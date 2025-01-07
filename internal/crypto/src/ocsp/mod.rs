@@ -50,7 +50,7 @@ impl Default for OcspResponse {
 
 impl OcspResponse {
     /// Convert an OCSP response in DER format to `OcspResponse`.
-    pub fn from_der_checked(
+    pub(crate) fn from_der_checked(
         der: &[u8],
         signing_time: Option<DateTime<Utc>>,
         validation_log: &mut impl StatusTracker,
@@ -265,7 +265,8 @@ impl OcspResponse {
 
 /// Describes errors that can be identified when parsing an OCSP response.
 #[derive(Debug, Eq, Error, PartialEq)]
-pub enum OcspError {
+#[allow(unused)] // InvalidSystemTime may not exist on all platforms.
+pub(crate) enum OcspError {
     /// An invalid certificate was detected.
     #[error("Invalid certificate detected")]
     InvalidCertificate,
@@ -289,4 +290,4 @@ const DATE_FMT: &str = "%Y-%m-%d %H:%M:%S %Z";
 mod fetch;
 
 #[cfg(not(target_arch = "wasm32"))]
-pub use fetch::fetch_ocsp_response;
+pub(crate) use fetch::fetch_ocsp_response;

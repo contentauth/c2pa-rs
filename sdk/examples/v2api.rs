@@ -16,7 +16,7 @@ use std::io::{Cursor, Seek};
 
 use anyhow::Result;
 use c2pa::{settings::load_settings_from_str, Builder, CallbackSigner, Reader};
-use c2pa_crypto::SigningAlg;
+use c2pa_crypto::raw_signature::SigningAlg;
 use serde_json::json;
 
 const TEST_IMAGE: &[u8] = include_bytes!("../tests/fixtures/CA.jpg");
@@ -151,7 +151,7 @@ fn main() -> Result<()> {
     }
 
     println!("{}", reader.json());
-    assert!(reader.validation_status().is_none());
+    assert_eq!(reader.validation_status(), None);
     assert_eq!(reader.active_manifest().unwrap().title().unwrap(), title);
 
     Ok(())
@@ -175,6 +175,7 @@ mod tests {
 
     #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
     #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    #[cfg_attr(not(any(target_arch = "wasm32", feature = "openssl")), ignore)]
     async fn test_v2_api() -> Result<()> {
         main()
     }

@@ -73,9 +73,14 @@ pub trait TimeStampProvider {
 /// asynchronously.
 ///
 /// [RFC 3161]: https://datatracker.ietf.org/doc/html/rfc3161
-#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
-#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
-pub trait AsyncTimeStampProvider {
+#[cfg(not(target_arch = "wasm32"))]
+#[async_trait]
+pub trait AsyncTimeStampProvider: Sync {
+    // IMPORTANT: It appears that the Sync (most platforms) vs not-Sync (WASM)
+    // distinction can't be achieved without duplicating the trait definition 👎🏻.
+    // Please verify that any changes made here are also made to the subsequent
+    // definition of AsyncTimeStampProvider for WASM builds.
+
     /// Return the URL for time stamp service.
     fn time_stamp_service_url(&self) -> Option<String> {
         None
@@ -125,7 +130,75 @@ pub trait AsyncTimeStampProvider {
     }
 }
 
-fn default_rfc3161_message(data: &[u8]) -> Result<Vec<u8>, TimeStampError> {
+/// An `AsyncTimeStampProvider` implementation can contact a [RFC 3161] time
+/// stamp service and generate a corresponding time stamp for a specific piece
+/// of data.
+///
+/// This is identical to [`TimeStampProvider`] except for performing its work
+/// asynchronously.
+///
+/// [RFC 3161]: https://datatracker.ietf.org/doc/html/rfc3161
+#[cfg(target_arch = "wasm32")]
+#[async_trait(?Send)]
+pub trait AsyncTimeStampProvider {
+    // IMPORTANT: It appears that the Sync (most platforms) vs not-Sync (WASM)
+    // distinction can't be achieved without duplicating the trait definition 👎🏻.
+    // Please verify that any changes made here are also made to the previous
+    // definition of AsyncTimeStampProvider for non-WASM builds.
+
+    /// Return the URL for time stamp service.
+    fn time_stamp_service_url(&self) -> Option<String> {
+        None
+    }
+
+    /// Additional request headers to pass to the time stamp service.
+    ///
+    /// IMPORTANT: You should not include the "Content-type" header here.
+    /// That is provided by default.
+    fn time_stamp_request_headers(&self) -> Option<Vec<(String, String)>> {
+        None
+    }
+
+    /// Generate the request body for the HTTPS request to the time stamp
+    /// service.
+    fn time_stamp_request_body(&self, message: &[u8]) -> Result<Vec<u8>, TimeStampError> {
+        default_rfc3161_message(message)
+    }
+
+    /// Request a [RFC 3161] time stamp over an arbitrary data packet.
+    ///
+    /// The default implementation will send the request to the URL
+    /// provided by [`Self::time_stamp_service_url()`], if any.
+    ///
+    /// [RFC 3161]: https://datatracker.ietf.org/doc/html/rfc3161
+    #[allow(unused_variables)] // `message` not used on WASM
+    async fn send_time_stamp_request(
+        &self,
+        message: &[u8],
+    ) -> Option<Result<Vec<u8>, TimeStampError>> {
+        // NOTE: This is currently synchronous, but may become
+        // async in the future.
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Some(url) = self.time_stamp_service_url() {
+            if let Ok(body) = self.time_stamp_request_body(message) {
+                let headers: Option<Vec<(String, String)>> = self.time_stamp_request_headers();
+                return Some(
+                    super::http_request::default_rfc3161_request_async(
+                        &url, headers, &body, message,
+                    )
+                    .await,
+                );
+            }
+        }
+
+        None
+    }
+}
+
+/// Create an [RFC 3161] time stamp request message for a given piece of data.
+///
+/// [RFC 3161]: https://datatracker.ietf.org/doc/html/rfc3161
+pub fn default_rfc3161_message(data: &[u8]) -> Result<Vec<u8>, TimeStampError> {
     let request = time_stamp_message_http(data, DigestAlgorithm::Sha256)?;
 
     let mut body = Vec::<u8>::new();

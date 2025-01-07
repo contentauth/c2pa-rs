@@ -11,7 +11,7 @@ The C2PA Rust library has been tested on the following operating systems:
 
 ## Requirements
 
-The C2PA Rust library requires **Rust version 1.76.0** or newer.
+The C2PA Rust library requires **Rust version 1.81.0** or newer.
 
 To use the library, add this to your `Cargo.toml`:
 
@@ -42,7 +42,6 @@ The Rust library crate provides the following capabilities:
 * `no_interleaved_io` forces fully-synchronous I/O; otherwise, the library uses threaded I/O for some operations to improve performance.
 * `fetch_remote_manifests` enables the verification step to retrieve externally referenced manifest stores.  External manifests are only fetched if there is no embedded manifest store and no locally adjacent .c2pa manifest store file of the same name.
 * `json_schema` is used by `make schema` to produce a JSON schema document that represents the `ManifestStore` data structures.
-* `psxxx_ocsp_stapling_experimental` enables a demonstration feature that attempts to fetch the OCSP data from the OCSP responders listed in the manifest signing certificate.  The response becomes part of the manifest and is used to prove the certificate was not revoked at the time of signing.  This is only implemented for PS256, PS384 and PS512 signatures and is intended as a demonstration.
 * `openssl_ffi_mutex` prevents multiple threads from accessing the C OpenSSL library simultaneously. (This library is not re-entrant.) In a multi-threaded process (such as Cargo's test runner), this can lead to unpredictable behavior.
 
 ### New API

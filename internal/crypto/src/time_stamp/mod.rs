@@ -20,12 +20,14 @@ pub use error::TimeStampError;
 
 #[cfg(not(target_arch = "wasm32"))]
 mod http_request;
+#[cfg(not(target_arch = "wasm32"))]
+pub use http_request::{default_rfc3161_request, default_rfc3161_request_async};
 
 mod provider;
-pub use provider::{AsyncTimeStampProvider, TimeStampProvider};
+pub use provider::{default_rfc3161_message, AsyncTimeStampProvider, TimeStampProvider};
 
 mod response;
+pub(crate) use response::{ContentInfo, TimeStampResponse};
 
 mod verify;
-/// TEMPORARILY PUBLIC while refactoring
-pub use verify::{verify_time_stamp, verify_time_stamp_async};
+pub(crate) use verify::{verify_time_stamp, verify_time_stamp_async};

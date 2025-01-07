@@ -16,7 +16,7 @@ use std::{borrow::Cow, collections::HashMap, io::Cursor, slice::Iter};
 use std::{fs::create_dir_all, path::Path};
 
 use async_generic::async_generic;
-use c2pa_crypto::SigningAlg;
+use c2pa_crypto::raw_signature::SigningAlg;
 use log::{debug, error};
 #[cfg(feature = "json_schema")]
 use schemars::JsonSchema;
@@ -1504,6 +1504,8 @@ pub(crate) mod tests {
 
     use std::io::Cursor;
 
+    #[cfg(any(feature = "file_io", target_arch = "wasm32"))]
+    use c2pa_crypto::raw_signature::SigningAlg;
     #[cfg(feature = "file_io")]
     use c2pa_status_tracker::{DetailedStatusTracker, StatusTracker};
     #[cfg(feature = "file_io")]
@@ -1520,7 +1522,8 @@ pub(crate) mod tests {
         ingredient::Ingredient,
         reader::Reader,
         store::Store,
-        utils::test::{temp_remote_signer, temp_signer, TEST_VC},
+        utils::test::{temp_remote_signer, TEST_VC},
+        utils::test_signer::{async_test_signer, test_signer},
         Manifest, Result,
     };
     #[cfg(feature = "file_io")]
@@ -1601,7 +1604,7 @@ pub(crate) mod tests {
         let test_output = dir.path().join("wc_embed_test.jpg");
 
         //embed a claim generated from this manifest
-        let signer = temp_signer();
+        let signer = test_signer(SigningAlg::Ps256);
 
         let _store = manifest
             .embed(&source_path, &test_output, signer.as_ref())
@@ -1612,7 +1615,7 @@ pub(crate) mod tests {
         if cfg!(feature = "add_thumbnails") {
             assert!(manifest.thumbnail().is_some());
         } else {
-            assert!(manifest.thumbnail().is_none());
+            assert_eq!(manifest.thumbnail(), None);
         }
         let ingredient = Ingredient::from_file(&test_output).expect("load_from_asset");
         assert!(ingredient.active_manifest().is_some());
@@ -1772,7 +1775,7 @@ pub(crate) mod tests {
             )
             .expect("add_assertion");
 
-        let signer = temp_signer();
+        let signer = test_signer(SigningAlg::Ps256);
 
         let c2pa_data = manifest
             .embed(&output, &output, signer.as_ref())
@@ -1797,7 +1800,7 @@ pub(crate) mod tests {
             .expect("add_redaction");
 
         //embed a claim in output2
-        let signer = temp_signer();
+        let signer = test_signer(SigningAlg::Ps256);
         let _store2 = manifest2
             .embed(&output2, &output2, signer.as_ref())
             .expect("embed");
@@ -1816,7 +1819,7 @@ pub(crate) mod tests {
         let redacted_uri = &claim2.redactions().unwrap()[0];
 
         let claim1 = store3.get_claim(&claim1_label).unwrap();
-        assert!(claim1.get_claim_assertion(redacted_uri, 0).is_none());
+        assert_eq!(claim1.get_claim_assertion(redacted_uri, 0), None);
     }
 
     #[test]
@@ -1838,7 +1841,7 @@ pub(crate) mod tests {
             .add_assertion(&actions)
             .expect("add_assertion");
 
-        let signer = temp_signer();
+        let signer = test_signer(SigningAlg::Ps256);
         parent_manifest
             .embed(&parent_output, &parent_output, signer.as_ref())
             .expect("embed");
@@ -1895,8 +1898,7 @@ pub(crate) mod tests {
         let temp_dir = tempdir().expect("temp dir");
         let output = temp_fixture_path(&temp_dir, TEST_SMALL_JPEG);
 
-        let async_signer =
-            crate::openssl::temp_signer_async::AsyncSignerAdapter::new(crate::SigningAlg::Ps256);
+        let async_signer = async_test_signer(SigningAlg::Ps256);
 
         let mut manifest = test_manifest();
         manifest
@@ -1938,7 +1940,7 @@ pub(crate) mod tests {
         let temp_dir = tempdir().expect("temp dir");
         let output = temp_fixture_path(&temp_dir, TEST_SMALL_JPEG);
 
-        let signer = temp_signer();
+        let signer = test_signer(SigningAlg::Ps256);
 
         let mut manifest = test_manifest();
         manifest.set_label("MyLabel");
@@ -1963,7 +1965,7 @@ pub(crate) mod tests {
         let fp = format!("file:/{}", sidecar.to_str().unwrap());
         let url = url::Url::parse(&fp).unwrap();
 
-        let signer = temp_signer();
+        let signer = test_signer(SigningAlg::Ps256);
 
         let mut manifest = test_manifest();
         manifest.set_label("MyLabel");
@@ -1983,6 +1985,7 @@ pub(crate) mod tests {
     #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
     #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
     #[allow(deprecated)]
+    #[cfg_attr(not(any(target_arch = "wasm32", feature = "openssl_sign")), ignore)]
     async fn test_embed_jpeg_stream_wasm() {
         use crate::assertions::User;
         let image = include_bytes!("../tests/fixtures/earth_apollo17.jpg");
@@ -2023,6 +2026,7 @@ pub(crate) mod tests {
     #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
     #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
     #[allow(deprecated)]
+    #[cfg_attr(not(any(target_arch = "wasm32", feature = "openssl_sign")), ignore)]
     async fn test_embed_png_stream_wasm() {
         use crate::assertions::User;
         let image = include_bytes!("../tests/fixtures/libpng-test.png");
@@ -2056,6 +2060,7 @@ pub(crate) mod tests {
     #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
     #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
     #[allow(deprecated)]
+    #[cfg_attr(not(any(target_arch = "wasm32", feature = "openssl_sign")), ignore)]
     async fn test_embed_webp_stream_wasm() {
         use crate::assertions::User;
         let image = include_bytes!("../tests/fixtures/mars.webp");
@@ -2087,6 +2092,7 @@ pub(crate) mod tests {
     }
 
     #[test]
+    #[cfg_attr(not(any(target_arch = "wasm32", feature = "openssl_sign")), ignore)]
     fn test_embed_stream() {
         use crate::assertions::User;
         let image = include_bytes!("../tests/fixtures/earth_apollo17.jpg");
@@ -2104,7 +2110,8 @@ pub(crate) mod tests {
             ))
             .unwrap();
 
-        let signer = temp_signer();
+        let signer = test_signer(SigningAlg::Ps256);
+
         let mut output = Cursor::new(Vec::new());
         // Embed a manifest using the signer.
         manifest
@@ -2122,11 +2129,14 @@ pub(crate) mod tests {
         //println!("{manifest_store}");main
     }
 
-    #[cfg(any(target_arch = "wasm32", feature = "openssl_sign"))]
     #[cfg_attr(feature = "openssl_sign", actix::test)]
     #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    #[cfg(any(
+        target_arch = "wasm32",
+        all(feature = "openssl_sign", feature = "file_io")
+    ))]
     async fn test_embed_from_memory_async() {
-        use crate::{assertions::User, utils::test::temp_async_signer};
+        use crate::assertions::User;
         let image = include_bytes!("../tests/fixtures/earth_apollo17.jpg");
         // convert buffer to cursor with Read/Write/Seek capability
         let mut stream = std::io::Cursor::new(image.to_vec());
@@ -2142,8 +2152,9 @@ pub(crate) mod tests {
             ))
             .unwrap();
 
-        let signer = temp_async_signer();
+        let signer = async_test_signer(SigningAlg::Ed25519);
         let mut output = Cursor::new(Vec::new());
+
         // Embed a manifest using the signer.
         manifest
             .embed_to_stream_async("jpeg", &mut stream, &mut output, signer.as_ref())
@@ -2171,7 +2182,7 @@ pub(crate) mod tests {
         let temp_dir = tempdir().expect("temp dir");
         let output = temp_fixture_path(&temp_dir, TEST_SMALL_JPEG);
 
-        let signer = temp_signer();
+        let signer = test_signer(SigningAlg::Ps256);
 
         let mut manifest = test_manifest();
         let ingredient =
@@ -2208,7 +2219,7 @@ pub(crate) mod tests {
         let fp = format!("file:/{}", sidecar.to_str().unwrap());
         let url = url::Url::parse(&fp).unwrap();
 
-        let signer = temp_signer();
+        let signer = test_signer(SigningAlg::Ps256);
 
         let parent = Ingredient::from_file(fixture_path("XCA.jpg")).expect("getting parent");
         let mut manifest = test_manifest();
@@ -2235,7 +2246,7 @@ pub(crate) mod tests {
         let temp_dir = tempdir().expect("temp dir");
         let output = temp_fixture_path(&temp_dir, TEST_SMALL_JPEG);
 
-        let signer = temp_signer();
+        let signer = test_signer(SigningAlg::Ps256);
 
         let mut manifest = test_manifest();
         let thumb_data = vec![1, 2, 3];
@@ -2252,7 +2263,7 @@ pub(crate) mod tests {
         assert_eq!(image.into_owned(), thumb_data);
     }
 
-    #[cfg(feature = "file_io")]
+    #[cfg(feature = "openssl_sign")]
     const MANIFEST_JSON: &str = r#"{
         "claim_generator": "test",
         "claim_generator_info": [
@@ -2397,7 +2408,8 @@ pub(crate) mod tests {
         // convert buffer to cursor with Read/Write/Seek capability
         let mut input = std::io::Cursor::new(image.to_vec());
 
-        let signer = temp_signer();
+        let signer = test_signer(SigningAlg::Ps256);
+
         // Embed a manifest using the signer.
         let mut output = Cursor::new(Vec::new());
         manifest
@@ -2464,7 +2476,8 @@ pub(crate) mod tests {
 
         let image = include_bytes!("../tests/fixtures/earth_apollo17.jpg");
 
-        let signer = temp_signer();
+        let signer = test_signer(SigningAlg::Ps256);
+
         // Embed a manifest using the signer.
         let output_image = manifest
             .embed_from_memory("jpeg", image, signer.as_ref())
@@ -2529,7 +2542,7 @@ pub(crate) mod tests {
         let temp_dir = tempdir().expect("temp dir");
         let output = temp_fixture_path(&temp_dir, TEST_SMALL_JPEG);
 
-        let signer = temp_signer();
+        let signer = test_signer(SigningAlg::Ps256);
 
         let mut manifest = Manifest::from_json(MANIFEST_JSON).expect("from_json");
         manifest.with_base_path(fixtures).expect("with_base");
@@ -2556,7 +2569,7 @@ pub(crate) mod tests {
         let temp_dir = tempdir().expect("temp dir");
         let output = temp_fixture_path(&temp_dir, TEST_WEBP);
 
-        let signer = temp_signer();
+        let signer = test_signer(SigningAlg::Ps256);
 
         let mut manifest = Manifest::from_json(MANIFEST_JSON).expect("from_json");
         manifest.with_base_path(fixtures).expect("with_base");
@@ -2587,14 +2600,14 @@ pub(crate) mod tests {
         assert!(manifest
             .set_thumbnail_ref(ResourceRef::new("image/jpg", "foo"))
             .is_err());
-        assert!(manifest.thumbnail_ref().is_none());
+        assert_eq!(manifest.thumbnail_ref(), None);
         // verify we can set a references that do exist
         assert!(manifest
             .set_thumbnail_ref(ResourceRef::new("image/jpeg", "C.jpg"))
             .is_ok());
         assert!(manifest.thumbnail_ref().is_some());
 
-        let signer = temp_signer();
+        let signer = test_signer(SigningAlg::Ps256);
         manifest
             .embed(&output, &output, signer.as_ref())
             .expect("embed");
@@ -2619,9 +2632,9 @@ pub(crate) mod tests {
         // verify there is a thumbnail ref
         assert!(manifest.thumbnail_ref().is_some());
         // verify there is no thumbnail
-        assert!(manifest.thumbnail().is_none());
+        assert_eq!(manifest.thumbnail(), None);
 
-        let signer = temp_signer();
+        let signer = test_signer(SigningAlg::Ps256);
         manifest
             .embed(&output, &output, signer.as_ref())
             .expect("embed");
@@ -2629,8 +2642,8 @@ pub(crate) mod tests {
         let manifest_store = Reader::from_file(&output).expect("from_file");
         println!("{manifest_store}");
         let active_manifest = manifest_store.active_manifest().unwrap();
-        assert!(active_manifest.thumbnail_ref().is_none());
-        assert!(active_manifest.thumbnail().is_none());
+        assert_eq!(active_manifest.thumbnail_ref(), None);
+        assert_eq!(active_manifest.thumbnail(), None);
     }
 
     #[test]
@@ -2650,9 +2663,11 @@ pub(crate) mod tests {
 
         let mut source = std::io::Cursor::new(vec![1, 2, 3]);
         let mut dest = std::io::Cursor::new(Vec::new());
-        let signer = temp_signer();
+        let signer = test_signer(SigningAlg::Ps256);
+
         let result =
             manifest.embed_to_stream("image/jpeg", &mut source, &mut dest, signer.as_ref());
+
         assert!(result.is_err());
         assert!(result
             .unwrap_err()
@@ -2666,7 +2681,7 @@ pub(crate) mod tests {
     fn test_data_hash_embeddable_manifest() {
         let ap = fixture_path("cloud.jpg");
 
-        let signer = temp_signer();
+        let signer = test_signer(SigningAlg::Ps256);
 
         let mut manifest = Manifest::new("claim_generator");
 
@@ -2715,7 +2730,7 @@ pub(crate) mod tests {
 
         let manifest_store = Reader::from_file(&output).expect("from_file");
         println!("{manifest_store}");
-        assert!(manifest_store.validation_status().is_none());
+        assert_eq!(manifest_store.validation_status(), None);
     }
 
     #[cfg(all(feature = "file_io", feature = "openssl_sign"))]
@@ -2774,7 +2789,7 @@ pub(crate) mod tests {
 
         let manifest_store = Reader::from_file(&output).expect("from_file");
         println!("{manifest_store}");
-        assert!(manifest_store.validation_status().is_none());
+        assert_eq!(manifest_store.validation_status(), None);
     }
 
     #[test]
@@ -2792,7 +2807,7 @@ pub(crate) mod tests {
             .add_labeled_assertion(crate::assertions::labels::BOX_HASH, &box_hash)
             .unwrap();
 
-        let signer = temp_signer();
+        let signer = test_signer(SigningAlg::Ps256);
 
         let embeddable = manifest
             .box_hash_embeddable_manifest(signer.as_ref(), None)
@@ -2807,6 +2822,6 @@ pub(crate) mod tests {
         .unwrap();
         println!("{reader}");
         assert!(reader.active_manifest().is_some());
-        assert!(reader.validation_status().is_none());
+        assert_eq!(reader.validation_status(), None);
     }
 }

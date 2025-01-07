@@ -349,10 +349,12 @@ pub mod tests {
 
     use std::io::Seek;
 
+    use c2pa_crypto::raw_signature::SigningAlg;
+
     use super::*;
     use crate::{
         asset_io::RemoteRefEmbedType,
-        utils::test::{create_test_store, temp_signer},
+        utils::{test::create_test_store, test_signer::test_signer},
     };
 
     #[test]
@@ -447,7 +449,7 @@ pub mod tests {
     fn test_jumbf(asset_type: &str, reader: &mut dyn CAIRead) {
         let mut writer = Cursor::new(Vec::new());
         let store = create_test_store().unwrap();
-        let signer = temp_signer();
+        let signer = test_signer(SigningAlg::Ps256);
         let jumbf = store.to_jumbf(&*signer).unwrap();
         save_jumbf_to_stream(asset_type, reader, &mut writer, &jumbf).unwrap();
         writer.set_position(0);
