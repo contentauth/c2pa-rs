@@ -15,7 +15,7 @@ use std::fmt::{Debug, Error, Formatter};
 
 pub(crate) struct DebugByteSlice<'a>(pub(crate) &'a [u8]);
 
-impl<'a> Debug for DebugByteSlice<'a> {
+impl Debug for DebugByteSlice<'_> {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), Error> {
         if self.0.len() > 20 {
             write!(
