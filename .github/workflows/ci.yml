@@ -431,5 +431,6 @@ jobs:
 
       - name: Run cargo-udeps
         run: |
-          cargo install cargo-udeps --locked
+          curl -L --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/install-from-binstall-release.sh | bash
+          cargo +nightly binstall cargo-udeps --locked
           cargo +nightly udeps --all-targets --all-features
