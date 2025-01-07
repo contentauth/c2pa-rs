@@ -11,6 +11,8 @@
 // specific language governing permissions and limitations under
 // each license.
 
+#![allow(deprecated)] // TEMPORARY while building
+
 use std::fs::OpenOptions;
 
 use c2pa::{Manifest, ManifestStore};

@@ -11,6 +11,8 @@
 // specific language governing permissions and limitations under
 // each license.
 
+#![allow(deprecated)] // TEMPORARY while building
+
 use c2pa::ManifestStore;
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::*;

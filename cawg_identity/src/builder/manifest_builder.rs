@@ -11,6 +11,8 @@
 // specific language governing permissions and limitations under
 // each license.
 
+#![allow(deprecated)] // TEMPORARY while building
+
 use c2pa::{CAIRead, CAIReadWrite, Manifest, ManifestPatchCallback, Signer};
 
 use crate::{builder::IdentityAssertionBuilder, internal, IdentityAssertion};
