@@ -435,6 +435,7 @@ jobs:
       - name: Run cargo-udeps (build and archive)
         run: |
           cargo +nightly install cargo-udeps --locked
+          mkdir ./.github/temp-bin
           cp `which cargo-udeps` ./.github/temp-bin/cargo-udeps
           # cargo +nightly udeps --all-targets --all-features
 
