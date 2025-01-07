@@ -110,11 +110,6 @@ jobs:
           echo --- commitlint results for PR title \"$PR_TITLE\" ---
           echo  
 
-          # Workaround for https://github.com/KeisukeYamashita/commitlint-rs/issues/355
-          if echo "$PR_TITLE" | grep -E "^[a-z]+\(.*\): "; then
-            echo "$PR_TITLE" | commitlint -g .commitlintrc.yml
-          else
-            echo "$PR_TITLE" | commitlint -g .commitlintrc.no-scope.yml
-          fi
+          echo "$PR_TITLE" | commitlint -g .commitlintrc.yml
 
           echo "✅ PR title matches all enforced rules."
