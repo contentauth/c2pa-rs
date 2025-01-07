@@ -434,6 +434,7 @@ jobs:
 
       - name: Run cargo-udeps
         run: |
-          ./.github/temp-bin/cargo-udeps --all-targets --all-features
+          mv ./.github/temp-bin/cargo-udeps /home/runner/.cargo/bin/cargo-udeps
+          cargo udeps --all-targets --all-features
           # NOTE: Using pre-built binary as a workaround for
           # https://github.com/aig787/cargo-udeps-action/issues/6.
