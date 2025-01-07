@@ -430,7 +430,6 @@ jobs:
         uses: dtolnay/rust-toolchain@nightly
 
       - name: Run cargo-udeps
-        uses: aig787/cargo-udeps-action@v1
-        with:
-          version: latest
-          args: --all-targets --all-features
+        run: |
+          cargo install cargo-udeps --locked
+          cargo +nightly udeps --all-targets --all-features
