@@ -23,7 +23,8 @@ fn impl_clone() {
             hash: hex!("53d1b2cf4e6d9a97ed9281183fa5d836c32751b9d2fca724b40836befee7d67f").to_vec(),
         };
 
-    assert_eq!(h.clone(), h);
+    let h2 = h.clone();
+    assert!(h == h2);
 }
 
 #[test]
