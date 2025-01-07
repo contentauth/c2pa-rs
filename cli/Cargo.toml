@@ -17,6 +17,10 @@ edition = "2018"
 homepage = "https://contentauthenticity.org"
 repository = "https://github.com/contentauth/c2pa-rs/tree/main/cli"
 
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(test)'] }
+# Workaround for https://github.com/est31/cargo-udeps/issues/293.
+
 [dependencies]
 anyhow = "1.0"
 atree = "0.5.2"

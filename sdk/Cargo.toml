@@ -43,6 +43,10 @@ unstable_api = []
 # It enables some low-overhead timing features used in our development cycle.
 diagnostics = []
 
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(test)'] }
+# Workaround for https://github.com/est31/cargo-udeps/issues/293.
+
 [[example]]
 name = "client"
 required-features = ["file_io"]

@@ -6,6 +6,10 @@ license = "MIT OR Apache-2.0"
 edition = "2018"
 rust-version = "1.81.0"
 
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(test)'] }
+# Workaround for https://github.com/est31/cargo-udeps/issues/293.
+
 [dependencies]
 anyhow = "1.0.40"
 c2pa = { path = "../sdk", default-features = false, features = ["json_schema", "unstable_api"] }
