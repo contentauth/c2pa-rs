@@ -16,6 +16,10 @@ edition = "2021"
 rust-version = "1.81.0"
 exclude = ["tests/fixtures"]
 
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(test)'] }
+# Workaround for https://github.com/est31/cargo-udeps/issues/293.
+
 [package.metadata.docs.rs]
 all-features = true
 rustdoc-args = ["--cfg", "docsrs"]

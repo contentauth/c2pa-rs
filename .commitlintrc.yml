@@ -20,18 +20,13 @@ rules:
   # Scope must be one of the following
   scope:
     level: error
+    optional: true
     options:
       - c2patool
       - cawg_identity
       - export_schema
       - make_test_images
       - sdk
-
-  # Scope may be empty
-  # (NOTE: Disabled for now while we work around
-  # https://github.com/KeisukeYamashita/commitlint-rs/issues/355.)
-  # scope-empty:
-  #   level: ignore
 
   # Subject line should exist
   subject-empty:
