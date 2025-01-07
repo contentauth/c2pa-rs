@@ -422,6 +422,9 @@ jobs:
 
     runs-on: ubuntu-latest
 
+    permissions:
+      contents: write
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -430,7 +433,8 @@ jobs:
         uses: dtolnay/rust-toolchain@nightly
 
       - name: Run cargo-udeps
-        uses: aig787/cargo-udeps-action@v1
-        with:
-          version: latest
-          args: --all-targets --all-features
+        run: |
+          mv ./.github/temp-bin/cargo-udeps /home/runner/.cargo/bin/cargo-udeps
+          cargo udeps --all-targets --all-features
+          # NOTE: Using pre-built binary as a workaround for
+          # https://github.com/aig787/cargo-udeps-action/issues/6.
