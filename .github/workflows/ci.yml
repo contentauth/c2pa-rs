@@ -432,14 +432,8 @@ jobs:
       - name: Install nightly Rust toolchain
         uses: dtolnay/rust-toolchain@nightly
 
-      - name: Run cargo-udeps (build and archive)
+      - name: Run cargo-udeps
         run: |
-          cargo +nightly install cargo-udeps --locked
-          mkdir ./.github/temp-bin
-          cp `which cargo-udeps` ./.github/temp-bin/cargo-udeps
-          # cargo +nightly udeps --all-targets --all-features
-
-      - name: Write back 
-        uses: stefanzweifel/git-auto-commit-action@v5
-        with:
-          commit-message: "Save copy of built cargo-udeps tool"
+          ./.github/temp-bin/cargo-udeps --all-targets --all-features
+          # NOTE: Using pre-built binary as a workaround for
+          # https://github.com/aig787/cargo-udeps-action/issues/6.
