@@ -27,6 +27,7 @@ rustdoc-args = ["--cfg", "docsrs"]
 [dependencies]
 async-trait = "0.1.78"
 c2pa-crypto = { path = "../internal/crypto", version = "0.2.0" }
+c2pa = { path = "../sdk", version = "0.40.0" }
 ciborium = "0.2.2"
 hex-literal = "0.4.1"
 serde = { version = "1.0.197", features = ["derive"] }
@@ -37,7 +38,6 @@ thiserror = "1.0.61"
 wasm-bindgen = "0.2.95"
 
 [dev-dependencies]
-c2pa = { path = "../sdk", version = "0.40" }
 serde = { version = "1.0.197", features = ["derive"] }
 
 [target.'cfg(target_arch = "wasm32")'.dev-dependencies]
