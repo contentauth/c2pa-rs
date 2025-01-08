@@ -1255,12 +1255,10 @@ impl Claim {
                         if first_action.action() != "c2pa.created"
                             && first_action.action() != "c2pa.opened"
                         {
-                            dbg!("first action test failed");
                             return Err(Error::AssertionEncoding); // todo: placeholder until we have 2.x error codes
                         }
                     } else {
                         // must have an action
-                        dbg!("no actions");
                         return Err(Error::AssertionEncoding); // todo: placeholder until we have 2.x error codes
                     }
                 } else {
@@ -1271,7 +1269,6 @@ impl Claim {
                         .iter()
                         .any(|a| a.action() == "c2pa.created" || a.action() == "c2pa.opened")
                     {
-                        dbg!("created or opened action not allowed");
                         return Err(Error::AssertionEncoding); // todo: placeholder until we have 2.x error codes
                     }
                 }

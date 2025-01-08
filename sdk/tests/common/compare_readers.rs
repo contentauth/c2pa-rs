@@ -174,7 +174,6 @@ fn compare_json_values(
                 if val2.is_null() {
                     issues.push(format!("Missing {}: {}", path, val1));
                 } else if val2.is_null() {
-                    dbg!(&path);
                     issues.push(format!("Added {}: {}", path, val2));
                 } else {
                     issues.push(format!("Changed {}: {} vs {}", path, val1, val2));

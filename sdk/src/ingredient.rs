@@ -1273,10 +1273,13 @@ impl Ingredient {
         };
 
         let mut ingredient_assertion = match claim.version() {
-            1 => assertions::Ingredient::new_v2(
-                self.title().unwrap_or_default(),
-                self.format().unwrap_or_default(),
-            ),
+            1 => {
+                // don't make v1 ingredients anymore, they will always be at least v2
+                assertions::Ingredient::new_v2(
+                    self.title().unwrap_or_default(),
+                    self.format().unwrap_or_default(),
+                )
+            }
             2 => {
                 let mut assertion = assertions::Ingredient::new_v3(self.relationship.clone());
                 assertion.title = self.title.clone();
