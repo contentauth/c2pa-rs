@@ -17,9 +17,14 @@ use serde::{Deserialize, Serialize};
 
 use crate::internal::debug_byte_slice::DebugByteSlice;
 
-/// A set of _referenced assertions_ and other related data, known overall as the **signer payload.** This binding **SHOULD** generally be construed as authorization of or participation in the creation of the statements described by those assertions and corresponding portions of the C2PA asset in which they appear.
+/// A set of _referenced assertions_ and other related data, known overall as
+/// the **signer payload.** This binding **SHOULD** generally be construed as
+/// authorization of or participation in the creation of the statements
+/// described by those assertions and corresponding portions of the C2PA asset
+/// in which they appear.
 ///
-/// This is described in [§5.1, Overview], of the CAWG Identity Assertion specification.
+/// This is described in [§5.1, Overview], of the CAWG Identity Assertion
+/// specification.
 ///
 /// [§5.1, Overview]: https://cawg.io/identity/1.1-draft/#_overview
 #[derive(Clone, Debug, Deserialize, Eq, Serialize, PartialEq)]
