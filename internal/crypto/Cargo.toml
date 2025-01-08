@@ -1,6 +1,6 @@
 [package]
 name = "c2pa-crypto"
-version = "0.2.0"
+version = "0.3.0"
 description = "Cryptography internals for c2pa-rs crate"
 authors = [
     "Maurice Fisher <mfisher@adobe.com>",
@@ -40,7 +40,7 @@ async-trait = "0.1.77"
 base64 = "0.22.1"
 bcder = "0.7.3"
 bytes = "1.7.2"
-c2pa-status-tracker = { path = "../status-tracker", version = "0.2.0" }
+c2pa-status-tracker = { path = "../status-tracker", version = "0.3.0" }
 ciborium = "0.2.2"
 const-hex = "1.14"
 coset = "0.3.1"

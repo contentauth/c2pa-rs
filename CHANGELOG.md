@@ -6,6 +6,47 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 Since version 0.36.2, the format of this changelog is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.41.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.40.0...c2pa-v0.41.0)
+_08 January 2025_
+
+### Added
+
+* Remove writing of native camera RAW formats from SDK (#814)
+* Review `c2pa-crypto` crate API (#813)
+* Add new function `c2pa_crypto::cose::signing_time_from_sign1` (#812)
+* Move COSE signing into `c2pa_crypto` crate (#807)
+* Move COSE timestamp generation into `c2pa_crypto` (#803)
+* Move COSE signature verification into `c2pa_crypto` (#801)
+* Introduce `c2pa_crypto::Verifier::verify_trust` (#798)
+* Introduce `c2pa_crypto::cose::Verifier` (#797)
+* Consolidate implementations of `cert_chain_from_sign1` in `c2pa_crypto` (#796)
+* Move `signing_alg_from_sign1` into `c2pa-crypto` (#795)
+* Move `get_cose_sign1` into `c2pa-crypto` crate (#794)
+* Move COSE OCSP support into c2pa-crypto (#793)
+* Move `verify_trust` into `c2pa_crypto` (#784)
+* Introduce `c2pa_crypto::CertificateAcceptancePolicy` (#779)
+* Bump MSRV to 1.81.0 (#781)
+
+### Fixed
+
+* Update img-parts for jpeg segment underflow fix (#806)
+* Bring `claim_v2` changes from #707 into `c2pa_crypto` (#811)
+* Improve usage of `#[cfg]` directives (#783)
+* OOB read attempt in jpeg_io asset handler in get_cai_segments function (#719)
+* Prevent negative length value for SVG object locations (#766)
+* JPEG `write_cai` OOB insertion (#762)
+* Add support XMP in SVG (#771)
+* Possible overflow for TIFF (#760)
+* Resolve new Clippy issues (#776)
+
+### Updated dependencies
+
+* Bump jfifdump from 0.5.1 to 0.6.0 (#785)
+* Bump serde-wasm-bindgen from 0.5.0 to 0.6.5 (#786)
+* Bump thiserror from 2.0.6 to 2.0.8 (#787)
+* Bump rasn from 0.18.0 to 0.22.0 (#727)
+* Bump thiserror from 1.0.69 to 2.0.6 (#770)
+
 ## [0.40.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.39.0...c2pa-v0.40.0)
 _12 December 2024_
 
