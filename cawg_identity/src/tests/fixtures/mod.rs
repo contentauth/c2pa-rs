@@ -14,3 +14,7 @@
 mod naive_credential_holder;
 #[allow(unused)]
 pub(crate) use naive_credential_holder::NaiveCredentialHolder;
+
+mod async_test_signer;
+#[allow(unused)]
+pub(crate) use async_test_signer::async_test_signer;
