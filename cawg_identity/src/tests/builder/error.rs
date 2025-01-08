@@ -1,4 +1,4 @@
-// Copyright 2024 Adobe. All rights reserved.
+// Copyright 2025 Adobe. All rights reserved.
 // This file is licensed to you under the Apache License,
 // Version 2.0 (http://www.apache.org/licenses/LICENSE-2.0)
 // or the MIT license (http://opensource.org/licenses/MIT),
@@ -11,17 +11,15 @@
 // specific language governing permissions and limitations under
 // each license.
 
-// Tests are grouped under this module so as to avoid
-// having the test code itself included in coverage numbers.
+use crate::builder::IdentityBuilderError;
 
-#![allow(clippy::expect_used)]
-#![allow(clippy::panic)]
-#![allow(clippy::unwrap_used)]
+#[test]
+fn impl_from_ciborium_err() {
+    let ciborium_err: ciborium::ser::Error<String> = ciborium::ser::Error::Value("foo".to_string());
+    let builder_err: IdentityBuilderError = ciborium_err.into();
 
-mod builder;
-pub(crate) mod fixtures;
-mod identity_assertion;
-mod internal;
-
-#[cfg(target_arch = "wasm32")]
-wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
+    assert_eq!(
+        builder_err.to_string(),
+        "error while generating CBOR (Value(\"foo\"))"
+    );
+}
