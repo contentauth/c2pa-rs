@@ -21,7 +21,8 @@ use c2pa_crypto::raw_signature::{
     async_signer_from_cert_chain_and_private_key, AsyncRawSigner, SigningAlg,
 };
 
-/// Creates an [`AsyncSigner`] instance for testing purposes using test credentials.
+/// Creates an [`AsyncSigner`] instance for testing purposes using test
+/// credentials.
 ///
 /// [`AsyncSigner`]: c2pa::AsyncSigner
 #[cfg(not(target_arch = "wasm32"))]
@@ -33,7 +34,8 @@ pub(crate) fn async_test_signer(alg: SigningAlg) -> Box<dyn AsyncSigner + Sync +
     ))
 }
 
-/// Creates an [`AsyncSigner`] instance for testing purposes using test credentials.
+/// Creates an [`AsyncSigner`] instance for testing purposes using test
+/// credentials.
 ///
 /// [`AsyncSigner`]: c2pa::AsyncSigner
 #[cfg(target_arch = "wasm32")]
