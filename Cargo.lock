@@ -823,9 +823,13 @@ dependencies = [
 name = "cawg-identity"
 version = "0.1.1"
 dependencies = [
+ "async-trait",
+ "c2pa-crypto",
+ "ciborium",
  "hex-literal",
  "serde",
  "serde_bytes",
+ "thiserror 1.0.69",
  "wasm-bindgen",
  "wasm-bindgen-test",
 ]
