@@ -148,6 +148,7 @@ jobs:
 
         sed -i "s/^version = \"\\(.*\\)\"/version = \"\\1$NIGHTLY_SUFFIX\"/" sdk/Cargo.toml
         sed -i "s/path = \"..\/sdk\", version = \"\\(.*\\)\"/path = \"..\/sdk\", version = \"\\1$NIGHTLY_SUFFIX\"/" cli/Cargo.toml
+        sed -i "s/path = \"..\/sdk\", version = \"\\(.*\\)\"/path = \"..\/sdk\", version = \"\\1$NIGHTLY_SUFFIX\"/" cawg_identity/Cargo.toml
         
         cargo update -w
         git add Cargo.lock
