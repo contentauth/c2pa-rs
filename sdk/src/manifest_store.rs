@@ -608,8 +608,8 @@ mod tests {
         let manifest = manifest_store.get_active().unwrap();
         assert!(!manifest.ingredients().is_empty());
         // make sure we have two different ingredients
-        assert_eq!(manifest.ingredients()[0].format(), "image/jpeg");
-        assert_eq!(manifest.ingredients()[1].format(), "image/png");
+        assert_eq!(manifest.ingredients()[0].format(), Some("image/jpeg"));
+        assert_eq!(manifest.ingredients()[1].format(), Some("image/png"));
 
         let full_report = manifest_store.to_string();
         assert!(!full_report.is_empty());

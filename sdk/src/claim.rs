@@ -1245,15 +1245,22 @@ impl Claim {
             if assertion_label == ACTIONS {
                 let ac = Actions::from_assertion(&assertion)?;
 
-                if self.created_assertions.is_empty() {
+                // The first actions assertion must start with c2pa.created or c2pa.opened
+                if !self
+                    .created_assertions
+                    .iter()
+                    .any(|a| a.url().contains(ACTIONS))
+                {
                     if let Some(first_action) = ac.actions().first() {
                         if first_action.action() != "c2pa.created"
                             && first_action.action() != "c2pa.opened"
                         {
+                            dbg!("first action test failed");
                             return Err(Error::AssertionEncoding); // todo: placeholder until we have 2.x error codes
                         }
                     } else {
                         // must have an action
+                        dbg!("no actions");
                         return Err(Error::AssertionEncoding); // todo: placeholder until we have 2.x error codes
                     }
                 } else {
@@ -1264,11 +1271,10 @@ impl Claim {
                         .iter()
                         .any(|a| a.action() == "c2pa.created" || a.action() == "c2pa.opened")
                     {
+                        dbg!("created or opened action not allowed");
                         return Err(Error::AssertionEncoding); // todo: placeholder until we have 2.x error codes
                     }
                 }
-            } else if self.created_assertions.is_empty() {
-                return Err(Error::AssertionEncoding); // todo: placeholder until we have 2.x error codes
             }
 
             // add to created assertions list
@@ -2204,7 +2210,7 @@ impl Claim {
         // make sure the ingredient is version compatible
         if ingredient.iter().any(|x| x.claim_version > self.version()) {
             return Err(Error::VersionCompatibility(
-                "ingredient claims must too new".into(),
+                "ingredient claims cannot be newer".into(),
             ));
         }
 

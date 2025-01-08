@@ -55,8 +55,8 @@ pub struct Manifest {
 
     /// A User Agent formatted string identifying the software/hardware/system produced this claim
     /// Spaces are not allowed in names, versions can be specified with product/1.0 syntax
-    #[serde(default = "default_claim_generator")]
-    pub claim_generator: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub claim_generator: Option<String>,
 
     /// A list of claim generator info data identifying the software/hardware/system produced this claim
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -71,16 +71,15 @@ pub struct Manifest {
     title: Option<String>,
 
     /// The format of the source file as a MIME type.
-    #[serde(default = "default_format")]
-    format: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    format: Option<String>,
 
     /// Instance ID from `xmpMM:InstanceID` in XMP metadata.
     #[serde(default = "default_instance_id")]
     instance_id: String,
 
-    #[serde(skip_serializing_if = "Option::is_none")]
-    claim_generator_hints: Option<HashMap<String, Value>>,
-
+    //#[serde(skip_serializing_if = "Option::is_none")]
+    // claim_generator_hints: Option<HashMap<String, Value>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     thumbnail: Option<ResourceRef>,
 
@@ -121,10 +120,6 @@ pub struct Manifest {
     resources: ResourceStore,
 }
 
-fn default_claim_generator() -> String {
-    format!("{}/{}", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"))
-}
-
 fn default_instance_id() -> String {
     format!("xmp:iid:{}", Uuid::new_v4())
 }
@@ -141,17 +136,24 @@ impl Manifest {
     /// Create a new Manifest
     /// requires a claim_generator string (User Agent))
     pub fn new<S: Into<String>>(claim_generator: S) -> Self {
+        // treat an empty string as None
+        let claim_generator = claim_generator.into();
+        let claim_generator = if claim_generator.is_empty() {
+            None
+        } else {
+            Some(claim_generator)
+        };
         Self {
-            claim_generator: claim_generator.into(),
-            format: default_format(),
+            claim_generator,
+            format: Some(default_format()),
             instance_id: default_instance_id(),
             ..Default::default()
         }
     }
 
     /// Returns a User Agent formatted string identifying the software/hardware/system produced this claim
-    pub fn claim_generator(&self) -> &str {
-        self.claim_generator.as_str()
+    pub fn claim_generator(&self) -> Option<&str> {
+        self.claim_generator.as_deref()
     }
 
     /// returns the manifest label for this Manifest, as referenced in a ManifestStore
@@ -160,8 +162,8 @@ impl Manifest {
     }
 
     /// Returns a MIME content_type for the asset associated with this manifest.
-    pub fn format(&self) -> &str {
-        &self.format
+    pub fn format(&self) -> Option<&str> {
+        self.format.as_deref()
     }
 
     /// Returns the instance identifier.
@@ -241,13 +243,13 @@ impl Manifest {
 
     /// Sets a human readable name for the product that created this manifest
     pub fn set_claim_generator<S: Into<String>>(&mut self, generator: S) -> &mut Self {
-        self.claim_generator = generator.into();
+        self.claim_generator = Some(generator.into());
         self
     }
 
     /// Sets a human-readable title for this ingredient.
     pub fn set_format<S: Into<String>>(&mut self, format: S) -> &mut Self {
-        self.format = format.into();
+        self.format = Some(format.into());
         self
     }
 
@@ -530,9 +532,20 @@ impl Manifest {
             })?;
 
         // extract vendor from claim label
-        let claim_generator = claim.claim_generator().to_owned();
+        //let claim_generator = claim.claim_generator().to_owned();
 
-        let mut manifest = Manifest::new(claim_generator);
+        //let mut manifest = Manifest::new(claim_generator);
+        let mut manifest = Manifest {
+            title: claim.title().map(|s| s.to_owned()),
+            format: if claim.format().is_empty() {
+                None
+            } else {
+                Some(claim.format().to_owned())
+            },
+            instance_id: claim.instance_id().to_owned(),
+            label: Some(claim.label().to_owned()),
+            ..Default::default()
+        };
 
         #[cfg(feature = "file_io")]
         if let Some(base_path) = resource_path {
@@ -557,9 +570,7 @@ impl Manifest {
             }
         }
 
-        manifest.set_label(claim.label());
         manifest.resources.set_label(claim.label()); // default manifest for relative urls
-        manifest.claim_generator_hints = claim.get_claim_generator_hint_map().cloned();
 
         // get credentials converting from AssertionData to Value
         let credentials: Vec<Value> = claim
@@ -580,12 +591,6 @@ impl Manifest {
                 .filter_map(|r| assertion_label_from_uri(r))
                 .collect()
         });
-
-        if let Some(title) = claim.title() {
-            manifest.set_title(title);
-        }
-        manifest.set_format(claim.format());
-        manifest.set_instance_id(claim.instance_id());
 
         manifest.assertion_references = claim
             .assertions()
@@ -732,12 +737,12 @@ impl Manifest {
         // Gather the information we need from the target path
         let ingredient = Ingredient::from_file_info(path.as_ref());
 
-        self.set_format(ingredient.format());
+        self.set_format(ingredient.format().unwrap_or_default());
         self.set_instance_id(ingredient.instance_id());
 
         // if there is already an asset title preserve it
-        if self.title().is_none() {
-            self.set_title(ingredient.title());
+        if self.title().is_none() && ingredient.title().is_some() {
+            self.set_title(ingredient.title().unwrap_or_default());
         }
 
         // if a thumbnail is not already defined, create one here
@@ -760,7 +765,7 @@ impl Manifest {
         // add library identifier to claim_generator
         let generator = format!(
             "{} {}/{}",
-            &self.claim_generator,
+            self.claim_generator().unwrap_or_default(),
             crate::NAME,
             crate::VERSION
         );
@@ -796,9 +801,11 @@ impl Manifest {
         }
 
         if let Some(title) = self.title() {
-            claim.set_title(Some(title.to_owned()));
+            claim.set_title(Some(title.to_string()));
         }
-        self.format().clone_into(&mut claim.format);
+        if let Some(format) = self.format() {
+            claim.format = format.to_string();
+        }
         self.instance_id().clone_into(&mut claim.instance_id);
 
         if let Some(thumb_ref) = self.thumbnail_ref() {
@@ -1607,7 +1614,7 @@ pub(crate) mod tests {
             .embed(&source_path, &test_output, signer.as_ref())
             .expect("embed");
 
-        assert_eq!(manifest.format(), "image/jpeg");
+        assert_eq!(manifest.format(), Some("image/jpeg"));
         assert_eq!(manifest.title(), Some("wc_embed_test.jpg"));
         if cfg!(feature = "add_thumbnails") {
             assert!(manifest.thumbnail().is_some());
@@ -2428,7 +2435,7 @@ pub(crate) mod tests {
             b"pirate with bird on shoulder"
         );
         // Validate a custom AI model ingredient.
-        assert_eq!(m.ingredients()[2].title(), "Custom AI Model");
+        assert_eq!(m.ingredients()[2].title(), Some("Custom AI Model"));
         assert_eq!(m.ingredients()[2].relationship(), &Relationship::InputTo);
         assert_eq!(
             m.ingredients()[2].data_types().unwrap()[0].asset_type,
@@ -2490,7 +2497,7 @@ pub(crate) mod tests {
             b"pirate with bird on shoulder"
         );
         // Validate a custom AI model ingredient.
-        assert_eq!(m.ingredients()[2].title(), "Custom AI Model");
+        assert_eq!(m.ingredients()[2].title(), Some("Custom AI Model"));
         assert_eq!(m.ingredients()[2].relationship(), &Relationship::InputTo);
         assert_eq!(
             m.ingredients()[2].data_types().unwrap()[0].asset_type,

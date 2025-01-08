@@ -258,6 +258,7 @@ impl MakeTestImages {
         let format = extension_to_mime(extension).unwrap_or("image/jpeg");
 
         let manifest_def = json!({
+            "claim_version": 1,
             "vendor": "contentauth",
             "title": name,
             "format": &format,

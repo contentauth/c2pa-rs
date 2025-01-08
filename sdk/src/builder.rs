@@ -52,8 +52,11 @@ const ARCHIVE_VERSION: &str = "1";
 #[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 #[non_exhaustive]
 pub struct ManifestDefinition {
+    /// The version of the claim.  Defaults to 1.
+    pub claim_version: Option<u8>,
+
     /// Optional prefix added to the generated Manifest Label
-    /// This is typically Internet domain name for the vendor (i.e. `adobe`)
+    /// This is typically a reverse domain name.
     pub vendor: Option<String>,
 
     /// Claim Generator Info is always required with at least one entry
@@ -257,6 +260,10 @@ impl Builder {
             definition: serde_json::from_str(json).map_err(Error::JsonError)?,
             ..Default::default()
         })
+    }
+
+    pub fn claim_version(&self) -> u8 {
+        self.definition.claim_version.unwrap_or(1)
     }
 
     /// Sets the [`ClaimGeneratorInfo`] for this [`Builder`].
@@ -603,8 +610,16 @@ impl Builder {
             .join(" ");
 
         let mut claim = match definition.label.as_ref() {
-            Some(label) => Claim::new_with_user_guid(&claim_generator, &label.to_string(), 1)?,
-            None => Claim::new(&claim_generator, definition.vendor.as_deref(), 1),
+            Some(label) => Claim::new_with_user_guid(
+                &claim_generator,
+                &label.to_string(),
+                self.claim_version().into(),
+            )?,
+            None => Claim::new(
+                &claim_generator,
+                definition.vendor.as_deref(),
+                self.claim_version().into(),
+            ),
         };
 
         // add claim generator info to claim resolving icons
@@ -639,6 +654,8 @@ impl Builder {
         definition.format.clone_into(&mut claim.format);
         definition.instance_id.clone_into(&mut claim.instance_id);
 
+        let salt = DefaultSalt::default();
+
         if let Some(thumb_ref) = definition.thumbnail.as_ref() {
             // Setting the format to "none" will ensure that no claim thumbnail is added
             if thumb_ref.format != "none" {
@@ -646,10 +663,13 @@ impl Builder {
                 let mut stream = self.resources.open(thumb_ref)?;
                 let mut data = Vec::new();
                 stream.read_to_end(&mut data)?;
-                claim.add_assertion(&Thumbnail::new(
-                    &labels::add_thumbnail_format(labels::CLAIM_THUMBNAIL, &thumb_ref.format),
-                    data,
-                ))?;
+                claim.add_assertion_with_salt(
+                    &Thumbnail::new(
+                        &labels::add_thumbnail_format(labels::CLAIM_THUMBNAIL, &thumb_ref.format),
+                        data,
+                    ),
+                    &salt,
+                )?;
             }
         }
 
@@ -665,8 +685,6 @@ impl Builder {
             ingredient_map.insert(ingredient.instance_id().to_string(), uri);
         }
 
-        let salt = DefaultSalt::default();
-
         // add any additional assertions
         for manifest_assertion in &definition.assertions {
             match manifest_assertion.label.as_str() {
@@ -674,12 +692,6 @@ impl Builder {
                     let version = labels::version(l);
 
                     let mut actions: Actions = manifest_assertion.to_assertion()?;
-
-                    let ingredients_key = match version {
-                        None | Some(1) => "ingredient",
-                        Some(2) => "ingredients",
-                        _ => return Err(Error::AssertionUnsupportedVersion),
-                    };
 
                     let mut updates = Vec::new();
                     let mut index = 0;
@@ -699,7 +711,13 @@ impl Builder {
                                     )));
                                 }
                             }
-                            update = update.set_parameter(ingredients_key, uris)?;
+                            match version {
+                                None | Some(1) => {
+                                    update = update.set_parameter("ingredient", uris[0].clone())?
+                                }
+                                Some(2) => update = update.set_parameter("ingredients", uris)?,
+                                _ => return Err(Error::AssertionUnsupportedVersion),
+                            };
                             updates.push((index, update));
                         }
                         index += 1;
@@ -1207,7 +1225,7 @@ mod tests {
         assert_eq!(definition.format, "image/tiff".to_string());
         assert_eq!(definition.instance_id, "1234".to_string());
         assert_eq!(definition.thumbnail, Some(thumbnail_ref));
-        assert_eq!(definition.ingredients[0].title(), "Parent Test".to_string());
+        assert_eq!(definition.ingredients[0].title(), Some("Parent Test"));
         assert_eq!(
             definition.assertions[0].label,
             "org.test.assertion".to_string()
@@ -1239,7 +1257,7 @@ mod tests {
             definition.thumbnail.clone().unwrap().identifier.as_str(),
             "thumbnail.jpg"
         );
-        assert_eq!(definition.ingredients[0].title(), "Test".to_string());
+        assert_eq!(definition.ingredients[0].title(), Some("Test"));
         assert_eq!(
             definition.assertions[0].label,
             "org.test.assertion".to_string()
@@ -1271,6 +1289,7 @@ mod tests {
         let mut dest = Cursor::new(Vec::new());
 
         let mut builder = Builder::from_json(&manifest_json()).unwrap();
+        //builder.definition.claim_version = Some(2);
         builder
             .add_ingredient_from_stream(parent_json().to_string(), format, &mut source)
             .unwrap();
@@ -1834,7 +1853,7 @@ mod tests {
         assert_eq!(m.ingredients().len(), 3);
         // Validate a prompt ingredient (with data field)
         let prompt = &m.ingredients()[1];
-        assert_eq!(prompt.title(), "prompt");
+        assert_eq!(prompt.title(), Some("prompt"));
         assert_eq!(prompt.relationship(), &Relationship::InputTo);
         assert!(prompt.data_ref().is_some());
         assert_eq!(prompt.data_ref().unwrap().format, "text/plain");
@@ -1844,7 +1863,7 @@ mod tests {
         assert_eq!(prompt_data.into_inner(), b"pirate with bird on shoulder");
 
         // Validate a custom AI model ingredient.
-        assert_eq!(m.ingredients()[2].title(), "Custom AI Model");
+        assert_eq!(m.ingredients()[2].title(), Some("Custom AI Model"));
         assert_eq!(m.ingredients()[2].relationship(), &Relationship::InputTo);
         assert_eq!(
             m.ingredients()[2].data_types().unwrap()[0].asset_type,

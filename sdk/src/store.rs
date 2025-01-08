@@ -3597,7 +3597,7 @@ impl Store {
             "ingredient missing provenace claim".into(),
         ))?;
         if claim.version() < pc.version() {
-            return Err(Error::OtherError("ingredient verion too new".into()));
+            return Err(Error::OtherError("ingredient version too new".into()));
         }
 
         claim.add_ingredient_data(provenance_label, store.claims.clone(), redactions)?;
@@ -3950,6 +3950,7 @@ pub mod tests {
     fn test_bad_claim_v2_generation() {
         // first assertion must be Actiion c2pa.opened, c2pa.created
         let action = Actions::new().add_action(Action::new("c2pa.opened"));
+        let edit_action = Actions::new().add_action(Action::new("c2pa.edited"));
 
         let my_content = r#"{"my_tag": "some value I will replace"}"#;
         let my_label = "com.mycompany.myassertion";
@@ -3957,7 +3958,10 @@ pub mod tests {
 
         // test adding non opened or created assertion first
         let mut claimv2 = Claim::new("Photoshop", Some("Adobe"), 2);
-        claimv2.add_assertion(&user).unwrap_err();
+        // ok to have other assertions first
+        claimv2.add_assertion(&user).unwrap();
+        // not ok to have other actions first
+        claimv2.add_assertion(&edit_action).unwrap_err();
 
         // test adding mulitple opened or created
         let mut claimv2 = Claim::new("Photoshop", Some("Adobe"), 2);
