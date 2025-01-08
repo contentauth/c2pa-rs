@@ -18,6 +18,8 @@
 #![allow(clippy::panic)]
 #![allow(clippy::unwrap_used)]
 
+mod builder;
+pub(crate) mod fixtures;
 mod identity_assertion;
 mod internal;
 

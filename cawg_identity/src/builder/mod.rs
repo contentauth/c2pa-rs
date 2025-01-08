@@ -11,19 +11,11 @@
 // specific language governing permissions and limitations under
 // each license.
 
-#![deny(clippy::expect_used)]
-#![deny(clippy::panic)]
-#![deny(clippy::unwrap_used)]
-#![deny(missing_docs)]
-#![deny(warnings)]
-#![doc = include_str!("../README.md")]
+//! This module contains the APIs you will use to build a
+//! C2PA Manifest that contains one or more CAWG identity assertions.
 
-pub mod builder;
+pub(crate) mod credential_holder;
+pub use credential_holder::CredentialHolder;
 
-mod identity_assertion;
-pub use identity_assertion::signer_payload::{HashedUri, SignerPayload};
-
-pub(crate) mod internal;
-
-#[cfg(test)]
-pub(crate) mod tests;
+mod error;
+pub use error::IdentityBuilderError;

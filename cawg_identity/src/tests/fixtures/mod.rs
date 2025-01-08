@@ -11,19 +11,6 @@
 // specific language governing permissions and limitations under
 // each license.
 
-#![deny(clippy::expect_used)]
-#![deny(clippy::panic)]
-#![deny(clippy::unwrap_used)]
-#![deny(missing_docs)]
-#![deny(warnings)]
-#![doc = include_str!("../README.md")]
-
-pub mod builder;
-
-mod identity_assertion;
-pub use identity_assertion::signer_payload::{HashedUri, SignerPayload};
-
-pub(crate) mod internal;
-
-#[cfg(test)]
-pub(crate) mod tests;
+mod naive_credential_holder;
+#[allow(unused)]
+pub(crate) use naive_credential_holder::NaiveCredentialHolder;

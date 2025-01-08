@@ -1,4 +1,4 @@
-// Copyright 2024 Adobe. All rights reserved.
+// Copyright 2025 Adobe. All rights reserved.
 // This file is licensed to you under the Apache License,
 // Version 2.0 (http://www.apache.org/licenses/LICENSE-2.0)
 // or the MIT license (http://opensource.org/licenses/MIT),
@@ -11,19 +11,15 @@
 // specific language governing permissions and limitations under
 // each license.
 
-#![deny(clippy::expect_used)]
-#![deny(clippy::panic)]
-#![deny(clippy::unwrap_used)]
-#![deny(missing_docs)]
-#![deny(warnings)]
-#![doc = include_str!("../README.md")]
+use crate::builder::IdentityBuilderError;
 
-pub mod builder;
+#[test]
+fn impl_from_ciborium_err() {
+    let ciborium_err: ciborium::ser::Error<String> = ciborium::ser::Error::Value("foo".to_string());
+    let builder_err: IdentityBuilderError = ciborium_err.into();
 
-mod identity_assertion;
-pub use identity_assertion::signer_payload::{HashedUri, SignerPayload};
-
-pub(crate) mod internal;
-
-#[cfg(test)]
-pub(crate) mod tests;
+    assert_eq!(
+        builder_err.to_string(),
+        "error while generating CBOR (Value(\"foo\"))"
+    );
+}
