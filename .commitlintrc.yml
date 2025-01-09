@@ -24,6 +24,7 @@ rules:
     options:
       - c2patool
       - cawg_identity
+      - crypto
       - export_schema
       - make_test_images
       - sdk
