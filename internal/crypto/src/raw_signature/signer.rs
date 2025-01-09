@@ -121,14 +121,14 @@ impl From<std::io::Error> for RawSignerError {
     }
 }
 
-#[cfg(feature = "openssl")]
+#[cfg(not(target_arch = "wasm32"))]
 impl From<openssl::error::ErrorStack> for RawSignerError {
     fn from(err: openssl::error::ErrorStack) -> Self {
         Self::CryptoLibraryError(err.to_string())
     }
 }
 
-#[cfg(feature = "openssl")]
+#[cfg(not(target_arch = "wasm32"))]
 impl From<crate::openssl::OpenSslMutexUnavailable> for RawSignerError {
     fn from(err: crate::openssl::OpenSslMutexUnavailable) -> Self {
         Self::InternalError(err.to_string())
@@ -165,7 +165,7 @@ pub fn signer_from_cert_chain_and_private_key(
     alg: SigningAlg,
     time_stamp_service_url: Option<String>,
 ) -> Result<Box<dyn RawSigner + Send + Sync>, RawSignerError> {
-    #[cfg(feature = "openssl")]
+    #[cfg(not(target_arch = "wasm32"))]
     {
         return crate::openssl::signers::signer_from_cert_chain_and_private_key(
             cert_chain,

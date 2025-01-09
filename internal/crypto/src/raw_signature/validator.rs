@@ -65,7 +65,7 @@ pub trait AsyncRawSignatureValidator {
 /// Which validators are available may vary depending on the platform and
 /// which crate features were enabled.
 pub fn validator_for_signing_alg(alg: SigningAlg) -> Option<Box<dyn RawSignatureValidator>> {
-    #[cfg(feature = "openssl")]
+    #[cfg(not(target_arch = "wasm32"))]
     if let Some(validator) = crate::openssl::validators::validator_for_signing_alg(alg) {
         return Some(validator);
     }
@@ -113,7 +113,7 @@ pub(crate) fn validator_for_sig_and_hash_algs(
     {
         // TO REVIEW: Do we need any of the RSA-PSS algorithms for this use case?
 
-        #[cfg(feature = "openssl")]
+        #[cfg(not(target_arch = "wasm32"))]
         if let Some(validator) =
             crate::openssl::validators::validator_for_sig_and_hash_algs(sig_alg, hash_alg)
         {
@@ -176,14 +176,14 @@ pub enum RawSignatureValidationError {
     InternalError(String),
 }
 
-#[cfg(feature = "openssl")]
+#[cfg(not(target_arch = "wasm32"))]
 impl From<openssl::error::ErrorStack> for RawSignatureValidationError {
     fn from(err: openssl::error::ErrorStack) -> Self {
         Self::CryptoLibraryError(err.to_string())
     }
 }
 
-#[cfg(feature = "openssl")]
+#[cfg(not(target_arch = "wasm32"))]
 impl From<crate::openssl::OpenSslMutexUnavailable> for RawSignatureValidationError {
     fn from(err: crate::openssl::OpenSslMutexUnavailable) -> Self {
         Self::InternalError(err.to_string())

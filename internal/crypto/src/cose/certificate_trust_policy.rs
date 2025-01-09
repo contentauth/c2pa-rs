@@ -113,7 +113,7 @@ impl CertificateTrustPolicy {
             }
         }
 
-        #[cfg(feature = "openssl")]
+        #[cfg(not(target_arch = "wasm32"))]
         {
             return crate::openssl::check_certificate_trust::check_certificate_trust(
                 self,
@@ -358,14 +358,14 @@ pub enum CertificateTrustError {
     InternalError(String),
 }
 
-#[cfg(feature = "openssl")]
+#[cfg(not(target_arch = "wasm32"))]
 impl From<openssl::error::ErrorStack> for CertificateTrustError {
     fn from(err: openssl::error::ErrorStack) -> Self {
         Self::CryptoLibraryError(err.to_string())
     }
 }
 
-#[cfg(feature = "openssl")]
+#[cfg(not(target_arch = "wasm32"))]
 impl From<crate::openssl::OpenSslMutexUnavailable> for CertificateTrustError {
     fn from(err: crate::openssl::OpenSslMutexUnavailable) -> Self {
         Self::InternalError(err.to_string())
