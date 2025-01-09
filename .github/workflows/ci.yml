@@ -146,9 +146,11 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@nightly
-        with:
-          components: llvm-tools-preview
+        uses: dtolnay/rust-toolchain@stable
+      # - name: Install Rust toolchain
+      #   uses: dtolnay/rust-toolchain@nightly
+      #   with:
+      #     components: llvm-tools-preview
 
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
@@ -156,24 +158,33 @@ jobs:
       - name: Install cargo-llvm-cov
         uses: taiki-e/install-action@cargo-llvm-cov
 
-      - name: Generate code coverage
-        env:
-          RUST_BACKTRACE: "1"
-        run: cargo llvm-cov --workspace --all-features --lcov --doctests --output-path lcov.info
+      # Disabling code coverage for doc tests due to a new bug in Rust nightly
+      # as of 2025-01-08. Will investigate later to see if there's a repro case.
+      # Meanwhile, simply run the tests so we know if there are any failing
+      # doc tests.
+
+      - name: Run doc tests (COVERAGE DISABLED)
+        run:
+          cargo test --workspace --all-features --doc
+      
+      # - name: Generate code coverage
+      #   env:
+      #     RUST_BACKTRACE: "1"
+      #   run: cargo llvm-cov --workspace --all-features --lcov --doctests --output-path lcov.info
 
       # Tokens aren't available for PRs originating from forks,
       # so we don't attempt to upload code coverage in that case.
-      - name: Upload code coverage results
-        if: |
-          github.event_name != 'pull_request' ||
-          github.event.pull_request.author_association == 'COLLABORATOR' ||
-          github.event.pull_request.author_association == 'MEMBER' ||
-          github.event.pull_request.user.login == 'dependabot[bot]'
-        uses: codecov/codecov-action@v5
-        with:
-          token: ${{ secrets.CODECOV_TOKEN }}
-          fail_ci_if_error: true
-          verbose: true
+      # - name: Upload code coverage results
+      #   if: |
+      #     github.event_name != 'pull_request' ||
+      #     github.event.pull_request.author_association == 'COLLABORATOR' ||
+      #     github.event.pull_request.author_association == 'MEMBER' ||
+      #     github.event.pull_request.user.login == 'dependabot[bot]'
+      #   uses: codecov/codecov-action@v5
+      #   with:
+      #     token: ${{ secrets.CODECOV_TOKEN }}
+      #     fail_ci_if_error: true
+      #     verbose: true
 
   cargo-check:
     name: Default features build
