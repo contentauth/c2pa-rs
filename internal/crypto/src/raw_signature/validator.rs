@@ -154,18 +154,9 @@ pub enum RawSignatureValidationError {
     #[error("the signature does not match the provided data or public key")]
     SignatureMismatch,
 
-    /// An error was reported by the OpenSSL native code.
-    ///
-    /// NOTE: We do not directly capture the OpenSSL error itself because it
-    /// lacks an Eq implementation. Instead we capture the error description.
-    #[cfg(feature = "openssl")]
-    #[error("an error was reported by OpenSSL native code: {0}")]
-    OpenSslError(String),
-
-    /// The OpenSSL native code mutex could not be acquired.
-    #[cfg(feature = "openssl")]
-    #[error(transparent)]
-    OpenSslMutexUnavailable(#[from] crate::openssl::OpenSslMutexUnavailable),
+    /// An error was reported by the underlying cryptography implementation.
+    #[error("an error was reported by the cryptography library: {0}")]
+    CryptoLibraryError(String),
 
     /// An invalid public key was provided.
     #[error("invalid public key")]
@@ -182,13 +173,20 @@ pub enum RawSignatureValidationError {
     /// An unexpected internal error occured while requesting the time stamp
     /// response.
     #[error("internal error ({0})")]
-    InternalError(&'static str),
+    InternalError(String),
 }
 
 #[cfg(feature = "openssl")]
 impl From<openssl::error::ErrorStack> for RawSignatureValidationError {
     fn from(err: openssl::error::ErrorStack) -> Self {
-        Self::OpenSslError(err.to_string())
+        Self::CryptoLibraryError(err.to_string())
+    }
+}
+
+#[cfg(feature = "openssl")]
+impl From<crate::openssl::OpenSslMutexUnavailable> for RawSignatureValidationError {
+    fn from(err: crate::openssl::OpenSslMutexUnavailable) -> Self {
+        Self::InternalError(err.to_string())
     }
 }
 
