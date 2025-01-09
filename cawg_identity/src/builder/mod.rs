@@ -19,3 +19,6 @@ pub use credential_holder::CredentialHolder;
 
 mod error;
 pub use error::IdentityBuilderError;
+
+mod identity_assertion_signer;
+pub use identity_assertion_signer::IdentityAssertionSigner;

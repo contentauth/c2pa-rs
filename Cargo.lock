@@ -830,7 +830,9 @@ dependencies = [
  "hex-literal",
  "serde",
  "serde_bytes",
+ "serde_json",
  "thiserror 1.0.69",
+ "tokio",
  "wasm-bindgen",
  "wasm-bindgen-test",
 ]

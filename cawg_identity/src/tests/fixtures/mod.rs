@@ -11,10 +11,10 @@
 // specific language governing permissions and limitations under
 // each license.
 
+#![allow(unused)]
+
 mod naive_credential_holder;
-#[allow(unused)]
 pub(crate) use naive_credential_holder::NaiveCredentialHolder;
 
-mod async_test_signer;
-#[allow(unused)]
-pub(crate) use async_test_signer::async_test_signer;
+mod test_credentials;
+pub(crate) use test_credentials::cert_chain_and_private_key_for_alg;
