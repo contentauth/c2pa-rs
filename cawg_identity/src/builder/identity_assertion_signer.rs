@@ -12,7 +12,7 @@
 // each license.
 
 use async_trait::async_trait;
-use c2pa::{AsyncSigner, Result};
+use c2pa::{AsyncSigner, DynamicAssertion, Result};
 use c2pa_crypto::raw_signature::{AsyncRawSigner, SigningAlg};
 
 /// An `IdentityAssertionSigner` extends the [`AsyncSigner`] interface to add
@@ -114,5 +114,9 @@ impl AsyncSigner for IdentityAssertionSigner {
 
     fn async_raw_signer(&self) -> Box<&dyn AsyncRawSigner> {
         Box::new(&*self.signer)
+    }
+
+    fn dynamic_assertions(&self) -> Vec<Box<dyn DynamicAssertion>> {
+        Vec::new()
     }
 }
