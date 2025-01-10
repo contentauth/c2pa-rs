@@ -195,10 +195,10 @@ impl From<crate::webcrypto::WasmCryptoError> for RawSignatureValidationError {
     fn from(err: crate::webcrypto::WasmCryptoError) -> Self {
         match err {
             crate::webcrypto::WasmCryptoError::UnknownContext => {
-                Self::InternalError("unknown WASM context")
+                Self::InternalError("unknown WASM context".to_string())
             }
             crate::webcrypto::WasmCryptoError::NoCryptoAvailable => {
-                Self::InternalError("WASM crypto unavailable")
+                Self::InternalError("WASM crypto unavailable".to_string())
             }
         }
     }
