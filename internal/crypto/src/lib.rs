@@ -27,7 +27,7 @@ pub(crate) mod internal;
 pub mod ocsp;
 
 #[cfg(not(target_arch = "wasm32"))]
-pub mod openssl;
+pub(crate) mod openssl;
 
 pub(crate) mod p1363;
 pub mod raw_signature;
