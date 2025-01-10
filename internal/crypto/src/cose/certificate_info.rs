@@ -18,9 +18,9 @@ use x509_parser::num_bigint::BigUint;
 
 use crate::raw_signature::SigningAlg;
 
-/// Describes a signature's validation data and status.
+/// Summary information about an X.509 signing certificate and the validation performed on it.
 #[derive(Debug, Default)]
-pub struct ValidationInfo {
+pub struct CertificateInfo {
     /// Algorithm used to validate the signature
     pub alg: Option<SigningAlg>,
 

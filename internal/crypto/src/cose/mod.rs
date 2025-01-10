@@ -15,6 +15,9 @@
 //!
 //! [COSE]: https://datatracker.ietf.org/doc/rfc9052/
 
+mod certificate_info;
+pub use certificate_info::CertificateInfo;
+
 mod certificate_trust_policy;
 pub use certificate_trust_policy::{
     CertificateTrustError, CertificateTrustPolicy, InvalidCertificateError,
@@ -46,9 +49,6 @@ pub(crate) use sigtst::{
 
 mod time_stamp_storage;
 pub use time_stamp_storage::TimeStampStorage;
-
-mod validation_info;
-pub use validation_info::ValidationInfo;
 
 mod verifier;
 pub use verifier::Verifier;
