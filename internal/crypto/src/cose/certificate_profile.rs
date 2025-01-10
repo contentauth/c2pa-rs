@@ -88,7 +88,7 @@ pub fn check_certificate_profile(
         // timestamp is valid now.
         let Ok(now) = SystemTime::now().duration_since(web_time::UNIX_EPOCH) else {
             return Err(CertificateProfileError::InternalError(
-                "system time invalid",
+                "system time invalid".to_string(),
             ));
         };
 
@@ -491,7 +491,7 @@ pub enum CertificateProfileError {
     /// An unexpected internal error occured while requesting the time stamp
     /// response.
     #[error("internal error ({0})")]
-    InternalError(&'static str),
+    InternalError(String),
 }
 
 fn generalized_time_to_datetime(gt: GeneralizedTime) -> DateTime<Utc> {

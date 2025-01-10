@@ -105,18 +105,9 @@ pub enum RawSignerError {
     #[error("I/O error ({0})")]
     IoError(String),
 
-    /// An error was reported by the OpenSSL native code.
-    ///
-    /// NOTE: We do not directly capture the OpenSSL error itself because it
-    /// lacks an `Eq` implementation. Instead we capture the error description.
-    #[cfg(feature = "openssl")]
-    #[error("an error was reported by OpenSSL native code: {0}")]
-    OpenSslError(String),
-
-    /// The OpenSSL native code mutex could not be acquired.
-    #[cfg(feature = "openssl")]
-    #[error(transparent)]
-    OpenSslMutexUnavailable(#[from] crate::openssl::OpenSslMutexUnavailable),
+    /// An error was reported by the underlying cryptography implementation.
+    #[error("an error was reported by the cryptography library: {0}")]
+    CryptoLibraryError(String),
 
     /// An unexpected internal error occured while requesting the time stamp
     /// response.
@@ -130,10 +121,17 @@ impl From<std::io::Error> for RawSignerError {
     }
 }
 
-#[cfg(feature = "openssl")]
+#[cfg(not(target_arch = "wasm32"))]
 impl From<openssl::error::ErrorStack> for RawSignerError {
     fn from(err: openssl::error::ErrorStack) -> Self {
-        Self::OpenSslError(err.to_string())
+        Self::CryptoLibraryError(err.to_string())
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl From<crate::openssl::OpenSslMutexUnavailable> for RawSignerError {
+    fn from(err: crate::openssl::OpenSslMutexUnavailable) -> Self {
+        Self::InternalError(err.to_string())
     }
 }
 
@@ -167,7 +165,7 @@ pub fn signer_from_cert_chain_and_private_key(
     alg: SigningAlg,
     time_stamp_service_url: Option<String>,
 ) -> Result<Box<dyn RawSigner + Send + Sync>, RawSignerError> {
-    #[cfg(feature = "openssl")]
+    #[cfg(not(target_arch = "wasm32"))]
     {
         return crate::openssl::signers::signer_from_cert_chain_and_private_key(
             cert_chain,

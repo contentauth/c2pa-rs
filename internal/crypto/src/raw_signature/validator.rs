@@ -65,7 +65,7 @@ pub trait AsyncRawSignatureValidator {
 /// Which validators are available may vary depending on the platform and
 /// which crate features were enabled.
 pub fn validator_for_signing_alg(alg: SigningAlg) -> Option<Box<dyn RawSignatureValidator>> {
-    #[cfg(feature = "openssl")]
+    #[cfg(not(target_arch = "wasm32"))]
     if let Some(validator) = crate::openssl::validators::validator_for_signing_alg(alg) {
         return Some(validator);
     }
@@ -113,7 +113,7 @@ pub(crate) fn validator_for_sig_and_hash_algs(
     {
         // TO REVIEW: Do we need any of the RSA-PSS algorithms for this use case?
 
-        #[cfg(feature = "openssl")]
+        #[cfg(not(target_arch = "wasm32"))]
         if let Some(validator) =
             crate::openssl::validators::validator_for_sig_and_hash_algs(sig_alg, hash_alg)
         {
@@ -154,18 +154,9 @@ pub enum RawSignatureValidationError {
     #[error("the signature does not match the provided data or public key")]
     SignatureMismatch,
 
-    /// An error was reported by the OpenSSL native code.
-    ///
-    /// NOTE: We do not directly capture the OpenSSL error itself because it
-    /// lacks an Eq implementation. Instead we capture the error description.
-    #[cfg(feature = "openssl")]
-    #[error("an error was reported by OpenSSL native code: {0}")]
-    OpenSslError(String),
-
-    /// The OpenSSL native code mutex could not be acquired.
-    #[cfg(feature = "openssl")]
-    #[error(transparent)]
-    OpenSslMutexUnavailable(#[from] crate::openssl::OpenSslMutexUnavailable),
+    /// An error was reported by the underlying cryptography implementation.
+    #[error("an error was reported by the cryptography library: {0}")]
+    CryptoLibraryError(String),
 
     /// An invalid public key was provided.
     #[error("invalid public key")]
@@ -182,13 +173,20 @@ pub enum RawSignatureValidationError {
     /// An unexpected internal error occured while requesting the time stamp
     /// response.
     #[error("internal error ({0})")]
-    InternalError(&'static str),
+    InternalError(String),
 }
 
-#[cfg(feature = "openssl")]
+#[cfg(not(target_arch = "wasm32"))]
 impl From<openssl::error::ErrorStack> for RawSignatureValidationError {
     fn from(err: openssl::error::ErrorStack) -> Self {
-        Self::OpenSslError(err.to_string())
+        Self::CryptoLibraryError(err.to_string())
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl From<crate::openssl::OpenSslMutexUnavailable> for RawSignatureValidationError {
+    fn from(err: crate::openssl::OpenSslMutexUnavailable) -> Self {
+        Self::InternalError(err.to_string())
     }
 }
 
@@ -197,10 +195,10 @@ impl From<crate::webcrypto::WasmCryptoError> for RawSignatureValidationError {
     fn from(err: crate::webcrypto::WasmCryptoError) -> Self {
         match err {
             crate::webcrypto::WasmCryptoError::UnknownContext => {
-                Self::InternalError("unknown WASM context")
+                Self::InternalError("unknown WASM context".to_string())
             }
             crate::webcrypto::WasmCryptoError::NoCryptoAvailable => {
-                Self::InternalError("WASM crypto unavailable")
+                Self::InternalError("WASM crypto unavailable".to_string())
             }
         }
     }

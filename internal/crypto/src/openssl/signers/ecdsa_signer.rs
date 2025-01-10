@@ -124,10 +124,7 @@ impl RawSigner for EcdsaSigner {
 
         self.cert_chain
             .iter()
-            .map(|cert| {
-                cert.to_der()
-                    .map_err(|e| RawSignerError::OpenSslError(e.to_string()))
-            })
+            .map(|cert| cert.to_der().map_err(|e| e.into()))
             .collect()
     }
 }

@@ -27,7 +27,7 @@ mod hash;
 mod internal;
 mod ocsp;
 
-#[cfg(all(feature = "openssl", not(target_arch = "wasm32")))]
+#[cfg(not(target_arch = "wasm32"))]
 mod openssl;
 
 mod raw_signature;
