@@ -56,7 +56,7 @@ impl AsyncRawSignatureValidator for EcdsaValidator {
             .as_js_object()
             .map_err(|_err| {
                 RawSignatureValidationError::InternalError(
-                    "error creating JS object for EcKeyImportParams",
+                    "error creating JS object for EcKeyImportParams".to_string(),
                 )
             })?;
 
@@ -67,15 +67,21 @@ impl AsyncRawSignatureValidator for EcdsaValidator {
 
         let promise = subtle_crypto
             .import_key_with_object("spki", &key_array_buf, &algorithm, true, &usages)
-            .map_err(|_err| RawSignatureValidationError::InternalError("SPKI unavailable"))?;
+            .map_err(|_err| {
+                RawSignatureValidationError::InternalError("SPKI unavailable".to_string())
+            })?;
 
         let crypto_key: CryptoKey = JsFuture::from(promise)
             .await
-            .map_err(|_err| RawSignatureValidationError::InternalError("invalid ECDSA key"))?
+            .map_err(|_err| {
+                RawSignatureValidationError::InternalError("invalid ECDSA key".to_string())
+            })?
             .into();
 
         let algorithm = EcdsaParams(hash).as_js_object().map_err(|_err| {
-            RawSignatureValidationError::InternalError("error creating JS object for EcdsaParams")
+            RawSignatureValidationError::InternalError(
+                "error creating JS object for EcdsaParams".to_string(),
+            )
         })?;
 
         let promise = subtle_crypto
@@ -86,14 +92,16 @@ impl AsyncRawSignatureValidator for EcdsaValidator {
                 &data_as_array_buffer(&data),
             )
             .map_err(|_err| {
-                RawSignatureValidationError::InternalError("unable to invoke SubtleCrypto verifier")
+                RawSignatureValidationError::InternalError(
+                    "unable to invoke SubtleCrypto verifier".to_string(),
+                )
             })?;
 
         let verified: JsValue = JsFuture::from(promise)
             .await
             .map_err(|_err| {
                 RawSignatureValidationError::InternalError(
-                    "error creating JS future from SubtleCrypto promise",
+                    "error creating JS future from SubtleCrypto promise".to_string(),
                 )
             })?
             .into();

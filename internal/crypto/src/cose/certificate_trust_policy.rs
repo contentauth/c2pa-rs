@@ -113,7 +113,7 @@ impl CertificateTrustPolicy {
             }
         }
 
-        #[cfg(feature = "openssl")]
+        #[cfg(not(target_arch = "wasm32"))]
         {
             return crate::openssl::check_certificate_trust::check_certificate_trust(
                 self,
@@ -124,7 +124,7 @@ impl CertificateTrustPolicy {
         }
 
         Err(CertificateTrustError::InternalError(
-            "no implementation for certificate evaluation available",
+            "no implementation for certificate evaluation available".to_string(),
         ))
     }
 
@@ -344,18 +344,9 @@ pub enum CertificateTrustError {
     #[error("the certificate contains an invalid extended key usage (EKU) value")]
     InvalidEku,
 
-    /// An error was reported by the OpenSSL native code.
-    ///
-    /// NOTE: We do not directly capture the OpenSSL error itself because it
-    /// lacks an Eq implementation. Instead we capture the error description.
-    #[cfg(feature = "openssl")]
-    #[error("an error was reported by OpenSSL native code: {0}")]
-    OpenSslError(String),
-
-    /// The OpenSSL native code mutex could not be acquired.
-    #[cfg(feature = "openssl")]
-    #[error(transparent)]
-    OpenSslMutexUnavailable(#[from] crate::openssl::OpenSslMutexUnavailable),
+    /// An error was reported by the underlying cryptography implementation.
+    #[error("an error was reported by the cryptography library: {0}")]
+    CryptoLibraryError(String),
 
     /// The certificate (or certificate chain) that was presented is invalid.
     #[error("the certificate or certificate chain is invalid")]
@@ -364,13 +355,20 @@ pub enum CertificateTrustError {
     /// An unexpected internal error occured while requesting the time stamp
     /// response.
     #[error("internal error ({0})")]
-    InternalError(&'static str),
+    InternalError(String),
 }
 
-#[cfg(feature = "openssl")]
+#[cfg(not(target_arch = "wasm32"))]
 impl From<openssl::error::ErrorStack> for CertificateTrustError {
     fn from(err: openssl::error::ErrorStack) -> Self {
-        Self::OpenSslError(err.to_string())
+        Self::CryptoLibraryError(err.to_string())
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl From<crate::openssl::OpenSslMutexUnavailable> for CertificateTrustError {
+    fn from(err: crate::openssl::OpenSslMutexUnavailable) -> Self {
+        Self::InternalError(err.to_string())
     }
 }
 
@@ -379,10 +377,10 @@ impl From<crate::webcrypto::WasmCryptoError> for CertificateTrustError {
     fn from(err: crate::webcrypto::WasmCryptoError) -> Self {
         match err {
             crate::webcrypto::WasmCryptoError::UnknownContext => {
-                Self::InternalError("unknown WASM context")
+                Self::InternalError("unknown WASM context".to_string())
             }
             crate::webcrypto::WasmCryptoError::NoCryptoAvailable => {
-                Self::InternalError("WASM crypto unavailable")
+                Self::InternalError("WASM crypto unavailable".to_string())
             }
         }
     }
