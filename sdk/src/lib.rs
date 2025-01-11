@@ -121,7 +121,7 @@ pub use builder::{Builder, ManifestDefinition};
 pub use c2pa_crypto::raw_signature::SigningAlg;
 pub use callback_signer::{CallbackFunc, CallbackSigner};
 pub use claim_generator_info::ClaimGeneratorInfo;
-pub use dynamic_assertion::DynamicAssertion;
+pub use dynamic_assertion::{DynamicAssertion, PreliminaryClaim};
 pub use error::{Error, Result};
 pub use external_manifest::ManifestPatchCallback;
 pub use hash_utils::{hash_stream_by_alg, HashRange};

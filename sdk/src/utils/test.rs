@@ -21,8 +21,10 @@ use std::{
 };
 
 use async_trait::async_trait;
+#[cfg(feature = "openssl_sign")]
+use c2pa_crypto::cose::TimeStampStorage;
 use c2pa_crypto::{
-    cose::{CertificateTrustPolicy, TimeStampStorage},
+    cose::CertificateTrustPolicy,
     raw_signature::{AsyncRawSigner, RawSigner, RawSignerError, SigningAlg},
     time_stamp::{AsyncTimeStampProvider, TimeStampError, TimeStampProvider},
 };
@@ -624,7 +626,7 @@ impl AsyncSigner for TempAsyncRemoteSigner {
         {
             use std::io::{Seek, Write};
 
-            let mut sign_bytes = std::io::Cursor::new(vec![0u8; self.reserve_size()]);
+            let mut sign_bytes = std::io::Cursor::new(vec![0u8; AsyncSigner::reserve_size(self)]);
 
             sign_bytes.rewind()?;
             sign_bytes.write_all(&claim_bytes)?;

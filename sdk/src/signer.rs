@@ -534,7 +534,7 @@ impl AsyncSigner for Box<dyn AsyncSigner> {
     }
 }
 
-#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+#[allow(dead_code)] // Not used in all configurations.
 pub(crate) struct RawSignerWrapper(pub(crate) Box<dyn RawSigner>);
 
 impl Signer for RawSignerWrapper {

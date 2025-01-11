@@ -31,7 +31,7 @@ pub(crate) fn test_signer(alg: SigningAlg) -> Box<dyn Signer> {
 }
 
 /// Creates an [`AsyncSigner`] instance for testing purposes using test credentials.
-#[cfg(not(target_arch = "wasm32"))]
+#[allow(dead_code)]
 pub(crate) fn async_test_signer(alg: SigningAlg) -> Box<dyn AsyncSigner + Sync + Send> {
     let (cert_chain, private_key) = cert_chain_and_private_key_for_alg(alg);
 
