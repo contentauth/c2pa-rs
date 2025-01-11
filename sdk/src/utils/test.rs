@@ -21,7 +21,7 @@ use std::{
 };
 
 use async_trait::async_trait;
-#[cfg(feature = "openssl_sign")]
+#[cfg(any(feature = "openssl_sign", target_arch = "wasm32"))]
 use c2pa_crypto::cose::TimeStampStorage;
 use c2pa_crypto::{
     cose::CertificateTrustPolicy,
