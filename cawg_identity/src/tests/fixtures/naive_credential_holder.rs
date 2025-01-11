@@ -20,6 +20,8 @@
 //!
 //! Not suitable for production use.
 
+use std::fmt::Debug;
+
 use async_trait::async_trait;
 
 use crate::{
@@ -27,6 +29,7 @@ use crate::{
     SignerPayload,
 };
 
+#[derive(Debug)]
 pub(crate) struct NaiveCredentialHolder {}
 
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
