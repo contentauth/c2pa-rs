@@ -17,7 +17,7 @@ use async_generic::async_generic;
 use c2pa_crypto::{
     cose::{
         cert_chain_from_sign1, parse_cose_sign1, signing_alg_from_sign1, signing_time_from_sign1,
-        signing_time_from_sign1_async, CertificateTrustPolicy, ValidationInfo, Verifier,
+        signing_time_from_sign1_async, CertificateInfo, CertificateTrustPolicy, Verifier,
     },
     raw_signature::SigningAlg,
 };
@@ -48,7 +48,7 @@ pub(crate) fn verify_cose(
     cert_check: bool,
     ctp: &CertificateTrustPolicy,
     validation_log: &mut impl StatusTracker,
-) -> Result<ValidationInfo> {
+) -> Result<CertificateInfo> {
     let verifier = if cert_check {
         match get_settings_value::<bool>("verify.verify_trust") {
             Ok(true) => Verifier::VerifyTrustPolicy(ctp),
@@ -96,7 +96,7 @@ pub(crate) fn get_signing_info(
     cose_bytes: &[u8],
     data: &[u8],
     validation_log: &mut impl StatusTracker,
-) -> ValidationInfo {
+) -> CertificateInfo {
     let mut date = None;
     let mut issuer_org = None;
     let mut alg: Option<SigningAlg> = None;
@@ -136,7 +136,7 @@ pub(crate) fn get_signing_info(
         Err(_e) => Vec::new(),
     };
 
-    ValidationInfo {
+    CertificateInfo {
         issuer_org,
         date,
         alg,
