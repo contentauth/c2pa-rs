@@ -1089,7 +1089,7 @@ mod tests {
     use wasm_bindgen_test::*;
 
     use super::*;
-    #[cfg(feature = "openssl_sign")]
+    #[cfg(any(feature = "openssl_sign", target_arch = "wasm32"))]
     use crate::{assertions::BoxHash, asset_handlers::jpeg_io::JpegIO};
     use crate::{
         hash_stream_by_alg,
