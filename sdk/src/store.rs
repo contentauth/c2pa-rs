@@ -1998,30 +1998,39 @@ impl Store {
         &mut self,
         dyn_assertions: &[Box<dyn DynamicAssertion>],
         dyn_uris: &[HashedUri],
+        preliminary_claim: &mut PreliminaryClaim,
     ) -> Result<bool> {
         if dyn_assertions.is_empty() {
             return Ok(false);
         }
+
         if _sync {
             Err(Error::NotImplemented(
                 "dynamic_assertions not implemented for sync".to_string(),
             ))
         } else {
-            let mut assertions = Vec::new();
+            let mut final_assertions = Vec::new();
+
             for (da, uri) in dyn_assertions.iter().zip(dyn_uris.iter()) {
                 let label = crate::jumbf::labels::assertion_label_from_uri(&uri.url())
                     .ok_or(Error::BadParam("write_dynamic_assertions".to_string()))?;
+
                 let da_size = da.reserve_size();
-                let preliminary_claim = PreliminaryClaim::default();
+
                 let da_data = da
                     .content(&label, Some(da_size), &preliminary_claim)
                     .await?;
-                assertions.push(UserCbor::new(&label, da_data).to_assertion()?);
+
+                // TO DO: Add new assertion to preliminary_claim
+
+                final_assertions.push(UserCbor::new(&label, da_data).to_assertion()?);
             }
+
             let pc = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
-            for assertion in assertions {
+            for assertion in final_assertions {
                 pc.replace_assertion(assertion)?;
             }
+
             Ok(true)
         }
     }
@@ -2167,15 +2176,31 @@ impl Store {
             signer.reserve_size(),
         )?;
 
+        let mut preliminary_claim = PreliminaryClaim::default();
+        {
+            let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
+            for assertion in pc.assertions() {
+                preliminary_claim.add_assertion(assertion);
+            }
+        }
+
         // Now add the dynamic assertions and update the JUMBF.
         if _sync {
             if !dynamic_assertions.is_empty() {
-                self.write_dynamic_assertions(&dynamic_assertions, &da_uris)?;
+                self.write_dynamic_assertions(
+                    &dynamic_assertions,
+                    &da_uris,
+                    &mut preliminary_claim,
+                )?;
             }
         } else {
             if !dynamic_assertions.is_empty()
                 && self
-                    .write_dynamic_assertions_async(&dynamic_assertions, &da_uris)
+                    .write_dynamic_assertions_async(
+                        &dynamic_assertions,
+                        &da_uris,
+                        &mut preliminary_claim,
+                    )
                     .await?
             {
                 let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
@@ -5954,11 +5979,19 @@ pub mod tests {
                 &self,
                 _label: &str,
                 _size: Option<usize>,
-                _claim: &PreliminaryClaim,
+                claim: &PreliminaryClaim,
             ) -> Result<Vec<u8>> {
+                assert!(claim
+                    .assertions()
+                    .inspect(|a| {
+                        dbg!(a);
+                    })
+                    .any(|a| a.url().contains("c2pa.hash")));
+
                 let assertion = TestAssertion {
                     my_tag: "some value I will replace".to_string(),
                 };
+
                 Ok(serde_cbor::to_vec(&assertion).unwrap())
             }
         }
