@@ -101,6 +101,7 @@ impl IdentityAssertionSigner {
     pub fn add_identity_assertion(&mut self, iab: IdentityAssertionBuilder) {
         #[cfg(not(target_arch = "wasm32"))]
         {
+            #[allow(clippy::unwrap_used)]
             let mut identity_assertions = self.identity_assertions.write().unwrap();
             // TO DO: Replace with error handling in the very unlikely case of a panic here.
             identity_assertions.push(iab);
@@ -164,6 +165,7 @@ impl AsyncSigner for IdentityAssertionSigner {
     fn dynamic_assertions(&self) -> Vec<Box<dyn DynamicAssertion>> {
         #[cfg(not(target_arch = "wasm32"))]
         {
+            #[allow(clippy::unwrap_used)]
             let mut identity_assertions = self.identity_assertions.write().unwrap();
             // TO DO: Replace with error handling in the very unlikely case of a panic here.
 
