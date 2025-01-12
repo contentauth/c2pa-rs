@@ -17,19 +17,32 @@ use std::fmt;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-/// Hashed Uri structure as defined by C2PA spec
-/// It is annotated to produce the correctly tagged cbor serialization
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+use crate::utils::DebugByteSlice;
+
+/// A `HashedUri` provides a reference to content available within the same
+/// manifest store.
+///
+/// This is described in [§8.3, URI References], of the C2PA Technical
+/// Specification.
+///
+/// [§8.3, URI References]: https://c2pa.org/specifications/specifications/2.1/specs/C2PA_Specification.html#_uri_references
+#[derive(Clone, Deserialize, Eq, PartialEq, Serialize)]
 #[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 pub struct HashedUri {
-    url: String, // URI stored as tagged cbor
+    /// JUMBF URI reference
+    url: String,
+
+    /// A string identifying the cryptographic hash algorithm used to compute
+    /// the hash
     #[serde(skip_serializing_if = "Option::is_none")]
     alg: Option<String>,
+
+    /// Byte string containing the hash value
     #[serde(with = "serde_bytes")]
     #[cfg_attr(feature = "json_schema", schemars(with = "Vec<u8>"))]
-    hash: Vec<u8>, // hash stored as cbor byte string
+    hash: Vec<u8>,
 
-    // salt used to generate hash
+    /// Salt used to generate the hash
     #[serde(skip_deserializing, skip_serializing)]
     salt: Option<Vec<u8>>,
 }
@@ -73,8 +86,59 @@ impl HashedUri {
     }
 }
 
+impl fmt::Debug for HashedUri {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
+        f.debug_struct("HashedUri")
+            .field("url", &self.url)
+            .field("alg", &self.alg)
+            .field("hash", &DebugByteSlice(&self.hash))
+            .finish()
+    }
+}
+
 impl fmt::Display for HashedUri {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "url: {}, alg: {:?}, hash", self.url, self.alg)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use hex_literal::hex;
+
+    use super::HashedUri;
+
+    #[test]
+    fn impl_clone() {
+        let h = HashedUri::new(
+            "self#jumbf=c2pa/urn:uuid:F9168C5E-CEB2-4faa-B6BF-329BF39FA1E4/c2pa.assertions/c2pa.hash.data".to_owned(),
+             Some("sha256".to_owned()),
+            &hex!("53d1b2cf4e6d9a97ed9281183fa5d836c32751b9d2fca724b40836befee7d67f"),
+        );
+
+        let h2 = h.clone();
+        assert!(h == h2);
+    }
+
+    #[test]
+    fn impl_debug() {
+        let h = HashedUri::new(
+            "self#jumbf=c2pa/urn:uuid:F9168C5E-CEB2-4faa-B6BF-329BF39FA1E4/c2pa.assertions/c2pa.hash.data".to_owned(),
+             Some("sha256".to_owned()),
+            &hex!("53d1b2cf4e6d9a97ed9281183fa5d836c32751b9d2fca724b40836befee7d67f"),
+        );
+
+        assert_eq!(format!("{h:#?}"), "HashedUri {\n    url: \"self#jumbf=c2pa/urn:uuid:F9168C5E-CEB2-4faa-B6BF-329BF39FA1E4/c2pa.assertions/c2pa.hash.data\",\n    alg: Some(\n        \"sha256\",\n    ),\n    hash: 32 bytes starting with [53, d1, b2, cf, 4e, 6d, 9a, 97, ed, 92, 81, 18, 3f, a5, d8, 36, c3, 27, 51, b9],\n}");
+    }
+
+    #[test]
+    fn impl_display() {
+        let h = HashedUri::new(
+            "self#jumbf=c2pa/urn:uuid:F9168C5E-CEB2-4faa-B6BF-329BF39FA1E4/c2pa.assertions/c2pa.hash.data".to_owned(),
+             Some("sha256".to_owned()),
+            &hex!("53d1b2cf4e6d9a97ed9281183fa5d836c32751b9d2fca724b40836befee7d67f"),
+        );
+
+        assert_eq!(format!("{h}"), "url: self#jumbf=c2pa/urn:uuid:F9168C5E-CEB2-4faa-B6BF-329BF39FA1E4/c2pa.assertions/c2pa.hash.data, alg: Some(\"sha256\"), hash");
     }
 }
