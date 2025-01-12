@@ -11,11 +11,10 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use std::fmt::{Debug, Formatter};
+use std::fmt::Debug;
 
+use c2pa::HashedUri;
 use serde::{Deserialize, Serialize};
-
-use crate::internal::debug_byte_slice::DebugByteSlice;
 
 /// A set of _referenced assertions_ and other related data, known overall as
 /// the **signer payload.** This binding **SHOULD** generally be construed as
@@ -36,36 +35,4 @@ pub struct SignerPayload {
     pub sig_type: String,
     // TO DO: Add role and expected_* fields.
     // (https://github.com/contentauth/c2pa-rs/issues/816)
-}
-
-/// A `HashedUri` provides a reference to content available within the same
-/// manifest store.
-///
-/// This is described in [§8.3, URI References], of the C2PA Technical
-/// Specification.
-///
-/// [§8.3, URI References]: https://c2pa.org/specifications/specifications/2.1/specs/C2PA_Specification.html#_uri_references
-#[derive(Clone, Deserialize, Eq, PartialEq, Serialize)]
-pub struct HashedUri {
-    /// JUMBF URI reference
-    pub url: String,
-
-    /// A string identifying the cryptographic hash algorithm used to compute
-    /// the hash
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub alg: Option<String>,
-
-    /// Byte string containing the hash value
-    #[serde(with = "serde_bytes")]
-    pub hash: Vec<u8>,
-}
-
-impl Debug for HashedUri {
-    fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), std::fmt::Error> {
-        f.debug_struct("HashedUri")
-            .field("url", &self.url)
-            .field("alg", &self.alg)
-            .field("hash", &DebugByteSlice(&self.hash))
-            .finish()
-    }
 }

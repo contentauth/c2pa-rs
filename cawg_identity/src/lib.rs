@@ -21,7 +21,7 @@
 pub mod builder;
 
 mod identity_assertion;
-pub use identity_assertion::signer_payload::{HashedUri, SignerPayload};
+pub use identity_assertion::signer_payload::SignerPayload;
 
 pub(crate) mod internal;
 
