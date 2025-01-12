@@ -15,8 +15,9 @@ use std::fmt::Debug;
 
 use async_trait::async_trait;
 use c2pa::{DynamicAssertion, PreliminaryClaim};
+use serde_bytes::ByteBuf;
 
-use crate::builder::CredentialHolder;
+use crate::{builder::CredentialHolder, IdentityAssertion, SignerPayload};
 
 /// An `IdentityAssertionBuilder` gathers together the necessary components
 /// for an identity assertion. When added to an [`IdentityAssertionSigner`],
@@ -59,9 +60,72 @@ impl DynamicAssertion for IdentityAssertionBuilder {
     async fn content(
         &self,
         _label: &str,
-        _size: Option<usize>,
-        _claim: &PreliminaryClaim,
+        size: Option<usize>,
+        claim: &PreliminaryClaim,
     ) -> c2pa::Result<Vec<u8>> {
-        unimplemented!();
+        // TO DO: Better filter for referenced assertions.
+        // For now, just require hard binding.
+
+        // TO DO: Update to respond correctly when identity assertions refer to each
+        // other.
+        let referenced_assertions = claim
+            .assertions()
+            .filter(|a| a.url().contains("c2pa.assertions/c2pa.hash."))
+            .cloned()
+            .collect();
+
+        let signer_payload = SignerPayload {
+            referenced_assertions,
+            sig_type: self.credential_holder.sig_type().to_owned(),
+        };
+
+        let signature = self
+            .credential_holder
+            .sign(&signer_payload)
+            .await
+            .map_err(|e| c2pa::Error::BadParam(e.to_string()))?;
+        // TO DO: Think through how errors map into c2pa::Error.
+
+        let mut ia = IdentityAssertion {
+            signer_payload,
+            signature,
+            pad1: vec![],
+            pad2: None,
+        };
+
+        let mut assertion_cbor: Vec<u8> = vec![];
+        ciborium::into_writer(&ia, &mut assertion_cbor)
+            .map_err(|e| c2pa::Error::BadParam(e.to_string()))?;
+        // TO DO: Think through how errors map into c2pa::Error.
+
+        if let Some(assertion_size) = size {
+            if assertion_cbor.len() > assertion_size {
+                // TO DO: Think about how to signal this in such a way that
+                // the CredentialHolder implementor understands the problem.
+                return Err(c2pa::Error::BadParam(format!("Serialized assertion is {len} bytes, which exceeds the planned size of {assertion_size} bytes", len = assertion_cbor.len())));
+            }
+
+            ia.pad1 = vec![0u8; assertion_size - assertion_cbor.len() - 15];
+
+            assertion_cbor.clear();
+            ciborium::into_writer(&ia, &mut assertion_cbor)
+                .map_err(|e| c2pa::Error::BadParam(e.to_string()))?;
+            // TO DO: Think through how errors map into c2pa::Error.
+
+            ia.pad2 = Some(ByteBuf::from(vec![
+                0u8;
+                assertion_size - assertion_cbor.len() - 6
+            ]));
+
+            assertion_cbor.clear();
+            ciborium::into_writer(&ia, &mut assertion_cbor)
+                .map_err(|e| c2pa::Error::BadParam(e.to_string()))?;
+            // TO DO: Think through how errors map into c2pa::Error.
+
+            // TO DO: See if this approach ever fails. IMHO it "should" work for all cases.
+            assert_eq!(assertion_size, assertion_cbor.len());
+        }
+
+        Ok(assertion_cbor)
     }
 }
