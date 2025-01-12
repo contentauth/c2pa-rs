@@ -688,6 +688,7 @@ dependencies = [
  "getrandom",
  "glob",
  "hex",
+ "hex-literal",
  "id3",
  "image 0.24.9",
  "img-parts",
