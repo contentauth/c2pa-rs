@@ -21,7 +21,10 @@
 pub mod builder;
 
 mod identity_assertion;
-pub use identity_assertion::{assertion::IdentityAssertion, signer_payload::SignerPayload};
+pub use identity_assertion::{
+    assertion::IdentityAssertion, signature_verifier::SignatureVerifier,
+    signer_payload::SignerPayload, validation_error::ValidationError,
+};
 
 pub(crate) mod internal;
 
