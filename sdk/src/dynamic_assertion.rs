@@ -123,4 +123,8 @@ impl PreliminaryClaim {
     pub fn assertions(&self) -> Iter<HashedUri> {
         self.assertion_uris.iter()
     }
+
+    pub(crate) fn add_assertion(&mut self, assertion: &HashedUri) {
+        self.assertion_uris.push(assertion.clone());
+    }
 }
