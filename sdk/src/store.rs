@@ -2017,9 +2017,7 @@ impl Store {
 
                 let da_size = da.reserve_size();
 
-                let da_data = da
-                    .content(&label, Some(da_size), preliminary_claim)
-                    .await?;
+                let da_data = da.content(&label, Some(da_size), preliminary_claim).await?;
 
                 // TO DO: Add new assertion to preliminary_claim
 
