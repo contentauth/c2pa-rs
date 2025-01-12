@@ -11,4 +11,5 @@
 // specific language governing permissions and limitations under
 // each license.
 
+pub(crate) mod assertion;
 pub(crate) mod signer_payload;

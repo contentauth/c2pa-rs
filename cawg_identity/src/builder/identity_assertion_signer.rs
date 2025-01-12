@@ -15,6 +15,8 @@ use async_trait::async_trait;
 use c2pa::{AsyncSigner, DynamicAssertion, Result};
 use c2pa_crypto::raw_signature::{AsyncRawSigner, SigningAlg};
 
+use crate::builder::IdentityAssertionBuilder;
+
 /// An `IdentityAssertionSigner` extends the [`AsyncSigner`] interface to add
 /// zero or more identity assertions to a C2PA [`Manifest`] that is being
 /// produced.
@@ -27,7 +29,12 @@ pub struct IdentityAssertionSigner {
 
     #[cfg(target_arch = "wasm32")]
     signer: Box<dyn AsyncRawSigner>,
-    // identity_assertions: Vec<IdentityAssertionBuilder>,
+
+    #[cfg(not(target_arch = "wasm32"))]
+    identity_assertions: std::sync::RwLock<Vec<IdentityAssertionBuilder>>,
+
+    #[cfg(target_arch = "wasm32")]
+    identity_assertions: std::cell::Cell<Vec<IdentityAssertionBuilder>>,
 }
 
 impl IdentityAssertionSigner {
@@ -35,14 +42,20 @@ impl IdentityAssertionSigner {
     /// [`AsyncRawSigner`] instance.
     #[cfg(not(target_arch = "wasm32"))]
     pub fn new(signer: Box<dyn AsyncRawSigner + Sync + Send>) -> Self {
-        Self { signer }
+        Self {
+            signer,
+            identity_assertions: Self::ia_default(),
+        }
     }
 
     /// Create an `IdentityAssertionSigner` wrapping the provided
     /// [`AsyncRawSigner`] instance.
     #[cfg(target_arch = "wasm32")]
     pub fn new(signer: Box<dyn AsyncRawSigner>) -> Self {
-        Self { signer }
+        Self {
+            signer,
+            identity_assertions: Self::ia_default(),
+        }
     }
 
     /// (FOR USE BY INTERNAL TESTS ONLY): Create an IdentityAssertionSigner
@@ -64,6 +77,40 @@ impl IdentityAssertionSigner {
                 None,
             )
             .unwrap(),
+            identity_assertions: Self::ia_default(),
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn ia_default() -> std::sync::RwLock<Vec<IdentityAssertionBuilder>> {
+        std::sync::RwLock::new(vec![])
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn ia_default() -> std::cell::Cell<Vec<IdentityAssertionBuilder>> {
+        std::cell::Cell::new(vec![])
+    }
+
+    /// Add an [`IdentityAssertionBuilder`] to be used when signing the next
+    /// [`Manifest`].
+    ///
+    /// IMPORTANT: When [`sign()`] is called, the list of
+    /// [`IdentityAssertionBuilder`]s will be cleared.
+    ///
+    /// [`Manifest`]: c2pa::Manifest
+    /// [`sign()`]: Self::sign
+    pub fn add_identity_assertion(&mut self, iab: IdentityAssertionBuilder) {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            #[allow(clippy::unwrap_used)]
+            let mut identity_assertions = self.identity_assertions.write().unwrap();
+            // TO DO: Replace with error handling in the very unlikely case of a panic here.
+            identity_assertions.push(iab);
+        }
+
+        #[cfg(target_arch = "wasm32")]
+        {
+            unimplemented!();
         }
     }
 }
@@ -117,6 +164,25 @@ impl AsyncSigner for IdentityAssertionSigner {
     }
 
     fn dynamic_assertions(&self) -> Vec<Box<dyn DynamicAssertion>> {
-        Vec::new()
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            #[allow(clippy::unwrap_used)]
+            let mut identity_assertions = self.identity_assertions.write().unwrap();
+            // TO DO: Replace with error handling in the very unlikely case of a panic here.
+
+            let ia_clone = identity_assertions.split_off(0);
+            let mut dynamic_assertions: Vec<Box<dyn DynamicAssertion>> = vec![];
+
+            for ia in ia_clone.into_iter() {
+                dynamic_assertions.push(Box::new(ia));
+            }
+
+            dynamic_assertions
+        }
+
+        #[cfg(target_arch = "wasm32")]
+        {
+            unimplemented!();
+        }
     }
 }

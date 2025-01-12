@@ -16,7 +16,10 @@ use std::io::{Cursor, Seek};
 use c2pa::{Builder, Reader, SigningAlg};
 use serde_json::json;
 
-use crate::builder::IdentityAssertionSigner;
+use crate::{
+    builder::{IdentityAssertionBuilder, IdentityAssertionSigner},
+    tests::fixtures::NaiveCredentialHolder,
+};
 
 const TEST_IMAGE: &[u8] = include_bytes!("../../../../sdk/tests/fixtures/CA.jpg");
 const TEST_THUMBNAIL: &[u8] = include_bytes!("../../../../sdk/tests/fixtures/thumbnail.jpg");
@@ -37,7 +40,11 @@ async fn simple_case() {
         .add_resource("thumbnail.jpg", Cursor::new(TEST_THUMBNAIL))
         .unwrap();
 
-    let signer = IdentityAssertionSigner::from_test_credentials(SigningAlg::Ps256);
+    let mut signer = IdentityAssertionSigner::from_test_credentials(SigningAlg::Ps256);
+
+    let nch = NaiveCredentialHolder {};
+    let iab = IdentityAssertionBuilder::for_credential_holder(nch);
+    signer.add_identity_assertion(iab);
 
     builder
         .sign_async(&signer, format, &mut source, &mut dest)
