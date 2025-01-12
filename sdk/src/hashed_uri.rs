@@ -128,6 +128,17 @@ mod tests {
             &hex!("53d1b2cf4e6d9a97ed9281183fa5d836c32751b9d2fca724b40836befee7d67f"),
         );
 
-        assert_eq!(format!("{:#?}", h), "HashedUri {\n    url: \"self#jumbf=c2pa/urn:uuid:F9168C5E-CEB2-4faa-B6BF-329BF39FA1E4/c2pa.assertions/c2pa.hash.data\",\n    alg: Some(\n        \"sha256\",\n    ),\n    hash: 32 bytes starting with [53, d1, b2, cf, 4e, 6d, 9a, 97, ed, 92, 81, 18, 3f, a5, d8, 36, c3, 27, 51, b9],\n}");
+        assert_eq!(format!("{h:#?}"), "HashedUri {\n    url: \"self#jumbf=c2pa/urn:uuid:F9168C5E-CEB2-4faa-B6BF-329BF39FA1E4/c2pa.assertions/c2pa.hash.data\",\n    alg: Some(\n        \"sha256\",\n    ),\n    hash: 32 bytes starting with [53, d1, b2, cf, 4e, 6d, 9a, 97, ed, 92, 81, 18, 3f, a5, d8, 36, c3, 27, 51, b9],\n}");
+    }
+
+    #[test]
+    fn impl_display() {
+        let h = HashedUri::new(
+            "self#jumbf=c2pa/urn:uuid:F9168C5E-CEB2-4faa-B6BF-329BF39FA1E4/c2pa.assertions/c2pa.hash.data".to_owned(),
+             Some("sha256".to_owned()),
+            &hex!("53d1b2cf4e6d9a97ed9281183fa5d836c32751b9d2fca724b40836befee7d67f"),
+        );
+
+        assert_eq!(format!("{h}"), "url: self#jumbf=c2pa/urn:uuid:F9168C5E-CEB2-4faa-B6BF-329BF39FA1E4/c2pa.assertions/c2pa.hash.data, alg: Some(\"sha256\"), hash");
     }
 }
