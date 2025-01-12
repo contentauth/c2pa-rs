@@ -98,6 +98,7 @@ impl IdentityAssertionSigner {
     /// [`IdentityAssertionBuilder`]s will be cleared.
     ///
     /// [`Manifest`]: c2pa::Manifest
+    /// [`sign()`]: Self::sign
     pub fn add_identity_assertion(&mut self, iab: IdentityAssertionBuilder) {
         #[cfg(not(target_arch = "wasm32"))]
         {
