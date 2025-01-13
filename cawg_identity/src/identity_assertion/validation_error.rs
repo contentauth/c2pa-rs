@@ -38,7 +38,7 @@ pub enum ValidationError<SignatureError> {
     /// The referenced assertion was referenced more than once by the identity
     /// assertion.
     #[error("the named with the label {0:#?} is referenced multiple times")]
-    DuplicateAssertionReferenced(String),
+    DuplicateAssertionReference(String),
 
     /// No hard-binding assertion was referenced by the identity assertion.
     #[error("no hard binding assertion is referenced")]

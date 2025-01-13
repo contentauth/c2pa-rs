@@ -26,7 +26,7 @@ use async_trait::async_trait;
 
 use crate::{
     builder::{CredentialHolder, IdentityBuilderError},
-    SignerPayload,
+    SignatureVerifier, SignerPayload, ValidationError,
 };
 
 #[derive(Debug)]
@@ -49,5 +49,30 @@ impl CredentialHolder for NaiveCredentialHolder {
         let mut result: Vec<u8> = vec![];
         ciborium::into_writer(signer_payload, &mut result)?;
         Ok(result)
+    }
+}
+
+pub(crate) struct NaiveSignatureVerifier {}
+
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+impl SignatureVerifier for NaiveSignatureVerifier {
+    type Error = ();
+    type Output = ();
+
+    async fn check_signature(
+        &self,
+        signer_payload: &SignerPayload,
+        signature: &[u8],
+    ) -> Result<Self::Output, ValidationError<Self::Error>> {
+        let mut signer_payload_cbor: Vec<u8> = vec![];
+        ciborium::into_writer(signer_payload, &mut signer_payload_cbor)
+            .map_err(|_| ValidationError::InternalError("CBOR serialization error".to_string()))?;
+
+        if signer_payload_cbor != signature {
+            Err(ValidationError::InvalidSignature)
+        } else {
+            Ok(())
+        }
     }
 }

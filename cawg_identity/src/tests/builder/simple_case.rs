@@ -18,7 +18,8 @@ use serde_json::json;
 
 use crate::{
     builder::{IdentityAssertionBuilder, IdentityAssertionSigner},
-    tests::fixtures::NaiveCredentialHolder,
+    tests::fixtures::{NaiveCredentialHolder, NaiveSignatureVerifier},
+    IdentityAssertion,
 };
 
 const TEST_IMAGE: &[u8] = include_bytes!("../../../../sdk/tests/fixtures/CA.jpg");
@@ -53,14 +54,22 @@ async fn simple_case() {
 
     // Read back the Manifest that was generated.
     dest.rewind().unwrap();
-    let manifest_store = Reader::from_stream(format, &mut dest).unwrap();
 
+    let manifest_store = Reader::from_stream(format, &mut dest).unwrap();
     assert_eq!(manifest_store.validation_status(), None);
 
-    assert_eq!(
-        manifest_store.active_manifest().unwrap().title().unwrap(),
-        "Test_Manifest"
-    );
+    let manifest = manifest_store.active_manifest().unwrap();
+    let mut ia_iter = IdentityAssertion::from_manifest(manifest);
+
+    // Should find exactly one identity assertion.
+    let ia = ia_iter.next().unwrap().unwrap();
+    dbg!(&ia);
+
+    assert!(ia_iter.next().is_none());
+
+    // And that identity assertion should be valid for this manifest.
+    let nsv = NaiveSignatureVerifier {};
+    ia.validate(manifest, &nsv).await.unwrap();
 }
 
 fn manifest_json() -> String {
