@@ -11,23 +11,13 @@
 // specific language governing permissions and limitations under
 // each license.
 
-#![deny(clippy::expect_used)]
-#![deny(clippy::panic)]
-#![deny(clippy::unwrap_used)]
-#![deny(missing_docs)]
-#![deny(warnings)]
-#![doc = include_str!("../README.md")]
+//! Basic infrastructure for working with W3C Verifiable Credentials.
 
-pub mod builder;
-pub mod claim_aggregation;
+#![allow(unused)] // TEMPORARY while building
 
-mod identity_assertion;
-pub use identity_assertion::{
-    assertion::IdentityAssertion, signature_verifier::SignatureVerifier,
-    signer_payload::SignerPayload, validation_error::ValidationError,
-};
-
-pub(crate) mod internal;
-
-#[cfg(test)]
-pub(crate) mod tests;
+pub(crate) mod credential;
+pub(crate) mod did;
+pub(crate) mod did_doc;
+pub(crate) mod did_web;
+pub(crate) mod jwk;
+pub(super) mod serialization;
