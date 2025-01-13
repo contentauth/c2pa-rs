@@ -51,7 +51,6 @@ wasm-bindgen = "0.2.95"
 
 [dev-dependencies]
 serde = { version = "1.0.197", features = ["derive"] }
-serde_json = { version = "1.0.117", features = ["preserve_order"] }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 httpmock = "0.7.0"
