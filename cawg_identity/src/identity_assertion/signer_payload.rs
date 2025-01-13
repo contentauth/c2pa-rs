@@ -119,4 +119,5 @@ impl SignerPayload {
     }
 }
 
+#[allow(clippy::unwrap_used)]
 static ABSOLUTE_URL_PREFIX: LazyLock<Regex> = LazyLock::new(|| Regex::new("/c2pa/[^/]+/").unwrap());

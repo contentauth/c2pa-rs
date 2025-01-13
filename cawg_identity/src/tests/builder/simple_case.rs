@@ -59,7 +59,7 @@ async fn simple_case() {
     assert_eq!(manifest_store.validation_status(), None);
 
     let manifest = manifest_store.active_manifest().unwrap();
-    let mut ia_iter = IdentityAssertion::from_manifest(&manifest);
+    let mut ia_iter = IdentityAssertion::from_manifest(manifest);
 
     // Should find exactly one identity assertion.
     let ia = ia_iter.next().unwrap().unwrap();
@@ -69,7 +69,7 @@ async fn simple_case() {
 
     // And that identity assertion should be valid for this manifest.
     let nsv = NaiveSignatureVerifier {};
-    ia.validate(&manifest, &nsv).await.unwrap();
+    ia.validate(manifest, &nsv).await.unwrap();
 }
 
 fn manifest_json() -> String {
