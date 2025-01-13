@@ -25,4 +25,7 @@ pub use ica_credential::{IcaCredential, IdentityProvider, VerifiedIdentity};
 mod ica_signature_verifier;
 pub use ica_signature_verifier::IcaSignatureVerifier;
 
+mod ica_validation_error;
+pub use ica_validation_error::IcaValidationError;
+
 pub(crate) mod w3c_vc;

@@ -14,13 +14,15 @@
 use async_trait::async_trait;
 use coset::{CoseSign1, RegisteredLabelWithPrivate, TaggedCborSerializable};
 
-use super::w3c_vc::{
-    did::Did,
-    did_web,
-    jwk::{Jwk, JwkError, Params},
-};
 use crate::{
-    claim_aggregation::{w3c_vc::jwk::Algorithm, IcaCredential},
+    claim_aggregation::{
+        w3c_vc::{
+            did::Did,
+            did_web,
+            jwk::{Algorithm, Jwk, JwkError, Params},
+        },
+        IcaCredential, IcaValidationError,
+    },
     SignatureVerifier, SignerPayload, ValidationError,
 };
 
@@ -38,7 +40,7 @@ pub struct IcaSignatureVerifier {}
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl SignatureVerifier for IcaSignatureVerifier {
-    type Error = ();
+    type Error = IcaValidationError;
     type Output = IcaCredential;
 
     async fn check_signature(
@@ -46,121 +48,151 @@ impl SignatureVerifier for IcaSignatureVerifier {
         _signer_payload: &SignerPayload,
         signature: &[u8],
     ) -> Result<Self::Output, ValidationError<Self::Error>> {
-        // At the receiving end, deserialize the bytes back to a `CoseSign1` object.
+        // The signature should be a `CoseSign1` object.
+        let sign1 = CoseSign1::from_tagged_slice(signature)?;
 
-        // TO DO (#27): Remove unwrap.
-        #[allow(clippy::unwrap_used)]
-        let sign1 = CoseSign1::from_tagged_slice(signature).unwrap();
-
-        // TEMPORARY: Require EdDSA algorithm.
-
-        // TO DO (#27): Remove panic.
-        #[allow(clippy::panic)]
+        // Identify the signature
         let _ssi_alg = if let Some(ref alg) = sign1.protected.header.alg {
             match alg {
+                // TEMPORARY: Require EdDSA algorithm.
                 RegisteredLabelWithPrivate::Assigned(coset::iana::Algorithm::EdDSA) => {
                     Algorithm::EdDsa
                 }
                 _ => {
-                    panic!("TO DO: Add suport for signing alg {alg:?}");
+                    return Err(ValidationError::SignatureError(
+                        IcaValidationError::UnsupportedSignatureType(format!("{alg:?}")),
+                    ));
                 }
             }
         } else {
-            panic!("ERROR: COSE protected headers do not contain a signing algorithm");
+            return Err(ValidationError::SignatureError(
+                IcaValidationError::SignatureTypeMissing,
+            ));
         };
 
-        // TO DO (#27): Remove panic.
-        #[allow(clippy::panic)]
         if let Some(ref cty) = sign1.protected.header.content_type {
             match cty {
                 coset::ContentType::Text(ref cty) => {
                     if cty != "application/vc" {
-                        panic!("ERROR: COSE content type is unsupported {cty:?}");
+                        return Err(ValidationError::SignatureError(
+                            IcaValidationError::UnsupportedContentType(format!("{cty:?}")),
+                        ));
                     }
                 }
                 _ => {
-                    panic!("ERROR: COSE content type is unsupported {cty:?}");
+                    return Err(ValidationError::SignatureError(
+                        IcaValidationError::UnsupportedContentType(format!("{cty:?}")),
+                    ));
                 }
             }
         } else {
-            panic!("ERROR: COSE protected headers do not contain required content type header");
+            return Err(ValidationError::SignatureError(
+                IcaValidationError::ContentTypeMissing,
+            ));
         }
 
         // Interpret the unprotected payload, which should be the raw VC.
-
-        // TO DO (#27): Remove panic.
-        #[allow(clippy::panic)]
-        let Some(ref payload_bytes) = sign1.payload
-        else {
-            panic!("ERROR: COSE Sign1 data structure has no payload");
+        let Some(ref payload_bytes) = sign1.payload else {
+            return Err(ValidationError::SignatureError(
+                IcaValidationError::CredentialPayloadMissing,
+            ));
         };
 
-        // TO DO (#27): Remove panic.
-        #[allow(clippy::expect_used)]
-        let ica_credential: IcaCredential = serde_json::from_slice(payload_bytes)
-            .expect("ERROR: can't decode VC as IdentityAssertionVc");
+        let ica_credential: IcaCredential = serde_json::from_slice(payload_bytes)?;
 
         // Discover public key for issuer DID and validate signature.
         // TEMPORARY version supports did:jwk and did:web only.
-
-        // TO DO (#27): Remove panic.
-        #[allow(clippy::unwrap_used)]
-        let issuer_id = Did::new(&ica_credential.issuer).unwrap();
+        let issuer_id = Did::new(&ica_credential.issuer)?;
         let (primary_did, _fragment) = issuer_id.split_fragment();
 
-        // TO DO (#27): Remove panic.
-        #[allow(clippy::unwrap_used)]
-        #[allow(clippy::panic)]
         let jwk = match primary_did.method_name() {
             "jwk" => {
                 let jwk = primary_did.method_specific_id();
-                let jwk = multibase::Base::decode(&multibase::Base::Base64Url, jwk).unwrap();
-                let jwk: Jwk = serde_json::from_slice(&jwk).unwrap();
+
+                let jwk =
+                    multibase::Base::decode(&multibase::Base::Base64Url, jwk).map_err(|e| {
+                        ValidationError::SignatureError(IcaValidationError::UnsupportedIssuerDid(
+                            e.to_string(),
+                        ))
+                    })?;
+
+                let jwk: Jwk = serde_json::from_slice(&jwk).map_err(|e| {
+                    ValidationError::SignatureError(IcaValidationError::UnsupportedIssuerDid(
+                        e.to_string(),
+                    ))
+                })?;
+
                 jwk
             }
             "web" => {
-                #[allow(clippy::expect_used)]
-                let did_doc = did_web::resolve(&primary_did).await.expect("No output");
+                let did_doc = did_web::resolve(&primary_did).await?;
 
-                let vm1 = did_doc
-                    .verification_relationships
-                    .assertion_method
-                    .first()
-                    .unwrap();
+                let Some(vm1) = did_doc.verification_relationships.assertion_method.first() else {
+                    return Err(ValidationError::SignatureError(
+                        IcaValidationError::UnsupportedIssuerDid(
+                            "DID document doesn't contain an assertion_method entry".to_string(),
+                        ),
+                    ));
+                };
 
                 let super::w3c_vc::did_doc::ValueOrReference::Value(vm1) = vm1 else {
-                    panic!("not value");
+                    return Err(ValidationError::SignatureError(
+                        IcaValidationError::UnsupportedIssuerDid(
+                            "DID document's assertion_method is not a value".to_string(),
+                        ),
+                    ));
                 };
-                let jwk_prop = vm1.properties.get("publicKeyJwk").unwrap();
+
+                let Some(jwk_prop) = vm1.properties.get("publicKeyJwk") else {
+                    return Err(ValidationError::SignatureError(
+                        IcaValidationError::UnsupportedIssuerDid(
+                            "DID document's assertion_method doesn't contain a publicKeyJwk entry"
+                                .to_string(),
+                        ),
+                    ));
+                };
+
                 dbg!(&jwk_prop);
 
                 // OMG SO HACKY!
-                let jwk_json = serde_json::to_string_pretty(jwk_prop).unwrap();
-                dbg!(&jwk_json);
+                let Ok(jwk_json) = serde_json::to_string_pretty(jwk_prop) else {
+                    return Err(ValidationError::SignatureError(
+                        IcaValidationError::UnsupportedIssuerDid(
+                            "couldn't re-serialize JWK".to_string(),
+                        ),
+                    ));
+                };
 
-                let jwk: Jwk = serde_json::from_str(&jwk_json).unwrap();
-                dbg!(&jwk);
+                let Ok(jwk) = serde_json::from_str(&jwk_json) else {
+                    return Err(ValidationError::SignatureError(
+                        IcaValidationError::UnsupportedIssuerDid(
+                            "couldn't re-serialize JWK".to_string(),
+                        ),
+                    ));
+                };
 
                 jwk
             }
             x => {
-                panic!("Unsupported DID method {x:?}");
+                return Err(ValidationError::SignatureError(
+                    IcaValidationError::UnsupportedIssuerDid(format!("unsupported DID method {x}")),
+                ));
             }
         };
 
         // TEMPORARY only support ED25519.
-        // TO DO (#27): Remove panic.
-        #[allow(clippy::panic)]
         let Params::Okp(ref okp) = jwk.params;
-        // else {
-        //     panic!("Temporarily unsupported params type");
-        // };
-        assert_eq!(okp.curve, "Ed25519");
+        if okp.curve != "Ed25519" {
+            return Err(ValidationError::SignatureError(
+                IcaValidationError::UnsupportedIssuerDid(format!(
+                    "unsupported OKP curve {}",
+                    okp.curve
+                )),
+            ));
+        }
 
         // Check the signature, which needs to have the same `aad` provided, by
         // providing a closure that can do the verify operation.
-        // TO DO (#27): Remove panic.
-        #[allow(clippy::unwrap_used)]
         sign1
             .verify_signature(b"", |sig, data| {
                 use ed25519_dalek::Verifier;
@@ -168,14 +200,18 @@ impl SignatureVerifier for IcaSignatureVerifier {
                 let signature: ed25519_dalek::Signature = sig.try_into().map_err(JwkError::from)?;
                 public_key.verify(data, &signature).map_err(JwkError::from)
             })
-            .unwrap();
+            .map_err(|_e| ValidationError::InvalidSignature)?;
 
         // Enforce [§8.1.1.4. Validity].
         //
         // [§8.1.1.4. Validity]: https://creator-assertions.github.io/identity/1.1-draft/#vc-property-validFrom
 
-        // TO DO (#27): Remove panic.
-        assert!(ica_credential.valid_from.is_some());
+        let Some(_valid_from) = ica_credential.valid_from else {
+            return Err(ValidationError::SignatureError(
+                IcaValidationError::MissingValidFromDate,
+            ));
+        };
+
         // TO DO: Enforce validity window as compared to sig time (or now if no TSA
         // time).
 
