@@ -30,8 +30,8 @@ use crate::{
     asn1::rfc3161::TstInfo,
     cose::{
         cert_chain_from_sign1, check_certificate_profile, parse_cose_sign1, signing_alg_from_sign1,
-        validate_cose_tst_info, validate_cose_tst_info_async, CertificateTrustError,
-        CertificateTrustPolicy, CoseError, ValidationInfo,
+        validate_cose_tst_info, validate_cose_tst_info_async, CertificateInfo,
+        CertificateTrustError, CertificateTrustPolicy, CoseError,
     },
     p1363::parse_ec_der_sig,
     raw_signature::{async_validator_for_signing_alg, validator_for_signing_alg, SigningAlg},
@@ -68,7 +68,7 @@ impl Verifier<'_> {
         data: &[u8],
         additional_data: &[u8],
         validation_log: &mut impl StatusTracker,
-    ) -> Result<ValidationInfo, CoseError> {
+    ) -> Result<CertificateInfo, CoseError> {
         let mut sign1 = parse_cose_sign1(cose_sign1, data, validation_log)?;
 
         let Ok(alg) = signing_alg_from_sign1(&sign1) else {
@@ -152,7 +152,7 @@ impl Verifier<'_> {
             .map(|attr| attr.to_string())
             .map_err(|_| CoseError::MissingSigningCertificateChain)?;
 
-        Ok(ValidationInfo {
+        Ok(CertificateInfo {
             alg: Some(alg),
             date: tst_info_res.map(|t| t.gen_time.into()).ok(),
             cert_serial_number: Some(sign_cert.serial.clone()),

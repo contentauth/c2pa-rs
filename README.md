@@ -44,7 +44,7 @@ NOTE: The current release includes a new API that replaces old methods of readin
 
 ### Rust language requirement (MSRV)
 
-The `c2pa` crate requires Rust version 1.81.0 or newer. When a newer version of Rust becomes required, a new minor (0.x.0) version of this crate will be released.
+The `c2pa` crate requires Rust version 1.82.0 or newer. When a newer version of Rust becomes required, a new minor (0.x.0) version of this crate will be released.
 
 ### Contributions and feedback
 

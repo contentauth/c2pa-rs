@@ -28,6 +28,7 @@ use crate::{
             CertificateChoices::Certificate, SignerIdentifier, OID_MESSAGE_DIGEST, OID_SIGNING_TIME,
         },
     },
+    raw_signature::validator_for_sig_and_hash_algs,
     time_stamp::{
         response::{signed_data_from_time_stamp_response, tst_info_from_signed_data},
         TimeStampError,
@@ -235,37 +236,21 @@ pub(crate) fn verify_time_stamp(ts: &[u8], data: &[u8]) -> Result<TstInfo, TimeS
             .write_encoded(bcder::Mode::Der, &mut signing_key_der)?;
 
         // Verify signature of time stamp signature.
-        #[cfg(feature = "openssl")]
-        validate_timestamp_sig(sig_alg, hash_alg, sig_val, &tbs, &signing_key_der)?;
-
-        #[cfg(not(feature = "openssl"))]
-        {
-            #[cfg(target_arch = "wasm32")]
-            {
-                if _sync {
-                    // IMPORTANT: The synchronous implementation of validate_timestamp_sync
-                    // on WASM is unable to support _some_ signature algorithms. The async path
-                    // should be used whenever possible.
-                    validate_timestamp_sig(sig_alg, hash_alg, sig_val, &tbs, &signing_key_der)?;
-                } else {
-                    // NOTE: We're keeping the WASM-specific async path alive for now because it
-                    // supports more signature algorithms. Look for future WASM platform to provide
-                    // the opportunity to unify.
-                    validate_timestamp_sig_async(
-                        sig_alg,
-                        hash_alg,
-                        sig_val,
-                        &tbs,
-                        &signing_key_der,
-                    )
-                    .await?;
-                }
-            }
-
+        if _sync {
+            // IMPORTANT: The synchronous implementation of validate_timestamp_sync
+            // on WASM is unable to support _some_ signature algorithms. The async path
+            // should be used whenever possible (for WASM, at least).
+            validate_timestamp_sig(sig_alg, hash_alg, sig_val, &tbs, &signing_key_der)?;
+        } else {
             #[cfg(not(target_arch = "wasm32"))]
-            if true {
-                unimplemented!();
-            }
+            validate_timestamp_sig(sig_alg, hash_alg, sig_val, &tbs, &signing_key_der)?;
+
+            // NOTE: We're keeping the WASM-specific async path alive for now because it
+            // supports more signature algorithms. Look for future WASM platform to provide
+            // the opportunity to unify.
+            #[cfg(target_arch = "wasm32")]
+            validate_timestamp_sig_async(sig_alg, hash_alg, sig_val, &tbs, &signing_key_der)
+                .await?;
         }
 
         // Make sure the time stamp's cert was valid for the stated signing time.
@@ -329,7 +314,6 @@ fn time_to_datetime(t: Time) -> DateTime<Utc> {
     }
 }
 
-#[cfg(any(feature = "openssl", target_arch = "wasm32"))]
 fn validate_timestamp_sig(
     sig_alg: &bcder::Oid,
     hash_alg: &bcder::Oid,
@@ -337,8 +321,6 @@ fn validate_timestamp_sig(
     tbs: &[u8],
     signing_key_der: &[u8],
 ) -> Result<(), TimeStampError> {
-    use crate::raw_signature::validator_for_sig_and_hash_algs;
-
     let Some(validator) = validator_for_sig_and_hash_algs(sig_alg, hash_alg) else {
         return Err(TimeStampError::UnsupportedAlgorithm);
     };

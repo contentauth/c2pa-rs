@@ -150,7 +150,7 @@ mod tests {
     };
 
     use super::sign_claim;
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(all(feature = "openssl_sign", not(target_arch = "wasm32")))]
     use crate::utils::test_signer::async_test_signer;
     use crate::{claim::Claim, utils::test_signer::test_signer, Result, Signer};
 
