@@ -11,23 +11,4 @@
 // specific language governing permissions and limitations under
 // each license.
 
-#![deny(clippy::expect_used)]
-#![deny(clippy::panic)]
-#![deny(clippy::unwrap_used)]
-#![deny(missing_docs)]
-#![deny(warnings)]
-#![doc = include_str!("../README.md")]
-
-pub mod builder;
-pub mod claim_aggregation;
-
-mod identity_assertion;
-pub use identity_assertion::{
-    assertion::IdentityAssertion, signature_verifier::SignatureVerifier,
-    signer_payload::SignerPayload, validation_error::ValidationError,
-};
-
-pub(crate) mod internal;
-
-#[cfg(test)]
-pub(crate) mod tests;
+mod w3c_vc;
