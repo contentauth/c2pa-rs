@@ -11,4 +11,5 @@
 // specific language governing permissions and limitations under
 // each license.
 
+mod adobe_connected_identities;
 mod w3c_vc;
