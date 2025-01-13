@@ -14,7 +14,7 @@ This is very early days for this crate. Many things are subject to change at thi
 
 ## Requirements
 
-The toolkit requires **Rust version 1.81.0** or newer. When a newer version of Rust becomes required, a new minor (0.x.0) version of this crate will be released.
+The toolkit requires **Rust version 1.82.0** or newer. When a newer version of Rust becomes required, a new minor (0.x.0) version of this crate will be released.
 
 ### Supported platforms
 
