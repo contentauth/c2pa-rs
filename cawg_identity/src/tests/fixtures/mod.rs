@@ -14,7 +14,7 @@
 #![allow(unused)]
 
 mod naive_credential_holder;
-pub(crate) use naive_credential_holder::NaiveCredentialHolder;
+pub(crate) use naive_credential_holder::{NaiveCredentialHolder, NaiveSignatureVerifier};
 
 mod test_credentials;
 pub(crate) use test_credentials::cert_chain_and_private_key_for_alg;

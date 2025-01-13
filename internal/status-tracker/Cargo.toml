@@ -13,7 +13,7 @@ homepage = "https://contentauthenticity.org"
 repository = "https://github.com/contentauth/c2pa-rs"
 readme = "README.md"
 edition = "2021"
-rust-version = "1.81.0"
+rust-version = "1.82.0"
 exclude = ["tests/fixtures"]
 
 [lints.rust]
