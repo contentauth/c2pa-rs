@@ -11,8 +11,6 @@
 // specific language governing permissions and limitations under
 // each license.
 
-#![allow(deprecated)] // TEMPORARY while building
-
 use std::io::Cursor;
 
 use c2pa::Reader;
