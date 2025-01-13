@@ -11,23 +11,12 @@
 // specific language governing permissions and limitations under
 // each license.
 
-#![deny(clippy::expect_used)]
-#![deny(clippy::panic)]
-#![deny(clippy::unwrap_used)]
-#![deny(missing_docs)]
-#![deny(warnings)]
-#![doc = include_str!("../README.md")]
+//! Contains implementations of [`CredentialHolder`] and [`SignatureHandler`]
+//! for the identity claim aggregation credential type described as specified in
+//! [§8.1, Identity claims aggregation].
+//!
+//! [`CredentialHolder`]: crate::builder::CredentialHolder
+//! [`SignatureHandler`]: crate::SignatureHandler
+//! [§8.1, Identity claims aggregation]: https://creator-assertions.github.io/identity/1.1-draft/#_identity_claims_aggregation
 
-pub mod builder;
-pub mod claim_aggregation;
-
-mod identity_assertion;
-pub use identity_assertion::{
-    assertion::IdentityAssertion, signature_verifier::SignatureVerifier,
-    signer_payload::SignerPayload, validation_error::ValidationError,
-};
-
-pub(crate) mod internal;
-
-#[cfg(test)]
-pub(crate) mod tests;
+pub(crate) mod w3c_vc;
