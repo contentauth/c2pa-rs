@@ -29,7 +29,7 @@ async-trait = "0.1.78"
 base64 = "0.22.1"
 c2pa = { path = "../sdk", version = "0.40.0", features = ["openssl", "unstable_api"] }
 c2pa-crypto = { path = "../internal/crypto", version = "0.2.0" }
-chrono = { version = "0.4.38", features = ["serde"] }
+chrono = { version = "0.4.39", features = ["serde"] }
 ciborium = "0.2.2"
 coset = "0.3.8"
 ed25519-dalek = { version = "2.1.1", features = ["rand_core"] }

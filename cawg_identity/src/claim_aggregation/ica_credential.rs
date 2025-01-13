@@ -73,7 +73,7 @@ impl VerifiableCredentialSubtype for IdentityClaimsAggregationVc {
 /// Every item in the `verifiedIdentities` array MUST contain information about
 /// the _named actor_ as verified by the _identity assertion generator_ or a
 /// service contacted by the _identity assertion generator._
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct VerifiedIdentity {
     /// ## Verified identity type
     ///
@@ -157,7 +157,7 @@ pub struct VerifiedIdentity {
 /// verification process. This specification mentions at least three properties
 /// that MAY be used to represent the _named actor’s_ verification details:
 /// `id`, `name`, and `proof`.
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct IdentityProvider {
     /// ## Identity provider ID
     ///

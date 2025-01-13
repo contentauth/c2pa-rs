@@ -11,11 +11,17 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use std::io::Cursor;
+use std::{io::Cursor, str::FromStr};
 
-use c2pa::Reader;
+use c2pa::{HashedUri, Reader};
+use chrono::{DateTime, FixedOffset};
+use iref::UriBuf;
+use non_empty_string::NonEmptyString;
 
-use crate::{claim_aggregation::IcaSignatureVerifier, IdentityAssertion};
+use crate::{
+    claim_aggregation::{IcaSignatureVerifier, IdentityProvider, VerifiedIdentity},
+    IdentityAssertion, SignerPayload,
+};
 
 #[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
@@ -33,14 +39,44 @@ async fn adobe_connected_identities() {
 
     // Should find exactly one identity assertion.
     let ia = ia_iter.next().unwrap().unwrap();
-    dbg!(&ia);
-
     assert!(ia_iter.next().is_none());
 
     // And that identity assertion should be valid for this manifest.
-    let nsv = IcaSignatureVerifier {};
-    let ica = ia.validate(manifest, &nsv).await.unwrap();
+    let isv = IcaSignatureVerifier {};
+    let ica = ia.validate(manifest, &isv).await.unwrap();
 
-    dbg!(&ica);
-    unimplemented!("Check for expected ICA results");
+    // There should be exactly one verified identity.
+    let ica_vc = ica.credential_subjects.first();
+
+    assert_eq!(ica_vc.verified_identities.len().get(), 1);
+    let vi1 = ica_vc.verified_identities.first();
+
+    assert_eq!(
+        vi1,
+        &VerifiedIdentity {
+            type_: NonEmptyString::new("cawg.social_media".to_string(),).unwrap(),
+            name: None,
+            username: Some(NonEmptyString::new("Robert Tiles".to_string(),).unwrap(),),
+            address: None,
+            uri: Some(UriBuf::from_str("https://net.s2stagehance.com/roberttiles").unwrap(),),
+            verified_at: DateTime::<FixedOffset>::parse_from_rfc3339("2024-09-24T18:15:11+00:00")
+                .unwrap(),
+            provider: IdentityProvider {
+                id: UriBuf::from_str("https://behance.net").unwrap(),
+                name: NonEmptyString::new("behance".to_string(),).unwrap(),
+            },
+        }
+    );
+
+    assert_eq!(
+        ica_vc.c2pa_asset,
+        SignerPayload {
+            referenced_assertions: vec![HashedUri::new(
+                "self#jumbf=c2pa.assertions/c2pa.hash.data".to_owned(),
+                None,
+                &hex_literal::hex!("58514c7072376d453164794f783477317a716e4f63716159325a594d686a5031526c7a552f7877614259383d")
+            )],
+            sig_type: "cawg.identity_claims_aggregation".to_owned(),
+        }
+    );
 }
