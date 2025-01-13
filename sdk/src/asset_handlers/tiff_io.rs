@@ -68,6 +68,16 @@ static SUPPORTED_TYPES: [&str; 10] = [
     "image/x-nikon-nef",
 ];
 
+// Writing native formats is beyond the scope of the SDK.
+static SUPPORTED_WRITER_TYPES: [&str; 6] = [
+    "tif",
+    "tiff",
+    "image/tiff",
+    "dng",
+    "image/dng",
+    "image/x-adobe-dng",
+];
+
 // The type of an IFD entry
 #[derive(Debug, PartialEq)]
 enum IFDEntryType {
@@ -1316,10 +1326,7 @@ where
     let (tiff_tree, page_0, e, big_tiff) = map_tiff(asset_reader).ok()?;
     let first_ifd = &tiff_tree[page_0].data;
 
-    let xmp_ifd_entry = match first_ifd.get_tag(XMP_TAG) {
-        Some(entry) => entry,
-        None => return None,
-    };
+    let xmp_ifd_entry = first_ifd.get_tag(XMP_TAG)?;
 
     // make sure the tag type is correct
     if IFDEntryType::from_u16(xmp_ifd_entry.entry_type)? != IFDEntryType::Byte {
@@ -1414,7 +1421,11 @@ impl AssetIO for TiffIO {
     }
 
     fn get_writer(&self, asset_type: &str) -> Option<Box<dyn CAIWriter>> {
-        Some(Box::new(TiffIO::new(asset_type)))
+        if SUPPORTED_WRITER_TYPES.contains(&asset_type) {
+            Some(Box::new(TiffIO::new(asset_type)))
+        } else {
+            None
+        }
     }
 
     fn remote_ref_writer_ref(&self) -> Option<&dyn RemoteRefEmbed> {

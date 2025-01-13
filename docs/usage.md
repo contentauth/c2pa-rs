@@ -11,7 +11,7 @@ The C2PA Rust library has been tested on the following operating systems:
 
 ## Requirements
 
-The C2PA Rust library requires **Rust version 1.81.0** or newer.
+The C2PA Rust library requires **Rust version 1.82.0** or newer.
 
 To use the library, add this to your `Cargo.toml`:
 

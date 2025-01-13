@@ -18,7 +18,7 @@ readme = "../README.md"
 keywords = ["xmp", "metadata"]
 categories = ["api-bindings"]
 edition = "2021"
-rust-version = "1.81.0"
+rust-version = "1.82.0"
 exclude = ["tests/fixtures"]
 
 [package.metadata.docs.rs]
@@ -32,8 +32,8 @@ file_io = ["openssl_sign"]
 serialize_thumbnails = []
 no_interleaved_io = ["file_io"]
 fetch_remote_manifests = []
-openssl = ["c2pa-crypto/openssl"]
-openssl_sign = ["openssl", "c2pa-crypto/openssl"]
+openssl = []
+openssl_sign = ["openssl"]
 json_schema = ["dep:schemars", "c2pa-crypto/json_schema"]
 pdf = ["dep:lopdf"]
 v1_api = []
@@ -42,6 +42,10 @@ unstable_api = []
 # The diagnostics feature is unsupported and might be removed.
 # It enables some low-overhead timing features used in our development cycle.
 diagnostics = []
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(test)'] }
+# Workaround for https://github.com/est31/cargo-udeps/issues/293.
 
 [[example]]
 name = "client"
@@ -90,7 +94,7 @@ conv = "0.3.3"
 coset = "0.3.1"
 extfmt = "0.1.1"
 ed25519-dalek = "2.1.1"
-fast-xml = "0.23.1"
+quick-xml = "0.37.1"
 hex = "0.4.3"
 # Version 1.13.0 doesn't compile under Rust < 1.75, pinning to 1.12.0
 id3 = "=1.14.0"
@@ -156,12 +160,13 @@ web-sys = { version = "0.3.58", features = [
 
 [dev-dependencies]
 anyhow = "1.0.40"
-mockall = "0.13.1"
 c2pa = { path = ".", default-features = false, features = [
     "unstable_api",
 ] } # allow integration tests to use the new API
 glob = "0.3.1"
+hex-literal = "0.4.1"
 jumbf = "0.4.0"
+mockall = "0.13.1"
 
 [target.'cfg(target_arch = "wasm32")'.dev-dependencies]
 wasm-bindgen-test = "0.3.31"
