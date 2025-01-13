@@ -91,7 +91,7 @@ impl<'a> Did<'a> {
     }
 }
 
-impl<'a> Deref for Did<'a> {
+impl Deref for Did<'_> {
     type Target = str;
 
     fn deref(&self) -> &Self::Target {
@@ -99,13 +99,13 @@ impl<'a> Deref for Did<'a> {
     }
 }
 
-impl<'a> PartialEq<DidBuf> for Did<'a> {
+impl PartialEq<DidBuf> for Did<'_> {
     fn eq(&self, other: &DidBuf) -> bool {
         self == &other.as_did()
     }
 }
 
-impl<'a> fmt::Display for Did<'a> {
+impl fmt::Display for Did<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.0.fmt(f)
     }
@@ -209,7 +209,7 @@ impl<'de> Deserialize<'de> for DidBuf {
     {
         struct Visitor;
 
-        impl<'de> serde::de::Visitor<'de> for Visitor {
+        impl serde::de::Visitor<'_> for Visitor {
             type Value = DidBuf;
 
             fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
