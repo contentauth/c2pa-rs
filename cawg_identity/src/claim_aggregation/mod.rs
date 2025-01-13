@@ -11,12 +11,12 @@
 // specific language governing permissions and limitations under
 // each license.
 
-//! Contains implementations of [`CredentialHolder`] and [`SignatureHandler`]
+//! Contains implementations of [`CredentialHolder`] and [`SignatureVerifier`]
 //! for the identity claim aggregation credential type described as specified in
 //! [§8.1, Identity claims aggregation].
 //!
 //! [`CredentialHolder`]: crate::builder::CredentialHolder
-//! [`SignatureHandler`]: crate::SignatureHandler
+//! [`SignatureVerifier`]: crate::SignatureVerifier
 //! [§8.1, Identity claims aggregation]: https://creator-assertions.github.io/identity/1.1-draft/#_identity_claims_aggregation
 
 pub(crate) mod w3c_vc;
