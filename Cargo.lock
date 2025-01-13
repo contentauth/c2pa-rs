@@ -829,6 +829,7 @@ dependencies = [
  "c2pa-crypto",
  "ciborium",
  "hex-literal",
+ "regex",
  "serde",
  "serde_bytes",
  "serde_json",
