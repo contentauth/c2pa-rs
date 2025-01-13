@@ -124,6 +124,7 @@ impl SignatureVerifier for IcaSignatureVerifier {
 
                 jwk
             }
+
             "web" => {
                 let did_doc = did_web::resolve(&primary_did).await?;
 
@@ -173,6 +174,7 @@ impl SignatureVerifier for IcaSignatureVerifier {
 
                 jwk
             }
+
             x => {
                 return Err(ValidationError::SignatureError(
                     IcaValidationError::UnsupportedIssuerDid(format!("unsupported DID method {x}")),
@@ -180,7 +182,7 @@ impl SignatureVerifier for IcaSignatureVerifier {
             }
         };
 
-        // TEMPORARY only support ED25519.
+        // TEMPORARY: only support ED25519.
         let Params::Okp(ref okp) = jwk.params;
         if okp.curve != "Ed25519" {
             return Err(ValidationError::SignatureError(
@@ -205,7 +207,6 @@ impl SignatureVerifier for IcaSignatureVerifier {
         // Enforce [§8.1.1.4. Validity].
         //
         // [§8.1.1.4. Validity]: https://creator-assertions.github.io/identity/1.1-draft/#vc-property-validFrom
-
         let Some(_valid_from) = ica_credential.valid_from else {
             return Err(ValidationError::SignatureError(
                 IcaValidationError::MissingValidFromDate,
