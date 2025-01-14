@@ -22,7 +22,7 @@ use c2pa::{
 };
 use c2pa_crypto::raw_signature::SigningAlg;
 
-const GENERATOR: &str = "test_app/0.1";
+const GENERATOR: &str = "test_app";
 const INDENT_SPACE: usize = 2;
 
 // Example for reading the contents of a manifest store, recursively showing nested manifests
@@ -34,8 +34,8 @@ fn show_manifest(reader: &Reader, manifest_label: &str, level: usize) -> Result<
         println!(
             "{}title: {} , format: {}, instance_id: {}",
             indent,
-            manifest.title().unwrap_or_default(),
-            manifest.format(),
+            manifest.title().unwrap_or("None"),
+            manifest.format().unwrap_or("None"),
             manifest.instance_id()
         );
 
@@ -66,7 +66,11 @@ fn show_manifest(reader: &Reader, manifest_label: &str, level: usize) -> Result<
         }
 
         for ingredient in manifest.ingredients().iter() {
-            println!("{}Ingredient title:{}", indent, ingredient.title());
+            println!(
+                "{}Ingredient title:{}",
+                indent,
+                ingredient.title().unwrap_or("None")
+            );
             if let Some(validation_status) = ingredient.validation_status() {
                 for status in validation_status {
                     println!(
@@ -100,6 +104,12 @@ pub fn main() -> Result<()> {
     // if a filepath was provided on the command line, read it as a parent file
     let mut parent = Ingredient::from_file(source.as_path())?;
     parent.set_relationship(Relationship::ParentOf);
+
+    // overwrite the destination file if it exists
+    if dest.exists() {
+        std::fs::remove_file(&dest)?;
+    }
+
     // create an action assertion stating that we imported this file
     let actions = Actions::new().add_action(
         Action::new(c2pa_action::OPENED)
@@ -126,8 +136,11 @@ pub fn main() -> Result<()> {
 
     // create a new Manifest
     let mut builder = Builder::new();
+    builder.definition.claim_version = Some(2);
+    let mut generator = ClaimGeneratorInfo::new(GENERATOR);
+    generator.set_version("0.1");
     builder
-        .set_claim_generator_info(ClaimGeneratorInfo::new(GENERATOR))
+        .set_claim_generator_info(generator)
         .add_ingredient(parent)
         .add_assertion(Actions::LABEL, &actions)?
         .add_assertion(CreativeWork::LABEL, &creative_work)?
