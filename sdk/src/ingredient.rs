@@ -44,7 +44,8 @@ use crate::{
     resource_store::{skip_serializing_resources, ResourceRef, ResourceStore},
     store::Store,
     utils::xmp_inmemory_utils::XmpInfo,
-    validation_status::{self, status_for_store, ValidationStatus},
+    validation_results::{ValidationResultsMap, ValidationState},
+    validation_status::{self, validation_results_for_store, ValidationStatus},
 };
 
 #[derive(Debug, Default, Deserialize, Serialize)]
@@ -99,9 +100,13 @@ pub struct Ingredient {
     #[serde(skip_serializing_if = "Option::is_none")]
     active_manifest: Option<String>,
 
-    /// Validation results.
+    /// Validation status (Ingredient v1 & v2)
     #[serde(skip_serializing_if = "Option::is_none")]
     validation_status: Option<Vec<ValidationStatus>>,
+
+    /// Validation results (Ingredient.V3)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    validation_results: Option<ValidationResultsMap>,
 
     /// A reference to the actual data of the ingredient.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -271,6 +276,11 @@ impl Ingredient {
     /// Returns a reference to the [`ValidationStatus`]s if they exist.
     pub fn validation_status(&self) -> Option<&[ValidationStatus]> {
         self.validation_status.as_deref()
+    }
+
+    /// Returns a reference to the [`ValidationResultsMap`]s if they exist.
+    pub fn validation_results(&self) -> Option<&ValidationResultsMap> {
+        self.validation_results.as_ref()
     }
 
     /// Returns a reference to [`Metadata`] if it exists.
@@ -578,11 +588,13 @@ impl Ingredient {
         match result {
             Ok(store) => {
                 // generate ValidationStatus from ValidationItems filtering for only errors
-                let statuses = status_for_store(&store, validation_log);
+                //let statuses = status_for_store(&store, validation_log);
+                let validation_results = validation_results_for_store(&store, validation_log);
 
                 if let Some(claim) = store.provenance_claim() {
                     // if the parent claim is valid and has a thumbnail, use it
-                    if statuses.is_empty() {
+                    //if statuses.is_empty() {
+                    if validation_results.validation_state() != ValidationState::Invalid {
                         if let Some(hashed_uri) = claim
                             .assertions()
                             .iter()
@@ -625,11 +637,9 @@ impl Ingredient {
                     self.set_manifest_data(bytes)?;
                 }
 
-                self.validation_status = if statuses.is_empty() {
-                    None
-                } else {
-                    Some(statuses)
-                };
+                self.validation_status = validation_results.validation_errors();
+                self.validation_results = Some(validation_results);
+
                 Ok(())
             }
             Err(Error::JumbfNotFound)
@@ -999,15 +1009,21 @@ impl Ingredient {
                     url: ingredient_uri.to_owned(),
                 })?;
         let ingredient_assertion = assertions::Ingredient::from_assertion(assertion)?;
-
         let mut validation_status = match ingredient_assertion.validation_status.as_ref() {
             Some(status) => status.clone(),
             None => Vec::new(),
         };
 
-        let active_manifest = ingredient_assertion
+        let mut active_manifest = ingredient_assertion
             .c2pa_manifest
             .and_then(|hash_url| manifest_label_from_uri(&hash_url.url()));
+
+        // use either the active_manifest or c2pa_manifest field
+        if active_manifest.is_none() {
+            active_manifest = ingredient_assertion
+                .active_manifest
+                .and_then(|hash_url| manifest_label_from_uri(&hash_url.url()));
+        }
 
         debug!(
             "Adding Ingredient {:?} {:?}",
@@ -1021,7 +1037,7 @@ impl Ingredient {
             document_id: ingredient_assertion.document_id,
             relationship: ingredient_assertion.relationship,
             active_manifest,
-            validation_status: None,
+            validation_results: ingredient_assertion.validation_results,
             metadata: ingredient_assertion.metadata,
             description: ingredient_assertion.description,
             informational_uri: ingredient_assertion.informational_uri,
@@ -1298,7 +1314,13 @@ impl Ingredient {
                     .clone_from(&self.validation_status);
             }
             2 => {
-                //ingredient_assertion.active_manifest = c2pa_manifest;
+                ingredient_assertion.active_manifest = c2pa_manifest;
+                // todo: patch this in for now make real later
+                if ingredient_assertion.active_manifest.is_some() {
+                    assert!(self.validation_results.is_some());
+                    ingredient_assertion.validation_results = self.validation_results.clone();
+                    // Some(ValidationResultsMap::default());
+                }
             }
             _ => {}
         }

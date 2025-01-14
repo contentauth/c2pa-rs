@@ -29,7 +29,8 @@ use crate::{
     claim::ClaimAssetData,
     jumbf::labels::{manifest_label_from_uri, to_absolute_uri, to_relative_uri},
     store::Store,
-    validation_status::{status_for_store, ValidationStatus},
+    validation_results::ValidationResultsMap,
+    validation_status::{validation_results_for_store, ValidationStatus},
     Error, Manifest, Result,
 };
 
@@ -45,6 +46,10 @@ pub struct ManifestStore {
     #[serde(skip_serializing_if = "Option::is_none")]
     /// ValidationStatus generated when loading the ManifestStore from an asset
     validation_status: Option<Vec<ValidationStatus>>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    // ValidationStatus generated when loading the ManifestStore from an asset
+    validation_results: Option<ValidationResultsMap>,
     #[serde(skip)]
     /// The internal store representing the manifest store
     store: Store,
@@ -58,6 +63,7 @@ impl ManifestStore {
             manifests: HashMap::<String, Manifest>::new(),
             validation_status: None,
             store: Store::new(),
+            validation_results: None,
         }
     }
 
@@ -171,7 +177,7 @@ impl ManifestStore {
         validation_log: &impl StatusTracker,
         #[cfg(feature = "file_io")] resource_path: Option<&Path>,
     ) -> ManifestStore {
-        let mut statuses = status_for_store(&store, validation_log);
+        let mut validation_results = validation_results_for_store(&store, validation_log);
 
         let mut manifest_store = ManifestStore::new();
         manifest_store.active_manifest = store.provenance_label();
@@ -192,14 +198,13 @@ impl ManifestStore {
                         .insert(manifest_label.to_owned(), manifest);
                 }
                 Err(e) => {
-                    statuses.push(ValidationStatus::from_error(&e));
+                    validation_results.add_status(manifest_label, ValidationStatus::from_error(&e));
                 }
             };
         }
 
-        if !statuses.is_empty() {
-            manifest_store.validation_status = Some(statuses);
-        }
+        manifest_store.validation_status = validation_results.validation_errors();
+        manifest_store.validation_results = Some(validation_results);
 
         manifest_store
     }
@@ -209,7 +214,7 @@ impl ManifestStore {
         validation_log: &impl StatusTracker,
         #[cfg(feature = "file_io")] resource_path: Option<&Path>,
     ) -> ManifestStore {
-        let mut statuses = status_for_store(&store, validation_log);
+        let mut validation_results = validation_results_for_store(&store, validation_log);
 
         let mut manifest_store = ManifestStore::new();
         manifest_store.active_manifest = store.provenance_label();
@@ -230,14 +235,13 @@ impl ManifestStore {
                         .insert(manifest_label.to_owned(), manifest);
                 }
                 Err(e) => {
-                    statuses.push(ValidationStatus::from_error(&e));
+                    validation_results.add_status(manifest_label, ValidationStatus::from_error(&e));
                 }
             };
         }
 
-        if !statuses.is_empty() {
-            manifest_store.validation_status = Some(statuses);
-        }
+        manifest_store.validation_status = validation_results.validation_errors();
+        manifest_store.validation_results = Some(validation_results);
 
         manifest_store
     }

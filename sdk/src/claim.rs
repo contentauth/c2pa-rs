@@ -1255,11 +1255,15 @@ impl Claim {
                         if first_action.action() != "c2pa.created"
                             && first_action.action() != "c2pa.opened"
                         {
-                            return Err(Error::AssertionEncoding); // todo: placeholder until we have 2.x error codes
+                            return Err(Error::AssertionEncoding(
+                                "first action must be c2pa.created or c2pa.opened".to_string(),
+                            )); // todo: placeholder until we have 2.x error codes
                         }
                     } else {
                         // must have an action
-                        return Err(Error::AssertionEncoding); // todo: placeholder until we have 2.x error codes
+                        return Err(Error::AssertionEncoding(
+                            "actions assertion must have an action".to_string(),
+                        )); // todo: placeholder until we have 2.x error codes
                     }
                 } else {
                     // any other added actions cannot be created or opened
@@ -1269,7 +1273,10 @@ impl Claim {
                         .iter()
                         .any(|a| a.action() == "c2pa.created" || a.action() == "c2pa.opened")
                     {
-                        return Err(Error::AssertionEncoding); // todo: placeholder until we have 2.x error codes
+                        return Err(Error::AssertionEncoding(
+                            "only the first actions assertion can have c2pa.created or c2pa.opened"
+                                .to_string(),
+                        )); // todo: placeholder until we have 2.x error codes
                     }
                 }
             }
@@ -1326,7 +1333,8 @@ impl Claim {
         };
 
         // serialize to cbor
-        let db_cbor = serde_cbor::to_vec(&new_db).map_err(|_err| Error::AssertionEncoding)?;
+        let db_cbor = serde_cbor::to_vec(&new_db)
+            .map_err(|_err| Error::AssertionEncoding(_err.to_string()))?;
 
         // get the index for the new assertion
         let mut index = 0;
@@ -1377,8 +1385,8 @@ impl Claim {
         let mut uri = C2PAAssertion::new(link, Some(self.alg().to_string()), &hash);
         uri.add_salt(salt);
 
-        let db: DataBox =
-            serde_cbor::from_slice(databox_cbor).map_err(|_err| Error::AssertionEncoding)?;
+        let db: DataBox = serde_cbor::from_slice(databox_cbor)
+            .map_err(|_err| Error::AssertionEncoding(_err.to_string()))?;
 
         // add data box  to data box store
         self.data_boxes.push((uri, db));
@@ -2342,11 +2350,11 @@ impl Claim {
                                 let mut to = serde_json::Serializer::new(buf);
 
                                 serde_transcode::transcode(&mut from, &mut to)
-                                    .map_err(|_err| Error::AssertionEncoding)?;
+                                    .map_err(|_err| Error::AssertionEncoding(_err.to_string()))?;
                                 let buf2 = to.into_inner();
 
                                 let decoded: Value = serde_json::from_slice(&buf2)
-                                    .map_err(|_err| Error::AssertionEncoding)?;
+                                    .map_err(|_err| Error::AssertionEncoding(_err.to_string()))?;
 
                                 json_map.insert(label, decoded);
                             }
@@ -2412,7 +2420,7 @@ impl Claim {
                         match claim_assertion.assertion.decode_data() {
                             AssertionData::Json(x) => {
                                 let d: Value = serde_json::from_str(x)
-                                    .map_err(|_err| Error::AssertionEncoding)?;
+                                    .map_err(|_err| Error::AssertionEncoding(_err.to_string()))?;
 
                                 let j = JsonOrderedAssertionData {
                                     label: claim_assertion.label().to_owned(),
@@ -2432,11 +2440,11 @@ impl Claim {
                                 let mut to = serde_json::Serializer::new(buf);
 
                                 serde_transcode::transcode(&mut from, &mut to)
-                                    .map_err(|_err| Error::AssertionEncoding)?;
+                                    .map_err(|_err| Error::AssertionEncoding(_err.to_string()))?;
                                 let buf2 = to.into_inner();
 
                                 let d: Value = serde_json::from_slice(&buf2)
-                                    .map_err(|_err| Error::AssertionEncoding)?;
+                                    .map_err(|_err| Error::AssertionEncoding(_err.to_string()))?;
 
                                 let j = JsonOrderedAssertionData {
                                     label: claim_assertion.label().to_owned(),

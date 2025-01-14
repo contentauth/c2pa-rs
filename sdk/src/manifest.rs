@@ -462,7 +462,8 @@ impl Manifest {
 
     /// Add verifiable credentials
     pub fn add_verifiable_credential<T: Serialize>(&mut self, data: &T) -> Result<&mut Self> {
-        let value = serde_json::to_value(data).map_err(|_err| Error::AssertionEncoding)?;
+        let value = serde_json::to_value(data)
+            .map_err(|_err| Error::AssertionEncoding(_err.to_string()))?;
         match self.credentials.as_mut() {
             Some(credentials) => credentials.push(value),
             None => self.credentials = Some([value].to_vec()),
@@ -980,11 +981,15 @@ impl Manifest {
                     ),
                     ManifestAssertionKind::Binary => {
                         // todo: Support binary kinds
-                        return Err(Error::AssertionEncoding);
+                        return Err(Error::AssertionEncoding(
+                            "Binary assertions not supported".to_string(),
+                        ));
                     }
                     ManifestAssertionKind::Uri => {
                         // todo: Support binary kinds
-                        return Err(Error::AssertionEncoding);
+                        return Err(Error::AssertionEncoding(
+                            "Uri assertions not supported".to_string(),
+                        ));
                     }
                 },
             }?;

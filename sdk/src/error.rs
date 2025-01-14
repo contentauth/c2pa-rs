@@ -34,7 +34,7 @@ pub enum Error {
 
     /// The attempt to serialize the assertion (typically to JSON or CBOR) failed.
     #[error("unable to encode assertion data")]
-    AssertionEncoding,
+    AssertionEncoding(String),
 
     #[error(transparent)]
     AssertionDecoding(#[from] crate::assertion::AssertionDecodeError),

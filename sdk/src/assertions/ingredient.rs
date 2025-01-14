@@ -487,7 +487,7 @@ impl AssertionBase for Ingredient {
 
     fn to_assertion(&self) -> Result<Assertion> {
         let data = crate::assertion::AssertionData::Cbor(
-            serde_cbor::to_vec(self).map_err(|_err| Error::AssertionEncoding)?,
+            serde_cbor::to_vec(self).map_err(|_err| Error::AssertionEncoding(_err.to_string()))?,
         );
         Ok(Assertion::new(self.label(), self.version(), data))
     }
@@ -769,7 +769,7 @@ pub mod tests {
     use crate::{
         assertion::AssertionData,
         assertions::AssetTypeEnum,
-        validation_results::{IngredientDeltaValidationResultMap, StatusCodesMap, StatusMap},
+        validation_results::{IngredientDeltaValidationResultMap, StatusCodesMap},
     };
 
     #[test]
@@ -902,20 +902,22 @@ pub mod tests {
         let validation_status = vec![ValidationStatus::new("claimSignature.validated")];
 
         let active_manifest_codes = StatusCodesMap::default()
-            .add_success_val(StatusMap::new("claimSignature.validated").set_url(
+            .add_success_val(ValidationStatus::new("claimSignature.validated").set_url(
                 "self#jumbf=c2pa/urn:c2pa:5E7B01FC-4932-4BAB-AB32-D4F12A8AA322/c2pa.signature",
             ))
-            .add_success_val(StatusMap::new("claimSignature.trusted").set_url(
+            .add_success_val(ValidationStatus::new("claimSignature.trusted").set_url(
                 "self#jumbf=c2pa/urn:c2pa:5E7B01FC-4932-4BAB-AB32-D4F12A8AA322/c2pa.signature",
             ))
-            .add_informational_val(StatusMap::new("signingCredential.ocsp.skipped").set_url(
-                "self#jumbf=c2pa/urn:c2pa:5E7B01FC-4932-4BAB-AB32-D4F12A8AA322/c2pa.signature",
-            ));
+            .add_informational_val(
+                ValidationStatus::new("signingCredential.ocsp.skipped").set_url(
+                    "self#jumbf=c2pa/urn:c2pa:5E7B01FC-4932-4BAB-AB32-D4F12A8AA322/c2pa.signature",
+                ),
+            );
 
         let ingredient_deltas = IngredientDeltaValidationResultMap::new(
             "self#jumbf=c2pa/urn:c2pa:5E7B01FC-4932-4BAB-AB32-D4F12A8AA322/c2pa.assertions/c2pa.ingredient.v3", 
             StatusCodesMap::default()
-                .add_failure_val(StatusMap::new("assertion.hashedURI.mismatch")
+                .add_failure_val(ValidationStatus::new("assertion.hashedURI.mismatch")
                     .set_url("self#jumbf=c2pa/urn:c2pa:F095F30E-6CD5-4BF7-8C44-CE8420CA9FB7/c2pa.assertions/c2pa.metadata"))
         );
 

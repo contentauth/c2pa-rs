@@ -73,7 +73,7 @@ mod integration_v2 {
                 "data": {
                     "actions": [
                         {
-                            "action": "c2pa.edited",
+                            "action": "c2pa.created",
                             "digitalSourceType": "http://cv.iptc.org/newscodes/digitalsourcetype/trainedAlgorithmicMedia",
                             "softwareAgent": "Adobe Firefly 0.1.0",
                             "parameters": {
