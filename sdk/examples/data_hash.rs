@@ -52,7 +52,7 @@ fn builder_from_source<S: AsRef<Path>>(source: S) -> Result<Builder> {
     // create an action assertion stating that we imported this file
     let actions = Actions::new().add_action(
         Action::new(c2pa_action::PLACED)
-            .set_parameter("identifier", parent.instance_id().to_owned())?,
+            .set_parameter("ingredients", [parent.instance_id().to_owned()])?,
     );
 
     // build a creative work assertion

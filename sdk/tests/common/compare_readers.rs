@@ -168,6 +168,7 @@ fn compare_json_values(
                 || path.ends_with(".identifier")
                 || path.ends_with(".time")
                 || path.contains(".hash")
+                || path.contains(".label")
                 || path.contains("claim_generator")  // changes with every version (todo: get more specific)
                 || val1.is_string() && val2.is_string() && val1.to_string().contains("urn:uuid:"))
             {

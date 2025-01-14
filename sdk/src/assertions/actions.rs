@@ -561,6 +561,7 @@ impl AssertionBase for Actions {
         } else {
             labels::ACTIONS
         }
+        //"c2pa.actions.v2"
     }
 
     fn to_assertion(&self) -> Result<Assertion> {

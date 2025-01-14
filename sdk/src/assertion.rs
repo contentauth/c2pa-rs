@@ -130,8 +130,9 @@ where
 /// Trait to handle default Cbor encoding/decoding of Assertions
 pub trait AssertionCbor: Serialize + DeserializeOwned + AssertionBase {
     fn to_cbor_assertion(&self) -> Result<Assertion> {
-        let data =
-            AssertionData::Cbor(serde_cbor::to_vec(self).map_err(|_err| Error::AssertionEncoding)?);
+        let data = AssertionData::Cbor(
+            serde_cbor::to_vec(self).map_err(|_err| Error::AssertionEncoding(_err.to_string()))?,
+        );
         Ok(Assertion::new(self.label(), self.version(), data))
     }
 
@@ -157,7 +158,8 @@ pub trait AssertionCbor: Serialize + DeserializeOwned + AssertionBase {
 pub trait AssertionJson: Serialize + DeserializeOwned + AssertionBase {
     fn to_json_assertion(&self) -> Result<Assertion> {
         let data = AssertionData::Json(
-            serde_json::to_string(self).map_err(|_err| Error::AssertionEncoding)?,
+            serde_json::to_string(self)
+                .map_err(|_err| Error::AssertionEncoding(_err.to_string()))?,
         );
         Ok(Assertion::new(self.label(), self.version(), data).set_content_type("application/json"))
     }

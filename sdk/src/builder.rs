@@ -712,10 +712,13 @@ impl Builder {
                                 }
                             }
                             match version {
-                                None | Some(1) => {
+                                Some(1) => {
+                                    // only for explicit version 1 (do we need to support this?)
                                     update = update.set_parameter("ingredient", uris[0].clone())?
                                 }
-                                Some(2) => update = update.set_parameter("ingredients", uris)?,
+                                None | Some(2) => {
+                                    update = update.set_parameter("ingredients", uris)?
+                                }
                                 _ => return Err(Error::AssertionUnsupportedVersion),
                             };
                             updates.push((index, update));
@@ -1291,7 +1294,7 @@ mod tests {
         let mut dest = Cursor::new(Vec::new());
 
         let mut builder = Builder::from_json(&manifest_json()).unwrap();
-        //builder.definition.claim_version = Some(2);
+        builder.definition.claim_version = Some(1);
         builder
             .add_ingredient_from_stream(parent_json().to_string(), format, &mut source)
             .unwrap();

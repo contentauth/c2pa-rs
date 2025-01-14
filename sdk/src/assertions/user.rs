@@ -43,8 +43,8 @@ impl AssertionBase for User {
 
     fn to_assertion(&self) -> Result<Assertion> {
         // validate that the string is valid json, but don't modify it
-        let _json_value: serde_json::Value =
-            serde_json::from_str(&self.data).map_err(|_err| Error::AssertionEncoding)?;
+        let _json_value: serde_json::Value = serde_json::from_str(&self.data)
+            .map_err(|_err| Error::AssertionEncoding(_err.to_string()))?;
         //let data = AssertionData::AssertionJson(json_value.to_string());
         let data = AssertionData::Json(self.data.to_owned());
         Ok(Assertion::new(&self.label, None, data).set_content_type("application/json"))
