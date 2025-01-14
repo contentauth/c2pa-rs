@@ -29,54 +29,6 @@ pub enum ValidationState {
     Trusted,
 }
 
-// #[derive(Clone, Serialize, Default, Deserialize, Debug, PartialEq, Eq)]
-// #[cfg_attr(feature = "json_schema", derive(JsonSchema))]
-// struct StatusMap {
-//     code: String, //A label-formatted string that describes the status
-//     #[serde(skip_serializing_if = "Option::is_none")]
-//     url: Option<String>, // JUMBF URI reference to the JUMBF box to which this status code applies
-//     #[serde(skip_serializing_if = "Option::is_none")]
-//     explanation: Option<String>, // (1..max-tstr-length), // A human readable string explaining the status
-//     #[serde(skip_serializing_if = "Option::is_none")]
-//     success: Option<bool>, // DEPRECATED. Does the code reflect success (true) or failure (false)
-// }
-
-// impl StatusMap {
-//     pub fn new<S: Into<String>>(code: S) -> Self {
-//         Self {
-//             code: code.into(),
-//             ..Default::default()
-//         }
-//     }
-
-//     pub fn set_url<S: Into<String>>(mut self, url: S) -> Self {
-//         self.url = Some(url.into());
-//         self
-//     }
-
-//     pub fn url(&self) -> Option<&String> {
-//         self.url.as_ref()
-//     }
-
-//     pub fn set_explanation<S: Into<String>>(mut self, explanation: S) -> Self {
-//         self.explanation = Some(explanation.into());
-//         self
-//     }
-
-//     pub fn explanation(&self) -> Option<&String> {
-//         self.explanation.as_ref()
-//     }
-
-//     pub fn set_success(mut self, success: bool) -> Self {
-//         self.success = Some(success);
-//         self
-//     }
-
-//     pub fn success(&self) -> Option<bool> {
-//         self.success
-//     }
-// }
-
 #[derive(Clone, Serialize, Default, Deserialize, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 pub struct StatusCodesMap {
@@ -176,32 +128,7 @@ impl ValidationResultsMap {
         }
     }
 
-    // pub fn validation_state(&self) -> ValidationState {
-    //     let active_errs = self.active_manifest.as_ref().map(|scm| scm.failure());
-    //     let ingredient_errs = self.ingredient_deltas.as_ref().map(|idv| {
-    //         idv.iter()
-    //             .map(|idv| idv.validation_deltas().failure())
-    //             .flatten()
-    //             .collect::<Vec<_>>()
-    //     });
-
-    //     let mut errs = Vec::new();
-
-    //     if let Some(active_errs) = active_errs {
-    //         errs.extend(active_errs);
-    //     }
-
-    //     if let Some(ingredient_errs) = ingredient_errs {
-    //         errs.extend(ingredient_errs);
-    //     }
-
-    //     if errs.is_empty() {
-    //         ValidationState::Valid
-    //     } else {
-    //         ValidationState::Invalid
-    //     }
-    // }
-
+    /// Adds a validation status to the results map.
     pub fn add_status(&mut self, active_manifest_label: &str, status: ValidationStatus) {
         use crate::jumbf::labels::manifest_label_from_uri;
         let active_manifest_label = active_manifest_label.to_string();

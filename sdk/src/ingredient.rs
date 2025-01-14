@@ -1315,12 +1315,7 @@ impl Ingredient {
             }
             2 => {
                 ingredient_assertion.active_manifest = c2pa_manifest;
-                // todo: patch this in for now make real later
-                if ingredient_assertion.active_manifest.is_some() {
-                    assert!(self.validation_results.is_some());
-                    ingredient_assertion.validation_results = self.validation_results.clone();
-                    // Some(ValidationResultsMap::default());
-                }
+                ingredient_assertion.validation_results = self.validation_results.clone();
             }
             _ => {}
         }
