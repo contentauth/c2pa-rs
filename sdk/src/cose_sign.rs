@@ -59,7 +59,6 @@ pub fn sign_claim(claim_bytes: &[u8], signer: &dyn Signer, box_size: usize) -> R
         TimeStampStorage::V1_sigTst
     };
 
-    // TEMPORARY: assume time stamp V1 until we plumb this through further
     let signed_bytes = if _sync {
         cose_sign(signer, claim_bytes, box_size, tss)
     } else {

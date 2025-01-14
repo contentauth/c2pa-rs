@@ -242,17 +242,6 @@ pub fn status_for_store(
 ) -> Vec<ValidationStatus> {
     let validation_results = validation_results_for_store(store, validation_log);
     validation_results.validation_errors().unwrap_or_default()
-    // let results = validation_results
-    //     .active_manifest()
-    //     .map_or_else(Vec::new, |m| m.failure().clone());
-    // let results2 = validation_results
-    //     .ingredient_deltas()
-    //     .map_or_else(Vec::new, |v| {
-    //         v.iter()
-    //             .flat_map(|i| i.validation_deltas().failure().clone())
-    //             .collect()
-    //     });
-    // results.into_iter().chain(results2).collect()
 }
 
 // -- unofficial status code --
