@@ -1028,7 +1028,7 @@ impl AssetBoxHash for JpegIO {
 
             input_stream.seek(std::io::SeekFrom::Start(bm.range_start as u64))?;
 
-            let size = if bm.names.first().map_or(false, |name| name == "SOS") {
+            let size = if bm.names.first().is_some_and(|name| name == "SOS") {
                 let mut size = get_seg_size(input_stream)?;
 
                 input_stream.seek(std::io::SeekFrom::Start((bm.range_start + size) as u64))?;

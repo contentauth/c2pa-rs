@@ -174,9 +174,7 @@ pub fn validation_results_for_store(
 
         // This closure returns true if the URI references the store's active manifest.
         let is_active_manifest = |uri: Option<&str>| {
-            uri.map_or(false, |uri| {
-                jumbf::labels::manifest_label_from_uri(uri) == active_manifest
-            })
+            uri.is_some_and(|uri| jumbf::labels::manifest_label_from_uri(uri) == active_manifest)
         };
 
         // Convert any relative manifest urls found in ingredient validation statuses to absolute.

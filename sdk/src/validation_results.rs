@@ -135,9 +135,7 @@ impl ValidationResultsMap {
 
         // This closure returns true if the URI references the store's active manifest.
         let is_active_manifest = |uri: Option<&str>| {
-            uri.map_or(false, |uri| {
-                manifest_label_from_uri(uri) == Some(active_manifest_label)
-            })
+            uri.is_some_and(|uri| manifest_label_from_uri(uri) == Some(active_manifest_label))
         };
 
         if is_active_manifest(status.url()) {
