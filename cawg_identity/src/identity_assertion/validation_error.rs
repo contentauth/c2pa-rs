@@ -11,8 +11,6 @@
 // specific language governing permissions and limitations under
 // each license.
 
-#![allow(unused)] // TEMPORARY while building
-
 use std::fmt::Debug;
 
 /// Describes the ways in which a CAWG identity assertion can fail validation as
