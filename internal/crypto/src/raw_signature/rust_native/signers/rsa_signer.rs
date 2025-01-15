@@ -69,12 +69,14 @@ impl RsaSigner {
         let pem_str = std::str::from_utf8(private_key)
             .map_err(|e| RawSignerError::InvalidSigningCredentials(e.to_string()))?;
 
-        let (label, private_key_der) =
-            SecretDocument::from_pem(pem_str).map_err(|e| RawSignerError::InvalidSigningCredentials(e.to_string()))?;
+        let (label, private_key_der) = SecretDocument::from_pem(pem_str)
+            .map_err(|e| RawSignerError::InvalidSigningCredentials(e.to_string()))?;
 
-            PrivateKeyInfo::validate_pem_label(label).map_err(|e| RawSignerError::InvalidSigningCredentials(e.to_string()))?;
+        PrivateKeyInfo::validate_pem_label(label)
+            .map_err(|e| RawSignerError::InvalidSigningCredentials(e.to_string()))?;
 
-        let pki = PrivateKeyInfo::try_from(private_key_der.as_bytes()).map_err(|e| RawSignerError::InvalidSigningCredentials(e.to_string()))?;
+        let pki = PrivateKeyInfo::try_from(private_key_der.as_bytes())
+            .map_err(|e| RawSignerError::InvalidSigningCredentials(e.to_string()))?;
 
         // TO DO: Check for correct OID here.
         // eprintln!(
@@ -82,12 +84,14 @@ impl RsaSigner {
         //     oid = &pki.algorithm.oid
         // );
 
-        let pkcs1_key =
-            pkcs1::RsaPrivateKey::try_from(pki.private_key).map_err(|e| RawSignerError::InvalidSigningCredentials(e.to_string()))?;
+        let pkcs1_key = pkcs1::RsaPrivateKey::try_from(pki.private_key)
+            .map_err(|e| RawSignerError::InvalidSigningCredentials(e.to_string()))?;
 
         // Multi-prime RSA keys not currently supported
         if pkcs1_key.version() != pkcs1::Version::TwoPrime {
-            return Err(RawSignerError::InvalidSigningCredentials("multi-prime RSA keys not supported".to_string()));
+            return Err(RawSignerError::InvalidSigningCredentials(
+                "multi-prime RSA keys not supported".to_string(),
+            ));
         }
 
         let n = BigUint::from_bytes_be(pkcs1_key.modulus.as_bytes());
@@ -96,8 +100,8 @@ impl RsaSigner {
         let prime1 = BigUint::from_bytes_be(pkcs1_key.prime1.as_bytes());
         let prime2 = BigUint::from_bytes_be(pkcs1_key.prime2.as_bytes());
         let primes = vec![prime1, prime2];
-        let private_key =
-            RsaPrivateKey::from_components(n, e, d, primes).map_err(|e| RawSignerError::InvalidSigningCredentials(e.to_string()))?;
+        let private_key = RsaPrivateKey::from_components(n, e, d, primes)
+            .map_err(|e| RawSignerError::InvalidSigningCredentials(e.to_string()))?;
 
         let alg: RsaSigningAlg = match alg {
             SigningAlg::Ps256 => RsaSigningAlg::Ps256,
