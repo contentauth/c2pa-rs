@@ -27,7 +27,7 @@ impl RawSignatureValidator for Ed25519Validator {
         data: &[u8],
         public_key: &[u8],
     ) -> Result<(), RawSignatureValidationError> {
-        let (_, public_key) = SubjectPublicKeyInfo::from_der(&public_key)
+        let (_, public_key) = SubjectPublicKeyInfo::from_der(public_key)
             .map_err(|_| RawSignatureValidationError::InvalidPublicKey)?;
 
         let public_key = public_key
@@ -43,7 +43,7 @@ impl RawSignatureValidator for Ed25519Validator {
         }
 
         let mut public_key_slice: [u8; PUBLIC_KEY_LENGTH] = Default::default();
-        public_key_slice.copy_from_slice(&public_key);
+        public_key_slice.copy_from_slice(public_key);
 
         let vk = VerifyingKey::from_bytes(&public_key_slice)
             .map_err(|_| RawSignatureValidationError::InvalidPublicKey)?;
@@ -51,7 +51,7 @@ impl RawSignatureValidator for Ed25519Validator {
         let ed_sig = Signature::from_slice(sig)
             .map_err(|_| RawSignatureValidationError::InvalidSignature)?;
 
-        match vk.verify(&data, &ed_sig) {
+        match vk.verify(data, &ed_sig) {
             Ok(_) => Ok(()),
             Err(_) => Err(RawSignatureValidationError::SignatureMismatch),
         }
