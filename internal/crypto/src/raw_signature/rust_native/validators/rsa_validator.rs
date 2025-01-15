@@ -50,7 +50,7 @@ impl RawSignatureValidator for RsaValidator {
         let spki = SubjectPublicKeyInfoRef::try_from(public_key)
             .map_err(|_| RawSignatureValidationError::InvalidPublicKey)?;
 
-        let (_, seq) = parse_ber_sequence(&spki.subject_public_key.raw_bytes())
+        let (_, seq) = parse_ber_sequence(spki.subject_public_key.raw_bytes())
             .map_err(|_| RawSignatureValidationError::InvalidPublicKey)?;
 
         let modulus = biguint_val(&seq[0]);
@@ -62,15 +62,15 @@ impl RawSignatureValidator for RsaValidator {
         let result = match self {
             Self::Ps256 => {
                 let vk = VerifyingKey::<Sha256>::new(public_key);
-                vk.verify(&data, &signature)
+                vk.verify(data, &signature)
             }
             Self::Ps384 => {
                 let vk = VerifyingKey::<Sha384>::new(public_key);
-                vk.verify(&data, &signature)
+                vk.verify(data, &signature)
             }
             Self::Ps512 => {
                 let vk = VerifyingKey::<Sha512>::new(public_key);
-                vk.verify(&data, &signature)
+                vk.verify(data, &signature)
             }
         };
 
