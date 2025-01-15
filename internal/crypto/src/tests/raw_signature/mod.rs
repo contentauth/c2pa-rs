@@ -12,4 +12,5 @@
 // each license.
 
 mod async_validators;
+mod signers;
 mod validators;
