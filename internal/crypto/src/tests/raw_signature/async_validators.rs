@@ -17,96 +17,111 @@ use rasn::types::OctetString;
 use wasm_bindgen_test::wasm_bindgen_test;
 
 use crate::raw_signature::{
-    validator_for_sig_and_hash_algs, validator_for_signing_alg, RawSignatureValidationError,
-    SigningAlg,
+    async_validator_for_sig_and_hash_algs, async_validator_for_signing_alg,
+    RawSignatureValidationError, SigningAlg,
 };
 
 const SAMPLE_DATA: &[u8] = b"some sample content to sign";
 
-#[test]
+#[cfg_attr(not(target_arch = "wasm32"), actix::test)]
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
-fn es256() {
+async fn es256() {
     let signature = include_bytes!("../fixtures/raw_signature/es256.raw_sig");
     let pub_key = include_bytes!("../fixtures/raw_signature/es256.pub_key");
 
-    let validator = validator_for_signing_alg(SigningAlg::Es256).unwrap();
+    let validator = async_validator_for_signing_alg(SigningAlg::Es256).unwrap();
 
-    validator.validate(signature, SAMPLE_DATA, pub_key).unwrap();
+    validator
+        .validate_async(signature, SAMPLE_DATA, pub_key)
+        .await
+        .unwrap();
 }
 
-#[test]
+#[cfg_attr(not(target_arch = "wasm32"), actix::test)]
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
-fn es256_bad_signature() {
+async fn es256_bad_signature() {
     let mut signature = include_bytes!("../fixtures/raw_signature/es256.raw_sig").to_vec();
     assert_ne!(signature[10], 10);
     signature[10] = 10;
 
     let pub_key = include_bytes!("../fixtures/raw_signature/es256.pub_key");
 
-    let validator = validator_for_signing_alg(SigningAlg::Es256).unwrap();
+    let validator = async_validator_for_signing_alg(SigningAlg::Es256).unwrap();
 
     assert_eq!(
         validator
-            .validate(&signature, SAMPLE_DATA, pub_key)
+            .validate_async(&signature, SAMPLE_DATA, pub_key)
+            .await
             .unwrap_err(),
         RawSignatureValidationError::SignatureMismatch
     );
 }
 
-#[test]
+#[cfg_attr(not(target_arch = "wasm32"), actix::test)]
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
-fn es256_bad_data() {
+async fn es256_bad_data() {
     let signature = include_bytes!("../fixtures/raw_signature/es256.raw_sig");
     let pub_key = include_bytes!("../fixtures/raw_signature/es256.pub_key");
 
     let mut data = SAMPLE_DATA.to_vec();
     data[10] = 0;
 
-    let validator = validator_for_signing_alg(SigningAlg::Es256).unwrap();
+    let validator = async_validator_for_signing_alg(SigningAlg::Es256).unwrap();
 
     assert_eq!(
-        validator.validate(signature, &data, pub_key).unwrap_err(),
+        validator
+            .validate_async(signature, &data, pub_key)
+            .await
+            .unwrap_err(),
         RawSignatureValidationError::SignatureMismatch
     );
 }
 
-#[test]
+#[cfg_attr(not(target_arch = "wasm32"), actix::test)]
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
-fn es384() {
+async fn es384() {
     let signature = include_bytes!("../fixtures/raw_signature/es384.raw_sig");
     let pub_key = include_bytes!("../fixtures/raw_signature/es384.pub_key");
 
-    let validator = validator_for_signing_alg(SigningAlg::Es384).unwrap();
+    let validator = async_validator_for_signing_alg(SigningAlg::Es384).unwrap();
 
-    validator.validate(signature, SAMPLE_DATA, pub_key).unwrap();
+    validator
+        .validate_async(signature, SAMPLE_DATA, pub_key)
+        .await
+        .unwrap();
 }
 
-#[test]
-// #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)] // ES512 not
-// implemented
-fn es512() {
+#[cfg_attr(not(target_arch = "wasm32"), actix::test)]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+async fn es512() {
     let signature = include_bytes!("../fixtures/raw_signature/es512.raw_sig");
     let pub_key = include_bytes!("../fixtures/raw_signature/es512.pub_key");
 
-    let validator = validator_for_signing_alg(SigningAlg::Es512).unwrap();
+    let validator = async_validator_for_signing_alg(SigningAlg::Es512).unwrap();
 
-    validator.validate(signature, SAMPLE_DATA, pub_key).unwrap();
+    validator
+        .validate_async(signature, SAMPLE_DATA, pub_key)
+        .await
+        .unwrap();
 }
 
-#[test]
+#[cfg_attr(not(target_arch = "wasm32"), actix::test)]
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
-fn ed25519() {
+async fn ed25519() {
     let signature = include_bytes!("../fixtures/raw_signature/ed25519.raw_sig");
     let pub_key = include_bytes!("../fixtures/raw_signature/ed25519.pub_key");
 
-    let validator = validator_for_signing_alg(SigningAlg::Ed25519).unwrap();
+    let validator = async_validator_for_signing_alg(SigningAlg::Ed25519).unwrap();
 
-    validator.validate(signature, SAMPLE_DATA, pub_key).unwrap();
+    validator
+        .validate_async(signature, SAMPLE_DATA, pub_key)
+        .await
+        .unwrap();
 }
 
-#[test]
+#[cfg_attr(not(target_arch = "wasm32"), actix::test)]
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
-fn ed25519_bad_data() {
+async fn ed25519_bad_data() {
     let signature = include_bytes!("../fixtures/raw_signature/ed25519.raw_sig");
     let pub_key = include_bytes!("../fixtures/raw_signature/ed25519.pub_key");
 
@@ -114,81 +129,97 @@ fn ed25519_bad_data() {
     data[5] = 10;
     data[6] = 11;
 
-    let validator = validator_for_signing_alg(SigningAlg::Ed25519).unwrap();
+    let validator = async_validator_for_signing_alg(SigningAlg::Ed25519).unwrap();
 
     assert_eq!(
-        validator.validate(signature, &data, pub_key).unwrap_err(),
+        validator
+            .validate_async(signature, &data, pub_key)
+            .await
+            .unwrap_err(),
         RawSignatureValidationError::SignatureMismatch
     );
 }
 
-#[test]
-// #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
-fn ps256() {
+#[cfg_attr(not(target_arch = "wasm32"), actix::test)]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+async fn ps256() {
     let signature = include_bytes!("../fixtures/raw_signature/ps256.raw_sig");
     let pub_key = include_bytes!("../fixtures/raw_signature/ps256.pub_key");
 
-    let validator = validator_for_signing_alg(SigningAlg::Ps256).unwrap();
+    let validator = async_validator_for_signing_alg(SigningAlg::Ps256).unwrap();
 
-    validator.validate(signature, SAMPLE_DATA, pub_key).unwrap();
+    validator
+        .validate_async(signature, SAMPLE_DATA, pub_key)
+        .await
+        .unwrap();
 }
 
-#[test]
-// #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
-fn ps256_bad_signature() {
+#[cfg_attr(not(target_arch = "wasm32"), actix::test)]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+async fn ps256_bad_signature() {
     let mut signature = include_bytes!("../fixtures/raw_signature/ps256.raw_sig").to_vec();
     assert_ne!(signature[10], 10);
     signature[10] = 10;
 
     let pub_key = include_bytes!("../fixtures/raw_signature/ps256.pub_key");
 
-    let validator = validator_for_signing_alg(SigningAlg::Ps256).unwrap();
+    let validator = async_validator_for_signing_alg(SigningAlg::Ps256).unwrap();
 
     assert_eq!(
         validator
-            .validate(&signature, SAMPLE_DATA, pub_key)
+            .validate_async(&signature, SAMPLE_DATA, pub_key)
+            .await
             .unwrap_err(),
         RawSignatureValidationError::SignatureMismatch
     );
 }
 
-#[test]
+#[cfg_attr(not(target_arch = "wasm32"), actix::test)]
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
-fn ps256_bad_data() {
+async fn ps256_bad_data() {
     let signature = include_bytes!("../fixtures/raw_signature/ps256.raw_sig");
     let pub_key = include_bytes!("../fixtures/raw_signature/ps256.pub_key");
 
     let mut data = SAMPLE_DATA.to_vec();
     data[10] = 0;
 
-    let validator = validator_for_signing_alg(SigningAlg::Ps256).unwrap();
+    let validator = async_validator_for_signing_alg(SigningAlg::Ps256).unwrap();
 
     assert_eq!(
-        validator.validate(signature, &data, pub_key).unwrap_err(),
+        validator
+            .validate_async(signature, &data, pub_key)
+            .await
+            .unwrap_err(),
         RawSignatureValidationError::SignatureMismatch
     );
 }
 
-#[test]
+#[cfg_attr(not(target_arch = "wasm32"), actix::test)]
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
-fn ps384() {
+async fn ps384() {
     let signature = include_bytes!("../fixtures/raw_signature/ps384.raw_sig");
     let pub_key = include_bytes!("../fixtures/raw_signature/ps384.pub_key");
 
-    let validator = validator_for_signing_alg(SigningAlg::Ps384).unwrap();
+    let validator = async_validator_for_signing_alg(SigningAlg::Ps384).unwrap();
 
-    validator.validate(signature, SAMPLE_DATA, pub_key).unwrap();
+    validator
+        .validate_async(signature, SAMPLE_DATA, pub_key)
+        .await
+        .unwrap();
 }
 
-#[test]
+#[cfg_attr(not(target_arch = "wasm32"), actix::test)]
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
-fn ps512() {
+async fn ps512() {
     let signature = include_bytes!("../fixtures/raw_signature/ps512.raw_sig");
     let pub_key = include_bytes!("../fixtures/raw_signature/ps512.pub_key");
 
-    let validator = validator_for_signing_alg(SigningAlg::Ps512).unwrap();
+    let validator = async_validator_for_signing_alg(SigningAlg::Ps512).unwrap();
 
-    validator.validate(signature, SAMPLE_DATA, pub_key).unwrap();
+    validator
+        .validate_async(signature, SAMPLE_DATA, pub_key)
+        .await
+        .unwrap();
 }
 
 // Argh. Different Oid types across different crates, so we have to construct
@@ -203,85 +234,84 @@ const SHA384_OID: Oid = bcder::Oid(OctetString::from_static(&[96, 134, 72, 1, 10
 
 const SHA512_OID: Oid = bcder::Oid(OctetString::from_static(&[96, 134, 72, 1, 101, 3, 4, 2, 3]));
 
-const SHA1_OID: Oid = bcder::Oid(OctetString::from_static(&[43, 14, 3, 2, 26]));
-
-#[test]
+#[cfg_attr(not(target_arch = "wasm32"), actix::test)]
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
-fn legacy_rs256() {
+async fn legacy_rs256() {
     let signature = include_bytes!("../fixtures/raw_signature/legacy/rs256.raw_sig");
     let pub_key = include_bytes!("../fixtures/raw_signature/legacy/rs256.pub_key");
 
-    let validator = validator_for_sig_and_hash_algs(&RSA_OID, &SHA256_OID).unwrap();
+    let validator = async_validator_for_sig_and_hash_algs(&RSA_OID, &SHA256_OID).unwrap();
 
-    validator.validate(signature, SAMPLE_DATA, pub_key).unwrap();
+    validator
+        .validate_async(signature, SAMPLE_DATA, pub_key)
+        .await
+        .unwrap();
 }
 
-#[test]
+#[cfg_attr(not(target_arch = "wasm32"), actix::test)]
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
-fn legacy_rs256_bad_signature() {
+async fn legacy_rs256_bad_signature() {
     let mut signature = include_bytes!("../fixtures/raw_signature/legacy/rs256.raw_sig").to_vec();
     assert_ne!(signature[10], 10);
     signature[10] = 10;
 
     let pub_key = include_bytes!("../fixtures/raw_signature/legacy/rs256.pub_key");
 
-    let validator = validator_for_sig_and_hash_algs(&RSA_OID, &SHA256_OID).unwrap();
+    let validator = async_validator_for_sig_and_hash_algs(&RSA_OID, &SHA256_OID).unwrap();
 
     assert_eq!(
         validator
-            .validate(&signature, SAMPLE_DATA, pub_key)
+            .validate_async(&signature, SAMPLE_DATA, pub_key)
+            .await
             .unwrap_err(),
         RawSignatureValidationError::SignatureMismatch
     );
 }
 
-#[test]
+#[cfg_attr(not(target_arch = "wasm32"), actix::test)]
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
-fn legacy_rs256_bad_data() {
+async fn legacy_rs256_bad_data() {
     let signature = include_bytes!("../fixtures/raw_signature/legacy/rs256.raw_sig");
     let pub_key = include_bytes!("../fixtures/raw_signature/legacy/rs256.pub_key");
 
     let mut data = SAMPLE_DATA.to_vec();
     data[10] = 0;
 
-    let validator = validator_for_sig_and_hash_algs(&RSA_OID, &SHA256_OID).unwrap();
+    let validator = async_validator_for_sig_and_hash_algs(&RSA_OID, &SHA256_OID).unwrap();
 
     assert_eq!(
-        validator.validate(signature, &data, pub_key).unwrap_err(),
+        validator
+            .validate_async(signature, &data, pub_key)
+            .await
+            .unwrap_err(),
         RawSignatureValidationError::SignatureMismatch
     );
 }
 
-#[test]
+#[cfg_attr(not(target_arch = "wasm32"), actix::test)]
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
-fn rs384() {
+async fn legacy_rs384() {
     let signature = include_bytes!("../fixtures/raw_signature/legacy/rs384.raw_sig");
     let pub_key = include_bytes!("../fixtures/raw_signature/legacy/rs384.pub_key");
 
-    let validator = validator_for_sig_and_hash_algs(&RSA_OID, &SHA384_OID).unwrap();
+    let validator = async_validator_for_sig_and_hash_algs(&RSA_OID, &SHA384_OID).unwrap();
 
-    validator.validate(signature, SAMPLE_DATA, pub_key).unwrap();
+    validator
+        .validate_async(signature, SAMPLE_DATA, pub_key)
+        .await
+        .unwrap();
 }
 
-#[test]
+#[cfg_attr(not(target_arch = "wasm32"), actix::test)]
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
-fn rs512() {
+async fn legacy_rs512() {
     let signature = include_bytes!("../fixtures/raw_signature/legacy/rs512.raw_sig");
     let pub_key = include_bytes!("../fixtures/raw_signature/legacy/rs512.pub_key");
 
-    let validator = validator_for_sig_and_hash_algs(&RSA_OID, &SHA512_OID).unwrap();
+    let validator = async_validator_for_sig_and_hash_algs(&RSA_OID, &SHA512_OID).unwrap();
 
-    validator.validate(signature, SAMPLE_DATA, pub_key).unwrap();
-}
-
-#[test]
-// #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)] // SHA1 not
-// implemented
-fn sha1() {
-    let signature = include_bytes!("../fixtures/raw_signature/legacy/sha1.raw_sig");
-    let pub_key = include_bytes!("../fixtures/raw_signature/legacy/sha1.pub_key");
-
-    let validator = validator_for_sig_and_hash_algs(&RSA_OID, &SHA1_OID).unwrap();
-
-    validator.validate(signature, SAMPLE_DATA, pub_key).unwrap();
+    validator
+        .validate_async(signature, SAMPLE_DATA, pub_key)
+        .await
+        .unwrap();
 }

@@ -80,24 +80,6 @@ pub fn validator_for_signing_alg(alg: SigningAlg) -> Option<Box<dyn RawSignature
 }
 
 /// Return a built-in signature validator for the requested signature
-/// algorithm.
-///
-/// Which validators are available may vary depending on the platform and
-/// which crate features were enabled.
-pub fn async_validator_for_signing_alg(
-    alg: SigningAlg,
-) -> Option<Box<dyn AsyncRawSignatureValidator>> {
-    #[cfg(target_arch = "wasm32")]
-    if let Some(validator) = crate::webcrypto::async_validator_for_signing_alg(alg) {
-        return Some(validator);
-    }
-
-    Some(Box::new(AsyncValidatorAdapter(validator_for_signing_alg(
-        alg,
-    )?)))
-}
-
-/// Return a built-in signature validator for the requested signature
 /// algorithm as identified by OID.
 ///
 /// Which validators are available may vary depending on the platform and
@@ -144,6 +126,43 @@ pub(crate) fn validator_for_sig_and_hash_algs(
     }
 
     None
+}
+
+/// Return a built-in signature validator for the requested signature
+/// algorithm.
+///
+/// Which validators are available may vary depending on the platform and
+/// which crate features were enabled.
+pub fn async_validator_for_signing_alg(
+    alg: SigningAlg,
+) -> Option<Box<dyn AsyncRawSignatureValidator>> {
+    #[cfg(target_arch = "wasm32")]
+    if let Some(validator) = crate::webcrypto::async_validator_for_signing_alg(alg) {
+        return Some(validator);
+    }
+
+    Some(Box::new(AsyncValidatorAdapter(validator_for_signing_alg(
+        alg,
+    )?)))
+}
+
+/// Return a built-in async signature validator for the requested signature
+/// algorithm as identified by OID.
+#[allow(unused)]
+pub(crate) fn async_validator_for_sig_and_hash_algs(
+    sig_alg: &Oid,
+    hash_alg: &Oid,
+) -> Option<Box<dyn AsyncRawSignatureValidator>> {
+    #[cfg(target_arch = "wasm32")]
+    if let Some(validator) =
+        crate::webcrypto::async_validator_for_sig_and_hash_algs(sig_alg, hash_alg)
+    {
+        return Some(validator);
+    }
+
+    Some(Box::new(AsyncValidatorAdapter(
+        validator_for_sig_and_hash_algs(sig_alg, hash_alg)?,
+    )))
 }
 
 /// Describes errors that can be identified when validating a raw signature.
