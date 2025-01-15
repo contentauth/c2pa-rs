@@ -8,6 +8,13 @@ This crate contains some of the internal cryptography implementation that is sha
 
 We welcome contributions to this project. For information on contributing, providing feedback, and about ongoing work, see [Contributing](https://github.com/contentauth/c2pa-rs/blob/main/CONTRIBUTING.md). For additional information on nightly builds and testing, see [Contributing to the project](docs/project-contributions.md).
 
+## Crate features
+
+This crate has two features, neither of which are enabled by default:
+
+* `json_schema`: Used by c2pa-rs documentation code to generate JSON schema for types defined in this crate.
+* `rust_native_crypto`: Where available, prefer Rust-native cryptography libraries for raw signature and validation implementations. (Experimental)
+
 ## License
 
 The `c2pa-crypto` crate is distributed under the terms of both the [MIT license](https://github.com/contentauth/c2pa-rs/blob/main/LICENSE-MIT) and the [Apache License (Version 2.0)](https://github.com/contentauth/c2pa-rs/blob/main/LICENSE-APACHE).
