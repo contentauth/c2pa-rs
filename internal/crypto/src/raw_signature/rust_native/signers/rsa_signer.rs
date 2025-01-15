@@ -62,64 +62,32 @@ impl RsaSigner {
             .collect::<Result<Vec<Vec<u8>>, PEMError>>()
             .map_err(|e| RawSignerError::InvalidSigningCredentials(e.to_string()))?;
 
-        // check_chain_order(&cert_chain).await?;
+        // TO DO: check_chain_order(&cert_chain).await?;
 
-        eprintln!("FCC 69");
         let cert_chain_len = cert_chain.len();
 
-        eprintln!("FCC 72");
         let pem_str = std::str::from_utf8(private_key)
             .map_err(|e| RawSignerError::InvalidSigningCredentials(e.to_string()))?;
 
-        // let signature: Signature = sig
-        //     .try_into()
-        //     .map_err(|_| RawSignatureValidationError::InvalidSignature)?;
-
-        // let spki = SubjectPublicKeyInfoRef::try_from(public_key)
-        //     .map_err(|_| RawSignatureValidationError::InvalidPublicKey)?;
-
-        // let (_, seq) = parse_ber_sequence(&spki.subject_public_key.raw_bytes())
-        //     .map_err(|_| RawSignatureValidationError::InvalidPublicKey)?;
-
-        // let modulus = biguint_val(&seq[0]);
-        // let exp = biguint_val(&seq[1]);
-
-        // let public_key = RsaPublicKey::new(modulus, exp)
-        //     .map_err(|_| RawSignatureValidationError::InvalidPublicKey)?;
-        // let signature: Signature = sig
-        //     .try_into()
-        //     .map_err(|_| RawSignatureValidationError::InvalidSignature)?;
-
-        // let spki = SubjectPublicKeyInfoRef::try_from(public_key)
-        //     .map_err(|_| RawSignatureValidationError::InvalidPublicKey)?;
-
-        // let (_, seq) = parse_ber_sequence(&spki.subject_public_key.raw_bytes())
-        //     .map_err(|_| RawSignatureValidationError::InvalidPublicKey)?;
-
-        // let modulus = biguint_val(&seq[0]);
-        // let exp = biguint_val(&seq[1]);
-
-        // let public_key = RsaPublicKey::new(modulus, exp)
-        //     .map_err(|_| RawSignatureValidationError::InvalidPublicKey)?;
-
         let (label, private_key_der) =
-            SecretDocument::from_pem(pem_str).expect("Error? What error?");
-        PrivateKeyInfo::validate_pem_label(label).expect("Error? What error?");
+            SecretDocument::from_pem(pem_str).map_err(|e| RawSignerError::InvalidSigningCredentials(e.to_string()))?;
 
-        let pki = PrivateKeyInfo::try_from(private_key_der.as_bytes()).expect("Error? What error?");
+            PrivateKeyInfo::validate_pem_label(label).map_err(|e| RawSignerError::InvalidSigningCredentials(e.to_string()))?;
 
-        eprintln!(
-            "TO DO: Check for correct OID here: {oid}",
-            oid = &pki.algorithm.oid
-        );
+        let pki = PrivateKeyInfo::try_from(private_key_der.as_bytes()).map_err(|e| RawSignerError::InvalidSigningCredentials(e.to_string()))?;
+
+        // TO DO: Check for correct OID here.
+        // eprintln!(
+        //     "TO DO: Check for correct OID here: {oid}",
+        //     oid = &pki.algorithm.oid
+        // );
 
         let pkcs1_key =
-            pkcs1::RsaPrivateKey::try_from(pki.private_key).expect("Error? What error?");
+            pkcs1::RsaPrivateKey::try_from(pki.private_key).map_err(|e| RawSignerError::InvalidSigningCredentials(e.to_string()))?;
 
         // Multi-prime RSA keys not currently supported
         if pkcs1_key.version() != pkcs1::Version::TwoPrime {
-            panic!("Bad version");
-            // return Err(pkcs1::Error::Version.into());
+            return Err(RawSignerError::InvalidSigningCredentials("multi-prime RSA keys not supported".to_string()));
         }
 
         let n = BigUint::from_bytes_be(pkcs1_key.modulus.as_bytes());
@@ -129,12 +97,8 @@ impl RsaSigner {
         let prime2 = BigUint::from_bytes_be(pkcs1_key.prime2.as_bytes());
         let primes = vec![prime1, prime2];
         let private_key =
-            RsaPrivateKey::from_components(n, e, d, primes).expect("Error? What error?");
+            RsaPrivateKey::from_components(n, e, d, primes).map_err(|e| RawSignerError::InvalidSigningCredentials(e.to_string()))?;
 
-        // let private_key = RsaPrivateKey::try_from(pki).expect("Yada yada");
-        dbg!(&private_key);
-
-        eprintln!("FCC 80");
         let alg: RsaSigningAlg = match alg {
             SigningAlg::Ps256 => RsaSigningAlg::Ps256,
             SigningAlg::Ps384 => RsaSigningAlg::Ps384,
@@ -146,7 +110,6 @@ impl RsaSigner {
             }
         };
 
-        eprintln!("FCC 92");
         Ok(RsaSigner {
             alg,
             cert_chain,
