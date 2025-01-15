@@ -12,7 +12,3 @@
 // each license.
 
 mod async_validators;
-mod ecdsa_validator;
-mod ed25519_validator;
-mod rsa_legacy_validator;
-mod rsa_validator;

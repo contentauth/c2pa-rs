@@ -123,7 +123,7 @@ fn ed25519_bad_data() {
 }
 
 #[test]
-// #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
 fn ps256() {
     let signature = include_bytes!("../fixtures/raw_signature/ps256.raw_sig");
     let pub_key = include_bytes!("../fixtures/raw_signature/ps256.pub_key");
@@ -134,7 +134,7 @@ fn ps256() {
 }
 
 #[test]
-// #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
 fn ps256_bad_signature() {
     let mut signature = include_bytes!("../fixtures/raw_signature/ps256.raw_sig").to_vec();
     assert_ne!(signature[10], 10);

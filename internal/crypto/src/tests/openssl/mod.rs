@@ -13,4 +13,3 @@
 
 mod ffi_mutex;
 mod signers;
-mod validators;
