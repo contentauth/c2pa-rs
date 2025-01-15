@@ -11,4 +11,5 @@
 // specific language governing permissions and limitations under
 // each license.
 
+mod async_validators;
 mod validators;
