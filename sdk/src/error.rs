@@ -328,8 +328,12 @@ pub type Result<T> = std::result::Result<T, Error>;
 impl From<c2pa_crypto::raw_signature::webcrypto::WasmCryptoError> for Error {
     fn from(err: c2pa_crypto::raw_signature::webcrypto::WasmCryptoError) -> Self {
         match err {
-            c2pa_crypto::raw_signature::webcrypto::WasmCryptoError::UnknownContext => Self::WasmInvalidContext,
-            c2pa_crypto::raw_signature::webcrypto::WasmCryptoError::NoCryptoAvailable => Self::WasmNoCrypto,
+            c2pa_crypto::raw_signature::webcrypto::WasmCryptoError::UnknownContext => {
+                Self::WasmInvalidContext
+            }
+            c2pa_crypto::raw_signature::webcrypto::WasmCryptoError::NoCryptoAvailable => {
+                Self::WasmNoCrypto
+            }
         }
     }
 }
