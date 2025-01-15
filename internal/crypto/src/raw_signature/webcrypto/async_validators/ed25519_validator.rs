@@ -31,7 +31,7 @@ impl AsyncRawSignatureValidator for Ed25519Validator {
     ) -> Result<(), RawSignatureValidationError> {
         // Sync and async cases are identical for Ed25519.
 
-        let sync_validator = crate::raw_signature::webcrypto::validators::Ed25519Validator {};
+        let sync_validator = crate::raw_signature::rust_native::validators::Ed25519Validator {};
         sync_validator.validate(sig, data, public_key)
     }
 }
