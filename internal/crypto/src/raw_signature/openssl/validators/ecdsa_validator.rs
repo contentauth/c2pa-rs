@@ -15,9 +15,8 @@ use openssl::{
     bn::BigNum, ec::EcKey, ecdsa::EcdsaSig, hash::MessageDigest, pkey::PKey, sign::Verifier,
 };
 
-use crate::{
-    openssl::OpenSslMutex,
-    raw_signature::{RawSignatureValidationError, RawSignatureValidator},
+use crate::raw_signature::{
+    openssl::OpenSslMutex, RawSignatureValidationError, RawSignatureValidator,
 };
 
 /// An `EcdsaValidator` can validate raw signatures with one of the ECDSA

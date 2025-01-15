@@ -66,12 +66,16 @@ pub trait AsyncRawSignatureValidator {
 /// which crate features were enabled.
 pub fn validator_for_signing_alg(alg: SigningAlg) -> Option<Box<dyn RawSignatureValidator>> {
     #[cfg(not(target_arch = "wasm32"))]
-    if let Some(validator) = crate::openssl::validators::validator_for_signing_alg(alg) {
+    if let Some(validator) =
+        crate::raw_signature::openssl::validators::validator_for_signing_alg(alg)
+    {
         return Some(validator);
     }
 
     #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
-    if let Some(validator) = crate::webcrypto::validators::validator_for_signing_alg(alg) {
+    if let Some(validator) =
+        crate::raw_signature::webcrypto::validators::validator_for_signing_alg(alg)
+    {
         return Some(validator);
     }
 
@@ -97,7 +101,9 @@ pub(crate) fn validator_for_sig_and_hash_algs(
 
         #[cfg(not(target_arch = "wasm32"))]
         if let Some(validator) =
-            crate::openssl::validators::validator_for_sig_and_hash_algs(sig_alg, hash_alg)
+            crate::raw_signature::openssl::validators::validator_for_sig_and_hash_algs(
+                sig_alg, hash_alg,
+            )
         {
             return Some(validator);
         }
@@ -105,7 +111,9 @@ pub(crate) fn validator_for_sig_and_hash_algs(
         // Not sure yet if we'll need legacy validators for WASM.
         #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
         if let Some(validator) =
-            crate::webcrypto::validators::validator_for_sig_and_hash_algs(sig_alg, hash_alg)
+            crate::raw_signature::webcrypto::validators::validator_for_sig_and_hash_algs(
+                sig_alg, hash_alg,
+            )
         {
             return Some(validator);
         }
@@ -137,7 +145,7 @@ pub fn async_validator_for_signing_alg(
     alg: SigningAlg,
 ) -> Option<Box<dyn AsyncRawSignatureValidator>> {
     #[cfg(target_arch = "wasm32")]
-    if let Some(validator) = crate::webcrypto::async_validator_for_signing_alg(alg) {
+    if let Some(validator) = crate::raw_signature::webcrypto::async_validator_for_signing_alg(alg) {
         return Some(validator);
     }
 
@@ -155,7 +163,7 @@ pub(crate) fn async_validator_for_sig_and_hash_algs(
 ) -> Option<Box<dyn AsyncRawSignatureValidator>> {
     #[cfg(target_arch = "wasm32")]
     if let Some(validator) =
-        crate::webcrypto::async_validator_for_sig_and_hash_algs(sig_alg, hash_alg)
+        crate::raw_signature::webcrypto::async_validator_for_sig_and_hash_algs(sig_alg, hash_alg)
     {
         return Some(validator);
     }
@@ -203,20 +211,20 @@ impl From<openssl::error::ErrorStack> for RawSignatureValidationError {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-impl From<crate::openssl::OpenSslMutexUnavailable> for RawSignatureValidationError {
-    fn from(err: crate::openssl::OpenSslMutexUnavailable) -> Self {
+impl From<crate::raw_signature::openssl::OpenSslMutexUnavailable> for RawSignatureValidationError {
+    fn from(err: crate::raw_signature::openssl::OpenSslMutexUnavailable) -> Self {
         Self::InternalError(err.to_string())
     }
 }
 
 #[cfg(target_arch = "wasm32")]
-impl From<crate::webcrypto::WasmCryptoError> for RawSignatureValidationError {
-    fn from(err: crate::webcrypto::WasmCryptoError) -> Self {
+impl From<crate::raw_signature::webcrypto::WasmCryptoError> for RawSignatureValidationError {
+    fn from(err: crate::raw_signature::webcrypto::WasmCryptoError) -> Self {
         match err {
-            crate::webcrypto::WasmCryptoError::UnknownContext => {
+            crate::raw_signature::webcrypto::WasmCryptoError::UnknownContext => {
                 Self::InternalError("unknown WASM context".to_string())
             }
-            crate::webcrypto::WasmCryptoError::NoCryptoAvailable => {
+            crate::raw_signature::webcrypto::WasmCryptoError::NoCryptoAvailable => {
                 Self::InternalError("WASM crypto unavailable".to_string())
             }
         }

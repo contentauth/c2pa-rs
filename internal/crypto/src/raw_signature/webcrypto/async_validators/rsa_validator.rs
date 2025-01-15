@@ -1,4 +1,4 @@
-// Copyright 2022 Adobe. All rights reserved.
+// Copyright 2024 Adobe. All rights reserved.
 // This file is licensed to you under the Apache License,
 // Version 2.0 (http://www.apache.org/licenses/LICENSE-2.0)
 // or the MIT license (http://opensource.org/licenses/MIT),
@@ -17,21 +17,36 @@ use crate::raw_signature::{
     AsyncRawSignatureValidator, RawSignatureValidationError, RawSignatureValidator,
 };
 
-/// An `Ed25519Validator` can validate raw signatures with the Ed25519 signature
-/// algorithm.
-pub struct Ed25519Validator {}
+/// An `RsaValidator` can validate raw signatures with one of the RSA-PSS
+/// signature algorithms.
+#[non_exhaustive]
+pub enum RsaValidator {
+    /// RSASSA-PSS using SHA-256 and MGF1 with SHA-256
+    Ps256,
+
+    /// RSASSA-PSS using SHA-384 and MGF1 with SHA-384
+    Ps384,
+
+    /// RSASSA-PSS using SHA-512 and MGF1 with SHA-512
+    Ps512,
+}
 
 #[async_trait(?Send)]
-impl AsyncRawSignatureValidator for Ed25519Validator {
+impl AsyncRawSignatureValidator for RsaValidator {
     async fn validate_async(
         &self,
         sig: &[u8],
         data: &[u8],
         public_key: &[u8],
     ) -> Result<(), RawSignatureValidationError> {
-        // Sync and async cases are identical for Ed25519.
+        // Sync and async cases are identical for RSA.
 
-        let sync_validator = crate::webcrypto::validators::Ed25519Validator {};
+        let sync_validator = match self {
+            Self::Ps256 => crate::raw_signature::webcrypto::validators::RsaValidator::Ps256,
+            Self::Ps384 => crate::raw_signature::webcrypto::validators::RsaValidator::Ps384,
+            Self::Ps512 => crate::raw_signature::webcrypto::validators::RsaValidator::Ps512,
+        };
+
         sync_validator.validate(sig, data, public_key)
     }
 }

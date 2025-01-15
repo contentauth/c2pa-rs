@@ -18,7 +18,7 @@ use openssl::{
 
 use crate::{
     cose::{CertificateTrustError, CertificateTrustPolicy},
-    openssl::OpenSslMutex,
+    raw_signature::openssl::OpenSslMutex,
 };
 
 pub(crate) fn check_certificate_trust(

@@ -129,20 +129,20 @@ impl From<openssl::error::ErrorStack> for RawSignerError {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-impl From<crate::openssl::OpenSslMutexUnavailable> for RawSignerError {
-    fn from(err: crate::openssl::OpenSslMutexUnavailable) -> Self {
+impl From<crate::raw_signature::openssl::OpenSslMutexUnavailable> for RawSignerError {
+    fn from(err: crate::raw_signature::openssl::OpenSslMutexUnavailable) -> Self {
         Self::InternalError(err.to_string())
     }
 }
 
 #[cfg(target_arch = "wasm32")]
-impl From<crate::webcrypto::WasmCryptoError> for RawSignerError {
-    fn from(err: crate::webcrypto::WasmCryptoError) -> Self {
+impl From<crate::raw_signature::webcrypto::WasmCryptoError> for RawSignerError {
+    fn from(err: crate::raw_signature::webcrypto::WasmCryptoError) -> Self {
         match err {
-            crate::webcrypto::WasmCryptoError::UnknownContext => {
+            crate::raw_signature::webcrypto::WasmCryptoError::UnknownContext => {
                 Self::InternalError("unknown WASM context".to_string())
             }
-            crate::webcrypto::WasmCryptoError::NoCryptoAvailable => {
+            crate::raw_signature::webcrypto::WasmCryptoError::NoCryptoAvailable => {
                 Self::InternalError("WASM crypto unavailable".to_string())
             }
         }
@@ -167,7 +167,7 @@ pub fn signer_from_cert_chain_and_private_key(
 ) -> Result<Box<dyn RawSigner + Send + Sync>, RawSignerError> {
     #[cfg(not(target_arch = "wasm32"))]
     {
-        return crate::openssl::signers::signer_from_cert_chain_and_private_key(
+        return crate::raw_signature::openssl::signers::signer_from_cert_chain_and_private_key(
             cert_chain,
             private_key,
             alg,
@@ -177,7 +177,7 @@ pub fn signer_from_cert_chain_and_private_key(
 
     #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
     {
-        return crate::webcrypto::signers::signer_from_cert_chain_and_private_key(
+        return crate::raw_signature::webcrypto::signers::signer_from_cert_chain_and_private_key(
             cert_chain,
             private_key,
             alg,

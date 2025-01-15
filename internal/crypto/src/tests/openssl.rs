@@ -11,7 +11,7 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use crate::openssl::OpenSslMutexUnavailable;
+use crate::raw_signature::openssl::OpenSslMutexUnavailable;
 
 #[test]
 fn impl_display() {

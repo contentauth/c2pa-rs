@@ -15,6 +15,9 @@
 
 pub(crate) mod oids;
 
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) mod openssl;
+
 pub(crate) mod signer;
 pub use signer::{
     async_signer_from_cert_chain_and_private_key, signer_from_cert_chain_and_private_key,
@@ -33,3 +36,6 @@ pub use validator::{
     async_validator_for_signing_alg, validator_for_signing_alg, AsyncRawSignatureValidator,
     RawSignatureValidationError, RawSignatureValidator,
 };
+
+#[cfg(target_arch = "wasm32")]
+pub mod webcrypto;

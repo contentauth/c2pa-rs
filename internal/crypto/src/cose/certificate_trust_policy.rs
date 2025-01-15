@@ -103,7 +103,7 @@ impl CertificateTrustPolicy {
         if _async {
             #[cfg(target_arch = "wasm32")]
             {
-                return crate::webcrypto::check_certificate_trust::check_certificate_trust(
+                return crate::raw_signature::webcrypto::check_certificate_trust::check_certificate_trust(
                     self,
                     chain_der,
                     end_entity_cert_der,
@@ -115,7 +115,7 @@ impl CertificateTrustPolicy {
 
         #[cfg(not(target_arch = "wasm32"))]
         {
-            return crate::openssl::check_certificate_trust::check_certificate_trust(
+            return crate::raw_signature::openssl::check_certificate_trust::check_certificate_trust(
                 self,
                 chain_der,
                 end_entity_cert_der,
@@ -366,20 +366,20 @@ impl From<openssl::error::ErrorStack> for CertificateTrustError {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-impl From<crate::openssl::OpenSslMutexUnavailable> for CertificateTrustError {
-    fn from(err: crate::openssl::OpenSslMutexUnavailable) -> Self {
+impl From<crate::raw_signature::openssl::OpenSslMutexUnavailable> for CertificateTrustError {
+    fn from(err: crate::raw_signature::openssl::OpenSslMutexUnavailable) -> Self {
         Self::InternalError(err.to_string())
     }
 }
 
 #[cfg(target_arch = "wasm32")]
-impl From<crate::webcrypto::WasmCryptoError> for CertificateTrustError {
-    fn from(err: crate::webcrypto::WasmCryptoError) -> Self {
+impl From<crate::raw_signature::webcrypto::WasmCryptoError> for CertificateTrustError {
+    fn from(err: crate::raw_signature::webcrypto::WasmCryptoError) -> Self {
         match err {
-            crate::webcrypto::WasmCryptoError::UnknownContext => {
+            crate::raw_signature::webcrypto::WasmCryptoError::UnknownContext => {
                 Self::InternalError("unknown WASM context".to_string())
             }
-            crate::webcrypto::WasmCryptoError::NoCryptoAvailable => {
+            crate::raw_signature::webcrypto::WasmCryptoError::NoCryptoAvailable => {
                 Self::InternalError("WASM crypto unavailable".to_string())
             }
         }
