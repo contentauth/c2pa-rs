@@ -67,7 +67,9 @@ pub trait AsyncRawSignatureValidator {
 pub fn validator_for_signing_alg(alg: SigningAlg) -> Option<Box<dyn RawSignatureValidator>> {
     #[cfg(any(target_arch = "wasm32", feature = "rust_native_crypto"))]
     {
-        if let Some(validator) = crate::raw_signature::rust_native::validators::validator_for_signing_alg(alg) {
+        if let Some(validator) =
+            crate::raw_signature::rust_native::validators::validator_for_signing_alg(alg)
+        {
             return Some(validator);
         }
     }
