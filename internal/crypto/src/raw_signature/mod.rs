@@ -25,7 +25,10 @@ mod signing_alg;
 pub use signing_alg::{SigningAlg, UnknownAlgorithmError};
 
 mod validator;
-pub(crate) use validator::validator_for_sig_and_hash_algs;
+#[allow(unused)] // not used in all configurations
+pub(crate) use validator::{
+    async_validator_for_sig_and_hash_algs, validator_for_sig_and_hash_algs,
+};
 pub use validator::{
     async_validator_for_signing_alg, validator_for_signing_alg, AsyncRawSignatureValidator,
     RawSignatureValidationError, RawSignatureValidator,
