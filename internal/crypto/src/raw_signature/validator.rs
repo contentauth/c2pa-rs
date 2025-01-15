@@ -11,11 +11,11 @@
 // specific language governing permissions and limitations under
 // each license.
 
+use async_trait::async_trait;
 use bcder::Oid;
 use thiserror::Error;
 
-use super::oids::*;
-use crate::SigningAlg;
+use crate::raw_signature::{oids::*, SigningAlg};
 
 /// A `RawSignatureValidator` implementation checks a signature encoded using a
 /// specific signature algorithm and a private/public key pair.
@@ -24,9 +24,34 @@ use crate::SigningAlg;
 /// another signature mechanism. In the C2PA ecosystem, this wrapper is
 /// typically COSE, but `RawSignatureValidator` does not implement COSE.
 pub trait RawSignatureValidator {
-    /// Return `true` if the signature `sig` is valid for the raw content `data`
-    /// and the public key `public_key`.
+    /// Return `Ok(())` if the signature `sig` is valid for the raw content
+    /// `data` and the public key `public_key`.
     fn validate(
+        &self,
+        sig: &[u8],
+        data: &[u8],
+        public_key: &[u8],
+    ) -> Result<(), RawSignatureValidationError>;
+}
+
+/// An `AsyncRawSignatureValidator` implementation checks a signature encoded
+/// using a specific signature algorithm and a private/public key pair.
+///
+/// IMPORTANT: This signature is typically embedded in a wrapper provided by
+/// another signature mechanism. In the C2PA ecosystem, this wrapper is
+/// typically COSE, but `AsyncRawSignatureValidator` does not implement COSE.
+///
+/// The WASM implementation of `c2pa-crypto` also implements
+/// [`RawSignatureValidator`] (the synchronous version), but some encryption
+/// algorithms are not supported. For that reason, it's preferable to use this
+/// implementation on WASM.
+///
+/// [`RawSignatureValidator`]: crate::raw_signature::RawSignatureValidator
+#[async_trait(?Send)]
+pub trait AsyncRawSignatureValidator {
+    /// Return `Ok(())` if the signature `sig` is valid for the raw content
+    /// `data` and the public key `public_key`.
+    async fn validate_async(
         &self,
         sig: &[u8],
         data: &[u8],
@@ -50,7 +75,26 @@ pub fn validator_for_signing_alg(alg: SigningAlg) -> Option<Box<dyn RawSignature
         return Some(validator);
     }
 
+    let _ = alg; // this value will be unused in this case
     None
+}
+
+/// Return a built-in signature validator for the requested signature
+/// algorithm.
+///
+/// Which validators are available may vary depending on the platform and
+/// which crate features were enabled.
+pub fn async_validator_for_signing_alg(
+    alg: SigningAlg,
+) -> Option<Box<dyn AsyncRawSignatureValidator>> {
+    #[cfg(target_arch = "wasm32")]
+    if let Some(validator) = crate::webcrypto::async_validator_for_signing_alg(alg) {
+        return Some(validator);
+    }
+
+    Some(Box::new(AsyncValidatorAdapter(validator_for_signing_alg(
+        alg,
+    )?)))
 }
 
 /// Return a built-in signature validator for the requested signature
@@ -58,10 +102,7 @@ pub fn validator_for_signing_alg(alg: SigningAlg) -> Option<Box<dyn RawSignature
 ///
 /// Which validators are available may vary depending on the platform and
 /// which crate features were enabled.
-///
-/// TEMPORARILY PUBLIC: This will become `pub(crate)` once time stamp code moves
-/// into c2pa-crypto
-pub fn validator_for_sig_and_hash_algs(
+pub(crate) fn validator_for_sig_and_hash_algs(
     sig_alg: &Oid,
     hash_alg: &Oid,
 ) -> Option<Box<dyn RawSignatureValidator>> {
@@ -162,5 +203,19 @@ impl From<crate::webcrypto::WasmCryptoError> for RawSignatureValidationError {
                 Self::InternalError("WASM crypto unavailable")
             }
         }
+    }
+}
+
+struct AsyncValidatorAdapter(Box<dyn RawSignatureValidator>);
+
+#[async_trait(?Send)]
+impl AsyncRawSignatureValidator for AsyncValidatorAdapter {
+    async fn validate_async(
+        &self,
+        sig: &[u8],
+        data: &[u8],
+        public_key: &[u8],
+    ) -> Result<(), RawSignatureValidationError> {
+        self.0.validate(sig, data, public_key)
     }
 }

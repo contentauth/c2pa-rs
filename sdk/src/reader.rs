@@ -28,20 +28,9 @@ use serde::{Deserialize, Serialize};
 use crate::error::Error;
 use crate::{
     claim::ClaimAssetData, error::Result, manifest_store::ManifestStore,
-    settings::get_settings_value, store::Store, validation_status::ValidationStatus, Manifest,
-    ManifestStoreReport,
+    settings::get_settings_value, store::Store, validation_results::ValidationState,
+    validation_status::ValidationStatus, Manifest, ManifestStoreReport,
 };
-
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "json_schema", derive(JsonSchema))]
-pub enum ValidationState {
-    /// Errors were found in the manifest store.
-    Invalid,
-    /// No errors were found in validation, but the active signature is not trusted.
-    Valid,
-    /// The manifest store is valid and the active signature is trusted.
-    Trusted,
-}
 
 /// A reader for the manifest store.
 #[derive(Serialize, Deserialize)]
@@ -272,6 +261,9 @@ impl Reader {
     /// Get the [`ValidationState`] of the manifest store.
     pub fn validation_state(&self) -> ValidationState {
         let verify_trust = get_settings_value("verify.trusted").unwrap_or(false);
+        if let Some(validation_results) = self.manifest_store.validation_results() {
+            return validation_results.validation_state();
+        }
         match self.validation_status() {
             Some(status) => {
                 // if there are any errors, the state is invalid unless the only error is an untrusted credential
@@ -487,8 +479,8 @@ pub mod tests {
         let manifest = reader.active_manifest().unwrap();
         let ingredient = manifest.ingredients().iter().next().unwrap();
         let uri = ingredient.thumbnail_ref().unwrap().identifier.clone();
-        let mut stream = std::io::Cursor::new(Vec::new());
-        let bytes_written = reader.resource_to_stream(&uri, &mut stream)?;
+        let stream = std::io::Cursor::new(Vec::new());
+        let bytes_written = reader.resource_to_stream(&uri, stream)?;
         assert_eq!(bytes_written, 41810);
         Ok(())
     }

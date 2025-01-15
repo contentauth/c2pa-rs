@@ -135,9 +135,7 @@ impl ValidationResultsMap {
 
         // This closure returns true if the URI references the store's active manifest.
         let is_active_manifest = |uri: Option<&str>| {
-            uri.map_or(false, |uri| {
-                manifest_label_from_uri(uri) == Some(active_manifest_label)
-            })
+            uri.is_some_and(|uri| manifest_label_from_uri(uri) == Some(active_manifest_label))
         };
 
         if is_active_manifest(status.url()) {
@@ -146,7 +144,7 @@ impl ValidationResultsMap {
                 .get_or_insert_with(StatusCodesMap::default);
             scm.add_status(status);
         } else {
-            let ingredient_url = status.url().unwrap_or("");
+            let ingredient_url = status.ingredient_uri().unwrap_or("NOT FOUND!!!");
             let ingredient_vec = self.ingredient_deltas.get_or_insert_with(Vec::new);
             match ingredient_vec
                 .iter_mut()

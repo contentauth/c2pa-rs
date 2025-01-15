@@ -140,6 +140,10 @@ impl ManifestStore {
         self.validation_status.as_deref()
     }
 
+    pub fn validation_results(&self) -> Option<&ValidationResultsMap> {
+        self.validation_results.as_ref()
+    }
+
     /// creates a ManifestStore from a Store with validation
     #[async_generic]
     pub(crate) fn from_store(store: Store, validation_log: &impl StatusTracker) -> ManifestStore {
@@ -584,7 +588,7 @@ impl std::fmt::Display for ManifestStore {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, any(target_arch = "wasm32", feature = "openssl")))]
 mod tests {
     #![allow(clippy::expect_used)]
     #![allow(clippy::unwrap_used)]
@@ -632,7 +636,7 @@ mod tests {
         assert!(manifest_store.active_label().is_some());
         assert!(manifest_store.get_active().is_some());
         assert!(!manifest_store.manifests().is_empty());
-        assert!(manifest_store.validation_status().is_none());
+        assert_eq!(manifest_store.validation_status(), None);
         let manifest = manifest_store.get_active().unwrap();
         assert!(!manifest.ingredients().is_empty());
         assert_eq!(manifest.issuer().unwrap(), "C2PA Test Signing Cert");
@@ -654,7 +658,7 @@ mod tests {
         assert!(manifest_store.active_label().is_some());
         assert!(manifest_store.get_active().is_some());
         assert!(!manifest_store.manifests().is_empty());
-        assert!(manifest_store.validation_status().is_none());
+        assert_eq!(manifest_store.validation_status(), None);
         let manifest = manifest_store.get_active().unwrap();
         assert!(!manifest.ingredients().is_empty());
         assert_eq!(manifest.issuer().unwrap(), "C2PA Test Signing Cert");
@@ -672,7 +676,7 @@ mod tests {
         assert!(manifest_store.active_label().is_some());
         assert!(manifest_store.get_active().is_some());
         assert!(!manifest_store.manifests().is_empty());
-        assert!(manifest_store.validation_status().is_none());
+        assert_eq!(manifest_store.validation_status(), None);
         let manifest = manifest_store.get_active().unwrap();
         assert!(!manifest.ingredients().is_empty());
         assert_eq!(manifest.issuer().unwrap(), "C2PA Test Signing Cert");
@@ -695,7 +699,7 @@ mod tests {
         .await
         .unwrap();
         assert!(!manifest_store.manifests().is_empty());
-        assert!(manifest_store.validation_status().is_none());
+        assert_eq!(manifest_store.validation_status(), None);
         println!("{manifest_store}");
     }
 
@@ -714,7 +718,7 @@ mod tests {
         assert!(manifest_store.active_label().is_some());
         assert!(manifest_store.get_active().is_some());
         assert!(!manifest_store.manifests().is_empty());
-        assert!(manifest_store.validation_status().is_none());
+        assert_eq!(manifest_store.validation_status(), None);
         let manifest = manifest_store.get_active().unwrap();
         assert!(!manifest.ingredients().is_empty());
         assert_eq!(manifest.issuer().unwrap(), "C2PA Test Signing Cert");
@@ -733,7 +737,7 @@ mod tests {
         assert!(manifest_store.active_label().is_some());
         assert!(manifest_store.get_active().is_some());
         assert!(!manifest_store.manifests().is_empty());
-        assert!(manifest_store.validation_status().is_none());
+        assert_eq!(manifest_store.validation_status(), None);
         let manifest = manifest_store.get_active().unwrap();
         assert!(!manifest.ingredients().is_empty());
         assert_eq!(manifest.issuer().unwrap(), "C2PA Test Signing Cert");

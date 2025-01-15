@@ -23,7 +23,7 @@ mod integration_1 {
         settings::load_settings_from_str,
         Builder, ClaimGeneratorInfo, Ingredient, Reader, Result, Signer,
     };
-    use c2pa_crypto::SigningAlg;
+    use c2pa_crypto::raw_signature::SigningAlg;
     use tempfile::tempdir;
 
     //const GENERATOR: &str = "app";

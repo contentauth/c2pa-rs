@@ -80,6 +80,16 @@ pub trait StatusTracker: Debug + Send {
             }
         })
     }
+
+    /// Keeps track of the current ingredient URI, if any.
+    ///
+    /// The current uri may be added to any log items created
+    fn push_ingredient_uri<S: Into<String>>(&mut self, _uri: S) {}
+
+    /// Removes the current ingredient URI, if any.
+    fn pop_ingredient_uri(&mut self) -> Option<String> {
+        None
+    }
 }
 
 pub(crate) mod detailed;

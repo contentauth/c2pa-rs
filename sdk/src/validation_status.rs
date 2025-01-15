@@ -44,6 +44,9 @@ pub struct ValidationStatus {
     #[serde(skip_serializing)]
     #[allow(dead_code)]
     success: Option<bool>, // deprecated in 2.x, allow reading for compatibility
+
+    #[serde(skip)]
+    ingredient_uri: Option<String>,
 }
 
 impl ValidationStatus {
@@ -53,6 +56,7 @@ impl ValidationStatus {
             url: None,
             explanation: None,
             success: None,
+            ingredient_uri: None,
         }
     }
 
@@ -77,9 +81,20 @@ impl ValidationStatus {
         self.explanation.as_deref()
     }
 
+    /// Returns the internal JUMBF reference to the Ingredient that was validated.
+    pub fn ingredient_uri(&self) -> Option<&str> {
+        self.ingredient_uri.as_deref()
+    }
+
     /// Sets the internal JUMBF reference to the entity was validated.
     pub fn set_url<S: Into<String>>(mut self, url: S) -> Self {
         self.url = Some(url.into());
+        self
+    }
+
+    /// Sets the internal JUMBF reference to the Ingredient that was validated.
+    pub fn set_ingredient_uri<S: Into<String>>(mut self, uri: S) -> Self {
+        self.ingredient_uri = Some(uri.into());
         self
     }
 
@@ -131,11 +146,15 @@ impl ValidationStatus {
     /// Creates a ValidationStatus from a validation_log item.
     pub(crate) fn from_validation_item(item: &LogItem) -> Option<Self> {
         match item.validation_status.as_ref() {
-            Some(status) => Some(
-                Self::new(status.to_string())
+            Some(status) => Some({
+                let mut vi = Self::new(status.to_string())
                     .set_url(item.label.to_string())
-                    .set_explanation(item.description.to_string()),
-            ),
+                    .set_explanation(item.description.to_string());
+                if let Some(ingredient_uri) = &item.ingredient_uri {
+                    vi = vi.set_ingredient_uri(ingredient_uri.to_string());
+                }
+                vi
+            }),
             // If we don't have a validation_status, then make one from the err_val
             // using the description plus error text explanation.
             None => item.err_val.as_ref().map(|e| {
@@ -174,9 +193,7 @@ pub fn validation_results_for_store(
 
         // This closure returns true if the URI references the store's active manifest.
         let is_active_manifest = |uri: Option<&str>| {
-            uri.map_or(false, |uri| {
-                jumbf::labels::manifest_label_from_uri(uri) == active_manifest
-            })
+            uri.is_some_and(|uri| jumbf::labels::manifest_label_from_uri(uri) == active_manifest)
         };
 
         // Convert any relative manifest urls found in ingredient validation statuses to absolute.
@@ -242,17 +259,6 @@ pub fn status_for_store(
 ) -> Vec<ValidationStatus> {
     let validation_results = validation_results_for_store(store, validation_log);
     validation_results.validation_errors().unwrap_or_default()
-    // let results = validation_results
-    //     .active_manifest()
-    //     .map_or_else(Vec::new, |m| m.failure().clone());
-    // let results2 = validation_results
-    //     .ingredient_deltas()
-    //     .map_or_else(Vec::new, |v| {
-    //         v.iter()
-    //             .flat_map(|i| i.validation_deltas().failure().clone())
-    //             .collect()
-    //     });
-    // results.into_iter().chain(results2).collect()
 }
 
 // -- unofficial status code --

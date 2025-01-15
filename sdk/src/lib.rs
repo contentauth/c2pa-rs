@@ -119,7 +119,7 @@ pub use assertions::Relationship;
 pub use asset_io::{CAIRead, CAIReadWrite};
 #[cfg(feature = "unstable_api")]
 pub use builder::{Builder, ManifestDefinition};
-pub use c2pa_crypto::SigningAlg;
+pub use c2pa_crypto::raw_signature::SigningAlg;
 pub use callback_signer::{CallbackFunc, CallbackSigner};
 pub use claim_generator_info::ClaimGeneratorInfo;
 pub use dynamic_assertion::DynamicAssertion;
@@ -136,10 +136,11 @@ pub use manifest_store::ManifestStore;
 #[cfg(feature = "v1_api")]
 pub use manifest_store_report::ManifestStoreReport;
 #[cfg(feature = "unstable_api")]
-pub use reader::{Reader, ValidationState};
+pub use reader::Reader;
 pub use resource_store::{ResourceRef, ResourceStore};
 pub use signer::{AsyncSigner, RemoteSigner, Signer};
 pub use utils::mime::format_from_path;
+pub use validation_results::{ValidationResultsMap, ValidationState};
 
 // Internal modules
 pub(crate) mod assertion;
@@ -164,8 +165,6 @@ pub(crate) mod manifest;
 pub(crate) mod manifest_assertion;
 pub(crate) mod manifest_store;
 pub(crate) mod manifest_store_report;
-#[cfg(feature = "openssl")]
-pub(crate) mod openssl;
 #[allow(dead_code)]
 // TODO: Remove this when the feature is released (used in tests only for some builds now)
 pub(crate) mod reader;
@@ -173,10 +172,6 @@ pub(crate) mod resource_store;
 pub(crate) mod salt;
 pub(crate) mod signer;
 pub(crate) mod store;
-pub(crate) mod time_stamp;
-pub(crate) mod trust_handler;
 
 pub(crate) mod utils;
 pub(crate) use utils::{cbor_types, hash_utils};
-
-pub(crate) mod validator;

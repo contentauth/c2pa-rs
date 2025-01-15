@@ -28,7 +28,6 @@ use crate::{
             CertificateChoices::Certificate, SignerIdentifier, OID_MESSAGE_DIGEST, OID_SIGNING_TIME,
         },
     },
-    raw_signature::validator_for_sig_and_hash_algs,
     time_stamp::{
         response::{signed_data_from_time_stamp_response, tst_info_from_signed_data},
         TimeStampError,
@@ -36,10 +35,8 @@ use crate::{
 };
 
 /// Decode the TimeStampToken info and verify it against the supplied data.
-///
-/// TEMPORARILY PUBLIC while refactoring
 #[async_generic]
-pub fn verify_time_stamp(ts: &[u8], data: &[u8]) -> Result<TstInfo, TimeStampError> {
+pub(crate) fn verify_time_stamp(ts: &[u8], data: &[u8]) -> Result<TstInfo, TimeStampError> {
     // Did the time stamp expire between issuance and verification?
     let Some(sd) = signed_data_from_time_stamp_response(ts)? else {
         return Err(TimeStampError::DecodeError(
@@ -266,7 +263,9 @@ pub fn verify_time_stamp(ts: &[u8], data: &[u8]) -> Result<TstInfo, TimeStampErr
             }
 
             #[cfg(not(target_arch = "wasm32"))]
-            unimplemented!();
+            if true {
+                unimplemented!();
+            }
         }
 
         // Make sure the time stamp's cert was valid for the stated signing time.
@@ -330,6 +329,7 @@ fn time_to_datetime(t: Time) -> DateTime<Utc> {
     }
 }
 
+#[cfg(any(feature = "openssl", target_arch = "wasm32"))]
 fn validate_timestamp_sig(
     sig_alg: &bcder::Oid,
     hash_alg: &bcder::Oid,
@@ -337,6 +337,8 @@ fn validate_timestamp_sig(
     tbs: &[u8],
     signing_key_der: &[u8],
 ) -> Result<(), TimeStampError> {
+    use crate::raw_signature::validator_for_sig_and_hash_algs;
+
     let Some(validator) = validator_for_sig_and_hash_algs(sig_alg, hash_alg) else {
         return Err(TimeStampError::UnsupportedAlgorithm);
     };

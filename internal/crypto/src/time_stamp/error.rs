@@ -60,7 +60,7 @@ pub enum TimeStampError {
     #[error("unable to complete HTTP request ({0})")]
     HttpConnectionError(String),
 
-    /// An unexpected internal error occured whiel requesting the time stamp
+    /// An unexpected internal error occured while requesting the time stamp
     /// response.
     #[error("internal error ({0})")]
     InternalError(String),
