@@ -65,6 +65,13 @@ pub trait AsyncRawSignatureValidator {
 /// Which validators are available may vary depending on the platform and
 /// which crate features were enabled.
 pub fn validator_for_signing_alg(alg: SigningAlg) -> Option<Box<dyn RawSignatureValidator>> {
+    #[cfg(any(target_arch = "wasm32", feature = "rust_native_crypto"))]
+    {
+        if let Some(validator) = crate::raw_signature::rust_native::validators::validator_for_signing_alg(alg) {
+            return Some(validator);
+        }
+    }
+
     #[cfg(not(target_arch = "wasm32"))]
     if let Some(validator) =
         crate::raw_signature::openssl::validators::validator_for_signing_alg(alg)
