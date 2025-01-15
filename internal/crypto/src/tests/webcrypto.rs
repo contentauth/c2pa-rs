@@ -13,7 +13,7 @@
 
 use wasm_bindgen_test::wasm_bindgen_test;
 
-use crate::webcrypto::WindowOrWorker;
+use crate::raw_signature::webcrypto::WindowOrWorker;
 
 #[wasm_bindgen_test]
 fn has_crypto_library() {

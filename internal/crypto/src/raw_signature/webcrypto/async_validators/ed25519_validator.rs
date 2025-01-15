@@ -17,31 +17,21 @@ use crate::raw_signature::{
     AsyncRawSignatureValidator, RawSignatureValidationError, RawSignatureValidator,
 };
 
-/// An `RsaLegacyValidator` can validate raw signatures with an RSA signature
-/// algorithm that is not supported directly by C2PA. (Some RFC 3161 time stamp
-/// providers issue these signatures, which is why it's supported here.)
-pub(crate) enum RsaLegacyValidator {
-    Rsa256,
-    Rsa384,
-    Rsa512,
-}
+/// An `Ed25519Validator` can validate raw signatures with the Ed25519 signature
+/// algorithm.
+pub struct Ed25519Validator {}
 
 #[async_trait(?Send)]
-impl AsyncRawSignatureValidator for RsaLegacyValidator {
+impl AsyncRawSignatureValidator for Ed25519Validator {
     async fn validate_async(
         &self,
         sig: &[u8],
         data: &[u8],
         public_key: &[u8],
     ) -> Result<(), RawSignatureValidationError> {
-        // Sync and async cases are identical for RSA.
+        // Sync and async cases are identical for Ed25519.
 
-        let sync_validator = match self {
-            Self::Rsa256 => crate::webcrypto::validators::RsaLegacyValidator::Rsa256,
-            Self::Rsa384 => crate::webcrypto::validators::RsaLegacyValidator::Rsa384,
-            Self::Rsa512 => crate::webcrypto::validators::RsaLegacyValidator::Rsa512,
-        };
-
+        let sync_validator = crate::raw_signature::webcrypto::validators::Ed25519Validator {};
         sync_validator.validate(sig, data, public_key)
     }
 }

@@ -26,15 +26,9 @@ pub mod hash;
 pub(crate) mod internal;
 pub mod ocsp;
 
-#[cfg(not(target_arch = "wasm32"))]
-pub(crate) mod openssl;
-
 pub(crate) mod p1363;
 pub mod raw_signature;
 pub mod time_stamp;
-
-#[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
-pub mod webcrypto;
 
 #[cfg(test)]
 pub(crate) mod tests;

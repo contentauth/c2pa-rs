@@ -1,4 +1,4 @@
-// Copyright 2024 Adobe. All rights reserved.
+// Copyright 2022 Adobe. All rights reserved.
 // This file is licensed to you under the Apache License,
 // Version 2.0 (http://www.apache.org/licenses/LICENSE-2.0)
 // or the MIT license (http://opensource.org/licenses/MIT),
@@ -17,22 +17,17 @@ use crate::raw_signature::{
     AsyncRawSignatureValidator, RawSignatureValidationError, RawSignatureValidator,
 };
 
-/// An `RsaValidator` can validate raw signatures with one of the RSA-PSS
-/// signature algorithms.
-#[non_exhaustive]
-pub enum RsaValidator {
-    /// RSASSA-PSS using SHA-256 and MGF1 with SHA-256
-    Ps256,
-
-    /// RSASSA-PSS using SHA-384 and MGF1 with SHA-384
-    Ps384,
-
-    /// RSASSA-PSS using SHA-512 and MGF1 with SHA-512
-    Ps512,
+/// An `RsaLegacyValidator` can validate raw signatures with an RSA signature
+/// algorithm that is not supported directly by C2PA. (Some RFC 3161 time stamp
+/// providers issue these signatures, which is why it's supported here.)
+pub(crate) enum RsaLegacyValidator {
+    Rsa256,
+    Rsa384,
+    Rsa512,
 }
 
 #[async_trait(?Send)]
-impl AsyncRawSignatureValidator for RsaValidator {
+impl AsyncRawSignatureValidator for RsaLegacyValidator {
     async fn validate_async(
         &self,
         sig: &[u8],
@@ -42,9 +37,9 @@ impl AsyncRawSignatureValidator for RsaValidator {
         // Sync and async cases are identical for RSA.
 
         let sync_validator = match self {
-            Self::Ps256 => crate::webcrypto::validators::RsaValidator::Ps256,
-            Self::Ps384 => crate::webcrypto::validators::RsaValidator::Ps384,
-            Self::Ps512 => crate::webcrypto::validators::RsaValidator::Ps512,
+            Self::Rsa256 => crate::raw_signature::webcrypto::validators::RsaLegacyValidator::Rsa256,
+            Self::Rsa384 => crate::raw_signature::webcrypto::validators::RsaLegacyValidator::Rsa384,
+            Self::Rsa512 => crate::raw_signature::webcrypto::validators::RsaLegacyValidator::Rsa512,
         };
 
         sync_validator.validate(sig, data, public_key)
