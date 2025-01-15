@@ -1286,6 +1286,9 @@ impl Store {
         for i in claim.ingredient_assertions() {
             let ingredient_assertion = Ingredient::from_assertion(i)?;
 
+            validation_log
+                .push_ingredient_uri(jumbf::labels::to_assertion_uri(claim.label(), &i.label()));
+
             // is this an ingredient
             if let Some(ref c2pa_manifest) = &ingredient_assertion.c2pa_manifest {
                 let label = Store::manifest_label_from_path(&c2pa_manifest.url());
@@ -1350,6 +1353,7 @@ impl Store {
                     )?;
                 }
             }
+            validation_log.pop_ingredient_uri();
         }
 
         // check ingredient rules
@@ -1394,6 +1398,9 @@ impl Store {
         // walk the ingredients
         for i in claim.ingredient_assertions() {
             let ingredient_assertion = Ingredient::from_assertion(i)?;
+
+            validation_log
+                .push_ingredient_uri(jumbf::labels::to_assertion_uri(claim.label(), &i.label()));
 
             // is this an ingredient
             if let Some(ref c2pa_manifest) = &ingredient_assertion.c2pa_manifest {
@@ -1456,6 +1463,7 @@ impl Store {
                     )?;
                 }
             }
+            validation_log.pop_ingredient_uri();
         }
 
         Ok(())

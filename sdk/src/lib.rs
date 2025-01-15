@@ -136,10 +136,11 @@ pub use manifest_store::ManifestStore;
 #[cfg(feature = "v1_api")]
 pub use manifest_store_report::ManifestStoreReport;
 #[cfg(feature = "unstable_api")]
-pub use reader::{Reader, ValidationState};
+pub use reader::Reader;
 pub use resource_store::{ResourceRef, ResourceStore};
 pub use signer::{AsyncSigner, RemoteSigner, Signer};
 pub use utils::mime::format_from_path;
+pub use validation_results::{ValidationResultsMap, ValidationState};
 
 // Internal modules
 pub(crate) mod assertion;

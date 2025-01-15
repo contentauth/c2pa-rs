@@ -140,6 +140,10 @@ impl ManifestStore {
         self.validation_status.as_deref()
     }
 
+    pub fn validation_results(&self) -> Option<&ValidationResultsMap> {
+        self.validation_results.as_ref()
+    }
+
     /// creates a ManifestStore from a Store with validation
     #[async_generic]
     pub(crate) fn from_store(store: Store, validation_log: &impl StatusTracker) -> ManifestStore {
