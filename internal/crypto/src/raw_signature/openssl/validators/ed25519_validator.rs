@@ -13,9 +13,8 @@
 
 use openssl::{pkey::PKey, sign::Verifier};
 
-use crate::{
-    openssl::OpenSslMutex,
-    raw_signature::{RawSignatureValidationError, RawSignatureValidator},
+use crate::raw_signature::{
+    openssl::OpenSslMutex, RawSignatureValidationError, RawSignatureValidator,
 };
 
 /// An `Ed25519Validator` can validate raw signatures with the Ed25519 signature

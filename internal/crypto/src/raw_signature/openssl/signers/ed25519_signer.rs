@@ -12,58 +12,37 @@
 // each license.
 
 use openssl::{
-    ec::EcKey,
-    hash::MessageDigest,
     pkey::{PKey, Private},
     sign::Signer,
     x509::X509,
 };
 
 use crate::{
-    openssl::{cert_chain::check_chain_order, OpenSslMutex},
-    p1363::der_to_p1363,
-    raw_signature::{RawSigner, RawSignerError, SigningAlg},
+    raw_signature::{
+        openssl::{cert_chain::check_chain_order, OpenSslMutex},
+        RawSigner, RawSignerError, SigningAlg,
+    },
     time_stamp::TimeStampProvider,
 };
 
-enum EcdsaSigningAlg {
-    Es256,
-    Es384,
-    Es512,
-}
-
-/// Implements `Signer` trait using OpenSSL's implementation of
-/// ECDSA encryption.
-pub struct EcdsaSigner {
-    alg: EcdsaSigningAlg,
-
+/// Implements `RawSigner` trait using OpenSSL's implementation of
+/// Edwards Curve encryption.
+pub struct Ed25519Signer {
     cert_chain: Vec<X509>,
     cert_chain_len: usize,
 
-    private_key: EcKey<Private>,
+    private_key: PKey<Private>,
 
     time_stamp_service_url: Option<String>,
     time_stamp_size: usize,
 }
 
-impl EcdsaSigner {
+impl Ed25519Signer {
     pub(crate) fn from_cert_chain_and_private_key(
         cert_chain: &[u8],
         private_key: &[u8],
-        alg: SigningAlg,
         time_stamp_service_url: Option<String>,
     ) -> Result<Self, RawSignerError> {
-        let alg = match alg {
-            SigningAlg::Es256 => EcdsaSigningAlg::Es256,
-            SigningAlg::Es384 => EcdsaSigningAlg::Es384,
-            SigningAlg::Es512 => EcdsaSigningAlg::Es512,
-            _ => {
-                return Err(RawSignerError::InternalError(
-                    "EcdsaSigner should be used only for SigningAlg::Es***".to_string(),
-                ));
-            }
-        };
-
         let _openssl = OpenSslMutex::acquire()?;
 
         let cert_chain = X509::stack_from_pem(cert_chain)?;
@@ -75,13 +54,14 @@ impl EcdsaSigner {
             ));
         }
 
-        let private_key = EcKey::private_key_from_pem(private_key)?;
+        let private_key = PKey::private_key_from_pem(private_key)?;
 
-        Ok(EcdsaSigner {
-            alg,
+        Ok(Ed25519Signer {
             cert_chain,
             cert_chain_len,
+
             private_key,
+
             time_stamp_service_url,
             time_stamp_size: 10000,
             // TO DO: Call out to time stamp service to get actual time stamp and use that size?
@@ -89,30 +69,17 @@ impl EcdsaSigner {
     }
 }
 
-impl RawSigner for EcdsaSigner {
+impl RawSigner for Ed25519Signer {
     fn sign(&self, data: &[u8]) -> Result<Vec<u8>, RawSignerError> {
         let _openssl = OpenSslMutex::acquire()?;
 
-        let private_key = PKey::from_ec_key(self.private_key.clone())?;
+        let mut signer = Signer::new_without_digest(&self.private_key)?;
 
-        let mut signer = match self.alg {
-            EcdsaSigningAlg::Es256 => Signer::new(MessageDigest::sha256(), &private_key)?,
-            EcdsaSigningAlg::Es384 => Signer::new(MessageDigest::sha384(), &private_key)?,
-            EcdsaSigningAlg::Es512 => Signer::new(MessageDigest::sha512(), &private_key)?,
-        };
-
-        signer.update(data)?;
-
-        let der_sig = signer.sign_to_vec()?;
-        der_to_p1363(&der_sig, self.alg())
+        Ok(signer.sign_oneshot_to_vec(data)?)
     }
 
     fn alg(&self) -> SigningAlg {
-        match self.alg {
-            EcdsaSigningAlg::Es256 => SigningAlg::Es256,
-            EcdsaSigningAlg::Es384 => SigningAlg::Es384,
-            EcdsaSigningAlg::Es512 => SigningAlg::Es512,
-        }
+        SigningAlg::Ed25519
     }
 
     fn reserve_size(&self) -> usize {
@@ -129,7 +96,7 @@ impl RawSigner for EcdsaSigner {
     }
 }
 
-impl TimeStampProvider for EcdsaSigner {
+impl TimeStampProvider for Ed25519Signer {
     fn time_stamp_service_url(&self) -> Option<String> {
         self.time_stamp_service_url.clone()
     }

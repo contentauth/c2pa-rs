@@ -1,4 +1,4 @@
-use c2pa_crypto::webcrypto::WindowOrWorker;
+use c2pa_crypto::raw_signature::webcrypto::WindowOrWorker;
 use web_sys::Crypto;
 
 use crate::{Error, Result};

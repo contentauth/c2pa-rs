@@ -20,8 +20,10 @@ use openssl::{
 };
 
 use crate::{
-    openssl::{cert_chain::check_chain_order, OpenSslMutex},
-    raw_signature::{RawSigner, RawSignerError, SigningAlg},
+    raw_signature::{
+        openssl::{cert_chain::check_chain_order, OpenSslMutex},
+        RawSigner, RawSignerError, SigningAlg,
+    },
     time_stamp::TimeStampProvider,
 };
 

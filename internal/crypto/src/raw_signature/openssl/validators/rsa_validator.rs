@@ -18,9 +18,8 @@ use openssl::{
     sign::Verifier,
 };
 
-use crate::{
-    openssl::OpenSslMutex,
-    raw_signature::{RawSignatureValidationError, RawSignatureValidator},
+use crate::raw_signature::{
+    openssl::OpenSslMutex, RawSignatureValidationError, RawSignatureValidator,
 };
 
 /// An `RsaValidator` can validate raw signatures with one of the RSA-PSS

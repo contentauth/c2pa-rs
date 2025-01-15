@@ -11,13 +11,10 @@
 // specific language governing permissions and limitations under
 // each license.
 
-#![allow(missing_docs)] // REMOVE once this becomes `pub(crate)`
-
 use openssl::{hash::MessageDigest, pkey::PKey, rsa::Rsa, sign::Verifier};
 
-use crate::{
-    openssl::OpenSslMutex,
-    raw_signature::{RawSignatureValidationError, RawSignatureValidator},
+use crate::raw_signature::{
+    openssl::OpenSslMutex, RawSignatureValidationError, RawSignatureValidator,
 };
 
 /// An `RsaLegacyValidator` can validate raw signatures with an RSA signature
