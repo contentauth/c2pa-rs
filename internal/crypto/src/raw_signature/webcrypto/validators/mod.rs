@@ -21,9 +21,6 @@ use crate::raw_signature::{oids::*, RawSignatureValidator, SigningAlg};
 mod ecdsa_validator;
 pub use ecdsa_validator::EcdsaValidator;
 
-mod ed25519_validator;
-pub use ed25519_validator::Ed25519Validator;
-
 mod rsa_legacy_validator;
 pub(crate) use rsa_legacy_validator::RsaLegacyValidator;
 
@@ -36,10 +33,10 @@ pub fn validator_for_signing_alg(alg: SigningAlg) -> Option<Box<dyn RawSignature
         SigningAlg::Es256 => Some(Box::new(EcdsaValidator::Es256)),
         SigningAlg::Es384 => Some(Box::new(EcdsaValidator::Es384)),
         SigningAlg::Es512 => None, /* why is this unimplemented? */
-        SigningAlg::Ed25519 => Some(Box::new(Ed25519Validator {})),
         SigningAlg::Ps256 => Some(Box::new(RsaValidator::Ps256)),
         SigningAlg::Ps384 => Some(Box::new(RsaValidator::Ps384)),
         SigningAlg::Ps512 => Some(Box::new(RsaValidator::Ps512)),
+        _ => None,
     }
 }
 

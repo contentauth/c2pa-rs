@@ -25,8 +25,7 @@ pub(crate) use async_validators::{
 };
 
 pub(crate) mod check_certificate_trust;
-pub(crate) mod signers;
-pub mod validators;
+pub(crate) mod validators;
 
 mod window_or_worker;
 pub use window_or_worker::{WasmCryptoError, WindowOrWorker};

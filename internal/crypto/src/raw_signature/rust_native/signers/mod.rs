@@ -1,4 +1,4 @@
-// Copyright 2024 Adobe. All rights reserved.
+// Copyright 2025 Adobe. All rights reserved.
 // This file is licensed to you under the Apache License,
 // Version 2.0 (http://www.apache.org/licenses/LICENSE-2.0)
 // or the MIT license (http://opensource.org/licenses/MIT),
@@ -10,6 +10,9 @@
 // implied. See the LICENSE-MIT and LICENSE-APACHE files for the
 // specific language governing permissions and limitations under
 // each license.
+
+//! This module binds Rust native logic for generating raw signatures to this
+//! crate's [`RawSigner`] trait.
 
 use crate::raw_signature::{RawSigner, RawSignerError, SigningAlg};
 
@@ -39,7 +42,7 @@ pub(crate) fn signer_from_cert_chain_and_private_key(
         )),
 
         _ => Err(RawSignerError::InternalError(format!(
-            "unsupported algorithm: {alg}"
+            "unsupported signing algorithm {alg}"
         ))),
     }
 }

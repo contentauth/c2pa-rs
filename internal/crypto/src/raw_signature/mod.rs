@@ -18,6 +18,9 @@ pub(crate) mod oids;
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) mod openssl;
 
+#[cfg(any(target_arch = "wasm32", feature = "rust_native_crypto", test))]
+pub(crate) mod rust_native;
+
 pub(crate) mod signer;
 pub use signer::{
     async_signer_from_cert_chain_and_private_key, signer_from_cert_chain_and_private_key,

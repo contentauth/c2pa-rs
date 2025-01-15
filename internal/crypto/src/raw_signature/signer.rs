@@ -165,19 +165,23 @@ pub fn signer_from_cert_chain_and_private_key(
     alg: SigningAlg,
     time_stamp_service_url: Option<String>,
 ) -> Result<Box<dyn RawSigner + Send + Sync>, RawSignerError> {
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(any(target_arch = "wasm32", feature = "rust_native_crypto"))]
     {
-        return crate::raw_signature::openssl::signers::signer_from_cert_chain_and_private_key(
+        match crate::raw_signature::rust_native::signers::signer_from_cert_chain_and_private_key(
             cert_chain,
             private_key,
             alg,
-            time_stamp_service_url,
-        );
+            time_stamp_service_url.clone(),
+        ) {
+            Ok(signer) => return Ok(signer),
+            Err(RawSignerError::InternalError(_)) => (),
+            Err(err) => return Err(err),
+        }
     }
 
-    #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
+    #[cfg(not(target_arch = "wasm32"))]
     {
-        return crate::raw_signature::webcrypto::signers::signer_from_cert_chain_and_private_key(
+        return crate::raw_signature::openssl::signers::signer_from_cert_chain_and_private_key(
             cert_chain,
             private_key,
             alg,
