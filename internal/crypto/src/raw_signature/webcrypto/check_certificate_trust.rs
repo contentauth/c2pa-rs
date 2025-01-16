@@ -20,7 +20,10 @@ use x509_parser::{
 use crate::{
     cose::{CertificateTrustError, CertificateTrustPolicy},
     p1363::der_to_p1363,
-    raw_signature::{async_validator_for_signing_alg, RawSignatureValidationError, SigningAlg},
+    raw_signature::{
+        validator_for_signing_alg, webcrypto::async_validator_for_signing_alg,
+        RawSignatureValidationError, SigningAlg,
+    },
 };
 
 pub(crate) async fn check_certificate_trust(
@@ -252,13 +255,17 @@ async fn verify_data(
         sig
     };
 
-    let Some(validator) = async_validator_for_signing_alg(signing_alg) else {
-        return Err(CertificateTrustError::InvalidCertificate);
+    let result = if let Some(validator) = async_validator_for_signing_alg(signing_alg) {
+        validator
+            .validate_async(&adjusted_sig, &data, certificate_public_key.raw.as_ref())
+            .await
+    } else {
+        if let Some(validator) = validator_for_signing_alg(signing_alg) {
+            validator.validate(&adjusted_sig, &data, certificate_public_key.raw.as_ref())
+        } else {
+            return Err(CertificateTrustError::InvalidCertificate);
+        }
     };
-
-    let result = validator
-        .validate_async(&adjusted_sig, &data, certificate_public_key.raw.as_ref())
-        .await;
 
     match result {
         Ok(()) => Ok(true),
