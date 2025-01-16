@@ -138,13 +138,14 @@ impl ValidationResultsMap {
             uri.is_some_and(|uri| manifest_label_from_uri(uri) == Some(active_manifest_label))
         };
 
+        // todo - test if we can just use lack of an ingredient URI to determine if it's the active manifest
         if is_active_manifest(status.url()) {
             let scm = self
                 .active_manifest
                 .get_or_insert_with(StatusCodesMap::default);
             scm.add_status(status);
         } else {
-            let ingredient_url = status.ingredient_uri().unwrap_or("NOT FOUND!!!");
+            let ingredient_url = status.ingredient_uri().unwrap_or("NOT FOUND!!!"); //todo: is there an error status for this?
             let ingredient_vec = self.ingredient_deltas.get_or_insert_with(Vec::new);
             match ingredient_vec
                 .iter_mut()

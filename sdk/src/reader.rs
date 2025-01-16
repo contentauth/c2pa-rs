@@ -410,8 +410,9 @@ impl std::fmt::Display for Reader {
 /// Prints the full debug details of the manifest data.
 impl std::fmt::Debug for Reader {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let report = ManifestStoreReport::from_store(self.manifest_store.store())
+        let mut report = ManifestStoreReport::from_store(self.manifest_store.store())
             .map_err(|_| std::fmt::Error)?;
+        report.validation_results = self.manifest_store.validation_results().cloned();
         f.write_str(&report.to_string())
     }
 }
