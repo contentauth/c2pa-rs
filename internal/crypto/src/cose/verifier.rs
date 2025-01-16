@@ -34,7 +34,7 @@ use crate::{
         CertificateTrustError, CertificateTrustPolicy, CoseError,
     },
     p1363::parse_ec_der_sig,
-    raw_signature::{async_validator_for_signing_alg, validator_for_signing_alg, SigningAlg},
+    raw_signature::{validator_for_signing_alg, SigningAlg},
     time_stamp::TimeStampError,
 };
 
@@ -127,20 +127,30 @@ impl Verifier<'_> {
         let pk = sign_cert.public_key();
         let pk_der = pk.raw;
 
-        if _sync {
+        #[allow(unused_mut)] // never written to in the _sync case
+        let mut validated = false;
+
+        if _async {
+            // This awkward configuration is necessary because we only have async validator
+            // implementations for _some_ algorithms, but we also can't easily wrap the sync
+            // implementations due to the joys of `Send`. So we have to fall back to the
+            // synchronous implementation, even on WASM, for some algorithms.
+            #[cfg(target_arch = "wasm32")]
+            if let Some(validator) = crate::raw_signature::async_validator_for_signing_alg(alg) {
+                validator
+                    .validate_async(&sign1.signature, &tbs, pk_der)
+                    .await?;
+
+                validated = true;
+            }
+        }
+
+        if !validated {
             let Some(validator) = validator_for_signing_alg(alg) else {
                 return Err(CoseError::UnsupportedSigningAlgorithm);
             };
 
             validator.validate(&sign1.signature, &tbs, pk_der)?;
-        } else {
-            let Some(validator) = async_validator_for_signing_alg(alg) else {
-                return Err(CoseError::UnsupportedSigningAlgorithm);
-            };
-
-            validator
-                .validate_async(&sign1.signature, &tbs, pk_der)
-                .await?;
         }
 
         let subject = sign_cert

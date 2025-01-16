@@ -13,18 +13,16 @@
 
 use bcder::Oid;
 use rasn::types::OctetString;
-#[cfg(target_arch = "wasm32")]
 use wasm_bindgen_test::wasm_bindgen_test;
 
 use crate::raw_signature::{
-    async_validator_for_sig_and_hash_algs, async_validator_for_signing_alg,
+    async_validator_for_signing_alg, webcrypto::async_validator_for_sig_and_hash_algs,
     RawSignatureValidationError, SigningAlg,
 };
 
 const SAMPLE_DATA: &[u8] = b"some sample content to sign";
 
-#[cfg_attr(not(target_arch = "wasm32"), actix::test)]
-#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+#[wasm_bindgen_test]
 async fn es256() {
     let signature = include_bytes!("../fixtures/raw_signature/es256.raw_sig");
     let pub_key = include_bytes!("../fixtures/raw_signature/es256.pub_key");
@@ -37,8 +35,7 @@ async fn es256() {
         .unwrap();
 }
 
-#[cfg_attr(not(target_arch = "wasm32"), actix::test)]
-#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+#[wasm_bindgen_test]
 async fn es256_bad_signature() {
     let mut signature = include_bytes!("../fixtures/raw_signature/es256.raw_sig").to_vec();
     assert_ne!(signature[10], 10);
@@ -57,8 +54,7 @@ async fn es256_bad_signature() {
     );
 }
 
-#[cfg_attr(not(target_arch = "wasm32"), actix::test)]
-#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+#[wasm_bindgen_test]
 async fn es256_bad_data() {
     let signature = include_bytes!("../fixtures/raw_signature/es256.raw_sig");
     let pub_key = include_bytes!("../fixtures/raw_signature/es256.pub_key");
@@ -77,8 +73,7 @@ async fn es256_bad_data() {
     );
 }
 
-#[cfg_attr(not(target_arch = "wasm32"), actix::test)]
-#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+#[wasm_bindgen_test]
 async fn es384() {
     let signature = include_bytes!("../fixtures/raw_signature/es384.raw_sig");
     let pub_key = include_bytes!("../fixtures/raw_signature/es384.pub_key");
@@ -91,8 +86,7 @@ async fn es384() {
         .unwrap();
 }
 
-#[cfg_attr(not(target_arch = "wasm32"), actix::test)]
-#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+#[wasm_bindgen_test]
 async fn es512() {
     let signature = include_bytes!("../fixtures/raw_signature/es512.raw_sig");
     let pub_key = include_bytes!("../fixtures/raw_signature/es512.pub_key");
@@ -105,8 +99,7 @@ async fn es512() {
         .unwrap();
 }
 
-#[cfg_attr(not(target_arch = "wasm32"), actix::test)]
-#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+#[wasm_bindgen_test]
 async fn ed25519() {
     let signature = include_bytes!("../fixtures/raw_signature/ed25519.raw_sig");
     let pub_key = include_bytes!("../fixtures/raw_signature/ed25519.pub_key");
@@ -119,8 +112,7 @@ async fn ed25519() {
         .unwrap();
 }
 
-#[cfg_attr(not(target_arch = "wasm32"), actix::test)]
-#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+#[wasm_bindgen_test]
 async fn ed25519_bad_data() {
     let signature = include_bytes!("../fixtures/raw_signature/ed25519.raw_sig");
     let pub_key = include_bytes!("../fixtures/raw_signature/ed25519.pub_key");
@@ -140,8 +132,7 @@ async fn ed25519_bad_data() {
     );
 }
 
-#[cfg_attr(not(target_arch = "wasm32"), actix::test)]
-#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+#[wasm_bindgen_test]
 async fn ps256() {
     let signature = include_bytes!("../fixtures/raw_signature/ps256.raw_sig");
     let pub_key = include_bytes!("../fixtures/raw_signature/ps256.pub_key");
@@ -154,8 +145,7 @@ async fn ps256() {
         .unwrap();
 }
 
-#[cfg_attr(not(target_arch = "wasm32"), actix::test)]
-#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+#[wasm_bindgen_test]
 async fn ps256_bad_signature() {
     let mut signature = include_bytes!("../fixtures/raw_signature/ps256.raw_sig").to_vec();
     assert_ne!(signature[10], 10);
@@ -174,8 +164,7 @@ async fn ps256_bad_signature() {
     );
 }
 
-#[cfg_attr(not(target_arch = "wasm32"), actix::test)]
-#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+#[wasm_bindgen_test]
 async fn ps256_bad_data() {
     let signature = include_bytes!("../fixtures/raw_signature/ps256.raw_sig");
     let pub_key = include_bytes!("../fixtures/raw_signature/ps256.pub_key");
@@ -194,8 +183,7 @@ async fn ps256_bad_data() {
     );
 }
 
-#[cfg_attr(not(target_arch = "wasm32"), actix::test)]
-#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+#[wasm_bindgen_test]
 async fn ps384() {
     let signature = include_bytes!("../fixtures/raw_signature/ps384.raw_sig");
     let pub_key = include_bytes!("../fixtures/raw_signature/ps384.pub_key");
@@ -208,8 +196,7 @@ async fn ps384() {
         .unwrap();
 }
 
-#[cfg_attr(not(target_arch = "wasm32"), actix::test)]
-#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+#[wasm_bindgen_test]
 async fn ps512() {
     let signature = include_bytes!("../fixtures/raw_signature/ps512.raw_sig");
     let pub_key = include_bytes!("../fixtures/raw_signature/ps512.pub_key");
@@ -234,8 +221,7 @@ const SHA384_OID: Oid = bcder::Oid(OctetString::from_static(&[96, 134, 72, 1, 10
 
 const SHA512_OID: Oid = bcder::Oid(OctetString::from_static(&[96, 134, 72, 1, 101, 3, 4, 2, 3]));
 
-#[cfg_attr(not(target_arch = "wasm32"), actix::test)]
-#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+#[wasm_bindgen_test]
 async fn legacy_rs256() {
     let signature = include_bytes!("../fixtures/raw_signature/legacy/rs256.raw_sig");
     let pub_key = include_bytes!("../fixtures/raw_signature/legacy/rs256.pub_key");
@@ -248,8 +234,7 @@ async fn legacy_rs256() {
         .unwrap();
 }
 
-#[cfg_attr(not(target_arch = "wasm32"), actix::test)]
-#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+#[wasm_bindgen_test]
 async fn legacy_rs256_bad_signature() {
     let mut signature = include_bytes!("../fixtures/raw_signature/legacy/rs256.raw_sig").to_vec();
     assert_ne!(signature[10], 10);
@@ -268,8 +253,7 @@ async fn legacy_rs256_bad_signature() {
     );
 }
 
-#[cfg_attr(not(target_arch = "wasm32"), actix::test)]
-#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+#[wasm_bindgen_test]
 async fn legacy_rs256_bad_data() {
     let signature = include_bytes!("../fixtures/raw_signature/legacy/rs256.raw_sig");
     let pub_key = include_bytes!("../fixtures/raw_signature/legacy/rs256.pub_key");
@@ -288,8 +272,7 @@ async fn legacy_rs256_bad_data() {
     );
 }
 
-#[cfg_attr(not(target_arch = "wasm32"), actix::test)]
-#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+#[wasm_bindgen_test]
 async fn legacy_rs384() {
     let signature = include_bytes!("../fixtures/raw_signature/legacy/rs384.raw_sig");
     let pub_key = include_bytes!("../fixtures/raw_signature/legacy/rs384.pub_key");
@@ -302,8 +285,7 @@ async fn legacy_rs384() {
         .unwrap();
 }
 
-#[cfg_attr(not(target_arch = "wasm32"), actix::test)]
-#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+#[wasm_bindgen_test]
 async fn legacy_rs512() {
     let signature = include_bytes!("../fixtures/raw_signature/legacy/rs512.raw_sig");
     let pub_key = include_bytes!("../fixtures/raw_signature/legacy/rs512.pub_key");
