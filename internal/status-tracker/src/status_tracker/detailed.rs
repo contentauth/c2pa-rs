@@ -66,10 +66,10 @@ impl StatusTracker for DetailedStatusTracker {
     }
 
     fn push_ingredient_uri<S: Into<String>>(&mut self, uri: S) {
-        self.ingredient_uris.push(dbg!(uri.into()));
+        self.ingredient_uris.push(uri.into());
     }
 
     fn pop_ingredient_uri(&mut self) -> Option<String> {
-        dbg!(self.ingredient_uris.pop())
+        self.ingredient_uris.pop()
     }
 }
