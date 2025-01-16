@@ -129,20 +129,20 @@ impl From<openssl::error::ErrorStack> for RawSignerError {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-impl From<crate::openssl::OpenSslMutexUnavailable> for RawSignerError {
-    fn from(err: crate::openssl::OpenSslMutexUnavailable) -> Self {
+impl From<crate::raw_signature::openssl::OpenSslMutexUnavailable> for RawSignerError {
+    fn from(err: crate::raw_signature::openssl::OpenSslMutexUnavailable) -> Self {
         Self::InternalError(err.to_string())
     }
 }
 
 #[cfg(target_arch = "wasm32")]
-impl From<crate::webcrypto::WasmCryptoError> for RawSignerError {
-    fn from(err: crate::webcrypto::WasmCryptoError) -> Self {
+impl From<crate::raw_signature::webcrypto::WasmCryptoError> for RawSignerError {
+    fn from(err: crate::raw_signature::webcrypto::WasmCryptoError) -> Self {
         match err {
-            crate::webcrypto::WasmCryptoError::UnknownContext => {
+            crate::raw_signature::webcrypto::WasmCryptoError::UnknownContext => {
                 Self::InternalError("unknown WASM context".to_string())
             }
-            crate::webcrypto::WasmCryptoError::NoCryptoAvailable => {
+            crate::raw_signature::webcrypto::WasmCryptoError::NoCryptoAvailable => {
                 Self::InternalError("WASM crypto unavailable".to_string())
             }
         }
@@ -165,19 +165,23 @@ pub fn signer_from_cert_chain_and_private_key(
     alg: SigningAlg,
     time_stamp_service_url: Option<String>,
 ) -> Result<Box<dyn RawSigner + Send + Sync>, RawSignerError> {
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(any(target_arch = "wasm32", feature = "rust_native_crypto"))]
     {
-        return crate::openssl::signers::signer_from_cert_chain_and_private_key(
+        match crate::raw_signature::rust_native::signers::signer_from_cert_chain_and_private_key(
             cert_chain,
             private_key,
             alg,
-            time_stamp_service_url,
-        );
+            time_stamp_service_url.clone(),
+        ) {
+            Ok(signer) => return Ok(signer),
+            Err(RawSignerError::InternalError(_)) => (),
+            Err(err) => return Err(err),
+        }
     }
 
-    #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
+    #[cfg(not(target_arch = "wasm32"))]
     {
-        return crate::webcrypto::signers::signer_from_cert_chain_and_private_key(
+        return crate::raw_signature::openssl::signers::signer_from_cert_chain_and_private_key(
             cert_chain,
             private_key,
             alg,
@@ -199,16 +203,12 @@ pub fn signer_from_cert_chain_and_private_key(
 ///
 /// May return an `Err` response if the certificate chain or private key are
 /// invalid.
-#[allow(unused)] // arguments may or may not be used depending on crate features
 pub fn async_signer_from_cert_chain_and_private_key(
     cert_chain: &[u8],
     private_key: &[u8],
     alg: SigningAlg,
     time_stamp_service_url: Option<String>,
 ) -> Result<Box<dyn AsyncRawSigner + Send + Sync>, RawSignerError> {
-    // TO DO: Preferentially use WASM-based signers, some of which are necessarily
-    // async.
-
     let sync_signer = signer_from_cert_chain_and_private_key(
         cert_chain,
         private_key,
