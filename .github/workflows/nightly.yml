@@ -146,9 +146,9 @@ jobs:
         export NIGHTLY_SUFFIX=$(echo -nightly+`date +%F`-`git rev-parse --short HEAD`)
         echo Will add nightly suffix $NIGHTLY_SUFFIX
 
-        sed -i "s/^version = \"\\(.*\\)\"/version = \"\\1$NIGHTLY_SUFFIX\"/" sdk/Cargo.toml
-        sed -i "s/path = \"..\/sdk\", version = \"\\(.*\\)\"/path = \"..\/sdk\", version = \"\\1$NIGHTLY_SUFFIX\"/" cawg_identity/Cargo.toml
-        sed -i "s/path = \"..\/sdk\", version = \"\\(.*\\)\"/path = \"..\/sdk\", version = \"\\1$NIGHTLY_SUFFIX\"/" cli/Cargo.toml
+        sed -i "s/^version = \"\\(\[^\"\]*\\)\"/version = \"\\1$NIGHTLY_SUFFIX\"/" sdk/Cargo.toml
+        sed -i "s/path = \"..\/sdk\", version = \"\\(\[^\"\]*\\)\"/path = \"..\/sdk\", version = \"\\1$NIGHTLY_SUFFIX\"/" cawg_identity/Cargo.toml
+        sed -i "s/path = \"..\/sdk\", version = \"\\(\[^\"\]*\\)\"/path = \"..\/sdk\", version = \"\\1$NIGHTLY_SUFFIX\"/" cli/Cargo.toml
 
         git diff
         
