@@ -11,6 +11,7 @@
 // specific language governing permissions and limitations under
 // each license.
 
+use const_oid::ObjectIdentifier;
 use der::{pem::PemLabel, SecretDocument};
 use num_bigint_dig::BigUint;
 use rsa::{
@@ -47,6 +48,11 @@ pub(crate) struct RsaSigner {
     time_stamp_size: usize,
 }
 
+// Can't use the OIDs defined at certificate_profile.rs because they're
+// different underlying types. (Sigh.)
+const RSA_OID: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.2.840.113549.1.1.1");
+const RSA_PSS_OID: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.2.840.113549.1.1.10");
+
 impl RsaSigner {
     pub(crate) fn from_cert_chain_and_private_key(
         cert_chain: &[u8],
@@ -78,16 +84,16 @@ impl RsaSigner {
         let pki = PrivateKeyInfo::try_from(private_key_der.as_bytes())
             .map_err(|e| RawSignerError::InvalidSigningCredentials(e.to_string()))?;
 
-        // TO DO: Check for correct OID here.
-        // eprintln!(
-        //     "TO DO: Check for correct OID here: {oid}",
-        //     oid = &pki.algorithm.oid
-        // );
+        let oid = &pki.algorithm.oid;
+        if !(oid == &RSA_OID || oid == &RSA_PSS_OID) {
+            return Err(RawSignerError::InvalidSigningCredentials(format!(
+                "unsupported private key algorithm ({oid})"
+            )));
+        }
 
         let pkcs1_key = pkcs1::RsaPrivateKey::try_from(pki.private_key)
             .map_err(|e| RawSignerError::InvalidSigningCredentials(e.to_string()))?;
 
-        // Multi-prime RSA keys not currently supported
         if pkcs1_key.version() != pkcs1::Version::TwoPrime {
             return Err(RawSignerError::InvalidSigningCredentials(
                 "multi-prime RSA keys not supported".to_string(),
@@ -132,26 +138,20 @@ impl RawSigner for RsaSigner {
 
         match self.alg {
             RsaSigningAlg::Ps256 => {
-                let s = rsa::pss::SigningKey::<Sha256>::new(self.private_key.clone());
-
+                let s = SigningKey::<Sha256>::new(self.private_key.clone());
                 let sig = s.sign_with_rng(&mut rng, data);
-
                 Ok(sig.to_bytes().to_vec())
             }
 
             RsaSigningAlg::Ps384 => {
                 let s = SigningKey::<Sha384>::new(self.private_key.clone());
-
                 let sig = s.sign_with_rng(&mut rng, data);
-
                 Ok(sig.to_bytes().to_vec())
             }
 
             RsaSigningAlg::Ps512 => {
                 let s = SigningKey::<Sha512>::new(self.private_key.clone());
-
                 let sig = s.sign_with_rng(&mut rng, data);
-
                 Ok(sig.to_bytes().to_vec())
             }
         }

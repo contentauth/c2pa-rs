@@ -32,6 +32,7 @@ rustdoc-args = ["--cfg", "docsrs"]
 [features]
 json_schema = ["dep:schemars"]
 rust_native_crypto = [
+    "dep:const-oid",
     "dep:der",
     "dep:ed25519-dalek",
     "dep:num-bigint-dig",
@@ -50,6 +51,7 @@ bytes = "1.7.2"
 c2pa-status-tracker = { path = "../status-tracker", version = "0.2.0" }
 ciborium = "0.2.2"
 const-hex = "1.14"
+const-oid = { version = "0.9.6", optional = true }
 coset = "0.3.1"
 der = { version = "0.7.9", optional = true }
 ed25519-dalek = { version = "2.1.1", features = ["alloc", "digest", "pem", "pkcs8"], optional = true }
@@ -94,6 +96,7 @@ features = ["now", "wasmbind"]
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 async-trait = "0.1.77"
+const-oid = "0.9.6"
 der = "0.7.9"
 ecdsa = "0.16.9"
 ed25519-dalek = { version = "2.1.1", features = ["alloc", "digest", "pem", "pkcs8"] }
@@ -119,6 +122,7 @@ getrandom = { version = "0.2.7", features = ["js"] }
 js-sys = "0.3.58"
 
 [dev-dependencies]
+const-oid = "0.9.6"
 der = "0.7.9"
 ed25519-dalek = { version = "2.1.1", features = ["alloc", "digest", "pem", "pkcs8"] }
 num-bigint-dig = "0.8.4"

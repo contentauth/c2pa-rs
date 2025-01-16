@@ -805,6 +805,7 @@ dependencies = [
  "chrono",
  "ciborium",
  "const-hex",
+ "const-oid",
  "coset",
  "der",
  "ecdsa",
