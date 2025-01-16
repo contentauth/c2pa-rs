@@ -23,10 +23,7 @@ pub fn async_validator_for_signing_alg(
         SigningAlg::Es256 => Some(Box::new(EcdsaValidator::Es256)),
         SigningAlg::Es384 => Some(Box::new(EcdsaValidator::Es384)),
         SigningAlg::Es512 => Some(Box::new(EcdsaValidator::Es512)),
-        SigningAlg::Ed25519 => Some(Box::new(Ed25519Validator {})),
-        SigningAlg::Ps256 => Some(Box::new(RsaValidator::Ps256)),
-        SigningAlg::Ps384 => Some(Box::new(RsaValidator::Ps384)),
-        SigningAlg::Ps512 => Some(Box::new(RsaValidator::Ps512)),
+        _ => None,
     }
 }
 
@@ -36,21 +33,7 @@ pub(crate) fn async_validator_for_sig_and_hash_algs(
     sig_alg: &Oid,
     hash_alg: &Oid,
 ) -> Option<Box<dyn AsyncRawSignatureValidator>> {
-    if sig_alg.as_ref() == RSA_OID.as_bytes()
-        || sig_alg.as_ref() == SHA256_WITH_RSAENCRYPTION_OID.as_bytes()
-        || sig_alg.as_ref() == SHA384_WITH_RSAENCRYPTION_OID.as_bytes()
-        || sig_alg.as_ref() == SHA512_WITH_RSAENCRYPTION_OID.as_bytes()
-    {
-        if hash_alg.as_ref() == SHA1_OID.as_bytes() {
-            return None; // not supported
-        } else if hash_alg.as_ref() == SHA256_OID.as_bytes() {
-            return Some(Box::new(RsaLegacyValidator::Rsa256));
-        } else if hash_alg.as_ref() == SHA384_OID.as_bytes() {
-            return Some(Box::new(RsaLegacyValidator::Rsa384));
-        } else if hash_alg.as_ref() == SHA512_OID.as_bytes() {
-            return Some(Box::new(RsaLegacyValidator::Rsa512));
-        }
-    } else if sig_alg.as_ref() == EC_PUBLICKEY_OID.as_bytes()
+    if sig_alg.as_ref() == EC_PUBLICKEY_OID.as_bytes()
         || sig_alg.as_ref() == ECDSA_WITH_SHA256_OID.as_bytes()
         || sig_alg.as_ref() == ECDSA_WITH_SHA384_OID.as_bytes()
         || sig_alg.as_ref() == ECDSA_WITH_SHA512_OID.as_bytes()
@@ -62,8 +45,6 @@ pub(crate) fn async_validator_for_sig_and_hash_algs(
         } else if hash_alg.as_ref() == SHA512_OID.as_bytes() {
             return async_validator_for_signing_alg(SigningAlg::Es512);
         }
-    } else if sig_alg.as_ref() == ED25519_OID.as_bytes() {
-        return async_validator_for_signing_alg(SigningAlg::Ed25519);
     }
 
     None
@@ -71,12 +52,3 @@ pub(crate) fn async_validator_for_sig_and_hash_algs(
 
 pub(crate) mod ecdsa_validator;
 use ecdsa_validator::EcdsaValidator;
-
-pub(crate) mod ed25519_validator;
-use ed25519_validator::Ed25519Validator;
-
-pub(crate) mod rsa_legacy_validator;
-use rsa_legacy_validator::RsaLegacyValidator;
-
-pub(crate) mod rsa_validator;
-use rsa_validator::RsaValidator;

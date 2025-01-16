@@ -420,48 +420,17 @@ struct TempRemoteSigner {}
 #[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
 impl crate::signer::RemoteSigner for TempRemoteSigner {
     async fn sign_remote(&self, claim_bytes: &[u8]) -> crate::error::Result<Vec<u8>> {
-        #[cfg(all(feature = "openssl_sign", feature = "file_io"))]
-        {
-            let signer = crate::utils::test_signer::async_test_signer(SigningAlg::Ps256);
+        let signer = crate::utils::test_signer::async_test_signer(SigningAlg::Ps256);
 
-            // this would happen on some remote server
-            // TEMPORARY: Assume v1 until we plumb things through further.
-            crate::cose_sign::cose_sign_async(
-                &signer,
-                claim_bytes,
-                self.reserve_size(),
-                TimeStampStorage::V1_sigTst,
-            )
-            .await
-        }
-        #[cfg(not(any(
-            target_arch = "wasm32",
-            all(feature = "openssl_sign", feature = "file_io")
-        )))]
-        {
-            use std::io::{Seek, Write};
-
-            let mut sign_bytes = std::io::Cursor::new(vec![0u8; self.reserve_size()]);
-
-            sign_bytes.rewind()?;
-            sign_bytes.write_all(claim_bytes)?;
-
-            // fake sig
-            Ok(sign_bytes.into_inner())
-        }
-        #[cfg(target_arch = "wasm32")]
-        {
-            let signer = crate::wasm::RsaWasmSignerAsync::new();
-
-            // TEMPORARY: Assume V1 until we plumb more through.
-            crate::cose_sign::cose_sign_async(
-                &signer,
-                claim_bytes,
-                self.reserve_size(),
-                TimeStampStorage::V1_sigTst,
-            )
-            .await
-        }
+        // this would happen on some remote server
+        // TEMPORARY: Assume v1 until we plumb things through further.
+        crate::cose_sign::cose_sign_async(
+            &signer,
+            claim_bytes,
+            self.reserve_size(),
+            TimeStampStorage::V1_sigTst,
+        )
+        .await
     }
 
     fn reserve_size(&self) -> usize {
@@ -591,49 +560,17 @@ struct TempAsyncRemoteSigner {
 impl AsyncSigner for TempAsyncRemoteSigner {
     // this will not be called but requires an implementation
     async fn sign(&self, claim_bytes: Vec<u8>) -> Result<Vec<u8>> {
-        #[cfg(all(feature = "openssl_sign", feature = "file_io"))]
-        {
-            let signer = crate::utils::test_signer::async_test_signer(SigningAlg::Ps256);
+        let signer = crate::utils::test_signer::async_test_signer(SigningAlg::Ps256);
 
-            // this would happen on some remote server
-            // TEMPORARY: Assume V1 until we plumb through further.
-            crate::cose_sign::cose_sign_async(
-                &signer,
-                &claim_bytes,
-                AsyncSigner::reserve_size(self),
-                TimeStampStorage::V1_sigTst,
-            )
-            .await
-        }
-
-        #[cfg(target_arch = "wasm32")]
-        {
-            let signer = crate::wasm::rsa_wasm_signer::RsaWasmSignerAsync::new();
-            // TEMPORARY: Assume V1 until we plumb through further.
-            crate::cose_sign::cose_sign_async(
-                &signer,
-                &claim_bytes,
-                AsyncRawSigner::reserve_size(self),
-                TimeStampStorage::V1_sigTst,
-            )
-            .await
-        }
-
-        #[cfg(not(any(
-            target_arch = "wasm32",
-            all(feature = "openssl_sign", feature = "file_io")
-        )))]
-        {
-            use std::io::{Seek, Write};
-
-            let mut sign_bytes = std::io::Cursor::new(vec![0u8; AsyncSigner::reserve_size(self)]);
-
-            sign_bytes.rewind()?;
-            sign_bytes.write_all(&claim_bytes)?;
-
-            // fake sig
-            Ok(sign_bytes.into_inner())
-        }
+        // this would happen on some remote server
+        // TEMPORARY: Assume V1 until we plumb through further.
+        crate::cose_sign::cose_sign_async(
+            &signer,
+            &claim_bytes,
+            AsyncSigner::reserve_size(self),
+            TimeStampStorage::V1_sigTst,
+        )
+        .await
     }
 
     // signer will return a COSE structure

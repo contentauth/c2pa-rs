@@ -1,4 +1,4 @@
-// Copyright 2022 Adobe. All rights reserved.
+// Copyright 2024 Adobe. All rights reserved.
 // This file is licensed to you under the Apache License,
 // Version 2.0 (http://www.apache.org/licenses/LICENSE-2.0)
 // or the MIT license (http://opensource.org/licenses/MIT),
@@ -12,27 +12,31 @@
 // each license.
 
 use rsa::{
-    pkcs1v15::{Signature, VerifyingKey},
+    pss::{Signature, VerifyingKey},
     sha2::{Sha256, Sha384, Sha512},
     signature::Verifier,
-    RsaPublicKey,
+    BigUint, RsaPublicKey,
 };
 use spki::SubjectPublicKeyInfoRef;
-use x509_parser::der_parser::ber::parse_ber_sequence;
+use x509_parser::der_parser::ber::{parse_ber_sequence, BerObject};
 
-use super::rsa_validator::biguint_val;
 use crate::raw_signature::{RawSignatureValidationError, RawSignatureValidator};
 
-/// An `RsaLegacyValidator` can validate raw signatures with an RSA signature
-/// algorithm that is not supported directly by C2PA. (Some RFC 3161 time stamp
-/// providers issue these signatures, which is why it's supported here.)
-pub(crate) enum RsaLegacyValidator {
-    Rsa256,
-    Rsa384,
-    Rsa512,
+/// An `RsaValidator` can validate raw signatures with one of the RSA-PSS
+/// signature algorithms.
+#[non_exhaustive]
+pub enum RsaValidator {
+    /// RSASSA-PSS using SHA-256 and MGF1 with SHA-256
+    Ps256,
+
+    /// RSASSA-PSS using SHA-384 and MGF1 with SHA-384
+    Ps384,
+
+    /// RSASSA-PSS using SHA-512 and MGF1 with SHA-512
+    Ps512,
 }
 
-impl RawSignatureValidator for RsaLegacyValidator {
+impl RawSignatureValidator for RsaValidator {
     fn validate(
         &self,
         sig: &[u8],
@@ -46,7 +50,7 @@ impl RawSignatureValidator for RsaLegacyValidator {
         let spki = SubjectPublicKeyInfoRef::try_from(public_key)
             .map_err(|_| RawSignatureValidationError::InvalidPublicKey)?;
 
-        let (_, seq) = parse_ber_sequence(&spki.subject_public_key.raw_bytes())
+        let (_, seq) = parse_ber_sequence(spki.subject_public_key.raw_bytes())
             .map_err(|_| RawSignatureValidationError::InvalidPublicKey)?;
 
         let modulus = biguint_val(&seq[0]);
@@ -56,22 +60,28 @@ impl RawSignatureValidator for RsaLegacyValidator {
             .map_err(|_| RawSignatureValidationError::InvalidPublicKey)?;
 
         let result = match self {
-            Self::Rsa256 => {
+            Self::Ps256 => {
                 let vk = VerifyingKey::<Sha256>::new(public_key);
-                vk.verify(&data, &signature)
+                vk.verify(data, &signature)
             }
-
-            Self::Rsa384 => {
+            Self::Ps384 => {
                 let vk = VerifyingKey::<Sha384>::new(public_key);
-                vk.verify(&data, &signature)
+                vk.verify(data, &signature)
             }
-
-            Self::Rsa512 => {
+            Self::Ps512 => {
                 let vk = VerifyingKey::<Sha512>::new(public_key);
-                vk.verify(&data, &signature)
+                vk.verify(data, &signature)
             }
         };
 
         result.map_err(|_| RawSignatureValidationError::SignatureMismatch)
     }
+}
+
+pub(super) fn biguint_val(ber_object: &BerObject) -> BigUint {
+    ber_object
+        .as_biguint()
+        .map(|x| x.to_u32_digits())
+        .map(rsa::BigUint::new)
+        .unwrap_or_default()
 }

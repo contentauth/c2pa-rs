@@ -203,16 +203,12 @@ pub fn signer_from_cert_chain_and_private_key(
 ///
 /// May return an `Err` response if the certificate chain or private key are
 /// invalid.
-#[allow(unused)] // arguments may or may not be used depending on crate features
 pub fn async_signer_from_cert_chain_and_private_key(
     cert_chain: &[u8],
     private_key: &[u8],
     alg: SigningAlg,
     time_stamp_service_url: Option<String>,
 ) -> Result<Box<dyn AsyncRawSigner + Send + Sync>, RawSignerError> {
-    // TO DO: Preferentially use WASM-based signers, some of which are necessarily
-    // async.
-
     let sync_signer = signer_from_cert_chain_and_private_key(
         cert_chain,
         private_key,
