@@ -420,17 +420,17 @@ struct TempRemoteSigner {}
 #[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
 impl crate::signer::RemoteSigner for TempRemoteSigner {
     async fn sign_remote(&self, claim_bytes: &[u8]) -> crate::error::Result<Vec<u8>> {
-            let signer = crate::utils::test_signer::async_test_signer(SigningAlg::Ps256);
+        let signer = crate::utils::test_signer::async_test_signer(SigningAlg::Ps256);
 
-            // this would happen on some remote server
-            // TEMPORARY: Assume v1 until we plumb things through further.
-            crate::cose_sign::cose_sign_async(
-                &signer,
-                claim_bytes,
-                self.reserve_size(),
-                TimeStampStorage::V1_sigTst,
-            )
-            .await
+        // this would happen on some remote server
+        // TEMPORARY: Assume v1 until we plumb things through further.
+        crate::cose_sign::cose_sign_async(
+            &signer,
+            claim_bytes,
+            self.reserve_size(),
+            TimeStampStorage::V1_sigTst,
+        )
+        .await
     }
 
     fn reserve_size(&self) -> usize {
@@ -560,18 +560,18 @@ struct TempAsyncRemoteSigner {
 impl AsyncSigner for TempAsyncRemoteSigner {
     // this will not be called but requires an implementation
     async fn sign(&self, claim_bytes: Vec<u8>) -> Result<Vec<u8>> {
-            let signer = crate::utils::test_signer::async_test_signer(SigningAlg::Ps256);
+        let signer = crate::utils::test_signer::async_test_signer(SigningAlg::Ps256);
 
-            // this would happen on some remote server
-            // TEMPORARY: Assume V1 until we plumb through further.
-            crate::cose_sign::cose_sign_async(
-                &signer,
-                &claim_bytes,
-                AsyncSigner::reserve_size(self),
-                TimeStampStorage::V1_sigTst,
-            )
-            .await
-}
+        // this would happen on some remote server
+        // TEMPORARY: Assume V1 until we plumb through further.
+        crate::cose_sign::cose_sign_async(
+            &signer,
+            &claim_bytes,
+            AsyncSigner::reserve_size(self),
+            TimeStampStorage::V1_sigTst,
+        )
+        .await
+    }
 
     // signer will return a COSE structure
     fn direct_cose_handling(&self) -> bool {
