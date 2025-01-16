@@ -6,6 +6,41 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 The format of this changelog is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.3.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-crypto-v0.2.0...c2pa-crypto-v0.3.0)
+_16 January 2025_
+
+### Added
+
+* Add `rsa` crate support to `rust_native_crypto` feature (#853)
+* Introduce new (experimental) `rust_native_crypto` feature (#850)
+* Review `c2pa-crypto` crate API (#813)
+* Add new function `c2pa_crypto::cose::signing_time_from_sign1` (#812)
+* Move COSE signing into `c2pa_crypto` crate (#807)
+* Move COSE timestamp generation into `c2pa_crypto` (#803)
+* Move COSE signature verification into `c2pa_crypto` (#801)
+* Make `AsyncRawSignatureValidator` available on all platforms (#800)
+* Introduce `c2pa_crypto::Verifier::verify_trust` (#798)
+* Introduce `c2pa_crypto::cose::Verifier` (#797)
+* Consolidate implementations of `cert_chain_from_sign1` in `c2pa_crypto` (#796)
+* Move `signing_alg_from_sign1` into `c2pa-crypto` (#795)
+* Move `get_cose_sign1` into `c2pa-crypto` crate (#794)
+* Move COSE OCSP support into c2pa-crypto (#793)
+* Move `verify_trust` into `c2pa_crypto` (#784)
+* Introduce `c2pa_crypto::CertificateAcceptancePolicy` (#779)
+* Bump MSRV to 1.81.0 (#781)
+
+### Fixed
+
+* Disable the built-in async validators on non-WASM platforms (#855)
+* Bring `claim_v2` changes from #707 into `c2pa_crypto` (#811)
+* Improve usage of `#[cfg]` directives (#783)
+
+### Updated dependencies
+
+* Bump thiserror from 2.0.6 to 2.0.8 (#787)
+* Bump rasn from 0.18.0 to 0.22.0 (#727)
+* Bump thiserror from 1.0.69 to 2.0.6 (#770)
+
 ## [0.2.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-crypto-v0.1.2...c2pa-crypto-v0.2.0)
 _12 December 2024_
 

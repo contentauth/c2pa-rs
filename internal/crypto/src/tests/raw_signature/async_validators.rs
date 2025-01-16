@@ -14,8 +14,7 @@
 use wasm_bindgen_test::wasm_bindgen_test;
 
 use crate::raw_signature::{
-    async_validator_for_signing_alg,
-    RawSignatureValidationError, SigningAlg,
+    async_validator_for_signing_alg, RawSignatureValidationError, SigningAlg,
 };
 
 const SAMPLE_DATA: &[u8] = b"some sample content to sign";

@@ -27,7 +27,6 @@ pub mod tests {
     wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
 
     #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
-    #[wasm_bindgen_test]
     fn test_get_random_values() {
         let len: usize = 32;
         let random1 = get_random_values(len).unwrap();
