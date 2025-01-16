@@ -11,4 +11,9 @@
 // specific language governing permissions and limitations under
 // each license.
 
-mod validator;
+mod async_signers;
+#[cfg(target_arch = "wasm32")]
+mod async_validators;
+mod rust_native;
+mod signers;
+mod validators;
