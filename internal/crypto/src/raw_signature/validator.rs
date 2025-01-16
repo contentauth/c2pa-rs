@@ -107,20 +107,20 @@ pub(crate) fn validator_for_sig_and_hash_algs(
         || sig_alg.as_ref() == SHA512_WITH_RSAENCRYPTION_OID.as_bytes()
     {
         // TO REVIEW: Do we need any of the RSA-PSS algorithms for this use case?
+        #[cfg(any(target_arch = "wasm32", feature = "rust_native_crypto"))]
+        {
+            if let Some(validator) =
+                crate::raw_signature::rust_native::validators::validator_for_sig_and_hash_algs(
+                    sig_alg, hash_alg,
+                )
+            {
+                return Some(validator);
+            }
+        }
 
         #[cfg(not(target_arch = "wasm32"))]
         if let Some(validator) =
             crate::raw_signature::openssl::validators::validator_for_sig_and_hash_algs(
-                sig_alg, hash_alg,
-            )
-        {
-            return Some(validator);
-        }
-
-        // Not sure yet if we'll need legacy validators for WASM.
-        #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
-        if let Some(validator) =
-            crate::raw_signature::webcrypto::validators::validator_for_sig_and_hash_algs(
                 sig_alg, hash_alg,
             )
         {

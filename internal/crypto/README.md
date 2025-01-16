@@ -23,9 +23,9 @@ This crate has two features, neither of which are enabled by default:
 | `es384` | OpenSSL | OpenSSL | ❌ |
 | `es512` | OpenSSL | OpenSSL | ❌ |
 | `ed25519` | OpenSSL | `ed25519-dalek` | `ed25519-dalek` |
-| `ps256` | OpenSSL | OpenSSL | ❌ |
-| `ps384` | OpenSSL | OpenSSL | ❌ |
-| `ps512` | OpenSSL | OpenSSL | ❌ |
+| `ps256` | OpenSSL | `rsa` | `rsa` |
+| `ps384` | OpenSSL | `rsa` | `rsa` |
+| `ps512` | OpenSSL | `rsa` | `rsa` |
 
 (*) Applies to all supported platforms except WASM <br />
 ❌ = not supported
@@ -38,9 +38,9 @@ This crate has two features, neither of which are enabled by default:
 | `es384` | OpenSSL | OpenSSL | `p384` |
 | `es512` | OpenSSL | OpenSSL | ❌ |
 | `ed25519` | OpenSSL | `ed25519-dalek` | `ed25519-dalek` |
-| `ps256` | OpenSSL | OpenSSL | `rsa` |
-| `ps384` | OpenSSL | OpenSSL | `rsa` |
-| `ps512` | OpenSSL | OpenSSL | `rsa` |
+| `ps256` | OpenSSL | `rsa` | `rsa` |
+| `ps384` | OpenSSL | `rsa` | `rsa` |
+| `ps512` | OpenSSL | `rsa` | `rsa` |
 
 (*) Applies to all supported platforms except WASM <br />
 ❌ = not supported
@@ -53,9 +53,9 @@ This crate has two features, neither of which are enabled by default:
 | `es384` | OpenSSL | OpenSSL | WebCrypto |
 | `es512` | OpenSSL | OpenSSL | WebCrypto |
 | `ed25519` | OpenSSL | `ed25519-dalek` | `ed25519-dalek` |
-| `ps256` | OpenSSL | OpenSSL | `rsa` |
-| `ps384` | OpenSSL | OpenSSL | `rsa` |
-| `ps512` | OpenSSL | OpenSSL | `rsa` |
+| `ps256` | OpenSSL | `rsa` | `rsa` |
+| `ps384` | OpenSSL | `rsa` | `rsa` |
+| `ps512` | OpenSSL | `rsa` | `rsa` |
 
 (*) Applies to all supported platforms except WASM
 

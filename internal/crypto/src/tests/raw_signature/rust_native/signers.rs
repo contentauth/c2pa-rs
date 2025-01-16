@@ -24,7 +24,7 @@ fn es256() {
     let private_key = include_bytes!("../../fixtures/raw_signature/es256.priv");
 
     let signer =
-        rust_native::signer_from_cert_chain_and_private_key(cert_chain, private_key, SigningAlg::Es256, None)
+        rust_native::signers::signer_from_cert_chain_and_private_key(cert_chain, private_key, SigningAlg::Es256, None)
             .unwrap();
 
     let data = b"some sample content to sign";
@@ -46,7 +46,7 @@ fn es384() {
     let private_key = include_bytes!("../../fixtures/raw_signature/es384.priv");
 
     let signer =
-        rust_native::signer_from_cert_chain_and_private_key(cert_chain, private_key, SigningAlg::Es384, None)
+        rust_native::signers::signer_from_cert_chain_and_private_key(cert_chain, private_key, SigningAlg::Es384, None)
             .unwrap();
 
     let data = b"some sample content to sign";
@@ -68,7 +68,7 @@ fn es512() {
     let private_key = include_bytes!("../../fixtures/raw_signature/es512.priv");
 
     let signer =
-        rust_native::signer_from_cert_chain_and_private_key(cert_chain, private_key, SigningAlg::Es512, None)
+        rust_native::signers::signer_from_cert_chain_and_private_key(cert_chain, private_key, SigningAlg::Es512, None)
             .unwrap();
 
     let data = b"some sample content to sign";
@@ -111,16 +111,19 @@ fn ed25519() {
     validator.validate(&signature, data, pub_key).unwrap();
 }
 
-/* Not implemented in rust_native yet.
 #[test]
-// #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
 fn ps256() {
     let cert_chain = include_bytes!("../../fixtures/raw_signature/ps256.pub");
     let private_key = include_bytes!("../../fixtures/raw_signature/ps256.priv");
 
-    let signer =
-        rust_native::signer_from_cert_chain_and_private_key(cert_chain, private_key, SigningAlg::Ps256, None)
-            .unwrap();
+    let signer = rust_native::signers::signer_from_cert_chain_and_private_key(
+        cert_chain,
+        private_key,
+        SigningAlg::Ps256,
+        None,
+    )
+    .unwrap();
 
     let data = b"some sample content to sign";
     let signature = signer.sign(data).unwrap();
@@ -135,14 +138,18 @@ fn ps256() {
 }
 
 #[test]
-// #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
 fn ps384() {
     let cert_chain = include_bytes!("../../fixtures/raw_signature/ps384.pub");
     let private_key = include_bytes!("../../fixtures/raw_signature/ps384.priv");
 
-    let signer =
-        rust_native::signer_from_cert_chain_and_private_key(cert_chain, private_key, SigningAlg::Ps384, None)
-            .unwrap();
+    let signer = rust_native::signers::signer_from_cert_chain_and_private_key(
+        cert_chain,
+        private_key,
+        SigningAlg::Ps384,
+        None,
+    )
+    .unwrap();
 
     let data = b"some sample content to sign";
     let signature = signer.sign(data).unwrap();
@@ -157,14 +164,18 @@ fn ps384() {
 }
 
 #[test]
-// #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
 fn ps512() {
     let cert_chain = include_bytes!("../../fixtures/raw_signature/ps512.pub");
     let private_key = include_bytes!("../../fixtures/raw_signature/ps512.priv");
 
-    let signer =
-        rust_native::signer_from_cert_chain_and_private_key(cert_chain, private_key, SigningAlg::Ps512, None)
-            .unwrap();
+    let signer = rust_native::signers::signer_from_cert_chain_and_private_key(
+        cert_chain,
+        private_key,
+        SigningAlg::Ps512,
+        None,
+    )
+    .unwrap();
 
     let data = b"some sample content to sign";
     let signature = signer.sign(data).unwrap();
@@ -177,4 +188,3 @@ fn ps512() {
     let validator = rust_native::validators::validator_for_signing_alg(SigningAlg::Ps512).unwrap();
     validator.validate(&signature, data, pub_key).unwrap();
 }
-*/

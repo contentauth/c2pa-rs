@@ -58,7 +58,13 @@ pub(crate) fn verify_cose(
         Verifier::IgnoreProfileAndTrustPolicy
     };
 
-    Ok(verifier.verify_signature(cose_bytes, data, additional_data, validation_log)?)
+    if _sync {
+        Ok(verifier.verify_signature(cose_bytes, data, additional_data, validation_log)?)
+    } else {
+        Ok(verifier
+            .verify_signature_async(cose_bytes, data, additional_data, validation_log)
+            .await?)
+    }
 }
 
 // internal util function to dump the cert chain in PEM format
