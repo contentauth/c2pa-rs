@@ -31,7 +31,7 @@ _16 January 2025_
 
 ### Fixed
 
-* *(sdk)* Make sure `DynamicAssertion::content` gets a properly populated `PreliminaryClaim` (#842)
+* Make sure `DynamicAssertion::content` gets a properly populated `PreliminaryClaim` (#842)
 * Switch to from fast_xml to quick_xml (#805)
 * Update img-parts for jpeg segment underflow fix (#806)
 * Bring `claim_v2` changes from #707 into `c2pa_crypto` (#811)

@@ -11,9 +11,8 @@ _16 January 2025_
 
 ### Added
 
-* *(crypto)* Add `rsa` crate support to `rust_native_crypto` feature (#853)
-* *(crypto)* Introduce new (experimental) `rust_native_crypto` feature (#850)
-* *(cawg_identity)* Implement identity assertion validation (#843)
+* Add `rsa` crate support to `rust_native_crypto` feature (#853)
+* Introduce new (experimental) `rust_native_crypto` feature (#850)
 * Review `c2pa-crypto` crate API (#813)
 * Add new function `c2pa_crypto::cose::signing_time_from_sign1` (#812)
 * Move COSE signing into `c2pa_crypto` crate (#807)
@@ -32,7 +31,7 @@ _16 January 2025_
 
 ### Fixed
 
-* *(crypto)* Disable the built-in async validators on non-WASM platforms (#855)
+* Disable the built-in async validators on non-WASM platforms (#855)
 * Bring `claim_v2` changes from #707 into `c2pa_crypto` (#811)
 * Improve usage of `#[cfg]` directives (#783)
 
