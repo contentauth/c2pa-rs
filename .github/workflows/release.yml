@@ -62,13 +62,16 @@ jobs:
         include:
           - os: macos-latest
             artifact_name: c2patool_mac_universal.zip
-            uploaded_asset_name: c2patool-${{ needs.release-plz.outputs.c2patool-release-tag }}-universal-apple-darwin.zip
+            uploaded_asset_name: ${{ needs.release-plz.outputs.c2patool-release-tag }}-universal-apple-darwin.zip
+            sbom_asset_name: ${{ needs.release-plz.outputs.c2patool-release-tag }}-universal-apple-darwin-sbom.json
           - os: ubuntu-latest
             artifact_name: c2patool_linux_intel.tar.gz
-            uploaded_asset_name: c2patool-${{ needs.release-plz.outputs.c2patool-release-tag }}-x86_64-unknown-linux-gnu.tar.gz
+            uploaded_asset_name: ${{ needs.release-plz.outputs.c2patool-release-tag }}-x86_64-unknown-linux-gnu.tar.gz
+            sbom_asset_name: ${{ needs.release-plz.outputs.c2patool-release-tag }}-x86_64-unknown-linux-gnu-sbom.json
           - os: windows-latest
             artifact_name: c2patool_win_intel.zip
-            uploaded_asset_name: c2patool-${{ needs.release-plz.outputs.c2patool-release-tag }}-x86_64-pc-windows-msvc.zip
+            uploaded_asset_name: ${{ needs.release-plz.outputs.c2patool-release-tag }}-x86_64-pc-windows-msvc.zip
+            sbom_asset_name: ${{ needs.release-plz.outputs.c2patool-release-tag }}-x86_64-pc-windows-msvc-sbom.json
 
     steps:
       - name: Checkout repository
@@ -109,14 +112,14 @@ jobs:
 
       - name: Generate SBOM
         if: ${{ needs.release-plz.outputs.c2patool-release-tag }}
-        run: cd cli && cargo sbom > c2patool.${{ matrix.os }}.sbom.json
+        run: cd cli && cargo sbom > c2patool-sbom.json
 
       - name: Upload SBOM to Github
         if: ${{ needs.release-plz.outputs.c2patool-release-tag }}
         uses: svenstaro/upload-release-action@v1-release
         with:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: cli/c2patool.${{ matrix.os }}.sbom.json
-          asset_name: c2patool-${{ needs.release-plz.outputs.c2patool-release-tag }}.${{ matrix.os }}-sbom.json
+          file: cli/c2patool-sbom.json
+          asset_name: ${{ matrix.sbom_asset_name }}
           tag: ${{ needs.release-plz.outputs.c2patool-release-tag }}
           overwrite: true
