@@ -117,6 +117,6 @@ jobs:
         with:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
           file: cli/c2patool.${{ matrix.os }}.sbom.json
-          asset_name: c2patool-${{ needs.release-plz.outputs.c2patool-release-tag }}-sbom.json
+          asset_name: c2patool-${{ needs.release-plz.outputs.c2patool-release-tag }}.${{ matrix.os }}-sbom.json
           tag: ${{ needs.release-plz.outputs.c2patool-release-tag }}
           overwrite: true
