@@ -61,7 +61,9 @@ pub(crate) fn verify_cose(
     if _sync {
         Ok(verifier.verify_signature(cose_bytes, data, additional_data, validation_log)?)
     } else {
-        Ok(verifier.verify_signature_async(cose_bytes, data, additional_data, validation_log).await?)
+        Ok(verifier
+            .verify_signature_async(cose_bytes, data, additional_data, validation_log)
+            .await?)
     }
 }
 
