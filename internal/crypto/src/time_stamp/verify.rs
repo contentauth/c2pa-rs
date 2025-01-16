@@ -338,16 +338,22 @@ async fn validate_timestamp_sig_async(
     tbs: &[u8],
     signing_key_der: &[u8],
 ) -> Result<(), TimeStampError> {
-    let Some(validator) =
-        crate::raw_signature::async_validator_for_sig_and_hash_algs(sig_alg, hash_alg)
-    else {
-        return Err(TimeStampError::UnsupportedAlgorithm);
-    };
-
-    validator
-        .validate_async(&sig_val.to_bytes(), tbs, signing_key_der)
-        .await
-        .map_err(|_| TimeStampError::InvalidData)?;
-
-    Ok(())
+    if let Some(validator) =
+        crate::raw_signature::webcrypto::async_validator_for_sig_and_hash_algs(sig_alg, hash_alg)
+    {
+        validator
+            .validate_async(&sig_val.to_bytes(), tbs, signing_key_der)
+            .await
+            .map_err(|_| TimeStampError::InvalidData)
+    } else {
+        if let Some(validator) =
+            crate::raw_signature::validator_for_sig_and_hash_algs(sig_alg, hash_alg)
+        {
+            validator
+                .validate(&sig_val.to_bytes(), tbs, signing_key_der)
+                .map_err(|_| TimeStampError::InvalidData)
+        } else {
+            Err(TimeStampError::UnsupportedAlgorithm)
+        }
+    }
 }
