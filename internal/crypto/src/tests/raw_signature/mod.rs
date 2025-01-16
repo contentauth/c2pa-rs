@@ -12,6 +12,7 @@
 // each license.
 
 mod async_signers;
+#[cfg(target_arch = "wasm32")]
 mod async_validators;
 mod rust_native;
 mod signers;

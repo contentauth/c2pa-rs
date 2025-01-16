@@ -150,36 +150,14 @@ pub(crate) fn validator_for_sig_and_hash_algs(
 ///
 /// Which validators are available may vary depending on the platform and
 /// which crate features were enabled.
+///
+/// IMPORTANT: Only available on WASM builds. There are no built-in async
+/// validators for other platforms.
+#[cfg(target_arch = "wasm32")]
 pub fn async_validator_for_signing_alg(
     alg: SigningAlg,
 ) -> Option<Box<dyn AsyncRawSignatureValidator>> {
-    #[cfg(target_arch = "wasm32")]
-    if let Some(validator) = crate::raw_signature::webcrypto::async_validator_for_signing_alg(alg) {
-        return Some(validator);
-    }
-
-    Some(Box::new(AsyncValidatorAdapter(validator_for_signing_alg(
-        alg,
-    )?)))
-}
-
-/// Return a built-in async signature validator for the requested signature
-/// algorithm as identified by OID.
-#[allow(unused)]
-pub(crate) fn async_validator_for_sig_and_hash_algs(
-    sig_alg: &Oid,
-    hash_alg: &Oid,
-) -> Option<Box<dyn AsyncRawSignatureValidator>> {
-    #[cfg(target_arch = "wasm32")]
-    if let Some(validator) =
-        crate::raw_signature::webcrypto::async_validator_for_sig_and_hash_algs(sig_alg, hash_alg)
-    {
-        return Some(validator);
-    }
-
-    Some(Box::new(AsyncValidatorAdapter(
-        validator_for_sig_and_hash_algs(sig_alg, hash_alg)?,
-    )))
+    crate::raw_signature::webcrypto::async_validator_for_signing_alg(alg)
 }
 
 /// Describes errors that can be identified when validating a raw signature.
@@ -237,19 +215,5 @@ impl From<crate::raw_signature::webcrypto::WasmCryptoError> for RawSignatureVali
                 Self::InternalError("WASM crypto unavailable".to_string())
             }
         }
-    }
-}
-
-struct AsyncValidatorAdapter(Box<dyn RawSignatureValidator>);
-
-#[async_trait(?Send)]
-impl AsyncRawSignatureValidator for AsyncValidatorAdapter {
-    async fn validate_async(
-        &self,
-        sig: &[u8],
-        data: &[u8],
-        public_key: &[u8],
-    ) -> Result<(), RawSignatureValidationError> {
-        self.0.validate(sig, data, public_key)
     }
 }
