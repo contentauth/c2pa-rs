@@ -140,6 +140,8 @@ pub use reader::{Reader, ValidationState};
 pub use resource_store::{ResourceRef, ResourceStore};
 pub use signer::{AsyncSigner, RemoteSigner, Signer};
 pub use utils::mime::format_from_path;
+#[cfg(feature = "cawg_identity")]
+pub use cawg_identity::{IdentityAssertion, IcaSignatureVerifier};
 
 // Internal modules
 pub(crate) mod assertion;
