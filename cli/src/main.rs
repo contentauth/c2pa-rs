@@ -517,7 +517,7 @@ fn main() -> Result<()> {
         } else {
             manifest.claim_generator_info.insert(1, tool_generator);
         }
-        println!("claim generator {:?}", manifest.claim_generator_info);
+
         // set manifest base path before ingredients so ingredients can override it
         if let Some(base) = base_path.as_ref() {
             builder.base_path = Some(base.clone());
@@ -607,10 +607,15 @@ fn main() -> Result<()> {
                     bail!("Missing extension output");
                 }
 
-                #[allow(deprecated)] // todo: remove when we can
-                builder
+                let manifest_data = builder
                     .sign_file(signer.as_ref(), &args.path, &output)
                     .context("embedding manifest")?;
+
+                if args.sidecar {
+                    let sidecar = output.with_extension("c2pa");
+                    let mut file = File::create(&sidecar)?;
+                    file.write_all(&manifest_data)?;
+                }
 
                 // generate a report on the output file
                 let reader = Reader::from_file(&output).map_err(special_errs)?;
