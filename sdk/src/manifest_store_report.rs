@@ -12,8 +12,8 @@
 // each license.
 
 use std::collections::HashMap;
-#[cfg(feature = "file_io")]
 #[cfg(feature = "v1_api")]
+#[cfg(feature = "file_io")]
 use std::path::Path;
 
 use atree::{Arena, Token};
@@ -131,8 +131,9 @@ impl ManifestStoreReport {
         store.get_provenance_cert_chain()
     }
 
-    #[cfg(feature = "v1_api")]
     /// Creates a ManifestStoreReport from an existing Store and a validation log
+    #[cfg(feature = "file_io")]
+    #[cfg(feature = "v1_api")]
     pub(crate) fn from_store_with_log(
         store: &Store,
         validation_log: &impl StatusTracker,
@@ -174,6 +175,7 @@ impl ManifestStoreReport {
     }
 
     #[cfg(feature = "file_io")]
+    #[cfg(feature = "v1_api")]
     pub fn from_fragments<P: AsRef<Path>>(
         path: P,
         fragments: &Vec<std::path::PathBuf>,
