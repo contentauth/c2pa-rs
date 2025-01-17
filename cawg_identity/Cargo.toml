@@ -36,7 +36,7 @@ ed25519-dalek = { version = "2.1.1", features = ["rand_core"] }
 hex-literal = "0.4.1"
 iref = { version = "3.2.2", features = ["serde"] }
 multibase = "0.9.1"
-non-empty-string = { version = "=0.2.4", features = ["serde"] }
+non-empty-string = { version = "=0.2.5", features = ["serde"] }
 nonempty-collections = { version = "0.2.9", features = ["serde"] }
 rand = "0.8.5"
 regex = "1.11"
