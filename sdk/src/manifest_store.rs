@@ -82,7 +82,6 @@ impl ManifestStore {
     }
 
     /// Returns a reference to manifest HashMap
-    #[cfg(feature = "v1_api")]
     pub fn manifests(&self) -> &HashMap<String, Manifest> {
         &self.manifests
     }
@@ -145,6 +144,7 @@ impl ManifestStore {
     }
 
     /// creates a ManifestStore from a Store with validation
+    #[allow(dead_code)] // async not used without v1 feature
     #[async_generic]
     pub(crate) fn from_store(store: Store, validation_log: &impl StatusTracker) -> ManifestStore {
         if _sync {
@@ -257,6 +257,7 @@ impl ManifestStore {
     /// Creates a new Manifest Store from a Manifest
     #[allow(dead_code)]
     #[deprecated(since = "0.38.0", note = "Please use Reader::from_json() instead")]
+    #[cfg(feature = "v1_api")]
     pub fn from_manifest(manifest: &Manifest) -> Result<Self> {
         use c2pa_status_tracker::OneShotStatusTracker;
         let store = manifest.to_store()?;
@@ -271,6 +272,7 @@ impl ManifestStore {
     /// Generate a Store from a format string and bytes.
     #[cfg(feature = "v1_api")]
     #[deprecated(since = "0.38.0", note = "Please use Reader::from_stream() instead")]
+    #[cfg(feature = "v1_api")]
     #[async_generic]
     pub fn from_bytes(format: &str, image_bytes: &[u8], verify: bool) -> Result<ManifestStore> {
         let mut validation_log = DetailedStatusTracker::default();
@@ -394,6 +396,7 @@ impl ManifestStore {
         since = "0.38.0",
         note = "Please use Reader::from_fragment_async() instead"
     )]
+    #[cfg(feature = "v1_api")]
     pub async fn from_fragment_bytes_async(
         format: &str,
         init_bytes: &[u8],
@@ -474,6 +477,7 @@ impl ManifestStore {
         since = "0.38.0",
         note = "Please use Reader::from_manifest_data_and_stream_async() instead"
     )]
+    #[cfg(feature = "v1_api")]
     pub async fn from_manifest_and_asset_bytes_async(
         manifest_bytes: &[u8],
         format: &str,
@@ -516,6 +520,7 @@ impl ManifestStore {
         since = "0.38.0",
         note = "Please use Reader::from_manifest_data_and_stream() instead"
     )]
+    #[cfg(feature = "v1_api")]
     pub fn from_manifest_and_asset_bytes(
         manifest_bytes: &[u8],
         format: &str,
