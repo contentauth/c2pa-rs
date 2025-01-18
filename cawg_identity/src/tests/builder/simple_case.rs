@@ -15,6 +15,8 @@ use std::io::{Cursor, Seek};
 
 use c2pa::{Builder, Reader, SigningAlg};
 use serde_json::json;
+#[cfg(target_arch = "wasm32")]
+use wasm_bindgen_test::wasm_bindgen_test;
 
 use crate::{
     builder::{IdentityAssertionBuilder, IdentityAssertionSigner},
