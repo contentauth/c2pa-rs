@@ -18,17 +18,22 @@
 // specific language governing permissions and limitations under
 // each license.
 
+#[cfg(target_arch = "wasm32")]
+use wasm_bindgen_test::wasm_bindgen_test;
+
 use crate::claim_aggregation::w3c_vc::jwk::*;
 
 const ED25519_JSON: &str = r#"{"kty":"OKP","crv":"Ed25519","x":"G80iskrv_nE69qbGLSpeOHJgmV4MKIzsy5l5iT6pCww","d":"39Ev8-k-jkKunJyFWog3k0OwgPjnKv_qwLhfqXdAXTY"}
 "#;
 
 #[test]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
 fn ed25519_from_str() {
     let _jwk: Jwk = serde_json::from_str(ED25519_JSON).unwrap();
 }
 
 #[test]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
 fn generate_ed25519() {
     let _key = Jwk::generate_ed25519().unwrap();
 }

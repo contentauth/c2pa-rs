@@ -18,9 +18,13 @@
 // specific language governing permissions and limitations under
 // each license.
 
+#[cfg(target_arch = "wasm32")]
+use wasm_bindgen_test::wasm_bindgen_test;
+
 use crate::claim_aggregation::w3c_vc::{did::Did, did_web};
 
 #[test]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
 fn to_url() {
     // https://w3c-ccg.github.io/did-method-web/#example-3-creating-the-did
     assert_eq!(
@@ -55,6 +59,8 @@ mod resolve {
     };
 
     #[tokio::test]
+    // #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    // Can't test this on WASM until we find an httpmock replacement.
     async fn from_did_key() {
         const DID_JSON: &str = r#"{
             "@context": "https://www.w3.org/ns/did/v1",
@@ -95,61 +101,62 @@ mod resolve {
     }
 
     /*
-    #[tokio::test]
-    async fn credential_prove_verify_did_web() {
-        let didweb = VerificationMethodDIDResolver::new(DIDWeb);
-        let params = VerificationParameters::from_resolver(&didweb);
+        #[tokio::test]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+        async fn credential_prove_verify_did_web() {
+            let didweb = VerificationMethodDIDResolver::new(DIDWeb);
+            let params = VerificationParameters::from_resolver(&didweb);
 
-        let (url, shutdown) = web_server().unwrap();
-        PROXY.with(|proxy| {
-            proxy.replace(Some(url));
-        });
+            let (url, shutdown) = web_server().unwrap();
+            PROXY.with(|proxy| {
+                proxy.replace(Some(url));
+            });
 
-        let cred = JsonCredential::new(
-            None,
-            did!("did:web:localhost").to_owned().into_uri().into(),
-            "2021-01-26T16:57:27Z".parse().unwrap(),
-            vec![serde_json::json!({
-                "id": "did:web:localhost"
-            })],
-        );
+            let cred = JsonCredential::new(
+                None,
+                did!("did:web:localhost").to_owned().into_uri().into(),
+                "2021-01-26T16:57:27Z".parse().unwrap(),
+                vec![serde_json::json!({
+                    "id": "did:web:localhost"
+                })],
+            );
 
-        let key: JWK = include_str!("../../../../../tests/ed25519-2020-10-18.json")
-            .parse()
-            .unwrap();
-        let verification_method = iri!("did:web:localhost#key1").to_owned().into();
-        let suite = AnySuite::pick(&key, Some(&verification_method)).unwrap();
-        let issue_options = ProofOptions::new(
-            "2021-01-26T16:57:27Z".parse().unwrap(),
-            verification_method,
-            ProofPurpose::Assertion,
-            Default::default(),
-        );
-        let signer = SingleSecretSigner::new(key).into_local();
-        let vc = suite
-            .sign(cred, &didweb, &signer, issue_options)
-            .await
-            .unwrap();
+            let key: JWK = include_str!("../../../../../tests/ed25519-2020-10-18.json")
+                .parse()
+                .unwrap();
+            let verification_method = iri!("did:web:localhost#key1").to_owned().into();
+            let suite = AnySuite::pick(&key, Some(&verification_method)).unwrap();
+            let issue_options = ProofOptions::new(
+                "2021-01-26T16:57:27Z".parse().unwrap(),
+                verification_method,
+                ProofPurpose::Assertion,
+                Default::default(),
+            );
+            let signer = SingleSecretSigner::new(key).into_local();
+            let vc = suite
+                .sign(cred, &didweb, &signer, issue_options)
+                .await
+                .unwrap();
 
-        println!(
-            "proof: {}",
-            serde_json::to_string_pretty(&vc.proofs).unwrap()
-        );
-        assert_eq!(vc.proofs.first().unwrap().signature.as_ref(), "eyJhbGciOiJFZERTQSIsImNyaXQiOlsiYjY0Il0sImI2NCI6ZmFsc2V9..BCvVb4jz-yVaTeoP24Wz0cOtiHKXCdPcmFQD_pxgsMU6aCAj1AIu3cqHyoViU93nPmzqMLswOAqZUlMyVnmzDw");
-        assert!(vc.verify(&params).await.unwrap().is_ok());
+            println!(
+                "proof: {}",
+                serde_json::to_string_pretty(&vc.proofs).unwrap()
+            );
+            assert_eq!(vc.proofs.first().unwrap().signature.as_ref(), "eyJhbGciOiJFZERTQSIsImNyaXQiOlsiYjY0Il0sImI2NCI6ZmFsc2V9..BCvVb4jz-yVaTeoP24Wz0cOtiHKXCdPcmFQD_pxgsMU6aCAj1AIu3cqHyoViU93nPmzqMLswOAqZUlMyVnmzDw");
+            assert!(vc.verify(&params).await.unwrap().is_ok());
 
-        // test that issuer property is used for verification
-        let mut vc_bad_issuer = vc.clone();
-        vc_bad_issuer.issuer = uri!("did:pkh:example:bad").to_owned().into();
-        // It should fail.
-        assert!(vc_bad_issuer.verify(params).await.unwrap().is_err());
+            // test that issuer property is used for verification
+            let mut vc_bad_issuer = vc.clone();
+            vc_bad_issuer.issuer = uri!("did:pkh:example:bad").to_owned().into();
+            // It should fail.
+            assert!(vc_bad_issuer.verify(params).await.unwrap().is_err());
 
-        PROXY.with(|proxy| {
-            proxy.replace(None);
-        });
-        shutdown().ok();
-    }
-    */
+            PROXY.with(|proxy| {
+                proxy.replace(None);
+            });
+            shutdown().ok();
+        }
+        */
 }
 
 fn did(s: &'static str) -> Did<'static> {
