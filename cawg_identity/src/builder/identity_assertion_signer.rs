@@ -162,8 +162,8 @@ impl AsyncSigner for IdentityAssertionSigner {
             .map(|r| r.map_err(|e| e.into()))
     }
 
-    fn async_raw_signer(&self) -> Box<&dyn AsyncRawSigner> {
-        Box::new(&*self.signer)
+    fn async_raw_signer(&self) -> Option<Box<&dyn AsyncRawSigner>> {
+        Some(Box::new(&*self.signer))
     }
 
     fn dynamic_assertions(&self) -> Vec<Box<dyn DynamicAssertion>> {
