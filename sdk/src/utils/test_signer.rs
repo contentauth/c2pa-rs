@@ -87,8 +87,6 @@ fn cert_chain_and_private_key_for_alg(alg: SigningAlg) -> (Vec<u8>, Vec<u8>) {
             include_bytes!("../../tests/fixtures/certs/ed25519.pub").to_vec(),
             include_bytes!("../../tests/fixtures/certs/ed25519.pem").to_vec(),
         ),
-
-        _ => unimplemented!("Unknown SigningAlg variant {alg:#?}"),
     }
 }
 
