@@ -154,7 +154,7 @@ fn signing_cert_valid(signing_cert: &[u8]) -> Result<()> {
 
 struct SignerWrapper<'a>(&'a dyn Signer);
 
-impl<'a> RawSigner for SignerWrapper<'a> {
+impl RawSigner for SignerWrapper<'_> {
     fn sign(&self, data: &[u8]) -> std::result::Result<Vec<u8>, RawSignerError> {
         Ok(self.0.sign(data)?)
     }
@@ -176,7 +176,7 @@ impl<'a> RawSigner for SignerWrapper<'a> {
     }
 }
 
-impl<'a> TimeStampProvider for SignerWrapper<'a> {
+impl TimeStampProvider for SignerWrapper<'_> {
     fn time_stamp_service_url(&self) -> Option<String> {
         self.0.time_authority_url()
     }
@@ -206,7 +206,7 @@ struct AsyncSignerWrapper<'a>(&'a dyn AsyncSigner);
 
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
-impl<'a> AsyncRawSigner for AsyncSignerWrapper<'a> {
+impl AsyncRawSigner for AsyncSignerWrapper<'_> {
     async fn sign(&self, data: Vec<u8>) -> std::result::Result<Vec<u8>, RawSignerError> {
         Ok(self.0.sign(data).await?)
     }
@@ -230,7 +230,7 @@ impl<'a> AsyncRawSigner for AsyncSignerWrapper<'a> {
 
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
-impl<'a> AsyncTimeStampProvider for AsyncSignerWrapper<'a> {
+impl AsyncTimeStampProvider for AsyncSignerWrapper<'_> {
     fn time_stamp_service_url(&self) -> Option<String> {
         self.0.time_authority_url()
     }
