@@ -28,7 +28,6 @@ use serde::{Deserialize, Serialize};
 /// [§13.2, “Digital Signatures”]: https://c2pa.org/specifications/specifications/2.1/specs/C2PA_Specification.html#_digital_signatures
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "json_schema", derive(JsonSchema))]
-#[non_exhaustive]
 pub enum SigningAlg {
     /// ECDSA with SHA-256
     Es256,
