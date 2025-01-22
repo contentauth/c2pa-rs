@@ -26,7 +26,6 @@ all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
 [features]
-default = ["unstable_api"]
 add_thumbnails = ["image"]
 file_io = ["openssl_sign"]
 serialize_thumbnails = []
@@ -37,7 +36,6 @@ openssl_sign = ["openssl", "c2pa-crypto/openssl"]
 json_schema = ["dep:schemars", "c2pa-crypto/json_schema"]
 pdf = ["dep:lopdf"]
 v1_api = []
-unstable_api = []
 
 # The diagnostics feature is unsupported and might be removed.
 # It enables some low-overhead timing features used in our development cycle.
@@ -53,11 +51,9 @@ required-features = ["file_io"]
 
 [[example]]
 name = "v2show"
-required-features = ["unstable_api"]
 
 [[example]]
 name = "v2api"
-required-features = ["unstable_api"]
 
 [lib]
 crate-type = ["lib"]
@@ -157,9 +153,7 @@ web-sys = { version = "0.3.58", features = [
 [dev-dependencies]
 anyhow = "1.0.40"
 mockall = "0.13.1"
-c2pa = { path = ".", default-features = false, features = [
-    "unstable_api",
-] } # allow integration tests to use the new API
+c2pa = { path = ".", default-features = false } # allow integration tests to use the new API
 glob = "0.3.1"
 jumbf = "0.4.0"
 

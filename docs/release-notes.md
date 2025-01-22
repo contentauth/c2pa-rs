@@ -27,15 +27,9 @@ The goals of this release are to provide a consistent, flexible, well-tested API
 
 ### Enabling 
 
-<!-- This requirement should go away with actual 1.0 release, right? -->
+These features are now standard and the `unstable_api` feature is no longer used.
 
-To use the new API, enable the `unstable_api` feature; for example:
-
-```
-c2pa = {version="0.39.0", features=["unstable_api"]}
-```
-
-When version 1.0 of the library is released, the new API will become the default, but you will still be able to use the deprecated API by enabling the `v1_api` feature; for example:
+You are still be able to use the deprecated API by enabling the `v1_api` feature; for example:
 
 ```
 c2pa = {version="0.39.0", features=["v1_api"]}

@@ -20,6 +20,9 @@ use crate::validation_status::ValidationStatus;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "json_schema", derive(JsonSchema))]
+/// Indicates if the manifest store is valid and trusted.
+/// 
+/// The Trusted state implies the manifest store is valid and the active signature is trusted.
 pub enum ValidationState {
     /// Errors were found in the manifest store.
     Invalid,
@@ -76,6 +79,10 @@ impl StatusCodesMap {
 
 #[derive(Clone, Serialize, Default, Deserialize, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "json_schema", derive(JsonSchema))]
+/// A map of validation results for a manifest store.
+/// 
+/// The map contains the validation results for the active manifest and any ingredient deltas.
+/// It is normal for there to be many 
 pub struct ValidationResultsMap {
     #[serde(rename = "activeManifest", skip_serializing_if = "Option::is_none")]
     active_manifest: Option<StatusCodesMap>, // Validation status codes for the ingredient's active manifest. Present if ingredient is a C2PA asset. Not present if the ingredient is not a C2PA asset.
@@ -85,6 +92,7 @@ pub struct ValidationResultsMap {
 }
 
 impl ValidationResultsMap {
+    /// Returns the [ValidationState] of the manifest store based on the validation results.
     pub fn validation_state(&self) -> ValidationState {
         let mut is_trusted = true; // Assume the state is trusted until proven otherwise
         if let Some(active_manifest) = self.active_manifest.as_ref() {

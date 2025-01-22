@@ -22,20 +22,10 @@
 //! Some functionality requires you to enable specific crate features,
 //! as noted in the documentation.
 //!
-//! The library has a new experimental Builder/Reader API that will eventually replace
-//! the existing methods of reading and writing C2PA data.
+//! The library has a new Builder/Reader API
 //! The new API focuses on stream support and can do more with fewer methods.
-//! It will be supported in all language bindings and build environments.
-//! To use the new API, you must enable the `unstable_api` feature, for example:
-//!
-//! ```text
-//! c2pa = {version="0.32.0", features=["unstable_api"]}
-//! ```
 //!
 //! # Example: Reading a ManifestStore
-//!
-//! This example requires the `unstable_api` feature to be enabled.
-//!
 //! ```
 //! # use c2pa::Result;
 //! use c2pa::{assertions::Actions, Reader};
@@ -56,8 +46,6 @@
 //! ```
 //!
 //! # Example: Adding a Manifest to a file
-//!
-//! This example requires the `unstable_api` feature to be enabled.
 //!
 //! ```
 //! # use c2pa::Result;
@@ -117,7 +105,6 @@ pub mod wasm;
 pub use assertions::Relationship;
 #[cfg(feature = "v1_api")]
 pub use asset_io::{CAIRead, CAIReadWrite};
-#[cfg(feature = "unstable_api")]
 pub use builder::{Builder, ManifestDefinition};
 pub use c2pa_crypto::raw_signature::SigningAlg;
 pub use callback_signer::{CallbackFunc, CallbackSigner};
@@ -134,7 +121,6 @@ pub use manifest_assertion::{ManifestAssertion, ManifestAssertionKind};
 #[cfg(feature = "v1_api")]
 pub use manifest_store::ManifestStore;
 pub use manifest_store_report::ManifestStoreReport;
-#[cfg(feature = "unstable_api")]
 pub use reader::Reader;
 pub use resource_store::{ResourceRef, ResourceStore};
 pub use signer::{AsyncSigner, RemoteSigner, Signer};
@@ -145,7 +131,6 @@ pub use validation_results::{ValidationResultsMap, ValidationState};
 pub(crate) mod assertion;
 pub(crate) mod asset_handlers;
 pub(crate) mod asset_io;
-#[cfg(feature = "unstable_api")]
 pub(crate) mod builder;
 pub(crate) mod callback_signer;
 pub(crate) mod claim;
