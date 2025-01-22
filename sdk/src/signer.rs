@@ -98,15 +98,19 @@ pub trait Signer {
         Vec::new()
     }
 
-    /// This struct must also implement [`RawSigner`]. Return a reference
-    /// to that trait implementation.
+    /// If this struct also implements or wraps [`RawSigner`], it should
+    /// return a reference to that trait implementation.
+    ///
+    /// If this function returns `None` (the default behavior), a temporary wrapper will be constructed for it.
     ///
     /// NOTE: Due to limitations in some of the FFI tooling that we use to bridge
     /// c2pa-rs to other languages, we can not make [`RawSigner`] a supertrait of
     /// this trait. This API is a workaround for that limitation.
     ///
     /// [`RawSigner`]: c2pa_crypto::raw_signature::RawSigner
-    fn raw_signer(&self) -> Box<&dyn RawSigner>;
+    fn raw_signer(&self) -> Option<Box<&dyn RawSigner>> {
+        None
+    }
 }
 
 /// Trait to allow loading of signing credential from external sources
@@ -376,7 +380,7 @@ impl Signer for Box<dyn Signer> {
         (**self).send_timestamp_request(message)
     }
 
-    fn raw_signer(&self) -> Box<&dyn RawSigner> {
+    fn raw_signer(&self) -> Option<Box<&dyn RawSigner>> {
         (**self).raw_signer()
     }
 }
@@ -578,7 +582,7 @@ impl Signer for RawSignerWrapper {
             .map(|r| r.map_err(|e| e.into()))
     }
 
-    fn raw_signer(&self) -> Box<&dyn RawSigner> {
-        Box::new(&*self.0)
+    fn raw_signer(&self) -> Option<Box<&dyn RawSigner>> {
+        Some(Box::new(&*self.0))
     }
 }

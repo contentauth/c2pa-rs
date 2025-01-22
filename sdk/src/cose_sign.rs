@@ -16,8 +16,10 @@
 #![deny(missing_docs)]
 
 use async_generic::async_generic;
-use c2pa_crypto::cose::{
-    check_certificate_profile, sign, sign_async, CertificateTrustPolicy, TimeStampStorage,
+use c2pa_crypto::{
+    cose::{check_certificate_profile, sign, sign_async, CertificateTrustPolicy, TimeStampStorage},
+    raw_signature::{RawSigner, RawSignerError, SigningAlg},
+    time_stamp::{TimeStampError, TimeStampProvider},
 };
 use c2pa_status_tracker::OneShotStatusTracker;
 
@@ -110,15 +112,16 @@ pub(crate) fn cose_sign(
         return Err(Error::CoseNoCerts);
     }
 
-    let raw_signer = if _sync {
-        signer.raw_signer()
-    } else {
-        signer.async_raw_signer()
-    };
-
     if _sync {
-        Ok(sign(*raw_signer, data, box_size, time_stamp_storage)?)
+        match signer.raw_signer() {
+            Some(raw_signer) => Ok(sign(*raw_signer, data, box_size, time_stamp_storage)?),
+            None => {
+                let wrapper = SignerWrapper(signer);
+                Ok(sign(&wrapper, data, box_size, time_stamp_storage)?)
+            }
+        }
     } else {
+        let raw_signer = signer.async_raw_signer();
         Ok(sign_async(*raw_signer, data, box_size, time_stamp_storage).await?)
     }
 }
@@ -141,13 +144,60 @@ fn signing_cert_valid(signing_cert: &[u8]) -> Result<()> {
     )?)
 }
 
+struct SignerWrapper<'a>(&'a dyn Signer);
+
+impl<'a> RawSigner for SignerWrapper<'a> {
+    fn sign(&self, data: &[u8]) -> std::result::Result<Vec<u8>, RawSignerError> {
+        Ok(self.0.sign(data)?)
+    }
+
+    fn alg(&self) -> SigningAlg {
+        self.0.alg()
+    }
+
+    fn cert_chain(&self) -> std::result::Result<Vec<Vec<u8>>, RawSignerError> {
+        Ok(self.0.certs()?)
+    }
+
+    fn reserve_size(&self) -> usize {
+        self.0.reserve_size()
+    }
+
+    fn ocsp_response(&self) -> Option<Vec<u8>> {
+        self.0.ocsp_val()
+    }
+}
+
+impl<'a> TimeStampProvider for SignerWrapper<'a> {
+    fn time_stamp_service_url(&self) -> Option<String> {
+        self.0.time_authority_url()
+    }
+
+    fn time_stamp_request_headers(&self) -> Option<Vec<(String, String)>> {
+        self.0.timestamp_request_headers()
+    }
+
+    fn time_stamp_request_body(
+        &self,
+        message: &[u8],
+    ) -> std::result::Result<Vec<u8>, TimeStampError> {
+        Ok(self.0.timestamp_request_body(message)?)
+    }
+
+    fn send_time_stamp_request(
+        &self,
+        message: &[u8],
+    ) -> Option<std::result::Result<Vec<u8>, TimeStampError>> {
+        self.0
+            .send_timestamp_request(message)
+            .map(|r| r.map_err(|e| e.into()))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used)]
-    use c2pa_crypto::{
-        raw_signature::{RawSigner, RawSignerError, SigningAlg},
-        time_stamp::{TimeStampError, TimeStampProvider},
-    };
+    use c2pa_crypto::raw_signature::SigningAlg;
 
     use super::sign_claim;
     #[cfg(all(feature = "openssl_sign", not(target_arch = "wasm32")))]
@@ -221,40 +271,6 @@ mod tests {
         }
 
         fn send_timestamp_request(&self, _message: &[u8]) -> Option<crate::error::Result<Vec<u8>>> {
-            Some(Ok(Vec::new()))
-        }
-
-        fn raw_signer(&self) -> Box<&dyn c2pa_crypto::raw_signature::RawSigner> {
-            Box::new(self)
-        }
-    }
-
-    impl RawSigner for BogusSigner {
-        fn sign(&self, _data: &[u8]) -> std::result::Result<Vec<u8>, RawSignerError> {
-            eprintln!("Canary, canary, please cause this deploy to fail!");
-            Ok(b"totally bogus signature".to_vec())
-        }
-
-        fn alg(&self) -> c2pa_crypto::raw_signature::SigningAlg {
-            c2pa_crypto::raw_signature::SigningAlg::Ps256
-        }
-
-        fn cert_chain(&self) -> std::result::Result<Vec<Vec<u8>>, RawSignerError> {
-            let cert_vec: Vec<u8> = Vec::new();
-            let certs = vec![cert_vec];
-            Ok(certs)
-        }
-
-        fn reserve_size(&self) -> usize {
-            1024
-        }
-    }
-
-    impl TimeStampProvider for BogusSigner {
-        fn send_time_stamp_request(
-            &self,
-            _message: &[u8],
-        ) -> Option<std::result::Result<Vec<u8>, TimeStampError>> {
             Some(Ok(Vec::new()))
         }
     }
