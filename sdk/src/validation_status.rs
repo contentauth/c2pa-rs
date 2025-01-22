@@ -173,13 +173,13 @@ impl PartialEq for ValidationStatus {
     }
 }
 
-use crate::validation_results::ValidationResultsMap;
+use crate::validation_results::ValidationResults;
 /// Given a `Store` and a `StatusTracker`, return `ValidationResultsMap
 pub fn validation_results_for_store(
     store: &Store,
     validation_log: &impl StatusTracker,
-) -> ValidationResultsMap {
-    let mut results = ValidationResultsMap::default();
+) -> ValidationResults {
+    let mut results = ValidationResults::default();
 
     let mut statuses: Vec<ValidationStatus> = validation_log
         .logged_items()

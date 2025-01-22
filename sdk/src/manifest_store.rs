@@ -29,7 +29,7 @@ use crate::{
     claim::ClaimAssetData,
     jumbf::labels::{manifest_label_from_uri, to_absolute_uri, to_relative_uri},
     store::Store,
-    validation_results::ValidationResultsMap,
+    validation_results::ValidationResults,
     validation_status::{validation_results_for_store, ValidationStatus},
     Error, Manifest, Result,
 };
@@ -41,6 +41,7 @@ pub struct ManifestStore {
     #[serde(skip_serializing_if = "Option::is_none")]
     /// A label for the active (most recent) manifest in the store
     active_manifest: Option<String>,
+
     /// A HashMap of Manifests
     manifests: HashMap<String, Manifest>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -49,7 +50,8 @@ pub struct ManifestStore {
 
     #[serde(skip_serializing_if = "Option::is_none")]
     // ValidationStatus generated when loading the ManifestStore from an asset
-    validation_results: Option<ValidationResultsMap>,
+    validation_results: Option<ValidationResults>,
+    
     #[serde(skip)]
     /// The internal store representing the manifest store
     store: Store,
@@ -139,7 +141,7 @@ impl ManifestStore {
         self.validation_status.as_deref()
     }
 
-    pub fn validation_results(&self) -> Option<&ValidationResultsMap> {
+    pub fn validation_results(&self) -> Option<&ValidationResults> {
         self.validation_results.as_ref()
     }
 

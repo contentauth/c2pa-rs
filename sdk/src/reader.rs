@@ -29,7 +29,7 @@ use crate::error::Error;
 use crate::{
     claim::ClaimAssetData, error::Result, manifest_store::ManifestStore,
     settings::get_settings_value, store::Store, validation_results::ValidationState,
-    validation_status::ValidationStatus, Manifest, ManifestStoreReport,
+    validation_status::ValidationStatus, validation_results::ValidationResults, Manifest, ManifestStoreReport,
 };
 
 /// A reader for the manifest store.
@@ -256,6 +256,27 @@ impl Reader {
     /// ```
     pub fn validation_status(&self) -> Option<&[ValidationStatus]> {
         self.manifest_store.validation_status()
+    }
+
+    /// Get the [`ValidationResults`] map of an asset if it exists.
+    /// 
+    /// Call this method to check for detailed validation results.
+    /// The validation_state method should be used to determine the overall validation state.
+    ///  
+    /// The results are divided between the active manifest and ingredient deltas.
+    /// The deltas will only exist if there are validation errors not already reported in ingredients
+    /// It is normal for there to be many success and information statuses.
+    /// Any errors will be reported in the failure array.
+    /// 
+    /// # Example
+    /// ```no_run
+    /// use c2pa::Reader;
+    /// let stream = std::io::Cursor::new(include_bytes!("../tests/fixtures/CA.jpg"));
+    /// let reader = Reader::from_stream("image/jpeg", stream).unwrap();
+    /// let status = reader.validation_results();
+    /// ```
+    pub fn validation_results(&self) -> Option<&ValidationResults> {
+        self.manifest_store.validation_results()
     }
 
     /// Get the [`ValidationState`] of the manifest store.

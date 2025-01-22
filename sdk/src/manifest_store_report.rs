@@ -25,7 +25,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::{
-    assertion::AssertionData, claim::Claim, store::Store, validation_results::ValidationResultsMap,
+    assertion::AssertionData, claim::Claim, store::Store, validation_results::ValidationResults,
     validation_status::ValidationStatus, Result,
 };
 
@@ -38,7 +38,7 @@ pub struct ManifestStoreReport {
     manifests: HashMap<String, ManifestReport>,
     #[serde(skip_serializing_if = "Option::is_none")]
     validation_status: Option<Vec<ValidationStatus>>,
-    pub(crate) validation_results: Option<ValidationResultsMap>,
+    pub(crate) validation_results: Option<ValidationResults>,
 }
 
 impl ManifestStoreReport {

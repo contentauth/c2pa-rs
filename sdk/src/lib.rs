@@ -125,7 +125,7 @@ pub use reader::Reader;
 pub use resource_store::{ResourceRef, ResourceStore};
 pub use signer::{AsyncSigner, RemoteSigner, Signer};
 pub use utils::mime::format_from_path;
-pub use validation_results::{ValidationResultsMap, ValidationState};
+pub use validation_results::{ValidationResults, ValidationState};
 
 // Internal modules
 pub(crate) mod assertion;

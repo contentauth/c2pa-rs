@@ -44,7 +44,7 @@ use crate::{
     resource_store::{skip_serializing_resources, ResourceRef, ResourceStore},
     store::Store,
     utils::xmp_inmemory_utils::XmpInfo,
-    validation_results::{ValidationResultsMap, ValidationState},
+    validation_results::{ValidationResults, ValidationState},
     validation_status::{self, validation_results_for_store, ValidationStatus},
 };
 
@@ -106,7 +106,7 @@ pub struct Ingredient {
 
     /// Validation results (Ingredient.V3)
     #[serde(skip_serializing_if = "Option::is_none")]
-    validation_results: Option<ValidationResultsMap>,
+    validation_results: Option<ValidationResults>,
 
     /// A reference to the actual data of the ingredient.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -278,8 +278,8 @@ impl Ingredient {
         self.validation_status.as_deref()
     }
 
-    /// Returns a reference to the [`ValidationResultsMap`]s if they exist.
-    pub fn validation_results(&self) -> Option<&ValidationResultsMap> {
+    /// Returns a reference to the [`ValidationResults`]s if they exist.
+    pub fn validation_results(&self) -> Option<&ValidationResults> {
         self.validation_results.as_ref()
     }
 

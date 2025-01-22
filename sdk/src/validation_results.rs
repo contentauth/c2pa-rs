@@ -21,7 +21,7 @@ use crate::validation_status::ValidationStatus;
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 /// Indicates if the manifest store is valid and trusted.
-/// 
+///
 /// The Trusted state implies the manifest store is valid and the active signature is trusted.
 pub enum ValidationState {
     /// Errors were found in the manifest store.
@@ -34,15 +34,17 @@ pub enum ValidationState {
 
 #[derive(Clone, Serialize, Default, Deserialize, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "json_schema", derive(JsonSchema))]
-pub struct StatusCodesMap {
+/// Contains a set of success, informational, and failure validation status codes.
+pub struct StatusCodes {
     pub success: Vec<ValidationStatus>, // an array of validation success codes. May be empty.
     pub informational: Vec<ValidationStatus>, // an array of validation informational codes. May be empty.
     pub failure: Vec<ValidationStatus>,       // an array of validation failure codes. May be empty.
 }
 
-impl StatusCodesMap {
+impl StatusCodes {
+    /// Adds a [ValidationStatus] to the StatusCodes.
     pub fn add_status(&mut self, status: ValidationStatus) {
-        if status.passed() {
+        if status.passed() { // todo, find informational status codes
             self.success.push(status);
         } else {
             self.failure.push(status);
@@ -80,18 +82,18 @@ impl StatusCodesMap {
 #[derive(Clone, Serialize, Default, Deserialize, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 /// A map of validation results for a manifest store.
-/// 
+///
 /// The map contains the validation results for the active manifest and any ingredient deltas.
-/// It is normal for there to be many 
-pub struct ValidationResultsMap {
+/// It is normal for there to be many
+pub struct ValidationResults {
     #[serde(rename = "activeManifest", skip_serializing_if = "Option::is_none")]
-    active_manifest: Option<StatusCodesMap>, // Validation status codes for the ingredient's active manifest. Present if ingredient is a C2PA asset. Not present if the ingredient is not a C2PA asset.
+    active_manifest: Option<StatusCodes>, // Validation status codes for the ingredient's active manifest. Present if ingredient is a C2PA asset. Not present if the ingredient is not a C2PA asset.
 
     #[serde(rename = "ingredientDeltas", skip_serializing_if = "Option::is_none")]
-    ingredient_deltas: Option<Vec<IngredientDeltaValidationResultMap>>, // List of any changes/deltas between the current and previous validation results for each ingredient's manifest. Present if the the ingredient is a C2PA asset.
+    ingredient_deltas: Option<Vec<IngredientDeltaValidationResult>>, // List of any changes/deltas between the current and previous validation results for each ingredient's manifest. Present if the the ingredient is a C2PA asset.
 }
 
-impl ValidationResultsMap {
+impl ValidationResults {
     /// Returns the [ValidationState] of the manifest store based on the validation results.
     pub fn validation_state(&self) -> ValidationState {
         let mut is_trusted = true; // Assume the state is trusted until proven otherwise
@@ -118,7 +120,7 @@ impl ValidationResultsMap {
         }
     }
 
-    /// Returns a list of all validation errors in the results map.
+    /// Returns a list of all validation errors in [ValidationResults].
     pub fn validation_errors(&self) -> Option<Vec<ValidationStatus>> {
         let mut status_vec = Vec::new();
         if let Some(active_manifest) = self.active_manifest.as_ref() {
@@ -136,7 +138,7 @@ impl ValidationResultsMap {
         }
     }
 
-    /// Adds a validation status to the results map.
+    /// Adds a [ValidationStatus] to the [ValidationResults].
     pub fn add_status(&mut self, active_manifest_label: &str, status: ValidationStatus) {
         use crate::jumbf::labels::manifest_label_from_uri;
         let active_manifest_label = active_manifest_label.to_string();
@@ -150,7 +152,7 @@ impl ValidationResultsMap {
         if is_active_manifest(status.url()) {
             let scm = self
                 .active_manifest
-                .get_or_insert_with(StatusCodesMap::default);
+                .get_or_insert_with(StatusCodes::default);
             scm.add_status(status);
         } else {
             let ingredient_url = status.ingredient_uri().unwrap_or("NOT FOUND!!!"); //todo: is there an error status for this?
@@ -163,9 +165,9 @@ impl ValidationResultsMap {
                     idv.validation_deltas_mut().add_status(status);
                 }
                 None => {
-                    let mut idv = IngredientDeltaValidationResultMap::new(
+                    let mut idv = IngredientDeltaValidationResult::new(
                         ingredient_url,
-                        StatusCodesMap::default(),
+                        StatusCodes::default(),
                     );
                     idv.validation_deltas_mut().add_status(status);
                     ingredient_vec.push(idv);
@@ -175,21 +177,21 @@ impl ValidationResultsMap {
     }
 
     /// Returns the active manifest status codes, if present.
-    pub fn active_manifest(&self) -> Option<&StatusCodesMap> {
+    pub fn active_manifest(&self) -> Option<&StatusCodes> {
         self.active_manifest.as_ref()
     }
 
     /// Returns the ingredient deltas, if present.
-    pub fn ingredient_deltas(&self) -> Option<&Vec<IngredientDeltaValidationResultMap>> {
+    pub fn ingredient_deltas(&self) -> Option<&Vec<IngredientDeltaValidationResult>> {
         self.ingredient_deltas.as_ref()
     }
 
-    pub fn add_active_manifest(mut self, scm: StatusCodesMap) -> Self {
+    pub fn add_active_manifest(mut self, scm: StatusCodes) -> Self {
         self.active_manifest = Some(scm);
         self
     }
 
-    pub fn add_ingredient_delta(mut self, idv: IngredientDeltaValidationResultMap) -> Self {
+    pub fn add_ingredient_delta(mut self, idv: IngredientDeltaValidationResult) -> Self {
         if let Some(id) = self.ingredient_deltas.as_mut() {
             id.push(idv);
         } else {
@@ -201,19 +203,23 @@ impl ValidationResultsMap {
 
 #[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "json_schema", derive(JsonSchema))]
-pub struct IngredientDeltaValidationResultMap {
+/// Represents any changes or deltas between the current and previous validation results for an ingredient's manifest.
+pub struct IngredientDeltaValidationResult {
     #[serde(rename = "ingredientAssertionURI")]
-    ingredient_assertion_uri: String, // JUMBF URI reference to the ingredient assertion
+    /// JUMBF URI reference to the ingredient assertion
+    ingredient_assertion_uri: String, 
     #[serde(rename = "validationDeltas")]
-    validation_deltas: StatusCodesMap, // Validation results for the ingredient's active manifest
+    /// Validation results for the ingredient's active manifest
+    validation_deltas: StatusCodes, 
 }
 
-impl IngredientDeltaValidationResultMap {
+impl IngredientDeltaValidationResult {
+    /// Creates a new [IngredientDeltaValidationResult] with the provided ingredient URI and validation deltas.
     pub fn new<S: Into<String>>(
         ingredient_assertion_uri: S,
-        validation_deltas: StatusCodesMap,
+        validation_deltas: StatusCodes,
     ) -> Self {
-        IngredientDeltaValidationResultMap {
+        IngredientDeltaValidationResult {
             ingredient_assertion_uri: ingredient_assertion_uri.into(),
             validation_deltas,
         }
@@ -223,11 +229,11 @@ impl IngredientDeltaValidationResultMap {
         self.ingredient_assertion_uri.as_str()
     }
 
-    pub fn validation_deltas(&self) -> &StatusCodesMap {
+    pub fn validation_deltas(&self) -> &StatusCodes {
         &self.validation_deltas
     }
 
-    pub fn validation_deltas_mut(&mut self) -> &mut StatusCodesMap {
+    pub fn validation_deltas_mut(&mut self) -> &mut StatusCodes {
         &mut self.validation_deltas
     }
 }

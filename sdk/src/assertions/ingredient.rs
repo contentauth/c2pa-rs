@@ -22,7 +22,7 @@ use crate::{
     cbor_types::map_cbor_to_type,
     error::Result,
     hashed_uri::HashedUri,
-    validation_results::ValidationResultsMap,
+    validation_results::ValidationResults,
     validation_status::ValidationStatus,
     Error,
 };
@@ -59,7 +59,7 @@ pub struct Ingredient {
     pub informational_uri: Option<String>,
     pub data_types: Option<Vec<AssetType>>,
 
-    pub validation_results: Option<ValidationResultsMap>,
+    pub validation_results: Option<ValidationResults>,
     pub active_manifest: Option<HashedUri>,
     pub claim_signature: Option<HashedUri>,
 
@@ -714,7 +714,7 @@ impl AssertionBase for Ingredient {
                 // add optional fields
                 let title: Option<String> = map_cbor_to_type("dc:title", &ingredient_value);
                 let format: Option<String> = map_cbor_to_type("dc:format", &ingredient_value);
-                let validation_results: Option<ValidationResultsMap> =
+                let validation_results: Option<ValidationResults> =
                     map_cbor_to_type("validationResults", &ingredient_value);
                 let instance_id: Option<String> = map_cbor_to_type("instanceID", &ingredient_value);
                 let data: Option<HashedUri> = map_cbor_to_type("data", &ingredient_value);
@@ -769,7 +769,7 @@ pub mod tests {
     use crate::{
         assertion::AssertionData,
         assertions::AssetTypeEnum,
-        validation_results::{IngredientDeltaValidationResultMap, StatusCodesMap},
+        validation_results::{IngredientDeltaValidationResult, StatusCodes},
     };
 
     #[test]
@@ -901,7 +901,7 @@ pub mod tests {
     fn test_serialization() {
         let validation_status = vec![ValidationStatus::new("claimSignature.validated")];
 
-        let active_manifest_codes = StatusCodesMap::default()
+        let active_manifest_codes = StatusCodes::default()
             .add_success_val(ValidationStatus::new("claimSignature.validated").set_url(
                 "self#jumbf=c2pa/urn:c2pa:5E7B01FC-4932-4BAB-AB32-D4F12A8AA322/c2pa.signature",
             ))
@@ -914,14 +914,14 @@ pub mod tests {
                 ),
             );
 
-        let ingredient_deltas = IngredientDeltaValidationResultMap::new(
+        let ingredient_deltas = IngredientDeltaValidationResult::new(
             "self#jumbf=c2pa/urn:c2pa:5E7B01FC-4932-4BAB-AB32-D4F12A8AA322/c2pa.assertions/c2pa.ingredient.v3", 
-            StatusCodesMap::default()
+            StatusCodes::default()
                 .add_failure_val(ValidationStatus::new("assertion.hashedURI.mismatch")
                     .set_url("self#jumbf=c2pa/urn:c2pa:F095F30E-6CD5-4BF7-8C44-CE8420CA9FB7/c2pa.assertions/c2pa.metadata"))
         );
 
-        let validation_results = ValidationResultsMap::default()
+        let validation_results = ValidationResults::default()
             .add_active_manifest(active_manifest_codes)
             .add_ingredient_delta(ingredient_deltas);
 
