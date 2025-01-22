@@ -6,6 +6,13 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 The format of this changelog is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.3.0](https://github.com/contentauth/c2pa-rs/compare/cawg-identity-v0.2.2...cawg-identity-v0.3.0)
+_22 January 2025_
+
+### Added
+
+* Change the definition of `Signer.raw_signer()` to return an `Option` defaulting to `None` (#869)
+
 ## [0.2.2](https://github.com/contentauth/c2pa-rs/compare/cawg-identity-v0.2.1...cawg-identity-v0.2.2)
 _22 January 2025_
 

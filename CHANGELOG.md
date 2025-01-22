@@ -6,6 +6,13 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 Since version 0.36.2, the format of this changelog is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.42.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.41.1...c2pa-v0.42.0)
+_22 January 2025_
+
+### Added
+
+* Change the definition of `Signer.raw_signer()` to return an `Option` defaulting to `None` (#869)
+
 ## [0.41.1](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.41.0...c2pa-v0.41.1)
 _22 January 2025_
 
