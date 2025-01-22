@@ -728,7 +728,6 @@ pub mod tests {
             .signer()
             .expect("get_signer");
 
-        #[allow(deprecated)] // todo: remove when we can
         let _result = builder
             .sign_file(signer.as_ref(), SOURCE_PATH, OUTPUT_PATH)
             .expect("embed");

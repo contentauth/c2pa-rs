@@ -824,8 +824,13 @@ impl Builder {
                 crate::utils::thumbnail::make_thumbnail_from_stream(format, stream)
             {
                 stream.rewind()?;
+                // Do not write this as a file when reading from files
+                let base_path = self.resources.take_base_path();
                 self.resources
                     .add(self.definition.instance_id.clone(), image)?;
+                if let Some(path) = base_path {
+                    self.resources.set_base_path(path)
+                }
                 self.definition.thumbnail = Some(ResourceRef::new(
                     format,
                     self.definition.instance_id.clone(),
