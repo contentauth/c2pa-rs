@@ -16,10 +16,11 @@
 #![deny(missing_docs)]
 
 use async_generic::async_generic;
+use async_trait::async_trait;
 use c2pa_crypto::{
     cose::{check_certificate_profile, sign, sign_async, CertificateTrustPolicy, TimeStampStorage},
-    raw_signature::{RawSigner, RawSignerError, SigningAlg},
-    time_stamp::{TimeStampError, TimeStampProvider},
+    raw_signature::{AsyncRawSigner, RawSigner, RawSignerError, SigningAlg},
+    time_stamp::{AsyncTimeStampProvider, TimeStampError, TimeStampProvider},
 };
 use c2pa_status_tracker::OneShotStatusTracker;
 
@@ -121,8 +122,15 @@ pub(crate) fn cose_sign(
             }
         }
     } else {
-        let raw_signer = signer.async_raw_signer();
-        Ok(sign_async(*raw_signer, data, box_size, time_stamp_storage).await?)
+        match signer.async_raw_signer() {
+            Some(raw_signer) => {
+                Ok(sign_async(*raw_signer, data, box_size, time_stamp_storage).await?)
+            }
+            None => {
+                let wrapper = AsyncSignerWrapper(signer);
+                Ok(sign_async(&wrapper, data, box_size, time_stamp_storage).await?)
+            }
+        }
     }
 }
 
@@ -190,6 +198,59 @@ impl<'a> TimeStampProvider for SignerWrapper<'a> {
     ) -> Option<std::result::Result<Vec<u8>, TimeStampError>> {
         self.0
             .send_timestamp_request(message)
+            .map(|r| r.map_err(|e| e.into()))
+    }
+}
+
+struct AsyncSignerWrapper<'a>(&'a dyn AsyncSigner);
+
+#[async_trait]
+impl<'a> AsyncRawSigner for AsyncSignerWrapper<'a> {
+    async fn sign(&self, data: Vec<u8>) -> std::result::Result<Vec<u8>, RawSignerError> {
+        Ok(self.0.sign(data).await?)
+    }
+
+    fn alg(&self) -> SigningAlg {
+        self.0.alg()
+    }
+
+    fn cert_chain(&self) -> std::result::Result<Vec<Vec<u8>>, RawSignerError> {
+        Ok(self.0.certs()?)
+    }
+
+    fn reserve_size(&self) -> usize {
+        self.0.reserve_size()
+    }
+
+    async fn ocsp_response(&self) -> Option<Vec<u8>> {
+        self.0.ocsp_val().await
+    }
+}
+
+#[async_trait]
+impl<'a> AsyncTimeStampProvider for AsyncSignerWrapper<'a> {
+    fn time_stamp_service_url(&self) -> Option<String> {
+        self.0.time_authority_url()
+    }
+
+    fn time_stamp_request_headers(&self) -> Option<Vec<(String, String)>> {
+        self.0.timestamp_request_headers()
+    }
+
+    fn time_stamp_request_body(
+        &self,
+        message: &[u8],
+    ) -> std::result::Result<Vec<u8>, TimeStampError> {
+        Ok(self.0.timestamp_request_body(message)?)
+    }
+
+    async fn send_time_stamp_request(
+        &self,
+        message: &[u8],
+    ) -> Option<std::result::Result<Vec<u8>, TimeStampError>> {
+        self.0
+            .send_timestamp_request(message)
+            .await
             .map(|r| r.map_err(|e| e.into()))
     }
 }

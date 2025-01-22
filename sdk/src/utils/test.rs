@@ -346,41 +346,6 @@ impl AsyncSigner for AsyncTestGoodSigner {
     ) -> Option<crate::error::Result<Vec<u8>>> {
         Some(Ok(Vec::new()))
     }
-
-    fn async_raw_signer(&self) -> Box<&dyn AsyncRawSigner> {
-        Box::new(self)
-    }
-}
-
-#[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
-#[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
-impl AsyncRawSigner for AsyncTestGoodSigner {
-    async fn sign(&self, _data: Vec<u8>) -> std::result::Result<Vec<u8>, RawSignerError> {
-        Ok(b"not a valid signature".to_vec())
-    }
-
-    fn alg(&self) -> SigningAlg {
-        SigningAlg::Ps256
-    }
-
-    fn cert_chain(&self) -> std::result::Result<Vec<Vec<u8>>, RawSignerError> {
-        Ok(Vec::new())
-    }
-
-    fn reserve_size(&self) -> usize {
-        1024
-    }
-}
-
-#[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
-#[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
-impl AsyncTimeStampProvider for AsyncTestGoodSigner {
-    async fn send_time_stamp_request(
-        &self,
-        _message: &[u8],
-    ) -> Option<std::result::Result<Vec<u8>, TimeStampError>> {
-        Some(Ok(Vec::new()))
-    }
 }
 
 struct TempRemoteSigner {}
@@ -504,10 +469,6 @@ impl AsyncSigner for WebCryptoSigner {
     async fn send_timestamp_request(&self, _: &[u8]) -> Option<Result<Vec<u8>>> {
         None
     }
-
-    fn async_raw_signer(&self) -> Box<&dyn AsyncRawSigner> {
-        unreachable!();
-    }
 }
 
 /// Create a [`RemoteSigner`] instance that can be used for testing purposes.
@@ -564,10 +525,6 @@ impl AsyncSigner for TempAsyncRemoteSigner {
         _message: &[u8],
     ) -> Option<crate::error::Result<Vec<u8>>> {
         Some(Ok(Vec::new()))
-    }
-
-    fn async_raw_signer(&self) -> Box<&dyn AsyncRawSigner> {
-        Box::new(self)
     }
 }
 

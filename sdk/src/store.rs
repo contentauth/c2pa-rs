@@ -5922,7 +5922,6 @@ pub mod tests {
     #[cfg(feature = "openssl_sign")]
     async fn test_dynamic_assertions() {
         use async_trait::async_trait;
-        use c2pa_crypto::raw_signature::AsyncRawSigner;
 
         #[derive(Serialize)]
         struct TestAssertion {
@@ -6006,10 +6005,6 @@ pub mod tests {
             // Returns our dynamic assertion here.
             fn dynamic_assertions(&self) -> Vec<Box<dyn crate::DynamicAssertion>> {
                 vec![Box::new(TestDynamicAssertion {})]
-            }
-
-            fn async_raw_signer(&self) -> Box<&dyn AsyncRawSigner> {
-                self.0.async_raw_signer()
             }
         }
 

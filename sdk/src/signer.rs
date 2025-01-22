@@ -101,7 +101,8 @@ pub trait Signer {
     /// If this struct also implements or wraps [`RawSigner`], it should
     /// return a reference to that trait implementation.
     ///
-    /// If this function returns `None` (the default behavior), a temporary wrapper will be constructed for it.
+    /// If this function returns `None` (the default behavior), a temporary
+    /// wrapper will be constructed for it.
     ///
     /// NOTE: Due to limitations in some of the FFI tooling that we use to bridge
     /// c2pa-rs to other languages, we can not make [`RawSigner`] a supertrait of
@@ -225,15 +226,20 @@ pub trait AsyncSigner: Sync {
         Vec::new()
     }
 
-    /// This struct must also implement [`AsyncRawSigner`]. Return a reference
-    /// to that trait implementation.
+    /// If this struct also implements or wraps [`AsyncRawSigner`], it should
+    /// return a reference to that trait implementation.
+    ///
+    /// If this function returns `None` (the default behavior), a temporary
+    /// wrapper will be constructed for it when needed.
     ///
     /// NOTE: Due to limitations in some of the FFI tooling that we use to bridge
     /// c2pa-rs to other languages, we can not make [`AsyncRawSigner`] a supertrait
     /// of this trait. This API is a workaround for that limitation.
     ///
     /// [`AsyncRawSigner`]: c2pa_crypto::raw_signature::AsyncRawSigner
-    fn async_raw_signer(&self) -> Box<&dyn AsyncRawSigner>;
+    fn async_raw_signer(&self) -> Option<Box<&dyn AsyncRawSigner>> {
+        None
+    }
 }
 
 /// The `AsyncSigner` trait generates a cryptographic signature over a byte array.
@@ -307,15 +313,20 @@ pub trait AsyncSigner {
         Vec::new()
     }
 
-    /// This struct must also implement [`AsyncRawSigner`]. Return a reference
-    /// to that trait implementation.
+    /// If this struct also implements or wraps [`AsyncRawSigner`], it should
+    /// return a reference to that trait implementation.
+    ///
+    /// If this function returns `None` (the default behavior), a temporary
+    /// wrapper will be constructed for it when needed.
     ///
     /// NOTE: Due to limitations in some of the FFI tooling that we use to bridge
     /// c2pa-rs to other languages, we can not make [`AsyncRawSigner`] a supertrait
     /// of this trait. This API is a workaround for that limitation.
     ///
     /// [`AsyncRawSigner`]: c2pa_crypto::raw_signature::AsyncRawSigner
-    fn async_raw_signer(&self) -> Box<&dyn AsyncRawSigner>;
+    fn async_raw_signer(&self) -> Option<Box<&dyn AsyncRawSigner>> {
+        None
+    }
 }
 
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
@@ -481,7 +492,7 @@ impl AsyncSigner for Box<dyn AsyncSigner + Send + Sync> {
         (**self).dynamic_assertions()
     }
 
-    fn async_raw_signer(&self) -> Box<&dyn AsyncRawSigner> {
+    fn async_raw_signer(&self) -> Option<Box<&dyn AsyncRawSigner>> {
         (**self).async_raw_signer()
     }
 }
@@ -533,7 +544,7 @@ impl AsyncSigner for Box<dyn AsyncSigner> {
         (**self).dynamic_assertions()
     }
 
-    fn async_raw_signer(&self) -> Box<&dyn AsyncRawSigner> {
+    fn async_raw_signer(&self) -> Option<Box<&dyn AsyncRawSigner>> {
         (**self).async_raw_signer()
     }
 }
