@@ -557,10 +557,10 @@ impl Manifest {
             })?;
 
         // extract vendor from claim label
-        //let claim_generator = claim.claim_generator().to_owned();
+        let claim_generator = claim.claim_generator().to_owned();
 
-        //let mut manifest = Manifest::new(claim_generator);
         let mut manifest = Manifest {
+            claim_generator: Some(claim_generator),
             title: claim.title().map(|s| s.to_owned()),
             format: if claim.format().is_empty() {
                 None

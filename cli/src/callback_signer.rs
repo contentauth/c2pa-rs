@@ -111,8 +111,9 @@ impl CallbackSignerConfig {
     pub fn new(sign_config: &SignConfig, reserve_size: usize) -> anyhow::Result<Self> {
         let alg = sign_config
             .alg
-            .clone()
-            .and_then(|alg| alg.parse::<SigningAlg>().ok())
+            .as_deref()
+            .map_or_else(|| "es256".to_string(), |alg| alg.to_lowercase())
+            .parse::<SigningAlg>()
             .context("Invalid signing algorithm provided")?;
 
         let sign_cert_path = sign_config

@@ -706,9 +706,10 @@ impl Builder {
                                     //updates.push((action_index, hash_url.clone()));
                                     uris.push(hash_url.clone());
                                 } else {
-                                    return Err(Error::BadParam(format!(
-                                        "Action ingredientId not found: {id}"
-                                    )));
+                                    dbg!(format!("Action ingredientId not found: {id}"));
+                                    // return Err(Error::BadParam(format!(
+                                    //     "Action ingredientId not found: {id}"
+                                    // )));
                                 }
                             }
                             match version {

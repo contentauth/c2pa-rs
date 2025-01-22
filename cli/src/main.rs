@@ -19,7 +19,7 @@
 /// in that file. If a manifest definition JSON file is specified,
 /// the claim will be added to any existing claims.
 use std::{
-    fs::{create_dir_all, remove_dir_all, File},
+    fs::{create_dir_all, remove_dir_all, remove_file, File},
     io::Write,
     path::{Path, PathBuf},
     str::FromStr,
@@ -596,8 +596,12 @@ fn main() -> Result<()> {
                 if ext_normal(&output) != ext_normal(&args.path) {
                     bail!("Output type must match source type");
                 }
-                if output.exists() && !args.force {
-                    bail!("Output already exists, use -f/force to force write");
+                if output.exists() {
+                    if args.force {
+                        remove_file(&output)?;
+                    } else {
+                        bail!("Output already exists, use -f/force to force write");
+                    }
                 }
 
                 if output.file_name().is_none() {
@@ -713,8 +717,8 @@ pub mod tests {
     #[test]
     fn test_manifest_config() {
         const SOURCE_PATH: &str = "tests/fixtures/earth_apollo17.jpg";
-        const OUTPUT_PATH: &str = "target/tmp/unit_out.jpg";
-        create_dir_all("target/tmp").expect("create_dir");
+        const OUTPUT_PATH: &str = "../target/tmp/unit_out.jpg";
+        create_dir_all("../target/tmp").expect("create_dir");
         std::fs::remove_file(OUTPUT_PATH).ok(); // remove output file if it exists
         let mut builder = Builder::from_json(CONFIG).expect("from_json");
 
