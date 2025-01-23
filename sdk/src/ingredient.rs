@@ -595,7 +595,7 @@ impl Ingredient {
                     // if the parent claim is valid and has a thumbnail, use it
                     if validation_results
                         .active_manifest()
-                        .map_or(false, |m| m.failure().is_empty())
+                        .is_some_and(|m| m.failure().is_empty())
                     {
                         if let Some(hashed_uri) = claim
                             .assertions()
