@@ -11,5 +11,4 @@
 // specific language governing permissions and limitations under
 // each license.
 
-mod error;
 mod simple_case;

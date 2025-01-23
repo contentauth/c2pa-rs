@@ -11,6 +11,8 @@
 // specific language governing permissions and limitations under
 // each license.
 
+use std::fmt::Display;
+
 use async_trait::async_trait;
 
 use crate::{builder::IdentityBuilderError, SignerPayload};
@@ -26,6 +28,13 @@ use crate::{builder::IdentityBuilderError, SignerPayload};
 #[cfg(not(target_arch = "wasm32"))]
 #[async_trait]
 pub trait CredentialHolder: Send + Sync {
+    /// The `Error` type provides a credential-specific explanation for why an
+    /// identity assertion signature could not be generated. This value may be
+    /// included in the `SignerError` variant of [`IdentityBuilderError`].
+    ///
+    /// [`ValidationError`]: crate::builder::IdentityBuilderError
+    type Error: Display;
+
     /// Returns the designated `sig_type` value for this kind of credential.
     fn sig_type(&self) -> &'static str;
 
@@ -47,7 +56,10 @@ pub trait CredentialHolder: Send + Sync {
     /// by the [`reserve_size`] function.
     ///
     /// [`reserve_size`]: Self::reserve_size
-    async fn sign(&self, signer_payload: &SignerPayload) -> Result<Vec<u8>, IdentityBuilderError>;
+    async fn sign(
+        &self,
+        signer_payload: &SignerPayload,
+    ) -> Result<Vec<u8>, IdentityBuilderError<Self::Error>>;
 }
 
 /// An implementation of `CredentialHolder` is able to generate a signature over

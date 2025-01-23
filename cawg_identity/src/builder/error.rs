@@ -13,12 +13,11 @@
 
 use std::fmt::Debug;
 
-use c2pa_crypto::raw_signature::RawSignerError;
 use thiserror::Error;
 
 /// Describes errors that can occur when building a CAWG identity assertion.
 #[derive(Debug, Error)]
-pub enum IdentityBuilderError {
+pub enum IdentityBuilderError<SignerError> {
     /// The box size provided for the signature is too small.
     #[error("the signature box is too small")]
     BoxSizeTooSmall,
@@ -27,18 +26,12 @@ pub enum IdentityBuilderError {
     #[error("error while generating CBOR ({0})")]
     CborGenerationError(String),
 
-    /// An error occurred when generating the underlying raw signature.
+    /// An error occurred when generating the underlying signature.
     #[error(transparent)]
-    RawSignerError(#[from] RawSignerError),
+    SignerError(#[from] SignerError),
 
     /// An unexpected internal error occured while requesting the time stamp
     /// response.
     #[error("internal error ({0})")]
     InternalError(String),
-}
-
-impl<T: Debug> From<ciborium::ser::Error<T>> for IdentityBuilderError {
-    fn from(err: ciborium::ser::Error<T>) -> Self {
-        Self::CborGenerationError(err.to_string())
-    }
 }

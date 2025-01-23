@@ -22,28 +22,31 @@ use crate::{builder::CredentialHolder, IdentityAssertion, SignerPayload};
 /// it ensures that the proper data is added to the final C2PA Manifest.
 ///
 /// [`IdentityAssertionSigner`]: crate::builder::IdentityAssertionSigner
-pub struct IdentityAssertionBuilder {
-    #[cfg(not(target_arch = "wasm32"))]
-    credential_holder: Box<dyn CredentialHolder + Sync + Send>,
-
-    #[cfg(target_arch = "wasm32")]
-    credential_holder: Box<dyn CredentialHolder>,
+#[cfg(not(target_arch = "wasm32"))]
+pub struct IdentityAssertionBuilder<CH: CredentialHolder + Send + Sync> {
+    credential_holder: CH,
     // referenced_assertions: Vec<MumbleSomething>,
 }
 
-impl IdentityAssertionBuilder {
+#[cfg(target_arch = "wasm32")]
+pub struct IdentityAssertionBuilder<CH: CredentialHolder> {
+    credential_holder: CH,
+    // referenced_assertions: Vec<MumbleSomething>,
+}
+
+impl<CH: CredentialHolder> IdentityAssertionBuilder<CH> {
     /// Create an `IdentityAssertionBuilder` for the given
     /// `CredentialHolder` instance.
-    pub fn for_credential_holder<CH: CredentialHolder + 'static>(credential_holder: CH) -> Self {
+    pub fn for_credential_holder(credential_holder: CH) -> Self {
         Self {
-            credential_holder: Box::new(credential_holder),
+            credential_holder: credential_holder,
         }
     }
 }
 
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
-impl DynamicAssertion for IdentityAssertionBuilder {
+impl<CH: CredentialHolder> DynamicAssertion for IdentityAssertionBuilder<CH> {
     fn label(&self) -> String {
         "cawg.identity".to_string()
     }

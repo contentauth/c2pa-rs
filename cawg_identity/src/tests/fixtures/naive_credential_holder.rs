@@ -35,6 +35,8 @@ pub(crate) struct NaiveCredentialHolder {}
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl CredentialHolder for NaiveCredentialHolder {
+    type Error = String;
+
     fn sig_type(&self) -> &'static str {
         "INVALID.identity.naive_credential"
     }
@@ -43,11 +45,15 @@ impl CredentialHolder for NaiveCredentialHolder {
         1000
     }
 
-    async fn sign(&self, signer_payload: &SignerPayload) -> Result<Vec<u8>, IdentityBuilderError> {
+    async fn sign(
+        &self,
+        signer_payload: &SignerPayload,
+    ) -> Result<Vec<u8>, IdentityBuilderError<String>> {
         // Naive implementation simply serializes SignerPayload
         // in CBOR format and calls it a "signature."
         let mut result: Vec<u8> = vec![];
-        ciborium::into_writer(signer_payload, &mut result)?;
+        ciborium::into_writer(signer_payload, &mut result)
+            .map_err(|e| IdentityBuilderError::CborGenerationError(e.to_string()))?;
         Ok(result)
     }
 }
