@@ -87,8 +87,6 @@ fn cert_chain_and_private_key_for_alg(alg: SigningAlg) -> (Vec<u8>, Vec<u8>) {
             include_bytes!("../../tests/fixtures/certs/ed25519.pub").to_vec(),
             include_bytes!("../../tests/fixtures/certs/ed25519.pem").to_vec(),
         ),
-
-        _ => unimplemented!("Unknown SigningAlg variant {alg:#?}"),
     }
 }
 
@@ -144,7 +142,7 @@ impl AsyncSigner for AsyncRawSignerWrapper {
             .map(|r| r.map_err(|e| e.into()))
     }
 
-    fn async_raw_signer(&self) -> Box<&dyn AsyncRawSigner> {
-        Box::new(&*self.0)
+    fn async_raw_signer(&self) -> Option<Box<&dyn AsyncRawSigner>> {
+        Some(Box::new(&*self.0))
     }
 }
