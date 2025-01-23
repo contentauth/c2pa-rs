@@ -213,6 +213,8 @@ impl SignatureVerifier for IcaSignatureVerifier {
             ));
         };
 
+        // TO DO: Enforce signer_payload matches what was stated outside the signature.
+
         // TO DO: Enforce validity window as compared to sig time (or now if no TSA
         // time).
 
