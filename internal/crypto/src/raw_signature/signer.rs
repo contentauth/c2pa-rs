@@ -57,9 +57,45 @@ pub trait RawSigner: TimeStampProvider {
 /// signature over an arbitrary byte array.
 ///
 /// Use this trait only when the implementation must be asynchronous.
-#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
-#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
-pub trait AsyncRawSigner: Sync + AsyncTimeStampProvider {
+#[cfg(not(target_arch = "wasm32"))]
+#[async_trait]
+pub trait AsyncRawSigner: AsyncTimeStampProvider + Sync {
+    /// Return a raw signature over the original byte slice.
+    async fn sign(&self, data: Vec<u8>) -> Result<Vec<u8>, RawSignerError>;
+
+    /// Return the algorithm implemented by this signer.
+    fn alg(&self) -> SigningAlg;
+
+    /// Return the signing certificate chain.
+    ///
+    /// Each certificate should be encoded in DER format and sequenced from
+    /// end-entity certificate to the outermost certificate authority.
+    fn cert_chain(&self) -> Result<Vec<Vec<u8>>, RawSignerError>;
+
+    /// Return the size in bytes of the largest possible expected signature.
+    /// Signing will fail if the result of the [`sign`] function is larger
+    /// than this value.
+    ///
+    /// [`sign`]: Self::sign
+    fn reserve_size(&self) -> usize;
+
+    /// Return an OCSP response for the signing certificate if available.
+    ///
+    /// By pre-querying the value for the signing certificate, the value can be
+    /// cached which will reduce load on the certificate authority, as
+    /// recommended by the C2PA spec.
+    async fn ocsp_response(&self) -> Option<Vec<u8>> {
+        None
+    }
+}
+
+/// Implementations of the `AsyncRawSigner` trait generate a cryptographic
+/// signature over an arbitrary byte array.
+///
+/// Use this trait only when the implementation must be asynchronous.
+#[cfg(target_arch = "wasm32")]
+#[async_trait(?Send)]
+pub trait AsyncRawSigner: AsyncTimeStampProvider {
     /// Return a raw signature over the original byte slice.
     async fn sign(&self, data: Vec<u8>) -> Result<Vec<u8>, RawSignerError>;
 
@@ -105,18 +141,9 @@ pub enum RawSignerError {
     #[error("I/O error ({0})")]
     IoError(String),
 
-    /// An error was reported by the OpenSSL native code.
-    ///
-    /// NOTE: We do not directly capture the OpenSSL error itself because it
-    /// lacks an `Eq` implementation. Instead we capture the error description.
-    #[cfg(feature = "openssl")]
-    #[error("an error was reported by OpenSSL native code: {0}")]
-    OpenSslError(String),
-
-    /// The OpenSSL native code mutex could not be acquired.
-    #[cfg(feature = "openssl")]
-    #[error(transparent)]
-    OpenSslMutexUnavailable(#[from] crate::openssl::OpenSslMutexUnavailable),
+    /// An error was reported by the underlying cryptography implementation.
+    #[error("an error was reported by the cryptography library: {0}")]
+    CryptoLibraryError(String),
 
     /// An unexpected internal error occured while requesting the time stamp
     /// response.
@@ -130,21 +157,28 @@ impl From<std::io::Error> for RawSignerError {
     }
 }
 
-#[cfg(feature = "openssl")]
+#[cfg(not(target_arch = "wasm32"))]
 impl From<openssl::error::ErrorStack> for RawSignerError {
     fn from(err: openssl::error::ErrorStack) -> Self {
-        Self::OpenSslError(err.to_string())
+        Self::CryptoLibraryError(err.to_string())
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl From<crate::raw_signature::openssl::OpenSslMutexUnavailable> for RawSignerError {
+    fn from(err: crate::raw_signature::openssl::OpenSslMutexUnavailable) -> Self {
+        Self::InternalError(err.to_string())
     }
 }
 
 #[cfg(target_arch = "wasm32")]
-impl From<crate::webcrypto::WasmCryptoError> for RawSignerError {
-    fn from(err: crate::webcrypto::WasmCryptoError) -> Self {
+impl From<crate::raw_signature::webcrypto::WasmCryptoError> for RawSignerError {
+    fn from(err: crate::raw_signature::webcrypto::WasmCryptoError) -> Self {
         match err {
-            crate::webcrypto::WasmCryptoError::UnknownContext => {
+            crate::raw_signature::webcrypto::WasmCryptoError::UnknownContext => {
                 Self::InternalError("unknown WASM context".to_string())
             }
-            crate::webcrypto::WasmCryptoError::NoCryptoAvailable => {
+            crate::raw_signature::webcrypto::WasmCryptoError::NoCryptoAvailable => {
                 Self::InternalError("WASM crypto unavailable".to_string())
             }
         }
@@ -167,19 +201,23 @@ pub fn signer_from_cert_chain_and_private_key(
     alg: SigningAlg,
     time_stamp_service_url: Option<String>,
 ) -> Result<Box<dyn RawSigner + Send + Sync>, RawSignerError> {
-    #[cfg(feature = "openssl")]
+    #[cfg(any(target_arch = "wasm32", feature = "rust_native_crypto"))]
     {
-        return crate::openssl::signers::signer_from_cert_chain_and_private_key(
+        match crate::raw_signature::rust_native::signers::signer_from_cert_chain_and_private_key(
             cert_chain,
             private_key,
             alg,
-            time_stamp_service_url,
-        );
+            time_stamp_service_url.clone(),
+        ) {
+            Ok(signer) => return Ok(signer),
+            Err(RawSignerError::InternalError(_)) => (),
+            Err(err) => return Err(err),
+        }
     }
 
-    #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
+    #[cfg(not(target_arch = "wasm32"))]
     {
-        return crate::webcrypto::signers::signer_from_cert_chain_and_private_key(
+        return crate::raw_signature::openssl::signers::signer_from_cert_chain_and_private_key(
             cert_chain,
             private_key,
             alg,
@@ -201,16 +239,12 @@ pub fn signer_from_cert_chain_and_private_key(
 ///
 /// May return an `Err` response if the certificate chain or private key are
 /// invalid.
-#[allow(unused)] // arguments may or may not be used depending on crate features
 pub fn async_signer_from_cert_chain_and_private_key(
     cert_chain: &[u8],
     private_key: &[u8],
     alg: SigningAlg,
     time_stamp_service_url: Option<String>,
 ) -> Result<Box<dyn AsyncRawSigner + Send + Sync>, RawSignerError> {
-    // TO DO: Preferentially use WASM-based signers, some of which are necessarily
-    // async.
-
     let sync_signer = signer_from_cert_chain_and_private_key(
         cert_chain,
         private_key,

@@ -288,10 +288,6 @@ pub enum Error {
     #[error(transparent)]
     CborError(#[from] serde_cbor::Error),
 
-    #[cfg(feature = "openssl")]
-    #[error("could not acquire OpenSSL FFI mutex")]
-    OpenSslMutexError,
-
     #[error(transparent)]
     OtherError(#[from] Box<dyn std::error::Error + Send + Sync + 'static>),
 
@@ -334,19 +330,16 @@ pub enum Error {
 /// A specialized `Result` type for C2PA toolkit operations.
 pub type Result<T> = std::result::Result<T, Error>;
 
-#[cfg(feature = "openssl")]
-impl From<c2pa_crypto::openssl::OpenSslMutexUnavailable> for Error {
-    fn from(_err: c2pa_crypto::openssl::OpenSslMutexUnavailable) -> Self {
-        Self::OpenSslMutexError
-    }
-}
-
 #[cfg(target_arch = "wasm32")]
-impl From<c2pa_crypto::webcrypto::WasmCryptoError> for Error {
-    fn from(err: c2pa_crypto::webcrypto::WasmCryptoError) -> Self {
+impl From<c2pa_crypto::raw_signature::webcrypto::WasmCryptoError> for Error {
+    fn from(err: c2pa_crypto::raw_signature::webcrypto::WasmCryptoError) -> Self {
         match err {
-            c2pa_crypto::webcrypto::WasmCryptoError::UnknownContext => Self::WasmInvalidContext,
-            c2pa_crypto::webcrypto::WasmCryptoError::NoCryptoAvailable => Self::WasmNoCrypto,
+            c2pa_crypto::raw_signature::webcrypto::WasmCryptoError::UnknownContext => {
+                Self::WasmInvalidContext
+            }
+            c2pa_crypto::raw_signature::webcrypto::WasmCryptoError::NoCryptoAvailable => {
+                Self::WasmNoCrypto
+            }
         }
     }
 }

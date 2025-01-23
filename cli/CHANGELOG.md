@@ -6,6 +6,35 @@ This project adheres to [Semantic Versioning](https://semver.org), except that â
 
 Since version 0.10.0, the format of this changelog is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.12.0](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.11.1...c2patool-v0.12.0)
+_22 January 2025_
+
+### Added
+
+* Change the definition of `Signer.raw_signer()` to return an `Option` defaulting to `None` (#869)
+
+## [0.11.1](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.11.0...c2patool-v0.11.1)
+_18 January 2025_
+
+### Fixed
+
+* Upload a distinct SBOM per platform (#856)
+
+## [0.11.0](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.10.2...c2patool-v0.11.0)
+_16 January 2025_
+
+### Added
+
+* Move COSE signing into `c2pa_crypto` crate (#807)
+
+### Documented
+
+* Post move cleanup (#778)
+
+### Fixed
+
+* Fix: Obscure glob error message for missing files
+
 ## [0.10.2](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.10.1...c2patool-v0.10.2)
 _12 December 2024_
 

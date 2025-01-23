@@ -1,6 +1,6 @@
 [package]
 name = "c2pa-status-tracker"
-version = "0.2.0"
+version = "0.3.0"
 description = "Status tracking internals for c2pa-rs crate"
 authors = [
     "Maurice Fisher <mfisher@adobe.com>",
@@ -13,8 +13,12 @@ homepage = "https://contentauthenticity.org"
 repository = "https://github.com/contentauth/c2pa-rs"
 readme = "README.md"
 edition = "2021"
-rust-version = "1.81.0"
+rust-version = "1.82.0"
 exclude = ["tests/fixtures"]
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(test)'] }
+# Workaround for https://github.com/est31/cargo-udeps/issues/293.
 
 [package.metadata.docs.rs]
 all-features = true

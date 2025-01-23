@@ -32,6 +32,7 @@ pub(crate) fn test_signer(alg: SigningAlg) -> Box<dyn Signer> {
 
 /// Creates an [`AsyncSigner`] instance for testing purposes using test credentials.
 #[cfg(not(target_arch = "wasm32"))]
+#[allow(dead_code)]
 pub(crate) fn async_test_signer(alg: SigningAlg) -> Box<dyn AsyncSigner + Sync + Send> {
     let (cert_chain, private_key) = cert_chain_and_private_key_for_alg(alg);
 
@@ -86,8 +87,6 @@ fn cert_chain_and_private_key_for_alg(alg: SigningAlg) -> (Vec<u8>, Vec<u8>) {
             include_bytes!("../../tests/fixtures/certs/ed25519.pub").to_vec(),
             include_bytes!("../../tests/fixtures/certs/ed25519.pem").to_vec(),
         ),
-
-        _ => unimplemented!("Unknown SigningAlg variant {alg:#?}"),
     }
 }
 
@@ -143,7 +142,7 @@ impl AsyncSigner for AsyncRawSignerWrapper {
             .map(|r| r.map_err(|e| e.into()))
     }
 
-    fn async_raw_signer(&self) -> Box<&dyn AsyncRawSigner> {
-        Box::new(&*self.0)
+    fn async_raw_signer(&self) -> Option<Box<&dyn AsyncRawSigner>> {
+        Some(Box::new(&*self.0))
     }
 }

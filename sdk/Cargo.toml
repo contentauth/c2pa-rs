@@ -1,6 +1,6 @@
 [package]
 name = "c2pa"
-version = "0.40.0"
+version = "0.42.0"
 description = "Rust SDK for C2PA (Coalition for Content Provenance and Authenticity) implementors"
 authors = [
     "Maurice Fisher <mfisher@adobe.com>",
@@ -18,7 +18,7 @@ readme = "../README.md"
 keywords = ["xmp", "metadata"]
 categories = ["api-bindings"]
 edition = "2021"
-rust-version = "1.81.0"
+rust-version = "1.82.0"
 exclude = ["tests/fixtures"]
 
 [package.metadata.docs.rs]
@@ -31,8 +31,8 @@ file_io = ["openssl_sign"]
 serialize_thumbnails = []
 no_interleaved_io = ["file_io"]
 fetch_remote_manifests = []
-openssl = ["c2pa-crypto/openssl"]
-openssl_sign = ["openssl", "c2pa-crypto/openssl"]
+openssl = []
+openssl_sign = ["openssl"]
 json_schema = ["dep:schemars", "c2pa-crypto/json_schema"]
 pdf = ["dep:lopdf"]
 v1_api = []
@@ -40,6 +40,10 @@ v1_api = []
 # The diagnostics feature is unsupported and might be removed.
 # It enables some low-overhead timing features used in our development cycle.
 diagnostics = []
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(test)'] }
+# Workaround for https://github.com/est31/cargo-udeps/issues/293.
 
 [[example]]
 name = "client"
@@ -68,8 +72,8 @@ bcder = "0.7.3"
 bytes = "1.7.2"
 byteorder = { version = "1.4.3", default-features = false }
 byteordered = "0.6.0"
-c2pa-crypto = { path = "../internal/crypto", version = "0.2.0" }
-c2pa-status-tracker = { path = "../internal/status-tracker", version = "0.2.0" }
+c2pa-crypto = { path = "../internal/crypto", version = "0.4.0" }
+c2pa-status-tracker = { path = "../internal/status-tracker", version = "0.3.0" }
 chrono = { version = "0.4.39", default-features = false, features = [
     "serde",
     "wasmbind",
@@ -86,11 +90,11 @@ conv = "0.3.3"
 coset = "0.3.1"
 extfmt = "0.1.1"
 ed25519-dalek = "2.1.1"
-fast-xml = "0.23.1"
+quick-xml = "0.37.1"
 hex = "0.4.3"
 # Version 1.13.0 doesn't compile under Rust < 1.75, pinning to 1.12.0
 id3 = "=1.14.0"
-img-parts = "0.3.0"
+img-parts = "0.3.2"
 jfifdump = "0.6.0"
 log = "0.4.8"
 lopdf = { version = "0.31.0", optional = true }
@@ -152,10 +156,11 @@ web-sys = { version = "0.3.58", features = [
 
 [dev-dependencies]
 anyhow = "1.0.40"
-mockall = "0.13.1"
-c2pa = { path = ".", default-features = false } # allow integration tests to use the new API
+c2pa = { path = ".", default-features = false }
 glob = "0.3.1"
+hex-literal = "0.4.1"
 jumbf = "0.4.0"
+mockall = "0.13.1"
 
 [target.'cfg(target_arch = "wasm32")'.dev-dependencies]
 wasm-bindgen-test = "0.3.31"

@@ -4,7 +4,11 @@ version = "0.36.1"
 authors = ["Gavin Peacock <gpeacock@adobe.com>"]
 license = "MIT OR Apache-2.0"
 edition = "2021"
-rust-version = "1.81.0"
+rust-version = "1.82.0"
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(test)'] }
+# Workaround for https://github.com/est31/cargo-udeps/issues/293.
 
 [[bin]]
 name = "make_test_images"

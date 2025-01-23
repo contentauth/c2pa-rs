@@ -65,36 +65,31 @@ pub trait AsyncRawSignatureValidator {
 /// Which validators are available may vary depending on the platform and
 /// which crate features were enabled.
 pub fn validator_for_signing_alg(alg: SigningAlg) -> Option<Box<dyn RawSignatureValidator>> {
-    #[cfg(feature = "openssl")]
-    if let Some(validator) = crate::openssl::validators::validator_for_signing_alg(alg) {
+    #[cfg(any(target_arch = "wasm32", feature = "rust_native_crypto"))]
+    {
+        if let Some(validator) =
+            crate::raw_signature::rust_native::validators::validator_for_signing_alg(alg)
+        {
+            return Some(validator);
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    if let Some(validator) =
+        crate::raw_signature::openssl::validators::validator_for_signing_alg(alg)
+    {
         return Some(validator);
     }
 
     #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
-    if let Some(validator) = crate::webcrypto::validators::validator_for_signing_alg(alg) {
+    if let Some(validator) =
+        crate::raw_signature::webcrypto::validators::validator_for_signing_alg(alg)
+    {
         return Some(validator);
     }
 
     let _ = alg; // this value will be unused in this case
     None
-}
-
-/// Return a built-in signature validator for the requested signature
-/// algorithm.
-///
-/// Which validators are available may vary depending on the platform and
-/// which crate features were enabled.
-pub fn async_validator_for_signing_alg(
-    alg: SigningAlg,
-) -> Option<Box<dyn AsyncRawSignatureValidator>> {
-    #[cfg(target_arch = "wasm32")]
-    if let Some(validator) = crate::webcrypto::async_validator_for_signing_alg(alg) {
-        return Some(validator);
-    }
-
-    Some(Box::new(AsyncValidatorAdapter(validator_for_signing_alg(
-        alg,
-    )?)))
 }
 
 /// Return a built-in signature validator for the requested signature
@@ -112,18 +107,22 @@ pub(crate) fn validator_for_sig_and_hash_algs(
         || sig_alg.as_ref() == SHA512_WITH_RSAENCRYPTION_OID.as_bytes()
     {
         // TO REVIEW: Do we need any of the RSA-PSS algorithms for this use case?
-
-        #[cfg(feature = "openssl")]
-        if let Some(validator) =
-            crate::openssl::validators::validator_for_sig_and_hash_algs(sig_alg, hash_alg)
+        #[cfg(any(target_arch = "wasm32", feature = "rust_native_crypto"))]
         {
-            return Some(validator);
+            if let Some(validator) =
+                crate::raw_signature::rust_native::validators::validator_for_sig_and_hash_algs(
+                    sig_alg, hash_alg,
+                )
+            {
+                return Some(validator);
+            }
         }
 
-        // Not sure yet if we'll need legacy validators for WASM.
-        #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
+        #[cfg(not(target_arch = "wasm32"))]
         if let Some(validator) =
-            crate::webcrypto::validators::validator_for_sig_and_hash_algs(sig_alg, hash_alg)
+            crate::raw_signature::openssl::validators::validator_for_sig_and_hash_algs(
+                sig_alg, hash_alg,
+            )
         {
             return Some(validator);
         }
@@ -146,6 +145,21 @@ pub(crate) fn validator_for_sig_and_hash_algs(
     None
 }
 
+/// Return a built-in signature validator for the requested signature
+/// algorithm.
+///
+/// Which validators are available may vary depending on the platform and
+/// which crate features were enabled.
+///
+/// IMPORTANT: Only available on WASM builds. There are no built-in async
+/// validators for other platforms.
+#[cfg(target_arch = "wasm32")]
+pub fn async_validator_for_signing_alg(
+    alg: SigningAlg,
+) -> Option<Box<dyn AsyncRawSignatureValidator>> {
+    crate::raw_signature::webcrypto::async_validator_for_signing_alg(alg)
+}
+
 /// Describes errors that can be identified when validating a raw signature.
 #[derive(Debug, Eq, Error, PartialEq)]
 #[non_exhaustive]
@@ -154,18 +168,9 @@ pub enum RawSignatureValidationError {
     #[error("the signature does not match the provided data or public key")]
     SignatureMismatch,
 
-    /// An error was reported by the OpenSSL native code.
-    ///
-    /// NOTE: We do not directly capture the OpenSSL error itself because it
-    /// lacks an Eq implementation. Instead we capture the error description.
-    #[cfg(feature = "openssl")]
-    #[error("an error was reported by OpenSSL native code: {0}")]
-    OpenSslError(String),
-
-    /// The OpenSSL native code mutex could not be acquired.
-    #[cfg(feature = "openssl")]
-    #[error(transparent)]
-    OpenSslMutexUnavailable(#[from] crate::openssl::OpenSslMutexUnavailable),
+    /// An error was reported by the underlying cryptography implementation.
+    #[error("an error was reported by the cryptography library: {0}")]
+    CryptoLibraryError(String),
 
     /// An invalid public key was provided.
     #[error("invalid public key")]
@@ -182,40 +187,33 @@ pub enum RawSignatureValidationError {
     /// An unexpected internal error occured while requesting the time stamp
     /// response.
     #[error("internal error ({0})")]
-    InternalError(&'static str),
+    InternalError(String),
 }
 
-#[cfg(feature = "openssl")]
+#[cfg(not(target_arch = "wasm32"))]
 impl From<openssl::error::ErrorStack> for RawSignatureValidationError {
     fn from(err: openssl::error::ErrorStack) -> Self {
-        Self::OpenSslError(err.to_string())
+        Self::CryptoLibraryError(err.to_string())
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl From<crate::raw_signature::openssl::OpenSslMutexUnavailable> for RawSignatureValidationError {
+    fn from(err: crate::raw_signature::openssl::OpenSslMutexUnavailable) -> Self {
+        Self::InternalError(err.to_string())
     }
 }
 
 #[cfg(target_arch = "wasm32")]
-impl From<crate::webcrypto::WasmCryptoError> for RawSignatureValidationError {
-    fn from(err: crate::webcrypto::WasmCryptoError) -> Self {
+impl From<crate::raw_signature::webcrypto::WasmCryptoError> for RawSignatureValidationError {
+    fn from(err: crate::raw_signature::webcrypto::WasmCryptoError) -> Self {
         match err {
-            crate::webcrypto::WasmCryptoError::UnknownContext => {
-                Self::InternalError("unknown WASM context")
+            crate::raw_signature::webcrypto::WasmCryptoError::UnknownContext => {
+                Self::InternalError("unknown WASM context".to_string())
             }
-            crate::webcrypto::WasmCryptoError::NoCryptoAvailable => {
-                Self::InternalError("WASM crypto unavailable")
+            crate::raw_signature::webcrypto::WasmCryptoError::NoCryptoAvailable => {
+                Self::InternalError("WASM crypto unavailable".to_string())
             }
         }
-    }
-}
-
-struct AsyncValidatorAdapter(Box<dyn RawSignatureValidator>);
-
-#[async_trait(?Send)]
-impl AsyncRawSignatureValidator for AsyncValidatorAdapter {
-    async fn validate_async(
-        &self,
-        sig: &[u8],
-        data: &[u8],
-        public_key: &[u8],
-    ) -> Result<(), RawSignatureValidationError> {
-        self.0.validate(sig, data, public_key)
     }
 }

@@ -15,6 +15,12 @@
 
 pub(crate) mod oids;
 
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) mod openssl;
+
+#[cfg(any(target_arch = "wasm32", feature = "rust_native_crypto", test))]
+pub(crate) mod rust_native;
+
 pub(crate) mod signer;
 pub use signer::{
     async_signer_from_cert_chain_and_private_key, signer_from_cert_chain_and_private_key,
@@ -25,8 +31,13 @@ mod signing_alg;
 pub use signing_alg::{SigningAlg, UnknownAlgorithmError};
 
 mod validator;
+#[cfg(target_arch = "wasm32")]
+pub use validator::async_validator_for_signing_alg;
 pub(crate) use validator::validator_for_sig_and_hash_algs;
 pub use validator::{
-    async_validator_for_signing_alg, validator_for_signing_alg, AsyncRawSignatureValidator,
-    RawSignatureValidationError, RawSignatureValidator,
+    validator_for_signing_alg, AsyncRawSignatureValidator, RawSignatureValidationError,
+    RawSignatureValidator,
 };
+
+#[cfg(target_arch = "wasm32")]
+pub mod webcrypto;

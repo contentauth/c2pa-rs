@@ -1116,9 +1116,9 @@ mod tests {
     use wasm_bindgen_test::*;
 
     use super::*;
+    #[cfg(any(feature = "openssl_sign", target_arch = "wasm32"))]
+    use crate::{assertions::BoxHash, asset_handlers::jpeg_io::JpegIO};
     use crate::{
-        assertions::BoxHash,
-        asset_handlers::jpeg_io::JpegIO,
         hash_stream_by_alg,
         utils::{test::write_jpeg_placeholder_stream, test_signer::test_signer},
         validation_results::ValidationState,
@@ -1190,7 +1190,7 @@ mod tests {
         .to_string()
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(all(feature = "openssl_sign", not(target_arch = "wasm32")))]
     const TEST_IMAGE_CLEAN: &[u8] = include_bytes!("../tests/fixtures/IMG_0003.jpg");
     const TEST_IMAGE: &[u8] = include_bytes!("../tests/fixtures/CA.jpg");
     const TEST_THUMBNAIL: &[u8] = include_bytes!("../tests/fixtures/thumbnail.jpg");

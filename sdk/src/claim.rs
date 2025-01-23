@@ -18,7 +18,7 @@ use std::{collections::HashMap, fmt};
 use async_generic::async_generic;
 use c2pa_crypto::{
     base64,
-    cose::{parse_cose_sign1, CertificateTrustPolicy, OcspFetchPolicy, ValidationInfo},
+    cose::{parse_cose_sign1, CertificateInfo, CertificateTrustPolicy, OcspFetchPolicy},
     ocsp::OcspResponse,
 };
 use c2pa_status_tracker::{log_item, OneShotStatusTracker, StatusTracker};
@@ -1676,7 +1676,7 @@ impl Claim {
 
     /// Return information about the signature
     #[async_generic]
-    pub fn signature_info(&self) -> Option<ValidationInfo> {
+    pub fn signature_info(&self) -> Option<CertificateInfo> {
         let sig = self.signature_val();
         let data = self.data().ok()?;
         let mut validation_log = OneShotStatusTracker::default();
@@ -1807,7 +1807,7 @@ impl Claim {
         claim: &Claim,
         asset_data: &mut ClaimAssetData<'_>,
         is_provenance: bool,
-        verified: Result<ValidationInfo>,
+        verified: Result<CertificateInfo>,
         validation_log: &mut impl StatusTracker,
     ) -> Result<()> {
         const UNNAMED: &str = "unnamed";

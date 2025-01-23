@@ -31,7 +31,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [windows-latest, macos-latest, ubuntu-latest]
-        rust_version: [stable, 1.81.0]
+        rust_version: [stable, 1.82.0]
 
     steps:
       - name: Checkout repository
@@ -146,9 +146,11 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@nightly
-        with:
-          components: llvm-tools-preview
+        uses: dtolnay/rust-toolchain@stable
+      # - name: Install Rust toolchain
+      #   uses: dtolnay/rust-toolchain@nightly
+      #   with:
+      #     components: llvm-tools-preview
 
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
@@ -156,24 +158,33 @@ jobs:
       - name: Install cargo-llvm-cov
         uses: taiki-e/install-action@cargo-llvm-cov
 
-      - name: Generate code coverage
-        env:
-          RUST_BACKTRACE: "1"
-        run: cargo llvm-cov --workspace --all-features --lcov --doctests --output-path lcov.info
+      # Disabling code coverage for doc tests due to a new bug in Rust nightly
+      # as of 2025-01-08. Will investigate later to see if there's a repro case.
+      # Meanwhile, simply run the tests so we know if there are any failing
+      # doc tests.
+
+      - name: Run doc tests (COVERAGE DISABLED)
+        run:
+          cargo test --workspace --all-features --doc
+      
+      # - name: Generate code coverage
+      #   env:
+      #     RUST_BACKTRACE: "1"
+      #   run: cargo llvm-cov --workspace --all-features --lcov --doctests --output-path lcov.info
 
       # Tokens aren't available for PRs originating from forks,
       # so we don't attempt to upload code coverage in that case.
-      - name: Upload code coverage results
-        if: |
-          github.event_name != 'pull_request' ||
-          github.event.pull_request.author_association == 'COLLABORATOR' ||
-          github.event.pull_request.author_association == 'MEMBER' ||
-          github.event.pull_request.user.login == 'dependabot[bot]'
-        uses: codecov/codecov-action@v5
-        with:
-          token: ${{ secrets.CODECOV_TOKEN }}
-          fail_ci_if_error: true
-          verbose: true
+      # - name: Upload code coverage results
+      #   if: |
+      #     github.event_name != 'pull_request' ||
+      #     github.event.pull_request.author_association == 'COLLABORATOR' ||
+      #     github.event.pull_request.author_association == 'MEMBER' ||
+      #     github.event.pull_request.user.login == 'dependabot[bot]'
+      #   uses: codecov/codecov-action@v5
+      #   with:
+      #     token: ${{ secrets.CODECOV_TOKEN }}
+      #     fail_ci_if_error: true
+      #     verbose: true
 
   cargo-check:
     name: Default features build
@@ -214,7 +225,7 @@ jobs:
       fail-fast: false
       matrix:
         target: [aarch64-unknown-linux-gnu]
-        rust_version: [stable, 1.81.0]
+        rust_version: [stable, 1.82.0]
 
     steps:
       - name: Checkout repository
@@ -271,6 +282,10 @@ jobs:
       - name: Run Wasm tests (c2pa-rs)
         run: wasm-pack test --chrome --headless
         working-directory: ./sdk
+
+      - name: Run Wasm tests (cawg-identity)
+        run: wasm-pack test --chrome --headless
+        working-directory: ./cawg_identity
 
   test-direct-minimal-versions:
     name: Unit tests with minimum versions of direct dependencies
@@ -422,6 +437,9 @@ jobs:
 
     runs-on: ubuntu-latest
 
+    permissions:
+      contents: write
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -430,7 +448,8 @@ jobs:
         uses: dtolnay/rust-toolchain@nightly
 
       - name: Run cargo-udeps
-        uses: aig787/cargo-udeps-action@v1
-        with:
-          version: latest
-          args: --all-targets --all-features
+        run: |
+          mv ./.github/temp-bin/cargo-udeps /home/runner/.cargo/bin/cargo-udeps
+          cargo udeps --all-targets --all-features
+          # NOTE: Using pre-built binary as a workaround for
+          # https://github.com/aig787/cargo-udeps-action/issues/6.
