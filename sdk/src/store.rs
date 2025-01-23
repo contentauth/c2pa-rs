@@ -3624,10 +3624,7 @@ pub mod tests {
 
     use std::io::Write;
 
-    use c2pa_crypto::{
-        raw_signature::{RawSigner, RawSignerError, SigningAlg},
-        time_stamp::TimeStampProvider,
-    };
+    use c2pa_crypto::raw_signature::SigningAlg;
     use c2pa_status_tracker::StatusTracker;
     use memchr::memmem;
     use serde::Serialize;
@@ -3868,31 +3865,7 @@ pub mod tests {
         fn reserve_size(&self) -> usize {
             42
         }
-
-        fn raw_signer(&self) -> Box<&dyn RawSigner> {
-            Box::new(self)
-        }
     }
-
-    impl RawSigner for BadSigner {
-        fn sign(&self, _data: &[u8]) -> std::result::Result<Vec<u8>, RawSignerError> {
-            Ok(b"not a valid signature".to_vec())
-        }
-
-        fn alg(&self) -> SigningAlg {
-            SigningAlg::Ps256
-        }
-
-        fn cert_chain(&self) -> std::result::Result<Vec<Vec<u8>>, RawSignerError> {
-            Ok(Vec::new())
-        }
-
-        fn reserve_size(&self) -> usize {
-            42
-        }
-    }
-
-    impl TimeStampProvider for BadSigner {}
 
     #[test]
     #[cfg(feature = "file_io")]
@@ -6012,7 +5985,6 @@ pub mod tests {
     #[cfg(feature = "openssl_sign")]
     async fn test_dynamic_assertions() {
         use async_trait::async_trait;
-        use c2pa_crypto::raw_signature::AsyncRawSigner;
 
         #[derive(Serialize)]
         struct TestAssertion {
@@ -6096,10 +6068,6 @@ pub mod tests {
             // Returns our dynamic assertion here.
             fn dynamic_assertions(&self) -> Vec<Box<dyn crate::DynamicAssertion>> {
                 vec![Box::new(TestDynamicAssertion {})]
-            }
-
-            fn async_raw_signer(&self) -> Box<&dyn AsyncRawSigner> {
-                self.0.async_raw_signer()
             }
         }
 
