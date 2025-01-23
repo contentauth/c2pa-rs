@@ -11,8 +11,6 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use std::fmt::Debug;
-
 use async_trait::async_trait;
 
 use crate::{builder::IdentityBuilderError, SignerPayload};
@@ -27,7 +25,7 @@ use crate::{builder::IdentityBuilderError, SignerPayload};
 /// [§8. Credentials, signatures, and validation methods]: https://cawg.io/identity/1.1-draft/#_credentials_signatures_and_validation_methods
 #[cfg(not(target_arch = "wasm32"))]
 #[async_trait]
-pub trait CredentialHolder: Debug + Send + Sync {
+pub trait CredentialHolder: Send + Sync {
     /// Returns the designated `sig_type` value for this kind of credential.
     fn sig_type(&self) -> &'static str;
 
@@ -62,7 +60,7 @@ pub trait CredentialHolder: Debug + Send + Sync {
 /// [§8. Credentials, signatures, and validation methods]: https://cawg.io/identity/1.1-draft/#_credentials_signatures_and_validation_methods
 #[cfg(target_arch = "wasm32")]
 #[async_trait(?Send)]
-pub trait CredentialHolder: Debug {
+pub trait CredentialHolder {
     /// Returns the designated `sig_type` value for this kind of credential.
     fn sig_type(&self) -> &'static str;
 

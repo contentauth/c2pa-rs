@@ -13,7 +13,7 @@
 
 #![deny(missing_docs)]
 
-use std::{fmt::Debug, slice::Iter};
+use std::slice::Iter;
 
 use async_trait::async_trait;
 
@@ -26,7 +26,7 @@ use crate::{hashed_uri::HashedUri, Result};
 /// [`Manifest`]: crate::Manifest
 #[cfg(not(target_arch = "wasm32"))]
 #[async_trait]
-pub trait DynamicAssertion: Debug + Sync {
+pub trait DynamicAssertion: Sync {
     /// Return the preferred label for this assertion.
     ///
     /// Note that the label may be adjusted in case multiple assertions
@@ -72,7 +72,7 @@ pub trait DynamicAssertion: Debug + Sync {
 /// [`Manifest`]: crate::Manifest
 #[cfg(target_arch = "wasm32")]
 #[async_trait(?Send)]
-pub trait DynamicAssertion: Debug {
+pub trait DynamicAssertion {
     /// Return the preferred label for this assertion.
     ///
     /// Note that the label may be adjusted in case multiple assertions
