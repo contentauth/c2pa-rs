@@ -115,20 +115,20 @@ pub(crate) fn cose_sign(
 
     if _sync {
         match signer.raw_signer() {
-            Some(raw_signer) => Ok(sign(*raw_signer, data, box_size, time_stamp_storage)?),
+            Some(raw_signer) => Ok(sign(*raw_signer, data, Some(box_size), time_stamp_storage)?),
             None => {
                 let wrapper = SignerWrapper(signer);
-                Ok(sign(&wrapper, data, box_size, time_stamp_storage)?)
+                Ok(sign(&wrapper, data, Some(box_size), time_stamp_storage)?)
             }
         }
     } else {
         match signer.async_raw_signer() {
             Some(raw_signer) => {
-                Ok(sign_async(*raw_signer, data, box_size, time_stamp_storage).await?)
+                Ok(sign_async(*raw_signer, data, Some(box_size), time_stamp_storage).await?)
             }
             None => {
                 let wrapper = AsyncSignerWrapper(signer);
-                Ok(sign_async(&wrapper, data, box_size, time_stamp_storage).await?)
+                Ok(sign_async(&wrapper, data, Some(box_size), time_stamp_storage).await?)
             }
         }
     }
