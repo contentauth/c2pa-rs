@@ -1546,7 +1546,6 @@ impl SignatureInfo {
 pub(crate) mod tests {
     #![allow(clippy::expect_used)]
     #![allow(clippy::unwrap_used)]
-    #![cfg(not(target_os = wasi))]
 
     use std::io::Cursor;
 
@@ -1555,10 +1554,10 @@ pub(crate) mod tests {
     use c2pa_status_tracker::{DetailedStatusTracker, StatusTracker};
     #[cfg(feature = "file_io")]
     use tempfile::tempdir;
-    #[cfg(target_arch = "wasm32")]
+    #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
     use wasm_bindgen_test::*;
 
-    #[cfg(target_arch = "wasm32")]
+    #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
     wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
 
     #[allow(unused_imports)]
@@ -1937,7 +1936,7 @@ pub(crate) mod tests {
     }
 
     #[cfg(all(feature = "file_io", feature = "openssl_sign"))]
-    #[actix::test]
+    #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
     #[allow(deprecated)]
     async fn test_embed_async_sign() {
         let temp_dir = tempdir().expect("temp dir");
@@ -1958,7 +1957,7 @@ pub(crate) mod tests {
     }
 
     #[cfg(all(feature = "file_io", feature = "openssl_sign"))]
-    #[actix::test]
+    #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
     #[allow(deprecated)]
     async fn test_embed_remote_sign() {
         let temp_dir = tempdir().expect("temp dir");
@@ -2028,9 +2027,13 @@ pub(crate) mod tests {
     }
 
     #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
-    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    #[cfg_attr(
+        all(target_arch = "wasm32", not(target_os = "wasi")),
+        wasm_bindgen_test
+    )]
     #[allow(deprecated)]
     #[cfg_attr(not(any(target_arch = "wasm32", feature = "openssl_sign")), ignore)]
+    #[cfg_attr(target_os = "wasi", allow(unused))]
     async fn test_embed_jpeg_stream_wasm() {
         use crate::assertions::User;
         let image = include_bytes!("../tests/fixtures/earth_apollo17.jpg");
@@ -2069,9 +2072,13 @@ pub(crate) mod tests {
     }
 
     #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
-    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    #[cfg_attr(
+        all(target_arch = "wasm32", not(target_os = "wasi")),
+        wasm_bindgen_test
+    )]
     #[allow(deprecated)]
     #[cfg_attr(not(any(target_arch = "wasm32", feature = "openssl_sign")), ignore)]
+    #[cfg_attr(target_os = "wasi", allow(unused))]
     async fn test_embed_png_stream_wasm() {
         use crate::assertions::User;
         let image = include_bytes!("../tests/fixtures/libpng-test.png");
@@ -2103,9 +2110,13 @@ pub(crate) mod tests {
     }
 
     #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
-    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    #[cfg_attr(
+        all(target_arch = "wasm32", not(target_os = "wasi")),
+        wasm_bindgen_test
+    )]
     #[allow(deprecated)]
     #[cfg_attr(not(any(target_arch = "wasm32", feature = "openssl_sign")), ignore)]
+    #[cfg_attr(target_os = "wasi", allow(unused))]
     async fn test_embed_webp_stream_wasm() {
         use crate::assertions::User;
         let image = include_bytes!("../tests/fixtures/mars.webp");
@@ -2175,9 +2186,12 @@ pub(crate) mod tests {
     }
 
     #[cfg_attr(feature = "openssl_sign", actix::test)]
-    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    #[cfg_attr(
+        all(target_arch = "wasm32", not(target_os = "wasi")),
+        wasm_bindgen_test
+    )]
     #[cfg(any(
-        target_arch = "wasm32",
+        all(target_arch = "wasm32", not(target_os = "wasi")),
         all(feature = "openssl_sign", feature = "file_io")
     ))]
     async fn test_embed_from_memory_async() {
@@ -2220,7 +2234,7 @@ pub(crate) mod tests {
     }
 
     #[cfg(feature = "file_io")]
-    #[actix::test]
+    #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
     #[allow(deprecated)]
     /// Verify that an ingredient with error is reported on the ingredient and not on the manifest_store
     async fn test_embed_with_ingredient_error() {
@@ -2779,7 +2793,7 @@ pub(crate) mod tests {
     }
 
     #[cfg(all(feature = "file_io", feature = "openssl_sign"))]
-    #[actix::test]
+    #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
     #[allow(deprecated)]
     async fn test_data_hash_embeddable_manifest_remote_signed() {
         let ap = fixture_path("cloud.jpg");

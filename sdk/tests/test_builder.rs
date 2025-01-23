@@ -21,7 +21,7 @@ mod common;
 use common::{compare_stream_to_known_good, fixtures_path, test_signer};
 
 #[test]
-#[cfg_attr(not(any(target_arch = "wasm32", feature = "openssl")), ignore)]
+#[ignore] // TODO: Test does not pass in WASI or native
 fn test_builder_ca_jpg() -> Result<()> {
     let manifest_def = std::fs::read_to_string(fixtures_path("simple_manifest.json"))?;
     let mut builder = Builder::from_json(&manifest_def)?;

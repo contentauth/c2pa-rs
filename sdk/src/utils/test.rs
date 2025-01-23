@@ -21,10 +21,8 @@ use std::{
 };
 
 use async_trait::async_trait;
-#[cfg(any(feature = "openssl_sign", target_arch = "wasm32"))]
-use c2pa_crypto::cose::TimeStampStorage;
 use c2pa_crypto::{
-    cose::CertificateTrustPolicy,
+    cose::{CertificateTrustPolicy, TimeStampStorage},
     raw_signature::{AsyncRawSigner, RawSignerError, SigningAlg},
     time_stamp::{AsyncTimeStampProvider, TimeStampError},
 };
@@ -190,6 +188,11 @@ pub fn create_test_store() -> Result<Store> {
 
 /// returns a path to a file in the fixtures folder
 pub fn fixture_path(file_name: &str) -> PathBuf {
+    // File paths are relative to directory specified in dir argument.
+    // This assumes `wasmtime --dir .`
+    #[cfg(target_os = "wasi")]
+    let mut path = PathBuf::from("/");
+    #[cfg(not(target_os = "wasi"))]
     let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     path.push("tests/fixtures");
     path.push(file_name);

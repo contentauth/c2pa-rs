@@ -1108,16 +1108,18 @@ impl Builder {
 mod tests {
     #![allow(clippy::expect_used)]
     #![allow(clippy::unwrap_used)]
-    #![cfg(not(target_os = "wasi"))]
     use std::io::Cursor;
 
     use c2pa_crypto::raw_signature::SigningAlg;
     use serde_json::json;
-    #[cfg(target_arch = "wasm32")]
+    #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
     use wasm_bindgen_test::*;
 
     use super::*;
-    #[cfg(any(feature = "openssl_sign", target_arch = "wasm32"))]
+    #[cfg(any(
+        feature = "openssl_sign",
+        all(target_arch = "wasm32", not(target_os = "wasi"))
+    ))]
     use crate::{assertions::BoxHash, asset_handlers::jpeg_io::JpegIO};
     use crate::{
         hash_stream_by_alg,
@@ -1126,7 +1128,7 @@ mod tests {
         Reader,
     };
 
-    #[cfg(target_arch = "wasm32")]
+    #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
     wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
 
     fn parent_json() -> String {
@@ -1330,6 +1332,7 @@ mod tests {
         builder.to_archive(&mut zipped).unwrap();
 
         // write the zipped stream to a file for debugging
+        #[cfg(not(target_os = "wasi"))] // target directory is outside of sandbox
         std::fs::write("../target/test.zip", zipped.get_ref()).unwrap();
 
         // unzip the manifest builder from the zipped stream
@@ -1453,8 +1456,12 @@ mod tests {
     }
 
     #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
-    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    #[cfg_attr(
+        all(target_arch = "wasm32", not(target_os = "wasi")),
+        wasm_bindgen_test
+    )]
     #[cfg_attr(not(any(target_arch = "wasm32", feature = "openssl_sign")), ignore)]
+    #[cfg_attr(target_os = "wasi", allow(unused))]
     async fn test_builder_remote_sign() {
         let format = "image/jpeg";
         let mut source = Cursor::new(TEST_IMAGE);
@@ -1585,9 +1592,12 @@ mod tests {
     }
 
     #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
-    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    #[cfg_attr(
+        all(target_arch = "wasm32", not(target_os = "wasi")),
+        wasm_bindgen_test
+    )]
     #[cfg(any(
-        target_arch = "wasm32",
+        all(target_arch = "wasm32", not(target_os = "wasi")),
         all(feature = "openssl_sign", feature = "file_io")
     ))]
     async fn test_builder_box_hashed_embeddable() {

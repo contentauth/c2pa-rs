@@ -289,7 +289,7 @@ mod tests {
     }
 
     #[cfg(all(feature = "openssl_sign", feature = "file_io"))]
-    #[actix::test]
+    #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
     async fn test_sign_claim_async() {
         use c2pa_crypto::raw_signature::SigningAlg;
 
