@@ -27,9 +27,14 @@ use serde::{Deserialize, Serialize};
 #[cfg(feature = "file_io")]
 use crate::error::Error;
 use crate::{
-    claim::ClaimAssetData, error::Result, manifest_store::ManifestStore,
-    settings::get_settings_value, store::Store, validation_results::ValidationState,
-    validation_status::ValidationStatus, validation_results::ValidationResults, Manifest, ManifestStoreReport,
+    claim::ClaimAssetData,
+    error::Result,
+    manifest_store::ManifestStore,
+    settings::get_settings_value,
+    store::Store,
+    validation_results::{ValidationResults, ValidationState},
+    validation_status::ValidationStatus,
+    Manifest, ManifestStoreReport,
 };
 
 /// A reader for the manifest store.
@@ -259,7 +264,7 @@ impl Reader {
     }
 
     /// Get the [`ValidationResults`] map of an asset if it exists.
-    /// 
+    ///
     /// Call this method to check for detailed validation results.
     /// The validation_state method should be used to determine the overall validation state.
     ///  
@@ -267,7 +272,7 @@ impl Reader {
     /// The deltas will only exist if there are validation errors not already reported in ingredients
     /// It is normal for there to be many success and information statuses.
     /// Any errors will be reported in the failure array.
-    /// 
+    ///
     /// # Example
     /// ```no_run
     /// use c2pa::Reader;

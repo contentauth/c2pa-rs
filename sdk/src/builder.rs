@@ -1121,6 +1121,7 @@ mod tests {
         asset_handlers::jpeg_io::JpegIO,
         hash_stream_by_alg,
         utils::{test::write_jpeg_placeholder_stream, test_signer::test_signer},
+        validation_results::ValidationState,
         Reader,
     };
 
@@ -1345,7 +1346,7 @@ mod tests {
         let manifest_store = Reader::from_stream(format, &mut dest).expect("from_bytes");
 
         println!("{}", manifest_store);
-        assert_eq!(manifest_store.validation_status(), None);
+        assert_ne!(manifest_store.validation_state(), ValidationState::Invalid);
         assert!(manifest_store.active_manifest().is_some());
         let manifest = manifest_store.active_manifest().unwrap();
         assert_eq!(manifest.title().unwrap(), "Test_Manifest");
@@ -1374,6 +1375,7 @@ mod tests {
         let manifest_store = Reader::from_file(&dest).expect("from_bytes");
 
         println!("{}", manifest_store);
+        assert_ne!(manifest_store.validation_state(), ValidationState::Invalid);
         assert_eq!(manifest_store.validation_status(), None);
         assert_eq!(
             manifest_store.active_manifest().unwrap().title().unwrap(),
@@ -1431,7 +1433,7 @@ mod tests {
             println!("{}", manifest_store);
             if format != "c2pa" {
                 // c2pa files will not validate since they have no associated asset
-                assert_eq!(manifest_store.validation_status(), None);
+                assert_ne!(manifest_store.validation_state(), ValidationState::Invalid);
             }
             assert_eq!(
                 manifest_store.active_manifest().unwrap().title().unwrap(),
@@ -1679,6 +1681,7 @@ mod tests {
         let reader = Reader::from_stream("image/jpeg", &mut dest).expect("from_bytes");
 
         //println!("{}", reader);
+        assert_ne!(reader.validation_state(), ValidationState::Invalid);
         assert_eq!(reader.validation_status(), None);
         assert_eq!(
             reader

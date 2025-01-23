@@ -17,6 +17,8 @@
 //!
 //! [§15.2.1, “Standard Status Codes.”]: https://c2pa.org/specifications/specifications/2.1/specs/C2PA_Specification.html#_standard_status_codes
 
+use crate::log::LogKind;
+
 // -- success codes --
 
 /// The claim signature referenced in the ingredient's claim validated.
@@ -302,15 +304,24 @@ pub const GENERAL_ERROR: &str = "general.error";
 /// assert!(!is_success(SIGNING_CREDENTIAL_REVOKED));
 /// ```
 pub fn is_success(status_code: &str) -> bool {
-    matches!(
-        status_code,
+    matches!(log_kind(status_code), LogKind::Success)
+}
+
+/// Returns the [`LogKind`] for a given status code.
+// todo: This needs to be expanded to include all status codes
+pub fn log_kind(status_code: &str) -> LogKind {
+    match status_code {
         CLAIM_SIGNATURE_VALIDATED
-            | SIGNING_CREDENTIAL_TRUSTED
-            | TIMESTAMP_TRUSTED
-            | ASSERTION_HASHEDURI_MATCH
-            | ASSERTION_DATAHASH_MATCH
-            | ASSERTION_BMFFHASH_MATCH
-            | ASSERTION_ACCESSIBLE
-            | ASSERTION_BOXHASH_MATCH
-    )
+        | SIGNING_CREDENTIAL_TRUSTED
+        | TIMESTAMP_TRUSTED
+        | ASSERTION_HASHEDURI_MATCH
+        | ASSERTION_DATAHASH_MATCH
+        | ASSERTION_BMFFHASH_MATCH
+        | ASSERTION_ACCESSIBLE
+        | ASSERTION_BOXHASH_MATCH => LogKind::Success,
+        TIMESTAMP_UNTRUSTED | TIMESTAMP_OUTSIDE_VALIDITY | TIMESTAMP_MISMATCH => {
+            LogKind::Informational
+        }
+        _ => LogKind::Failure,
+    }
 }

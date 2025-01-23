@@ -51,7 +51,7 @@ pub struct ManifestStore {
     #[serde(skip_serializing_if = "Option::is_none")]
     // ValidationStatus generated when loading the ManifestStore from an asset
     validation_results: Option<ValidationResults>,
-    
+
     #[serde(skip)]
     /// The internal store representing the manifest store
     store: Store,

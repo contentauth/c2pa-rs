@@ -147,6 +147,7 @@ impl ManifestStoreReport {
                 statuses.push(
                     ValidationStatus::new(status.to_string())
                         .set_url(item.label.to_string())
+                        .set_kind(item.kind.clone())
                         .set_explanation(item.description.to_string()),
                 );
             }

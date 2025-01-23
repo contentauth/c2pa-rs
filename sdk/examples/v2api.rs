@@ -15,7 +15,10 @@
 use std::io::{Cursor, Seek};
 
 use anyhow::Result;
-use c2pa::{settings::load_settings_from_str, Builder, CallbackSigner, Reader};
+use c2pa::{
+    settings::load_settings_from_str, validation_results::ValidationState, Builder, CallbackSigner,
+    Reader,
+};
 use c2pa_crypto::raw_signature::SigningAlg;
 use serde_json::json;
 
@@ -151,7 +154,7 @@ fn main() -> Result<()> {
     }
 
     println!("{}", reader.json());
-    assert_eq!(reader.validation_status(), None);
+    assert_ne!(reader.validation_state(), ValidationState::Invalid);
     assert_eq!(reader.active_manifest().unwrap().title().unwrap(), title);
 
     Ok(())

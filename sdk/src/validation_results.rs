@@ -12,6 +12,7 @@
 // each license.
 
 pub use c2pa_status_tracker::validation_codes::*;
+use c2pa_status_tracker::LogKind;
 #[cfg(feature = "json_schema")]
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -44,10 +45,10 @@ pub struct StatusCodes {
 impl StatusCodes {
     /// Adds a [ValidationStatus] to the StatusCodes.
     pub fn add_status(&mut self, status: ValidationStatus) {
-        if status.passed() { // todo, find informational status codes
-            self.success.push(status);
-        } else {
-            self.failure.push(status);
+        match status.kind() {
+            LogKind::Success => self.success.push(status),
+            LogKind::Informational => self.informational.push(status),
+            LogKind::Failure => self.failure.push(status),
         }
     }
 
@@ -139,7 +140,11 @@ impl ValidationResults {
     }
 
     /// Adds a [ValidationStatus] to the [ValidationResults].
-    pub fn add_status(&mut self, active_manifest_label: &str, status: ValidationStatus) {
+    pub fn add_status(
+        &mut self,
+        active_manifest_label: &str,
+        status: ValidationStatus,
+    ) -> &mut Self {
         use crate::jumbf::labels::manifest_label_from_uri;
         let active_manifest_label = active_manifest_label.to_string();
 
@@ -174,6 +179,7 @@ impl ValidationResults {
                 }
             };
         }
+        self
     }
 
     /// Returns the active manifest status codes, if present.
@@ -207,10 +213,10 @@ impl ValidationResults {
 pub struct IngredientDeltaValidationResult {
     #[serde(rename = "ingredientAssertionURI")]
     /// JUMBF URI reference to the ingredient assertion
-    ingredient_assertion_uri: String, 
+    ingredient_assertion_uri: String,
     #[serde(rename = "validationDeltas")]
     /// Validation results for the ingredient's active manifest
-    validation_deltas: StatusCodes, 
+    validation_deltas: StatusCodes,
 }
 
 impl IngredientDeltaValidationResult {

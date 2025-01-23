@@ -44,7 +44,7 @@ use crate::{
     resource_store::{skip_serializing_resources, ResourceRef, ResourceStore},
     store::Store,
     utils::xmp_inmemory_utils::XmpInfo,
-    validation_results::{ValidationResults, ValidationState},
+    validation_results::ValidationResults,
     validation_status::{self, validation_results_for_store, ValidationStatus},
 };
 
@@ -585,16 +585,18 @@ impl Ingredient {
         manifest_bytes: Option<Vec<u8>>,
         validation_log: &impl StatusTracker,
     ) -> Result<()> {
+        let active_manifest = self.active_manifest.as_deref().unwrap_or_default();
         match result {
             Ok(store) => {
-                // generate ValidationStatus from ValidationItems filtering for only errors
-                //let statuses = status_for_store(&store, validation_log);
+                // generate validation results from the store
                 let validation_results = validation_results_for_store(&store, validation_log);
 
                 if let Some(claim) = store.provenance_claim() {
                     // if the parent claim is valid and has a thumbnail, use it
-                    //if statuses.is_empty() {
-                    if validation_results.validation_state() != ValidationState::Invalid {
+                    if validation_results
+                        .active_manifest()
+                        .map_or(false, |m| m.failure().is_empty())
+                    {
                         if let Some(hashed_uri) = claim
                             .assertions()
                             .iter()
@@ -646,35 +648,34 @@ impl Ingredient {
             | Err(Error::ProvenanceMissing)
             | Err(Error::UnsupportedType) => Ok(()), // no claims but valid file
             Err(Error::BadParam(desc)) if desc == *"unrecognized file type" => Ok(()),
-            Err(Error::RemoteManifestUrl(url)) => {
-                let status = ValidationStatus::new(validation_status::MANIFEST_INACCESSIBLE)
-                    .set_url(url)
-                    .set_explanation("Remote manifest not fetched".to_string());
-                self.validation_status = Some(vec![status]);
-                Ok(())
-            }
-            Err(Error::RemoteManifestFetch(url)) => {
-                let status = ValidationStatus::new(validation_status::MANIFEST_INACCESSIBLE)
-                    .set_url(url)
-                    .set_explanation("Unable to fetch remote manifest".to_string());
+            Err(Error::RemoteManifestUrl(url)) | Err(Error::RemoteManifestFetch(url)) => {
+                let status =
+                    ValidationStatus::new_failure(validation_status::MANIFEST_INACCESSIBLE)
+                        .set_url(url)
+                        .set_explanation("Remote manifest not fetched".to_string());
+                let mut validation_results = ValidationResults::default();
+                validation_results.add_status(active_manifest, status.clone());
+                self.validation_results = Some(validation_results);
                 self.validation_status = Some(vec![status]);
                 Ok(())
             }
             Err(e) => {
                 // we can ignore the error here because it should have a log entry corresponding to it
                 debug!("ingredient {:?}", e);
+
+                let mut results = ValidationResults::default();
                 // convert any other error to a validation status
                 let statuses: Vec<ValidationStatus> = validation_log
                     .logged_items()
                     .iter()
-                    .filter_map(ValidationStatus::from_validation_item)
-                    .filter(|s| !validation_status::is_success(s.code()))
+                    .filter_map(ValidationStatus::from_log_item)
                     .collect();
-                self.validation_status = if statuses.is_empty() {
-                    None
-                } else {
-                    Some(statuses)
-                };
+
+                for status in statuses {
+                    results.add_status(active_manifest, status.clone());
+                }
+                self.validation_status = results.validation_errors();
+                self.validation_results = Some(results);
                 Ok(())
             }
         }
@@ -1087,8 +1088,10 @@ impl Ingredient {
                 None => {
                     error!("failed to get {} from {}", hashed_uri.url(), ingredient_uri);
                     validation_status.push(
-                        ValidationStatus::new(validation_status::ASSERTION_MISSING.to_string())
-                            .set_url(hashed_uri.url()),
+                        ValidationStatus::new_failure(
+                            validation_status::ASSERTION_MISSING.to_string(),
+                        )
+                        .set_url(hashed_uri.url()),
                     );
                 }
             }

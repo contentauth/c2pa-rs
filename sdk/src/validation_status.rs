@@ -18,7 +18,7 @@
 #![deny(missing_docs)]
 
 pub use c2pa_status_tracker::validation_codes::*;
-use c2pa_status_tracker::{LogItem, StatusTracker};
+use c2pa_status_tracker::{LogItem, LogKind, StatusTracker};
 use log::debug;
 #[cfg(feature = "json_schema")]
 use schemars::JsonSchema;
@@ -46,7 +46,15 @@ pub struct ValidationStatus {
     success: Option<bool>, // deprecated in 2.x, allow reading for compatibility
 
     #[serde(skip)]
+    #[serde(default = "default_log_kind")]
+    kind: LogKind,
+
+    #[serde(skip)]
     ingredient_uri: Option<String>,
+}
+
+fn default_log_kind() -> LogKind {
+    LogKind::Success
 }
 
 impl ValidationStatus {
@@ -57,7 +65,12 @@ impl ValidationStatus {
             explanation: None,
             success: None,
             ingredient_uri: None,
+            kind: LogKind::Success,
         }
+    }
+
+    pub(crate) fn new_failure<S: Into<String>>(code: S) -> Self {
+        Self::new(code).set_kind(LogKind::Failure)
     }
 
     /// Returns the validation status code.
@@ -92,6 +105,12 @@ impl ValidationStatus {
         self
     }
 
+    /// Sets the LogKind for this validation status.
+    pub fn set_kind(mut self, kind: LogKind) -> Self {
+        self.kind = kind;
+        self
+    }
+
     /// Sets the internal JUMBF reference to the Ingredient that was validated.
     pub fn set_ingredient_uri<S: Into<String>>(mut self, uri: S) -> Self {
         self.ingredient_uri = Some(uri.into());
@@ -107,6 +126,11 @@ impl ValidationStatus {
     /// Returns `true` if this has a successful validation code.
     pub fn passed(&self) -> bool {
         is_success(&self.code)
+    }
+
+    /// Returns the LogKind for this validation status.
+    pub fn kind(&self) -> &LogKind {
+        &self.kind
     }
 
     // Maps errors into validation_status codes.
@@ -140,15 +164,16 @@ impl ValidationStatus {
         // We need to create error codes here for client processing.
         let code = Self::code_from_error(error);
         debug!("ValidationStatus {} from error {:#?}", code, error);
-        Self::new(code.to_string()).set_explanation(error.to_string())
+        Self::new_failure(code.to_string()).set_explanation(error.to_string())
     }
 
     /// Creates a ValidationStatus from a validation_log item.
-    pub(crate) fn from_validation_item(item: &LogItem) -> Option<Self> {
+    pub(crate) fn from_log_item(item: &LogItem) -> Option<Self> {
         match item.validation_status.as_ref() {
             Some(status) => Some({
                 let mut vi = Self::new(status.to_string())
                     .set_url(item.label.to_string())
+                    .set_kind(item.kind.clone())
                     .set_explanation(item.description.to_string());
                 if let Some(ingredient_uri) = &item.ingredient_uri {
                     vi = vi.set_ingredient_uri(ingredient_uri.to_string());
@@ -159,7 +184,7 @@ impl ValidationStatus {
             // using the description plus error text explanation.
             None => item.err_val.as_ref().map(|e| {
                 let code = Self::code_from_error_str(e);
-                Self::new(code.to_string())
+                Self::new_failure(code.to_string())
                     .set_url(item.label.to_string())
                     .set_explanation(format!("{}: {}", item.description, e))
             }),
@@ -184,7 +209,7 @@ pub fn validation_results_for_store(
     let mut statuses: Vec<ValidationStatus> = validation_log
         .logged_items()
         .iter()
-        .filter_map(ValidationStatus::from_validation_item)
+        .filter_map(ValidationStatus::from_log_item)
         .collect();
 
     // Filter out any status that is already captured in an ingredient assertion.
