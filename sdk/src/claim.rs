@@ -475,7 +475,7 @@ impl Claim {
     }
 
     // Deserializer that maps V1/V2 Claim object into our internal Claim representation.  Note:  Our Claim
-    // structure is not the Claim form the spec but an amalgamation that allows us to represent any version
+    // structure is not the Claim from the spec but an amalgamation that allows us to represent any version
     pub fn from_value(claim_value: serde_cbor::Value, label: &str, data: &[u8]) -> Result<Self> {
         // populate claim from the map
         // parse possible fields to figure out which version of the claim is possible.
@@ -1332,8 +1332,8 @@ impl Claim {
         };
 
         // serialize to cbor
-        let db_cbor = serde_cbor::to_vec(&new_db)
-            .map_err(|_err| Error::AssertionEncoding(_err.to_string()))?;
+        let db_cbor =
+            serde_cbor::to_vec(&new_db).map_err(|err| Error::AssertionEncoding(err.to_string()))?;
 
         // get the index for the new assertion
         let mut index = 0;
@@ -1385,7 +1385,7 @@ impl Claim {
         uri.add_salt(salt);
 
         let db: DataBox = serde_cbor::from_slice(databox_cbor)
-            .map_err(|_err| Error::AssertionEncoding(_err.to_string()))?;
+            .map_err(|err| Error::AssertionEncoding(err.to_string()))?;
 
         // add data box  to data box store
         self.data_boxes.push((uri, db));
@@ -2365,11 +2365,11 @@ impl Claim {
                                 let mut to = serde_json::Serializer::new(buf);
 
                                 serde_transcode::transcode(&mut from, &mut to)
-                                    .map_err(|_err| Error::AssertionEncoding(_err.to_string()))?;
+                                    .map_err(|err| Error::AssertionEncoding(err.to_string()))?;
                                 let buf2 = to.into_inner();
 
                                 let decoded: Value = serde_json::from_slice(&buf2)
-                                    .map_err(|_err| Error::AssertionEncoding(_err.to_string()))?;
+                                    .map_err(|err| Error::AssertionEncoding(err.to_string()))?;
 
                                 json_map.insert(label, decoded);
                             }
@@ -2435,7 +2435,7 @@ impl Claim {
                         match claim_assertion.assertion.decode_data() {
                             AssertionData::Json(x) => {
                                 let d: Value = serde_json::from_str(x)
-                                    .map_err(|_err| Error::AssertionEncoding(_err.to_string()))?;
+                                    .map_err(|err| Error::AssertionEncoding(err.to_string()))?;
 
                                 let j = JsonOrderedAssertionData {
                                     label: claim_assertion.label().to_owned(),
@@ -2455,11 +2455,11 @@ impl Claim {
                                 let mut to = serde_json::Serializer::new(buf);
 
                                 serde_transcode::transcode(&mut from, &mut to)
-                                    .map_err(|_err| Error::AssertionEncoding(_err.to_string()))?;
+                                    .map_err(|err| Error::AssertionEncoding(err.to_string()))?;
                                 let buf2 = to.into_inner();
 
                                 let d: Value = serde_json::from_slice(&buf2)
-                                    .map_err(|_err| Error::AssertionEncoding(_err.to_string()))?;
+                                    .map_err(|err| Error::AssertionEncoding(err.to_string()))?;
 
                                 let j = JsonOrderedAssertionData {
                                     label: claim_assertion.label().to_owned(),

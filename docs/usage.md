@@ -45,12 +45,12 @@ The Rust library crate provides the following capabilities:
 
 ### New API
 
-The new API is now enabled by default and the `unstable_api` feature is no longer used.
+The new API is now enabled by default. The `unstable_api` feature is no longer used.
 
-You can still use the deprecated API by enabling the `v1_api` feature. For example:
+To use the deprecated v1 API, enable the v1_api feature; for example:
 
 ```
-c2pa = {version="0.39.0", features=["v1_api"]}
+c2pa = {version="0.43.0", features=["v1_api"]}
 ```
 
 ### Resource references

@@ -294,7 +294,7 @@ pub enum Error {
     #[error("prerelease content detected")]
     PrereleaseError,
 
-    #[error("capability is not supported by this version")]
+    #[error("capability is not supported by this version: {0}")]
     VersionCompatibility(String),
 
     #[error("insufficient memory space for operation")]
