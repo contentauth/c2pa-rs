@@ -40,7 +40,7 @@ pub struct X509CredentialHolder(Box<dyn AsyncRawSigner + Send + Sync + 'static>)
 /// [`CredentialHolder`]: crate::builder::CredentialHolder
 /// [§8.2, X.509 certificates and COSE signatures]: https://cawg.io/identity/1.1-draft/#_x_509_certificates_and_cose_signatures
 #[cfg(target_arch = "wasm32")]
-pub struct X509CredentialHolder(Box<dyn AsyncRawSigner>);
+pub struct X509CredentialHolder(Box<dyn AsyncRawSigner + 'static>);
 
 impl X509CredentialHolder {
     /// Create an `X509CredentialHolder` instance by wrapping an instance of
@@ -63,7 +63,7 @@ impl X509CredentialHolder {
     ///
     /// [`AsyncRawSigner`]: c2pa_crypto::raw_signature::AsyncRawSigner
     #[cfg(target_arch = "wasm32")]
-    pub fn from_async_raw_signer<S: AsyncRawSigner>(signer: S) -> Self {
+    pub fn from_async_raw_signer<S: AsyncRawSigner + 'static>(signer: S) -> Self {
         Self(Box::new(signer))
     }
 }
