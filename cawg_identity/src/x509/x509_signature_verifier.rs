@@ -13,10 +13,11 @@
 
 use async_trait::async_trait;
 use c2pa_crypto::{
-    cose::{CertificateInfo, CoseError, Verifier},
+    cose::{parse_cose_sign1, CertificateInfo, CoseError, Verifier},
     raw_signature::RawSignatureValidationError,
 };
 use c2pa_status_tracker::DetailedStatusTracker;
+use coset::CoseSign1;
 
 use crate::{SignatureVerifier, SignerPayload, ValidationError};
 
@@ -32,10 +33,7 @@ pub struct X509SignatureVerifier {}
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl SignatureVerifier for X509SignatureVerifier {
     type Error = CoseError;
-    type Output = CertificateInfo;
-
-    // TO DO: I'm not sure CertificateInfo is the right response
-    // as that loses some of the info outside of the cert (i.e. signing time).
+    type Output = X509SignatureInfo;
 
     async fn check_signature(
         &self,
@@ -58,7 +56,9 @@ impl SignatureVerifier for X509SignatureVerifier {
         // TO DO: Figure out how to provide a validation log.
         let mut validation_log = DetailedStatusTracker::default();
 
-        Ok(verifier
+        let cose_sign1 = parse_cose_sign1(signature, &signer_payload_cbor, &mut validation_log)?;
+
+        let cert_info = verifier
             .verify_signature_async(signature, &signer_payload_cbor, &[], &mut validation_log)
             .await
             .map_err(|e| match e {
@@ -67,6 +67,21 @@ impl SignatureVerifier for X509SignatureVerifier {
                 ) => ValidationError::InvalidSignature,
 
                 e => ValidationError::SignatureError(e),
-            })?)
+            })?;
+
+        Ok(X509SignatureInfo {
+            cose_sign1,
+            cert_info,
+        })
     }
+}
+
+/// Contains information the X.509 certificate chain and the COSE signature that
+/// was used to generate this identity assertion signature.
+pub struct X509SignatureInfo {
+    /// Parsed COSE signature.
+    pub cose_sign1: CoseSign1,
+
+    /// Information about the X.509 certificate chain.
+    pub cert_info: CertificateInfo,
 }

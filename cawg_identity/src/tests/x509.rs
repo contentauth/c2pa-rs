@@ -82,13 +82,16 @@ async fn simple_case() {
 
     // And that identity assertion should be valid for this manifest.
     let x509_verifier = X509SignatureVerifier {};
-    let cert_info = ia.validate(manifest, &x509_verifier).await.unwrap();
+    let sig_info = ia.validate(manifest, &x509_verifier).await.unwrap();
 
+    let cert_info = &sig_info.cert_info;
     assert_eq!(cert_info.alg.unwrap(), SigningAlg::Ed25519);
     assert_eq!(
         cert_info.issuer_org.as_ref().unwrap(),
         "C2PA Test Signing Cert"
     );
+
+    // TO DO: Not sure what to check from COSE_Sign1.
 }
 
 fn manifest_json() -> String {
