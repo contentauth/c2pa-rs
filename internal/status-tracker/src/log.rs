@@ -167,6 +167,7 @@ impl LogItem {
     /// # use c2pa_status_tracker::{log_item, LogKind, LogItem};
     /// let log = log_item!("test1", "test item 1", "test func")
     ///     .set_ingredient_uri("self#jumbf=/c2pa/contentauth:urn:uuid:bef41f24-13aa-4040-8efa-08e5e85c4a00/c2pa.assertions/c2pa.ingredient__1");
+    /// ```
     pub fn set_ingredient_uri<S: Into<String>>(self, uri: S) -> Self {
         LogItem {
             ingredient_uri: Some(uri.into().into()),

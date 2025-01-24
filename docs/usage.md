@@ -45,9 +45,9 @@ The Rust library crate provides the following capabilities:
 
 ### New API
 
-The new api is now enabled by default, the `unstable_api` feature is no longer used.
+The new API is now enabled by default and the `unstable_api` feature is no longer used.
 
-You are still be able to use the deprecated API by enabling the `v1_api` feature; for example:
+You can still use the deprecated API by enabling the `v1_api` feature. For example:
 
 ```
 c2pa = {version="0.39.0", features=["v1_api"]}
@@ -55,7 +55,7 @@ c2pa = {version="0.39.0", features=["v1_api"]}
 
 ### Resource references
 
-A resource reference is a superset of a `HashedUri`, which the C2PA specification refers to  as both `hashed-uri-map` and  `hashed-ext-uri-map`. In some cases either can be used.
+A resource reference is a superset of a `HashedUri`, which the C2PA specification refers to as both `hashed-uri-map` and  `hashed-ext-uri-map`. In some cases either can be used.
 
 A resource reference also adds local references to things like the file system or any abstracted storage. You can use the identifier field to distinguish from the URL field, but they are really the same. However, the specification will only allow for JUMBF and HTTP(S) references, so if the external identifier is not HTTP(S), it must be converted to a JUMBF reference before embedding into a manifest.
 
