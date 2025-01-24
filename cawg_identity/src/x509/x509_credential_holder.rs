@@ -11,8 +11,6 @@
 // specific language governing permissions and limitations under
 // each license.
 
-#![allow(unused)] // TEMPORARY while building
-
 use async_trait::async_trait;
 use c2pa_crypto::{
     cose::{sign_async, TimeStampStorage},
