@@ -323,7 +323,7 @@ fn dump_cert_chain(certs: &[Vec<u8>]) -> Result<Vec<u8>, CoseError> {
     for der_bytes in certs {
         let cert_base_str = encode(der_bytes);
 
-        // Break line into fixed length lines.
+        // Break line into fixed-length lines.
         let cert_lines = cert_base_str
             .chars()
             .collect::<Vec<char>>()
