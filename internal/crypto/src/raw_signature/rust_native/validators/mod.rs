@@ -130,7 +130,7 @@ pub(crate) fn validator_for_sig_and_hash_algs(
         return Some(Box::new(EcdsaValidator::Es512));
     }
 
-    // Handle ED25519
+    // Handle ED25519.
     if sig_alg.as_ref() == ED25519_OID.as_bytes() {
         return Some(Box::new(Ed25519Validator {}));
     }
