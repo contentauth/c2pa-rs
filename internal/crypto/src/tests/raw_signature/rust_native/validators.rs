@@ -19,7 +19,7 @@ use crate::raw_signature::{rust_native, RawSignatureValidationError, SigningAlg}
 const SAMPLE_DATA: &[u8] = b"some sample content to sign";
 
 #[test]
-#[cfg(any(target_arch = "wasm32", feature = "rust_native_crypto", test))]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
 fn es256() {
     let signature = include_bytes!("../../fixtures/raw_signature/es256.raw_sig");
     let pub_key = include_bytes!("../../fixtures/raw_signature/es256.pub_key");
@@ -30,7 +30,7 @@ fn es256() {
 }
 
 #[test]
-#[cfg(any(target_arch = "wasm32", feature = "rust_native_crypto", test))]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
 fn es256_bad_signature() {
     let mut signature = include_bytes!("../../fixtures/raw_signature/es256.raw_sig").to_vec();
     assert_ne!(signature[10], 10);
@@ -49,7 +49,7 @@ fn es256_bad_signature() {
 }
 
 #[test]
-#[cfg(any(target_arch = "wasm32", feature = "rust_native_crypto", test))]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
 fn es256_bad_data() {
     let signature = include_bytes!("../../fixtures/raw_signature/es256.raw_sig");
     let pub_key = include_bytes!("../../fixtures/raw_signature/es256.pub_key");
@@ -66,7 +66,7 @@ fn es256_bad_data() {
 }
 
 #[test]
-#[cfg(any(target_arch = "wasm32", feature = "rust_native_crypto", test))]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
 fn es384() {
     let signature = include_bytes!("../../fixtures/raw_signature/es384.raw_sig");
     let pub_key = include_bytes!("../../fixtures/raw_signature/es384.pub_key");
@@ -77,7 +77,7 @@ fn es384() {
 }
 
 #[test]
-#[cfg(any(target_arch = "wasm32", feature = "rust_native_crypto", test))]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
 fn es512() {
     let signature = include_bytes!("../../fixtures/raw_signature/es512.raw_sig");
     let pub_key = include_bytes!("../../fixtures/raw_signature/es512.pub_key");
@@ -88,7 +88,7 @@ fn es512() {
 }
 
 #[test]
-#[cfg(any(target_arch = "wasm32", feature = "rust_native_crypto", test))]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
 fn ed25519() {
     let signature = include_bytes!("../../fixtures/raw_signature/ed25519.raw_sig");
     let pub_key = include_bytes!("../../fixtures/raw_signature/ed25519.pub_key");
@@ -100,7 +100,7 @@ fn ed25519() {
 }
 
 #[test]
-#[cfg(any(target_arch = "wasm32", feature = "rust_native_crypto", test))]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
 fn ed25519_bad_data() {
     let signature = include_bytes!("../../fixtures/raw_signature/ed25519.raw_sig");
     let pub_key = include_bytes!("../../fixtures/raw_signature/ed25519.pub_key");
@@ -119,7 +119,7 @@ fn ed25519_bad_data() {
 }
 
 #[test]
-#[cfg(any(target_arch = "wasm32", feature = "rust_native_crypto", test))]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
 fn ps256() {
     let signature = include_bytes!("../../fixtures/raw_signature/ps256.raw_sig");
     let pub_key = include_bytes!("../../fixtures/raw_signature/ps256.pub_key");
@@ -130,7 +130,7 @@ fn ps256() {
 }
 
 #[test]
-#[cfg(any(target_arch = "wasm32", feature = "rust_native_crypto", test))]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
 fn ps256_bad_signature() {
     let mut signature = include_bytes!("../../fixtures/raw_signature/ps256.raw_sig").to_vec();
     assert_ne!(signature[10], 10);
@@ -149,7 +149,7 @@ fn ps256_bad_signature() {
 }
 
 #[test]
-#[cfg(any(target_arch = "wasm32", feature = "rust_native_crypto", test))]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
 fn ps256_bad_data() {
     let signature = include_bytes!("../../fixtures/raw_signature/ps256.raw_sig");
     let pub_key = include_bytes!("../../fixtures/raw_signature/ps256.pub_key");
@@ -166,7 +166,7 @@ fn ps256_bad_data() {
 }
 
 #[test]
-#[cfg(any(target_arch = "wasm32", feature = "rust_native_crypto", test))]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
 fn ps384() {
     let signature = include_bytes!("../../fixtures/raw_signature/ps384.raw_sig");
     let pub_key = include_bytes!("../../fixtures/raw_signature/ps384.pub_key");
@@ -177,7 +177,7 @@ fn ps384() {
 }
 
 #[test]
-#[cfg(any(target_arch = "wasm32", feature = "rust_native_crypto", test))]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
 fn ps512() {
     let signature = include_bytes!("../../fixtures/raw_signature/ps512.raw_sig");
     let pub_key = include_bytes!("../../fixtures/raw_signature/ps512.pub_key");
@@ -200,7 +200,7 @@ const SHA384_OID: Oid = bcder::Oid(OctetString::from_static(&[96, 134, 72, 1, 10
 const SHA512_OID: Oid = bcder::Oid(OctetString::from_static(&[96, 134, 72, 1, 101, 3, 4, 2, 3]));
 
 #[test]
-#[cfg(any(target_arch = "wasm32", feature = "rust_native_crypto", test))]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
 fn legacy_rs256() {
     let signature = include_bytes!("../../fixtures/raw_signature/legacy/rs256.raw_sig");
     let pub_key = include_bytes!("../../fixtures/raw_signature/legacy/rs256.pub_key");
@@ -212,7 +212,7 @@ fn legacy_rs256() {
 }
 
 #[test]
-#[cfg(any(target_arch = "wasm32", feature = "rust_native_crypto", test))]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
 fn legacy_rs256_bad_signature() {
     let mut signature =
         include_bytes!("../../fixtures/raw_signature/legacy/rs256.raw_sig").to_vec();
@@ -233,7 +233,7 @@ fn legacy_rs256_bad_signature() {
 }
 
 #[test]
-#[cfg(any(target_arch = "wasm32", feature = "rust_native_crypto", test))]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
 fn legacy_rs256_bad_data() {
     let signature = include_bytes!("../../fixtures/raw_signature/legacy/rs256.raw_sig");
     let pub_key = include_bytes!("../../fixtures/raw_signature/legacy/rs256.pub_key");
@@ -251,7 +251,7 @@ fn legacy_rs256_bad_data() {
 }
 
 #[test]
-#[cfg(any(target_arch = "wasm32", feature = "rust_native_crypto", test))]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
 fn rs384() {
     let signature = include_bytes!("../../fixtures/raw_signature/legacy/rs384.raw_sig");
     let pub_key = include_bytes!("../../fixtures/raw_signature/legacy/rs384.pub_key");
@@ -263,7 +263,7 @@ fn rs384() {
 }
 
 #[test]
-#[cfg(any(target_arch = "wasm32", feature = "rust_native_crypto", test))]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
 fn rs512() {
     let signature = include_bytes!("../../fixtures/raw_signature/legacy/rs512.raw_sig");
     let pub_key = include_bytes!("../../fixtures/raw_signature/legacy/rs512.pub_key");

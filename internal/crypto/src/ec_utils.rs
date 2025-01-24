@@ -30,7 +30,7 @@ use crate::raw_signature::{
 };
 
 // Enum to identify the NIST curves supported for with EcdsaValidator
-pub enum EcdsaCurve {
+pub(crate) enum EcdsaCurve {
     /// NIST curve P-256
     P256,
 
