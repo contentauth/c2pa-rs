@@ -13,8 +13,6 @@
 
 use bcder::Oid;
 use rasn::types::OctetString;
-#[cfg(target_arch = "wasm32")]
-use wasm_bindgen_test::wasm_bindgen_test;
 
 use crate::raw_signature::{rust_native, RawSignatureValidationError, SigningAlg};
 
