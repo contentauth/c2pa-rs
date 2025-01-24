@@ -372,7 +372,7 @@ impl crate::signer::RemoteSigner for TempRemoteSigner {
     }
 }
 
-/* This test should be replaced by a rust_native signer if desired to sign from wasm
+/* todo: This test should be replaced by a rust_native signer if desired to sign from wasm
 #[cfg(target_arch = "wasm32")]
 struct WebCryptoSigner {
     signing_alg: SigningAlg,
