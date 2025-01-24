@@ -151,6 +151,7 @@ pub(crate) fn ec_curve_from_public_key_der(public_key: &[u8]) -> Option<EcdsaCur
 }
 
 // Returns supported EcdsaCurve for given private key.
+#[allow(dead_code)] // not used on WASM builds
 pub(crate) fn ec_curve_from_private_key_der(private_key: &[u8]) -> Option<EcdsaCurve> {
     use pkcs8::der::Decode;
     let ec_key = PrivateKeyInfo::from_der(private_key).ok()?;
