@@ -109,8 +109,6 @@ pub mod create_signer;
 pub mod jumbf_io;
 pub mod settings;
 pub mod validation_status;
-#[cfg(target_arch = "wasm32")]
-pub mod wasm;
 
 // Public exports
 pub use assertions::Relationship;

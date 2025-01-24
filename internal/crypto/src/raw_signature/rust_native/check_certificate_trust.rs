@@ -11,26 +11,28 @@
 // specific language governing permissions and limitations under
 // each license.
 
+use std::str::FromStr;
+
 use asn1_rs::{Any, Class, FromDer, Header, Tag};
 use nom::AsBytes;
 use x509_parser::{
     certificate::X509Certificate, der_parser::oid, oid_registry::Oid, x509::AlgorithmIdentifier,
 };
 
+use super::validators::validator_for_signing_alg;
 use crate::{
     cose::{CertificateTrustError, CertificateTrustPolicy},
-    p1363::der_to_p1363,
     raw_signature::{
-        validator_for_signing_alg, webcrypto::async_validator_for_signing_alg,
+        oids::{EC_PUBLICKEY_OID, PRIME256V1_OID, SECP384R1_OID, SECP521R1_OID},
         RawSignatureValidationError, SigningAlg,
     },
 };
 
-pub(crate) async fn check_certificate_trust(
+pub(crate) fn check_certificate_trust(
     ctp: &CertificateTrustPolicy,
     chain_der: &[Vec<u8>],
     cert_der: &[u8],
-    _signing_time_epoch: Option<i64>,
+    signing_time_epoch: Option<i64>,
 ) -> Result<(), CertificateTrustError> {
     let Ok((_rem, cert)) = X509Certificate::from_der(cert_der) else {
         return Err(CertificateTrustError::InvalidCertificate);
@@ -40,12 +42,12 @@ pub(crate) async fn check_certificate_trust(
         return Err(CertificateTrustError::InvalidEku);
     };
 
-    let Some(_approved_oid) = ctp.has_allowed_eku(&eku.value) else {
+    let Some(_approved_oid) = ctp.has_allowed_eku(eku.value) else {
         return Err(CertificateTrustError::InvalidEku);
     };
 
     // Add end-entity cert to the chain if not already there.
-    let full_chain = if !chain_der.is_empty() && cert_der == &chain_der[0] {
+    let full_chain = if !chain_der.is_empty() && cert_der == chain_der[0] {
         chain_der.to_vec()
     } else {
         let mut full_chain: Vec<Vec<u8>> = Vec::new();
@@ -56,7 +58,7 @@ pub(crate) async fn check_certificate_trust(
     };
 
     // Make sure chain is in the correct order and valid.
-    check_chain_order(&full_chain).await?;
+    check_chain_order(&full_chain)?;
 
     // Build anchors and check against trust anchors.
     let anchors = ctp
@@ -77,6 +79,16 @@ pub(crate) async fn check_certificate_trust(
         let (_, chain_cert) = X509Certificate::from_der(cert)
             .map_err(|_e| CertificateTrustError::CertificateNotTrusted)?;
 
+        // make sure the cert was not expired
+        if let Some(signing_time) = signing_time_epoch {
+            if !chain_cert.validity().is_valid_at(
+                x509_parser::time::ASN1Time::from_timestamp(signing_time)
+                    .map_err(|_| CertificateTrustError::CertificateNotTrusted)?,
+            ) {
+                return Err(CertificateTrustError::CertificateNotTrusted);
+            }
+        }
+
         for anchor in ctp.trust_anchor_ders() {
             let data = chain_cert.tbs_certificate.as_ref();
             let sig = chain_cert.signature_value.as_ref();
@@ -87,8 +99,7 @@ pub(crate) async fn check_certificate_trust(
                 .map_err(|_e| CertificateTrustError::CertificateNotTrusted)?;
 
             if chain_cert.issuer() == anchor_cert.subject() {
-                let result =
-                    verify_data(anchor.clone(), sig_alg, sig.to_vec(), data.to_vec()).await;
+                let result = verify_data(anchor.clone(), sig_alg, sig.to_vec(), data.to_vec());
 
                 match result {
                     Ok(b) => {
@@ -102,11 +113,10 @@ pub(crate) async fn check_certificate_trust(
         }
     }
 
-    // TO DO: Consider path check and names restrictions.
-    return Err(CertificateTrustError::CertificateNotTrusted);
+    Err(CertificateTrustError::CertificateNotTrusted)
 }
 
-async fn check_chain_order(certs: &[Vec<u8>]) -> Result<(), CertificateTrustError> {
+fn check_chain_order(certs: &[Vec<u8>]) -> Result<(), CertificateTrustError> {
     let chain_length = certs.len();
     if chain_length < 2 {
         return Ok(());
@@ -121,7 +131,7 @@ async fn check_chain_order(certs: &[Vec<u8>]) -> Result<(), CertificateTrustErro
         let sig = current_cert.signature_value.as_ref();
         let sig_alg = cert_signing_alg(&current_cert);
 
-        if !verify_data(issuer_der, sig_alg, sig.to_vec(), data.to_vec()).await? {
+        if !verify_data(issuer_der, sig_alg, sig.to_vec(), data.to_vec())? {
             return Err(CertificateTrustError::CertificateNotTrusted);
         }
     }
@@ -186,9 +196,7 @@ fn signing_alg_from_rsapss_alg(alg: &AlgorithmIdentifier) -> Option<String> {
         return None;
     };
 
-    let Some(mgf_ai_parameters) = mgf_ai.parameters else {
-        return None;
-    };
+    let mgf_ai_parameters = mgf_ai.parameters?;
 
     let Ok(mgf_ai_parameters) = mgf_ai_parameters.as_sequence() else {
         return None;
@@ -221,7 +229,7 @@ fn signing_alg_from_rsapss_alg(alg: &AlgorithmIdentifier) -> Option<String> {
     }
 }
 
-async fn verify_data(
+fn verify_data(
     cert_der: Vec<u8>,
     sig_alg: Option<String>,
     sig: Vec<u8>,
@@ -240,31 +248,10 @@ async fn verify_data(
         .parse()
         .map_err(|_| CertificateTrustError::InvalidCertificate)?;
 
-    // Not sure this is needed any more. Leaving this for now, but I think this
-    // should be handled in c2pa_crypto's raw signature code.
-
-    // TO REVIEW: For now, this is needed because this function could validate C2PA
-    // signatures (P1363) or those from certificates which are ASN.1 DER. I don't
-    // know if the new code is only used for DER now.
-    let adjusted_sig = if cert_alg_string.starts_with("es") {
-        match der_to_p1363(&sig, signing_alg) {
-            Ok(p1363) => p1363,
-            Err(_) => sig,
-        }
+    let result = if let Some(validator) = validator_for_signing_alg(signing_alg) {
+        validator.validate(&sig, &data, certificate_public_key.raw.as_ref())
     } else {
-        sig
-    };
-
-    let result = if let Some(validator) = async_validator_for_signing_alg(signing_alg) {
-        validator
-            .validate_async(&adjusted_sig, &data, certificate_public_key.raw.as_ref())
-            .await
-    } else {
-        if let Some(validator) = validator_for_signing_alg(signing_alg) {
-            validator.validate(&adjusted_sig, &data, certificate_public_key.raw.as_ref())
-        } else {
-            return Err(CertificateTrustError::InvalidCertificate);
-        }
+        return Err(CertificateTrustError::InvalidCertificate);
     };
 
     match result {

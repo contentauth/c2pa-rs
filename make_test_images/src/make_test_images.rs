@@ -167,7 +167,7 @@ impl MakeTestImages {
         let mut path_buf = PathBuf::from(s);
         // parent() tends to return an empty string instead of None
         let has_path = match path_buf.parent() {
-            Some(p) => p.to_string_lossy().len() > 0,
+            Some(p) => !p.to_string_lossy().is_empty(),
             None => false,
         };
         // if we just have a filename, then assume it is in the output folder

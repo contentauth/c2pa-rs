@@ -20,7 +20,7 @@ use openssl::{
 };
 
 use crate::{
-    p1363::der_to_p1363,
+    ec_utils::{der_to_p1363, ec_curve_from_private_key_der},
     raw_signature::{
         openssl::{cert_chain::check_chain_order, OpenSslMutex},
         RawSigner, RawSignerError, SigningAlg,
@@ -96,17 +96,23 @@ impl RawSigner for EcdsaSigner {
         let _openssl = OpenSslMutex::acquire()?;
 
         let private_key = PKey::from_ec_key(self.private_key.clone())?;
+        let pkcs8_private_key = private_key.private_key_to_pkcs8().map_err(|_| {
+            RawSignerError::InvalidSigningCredentials("unsupported EC curve".to_string())
+        })?;
+        let curve = ec_curve_from_private_key_der(&pkcs8_private_key).ok_or(
+            RawSignerError::InvalidSigningCredentials("unsupported EC curve".to_string()),
+        )?;
+        let sig_len = curve.p1363_sig_len();
 
         let mut signer = match self.alg {
             EcdsaSigningAlg::Es256 => Signer::new(MessageDigest::sha256(), &private_key)?,
             EcdsaSigningAlg::Es384 => Signer::new(MessageDigest::sha384(), &private_key)?,
             EcdsaSigningAlg::Es512 => Signer::new(MessageDigest::sha512(), &private_key)?,
         };
-
         signer.update(data)?;
 
         let der_sig = signer.sign_to_vec()?;
-        der_to_p1363(&der_sig, self.alg())
+        der_to_p1363(&der_sig, sig_len)
     }
 
     fn alg(&self) -> SigningAlg {

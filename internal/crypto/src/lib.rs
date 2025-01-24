@@ -26,7 +26,7 @@ pub mod hash;
 pub(crate) mod internal;
 pub mod ocsp;
 
-pub(crate) mod p1363;
+pub(crate) mod ec_utils;
 pub mod raw_signature;
 pub mod time_stamp;
 

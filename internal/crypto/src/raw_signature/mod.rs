@@ -38,6 +38,3 @@ pub use validator::{
     validator_for_signing_alg, AsyncRawSignatureValidator, RawSignatureValidationError,
     RawSignatureValidator,
 };
-
-#[cfg(target_arch = "wasm32")]
-pub mod webcrypto;

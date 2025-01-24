@@ -81,13 +81,6 @@ pub fn validator_for_signing_alg(alg: SigningAlg) -> Option<Box<dyn RawSignature
         return Some(validator);
     }
 
-    #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
-    if let Some(validator) =
-        crate::raw_signature::webcrypto::validators::validator_for_signing_alg(alg)
-    {
-        return Some(validator);
-    }
-
     let _ = alg; // this value will be unused in this case
     None
 }
@@ -157,7 +150,7 @@ pub(crate) fn validator_for_sig_and_hash_algs(
 pub fn async_validator_for_signing_alg(
     alg: SigningAlg,
 ) -> Option<Box<dyn AsyncRawSignatureValidator>> {
-    crate::raw_signature::webcrypto::async_validator_for_signing_alg(alg)
+    crate::raw_signature::rust_native::validators::async_validator_for_signing_alg(alg)
 }
 
 /// Describes errors that can be identified when validating a raw signature.
@@ -201,19 +194,5 @@ impl From<openssl::error::ErrorStack> for RawSignatureValidationError {
 impl From<crate::raw_signature::openssl::OpenSslMutexUnavailable> for RawSignatureValidationError {
     fn from(err: crate::raw_signature::openssl::OpenSslMutexUnavailable) -> Self {
         Self::InternalError(err.to_string())
-    }
-}
-
-#[cfg(target_arch = "wasm32")]
-impl From<crate::raw_signature::webcrypto::WasmCryptoError> for RawSignatureValidationError {
-    fn from(err: crate::raw_signature::webcrypto::WasmCryptoError) -> Self {
-        match err {
-            crate::raw_signature::webcrypto::WasmCryptoError::UnknownContext => {
-                Self::InternalError("unknown WASM context".to_string())
-            }
-            crate::raw_signature::webcrypto::WasmCryptoError::NoCryptoAvailable => {
-                Self::InternalError("WASM crypto unavailable".to_string())
-            }
-        }
     }
 }
