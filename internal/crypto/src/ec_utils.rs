@@ -29,8 +29,8 @@ use crate::raw_signature::{
     RawSignerError,
 };
 
-// Enum to identify the NIST curves supported for with EcdsaValidator
-pub enum EcdsaCurve {
+/// NIST curves supported by `EcdsaValidator`.
+pub(crate) enum EcdsaCurve {
     /// NIST curve P-256
     P256,
 
@@ -55,7 +55,7 @@ impl EcdsaCurve {
 /// Parse an ASN.1 DER object that contains a P1363 format into its components.
 ///
 /// This format is used by C2PA to describe ECDSA signature keys.
-pub fn parse_ec_der_sig(data: &[u8]) -> BerResult<EcSigComps> {
+pub(crate) fn parse_ec_der_sig(data: &[u8]) -> BerResult<EcSigComps> {
     parse_der_sequence_defined_g(|content: &[u8], _| {
         let (rem1, r) = parse_der_integer(content)?;
         let (_rem2, s) = parse_der_integer(rem1)?;
@@ -70,9 +70,7 @@ pub fn parse_ec_der_sig(data: &[u8]) -> BerResult<EcSigComps> {
     })(data)
 }
 
-/// Component data for ECDSA signature components.
-#[allow(missing_docs)]
-pub struct EcSigComps<'a> {
+pub(crate) struct EcSigComps<'a> {
     pub r: &'a [u8],
     pub s: &'a [u8],
 }
@@ -86,7 +84,7 @@ pub(crate) fn der_to_p1363(data: &[u8], sig_len: usize) -> Result<Vec<u8>, RawSi
     let mut r = const_hex::encode(p.r);
     let mut s = const_hex::encode(p.s);
 
-    // check against the supported sig sizes
+    // Check against the supported signature sizes.
     if ![64usize, 96, 132].contains(&sig_len) {
         return Err(RawSignerError::InternalError(
             "unsupported algorithm for der_to_p1363".to_string(),
@@ -129,7 +127,6 @@ pub(crate) fn der_to_p1363(data: &[u8], sig_len: usize) -> Result<Vec<u8>, RawSi
 }
 
 // Returns supported EcdsaCurve for given public key.
-#[allow(dead_code)]
 pub(crate) fn ec_curve_from_public_key_der(public_key: &[u8]) -> Option<EcdsaCurve> {
     let (_, pk) = SubjectPublicKeyInfo::from_der(public_key).ok()?;
 
@@ -139,7 +136,7 @@ pub(crate) fn ec_curve_from_public_key_der(public_key: &[u8]) -> Option<EcdsaCur
         if let Some(parameters) = &public_key_alg.parameters {
             let named_curve_oid = parameters.as_oid().ok()?;
 
-            // find supported curve
+            // Find supported curve.
             if named_curve_oid == PRIME256V1_OID {
                 return Some(EcdsaCurve::P256);
             } else if named_curve_oid == SECP384R1_OID {
@@ -154,7 +151,6 @@ pub(crate) fn ec_curve_from_public_key_der(public_key: &[u8]) -> Option<EcdsaCur
 }
 
 // Returns supported EcdsaCurve for given private key.
-#[allow(dead_code)]
 pub(crate) fn ec_curve_from_private_key_der(private_key: &[u8]) -> Option<EcdsaCurve> {
     use pkcs8::der::Decode;
     let ec_key = PrivateKeyInfo::from_der(private_key).ok()?;
