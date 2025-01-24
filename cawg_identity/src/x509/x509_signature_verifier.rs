@@ -40,7 +40,7 @@ impl SignatureVerifier for X509SignatureVerifier {
         signer_payload: &SignerPayload,
         signature: &[u8],
     ) -> Result<Self::Output, ValidationError<Self::Error>> {
-        if signer_payload.sig_type != "cawg.x509.cose" {
+        if signer_payload.sig_type != super::CAWG_X509_SIG_TYPE {
             return Err(ValidationError::UnknownSignatureType(
                 signer_payload.sig_type.clone(),
             ));

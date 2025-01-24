@@ -70,7 +70,7 @@ impl X509CredentialHolder {
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl CredentialHolder for X509CredentialHolder {
     fn sig_type(&self) -> &'static str {
-        "cawg.x509.cose"
+        super::CAWG_X509_SIG_TYPE
     }
 
     fn reserve_size(&self) -> usize {
