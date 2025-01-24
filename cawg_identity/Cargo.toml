@@ -1,6 +1,6 @@
 [package]
 name = "cawg-identity"
-version = "0.2.0"
+version = "0.3.0"
 description = "Rust SDK for CAWG (Creator Assertions Working Group) identity assertion"
 authors = [
     "Eric Scouten <scouten@adobe.com>",
@@ -27,8 +27,8 @@ rustdoc-args = ["--cfg", "docsrs"]
 [dependencies]
 async-trait = "0.1.78"
 base64 = "0.22.1"
-c2pa = { path = "../sdk", version = "0.41.0", features = ["openssl", "unstable_api"] }
-c2pa-crypto = { path = "../internal/crypto", version = "0.3.0" }
+c2pa = { path = "../sdk", version = "0.42.0", features = ["openssl", "unstable_api"] }
+c2pa-crypto = { path = "../internal/crypto", version = "0.4.0" }
 chrono = { version = "0.4.38", features = ["serde"] }
 ciborium = "0.2.2"
 coset = "0.3.8"
