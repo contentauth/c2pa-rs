@@ -33,7 +33,7 @@ This crate has two features, neither of which are enabled by default:
 ### Validation
 
 | C2PA `SigningAlg` | Default (*) | `feature = "rust_native_crypto"` (*) or WASM |
-| --- | --- | --- | --- |
+| --- | --- | --- |
 | `es256` | OpenSSL | `p256` |
 | `es384` | OpenSSL | `p384` |
 | `es512` | OpenSSL | `p521` |
