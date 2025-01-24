@@ -94,12 +94,12 @@ pub fn validator_for_signing_alg(alg: SigningAlg) -> Option<Box<dyn RawSignature
     }
 }
 
-/// Select validator based on signing algorithm and hash type or ec curve.
+/// Select validator based on signing algorithm and hash type or EC curve.
 pub(crate) fn validator_for_sig_and_hash_algs(
     sig_alg: &Oid,
     hash_alg_or_curve: &Oid,
 ) -> Option<Box<dyn RawSignatureValidator>> {
-    // handle legacy RSA
+    // Handle legacy RSA.
     if sig_alg.as_ref() == RSA_OID.as_bytes() {
         if hash_alg_or_curve.as_ref() == SHA256_OID.as_bytes() {
             return Some(Box::new(RsaLegacyValidator::Rsa256));
@@ -110,7 +110,7 @@ pub(crate) fn validator_for_sig_and_hash_algs(
         }
     }
 
-    // handle RSS-PSS
+    // Handle RSS-PSS.
     if sig_alg.as_ref() == RSA_PSS_OID.as_bytes() {
         if hash_alg_or_curve.as_ref() == SHA256_WITH_RSAENCRYPTION_OID.as_bytes() {
             return Some(Box::new(RsaValidator::Ps256));
@@ -121,7 +121,7 @@ pub(crate) fn validator_for_sig_and_hash_algs(
         }
     }
 
-    // handle elliptical curve and hash combinations
+    // Handle elliptical curve and hash combinations.
     if sig_alg.as_ref() == ECDSA_WITH_SHA256_OID.as_bytes() {
         return Some(Box::new(EcdsaValidator::Es256));
     } else if sig_alg.as_ref() == ECDSA_WITH_SHA384_OID.as_bytes() {
@@ -130,7 +130,7 @@ pub(crate) fn validator_for_sig_and_hash_algs(
         return Some(Box::new(EcdsaValidator::Es512));
     }
 
-    // handle ED25519
+    // Handle ED25519
     if sig_alg.as_ref() == ED25519_OID.as_bytes() {
         return Some(Box::new(Ed25519Validator {}));
     }

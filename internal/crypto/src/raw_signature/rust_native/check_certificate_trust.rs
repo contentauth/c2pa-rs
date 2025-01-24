@@ -79,7 +79,7 @@ pub(crate) fn check_certificate_trust(
         let (_, chain_cert) = X509Certificate::from_der(cert)
             .map_err(|_e| CertificateTrustError::CertificateNotTrusted)?;
 
-        // make sure the cert was not expired
+        // Make sure the certificate was not expired.
         if let Some(signing_time) = signing_time_epoch {
             if !chain_cert.validity().is_valid_at(
                 x509_parser::time::ASN1Time::from_timestamp(signing_time)
