@@ -23,3 +23,4 @@ mod x509_credential_holder;
 pub use x509_credential_holder::X509CredentialHolder;
 
 mod x509_signature_verifier;
+pub use x509_signature_verifier::X509SignatureVerifier;

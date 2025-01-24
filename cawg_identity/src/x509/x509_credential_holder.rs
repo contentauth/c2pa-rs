@@ -51,8 +51,8 @@ impl X509CredentialHolder {
     ///
     /// [`AsyncRawSigner`]: c2pa_crypto::raw_signature::AsyncRawSigner
     #[cfg(not(target_arch = "wasm32"))]
-    pub fn from_async_raw_signer<S: AsyncRawSigner + Send + Sync + 'static>(signer: S) -> Self {
-        Self(Box::new(signer))
+    pub fn from_async_raw_signer(signer: Box<dyn AsyncRawSigner + Send + Sync + 'static>) -> Self {
+        Self(signer)
     }
 
     /// Create an `X509CredentialHolder` instance by wrapping an instance of
@@ -63,8 +63,8 @@ impl X509CredentialHolder {
     ///
     /// [`AsyncRawSigner`]: c2pa_crypto::raw_signature::AsyncRawSigner
     #[cfg(target_arch = "wasm32")]
-    pub fn from_async_raw_signer<S: AsyncRawSigner + 'static>(signer: S) -> Self {
-        Self(Box::new(signer))
+    pub fn from_async_raw_signer(signer: Box<dyn AsyncRawSigner + 'static>) -> Self {
+        Self(signer)
     }
 }
 

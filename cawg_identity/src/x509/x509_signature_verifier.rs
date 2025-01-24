@@ -26,13 +26,16 @@ use crate::{SignatureVerifier, SignerPayload, ValidationError};
 ///
 /// [`SignatureVerifier`]: crate::SignatureVerifier
 /// [§8.2, X.509 certificates and COSE signatures]: https://cawg.io/identity/1.1-draft/#_x_509_certificates_and_cose_signatures
-pub(crate) struct X509SignatureVerifier {}
+pub struct X509SignatureVerifier {}
 
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl SignatureVerifier for X509SignatureVerifier {
     type Error = CoseError;
     type Output = CertificateInfo;
+
+    // TO DO: I'm not sure CertificateInfo is the right response
+    // as that loses some of the info outside of the cert (i.e. signing time).
 
     async fn check_signature(
         &self,
