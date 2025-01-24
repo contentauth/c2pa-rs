@@ -6,6 +6,13 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 The format of this changelog is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.4.0](https://github.com/contentauth/c2pa-rs/compare/cawg-identity-v0.3.0...cawg-identity-v0.4.0)
+_24 January 2025_
+
+### Fixed
+
+* Remove `Debug` supertrait from `DynamicAssertion` and `CredentialHolder` traits (#876)
+
 ## [0.3.0](https://github.com/contentauth/c2pa-rs/compare/cawg-identity-v0.2.2...cawg-identity-v0.3.0)
 _22 January 2025_
 
