@@ -469,7 +469,7 @@ fn main() -> Result<()> {
     //     match args.output {
     //         Some(output) => {
     //             if output.exists() && !args.force {
-    //                 bail!("Output already exists, use -f/force to force write");
+    //                 bail!("Output already exists; use -f/force to force write");
     //             }
     //             if path != &output {
     //                 std::fs::copy(path, &output)?;
@@ -600,7 +600,7 @@ fn main() -> Result<()> {
                     if args.force {
                         remove_file(&output)?;
                     } else {
-                        bail!("Output already exists, use -f/force to force write");
+                        bail!("Output already exists; use -f/force to force write");
                     }
                 }
 
@@ -642,7 +642,7 @@ fn main() -> Result<()> {
             if args.force {
                 remove_dir_all(&output)?;
             } else {
-                bail!("Output already exists, use -f/force to force write");
+                bail!("Output already exists; use -f/force to force write");
             }
         }
         create_dir_all(&output)?;

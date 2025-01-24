@@ -156,7 +156,7 @@ fn tool_fs_output_fails_when_output_exists() -> Result<(), Box<dyn Error>> {
         .assert()
         .failure()
         .stderr(str::contains(
-            "Error: Output already exists, use -f/force to force write",
+            "Error: Output already exists; use -f/force to force write",
         ));
     Ok(())
 }
