@@ -17,6 +17,8 @@ use c2pa::{HashedUri, Reader};
 use chrono::{DateTime, FixedOffset};
 use iref::UriBuf;
 use non_empty_string::NonEmptyString;
+#[cfg(target_arch = "wasm32")]
+use wasm_bindgen_test::wasm_bindgen_test;
 
 use crate::{
     claim_aggregation::{IcaSignatureVerifier, IdentityProvider, VerifiedIdentity},

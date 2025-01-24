@@ -283,6 +283,10 @@ jobs:
         run: wasm-pack test --chrome --headless
         working-directory: ./sdk
 
+      - name: Run Wasm tests (cawg-identity)
+        run: wasm-pack test --chrome --headless
+        working-directory: ./cawg_identity
+
   test-direct-minimal-versions:
     name: Unit tests with minimum versions of direct dependencies
     if: |

@@ -77,13 +77,13 @@ use crate::{
 #[async_generic(async_signature(
     signer: &dyn AsyncRawSigner,
     data: &[u8],
-    box_size: usize,
+    box_size: Option<usize>,
     tss: TimeStampStorage
 ))]
 pub fn sign(
     signer: &dyn RawSigner,
     data: &[u8],
-    box_size: usize,
+    box_size: Option<usize>,
     tss: TimeStampStorage,
 ) -> Result<Vec<u8>, CoseError> {
     if _sync {
@@ -102,13 +102,13 @@ pub fn sign(
 #[async_generic(async_signature(
     signer: &dyn AsyncRawSigner,
     data: &[u8],
-    box_size: usize,
+    box_size: Option<usize>,
     tss: TimeStampStorage
 ))]
 pub fn sign_v1(
     signer: &dyn RawSigner,
     data: &[u8],
-    box_size: usize,
+    box_size: Option<usize>,
     tss: TimeStampStorage,
 ) -> Result<Vec<u8>, CoseError> {
     let alg = signer.alg();
@@ -179,13 +179,13 @@ pub fn sign_v1(
 #[async_generic(async_signature(
     signer: &dyn AsyncRawSigner,
     data: &[u8],
-    box_size: usize,
+    box_size: Option<usize>,
     tss: TimeStampStorage
 ))]
 pub fn sign_v2(
     signer: &dyn RawSigner,
     data: &[u8],
-    box_size: usize,
+    box_size: Option<usize>,
     tss: TimeStampStorage,
 ) -> Result<Vec<u8>, CoseError> {
     let alg = signer.alg();
@@ -298,7 +298,7 @@ fn build_protected_header(
     Ok(ph2)
 }
 
-#[async_generic(async_signature(signer: &dyn AsyncRawSigner, data: &[u8], p_header: &ProtectedHeader,     tss: TimeStampStorage,))]
+#[async_generic(async_signature(signer: &dyn AsyncRawSigner, data: &[u8], p_header: &ProtectedHeader, tss: TimeStampStorage,))]
 fn build_unprotected_header(
     signer: &dyn RawSigner,
     data: &[u8],
@@ -347,12 +347,16 @@ const PAD_OFFSET: usize = 7;
 // when that happens a second padding is added to change the remaining needed
 // padding. The default initial guess works for almost all sizes, without the
 // need for additional loops.
-fn pad_cose_sig(sign1: &mut CoseSign1, end_size: usize) -> Result<Vec<u8>, CoseError> {
+fn pad_cose_sig(sign1: &mut CoseSign1, end_size: Option<usize>) -> Result<Vec<u8>, CoseError> {
     let mut sign1_clone = sign1.clone();
 
     let cur_vec = sign1_clone
         .to_tagged_vec()
         .map_err(|e| CoseError::CborGenerationError(e.to_string()))?;
+
+    let Some(end_size) = end_size else {
+        return Ok(cur_vec);
+    };
 
     let cur_size = cur_vec.len();
     if cur_size == end_size {
@@ -390,7 +394,7 @@ fn pad_cose_sig(sign1: &mut CoseSign1, end_size: usize) -> Result<Vec<u8>, CoseE
                 Label::Text(PAD.to_string()),
                 Value::Bytes(vec![0u8; target_guess]),
             ));
-            return pad_cose_sig(&mut sign1_clone, end_size);
+            return pad_cose_sig(&mut sign1_clone, Some(end_size));
         }
 
         // Get current CBOR vec to see if we reached target size.
@@ -412,5 +416,5 @@ fn pad_cose_sig(sign1: &mut CoseSign1, end_size: usize) -> Result<Vec<u8>, CoseE
         Value::Bytes(vec![0u8; last_pad - 10]),
     ));
 
-    pad_cose_sig(sign1, end_size)
+    pad_cose_sig(sign1, Some(end_size))
 }

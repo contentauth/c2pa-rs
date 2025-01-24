@@ -262,57 +262,6 @@ pub mod tests {
             fn ocsp_val(&self) -> Option<Vec<u8>> {
                 Some(self.ocsp_rsp.clone())
             }
-
-            fn raw_signer(&self) -> Box<&dyn RawSigner> {
-                Box::new(self)
-            }
-        }
-
-        impl RawSigner for OcspSigner {
-            fn sign(&self, data: &[u8]) -> std::result::Result<Vec<u8>, RawSignerError> {
-                self.raw_signer.sign(data)
-            }
-
-            fn alg(&self) -> SigningAlg {
-                self.raw_signer.alg()
-            }
-
-            fn cert_chain(&self) -> std::result::Result<Vec<Vec<u8>>, RawSignerError> {
-                self.raw_signer.cert_chain()
-            }
-
-            fn reserve_size(&self) -> usize {
-                self.raw_signer.reserve_size()
-            }
-
-            fn ocsp_response(&self) -> Option<Vec<u8>> {
-                eprintln!("THE ONE I WANTED @ 287");
-                Some(self.ocsp_rsp.clone())
-            }
-        }
-
-        impl TimeStampProvider for OcspSigner {
-            fn time_stamp_service_url(&self) -> Option<String> {
-                self.raw_signer.time_stamp_service_url()
-            }
-
-            fn time_stamp_request_headers(&self) -> Option<Vec<(String, String)>> {
-                self.raw_signer.time_stamp_request_headers()
-            }
-
-            fn time_stamp_request_body(
-                &self,
-                message: &[u8],
-            ) -> std::result::Result<Vec<u8>, TimeStampError> {
-                self.raw_signer.time_stamp_request_body(message)
-            }
-
-            fn send_time_stamp_request(
-                &self,
-                message: &[u8],
-            ) -> Option<std::result::Result<Vec<u8>, TimeStampError>> {
-                self.raw_signer.send_time_stamp_request(message)
-            }
         }
 
         let ocsp_signer = OcspSigner {
@@ -321,12 +270,9 @@ pub mod tests {
         };
 
         // sign and staple
-        let cose_bytes = crate::cose_sign::sign_claim(
-            &claim_bytes,
-            &ocsp_signer,
-            RawSigner::reserve_size(&ocsp_signer),
-        )
-        .unwrap();
+        let cose_bytes =
+            crate::cose_sign::sign_claim(&claim_bytes, &ocsp_signer, ocsp_signer.reserve_size())
+                .unwrap();
 
         let cose_sign1 = parse_cose_sign1(&cose_bytes, &claim_bytes, &mut validation_log).unwrap();
         let ocsp_stapled = get_ocsp_der(&cose_sign1).unwrap();
