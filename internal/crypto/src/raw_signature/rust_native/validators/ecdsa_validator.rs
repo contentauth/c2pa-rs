@@ -107,7 +107,8 @@ impl RawSignatureValidator for EcdsaValidator {
                 let signature = EcdsaSignature::from_slice(&adjusted_sig)
                     .map_err(|_| RawSignatureValidationError::InvalidSignature)?;
 
-                // P521VerifyingKey does't have an implementation of `from_public_key` so we load it manually.
+                // P521VerifyingKey does't have an implementation of `from_public_key` so we
+                // load it manually.
                 let pk = P521PublicKey::from_public_key_der(public_key)
                     .map_err(|_| RawSignatureValidationError::InvalidPublicKey)?;
 
