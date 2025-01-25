@@ -85,7 +85,7 @@ pub const HARD_BINDINGS_MISSING: &str = "claim.hardBindings.missing";
 
 // Multiple hard bindings are present in the claim.
 ///
-/// Any corresponding URL should point to a C2PA assertion
+/// Any corresponding URL should point to a C2PA assertion.
 pub const HARD_BINDINGS_MULTIPLE: &str = "assertion.multipleHardBindings";
 
 /// A required field is not present in the claim.
@@ -308,7 +308,7 @@ pub fn is_success(status_code: &str) -> bool {
 }
 
 /// Returns the [`LogKind`] for a given status code.
-// todo: This needs to be expanded to include all status codes
+// TODO: This needs to be expanded to include all status codes.
 pub fn log_kind(status_code: &str) -> LogKind {
     match status_code {
         CLAIM_SIGNATURE_VALIDATED
