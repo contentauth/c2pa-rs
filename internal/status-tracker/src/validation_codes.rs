@@ -308,7 +308,7 @@ pub fn is_success(status_code: &str) -> bool {
 }
 
 /// Returns the [`LogKind`] for a given status code.
-// todo: This needs to be expanded to include all status codes
+// TODO: This needs to be expanded to include all status codes.
 pub fn log_kind(status_code: &str) -> LogKind {
     match status_code {
         CLAIM_SIGNATURE_VALIDATED
