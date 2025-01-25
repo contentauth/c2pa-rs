@@ -485,8 +485,8 @@ impl Manifest {
     /// Add verifiable credentials
     #[cfg(feature = "v1_api")]
     pub fn add_verifiable_credential<T: Serialize>(&mut self, data: &T) -> Result<&mut Self> {
-        let value = serde_json::to_value(data)
-            .map_err(|_err| Error::AssertionEncoding(_err.to_string()))?;
+        let value =
+            serde_json::to_value(data).map_err(|err| Error::AssertionEncoding(err.to_string()))?;
         match self.credentials.as_mut() {
             Some(credentials) => credentials.push(value),
             None => self.credentials = Some([value].to_vec()),
@@ -531,7 +531,7 @@ impl Manifest {
     /// Setting a base path will make the manifest use resource files instead of memory buffers
     ///
     /// The files will be relative to the given base path
-    /// Ingredients resources will also be relative to this patH
+    /// Ingredients resources will also be relative to this path
     #[cfg(feature = "file_io")]
     pub fn with_base_path<P: AsRef<Path>>(&mut self, base_path: P) -> Result<&Self> {
         create_dir_all(&base_path)?;
@@ -556,17 +556,10 @@ impl Manifest {
                 label: manifest_label.to_owned(),
             })?;
 
-        // extract vendor from claim label
-        let claim_generator = claim.claim_generator().to_owned();
-
         let mut manifest = Manifest {
-            claim_generator: Some(claim_generator),
+            claim_generator: claim.claim_generator().map(|s| s.to_owned()),
             title: claim.title().map(|s| s.to_owned()),
-            format: if claim.format().is_empty() {
-                None
-            } else {
-                Some(claim.format().to_owned())
-            },
+            format: claim.format().map(|s| s.to_owned()),
             instance_id: claim.instance_id().to_owned(),
             label: Some(claim.label().to_owned()),
             ..Default::default()
@@ -831,7 +824,7 @@ impl Manifest {
             claim.set_title(Some(title.to_string()));
         }
         if let Some(format) = self.format() {
-            claim.format = format.to_string();
+            claim.format = Some(format.to_string());
         }
         self.instance_id().clone_into(&mut claim.instance_id);
 

@@ -864,7 +864,7 @@ impl Store {
 
                         for (uri, db) in claim.databoxes() {
                             let db_cbor_bytes = serde_cbor::to_vec(db)
-                                .map_err(|_err| Error::AssertionEncoding(_err.to_string()))?;
+                                .map_err(|err| Error::AssertionEncoding(err.to_string()))?;
 
                             let (link, instance) = Claim::assertion_label_from_link(&uri.url());
                             let label = Claim::label_with_instance(&link, instance);

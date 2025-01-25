@@ -286,10 +286,11 @@ impl Reader {
 
     /// Get the [`ValidationState`] of the manifest store.
     pub fn validation_state(&self) -> ValidationState {
-        let verify_trust = get_settings_value("verify.trusted").unwrap_or(false);
         if let Some(validation_results) = self.manifest_store.validation_results() {
             return validation_results.validation_state();
         }
+
+        let verify_trust = get_settings_value("verify.trusted").unwrap_or(false);
         match self.validation_status() {
             Some(status) => {
                 // if there are any errors, the state is invalid unless the only error is an untrusted credential
@@ -298,8 +299,11 @@ impl Reader {
                     .any(|s| s.code() != crate::validation_status::SIGNING_CREDENTIAL_UNTRUSTED);
                 if errs {
                     ValidationState::Invalid
-                } else {
+                } else if verify_trust {
+                    // If we verified trust and didn't get an error, we can assume it is trusted
                     ValidationState::Trusted
+                } else {
+                    ValidationState::Valid
                 }
             }
             None => {

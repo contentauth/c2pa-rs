@@ -236,7 +236,7 @@ pub struct Claim {
 
     pub title: Option<String>, // title for this claim, generally the name of the containing asset
 
-    pub format: String, // mime format of document containing this claim
+    pub format: Option<String>, // mime format of document containing this claim
 
     pub instance_id: String, // instance Id of document containing this claim
 
@@ -260,7 +260,7 @@ pub struct Claim {
     // These are serialized manually based on need.
     vc_store: Vec<(HashedUri, AssertionData)>, //  V1 feature
 
-    claim_generator: String, // generator of this claim
+    claim_generator: Option<String>, // generator of this claim
 
     pub(crate) claim_generator_info: Option<Vec<ClaimGeneratorInfo>>, /* detailed generator info of this claim */
 
@@ -388,7 +388,7 @@ impl Claim {
             label: l,
             signature: "".to_string(),
 
-            claim_generator: claim_generator.into(),
+            claim_generator: Some(claim_generator.into()),
             claim_generator_info: None,
             assertion_store: Vec::new(),
             vc_store: Vec::new(),
@@ -401,7 +401,7 @@ impl Claim {
             claim_generator_hints: None,
 
             title: None,
-            format: "".to_string(),
+            format: Some("".to_string()),
             instance_id: "".to_string(),
 
             update_manifest: false,
@@ -449,7 +449,7 @@ impl Claim {
             label,
             signature: "".to_string(),
 
-            claim_generator: claim_generator.into(),
+            claim_generator: Some(claim_generator.into()),
             claim_generator_info: None,
             assertion_store: Vec::new(),
             vc_store: Vec::new(),
@@ -462,7 +462,7 @@ impl Claim {
             claim_generator_hints: None,
 
             title: None,
-            format: "".to_string(),
+            format: None,
             instance_id: "".to_string(),
 
             update_manifest: false,
@@ -559,7 +559,7 @@ impl Claim {
                 remote_manifest: RemoteManifest::NoRemote,
                 update_manifest: false,
                 title,
-                format,
+                format: Some(format),
                 instance_id,
                 ingredients_store: HashMap::new(),
                 signature_val: Vec::new(),
@@ -567,7 +567,7 @@ impl Claim {
                 label: label.to_string(),
                 assertion_store: Vec::new(),
                 vc_store: Vec::new(),
-                claim_generator,
+                claim_generator: Some(claim_generator),
                 claim_generator_info: Some(claim_generator_info),
                 signature,
                 assertions,
@@ -652,7 +652,7 @@ impl Claim {
                 remote_manifest: RemoteManifest::NoRemote,
                 update_manifest: false,
                 title,
-                format: "".into(),
+                format: None,
                 instance_id,
                 ingredients_store: HashMap::new(),
                 signature_val: Vec::new(),
@@ -660,7 +660,7 @@ impl Claim {
                 label: label.to_string(),
                 assertion_store: Vec::new(),
                 vc_store: Vec::new(),
-                claim_generator: "".into(),
+                claim_generator: None,
                 claim_generator_info: Some([claim_generator_info].to_vec()),
                 signature,
                 assertions,
@@ -716,7 +716,9 @@ impl Claim {
         let mut claim_map = serializer.serialize_struct("Claim", claim_map_len)?;
 
         // serialize mandatory fields
-        claim_map.serialize_field(CLAIM_GENERATOR_F, self.claim_generator())?;
+        if let Some(cg) = self.claim_generator() {
+            claim_map.serialize_field(CLAIM_GENERATOR_F, cg)?;
+        } // todo: what if there is no claim_generator?
 
         if let Some(cgi) = self.claim_generator_info() {
             claim_map.serialize_field(CLAIM_GENERATOR_INFO_F, cgi)?;
@@ -727,7 +729,9 @@ impl Claim {
 
         claim_map.serialize_field(SIGNATURE_F, &self.signature)?;
         claim_map.serialize_field(ASSERTIONS_F, self.assertions())?;
-        claim_map.serialize_field(DC_FORMAT_F, self.format())?;
+        if let Some(format) = self.format() {
+            claim_map.serialize_field(DC_FORMAT_F, format)?;
+        } //todo: what if there is no format?
         claim_map.serialize_field(INSTANCE_ID_F, self.instance_id())?;
 
         // serialize optional fields
@@ -911,13 +915,13 @@ impl Claim {
     }
 
     /// get claim generator
-    pub fn claim_generator(&self) -> &str {
-        &self.claim_generator
+    pub fn claim_generator(&self) -> Option<&str> {
+        self.claim_generator.as_deref()
     }
 
     /// get format
-    pub fn format(&self) -> &str {
-        &self.format
+    pub fn format(&self) -> Option<&str> {
+        self.format.as_deref()
     }
 
     /// get instance_id

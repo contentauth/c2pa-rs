@@ -651,7 +651,7 @@ impl Builder {
         if let Some(title) = definition.title.as_ref() {
             claim.set_title(Some(title.to_owned()));
         }
-        definition.format.clone_into(&mut claim.format);
+        claim.format = Some(definition.format.clone());
         definition.instance_id.clone_into(&mut claim.instance_id);
 
         let salt = DefaultSalt::default();
