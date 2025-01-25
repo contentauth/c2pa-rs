@@ -34,7 +34,7 @@ pub struct IdentityAssertionSigner {
     identity_assertions: std::sync::RwLock<Vec<IdentityAssertionBuilder>>,
 
     #[cfg(target_arch = "wasm32")]
-    identity_assertions: std::cell::Cell<Vec<IdentityAssertionBuilder>>,
+    identity_assertions: std::cell::RefCell<Vec<IdentityAssertionBuilder>>,
 }
 
 impl IdentityAssertionSigner {
@@ -87,8 +87,8 @@ impl IdentityAssertionSigner {
     }
 
     #[cfg(target_arch = "wasm32")]
-    fn ia_default() -> std::cell::Cell<Vec<IdentityAssertionBuilder>> {
-        std::cell::Cell::new(vec![])
+    fn ia_default() -> std::cell::RefCell<Vec<IdentityAssertionBuilder>> {
+        std::cell::RefCell::new(vec![])
     }
 
     /// Add an [`IdentityAssertionBuilder`] to be used when signing the next
@@ -110,7 +110,10 @@ impl IdentityAssertionSigner {
 
         #[cfg(target_arch = "wasm32")]
         {
-            unimplemented!();
+            #[allow(clippy::unwrap_used)]
+            let mut identity_assertions = self.identity_assertions.try_borrow_mut().unwrap();
+            // TO DO: Replace with error handling in the very unlikely case of a panic here.
+            identity_assertions.push(iab);
         }
     }
 }
@@ -159,8 +162,8 @@ impl AsyncSigner for IdentityAssertionSigner {
             .map(|r| r.map_err(|e| e.into()))
     }
 
-    fn async_raw_signer(&self) -> Box<&dyn AsyncRawSigner> {
-        Box::new(&*self.signer)
+    fn async_raw_signer(&self) -> Option<Box<&dyn AsyncRawSigner>> {
+        Some(Box::new(&*self.signer))
     }
 
     fn dynamic_assertions(&self) -> Vec<Box<dyn DynamicAssertion>> {
@@ -182,7 +185,18 @@ impl AsyncSigner for IdentityAssertionSigner {
 
         #[cfg(target_arch = "wasm32")]
         {
-            unimplemented!();
+            #[allow(clippy::unwrap_used)]
+            let mut identity_assertions = self.identity_assertions.try_borrow_mut().unwrap();
+            // TO DO: Replace with error handling in the very unlikely case of a panic here.
+
+            let ia_clone = identity_assertions.split_off(0);
+            let mut dynamic_assertions: Vec<Box<dyn DynamicAssertion>> = vec![];
+
+            for ia in ia_clone.into_iter() {
+                dynamic_assertions.push(Box::new(ia));
+            }
+
+            dynamic_assertions
         }
     }
 }

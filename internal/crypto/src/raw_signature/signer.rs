@@ -57,9 +57,45 @@ pub trait RawSigner: TimeStampProvider {
 /// signature over an arbitrary byte array.
 ///
 /// Use this trait only when the implementation must be asynchronous.
-#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
-#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
-pub trait AsyncRawSigner: Sync + AsyncTimeStampProvider {
+#[cfg(not(target_arch = "wasm32"))]
+#[async_trait]
+pub trait AsyncRawSigner: AsyncTimeStampProvider + Sync {
+    /// Return a raw signature over the original byte slice.
+    async fn sign(&self, data: Vec<u8>) -> Result<Vec<u8>, RawSignerError>;
+
+    /// Return the algorithm implemented by this signer.
+    fn alg(&self) -> SigningAlg;
+
+    /// Return the signing certificate chain.
+    ///
+    /// Each certificate should be encoded in DER format and sequenced from
+    /// end-entity certificate to the outermost certificate authority.
+    fn cert_chain(&self) -> Result<Vec<Vec<u8>>, RawSignerError>;
+
+    /// Return the size in bytes of the largest possible expected signature.
+    /// Signing will fail if the result of the [`sign`] function is larger
+    /// than this value.
+    ///
+    /// [`sign`]: Self::sign
+    fn reserve_size(&self) -> usize;
+
+    /// Return an OCSP response for the signing certificate if available.
+    ///
+    /// By pre-querying the value for the signing certificate, the value can be
+    /// cached which will reduce load on the certificate authority, as
+    /// recommended by the C2PA spec.
+    async fn ocsp_response(&self) -> Option<Vec<u8>> {
+        None
+    }
+}
+
+/// Implementations of the `AsyncRawSigner` trait generate a cryptographic
+/// signature over an arbitrary byte array.
+///
+/// Use this trait only when the implementation must be asynchronous.
+#[cfg(target_arch = "wasm32")]
+#[async_trait(?Send)]
+pub trait AsyncRawSigner: AsyncTimeStampProvider {
     /// Return a raw signature over the original byte slice.
     async fn sign(&self, data: Vec<u8>) -> Result<Vec<u8>, RawSignerError>;
 

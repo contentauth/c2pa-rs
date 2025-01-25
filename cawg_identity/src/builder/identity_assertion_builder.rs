@@ -11,8 +11,6 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use std::fmt::Debug;
-
 use async_trait::async_trait;
 use c2pa::{DynamicAssertion, PreliminaryClaim};
 use serde_bytes::ByteBuf;
@@ -24,7 +22,6 @@ use crate::{builder::CredentialHolder, IdentityAssertion, SignerPayload};
 /// it ensures that the proper data is added to the final C2PA Manifest.
 ///
 /// [`IdentityAssertionSigner`]: crate::builder::IdentityAssertionSigner
-#[derive(Debug)]
 pub struct IdentityAssertionBuilder {
     #[cfg(not(target_arch = "wasm32"))]
     credential_holder: Box<dyn CredentialHolder + Sync + Send>,

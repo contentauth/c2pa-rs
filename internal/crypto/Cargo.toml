@@ -1,6 +1,6 @@
 [package]
 name = "c2pa-crypto"
-version = "0.3.0"
+version = "0.5.0"
 description = "Cryptography internals for c2pa-rs crate"
 authors = [
     "Maurice Fisher <mfisher@adobe.com>",
@@ -52,7 +52,7 @@ c2pa-status-tracker = { path = "../status-tracker", version = "0.3.0" }
 ciborium = "0.2.2"
 const-hex = "1.14"
 const-oid = { version = "0.9.6", optional = true }
-coset = "0.3.1"
+coset = "0.3.8"
 der = { version = "0.7.9", optional = true }
 ed25519-dalek = { version = "2.1.1", features = ["alloc", "digest", "pem", "pkcs8"], optional = true }
 getrandom = { version = "0.2.7", features = ["js"] }
