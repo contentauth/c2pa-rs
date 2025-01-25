@@ -39,6 +39,14 @@ impl IdentityAssertionBuilder {
             credential_holder: Box::new(credential_holder),
         }
     }
+
+    // Create an `IdentityAssertionBuilder` for the given
+    /// `CredentialHolder` pointer.
+    pub fn for_credential_holder_boxed(credential_holder: Box<dyn CredentialHolder + Sync + Send>) -> Self {
+      Self {
+          credential_holder,
+      }
+  }
 }
 
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
