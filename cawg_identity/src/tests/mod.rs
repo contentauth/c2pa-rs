@@ -23,6 +23,7 @@ mod claim_aggregation;
 pub(crate) mod fixtures;
 mod identity_assertion;
 mod internal;
+mod x509;
 
 #[cfg(target_arch = "wasm32")]
 wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);

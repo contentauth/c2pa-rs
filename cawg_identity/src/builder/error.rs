@@ -13,7 +13,6 @@
 
 use std::fmt::Debug;
 
-use c2pa_crypto::raw_signature::RawSignerError;
 use thiserror::Error;
 
 /// Describes errors that can occur when building a CAWG identity assertion.
@@ -27,9 +26,13 @@ pub enum IdentityBuilderError {
     #[error("error while generating CBOR ({0})")]
     CborGenerationError(String),
 
-    /// An error occurred when generating the underlying raw signature.
-    #[error(transparent)]
-    RawSignerError(#[from] RawSignerError),
+    /// The credentials provided could not be used.
+    #[error("credential-related error ({0})")]
+    CredentialError(String),
+
+    /// An error occurred when generating the underlying signature.
+    #[error("error while generating signature ({0})")]
+    SignerError(String),
 
     /// An unexpected internal error occured while requesting the time stamp
     /// response.

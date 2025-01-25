@@ -882,6 +882,7 @@ dependencies = [
  "base64 0.22.1",
  "c2pa",
  "c2pa-crypto",
+ "c2pa-status-tracker",
  "chrono",
  "ciborium",
  "coset",
