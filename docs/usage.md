@@ -45,7 +45,7 @@ The Rust library crate provides the following capabilities:
 
 ### New API
 
-The new API is now enabled by default. The `unstable_api` feature is no longer used.
+The new API is now enabled by default. The `unstable_api` feature is no longer available.
 
 To use the deprecated v1 API, enable the v1_api feature; for example:
 
@@ -103,4 +103,3 @@ The default operation of C2PA signing is to embed a C2PA manifest store into an 
 ## Example code
 
 The [sdk/examples](https://github.com/contentauth/c2pa-rs/tree/main/sdk/examples) directory contains some minimal example code.  The [client/client.rs](https://github.com/contentauth/c2pa-rs/blob/main/sdk/examples/client/client.rs) is the most instructive and provides and example of reading the contents of a manifest store, recursively displaying nested manifests.
-
