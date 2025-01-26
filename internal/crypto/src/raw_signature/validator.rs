@@ -13,6 +13,7 @@
 
 use async_trait::async_trait;
 use bcder::Oid;
+use c2pa_status_tracker::ValidationError;
 use thiserror::Error;
 
 use crate::raw_signature::{oids::*, SigningAlg};
@@ -216,4 +217,8 @@ impl From<crate::raw_signature::webcrypto::WasmCryptoError> for RawSignatureVali
             }
         }
     }
+}
+
+impl ValidationError for RawSignatureValidationError {
+    // ...
 }

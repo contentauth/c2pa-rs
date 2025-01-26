@@ -284,6 +284,11 @@ pub(crate) enum OcspError {
     CertificateStatusUnknown,
 }
 
+
+impl ValidationError for OcspError {
+    // ...
+}
+
 const DATE_FMT: &str = "%Y-%m-%d %H:%M:%S %Z";
 
 #[cfg(not(target_arch = "wasm32"))]
