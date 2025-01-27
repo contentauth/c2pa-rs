@@ -46,7 +46,7 @@ Use this method instead of checking for `validation_status()` = `None`.
 `Reader` also now has a `validation_results()` method that returns `ValidationResults`.
 `ValidationResults` are a more complete form of `ValidationStatus` and will return `success`, `informational` and `failure` codes for the active manifest and ingredients. `ValidationStatus` will be deprecated in favor of `ValidationResults`.
 
-The `Manifest` `title` is optional and `format` is not supported in v2 claims, so these methods now return an Option<String> and may not appear in serialized JSON.
+The `Manifest` `title` is optional and `format` is not supported in v2 claims, so these methods now return an `Option<String>` and may not appear in serialized JSON.
 
 The `Ingredient` `title` and `format` are optional in v3 ingredients, so these methods now return an Option<String> and may not appear in serialized JSON.
 

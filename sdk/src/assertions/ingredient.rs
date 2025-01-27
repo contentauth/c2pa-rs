@@ -75,7 +75,9 @@ impl Serialize for Ingredient {
             1 => self.serialize_v1(serializer),
             2 => self.serialize_v2(serializer),
             3 => self.serialize_v3(serializer),
-            _ => Err(serde::ser::Error::custom("Ingredient serializer not found")),
+            v => Err(serde::ser::Error::custom(format!(
+                "Unsupported ingredient version: {v}"
+            ))),
         }
     }
 }

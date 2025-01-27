@@ -188,7 +188,7 @@ impl ClaimAssertion {
         Assertion::assertions_eq(&self.assertion, input_assertion)
     }
 
-    pub fn assertion_typ(&self) -> ClaimAssertionType {
+    pub fn assertion_type(&self) -> ClaimAssertionType {
         self.typ.clone()
     }
 }
