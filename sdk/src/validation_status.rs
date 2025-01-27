@@ -221,9 +221,15 @@ pub fn validation_results_for_store(
             uri.is_some_and(|uri| jumbf::labels::manifest_label_from_uri(uri) == active_manifest)
         };
 
-        // Convert any relative manifest urls found in ingredient validation statuses to absolute.
         let make_absolute = |i: Ingredient| {
-            i.validation_status.map(|mut statuses| {
+            // Get a flat list of validation statuses from the ingredient.
+            let validation_status = match i.validation_results {
+                Some(v) => Some(v.validation_status()),
+                None => i.validation_status,
+            };
+
+            // Convert any relative manifest urls found in ingredient validation statuses to absolute.
+            validation_status.map(|mut statuses| {
                 if let Some(label) = i
                     .active_manifest
                     .as_ref()
@@ -251,6 +257,7 @@ pub fn validation_results_for_store(
             .any(|s| !is_active_manifest(s.url.as_deref()))
         {
             // Collect all the ValidationStatus records from all the ingredients in the store.
+            // Since we need to process v1,v2 and v3 ingredients, we process all in the same format.
             let ingredient_statuses: Vec<ValidationStatus> = store
                 .claims()
                 .iter()

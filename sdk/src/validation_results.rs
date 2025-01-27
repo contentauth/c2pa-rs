@@ -139,6 +139,24 @@ impl ValidationResults {
         }
     }
 
+    /// Returns a list of all validation status codes in [ValidationResults].
+    pub(crate) fn validation_status(&self) -> Vec<ValidationStatus> {
+        let mut status = Vec::new();
+        if let Some(active_manifest) = self.active_manifest.as_ref() {
+            status.extend(active_manifest.success().to_vec());
+            status.extend(active_manifest.informational().to_vec());
+            status.extend(active_manifest.failure().to_vec());
+        }
+        if let Some(ingredient_deltas) = self.ingredient_deltas.as_ref() {
+            for idv in ingredient_deltas.iter() {
+                status.extend(idv.validation_deltas().success().to_vec());
+                status.extend(idv.validation_deltas().informational().to_vec());
+                status.extend(idv.validation_deltas().failure().to_vec());
+            }
+        }
+        status
+    }
+
     /// Adds a [ValidationStatus] to the [ValidationResults].
     pub fn add_status(
         &mut self,
