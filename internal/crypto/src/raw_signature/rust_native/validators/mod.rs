@@ -101,11 +101,11 @@ pub(crate) fn validator_for_sig_and_hash_algs(
 ) -> Option<Box<dyn RawSignatureValidator>> {
     // handle legacy RSA
     if sig_alg.as_ref() == RSA_OID.as_bytes() {
-        if hash_alg_or_curve.as_ref() == SHA256_OID.as_bytes() {
+        if hash_alg_or_curve.as_ref() == SHA256_WITH_RSAENCRYPTION_OID.as_bytes() {
             return Some(Box::new(RsaLegacyValidator::Rsa256));
-        } else if hash_alg_or_curve.as_ref() == SHA384_OID.as_bytes() {
+        } else if hash_alg_or_curve.as_ref() == SHA384_WITH_RSAENCRYPTION_OID.as_bytes() {
             return Some(Box::new(RsaLegacyValidator::Rsa384));
-        } else if hash_alg_or_curve.as_ref() == SHA512_OID.as_bytes() {
+        } else if hash_alg_or_curve.as_ref() == SHA512_WITH_RSAENCRYPTION_OID.as_bytes() {
             return Some(Box::new(RsaLegacyValidator::Rsa512));
         }
     }

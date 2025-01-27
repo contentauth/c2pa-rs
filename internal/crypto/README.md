@@ -34,10 +34,10 @@ This crate has two features, neither of which are enabled by default:
 
 | C2PA `SigningAlg` | Default (*) | `feature = "rust_native_crypto"` (*) | WASM |
 | --- | --- | --- | --- |
-| `es256` | OpenSSL | OpenSSL | `p256` |
-| `es384` | OpenSSL | OpenSSL | `p384` |
-| `es512` | OpenSSL | OpenSSL | ❌ |
-| `ed25519` | OpenSSL | `ed25519-dalek` | `ed25519-dalek` |
+| `es256` | OpenSSL | OpenSSL | `RustCrypto` |
+| `es384` | OpenSSL | OpenSSL | `RustCrypto` |
+| `es512` | OpenSSL | OpenSSL | `RustCrypto` |
+| `ed25519` | OpenSSL | `RustCrypto` | `RustCrypto` |
 | `ps256` | OpenSSL | `rsa` | `rsa` |
 | `ps384` | OpenSSL | `rsa` | `rsa` |
 | `ps512` | OpenSSL | `rsa` | `rsa` |
