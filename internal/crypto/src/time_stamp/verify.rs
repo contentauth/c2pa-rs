@@ -266,7 +266,7 @@ pub(crate) fn verify_time_stamp(ts: &[u8], data: &[u8]) -> Result<TstInfo, TimeS
         let digest_algorithm = match DigestAlgorithm::try_from(&mi.hash_algorithm.algorithm) {
             Ok(d) => d,
             Err(_) => {
-                last_err = TimeStampError::UnsupportedAlgorithm;
+                last_err = TimeStampError::InternalError("digest not supported".into());
                 continue;
             }
         };
@@ -322,7 +322,7 @@ fn validate_timestamp_sig(
     signing_key_der: &[u8],
 ) -> Result<(), TimeStampError> {
     let Some(validator) = validator_for_sig_and_hash_algs(sig_alg, hash_alg) else {
-        return Err(TimeStampError::UnsupportedAlgorithm);
+        return Err(TimeStampError::InternalError("sync validate chosen".into()));
     };
 
     validator
@@ -355,7 +355,7 @@ async fn validate_timestamp_sig_async(
                 .validate(&sig_val.to_bytes(), tbs, signing_key_der)
                 .map_err(|_| TimeStampError::InvalidData)
         } else {
-            Err(TimeStampError::UnsupportedAlgorithm)
+            Err(TimeStampError::InternalError("could not load wasm handler".into()))
         }
     }
 }
