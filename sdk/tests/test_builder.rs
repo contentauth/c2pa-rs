@@ -158,7 +158,7 @@ fn test_builder_remote_url_no_embed() -> Result<()> {
 #[cfg_attr(not(any(target_arch = "wasm32", feature = "openssl")), ignore)]
 fn test_builder_embedded_v1_otgp() -> Result<()> {
     let manifest_def = include_str!("fixtures/simple_manifest.json");
-    let mut source = Cursor::new(include_bytes!("fixtures/xca.jpg"));
+    let mut source = Cursor::new(include_bytes!("fixtures/XCA.jpg"));
     let format = "image/jpeg";
 
     let mut builder = Builder::from_json(manifest_def)?;

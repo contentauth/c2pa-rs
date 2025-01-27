@@ -2233,9 +2233,10 @@ impl Claim {
     ) -> Result<()> {
         // make sure the ingredient is version compatible
         if ingredient.iter().any(|x| x.claim_version > self.version()) {
-            return Err(Error::VersionCompatibility(
-                "ingredient claims cannot be newer".into(),
-            ));
+            return Err(Error::VersionCompatibility(format!(
+                "ingredient claim version is newer than claim version {}",
+                self.version()
+            )));
         }
 
         // redact assertion from incoming ingredients

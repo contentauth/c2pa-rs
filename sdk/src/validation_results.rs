@@ -122,7 +122,7 @@ impl ValidationResults {
     }
 
     /// Returns a list of all validation errors in [ValidationResults].
-    pub fn validation_errors(&self) -> Option<Vec<ValidationStatus>> {
+    pub(crate) fn validation_errors(&self) -> Option<Vec<ValidationStatus>> {
         let mut status_vec = Vec::new();
         if let Some(active_manifest) = self.active_manifest.as_ref() {
             status_vec.extend(active_manifest.failure().to_vec());

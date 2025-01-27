@@ -30,6 +30,8 @@ use c2pa_crypto::{
 use c2pa_status_tracker::{log_item, DetailedStatusTracker, OneShotStatusTracker, StatusTracker};
 use log::error;
 
+#[cfg(feature = "v1_api")]
+use crate::jumbf_io::save_jumbf_to_memory;
 #[cfg(feature = "file_io")]
 use crate::jumbf_io::{
     get_file_extension, get_supported_file_extension, load_jumbf_from_file, object_locations,
@@ -65,7 +67,7 @@ use crate::{
     },
     jumbf_io::{
         get_assetio_handler, is_bmff_format, load_jumbf_from_stream, object_locations_from_stream,
-        save_jumbf_to_memory, save_jumbf_to_stream,
+        save_jumbf_to_stream,
     },
     manifest_store_report::ManifestStoreReport,
     salt::DefaultSalt,
@@ -1204,7 +1206,9 @@ impl Store {
 
                 // VC stores should not be in a 2.x claim
                 if claim.version() > 1 {
-                    return Err(Error::InvalidClaim(InvalidClaimError::VersionFailure));
+                    return Err(Error::InvalidClaim(InvalidClaimError::UnsupportedFeature(
+                        "Verifiable Credentials Store > v1 claim".to_string(),
+                    )));
                 }
 
                 for idx in 0..num_vcs {
@@ -2520,7 +2524,7 @@ impl Store {
     /// asset and manifest. Updates XMP with provenance record.
     /// When called, the stream should contain an asset matching format.
     /// Returns a tuple (output asset, manifest store) with a `Vec<u8>` containing the output asset and a `Vec<u8>` containing the insert manifest store.  (output asset, )
-    #[allow(dead_code)]
+    #[cfg(feature = "v1_api")]
     pub(crate) async fn save_to_memory_remote_signed(
         &mut self,
         format: &str,
@@ -2943,6 +2947,7 @@ impl Store {
         Ok((sig, jumbf_bytes))
     }
 
+    #[cfg(feature = "v1_api")]
     fn finish_save_to_memory(
         &self,
         mut jumbf_bytes: Vec<u8>,
@@ -3679,7 +3684,7 @@ pub enum InvalidClaimError {
 
     /// The feature is not supported by version
     #[error("the manifest contained a feature not support by version")]
-    VersionFailure,
+    UnsupportedFeature(String),
 
     /// The assertion store does not contain the expected number of assertions.
     #[error(
