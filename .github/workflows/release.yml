@@ -29,7 +29,7 @@ jobs:
 
       - name: Run release-plz
         id: release-plz
-        uses: MarcoIeni/release-plz-action@v0.5.86
+        uses: MarcoIeni/release-plz-action@v0.5.89
         env:
           GITHUB_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
           CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_IO_SECRET }}
