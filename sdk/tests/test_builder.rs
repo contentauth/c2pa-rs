@@ -13,7 +13,9 @@
 
 use std::io::{self, Cursor};
 
-use c2pa::{settings::load_settings_from_str, Builder, Reader, Result};
+use c2pa::{
+    settings::load_settings_from_str, validation_status, Builder, Reader, Result, ValidationState,
+};
 
 mod common;
 use common::{compare_stream_to_known_good, fixtures_path, test_signer};
@@ -149,5 +151,34 @@ fn test_builder_remote_url_no_embed() -> Result<()> {
             reader
         );
     }
+    Ok(())
+}
+
+#[test]
+#[cfg_attr(not(any(target_arch = "wasm32", feature = "openssl")), ignore)]
+fn test_builder_embedded_v1_otgp() -> Result<()> {
+    let manifest_def = include_str!("fixtures/simple_manifest.json");
+    let mut source = Cursor::new(include_bytes!("fixtures/XCA.jpg"));
+    let format = "image/jpeg";
+
+    let mut builder = Builder::from_json(manifest_def)?;
+    builder.add_ingredient_from_stream(r#"{"relationship": "parentOf"}"#, format, &mut source)?;
+    source.set_position(0);
+    let mut dest = Cursor::new(Vec::new());
+    builder.sign(&test_signer(), format, &mut source, &mut dest)?;
+    dest.set_position(0);
+    let reader = Reader::from_stream(format, &mut dest)?;
+    // check that the v1 OTGP is embedded and we catch it correct with validation_results
+    assert_eq!(reader.validation_status(), None);
+    assert_ne!(reader.validation_state(), ValidationState::Invalid);
+    //println!("reader: {}", reader);
+    assert_eq!(
+        reader.active_manifest().unwrap().ingredients()[0]
+            .validation_status()
+            .unwrap()[0]
+            .code(),
+        validation_status::ASSERTION_DATAHASH_MISMATCH
+    );
+
     Ok(())
 }

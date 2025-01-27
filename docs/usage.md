@@ -42,31 +42,20 @@ The Rust library crate provides the following capabilities:
 * `no_interleaved_io` forces fully-synchronous I/O; otherwise, the library uses threaded I/O for some operations to improve performance.
 * `fetch_remote_manifests` enables the verification step to retrieve externally referenced manifest stores.  External manifests are only fetched if there is no embedded manifest store and no locally adjacent .c2pa manifest store file of the same name.
 * `json_schema` is used by `make schema` to produce a JSON schema document that represents the `ManifestStore` data structures.
-* `openssl_ffi_mutex` prevents multiple threads from accessing the C OpenSSL library simultaneously. (This library is not re-entrant.) In a multi-threaded process (such as Cargo's test runner), this can lead to unpredictable behavior.
 
 ### New API
 
-### Enabling 
+The new API is now enabled by default. The `unstable_api` feature is no longer available.
 
-<!-- This requirement should go away with actual 1.0 release -->
-
-The current release has a new API that replaces the previous methods of reading and writing C2PA data, which are still supported but will be deprecated.  
-
-To use the new API, enable the `unstable_api` feature; for example:
+To use the deprecated v1 API, enable the v1_api feature; for example:
 
 ```
-c2pa = {version="0.39.0", features=["unstable_api"]}
-```
-
-When version 1.0 of the library is released, the new API will become the default, but you will still be able to use the deprecated API by enabling the `v1_api` feature; for example:
-
-```
-c2pa = {version="0.39.0", features=["v1_api"]}
+c2pa = {version="0.43.0", features=["v1_api"]}
 ```
 
 ### Resource references
 
-A resource reference is a superset of a `HashedUri`, which the C2PA specification refers to  as both `hashed-uri-map` and  `hashed-ext-uri-map`. In some cases either can be used.
+A resource reference is a superset of a `HashedUri`, which the C2PA specification refers to as both `hashed-uri-map` and  `hashed-ext-uri-map`. In some cases either can be used.
 
 A resource reference also adds local references to things like the file system or any abstracted storage. You can use the identifier field to distinguish from the URL field, but they are really the same. However, the specification will only allow for JUMBF and HTTP(S) references, so if the external identifier is not HTTP(S), it must be converted to a JUMBF reference before embedding into a manifest.
 
@@ -114,4 +103,3 @@ The default operation of C2PA signing is to embed a C2PA manifest store into an 
 ## Example code
 
 The [sdk/examples](https://github.com/contentauth/c2pa-rs/tree/main/sdk/examples) directory contains some minimal example code.  The [client/client.rs](https://github.com/contentauth/c2pa-rs/blob/main/sdk/examples/client/client.rs) is the most instructive and provides and example of reading the contents of a manifest store, recursively displaying nested manifests.
-

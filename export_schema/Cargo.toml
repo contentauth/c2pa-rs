@@ -12,6 +12,6 @@ unexpected_cfgs = { level = "warn", check-cfg = ['cfg(test)'] }
 
 [dependencies]
 anyhow = "1.0.40"
-c2pa = { path = "../sdk", default-features = false, features = ["json_schema", "unstable_api"] }
+c2pa = { path = "../sdk", default-features = false, features = ["json_schema"] }
 schemars = "0.8.21"
 serde_json = "1.0.117"
