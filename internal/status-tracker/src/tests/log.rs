@@ -32,6 +32,7 @@ fn r#macro() {
             line: log.line,
             err_val: None,
             validation_status: None,
+            ..Default::default()
         }
     );
 
@@ -56,6 +57,7 @@ fn macro_from_string() {
             line: log.line,
             err_val: None,
             validation_status: None,
+            ..Default::default()
         }
     );
 
@@ -82,6 +84,7 @@ fn success() {
             line: log_item.line,
             err_val: None,
             validation_status: None,
+            ingredient_uri: None,
         }
     );
 }
@@ -106,6 +109,7 @@ fn informational() {
             line: log_item.line,
             err_val: None,
             validation_status: None,
+            ..Default::default()
         }
     );
 }
@@ -132,6 +136,7 @@ fn failure() {
             line: log_item.line,
             err_val: Some(Cow::Borrowed("\"sample error message\"")),
             validation_status: None,
+            ..Default::default()
         }
     );
 }
@@ -156,7 +161,7 @@ fn failure_no_throw() {
             function: Cow::Borrowed("test func"),
             line: log_item.line,
             err_val: Some(Cow::Borrowed("\"sample error message\"")),
-            validation_status: None,
+            ..Default::default()
         }
     );
 }
@@ -179,6 +184,7 @@ fn validation_status() {
             line: log_item.line,
             err_val: None,
             validation_status: Some(Cow::Borrowed("claim.missing")),
+            ..Default::default()
         }
     );
 }

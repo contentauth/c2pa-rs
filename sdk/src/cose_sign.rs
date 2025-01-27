@@ -54,13 +54,18 @@ use crate::{
 pub fn sign_claim(claim_bytes: &[u8], signer: &dyn Signer, box_size: usize) -> Result<Vec<u8>> {
     // Must be a valid claim.
     let label = "dummy_label";
-    let _claim = Claim::from_data(label, claim_bytes)?;
+    let claim = Claim::from_data(label, claim_bytes)?;
 
-    // TEMPORARY: assume time stamp V1 until we plumb this through further
-    let signed_bytes = if _sync {
-        cose_sign(signer, claim_bytes, box_size, TimeStampStorage::V1_sigTst)
+    let tss = if claim.version() > 1 {
+        TimeStampStorage::V2_sigTst2_CTT
     } else {
-        cose_sign_async(signer, claim_bytes, box_size, TimeStampStorage::V1_sigTst).await
+        TimeStampStorage::V1_sigTst
+    };
+
+    let signed_bytes = if _sync {
+        cose_sign(signer, claim_bytes, box_size, tss)
+    } else {
+        cose_sign_async(signer, claim_bytes, box_size, tss).await
     };
 
     match signed_bytes {
@@ -270,7 +275,7 @@ mod tests {
     #[test]
     #[cfg_attr(not(any(target_arch = "wasm32", feature = "openssl_sign")), ignore)]
     fn test_sign_claim() {
-        let mut claim = Claim::new("extern_sign_test", Some("contentauth"));
+        let mut claim = Claim::new("extern_sign_test", Some("contentauth"), 1);
         claim.build().unwrap();
 
         let claim_bytes = claim.data().unwrap();
@@ -290,7 +295,7 @@ mod tests {
 
         use crate::{cose_sign::sign_claim_async, AsyncSigner};
 
-        let mut claim = Claim::new("extern_sign_test", Some("contentauth"));
+        let mut claim = Claim::new("extern_sign_test", Some("contentauth"), 1);
         claim.build().unwrap();
 
         let claim_bytes = claim.data().unwrap();
@@ -340,7 +345,7 @@ mod tests {
 
     #[test]
     fn test_bogus_signer() {
-        let mut claim = Claim::new("bogus_sign_test", Some("contentauth"));
+        let mut claim = Claim::new("bogus_sign_test", Some("contentauth"), 1);
         claim.build().unwrap();
 
         let claim_bytes = claim.data().unwrap();

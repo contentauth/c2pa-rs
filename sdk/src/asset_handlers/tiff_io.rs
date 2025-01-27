@@ -1327,7 +1327,6 @@ where
     let first_ifd = &tiff_tree[page_0].data;
 
     let xmp_ifd_entry = first_ifd.get_tag(XMP_TAG)?;
-
     // make sure the tag type is correct
     if IFDEntryType::from_u16(xmp_ifd_entry.entry_type)? != IFDEntryType::Byte {
         return None;

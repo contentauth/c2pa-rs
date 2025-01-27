@@ -27,21 +27,15 @@ use serde::{Deserialize, Serialize};
 #[cfg(feature = "file_io")]
 use crate::error::Error;
 use crate::{
-    claim::ClaimAssetData, error::Result, manifest_store::ManifestStore,
-    settings::get_settings_value, store::Store, validation_status::ValidationStatus, Manifest,
-    ManifestStoreReport,
+    claim::ClaimAssetData,
+    error::Result,
+    manifest_store::ManifestStore,
+    settings::get_settings_value,
+    store::Store,
+    validation_results::{ValidationResults, ValidationState},
+    validation_status::ValidationStatus,
+    Manifest, ManifestStoreReport,
 };
-
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "json_schema", derive(JsonSchema))]
-pub enum ValidationState {
-    /// Errors were found in the manifest store.
-    Invalid,
-    /// No errors were found in validation, but the active signature is not trusted.
-    Valid,
-    /// The manifest store is valid and the active signature is trusted.
-    Trusted,
-}
 
 /// A reader for the manifest store.
 #[derive(Serialize, Deserialize)]
@@ -269,8 +263,33 @@ impl Reader {
         self.manifest_store.validation_status()
     }
 
+    /// Get the [`ValidationResults`] map of an asset if it exists.
+    ///
+    /// Call this method to check for detailed validation results.
+    /// The validation_state method should be used to determine the overall validation state.
+    ///  
+    /// The results are divided between the active manifest and ingredient deltas.
+    /// The deltas will only exist if there are validation errors not already reported in ingredients
+    /// It is normal for there to be many success and information statuses.
+    /// Any errors will be reported in the failure array.
+    ///
+    /// # Example
+    /// ```no_run
+    /// use c2pa::Reader;
+    /// let stream = std::io::Cursor::new(include_bytes!("../tests/fixtures/CA.jpg"));
+    /// let reader = Reader::from_stream("image/jpeg", stream).unwrap();
+    /// let status = reader.validation_results();
+    /// ```
+    pub fn validation_results(&self) -> Option<&ValidationResults> {
+        self.manifest_store.validation_results()
+    }
+
     /// Get the [`ValidationState`] of the manifest store.
     pub fn validation_state(&self) -> ValidationState {
+        if let Some(validation_results) = self.manifest_store.validation_results() {
+            return validation_results.validation_state();
+        }
+
         let verify_trust = get_settings_value("verify.trusted").unwrap_or(false);
         match self.validation_status() {
             Some(status) => {
@@ -280,8 +299,11 @@ impl Reader {
                     .any(|s| s.code() != crate::validation_status::SIGNING_CREDENTIAL_UNTRUSTED);
                 if errs {
                     ValidationState::Invalid
-                } else {
+                } else if verify_trust {
+                    // If we verified trust and didn't get an error, we can assume it is trusted
                     ValidationState::Trusted
+                } else {
+                    ValidationState::Valid
                 }
             }
             None => {
@@ -418,8 +440,9 @@ impl std::fmt::Display for Reader {
 /// Prints the full debug details of the manifest data.
 impl std::fmt::Debug for Reader {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let report = ManifestStoreReport::from_store(self.manifest_store.store())
+        let mut report = ManifestStoreReport::from_store(self.manifest_store.store())
             .map_err(|_| std::fmt::Error)?;
+        report.validation_results = self.manifest_store.validation_results().cloned();
         f.write_str(&report.to_string())
     }
 }

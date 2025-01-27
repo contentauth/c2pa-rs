@@ -22,6 +22,7 @@ use crate::{LogItem, StatusTracker};
 #[derive(Debug, Default)]
 pub struct DetailedStatusTracker {
     logged_items: Vec<LogItem>,
+    ingredient_uris: Vec<String>,
 }
 
 impl DetailedStatusTracker {
@@ -49,12 +50,26 @@ impl StatusTracker for DetailedStatusTracker {
         &self.logged_items
     }
 
-    fn add_non_error(&mut self, log_item: LogItem) {
+    fn add_non_error(&mut self, mut log_item: LogItem) {
+        if let Some(ingredient_uri) = self.ingredient_uris.last() {
+            log_item.ingredient_uri = Some(ingredient_uri.to_string().into());
+        }
         self.logged_items.push(log_item);
     }
 
-    fn add_error<E>(&mut self, log_item: LogItem, _err: E) -> Result<(), E> {
+    fn add_error<E>(&mut self, mut log_item: LogItem, _err: E) -> Result<(), E> {
+        if let Some(ingredient_uri) = self.ingredient_uris.last() {
+            log_item.ingredient_uri = Some(ingredient_uri.to_string().into());
+        }
         self.logged_items.push(log_item);
         Ok(())
+    }
+
+    fn push_ingredient_uri<S: Into<String>>(&mut self, uri: S) {
+        self.ingredient_uris.push(uri.into());
+    }
+
+    fn pop_ingredient_uri(&mut self) -> Option<String> {
+        self.ingredient_uris.pop()
     }
 }

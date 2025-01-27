@@ -132,7 +132,7 @@ pub mod tests {
     #![allow(clippy::unwrap_used)]
 
     use super::*;
-    use crate::Manifest;
+    use crate::builder::Builder;
 
     const SPEC_EXAMPLE: &str = r#"{
         "@context" : {
@@ -169,40 +169,37 @@ pub mod tests {
 
     #[test]
     fn exif_new() {
-        let mut manifest = Manifest::new("my_app".to_owned());
+        let mut builder = Builder::new();
+
         let original = Exif::new()
             .insert("exif:GPSLatitude", "39,21.102N")
             .unwrap();
-        manifest.add_assertion(&original).expect("adding assertion");
-        println!("{manifest}");
-        let exif: Exif = manifest
-            .find_assertion(Exif::LABEL)
-            .expect("find_assertion");
+        builder
+            .add_assertion(Exif::LABEL, &original)
+            .expect("adding assertion");
+        let exif: Exif = builder.find_assertion(Exif::LABEL).expect("find_assertion");
         let latitude: String = exif.get("exif:GPSLatitude").unwrap();
         assert_eq!(&latitude, "39,21.102N")
     }
 
     #[test]
     fn exif_from_json() {
-        let mut manifest = Manifest::new("my_app".to_owned());
+        let mut builder = Builder::new();
         let original = Exif::from_json_str(SPEC_EXAMPLE).expect("from_json");
-        manifest.add_assertion(&original).expect("adding assertion");
-        println!("{manifest}");
-        let exif: Exif = manifest
-            .find_assertion(Exif::LABEL)
-            .expect("find_assertion");
+        builder
+            .add_assertion(Exif::LABEL, &original)
+            .expect("adding assertion");
+        let exif: Exif = builder.find_assertion(Exif::LABEL).expect("find_assertion");
         let latitude: String = exif.get("exif:GPSLatitude").unwrap();
         assert_eq!(&latitude, "39,21.102N")
     }
 
     #[test]
-    fn exif_to_assertoin() {
+    fn exif_to_assertion() {
         let original = Exif::from_json_str(SPEC_EXAMPLE).expect("from_json");
         let assertion = original.to_assertion().expect("to_assertion");
         assert_eq!(assertion.content_type(), "application/json");
-        println!("{assertion:?}");
         let result = Exif::from_assertion(&assertion).expect("from_assertion");
-        println!("{result:?}");
         let latitude: String = result.get("exif:GPSLatitude").unwrap();
         assert_eq!(&latitude, "39,21.102N")
     }

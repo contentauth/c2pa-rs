@@ -12,8 +12,8 @@
 // each license.
 
 use std::collections::HashMap;
-#[cfg(feature = "file_io")]
 #[cfg(feature = "v1_api")]
+#[cfg(feature = "file_io")]
 use std::path::Path;
 
 use atree::{Arena, Token};
@@ -25,8 +25,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::{
-    assertion::AssertionData, claim::Claim, store::Store, validation_status::ValidationStatus,
-    Result,
+    assertion::AssertionData, claim::Claim, store::Store, validation_results::ValidationResults,
+    validation_status::ValidationStatus, Result,
 };
 
 /// Low level JSON based representation of Manifest Store - used for debugging
@@ -38,6 +38,7 @@ pub struct ManifestStoreReport {
     manifests: HashMap<String, ManifestReport>,
     #[serde(skip_serializing_if = "Option::is_none")]
     validation_status: Option<Vec<ValidationStatus>>,
+    pub(crate) validation_results: Option<ValidationResults>,
 }
 
 impl ManifestStoreReport {
@@ -52,6 +53,7 @@ impl ManifestStoreReport {
             active_manifest: store.provenance_label(),
             manifests,
             validation_status: None,
+            validation_results: None,
         })
     }
 
@@ -129,8 +131,9 @@ impl ManifestStoreReport {
         store.get_provenance_cert_chain()
     }
 
-    #[cfg(feature = "v1_api")]
     /// Creates a ManifestStoreReport from an existing Store and a validation log
+    #[cfg(feature = "file_io")]
+    #[cfg(feature = "v1_api")]
     pub(crate) fn from_store_with_log(
         store: &Store,
         validation_log: &impl StatusTracker,
@@ -144,6 +147,7 @@ impl ManifestStoreReport {
                 statuses.push(
                     ValidationStatus::new(status.to_string())
                         .set_url(item.label.to_string())
+                        .set_kind(item.kind.clone())
                         .set_explanation(item.description.to_string()),
                 );
             }
@@ -172,6 +176,7 @@ impl ManifestStoreReport {
     }
 
     #[cfg(feature = "file_io")]
+    #[cfg(feature = "v1_api")]
     pub fn from_fragments<P: AsRef<Path>>(
         path: P,
         fragments: &Vec<std::path::PathBuf>,
@@ -229,13 +234,20 @@ impl ManifestStoreReport {
             // is this an ingredient
             if let Some(ref c2pa_manifest) = &ingredient_assertion.c2pa_manifest {
                 let label = Store::manifest_label_from_path(&c2pa_manifest.url());
+
                 if let Some(hash) = c2pa_manifest.hash().get(0..5) {
                     if let Some(ingredient_claim) = store.get_claim(&label) {
                         // create new node
-                        let data = if name_only {
-                            format!("{}_{}", ingredient_assertion.title, Hexlify(hash))
+                        let title = if let Some(title) = &ingredient_assertion.title {
+                            title.to_owned()
                         } else {
-                            format!("Asset:{}, Manifest:{}", ingredient_assertion.title, label)
+                            "No title".into()
+                        };
+
+                        let data = if name_only {
+                            format!("{}_{}", title, Hexlify(hash))
+                        } else {
+                            format!("Asset:{}, Manifest:{}", title, label)
                         };
 
                         let new_token = current_token.append(tree, data);
@@ -254,9 +266,13 @@ impl ManifestStoreReport {
                     ));
                 }
             } else {
-                let asset_name = &ingredient_assertion.title;
+                let asset_name = if let Some(title) = &ingredient_assertion.title {
+                    title.to_owned()
+                } else {
+                    "No title".into()
+                };
                 let data = if name_only {
-                    asset_name.to_string()
+                    asset_name
                 } else {
                     format!("Asset:{asset_name}")
                 };

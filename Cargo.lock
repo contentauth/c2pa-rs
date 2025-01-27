@@ -724,7 +724,6 @@ dependencies = [
  "byteorder",
  "byteordered",
  "bytes",
- "c2pa",
  "c2pa-crypto",
  "c2pa-status-tracker",
  "chrono",

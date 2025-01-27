@@ -25,15 +25,16 @@ use tempfile::Builder;
 use crate::{
     assertions::{BoxMap, C2PA_BOXHASH},
     asset_io::{
-        self, AssetBoxHash, AssetIO, AssetPatch, CAIReader, CAIWriter, ComposedManifestRef,
-        HashBlockObjectType, HashObjectPositions, RemoteRefEmbed, RemoteRefEmbedType,
+        self, AssetBoxHash, AssetIO, AssetPatch, CAIRead, CAIReadWrite, CAIReader, CAIWriter,
+        ComposedManifestRef, HashBlockObjectType, HashObjectPositions, RemoteRefEmbed,
+        RemoteRefEmbedType,
     },
     error::Result,
     utils::{
         io_utils::stream_len,
         xmp_inmemory_utils::{self, MIN_XMP},
     },
-    CAIRead, CAIReadWrite, Error,
+    Error,
 };
 
 // https://www.w3.org/Graphics/GIF/spec-gif89a.txt

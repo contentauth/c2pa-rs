@@ -26,10 +26,9 @@ use std::{
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-#[cfg(feature = "unstable_api")]
-use crate::asset_io::CAIRead;
 use crate::{
     assertions::{labels, AssetType},
+    asset_io::CAIRead,
     claim::Claim,
     hashed_uri::HashedUri,
     jumbf::labels::{assertion_label_from_uri, to_absolute_uri},
@@ -367,13 +366,11 @@ impl Default for ResourceStore {
     }
 }
 
-#[cfg(feature = "unstable_api")]
 pub trait ResourceResolver {
     /// Read the data in a [`ResourceRef`][ResourceRef] via a stream.
     fn open(&self, reference: &ResourceRef) -> Result<Box<dyn CAIRead>>;
 }
 
-#[cfg(feature = "unstable_api")]
 impl ResourceResolver for ResourceStore {
     fn open(&self, reference: &ResourceRef) -> Result<Box<dyn CAIRead>> {
         let data = self.get(&reference.identifier)?.into_owned();

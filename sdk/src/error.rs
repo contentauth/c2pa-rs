@@ -35,7 +35,7 @@ pub enum Error {
 
     /// The attempt to serialize the assertion (typically to JSON or CBOR) failed.
     #[error("unable to encode assertion data")]
-    AssertionEncoding,
+    AssertionEncoding(String),
 
     #[error(transparent)]
     AssertionDecoding(#[from] crate::assertion::AssertionDecodeError),
@@ -83,6 +83,9 @@ pub enum Error {
 
     #[error("claim missing hard binding")]
     ClaimMissingHardBinding,
+
+    #[error("claim contains multiple hard bindings")]
+    ClaimMultipleHardBinding,
 
     #[error("claim contains self redactions")]
     ClaimSelfRedact,
@@ -290,6 +293,9 @@ pub enum Error {
 
     #[error("prerelease content detected")]
     PrereleaseError,
+
+    #[error("capability is not supported by this version: {0}")]
+    VersionCompatibility(String),
 
     #[error("insufficient memory space for operation")]
     InsufficientMemory,

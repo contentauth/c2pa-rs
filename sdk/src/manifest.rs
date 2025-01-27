@@ -11,13 +11,17 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use std::{borrow::Cow, collections::HashMap, io::Cursor, slice::Iter};
+use std::{borrow::Cow, slice::Iter};
+#[cfg(feature = "v1_api")]
+use std::{collections::HashMap, io::Cursor};
 #[cfg(feature = "file_io")]
 use std::{fs::create_dir_all, path::Path};
 
 use async_generic::async_generic;
 use c2pa_crypto::raw_signature::SigningAlg;
-use log::{debug, error};
+use log::debug;
+#[cfg(feature = "v1_api")]
+use log::error;
 #[cfg(feature = "json_schema")]
 use schemars::JsonSchema;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
@@ -26,22 +30,24 @@ use uuid::Uuid;
 
 use crate::{
     assertion::{AssertionBase, AssertionData},
-    assertions::{
-        labels, Actions, CreativeWork, DataHash, Exif, Metadata, SoftwareAgent, Thumbnail, User,
-        UserCbor,
-    },
-    asset_io::{CAIRead, CAIReadWrite},
-    claim::{Claim, RemoteManifest},
+    assertions::{labels, Actions, Metadata, SoftwareAgent, Thumbnail},
+    claim::RemoteManifest,
     error::{Error, Result},
     hashed_uri::HashedUri,
     ingredient::Ingredient,
     jumbf::labels::{assertion_label_from_uri, to_absolute_uri, to_assertion_uri},
     manifest_assertion::ManifestAssertion,
     resource_store::{mime_from_uri, skip_serializing_resources, ResourceRef, ResourceStore},
-    salt::DefaultSalt,
     store::Store,
-    AsyncSigner, ClaimGeneratorInfo, HashRange, ManifestAssertionKind, ManifestPatchCallback,
-    RemoteSigner, Signer,
+    ClaimGeneratorInfo, ManifestAssertionKind,
+};
+#[cfg(feature = "v1_api")]
+use crate::{
+    assertions::{CreativeWork, DataHash, Exif, User, UserCbor},
+    asset_io::{CAIRead, CAIReadWrite},
+    claim::Claim,
+    salt::DefaultSalt,
+    AsyncSigner, HashRange, ManifestPatchCallback, RemoteSigner, Signer,
 };
 
 /// A Manifest represents all the information in a c2pa manifest
@@ -55,8 +61,8 @@ pub struct Manifest {
 
     /// A User Agent formatted string identifying the software/hardware/system produced this claim
     /// Spaces are not allowed in names, versions can be specified with product/1.0 syntax
-    #[serde(default = "default_claim_generator")]
-    pub claim_generator: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub claim_generator: Option<String>,
 
     /// A list of claim generator info data identifying the software/hardware/system produced this claim
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -71,16 +77,15 @@ pub struct Manifest {
     title: Option<String>,
 
     /// The format of the source file as a MIME type.
-    #[serde(default = "default_format")]
-    format: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    format: Option<String>,
 
     /// Instance ID from `xmpMM:InstanceID` in XMP metadata.
     #[serde(default = "default_instance_id")]
     instance_id: String,
 
-    #[serde(skip_serializing_if = "Option::is_none")]
-    claim_generator_hints: Option<HashMap<String, Value>>,
-
+    //#[serde(skip_serializing_if = "Option::is_none")]
+    // claim_generator_hints: Option<HashMap<String, Value>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     thumbnail: Option<ResourceRef>,
 
@@ -121,10 +126,6 @@ pub struct Manifest {
     resources: ResourceStore,
 }
 
-fn default_claim_generator() -> String {
-    format!("{}/{}", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"))
-}
-
 fn default_instance_id() -> String {
     format!("xmp:iid:{}", Uuid::new_v4())
 }
@@ -141,17 +142,24 @@ impl Manifest {
     /// Create a new Manifest
     /// requires a claim_generator string (User Agent))
     pub fn new<S: Into<String>>(claim_generator: S) -> Self {
+        // treat an empty string as None
+        let claim_generator = claim_generator.into();
+        let claim_generator = if claim_generator.is_empty() {
+            None
+        } else {
+            Some(claim_generator)
+        };
         Self {
-            claim_generator: claim_generator.into(),
-            format: default_format(),
+            claim_generator,
+            format: Some(default_format()),
             instance_id: default_instance_id(),
             ..Default::default()
         }
     }
 
     /// Returns a User Agent formatted string identifying the software/hardware/system produced this claim
-    pub fn claim_generator(&self) -> &str {
-        self.claim_generator.as_str()
+    pub fn claim_generator(&self) -> Option<&str> {
+        self.claim_generator.as_deref()
     }
 
     /// returns the manifest label for this Manifest, as referenced in a ManifestStore
@@ -160,8 +168,8 @@ impl Manifest {
     }
 
     /// Returns a MIME content_type for the asset associated with this manifest.
-    pub fn format(&self) -> &str {
-        &self.format
+    pub fn format(&self) -> Option<&str> {
+        self.format.as_deref()
     }
 
     /// Returns the instance identifier.
@@ -223,6 +231,7 @@ impl Manifest {
         }
     }
 
+    #[cfg(feature = "v1_api")]
     /// Sets the vendor prefix to be used when generating manifest labels
     /// Optional prefix added to the generated Manifest Label
     /// This is typically a lower case Internet domain name for the vendor (i.e. `adobe`)
@@ -231,6 +240,7 @@ impl Manifest {
         self
     }
 
+    #[cfg(feature = "v1_api")]
     /// Sets the label for this manifest
     /// A label will be generated if this is not called
     /// This is needed if embedding a URL that references the manifest label
@@ -239,30 +249,35 @@ impl Manifest {
         self
     }
 
+    #[cfg(feature = "v1_api")]
     /// Sets a human readable name for the product that created this manifest
     pub fn set_claim_generator<S: Into<String>>(&mut self, generator: S) -> &mut Self {
-        self.claim_generator = generator.into();
+        self.claim_generator = Some(generator.into());
         self
     }
 
+    #[cfg(feature = "v1_api")]
     /// Sets a human-readable title for this ingredient.
     pub fn set_format<S: Into<String>>(&mut self, format: S) -> &mut Self {
-        self.format = format.into();
+        self.format = Some(format.into());
         self
     }
 
+    #[cfg(feature = "v1_api")]
     /// Sets a human-readable title for this ingredient.
     pub fn set_instance_id<S: Into<String>>(&mut self, instance_id: S) -> &mut Self {
         self.instance_id = instance_id.into();
         self
     }
 
+    #[cfg(feature = "v1_api")]
     /// Sets a human-readable title for this ingredient.
     pub fn set_title<S: Into<String>>(&mut self, title: S) -> &mut Self {
         self.title = Some(title.into());
         self
     }
 
+    #[cfg(feature = "v1_api")]
     /// Sets the thumbnail from a ResourceRef.
     pub fn set_thumbnail_ref(&mut self, thumbnail: ResourceRef) -> Result<&mut Self> {
         // verify the resource referenced exists
@@ -273,6 +288,7 @@ impl Manifest {
         Ok(self)
     }
 
+    #[cfg(feature = "v1_api")]
     /// Sets the thumbnail format and image data.
     pub fn set_thumbnail<S: Into<String>, B: Into<Vec<u8>>>(
         &mut self,
@@ -290,6 +306,7 @@ impl Manifest {
         Ok(self)
     }
 
+    #[cfg(feature = "v1_api")]
     /// If set, the embed calls will create a sidecar .c2pa manifest file next to the output file
     /// No change will be made to the output file
     pub fn set_sidecar_manifest(&mut self) -> &mut Self {
@@ -297,6 +314,7 @@ impl Manifest {
         self
     }
 
+    #[cfg(feature = "v1_api")]
     /// If set, the embed calls will put the remote url into the output file xmp provenance
     /// and create a c2pa manifest file next to the output file
     pub fn set_remote_manifest<S: Into<String>>(&mut self, remote_url: S) -> &mut Self {
@@ -304,6 +322,7 @@ impl Manifest {
         self
     }
 
+    #[cfg(feature = "v1_api")]
     /// If set, the embed calls will put the remote url into the output file xmp provenance
     /// and will embed the manifest into the output file
     pub fn set_embedded_manifest_with_remote_ref<S: Into<String>>(
@@ -323,6 +342,7 @@ impl Manifest {
         self.ingredients.iter().find(|i| i.is_parent())
     }
 
+    #[cfg(feature = "v1_api")]
     /// Sets the parent ingredient, assuring it is first and setting the is_parent flag
     pub fn set_parent(&mut self, mut ingredient: Ingredient) -> Result<&mut Self> {
         // there should only be one parent so return an error if we already have one
@@ -342,6 +362,7 @@ impl Manifest {
         self
     }
 
+    #[cfg(feature = "v1_api")]
     /// Adds assertion using given label and any serde serializable
     /// The data for predefined assertions must be in correct format
     ///
@@ -367,6 +388,7 @@ impl Manifest {
         Ok(self)
     }
 
+    #[cfg(feature = "v1_api")]
     /// TO DO: Add docs
     pub fn add_cbor_assertion<S: Into<String>, T: Serialize>(
         &mut self,
@@ -378,6 +400,7 @@ impl Manifest {
         Ok(self)
     }
 
+    #[cfg(feature = "v1_api")]
     /// Adds ManifestAssertions from existing assertions
     /// The data for standard assertions must be in correct format
     ///
@@ -449,6 +472,7 @@ impl Manifest {
 
     /// Redacts an assertion from the parent [Ingredient] of this manifest using the provided
     /// assertion label.
+    #[cfg(feature = "v1_api")]
     pub fn add_redaction<S: Into<String>>(&mut self, label: S) -> Result<&mut Self> {
         // todo: any way to verify if this assertion exists in the parent claim here?
         match self.redactions.as_mut() {
@@ -459,8 +483,10 @@ impl Manifest {
     }
 
     /// Add verifiable credentials
+    #[cfg(feature = "v1_api")]
     pub fn add_verifiable_credential<T: Serialize>(&mut self, data: &T) -> Result<&mut Self> {
-        let value = serde_json::to_value(data).map_err(|_err| Error::AssertionEncoding)?;
+        let value =
+            serde_json::to_value(data).map_err(|err| Error::AssertionEncoding(err.to_string()))?;
         match self.credentials.as_mut() {
             Some(credentials) => credentials.push(value),
             None => self.credentials = Some([value].to_vec()),
@@ -497,6 +523,7 @@ impl Manifest {
     }
 
     /// Creates a Manifest from a JSON string formatted as a Manifest
+    #[cfg(feature = "v1_api")]
     pub fn from_json(json: &str) -> Result<Self> {
         serde_json::from_slice(json.as_bytes()).map_err(Error::JsonError)
     }
@@ -529,10 +556,14 @@ impl Manifest {
                 label: manifest_label.to_owned(),
             })?;
 
-        // extract vendor from claim label
-        let claim_generator = claim.claim_generator().to_owned();
-
-        let mut manifest = Manifest::new(claim_generator);
+        let mut manifest = Manifest {
+            claim_generator: claim.claim_generator().map(|s| s.to_owned()),
+            title: claim.title().map(|s| s.to_owned()),
+            format: claim.format().map(|s| s.to_owned()),
+            instance_id: claim.instance_id().to_owned(),
+            label: Some(claim.label().to_owned()),
+            ..Default::default()
+        };
 
         #[cfg(feature = "file_io")]
         if let Some(base_path) = resource_path {
@@ -557,9 +588,7 @@ impl Manifest {
             }
         }
 
-        manifest.set_label(claim.label());
         manifest.resources.set_label(claim.label()); // default manifest for relative urls
-        manifest.claim_generator_hints = claim.get_claim_generator_hint_map().cloned();
 
         // get credentials converting from AssertionData to Value
         let credentials: Vec<Value> = claim
@@ -580,12 +609,6 @@ impl Manifest {
                 .filter_map(|r| assertion_label_from_uri(r))
                 .collect()
         });
-
-        if let Some(title) = claim.title() {
-            manifest.set_title(title);
-        }
-        manifest.set_format(claim.format());
-        manifest.set_instance_id(claim.instance_id());
 
         manifest.assertion_references = claim
             .assertions()
@@ -727,17 +750,18 @@ impl Manifest {
     /// the information in the claim should reflect the state of the asset it is embedded in
     /// this method can be used to ensure that data is correct
     /// it will extract filename,format and xmp info and generate a thumbnail
+    #[cfg(feature = "v1_api")]
     #[cfg(feature = "file_io")]
     pub fn set_asset_from_path<P: AsRef<Path>>(&mut self, path: P) -> Result<()> {
         // Gather the information we need from the target path
         let ingredient = Ingredient::from_file_info(path.as_ref());
 
-        self.set_format(ingredient.format());
+        self.set_format(ingredient.format().unwrap_or_default());
         self.set_instance_id(ingredient.instance_id());
 
         // if there is already an asset title preserve it
-        if self.title().is_none() {
-            self.set_title(ingredient.title());
+        if self.title().is_none() && ingredient.title().is_some() {
+            self.set_title(ingredient.title().unwrap_or_default());
         }
 
         // if a thumbnail is not already defined, create one here
@@ -755,19 +779,20 @@ impl Manifest {
         Ok(())
     }
 
+    #[cfg(feature = "v1_api")]
     // Convert a Manifest into a Claim
     pub(crate) fn to_claim(&self) -> Result<Claim> {
         // add library identifier to claim_generator
         let generator = format!(
             "{} {}/{}",
-            &self.claim_generator,
+            self.claim_generator().unwrap_or_default(),
             crate::NAME,
             crate::VERSION
         );
 
         let mut claim = match self.label() {
-            Some(label) => Claim::new_with_user_guid(&generator, &label.to_string()),
-            None => Claim::new(&generator, self.vendor.as_deref()),
+            Some(label) => Claim::new_with_user_guid(&generator, &label.to_string(), 1)?,
+            None => Claim::new(&generator, self.vendor.as_deref(), 1),
         };
 
         if let Some(info_vec) = self.claim_generator_info.as_ref() {
@@ -796,9 +821,11 @@ impl Manifest {
         }
 
         if let Some(title) = self.title() {
-            claim.set_title(Some(title.to_owned()));
+            claim.set_title(Some(title.to_string()));
         }
-        self.format().clone_into(&mut claim.format);
+        if let Some(format) = self.format() {
+            claim.format = Some(format.to_string());
+        }
         self.instance_id().clone_into(&mut claim.instance_id);
 
         if let Some(thumb_ref) = self.thumbnail_ref() {
@@ -973,11 +1000,15 @@ impl Manifest {
                     ),
                     ManifestAssertionKind::Binary => {
                         // todo: Support binary kinds
-                        return Err(Error::AssertionEncoding);
+                        return Err(Error::AssertionEncoding(
+                            "Binary assertions not supported".to_string(),
+                        ));
                     }
                     ManifestAssertionKind::Uri => {
                         // todo: Support binary kinds
-                        return Err(Error::AssertionEncoding);
+                        return Err(Error::AssertionEncoding(
+                            "Uri assertions not supported".to_string(),
+                        ));
                     }
                 },
             }?;
@@ -986,6 +1017,7 @@ impl Manifest {
         Ok(claim)
     }
 
+    #[cfg(feature = "v1_api")]
     // Convert a Manifest into a Store
     pub(crate) fn to_store(&self) -> Result<Store> {
         let claim = self.to_claim()?;
@@ -998,6 +1030,7 @@ impl Manifest {
     // factor out this code to set up the destination path with a file
     // so we can use set_asset_from_path to initialize the right fields in Manifest
     #[cfg(feature = "file_io")]
+    #[cfg(feature = "v1_api")]
     fn embed_prep<P: AsRef<Path>>(&mut self, source_path: P, dest_path: P) -> Result<P> {
         let mut copied = false;
 
@@ -1054,6 +1087,7 @@ impl Manifest {
     /// ```
     #[cfg(feature = "file_io")]
     #[deprecated(since = "0.35.0", note = "use Builder.sign_file instead")]
+    #[cfg(feature = "v1_api")]
     pub fn embed<P: AsRef<Path>>(
         &mut self,
         source_path: P,
@@ -1074,6 +1108,7 @@ impl Manifest {
     /// returns the bytes of the  manifest that was embedded
     #[allow(deprecated)]
     #[deprecated(since = "0.35.0", note = "use Builder.sign with Cursor instead")]
+    #[cfg(feature = "v1_api")]
     #[async_generic(async_signature(
         &mut self,
         format: &str,
@@ -1104,6 +1139,7 @@ impl Manifest {
     ///
     /// Returns the bytes of the new asset
     #[deprecated(since = "0.35.0", note = "obsolete test")]
+    #[cfg(feature = "v1_api")]
     pub fn embed_stream(
         &mut self,
         format: &str,
@@ -1123,6 +1159,7 @@ impl Manifest {
     ///
     /// Returns the bytes of c2pa_manifest that was embedded.
     #[allow(deprecated)]
+    #[cfg(feature = "v1_api")]
     #[async_generic(async_signature(
         &mut self,
         format: &str,
@@ -1173,6 +1210,7 @@ impl Manifest {
         since = "0.35.0",
         note = "use Builder.sign with memory Cursor and direct_cose_handling signer instead"
     )]
+    #[cfg(feature = "v1_api")]
     pub async fn embed_from_memory_remote_signed(
         &mut self,
         format: &str,
@@ -1212,6 +1250,7 @@ impl Manifest {
     /// Embed a signed manifest into the target file using a supplied [`AsyncSigner`].
     #[cfg(feature = "file_io")]
     #[deprecated(since = "0.35.0", note = "use Builder.sign_file_async instead")]
+    #[cfg(feature = "v1_api")]
     pub async fn embed_async_signed<P: AsRef<Path>>(
         &mut self,
         source_path: P,
@@ -1234,6 +1273,7 @@ impl Manifest {
         since = "0.35.0",
         note = "use Builder.sign_file with cose_handling enabled signer."
     )]
+    #[cfg(feature = "v1_api")]
     pub async fn embed_remote_signed<P: AsRef<Path>>(
         &mut self,
         source_path: P,
@@ -1253,6 +1293,7 @@ impl Manifest {
     /// Embed a signed manifest into fragmented BMFF content (i.e. DASH) assets using a supplied signer.
     #[cfg(feature = "file_io")]
     #[deprecated(since = "0.35.0", note = "use Builder.sign_fragmented_files.")]
+    #[cfg(feature = "v1_api")]
     pub fn embed_to_bmff_fragmented<P: AsRef<Path>>(
         &mut self,
         asset_path: P,
@@ -1279,6 +1320,7 @@ impl Manifest {
     /// This should only be used for special cases, such as converting an embedded manifest
     /// to a cloud manifest
     #[cfg(feature = "file_io")]
+    #[cfg(feature = "v1_api")]
     pub fn remove_manifest<P: AsRef<Path>>(asset_path: P) -> Result<()> {
         use crate::jumbf_io::remove_jumbf_from_file;
         remove_jumbf_from_file(asset_path.as_ref())
@@ -1295,6 +1337,7 @@ impl Manifest {
         since = "0.35.0",
         note = "use Builder.sign_data_hashed_placeholder instead"
     )]
+    #[cfg(feature = "v1_api")]
     pub fn data_hash_placeholder(&mut self, reserve_size: usize, format: &str) -> Result<Vec<u8>> {
         let dh: Result<DataHash> = self.find_assertion(DataHash::LABEL);
         if dh.is_err() {
@@ -1321,6 +1364,7 @@ impl Manifest {
         since = "0.35.0",
         note = "use Builder.sign_data_hashed_embeddable instead"
     )]
+    #[cfg(feature = "v1_api")]
     #[async_generic(async_signature(
         &mut self,
         dh: &DataHash,
@@ -1359,6 +1403,7 @@ impl Manifest {
         since = "0.35.0",
         note = "use Builder.sign_data_hashed_embeddable instead"
     )]
+    #[cfg(feature = "v1_api")]
     pub async fn data_hash_embeddable_manifest_remote(
         &mut self,
         dh: &DataHash,
@@ -1382,6 +1427,7 @@ impl Manifest {
         since = "0.35.0",
         note = "use Builder.sign_box_hashed_embeddable instead"
     )]
+    #[cfg(feature = "v1_api")]
     #[async_generic(async_signature(
         &mut self,
         signer: &dyn AsyncSigner,
@@ -1407,6 +1453,7 @@ impl Manifest {
     /// Formats a signed manifest for embedding in the given format
     ///
     /// For instance, this would return one or JPEG App11 segments containing the manifest
+    #[cfg(feature = "v1_api")]
     pub fn composed_manifest(manifest_bytes: &[u8], format: &str) -> Result<Vec<u8>> {
         Store::get_composed_manifest(manifest_bytes, format)
     }
@@ -1417,6 +1464,7 @@ impl Manifest {
     /// been signed.  Use embed_placed_manifest to insert into the asset
     /// referenced by input_stream
     #[deprecated(since = "0.35.0", note = "use Builder.sign with dynamic assertions.")]
+    #[cfg(feature = "v1_api")]
     pub fn get_placed_manifest(
         &mut self,
         reserve_size: usize,
@@ -1437,6 +1485,7 @@ impl Manifest {
     /// traits to make any modifications to assertions.  The callbacks are processed before
     /// the manifest is signed.  
     #[deprecated(since = "0.38.0", note = "use Builder.sign with dynamic assertions.")]
+    #[cfg(feature = "v1_api")]
     pub fn embed_placed_manifest(
         manifest_bytes: &[u8],
         format: &str,
@@ -1498,6 +1547,7 @@ impl SignatureInfo {
 }
 
 #[cfg(test)]
+#[cfg(feature = "v1_api")] // todo: convert/move some of these to builder
 pub(crate) mod tests {
     #![allow(clippy::expect_used)]
     #![allow(clippy::unwrap_used)]
@@ -1521,7 +1571,7 @@ pub(crate) mod tests {
         ingredient::Ingredient,
         reader::Reader,
         store::Store,
-        utils::test::{temp_remote_signer, TEST_VC},
+        utils::test::{static_test_uuid, temp_remote_signer, TEST_VC},
         utils::test_signer::{async_test_signer, test_signer},
         Manifest, Result,
     };
@@ -1609,7 +1659,7 @@ pub(crate) mod tests {
             .embed(&source_path, &test_output, signer.as_ref())
             .expect("embed");
 
-        assert_eq!(manifest.format(), "image/jpeg");
+        assert_eq!(manifest.format(), Some("image/jpeg"));
         assert_eq!(manifest.title(), Some("wc_embed_test.jpg"));
         if cfg!(feature = "add_thumbnails") {
             assert!(manifest.thumbnail().is_some());
@@ -1938,11 +1988,11 @@ pub(crate) mod tests {
     fn test_embed_user_label() {
         let temp_dir = tempdir().expect("temp dir");
         let output = temp_fixture_path(&temp_dir, TEST_SMALL_JPEG);
-
+        let my_guid = static_test_uuid();
         let signer = test_signer(SigningAlg::Ps256);
 
         let mut manifest = test_manifest();
-        manifest.set_label("MyLabel");
+        manifest.set_label(my_guid);
         manifest
             .embed(&output, &output, signer.as_ref())
             .expect("embed");
@@ -1967,7 +2017,7 @@ pub(crate) mod tests {
         let signer = test_signer(SigningAlg::Ps256);
 
         let mut manifest = test_manifest();
-        manifest.set_label("MyLabel");
+        manifest.set_label(static_test_uuid());
         manifest.set_remote_manifest(url);
         let c2pa_data = manifest
             .embed(&output, &output, signer.as_ref())
@@ -2437,7 +2487,7 @@ pub(crate) mod tests {
             b"pirate with bird on shoulder"
         );
         // Validate a custom AI model ingredient.
-        assert_eq!(m.ingredients()[2].title(), "Custom AI Model");
+        assert_eq!(m.ingredients()[2].title(), Some("Custom AI Model"));
         assert_eq!(m.ingredients()[2].relationship(), &Relationship::InputTo);
         assert_eq!(
             m.ingredients()[2].data_types().unwrap()[0].asset_type,
@@ -2500,7 +2550,7 @@ pub(crate) mod tests {
             b"pirate with bird on shoulder"
         );
         // Validate a custom AI model ingredient.
-        assert_eq!(m.ingredients()[2].title(), "Custom AI Model");
+        assert_eq!(m.ingredients()[2].title(), Some("Custom AI Model"));
         assert_eq!(m.ingredients()[2].relationship(), &Relationship::InputTo);
         assert_eq!(
             m.ingredients()[2].data_types().unwrap()[0].asset_type,

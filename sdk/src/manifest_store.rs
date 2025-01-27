@@ -29,7 +29,8 @@ use crate::{
     claim::ClaimAssetData,
     jumbf::labels::{manifest_label_from_uri, to_absolute_uri, to_relative_uri},
     store::Store,
-    validation_status::{status_for_store, ValidationStatus},
+    validation_results::ValidationResults,
+    validation_status::{validation_results_for_store, ValidationStatus},
     Error, Manifest, Result,
 };
 
@@ -40,11 +41,17 @@ pub struct ManifestStore {
     #[serde(skip_serializing_if = "Option::is_none")]
     /// A label for the active (most recent) manifest in the store
     active_manifest: Option<String>,
+
     /// A HashMap of Manifests
     manifests: HashMap<String, Manifest>,
     #[serde(skip_serializing_if = "Option::is_none")]
     /// ValidationStatus generated when loading the ManifestStore from an asset
     validation_status: Option<Vec<ValidationStatus>>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    // ValidationStatus generated when loading the ManifestStore from an asset
+    validation_results: Option<ValidationResults>,
+
     #[serde(skip)]
     /// The internal store representing the manifest store
     store: Store,
@@ -58,6 +65,7 @@ impl ManifestStore {
             manifests: HashMap::<String, Manifest>::new(),
             validation_status: None,
             store: Store::new(),
+            validation_results: None,
         }
     }
 
@@ -76,7 +84,6 @@ impl ManifestStore {
     }
 
     /// Returns a reference to manifest HashMap
-    #[cfg(feature = "v1_api")]
     pub fn manifests(&self) -> &HashMap<String, Manifest> {
         &self.manifests
     }
@@ -134,7 +141,12 @@ impl ManifestStore {
         self.validation_status.as_deref()
     }
 
+    pub fn validation_results(&self) -> Option<&ValidationResults> {
+        self.validation_results.as_ref()
+    }
+
     /// creates a ManifestStore from a Store with validation
+    #[allow(dead_code)] // async not used without v1 feature
     #[async_generic]
     pub(crate) fn from_store(store: Store, validation_log: &impl StatusTracker) -> ManifestStore {
         if _sync {
@@ -171,7 +183,7 @@ impl ManifestStore {
         validation_log: &impl StatusTracker,
         #[cfg(feature = "file_io")] resource_path: Option<&Path>,
     ) -> ManifestStore {
-        let mut statuses = status_for_store(&store, validation_log);
+        let mut validation_results = validation_results_for_store(&store, validation_log);
 
         let mut manifest_store = ManifestStore::new();
         manifest_store.active_manifest = store.provenance_label();
@@ -192,14 +204,13 @@ impl ManifestStore {
                         .insert(manifest_label.to_owned(), manifest);
                 }
                 Err(e) => {
-                    statuses.push(ValidationStatus::from_error(&e));
+                    validation_results.add_status(manifest_label, ValidationStatus::from_error(&e));
                 }
             };
         }
 
-        if !statuses.is_empty() {
-            manifest_store.validation_status = Some(statuses);
-        }
+        manifest_store.validation_status = validation_results.validation_errors();
+        manifest_store.validation_results = Some(validation_results);
 
         manifest_store
     }
@@ -209,7 +220,7 @@ impl ManifestStore {
         validation_log: &impl StatusTracker,
         #[cfg(feature = "file_io")] resource_path: Option<&Path>,
     ) -> ManifestStore {
-        let mut statuses = status_for_store(&store, validation_log);
+        let mut validation_results = validation_results_for_store(&store, validation_log);
 
         let mut manifest_store = ManifestStore::new();
         manifest_store.active_manifest = store.provenance_label();
@@ -230,14 +241,13 @@ impl ManifestStore {
                         .insert(manifest_label.to_owned(), manifest);
                 }
                 Err(e) => {
-                    statuses.push(ValidationStatus::from_error(&e));
+                    validation_results.add_status(manifest_label, ValidationStatus::from_error(&e));
                 }
             };
         }
 
-        if !statuses.is_empty() {
-            manifest_store.validation_status = Some(statuses);
-        }
+        manifest_store.validation_status = validation_results.validation_errors();
+        manifest_store.validation_results = Some(validation_results);
 
         manifest_store
     }
@@ -249,6 +259,7 @@ impl ManifestStore {
     /// Creates a new Manifest Store from a Manifest
     #[allow(dead_code)]
     #[deprecated(since = "0.38.0", note = "Please use Reader::from_json() instead")]
+    #[cfg(feature = "v1_api")]
     pub fn from_manifest(manifest: &Manifest) -> Result<Self> {
         use c2pa_status_tracker::OneShotStatusTracker;
         let store = manifest.to_store()?;
@@ -263,6 +274,7 @@ impl ManifestStore {
     /// Generate a Store from a format string and bytes.
     #[cfg(feature = "v1_api")]
     #[deprecated(since = "0.38.0", note = "Please use Reader::from_stream() instead")]
+    #[cfg(feature = "v1_api")]
     #[async_generic]
     pub fn from_bytes(format: &str, image_bytes: &[u8], verify: bool) -> Result<ManifestStore> {
         let mut validation_log = DetailedStatusTracker::default();
@@ -386,6 +398,7 @@ impl ManifestStore {
         since = "0.38.0",
         note = "Please use Reader::from_fragment_async() instead"
     )]
+    #[cfg(feature = "v1_api")]
     pub async fn from_fragment_bytes_async(
         format: &str,
         init_bytes: &[u8],
@@ -466,6 +479,7 @@ impl ManifestStore {
         since = "0.38.0",
         note = "Please use Reader::from_manifest_data_and_stream_async() instead"
     )]
+    #[cfg(feature = "v1_api")]
     pub async fn from_manifest_and_asset_bytes_async(
         manifest_bytes: &[u8],
         format: &str,
@@ -508,6 +522,7 @@ impl ManifestStore {
         since = "0.38.0",
         note = "Please use Reader::from_manifest_data_and_stream() instead"
     )]
+    #[cfg(feature = "v1_api")]
     pub fn from_manifest_and_asset_bytes(
         manifest_bytes: &[u8],
         format: &str,
@@ -608,8 +623,8 @@ mod tests {
         let manifest = manifest_store.get_active().unwrap();
         assert!(!manifest.ingredients().is_empty());
         // make sure we have two different ingredients
-        assert_eq!(manifest.ingredients()[0].format(), "image/jpeg");
-        assert_eq!(manifest.ingredients()[1].format(), "image/png");
+        assert_eq!(manifest.ingredients()[0].format(), Some("image/jpeg"));
+        assert_eq!(manifest.ingredients()[1].format(), Some("image/png"));
 
         let full_report = manifest_store.to_string();
         assert!(!full_report.is_empty());
