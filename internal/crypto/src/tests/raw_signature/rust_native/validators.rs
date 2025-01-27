@@ -13,6 +13,8 @@
 
 use bcder::Oid;
 use rasn::types::OctetString;
+#[cfg(target_arch = "wasm32")]
+use wasm_bindgen_test::wasm_bindgen_test;
 
 use crate::raw_signature::{rust_native, RawSignatureValidationError, SigningAlg};
 
@@ -278,7 +280,7 @@ fn rs512() {
 const SHA1_OID: Oid = bcder::Oid(OctetString::from_static(&[43, 14, 3, 2, 26]));
 
 #[test]
-// #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
 fn sha1() {
     let signature = include_bytes!("../../fixtures/raw_signature/legacy/sha1.raw_sig");
     let pub_key = include_bytes!("../../fixtures/raw_signature/legacy/sha1.pub_key");

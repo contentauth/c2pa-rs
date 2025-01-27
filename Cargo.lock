@@ -711,7 +711,7 @@ checksum = "325918d6fe32f23b19878fe4b34794ae41fc19ddbe53b10571a4874d44ffd39b"
 
 [[package]]
 name = "c2pa"
-version = "0.42.0"
+version = "0.43.0"
 dependencies = [
  "actix",
  "anyhow",
@@ -793,7 +793,7 @@ dependencies = [
 
 [[package]]
 name = "c2pa-crypto"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "actix",
  "asn1-rs",
@@ -878,7 +878,7 @@ dependencies = [
 
 [[package]]
 name = "cawg-identity"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -2296,9 +2296,9 @@ dependencies = [
 
 [[package]]
 name = "id3"
-version = "1.14.0"
+version = "1.16.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "55f4e785f2c700217ee82a1c727c720449421742abd5fcb2f1df04e1244760e9"
+checksum = "872718dfcd3a6f4601a3fb413365ee5e1d3ec050316ff79e690c98658a6738ef"
 dependencies = [
  "bitflags 2.8.0",
  "byteorder",
@@ -2942,9 +2942,9 @@ dependencies = [
 
 [[package]]
 name = "openssl-probe"
-version = "0.1.5"
+version = "0.1.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ff011a302c396a5197692431fc1948019154afc178baf7d8e37367442a4601cf"
+checksum = "d05e27ee213611ffe7d6348b942e8f942b37114c00cc03cec254295a4a17852e"
 
 [[package]]
 name = "openssl-src"
@@ -4714,9 +4714,9 @@ checksum = "eaea85b334db583fe3274d12b4cd1880032beab409c0d774be044d4480ab9a94"
 
 [[package]]
 name = "unicode-ident"
-version = "1.0.14"
+version = "1.0.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "adb9e6ca4f869e1180728b7950e35922a7fc6397f7b641499e8f3ef06e50dc83"
+checksum = "11cd88e12b17c6494200a9c1b683a04fcac9573ed74cd1b62aeb2727c5592243"
 
 [[package]]
 name = "unicode-xid"

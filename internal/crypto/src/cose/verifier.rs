@@ -323,7 +323,7 @@ fn dump_cert_chain(certs: &[Vec<u8>]) -> Result<Vec<u8>, CoseError> {
     for der_bytes in certs {
         let cert_base_str = encode(der_bytes);
 
-        // break line into fixed len lines
+        // Break line into fixed-length lines.
         let cert_lines = cert_base_str
             .chars()
             .collect::<Vec<char>>()
@@ -331,15 +331,16 @@ fn dump_cert_chain(certs: &[Vec<u8>]) -> Result<Vec<u8>, CoseError> {
             .map(|chunk| chunk.iter().collect::<String>())
             .collect::<Vec<_>>();
 
-        // write lines
         writer
             .write_fmt(format_args!("{}\n", cert_begin))
             .map_err(|_e| CoseError::InternalError("could not write PEM".to_string()))?;
+
         for l in cert_lines {
             writer
                 .write_fmt(format_args!("{}\n", l))
                 .map_err(|_e| CoseError::InternalError("could not write PEM".to_string()))?;
         }
+
         writer
             .write_fmt(format_args!("{}\n", cert_end))
             .map_err(|_e| CoseError::InternalError("could not write PEM".to_string()))?;

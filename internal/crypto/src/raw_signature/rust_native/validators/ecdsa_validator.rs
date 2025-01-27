@@ -55,11 +55,13 @@ impl RawSignatureValidator for EcdsaValidator {
                 hasher.update(data);
                 hasher.finalize().to_vec()
             }
+
             EcdsaValidator::Es384 => {
                 let mut hasher = Sha384::new();
                 hasher.update(data);
                 hasher.finalize().to_vec()
             }
+
             EcdsaValidator::Es512 => {
                 let mut hasher = Sha512::new();
                 hasher.update(data);
@@ -67,11 +69,11 @@ impl RawSignatureValidator for EcdsaValidator {
             }
         };
 
-        // determine curve from public key
+        // Determine curve from public key.
         let curve = ec_curve_from_public_key_der(public_key)
             .ok_or(RawSignatureValidationError::InvalidPublicKey)?;
 
-        // requires fixed sized P1363 signature
+        // Requires fixed-size P1363 signature.
         let adjusted_sig = match der_to_p1363(sig, curve.p1363_sig_len()) {
             Ok(p1363) => p1363,
             Err(_) => sig.to_vec(),
@@ -88,6 +90,7 @@ impl RawSignatureValidator for EcdsaValidator {
 
                 vk.verify_prehash(&digest, &signature)
             }
+
             EcdsaCurve::P384 => {
                 use p384::pkcs8::DecodePublicKey;
                 let signature = EcdsaSignature::from_slice(&adjusted_sig)
@@ -98,15 +101,17 @@ impl RawSignatureValidator for EcdsaValidator {
 
                 vk.verify_prehash(&digest, &signature)
             }
+
             EcdsaCurve::P521 => {
                 use p521::pkcs8::DecodePublicKey;
                 let signature = EcdsaSignature::from_slice(&adjusted_sig)
                     .map_err(|_| RawSignatureValidationError::InvalidSignature)?;
 
-                // internal from_public_key not implemented for P521VerifyingKey so manually
-                // load
+                // P521VerifyingKey does't have an implementation of `from_public_key` so we
+                // load it manually.
                 let pk = P521PublicKey::from_public_key_der(public_key)
                     .map_err(|_| RawSignatureValidationError::InvalidPublicKey)?;
+
                 let pk_bytes = pk.to_sec1_bytes();
 
                 let vk = P521VerifyingKey::from_sec1_bytes(&pk_bytes)
