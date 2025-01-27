@@ -321,7 +321,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Run tests
-        run: cargo +nightly test -Z direct-minimal-versions --all-targets --all-features
+        run: cargo +nightly-2025-01-24 test -Z direct-minimal-versions --all-targets --all-features
 
   clippy_check:
     name: Clippy
