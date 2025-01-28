@@ -35,7 +35,6 @@ mod validator;
 pub(crate) use validator::async_validator_for_sig_and_hash_algs;
 #[cfg(target_arch = "wasm32")]
 pub use validator::async_validator_for_signing_alg;
-
 pub(crate) use validator::validator_for_sig_and_hash_algs;
 pub use validator::{
     validator_for_signing_alg, AsyncRawSignatureValidator, RawSignatureValidationError,
