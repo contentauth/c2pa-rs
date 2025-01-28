@@ -35,11 +35,11 @@ mod rsa_validator;
 pub(crate) use rsa_validator::RsaValidator;
 
 struct AsyncRawSignatureValidatorAdapter {
-    validator: Box<Box<dyn RawSignatureValidator>>,
+    validator: Box<dyn RawSignatureValidator>,
 }
 
 impl AsyncRawSignatureValidatorAdapter {
-    fn new(validator: Box<Box<dyn RawSignatureValidator>>) -> Self {
+    fn new(validator: Box<dyn RawSignatureValidator>) -> Self {
         Self { validator }
     }
 }
@@ -62,22 +62,18 @@ pub(crate) fn async_validator_for_signing_alg(
 ) -> Option<Box<dyn AsyncRawSignatureValidator>> {
     let validator = validator_for_signing_alg(alg)?;
 
-    Some(Box::new(AsyncRawSignatureValidatorAdapter::new(
-        validator.into(),
-    )))
+    Some(Box::new(AsyncRawSignatureValidatorAdapter::new(validator)))
 }
 
 /// Return a built-in async signature validator for the requested signature
 /// algorithm as identified by OID.
 pub(crate) fn async_validator_for_sig_and_hash_algs(
     sig_alg: &Oid,
-    hash_alg_or_curve: &Oid,
+    hash_alg: &Oid,
 ) -> Option<Box<dyn AsyncRawSignatureValidator>> {
-    let validator = validator_for_sig_and_hash_algs(sig_alg, hash_alg_or_curve)?;
+    let validator = validator_for_sig_and_hash_algs(sig_alg, hash_alg)?;
 
-    Some(Box::new(AsyncRawSignatureValidatorAdapter::new(
-        validator.into(),
-    )))
+    Some(Box::new(AsyncRawSignatureValidatorAdapter::new(validator)))
 }
 
 /// Return a validator for the given signing algorithm.
@@ -97,26 +93,30 @@ pub fn validator_for_signing_alg(alg: SigningAlg) -> Option<Box<dyn RawSignature
 /// Select validator based on signing algorithm and hash type or EC curve.
 pub(crate) fn validator_for_sig_and_hash_algs(
     sig_alg: &Oid,
-    hash_alg_or_curve: &Oid,
+    hash_alg: &Oid,
 ) -> Option<Box<dyn RawSignatureValidator>> {
     // Handle legacy RSA.
     if sig_alg.as_ref() == RSA_OID.as_bytes() {
-        if hash_alg_or_curve.as_ref() == SHA256_WITH_RSAENCRYPTION_OID.as_bytes() {
+        if hash_alg.as_ref() == SHA256_OID.as_bytes() {
             return Some(Box::new(RsaLegacyValidator::Rsa256));
-        } else if hash_alg_or_curve.as_ref() == SHA384_WITH_RSAENCRYPTION_OID.as_bytes() {
+        } else if hash_alg.as_ref() == SHA384_OID.as_bytes() {
             return Some(Box::new(RsaLegacyValidator::Rsa384));
-        } else if hash_alg_or_curve.as_ref() == SHA512_WITH_RSAENCRYPTION_OID.as_bytes() {
+        } else if hash_alg.as_ref() == SHA512_OID.as_bytes() {
             return Some(Box::new(RsaLegacyValidator::Rsa512));
         }
     }
 
     // Handle RSS-PSS.
-    if sig_alg.as_ref() == RSA_PSS_OID.as_bytes() {
-        if hash_alg_or_curve.as_ref() == SHA256_WITH_RSAENCRYPTION_OID.as_bytes() {
+    if sig_alg.as_ref() == RSA_PSS_OID.as_bytes()
+        || sig_alg.as_ref() == SHA256_WITH_RSAENCRYPTION_OID.as_bytes()
+        || sig_alg.as_ref() == SHA384_WITH_RSAENCRYPTION_OID.as_bytes()
+        || sig_alg.as_ref() == SHA512_WITH_RSAENCRYPTION_OID.as_bytes()
+    {
+        if hash_alg.as_ref() == SHA256_OID.as_bytes() {
             return Some(Box::new(RsaValidator::Ps256));
-        } else if hash_alg_or_curve.as_ref() == SHA384_WITH_RSAENCRYPTION_OID.as_bytes() {
+        } else if hash_alg.as_ref() == SHA384_OID.as_bytes() {
             return Some(Box::new(RsaValidator::Ps384));
-        } else if hash_alg_or_curve.as_ref() == SHA512_WITH_RSAENCRYPTION_OID.as_bytes() {
+        } else if hash_alg.as_ref() == SHA512_OID.as_bytes() {
             return Some(Box::new(RsaValidator::Ps512));
         }
     }

@@ -224,8 +224,8 @@ pub(crate) fn verify_time_stamp(ts: &[u8], data: &[u8]) -> Result<TstInfo, TimeS
             }
         };
 
+        // hash used for signature
         let hash_alg = &signer_info.digest_algorithm.algorithm;
-        let sig_alg = &signer_info.signature_algorithm.algorithm;
 
         // Grab signing certificate.
         let sig_val = &signer_info.signature;
@@ -234,6 +234,13 @@ pub(crate) fn verify_time_stamp(ts: &[u8], data: &[u8]) -> Result<TstInfo, TimeS
             .subject_public_key_info
             .encode_ref()
             .write_encoded(bcder::Mode::Der, &mut signing_key_der)?;
+
+        // algorithm used to sign the certificate
+        let sig_alg = &cert
+            .tbs_certificate
+            .subject_public_key_info
+            .algorithm
+            .algorithm;
 
         // Verify signature of time stamp signature.
         if _sync {
@@ -339,9 +346,7 @@ async fn validate_timestamp_sig_async(
     signing_key_der: &[u8],
 ) -> Result<(), TimeStampError> {
     if let Some(validator) =
-        crate::raw_signature::rust_native::validators::async_validator_for_sig_and_hash_algs(
-            sig_alg, hash_alg,
-        )
+        crate::raw_signature::async_validator_for_sig_and_hash_algs(sig_alg, hash_alg)
     {
         validator
             .validate_async(&sig_val.to_bytes(), tbs, signing_key_der)
@@ -355,7 +360,9 @@ async fn validate_timestamp_sig_async(
                 .validate(&sig_val.to_bytes(), tbs, signing_key_der)
                 .map_err(|_| TimeStampError::InvalidData)
         } else {
-            Err(TimeStampError::InternalError("could not load wasm handler".into()))
+            Err(TimeStampError::InternalError(
+                "could not load wasm handler".into(),
+            ))
         }
     }
 }
