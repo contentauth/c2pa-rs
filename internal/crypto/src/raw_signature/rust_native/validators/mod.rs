@@ -107,11 +107,7 @@ pub(crate) fn validator_for_sig_and_hash_algs(
     }
 
     // Handle RSS-PSS.
-    if sig_alg.as_ref() == RSA_PSS_OID.as_bytes()
-        || sig_alg.as_ref() == SHA256_WITH_RSAENCRYPTION_OID.as_bytes()
-        || sig_alg.as_ref() == SHA384_WITH_RSAENCRYPTION_OID.as_bytes()
-        || sig_alg.as_ref() == SHA512_WITH_RSAENCRYPTION_OID.as_bytes()
-    {
+    if sig_alg.as_ref() == RSA_PSS_OID.as_bytes() {
         if hash_alg.as_ref() == SHA256_OID.as_bytes() {
             return Some(Box::new(RsaValidator::Ps256));
         } else if hash_alg.as_ref() == SHA384_OID.as_bytes() {
@@ -122,12 +118,14 @@ pub(crate) fn validator_for_sig_and_hash_algs(
     }
 
     // Handle elliptical curve and hash combinations.
-    if sig_alg.as_ref() == ECDSA_WITH_SHA256_OID.as_bytes() {
-        return Some(Box::new(EcdsaValidator::Es256));
-    } else if sig_alg.as_ref() == ECDSA_WITH_SHA384_OID.as_bytes() {
-        return Some(Box::new(EcdsaValidator::Es384));
-    } else if sig_alg.as_ref() == ECDSA_WITH_SHA512_OID.as_bytes() {
-        return Some(Box::new(EcdsaValidator::Es512));
+    if sig_alg.as_ref() == EC_PUBLICKEY_OID.as_bytes() {
+        if hash_alg.as_ref() == SHA256_OID.as_bytes() {
+            return Some(Box::new(EcdsaValidator::Es256));
+        } else if hash_alg.as_ref() == SHA384_OID.as_bytes() {
+            return Some(Box::new(EcdsaValidator::Es384));
+        } else if hash_alg.as_ref() == SHA512_OID.as_bytes() {
+            return Some(Box::new(EcdsaValidator::Es512));
+        }
     }
 
     // Handle ED25519.

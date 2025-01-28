@@ -47,11 +47,7 @@ pub(crate) fn validator_for_sig_and_hash_algs(
     sig_alg: &Oid,
     hash_alg: &Oid,
 ) -> Option<Box<dyn RawSignatureValidator>> {
-    if sig_alg.as_ref() == RSA_OID.as_bytes()
-        || sig_alg.as_ref() == SHA256_WITH_RSAENCRYPTION_OID.as_bytes()
-        || sig_alg.as_ref() == SHA384_WITH_RSAENCRYPTION_OID.as_bytes()
-        || sig_alg.as_ref() == SHA512_WITH_RSAENCRYPTION_OID.as_bytes()
-    {
+    if sig_alg.as_ref() == RSA_OID.as_bytes() {
         if hash_alg.as_ref() == SHA1_OID.as_bytes() {
             return Some(Box::new(RsaLegacyValidator::Sha1));
         } else if hash_alg.as_ref() == SHA256_OID.as_bytes() {
@@ -61,6 +57,35 @@ pub(crate) fn validator_for_sig_and_hash_algs(
         } else if hash_alg.as_ref() == SHA512_OID.as_bytes() {
             return Some(Box::new(RsaLegacyValidator::Rsa512));
         }
+    }
+
+    // Handle RSS-PSS.
+    if sig_alg.as_ref() == RSA_PSS_OID.as_bytes() {
+        if hash_alg.as_ref() == SHA256_OID.as_bytes() {
+            return Some(Box::new(RsaValidator::Ps256));
+        } else if hash_alg.as_ref() == SHA384_OID.as_bytes() {
+            return Some(Box::new(RsaValidator::Ps384));
+        } else if hash_alg.as_ref() == SHA512_OID.as_bytes() {
+            return Some(Box::new(RsaValidator::Ps512));
+        }
+    }
+
+    // Handle elliptical curve and hash combinations.
+    // Handle elliptical curve and hash combinations.
+    // Handle elliptical curve and hash combinations.
+    if sig_alg.as_ref() == EC_PUBLICKEY_OID.as_bytes() {
+        if hash_alg.as_ref() == SHA256_OID.as_bytes() {
+            return Some(Box::new(EcdsaValidator::Es256));
+        } else if hash_alg.as_ref() == SHA384_OID.as_bytes() {
+            return Some(Box::new(EcdsaValidator::Es384));
+        } else if hash_alg.as_ref() == SHA512_OID.as_bytes() {
+            return Some(Box::new(EcdsaValidator::Es512));
+        }
+    }
+
+    // Handle ED25519.
+    if sig_alg.as_ref() == ED25519_OID.as_bytes() {
+        return Some(Box::new(Ed25519Validator {}));
     }
 
     None

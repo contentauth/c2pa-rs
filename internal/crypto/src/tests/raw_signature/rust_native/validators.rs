@@ -11,6 +11,8 @@
 // specific language governing permissions and limitations under
 // each license.
 
+use std::str::FromStr;
+
 use bcder::Oid;
 use rasn::types::OctetString;
 #[cfg(target_arch = "wasm32")]
@@ -291,3 +293,45 @@ fn sha1() {
     validator.validate(signature, SAMPLE_DATA, pub_key).unwrap();
 }
 */
+
+fn ans1_oid_bcder_oid(asn1_oid: &asn1_rs::Oid) -> bcder::Oid {
+    const TEST_FAIL: Oid = bcder::Oid(OctetString::from_static(&[0, 0, 0, 0]));
+
+    let asn1_oid_str = asn1_oid.to_id_string();
+
+    bcder::Oid::from_str(&asn1_oid_str).unwrap_or(TEST_FAIL.to_owned())
+}
+
+#[test]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+fn test_get_by_sig_and_alg() {
+    use rust_native::validators::validator_for_sig_and_hash_algs;
+
+    use crate::raw_signature::oids::*;
+
+    let rsa_oid = ans1_oid_bcder_oid(&RSA_OID);
+    let rsa_pss_oid = ans1_oid_bcder_oid(&RSA_PSS_OID);
+    let ec_pubic_key_oid = ans1_oid_bcder_oid(&EC_PUBLICKEY_OID);
+    let ed25519_oid = ans1_oid_bcder_oid(&ED25519_OID);
+    let sha256 = ans1_oid_bcder_oid(&SHA256_OID);
+    let sha384 = ans1_oid_bcder_oid(&SHA384_OID);
+    let sha512 = ans1_oid_bcder_oid(&SHA512_OID);
+
+    assert!(validator_for_sig_and_hash_algs(&rsa_oid, &sha256).is_some());
+    assert!(validator_for_sig_and_hash_algs(&rsa_oid, &sha384).is_some());
+    assert!(validator_for_sig_and_hash_algs(&rsa_oid, &sha512).is_some());
+
+    assert!(validator_for_sig_and_hash_algs(&rsa_pss_oid, &sha256).is_some());
+    assert!(validator_for_sig_and_hash_algs(&rsa_pss_oid, &sha384).is_some());
+    assert!(validator_for_sig_and_hash_algs(&rsa_pss_oid, &sha512).is_some());
+
+    assert!(validator_for_sig_and_hash_algs(&ec_pubic_key_oid, &sha256).is_some());
+    assert!(validator_for_sig_and_hash_algs(&ec_pubic_key_oid, &sha384).is_some());
+    assert!(validator_for_sig_and_hash_algs(&ec_pubic_key_oid, &sha512).is_some());
+
+    assert!(validator_for_sig_and_hash_algs(&ed25519_oid, &sha512).is_some());
+
+    // test negative case
+    const TEST_FAIL: Oid = bcder::Oid(OctetString::from_static(&[0, 0, 0, 0]));
+    assert!(validator_for_sig_and_hash_algs(&TEST_FAIL, &sha512).is_none());
+}
