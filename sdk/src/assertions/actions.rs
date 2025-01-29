@@ -109,6 +109,9 @@ pub struct Action {
     #[serde(skip_serializing_if = "Option::is_none")]
     changed: Option<String>,
 
+    #[serde(skip_serializing_if = "Option::is_none")]
+    description: Option<String>,
+
     /// A list of the regions of interest of the resource that were changed.
     ///
     /// If not present, presumed to be undefined.
@@ -119,8 +122,9 @@ pub struct Action {
 
     /// This is NOT the instanceID in the spec
     /// It is now deprecated but was previously used to map the action to an ingredient
-    #[serde(rename = "instanceId", skip_serializing)] // this should never be written to CBOR
     #[deprecated(since = "0.37.0", note = "Use `org.cai.ingredientIds` instead")]
+    #[serde(skip_serializing)]
+    #[serde(alias = "instanceId", alias = "instanceID")]
     instance_id: Option<String>,
 
     /// Additional parameters of the action. These vary by the type of action.
