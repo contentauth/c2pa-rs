@@ -24,7 +24,7 @@ pub fn info(path: &Path) -> Result<()> {
         }
     }
     let ingredient = c2pa::Ingredient::from_file_with_options(path, &Options {})?;
-    println!("Information for {}", ingredient.title());
+    println!("Information for {}", ingredient.title().unwrap_or_default());
     let mut is_cloud_manifest = false;
     //println!("instanceID = {}", ingredient.instance_id());
     if let Some(provenance) = ingredient.provenance() {

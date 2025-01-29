@@ -31,3 +31,5 @@ pub(crate) mod internal;
 
 #[cfg(test)]
 pub(crate) mod tests;
+
+pub mod x509;
