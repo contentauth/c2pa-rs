@@ -10,7 +10,7 @@ rules:
   # Description must start with a capital letter and must not end with a period or space
   description-format:
     level: error
-    format: ^[\w ])+([\s\S]*)$
+    format: ^[\w ]+[\s\S]*$
 
   # Description should be <70 chars
   description-max-length:
