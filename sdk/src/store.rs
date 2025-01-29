@@ -2065,33 +2065,31 @@ impl Store {
             return Ok(false);
         }
 
-        if _sync {
-            Err(Error::NotImplemented(
-                "dynamic_assertions not implemented for sync".to_string(),
-            ))
-        } else {
-            let mut final_assertions = Vec::new();
+        let mut final_assertions = Vec::new();
 
-            for (da, uri) in dyn_assertions.iter().zip(dyn_uris.iter()) {
-                let label = crate::jumbf::labels::assertion_label_from_uri(&uri.url())
-                    .ok_or(Error::BadParam("write_dynamic_assertions".to_string()))?;
+        for (da, uri) in dyn_assertions.iter().zip(dyn_uris.iter()) {
+            let label = crate::jumbf::labels::assertion_label_from_uri(&uri.url())
+                .ok_or(Error::BadParam("write_dynamic_assertions".to_string()))?;
 
-                let da_size = da.reserve_size();
+            let da_size = da.reserve_size();
+            let da_data = if _sync {
+                da.content(&label, Some(da_size), preliminary_claim)?
+            } else {
+                da.content_async(&label, Some(da_size), preliminary_claim)
+                    .await?
+            };
 
-                let da_data = da.content(&label, Some(da_size), preliminary_claim).await?;
-
-                // TO DO: Add new assertion to preliminary_claim
-
-                final_assertions.push(UserCbor::new(&label, da_data).to_assertion()?);
-            }
-
-            let pc = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
-            for assertion in final_assertions {
-                pc.replace_assertion(assertion)?;
-            }
-
-            Ok(true)
+            // TO DO: Add new assertion to preliminary_claim
+            // todo: support for non-CBOR asssertions?
+            final_assertions.push(UserCbor::new(&label, da_data).to_assertion()?);
         }
+
+        let pc = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
+        for assertion in final_assertions {
+            pc.replace_assertion(assertion)?;
+        }
+
+        Ok(true)
     }
 
     #[cfg(feature = "file_io")]
@@ -2244,40 +2242,33 @@ impl Store {
         }
 
         // Now add the dynamic assertions and update the JUMBF.
-        if _sync {
-            if !dynamic_assertions.is_empty() {
-                self.write_dynamic_assertions(
-                    &dynamic_assertions,
-                    &da_uris,
-                    &mut preliminary_claim,
-                )?;
-            }
+        let modified = if _sync {
+            self.write_dynamic_assertions(&dynamic_assertions, &da_uris, &mut preliminary_claim)
         } else {
-            if !dynamic_assertions.is_empty()
-                && self
-                    .write_dynamic_assertions_async(
-                        &dynamic_assertions,
-                        &da_uris,
-                        &mut preliminary_claim,
-                    )
-                    .await?
-            {
-                let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
-                match pc.remote_manifest() {
-                    RemoteManifest::NoRemote | RemoteManifest::EmbedWithRemote(_) => {
-                        jumbf_bytes = self.to_jumbf_internal(signer.reserve_size())?;
+            self.write_dynamic_assertions_async(
+                &dynamic_assertions,
+                &da_uris,
+                &mut preliminary_claim,
+            )
+            .await
+        }?;
+        // update the JUMBF if modified with dynamic assertions
+        if modified {
+            let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
+            match pc.remote_manifest() {
+                RemoteManifest::NoRemote | RemoteManifest::EmbedWithRemote(_) => {
+                    jumbf_bytes = self.to_jumbf_internal(signer.reserve_size())?;
 
-                        intermediate_stream.rewind()?;
-                        save_jumbf_to_stream(
-                            format,
-                            &mut intermediate_stream,
-                            output_stream,
-                            &jumbf_bytes,
-                        )?;
-                    }
-                    _ => (),
-                };
-            }
+                    intermediate_stream.rewind()?;
+                    save_jumbf_to_stream(
+                        format,
+                        &mut intermediate_stream,
+                        output_stream,
+                        &jumbf_bytes,
+                    )?;
+                }
+                _ => (),
+            };
         }
 
         let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
@@ -6145,7 +6136,7 @@ pub mod tests {
                 serde_cbor::to_vec(&assertion).unwrap().len()
             }
 
-            async fn content(
+            async fn content_async(
                 &self,
                 _label: &str,
                 _size: Option<usize>,
