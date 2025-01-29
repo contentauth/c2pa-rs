@@ -6,6 +6,13 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 The format of this changelog is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.4.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-status-tracker-v0.3.0...c2pa-status-tracker-v0.4.0)
+_29 January 2025_
+
+### Added
+
+* Claim v2 (#707)
+
 ## [0.3.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-status-tracker-v0.2.0...c2pa-status-tracker-v0.3.0)
 _16 January 2025_
 
