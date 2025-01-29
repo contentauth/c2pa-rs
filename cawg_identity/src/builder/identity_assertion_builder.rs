@@ -54,7 +54,7 @@ impl DynamicAssertion for IdentityAssertionBuilder {
         // Add additional size for CBOR wrapper outside signature.
     }
 
-    async fn content(
+    async fn content_async(
         &self,
         _label: &str,
         size: Option<usize>,

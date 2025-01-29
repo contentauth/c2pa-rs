@@ -17,7 +17,7 @@ use std::slice::Iter;
 
 use async_trait::async_trait;
 
-use crate::{hashed_uri::HashedUri, Result};
+use crate::{hashed_uri::HashedUri, Error, Result};
 
 /// A `DynamicAssertion` is an assertion that has the ability
 /// to adjust its content based on other assertions within the
@@ -44,7 +44,9 @@ pub trait DynamicAssertion: Sync {
     /// [`Builder`]: crate::Builder
     fn reserve_size(&self) -> usize;
 
-    /// Return the final assertion content.
+    /// Return the final assertion content using a synchronous approach.
+    ///
+    /// This will be called if the overall signing is also synchronous.
     ///
     /// The `label` parameter will contain the final assigned label for
     /// this assertion.
@@ -57,12 +59,44 @@ pub trait DynamicAssertion: Sync {
     ///
     /// The `claim` structure will contain information about the preliminary
     /// C2PA claim as known at the time of this call.
-    async fn content(
+    #[allow(unused_variables)]
+    fn content(
         &self,
         label: &str,
         size: Option<usize>,
         claim: &PreliminaryClaim,
-    ) -> Result<Vec<u8>>;
+    ) -> Result<Vec<u8>> {
+        Err(Error::NotImplemented(
+            "Dynamic Assertion content()".to_string(),
+        ))
+    }
+
+    /// Return the final assertion content using an asynchronous approach.
+    ///
+    /// This will be called if the overall signing is also asynchronous.
+    ///
+    /// The `label` parameter will contain the final assigned label for
+    /// this assertion.
+    ///
+    /// If the hard binding assertion requires that the assertion size
+    /// be predicted in advance, then `size` will contain the number of bytes
+    /// specified by a previous call to `reserve_size`. In that case, the
+    /// resulting binary content *MUST* exactly match the specified size;
+    /// otherwise, the overall manifest generation process will fail.
+    ///
+    /// The `claim` structure will contain information about the preliminary
+    /// C2PA claim as known at the time of this call.
+    #[allow(unused_variables)]
+    async fn content_async(
+        &self,
+        label: &str,
+        size: Option<usize>,
+        claim: &PreliminaryClaim,
+    ) -> Result<Vec<u8>> {
+        Err(Error::NotImplemented(
+            "Dynamic Assertion content_async()".to_string(),
+        ))
+    }
 }
 
 /// A `DynamicAssertion` is an assertion that has the ability
@@ -90,7 +124,9 @@ pub trait DynamicAssertion {
     /// [`Builder`]: crate::Builder
     fn reserve_size(&self) -> usize;
 
-    /// Return the final assertion content.
+    /// Return the final assertion content using a synchronous approach.
+    ///
+    /// This will be called if the overall signing is also synchronous.
     ///
     /// The `label` parameter will contain the final assigned label for
     /// this assertion.
@@ -103,12 +139,44 @@ pub trait DynamicAssertion {
     ///
     /// The `claim` structure will contain information about the preliminary
     /// C2PA claim as known at the time of this call.
-    async fn content(
+    #[allow(unused_variables)]
+    fn content(
         &self,
         label: &str,
         size: Option<usize>,
         claim: &PreliminaryClaim,
-    ) -> Result<Vec<u8>>;
+    ) -> Result<Vec<u8>> {
+        Err(Error::NotImplemented(
+            "Dynamic Assertion content()".to_string(),
+        ))
+    }
+
+    /// Return the final assertion content using an asynchronous approach.
+    ///
+    /// This will be called if the overall signing is also asynchronous.
+    ///
+    /// The `label` parameter will contain the final assigned label for
+    /// this assertion.
+    ///
+    /// If the hard binding assertion requires that the assertion size
+    /// be predicted in advance, then `size` will contain the number of bytes
+    /// specified by a previous call to `reserve_size`. In that case, the
+    /// resulting binary content *MUST* exactly match the specified size;
+    /// otherwise, the overall manifest generation process will fail.
+    ///
+    /// The `claim` structure will contain information about the preliminary
+    /// C2PA claim as known at the time of this call.
+    #[allow(unused_variables)]
+    async fn content_async(
+        &self,
+        label: &str,
+        size: Option<usize>,
+        claim: &PreliminaryClaim,
+    ) -> Result<Vec<u8>> {
+        Err(Error::NotImplemented(
+            "Dynamic Assertion content_async()".to_string(),
+        ))
+    }
 }
 
 /// Describes information from the preliminary C2PA Claim that may
