@@ -6,6 +6,13 @@ This project adheres to [Semantic Versioning](https://semver.org), except that â
 
 Since version 0.10.0, the format of this changelog is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.13.0](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.12.0...c2patool-v0.13.0)
+_29 January 2025_
+
+### Added
+
+* Claim v2 (#707)
+
 ## [0.12.0](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.11.1...c2patool-v0.12.0)
 _22 January 2025_
 
