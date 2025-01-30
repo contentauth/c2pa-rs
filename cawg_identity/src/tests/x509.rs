@@ -20,7 +20,7 @@ use serde_json::json;
 use wasm_bindgen_test::wasm_bindgen_test;
 
 use crate::{
-    builder::{IdentityAssertionBuilder, IdentityAssertionSigner},
+    builder::{AsyncIdentityAssertionBuilder, AsyncIdentityAssertionSigner},
     tests::fixtures::cert_chain_and_private_key_for_alg,
     x509::{X509CredentialHolder, X509SignatureVerifier},
     IdentityAssertion,
@@ -45,7 +45,7 @@ async fn simple_case() {
         .add_resource("thumbnail.jpg", Cursor::new(TEST_THUMBNAIL))
         .unwrap();
 
-    let mut c2pa_signer = IdentityAssertionSigner::from_test_credentials(SigningAlg::Ps256);
+    let mut c2pa_signer = AsyncIdentityAssertionSigner::from_test_credentials(SigningAlg::Ps256);
 
     let (cawg_cert_chain, cawg_private_key) =
         cert_chain_and_private_key_for_alg(SigningAlg::Ed25519);
@@ -59,7 +59,7 @@ async fn simple_case() {
     .unwrap();
 
     let x509_holder = X509CredentialHolder::from_async_raw_signer(cawg_raw_signer);
-    let iab = IdentityAssertionBuilder::for_credential_holder(x509_holder);
+    let iab = AsyncIdentityAssertionBuilder::for_credential_holder(x509_holder);
     c2pa_signer.add_identity_assertion(iab);
 
     builder

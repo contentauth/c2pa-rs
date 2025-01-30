@@ -24,12 +24,12 @@ use crate::{
 
 /// This struct represents the raw content of the identity assertion.
 ///
-/// Use [`IdentityAssertionBuilder`] and -- at your option,
-/// [`IdentityAssertionSigner`] -- to ensure correct construction of a new
+/// Use [`AsyncIdentityAssertionBuilder`] and -- at your option,
+/// [`AsyncIdentityAssertionSigner`] -- to ensure correct construction of a new
 /// identity assertion.
 ///
-/// [`IdentityAssertionBuilder`]: crate::builder::IdentityAssertionBuilder
-/// [`IdentityAssertionSigner`]: crate::builder::IdentityAssertionSigner
+/// [`AsyncIdentityAssertionBuilder`]: crate::builder::AsyncIdentityAssertionBuilder
+/// [`AsyncIdentityAssertionSigner`]: crate::builder::AsyncIdentityAssertionSigner
 #[derive(Deserialize, Serialize)]
 pub struct IdentityAssertion {
     pub(crate) signer_payload: SignerPayload,

@@ -55,7 +55,7 @@ use crate::{
     },
     cose_sign::{cose_sign, cose_sign_async},
     cose_validator::{verify_cose, verify_cose_async},
-    dynamic_assertion::{DynamicAssertion, PreliminaryClaim},
+    dynamic_assertion::{AsyncDynamicAssertion, DynamicAssertion, PreliminaryClaim},
     error::{Error, Result},
     external_manifest::ManifestPatchCallback,
     hash_utils::{hash_by_alg, vec_compare, verify_by_alg},
@@ -139,7 +139,6 @@ impl Store {
             label: label.to_string(),
             ctp: CertificateTrustPolicy::default(),
             provenance_path: None,
-            //dynamic_assertions: Vec::new(),
         };
 
         // load the trust handler settings, don't worry about status as these are checked during setting generation
@@ -2028,6 +2027,10 @@ impl Store {
     }
 
     /// Inserts placeholders for dynamic assertions to be updated later.
+    #[async_generic(async_signature(
+        &mut self,
+        dyn_assertions: &[Box<dyn AsyncDynamicAssertion>],
+    ))]
     fn add_dynamic_assertion_placeholders(
         &mut self,
         dyn_assertions: &[Box<dyn DynamicAssertion>],
@@ -2035,7 +2038,8 @@ impl Store {
         if dyn_assertions.is_empty() {
             return Ok(Vec::new());
         }
-        // two passes since we are accessing two fields in self
+
+        // Two passes since we are accessing two fields in self.
         let mut assertions = Vec::new();
         for da in dyn_assertions.iter() {
             let reserve_size = da.reserve_size();
@@ -2053,7 +2057,12 @@ impl Store {
     }
 
     /// Write the dynamic assertions to the manifest.
-    #[async_generic()]
+    #[async_generic(async_signature(
+        &mut self,
+        dyn_assertions: &[Box<dyn AsyncDynamicAssertion>],
+        dyn_uris: &[HashedUri],
+        preliminary_claim: &mut PreliminaryClaim,
+    ))]
     #[allow(unused_variables)]
     fn write_dynamic_assertions(
         &mut self,
@@ -2075,8 +2084,7 @@ impl Store {
             let da_data = if _sync {
                 da.content(&label, Some(da_size), preliminary_claim)?
             } else {
-                da.content_async(&label, Some(da_size), preliminary_claim)
-                    .await?
+                da.content(&label, Some(da_size), preliminary_claim).await?
             };
 
             // TO DO: Add new assertion to preliminary_claim
@@ -2220,7 +2228,13 @@ impl Store {
         signer: &dyn Signer,
     ) -> Result<Vec<u8>> {
         let dynamic_assertions = signer.dynamic_assertions();
-        let da_uris = self.add_dynamic_assertion_placeholders(&dynamic_assertions)?;
+
+        let da_uris = if _sync {
+            self.add_dynamic_assertion_placeholders(&dynamic_assertions)?
+        } else {
+            self.add_dynamic_assertion_placeholders_async(&dynamic_assertions)
+                .await?
+        };
 
         let intermediate_output: Vec<u8> = Vec::new();
         let mut intermediate_stream = Cursor::new(intermediate_output);
@@ -6109,11 +6123,9 @@ pub mod tests {
         assert!(errors.is_empty());
     }
 
-    #[actix::test]
+    #[test]
     #[cfg(feature = "openssl_sign")]
-    async fn test_dynamic_assertions() {
-        use async_trait::async_trait;
-
+    fn test_dynamic_assertions() {
         #[derive(Serialize)]
         struct TestAssertion {
             my_tag: String,
@@ -6122,8 +6134,6 @@ pub mod tests {
         #[derive(Debug)]
         struct TestDynamicAssertion {}
 
-        #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
-        #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
         impl DynamicAssertion for TestDynamicAssertion {
             fn label(&self) -> String {
                 "com.mycompany.myassertion".to_string()
@@ -6136,7 +6146,138 @@ pub mod tests {
                 serde_cbor::to_vec(&assertion).unwrap().len()
             }
 
-            async fn content_async(
+            fn content(
+                &self,
+                _label: &str,
+                _size: Option<usize>,
+                claim: &PreliminaryClaim,
+            ) -> Result<Vec<u8>> {
+                assert!(claim
+                    .assertions()
+                    .inspect(|a| {
+                        dbg!(a);
+                    })
+                    .any(|a| a.url().contains("c2pa.hash")));
+
+                let assertion = TestAssertion {
+                    my_tag: "some value I will replace".to_string(),
+                };
+
+                Ok(serde_cbor::to_vec(&assertion).unwrap())
+            }
+        }
+
+        /// This is an signer wrapped around a local temp signer,
+        /// that implements the dynamic assertion trait.
+        struct DynamicSigner(Box<dyn Signer>);
+
+        impl DynamicSigner {
+            fn new() -> Self {
+                Self(test_signer(SigningAlg::Ps256))
+            }
+        }
+
+        impl crate::Signer for DynamicSigner {
+            fn sign(&self, data: &[u8]) -> crate::error::Result<Vec<u8>> {
+                self.0.sign(data)
+            }
+
+            fn alg(&self) -> SigningAlg {
+                self.0.alg()
+            }
+
+            fn certs(&self) -> crate::Result<Vec<Vec<u8>>> {
+                self.0.certs()
+            }
+
+            fn reserve_size(&self) -> usize {
+                self.0.reserve_size()
+            }
+
+            fn time_authority_url(&self) -> Option<String> {
+                self.0.time_authority_url()
+            }
+
+            fn ocsp_val(&self) -> Option<Vec<u8>> {
+                self.0.ocsp_val()
+            }
+
+            // Returns our dynamic assertion here.
+            fn dynamic_assertions(&self) -> Vec<Box<dyn crate::DynamicAssertion>> {
+                vec![Box::new(TestDynamicAssertion {})]
+            }
+        }
+
+        let file_buffer = include_bytes!("../tests/fixtures/earth_apollo17.jpg").to_vec();
+        // convert buffer to cursor with Read/Write/Seek capability
+        let mut buf_io = Cursor::new(file_buffer);
+
+        // Create claims store.
+        let mut store = Store::new();
+
+        // Create a new claim.
+        let claim1 = create_test_claim().unwrap();
+
+        let signer = DynamicSigner::new();
+
+        store.commit_claim(claim1).unwrap();
+
+        let mut result: Vec<u8> = Vec::new();
+        let mut result_stream = Cursor::new(result);
+
+        store
+            .save_to_stream("jpeg", &mut buf_io, &mut result_stream, &signer)
+            .unwrap();
+
+        // convert our cursor back into a buffer
+        result = result_stream.into_inner();
+
+        // make sure we can read from new file
+        let mut report = DetailedStatusTracker::default();
+        let new_store = Store::load_from_memory("jpeg", &result, false, &mut report).unwrap();
+
+        println!("new_store: {}", new_store);
+
+        Store::verify_store(
+            &new_store,
+            &mut ClaimAssetData::Bytes(&result, "jpg"),
+            &mut report,
+        )
+        .unwrap();
+
+        let errors = report.take_errors();
+        assert!(errors.is_empty());
+        // std::fs::write("target/test.jpg", result).unwrap();
+    }
+
+    #[actix::test]
+    #[cfg(feature = "openssl_sign")]
+    async fn test_async_dynamic_assertions() {
+        use async_trait::async_trait;
+
+        #[derive(Serialize)]
+        struct TestAssertion {
+            my_tag: String,
+        }
+
+        #[derive(Debug)]
+        struct TestDynamicAssertion {}
+
+        #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+        #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+        impl AsyncDynamicAssertion for TestDynamicAssertion {
+            fn label(&self) -> String {
+                "com.mycompany.myassertion".to_string()
+            }
+
+            fn reserve_size(&self) -> usize {
+                let assertion = TestAssertion {
+                    my_tag: "some value I will replace".to_string(),
+                };
+                serde_cbor::to_vec(&assertion).unwrap().len()
+            }
+
+            async fn content(
                 &self,
                 _label: &str,
                 _size: Option<usize>,
@@ -6194,7 +6335,7 @@ pub mod tests {
             }
 
             // Returns our dynamic assertion here.
-            fn dynamic_assertions(&self) -> Vec<Box<dyn crate::DynamicAssertion>> {
+            fn dynamic_assertions(&self) -> Vec<Box<dyn crate::AsyncDynamicAssertion>> {
                 vec![Box::new(TestDynamicAssertion {})]
             }
         }

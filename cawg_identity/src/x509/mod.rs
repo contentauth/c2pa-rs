@@ -11,11 +11,11 @@
 // specific language governing permissions and limitations under
 // each license.
 
-//! Contains implementations of [`CredentialHolder`] and [`SignatureVerifier`]
-//! for the X.509 certificates credential type described as specified in
-//! [§8.2, X.509 certificates and COSE signatures].
+//! Contains implementations of [`AsyncCredentialHolder`] and
+//! [`SignatureVerifier`] for the X.509 certificates credential type described
+//! as specified in [§8.2, X.509 certificates and COSE signatures].
 //!
-//! [`CredentialHolder`]: crate::builder::CredentialHolder
+//! [`AsyncCredentialHolder`]: crate::builder::AsyncCredentialHolder
 //! [`SignatureVerifier`]: crate::SignatureVerifier
 //! [§8.2, X.509 certificates and COSE signatures]: https://cawg.io/identity/1.1-draft/#_x_509_certificates_and_cose_signatures
 
