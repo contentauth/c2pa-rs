@@ -15,7 +15,7 @@
 //! C2PA Manifest that contains one or more CAWG identity assertions.
 
 pub(crate) mod credential_holder;
-pub use credential_holder::AsyncCredentialHolder;
+pub use credential_holder::{AsyncCredentialHolder, CredentialHolder};
 
 mod error;
 pub use error::IdentityBuilderError;
