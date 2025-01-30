@@ -12,7 +12,7 @@
 // each license.
 
 use async_trait::async_trait;
-use c2pa::{DynamicAssertion, PreliminaryClaim};
+use c2pa::{AsyncDynamicAssertion, PreliminaryClaim};
 use serde_bytes::ByteBuf;
 
 use crate::{builder::AsyncCredentialHolder, IdentityAssertion, SignerPayload};
@@ -45,7 +45,7 @@ impl AsyncIdentityAssertionBuilder {
 
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
-impl DynamicAssertion for AsyncIdentityAssertionBuilder {
+impl AsyncDynamicAssertion for AsyncIdentityAssertionBuilder {
     fn label(&self) -> String {
         "cawg.identity".to_string()
     }
@@ -56,7 +56,7 @@ impl DynamicAssertion for AsyncIdentityAssertionBuilder {
         // Add additional size for CBOR wrapper outside signature.
     }
 
-    async fn content_async(
+    async fn content(
         &self,
         _label: &str,
         size: Option<usize>,

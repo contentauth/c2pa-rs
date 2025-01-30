@@ -12,7 +12,7 @@
 // each license.
 
 use async_trait::async_trait;
-use c2pa::{AsyncSigner, DynamicAssertion, Result};
+use c2pa::{AsyncDynamicAssertion, AsyncSigner, Result};
 use c2pa_crypto::raw_signature::{AsyncRawSigner, SigningAlg};
 
 use crate::builder::AsyncIdentityAssertionBuilder;
@@ -166,7 +166,7 @@ impl AsyncSigner for IdentityAssertionSigner {
         Some(Box::new(&*self.signer))
     }
 
-    fn dynamic_assertions(&self) -> Vec<Box<dyn DynamicAssertion>> {
+    fn dynamic_assertions(&self) -> Vec<Box<dyn AsyncDynamicAssertion>> {
         #[cfg(not(target_arch = "wasm32"))]
         {
             #[allow(clippy::unwrap_used)]
@@ -174,7 +174,7 @@ impl AsyncSigner for IdentityAssertionSigner {
             // TO DO: Replace with error handling in the very unlikely case of a panic here.
 
             let ia_clone = identity_assertions.split_off(0);
-            let mut dynamic_assertions: Vec<Box<dyn DynamicAssertion>> = vec![];
+            let mut dynamic_assertions: Vec<Box<dyn AsyncDynamicAssertion>> = vec![];
 
             for ia in ia_clone.into_iter() {
                 dynamic_assertions.push(Box::new(ia));
@@ -190,7 +190,7 @@ impl AsyncSigner for IdentityAssertionSigner {
             // TO DO: Replace with error handling in the very unlikely case of a panic here.
 
             let ia_clone = identity_assertions.split_off(0);
-            let mut dynamic_assertions: Vec<Box<dyn DynamicAssertion>> = vec![];
+            let mut dynamic_assertions: Vec<Box<dyn AsyncDynamicAssertion>> = vec![];
 
             for ia in ia_clone.into_iter() {
                 dynamic_assertions.push(Box::new(ia));
