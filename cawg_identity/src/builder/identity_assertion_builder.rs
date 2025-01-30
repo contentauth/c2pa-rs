@@ -15,7 +15,7 @@ use async_trait::async_trait;
 use c2pa::{DynamicAssertion, PreliminaryClaim};
 use serde_bytes::ByteBuf;
 
-use crate::{builder::CredentialHolder, IdentityAssertion, SignerPayload};
+use crate::{builder::AsyncCredentialHolder, IdentityAssertion, SignerPayload};
 
 /// An `IdentityAssertionBuilder` gathers together the necessary components
 /// for an identity assertion. When added to an [`IdentityAssertionSigner`],
@@ -24,17 +24,19 @@ use crate::{builder::CredentialHolder, IdentityAssertion, SignerPayload};
 /// [`IdentityAssertionSigner`]: crate::builder::IdentityAssertionSigner
 pub struct IdentityAssertionBuilder {
     #[cfg(not(target_arch = "wasm32"))]
-    credential_holder: Box<dyn CredentialHolder + Sync + Send>,
+    credential_holder: Box<dyn AsyncCredentialHolder + Sync + Send>,
 
     #[cfg(target_arch = "wasm32")]
-    credential_holder: Box<dyn CredentialHolder>,
+    credential_holder: Box<dyn AsyncCredentialHolder>,
     // referenced_assertions: Vec<MumbleSomething>,
 }
 
 impl IdentityAssertionBuilder {
     /// Create an `IdentityAssertionBuilder` for the given
-    /// `CredentialHolder` instance.
-    pub fn for_credential_holder<CH: CredentialHolder + 'static>(credential_holder: CH) -> Self {
+    /// `AsyncCredentialHolder` instance.
+    pub fn for_credential_holder<CH: AsyncCredentialHolder + 'static>(
+        credential_holder: CH,
+    ) -> Self {
         Self {
             credential_holder: Box::new(credential_holder),
         }
@@ -98,7 +100,7 @@ impl DynamicAssertion for IdentityAssertionBuilder {
         if let Some(assertion_size) = size {
             if assertion_cbor.len() > assertion_size {
                 // TO DO: Think about how to signal this in such a way that
-                // the CredentialHolder implementor understands the problem.
+                // the AsyncCredentialHolder implementor understands the problem.
                 return Err(c2pa::Error::BadParam(format!("Serialized assertion is {len} bytes, which exceeds the planned size of {assertion_size} bytes", len = assertion_cbor.len())));
             }
 

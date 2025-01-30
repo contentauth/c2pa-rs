@@ -25,7 +25,7 @@ use std::fmt::Debug;
 use async_trait::async_trait;
 
 use crate::{
-    builder::{CredentialHolder, IdentityBuilderError},
+    builder::{AsyncCredentialHolder, IdentityBuilderError},
     SignatureVerifier, SignerPayload, ValidationError,
 };
 
@@ -34,7 +34,7 @@ pub(crate) struct NaiveCredentialHolder {}
 
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
-impl CredentialHolder for NaiveCredentialHolder {
+impl AsyncCredentialHolder for NaiveCredentialHolder {
     fn sig_type(&self) -> &'static str {
         "INVALID.identity.naive_credential"
     }

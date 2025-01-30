@@ -15,8 +15,8 @@ use async_trait::async_trait;
 
 use crate::{builder::IdentityBuilderError, SignerPayload};
 
-/// An implementation of `CredentialHolder` is able to generate a signature over
-/// the [`SignerPayload`] data structure on behalf of a credential holder.
+/// An implementation of `AsyncCredentialHolder` is able to generate a signature
+/// over the [`SignerPayload`] data structure on behalf of a credential holder.
 ///
 /// Implementations of this trait will specialize based on the kind of
 /// credential as specified in [§8. Credentials, signatures, and validation
@@ -25,7 +25,7 @@ use crate::{builder::IdentityBuilderError, SignerPayload};
 /// [§8. Credentials, signatures, and validation methods]: https://cawg.io/identity/1.1-draft/#_credentials_signatures_and_validation_methods
 #[cfg(not(target_arch = "wasm32"))]
 #[async_trait]
-pub trait CredentialHolder: Send + Sync {
+pub trait AsyncCredentialHolder: Send + Sync {
     /// Returns the designated `sig_type` value for this kind of credential.
     fn sig_type(&self) -> &'static str;
 
@@ -50,8 +50,8 @@ pub trait CredentialHolder: Send + Sync {
     async fn sign(&self, signer_payload: &SignerPayload) -> Result<Vec<u8>, IdentityBuilderError>;
 }
 
-/// An implementation of `CredentialHolder` is able to generate a signature over
-/// the [`SignerPayload`] data structure on behalf of a credential holder.
+/// An implementation of `AsyncCredentialHolder` is able to generate a signature
+/// over the [`SignerPayload`] data structure on behalf of a credential holder.
 ///
 /// Implementations of this trait will specialize based on the kind of
 /// credential as specified in [§8. Credentials, signatures, and validation
@@ -60,7 +60,7 @@ pub trait CredentialHolder: Send + Sync {
 /// [§8. Credentials, signatures, and validation methods]: https://cawg.io/identity/1.1-draft/#_credentials_signatures_and_validation_methods
 #[cfg(target_arch = "wasm32")]
 #[async_trait(?Send)]
-pub trait CredentialHolder {
+pub trait AsyncCredentialHolder {
     /// Returns the designated `sig_type` value for this kind of credential.
     fn sig_type(&self) -> &'static str;
 
