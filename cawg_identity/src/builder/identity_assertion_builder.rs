@@ -17,12 +17,12 @@ use serde_bytes::ByteBuf;
 
 use crate::{builder::AsyncCredentialHolder, IdentityAssertion, SignerPayload};
 
-/// An `IdentityAssertionBuilder` gathers together the necessary components
+/// An `AsyncIdentityAssertionBuilder` gathers together the necessary components
 /// for an identity assertion. When added to an [`IdentityAssertionSigner`],
 /// it ensures that the proper data is added to the final C2PA Manifest.
 ///
 /// [`IdentityAssertionSigner`]: crate::builder::IdentityAssertionSigner
-pub struct IdentityAssertionBuilder {
+pub struct AsyncIdentityAssertionBuilder {
     #[cfg(not(target_arch = "wasm32"))]
     credential_holder: Box<dyn AsyncCredentialHolder + Sync + Send>,
 
@@ -31,8 +31,8 @@ pub struct IdentityAssertionBuilder {
     // referenced_assertions: Vec<MumbleSomething>,
 }
 
-impl IdentityAssertionBuilder {
-    /// Create an `IdentityAssertionBuilder` for the given
+impl AsyncIdentityAssertionBuilder {
+    /// Create an `AsyncIdentityAssertionBuilder` for the given
     /// `AsyncCredentialHolder` instance.
     pub fn for_credential_holder<CH: AsyncCredentialHolder + 'static>(
         credential_holder: CH,
@@ -45,7 +45,7 @@ impl IdentityAssertionBuilder {
 
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
-impl DynamicAssertion for IdentityAssertionBuilder {
+impl DynamicAssertion for AsyncIdentityAssertionBuilder {
     fn label(&self) -> String {
         "cawg.identity".to_string()
     }

@@ -19,7 +19,7 @@ use serde_json::json;
 use wasm_bindgen_test::wasm_bindgen_test;
 
 use crate::{
-    builder::{IdentityAssertionBuilder, IdentityAssertionSigner},
+    builder::{AsyncIdentityAssertionBuilder, IdentityAssertionSigner},
     tests::fixtures::{NaiveAsyncCredentialHolder, NaiveSignatureVerifier},
     IdentityAssertion,
 };
@@ -46,7 +46,7 @@ async fn simple_case() {
     let mut signer = IdentityAssertionSigner::from_test_credentials(SigningAlg::Ps256);
 
     let nch = NaiveAsyncCredentialHolder {};
-    let iab = IdentityAssertionBuilder::for_credential_holder(nch);
+    let iab = AsyncIdentityAssertionBuilder::for_credential_holder(nch);
     signer.add_identity_assertion(iab);
 
     builder

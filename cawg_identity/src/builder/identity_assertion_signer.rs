@@ -15,7 +15,7 @@ use async_trait::async_trait;
 use c2pa::{AsyncSigner, DynamicAssertion, Result};
 use c2pa_crypto::raw_signature::{AsyncRawSigner, SigningAlg};
 
-use crate::builder::IdentityAssertionBuilder;
+use crate::builder::AsyncIdentityAssertionBuilder;
 
 /// An `IdentityAssertionSigner` extends the [`AsyncSigner`] interface to add
 /// zero or more identity assertions to a C2PA [`Manifest`] that is being
@@ -31,10 +31,10 @@ pub struct IdentityAssertionSigner {
     signer: Box<dyn AsyncRawSigner>,
 
     #[cfg(not(target_arch = "wasm32"))]
-    identity_assertions: std::sync::RwLock<Vec<IdentityAssertionBuilder>>,
+    identity_assertions: std::sync::RwLock<Vec<AsyncIdentityAssertionBuilder>>,
 
     #[cfg(target_arch = "wasm32")]
-    identity_assertions: std::cell::RefCell<Vec<IdentityAssertionBuilder>>,
+    identity_assertions: std::cell::RefCell<Vec<AsyncIdentityAssertionBuilder>>,
 }
 
 impl IdentityAssertionSigner {
@@ -82,24 +82,24 @@ impl IdentityAssertionSigner {
     }
 
     #[cfg(not(target_arch = "wasm32"))]
-    fn ia_default() -> std::sync::RwLock<Vec<IdentityAssertionBuilder>> {
+    fn ia_default() -> std::sync::RwLock<Vec<AsyncIdentityAssertionBuilder>> {
         std::sync::RwLock::new(vec![])
     }
 
     #[cfg(target_arch = "wasm32")]
-    fn ia_default() -> std::cell::RefCell<Vec<IdentityAssertionBuilder>> {
+    fn ia_default() -> std::cell::RefCell<Vec<AsyncIdentityAssertionBuilder>> {
         std::cell::RefCell::new(vec![])
     }
 
-    /// Add an [`IdentityAssertionBuilder`] to be used when signing the next
-    /// [`Manifest`].
+    /// Add an [`AsyncIdentityAssertionBuilder`] to be used when signing the
+    /// next [`Manifest`].
     ///
     /// IMPORTANT: When [`sign()`] is called, the list of
-    /// [`IdentityAssertionBuilder`]s will be cleared.
+    /// [`AsyncIdentityAssertionBuilder`]s will be cleared.
     ///
     /// [`Manifest`]: c2pa::Manifest
     /// [`sign()`]: Self::sign
-    pub fn add_identity_assertion(&mut self, iab: IdentityAssertionBuilder) {
+    pub fn add_identity_assertion(&mut self, iab: AsyncIdentityAssertionBuilder) {
         #[cfg(not(target_arch = "wasm32"))]
         {
             #[allow(clippy::unwrap_used)]
