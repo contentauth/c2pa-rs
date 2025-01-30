@@ -65,9 +65,9 @@ impl SignerPayload {
                 }
 
                 // TO REVIEW WITH GAVIN: I'm getting different value for
-                // assertion.alg (None) via the DynamicAssertion API than what
-                // I'm getting when I read the claim back on validation
-                // (Some("ps256")).
+                // assertion.alg (None) via the AsyncDynamicAssertion API than
+                // what I'm getting when I read the claim back
+                // on validation (Some("ps256")).
 
                 // if let Some(alg) = claim_assertion.alg().as_ref() {
                 //     if Some(alg) != ref_assertion.alg().as_ref() {
