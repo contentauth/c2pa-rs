@@ -6,6 +6,13 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 The format of this changelog is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.6.0](https://github.com/contentauth/c2pa-rs/compare/cawg-identity-v0.5.0...cawg-identity-v0.6.0)
+_30 January 2025_
+
+### Added
+
+* *(cawg_identity)* Split `CredentialHolder` into sync and async versions (#891)
+
 ## [0.5.0](https://github.com/contentauth/c2pa-rs/compare/cawg-identity-v0.4.0...cawg-identity-v0.5.0)
 _29 January 2025_
 
