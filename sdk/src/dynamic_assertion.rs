@@ -19,7 +19,8 @@ use async_trait::async_trait;
 
 use crate::{hashed_uri::HashedUri, Result};
 
-/// A `DynamicAssertion` is an assertion that has the ability to adjust its content based on other assertions within the overall [`Manifest`].
+/// A `DynamicAssertion` is an assertion that has the ability to adjust
+/// its content based on other assertions within the overall [`Manifest`].
 ///
 /// Use `DynamicAssertion` when the overall signing path is synchronous.
 ///
