@@ -30,11 +30,11 @@ use crate::{
 };
 
 #[derive(Debug)]
-pub(crate) struct NaiveCredentialHolder {}
+pub(crate) struct NaiveAsyncCredentialHolder {}
 
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
-impl AsyncCredentialHolder for NaiveCredentialHolder {
+impl AsyncCredentialHolder for NaiveAsyncCredentialHolder {
     fn sig_type(&self) -> &'static str {
         "INVALID.identity.naive_credential"
     }

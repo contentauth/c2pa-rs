@@ -20,7 +20,7 @@ use wasm_bindgen_test::wasm_bindgen_test;
 
 use crate::{
     builder::{IdentityAssertionBuilder, IdentityAssertionSigner},
-    tests::fixtures::{NaiveCredentialHolder, NaiveSignatureVerifier},
+    tests::fixtures::{NaiveAsyncCredentialHolder, NaiveSignatureVerifier},
     IdentityAssertion,
 };
 
@@ -45,7 +45,7 @@ async fn simple_case() {
 
     let mut signer = IdentityAssertionSigner::from_test_credentials(SigningAlg::Ps256);
 
-    let nch = NaiveCredentialHolder {};
+    let nch = NaiveAsyncCredentialHolder {};
     let iab = IdentityAssertionBuilder::for_credential_holder(nch);
     signer.add_identity_assertion(iab);
 
