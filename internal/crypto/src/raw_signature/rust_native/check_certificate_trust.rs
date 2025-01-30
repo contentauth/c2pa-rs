@@ -19,13 +19,10 @@ use x509_parser::{
     certificate::X509Certificate, der_parser::oid, oid_registry::Oid, x509::AlgorithmIdentifier,
 };
 
-use super::validators::validator_for_signing_alg;
+use super::validators::validator_for_sig_and_hash_algs;
 use crate::{
     cose::{CertificateTrustError, CertificateTrustPolicy},
-    raw_signature::{
-        oids::{EC_PUBLICKEY_OID, PRIME256V1_OID, SECP384R1_OID, SECP521R1_OID},
-        RawSignatureValidationError, SigningAlg,
-    },
+    raw_signature::{oids::*, RawSignatureValidationError, SigningAlg},
 };
 
 pub(crate) fn check_certificate_trust(
@@ -139,6 +136,67 @@ fn check_chain_order(certs: &[Vec<u8>]) -> Result<(), CertificateTrustError> {
     Ok(())
 }
 
+fn ans1_oid_bcder_oid(asn1_oid: &asn1_rs::Oid) -> Option<bcder::Oid> {
+    let asn1_oid_str = asn1_oid.to_id_string();
+    bcder::Oid::from_str(&asn1_oid_str).ok()
+}
+
+fn signing_alg_to_sig_and_hash_oid(alg: &str) -> Option<(bcder::Oid, bcder::Oid)> {
+    if alg == "rsa256" {
+        Some((
+            ans1_oid_bcder_oid(&RSA_OID)?,
+            ans1_oid_bcder_oid(&SHA256_OID)?,
+        ))
+    } else if alg == "rsa384" {
+        Some((
+            ans1_oid_bcder_oid(&RSA_OID)?,
+            ans1_oid_bcder_oid(&SHA384_OID)?,
+        ))
+    } else if alg == "rsa512" {
+        Some((
+            ans1_oid_bcder_oid(&RSA_OID)?,
+            ans1_oid_bcder_oid(&SHA512_OID)?,
+        ))
+    } else if alg == "es256" {
+        Some((
+            ans1_oid_bcder_oid(&EC_PUBLICKEY_OID)?,
+            ans1_oid_bcder_oid(&SHA256_OID)?,
+        ))
+    } else if alg == "es384" {
+        Some((
+            ans1_oid_bcder_oid(&EC_PUBLICKEY_OID)?,
+            ans1_oid_bcder_oid(&SHA384_OID)?,
+        ))
+    } else if alg == "es512" {
+        Some((
+            ans1_oid_bcder_oid(&EC_PUBLICKEY_OID)?,
+            ans1_oid_bcder_oid(&SHA512_OID)?,
+        ))
+    } else if alg == "ps256" {
+        Some((
+            ans1_oid_bcder_oid(&RSA_PSS_OID)?,
+            ans1_oid_bcder_oid(&SHA256_OID)?,
+        ))
+    } else if alg == "ps384" {
+        Some((
+            ans1_oid_bcder_oid(&RSA_PSS_OID)?,
+            ans1_oid_bcder_oid(&SHA384_OID)?,
+        ))
+    } else if alg == "ps512" {
+        Some((
+            ans1_oid_bcder_oid(&RSA_PSS_OID)?,
+            ans1_oid_bcder_oid(&SHA512_OID)?,
+        ))
+    } else if alg == "ed25519" {
+        Some((
+            ans1_oid_bcder_oid(&ED25519_OID)?,
+            ans1_oid_bcder_oid(&SHA512_OID)?,
+        ))
+    } else {
+        None
+    }
+}
+
 fn cert_signing_alg(cert: &X509Certificate) -> Option<String> {
     let cert_alg = &cert.signature_algorithm.algorithm;
 
@@ -154,7 +212,7 @@ fn cert_signing_alg(cert: &X509Certificate) -> Option<String> {
         Some(SigningAlg::Es384.to_string())
     } else if *cert_alg == ECDSA_WITH_SHA512_OID {
         Some(SigningAlg::Es512.to_string())
-    } else if *cert_alg == RSASSA_PSS_OID {
+    } else if *cert_alg == RSA_PSS_OID {
         signing_alg_from_rsapss_alg(&cert.signature_algorithm)
     } else if *cert_alg == ED25519_OID {
         Some(SigningAlg::Ed25519.to_string())
@@ -244,11 +302,10 @@ fn verify_data(
         return Err(CertificateTrustError::InvalidCertificate);
     };
 
-    let signing_alg: SigningAlg = cert_alg_string
-        .parse()
-        .map_err(|_| CertificateTrustError::InvalidCertificate)?;
+    let (sig_alg, hash_alg) = signing_alg_to_sig_and_hash_oid(&cert_alg_string)
+        .ok_or(CertificateTrustError::InvalidCertificate)?;
 
-    let result = if let Some(validator) = validator_for_signing_alg(signing_alg) {
+    let result = if let Some(validator) = validator_for_sig_and_hash_algs(&sig_alg, &hash_alg) {
         validator.validate(&sig, &data, certificate_public_key.raw.as_ref())
     } else {
         return Err(CertificateTrustError::InvalidCertificate);
@@ -260,15 +317,3 @@ fn verify_data(
         Err(_err) => Err(CertificateTrustError::InvalidCertificate),
     }
 }
-
-const RSASSA_PSS_OID: Oid<'static> = oid!(1.2.840 .113549 .1 .1 .10);
-const ECDSA_WITH_SHA256_OID: Oid<'static> = oid!(1.2.840 .10045 .4 .3 .2);
-const ECDSA_WITH_SHA384_OID: Oid<'static> = oid!(1.2.840 .10045 .4 .3 .3);
-const ECDSA_WITH_SHA512_OID: Oid<'static> = oid!(1.2.840 .10045 .4 .3 .4);
-const SHA256_WITH_RSAENCRYPTION_OID: Oid<'static> = oid!(1.2.840 .113549 .1 .1 .11);
-const SHA384_WITH_RSAENCRYPTION_OID: Oid<'static> = oid!(1.2.840 .113549 .1 .1 .12);
-const SHA512_WITH_RSAENCRYPTION_OID: Oid<'static> = oid!(1.2.840 .113549 .1 .1 .13);
-const ED25519_OID: Oid<'static> = oid!(1.3.101 .112);
-const SHA256_OID: Oid<'static> = oid!(2.16.840 .1 .101 .3 .4 .2 .1);
-const SHA384_OID: Oid<'static> = oid!(2.16.840 .1 .101 .3 .4 .2 .2);
-const SHA512_OID: Oid<'static> = oid!(2.16.840 .1 .101 .3 .4 .2 .3);
