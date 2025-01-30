@@ -21,7 +21,7 @@ mod error;
 pub use error::IdentityBuilderError;
 
 pub(crate) mod identity_assertion_builder;
-pub use identity_assertion_builder::AsyncIdentityAssertionBuilder;
+pub use identity_assertion_builder::{AsyncIdentityAssertionBuilder, IdentityAssertionBuilder};
 
 mod identity_assertion_signer;
 pub use identity_assertion_signer::IdentityAssertionSigner;
