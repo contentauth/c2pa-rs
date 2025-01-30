@@ -17,13 +17,13 @@ use c2pa_crypto::raw_signature::{AsyncRawSigner, SigningAlg};
 
 use crate::builder::AsyncIdentityAssertionBuilder;
 
-/// An `IdentityAssertionSigner` extends the [`AsyncSigner`] interface to add
-/// zero or more identity assertions to a C2PA [`Manifest`] that is being
+/// An `AsyncIdentityAssertionSigner` extends the [`AsyncSigner`] interface to
+/// add zero or more identity assertions to a C2PA [`Manifest`] that is being
 /// produced.
 ///
 /// [`AsyncSigner`]: c2pa::AsyncSigner
 /// [`Manifest`]: c2pa::Manifest
-pub struct IdentityAssertionSigner {
+pub struct AsyncIdentityAssertionSigner {
     #[cfg(not(target_arch = "wasm32"))]
     signer: Box<dyn AsyncRawSigner + Sync + Send>,
 
@@ -37,8 +37,8 @@ pub struct IdentityAssertionSigner {
     identity_assertions: std::cell::RefCell<Vec<AsyncIdentityAssertionBuilder>>,
 }
 
-impl IdentityAssertionSigner {
-    /// Create an `IdentityAssertionSigner` wrapping the provided
+impl AsyncIdentityAssertionSigner {
+    /// Create an `AsyncIdentityAssertionSigner` wrapping the provided
     /// [`AsyncRawSigner`] instance.
     #[cfg(not(target_arch = "wasm32"))]
     pub fn new(signer: Box<dyn AsyncRawSigner + Sync + Send>) -> Self {
@@ -48,7 +48,7 @@ impl IdentityAssertionSigner {
         }
     }
 
-    /// Create an `IdentityAssertionSigner` wrapping the provided
+    /// Create an `AsyncIdentityAssertionSigner` wrapping the provided
     /// [`AsyncRawSigner`] instance.
     #[cfg(target_arch = "wasm32")]
     pub fn new(signer: Box<dyn AsyncRawSigner>) -> Self {
@@ -58,7 +58,7 @@ impl IdentityAssertionSigner {
         }
     }
 
-    /// (FOR USE BY INTERNAL TESTS ONLY): Create an IdentityAssertionSigner
+    /// (FOR USE BY INTERNAL TESTS ONLY): Create an AsyncIdentityAssertionSigner
     /// using test credentials for a particular algorithm.
     #[cfg(test)]
     pub(crate) fn from_test_credentials(alg: SigningAlg) -> Self {
@@ -120,7 +120,7 @@ impl IdentityAssertionSigner {
 
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
-impl AsyncSigner for IdentityAssertionSigner {
+impl AsyncSigner for AsyncIdentityAssertionSigner {
     async fn sign(&self, data: Vec<u8>) -> Result<Vec<u8>> {
         self.signer.sign(data).await.map_err(|e| e.into())
     }

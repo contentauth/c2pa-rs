@@ -85,12 +85,13 @@ impl DynamicAssertion for IdentityAssertionBuilder {
 }
 
 /// An `AsyncIdentityAssertionBuilder` gathers together the necessary components
-/// for an identity assertion. When added to an [`IdentityAssertionSigner`],
-/// it ensures that the proper data is added to the final C2PA Manifest.
+/// for an identity assertion. When added to an
+/// [`AsyncIdentityAssertionSigner`], it ensures that the proper data is added
+/// to the final C2PA Manifest.
 ///
 /// Use this when the overall C2PA Manifest signing path is asynchronous.
 ///
-/// [`IdentityAssertionSigner`]: crate::builder::IdentityAssertionSigner
+/// [`AsyncIdentityAssertionSigner`]: crate::builder::AsyncIdentityAssertionSigner
 pub struct AsyncIdentityAssertionBuilder {
     #[cfg(not(target_arch = "wasm32"))]
     credential_holder: Box<dyn AsyncCredentialHolder + Sync + Send>,
