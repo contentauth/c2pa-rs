@@ -212,6 +212,52 @@ mod integration_1 {
 
     #[test]
     #[cfg(feature = "file_io")]
+    fn test_embed_json_manifest_2() -> Result<()> {
+        // set up parent and destination paths
+        let dir = tempdir()?;
+        let output_path = dir.path().join("test_file_2.jpg");
+
+        let mut fixture_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        fixture_path.push("tests/fixtures");
+
+        let mut parent_path = fixture_path.clone();
+        parent_path.push("api_test_C.jpg");
+        let mut manifest_path = fixture_path.clone();
+        manifest_path.push("api_test_json.json");
+
+        let json = std::fs::read_to_string(manifest_path)?;
+
+        let mut builder = Builder::from_json(&json)?;
+        builder.base_path = Some(fixture_path.canonicalize()?);
+
+        // sign and embed into the target file
+        let mut signcert_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        signcert_path.push("tests/fixtures/api_test_es256_certs.pem");
+        let mut pkey_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        pkey_path.push("tests/fixtures/certs/api_test_es256_certs.pem");
+        let signer = create_signer::from_files(signcert_path, pkey_path, SigningAlg::Ps256, None)
+            .expect("get_signer_from_files");
+
+        builder.sign_file(signer.as_ref(), &parent_path, &output_path)?;
+
+        // read our new file with embedded manifest
+        let reader = Reader::from_file(&output_path)?;
+
+        println!("{reader}");
+        // std::fs::copy(&output_path, "test_file.jpg")?; // for debugging to get copy of the file
+
+        assert!(reader.active_manifest().is_some());
+        if let Some(manifest) = reader.active_manifest() {
+            assert!(manifest.title().is_some());
+            assert_eq!(manifest.ingredients().len(), 2);
+        } else {
+            panic!("no manifest in store");
+        }
+        Ok(())
+    }
+
+    #[test]
+    #[cfg(feature = "file_io")]
     fn test_embed_bmff_manifest() -> Result<()> {
         // set up parent and destination paths
         let dir = tempdir()?;

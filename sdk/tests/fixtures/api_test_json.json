@@ -1,0 +1,30 @@
+{
+  "claim_version": 1,
+  "claim_generator_info": [
+    {
+      "name": "c2pa-c test",
+      "version": "0.2"
+    }
+  ],
+  "assertions": [
+    {
+      "label": "cawg.training-mining",
+      "data": {
+        "entries": {
+          "cawg.ai_generative_training": {
+            "use": "notAllowed"
+          },
+          "cawg.ai_inference": {
+            "use": "notAllowed"
+          },
+          "cawg.ai_training": {
+            "use": "notAllowed"
+          },
+          "cawg.data_mining": {
+            "use": "notAllowed"
+          }
+        }
+      }
+    }
+  ]
+}
