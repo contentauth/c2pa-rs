@@ -232,9 +232,9 @@ mod integration_1 {
 
         // sign and embed into the target file
         let mut signcert_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        signcert_path.push("tests/fixtures/api_test_es256_certs.pem");
+        signcert_path.push("tests/fixtures/certs/api_test_es256_certs.pem");
         let mut pkey_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        pkey_path.push("tests/fixtures/certs/api_test_es256_certs.pem");
+        pkey_path.push("tests/fixtures/certs/api_tests_es256_private.key");
         let signer = create_signer::from_files(signcert_path, pkey_path, SigningAlg::Ps256, None)
             .expect("get_signer_from_files");
 
