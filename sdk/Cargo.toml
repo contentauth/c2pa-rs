@@ -1,6 +1,6 @@
 [package]
 name = "c2pa"
-version = "0.43.0"
+version = "0.45.0"
 description = "Rust SDK for C2PA (Coalition for Content Provenance and Authenticity) implementors"
 authors = [
     "Maurice Fisher <mfisher@adobe.com>",
@@ -26,7 +26,6 @@ all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
 [features]
-default = ["v1_api"]
 add_thumbnails = ["image"]
 file_io = ["openssl_sign"]
 serialize_thumbnails = []
@@ -37,7 +36,6 @@ openssl_sign = ["openssl"]
 json_schema = ["dep:schemars", "c2pa-crypto/json_schema"]
 pdf = ["dep:lopdf"]
 v1_api = []
-unstable_api = []
 
 # The diagnostics feature is unsupported and might be removed.
 # It enables some low-overhead timing features used in our development cycle.
@@ -57,11 +55,9 @@ required-features = ["file_io"]
 
 [[example]]
 name = "v2show"
-required-features = ["unstable_api"]
 
 [[example]]
 name = "v2api"
-required-features = ["unstable_api"]
 
 [lib]
 crate-type = ["lib"]
@@ -76,8 +72,8 @@ bcder = "0.7.3"
 bytes = "1.7.2"
 byteorder = { version = "1.4.3", default-features = false }
 byteordered = "0.6.0"
-c2pa-crypto = { path = "../internal/crypto", version = "0.5.0" }
-c2pa-status-tracker = { path = "../internal/status-tracker", version = "0.3.0" }
+c2pa-crypto = { path = "../internal/crypto", version = "0.6.0" }
+c2pa-status-tracker = { path = "../internal/status-tracker", version = "0.4.0" }
 chrono = { version = "0.4.39", default-features = false, features = [
     "serde",
     "wasmbind",
@@ -159,9 +155,6 @@ web-sys = { version = "0.3.58", features = [
 
 [dev-dependencies]
 anyhow = "1.0.40"
-c2pa = { path = ".", default-features = false, features = [
-    "unstable_api",
-] } # allow integration tests to use the new API
 glob = "0.3.1"
 hex-literal = "0.4.1"
 jumbf = "0.4.0"

@@ -22,7 +22,7 @@ use std::{
 use anyhow::{Context, Result};
 use c2pa::{
     create_signer,
-    jumbf_io::{get_supported_types, load_jumbf_from_stream, save_jumbf_to_stream},
+    jumbf_io::{load_jumbf_from_stream, save_jumbf_to_stream},
     Builder, Error, Ingredient, Reader, Relationship, Signer, SigningAlg,
 };
 use memchr::memmem;
@@ -258,6 +258,7 @@ impl MakeTestImages {
         let format = extension_to_mime(extension).unwrap_or("image/jpeg");
 
         let manifest_def = json!({
+            "claim_version": 1,
             "vendor": "contentauth",
             "title": name,
             "format": &format,
@@ -611,8 +612,6 @@ impl MakeTestImages {
 
     /// Runs a list of recipes
     pub fn run(&self) -> Result<()> {
-        let supported = get_supported_types();
-        println!("Supported types: {:#?}", supported);
         if !self.output_dir.exists() {
             std::fs::create_dir_all(&self.output_dir).context("Can't create output folder")?;
         };

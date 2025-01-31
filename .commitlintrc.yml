@@ -10,7 +10,7 @@ rules:
   # Description must start with a capital letter and must not end with a period or space
   description-format:
     level: error
-    format: ^[A-Z0-9].*[^. ]$
+    format: ^[\w ]+[\s\S]*$
 
   # Description should be <70 chars
   description-max-length:
@@ -37,8 +37,15 @@ rules:
   type:
     level: error
     options:
-      - fix
-      - feat
+      - build
       - chore
+      - ci
+      - docs
+      - feat
+      - fix
+      - perf
+      - refactor
+      - revert
+      - style
+      - test
       - update
-      - doc

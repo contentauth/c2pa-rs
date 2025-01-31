@@ -19,14 +19,61 @@ use async_trait::async_trait;
 
 use crate::{hashed_uri::HashedUri, Result};
 
-/// A `DynamicAssertion` is an assertion that has the ability
+/// A `DynamicAssertion` is an assertion that has the ability to adjust
+/// its content based on other assertions within the overall [`Manifest`].
+///
+/// Use `DynamicAssertion` when the overall signing path is synchronous.
+///
+/// [`Manifest`]: crate::Manifest
+pub trait DynamicAssertion {
+    /// Return the preferred label for this assertion.
+    ///
+    /// Note that the label may be adjusted in case multiple assertions
+    /// return the same preferred label (i.e. a `_2`, `_3`, etc. suffix
+    /// may be added).
+    fn label(&self) -> String;
+
+    /// Return the expected size of the final assertion content in bytes.
+    ///
+    /// This function will be called by the [`Builder`] API if the hard
+    /// binding assertion in use requires that the assertion size be locked
+    /// down in order to complete file layout (i.e. when using a data hash
+    /// assertion).
+    ///
+    /// [`Builder`]: crate::Builder
+    fn reserve_size(&self) -> usize;
+
+    /// Return the final assertion content.
+    ///
+    /// The `label` parameter will contain the final assigned label for
+    /// this assertion.
+    ///
+    /// If the hard binding assertion requires that the assertion size
+    /// be predicted in advance, then `size` will contain the number of bytes
+    /// specified by a previous call to `reserve_size`. In that case, the
+    /// resulting binary content *MUST* exactly match the specified size;
+    /// otherwise, the overall manifest generation process will fail.
+    ///
+    /// The `claim` structure will contain information about the preliminary
+    /// C2PA claim as known at the time of this call.
+    fn content(
+        &self,
+        label: &str,
+        size: Option<usize>,
+        claim: &PreliminaryClaim,
+    ) -> Result<Vec<u8>>;
+}
+
+/// An `AsyncDynamicAssertion` is an assertion that has the ability
 /// to adjust its content based on other assertions within the
 /// overall [`Manifest`].
+///
+/// Use `AsyncDynamicAssertion` when the overall signing path is asynchronous.
 ///
 /// [`Manifest`]: crate::Manifest
 #[cfg(not(target_arch = "wasm32"))]
 #[async_trait]
-pub trait DynamicAssertion: Sync {
+pub trait AsyncDynamicAssertion: Sync {
     /// Return the preferred label for this assertion.
     ///
     /// Note that the label may be adjusted in case multiple assertions
@@ -65,14 +112,16 @@ pub trait DynamicAssertion: Sync {
     ) -> Result<Vec<u8>>;
 }
 
-/// A `DynamicAssertion` is an assertion that has the ability
+/// An `AsyncDynamicAssertion` is an assertion that has the ability
 /// to adjust its content based on other assertions within the
 /// overall [`Manifest`].
+///
+/// Use `AsyncDynamicAssertion` when the overall signing path is asynchronous.
 ///
 /// [`Manifest`]: crate::Manifest
 #[cfg(target_arch = "wasm32")]
 #[async_trait(?Send)]
-pub trait DynamicAssertion {
+pub trait AsyncDynamicAssertion {
     /// Return the preferred label for this assertion.
     ///
     /// Note that the label may be adjusted in case multiple assertions
@@ -112,7 +161,7 @@ pub trait DynamicAssertion {
 }
 
 /// Describes information from the preliminary C2PA Claim that may
-/// be helpful in constructing the final content of a [`DynamicAssertion`].
+/// be helpful in constructing the final content of a [`AsyncDynamicAssertion`].
 #[derive(Debug, Default, Eq, PartialEq)]
 pub struct PreliminaryClaim {
     assertion_uris: Vec<HashedUri>,
