@@ -12,7 +12,7 @@
 
 #![doc = include_str!("../README.md")]
 
-/// Tool to display and create C2PA manifests
+/// Tool to display and create C2PA manifests.
 ///
 /// A file path to an asset must be provided. If only the path
 /// is given, this will generate a summary report of any claims
@@ -195,7 +195,7 @@ struct ManifestDef {
     ingredient_paths: Option<Vec<PathBuf>>,
 }
 
-// convert certain errors to output messages
+// Convert certain errors to output messages.
 fn special_errs(e: c2pa::Error) -> anyhow::Error {
     match e {
         Error::JumbfNotFound => anyhow!("No claim found"),
@@ -206,7 +206,7 @@ fn special_errs(e: c2pa::Error) -> anyhow::Error {
     }
 }
 
-// normalize extensions so we can compare them
+// Normalize extensions so we can compare them.
 fn ext_normal(path: &Path) -> String {
     let ext = path
         .extension()
