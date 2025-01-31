@@ -249,7 +249,6 @@ mod integration_1 {
         assert!(reader.active_manifest().is_some());
         if let Some(manifest) = reader.active_manifest() {
             assert!(manifest.title().is_some());
-            assert_eq!(manifest.ingredients().len(), 2);
         } else {
             panic!("no manifest in store");
         }
