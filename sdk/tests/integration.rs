@@ -212,7 +212,7 @@ mod integration_1 {
 
     #[test]
     #[cfg(feature = "file_io")]
-    fn test_embed_json_manifest_2() -> Result<()> {
+    fn test_embed_json_manifest_es_256() -> Result<()> {
         // set up parent and destination paths
         let dir = tempdir()?;
         let output_path = dir.path().join("test_file_2.jpg");
