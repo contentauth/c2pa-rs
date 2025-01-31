@@ -22,13 +22,13 @@ unexpected_cfgs = { level = "warn", check-cfg = ['cfg(test)'] }
 [dependencies]
 anyhow = "1.0"
 atree = "0.5.2"
-c2pa = { path = "../sdk", version = "0.45.0", features = [
+c2pa = { path = "../sdk", version = "0.45.1", features = [
 	"fetch_remote_manifests",
 	"file_io",
 	"add_thumbnails",
 	"pdf"
 ] }
-c2pa-crypto = { path = "../internal/crypto", version = "0.6.0" }
+c2pa-crypto = { path = "../internal/crypto", version = "0.6.1" }
 clap = { version = "4.5.10", features = ["derive", "env"] }
 env_logger = "0.11.4"
 glob = "0.3.1"
