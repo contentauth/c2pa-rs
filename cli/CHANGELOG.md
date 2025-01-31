@@ -6,6 +6,13 @@ This project adheres to [Semantic Versioning](https://semver.org), except that â
 
 Since version 0.10.0, the format of this changelog is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.13.1](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.13.0...c2patool-v0.13.1)
+_31 January 2025_
+
+### Fixed
+
+* Trigger a release of c2patool to pick up latest c2pa-rs changes (#895)
+
 ## [0.13.0](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.12.0...c2patool-v0.13.0)
 _29 January 2025_
 
