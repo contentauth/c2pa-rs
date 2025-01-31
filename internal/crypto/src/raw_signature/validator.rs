@@ -15,7 +15,7 @@ use async_trait::async_trait;
 use bcder::Oid;
 use thiserror::Error;
 
-use crate::raw_signature::{oids::*, SigningAlg};
+use crate::raw_signature::SigningAlg;
 
 /// A `RawSignatureValidator` implementation checks a signature encoded using a
 /// specific signature algorithm and a private/public key pair.
@@ -81,13 +81,6 @@ pub fn validator_for_signing_alg(alg: SigningAlg) -> Option<Box<dyn RawSignature
         return Some(validator);
     }
 
-    #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
-    if let Some(validator) =
-        crate::raw_signature::webcrypto::validators::validator_for_signing_alg(alg)
-    {
-        return Some(validator);
-    }
-
     let _ = alg; // this value will be unused in this case
     None
 }
@@ -101,46 +94,29 @@ pub(crate) fn validator_for_sig_and_hash_algs(
     sig_alg: &Oid,
     hash_alg: &Oid,
 ) -> Option<Box<dyn RawSignatureValidator>> {
-    if sig_alg.as_ref() == RSA_OID.as_bytes()
-        || sig_alg.as_ref() == SHA256_WITH_RSAENCRYPTION_OID.as_bytes()
-        || sig_alg.as_ref() == SHA384_WITH_RSAENCRYPTION_OID.as_bytes()
-        || sig_alg.as_ref() == SHA512_WITH_RSAENCRYPTION_OID.as_bytes()
+    // TO REVIEW: Do we need any of the RSA-PSS algorithms for this use case?
+    #[cfg(any(target_arch = "wasm32", feature = "rust_native_crypto"))]
     {
-        // TO REVIEW: Do we need any of the RSA-PSS algorithms for this use case?
-        #[cfg(any(target_arch = "wasm32", feature = "rust_native_crypto"))]
-        {
-            if let Some(validator) =
-                crate::raw_signature::rust_native::validators::validator_for_sig_and_hash_algs(
-                    sig_alg, hash_alg,
-                )
-            {
-                return Some(validator);
-            }
-        }
-
-        #[cfg(not(target_arch = "wasm32"))]
         if let Some(validator) =
-            crate::raw_signature::openssl::validators::validator_for_sig_and_hash_algs(
+            crate::raw_signature::rust_native::validators::validator_for_sig_and_hash_algs(
                 sig_alg, hash_alg,
             )
         {
             return Some(validator);
         }
-    } else if sig_alg.as_ref() == EC_PUBLICKEY_OID.as_bytes()
-        || sig_alg.as_ref() == ECDSA_WITH_SHA256_OID.as_bytes()
-        || sig_alg.as_ref() == ECDSA_WITH_SHA384_OID.as_bytes()
-        || sig_alg.as_ref() == ECDSA_WITH_SHA512_OID.as_bytes()
-    {
-        if hash_alg.as_ref() == SHA256_OID.as_bytes() {
-            return validator_for_signing_alg(SigningAlg::Es256);
-        } else if hash_alg.as_ref() == SHA384_OID.as_bytes() {
-            return validator_for_signing_alg(SigningAlg::Es384);
-        } else if hash_alg.as_ref() == SHA512_OID.as_bytes() {
-            return validator_for_signing_alg(SigningAlg::Es512);
-        }
-    } else if sig_alg.as_ref() == ED25519_OID.as_bytes() {
-        return validator_for_signing_alg(SigningAlg::Ed25519);
     }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    if let Some(validator) =
+        crate::raw_signature::openssl::validators::validator_for_sig_and_hash_algs(
+            sig_alg, hash_alg,
+        )
+    {
+        return Some(validator);
+    }
+
+    let _ = sig_alg; // this value will be unused in this case
+    let _ = hash_alg; // this value will be unused in this case
 
     None
 }
@@ -157,7 +133,16 @@ pub(crate) fn validator_for_sig_and_hash_algs(
 pub fn async_validator_for_signing_alg(
     alg: SigningAlg,
 ) -> Option<Box<dyn AsyncRawSignatureValidator>> {
-    crate::raw_signature::webcrypto::async_validator_for_signing_alg(alg)
+    crate::raw_signature::rust_native::validators::async_validator_for_signing_alg(alg)
+}
+#[cfg(target_arch = "wasm32")]
+pub(crate) fn async_validator_for_sig_and_hash_algs(
+    sig_alg: &Oid,
+    hash_alg: &Oid,
+) -> Option<Box<dyn AsyncRawSignatureValidator>> {
+    crate::raw_signature::rust_native::validators::async_validator_for_sig_and_hash_algs(
+        sig_alg, hash_alg,
+    )
 }
 
 /// Describes errors that can be identified when validating a raw signature.
@@ -201,19 +186,5 @@ impl From<openssl::error::ErrorStack> for RawSignatureValidationError {
 impl From<crate::raw_signature::openssl::OpenSslMutexUnavailable> for RawSignatureValidationError {
     fn from(err: crate::raw_signature::openssl::OpenSslMutexUnavailable) -> Self {
         Self::InternalError(err.to_string())
-    }
-}
-
-#[cfg(target_arch = "wasm32")]
-impl From<crate::raw_signature::webcrypto::WasmCryptoError> for RawSignatureValidationError {
-    fn from(err: crate::raw_signature::webcrypto::WasmCryptoError) -> Self {
-        match err {
-            crate::raw_signature::webcrypto::WasmCryptoError::UnknownContext => {
-                Self::InternalError("unknown WASM context".to_string())
-            }
-            crate::raw_signature::webcrypto::WasmCryptoError::NoCryptoAvailable => {
-                Self::InternalError("WASM crypto unavailable".to_string())
-            }
-        }
     }
 }

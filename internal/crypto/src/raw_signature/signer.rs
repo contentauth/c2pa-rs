@@ -171,20 +171,6 @@ impl From<crate::raw_signature::openssl::OpenSslMutexUnavailable> for RawSignerE
     }
 }
 
-#[cfg(target_arch = "wasm32")]
-impl From<crate::raw_signature::webcrypto::WasmCryptoError> for RawSignerError {
-    fn from(err: crate::raw_signature::webcrypto::WasmCryptoError) -> Self {
-        match err {
-            crate::raw_signature::webcrypto::WasmCryptoError::UnknownContext => {
-                Self::InternalError("unknown WASM context".to_string())
-            }
-            crate::raw_signature::webcrypto::WasmCryptoError::NoCryptoAvailable => {
-                Self::InternalError("WASM crypto unavailable".to_string())
-            }
-        }
-    }
-}
-
 /// Return a built-in [`RawSigner`] instance using the provided signing
 /// certificate and private key.
 ///

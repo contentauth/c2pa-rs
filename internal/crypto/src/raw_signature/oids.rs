@@ -32,4 +32,8 @@ pub(crate) const ECDSA_WITH_SHA256_OID: Oid<'static> = oid!(1.2.840 .10045 .4 .3
 pub(crate) const ECDSA_WITH_SHA384_OID: Oid<'static> = oid!(1.2.840 .10045 .4 .3 .3);
 pub(crate) const ECDSA_WITH_SHA512_OID: Oid<'static> = oid!(1.2.840 .10045 .4 .3 .4);
 
+pub(crate) const SECP521R1_OID: Oid<'static> = oid!(1.3.132 .0 .35);
+pub(crate) const SECP384R1_OID: Oid<'static> = oid!(1.3.132 .0 .34);
+pub(crate) const PRIME256V1_OID: Oid<'static> = oid!(1.2.840 .10045 .3 .1 .7);
+
 pub(crate) const ED25519_OID: Oid<'static> = oid!(1.3.101 .112);

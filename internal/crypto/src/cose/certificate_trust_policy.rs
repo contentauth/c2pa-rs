@@ -100,17 +100,14 @@ impl CertificateTrustPolicy {
             return Ok(());
         }
 
-        if _async {
-            #[cfg(target_arch = "wasm32")]
-            {
-                return crate::raw_signature::webcrypto::check_certificate_trust::check_certificate_trust(
-                    self,
-                    chain_der,
-                    end_entity_cert_der,
-                    signing_time_epoch,
-                )
-                .await;
-            }
+        #[cfg(any(target_arch = "wasm32", feature = "rust_native_crypto", test))]
+        {
+            return crate::raw_signature::rust_native::check_certificate_trust::check_certificate_trust(
+                self,
+                chain_der,
+                end_entity_cert_der,
+                signing_time_epoch,
+            );
         }
 
         #[cfg(not(target_arch = "wasm32"))]
@@ -369,20 +366,6 @@ impl From<openssl::error::ErrorStack> for CertificateTrustError {
 impl From<crate::raw_signature::openssl::OpenSslMutexUnavailable> for CertificateTrustError {
     fn from(err: crate::raw_signature::openssl::OpenSslMutexUnavailable) -> Self {
         Self::InternalError(err.to_string())
-    }
-}
-
-#[cfg(target_arch = "wasm32")]
-impl From<crate::raw_signature::webcrypto::WasmCryptoError> for CertificateTrustError {
-    fn from(err: crate::raw_signature::webcrypto::WasmCryptoError) -> Self {
-        match err {
-            crate::raw_signature::webcrypto::WasmCryptoError::UnknownContext => {
-                Self::InternalError("unknown WASM context".to_string())
-            }
-            crate::raw_signature::webcrypto::WasmCryptoError::NoCryptoAvailable => {
-                Self::InternalError("WASM crypto unavailable".to_string())
-            }
-        }
     }
 }
 

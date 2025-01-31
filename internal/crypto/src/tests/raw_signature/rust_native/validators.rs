@@ -20,7 +20,6 @@ use crate::raw_signature::{rust_native, RawSignatureValidationError, SigningAlg}
 
 const SAMPLE_DATA: &[u8] = b"some sample content to sign";
 
-/* Not implemented in rust_native yet.
 #[test]
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
 fn es256() {
@@ -80,8 +79,7 @@ fn es384() {
 }
 
 #[test]
-// #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)] // ES512 not
-// implemented
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
 fn es512() {
     let signature = include_bytes!("../../fixtures/raw_signature/es512.raw_sig");
     let pub_key = include_bytes!("../../fixtures/raw_signature/es512.pub_key");
@@ -90,7 +88,6 @@ fn es512() {
 
     validator.validate(signature, SAMPLE_DATA, pub_key).unwrap();
 }
-*/
 
 #[test]
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
@@ -283,7 +280,7 @@ fn rs512() {
 const SHA1_OID: Oid = bcder::Oid(OctetString::from_static(&[43, 14, 3, 2, 26]));
 
 #[test]
-// #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
 fn sha1() {
     let signature = include_bytes!("../../fixtures/raw_signature/legacy/sha1.raw_sig");
     let pub_key = include_bytes!("../../fixtures/raw_signature/legacy/sha1.pub_key");

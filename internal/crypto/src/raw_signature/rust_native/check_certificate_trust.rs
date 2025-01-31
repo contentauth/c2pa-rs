@@ -11,26 +11,25 @@
 // specific language governing permissions and limitations under
 // each license.
 
+use std::str::FromStr;
+
 use asn1_rs::{Any, Class, FromDer, Header, Tag};
 use nom::AsBytes;
 use x509_parser::{
     certificate::X509Certificate, der_parser::oid, oid_registry::Oid, x509::AlgorithmIdentifier,
 };
 
+use super::validators::validator_for_sig_and_hash_algs;
 use crate::{
     cose::{CertificateTrustError, CertificateTrustPolicy},
-    p1363::der_to_p1363,
-    raw_signature::{
-        validator_for_signing_alg, webcrypto::async_validator_for_signing_alg,
-        RawSignatureValidationError, SigningAlg,
-    },
+    raw_signature::{oids::*, RawSignatureValidationError, SigningAlg},
 };
 
-pub(crate) async fn check_certificate_trust(
+pub(crate) fn check_certificate_trust(
     ctp: &CertificateTrustPolicy,
     chain_der: &[Vec<u8>],
     cert_der: &[u8],
-    _signing_time_epoch: Option<i64>,
+    signing_time_epoch: Option<i64>,
 ) -> Result<(), CertificateTrustError> {
     let Ok((_rem, cert)) = X509Certificate::from_der(cert_der) else {
         return Err(CertificateTrustError::InvalidCertificate);
@@ -40,12 +39,12 @@ pub(crate) async fn check_certificate_trust(
         return Err(CertificateTrustError::InvalidEku);
     };
 
-    let Some(_approved_oid) = ctp.has_allowed_eku(&eku.value) else {
+    let Some(_approved_oid) = ctp.has_allowed_eku(eku.value) else {
         return Err(CertificateTrustError::InvalidEku);
     };
 
     // Add end-entity cert to the chain if not already there.
-    let full_chain = if !chain_der.is_empty() && cert_der == &chain_der[0] {
+    let full_chain = if !chain_der.is_empty() && cert_der == chain_der[0] {
         chain_der.to_vec()
     } else {
         let mut full_chain: Vec<Vec<u8>> = Vec::new();
@@ -56,7 +55,7 @@ pub(crate) async fn check_certificate_trust(
     };
 
     // Make sure chain is in the correct order and valid.
-    check_chain_order(&full_chain).await?;
+    check_chain_order(&full_chain)?;
 
     // Build anchors and check against trust anchors.
     let anchors = ctp
@@ -77,6 +76,16 @@ pub(crate) async fn check_certificate_trust(
         let (_, chain_cert) = X509Certificate::from_der(cert)
             .map_err(|_e| CertificateTrustError::CertificateNotTrusted)?;
 
+        // Make sure the certificate was not expired.
+        if let Some(signing_time) = signing_time_epoch {
+            if !chain_cert.validity().is_valid_at(
+                x509_parser::time::ASN1Time::from_timestamp(signing_time)
+                    .map_err(|_| CertificateTrustError::CertificateNotTrusted)?,
+            ) {
+                return Err(CertificateTrustError::CertificateNotTrusted);
+            }
+        }
+
         for anchor in ctp.trust_anchor_ders() {
             let data = chain_cert.tbs_certificate.as_ref();
             let sig = chain_cert.signature_value.as_ref();
@@ -87,8 +96,7 @@ pub(crate) async fn check_certificate_trust(
                 .map_err(|_e| CertificateTrustError::CertificateNotTrusted)?;
 
             if chain_cert.issuer() == anchor_cert.subject() {
-                let result =
-                    verify_data(anchor.clone(), sig_alg, sig.to_vec(), data.to_vec()).await;
+                let result = verify_data(anchor.clone(), sig_alg, sig.to_vec(), data.to_vec());
 
                 match result {
                     Ok(b) => {
@@ -102,11 +110,10 @@ pub(crate) async fn check_certificate_trust(
         }
     }
 
-    // TO DO: Consider path check and names restrictions.
-    return Err(CertificateTrustError::CertificateNotTrusted);
+    Err(CertificateTrustError::CertificateNotTrusted)
 }
 
-async fn check_chain_order(certs: &[Vec<u8>]) -> Result<(), CertificateTrustError> {
+fn check_chain_order(certs: &[Vec<u8>]) -> Result<(), CertificateTrustError> {
     let chain_length = certs.len();
     if chain_length < 2 {
         return Ok(());
@@ -121,12 +128,73 @@ async fn check_chain_order(certs: &[Vec<u8>]) -> Result<(), CertificateTrustErro
         let sig = current_cert.signature_value.as_ref();
         let sig_alg = cert_signing_alg(&current_cert);
 
-        if !verify_data(issuer_der, sig_alg, sig.to_vec(), data.to_vec()).await? {
+        if !verify_data(issuer_der, sig_alg, sig.to_vec(), data.to_vec())? {
             return Err(CertificateTrustError::CertificateNotTrusted);
         }
     }
 
     Ok(())
+}
+
+fn ans1_oid_bcder_oid(asn1_oid: &asn1_rs::Oid) -> Option<bcder::Oid> {
+    let asn1_oid_str = asn1_oid.to_id_string();
+    bcder::Oid::from_str(&asn1_oid_str).ok()
+}
+
+fn signing_alg_to_sig_and_hash_oid(alg: &str) -> Option<(bcder::Oid, bcder::Oid)> {
+    if alg == "rsa256" {
+        Some((
+            ans1_oid_bcder_oid(&RSA_OID)?,
+            ans1_oid_bcder_oid(&SHA256_OID)?,
+        ))
+    } else if alg == "rsa384" {
+        Some((
+            ans1_oid_bcder_oid(&RSA_OID)?,
+            ans1_oid_bcder_oid(&SHA384_OID)?,
+        ))
+    } else if alg == "rsa512" {
+        Some((
+            ans1_oid_bcder_oid(&RSA_OID)?,
+            ans1_oid_bcder_oid(&SHA512_OID)?,
+        ))
+    } else if alg == "es256" {
+        Some((
+            ans1_oid_bcder_oid(&EC_PUBLICKEY_OID)?,
+            ans1_oid_bcder_oid(&SHA256_OID)?,
+        ))
+    } else if alg == "es384" {
+        Some((
+            ans1_oid_bcder_oid(&EC_PUBLICKEY_OID)?,
+            ans1_oid_bcder_oid(&SHA384_OID)?,
+        ))
+    } else if alg == "es512" {
+        Some((
+            ans1_oid_bcder_oid(&EC_PUBLICKEY_OID)?,
+            ans1_oid_bcder_oid(&SHA512_OID)?,
+        ))
+    } else if alg == "ps256" {
+        Some((
+            ans1_oid_bcder_oid(&RSA_PSS_OID)?,
+            ans1_oid_bcder_oid(&SHA256_OID)?,
+        ))
+    } else if alg == "ps384" {
+        Some((
+            ans1_oid_bcder_oid(&RSA_PSS_OID)?,
+            ans1_oid_bcder_oid(&SHA384_OID)?,
+        ))
+    } else if alg == "ps512" {
+        Some((
+            ans1_oid_bcder_oid(&RSA_PSS_OID)?,
+            ans1_oid_bcder_oid(&SHA512_OID)?,
+        ))
+    } else if alg == "ed25519" {
+        Some((
+            ans1_oid_bcder_oid(&ED25519_OID)?,
+            ans1_oid_bcder_oid(&SHA512_OID)?,
+        ))
+    } else {
+        None
+    }
 }
 
 fn cert_signing_alg(cert: &X509Certificate) -> Option<String> {
@@ -144,7 +212,7 @@ fn cert_signing_alg(cert: &X509Certificate) -> Option<String> {
         Some(SigningAlg::Es384.to_string())
     } else if *cert_alg == ECDSA_WITH_SHA512_OID {
         Some(SigningAlg::Es512.to_string())
-    } else if *cert_alg == RSASSA_PSS_OID {
+    } else if *cert_alg == RSA_PSS_OID {
         signing_alg_from_rsapss_alg(&cert.signature_algorithm)
     } else if *cert_alg == ED25519_OID {
         Some(SigningAlg::Ed25519.to_string())
@@ -186,9 +254,7 @@ fn signing_alg_from_rsapss_alg(alg: &AlgorithmIdentifier) -> Option<String> {
         return None;
     };
 
-    let Some(mgf_ai_parameters) = mgf_ai.parameters else {
-        return None;
-    };
+    let mgf_ai_parameters = mgf_ai.parameters?;
 
     let Ok(mgf_ai_parameters) = mgf_ai_parameters.as_sequence() else {
         return None;
@@ -221,7 +287,7 @@ fn signing_alg_from_rsapss_alg(alg: &AlgorithmIdentifier) -> Option<String> {
     }
 }
 
-async fn verify_data(
+fn verify_data(
     cert_der: Vec<u8>,
     sig_alg: Option<String>,
     sig: Vec<u8>,
@@ -236,35 +302,13 @@ async fn verify_data(
         return Err(CertificateTrustError::InvalidCertificate);
     };
 
-    let signing_alg: SigningAlg = cert_alg_string
-        .parse()
-        .map_err(|_| CertificateTrustError::InvalidCertificate)?;
+    let (sig_alg, hash_alg) = signing_alg_to_sig_and_hash_oid(&cert_alg_string)
+        .ok_or(CertificateTrustError::InvalidCertificate)?;
 
-    // Not sure this is needed any more. Leaving this for now, but I think this
-    // should be handled in c2pa_crypto's raw signature code.
-
-    // TO REVIEW: For now, this is needed because this function could validate C2PA
-    // signatures (P1363) or those from certificates which are ASN.1 DER. I don't
-    // know if the new code is only used for DER now.
-    let adjusted_sig = if cert_alg_string.starts_with("es") {
-        match der_to_p1363(&sig, signing_alg) {
-            Ok(p1363) => p1363,
-            Err(_) => sig,
-        }
+    let result = if let Some(validator) = validator_for_sig_and_hash_algs(&sig_alg, &hash_alg) {
+        validator.validate(&sig, &data, certificate_public_key.raw.as_ref())
     } else {
-        sig
-    };
-
-    let result = if let Some(validator) = async_validator_for_signing_alg(signing_alg) {
-        validator
-            .validate_async(&adjusted_sig, &data, certificate_public_key.raw.as_ref())
-            .await
-    } else {
-        if let Some(validator) = validator_for_signing_alg(signing_alg) {
-            validator.validate(&adjusted_sig, &data, certificate_public_key.raw.as_ref())
-        } else {
-            return Err(CertificateTrustError::InvalidCertificate);
-        }
+        return Err(CertificateTrustError::InvalidCertificate);
     };
 
     match result {
@@ -273,15 +317,3 @@ async fn verify_data(
         Err(_err) => Err(CertificateTrustError::InvalidCertificate),
     }
 }
-
-const RSASSA_PSS_OID: Oid<'static> = oid!(1.2.840 .113549 .1 .1 .10);
-const ECDSA_WITH_SHA256_OID: Oid<'static> = oid!(1.2.840 .10045 .4 .3 .2);
-const ECDSA_WITH_SHA384_OID: Oid<'static> = oid!(1.2.840 .10045 .4 .3 .3);
-const ECDSA_WITH_SHA512_OID: Oid<'static> = oid!(1.2.840 .10045 .4 .3 .4);
-const SHA256_WITH_RSAENCRYPTION_OID: Oid<'static> = oid!(1.2.840 .113549 .1 .1 .11);
-const SHA384_WITH_RSAENCRYPTION_OID: Oid<'static> = oid!(1.2.840 .113549 .1 .1 .12);
-const SHA512_WITH_RSAENCRYPTION_OID: Oid<'static> = oid!(1.2.840 .113549 .1 .1 .13);
-const ED25519_OID: Oid<'static> = oid!(1.3.101 .112);
-const SHA256_OID: Oid<'static> = oid!(2.16.840 .1 .101 .3 .4 .2 .1);
-const SHA384_OID: Oid<'static> = oid!(2.16.840 .1 .101 .3 .4 .2 .2);
-const SHA512_OID: Oid<'static> = oid!(2.16.840 .1 .101 .3 .4 .2 .3);
