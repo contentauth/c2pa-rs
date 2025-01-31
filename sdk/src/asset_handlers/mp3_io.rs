@@ -94,7 +94,7 @@ impl ID3V2Header {
     }
 
     fn decode_tag_size(n: u32) -> u32 {
-        n & 0xff | (n & 0xff00) >> 1 | (n & 0xff0000) >> 2 | (n & 0xff000000) >> 3
+        (n & 0xff) | ((n & 0xff00) >> 1) | ((n & 0xff0000) >> 2) | ((n & 0xff000000) >> 3)
     }
 
     fn is_mp3_frame_sync(header: &[u8]) -> bool {

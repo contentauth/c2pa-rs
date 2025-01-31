@@ -98,8 +98,6 @@ pub mod jumbf_io;
 pub mod settings;
 pub mod validation_results;
 pub mod validation_status;
-#[cfg(target_arch = "wasm32")]
-pub mod wasm;
 
 // Public exports
 pub use assertions::Relationship;

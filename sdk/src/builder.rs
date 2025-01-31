@@ -1403,7 +1403,7 @@ mod tests {
             "cloud_manifest.c2pa",
         ];
         for file_name in TESTFILES {
-            let extension = file_name.split('.').last().unwrap();
+            let extension = file_name.split('.').next_back().unwrap();
             let format = extension;
 
             let path = format!("tests/fixtures/{}", file_name);
