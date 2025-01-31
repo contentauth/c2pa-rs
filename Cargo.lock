@@ -711,7 +711,7 @@ checksum = "325918d6fe32f23b19878fe4b34794ae41fc19ddbe53b10571a4874d44ffd39b"
 
 [[package]]
 name = "c2pa"
-version = "0.45.0"
+version = "0.45.1"
 dependencies = [
  "actix",
  "anyhow",
@@ -792,7 +792,7 @@ dependencies = [
 
 [[package]]
 name = "c2pa-crypto"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "actix",
  "asn1-rs",
@@ -4988,9 +4988,9 @@ dependencies = [
 
 [[package]]
 name = "webpki-roots"
-version = "0.26.7"
+version = "0.26.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5d642ff16b7e79272ae451b7322067cdc17cadf68c23264be9d94a32319efe7e"
+checksum = "2210b291f7ea53617fbafcc4939f10914214ec15aace5ba62293a668f322c5c9"
 dependencies = [
  "rustls-pki-types",
 ]
