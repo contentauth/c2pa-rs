@@ -109,9 +109,6 @@ pub struct Action {
     #[serde(skip_serializing_if = "Option::is_none")]
     changed: Option<String>,
 
-    #[serde(skip_serializing_if = "Option::is_none")]
-    description: Option<String>,
-
     /// A list of the regions of interest of the resource that were changed.
     ///
     /// If not present, presumed to be undefined.
