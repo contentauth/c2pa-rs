@@ -96,7 +96,7 @@ impl Verifier<'_> {
                     // Should have been in P1363 format, not DER.
                     log_item!(
                         "Cose_Sign1",
-                        "unsupported signature format(EC signature should be in P1363 r|s format)",
+                        "unsupported signature format (EC signature should be in P1363 r|s format)",
                         "verify_cose"
                     )
                     .validation_status(SIGNING_CREDENTIAL_INVALID)
