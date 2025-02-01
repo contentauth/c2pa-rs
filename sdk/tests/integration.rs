@@ -211,7 +211,7 @@ mod integration_1 {
     }
 
     #[test]
-    #[cfg(feature = "file_io")]
+    #[cfg(all(feature = "file_io", feature = "v1_api"))]
     fn test_embed_json_manifest_es_256() -> Result<()> {
         // set up parent and destination paths
         let dir = tempdir()?;
