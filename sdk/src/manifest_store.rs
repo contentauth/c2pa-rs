@@ -168,7 +168,7 @@ impl ManifestStore {
     }
 
     /// creates a ManifestStore from a Store writing resources to resource_path
-    #[cfg(feature = "file_io")]
+    #[cfg(all(feature = "file_io", feature = "v1_api"))]
     pub(crate) fn from_store_with_resources(
         store: Store,
         validation_log: &impl StatusTracker,
@@ -355,7 +355,7 @@ impl ManifestStore {
         Ok(Self::from_store(store, &validation_log))
     }
 
-    #[cfg(feature = "file_io")]
+    #[cfg(all(feature = "file_io", feature = "v1_api"))]
     /// Loads a ManifestStore from a file adding resources to a folder
     /// Example:
     ///

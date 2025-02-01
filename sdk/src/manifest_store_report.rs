@@ -441,9 +441,11 @@ mod tests {
     #[cfg(feature = "v1_api")]
     use std::fs;
 
+    #[cfg(feature = "v1_api")]
     use crate::{manifest_store_report::ManifestStoreReport, utils::test::fixture_path};
 
     #[test]
+    #[cfg(feature = "v1_api")]
     fn manifest_store_report() {
         let path = fixture_path("CIE-sig-CA.jpg");
         let report = ManifestStoreReport::from_file(path).expect("load_from_asset");
