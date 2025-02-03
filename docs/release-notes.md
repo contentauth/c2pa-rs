@@ -48,7 +48,7 @@ Use this method instead of checking for `validation_status()` = `None`.
 
 The `Manifest` `title` is optional and `format` is not supported in v2 claims, so these methods now return an `Option<String>` and may not appear in serialized JSON.
 
-The `Ingredient` `title` and `format` are optional in v3 ingredients, so these methods now return an Option<String> and may not appear in serialized JSON.
+The `Ingredient` `title` and `format` are optional in v3 ingredients, so these methods now return an `Option<String>` and may not appear in serialized JSON.
 
 `Ingredient` now supports a `validation_results` method and a `validation_results` field.
 
