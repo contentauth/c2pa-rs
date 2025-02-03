@@ -82,7 +82,7 @@ x509-certificate = "0.21.0"
 x509-parser = "0.16.0"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-openssl = { version = "0.10.61", features = ["vendored"] }
+openssl = { version = "0.10.70", features = ["vendored"] }
 ureq = "2.4.0"
 url = "2.5.3"
 
