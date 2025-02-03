@@ -25,16 +25,36 @@ use std::fmt::Debug;
 use async_trait::async_trait;
 
 use crate::{
-    builder::{CredentialHolder, IdentityBuilderError},
+    builder::{AsyncCredentialHolder, CredentialHolder, IdentityBuilderError},
     SignatureVerifier, SignerPayload, ValidationError,
 };
 
-#[derive(Debug)]
 pub(crate) struct NaiveCredentialHolder {}
+
+impl CredentialHolder for NaiveCredentialHolder {
+    fn sig_type(&self) -> &'static str {
+        "INVALID.identity.naive_credential"
+    }
+
+    fn reserve_size(&self) -> usize {
+        1000
+    }
+
+    fn sign(&self, signer_payload: &SignerPayload) -> Result<Vec<u8>, IdentityBuilderError> {
+        // Naive implementation simply serializes SignerPayload
+        // in CBOR format and calls it a "signature."
+        let mut result: Vec<u8> = vec![];
+        ciborium::into_writer(signer_payload, &mut result)?;
+        Ok(result)
+    }
+}
+
+#[derive(Debug)]
+pub(crate) struct NaiveAsyncCredentialHolder {}
 
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
-impl CredentialHolder for NaiveCredentialHolder {
+impl AsyncCredentialHolder for NaiveAsyncCredentialHolder {
     fn sig_type(&self) -> &'static str {
         "INVALID.identity.naive_credential"
     }

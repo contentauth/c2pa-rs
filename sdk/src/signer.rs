@@ -17,7 +17,7 @@ use c2pa_crypto::{
     time_stamp::{TimeStampError, TimeStampProvider},
 };
 
-use crate::{DynamicAssertion, Result};
+use crate::{AsyncDynamicAssertion, DynamicAssertion, Result};
 
 /// The `Signer` trait generates a cryptographic signature over a byte array.
 ///
@@ -222,7 +222,7 @@ pub trait AsyncSigner: Sync {
     }
 
     /// Returns a list of dynamic assertions that should be included in the manifest.
-    fn dynamic_assertions(&self) -> Vec<Box<dyn DynamicAssertion>> {
+    fn dynamic_assertions(&self) -> Vec<Box<dyn AsyncDynamicAssertion>> {
         Vec::new()
     }
 
@@ -309,7 +309,7 @@ pub trait AsyncSigner {
     }
 
     /// Returns a list of dynamic assertions that should be included in the manifest.
-    fn dynamic_assertions(&self) -> Vec<Box<dyn DynamicAssertion>> {
+    fn dynamic_assertions(&self) -> Vec<Box<dyn AsyncDynamicAssertion>> {
         Vec::new()
     }
 
@@ -488,7 +488,7 @@ impl AsyncSigner for Box<dyn AsyncSigner + Send + Sync> {
         (**self).direct_cose_handling()
     }
 
-    fn dynamic_assertions(&self) -> Vec<Box<dyn DynamicAssertion>> {
+    fn dynamic_assertions(&self) -> Vec<Box<dyn AsyncDynamicAssertion>> {
         (**self).dynamic_assertions()
     }
 
@@ -540,7 +540,7 @@ impl AsyncSigner for Box<dyn AsyncSigner> {
         (**self).direct_cose_handling()
     }
 
-    fn dynamic_assertions(&self) -> Vec<Box<dyn DynamicAssertion>> {
+    fn dynamic_assertions(&self) -> Vec<Box<dyn AsyncDynamicAssertion>> {
         (**self).dynamic_assertions()
     }
 

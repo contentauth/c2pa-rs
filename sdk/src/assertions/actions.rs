@@ -64,9 +64,20 @@ pub mod c2pa_action {
     pub const UNKNOWN: &str = "c2pa.unknown";
 }
 
+pub static V2_DEPRECATED_ACTIONS: [&str; 7] = [
+    "c2pa.copied",
+    "c2pa.formatted",
+    "c2pa.version_updated",
+    "c2pa.printed",
+    "c2pa.managed",
+    "c2pa.produced",
+    "c2pa.saved",
+];
+
 /// We use this to allow SourceAgent to be either a string or a ClaimGeneratorInfo
 #[derive(Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
 #[serde(untagged)]
+#[allow(clippy::large_enum_variant)]
 pub enum SoftwareAgent {
     String(String),
     ClaimGeneratorInfo(ClaimGeneratorInfo),
@@ -119,8 +130,9 @@ pub struct Action {
 
     /// This is NOT the instanceID in the spec
     /// It is now deprecated but was previously used to map the action to an ingredient
-    #[serde(rename = "instanceId", skip_serializing)] // this should never be written to CBOR
     #[deprecated(since = "0.37.0", note = "Use `org.cai.ingredientIds` instead")]
+    #[serde(skip_serializing)]
+    #[serde(alias = "instanceId", alias = "instanceID")]
     instance_id: Option<String>,
 
     /// Additional parameters of the action. These vary by the type of action.

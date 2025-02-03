@@ -1,6 +1,6 @@
 [package]
 name = "c2pa"
-version = "0.42.0"
+version = "0.45.1"
 description = "Rust SDK for C2PA (Coalition for Content Provenance and Authenticity) implementors"
 authors = [
     "Maurice Fisher <mfisher@adobe.com>",
@@ -26,7 +26,6 @@ all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
 [features]
-default = ["v1_api"]
 add_thumbnails = ["image"]
 file_io = ["openssl_sign"]
 serialize_thumbnails = []
@@ -37,7 +36,6 @@ openssl_sign = ["openssl"]
 json_schema = ["dep:schemars", "c2pa-crypto/json_schema"]
 pdf = ["dep:lopdf"]
 v1_api = []
-unstable_api = []
 
 # The diagnostics feature is unsupported and might be removed.
 # It enables some low-overhead timing features used in our development cycle.
@@ -57,11 +55,9 @@ required-features = ["file_io"]
 
 [[example]]
 name = "v2show"
-required-features = ["unstable_api"]
 
 [[example]]
 name = "v2api"
-required-features = ["unstable_api"]
 
 [lib]
 crate-type = ["lib"]
@@ -76,8 +72,8 @@ bcder = "0.7.3"
 bytes = "1.7.2"
 byteorder = { version = "1.4.3", default-features = false }
 byteordered = "0.6.0"
-c2pa-crypto = { path = "../internal/crypto", version = "0.4.0" }
-c2pa-status-tracker = { path = "../internal/status-tracker", version = "0.3.0" }
+c2pa-crypto = { path = "../internal/crypto", version = "0.6.1" }
+c2pa-status-tracker = { path = "../internal/status-tracker", version = "0.4.0" }
 chrono = { version = "0.4.39", default-features = false, features = [
     "serde",
     "wasmbind",
@@ -91,13 +87,12 @@ config = { version = "0.14.0", default-features = false, features = [
     "ini",
 ] }
 conv = "0.3.3"
-coset = "0.3.1"
+coset = "0.3.8"
 extfmt = "0.1.1"
 ed25519-dalek = "2.1.1"
 quick-xml = "0.37.1"
 hex = "0.4.3"
-# Version 1.13.0 doesn't compile under Rust < 1.75, pinning to 1.12.0
-id3 = "=1.14.0"
+id3 = "=1.16.1"
 img-parts = "0.3.2"
 jfifdump = "0.6.0"
 log = "0.4.8"
@@ -160,9 +155,6 @@ web-sys = { version = "0.3.58", features = [
 
 [dev-dependencies]
 anyhow = "1.0.40"
-c2pa = { path = ".", default-features = false, features = [
-    "unstable_api",
-] } # allow integration tests to use the new API
 glob = "0.3.1"
 hex-literal = "0.4.1"
 jumbf = "0.4.0"

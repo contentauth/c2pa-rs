@@ -6,6 +6,31 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 The format of this changelog is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.6.1](https://github.com/contentauth/c2pa-rs/compare/c2pa-crypto-v0.6.0...c2pa-crypto-v0.6.1)
+_31 January 2025_
+
+### Fixed
+
+* Remove dependency on SubtleCrypto (#881)
+
+## [0.6.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-crypto-v0.5.0...c2pa-crypto-v0.6.0)
+_29 January 2025_
+
+### Added
+
+* Claim v2 (#707)
+
+## [0.5.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-crypto-v0.4.0...c2pa-crypto-v0.5.0)
+_24 January 2025_
+
+### Added
+
+* *(crypto)* Make `box_size` parameter on `c2pa_crypto::cose::sign` an `Option` (#879)
+
+### Fixed
+
+* Bump coset requirement to 0.3.8 (#883)
+
 ## [0.4.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-crypto-v0.3.1...c2pa-crypto-v0.4.0)
 _22 January 2025_
 

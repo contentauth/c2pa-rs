@@ -70,9 +70,23 @@ pub const TEST_VC: &str = r#"{
     }
 }"#;
 
+/// Create new C2PA compatible UUID
+pub(crate) fn gen_c2pa_uuid() -> String {
+    let guid = uuid::Uuid::new_v4();
+    guid.hyphenated()
+        .encode_lower(&mut uuid::Uuid::encode_buffer())
+        .to_owned()
+}
+
+// Returns a non-changing C2PA compatible UUID for testing
+pub(crate) fn static_test_uuid() -> &'static str {
+    const TEST_GUID: &str = "f75ddc48-cdc8-4723-bcfe-77a8d68a5920";
+    TEST_GUID
+}
+
 /// creates a claim for testing
 pub fn create_test_claim() -> Result<Claim> {
-    let mut claim = Claim::new("adobe unit test", Some("adobe"));
+    let mut claim = Claim::new("adobe unit test", Some("adobe"), 1);
 
     // add some data boxes
     let _db_uri = claim.add_databox("text/plain", "this is a test".as_bytes().to_vec(), None)?;
@@ -372,6 +386,7 @@ impl crate::signer::RemoteSigner for TempRemoteSigner {
     }
 }
 
+/* todo: This test should be replaced by a rust_native signer if desired to sign from wasm
 #[cfg(target_arch = "wasm32")]
 struct WebCryptoSigner {
     signing_alg: SigningAlg,
@@ -470,6 +485,7 @@ impl AsyncSigner for WebCryptoSigner {
         None
     }
 }
+*/
 
 /// Create a [`RemoteSigner`] instance that can be used for testing purposes.
 ///

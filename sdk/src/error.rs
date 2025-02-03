@@ -35,7 +35,7 @@ pub enum Error {
 
     /// The attempt to serialize the assertion (typically to JSON or CBOR) failed.
     #[error("unable to encode assertion data")]
-    AssertionEncoding,
+    AssertionEncoding(String),
 
     #[error(transparent)]
     AssertionDecoding(#[from] crate::assertion::AssertionDecodeError),
@@ -83,6 +83,9 @@ pub enum Error {
 
     #[error("claim missing hard binding")]
     ClaimMissingHardBinding,
+
+    #[error("claim contains multiple hard bindings")]
+    ClaimMultipleHardBinding,
 
     #[error("claim contains self redactions")]
     ClaimSelfRedact,
@@ -291,6 +294,9 @@ pub enum Error {
     #[error("prerelease content detected")]
     PrereleaseError,
 
+    #[error("capability is not supported by this version: {0}")]
+    VersionCompatibility(String),
+
     #[error("insufficient memory space for operation")]
     InsufficientMemory,
 
@@ -323,20 +329,6 @@ pub enum Error {
 
 /// A specialized `Result` type for C2PA toolkit operations.
 pub type Result<T> = std::result::Result<T, Error>;
-
-#[cfg(target_arch = "wasm32")]
-impl From<c2pa_crypto::raw_signature::webcrypto::WasmCryptoError> for Error {
-    fn from(err: c2pa_crypto::raw_signature::webcrypto::WasmCryptoError) -> Self {
-        match err {
-            c2pa_crypto::raw_signature::webcrypto::WasmCryptoError::UnknownContext => {
-                Self::WasmInvalidContext
-            }
-            c2pa_crypto::raw_signature::webcrypto::WasmCryptoError::NoCryptoAvailable => {
-                Self::WasmNoCrypto
-            }
-        }
-    }
-}
 
 impl From<CoseError> for Error {
     fn from(err: CoseError) -> Self {

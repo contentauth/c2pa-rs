@@ -14,14 +14,17 @@
 //! This module contains the APIs you will use to build a
 //! C2PA Manifest that contains one or more CAWG identity assertions.
 
+mod async_identity_assertion_signer;
+pub use async_identity_assertion_signer::AsyncIdentityAssertionSigner;
+
 pub(crate) mod credential_holder;
-pub use credential_holder::CredentialHolder;
+pub use credential_holder::{AsyncCredentialHolder, CredentialHolder};
 
 mod error;
 pub use error::IdentityBuilderError;
 
 pub(crate) mod identity_assertion_builder;
-pub use identity_assertion_builder::IdentityAssertionBuilder;
+pub use identity_assertion_builder::{AsyncIdentityAssertionBuilder, IdentityAssertionBuilder};
 
 mod identity_assertion_signer;
 pub use identity_assertion_signer::IdentityAssertionSigner;
