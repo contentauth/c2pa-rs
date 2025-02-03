@@ -26,7 +26,6 @@ use crate::{
     SignatureVerifier, SignerPayload, ValidationError,
 };
 
-
 /// Signature verifier supporting identity claims.
 ///
 /// An implementation of [`SignatureVerifier`] that supports Identity Claims
