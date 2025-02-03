@@ -30,13 +30,13 @@ test-wasm:
 
 test-wasm-web:
 	cd sdk && wasm-pack test --chrome --headless -- --features="serialize_thumbnails"
-	
+
 # Full local validation, build and test all features including wasm
 # Run this before pushing a PR to pre-validate
 test: check-format check-docs clippy test-local test-wasm-web
 
 # Auto format code according to standards
-fmt: 
+fmt:
 	cargo +nightly fmt
 
 # Builds and views documentation

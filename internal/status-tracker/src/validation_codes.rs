@@ -117,6 +117,8 @@ pub const CLAIM_SIGNATURE_MISSING: &str = "claimSignature.missing";
 /// Any corresponding URL should point to a C2PA claim signature box.
 pub const CLAIM_SIGNATURE_MISMATCH: &str = "claimSignature.mismatch";
 
+/// The remote manifest is missing from the remote location.
+///
 /// If a manifest was documented to exist in a remote location,
 /// but is not present there, or the location is not currently available
 /// (such as in an offline scenario),

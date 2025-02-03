@@ -26,6 +26,9 @@ use crate::{
     SignatureVerifier, SignerPayload, ValidationError,
 };
 
+
+/// Signature verifier supporting identity claims.
+///
 /// An implementation of [`SignatureVerifier`] that supports Identity Claims
 /// Aggregation Credentials (a specific grammar of W3C Verifiable Credentials)
 /// as specified in [§8.1, Identity claims aggregation] and secured by COSE as

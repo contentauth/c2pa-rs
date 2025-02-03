@@ -52,12 +52,16 @@ pub mod c2pa_action {
     pub const PLACED: &str = "c2pa.placed";
     /// Asset is released to a wider audience.
     pub const PUBLISHED: &str = "c2pa.published";
+    /// Repackage from one container to another.
+    ///
     /// A conversion of one packaging or container format to another. Content may be repackaged without transcoding.
     /// Does not include any adjustments that would affect the "editorial" meaning of the content.
     pub const REPACKAGED: &str = "c2pa.repackaged";
     /// Changes to content dimensions and/or file size
     pub const RESIZED: &str = "c2pa.resized";
-    /// A direct conversion of one encoding to another, including resolution scaling, bitrate adjustment and encoding format change.
+    /// Direct conversion of one encoding to another.
+    ///
+    /// This included resolution scaling, bitrate adjustment and encoding format change.
     /// Does not include any adjustments that would affect the "editorial" meaning of the content.
     pub const TRANSCODED: &str = "c2pa.transcoded";
     /// Something happened, but the claim_generator cannot specify what.
