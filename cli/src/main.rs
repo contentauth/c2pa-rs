@@ -674,7 +674,7 @@ fn main() -> Result<()> {
             Ingredient::from_file(&args.path).map_err(special_errs)?
         )
     } else if args.detailed {
-        println!("## TMN-Debug ~ Here we read the detailed edition");
+        println!("## TMN-Debug ~ cli#main ~ Here we read the detailed edition");
         println!(
             "{:#?}",
             Reader::from_file(&args.path).map_err(special_errs)?
@@ -690,7 +690,7 @@ fn main() -> Result<()> {
             println!("{} Init manifests validated", stores.len());
         }
     } else {
-        println!("## TMN-Debug ~ Here we read");
+        println!("## TMN-Debug ~ cli#main ~ Here we read");
         println!("{}", Reader::from_file(&args.path).map_err(special_errs)?)
     }
 
