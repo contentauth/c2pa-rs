@@ -245,7 +245,9 @@ impl Reader {
     /// Get the manifest store as a JSON string
     pub fn json(&self) -> String {
         println!("## TMN-Debug ~ Reader#json");
-        self.manifest_store.to_string()
+        let result = self.manifest_store.to_string();
+        println!("## TMN-Debug ~ Reader#json -> got result string");
+        result
     }
 
     /// Get the [`ValidationStatus`] array of the manifest store if it exists.
