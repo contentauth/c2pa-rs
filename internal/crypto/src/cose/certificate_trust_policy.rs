@@ -22,8 +22,6 @@ use x509_parser::{extensions::ExtendedKeyUsage, pem::Pem};
 
 use crate::{base64, hash::sha256};
 
-/// Certificate Trust Policy configuration.
-///
 /// A `CertificateTrustPolicy` is configured with information about trust
 /// anchors, privately-accepted end-entity certificates, and allowed EKUs. It
 /// can be used to evaluate a signing certificate against those policies.

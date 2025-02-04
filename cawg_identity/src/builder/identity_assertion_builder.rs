@@ -17,8 +17,7 @@ use serde_bytes::ByteBuf;
 
 use super::{CredentialHolder, IdentityBuilderError};
 use crate::{builder::AsyncCredentialHolder, IdentityAssertion, SignerPayload};
-/// Holder of data to build identity assertions.
-///
+
 /// An `IdentityAssertionBuilder` gathers together the necessary components
 /// for an identity assertion. When added to an [`IdentityAssertionSigner`],
 /// it ensures that the proper data is added to the final C2PA Manifest.
@@ -85,8 +84,6 @@ impl DynamicAssertion for IdentityAssertionBuilder {
     }
 }
 
-/// Holder of data to build identity assertions (async).
-///
 /// An `AsyncIdentityAssertionBuilder` gathers together the necessary components
 /// for an identity assertion. When added to an
 /// [`AsyncIdentityAssertionSigner`], it ensures that the proper data is added

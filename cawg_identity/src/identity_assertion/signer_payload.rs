@@ -19,8 +19,6 @@ use serde::{Deserialize, Serialize};
 
 use crate::ValidationError;
 
-/// Referenced assertions and data related to those assertions.
-///
 /// A set of _referenced assertions_ and other related data, known overall as
 /// the **signer payload.** This binding **SHOULD** generally be construed as
 /// authorization of or participation in the creation of the statements

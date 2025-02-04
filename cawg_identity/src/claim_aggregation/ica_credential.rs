@@ -70,8 +70,6 @@ impl VerifiableCredentialSubtype for IdentityClaimsAggregationVc {
     }
 }
 
-/// Verified identity details.
-///
 /// Every item in the `verifiedIdentities` array MUST contain information about
 /// the _named actor_ as verified by the _identity assertion generator_ or a
 /// service contacted by the _identity assertion generator._
