@@ -57,6 +57,7 @@ build-release-mac-universal: build-release-mac-arm build-release-mac-x86
 build-release-linux:
 	cargo build --release
 
+# make release
 # Builds and packages a zip for c2patool for each platform
 ifeq ($(PLATFORM), mac)
 release: build-release-mac-universal c2patool-package
