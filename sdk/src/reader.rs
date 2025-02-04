@@ -267,7 +267,7 @@ impl Reader {
     ///
     /// Call this method to check for detailed validation results.
     /// The validation_state method should be used to determine the overall validation state.
-    ///  
+    ///
     /// The results are divided between the active manifest and ingredient deltas.
     /// The deltas will only exist if there are validation errors not already reported in ingredients
     /// It is normal for there to be many success and information statuses.
@@ -388,7 +388,7 @@ impl Reader {
     /// Write all resources to a folder.
     ///
     ///
-    /// This function writes all resources to a folder.  
+    /// This function writes all resources to a folder.
     /// Resources are stored in sub-folders corresponding to manifest label.
     /// Conversions ensure the file paths are valid.
     ///

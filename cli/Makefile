@@ -26,7 +26,7 @@ test-local:
 # Run this before pushing a PR to pre-validate
 test: check-format clippy test-local
 
-fmt: 
+fmt:
 	cargo +nightly fmt
 
 # Creates a folder wtih c2patool bin, samples and readme
@@ -57,6 +57,7 @@ build-release-mac-universal: build-release-mac-arm build-release-mac-x86
 build-release-linux:
 	cargo build --release
 
+# make release
 # Builds and packages a zip for c2patool for each platform
 ifeq ($(PLATFORM), mac)
 release: build-release-mac-universal c2patool-package

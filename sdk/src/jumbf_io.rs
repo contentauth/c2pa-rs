@@ -194,9 +194,13 @@ pub(crate) fn get_supported_file_extension(path: &Path) -> Option<String> {
 }
 
 #[cfg(feature = "file_io")]
-/// save_jumbf to a file
-/// in_path - path is source file
-/// out_path - path to the output file
+/// Save JUMBF data to a file.
+///
+/// Parameters:
+/// * save_jumbf to a file
+/// * in_path - path is source file
+/// * out_path - path to the output file
+///
 /// If no output file is given an new file will be created with "-c2pa" appending to file name e.g. "test.jpg" => "test-c2pa.jpg"
 /// If input == output then the input file will be overwritten.
 pub fn save_jumbf_to_file(data: &[u8], in_path: &Path, out_path: Option<&Path>) -> Result<()> {

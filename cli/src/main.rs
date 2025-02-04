@@ -709,7 +709,7 @@ pub mod tests {
         "assertions": [
             {
                 "label": "org.contentauth.test",
-                 "data": {"my_key": "whatever I want"}
+                "data": {"my_key": "whatever I want"}
             }
         ]
     }"#;
