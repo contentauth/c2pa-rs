@@ -691,7 +691,9 @@ fn main() -> Result<()> {
         }
     } else {
         println!("## TMN-Debug ~ cli#main ~ Here we read");
-        println!("{}", Reader::from_file(&args.path).map_err(special_errs)?)
+        let reader_result = Reader::from_file(&args.path).map_err(special_errs)?;
+        println!("## TMN-Debug ~ cli#main ~ Reading done");
+        println!("{}", reader_result);
     }
 
     Ok(())
