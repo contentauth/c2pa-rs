@@ -857,6 +857,7 @@ dependencies = [
  "atree",
  "c2pa",
  "c2pa-crypto",
+ "cawg-identity",
  "clap",
  "env_logger",
  "glob",

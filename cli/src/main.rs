@@ -33,6 +33,8 @@ use serde::Deserialize;
 use signer::SignConfig;
 use url::Url;
 
+use cawg_identity::IdentityAssertion;
+
 use crate::{
     callback_signer::{CallbackSigner, CallbackSignerConfig, ExternalProcessRunner},
     info::info,
@@ -691,9 +693,18 @@ fn main() -> Result<()> {
         }
     } else {
         println!("## TMN-Debug ~ cli#main ~ Here we read");
-        let reader_result = Reader::from_file(&args.path).map_err(special_errs)?;
-        println!("## TMN-Debug ~ cli#main ~ Reading done");
-        println!("{}", reader_result);
+        let reader = Reader::from_file(&args.path).map_err(special_errs)?;
+        println!("{}", reader);
+
+        println!("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~");
+        println!("@@@@@@@@@@@@@@@@@@@@@@@@");
+        let active_manifest = reader.active_manifest().unwrap();
+        let ia_iter = IdentityAssertion::from_manifest(active_manifest);
+        ia_iter.for_each(|ia| {
+            let identity_assertion: IdentityAssertion = ia.unwrap();
+            println!("{:?}", identity_assertion);
+        });
+        println!("@@@@@@@@@@@@@@@@@@@@@@@@");
     }
 
     Ok(())
