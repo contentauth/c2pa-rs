@@ -11,6 +11,7 @@
 // specific language governing permissions and limitations under
 // each license.
 
+use asn1_rs::FromDer;
 use async_generic::async_generic;
 use ciborium::value::Value;
 use coset::{
@@ -19,6 +20,7 @@ use coset::{
     TaggedCborSerializable,
 };
 use serde_bytes::ByteBuf;
+use x509_parser::prelude::X509Certificate;
 
 use super::cert_chain_from_sign1;
 use crate::{
@@ -161,7 +163,13 @@ pub fn sign_v1(
                     "bad certificate chain".to_string(),
                 ))?;
 
-                let curve = ec_curve_from_public_key_der(signing_cert).ok_or(
+                let (_, cert) = X509Certificate::from_der(signing_cert).map_err(|_e| {
+                    CoseError::CborGenerationError("incorrect EC signature format".to_string())
+                })?;
+
+                let certificate_public_key = cert.public_key();
+
+                let curve = ec_curve_from_public_key_der(certificate_public_key.raw).ok_or(
                     CoseError::CborGenerationError("incorrect EC signature format".to_string()),
                 )?;
 
@@ -235,7 +243,13 @@ pub fn sign_v2(
                     "bad certificate chain".to_string(),
                 ))?;
 
-                let curve = ec_curve_from_public_key_der(signing_cert).ok_or(
+                let (_, cert) = X509Certificate::from_der(signing_cert).map_err(|_e| {
+                    CoseError::CborGenerationError("incorrect EC signature format".to_string())
+                })?;
+
+                let certificate_public_key = cert.public_key();
+
+                let curve = ec_curve_from_public_key_der(certificate_public_key.raw).ok_or(
                     CoseError::CborGenerationError("incorrect EC signature format".to_string()),
                 )?;
 
