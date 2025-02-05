@@ -598,6 +598,7 @@ impl std::fmt::Display for ManifestStore {
         json = omit_tag(json, "pad");
         json = omit_tag(json, "pad1");
         json = omit_tag(json, "pad2");
+        json = omit_tag(json, "signature");
 
         f.write_str(&json)
     }
