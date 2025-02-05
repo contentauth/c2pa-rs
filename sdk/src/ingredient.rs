@@ -1891,7 +1891,7 @@ mod tests_file_io {
         let ap = fixture_path("CIE-sig-CA.jpg");
         let ingredient = Ingredient::from_file(ap).expect("from_file");
         // println!("ingredient = {ingredient}");
-        assert_eq!(ingredient.validation_status(), None);
+        assert!(ingredient.validation_status().is_some()); // error should be caught
         assert!(ingredient.manifest_data().is_some());
     }
 

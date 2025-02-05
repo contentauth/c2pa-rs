@@ -1741,8 +1741,20 @@ impl Claim {
                 *li = new_li;
             }
         })?;
-        check_ocsp_status_async(&sign1, &data, ctp, validation_log)
-            .await
+        check_ocsp_status(&sign1, &data, ctp, validation_log)
+            .map(|v| {
+                // if a value contains the der response and is successfull returned than we had a good OCSP response
+                // so log the success status
+                if !v.ocsp_der.is_empty() && v.revoked_at.is_none() {
+                    log_item!(
+                        claim.uri(),
+                        "claim signature OCSP value good",
+                        "verify_internal"
+                    )
+                    .validation_status(validation_status::SIGNING_CREDENTIAL_NOT_REVOKED)
+                    .success(validation_log);
+                }
+            })
             .inspect_err(|_e| {
                 // adjust the error info
                 if let Some(li) = validation_log.logged_items_mut().last_mut() {
@@ -1820,19 +1832,33 @@ impl Claim {
                 *li = new_li;
             }
         })?;
-        check_ocsp_status(&sign1, data, ctp, validation_log).inspect_err(|_e| {
-            // adjust the error info
-            if let Some(li) = validation_log.logged_items_mut().last_mut() {
-                let mut new_li = li.clone();
-                if is_provenance {
-                    new_li.label = Cow::from(claim.uri());
-                } else {
-                    new_li = new_li.set_ingredient_uri(claim.uri());
+        check_ocsp_status(&sign1, data, ctp, validation_log)
+            .map(|v| {
+                // if a value contains the der response and is successfull returned than we had a good OCSP response
+                // so log the success status
+                if !v.ocsp_der.is_empty() && v.revoked_at.is_none() {
+                    log_item!(
+                        claim.uri(),
+                        "claim signature OCSP value good",
+                        "verify_internal"
+                    )
+                    .validation_status(validation_status::SIGNING_CREDENTIAL_NOT_REVOKED)
+                    .success(validation_log);
                 }
+            })
+            .inspect_err(|_e| {
+                // adjust the error info
+                if let Some(li) = validation_log.logged_items_mut().last_mut() {
+                    let mut new_li = li.clone();
+                    if is_provenance {
+                        new_li.label = Cow::from(claim.uri());
+                    } else {
+                        new_li = new_li.set_ingredient_uri(claim.uri());
+                    }
 
-                *li = new_li;
-            }
-        })?;
+                    *li = new_li;
+                }
+            })?;
 
         let verified = verify_cose(
             sig,
@@ -1891,6 +1917,28 @@ impl Claim {
                     .validation_status(validation_status::CLAIM_SIGNATURE_MISMATCH)
                     .failure(validation_log, Error::CoseSignature)?;
                 } else {
+                    // update the log_item details
+                    if let Some(li) = validation_log.logged_items_mut().last_mut() {
+                        let mut new_li = li.clone();
+                        new_li.label = Cow::from(claim.uri());
+                        new_li.description = Cow::Borrowed("claim signature valid");
+
+                        if !is_provenance {
+                            new_li = new_li.set_ingredient_uri(claim.uri());
+                        }
+
+                        *li = new_li;
+                    }
+                    // signing cert has not expired
+                    log_item!(
+                        claim.signature_uri(),
+                        "claim signature valid",
+                        "verify_internal"
+                    )
+                    .validation_status(validation_status::CLAIM_SIGNATURE_INSIDE_VALIDITY)
+                    .success(validation_log);
+
+                    // add signature validated status
                     log_item!(
                         claim.signature_uri(),
                         "claim signature valid",
@@ -1907,11 +1955,7 @@ impl Claim {
                 // adjust the error info
                 if let Some(li) = validation_log.logged_items_mut().last_mut() {
                     let mut new_li = li.clone();
-                    if is_provenance {
-                        new_li.label = Cow::from(claim.uri());
-                    } else {
-                        new_li = new_li.set_ingredient_uri(claim.uri());
-                    }
+                    new_li.label = Cow::from(claim.uri());
 
                     *li = new_li;
                 }
