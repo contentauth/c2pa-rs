@@ -34,6 +34,7 @@ use signer::SignConfig;
 use url::Url;
 
 use cawg_identity::IdentityAssertion;
+use cawg_identity::claim_aggregation::IcaSignatureVerifier;
 
 use crate::{
     callback_signer::{CallbackSigner, CallbackSignerConfig, ExternalProcessRunner},
@@ -696,15 +697,21 @@ fn main() -> Result<()> {
         let reader = Reader::from_file(&args.path).map_err(special_errs)?;
         println!("{}", reader);
 
-        println!("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~");
-        println!("@@@@@@@@@@@@@@@@@@@@@@@@");
-        let active_manifest = reader.active_manifest().unwrap();
-        let ia_iter = IdentityAssertion::from_manifest(active_manifest);
-        ia_iter.for_each(|ia| {
-            let identity_assertion: IdentityAssertion = ia.unwrap();
-            println!("{:?}", identity_assertion);
-        });
-        println!("@@@@@@@@@@@@@@@@@@@@@@@@");
+        // println!("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~");
+        // println!("@@@@@@@@@@@@@@@@@@@@@@@@");
+        // let active_manifest = reader.active_manifest().unwrap();
+        // let ia_iter = IdentityAssertion::from_manifest(active_manifest);
+
+        // ia_iter.for_each(|ia| {
+        //     let identity_assertion: IdentityAssertion = ia.unwrap();
+        //     // println!("{:?}", identity_assertion);
+
+        //     let isv = IcaSignatureVerifier {};
+        //     let ica = identity_assertion.validate(active_manifest, &isv);
+
+        //     let ica_vc = ica.credential_subjects;
+        // });
+        // println!("@@@@@@@@@@@@@@@@@@@@@@@@");
     }
 
     Ok(())
