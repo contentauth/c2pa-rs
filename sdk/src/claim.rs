@@ -13,7 +13,7 @@
 
 #[cfg(feature = "file_io")]
 use std::path::Path;
-use std::{collections::HashMap, fmt};
+use std::{borrow::Cow, collections::HashMap, fmt};
 
 use async_generic::async_generic;
 use c2pa_crypto::{
@@ -1728,8 +1728,34 @@ impl Claim {
         }
 
         // check certificate revocation
-        let sign1 = parse_cose_sign1(&sig, &data, validation_log)?;
-        check_ocsp_status_async(&sign1, &data, ctp, validation_log).await?;
+        let sign1 = parse_cose_sign1(&sig, &data, validation_log).inspect_err(|_e| {
+            // adjust the error info
+            if let Some(li) = validation_log.logged_items_mut().last_mut() {
+                let mut new_li = li.clone();
+                if is_provenance {
+                    new_li.label = Cow::from(claim.uri());
+                } else {
+                    new_li = new_li.set_ingredient_uri(claim.uri());
+                }
+
+                *li = new_li;
+            }
+        })?;
+        check_ocsp_status_async(&sign1, &data, ctp, validation_log)
+            .await
+            .inspect_err(|_e| {
+                // adjust the error info
+                if let Some(li) = validation_log.logged_items_mut().last_mut() {
+                    let mut new_li = li.clone();
+                    if is_provenance {
+                        new_li.label = Cow::from(claim.uri());
+                    } else {
+                        new_li = new_li.set_ingredient_uri(claim.uri());
+                    }
+
+                    *li = new_li;
+                }
+            })?;
 
         let verified = verify_cose_async(
             &sig,
@@ -1781,8 +1807,32 @@ impl Claim {
         };
 
         // check certificate revocation
-        let sign1 = parse_cose_sign1(sig, data, validation_log)?;
-        check_ocsp_status(&sign1, data, ctp, validation_log)?;
+        let sign1 = parse_cose_sign1(sig, data, validation_log).inspect_err(|_e| {
+            // adjust the error info
+            if let Some(li) = validation_log.logged_items_mut().last_mut() {
+                let mut new_li = li.clone();
+                if is_provenance {
+                    new_li.label = Cow::from(claim.uri());
+                } else {
+                    new_li = new_li.set_ingredient_uri(claim.uri());
+                }
+
+                *li = new_li;
+            }
+        })?;
+        check_ocsp_status(&sign1, data, ctp, validation_log).inspect_err(|_e| {
+            // adjust the error info
+            if let Some(li) = validation_log.logged_items_mut().last_mut() {
+                let mut new_li = li.clone();
+                if is_provenance {
+                    new_li.label = Cow::from(claim.uri());
+                } else {
+                    new_li = new_li.set_ingredient_uri(claim.uri());
+                }
+
+                *li = new_li;
+            }
+        })?;
 
         let verified = verify_cose(
             sig,
@@ -1794,6 +1844,19 @@ impl Claim {
         );
 
         Claim::verify_internal(claim, asset_data, is_provenance, verified, validation_log)
+            .inspect_err(|_e| {
+                // adjust the error info
+                if let Some(li) = validation_log.logged_items_mut().last_mut() {
+                    let mut new_li = li.clone();
+                    if is_provenance {
+                        new_li.label = Cow::from(claim.uri());
+                    } else {
+                        new_li = new_li.set_ingredient_uri(claim.uri());
+                    }
+
+                    *li = new_li;
+                }
+            })
     }
 
     /// Get the signing certificate chain as PEM bytes
@@ -1837,14 +1900,21 @@ impl Claim {
                     .success(validation_log);
                 }
             }
-            Err(parse_err) => {
-                log_item!(
-                    claim.signature_uri(),
-                    "claim signature is not valid",
-                    "verify_internal"
-                )
-                .validation_status(validation_status::GENERAL_ERROR)
-                .failure(validation_log, parse_err)?;
+            Err(_parse_err) => {
+                // the lower level errors are logged validation_log
+                // continue on to catch other failures.
+
+                // adjust the error info
+                if let Some(li) = validation_log.logged_items_mut().last_mut() {
+                    let mut new_li = li.clone();
+                    if is_provenance {
+                        new_li.label = Cow::from(claim.uri());
+                    } else {
+                        new_li = new_li.set_ingredient_uri(claim.uri());
+                    }
+
+                    *li = new_li;
+                }
             }
         };
 
