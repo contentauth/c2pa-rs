@@ -534,8 +534,8 @@ fn get_cawg_details_for_manifest(
     };
 
     // Get the credentials subject information...
-    let credentials_subject = map.get_mut("credentialSubject");
-    let credentials_subject = match credentials_subject {
+    let credentials_subject_maybe = map.get_mut("credentialSubject");
+    let credentials_subject = match credentials_subject_maybe {
         Some(credentials_subject) => credentials_subject,
         None => {
             println!("Could not find credentialSubject in CAWG details for manifest");
