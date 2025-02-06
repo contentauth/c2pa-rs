@@ -29,6 +29,7 @@ use anyhow::{anyhow, bail, Context, Result};
 use c2pa::{Builder, ClaimGeneratorInfo, Error, Ingredient, ManifestDefinition, Reader, Signer};
 use clap::{Parser, Subcommand};
 use log::debug;
+use tokio::runtime::Runtime;
 use serde::Deserialize;
 use signer::SignConfig;
 use url::Url;
@@ -694,24 +695,27 @@ fn main() -> Result<()> {
         }
     } else {
         println!("## TMN-Debug ~ cli#main ~ Here we read");
+        let tokio_runtime = Runtime::new()?;
+
         let reader = Reader::from_file(&args.path).map_err(special_errs)?;
         println!("{}", reader);
 
-        // println!("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~");
-        // println!("@@@@@@@@@@@@@@@@@@@@@@@@");
-        // let active_manifest = reader.active_manifest().unwrap();
-        // let ia_iter = IdentityAssertion::from_manifest(active_manifest);
+        println!("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~");
+        println!("@@@@@@@@@@@@@@@@@@@@@@@@");
+        let active_manifest = reader.active_manifest().unwrap();
+        let ia_iter = IdentityAssertion::from_manifest(active_manifest);
 
-        // ia_iter.for_each(|ia| {
-        //     let identity_assertion: IdentityAssertion = ia.unwrap();
-        //     // println!("{:?}", identity_assertion);
+        ia_iter.for_each(|ia| {
+            let identity_assertion: IdentityAssertion = ia.unwrap();
+            // println!("{:?}", identity_assertion);
 
-        //     let isv = IcaSignatureVerifier {};
-        //     let ica = identity_assertion.validate(active_manifest, &isv);
+            let isv = IcaSignatureVerifier {};
+            let ica = tokio_runtime.block_on(identity_assertion.validate(active_manifest, &isv)).unwrap();
+            println!("{:?}", ica);
 
-        //     let ica_vc = ica.credential_subjects;
-        // });
-        // println!("@@@@@@@@@@@@@@@@@@@@@@@@");
+            //let ica_vc = ica.credential_subjects;
+        });
+        println!("@@@@@@@@@@@@@@@@@@@@@@@@");
     }
 
     Ok(())
