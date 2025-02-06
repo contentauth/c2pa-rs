@@ -428,9 +428,39 @@ fn verify_fragmented(init_pattern: &Path, frag_pattern: &Path) -> Result<Vec<Rea
     Ok(readers)
 }
 
-fn decorate_json_display(manifest: &c2pa::Manifest, tokio_runtime: &Runtime) -> String {
-    // determine which decorators to apply
-    todo!()
+fn decorate_json_display(reader: Reader, tokio_runtime: &Runtime) -> String {
+  let mut reader_content = reader.json_value_map().unwrap();
+  let json_content = reader_content.get_mut("manifests").unwrap();
+
+  let mut stringified_decorated_json = String::new();
+
+  if let Value::Object(map) = json_content {
+      // Iterate over the key-value pairs
+      for (key, value) in &mut *map {
+          // Get additional CAWG details
+          let current_manifest: &c2pa::Manifest = reader.get_manifest(key).unwrap();
+
+          // Replace the signature content of the assertion with parsed details by CAWG
+          let assertions = value.get_mut("assertions").unwrap();
+          let assertions_array = assertions.as_array_mut().unwrap();
+          for assertion in assertions_array {
+              let label = assertion.get("label").unwrap().to_string();
+              if label.contains("cawg.identity") {
+                  let parsed_cawg_json_string =
+                      get_cawg_details_for_manifest(current_manifest, &tokio_runtime);
+                  let assertion_data: &mut serde_json::Value = assertion.get_mut("data").unwrap();
+                  assertion_data["signature"] = serde_json::from_str(&parsed_cawg_json_string).unwrap();
+              }
+          }
+      }
+
+      stringified_decorated_json = serde_json::to_string_pretty(&map).unwrap();
+  } else {
+      // TODO - TMN: Error handling
+      println!("The JSON is not an object");
+  }
+
+  stringified_decorated_json
 }
 
 /// Parse additional CAWG details from the manifest store to update displayed results.
@@ -733,41 +763,8 @@ fn main() -> Result<()> {
     } else {
         let tokio_runtime: Runtime = Runtime::new()?;
 
-        let reader = Reader::from_file(&args.path).map_err(special_errs)?;
-        //println!("{}", reader);
-
-        // TODO-TMN: Move the below to decorate_json_display
-        let mut reader_content = reader.json_value_map().unwrap();
-        let json_content = reader_content.get_mut("manifests").unwrap();
-
-        let mut stringified_decorated_json = String::new();
-
-        if let Value::Object(map) = json_content {
-            // Iterate over the key-value pairs
-            for (key, value) in &mut *map {
-                // Get additional CAWG details
-                let current_manifest: &c2pa::Manifest = reader.get_manifest(key).unwrap();
-
-                // Replace the signature content of the assertion with parsed details by CAWG
-                let assertions = value.get_mut("assertions").unwrap();
-                let assertions_array = assertions.as_array_mut().unwrap();
-                for assertion in assertions_array {
-                    let label = assertion.get("label").unwrap().to_string();
-                    if label.contains("cawg.identity") {
-                        let parsed_cawg_json_string =
-                            get_cawg_details_for_manifest(current_manifest, &tokio_runtime);
-                        let assertion_data: &mut serde_json::Value = assertion.get_mut("data").unwrap();
-                        assertion_data["signature"] = serde_json::from_str(&parsed_cawg_json_string).unwrap();
-                    }
-                }
-            }
-
-            stringified_decorated_json = serde_json::to_string_pretty(&map).unwrap();
-        } else {
-            // TODO - TMN: Error handling
-            println!("The JSON is not an object");
-        }
-
+        let reader: Reader = Reader::from_file(&args.path).map_err(special_errs)?;
+        let stringified_decorated_json = decorate_json_display(reader, &tokio_runtime);
         println!("{}", stringified_decorated_json);
     }
 
