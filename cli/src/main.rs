@@ -427,7 +427,7 @@ fn verify_fragmented(init_pattern: &Path, frag_pattern: &Path) -> Result<Vec<Rea
     Ok(readers)
 }
 
-// Update/decorate the displayed JSON string for a more human-readable JSON output.
+/// Update/decorate the displayed JSON string for a more human-readable JSON output.
 fn decorate_json_display(reader: Reader, tokio_runtime: &Runtime) -> String {
     let mut reader_content = match reader.json_value_map() {
         Ok(mapped_json) => mapped_json,
@@ -465,8 +465,12 @@ fn decorate_json_display(reader: Reader, tokio_runtime: &Runtime) -> String {
     }
 }
 
-// Update/decorate the displayed JSON assertions for a more human-readable JSON output.
-fn decorate_json_assertions(reader: Reader, json_content: &mut Value, tokio_runtime: &Runtime) -> Result<(), Error>{
+/// Update/decorate the displayed JSON assertions for a more human-readable JSON output.
+fn decorate_json_assertions(
+    reader: Reader,
+    json_content: &mut Value,
+    tokio_runtime: &Runtime,
+) -> Result<(), Error> {
     if let Value::Object(map) = json_content {
         // Iterate over the key-value pairs
         for (key, value) in &mut *map {
@@ -475,7 +479,9 @@ fn decorate_json_assertions(reader: Reader, json_content: &mut Value, tokio_runt
             let current_manifest = match current_manifest {
                 Some(current_manifest) => current_manifest,
                 None => {
-                    return Err(crate::Error::JsonSerializationError("Could not get current manifest".to_string()));
+                    return Err(crate::Error::JsonSerializationError(
+                        "Could not get current manifest".to_string(),
+                    ));
                 }
             };
 
@@ -483,13 +489,17 @@ fn decorate_json_assertions(reader: Reader, json_content: &mut Value, tokio_runt
             let assertions = match value.get_mut("assertions") {
                 Some(assertions) => assertions,
                 None => {
-                    return Err(crate::Error::JsonSerializationError("Could not parse JSON assertions as object".to_string()));
+                    return Err(crate::Error::JsonSerializationError(
+                        "Could not parse JSON assertions as object".to_string(),
+                    ));
                 }
             };
             let assertions_array = match assertions.as_array_mut() {
                 Some(assertions_array) => assertions_array,
                 None => {
-                    return Err(crate::Error::JsonSerializationError("Could not parse JSON assertions as array".to_string()));
+                    return Err(crate::Error::JsonSerializationError(
+                        "Could not parse JSON assertions as array".to_string(),
+                    ));
                 }
             };
 
@@ -498,49 +508,70 @@ fn decorate_json_assertions(reader: Reader, json_content: &mut Value, tokio_runt
                 let label = match assertion.get("label") {
                     Some(label) => label.to_string(),
                     None => {
-                      return Err(crate::Error::JsonSerializationError("Could not parse assertion label".to_string()));
+                        return Err(crate::Error::JsonSerializationError(
+                            "Could not parse assertion label".to_string(),
+                        ));
                     }
                 };
 
                 // for CAWG assertions, further parse the signature
                 if label.contains("cawg.identity") {
-                    let parsed_cawg_json_string = match get_cawg_details_for_manifest(
-                        current_manifest,
-                        tokio_runtime,
-                    ) {
-                        Some(parsed_cawg_json_string) => parsed_cawg_json_string,
-                        None => {
-                            println!("Could not parse CAWG details for manifest (leaving original raw data unformatted)");
-                            continue;
-                        }
-                    };
-
-                    let assertion_data: &mut serde_json::Value = assertion.get_mut("data").unwrap();
-                    // update signature with parsed content
-
-                    let parsed_signature = match serde_json::from_str(&parsed_cawg_json_string) {
-                        Ok(parsed_signature) => parsed_signature,
-                        Err(err) => {
-                            println!("Could not parse CAWG signature details: {:?}", err);
-                            continue;
-                        }
-                    };
-                    assertion_data["signature"] = parsed_signature;
-
-                    // we don't need to show the padding fields either
-                    let assertion_data_map = match assertion_data.as_object_mut() {
-                        Some(assertion_data_map) => assertion_data_map,
-                        None => {
-                            println!("Could not parse assertion data as object");
-                            continue;
-                        }
-                    };
-                    assertion_data_map.remove("pad1");
-                    assertion_data_map.remove("pad2");
+                    decorate_json_cawg_assertions(current_manifest, assertion, tokio_runtime)?;
                 }
             }
         }
     }
+
+    Ok(())
+}
+
+/// Update/decorate the displayed CAWG assertion for a more human-readable JSON output.
+fn decorate_json_cawg_assertions(
+    holding_manifest: &c2pa::Manifest,
+    assertion: &mut Value,
+    tokio_runtime: &Runtime,
+) -> Result<(), Error> {
+    let parsed_cawg_json_string =
+        match get_cawg_details_for_manifest(holding_manifest, tokio_runtime) {
+            Some(parsed_cawg_json_string) => parsed_cawg_json_string,
+            None => {
+                println!(
+                "Could not parse CAWG details for manifest (leaving original raw data unformatted)"
+            );
+                return Ok(());
+            }
+        };
+
+    // Let's look at the assertion data
+    let assertion_data = match assertion.get_mut("data") {
+        Some(assertion_data) => assertion_data,
+        None => {
+            return Err(crate::Error::JsonSerializationError(
+                "Could not parse CAWG assertion data".to_string(),
+            ));
+        }
+    };
+
+    // Update signature with parsed content
+    let parsed_signature = match serde_json::from_str(&parsed_cawg_json_string) {
+        Ok(parsed_signature) => parsed_signature,
+        Err(err) => {
+            return Err(crate::Error::JsonSerializationError(err.to_string()));
+        }
+    };
+    assertion_data["signature"] = parsed_signature;
+
+    // We don't need to show the padding fields either
+    let assertion_data_map = match assertion_data.as_object_mut() {
+        Some(assertion_data_map) => assertion_data_map,
+        None => {
+            return Err(crate::Error::JsonSerializationError(
+                "Could not parse CAWG assertion data as object".to_string(),
+            ));
+        }
+    };
+    assertion_data_map.remove("pad1");
+    assertion_data_map.remove("pad2");
 
     Ok(())
 }
