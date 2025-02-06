@@ -1732,39 +1732,38 @@ impl Claim {
             // adjust the error info
             if let Some(li) = validation_log.logged_items_mut().last_mut() {
                 let mut new_li = li.clone();
-                if is_provenance {
-                    new_li.label = Cow::from(claim.uri());
-                } else {
-                    new_li = new_li.set_ingredient_uri(claim.uri());
-                }
-
+                new_li.label = Cow::from(claim.uri());
                 *li = new_li;
             }
         })?;
         check_ocsp_status(&sign1, &data, ctp, validation_log)
             .map(|v| {
                 // if a value contains the der response and is successfull returned than we had a good OCSP response
-                // so log the success status
-                if !v.ocsp_der.is_empty() && v.revoked_at.is_none() {
-                    log_item!(
-                        claim.uri(),
-                        "claim signature OCSP value good",
-                        "verify_internal"
-                    )
-                    .validation_status(validation_status::SIGNING_CREDENTIAL_NOT_REVOKED)
-                    .success(validation_log);
+                if !v.ocsp_der.is_empty() {
+                    // so log the success status
+                    if v.revoked_at.is_none() {
+                        log_item!(
+                            claim.uri(),
+                            "claim signature OCSP value good",
+                            "verify_internal"
+                        )
+                        .validation_status(validation_status::SIGNING_CREDENTIAL_NOT_REVOKED)
+                        .success(validation_log);
+                    } else {
+                        // adjust the error info
+                        if let Some(li) = validation_log.logged_items_mut().last_mut() {
+                            let mut new_li = li.clone();
+                            new_li.label = Cow::from(claim.uri());
+                            *li = new_li;
+                        }
+                    }
                 }
             })
             .inspect_err(|_e| {
                 // adjust the error info
                 if let Some(li) = validation_log.logged_items_mut().last_mut() {
                     let mut new_li = li.clone();
-                    if is_provenance {
-                        new_li.label = Cow::from(claim.uri());
-                    } else {
-                        new_li = new_li.set_ingredient_uri(claim.uri());
-                    }
-
+                    new_li.label = Cow::from(claim.uri());
                     *li = new_li;
                 }
             })?;
@@ -1823,39 +1822,38 @@ impl Claim {
             // adjust the error info
             if let Some(li) = validation_log.logged_items_mut().last_mut() {
                 let mut new_li = li.clone();
-                if is_provenance {
-                    new_li.label = Cow::from(claim.uri());
-                } else {
-                    new_li = new_li.set_ingredient_uri(claim.uri());
-                }
-
+                new_li.label = Cow::from(claim.uri());
                 *li = new_li;
             }
         })?;
         check_ocsp_status(&sign1, data, ctp, validation_log)
             .map(|v| {
                 // if a value contains the der response and is successfull returned than we had a good OCSP response
-                // so log the success status
-                if !v.ocsp_der.is_empty() && v.revoked_at.is_none() {
-                    log_item!(
-                        claim.uri(),
-                        "claim signature OCSP value good",
-                        "verify_internal"
-                    )
-                    .validation_status(validation_status::SIGNING_CREDENTIAL_NOT_REVOKED)
-                    .success(validation_log);
+                if !v.ocsp_der.is_empty() {
+                    // so log the success status
+                    if v.revoked_at.is_none() {
+                        log_item!(
+                            claim.uri(),
+                            "claim signature OCSP value good",
+                            "verify_internal"
+                        )
+                        .validation_status(validation_status::SIGNING_CREDENTIAL_NOT_REVOKED)
+                        .success(validation_log);
+                    } else {
+                        // adjust the error info
+                        if let Some(li) = validation_log.logged_items_mut().last_mut() {
+                            let mut new_li = li.clone();
+                            new_li.label = Cow::from(claim.uri());
+                            *li = new_li;
+                        }
+                    }
                 }
             })
             .inspect_err(|_e| {
                 // adjust the error info
                 if let Some(li) = validation_log.logged_items_mut().last_mut() {
                     let mut new_li = li.clone();
-                    if is_provenance {
-                        new_li.label = Cow::from(claim.uri());
-                    } else {
-                        new_li = new_li.set_ingredient_uri(claim.uri());
-                    }
-
+                    new_li.label = Cow::from(claim.uri());
                     *li = new_li;
                 }
             })?;
