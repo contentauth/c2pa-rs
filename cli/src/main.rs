@@ -427,6 +427,12 @@ fn verify_fragmented(init_pattern: &Path, frag_pattern: &Path) -> Result<Vec<Rea
     Ok(readers)
 }
 
+fn decorate_json_detailled_display(reader: Reader, extracted_report: String, tokio_runtime: &Runtime) -> String{
+  let mut report_json_map: Map<String, Value> = serde_json::from_str(&extracted_report).unwrap();
+
+  let manifests = report_json_map.get_mut("manifests").unwrap();
+}
+
 /// Update/decorate the displayed JSON string for a more human-readable JSON output.
 fn decorate_json_display(reader: Reader, tokio_runtime: &Runtime) -> String {
     let mut reader_content = match reader.json_value_map() {
@@ -921,7 +927,14 @@ fn main() -> Result<()> {
         )
     } else if args.detailed {
         let reader = Reader::from_file(&args.path).map_err(special_errs)?;
-        println!("{:#?}", reader);
+
+        let json_report = reader.json_report();
+        let extracted_json_report = match json_report {
+            Ok(extracted_json_report) => extracted_json_report,
+            Err(err) => format!("Could not parse JSON report: {:?}", err)
+        };
+
+        decorate_json_detailled_display(reader, extracted_json_report, &tokio_runtime);
     } else if let Some(Commands::Fragment {
         fragments_glob: Some(fg),
     }) = &args.command
