@@ -127,6 +127,7 @@ pub(crate) fn der_to_p1363(data: &[u8], sig_len: usize) -> Result<Vec<u8>, RawSi
 }
 
 // Returns supported EcdsaCurve for given public key.
+#[allow(dead_code)]
 pub(crate) fn ec_curve_from_public_key_der(public_key: &[u8]) -> Option<EcdsaCurve> {
     let (_, pk) = SubjectPublicKeyInfo::from_der(public_key).ok()?;
 
