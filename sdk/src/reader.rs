@@ -249,10 +249,7 @@ impl Reader {
 
     /// Get the manifest store as a serde serialized JSON value map.
     pub fn json_value_map(&self) -> Result<Map<String, Value>> {
-        let reader_as_json = self.json();
-        let reader_as_json_str = reader_as_json.as_str();
-        let mapped_json = serde_json::from_str(reader_as_json_str);
-        match mapped_json {
+        match serde_json::from_str(self.json().as_str()) {
             Ok(mapped_json) => Ok(mapped_json),
             Err(err) => Err(crate::Error::JsonSerializationError(err.to_string())),
         }
