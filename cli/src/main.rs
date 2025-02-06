@@ -478,17 +478,16 @@ fn decorate_json_display(reader: Reader, tokio_runtime: &Runtime) -> String {
         println!("Could not parse manifest store JSON content");
     }
 
-    let decorated_result = match serde_json::to_string_pretty(&reader_content) {
+    match serde_json::to_string_pretty(&reader_content) {
         Ok(decorated_result) => decorated_result,
         Err(err) => {
             println!(
                 "Could not parse manifest store JSON content with additional CAWG details: {:?}",
                 err
             );
-            return String::new();
+            String::new()
         }
-    };
-    decorated_result
+    }
 }
 
 /// Parse additional CAWG details from the manifest store to update displayed results.
