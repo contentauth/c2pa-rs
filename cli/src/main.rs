@@ -446,7 +446,12 @@ fn decorate_json_display(reader: Reader, tokio_runtime: &Runtime) -> String {
     };
 
     // Update assertion with more details, eg. for CAWG
-    decorate_json_assertions(reader, manifests_json_content, tokio_runtime);
+    match decorate_json_assertions(reader, manifests_json_content, tokio_runtime) {
+        Ok(_) => (),
+        Err(err) => {
+            println!("Could not decorate JSON assertions for display: {:?}", err);
+        }
+    };
 
     match serde_json::to_string_pretty(&reader_content) {
         Ok(decorated_result) => decorated_result,
