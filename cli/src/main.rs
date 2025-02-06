@@ -452,7 +452,6 @@ fn decorate_json_display(reader: Reader, tokio_runtime: &Runtime) -> String {
             println!("Could not decorate JSON assertions for display: {:?}", err);
         }
     };
-
     match serde_json::to_string_pretty(&reader_content) {
         Ok(decorated_result) => decorated_result,
         Err(err) => {
