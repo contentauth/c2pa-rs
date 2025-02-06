@@ -255,6 +255,17 @@ impl Reader {
         }
     }
 
+    // Get the full report as json
+    pub fn json_report(&self) -> Result<String> {
+        let report = ManifestStoreReport::from_store(self.manifest_store.store());
+        let mut report = match report {
+            Ok(report) => report,
+            Err(err) => return Err(crate::Error::JsonSerializationError(err.to_string())),
+        };
+        report.validation_results = self.manifest_store.validation_results().cloned();
+        Ok(report.to_string())
+    }
+
     /// Get the [`ValidationStatus`] array of the manifest store if it exists.
     /// Call this method to check for validation errors.
     ///

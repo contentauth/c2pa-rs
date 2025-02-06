@@ -1,0 +1,125 @@
+{
+  "active_manifest": "urn:uuid:edf0ad6d-e625-49d3-aebc-721f7d9be57b",
+  "manifests": {
+    "urn:uuid:edf0ad6d-e625-49d3-aebc-721f7d9be57b": {
+      "claim_generator": "adobetest/0.1",
+      "claim_generator_info": [
+        {
+          "name": "AdobeTest",
+          "version": "0.1",
+          "org.cai.c2pa_rs": "0.45.1"
+        }
+      ],
+      "format": "image/jpeg",
+      "instance_id": "xmp:iid:e9c6522c-a3e4-4959-940c-da2694a148f6",
+      "thumbnail": {
+        "format": "image/jpeg",
+        "identifier": "self#jumbf=/c2pa/urn:uuid:edf0ad6d-e625-49d3-aebc-721f7d9be57b/c2pa.assertions/c2pa.thumbnail.claim.jpeg"
+      },
+      "ingredients": [],
+      "assertions": [
+        {
+          "label": "c2pa.actions",
+          "data": {
+            "actions": [
+              {
+                "action": "c2pa.edited"
+              }
+            ]
+          }
+        },
+        {
+          "label": "cawg.identity",
+          "data": {
+            "signer_payload": {
+              "referenced_assertions": [
+                {
+                  "url": "self#jumbf=c2pa.assertions/c2pa.hash.data",
+                  "hash": "Rz9LLCKr1F+1/6xoZUqJxGC//+CzQ8QxORzGRv0Z9EQ="
+                }
+              ],
+              "sig_type": "cawg.identity_claims_aggregation"
+            },
+            "signature": {
+              "@context": [
+                "https://www.w3.org/ns/credentials/v2",
+                "https://creator-assertions.github.io/tbd/tbd"
+              ],
+              "type": [
+                "VerifiableCredential",
+                "IdentityClaimsAggregationCredential"
+              ],
+              "credentialSubject": {
+                "verifiedIdentities": [
+                  {
+                    "type": "cawg.social_media",
+                    "username": "firstlast555",
+                    "uri": "https://net.s2stagehance.com/firstlast555",
+                    "verifiedAt": "2025-01-10T19:53:59Z",
+                    "provider": {
+                      "id": "https://behance.net",
+                      "name": "behance"
+                    }
+                  }
+                ]
+              },
+              "issuer": "did:web:connected-identities.identity-stage.adobe.com",
+              "validFrom": "2025-01-31T22:15:57Z",
+              "credentialSchema": [
+                {
+                  "id": "https://cawg.io/schemas/v1/creator-identity-assertion.json",
+                  "type": "JSONSchema"
+                }
+              ]
+            }
+          }
+        }
+      ],
+      "signature_info": {
+        "alg": "Ps256",
+        "issuer": "Adobe Inc.",
+        "cert_serial_number": "28285008935659793949362901115676279692",
+        "time": "2025-01-31T22:15:57+00:00"
+      },
+      "label": "urn:uuid:edf0ad6d-e625-49d3-aebc-721f7d9be57b"
+    }
+  },
+  "validation_results": {
+    "activeManifest": {
+      "success": [
+        {
+          "code": "claimSignature.validated",
+          "url": "self#jumbf=/c2pa/urn:uuid:edf0ad6d-e625-49d3-aebc-721f7d9be57b/c2pa.signature",
+          "explanation": "claim signature valid"
+        },
+        {
+          "code": "assertion.hashedURI.match",
+          "url": "self#jumbf=/c2pa/urn:uuid:edf0ad6d-e625-49d3-aebc-721f7d9be57b/c2pa.assertions/c2pa.thumbnail.claim.jpeg",
+          "explanation": "hashed uri matched: self#jumbf=c2pa.assertions/c2pa.thumbnail.claim.jpeg"
+        },
+        {
+          "code": "assertion.hashedURI.match",
+          "url": "self#jumbf=/c2pa/urn:uuid:edf0ad6d-e625-49d3-aebc-721f7d9be57b/c2pa.assertions/c2pa.actions",
+          "explanation": "hashed uri matched: self#jumbf=c2pa.assertions/c2pa.actions"
+        },
+        {
+          "code": "assertion.hashedURI.match",
+          "url": "self#jumbf=/c2pa/urn:uuid:edf0ad6d-e625-49d3-aebc-721f7d9be57b/c2pa.assertions/cawg.identity",
+          "explanation": "hashed uri matched: self#jumbf=c2pa.assertions/cawg.identity"
+        },
+        {
+          "code": "assertion.hashedURI.match",
+          "url": "self#jumbf=/c2pa/urn:uuid:edf0ad6d-e625-49d3-aebc-721f7d9be57b/c2pa.assertions/c2pa.hash.data",
+          "explanation": "hashed uri matched: self#jumbf=c2pa.assertions/c2pa.hash.data"
+        },
+        {
+          "code": "assertion.dataHash.match",
+          "url": "self#jumbf=/c2pa/urn:uuid:edf0ad6d-e625-49d3-aebc-721f7d9be57b/c2pa.assertions/c2pa.hash.data",
+          "explanation": "data hash valid"
+        }
+      ],
+      "informational": [],
+      "failure": []
+    }
+  }
+}

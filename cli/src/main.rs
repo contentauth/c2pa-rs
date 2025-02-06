@@ -920,9 +920,8 @@ fn main() -> Result<()> {
             Ingredient::from_file(&args.path).map_err(special_errs)?
         )
     } else if args.detailed {
-        println!("## TMN-Debug ~ cli#main ~ Here we read the detailed edition");
         let reader = Reader::from_file(&args.path).map_err(special_errs)?;
-        println!("{:#?}", reader)
+        println!("{:#?}", reader);
     } else if let Some(Commands::Fragment {
         fragments_glob: Some(fg),
     }) = &args.command
