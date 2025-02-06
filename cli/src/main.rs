@@ -444,8 +444,7 @@ fn decorate_json_display(reader: Reader, tokio_runtime: &Runtime) -> String {
         }
     };
 
-    let mut stringified_decorated_json = String::new();
-
+    // Update manifests with CAWG details
     if let Value::Object(map) = json_content {
         // Iterate over the key-value pairs
         for (key, value) in &mut *map {
@@ -475,13 +474,21 @@ fn decorate_json_display(reader: Reader, tokio_runtime: &Runtime) -> String {
                 }
             }
         }
-
-        stringified_decorated_json = serde_json::to_string_pretty(&map).unwrap();
     } else {
         println!("Could not parse manifest store JSON content");
     }
 
-    stringified_decorated_json
+    let decorated_result = match serde_json::to_string_pretty(&reader_content) {
+        Ok(decorated_result) => decorated_result,
+        Err(err) => {
+            println!(
+                "Could not parse manifest store JSON content with additional CAWG details: {:?}",
+                err
+            );
+            return String::new();
+        }
+    };
+    decorated_result
 }
 
 /// Parse additional CAWG details from the manifest store to update displayed results.
@@ -598,6 +605,9 @@ fn main() -> Result<()> {
 
     // configure the SDK
     configure_sdk(&args).context("Could not configure c2pa-rs")?;
+
+    // configure tokio runtime for blocking operations
+    let tokio_runtime: Runtime = Runtime::new()?;
 
     // Remove manifest needs to also remove XMP provenance
     // if args.remove_manifest {
@@ -823,8 +833,6 @@ fn main() -> Result<()> {
             println!("{} Init manifests validated", stores.len());
         }
     } else {
-        let tokio_runtime: Runtime = Runtime::new()?;
-
         let reader: Reader = Reader::from_file(&args.path).map_err(special_errs)?;
         let stringified_decorated_json = decorate_json_display(reader, &tokio_runtime);
         println!("{}", stringified_decorated_json);
