@@ -2033,7 +2033,7 @@ pub(crate) mod tests {
     )]
     #[allow(deprecated)]
     #[cfg_attr(not(any(target_arch = "wasm32", feature = "openssl_sign")), ignore)]
-    #[cfg_attr(target_os = "wasi", allow(unused))]
+    #[cfg_attr(target_os = "wasi", wstd::test)]
     async fn test_embed_jpeg_stream_wasm() {
         use crate::assertions::User;
         let image = include_bytes!("../tests/fixtures/earth_apollo17.jpg");
@@ -2078,7 +2078,7 @@ pub(crate) mod tests {
     )]
     #[allow(deprecated)]
     #[cfg_attr(not(any(target_arch = "wasm32", feature = "openssl_sign")), ignore)]
-    #[cfg_attr(target_os = "wasi", allow(unused))]
+    #[cfg_attr(target_os = "wasi", wstd::test)]
     async fn test_embed_png_stream_wasm() {
         use crate::assertions::User;
         let image = include_bytes!("../tests/fixtures/libpng-test.png");
@@ -2116,7 +2116,7 @@ pub(crate) mod tests {
     )]
     #[allow(deprecated)]
     #[cfg_attr(not(any(target_arch = "wasm32", feature = "openssl_sign")), ignore)]
-    #[cfg_attr(target_os = "wasi", allow(unused))]
+    #[cfg_attr(target_os = "wasi", wstd::test)]
     async fn test_embed_webp_stream_wasm() {
         use crate::assertions::User;
         let image = include_bytes!("../tests/fixtures/mars.webp");

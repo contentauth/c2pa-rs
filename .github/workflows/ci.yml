@@ -297,8 +297,6 @@ jobs:
       contains(github.event.pull_request.labels.*.name, 'safe to test')
 
     runs-on: ubuntu-latest
-#    container:
-#      image: ghcr.io/webassembly/wasi-sdk
 
     steps:
       - name: Checkout repository
@@ -338,7 +336,7 @@ jobs:
           CC: /opt/wasi-sdk/bin/clang
           WASI_SDK_PATH: /opt/wasi-sdk
           RUST_MIN_STACK: 16777216
-        run: cargo +nightly test --target wasm32-wasip2 -p c2pa
+        run: cargo +nightly test --target wasm32-wasip2 -p c2pa -p c2pa-crypto
 
   test-direct-minimal-versions:
     name: Unit tests with minimum versions of direct dependencies

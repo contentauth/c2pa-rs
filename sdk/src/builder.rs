@@ -1461,7 +1461,7 @@ mod tests {
         wasm_bindgen_test
     )]
     #[cfg_attr(not(any(target_arch = "wasm32", feature = "openssl_sign")), ignore)]
-    #[cfg_attr(target_os = "wasi", allow(unused))]
+    #[cfg_attr(target_os = "wasi", wstd::test)]
     async fn test_builder_remote_sign() {
         let format = "image/jpeg";
         let mut source = Cursor::new(TEST_IMAGE);

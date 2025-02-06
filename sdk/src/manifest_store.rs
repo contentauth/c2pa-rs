@@ -658,7 +658,7 @@ mod tests {
         all(target_arch = "wasm32", not(target_os = "wasi")),
         wasm_bindgen_test
     )]
-    #[cfg_attr(target_os = "wasi", allow(unused))]
+    #[cfg_attr(target_os = "wasi", wstd::test)]
     #[cfg(feature = "v1_api")]
     #[allow(deprecated)]
     async fn manifest_report_image_async() {
@@ -702,7 +702,7 @@ mod tests {
         all(target_arch = "wasm32", not(target_os = "wasi")),
         wasm_bindgen_test
     )]
-    #[cfg_attr(target_os = "wasi", allow(unused))]
+    #[cfg_attr(target_os = "wasi", wstd::test)]
     #[allow(deprecated)]
     #[cfg(feature = "v1_api")]
     async fn manifest_report_from_manifest_and_asset_bytes_async() {

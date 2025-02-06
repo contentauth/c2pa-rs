@@ -11,7 +11,7 @@
 // specific language governing permissions and limitations under
 // each license.
 
-#[cfg(target_arch = "wasm32")]
+#[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
 use wasm_bindgen_test::wasm_bindgen_test;
 
 use crate::raw_signature::{
@@ -19,7 +19,8 @@ use crate::raw_signature::{
 };
 
 #[test]
-// #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+// #[cfg_attr(all(target_arch = "wasm32", not(target_os = "wasi")), wasm_bindgen_test)]
+#[cfg(not(target_arch = "wasm32"))]
 fn es256() {
     let cert_chain = include_bytes!("../fixtures/raw_signature/es256.pub");
     let private_key = include_bytes!("../fixtures/raw_signature/es256.priv");
@@ -41,7 +42,8 @@ fn es256() {
 }
 
 #[test]
-// #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+// #[cfg_attr(all(target_arch = "wasm32", not(target_os = "wasi")), wasm_bindgen_test)]
+#[cfg(not(target_arch = "wasm32"))]
 fn es384() {
     let cert_chain = include_bytes!("../fixtures/raw_signature/es384.pub");
     let private_key = include_bytes!("../fixtures/raw_signature/es384.priv");
@@ -63,7 +65,8 @@ fn es384() {
 }
 
 #[test]
-// #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+// #[cfg_attr(all(target_arch = "wasm32", not(target_os = "wasi")), wasm_bindgen_test)]
+#[cfg(not(target_arch = "wasm32"))]
 fn es512() {
     let cert_chain = include_bytes!("../fixtures/raw_signature/es512.pub");
     let private_key = include_bytes!("../fixtures/raw_signature/es512.priv");
@@ -85,7 +88,10 @@ fn es512() {
 }
 
 #[test]
-#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+#[cfg_attr(
+    all(target_arch = "wasm32", not(target_os = "wasi")),
+    wasm_bindgen_test
+)]
 fn ed25519() {
     let cert_chain = include_bytes!("../fixtures/raw_signature/ed25519.pub");
     let private_key = include_bytes!("../fixtures/raw_signature/ed25519.priv");
@@ -107,7 +113,7 @@ fn ed25519() {
 }
 
 #[test]
-// #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+// #[cfg_attr(all(target_arch = "wasm32", not(target_os = "wasi")), wasm_bindgen_test)]
 fn ps256() {
     let cert_chain = include_bytes!("../fixtures/raw_signature/ps256.pub");
     let private_key = include_bytes!("../fixtures/raw_signature/ps256.priv");
@@ -129,7 +135,7 @@ fn ps256() {
 }
 
 #[test]
-// #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+// #[cfg_attr(all(target_arch = "wasm32", not(target_os = "wasi")), wasm_bindgen_test)]
 fn ps384() {
     let cert_chain = include_bytes!("../fixtures/raw_signature/ps384.pub");
     let private_key = include_bytes!("../fixtures/raw_signature/ps384.priv");
@@ -151,7 +157,7 @@ fn ps384() {
 }
 
 #[test]
-// #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+// #[cfg_attr(all(target_arch = "wasm32", not(target_os = "wasi")), wasm_bindgen_test)]
 fn ps512() {
     let cert_chain = include_bytes!("../fixtures/raw_signature/ps512.pub");
     let private_key = include_bytes!("../fixtures/raw_signature/ps512.priv");
