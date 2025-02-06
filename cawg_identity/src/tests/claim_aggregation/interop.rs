@@ -52,7 +52,6 @@ async fn adobe_connected_identities() {
 
     assert_eq!(ica_vc.verified_identities.len().get(), 1);
     let vi1 = ica_vc.verified_identities.first();
-    println!("ica_vc.verified_identities.first(): {:?}", vi1);
 
     assert_eq!(
         vi1,
