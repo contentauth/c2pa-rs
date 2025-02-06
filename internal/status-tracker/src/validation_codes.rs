@@ -26,10 +26,20 @@ use crate::log::LogKind;
 /// Any corresponding URL should point to a C2PA claim signature box.
 pub const CLAIM_SIGNATURE_VALIDATED: &str = "claimSignature.validated";
 
+/// The claims signing certificate was valid at the time of signing.
+///
+/// Any corresponding URL should point to a C2PA claim box.
+pub const CLAIM_SIGNATURE_INSIDE_VALIDITY: &str = "claimSignature.insideValidity";
+
 /// The signing credential is listed on the validator's trust list.
 ///
 /// Any corresponding URL should point to a C2PA claim signature box.
 pub const SIGNING_CREDENTIAL_TRUSTED: &str = "signingCredential.trusted";
+
+/// The signing credential for the manifest has not been revoked:
+///
+/// Any corresponding URL should point to a C2PA claim
+pub const SIGNING_CREDENTIAL_NOT_REVOKED: &str = "signingCredential.ocsp.notRevoked";
 
 /// The time-stamp credential is listed on the validator's trust list.
 ///

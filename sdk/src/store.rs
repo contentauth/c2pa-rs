@@ -5125,9 +5125,7 @@ pub mod tests {
         // replace the title that is inside the claim data - should cause signature to not match
         let report = patch_and_report("C.jpg", b"C.jpg", b"X.jpg");
         assert!(!report.logged_items().is_empty());
-        assert!(report.has_error(Error::TimeStampError(
-            c2pa_crypto::time_stamp::TimeStampError::InvalidData
-        )));
+        assert!(report.has_error(c2pa_crypto::time_stamp::TimeStampError::InvalidData));
         assert!(report.has_status(validation_status::TIMESTAMP_MISMATCH));
     }
 

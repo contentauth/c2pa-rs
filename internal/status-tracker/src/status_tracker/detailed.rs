@@ -72,4 +72,8 @@ impl StatusTracker for DetailedStatusTracker {
     fn pop_ingredient_uri(&mut self) -> Option<String> {
         self.ingredient_uris.pop()
     }
+
+    fn logged_items_mut(&mut self) -> &mut [LogItem] {
+        &mut self.logged_items
+    }
 }

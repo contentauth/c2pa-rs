@@ -22,6 +22,9 @@ pub trait StatusTracker: Debug + Send {
     /// Return the current list of validation log items.
     fn logged_items(&self) -> &[LogItem];
 
+    /// Return the mutable list of validation log items.
+    fn logged_items_mut(&mut self) -> &mut [LogItem];
+
     /// Appends the contents of another [`StatusTracker`] to this list of
     /// validation log items.
     fn append(&mut self, other: &impl StatusTracker) {

@@ -125,7 +125,7 @@ impl ValidationStatus {
 
     /// Returns `true` if this has a successful validation code.
     pub fn passed(&self) -> bool {
-        is_success(&self.code)
+        self.kind != LogKind::Failure
     }
 
     /// Returns the LogKind for this validation status.
