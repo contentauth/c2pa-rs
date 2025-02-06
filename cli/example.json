@@ -1,0 +1,87 @@
+{
+  "@context": [
+    "https://www.w3.org/ns/credentials/v2",
+    "https://creator-assertions.github.io/tbd/tbd"
+  ],
+  "type": [
+    "VerifiableCredential",
+    "IdentityClaimsAggregationCredential"
+  ],
+  "credentialSubject": {
+    "verifiedIdentities": [
+      {
+        "type": "cawg.social_media",
+        "username": "firstlast555",
+        "uri": "https://net.s2stagehance.com/firstlast555",
+        "verifiedAt": "2025-01-10T19:53:59Z",
+        "provider": {
+          "id": "https://behance.net",
+          "name": "behance"
+        }
+      }
+    ],
+    "c2paAsset": {
+      "referenced_assertions": [
+        {
+          "url": "self#jumbf=c2pa.assertions/c2pa.hash.data",
+          "alg": "sha256",
+          "hash": [
+            82,
+            122,
+            57,
+            76,
+            76,
+            67,
+            75,
+            114,
+            49,
+            70,
+            43,
+            49,
+            47,
+            54,
+            120,
+            111,
+            90,
+            85,
+            113,
+            74,
+            120,
+            71,
+            67,
+            47,
+            47,
+            43,
+            67,
+            122,
+            81,
+            56,
+            81,
+            120,
+            79,
+            82,
+            122,
+            71,
+            82,
+            118,
+            48,
+            90,
+            57,
+            69,
+            81,
+            61
+          ]
+        }
+      ],
+      "sig_type": "cawg.identity_claims_aggregation"
+    }
+  },
+  "issuer": "did:web:connected-identities.identity-stage.adobe.com",
+  "validFrom": "2025-01-31T22:15:57Z",
+  "credentialSchema": [
+    {
+      "id": "https://cawg.io/schemas/v1/creator-identity-assertion.json",
+      "type": "JSONSchema"
+    }
+  ]
+}

@@ -549,8 +549,6 @@ impl Default for ManifestStore {
 
 impl std::fmt::Display for ManifestStore {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        println!("## TMN-Debug ~ std::fmt::Display for ManifestStore");
-
         let mut json = serde_json::to_string_pretty(self).unwrap_or_default();
 
         fn omit_tag(mut json: String, tag: &str) -> String {

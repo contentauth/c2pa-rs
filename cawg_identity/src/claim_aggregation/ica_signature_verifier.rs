@@ -153,7 +153,7 @@ impl SignatureVerifier for IcaSignatureVerifier {
                     ));
                 };
 
-                dbg!(&jwk_prop);
+                // dbg!(&jwk_prop);
 
                 // OMG SO HACKY!
                 let Ok(jwk_json) = serde_json::to_string_pretty(jwk_prop) else {

@@ -872,6 +872,7 @@ dependencies = [
  "serde_derive",
  "serde_json",
  "tempfile",
+ "tokio",
  "treeline",
  "url",
 ]

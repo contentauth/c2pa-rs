@@ -27,15 +27,13 @@ use std::{
 
 use anyhow::{anyhow, bail, Context, Result};
 use c2pa::{Builder, ClaimGeneratorInfo, Error, Ingredient, ManifestDefinition, Reader, Signer};
+use cawg_identity::{claim_aggregation::IcaSignatureVerifier, IdentityAssertion};
 use clap::{Parser, Subcommand};
 use log::debug;
-use tokio::runtime::Runtime;
 use serde::Deserialize;
 use signer::SignConfig;
+use tokio::runtime::Runtime;
 use url::Url;
-
-use cawg_identity::IdentityAssertion;
-use cawg_identity::claim_aggregation::IcaSignatureVerifier;
 
 use crate::{
     callback_signer::{CallbackSigner, CallbackSignerConfig, ExternalProcessRunner},
@@ -710,10 +708,12 @@ fn main() -> Result<()> {
             // println!("{:?}", identity_assertion);
 
             let isv = IcaSignatureVerifier {};
-            let ica = tokio_runtime.block_on(identity_assertion.validate(active_manifest, &isv)).unwrap();
-            println!("{:?}", ica);
+            let ica = tokio_runtime
+                .block_on(identity_assertion.validate(active_manifest, &isv))
+                .unwrap();
 
-            //let ica_vc = ica.credential_subjects;
+            let serialized = serde_json::to_string(&ica).unwrap();
+            println!("{:?}", serialized);
         });
         println!("@@@@@@@@@@@@@@@@@@@@@@@@");
     }

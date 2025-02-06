@@ -65,7 +65,6 @@ impl Reader {
     /// ```
     #[async_generic()]
     pub fn from_stream(format: &str, mut stream: impl Read + Seek + Send) -> Result<Reader> {
-        println!("## TMN-Debug ~ read from_stream to build the manifest store (Reader#from_stream)");
         let verify = get_settings_value::<bool>("verify.verify_after_reading")?; // defaults to true
         #[allow(deprecated)]
         let reader = if _sync {
@@ -244,7 +243,6 @@ impl Reader {
 
     /// Get the manifest store as a JSON string
     pub fn json(&self) -> String {
-        println!("## TMN-Debug ~ Reader#json");
         self.manifest_store.to_string()
     }
 
@@ -435,7 +433,6 @@ impl Default for Reader {
 /// Prints the JSON of the manifest data.
 impl std::fmt::Display for Reader {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        println!("## TMN-Debug ~ std::fmt::Display for Reader");
         f.write_str(self.json().as_str())
     }
 }
