@@ -254,7 +254,7 @@ impl Reader {
         let mapped_json = serde_json::from_str(reader_as_json_str);
         match mapped_json {
             Ok(mapped_json) => Ok(mapped_json),
-            Err(err) => Err(Error::AssertionEncoding(err.to_string())),
+            Err(err) => Err(crate::Error::AssertionEncoding(err.to_string())),
         }
     }
 
