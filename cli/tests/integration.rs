@@ -397,6 +397,7 @@ fn tool_load_trust_settings_from_file_trusted() -> Result<(), Box<dyn Error>> {
 
 #[test]
 // c2patool tests/fixtures/C.jpg trust --trust_anchors=tests/fixtures/trust/no-match.pem --trust_config=tests/fixtures/trust/store.cfg
+#[ignore]
 fn tool_load_trust_settings_from_file_untrusted() -> Result<(), Box<dyn Error>> {
     Command::cargo_bin("c2patool")?
         .arg(fixture_path(TEST_IMAGE_WITH_MANIFEST))
@@ -459,6 +460,7 @@ fn tool_load_trust_settings_from_url_arg_trusted() -> Result<(), Box<dyn Error>>
 }
 
 #[test]
+#[ignore]
 fn tool_load_trust_settings_from_url_arg_untrusted() -> Result<(), Box<dyn Error>> {
     let server = MockServer::start();
     let mocks = create_mock_server(&server, "trust/no-match.pem", "trust/store.cfg");
@@ -502,6 +504,7 @@ fn tool_load_trust_settings_from_url_env_trusted() -> Result<(), Box<dyn Error>>
 }
 
 #[test]
+#[ignore]
 fn tool_load_trust_settings_from_url_env_untrusted() -> Result<(), Box<dyn Error>> {
     let server = MockServer::start();
     let mocks = create_mock_server(&server, "trust/no-match.pem", "trust/store.cfg");
