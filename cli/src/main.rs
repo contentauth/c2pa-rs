@@ -429,8 +429,21 @@ fn verify_fragmented(init_pattern: &Path, frag_pattern: &Path) -> Result<Vec<Rea
 }
 
 fn decorate_json_display(reader: Reader, tokio_runtime: &Runtime) -> String {
-  let mut reader_content = reader.json_value_map().unwrap();
-  let json_content = reader_content.get_mut("manifests").unwrap();
+  let mut reader_content = match reader.json_value_map() {
+      Ok(mapped_json) => mapped_json,
+      Err(_) => {
+          println!("Could not parse manifest store JSON content");
+          return String::new();
+      }
+  };
+
+  let json_content = match reader_content.get_mut("manifests") {
+      Some(json) => json,
+      None => {
+          println!("No JSON to parse in manifest store (key: manifests)");
+          return String::new();
+      }
+  };
 
   let mut stringified_decorated_json = String::new();
 
@@ -445,6 +458,8 @@ fn decorate_json_display(reader: Reader, tokio_runtime: &Runtime) -> String {
           let assertions_array = assertions.as_array_mut().unwrap();
           for assertion in assertions_array {
               let label = assertion.get("label").unwrap().to_string();
+
+              // for CAWG assertions, further parse the signature
               if label.contains("cawg.identity") {
                   let parsed_cawg_json_string =
                       get_cawg_details_for_manifest(current_manifest, &tokio_runtime);
@@ -456,8 +471,7 @@ fn decorate_json_display(reader: Reader, tokio_runtime: &Runtime) -> String {
 
       stringified_decorated_json = serde_json::to_string_pretty(&map).unwrap();
   } else {
-      // TODO - TMN: Error handling
-      println!("The JSON is not an object");
+      println!("Could not parse manifest store JSON content");
   }
 
   stringified_decorated_json
@@ -746,9 +760,10 @@ fn main() -> Result<()> {
         )
     } else if args.detailed {
         println!("## TMN-Debug ~ cli#main ~ Here we read the detailed edition");
+        let reader = Reader::from_file(&args.path).map_err(special_errs)?;
         println!(
             "{:#?}",
-            Reader::from_file(&args.path).map_err(special_errs)?
+            reader
         )
     } else if let Some(Commands::Fragment {
         fragments_glob: Some(fg),
