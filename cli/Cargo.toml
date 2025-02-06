@@ -22,6 +22,7 @@ unexpected_cfgs = { level = "warn", check-cfg = ['cfg(test)'] }
 [dependencies]
 anyhow = "1.0"
 atree = "0.5.2"
+cawg-identity = { path = "../cawg_identity"}
 c2pa = { path = "../sdk", version = "0.45.1", features = [
 	"fetch_remote_manifests",
 	"file_io",
@@ -37,6 +38,7 @@ serde = { version = "1.0", features = ["derive"] }
 serde_derive = "1.0"
 serde_json = "1.0"
 tempfile = "3.3"
+tokio = { version = "1.42", features = ["full"] }
 treeline = "0.1.0"
 pem = "3.0.3"
 openssl = { version = "0.10.61", features = ["vendored"] }

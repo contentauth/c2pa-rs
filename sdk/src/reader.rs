@@ -23,6 +23,7 @@ use c2pa_status_tracker::DetailedStatusTracker;
 #[cfg(feature = "json_schema")]
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use serde_json::{Map, Value};
 
 #[cfg(feature = "file_io")]
 use crate::error::Error;
@@ -241,9 +242,20 @@ impl Reader {
         })
     }
 
-    /// Get the manifest store as a JSON string
+    /// Get the manifest store as a JSON string.
     pub fn json(&self) -> String {
         self.manifest_store.to_string()
+    }
+
+    /// Get the manifest store as a serde serialized JSON value map.
+    pub fn json_value_map(&self) -> Result<Map<String, Value>> {
+        let reader_as_json = self.json();
+        let reader_as_json_str = reader_as_json.as_str();
+        let mapped_json = serde_json::from_str(reader_as_json_str);
+        match mapped_json {
+            Ok(mapped_json) => Ok(mapped_json),
+            Err(err) => Err(crate::Error::JsonSerializationError(err.to_string())),
+        }
     }
 
     /// Get the [`ValidationStatus`] array of the manifest store if it exists.

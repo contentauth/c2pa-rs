@@ -857,6 +857,7 @@ dependencies = [
  "atree",
  "c2pa",
  "c2pa-crypto",
+ "cawg-identity",
  "clap",
  "env_logger",
  "glob",
@@ -871,6 +872,7 @@ dependencies = [
  "serde_derive",
  "serde_json",
  "tempfile",
+ "tokio",
  "treeline",
  "url",
 ]

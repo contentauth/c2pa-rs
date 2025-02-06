@@ -68,7 +68,7 @@ pub(crate) async fn resolve(did: &Did<'_>) -> Result<DidDocument, DidWebError> {
 
     let method_specific_id = did.method_specific_id();
 
-    dbg!(method_specific_id);
+    //dbg!(method_specific_id);
 
     let url = to_url(method_specific_id)?;
     // TODO: https://w3c-ccg.github.io/did-method-web/#in-transit-security

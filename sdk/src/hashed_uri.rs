@@ -112,7 +112,7 @@ mod tests {
     fn impl_clone() {
         let h = HashedUri::new(
             "self#jumbf=c2pa/urn:uuid:F9168C5E-CEB2-4faa-B6BF-329BF39FA1E4/c2pa.assertions/c2pa.hash.data".to_owned(),
-             Some("sha256".to_owned()),
+            Some("sha256".to_owned()),
             &hex!("53d1b2cf4e6d9a97ed9281183fa5d836c32751b9d2fca724b40836befee7d67f"),
         );
 
@@ -124,7 +124,7 @@ mod tests {
     fn impl_debug() {
         let h = HashedUri::new(
             "self#jumbf=c2pa/urn:uuid:F9168C5E-CEB2-4faa-B6BF-329BF39FA1E4/c2pa.assertions/c2pa.hash.data".to_owned(),
-             Some("sha256".to_owned()),
+            Some("sha256".to_owned()),
             &hex!("53d1b2cf4e6d9a97ed9281183fa5d836c32751b9d2fca724b40836befee7d67f"),
         );
 
@@ -135,7 +135,7 @@ mod tests {
     fn impl_display() {
         let h = HashedUri::new(
             "self#jumbf=c2pa/urn:uuid:F9168C5E-CEB2-4faa-B6BF-329BF39FA1E4/c2pa.assertions/c2pa.hash.data".to_owned(),
-             Some("sha256".to_owned()),
+            Some("sha256".to_owned()),
             &hex!("53d1b2cf4e6d9a97ed9281183fa5d836c32751b9d2fca724b40836befee7d67f"),
         );
 

@@ -252,6 +252,9 @@ pub enum Error {
     #[error("The Verifiable Content structure is not valid")]
     VerifiableCredentialInvalid,
 
+    #[error("error while serializing to JSON: {0}")]
+    JsonSerializationError(String),
+
     /// Could not parse ECDSA signature. (Only appears when using WASM web crypto.)
     #[error("could not parse ECDSA signature")]
     InvalidEcdsaSignature,
