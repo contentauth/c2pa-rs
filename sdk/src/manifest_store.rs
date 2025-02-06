@@ -589,7 +589,6 @@ impl std::fmt::Display for ManifestStore {
         }
 
         json = b64_tag(json, "hash");
-        json = b64_tag(json, "signature");
 
         // list of tags to omit (padding tags)
         // Reason of padding, see note at:
