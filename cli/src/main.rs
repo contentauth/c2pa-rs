@@ -427,6 +427,25 @@ fn verify_fragmented(init_pattern: &Path, frag_pattern: &Path) -> Result<Vec<Rea
     Ok(readers)
 }
 
+/// Parse additional CAWG details from the manifest store to update displayed results
+fn get_cawg_details_for_manifest(manifest: &c2pa::Manifest, tokio_runtime: &Runtime) -> String {
+    let ia_iter = IdentityAssertion::from_manifest(manifest);
+    let mut parsed_cawg_json = String::new();
+    ia_iter.for_each(|ia| {
+        let identity_assertion: IdentityAssertion = ia.unwrap();
+        // println!("{:?}", identity_assertion);
+        let isv = IcaSignatureVerifier {};
+        let ica = tokio_runtime
+            .block_on(identity_assertion.validate(manifest, &isv))
+            .unwrap();
+
+        parsed_cawg_json = serde_json::to_string(&ica).unwrap();
+        // println!("Serialized signature content: {:?}", parsed_cawg_json);
+    });
+
+    parsed_cawg_json
+}
+
 fn main() -> Result<()> {
     let args = CliArgs::parse();
 
@@ -694,55 +713,42 @@ fn main() -> Result<()> {
         }
     } else {
         println!("## TMN-Debug ~ cli#main ~ Here we read");
-        let tokio_runtime = Runtime::new()?;
+        let tokio_runtime: Runtime = Runtime::new()?;
 
         let reader = Reader::from_file(&args.path).map_err(special_errs)?;
         //println!("{}", reader);
 
         println!("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~");
-        let mut reader_content = reader.json_value_map();
+        let mut reader_content = reader.json_value_map().unwrap();
         let json_content = reader_content.get_mut("manifests").unwrap();
         if let Value::Object(map) = json_content {
             // Iterate over the key-value pairs
             for (key, value) in map {
                 println!("Current manifest key: {}", key);
-                //println!("Value: {}", value);
+                // println!("Current manifest value: {}", value);
 
-                let current_manifest = reader.get_manifest(key).unwrap();
-                let ia_iter = IdentityAssertion::from_manifest(current_manifest);
-                ia_iter.for_each(|ia| {
-                  let identity_assertion: IdentityAssertion = ia.unwrap();
-                      // println!("{:?}", identity_assertion);
-                      let isv = IcaSignatureVerifier {};
-                      let ica = tokio_runtime
-                          .block_on(identity_assertion.validate(current_manifest, &isv))
-                          .unwrap();
+                // Get additional CAWG details
+                let current_manifest: &c2pa::Manifest = reader.get_manifest(key).unwrap();
+                let parsed_cawg_json_string = get_cawg_details_for_manifest(current_manifest, &tokio_runtime);
 
-                      let serialized = serde_json::to_string(&ica).unwrap();
-                      println!("Serialized signature content: {:?}", serialized);
-                });
+                // Get the signature element from the JSON
+                let assertions = value.get("assertions").unwrap();
+                for assertion in assertions.as_array().unwrap() {
+                    // println!("Current assertion value: {}", assertion);
+                    let label = assertion.get("label").unwrap().to_string();
+                    println!("label: {}", label);
+                    if label.contains("cawg.identity") {
+                        // println!("Current assertion: {}", assertion);
+                        let assertion_data = assertion.get("data").unwrap();
+                        let assertion_data_signature = assertion_data.get("signature").unwrap();
+                        println!("assertion_data_signature: {}", assertion_data_signature);
+                    }
+                }
             }
         } else {
+            // TODO - TMN: Error handling
             println!("The JSON is not an object");
         }
-
-        // println!("@@@@@@@@@@@@@@@@@@@@@@@@");
-        // let active_manifest = reader.active_manifest().unwrap();
-        // let ia_iter = IdentityAssertion::from_manifest(active_manifest);
-
-        // ia_iter.for_each(|ia| {
-        //     let identity_assertion: IdentityAssertion = ia.unwrap();
-        //     // println!("{:?}", identity_assertion);
-
-        //     let isv = IcaSignatureVerifier {};
-        //     let ica = tokio_runtime
-        //         .block_on(identity_assertion.validate(active_manifest, &isv))
-        //         .unwrap();
-
-        //     let serialized = serde_json::to_string(&ica).unwrap();
-        //     println!("{:?}", serialized);
-        // });
-        // println!("@@@@@@@@@@@@@@@@@@@@@@@@");
     }
 
     Ok(())
