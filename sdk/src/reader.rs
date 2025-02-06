@@ -242,19 +242,19 @@ impl Reader {
         })
     }
 
-    /// Get the manifest store as a JSON string
+    /// Get the manifest store as a JSON string.
     pub fn json(&self) -> String {
         self.manifest_store.to_string()
     }
 
-    /// Get the manifest store as a serialized JSON value map
+    /// Get the manifest store as a serde serialized JSON value map.
     pub fn json_value_map(&self) -> Result<Map<String, Value>> {
         let reader_as_json = self.json();
         let reader_as_json_str = reader_as_json.as_str();
         let mapped_json = serde_json::from_str(reader_as_json_str);
         match mapped_json {
             Ok(mapped_json) => Ok(mapped_json),
-            Err(err) => Err(crate::Error::AssertionEncoding(err.to_string())),
+            Err(err) => Err(crate::Error::JsonSerializationError(err.to_string())),
         }
     }
 
