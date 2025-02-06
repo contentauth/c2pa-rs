@@ -459,18 +459,39 @@ fn decorate_json_display(reader: Reader, tokio_runtime: &Runtime) -> String {
 
                 // for CAWG assertions, further parse the signature
                 if label.contains("cawg.identity") {
-                    let parsed_cawg_json_string =
-                        match get_cawg_details_for_manifest(current_manifest, tokio_runtime) {
-                            Some(parsed_cawg_json_string) => parsed_cawg_json_string,
-                            None => {
-                                println!("Could not parse CAWG details for manifest");
-                                continue;
-                            }
-                        };
+                    let parsed_cawg_json_string = match get_cawg_details_for_manifest(
+                        current_manifest,
+                        tokio_runtime,
+                    ) {
+                        Some(parsed_cawg_json_string) => parsed_cawg_json_string,
+                        None => {
+                            println!("Could not parse CAWG details for manifest (leaving original raw data unformatted)");
+                            continue;
+                        }
+                    };
 
                     let assertion_data: &mut serde_json::Value = assertion.get_mut("data").unwrap();
-                    assertion_data["signature"] =
-                        serde_json::from_str(&parsed_cawg_json_string).unwrap();
+                    // update signature with parsed content
+
+                    let parsed_signature = match serde_json::from_str(&parsed_cawg_json_string) {
+                        Ok(parsed_signature) => parsed_signature,
+                        Err(err) => {
+                            println!("Could not parse CAWG signature details: {:?}", err);
+                            continue;
+                        }
+                    };
+                    assertion_data["signature"] = parsed_signature;
+
+                    // we don't need to show the padding fields either
+                    let assertion_data_map = match assertion_data.as_object_mut() {
+                        Some(assertion_data_map) => assertion_data_map,
+                        None => {
+                            println!("Could not parse assertion data as object");
+                            continue;
+                        }
+                    };
+                    assertion_data_map.remove("pad1");
+                    assertion_data_map.remove("pad2");
                 }
             }
         }
@@ -505,7 +526,7 @@ fn get_cawg_details_for_manifest(
         let identity_assertion = match ia {
             Ok(ia) => ia,
             Err(err) => {
-                println!("Could not parse identity assertion: {:?}", err);
+                println!("Could not parse CAWG identity assertion: {:?}", err);
                 return;
             }
         };
@@ -515,20 +536,36 @@ fn get_cawg_details_for_manifest(
         let ica = match ica_validated {
             Ok(ica) => ica,
             Err(err) => {
-                println!("Could not validate identity assertion: {:?}", err);
+                println!("Could not validate CAWG identity assertion: {:?}", err);
                 return;
             }
         };
 
-        parsed_cawg_json = serde_json::to_string(&ica).unwrap();
+        parsed_cawg_json = match serde_json::to_string(&ica) {
+            Ok(parsed_cawg_json) => parsed_cawg_json,
+            Err(err) => {
+                println!(
+                    "Could not parse CAWG identity claims aggregation details for manifest: {:?}",
+                    err
+                );
+                return;
+            }
+        };
     });
 
-    // Get the JSON as mutable, so we can further parse and format
+    if parsed_cawg_json.is_empty() {
+        return None;
+    }
+
+    // Get the JSON as mutable, so we can further parse and format CAWG data
     let maybe_map = serde_json::from_str(parsed_cawg_json.as_str());
     let mut map: Map<String, Value> = match maybe_map {
         Ok(map) => map,
         Err(err) => {
-            println!("Could not parse CAWG details for manifest: {:?}", err);
+            println!(
+                "Could not parse convert CAWG identity claims details to JSON string map: {:?}",
+                err
+            );
             return None;
         }
     };
@@ -538,7 +575,7 @@ fn get_cawg_details_for_manifest(
     let credentials_subject = match credentials_subject_maybe {
         Some(credentials_subject) => credentials_subject,
         None => {
-            println!("Could not find credentialSubject in CAWG details for manifest");
+            println!("Could not find credential subject in CAWG details for manifest");
             return None;
         }
     };
