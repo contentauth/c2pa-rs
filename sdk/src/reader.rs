@@ -249,13 +249,13 @@ impl Reader {
 
     /// Get the manifest store as a serialized JSON value map
     pub fn json_value_map(&self) -> Result<Map<String, Value>> {
-      let reader_as_json = self.json();
-      let reader_as_json_str = reader_as_json.as_str();
-      let mapped_json= serde_json::from_str(reader_as_json_str);
-      match mapped_json {
-        Ok(mapped_json) => Ok(mapped_json),
-        Err(err) => Err(Error::AssertionEncoding(err.to_string()))
-      }
+        let reader_as_json = self.json();
+        let reader_as_json_str = reader_as_json.as_str();
+        let mapped_json = serde_json::from_str(reader_as_json_str);
+        match mapped_json {
+            Ok(mapped_json) => Ok(mapped_json),
+            Err(err) => Err(Error::AssertionEncoding(err.to_string())),
+        }
     }
 
     /// Get the [`ValidationStatus`] array of the manifest store if it exists.

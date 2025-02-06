@@ -31,8 +31,7 @@ use cawg_identity::{claim_aggregation::IcaSignatureVerifier, IdentityAssertion};
 use clap::{Parser, Subcommand};
 use log::debug;
 use serde::Deserialize;
-use serde_json::Map;
-use serde_json::Value;
+use serde_json::{Map, Value};
 use signer::SignConfig;
 use tokio::runtime::Runtime;
 use url::Url;
@@ -429,84 +428,135 @@ fn verify_fragmented(init_pattern: &Path, frag_pattern: &Path) -> Result<Vec<Rea
 }
 
 fn decorate_json_display(reader: Reader, tokio_runtime: &Runtime) -> String {
-  let mut reader_content = match reader.json_value_map() {
-      Ok(mapped_json) => mapped_json,
-      Err(_) => {
-          println!("Could not parse manifest store JSON content");
-          return String::new();
-      }
-  };
+    let mut reader_content = match reader.json_value_map() {
+        Ok(mapped_json) => mapped_json,
+        Err(_) => {
+            println!("Could not parse manifest store JSON content");
+            return String::new();
+        }
+    };
 
-  let json_content = match reader_content.get_mut("manifests") {
-      Some(json) => json,
-      None => {
-          println!("No JSON to parse in manifest store (key: manifests)");
-          return String::new();
-      }
-  };
+    let json_content = match reader_content.get_mut("manifests") {
+        Some(json) => json,
+        None => {
+            println!("No JSON to parse in manifest store (key: manifests)");
+            return String::new();
+        }
+    };
 
-  let mut stringified_decorated_json = String::new();
+    let mut stringified_decorated_json = String::new();
 
-  if let Value::Object(map) = json_content {
-      // Iterate over the key-value pairs
-      for (key, value) in &mut *map {
-          // Get additional CAWG details
-          let current_manifest: &c2pa::Manifest = reader.get_manifest(key).unwrap();
+    if let Value::Object(map) = json_content {
+        // Iterate over the key-value pairs
+        for (key, value) in &mut *map {
+            // Get additional CAWG details
+            let current_manifest: &c2pa::Manifest = reader.get_manifest(key).unwrap();
 
-          // Replace the signature content of the assertion with parsed details by CAWG
-          let assertions = value.get_mut("assertions").unwrap();
-          let assertions_array = assertions.as_array_mut().unwrap();
-          for assertion in assertions_array {
-              let label = assertion.get("label").unwrap().to_string();
+            // Replace the signature content of the assertion with parsed details by CAWG
+            let assertions = value.get_mut("assertions").unwrap();
+            let assertions_array = assertions.as_array_mut().unwrap();
+            for assertion in assertions_array {
+                let label = assertion.get("label").unwrap().to_string();
 
-              // for CAWG assertions, further parse the signature
-              if label.contains("cawg.identity") {
-                  let parsed_cawg_json_string =
-                      get_cawg_details_for_manifest(current_manifest, &tokio_runtime);
-                  let assertion_data: &mut serde_json::Value = assertion.get_mut("data").unwrap();
-                  assertion_data["signature"] = serde_json::from_str(&parsed_cawg_json_string).unwrap();
-              }
-          }
-      }
+                // for CAWG assertions, further parse the signature
+                if label.contains("cawg.identity") {
+                    let parsed_cawg_json_string =
+                        match get_cawg_details_for_manifest(current_manifest, tokio_runtime) {
+                            Some(parsed_cawg_json_string) => parsed_cawg_json_string,
+                            None => {
+                                println!("Could not parse CAWG details for manifest");
+                                continue;
+                            }
+                        };
 
-      stringified_decorated_json = serde_json::to_string_pretty(&map).unwrap();
-  } else {
-      println!("Could not parse manifest store JSON content");
-  }
+                    let assertion_data: &mut serde_json::Value = assertion.get_mut("data").unwrap();
+                    assertion_data["signature"] =
+                        serde_json::from_str(&parsed_cawg_json_string).unwrap();
+                }
+            }
+        }
 
-  stringified_decorated_json
+        stringified_decorated_json = serde_json::to_string_pretty(&map).unwrap();
+    } else {
+        println!("Could not parse manifest store JSON content");
+    }
+
+    stringified_decorated_json
 }
 
 /// Parse additional CAWG details from the manifest store to update displayed results.
 /// As CAWG mostly async, this will block on network requests for checks using a tokio runtime.
-fn get_cawg_details_for_manifest(manifest: &c2pa::Manifest, tokio_runtime: &Runtime) -> String {
+fn get_cawg_details_for_manifest(
+    manifest: &c2pa::Manifest,
+    tokio_runtime: &Runtime,
+) -> Option<String> {
     let ia_iter = IdentityAssertion::from_manifest(manifest);
 
     // TODO: Determine what should happen when multiple identities are reported (currently only 1 is supported)
     let mut parsed_cawg_json = String::new();
+
     ia_iter.for_each(|ia| {
-        let identity_assertion: IdentityAssertion = ia.unwrap();
+        let identity_assertion = match ia {
+            Ok(ia) => ia,
+            Err(err) => {
+                println!("Could not parse identity assertion: {:?}", err);
+                return;
+            }
+        };
+
         let isv = IcaSignatureVerifier {};
-        let ica = tokio_runtime
-            .block_on(identity_assertion.validate(manifest, &isv))
-            .unwrap();
+        let ica_validated = tokio_runtime.block_on(identity_assertion.validate(manifest, &isv));
+        let ica = match ica_validated {
+            Ok(ica) => ica,
+            Err(err) => {
+                println!("Could not validate identity assertion: {:?}", err);
+                return;
+            }
+        };
 
         parsed_cawg_json = serde_json::to_string(&ica).unwrap();
     });
 
-    // Do some formatting to avoid repetitions in the output...
-    let mut map: Map<String, Value> = serde_json::from_str(parsed_cawg_json.as_str()).unwrap();
-    let credential_subject_details = map
-        .get_mut("credentialSubject")
-        .unwrap()
-        .as_object_mut()
-        .unwrap();
+    // Get the JSON as mutable, so we can further parse and format
+    let maybe_map = serde_json::from_str(parsed_cawg_json.as_str());
+    let mut map: Map<String, Value> = match maybe_map {
+        Ok(map) => map,
+        Err(err) => {
+            println!("Could not parse CAWG details for manifest: {:?}", err);
+            return None;
+        }
+    };
 
-    // ... as per design CAWG has some repetition between assertion an signature (c2paAsset field)
+    // Get the credentials subject information...
+    let credentials_subject = map.get_mut("credentialSubject");
+    let credentials_subject = match credentials_subject {
+        Some(credentials_subject) => credentials_subject,
+        None => {
+            println!("Could not find credentialSubject in CAWG details for manifest");
+            return None;
+        }
+    };
+    let credentials_subject_as_obj = credentials_subject.as_object_mut();
+    let credential_subject_details = match credentials_subject_as_obj {
+        Some(credentials_subject) => credentials_subject,
+        None => {
+            println!("Could not parse credential subject as object in CAWG details for manifest");
+            return None;
+        }
+    };
+    // As per design CAWG has some repetition between assertion an signature (c2paAsset field)
+    // so we remove the c2paAsset field from the credential subject details too
     credential_subject_details.remove("c2paAsset");
 
     // return the for-display json-formatted string
-    serde_json::to_string(&map).unwrap()
+    let serialized_content = serde_json::to_string(&map);
+    match serialized_content {
+        Ok(serialized_content) => Some(serialized_content),
+        Err(err) => {
+            println!("Could not parse CAWG details for manifest: {:?}", err);
+            None
+        }
+    }
 }
 
 fn main() -> Result<()> {
@@ -761,10 +811,7 @@ fn main() -> Result<()> {
     } else if args.detailed {
         println!("## TMN-Debug ~ cli#main ~ Here we read the detailed edition");
         let reader = Reader::from_file(&args.path).map_err(special_errs)?;
-        println!(
-            "{:#?}",
-            reader
-        )
+        println!("{:#?}", reader)
     } else if let Some(Commands::Fragment {
         fragments_glob: Some(fg),
     }) = &args.command
