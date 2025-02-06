@@ -429,7 +429,7 @@ fn verify_fragmented(init_pattern: &Path, frag_pattern: &Path) -> Result<Vec<Rea
 }
 
 fn decorate_json_display(manifest: &c2pa::Manifest, tokio_runtime: &Runtime) -> String {
-    // determine which decorators to applu
+    // determine which decorators to apply
     todo!()
 }
 
@@ -736,6 +736,7 @@ fn main() -> Result<()> {
         let reader = Reader::from_file(&args.path).map_err(special_errs)?;
         //println!("{}", reader);
 
+        // TODO-TMN: Move the below to decorate_json_display
         let mut reader_content = reader.json_value_map().unwrap();
         let json_content = reader_content.get_mut("manifests").unwrap();
 
@@ -766,10 +767,6 @@ fn main() -> Result<()> {
             // TODO - TMN: Error handling
             println!("The JSON is not an object");
         }
-
-        // println!("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~");
-        // println!("Final JSON: {:?}", stringified_decorated_json);
-        // println!("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~");
 
         println!("{}", stringified_decorated_json);
     }
