@@ -1738,7 +1738,7 @@ impl Claim {
         })?;
         check_ocsp_status(&sign1, &data, ctp, validation_log)
             .map(|v| {
-                // if a value contains the der response and is successfull returned than we had a good OCSP response
+                // if a value contains the der response it has successfully returned a good OCSP response
                 if !v.ocsp_der.is_empty() {
                     // so log the success status
                     if v.revoked_at.is_none() {
@@ -1828,7 +1828,7 @@ impl Claim {
         })?;
         check_ocsp_status(&sign1, data, ctp, validation_log)
             .map(|v| {
-                // if a value contains the der response and is successfull returned than we had a good OCSP response
+                // if a value contains the der response it has successfully returned a good OCSP response
                 if !v.ocsp_der.is_empty() {
                     // so log the success status
                     if v.revoked_at.is_none() {
@@ -1872,12 +1872,7 @@ impl Claim {
                 // adjust the error info
                 if let Some(li) = validation_log.logged_items_mut().last_mut() {
                     let mut new_li = li.clone();
-                    if is_provenance {
-                        new_li.label = Cow::from(claim.uri());
-                    } else {
-                        new_li = new_li.set_ingredient_uri(claim.uri());
-                    }
-
+                    new_li.label = Cow::from(claim.uri());
                     *li = new_li;
                 }
             })
