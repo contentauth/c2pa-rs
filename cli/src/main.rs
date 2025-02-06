@@ -731,13 +731,11 @@ fn main() -> Result<()> {
             println!("{} Init manifests validated", stores.len());
         }
     } else {
-        println!("## TMN-Debug ~ cli#main ~ Here we read");
         let tokio_runtime: Runtime = Runtime::new()?;
 
         let reader = Reader::from_file(&args.path).map_err(special_errs)?;
         //println!("{}", reader);
 
-        println!("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~");
         let mut reader_content = reader.json_value_map().unwrap();
         let json_content = reader_content.get_mut("manifests").unwrap();
 
@@ -753,10 +751,8 @@ fn main() -> Result<()> {
                 let assertions = value.get_mut("assertions").unwrap();
                 let assertions_array = assertions.as_array_mut().unwrap();
                 for assertion in assertions_array {
-                    // println!("Current assertion value: {}", assertion);
                     let label = assertion.get("label").unwrap().to_string();
                     if label.contains("cawg.identity") {
-                        // println!("Current assertion: {}", assertion);
                         let parsed_cawg_json_string =
                             get_cawg_details_for_manifest(current_manifest, &tokio_runtime);
                         let assertion_data: &mut serde_json::Value = assertion.get_mut("data").unwrap();
@@ -765,15 +761,17 @@ fn main() -> Result<()> {
                 }
             }
 
-            stringified_decorated_json = serde_json::to_string(&map).unwrap();
+            stringified_decorated_json = serde_json::to_string_pretty(&map).unwrap();
         } else {
             // TODO - TMN: Error handling
             println!("The JSON is not an object");
         }
 
-        println!("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~");
-        println!("Final JSON: {:?}", stringified_decorated_json);
-        println!("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~");
+        // println!("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~");
+        // println!("Final JSON: {:?}", stringified_decorated_json);
+        // println!("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~");
+
+        println!("{}", stringified_decorated_json);
     }
 
     Ok(())
