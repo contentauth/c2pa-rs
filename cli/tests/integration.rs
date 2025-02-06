@@ -36,6 +36,7 @@ fn temp_path(name: &str) -> PathBuf {
     create_dir_all(&path).ok();
     path.join(name)
 }
+
 #[test]
 fn tool_not_found() -> Result<(), Box<dyn Error>> {
     let mut cmd = Command::cargo_bin("c2patool")?;
@@ -43,6 +44,7 @@ fn tool_not_found() -> Result<(), Box<dyn Error>> {
     cmd.assert().failure().stderr(str::contains("os error"));
     Ok(())
 }
+
 #[test]
 fn tool_not_found_info() -> Result<(), Box<dyn Error>> {
     let mut cmd = Command::cargo_bin("c2patool")?;
@@ -52,6 +54,7 @@ fn tool_not_found_info() -> Result<(), Box<dyn Error>> {
         .stderr(str::contains("file not found"));
     Ok(())
 }
+
 #[test]
 fn tool_jpeg_no_report() -> Result<(), Box<dyn Error>> {
     let mut cmd = Command::cargo_bin("c2patool")?;
@@ -93,6 +96,7 @@ fn tool_embed_jpeg_report() -> Result<(), Box<dyn Error>> {
         .stdout(str::contains("My Title"));
     Ok(())
 }
+
 #[test]
 fn tool_fs_output_report() -> Result<(), Box<dyn Error>> {
     let path = temp_path("output_dir");
@@ -120,6 +124,7 @@ fn tool_fs_output_report() -> Result<(), Box<dyn Error>> {
     );
     Ok(())
 }
+
 #[test]
 fn tool_fs_output_report_supports_detailed_flag() -> Result<(), Box<dyn Error>> {
     let path = temp_path("./output_detailed");
@@ -144,6 +149,7 @@ fn tool_fs_output_report_supports_detailed_flag() -> Result<(), Box<dyn Error>> 
         .is_some());
     Ok(())
 }
+
 #[test]
 fn tool_fs_output_fails_when_output_exists() -> Result<(), Box<dyn Error>> {
     let path = temp_path("./output_conflict");
@@ -160,6 +166,7 @@ fn tool_fs_output_fails_when_output_exists() -> Result<(), Box<dyn Error>> {
         ));
     Ok(())
 }
+
 #[test]
 // c2patool tests/fixtures/C.jpg -fo target/tmp/manifest_test
 fn tool_test_manifest_folder() -> Result<(), Box<dyn std::error::Error>> {
@@ -180,6 +187,7 @@ fn tool_test_manifest_folder() -> Result<(), Box<dyn std::error::Error>> {
     assert!(json.contains("make_test_images"));
     Ok(())
 }
+
 #[test]
 // c2patool tests/fixtures/C.jpg -ifo target/tmp/ingredient_test
 fn tool_test_ingredient_folder() -> Result<(), Box<dyn std::error::Error>> {
@@ -199,6 +207,7 @@ fn tool_test_ingredient_folder() -> Result<(), Box<dyn std::error::Error>> {
     assert!(json.contains("manifest_data"));
     Ok(())
 }
+
 #[test]
 // c2patool tests/fixtures/C.jpg -ifo target/tmp/ingredient_json
 // c2patool tests/fixtures/earth_apollo17.jpg -m sample/test.json -p target/tmp/ingredient_json/ingredient.json -fo target/tmp/out_2.jpg
@@ -230,6 +239,7 @@ fn tool_test_manifest_ingredient_json() -> Result<(), Box<dyn std::error::Error>
         .stdout(str::contains("My Title"));
     Ok(())
 }
+
 #[test]
 // c2patool tests/fixtures/earth_apollo17.jpg -m tests/fixtures/ingredient_test.json -fo target/tmp/ingredients.jpg
 fn tool_embed_jpeg_with_ingredients_report() -> Result<(), Box<dyn Error>> {
@@ -248,6 +258,7 @@ fn tool_embed_jpeg_with_ingredients_report() -> Result<(), Box<dyn Error>> {
         .stdout(str::contains("earth_apollo17.jpg"));
     Ok(())
 }
+
 #[test]
 fn tool_extensions_do_not_match() -> Result<(), Box<dyn Error>> {
     let path = temp_path("./foo.png");
@@ -262,6 +273,7 @@ fn tool_extensions_do_not_match() -> Result<(), Box<dyn Error>> {
         .stderr(str::contains("Output type must match source type"));
     Ok(())
 }
+
 #[test]
 fn tool_similar_extensions_match() -> Result<(), Box<dyn Error>> {
     let path = temp_path("./similar.JpEg");
@@ -277,6 +289,7 @@ fn tool_similar_extensions_match() -> Result<(), Box<dyn Error>> {
         .stdout(str::contains("similar."));
     Ok(())
 }
+
 #[test]
 fn tool_fail_if_thumbnail_missing() -> Result<(), Box<dyn Error>> {
     Command::cargo_bin("c2patool")?
@@ -532,5 +545,22 @@ fn tool_tree() -> Result<(), Box<dyn Error>> {
         .success()
         .stdout(str::contains("Asset:C.jpg, Manifest:contentauth:urn:uuid:"))
         .stdout(str::contains("Assertion:c2pa.actions"));
+    Ok(())
+}
+
+#[test]
+// c2patool C_with_CAWG_data.jpg
+fn tool_read_image_with_cawg_data() -> Result<(), Box<dyn Error>> {
+    Command::cargo_bin("c2patool")?
+        .arg(fixture_path("C_with_CAWG_data.jpg"))
+        .assert()
+        .success()
+        .stdout(str::contains("cawg.identity"))
+        .stdout(str::contains("credentialSubject"))
+        .stdout(str::contains("verifiedIdentities"))
+        .stdout(str::contains("credentialSchema"))
+        .stdout(str::contains("cawg.social_media"))
+        .stdout(str::contains("VerifiableCredential"))
+        .stdout(str::contains("IdentityClaimsAggregationCredential"));
     Ok(())
 }
