@@ -27,6 +27,7 @@ use std::{
 
 use anyhow::{anyhow, bail, Context, Result};
 use c2pa::{Builder, ClaimGeneratorInfo, Error, Ingredient, ManifestDefinition, Reader, Signer};
+use c2pa_crypto::base64;
 use cawg_identity::{claim_aggregation::IcaSignatureVerifier, IdentityAssertion};
 use clap::{Parser, Subcommand};
 use log::debug;
@@ -714,6 +715,9 @@ fn main() -> Result<()> {
 
             let serialized = serde_json::to_string(&ica).unwrap();
             println!("{:?}", serialized);
+
+            let bytes = vec![82,122,57,76,76,67,75,114,49,70,43,49,47,54,120,111,90,85,113,74,120,71,67,47,47,43,67,122,81,56,81,120,79,82,122,71,82,118,48,90,57,69,81,61];
+            println!("{:?}", base64::encode(&bytes));
         });
         println!("@@@@@@@@@@@@@@@@@@@@@@@@");
     }
