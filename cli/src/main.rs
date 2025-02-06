@@ -427,6 +427,7 @@ fn verify_fragmented(init_pattern: &Path, frag_pattern: &Path) -> Result<Vec<Rea
     Ok(readers)
 }
 
+// Update/decorate the displayed JSON string for a more human-readable JSON output.
 fn decorate_json_display(reader: Reader, tokio_runtime: &Runtime) -> String {
     let mut reader_content = match reader.json_value_map() {
         Ok(mapped_json) => mapped_json,
@@ -436,7 +437,7 @@ fn decorate_json_display(reader: Reader, tokio_runtime: &Runtime) -> String {
         }
     };
 
-    let json_content = match reader_content.get_mut("manifests") {
+    let manifests_json_content = match reader_content.get_mut("manifests") {
         Some(json) => json,
         None => {
             println!("No JSON to parse in manifest store (key: manifests)");
@@ -444,18 +445,57 @@ fn decorate_json_display(reader: Reader, tokio_runtime: &Runtime) -> String {
         }
     };
 
-    // Update manifests with CAWG details
+    // Update assertion with more details, eg. for CAWG
+    decorate_json_assertions(reader, manifests_json_content, tokio_runtime);
+
+    match serde_json::to_string_pretty(&reader_content) {
+        Ok(decorated_result) => decorated_result,
+        Err(err) => {
+            println!(
+                "Could not decorate displayed JSON with additional details: {:?}",
+                err
+            );
+            String::new()
+        }
+    }
+}
+
+// Update/decorate the displayed JSON assertions for a more human-readable JSON output.
+fn decorate_json_assertions(reader: Reader, json_content: &mut Value, tokio_runtime: &Runtime) -> Result<(), Error>{
     if let Value::Object(map) = json_content {
         // Iterate over the key-value pairs
         for (key, value) in &mut *map {
             // Get additional CAWG details
-            let current_manifest: &c2pa::Manifest = reader.get_manifest(key).unwrap();
+            let current_manifest = reader.get_manifest(key);
+            let current_manifest = match current_manifest {
+                Some(current_manifest) => current_manifest,
+                None => {
+                    return Err(crate::Error::JsonSerializationError("Could not get current manifest".to_string()));
+                }
+            };
 
-            // Replace the signature content of the assertion with parsed details by CAWG
-            let assertions = value.get_mut("assertions").unwrap();
-            let assertions_array = assertions.as_array_mut().unwrap();
+            // Get the assertions as array from the JSON
+            let assertions = match value.get_mut("assertions") {
+                Some(assertions) => assertions,
+                None => {
+                    return Err(crate::Error::JsonSerializationError("Could not parse JSON assertions as object".to_string()));
+                }
+            };
+            let assertions_array = match assertions.as_array_mut() {
+                Some(assertions_array) => assertions_array,
+                None => {
+                    return Err(crate::Error::JsonSerializationError("Could not parse JSON assertions as array".to_string()));
+                }
+            };
+
+            // Loop over the assertions to process those of interest
             for assertion in assertions_array {
-                let label = assertion.get("label").unwrap().to_string();
+                let label = match assertion.get("label") {
+                    Some(label) => label.to_string(),
+                    None => {
+                      return Err(crate::Error::JsonSerializationError("Could not parse assertion label".to_string()));
+                    }
+                };
 
                 // for CAWG assertions, further parse the signature
                 if label.contains("cawg.identity") {
@@ -495,20 +535,9 @@ fn decorate_json_display(reader: Reader, tokio_runtime: &Runtime) -> String {
                 }
             }
         }
-    } else {
-        println!("Could not parse manifest store JSON content");
     }
 
-    match serde_json::to_string_pretty(&reader_content) {
-        Ok(decorated_result) => decorated_result,
-        Err(err) => {
-            println!(
-                "Could not parse manifest store JSON content with additional CAWG details: {:?}",
-                err
-            );
-            String::new()
-        }
-    }
+    Ok(())
 }
 
 /// Parse additional CAWG details from the manifest store to update displayed results.
