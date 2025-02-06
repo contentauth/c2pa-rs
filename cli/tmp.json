@@ -1,53 +1,32 @@
 {
-  "claim_generator": "adobetest/0.1",
-  "claim_generator_info": [
-    {
-      "name": "AdobeTest",
-      "version": "0.1",
-      "org.cai.c2pa_rs": "0.45.1"
-    }
+  "@context": [
+    "https://www.w3.org/ns/credentials/v2",
+    "https://creator-assertions.github.io/tbd/tbd"
   ],
-  "format": "image/jpeg",
-  "instance_id": "xmp:iid:e9c6522c-a3e4-4959-940c-da2694a148f6",
-  "thumbnail": {
-    "format": "image/jpeg",
-    "identifier": "self#jumbf=/c2pa/urn:uuid:edf0ad6d-e625-49d3-aebc-721f7d9be57b/c2pa.assertions/c2pa.thumbnail.claim.jpeg"
-  },
-  "ingredients": [],
-  "assertions": [
-    {
-      "label": "c2pa.actions",
-      "data": {
-        "actions": [
-          {
-            "action": "c2pa.edited"
-          }
-        ]
-      }
-    },
-    {
-      "label": "cawg.identity",
-      "data": {
-        "signer_payload": {
-          "referenced_assertions": [
-            {
-              "url": "self#jumbf=c2pa.assertions/c2pa.hash.data",
-              "hash": "Rz9LLCKr1F+1/6xoZUqJxGC//+CzQ8QxORzGRv0Z9EQ="
-            }
-          ],
-          "sig_type": "cawg.identity_claims_aggregation"
-        },
-        "signature": "0oRYaaQBJxB2YXBwbGljYXRpb24vdmMtbGQrY29zZQNuYXBwbGljYXRpb24vdmMEWDtkaWQ6d2ViOmNvbm5lY3RlZC1pZGVudGl0aWVzLmlkZW50aXR5LXN0YWdlLmFkb2JlLmNvbSNrZXktMKBZA8F7IkBjb250ZXh0IjpbImh0dHBzOi8vd3d3LnczLm9yZy9ucy9jcmVkZW50aWFscy92MiIsImh0dHBzOi8vY3JlYXRvci1hc3NlcnRpb25zLmdpdGh1Yi5pby90YmQvdGJkIl0sInR5cGUiOlsiVmVyaWZpYWJsZUNyZWRlbnRpYWwiLCJJZGVudGl0eUNsYWltc0FnZ3JlZ2F0aW9uQ3JlZGVudGlhbCJdLCJpc3N1ZXIiOiJkaWQ6d2ViOmNvbm5lY3RlZC1pZGVudGl0aWVzLmlkZW50aXR5LXN0YWdlLmFkb2JlLmNvbSIsInZhbGlkRnJvbSI6IjIwMjUtMDEtMzFUMjI6MTU6NTdaIiwiY3JlZGVudGlhbFN1YmplY3QiOnsiaWQiOiJkaWQ6d2ViOmNvbm5lY3RlZC1pZGVudGl0aWVzLmlkZW50aXR5LXN0YWdlLmFkb2JlLmNvbTp1c2VyOmY4Y2ZiZmY2YzhiMjE1MGE2M2U4NmMyY2Y1ZmYwYWFiMDYyMWVkNWQzZjExN2ZkNmVhOWNlZTg2M2MwZWUzN2NmIiwidmVyaWZpZWRJZGVudGl0aWVzIjpbeyJ0eXBlIjoiY2F3Zy5zb2NpYWxfbWVkaWEiLCJ1c2VybmFtZSI6ImZpcnN0bGFzdDU1NSIsInVyaSI6Imh0dHBzOi8vbmV0LnMyc3RhZ2VoYW5jZS5jb20vZmlyc3RsYXN0NTU1IiwicHJvdmlkZXIiOnsiaWQiOiJodHRwczovL2JlaGFuY2UubmV0IiwibmFtZSI6ImJlaGFuY2UifSwidmVyaWZpZWRBdCI6IjIwMjUtMDEtMTBUMTk6NTM6NTlaIn1dLCJjMnBhQXNzZXQiOnsicmVmZXJlbmNlZF9hc3NlcnRpb25zIjpbeyJ1cmwiOiJzZWxmI2p1bWJmPWMycGEuYXNzZXJ0aW9ucy9jMnBhLmhhc2guZGF0YSIsImhhc2giOiJSejlMTENLcjFGKzEvNnhvWlVxSnhHQy8vK0N6UThReE9SekdSdjBaOUVRPSIsImFsZyI6InNoYTI1NiJ9XSwic2lnX3R5cGUiOiJjYXdnLmlkZW50aXR5X2NsYWltc19hZ2dyZWdhdGlvbiJ9fSwiY3JlZGVudGlhbFNjaGVtYSI6W3siaWQiOiJodHRwczovL2Nhd2cuaW8vc2NoZW1hcy92MS9jcmVhdG9yLWlkZW50aXR5LWFzc2VydGlvbi5qc29uIiwidHlwZSI6IkpTT05TY2hlbWEifV19WECLd21UejnYaSzEYJUyNmLnXXZhWRqiBzLWi91MHYWrrAvJZwT9lY//Pd5tSFNtMv+IgWO1d9eWELhq/LHtdRgH",
-        "pad1": "<omitted>",
-        "pad2": "<omitted>"
-      }
-    }
+  "type": [
+    "VerifiableCredential",
+    "IdentityClaimsAggregationCredential"
   ],
-  "signature_info": {
-    "alg": "Ps256",
-    "issuer": "Adobe Inc.",
-    "cert_serial_number": "28285008935659793949362901115676279692",
-    "time": "2025-01-31T22:15:57+00:00"
+  "credentialSubject": {
+    "verifiedIdentities": [
+      {
+        "type": "cawg.social_media",
+        "username": "firstlast555",
+        "uri": "https://net.s2stagehance.com/firstlast555",
+        "verifiedAt": "2025-01-10T19:53:59Z",
+        "provider": {
+          "id": "https://behance.net",
+          "name": "behance"
+        }
+      }
+    ]
   },
-  "label": "urn:uuid:edf0ad6d-e625-49d3-aebc-721f7d9be57b"
+  "issuer": "did:web:connected-identities.identity-stage.adobe.com",
+  "validFrom": "2025-01-31T22:15:57Z",
+  "credentialSchema": [
+    {
+      "id": "https://cawg.io/schemas/v1/creator-identity-assertion.json",
+      "type": "JSONSchema"
+    }
+  ]
 }

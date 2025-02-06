@@ -31,6 +31,7 @@ use cawg_identity::{claim_aggregation::IcaSignatureVerifier, IdentityAssertion};
 use clap::{Parser, Subcommand};
 use log::debug;
 use serde::Deserialize;
+use serde_json::Map;
 use serde_json::Value;
 use signer::SignConfig;
 use tokio::runtime::Runtime;
@@ -427,23 +428,41 @@ fn verify_fragmented(init_pattern: &Path, frag_pattern: &Path) -> Result<Vec<Rea
     Ok(readers)
 }
 
-/// Parse additional CAWG details from the manifest store to update displayed results
+fn decorate_json_display(manifest: &c2pa::Manifest, tokio_runtime: &Runtime) -> String {
+  // determine which decorators to applu
+  todo!()
+}
+
+/// Parse additional CAWG details from the manifest store to update displayed results.
+/// As CAWG mostly async, this will block on network requests for checks using a tokio runtime.
 fn get_cawg_details_for_manifest(manifest: &c2pa::Manifest, tokio_runtime: &Runtime) -> String {
     let ia_iter = IdentityAssertion::from_manifest(manifest);
+
+    // TODO: Determine what should happen when multiple identities are reported (currently only 1 is supported)
     let mut parsed_cawg_json = String::new();
     ia_iter.for_each(|ia| {
         let identity_assertion: IdentityAssertion = ia.unwrap();
-        // println!("{:?}", identity_assertion);
         let isv = IcaSignatureVerifier {};
         let ica = tokio_runtime
             .block_on(identity_assertion.validate(manifest, &isv))
             .unwrap();
 
         parsed_cawg_json = serde_json::to_string(&ica).unwrap();
-        // println!("Serialized signature content: {:?}", parsed_cawg_json);
     });
 
-    parsed_cawg_json
+    // Do some formatting to avoid repetitions in the output...
+    let mut map: Map<String, Value> = serde_json::from_str(parsed_cawg_json.as_str()).unwrap();
+    let credential_subject_details = map
+        .get_mut("credentialSubject")
+        .unwrap()
+        .as_object_mut()
+        .unwrap();
+
+    // ... as per design CAWG has some repetition between assertion an signature (c2paAsset field)
+    credential_subject_details.remove("c2paAsset");
+
+    // return the for-display json-formatted string
+    serde_json::to_string(&map).unwrap()
 }
 
 fn main() -> Result<()> {
@@ -724,24 +743,22 @@ fn main() -> Result<()> {
         if let Value::Object(map) = json_content {
             // Iterate over the key-value pairs
             for (key, value) in map {
-                println!("Current manifest key: {}", key);
-                // println!("Current manifest value: {}", value);
-
                 // Get additional CAWG details
                 let current_manifest: &c2pa::Manifest = reader.get_manifest(key).unwrap();
-                let parsed_cawg_json_string = get_cawg_details_for_manifest(current_manifest, &tokio_runtime);
+                let parsed_cawg_json_string =
+                    get_cawg_details_for_manifest(current_manifest, &tokio_runtime);
 
-                // Get the signature element from the JSON
+                // Replace the signature content of the assertion with parsed details by CAWG
                 let assertions = value.get("assertions").unwrap();
                 for assertion in assertions.as_array().unwrap() {
                     // println!("Current assertion value: {}", assertion);
                     let label = assertion.get("label").unwrap().to_string();
-                    println!("label: {}", label);
                     if label.contains("cawg.identity") {
                         // println!("Current assertion: {}", assertion);
                         let assertion_data = assertion.get("data").unwrap();
                         let assertion_data_signature = assertion_data.get("signature").unwrap();
-                        println!("assertion_data_signature: {}", assertion_data_signature);
+
+                        println!("target content for signature: {}", parsed_cawg_json_string);
                     }
                 }
             }
