@@ -32,9 +32,8 @@ fn decorate_json_assertions(
     tokio_runtime: &Runtime,
 ) -> Result<(), Error> {
     if let Value::Object(map) = json_content {
-        // Iterate over the key-value pairs
         for (key, value) in &mut *map {
-            // Get additional CAWG details
+            // extract manifest we're looking at
             let current_manifest = reader.get_manifest(key);
             let current_manifest = match current_manifest {
                 Some(current_manifest) => current_manifest,
