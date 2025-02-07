@@ -432,13 +432,36 @@ fn decorate_json_detailled_display(
     extracted_report: String,
     tokio_runtime: &Runtime,
 ) -> String {
-    let mut report_json_map: Map<String, Value> = serde_json::from_str(&extracted_report).unwrap();
+    let mut report_json_map: Map<String, Value> = match serde_json::from_str(&extracted_report) {
+        Ok(report_json_map) => report_json_map,
+        Err(err) => {
+            println!("Could not parse extracted JSON report: {:?}", err);
+            return String::new();
+        }
+    };
 
-    let manifests = report_json_map.get_mut("manifests").unwrap();
+    let manifests = match report_json_map.get_mut("manifests") {
+        Some(manifests) => manifests,
+        None => {
+            println!("No parsable JSON in manifest store (key: manifests)");
+            return String::new();
+        }
+    };
 
-    decorate_cawg_assertion_from_detailed_report(reader, manifests, tokio_runtime).unwrap();
+    match decorate_cawg_assertion_from_detailed_report(reader, manifests, tokio_runtime) {
+        Ok(_) => (),
+        Err(err) => {
+            println!("Could not decorate detailed JSON for display: {:?}", err);
+        }
+    };
 
-    serde_json::to_string_pretty(&report_json_map).unwrap()
+    match serde_json::to_string_pretty(&report_json_map) {
+        Ok(decorated_result) => decorated_result,
+        Err(err) => {
+            println!("Could not decorate displayed detailed JSON with additional details: {:?}", err);
+            String::new()
+        }
+    }
 }
 
 /// Update/decorate the displayed JSON assertions for a more human-readable JSON output.
