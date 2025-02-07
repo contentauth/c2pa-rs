@@ -10,7 +10,7 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use c2pa::{Error, Reader};
+use c2pa::Reader;
 use cawg_identity::{claim_aggregation::IcaSignatureVerifier, IdentityAssertion};
 use serde_json::{Map, Value};
 use tokio::runtime::Runtime;
@@ -20,7 +20,7 @@ pub(crate) fn decorate_cawg_assertion_from_detailed_report(
     reader: &Reader,
     json_content: &mut Value,
     tokio_runtime: &Runtime,
-) -> Result<(), Error> {
+) -> Result<(), anyhow::Error> {
     if let Value::Object(map) = json_content {
         // Iterate over the key-value pairs
         for (key, value) in &mut *map {
@@ -30,8 +30,8 @@ pub(crate) fn decorate_cawg_assertion_from_detailed_report(
             let assertions = match value.get_mut("assertion_store") {
                 Some(assertions) => assertions,
                 None => {
-                    return Err(crate::Error::JsonSerializationError(
-                        "Could not parse JSON assertion store as object".to_string(),
+                    return Err(anyhow::Error::msg(
+                        "Could not parse JSON assertions as object",
                     ));
                 }
             };
@@ -39,8 +39,8 @@ pub(crate) fn decorate_cawg_assertion_from_detailed_report(
             let cawg_assertion = match assertions.get_mut("cawg.identity") {
                 Some(cawg_assertion) => cawg_assertion,
                 None => {
-                    return Err(crate::Error::JsonSerializationError(
-                        "Could not parse CAWG identity details from assertion store".to_string(),
+                    return Err(anyhow::Error::msg(
+                        "Could not parse CAWG identity details from assertion store",
                     ));
                 }
             };
@@ -48,8 +48,8 @@ pub(crate) fn decorate_cawg_assertion_from_detailed_report(
             let holding_manifest = match reader.get_manifest(key) {
                 Some(holding_manifest) => holding_manifest,
                 None => {
-                    return Err(crate::Error::JsonSerializationError(
-                        "Could not recover manifest holding CAWG data".to_string(),
+                    return Err(anyhow::Error::msg(
+                        "Could not recover manifest holding CAWG data",
                     ));
                 }
             };
@@ -68,16 +68,15 @@ pub(crate) fn decorate_cawg_assertion_from_detailed_report(
             cawg_assertion["signature"] = match serde_json::from_str(&parsed_cawg_json_string) {
                 Ok(decoded_cawg_assertion) => decoded_cawg_assertion,
                 Err(err) => {
-                    return Err(crate::Error::JsonSerializationError(err.to_string()));
+                    return Err(anyhow::Error::msg(err.to_string()));
                 }
             };
 
             let cawg_assertion = match cawg_assertion.as_object_mut() {
                 Some(cawg_assertion) => cawg_assertion,
                 None => {
-                    return Err(crate::Error::JsonSerializationError(
-                        "Could not parse CAWG assertion data as object to decorate for display"
-                            .to_string(),
+                    return Err(anyhow::Error::msg(
+                        "Could not parse CAWG assertion data as object to decorate for display",
                     ));
                 }
             };
@@ -94,7 +93,7 @@ pub(crate) fn decorate_json_cawg_assertions(
     holding_manifest: &c2pa::Manifest,
     assertion: &mut Value,
     tokio_runtime: &Runtime,
-) -> Result<(), Error> {
+) -> Result<(), anyhow::Error> {
     let parsed_cawg_json_string =
         match get_cawg_details_for_manifest(holding_manifest, tokio_runtime) {
             Some(parsed_cawg_json_string) => parsed_cawg_json_string,
@@ -109,9 +108,7 @@ pub(crate) fn decorate_json_cawg_assertions(
     let assertion_data = match assertion.get_mut("data") {
         Some(assertion_data) => assertion_data,
         None => {
-            return Err(crate::Error::JsonSerializationError(
-                "Could not parse CAWG assertion data".to_string(),
-            ));
+            return Err(anyhow::Error::msg("Could not parse CAWG assertion data"));
         }
     };
 
@@ -119,7 +116,7 @@ pub(crate) fn decorate_json_cawg_assertions(
     let parsed_signature = match serde_json::from_str(&parsed_cawg_json_string) {
         Ok(parsed_signature) => parsed_signature,
         Err(err) => {
-            return Err(crate::Error::JsonSerializationError(err.to_string()));
+            return Err(anyhow::Error::msg(err.to_string()));
         }
     };
     assertion_data["signature"] = parsed_signature;
@@ -128,8 +125,8 @@ pub(crate) fn decorate_json_cawg_assertions(
     let assertion_data_map = match assertion_data.as_object_mut() {
         Some(assertion_data_map) => assertion_data_map,
         None => {
-            return Err(crate::Error::JsonSerializationError(
-                "Could not parse CAWG assertion data as object".to_string(),
+            return Err(anyhow::Error::msg(
+                "Could not parse CAWG assertion data as object",
             ));
         }
     };

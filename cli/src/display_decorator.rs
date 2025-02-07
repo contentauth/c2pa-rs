@@ -12,7 +12,7 @@
 
 use std::convert::TryInto;
 
-use c2pa::{Error, Reader};
+use c2pa::Reader;
 use serde_json::{Map, Value};
 use tokio::runtime::Runtime;
 
@@ -30,7 +30,7 @@ fn decorate_json_assertions(
     reader: &Reader,
     json_content: &mut Value,
     tokio_runtime: &Runtime,
-) -> Result<(), Error> {
+) -> Result<(), anyhow::Error> {
     if let Value::Object(map) = json_content {
         for (key, value) in &mut *map {
             // extract manifest we're looking at
@@ -38,8 +38,8 @@ fn decorate_json_assertions(
             let current_manifest = match current_manifest {
                 Some(current_manifest) => current_manifest,
                 None => {
-                    return Err(crate::Error::JsonSerializationError(
-                        "Could not get current manifest".to_string(),
+                    return Err(anyhow::Error::msg(
+                        "Could not recover manifest for assertion decoration",
                     ));
                 }
             };
@@ -48,16 +48,16 @@ fn decorate_json_assertions(
             let assertions = match value.get_mut("assertions") {
                 Some(assertions) => assertions,
                 None => {
-                    return Err(crate::Error::JsonSerializationError(
-                        "Could not parse JSON assertions as object".to_string(),
+                    return Err(anyhow::Error::msg(
+                        "Could not parse JSON assertions as object",
                     ));
                 }
             };
             let assertions_array = match assertions.as_array_mut() {
                 Some(assertions_array) => assertions_array,
                 None => {
-                    return Err(crate::Error::JsonSerializationError(
-                        "Could not parse JSON assertions as array".to_string(),
+                    return Err(anyhow::Error::msg(
+                        "Could not parse JSON assertions as array",
                     ));
                 }
             };
@@ -67,9 +67,7 @@ fn decorate_json_assertions(
                 let label = match assertion.get("label") {
                     Some(label) => label.to_string(),
                     None => {
-                        return Err(crate::Error::JsonSerializationError(
-                            "Could not parse assertion label".to_string(),
-                        ));
+                        return Err(anyhow::Error::msg("Could not parse assertion label"));
                     }
                 };
 
@@ -88,22 +86,22 @@ fn decorate_json_assertions(
 pub(crate) fn decorate_json_detailed_display(
     reader: &Reader,
     tokio_runtime: &Runtime,
-) -> Result<String, Error> {
+) -> Result<String, anyhow::Error> {
     let extracted_report = format!("{:#?}", reader);
 
     let mut report_json_map: Map<String, Value> = match serde_json::from_str(&extracted_report) {
         Ok(report_json_map) => report_json_map,
         Err(err) => {
             let message = format!("Could not parse extracted JSON detailed report: {:?}", err);
-            return Err(crate::Error::JsonSerializationError(message));
+            return Err(anyhow::Error::msg(message));
         }
     };
 
     let manifests = match report_json_map.get_mut("manifests") {
         Some(manifests) => manifests,
         None => {
-            return Err(crate::Error::JsonSerializationError(
-                "No parsable JSON in manifest store (key: manifests)".to_string(),
+            return Err(anyhow::Error::msg(
+                "No parsable JSON in manifest store (key: manifests)",
             ));
         }
     };
@@ -113,7 +111,7 @@ pub(crate) fn decorate_json_detailed_display(
         Ok(_) => (),
         Err(err) => {
             let message = format!("Could not decorate detailed JSON for display: {:?}", err);
-            return Err(crate::Error::JsonSerializationError(message));
+            return Err(anyhow::Error::msg(message));
         }
     };
 
@@ -125,7 +123,7 @@ pub(crate) fn decorate_json_detailed_display(
                 "Could not decorate displayed detailed JSON with additional details: {:?}",
                 err
             );
-            Err(crate::Error::JsonSerializationError(message))
+            Err(anyhow::Error::msg(message))
         }
     }
 }
@@ -134,12 +132,12 @@ pub(crate) fn decorate_json_detailed_display(
 pub(crate) fn decorate_json_display(
     reader: &Reader,
     tokio_runtime: &Runtime,
-) -> Result<String, Error> {
+) -> Result<String, anyhow::Error> {
     let mut reader_content: serde_json::Map<String, serde_json::Value> = match reader.try_into() {
         Ok(mapped_json) => mapped_json,
         Err(_) => {
-            return Err(crate::Error::JsonSerializationError(
-                "Could not parse manifest store JSON content".to_string(),
+            return Err(anyhow::Error::msg(
+                "Could not parse manifest store JSON content",
             ));
         }
     };
@@ -147,8 +145,8 @@ pub(crate) fn decorate_json_display(
     let manifests_json_content = match reader_content.get_mut("manifests") {
         Some(json) => json,
         None => {
-            return Err(crate::Error::JsonSerializationError(
-                "No JSON to parse in manifest store (key: manifests)".to_string(),
+            return Err(anyhow::Error::msg(
+                "No JSON to parse in manifest store (key: manifests)",
             ));
         }
     };
@@ -161,7 +159,7 @@ pub(crate) fn decorate_json_display(
                 "Could not decorate displayed JSON with additional details: {:?}",
                 err
             );
-            return Err(crate::Error::JsonSerializationError(message));
+            return Err(anyhow::Error::msg(message));
         }
     };
 
@@ -173,7 +171,7 @@ pub(crate) fn decorate_json_display(
                 "Could not decorate displayed JSON with additional details: {:?}",
                 err
             );
-            Err(crate::Error::JsonSerializationError(message))
+            Err(anyhow::Error::msg(message))
         }
     }
 }
