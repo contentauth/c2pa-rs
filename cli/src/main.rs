@@ -44,6 +44,7 @@ mod info;
 mod tree;
 
 mod callback_signer;
+mod decorators;
 mod display_decorator;
 mod signer;
 
