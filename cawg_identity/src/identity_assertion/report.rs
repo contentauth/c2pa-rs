@@ -15,19 +15,17 @@ use std::fmt::Debug;
 
 use serde::Serialize;
 
-use crate::{builder::CredentialHolder, identity_assertion::signer_payload::SignerPayload};
+use crate::identity_assertion::signer_payload::SignerPayload;
 
 /// This struct represents the validated content of an identity assertion.
 ///
 /// It is created by calling [`IdentityAssertion::to_report`], which will
 /// validate the content of the assertion and decode the content
 #[derive(Debug, Serialize)]
-pub struct IdentityAssertionReport {
+pub struct IdentityAssertionReport<T: Serialize> {
     #[serde(flatten)]
     pub(crate) signer_payload: SignerPayload,
 
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) named_actor: Option<Box<dyn CredentialHolder>>,
-    // ^^ TO DO: Replace CredentialHolder with another type
-    // that is guaranteed to be Serializable.
+    pub(crate) named_actor: Option<T>,
 }

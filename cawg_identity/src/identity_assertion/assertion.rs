@@ -18,7 +18,6 @@ use serde::{Deserialize, Serialize};
 use serde_bytes::ByteBuf;
 
 use crate::{
-    IdentityAssertionReport,
     identity_assertion::signer_payload::SignerPayload, internal::debug_byte_slice::DebugByteSlice,
     SignatureVerifier, ValidationError,
 };
@@ -64,22 +63,22 @@ impl IdentityAssertion {
             .map(|a| a.to_assertion())
     }
 
-    /// Create an [`IdentityAssertionReport`] from this `IdentityAssertion`.
-    ///
-    /// This will [`validate`] the assertion and then render the result as
-    /// an [`IdentityAssertionReport`] that describes the decoded content of
-    /// the identity assertion.
-    ///
-    /// [`validate`]: Self::validate
-    pub async fn to_report<SV: SignatureVerifier>(
-        &self,
-        manifest: &Manifest,
-        verifier: &SV,
-    ) -> IdentityAssertionReport {
-        let _ = manifest;
-        let _ = verifier;
-        todo!("validate and render as report");
-    }
+    // /// Create an [`IdentityAssertionReport`] from this `IdentityAssertion`.
+    // ///
+    // /// This will [`validate`] the assertion and then render the result as
+    // /// an [`IdentityAssertionReport`] that describes the decoded content of
+    // /// the identity assertion.
+    // ///
+    // /// [`validate`]: Self::validate
+    // pub async fn to_report<SV: SignatureVerifier>(
+    //     &self,
+    //     manifest: &Manifest,
+    //     verifier: &SV,
+    // ) -> IdentityAssertionReport {
+    //     let _ = manifest;
+    //     let _ = verifier;
+    //     todo!("validate and render as report");
+    // }
 
     /// Using the provided [`SignatureVerifier`], check the validity of this
     /// identity assertion.

@@ -18,8 +18,12 @@ use c2pa_crypto::{
 };
 use c2pa_status_tracker::DetailedStatusTracker;
 use coset::CoseSign1;
+use serde::Serialize;
 
-use crate::{SignatureVerifier, SignerPayload, ValidationError};
+use crate::{
+    identity_assertion::signature_verifier::ToCredentialSummary, SignatureVerifier, SignerPayload,
+    ValidationError,
+};
 
 /// An implementation of [`SignatureVerifier`] that supports COSE signatures
 /// generated from X.509 credentials as specified in [§8.2, X.509 certificates
@@ -84,4 +88,24 @@ pub struct X509SignatureInfo {
 
     /// Information about the X.509 certificate chain.
     pub cert_info: CertificateInfo,
+}
+
+impl ToCredentialSummary for X509SignatureInfo {
+    // type SummaryOutput = X509SignatureReport;
+
+    fn to_summary(&self) -> impl Serialize {
+        X509SignatureReport {}
+    }
+}
+
+// #[derive(Serialize)] <- uncomment once the type is populated
+pub struct X509SignatureReport {}
+
+impl Serialize for X509SignatureReport {
+    fn serialize<S>(&self, _serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        todo!("X509SignatureReport type not defined yet");
+    }
 }

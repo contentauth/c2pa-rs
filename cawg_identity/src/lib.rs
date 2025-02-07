@@ -23,8 +23,11 @@ pub mod claim_aggregation;
 
 mod identity_assertion;
 pub use identity_assertion::{
-    assertion::IdentityAssertion, report::IdentityAssertionReport, signature_verifier::SignatureVerifier,
-    signer_payload::SignerPayload, validation_error::ValidationError,
+    assertion::IdentityAssertion,
+    report::IdentityAssertionReport,
+    signature_verifier::{SignatureVerifier, ToCredentialSummary},
+    signer_payload::SignerPayload,
+    validation_error::ValidationError,
 };
 
 pub(crate) mod internal;
