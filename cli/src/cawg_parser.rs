@@ -10,6 +10,8 @@
 // specific language governing permissions and limitations under
 // each license.
 
+use std::convert::TryInto;
+
 use c2pa::{Error, Reader};
 use cawg_identity::{claim_aggregation::IcaSignatureVerifier, IdentityAssertion};
 use serde_json::{Map, Value};
@@ -346,7 +348,7 @@ pub(crate) fn decorate_json_display(
     reader: &Reader,
     tokio_runtime: &Runtime,
 ) -> Result<String, Error> {
-    let mut reader_content = match reader.json_value_map() {
+    let mut reader_content: serde_json::Map<String, serde_json::Value> = match reader.try_into() {
         Ok(mapped_json) => mapped_json,
         Err(_) => {
             return Err(crate::Error::JsonSerializationError(

@@ -247,14 +247,6 @@ impl Reader {
         self.manifest_store.to_string()
     }
 
-    /// Get the manifest store as a serde serialized JSON value map.
-    pub fn json_value_map(&self) -> Result<Map<String, Value>> {
-        match serde_json::from_str(self.json().as_str()) {
-            Ok(mapped_json) => Ok(mapped_json),
-            Err(err) => Err(crate::Error::JsonSerializationError(err.to_string())),
-        }
-    }
-
     // Get a full reader (manifest and manifest store) report as a JSON string.
     pub fn json_report(&self) -> Result<String> {
         let report = ManifestStoreReport::from_store(self.manifest_store.store());
@@ -447,6 +439,24 @@ impl Default for Reader {
         Self {
             manifest_store: ManifestStore::new(),
         }
+    }
+}
+
+impl TryInto<serde_json::Map<String, serde_json::Value>> for Reader {
+    type Error = crate::Error;
+
+    /// Get the manifest store as a serde serialized JSON value map.
+    fn try_into(self) -> Result<serde_json::Map<String, serde_json::Value>> {
+        serde_json::from_str(self.json().as_str()).map_err(crate::Error::JsonError)
+    }
+}
+
+impl TryInto<serde_json::Map<String, serde_json::Value>> for &Reader {
+    type Error = crate::Error;
+
+    /// Get the manifest store as a serde serialized JSON value map.
+    fn try_into(self) -> Result<serde_json::Map<String, serde_json::Value>> {
+        serde_json::from_str(self.json().as_str()).map_err(crate::Error::JsonError)
     }
 }
 
