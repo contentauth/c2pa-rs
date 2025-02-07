@@ -18,6 +18,7 @@ use serde::{Deserialize, Serialize};
 use serde_bytes::ByteBuf;
 
 use crate::{
+    IdentityAssertionReport,
     identity_assertion::signer_payload::SignerPayload, internal::debug_byte_slice::DebugByteSlice,
     SignatureVerifier, ValidationError,
 };
@@ -75,6 +76,8 @@ impl IdentityAssertion {
         manifest: &Manifest,
         verifier: &SV,
     ) -> IdentityAssertionReport {
+        let _ = manifest;
+        let _ = verifier;
         todo!("validate and render as report");
     }
 

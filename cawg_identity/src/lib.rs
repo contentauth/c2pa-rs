@@ -23,7 +23,7 @@ pub mod claim_aggregation;
 
 mod identity_assertion;
 pub use identity_assertion::{
-    assertion::IdentityAssertion, signature_verifier::SignatureVerifier,
+    assertion::IdentityAssertion, report::IdentityAssertionReport, signature_verifier::SignatureVerifier,
     signer_payload::SignerPayload, validation_error::ValidationError,
 };
 
