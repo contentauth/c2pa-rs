@@ -19,12 +19,19 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     claim_aggregation::w3c_vc::credential::{CredentialV2, VerifiableCredentialSubtype},
+    identity_assertion::signature_verifier::ToCredentialSummary,
     SignerPayload,
 };
 
 /// TO DO: Doc -- looks like CredentialV2 for our specific use
 /// case.
 pub type IcaCredential = CredentialV2<IdentityClaimsAggregationVc>;
+
+impl ToCredentialSummary for IcaCredential {
+    fn to_summary(&self) -> impl Serialize {
+        IcaCredentialSummary::from_credential(self)
+    }
+}
 
 /// Identity claims aggregation context IRI.
 pub const IDENTITY_CLAIMS_AGGREGATION_CONTEXT_IRI: &Iri =
@@ -174,4 +181,21 @@ pub struct IdentityProvider {
     /// non-empty string. ///The `verifiedIdentities[?].provider.name` property
     /// is the user-visible name of the _identity provider._
     pub name: NonEmptyString,
+}
+
+#[derive(Serialize)]
+pub struct IcaCredentialSummary {
+    #[serde(rename = "verifiedIdentities")]
+    verified_identities: NEVec<VerifiedIdentity>,
+    // TO DO: Add other fields from root credential type.
+}
+
+impl IcaCredentialSummary {
+    fn from_credential(ica: &IcaCredential) -> Self {
+        let subject = ica.credential_subjects.first();
+
+        Self {
+            verified_identities: subject.verified_identities.clone(),
+        }
+    }
 }

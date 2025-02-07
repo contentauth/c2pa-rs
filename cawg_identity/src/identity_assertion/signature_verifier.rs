@@ -12,6 +12,7 @@
 // each license.
 
 use async_trait::async_trait;
+use serde::Serialize;
 
 use crate::{SignerPayload, ValidationError};
 
@@ -28,7 +29,7 @@ pub trait SignatureVerifier: Sync {
     /// derived from the signature. Typically, this describes the named actor,
     /// but may also contain information about the time of signing or the
     /// credential's source.
-    type Output;
+    type Output: ToCredentialSummary;
 
     /// The `Error` type provides a credential-specific explanation for why an
     /// identity assertion signature could not be accepted. This value may be
@@ -61,7 +62,7 @@ pub trait SignatureVerifier {
     /// derived from the signature. Typically, this describes the named actor,
     /// but may also contain information about the time of signing or the
     /// credential's source.
-    type Output;
+    type Output: ToCredentialSummary;
 
     /// The `Error` type provides a credential-specific explanation for why an
     /// identity assertion signature could not be accepted. This value may be
@@ -79,4 +80,20 @@ pub trait SignatureVerifier {
         signer_payload: &SignerPayload,
         signature: &[u8],
     ) -> Result<Self::Output, ValidationError<Self::Error>>;
+}
+
+/// The `Output` result type from [`SignatureVerifier::check_signature`] may be
+/// called upon to summarize its contents in a form suitable for JSON or similar
+/// serialization.
+///
+/// This report is kept separate from any [`Serializable`] implementation
+/// because that original credential type may have a native serialization that
+/// is not suitable for summarizaton.
+///
+/// This trait allows the credential type to reshape its output into a suitable
+/// summary form.
+pub trait ToCredentialSummary {
+    /// Convert the underlying credential type into a summary type which can be
+    /// serialized for JSON or similar reporting format.
+    fn to_summary(&self) -> impl Serialize;
 }
