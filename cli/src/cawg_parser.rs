@@ -17,7 +17,7 @@ use tokio::runtime::Runtime;
 
 /// Update/decorate the displayed JSON assertions for a more human-readable JSON output.
 fn decorate_cawg_assertion_from_detailed_report(
-    reader: Reader,
+    reader: &Reader,
     json_content: &mut Value,
     tokio_runtime: &Runtime,
 ) -> Result<(), Error> {
@@ -91,7 +91,7 @@ fn decorate_cawg_assertion_from_detailed_report(
 
 /// Update/decorate the displayed JSON assertions for a more human-readable JSON output.
 fn decorate_json_assertions(
-    reader: Reader,
+    reader: &Reader,
     json_content: &mut Value,
     tokio_runtime: &Runtime,
 ) -> Result<(), Error> {
@@ -292,48 +292,57 @@ fn get_cawg_details_for_manifest(
 
 /// Update/decorate the detailed displayed JSON string for a more human-readable JSON output.
 pub(crate) fn decorate_json_detailed_display(
-    reader: Reader,
-    extracted_report: String,
+    reader: &Reader,
     tokio_runtime: &Runtime,
-) -> String {
+) -> Result<String, Error> {
+    let json_report = reader.json_report();
+    let extracted_report = match json_report {
+        Ok(extracted_json_report) => extracted_json_report,
+        Err(err) => {
+            let message = format!("Could not parse JSON report: {:?}", err);
+            return Err(crate::Error::JsonSerializationError(message));
+        }
+    };
+
     let mut report_json_map: Map<String, Value> = match serde_json::from_str(&extracted_report) {
         Ok(report_json_map) => report_json_map,
         Err(err) => {
-            eprintln!("Could not parse extracted JSON report: {:?}", err);
-            return String::new();
+            let message = format!("Could not parse extracted JSON detailed report: {:?}", err);
+            return Err(crate::Error::JsonSerializationError(message));
         }
     };
 
     let manifests = match report_json_map.get_mut("manifests") {
         Some(manifests) => manifests,
         None => {
-            eprintln!("No parsable JSON in manifest store (key: manifests)");
-            return String::new();
+            return Err(crate::Error::JsonSerializationError(
+                "No parsable JSON in manifest store (key: manifests)".to_string(),
+            ));
         }
     };
 
     match decorate_cawg_assertion_from_detailed_report(reader, manifests, tokio_runtime) {
         Ok(_) => (),
         Err(err) => {
-            eprintln!("Could not decorate detailed JSON for display: {:?}", err);
-            return String::new();
+            let message = format!("Could not decorate detailed JSON for display: {:?}", err);
+            return Err(crate::Error::JsonSerializationError(message));
         }
     };
 
     match serde_json::to_string_pretty(&report_json_map) {
-        Ok(decorated_result) => decorated_result,
+        Ok(decorated_result) => Ok(decorated_result),
         Err(err) => {
-            eprintln!(
+            let message = format!(
                 "Could not decorate displayed detailed JSON with additional details: {:?}",
                 err
             );
-            String::new()
+            return Err(crate::Error::JsonSerializationError(message));
         }
     }
 }
 
 /// Update/decorate the displayed JSON string for a more human-readable JSON output.
-pub(crate) fn decorate_json_display(reader: Reader, tokio_runtime: &Runtime) -> String {
+pub(crate) fn decorate_json_display(reader: &Reader, tokio_runtime: &Runtime) -> String {
     let mut reader_content = match reader.json_value_map() {
         Ok(mapped_json) => mapped_json,
         Err(_) => {

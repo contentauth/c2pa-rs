@@ -681,16 +681,14 @@ fn main() -> Result<()> {
         )
     } else if args.detailed {
         let reader = Reader::from_file(&args.path).map_err(special_errs)?;
-
-        let json_report = reader.json_report();
-        let extracted_json_report = match json_report {
-            Ok(extracted_json_report) => extracted_json_report,
-            Err(err) => format!("Could not parse JSON report: {:?}", err),
+        let decorated_details_manifest = decorate_json_detailed_display(&reader, &tokio_runtime);
+        match decorated_details_manifest {
+            Ok(decorated_details_manifest) => println!("{}", decorated_details_manifest),
+            Err(_) => {
+                // fall back to raw display of data (unparsed CAWG)
+                println!("{:#?}", reader)
+            }
         };
-
-        let decorated_details_manifest =
-            decorate_json_detailed_display(reader, extracted_json_report, &tokio_runtime);
-        println!("{}", decorated_details_manifest);
     } else if let Some(Commands::Fragment {
         fragments_glob: Some(fg),
     }) = &args.command
@@ -703,7 +701,8 @@ fn main() -> Result<()> {
         }
     } else {
         let reader: Reader = Reader::from_file(&args.path).map_err(special_errs)?;
-        let stringified_decorated_json = decorate_json_display(reader, &tokio_runtime);
+
+        let stringified_decorated_json = decorate_json_display(&reader, &tokio_runtime);
         println!("{}", stringified_decorated_json);
     }
 
