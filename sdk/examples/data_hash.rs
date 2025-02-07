@@ -14,13 +14,13 @@
 // Example code (in unit test) for how you might use client DataHash values.  This allows clients
 // to perform the manifest embedding and optionally the hashing
 
-#[cfg(all(feature = "openssl_sign", not(target_arch = "wasm32")))]
+#[cfg(any(feature = "openssl_sign", feature = "file_io"))]
 use std::{
     io::{Cursor, Read, Seek, Write},
     path::{Path, PathBuf},
 };
 
-#[cfg(all(feature = "openssl_sign", not(target_arch = "wasm32")))]
+#[cfg(any(feature = "openssl_sign", feature = "file_io"))]
 use c2pa::{
     assertions::{
         c2pa_action, labels::*, Action, Actions, CreativeWork, DataHash, Exif, SchemaDotOrgPerson,
@@ -28,7 +28,7 @@ use c2pa::{
     create_signer, hash_stream_by_alg, Builder, ClaimGeneratorInfo, HashRange, Ingredient, Reader,
     Relationship, Result,
 };
-#[cfg(all(feature = "openssl_sign", not(target_arch = "wasm32")))]
+#[cfg(any(feature = "openssl_sign", feature = "file_io"))]
 use c2pa_crypto::raw_signature::SigningAlg;
 
 fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {

@@ -520,10 +520,14 @@ pub mod tests {
     #[cfg(feature = "file_io")]
     /// Test that the reader can validate a file with nested assertion errors
     fn test_reader_to_folder() -> Result<()> {
+        use crate::utils::{io_utils::tempdirectory, test::temp_dir_path};
+
         let reader = Reader::from_file("tests/fixtures/CACAE-uri-CA.jpg")?;
         assert_eq!(reader.validation_status(), None);
-        reader.to_folder("../target/reader_folder")?;
-        assert!(std::path::Path::new("../target/reader_folder/manifest.json").exists());
+        let temp_dir = tempdirectory().unwrap();
+        reader.to_folder(temp_dir.path())?;
+        let path = temp_dir_path(&temp_dir, "manifest.json");
+        assert!(path.exists());
         Ok(())
     }
 }

@@ -27,7 +27,6 @@ use img_parts::{
     Bytes, DynImage,
 };
 use serde_bytes::ByteBuf;
-use tempfile::Builder;
 
 use crate::{
     assertions::{BoxMap, C2PA_BOXHASH},
@@ -37,7 +36,10 @@ use crate::{
         RemoteRefEmbedType,
     },
     error::{Error, Result},
-    utils::xmp_inmemory_utils::{add_provenance, MIN_XMP},
+    utils::{
+        io_utils::tempfile_builder,
+        xmp_inmemory_utils::{add_provenance, MIN_XMP},
+    },
 };
 
 static SUPPORTED_TYPES: [&str; 3] = ["jpg", "jpeg", "image/jpeg"];
@@ -481,10 +483,7 @@ impl AssetIO for JpegIO {
             .open(asset_path)
             .map_err(Error::IoError)?;
 
-        let mut temp_file = Builder::new()
-            .prefix("c2pa_temp")
-            .rand_bytes(5)
-            .tempfile()?;
+        let mut temp_file = tempfile_builder("c2pa_temp")?;
 
         self.write_cai(&mut input_stream, &mut temp_file, store_bytes)?;
 

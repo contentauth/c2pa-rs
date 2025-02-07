@@ -1116,10 +1116,7 @@ mod tests {
     use wasm_bindgen_test::*;
 
     use super::*;
-    #[cfg(any(
-        feature = "openssl_sign",
-        all(target_arch = "wasm32", not(target_os = "wasi"))
-    ))]
+    #[cfg(any(feature = "openssl_sign", target_arch = "wasm32"))]
     use crate::{assertions::BoxHash, asset_handlers::jpeg_io::JpegIO};
     use crate::{
         hash_stream_by_alg,
@@ -1193,7 +1190,7 @@ mod tests {
         .to_string()
     }
 
-    #[cfg(all(feature = "openssl_sign", not(target_arch = "wasm32")))]
+    #[cfg(any(feature = "file_io", feature = "openssl_sign"))]
     const TEST_IMAGE_CLEAN: &[u8] = include_bytes!("../tests/fixtures/IMG_0003.jpg");
     const TEST_IMAGE: &[u8] = include_bytes!("../tests/fixtures/CA.jpg");
     const TEST_THUMBNAIL: &[u8] = include_bytes!("../tests/fixtures/thumbnail.jpg");
@@ -1361,8 +1358,10 @@ mod tests {
     #[test]
     #[cfg(feature = "file_io")]
     fn test_builder_sign_file() {
+        use crate::utils::io_utils::tempdirectory;
+
         let source = "tests/fixtures/CA.jpg";
-        let dir = tempfile::tempdir().unwrap();
+        let dir = tempdirectory().unwrap();
         let dest = dir.path().join("test_file.jpg");
 
         let mut builder = Builder::from_json(&manifest_json()).unwrap();
@@ -1596,8 +1595,9 @@ mod tests {
         all(target_arch = "wasm32", not(target_os = "wasi")),
         wasm_bindgen_test
     )]
+    #[cfg_attr(target_os = "wasi", wstd::test)]
     #[cfg(any(
-        all(target_arch = "wasm32", not(target_os = "wasi")),
+        target_arch = "wasm32",
         all(feature = "openssl_sign", feature = "file_io")
     ))]
     async fn test_builder_box_hashed_embeddable() {

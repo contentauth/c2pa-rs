@@ -412,6 +412,8 @@ pub mod tests {
     use std::sync::Mutex;
 
     use super::*;
+    #[cfg(feature = "file_io")]
+    use crate::utils::io_utils::tempdirectory;
 
     // prevent tests from polluting the results of each other because of Rust unit test concurrency
     static PROTECT: Mutex<u32> = Mutex::new(1); // prevent tests from polluting the results of each other
@@ -542,7 +544,7 @@ pub mod tests {
     fn test_save_load() {
         let _protect = PROTECT.lock().unwrap();
 
-        let temp_dir = tempfile::tempdir().unwrap();
+        let temp_dir = tempdirectory().unwrap();
         let op = crate::utils::test::temp_dir_path(&temp_dir, "sdk_config.json");
 
         save_settings_as_json(&op).unwrap();
@@ -560,7 +562,7 @@ pub mod tests {
     fn test_save_load_from_string() {
         let _protect = PROTECT.lock().unwrap();
 
-        let temp_dir = tempfile::tempdir().unwrap();
+        let temp_dir = tempdirectory().unwrap();
         let op = crate::utils::test::temp_dir_path(&temp_dir, "sdk_config.json");
 
         save_settings_as_json(&op).unwrap();
