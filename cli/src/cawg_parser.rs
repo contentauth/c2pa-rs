@@ -336,7 +336,7 @@ pub(crate) fn decorate_json_detailed_display(
                 "Could not decorate displayed detailed JSON with additional details: {:?}",
                 err
             );
-            return Err(crate::Error::JsonSerializationError(message));
+            Err(crate::Error::JsonSerializationError(message))
         }
     }
 }
@@ -382,7 +382,7 @@ pub(crate) fn decorate_json_display(
                 "Could not decorate displayed JSON with additional details: {:?}",
                 err
             );
-            return Err(crate::Error::JsonSerializationError(message));
+            Err(crate::Error::JsonSerializationError(message))
         }
     }
 }
