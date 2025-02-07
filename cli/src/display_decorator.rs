@@ -22,7 +22,8 @@ use crate::decorators::cawg_decorator::{
 };
 
 // Display decorators for JSON output/display
-// We do not mutate any Reader here, only make JSON output "nicer""
+// We do not mutate any Reader here, only make JSON output "nicer",
+// by doing some additional parsing or clean-ups.
 
 /// Update/decorate the displayed JSON assertions for a more human-readable JSON output.
 fn decorate_json_assertions(
