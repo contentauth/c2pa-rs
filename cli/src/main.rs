@@ -432,7 +432,7 @@ fn decorate_json_display(reader: Reader, tokio_runtime: &Runtime) -> String {
     let mut reader_content = match reader.json_value_map() {
         Ok(mapped_json) => mapped_json,
         Err(_) => {
-            println!("Could not parse manifest store JSON content");
+            eprintln!("Could not parse manifest store JSON content");
             return String::new();
         }
     };
@@ -440,7 +440,7 @@ fn decorate_json_display(reader: Reader, tokio_runtime: &Runtime) -> String {
     let manifests_json_content = match reader_content.get_mut("manifests") {
         Some(json) => json,
         None => {
-            println!("No JSON to parse in manifest store (key: manifests)");
+            eprintln!("No JSON to parse in manifest store (key: manifests)");
             return String::new();
         }
     };
@@ -449,13 +449,13 @@ fn decorate_json_display(reader: Reader, tokio_runtime: &Runtime) -> String {
     match decorate_json_assertions(reader, manifests_json_content, tokio_runtime) {
         Ok(_) => (),
         Err(err) => {
-            println!("Could not decorate JSON assertions for display: {:?}", err);
+            eprintln!("Could not decorate JSON assertions for display: {:?}", err);
         }
     };
     match serde_json::to_string_pretty(&reader_content) {
         Ok(decorated_result) => decorated_result,
         Err(err) => {
-            println!(
+            eprintln!(
                 "Could not decorate displayed JSON with additional details: {:?}",
                 err
             );
@@ -534,9 +534,8 @@ fn decorate_json_cawg_assertions(
         match get_cawg_details_for_manifest(holding_manifest, tokio_runtime) {
             Some(parsed_cawg_json_string) => parsed_cawg_json_string,
             None => {
-                println!(
-                "Could not parse CAWG details for manifest (leaving original raw data unformatted)"
-            );
+                // Could not parse CAWG details for manifest (leaving original raw data unformatted).
+                // Not a fatal failure, so leaving raw data unformatted.
                 return Ok(());
             }
         };
@@ -590,7 +589,7 @@ fn get_cawg_details_for_manifest(
         let identity_assertion = match ia {
             Ok(ia) => ia,
             Err(err) => {
-                println!("Could not parse CAWG identity assertion: {:?}", err);
+                eprintln!("Could not parse CAWG identity assertion: {:?}", err);
                 return;
             }
         };
@@ -600,7 +599,7 @@ fn get_cawg_details_for_manifest(
         let ica = match ica_validated {
             Ok(ica) => ica,
             Err(err) => {
-                println!("Could not validate CAWG identity assertion: {:?}", err);
+                eprintln!("Could not validate CAWG identity assertion: {:?}", err);
                 return;
             }
         };
@@ -608,7 +607,7 @@ fn get_cawg_details_for_manifest(
         parsed_cawg_json = match serde_json::to_string(&ica) {
             Ok(parsed_cawg_json) => parsed_cawg_json,
             Err(err) => {
-                println!(
+                eprintln!(
                     "Could not parse CAWG identity claims aggregation details for manifest: {:?}",
                     err
                 );
@@ -626,7 +625,7 @@ fn get_cawg_details_for_manifest(
     let mut map: Map<String, Value> = match maybe_map {
         Ok(map) => map,
         Err(err) => {
-            println!(
+            eprintln!(
                 "Could not parse convert CAWG identity claims details to JSON string map: {:?}",
                 err
             );
@@ -639,7 +638,7 @@ fn get_cawg_details_for_manifest(
     let credentials_subject = match credentials_subject_maybe {
         Some(credentials_subject) => credentials_subject,
         None => {
-            println!("Could not find credential subject in CAWG details for manifest");
+            eprintln!("Could not find credential subject in CAWG details for manifest");
             return None;
         }
     };
@@ -647,7 +646,7 @@ fn get_cawg_details_for_manifest(
     let credential_subject_details = match credentials_subject_as_obj {
         Some(credentials_subject) => credentials_subject,
         None => {
-            println!("Could not parse credential subject as object in CAWG details for manifest");
+            eprintln!("Could not parse credential subject as object in CAWG details for manifest");
             return None;
         }
     };
@@ -660,7 +659,7 @@ fn get_cawg_details_for_manifest(
     match serialized_content {
         Ok(serialized_content) => Some(serialized_content),
         Err(err) => {
-            println!("Could not parse CAWG details for manifest: {:?}", err);
+            eprintln!("Could not parse CAWG details for manifest: {:?}", err);
             None
         }
     }
