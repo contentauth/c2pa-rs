@@ -564,3 +564,22 @@ fn tool_read_image_with_cawg_data() -> Result<(), Box<dyn Error>> {
         .stdout(str::contains("IdentityClaimsAggregationCredential"));
     Ok(())
 }
+
+#[test]
+// c2patool --detailed C_with_CAWG_data.jpg
+fn tool_read_image_with_details_with_cawg_data() -> Result<(), Box<dyn Error>> {
+    Command::cargo_bin("c2patool")?
+        .arg(fixture_path("C_with_CAWG_data.jpg"))
+        .arg("--detailed")
+        .assert()
+        .success()
+        .stdout(str::contains("assertion_store"))
+        .stdout(str::contains("cawg.identity"))
+        .stdout(str::contains("credentialSubject"))
+        .stdout(str::contains("verifiedIdentities"))
+        .stdout(str::contains("credentialSchema"))
+        .stdout(str::contains("cawg.social_media"))
+        .stdout(str::contains("VerifiableCredential"))
+        .stdout(str::contains("IdentityClaimsAggregationCredential"));
+    Ok(())
+}
