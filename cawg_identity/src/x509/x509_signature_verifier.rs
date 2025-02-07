@@ -93,7 +93,7 @@ pub struct X509SignatureInfo {
 impl ToCredentialSummary for X509SignatureInfo {
     // type SummaryOutput = X509SignatureReport;
 
-    fn to_summary(&self) -> impl Serialize {
+    fn to_summary(self) -> impl Serialize {
         X509SignatureReport {}
     }
 }

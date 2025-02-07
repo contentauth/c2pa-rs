@@ -17,12 +17,8 @@ use serde::Serialize;
 
 use crate::identity_assertion::signer_payload::SignerPayload;
 
-/// This struct represents the validated content of an identity assertion.
-///
-/// It is created by calling [`IdentityAssertion::to_report`], which will
-/// validate the content of the assertion and decode the content
 #[derive(Debug, Serialize)]
-pub struct IdentityAssertionReport<T: Serialize> {
+pub(crate) struct IdentityAssertionReport<T: Serialize> {
     #[serde(flatten)]
     pub(crate) signer_payload: SignerPayload,
 

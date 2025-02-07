@@ -18,8 +18,9 @@ use serde::{Deserialize, Serialize};
 use serde_bytes::ByteBuf;
 
 use crate::{
-    identity_assertion::signer_payload::SignerPayload, internal::debug_byte_slice::DebugByteSlice,
-    SignatureVerifier, ValidationError,
+    identity_assertion::{report::IdentityAssertionReport, signer_payload::SignerPayload},
+    internal::debug_byte_slice::DebugByteSlice,
+    SignatureVerifier, ToCredentialSummary, ValidationError,
 };
 
 /// This struct represents the raw content of the identity assertion.
@@ -63,22 +64,36 @@ impl IdentityAssertion {
             .map(|a| a.to_assertion())
     }
 
-    // /// Create an [`IdentityAssertionReport`] from this `IdentityAssertion`.
-    // ///
-    // /// This will [`validate`] the assertion and then render the result as
-    // /// an [`IdentityAssertionReport`] that describes the decoded content of
-    // /// the identity assertion.
-    // ///
-    // /// [`validate`]: Self::validate
-    // pub async fn to_report<SV: SignatureVerifier>(
-    //     &self,
-    //     manifest: &Manifest,
-    //     verifier: &SV,
-    // ) -> IdentityAssertionReport {
-    //     let _ = manifest;
-    //     let _ = verifier;
-    //     todo!("validate and render as report");
-    // }
+    /// Create an [`IdentityAssertionReport`] from this `IdentityAssertion`.
+    ///
+    /// This will [`validate`] the assertion and then render the result as
+    /// an [`IdentityAssertionReport`] that describes the decoded content of
+    /// the identity assertion.
+    ///
+    /// [`validate`]: Self::validate
+    pub async fn to_summary<SV: SignatureVerifier>(
+        &self,
+        manifest: &Manifest,
+        verifier: &SV,
+    ) -> impl Serialize
+    where
+        <SV as SignatureVerifier>::Output: 'static,
+    {
+        match self.validate(manifest, verifier).await {
+            Ok(named_actor) => {
+                let summary = named_actor.to_summary();
+
+                IdentityAssertionReport {
+                    signer_payload: self.signer_payload.clone(),
+                    named_actor: Some(summary),
+                }
+            }
+
+            Err(_err) => {
+                todo!("Handle summary report for failure case");
+            }
+        }
+    }
 
     /// Using the provided [`SignatureVerifier`], check the validity of this
     /// identity assertion.

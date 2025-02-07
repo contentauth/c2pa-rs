@@ -95,5 +95,5 @@ pub trait SignatureVerifier {
 pub trait ToCredentialSummary {
     /// Convert the underlying credential type into a summary type which can be
     /// serialized for JSON or similar reporting format.
-    fn to_summary(&self) -> impl Serialize;
+    fn to_summary(self) -> impl Serialize;
 }
