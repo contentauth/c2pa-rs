@@ -255,7 +255,7 @@ impl Reader {
         }
     }
 
-    // Get the full report as json
+    // Get the full report as json.
     pub fn json_report(&self) -> Result<String> {
         let report = ManifestStoreReport::from_store(self.manifest_store.store());
         let mut report = match report {
