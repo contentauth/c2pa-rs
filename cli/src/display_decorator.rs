@@ -16,9 +16,13 @@ use c2pa::{Error, Reader};
 use serde_json::{Map, Value};
 use tokio::runtime::Runtime;
 
+// the decorators we know about an plan to use
 use crate::decorators::cawg_decorator::{
     decorate_cawg_assertion_from_detailed_report, decorate_json_cawg_assertions,
 };
+
+// Display decorators for JSON output/display
+// We do not mutate any Reader here, only make JSON output "nicer""
 
 /// Update/decorate the displayed JSON assertions for a more human-readable JSON output.
 fn decorate_json_assertions(
@@ -69,7 +73,7 @@ fn decorate_json_assertions(
                     }
                 };
 
-                // for CAWG assertions, further parse the signature
+                // here we decorate something: for CAWG assertions, further parse the signature
                 if label.contains("cawg.identity") {
                     decorate_json_cawg_assertions(current_manifest, assertion, tokio_runtime)?;
                 }
@@ -111,7 +115,7 @@ pub(crate) fn decorate_json_detailed_display(
         }
     };
 
-    // Update assertion with more details (eg. for CAWG)
+    // Here we decorate something: Update assertion with more details (eg. for CAWG)
     match decorate_cawg_assertion_from_detailed_report(reader, manifests, tokio_runtime) {
         Ok(_) => (),
         Err(err) => {
