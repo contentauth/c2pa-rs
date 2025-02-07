@@ -594,8 +594,8 @@ impl std::fmt::Display for ManifestStore {
         // Reason of padding, see note at:
         // https://c2pa.org/specifications/specifications/2.1/specs/C2PA_Specification.html#_going_back_and_filling_in
         json = omit_tag(json, "pad");
-        json = omit_tag(json, "pad1");
-        json = omit_tag(json, "pad2");
+        // json = omit_tag(json, "pad1");
+        // json = omit_tag(json, "pad2");
 
         f.write_str(&json)
     }
