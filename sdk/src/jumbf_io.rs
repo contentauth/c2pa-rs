@@ -269,11 +269,11 @@ pub(crate) fn update_file_jumbf(
 
 #[cfg(feature = "file_io")]
 /// load the JUMBF block from an asset if available
-pub fn load_jumbf_from_file(in_path: &Path) -> Result<Vec<u8>> {
-    let ext = get_file_extension(in_path).ok_or(Error::UnsupportedType)?;
+pub fn load_jumbf_from_file<P: AsRef<Path>>(in_path: P) -> Result<Vec<u8>> {
+    let ext = get_file_extension(in_path.as_ref()).ok_or(Error::UnsupportedType)?;
 
     match get_assetio_handler(&ext) {
-        Some(asset_handler) => asset_handler.read_cai_store(in_path),
+        Some(asset_handler) => asset_handler.read_cai_store(in_path.as_ref()),
         _ => Err(Error::UnsupportedType),
     }
 }
