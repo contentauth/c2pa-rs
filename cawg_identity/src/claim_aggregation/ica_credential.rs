@@ -11,8 +11,10 @@
 // specific language governing permissions and limitations under
 // each license.
 
+use std::collections::BTreeMap;
+
 use chrono::{DateTime, FixedOffset};
-use iref::{Iri, UriBuf};
+use iref::{Iri, IriBuf, UriBuf};
 use non_empty_string::NonEmptyString;
 use nonempty_collections::NEVec;
 use serde::{Deserialize, Serialize};
@@ -184,10 +186,35 @@ pub struct IdentityProvider {
 }
 
 #[derive(Serialize)]
-pub struct IcaCredentialSummary {
+struct IcaCredentialSummary {
+    #[serde(rename = "@context")]
+    contexts: NEVec<IriBuf>,
+
+    #[serde(
+        default,
+        deserialize_with = "not_null",
+        skip_serializing_if = "Option::is_none"
+    )]
+    id: Option<UriBuf>,
+
+    #[serde(rename = "type")]
+    types: NEVec<String>,
+
+    issuer: UriBuf,
+
+    #[serde(rename = "validFrom")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    valid_from: Option<DateTime<FixedOffset>>,
+
+    #[serde(rename = "validUntil")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    valid_until: Option<DateTime<FixedOffset>>,
+
     #[serde(rename = "verifiedIdentities")]
     verified_identities: NEVec<VerifiedIdentity>,
-    // TO DO: Add other fields from root credential type.
+
+    #[serde(flatten)]
+    extra_properties: BTreeMap<String, serde_json::Value>,
 }
 
 impl IcaCredentialSummary {
@@ -195,7 +222,14 @@ impl IcaCredentialSummary {
         let subject = ica.credential_subjects.first();
 
         Self {
+            contexts: ica.contexts.clone(),
+            id: ica.id.clone(),
+            issuer: ica.issuer.clone(),
+            types: ica.types.clone(),
+            valid_from: ica.valid_from.clone(),
+            valid_until: ica.valid_until.clone(),
             verified_identities: subject.verified_identities.clone(),
+            extra_properties: ica.extra_properties.clone(),
         }
     }
 }

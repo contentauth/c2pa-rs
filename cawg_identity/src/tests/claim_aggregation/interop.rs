@@ -22,7 +22,7 @@ use wasm_bindgen_test::wasm_bindgen_test;
 
 use crate::{
     claim_aggregation::{IcaSignatureVerifier, IdentityProvider, VerifiedIdentity},
-    IdentityAssertion, SignerPayload,
+    IdentityAssertion, SignerPayload, ToCredentialSummary,
 };
 
 #[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
@@ -80,5 +80,14 @@ async fn adobe_connected_identities() {
             )],
             sig_type: "cawg.identity_claims_aggregation".to_owned(),
         }
+    );
+
+    // Check the summary report for this credential.
+    let ica_summary = ica.to_summary();
+    let ica_json = serde_json::to_string(&ica_summary).unwrap();
+
+    assert_eq!(
+        ica_json,
+        r#"{"@context":["https://www.w3.org/ns/credentials/v2","https://creator-assertions.github.io/tbd/tbd"],"type":["VerifiableCredential","IdentityClaimsAggregationCredential"],"issuer":"did:web:connected-identities.identity-stage.adobe.com","validFrom":"2024-10-03T21:47:02Z","verifiedIdentities":[{"type":"cawg.social_media","username":"Robert Tiles","uri":"https://net.s2stagehance.com/roberttiles","verifiedAt":"2024-09-24T18:15:11Z","provider":{"id":"https://behance.net","name":"behance"}}],"credentialSchema":[{"id":"https://creator-assertions.github.io/schemas/v1/creator-identity-assertion.json","type":"JSONSchema"}]}"#
     );
 }
