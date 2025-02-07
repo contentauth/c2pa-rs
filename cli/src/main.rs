@@ -458,7 +458,10 @@ fn decorate_json_detailled_display(
     match serde_json::to_string_pretty(&report_json_map) {
         Ok(decorated_result) => decorated_result,
         Err(err) => {
-            println!("Could not decorate displayed detailed JSON with additional details: {:?}", err);
+            println!(
+                "Could not decorate displayed detailed JSON with additional details: {:?}",
+                err
+            );
             String::new()
         }
     }
@@ -525,7 +528,8 @@ fn decorate_cawg_assertion_from_detailed_report(
                 Some(cawg_assertion) => cawg_assertion,
                 None => {
                     return Err(crate::Error::JsonSerializationError(
-                        "Could not parse CAWG assertion data as object to decorate for display".to_string(),
+                        "Could not parse CAWG assertion data as object to decorate for display"
+                            .to_string(),
                     ));
                 }
             };
