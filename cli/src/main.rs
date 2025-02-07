@@ -685,7 +685,7 @@ fn main() -> Result<()> {
         match decorated_details_manifest {
             Ok(decorated_details_manifest) => println!("{}", decorated_details_manifest),
             Err(_) => {
-                // fall back to raw display of data (unparsed CAWG)
+                // fall back to raw debug display of data (unparsed CAWG)
                 println!("{:#?}", reader)
             }
         };
@@ -701,9 +701,13 @@ fn main() -> Result<()> {
         }
     } else {
         let reader: Reader = Reader::from_file(&args.path).map_err(special_errs)?;
-
-        let stringified_decorated_json = decorate_json_display(&reader, &tokio_runtime);
-        println!("{}", stringified_decorated_json);
+        match decorate_json_display(&reader, &tokio_runtime) {
+            Ok(stringified_decorated_json) => println!("{}", stringified_decorated_json),
+            Err(_) => {
+                // fall back to raw display of data (unparsed CAWG)
+                println!("{:?}", reader)
+            }
+        };
     }
 
     Ok(())

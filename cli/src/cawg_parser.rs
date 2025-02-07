@@ -342,20 +342,25 @@ pub(crate) fn decorate_json_detailed_display(
 }
 
 /// Update/decorate the displayed JSON string for a more human-readable JSON output.
-pub(crate) fn decorate_json_display(reader: &Reader, tokio_runtime: &Runtime) -> String {
+pub(crate) fn decorate_json_display(
+    reader: &Reader,
+    tokio_runtime: &Runtime,
+) -> Result<String, Error> {
     let mut reader_content = match reader.json_value_map() {
         Ok(mapped_json) => mapped_json,
         Err(_) => {
-            eprintln!("Could not parse manifest store JSON content");
-            return String::new();
+            return Err(crate::Error::JsonSerializationError(
+                "Could not parse manifest store JSON content".to_string(),
+            ));
         }
     };
 
     let manifests_json_content = match reader_content.get_mut("manifests") {
         Some(json) => json,
         None => {
-            eprintln!("No JSON to parse in manifest store (key: manifests)");
-            return String::new();
+            return Err(crate::Error::JsonSerializationError(
+                "No JSON to parse in manifest store (key: manifests)".to_string(),
+            ));
         }
     };
 
@@ -363,17 +368,21 @@ pub(crate) fn decorate_json_display(reader: &Reader, tokio_runtime: &Runtime) ->
     match decorate_json_assertions(reader, manifests_json_content, tokio_runtime) {
         Ok(_) => (),
         Err(err) => {
-            eprintln!("Could not decorate JSON assertions for display: {:?}", err);
-        }
-    };
-    match serde_json::to_string_pretty(&reader_content) {
-        Ok(decorated_result) => decorated_result,
-        Err(err) => {
-            eprintln!(
+            let message = format!(
                 "Could not decorate displayed JSON with additional details: {:?}",
                 err
             );
-            String::new()
+            return Err(crate::Error::JsonSerializationError(message));
+        }
+    };
+    match serde_json::to_string_pretty(&reader_content) {
+        Ok(decorated_result) => Ok(decorated_result),
+        Err(err) => {
+            let message = format!(
+                "Could not decorate displayed JSON with additional details: {:?}",
+                err
+            );
+            return Err(crate::Error::JsonSerializationError(message));
         }
     }
 }
