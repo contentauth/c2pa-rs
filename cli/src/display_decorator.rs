@@ -323,6 +323,7 @@ pub(crate) fn decorate_json_detailed_display(
         }
     };
 
+    // Update assertion with more details (eg. for CAWG)
     match decorate_cawg_assertion_from_detailed_report(reader, manifests, tokio_runtime) {
         Ok(_) => (),
         Err(err) => {
@@ -331,6 +332,7 @@ pub(crate) fn decorate_json_detailed_display(
         }
     };
 
+    // return decorated detailed JSON to display
     match serde_json::to_string_pretty(&report_json_map) {
         Ok(decorated_result) => Ok(decorated_result),
         Err(err) => {
@@ -377,6 +379,8 @@ pub(crate) fn decorate_json_display(
             return Err(crate::Error::JsonSerializationError(message));
         }
     };
+
+    // return decorated JSON to display
     match serde_json::to_string_pretty(&reader_content) {
         Ok(decorated_result) => Ok(decorated_result),
         Err(err) => {

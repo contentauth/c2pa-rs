@@ -23,7 +23,6 @@ use c2pa_status_tracker::DetailedStatusTracker;
 #[cfg(feature = "json_schema")]
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use serde_json::{Map, Value};
 
 #[cfg(feature = "file_io")]
 use crate::error::Error;

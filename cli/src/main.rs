@@ -36,7 +36,7 @@ use url::Url;
 
 use crate::{
     callback_signer::{CallbackSigner, CallbackSignerConfig, ExternalProcessRunner},
-    cawg_parser::{decorate_json_detailed_display, decorate_json_display},
+    display_decorator::{decorate_json_detailed_display, decorate_json_display},
     info::info,
 };
 
@@ -44,7 +44,7 @@ mod info;
 mod tree;
 
 mod callback_signer;
-mod cawg_parser;
+mod display_decorator;
 mod signer;
 
 /// Tool for displaying and creating C2PA manifests.
@@ -685,7 +685,7 @@ fn main() -> Result<()> {
         match decorated_details_manifest {
             Ok(decorated_details_manifest) => println!("{}", decorated_details_manifest),
             Err(_) => {
-                // non-fatal: fall back to raw debug display of data (unparsed CAWG)
+                // non-fatal: fall back to raw debug display of data (eg. unparsed CAWG)
                 println!("{:#?}", reader)
             }
         };
@@ -704,7 +704,7 @@ fn main() -> Result<()> {
         match decorate_json_display(&reader, &tokio_runtime) {
             Ok(stringified_decorated_json) => println!("{}", stringified_decorated_json),
             Err(_) => {
-                // non-fatal: fall back to raw display of data (unparsed CAWG)
+                // non-fatal: fall back to raw display of data (eg. unparsed CAWG)
                 println!("{:?}", reader)
             }
         };
