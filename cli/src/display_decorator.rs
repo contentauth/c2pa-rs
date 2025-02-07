@@ -89,14 +89,7 @@ pub(crate) fn decorate_json_detailed_display(
     reader: &Reader,
     tokio_runtime: &Runtime,
 ) -> Result<String, Error> {
-    let json_report = reader.json_report();
-    let extracted_report = match json_report {
-        Ok(extracted_json_report) => extracted_json_report,
-        Err(err) => {
-            let message = format!("Could not parse JSON report: {:?}", err);
-            return Err(crate::Error::JsonSerializationError(message));
-        }
-    };
+    let extracted_report = format!("{:#?}", reader);
 
     let mut report_json_map: Map<String, Value> = match serde_json::from_str(&extracted_report) {
         Ok(report_json_map) => report_json_map,
