@@ -427,10 +427,63 @@ fn verify_fragmented(init_pattern: &Path, frag_pattern: &Path) -> Result<Vec<Rea
     Ok(readers)
 }
 
-fn decorate_json_detailled_display(reader: Reader, extracted_report: String, tokio_runtime: &Runtime) -> String{
+fn decorate_json_detailled_display(reader: Reader, extracted_report: String, tokio_runtime: &Runtime) -> String {
+  //let report_json_value: Value = serde_json::from_str(&extracted_report).unwrap();
   let mut report_json_map: Map<String, Value> = serde_json::from_str(&extracted_report).unwrap();
 
   let manifests = report_json_map.get_mut("manifests").unwrap();
+
+  decorate_cawg_assertion_from_detailed_report(reader, manifests, tokio_runtime).unwrap();
+
+  //println!("{:?}", report_json_map);
+
+  serde_json::to_string_pretty(&report_json_map).unwrap()
+}
+
+/// Update/decorate the displayed JSON assertions for a more human-readable JSON output.
+fn decorate_cawg_assertion_from_detailed_report(
+  reader: Reader,
+  json_content: &mut Value,
+  tokio_runtime: &Runtime,
+) -> Result<(), Error> {
+  if let Value::Object(map) = json_content {
+      // Iterate over the key-value pairs
+      for (key, value) in &mut *map {
+          // Get additional CAWG details
+
+          // Get the assertions as array from the JSON
+          let assertions = match value.get_mut("assertion_store") {
+              Some(assertions) => assertions,
+              None => {
+                  return Err(crate::Error::JsonSerializationError(
+                      "Could not parse JSON assertion store as object".to_string(),
+                  ));
+              }
+          };
+
+          let cawg_assertion = assertions.get_mut("cawg.identity").unwrap();
+
+          let holding_manifest = reader.get_manifest(key).unwrap();
+          let parsed_cawg_json_string =
+        match get_cawg_details_for_manifest(holding_manifest, tokio_runtime) {
+            Some(parsed_cawg_json_string) => parsed_cawg_json_string,
+            None => {
+                println!(
+                "Could not parse CAWG details for manifest (leaving original raw data unformatted)"
+            );
+                return Ok(());
+            }
+        };
+
+        cawg_assertion["signature"] = serde_json::from_str(&parsed_cawg_json_string).unwrap();
+
+        let cawg_assertion = cawg_assertion.as_object_mut().unwrap();
+        cawg_assertion.remove("pad1");
+        cawg_assertion.remove("pad2");
+      }
+  }
+
+  Ok(())
 }
 
 /// Update/decorate the displayed JSON string for a more human-readable JSON output.
@@ -934,7 +987,8 @@ fn main() -> Result<()> {
             Err(err) => format!("Could not parse JSON report: {:?}", err)
         };
 
-        decorate_json_detailled_display(reader, extracted_json_report, &tokio_runtime);
+        let decorated_details_manifest = decorate_json_detailled_display(reader, extracted_json_report, &tokio_runtime);
+        println!("{}", decorated_details_manifest);
     } else if let Some(Commands::Fragment {
         fragments_glob: Some(fg),
     }) = &args.command
