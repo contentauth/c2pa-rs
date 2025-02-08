@@ -226,8 +226,8 @@ impl IcaCredentialSummary {
             id: ica.id.clone(),
             issuer: ica.issuer.clone(),
             types: ica.types.clone(),
-            valid_from: ica.valid_from.clone(),
-            valid_until: ica.valid_until.clone(),
+            valid_from: ica.valid_from,
+            valid_until: ica.valid_until,
             verified_identities: subject.verified_identities.clone(),
             extra_properties: ica.extra_properties.clone(),
         }
