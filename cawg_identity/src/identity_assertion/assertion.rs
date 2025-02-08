@@ -18,7 +18,10 @@ use serde::{Deserialize, Serialize};
 use serde_bytes::ByteBuf;
 
 use crate::{
-    identity_assertion::{report::IdentityAssertionReport, signer_payload::SignerPayload},
+    identity_assertion::{
+        report::{IdentityAssertionReport, SignerPayloadReport},
+        signer_payload::SignerPayload,
+    },
     internal::debug_byte_slice::DebugByteSlice,
     SignatureVerifier, ToCredentialSummary, ValidationError,
 };
@@ -84,7 +87,7 @@ impl IdentityAssertion {
                 let summary = named_actor.to_summary();
 
                 IdentityAssertionReport {
-                    signer_payload: self.signer_payload.clone(),
+                    signer_payload: SignerPayloadReport::from_signer_payload(&self.signer_payload),
                     named_actor: Some(summary),
                 }
             }

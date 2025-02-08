@@ -11,17 +11,36 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use std::fmt::Debug;
-
 use serde::Serialize;
 
 use crate::identity_assertion::signer_payload::SignerPayload;
 
-#[derive(Debug, Serialize)]
+#[derive(Serialize)]
 pub(crate) struct IdentityAssertionReport<T: Serialize> {
-    #[serde(flatten)]
-    pub(crate) signer_payload: SignerPayload,
-
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) named_actor: Option<T>,
+
+    #[serde(flatten)]
+    pub(crate) signer_payload: SignerPayloadReport,
+}
+
+#[derive(Serialize)]
+pub(crate) struct SignerPayloadReport {
+    referenced_assertions: Vec<String>,
+    sig_type: String,
+    // TO DO: Add role and expected_* fields.
+    // (https://github.com/contentauth/c2pa-rs/issues/816)
+}
+
+impl SignerPayloadReport {
+    pub(crate) fn from_signer_payload(sp: &SignerPayload) -> Self {
+        Self {
+            referenced_assertions: sp
+                .referenced_assertions
+                .iter()
+                .map(|a| a.url().replace("self#jumbf=c2pa.assertions/", ""))
+                .collect(),
+            sig_type: sp.sig_type.clone(),
+        }
+    }
 }
