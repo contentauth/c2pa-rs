@@ -206,6 +206,7 @@ impl fmt::Debug for ClaimAssertion {
 // Claim field names
 const CLAIM_GENERATOR_F: &str = "claim_generator";
 const CLAIM_GENERATOR_INFO_F: &str = "claim_generator_info";
+const CLAIM_GENERATOR_HINTS_F: &str = "claim_generator_hints";
 const SIGNATURE_F: &str = "signature";
 const ASSERTIONS_F: &str = "assertions";
 const DC_FORMAT_F: &str = "dc:format";
@@ -495,6 +496,7 @@ impl Claim {
         if claim_version == 1 {
             /* Claim V1 fields
             "claim_generator": tstr,
+            "claim_generator_hints",
             "claim_generator_info": [1* generator-info-map],
             "signature": jumbf-uri-type,
             "assertions": [1* $hashed-uri-map],
@@ -507,8 +509,9 @@ impl Claim {
             ? "metadata": $assertion-metadata-map,
             */
 
-            static V1_FIELDS: [&str; 11] = [
+            static V1_FIELDS: [&str; 12] = [
                 CLAIM_GENERATOR_F,
+                CLAIM_GENERATOR_HINTS_F,
                 CLAIM_GENERATOR_INFO_F,
                 SIGNATURE_F,
                 ASSERTIONS_F,
@@ -535,9 +538,6 @@ impl Claim {
 
             let claim_generator: String =
                 map_cbor_to_type(CLAIM_GENERATOR_F, &claim_value).ok_or(Error::ClaimDecoding)?;
-            let claim_generator_info: Vec<ClaimGeneratorInfo> =
-                map_cbor_to_type(CLAIM_GENERATOR_INFO_F, &claim_value).unwrap_or_default();
-
             let signature: String =
                 map_cbor_to_type(SIGNATURE_F, &claim_value).ok_or(Error::ClaimDecoding)?;
             let assertions: Vec<HashedUri> =
@@ -548,6 +548,10 @@ impl Claim {
                 map_cbor_to_type(INSTANCE_ID_F, &claim_value).ok_or(Error::ClaimDecoding)?;
 
             // optional V1 fields
+            let claim_generator_info: Option<Vec<ClaimGeneratorInfo>> =
+                map_cbor_to_type(CLAIM_GENERATOR_INFO_F, &claim_value);
+            let claim_generator_hints: Option<HashMap<String, Value>> =
+                map_cbor_to_type(CLAIM_GENERATOR_HINTS_F, &claim_value);
             let title: Option<String> = map_cbor_to_type(DC_TITLE_F, &claim_value);
             let redacted_assertions: Option<Vec<String>> =
                 map_cbor_to_type(REDACTED_ASSERTIONS_F, &claim_value);
@@ -568,7 +572,7 @@ impl Claim {
                 assertion_store: Vec::new(),
                 vc_store: Vec::new(),
                 claim_generator: Some(claim_generator),
-                claim_generator_info: Some(claim_generator_info),
+                claim_generator_info,
                 signature,
                 assertions,
                 original_bytes: Some(data.to_owned()),
@@ -576,7 +580,7 @@ impl Claim {
                 redacted_assertions,
                 alg,
                 alg_soft,
-                claim_generator_hints: None,
+                claim_generator_hints,
                 metadata,
                 data_boxes: Vec::new(),
                 claim_version,
