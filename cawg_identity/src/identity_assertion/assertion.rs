@@ -17,6 +17,7 @@ use c2pa::Manifest;
 use serde::{Deserialize, Serialize};
 use serde_bytes::ByteBuf;
 
+use super::report::IdentityAssertionsForManifest;
 use crate::{
     identity_assertion::{
         report::{IdentityAssertionReport, SignerPayloadReport},
@@ -96,6 +97,29 @@ impl IdentityAssertion {
                 todo!("Handle summary report for failure case");
             }
         }
+    }
+
+    /// Summarize all of the identity assertions found for a [`Manifest`].
+    pub async fn summarize_all<SV: SignatureVerifier>(
+        manifest: &Manifest,
+        verifier: &SV,
+    ) -> impl Serialize {
+        // NOTE: We can't write this using .map(...).collect() because there are async
+        // calls.
+        let mut assertions: Vec<Result<SV::Output, ValidationError<SV::Error>>> = vec![];
+
+        for assertion in Self::from_manifest(manifest) {
+            let result = match assertion {
+                Ok(assertion) => assertion.validate(manifest, verifier).await,
+                Err(_) => {
+                    todo!("Handle assertion failed to parse case");
+                }
+            };
+
+            assertions.push(result);
+        }
+
+        IdentityAssertionsForManifest::<SV>(assertions)
     }
 
     /// Using the provided [`SignatureVerifier`], check the validity of this

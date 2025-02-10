@@ -29,7 +29,7 @@ pub trait SignatureVerifier: Sync {
     /// derived from the signature. Typically, this describes the named actor,
     /// but may also contain information about the time of signing or the
     /// credential's source.
-    type Output: ToCredentialSummary;
+    type Output: ToCredentialSummary + 'static;
 
     /// The `Error` type provides a credential-specific explanation for why an
     /// identity assertion signature could not be accepted. This value may be
@@ -62,7 +62,7 @@ pub trait SignatureVerifier {
     /// derived from the signature. Typically, this describes the named actor,
     /// but may also contain information about the time of signing or the
     /// credential's source.
-    type Output: ToCredentialSummary;
+    type Output: ToCredentialSummary + 'static;
 
     /// The `Error` type provides a credential-specific explanation for why an
     /// identity assertion signature could not be accepted. This value may be
@@ -95,5 +95,5 @@ pub trait SignatureVerifier {
 pub trait ToCredentialSummary {
     /// Convert the underlying credential type into a summary type which can be
     /// serialized for JSON or similar reporting format.
-    fn to_summary(self) -> impl Serialize;
+    fn to_summary(&self) -> impl Serialize + use<>;
 }

@@ -30,7 +30,7 @@ use crate::{
 pub type IcaCredential = CredentialV2<IdentityClaimsAggregationVc>;
 
 impl ToCredentialSummary for IcaCredential {
-    fn to_summary(self) -> impl Serialize {
+    fn to_summary(&self) -> impl Serialize + 'static {
         IcaCredentialSummary::from_credential(&self)
     }
 }
