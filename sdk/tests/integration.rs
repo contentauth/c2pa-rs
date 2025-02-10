@@ -16,8 +16,7 @@
 
 #[cfg(feature = "file_io")]
 mod integration_1 {
-    use std::io;
-    use std::path::PathBuf;
+    use std::{io, path::PathBuf};
 
     use c2pa::{
         assertions::{c2pa_action, Action, Actions},

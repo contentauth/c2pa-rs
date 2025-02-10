@@ -20,11 +20,10 @@ use std::{
     path::{Path, PathBuf},
 };
 
-#[allow(unused)] // different code path for WASI
-use tempfile::{tempdir, TempDir};
-
 use c2pa::{format_from_path, Reader, Result};
 pub use compare_readers::compare_readers;
+#[allow(unused)] // different code path for WASI
+use tempfile::{tempdir, TempDir};
 #[allow(unused)]
 pub use test_signer::test_signer;
 

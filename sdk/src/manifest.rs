@@ -1549,13 +1549,14 @@ pub(crate) mod tests {
 
     use std::io::Cursor;
 
-    #[cfg(feature = "file_io")]
-    use crate::utils::io_utils::tempdirectory;
     use c2pa_crypto::raw_signature::SigningAlg;
     #[cfg(feature = "file_io")]
     use c2pa_status_tracker::{DetailedStatusTracker, StatusTracker};
     #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
     use wasm_bindgen_test::*;
+
+    #[cfg(feature = "file_io")]
+    use crate::utils::io_utils::tempdirectory;
 
     #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
     wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
@@ -2197,7 +2198,7 @@ pub(crate) mod tests {
     )]
     #[cfg_attr(target_os = "wasi", wstd::test)]
     #[cfg(any(
-        all(target_arch = "wasm32"),
+        target_arch = "wasm32",
         all(feature = "openssl_sign", feature = "file_io")
     ))]
     async fn test_embed_from_memory_async() {

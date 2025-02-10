@@ -96,8 +96,8 @@ fn es384() {
 }
 
 #[test]
-// #[cfg_attr(all(target_arch = "wasm32", not(target_os = "wasi")), wasm_bindgen_test)] // ES512 not
-// implemented
+// #[cfg_attr(all(target_arch = "wasm32", not(target_os = "wasi")),
+// wasm_bindgen_test)] // ES512 not implemented
 fn es512() {
     let signature = include_bytes!("../fixtures/raw_signature/es512.raw_sig");
     let pub_key = include_bytes!("../fixtures/raw_signature/es512.pub_key");
