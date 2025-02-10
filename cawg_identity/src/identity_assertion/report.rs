@@ -17,17 +17,17 @@ use crate::identity_assertion::signer_payload::SignerPayload;
 
 #[derive(Serialize)]
 pub(crate) struct IdentityAssertionReport<T: Serialize> {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) named_actor: Option<T>,
-
     #[serde(flatten)]
     pub(crate) signer_payload: SignerPayloadReport,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) named_actor: Option<T>,
 }
 
 #[derive(Serialize)]
 pub(crate) struct SignerPayloadReport {
-    referenced_assertions: Vec<String>,
     sig_type: String,
+    referenced_assertions: Vec<String>,
     // TO DO: Add role and expected_* fields.
     // (https://github.com/contentauth/c2pa-rs/issues/816)
 }
