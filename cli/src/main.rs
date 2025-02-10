@@ -31,10 +31,12 @@ use clap::{Parser, Subcommand};
 use log::debug;
 use serde::Deserialize;
 use signer::SignConfig;
+use tokio::runtime::Runtime;
 use url::Url;
 
 use crate::{
     callback_signer::{CallbackSigner, CallbackSignerConfig, ExternalProcessRunner},
+    display_decorator::{decorate_json_detailed_display, decorate_json_display},
     info::info,
 };
 
@@ -42,6 +44,8 @@ mod info;
 mod tree;
 
 mod callback_signer;
+mod decorators;
+mod display_decorator;
 mod signer;
 
 /// Tool for displaying and creating C2PA manifests.
@@ -464,6 +468,9 @@ fn main() -> Result<()> {
     // configure the SDK
     configure_sdk(&args).context("Could not configure c2pa-rs")?;
 
+    // configure tokio runtime for blocking operations
+    let tokio_runtime: Runtime = Runtime::new()?;
+
     // Remove manifest needs to also remove XMP provenance
     // if args.remove_manifest {
     //     match args.output {
@@ -674,10 +681,15 @@ fn main() -> Result<()> {
             Ingredient::from_file(&args.path).map_err(special_errs)?
         )
     } else if args.detailed {
-        println!(
-            "{:#?}",
-            Reader::from_file(&args.path).map_err(special_errs)?
-        )
+        let reader = Reader::from_file(&args.path).map_err(special_errs)?;
+        let decorated_details_manifest = decorate_json_detailed_display(&reader, &tokio_runtime);
+        match decorated_details_manifest {
+            Ok(decorated_details_manifest) => println!("{}", decorated_details_manifest),
+            Err(_) => {
+                // non-fatal: fall back to raw debug display of data (eg. unparsed CAWG)
+                println!("{:#?}", reader)
+            }
+        };
     } else if let Some(Commands::Fragment {
         fragments_glob: Some(fg),
     }) = &args.command
@@ -689,7 +701,14 @@ fn main() -> Result<()> {
             println!("{} Init manifests validated", stores.len());
         }
     } else {
-        println!("{}", Reader::from_file(&args.path).map_err(special_errs)?)
+        let reader: Reader = Reader::from_file(&args.path).map_err(special_errs)?;
+        match decorate_json_display(&reader, &tokio_runtime) {
+            Ok(stringified_decorated_json) => println!("{}", stringified_decorated_json),
+            Err(_) => {
+                // non-fatal: fall back to raw display of data (eg. unparsed CAWG)
+                println!("{:?}", reader)
+            }
+        };
     }
 
     Ok(())
