@@ -721,9 +721,9 @@ mod tests {
         println!("{manifest_store}");
     }
 
+    // WASI cannot read files in the target directory
     #[test]
-    #[cfg(feature = "file_io")]
-    #[cfg(feature = "v1_api")]
+    #[cfg(all(feature = "file_io", feature = "v1_api", not(target_arch = "wasm32")))]
     #[allow(deprecated)]
     fn manifest_report_from_file_with_resources() {
         let manifest_store = ManifestStore::from_file_with_resources(

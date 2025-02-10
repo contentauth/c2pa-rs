@@ -108,7 +108,6 @@ mod integration_1 {
     #[test]
     #[cfg(feature = "file_io")]
     fn test_embed_manifest() -> Result<()> {
-        println!("HERE");
         // set up parent and destination paths
         let dir = tempdirectory()?;
         let output_path = dir.path().join("test_file.jpg");
@@ -360,7 +359,12 @@ mod integration_1 {
         let json = std::fs::read_to_string(manifest_path)?;
 
         let mut manifest = Manifest::from_json(&json)?;
-        manifest.with_base_path(fixture_path.canonicalize()?)?;
+        // WASI does not support canonicalize(), but the path is canonical to begin with
+        #[cfg(target_os = "wasi")]
+        let base_path = fixture_path;
+        #[cfg(not(target_os = "wasi"))]
+        let base_path = fixture_path.canonicalize()?;
+        manifest.with_base_path(base_path)?;
 
         // sign and embed into the target file
         let signer = get_temp_signer();
@@ -431,7 +435,12 @@ mod integration_1 {
         let json = std::fs::read_to_string(manifest_path)?;
 
         let mut manifest = Manifest::from_json(&json)?;
-        manifest.with_base_path(fixture_path.canonicalize()?)?;
+        // WASI does not support canonicalize(), but the path is canonical to begin with
+        #[cfg(target_os = "wasi")]
+        let base_path = fixture_path;
+        #[cfg(not(target_os = "wasi"))]
+        let base_path = fixture_path.canonicalize()?;
+        manifest.with_base_path(base_path)?;
 
         // sign and embed into the target file
         let signer = get_temp_signer();

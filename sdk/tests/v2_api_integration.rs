@@ -13,7 +13,6 @@
 
 /// Complete functional integration test with acquisitions and ingredients.
 //  Isolate from wasm by wrapping in module.
-#[cfg(not(target_arch = "wasm32"))] // wasm doesn't support ed25519 yet
 mod integration_v2 {
     use std::io::{Cursor, Seek};
 

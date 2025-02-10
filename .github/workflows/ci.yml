@@ -321,7 +321,6 @@ jobs:
           fi
           wget https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-25/wasi-sdk-25.0-${ARCH}-${RUNNER_OS}.tar.gz
           tar xvf wasi-sdk-25.0-${ARCH}-${RUNNER_OS}.tar.gz
-          ls wasi*
           mv $(echo wasi-sdk-25.0-${ARCH}-${RUNNER_OS} | tr '[:upper:]' '[:lower:]') /opt/wasi-sdk
 
       - name: Add wasm32-wasip2 target
@@ -332,11 +331,11 @@ jobs:
 
       - name: Run WASI tests (c2pa-rs)
         env:
-          CARGO_TARGET_WASM32_WASIP2_RUNNER: "wasmtime -S common --dir ."
+          CARGO_TARGET_WASM32_WASIP2_RUNNER: "wasmtime -S cli -S http --dir ."
           CC: /opt/wasi-sdk/bin/clang
           WASI_SDK_PATH: /opt/wasi-sdk
           RUST_MIN_STACK: 16777216
-        run: cargo +nightly test --target wasm32-wasip2 -p c2pa -p c2pa-crypto
+        run: cargo +nightly test --target wasm32-wasip2 -p c2pa -p c2pa-crypto --all-features
 
   test-direct-minimal-versions:
     name: Unit tests with minimum versions of direct dependencies

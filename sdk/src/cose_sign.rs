@@ -357,7 +357,7 @@ mod tests {
 
         let _cose_sign1 = sign_claim(&claim_bytes, &signer, box_size);
 
-        #[cfg(feature = "openssl")] // there is no verify on sign when openssl is disabled
+        #[cfg(any(feature = "openssl", target_os = "wasi"))] // there is no verify on sign when openssl is disabled
         assert!(_cose_sign1.is_err());
     }
 }

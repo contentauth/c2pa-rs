@@ -167,7 +167,7 @@ pub(crate) fn tempfile_builder<T: AsRef<OsStr> + Sized>(prefix: T) -> Result<Nam
 }
 
 #[allow(dead_code)] // used in tests
-pub fn tempdirectory() -> Result<TempDir> {
+pub(crate) fn tempdirectory() -> Result<TempDir> {
     #[cfg(target_os = "wasi")]
     return TempDir::new_in("/").map_err(Error::IoError);
 

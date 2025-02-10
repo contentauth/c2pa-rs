@@ -3229,7 +3229,7 @@ impl Store {
     }
 
     // fetch remote manifest if possible
-    #[cfg(feature = "fetch_remote_manifests")]
+    #[cfg(all(feature = "fetch_remote_manifests", not(target_os = "wasi")))]
     fn fetch_remote_manifest(url: &str) -> Result<Vec<u8>> {
         use conv::ValueFrom;
         use ureq::Error as uError;
@@ -3273,6 +3273,82 @@ impl Store {
                 resp.status_text()
             ))),
             Err(uError::Transport(_)) => Err(Error::RemoteManifestFetch(url.to_string())),
+        }
+    }
+
+    // fetch remote manifest if possible
+    #[cfg(all(feature = "fetch_remote_manifests", target_os = "wasi"))]
+    fn fetch_remote_manifest(url: &str) -> Result<Vec<u8>> {
+        use url::Url;
+        use wasi::http::{
+            outgoing_handler,
+            types::{Fields, OutgoingRequest, Scheme},
+        };
+
+        //const MANIFEST_CONTENT_TYPE: &str = "application/x-c2pa-manifest-store"; // todo verify once these are served
+        //const DEFAULT_MANIFEST_RESPONSE_SIZE: usize = 10 * 1024 * 1024; // 10 MB
+        let parsed_url = Url::parse(url)
+            .map_err(|e| Error::RemoteManifestFetch(format!("invalid URL: {}", e)))?;
+        let path_with_query = parsed_url[url::Position::BeforeHost..].to_string();
+
+        let request = OutgoingRequest::new(Fields::new());
+        request.set_path_with_query(Some(&path_with_query)).unwrap();
+        request.set_scheme(Some(&Scheme::Https)).unwrap();
+        match outgoing_handler::handle(request, None) {
+            Ok(resp) => {
+                resp.subscribe().block();
+                let response = resp
+                    .get()
+                    .expect("HTTP request response missing")
+                    .expect("HTTP request response requested more than once")
+                    .expect("HTTP request failed");
+                if response.status() == 200 {
+                    let raw_header = response.headers().get("Content-Length");
+                    if raw_header.first().map(|val| val.is_empty()).unwrap_or(true) {
+                        return Err(Error::RemoteManifestFetch(
+                            "url returned no content length".to_string(),
+                        ));
+                    }
+                    let str_parsed_header = match std::str::from_utf8(raw_header.first().unwrap()) {
+                        Ok(s) => s,
+                        Err(e) => {
+                            return Err(Error::RemoteManifestFetch(format!(
+                                "error parsing content length header: {}",
+                                e
+                            )))
+                        }
+                    };
+                    let content_length: usize = match str_parsed_header.parse() {
+                        Ok(s) => s,
+                        Err(e) => {
+                            return Err(Error::RemoteManifestFetch(format!(
+                                "error parsing content length header: {}",
+                                e
+                            )))
+                        }
+                    };
+                    let body = {
+                        let mut buf = Vec::with_capacity(content_length);
+                        let response_body = response
+                            .consume()
+                            .expect("failed to get incoming request body");
+                        let mut stream = response_body
+                            .stream()
+                            .expect("failed to get response body stream");
+                        stream
+                            .read_to_end(&mut buf)
+                            .expect("failed to read response body");
+                        buf
+                    };
+                    Ok(body)
+                } else {
+                    Err(Error::RemoteManifestFetch(format!(
+                        "fetch failed: code: {}",
+                        response.status(),
+                    )))
+                }
+            }
+            Err(e) => Err(Error::RemoteManifestFetch(e.to_string())),
         }
     }
 
