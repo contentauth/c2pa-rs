@@ -11,8 +11,6 @@
 // specific language governing permissions and limitations under
 // each license.
 
-#![allow(unused)] // TEMPORARY while updating ...
-
 use std::fmt::{Debug, Error, Formatter};
 
 pub(crate) struct DebugByteSlice<'a>(pub(crate) &'a [u8]);
