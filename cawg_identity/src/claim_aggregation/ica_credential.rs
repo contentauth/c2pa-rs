@@ -30,7 +30,9 @@ use crate::{
 pub type IcaCredential = CredentialV2<IdentityClaimsAggregationVc>;
 
 impl ToCredentialSummary for IcaCredential {
-    fn to_summary(self) -> impl Serialize {
+    type CredentialSummary = IcaCredentialSummary;
+
+    fn to_summary(&self) -> Self::CredentialSummary {
         IcaCredentialSummary::from_credential(&self)
     }
 }
@@ -185,8 +187,9 @@ pub struct IdentityProvider {
     pub name: NonEmptyString,
 }
 
+#[doc(hidden)]
 #[derive(Serialize)]
-struct IcaCredentialSummary {
+pub struct IcaCredentialSummary {
     #[serde(rename = "@context")]
     contexts: NEVec<IriBuf>,
 

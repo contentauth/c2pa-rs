@@ -11,9 +11,43 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use serde::Serialize;
+use serde::{ser::SerializeSeq, Serialize};
 
-use crate::identity_assertion::signer_payload::SignerPayload;
+use crate::{
+    identity_assertion::signer_payload::SignerPayload, SignatureVerifier, ToCredentialSummary,
+    ValidationError,
+};
+
+/// Describes the content and validation results for all
+/// [`IdentityAssertion`]s contained within a single [`Manifest`].
+///
+/// Primarily intended for use with [`Serialize`] to generate JSON
+/// (or potentially similar) structured reports on any identity
+/// information available for a [`Manifest`].
+pub struct IdentityAssertionsForManifest<SV: SignatureVerifier>(
+    pub(crate) Vec<Result<SV::Output, ValidationError<SV::Error>>>,
+);
+
+impl<SV: SignatureVerifier> Serialize for IdentityAssertionsForManifest<SV> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let mut seq = serializer.serialize_seq(Some(self.0.len()))?;
+        for result in self.0.iter() {
+            match result {
+                Ok(output) => {
+                    let summary = output.to_summary();
+                    seq.serialize_element(&summary)?;
+                }
+                Err(_) => {
+                    todo!("Handle error case");
+                }
+            }
+        }
+        seq.end()
+    }
+}
 
 #[derive(Serialize)]
 pub(crate) struct IdentityAssertionReport<T: Serialize> {

@@ -19,7 +19,7 @@ use serde_bytes::ByteBuf;
 
 use crate::{
     identity_assertion::{
-        report::{IdentityAssertionReport, SignerPayloadReport},
+        report::{IdentityAssertionReport, IdentityAssertionsForManifest, SignerPayloadReport},
         signer_payload::SignerPayload,
     },
     internal::debug_byte_slice::DebugByteSlice,
@@ -67,10 +67,11 @@ impl IdentityAssertion {
             .map(|a| a.to_assertion())
     }
 
-    /// Create an [`IdentityAssertionReport`] from this `IdentityAssertion`.
+    /// TO DO: Document. Create an `IdentityAssertionReport` from this
+    /// `IdentityAssertion`.
     ///
     /// This will [`validate`] the assertion and then render the result as
-    /// an [`IdentityAssertionReport`] that describes the decoded content of
+    /// an `IdentityAssertionReport` that describes the decoded content of
     /// the identity assertion.
     ///
     /// [`validate`]: Self::validate
@@ -96,6 +97,29 @@ impl IdentityAssertion {
                 todo!("Handle summary report for failure case");
             }
         }
+    }
+
+    /// Summarize all of the identity assertions found for a [`Manifest`].
+    pub async fn summarize_all<SV: SignatureVerifier>(
+        manifest: &Manifest,
+        verifier: &SV,
+    ) -> impl Serialize {
+        // NOTE: We can't write this using .map(...).collect() because there are async
+        // calls.
+        let mut assertions: Vec<Result<SV::Output, ValidationError<SV::Error>>> = vec![];
+
+        for assertion in Self::from_manifest(manifest) {
+            let result = match assertion {
+                Ok(assertion) => assertion.validate(manifest, verifier).await,
+                Err(_) => {
+                    todo!("Handle assertion failed to parse case");
+                }
+            };
+
+            assertions.push(result);
+        }
+
+        IdentityAssertionsForManifest::<SV>(assertions)
     }
 
     /// Using the provided [`SignatureVerifier`], check the validity of this

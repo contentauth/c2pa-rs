@@ -91,14 +91,15 @@ pub struct X509SignatureInfo {
 }
 
 impl ToCredentialSummary for X509SignatureInfo {
-    // type SummaryOutput = X509SignatureReport;
+    type CredentialSummary = X509SignatureReport;
 
-    fn to_summary(self) -> impl Serialize {
+    fn to_summary(&self) -> Self::CredentialSummary {
         X509SignatureReport {}
     }
 }
 
 // #[derive(Serialize)] <- uncomment once the type is populated
+#[doc(hidden)]
 pub struct X509SignatureReport {}
 
 impl Serialize for X509SignatureReport {

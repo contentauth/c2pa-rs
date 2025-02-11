@@ -102,10 +102,13 @@ impl SignatureVerifier for NaiveSignatureVerifier {
 pub(crate) struct NaiveCredential {}
 
 impl ToCredentialSummary for NaiveCredential {
-    fn to_summary(self) -> impl Serialize {
+    type CredentialSummary = NaiveCredentialSummary;
+
+    fn to_summary(&self) -> Self::CredentialSummary {
         NaiveCredentialSummary {}
     }
 }
 
+#[doc(hidden)]
 #[derive(Serialize)]
-struct NaiveCredentialSummary {}
+pub struct NaiveCredentialSummary {}
