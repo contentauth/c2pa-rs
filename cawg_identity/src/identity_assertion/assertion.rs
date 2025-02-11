@@ -67,15 +67,25 @@ impl IdentityAssertion {
             .map(|a| a.to_assertion())
     }
 
-    /// TO DO: Document. Create an `IdentityAssertionReport` from this
-    /// `IdentityAssertion`.
+    /// Create a summary report from this `IdentityAssertion`.
     ///
     /// This will [`validate`] the assertion and then render the result as
-    /// an `IdentityAssertionReport` that describes the decoded content of
-    /// the identity assertion.
+    /// an opaque [`Serialize`]-able struct that describes the decoded content
+    /// of the identity assertion.
     ///
     /// [`validate`]: Self::validate
     pub async fn to_summary<SV: SignatureVerifier>(
+        &self,
+        manifest: &Manifest,
+        verifier: &SV,
+    ) -> impl Serialize
+    where
+        <SV as SignatureVerifier>::Output: 'static,
+    {
+        self.to_summary_impl(manifest, verifier).await
+    }
+
+    pub(crate) async fn to_summary_impl<SV: SignatureVerifier>(
         &self,
         manifest: &Manifest,
         verifier: &SV,
@@ -105,9 +115,7 @@ impl IdentityAssertion {
     pub async fn summarize_all<SV: SignatureVerifier>(
         manifest: &Manifest,
         verifier: &SV,
-    ) -> IdentityAssertionsForManifest<
-        <<SV as SignatureVerifier>::Output as ToCredentialSummary>::CredentialSummary,
-    > {
+    ) -> impl Serialize {
         // NOTE: We can't write this using .map(...).collect() because there are async
         // calls.
         let mut reports: Vec<
@@ -118,7 +126,7 @@ impl IdentityAssertion {
 
         for assertion in Self::from_manifest(manifest) {
             let report = match assertion {
-                Ok(assertion) => assertion.to_summary(manifest, verifier).await,
+                Ok(assertion) => assertion.to_summary_impl(manifest, verifier).await,
                 Err(_) => {
                     todo!("Handle assertion failed to parse case");
                 }
