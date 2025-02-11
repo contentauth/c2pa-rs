@@ -6,6 +6,13 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 The format of this changelog is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.7.0](https://github.com/contentauth/c2pa-rs/compare/cawg-identity-v0.6.1...cawg-identity-v0.7.0)
+_11 February 2025_
+
+### Added
+
+* *(cawg_identity)* Add `IdentityAssertion::to_summary` and `IdentityAssertion::summarize_all` (#913)
+
 ## [0.6.1](https://github.com/contentauth/c2pa-rs/compare/cawg-identity-v0.6.0...cawg-identity-v0.6.1)
 _11 February 2025_
 
