@@ -11,7 +11,7 @@ _11 February 2025_
 
 ### Fixed
 
-* Restore support for claim_generator_hints. (#915)
+* Restore support for claim_generator_hints (#915)
 
 ## [0.45.2](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.45.1...c2pa-v0.45.2)
 _06 February 2025_
