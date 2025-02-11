@@ -13,7 +13,6 @@
 
 /// Complete functional integration test with parent and ingredients.
 // Isolate from wasm by wrapping in module.
-
 #[cfg(feature = "file_io")]
 mod integration_1 {
     use std::{io, path::PathBuf};

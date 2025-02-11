@@ -147,10 +147,13 @@ mod integration_v2 {
             dest
         };
 
-        // write dest to file for debugging
-        let debug_path = format!("{}/../target/v2_test.jpg", env!("CARGO_MANIFEST_DIR"));
-        std::fs::write(debug_path, dest.get_ref())?;
-        dest.rewind()?;
+        #[cfg(not(target_os = "wasi"))]
+        {
+            // write dest to file for debugging
+            let debug_path = format!("{}/../target/v2_test.jpg", env!("CARGO_MANIFEST_DIR"));
+            std::fs::write(debug_path, dest.get_ref())?;
+            dest.rewind()?;
+        }
 
         let reader = Reader::from_stream(format, &mut dest)?;
 

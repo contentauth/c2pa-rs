@@ -191,10 +191,10 @@ pub enum Error {
     #[error("required JUMBF box not found")]
     JumbfBoxNotFound,
 
-    #[error("could not fetch the remote manifest")]
+    #[error("could not fetch the remote manifest {0}")]
     RemoteManifestFetch(String),
 
-    #[error("must fetch remote manifests from url")]
+    #[error("must fetch remote manifests from url {0}")]
     RemoteManifestUrl(String),
 
     #[error("stopped because of logged error")]
