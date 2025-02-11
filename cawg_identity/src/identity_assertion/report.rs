@@ -13,44 +13,29 @@
 
 use serde::{ser::SerializeSeq, Serialize};
 
-use crate::{
-    identity_assertion::signer_payload::SignerPayload, SignatureVerifier, ToCredentialSummary,
-    ValidationError,
-};
+use crate::identity_assertion::signer_payload::SignerPayload;
 
-/// Describes the content and validation results for all
-/// [`IdentityAssertion`]s contained within a single [`Manifest`].
-///
-/// Primarily intended for use with [`Serialize`] to generate JSON
-/// (or potentially similar) structured reports on any identity
-/// information available for a [`Manifest`].
-pub struct IdentityAssertionsForManifest<SV: SignatureVerifier>(
-    pub(crate) Vec<Result<SV::Output, ValidationError<SV::Error>>>,
-);
+#[doc(hidden)]
+pub struct IdentityAssertionsForManifest<IAR: Serialize> {
+    pub(crate) assertion_reports: Vec<IdentityAssertionReport<IAR>>,
+}
 
-impl<SV: SignatureVerifier> Serialize for IdentityAssertionsForManifest<SV> {
+impl<IAR: Serialize> Serialize for IdentityAssertionsForManifest<IAR> {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: serde::Serializer,
     {
-        let mut seq = serializer.serialize_seq(Some(self.0.len()))?;
-        for result in self.0.iter() {
-            match result {
-                Ok(output) => {
-                    let summary = output.to_summary();
-                    seq.serialize_element(&summary)?;
-                }
-                Err(_) => {
-                    todo!("Handle error case");
-                }
-            }
+        let mut seq = serializer.serialize_seq(Some(self.assertion_reports.len()))?;
+        for report in self.assertion_reports.iter() {
+            seq.serialize_element(report)?;
         }
         seq.end()
     }
 }
 
+#[doc(hidden)]
 #[derive(Serialize)]
-pub(crate) struct IdentityAssertionReport<T: Serialize> {
+pub struct IdentityAssertionReport<T: Serialize> {
     #[serde(flatten)]
     pub(crate) signer_payload: SignerPayloadReport,
 

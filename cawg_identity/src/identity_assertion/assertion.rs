@@ -79,7 +79,9 @@ impl IdentityAssertion {
         &self,
         manifest: &Manifest,
         verifier: &SV,
-    ) -> impl Serialize
+    ) -> IdentityAssertionReport<
+        <<SV as SignatureVerifier>::Output as ToCredentialSummary>::CredentialSummary,
+    >
     where
         <SV as SignatureVerifier>::Output: 'static,
     {
@@ -103,23 +105,33 @@ impl IdentityAssertion {
     pub async fn summarize_all<SV: SignatureVerifier>(
         manifest: &Manifest,
         verifier: &SV,
-    ) -> impl Serialize {
+    ) -> IdentityAssertionsForManifest<
+        <<SV as SignatureVerifier>::Output as ToCredentialSummary>::CredentialSummary,
+    > {
         // NOTE: We can't write this using .map(...).collect() because there are async
         // calls.
-        let mut assertions: Vec<Result<SV::Output, ValidationError<SV::Error>>> = vec![];
+        let mut reports: Vec<
+            IdentityAssertionReport<
+                <<SV as SignatureVerifier>::Output as ToCredentialSummary>::CredentialSummary,
+            >,
+        > = vec![];
 
         for assertion in Self::from_manifest(manifest) {
-            let result = match assertion {
-                Ok(assertion) => assertion.validate(manifest, verifier).await,
+            let report = match assertion {
+                Ok(assertion) => assertion.to_summary(manifest, verifier).await,
                 Err(_) => {
                     todo!("Handle assertion failed to parse case");
                 }
             };
 
-            assertions.push(result);
+            reports.push(report);
         }
 
-        IdentityAssertionsForManifest::<SV>(assertions)
+        IdentityAssertionsForManifest::<
+            <<SV as SignatureVerifier>::Output as ToCredentialSummary>::CredentialSummary,
+        > {
+            assertion_reports: reports,
+        }
     }
 
     /// Using the provided [`SignatureVerifier`], check the validity of this
