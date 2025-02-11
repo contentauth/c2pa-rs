@@ -24,7 +24,7 @@ use crate::{
         IdentityAssertionSigner,
     },
     tests::fixtures::{NaiveAsyncCredentialHolder, NaiveCredentialHolder, NaiveSignatureVerifier},
-    IdentityAssertion,
+    IdentityAssertion, ToCredentialSummary,
 };
 
 const TEST_IMAGE: &[u8] = include_bytes!("../../../../sdk/tests/fixtures/CA.jpg");
@@ -76,7 +76,11 @@ async fn simple_case() {
 
     // And that identity assertion should be valid for this manifest.
     let nsv = NaiveSignatureVerifier {};
-    ia.validate(manifest, &nsv).await.unwrap();
+    let naive_credential = ia.validate(manifest, &nsv).await.unwrap();
+
+    let nc_summary = naive_credential.to_summary();
+    let nc_json = serde_json::to_string(&nc_summary).unwrap();
+    assert_eq!(nc_json, "{}");
 }
 
 #[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
@@ -123,7 +127,11 @@ async fn simple_case_async() {
 
     // And that identity assertion should be valid for this manifest.
     let nsv = NaiveSignatureVerifier {};
-    ia.validate(manifest, &nsv).await.unwrap();
+    let naive_credential = ia.validate(manifest, &nsv).await.unwrap();
+
+    let nc_summary = naive_credential.to_summary();
+    let nc_json = serde_json::to_string(&nc_summary).unwrap();
+    assert_eq!(nc_json, "{}");
 }
 
 fn manifest_json() -> String {
