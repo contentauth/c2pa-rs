@@ -83,7 +83,7 @@ async fn adobe_connected_identities() {
     );
 
     // Check the summary report for this manifest.
-    let ia_summary = IdentityAssertion::summarize_all(&manifest, &isv).await;
+    let ia_summary = IdentityAssertion::summarize_all(manifest, &isv).await;
     let ia_json = serde_json::to_string(&ia_summary).unwrap();
 
     assert_eq!(

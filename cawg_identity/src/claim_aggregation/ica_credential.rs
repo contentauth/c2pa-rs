@@ -33,7 +33,7 @@ impl ToCredentialSummary for IcaCredential {
     type CredentialSummary = IcaCredentialSummary;
 
     fn to_summary(&self) -> Self::CredentialSummary {
-        IcaCredentialSummary::from_credential(&self)
+        IcaCredentialSummary::from_credential(self)
     }
 }
 
