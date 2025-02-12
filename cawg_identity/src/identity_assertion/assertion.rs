@@ -16,7 +16,7 @@ use std::{
     fmt::{Debug, Formatter},
 };
 
-use c2pa::{Manifest, ManifestStore, Reader};
+use c2pa::{Manifest, Reader};
 use serde::{Deserialize, Serialize};
 use serde_bytes::ByteBuf;
 
@@ -160,7 +160,7 @@ impl IdentityAssertion {
     /// Summarize all of the identity assertions found for a [`ManifestStore`].
     #[cfg(feature = "v1_api")]
     pub async fn summarize_manifest_store<SV: SignatureVerifier>(
-        store: &ManifestStore,
+        store: &c2pa::ManifestStore,
         verifier: &SV,
     ) -> impl Serialize {
         // NOTE: We can't write this using .map(...).collect() because there are async
