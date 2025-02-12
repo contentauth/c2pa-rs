@@ -11,9 +11,32 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use serde::{ser::SerializeSeq, Serialize};
+use std::collections::HashMap;
+
+use serde::{
+    ser::{SerializeMap, SerializeSeq},
+    Serialize,
+};
 
 use crate::identity_assertion::signer_payload::SignerPayload;
+
+#[doc(hidden)]
+pub struct IdentityAssertionsForManifestStore<IAR: Serialize> {
+    pub(crate) assertions_for_manifest: HashMap<String, IdentityAssertionsForManifest<IAR>>,
+}
+
+impl<IAR: Serialize> Serialize for IdentityAssertionsForManifestStore<IAR> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let mut map = serializer.serialize_map(Some(self.assertions_for_manifest.len()))?;
+        for (manifest_id, report) in self.assertions_for_manifest.iter() {
+            map.serialize_entry(manifest_id, report)?;
+        }
+        map.end()
+    }
+}
 
 #[doc(hidden)]
 pub struct IdentityAssertionsForManifest<IAR: Serialize> {

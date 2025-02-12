@@ -24,6 +24,9 @@ unexpected_cfgs = { level = "warn", check-cfg = ['cfg(test)'] }
 all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
+[features]
+v1_api = ["c2pa/v1_api"]
+
 [dependencies]
 async-trait = "0.1.78"
 base64 = "0.22.1"
