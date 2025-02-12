@@ -158,6 +158,8 @@ impl IdentityAssertion {
     }
 
     /// Summarize all of the identity assertions found for a [`ManifestStore`].
+    /// 
+    /// [`ManifestStore`]: c2pa::ManifestStore
     #[cfg(feature = "v1_api")]
     pub async fn summarize_manifest_store<SV: SignatureVerifier>(
         store: &c2pa::ManifestStore,
