@@ -17,7 +17,7 @@ To use the library, add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-c2pa = "0.36.1"
+c2pa = "0.45.2"
 ```
 
 To read or write a manifest file, add the `file_io` dependency to your `Cargo.toml`.
@@ -27,7 +27,7 @@ To read or write a manifest file, add the `file_io` dependency to your `Cargo.to
 Add the `add_thumbnails` dependency to generate thumbnails for JPEG and PNG files. For example:
 
 ```
-c2pa = { version = "0.39.0", features = ["file_io", "add_thumbnails"] }
+c2pa = { version = "0.45.2", features = ["file_io", "add_thumbnails"] }
 ```
 
 NOTE: If you are building for WASM, omit the `file_io` dependency.
@@ -36,12 +36,16 @@ NOTE: If you are building for WASM, omit the `file_io` dependency.
 
 The Rust library crate provides the following capabilities:
 
-* `file_io` enables manifest generation, signing via OpenSSL, and embedding manifests in [supported file formats](supported-formats.md).
 * `add_thumbnails` generates thumbnails automatically for JPEG and PNG files. (no longer included with `file_io`)
-* `serialize_thumbnails` includes binary thumbnail data in the [Serde](https://serde.rs/) serialization output.
-* `no_interleaved_io` forces fully-synchronous I/O; otherwise, the library uses threaded I/O for some operations to improve performance.
 * `fetch_remote_manifests` enables the verification step to retrieve externally referenced manifest stores.  External manifests are only fetched if there is no embedded manifest store and no locally adjacent .c2pa manifest store file of the same name.
+* `file_io` enables manifest generation, signing via OpenSSL, and embedding manifests in [supported file formats](supported-formats.md).
 * `json_schema` is used by `make schema` to produce a JSON schema document that represents the `ManifestStore` data structures.
+* `no_interleaved_io` forces fully-synchronous I/O; otherwise, the library uses threaded I/O for some operations to improve performance.
+* `openssl` - ??
+* `openssl_sign` - ??
+* `serialize_thumbnails` includes binary thumbnail data in the [Serde](https://serde.rs/) serialization output.
+* `v1_api` - Use the old API (which will soon be deprecated) instead of the [new API](release-notes.md#new-api).
+* `pdf` - ??
 
 ### New API
 
