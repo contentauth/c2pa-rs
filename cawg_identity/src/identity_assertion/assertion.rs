@@ -11,15 +11,21 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use std::fmt::{Debug, Formatter};
+use std::{
+    collections::HashMap,
+    fmt::{Debug, Formatter},
+};
 
-use c2pa::Manifest;
+use c2pa::{Manifest, ManifestStore, Reader};
 use serde::{Deserialize, Serialize};
 use serde_bytes::ByteBuf;
 
 use crate::{
     identity_assertion::{
-        report::{IdentityAssertionReport, IdentityAssertionsForManifest, SignerPayloadReport},
+        report::{
+            IdentityAssertionReport, IdentityAssertionsForManifest,
+            IdentityAssertionsForManifestStore, SignerPayloadReport,
+        },
         signer_payload::SignerPayload,
     },
     internal::debug_byte_slice::DebugByteSlice,
@@ -116,6 +122,15 @@ impl IdentityAssertion {
         manifest: &Manifest,
         verifier: &SV,
     ) -> impl Serialize {
+        Self::summarize_all_impl(manifest, verifier).await
+    }
+
+    pub(crate) async fn summarize_all_impl<SV: SignatureVerifier>(
+        manifest: &Manifest,
+        verifier: &SV,
+    ) -> IdentityAssertionsForManifest<
+        <<SV as SignatureVerifier>::Output as ToCredentialSummary>::CredentialSummary,
+    > {
         // NOTE: We can't write this using .map(...).collect() because there are async
         // calls.
         let mut reports: Vec<
@@ -139,6 +154,62 @@ impl IdentityAssertion {
             <<SV as SignatureVerifier>::Output as ToCredentialSummary>::CredentialSummary,
         > {
             assertion_reports: reports,
+        }
+    }
+
+    /// Summarize all of the identity assertions found for a [`ManifestStore`].
+    pub async fn summarize_manifest_store<SV: SignatureVerifier>(
+        store: &ManifestStore,
+        verifier: &SV,
+    ) -> impl Serialize {
+        // NOTE: We can't write this using .map(...).collect() because there are async
+        // calls.
+        let mut reports: HashMap<
+            String,
+            IdentityAssertionsForManifest<
+                <<SV as SignatureVerifier>::Output as ToCredentialSummary>::CredentialSummary,
+            >,
+        > = HashMap::new();
+
+        for (id, manifest) in store.manifests() {
+            let report = Self::summarize_all_impl(manifest, verifier).await;
+            reports.insert(id.clone(), report);
+        }
+
+        IdentityAssertionsForManifestStore::<
+            <<SV as SignatureVerifier>::Output as ToCredentialSummary>::CredentialSummary,
+        > {
+            assertions_for_manifest: reports,
+        }
+    }
+
+    /// Summarize all of the identity assertions found for a [`Reader`].
+    pub async fn summarize_from_reader<SV: SignatureVerifier>(
+        reader: &Reader,
+        verifier: &SV,
+    ) -> impl Serialize {
+        // NOTE: We can't write this using .map(...).collect() because there are async
+        // calls.
+        let mut reports: HashMap<
+            String,
+            IdentityAssertionsForManifest<
+                <<SV as SignatureVerifier>::Output as ToCredentialSummary>::CredentialSummary,
+            >,
+        > = HashMap::new();
+
+        for manifest in reader.iter_manifests() {
+            let report = Self::summarize_all_impl(manifest, verifier).await;
+
+            // TO DO: What to do if manifest doesn't have a label?
+            if let Some(label) = manifest.label() {
+                reports.insert(label.to_owned(), report);
+            }
+        }
+
+        IdentityAssertionsForManifestStore::<
+            <<SV as SignatureVerifier>::Output as ToCredentialSummary>::CredentialSummary,
+        > {
+            assertions_for_manifest: reports,
         }
     }
 
