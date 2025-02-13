@@ -11,7 +11,7 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 use serde::{
     ser::{SerializeMap, SerializeSeq},
@@ -22,7 +22,7 @@ use crate::identity_assertion::signer_payload::SignerPayload;
 
 #[doc(hidden)]
 pub struct IdentityAssertionsForManifestStore<IAR: Serialize> {
-    pub(crate) assertions_for_manifest: HashMap<String, IdentityAssertionsForManifest<IAR>>,
+    pub(crate) assertions_for_manifest: BTreeMap<String, IdentityAssertionsForManifest<IAR>>,
 }
 
 impl<IAR: Serialize> Serialize for IdentityAssertionsForManifestStore<IAR> {
