@@ -12,7 +12,7 @@
 // each license.
 
 use std::{
-    collections::HashMap,
+    collections::BTreeMap,
     fmt::{Debug, Formatter},
 };
 
@@ -167,12 +167,12 @@ impl IdentityAssertion {
     ) -> impl Serialize {
         // NOTE: We can't write this using .map(...).collect() because there are async
         // calls.
-        let mut reports: HashMap<
+        let mut reports: BTreeMap<
             String,
             IdentityAssertionsForManifest<
                 <<SV as SignatureVerifier>::Output as ToCredentialSummary>::CredentialSummary,
             >,
-        > = HashMap::new();
+        > = BTreeMap::new();
 
         for (id, manifest) in store.manifests() {
             let report = Self::summarize_all_impl(manifest, verifier).await;
@@ -193,12 +193,12 @@ impl IdentityAssertion {
     ) -> impl Serialize {
         // NOTE: We can't write this using .map(...).collect() because there are async
         // calls.
-        let mut reports: HashMap<
+        let mut reports: BTreeMap<
             String,
             IdentityAssertionsForManifest<
                 <<SV as SignatureVerifier>::Output as ToCredentialSummary>::CredentialSummary,
             >,
-        > = HashMap::new();
+        > = BTreeMap::new();
 
         for manifest in reader.iter_manifests() {
             let report = Self::summarize_all_impl(manifest, verifier).await;
