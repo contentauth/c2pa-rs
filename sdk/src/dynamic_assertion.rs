@@ -19,6 +19,16 @@ use async_trait::async_trait;
 
 use crate::{hashed_uri::HashedUri, Result};
 
+/// The type of content that can be returned by a [`DynamicAssertion`] content call.
+pub enum DynamicAssertionContent {
+    /// The assertion is a CBOR-encoded binary blob.
+    Cbor(Vec<u8>),
+    /// The assertion is a JSON-encoded Strings.
+    Json(String),
+    /// The assertion is a binary blob with a content type.
+    Binary(String, Vec<u8>),
+}
+
 /// A `DynamicAssertion` is an assertion that has the ability to adjust
 /// its content based on other assertions within the overall [`Manifest`].
 ///
@@ -41,7 +51,7 @@ pub trait DynamicAssertion {
     /// assertion).
     ///
     /// [`Builder`]: crate::Builder
-    fn reserve_size(&self) -> usize;
+    fn reserve_size(&self) -> Result<usize>;
 
     /// Return the final assertion content.
     ///
@@ -61,7 +71,7 @@ pub trait DynamicAssertion {
         label: &str,
         size: Option<usize>,
         claim: &PreliminaryClaim,
-    ) -> Result<Vec<u8>>;
+    ) -> Result<DynamicAssertionContent>;
 }
 
 /// An `AsyncDynamicAssertion` is an assertion that has the ability
@@ -89,7 +99,7 @@ pub trait AsyncDynamicAssertion: Sync {
     /// assertion).
     ///
     /// [`Builder`]: crate::Builder
-    fn reserve_size(&self) -> usize;
+    fn reserve_size(&self) -> Result<usize>;
 
     /// Return the final assertion content.
     ///
@@ -109,7 +119,7 @@ pub trait AsyncDynamicAssertion: Sync {
         label: &str,
         size: Option<usize>,
         claim: &PreliminaryClaim,
-    ) -> Result<Vec<u8>>;
+    ) -> Result<DynamicAssertionContent>;
 }
 
 /// An `AsyncDynamicAssertion` is an assertion that has the ability
@@ -137,7 +147,7 @@ pub trait AsyncDynamicAssertion {
     /// assertion).
     ///
     /// [`Builder`]: crate::Builder
-    fn reserve_size(&self) -> usize;
+    fn reserve_size(&self) -> Result<usize>;
 
     /// Return the final assertion content.
     ///
@@ -157,7 +167,7 @@ pub trait AsyncDynamicAssertion {
         label: &str,
         size: Option<usize>,
         claim: &PreliminaryClaim,
-    ) -> Result<Vec<u8>>;
+    ) -> Result<DynamicAssertionContent>;
 }
 
 /// Describes information from the preliminary C2PA Claim that may

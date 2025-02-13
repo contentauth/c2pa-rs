@@ -44,7 +44,7 @@ use crate::{
     assertions::{
         labels::{self, CLAIM},
         BmffHash, DataBox, DataHash, DataMap, ExclusionsMap, Ingredient, Relationship, SubsetMap,
-        UserCbor,
+        User, UserCbor,
     },
     asset_io::{
         CAIRead, CAIReadWrite, HashBlockObjectType, HashObjectPositions, RemoteRefEmbedType,
@@ -55,7 +55,9 @@ use crate::{
     },
     cose_sign::{cose_sign, cose_sign_async},
     cose_validator::{verify_cose, verify_cose_async},
-    dynamic_assertion::{AsyncDynamicAssertion, DynamicAssertion, PreliminaryClaim},
+    dynamic_assertion::{
+        AsyncDynamicAssertion, DynamicAssertion, DynamicAssertionContent, PreliminaryClaim,
+    },
     error::{Error, Result},
     external_manifest::ManifestPatchCallback,
     hash_utils::{hash_by_alg, vec_compare, verify_by_alg},
@@ -2042,7 +2044,7 @@ impl Store {
         // Two passes since we are accessing two fields in self.
         let mut assertions = Vec::new();
         for da in dyn_assertions.iter() {
-            let reserve_size = da.reserve_size();
+            let reserve_size = da.reserve_size()?;
             let data1 = serde_cbor::ser::to_vec_packed(&vec![0; reserve_size])?;
             let cbor_delta = data1.len() - reserve_size;
             let da_data = serde_cbor::ser::to_vec_packed(&vec![0; reserve_size - cbor_delta])?;
@@ -2080,16 +2082,24 @@ impl Store {
             let label = crate::jumbf::labels::assertion_label_from_uri(&uri.url())
                 .ok_or(Error::BadParam("write_dynamic_assertions".to_string()))?;
 
-            let da_size = da.reserve_size();
+            let da_size = da.reserve_size()?;
             let da_data = if _sync {
                 da.content(&label, Some(da_size), preliminary_claim)?
             } else {
                 da.content(&label, Some(da_size), preliminary_claim).await?
             };
 
-            // TO DO: Add new assertion to preliminary_claim
-            // todo: support for non-CBOR asssertions?
-            final_assertions.push(UserCbor::new(&label, da_data).to_assertion()?);
+            match da_data {
+                DynamicAssertionContent::Cbor(data) => {
+                    final_assertions.push(UserCbor::new(&label, data).to_assertion()?);
+                }
+                DynamicAssertionContent::Json(data) => {
+                    final_assertions.push(User::new(&label, &data).to_assertion()?);
+                }
+                DynamicAssertionContent::Binary(format, data) => {
+                    // todo:: support for pushing binary assertions here
+                }
+            }
         }
 
         let pc = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
@@ -6137,11 +6147,11 @@ pub mod tests {
                 "com.mycompany.myassertion".to_string()
             }
 
-            fn reserve_size(&self) -> usize {
+            fn reserve_size(&self) -> Result<usize> {
                 let assertion = TestAssertion {
                     my_tag: "some value I will replace".to_string(),
                 };
-                serde_cbor::to_vec(&assertion).unwrap().len()
+                Ok(serde_cbor::to_vec(&assertion)?.len())
             }
 
             fn content(
@@ -6149,7 +6159,7 @@ pub mod tests {
                 _label: &str,
                 _size: Option<usize>,
                 claim: &PreliminaryClaim,
-            ) -> Result<Vec<u8>> {
+            ) -> Result<DynamicAssertionContent> {
                 assert!(claim
                     .assertions()
                     .inspect(|a| {
@@ -6161,7 +6171,9 @@ pub mod tests {
                     my_tag: "some value I will replace".to_string(),
                 };
 
-                Ok(serde_cbor::to_vec(&assertion).unwrap())
+                Ok(DynamicAssertionContent::Cbor(
+                    serde_cbor::to_vec(&assertion).unwrap(),
+                ))
             }
         }
 
@@ -6268,11 +6280,11 @@ pub mod tests {
                 "com.mycompany.myassertion".to_string()
             }
 
-            fn reserve_size(&self) -> usize {
+            fn reserve_size(&self) -> Result<usize> {
                 let assertion = TestAssertion {
                     my_tag: "some value I will replace".to_string(),
                 };
-                serde_cbor::to_vec(&assertion).unwrap().len()
+                Ok(serde_cbor::to_vec(&assertion)?.len())
             }
 
             async fn content(
@@ -6280,7 +6292,7 @@ pub mod tests {
                 _label: &str,
                 _size: Option<usize>,
                 claim: &PreliminaryClaim,
-            ) -> Result<Vec<u8>> {
+            ) -> Result<DynamicAssertionContent> {
                 assert!(claim
                     .assertions()
                     .inspect(|a| {
@@ -6292,7 +6304,9 @@ pub mod tests {
                     my_tag: "some value I will replace".to_string(),
                 };
 
-                Ok(serde_cbor::to_vec(&assertion).unwrap())
+                Ok(DynamicAssertionContent::Cbor(
+                    serde_cbor::to_vec(&assertion).unwrap(),
+                ))
             }
         }
 
