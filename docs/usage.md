@@ -41,11 +41,9 @@ The Rust library crate provides the following capabilities:
 * `file_io` enables manifest generation, signing via OpenSSL, and embedding manifests in [supported file formats](supported-formats.md).
 * `json_schema` is used by `make schema` to produce a JSON schema document that represents the `ManifestStore` data structures.
 * `no_interleaved_io` forces fully-synchronous I/O; otherwise, the library uses threaded I/O for some operations to improve performance.
-* `openssl` - ??
-* `openssl_sign` - ??
 * `serialize_thumbnails` includes binary thumbnail data in the [Serde](https://serde.rs/) serialization output.
 * `v1_api` - Use the old API (which will soon be deprecated) instead of the [new API](release-notes.md#new-api).
-* `pdf` - ??
+* `pdf` - Enable support for reading claims on PDF files.
 
 ### New API
 
