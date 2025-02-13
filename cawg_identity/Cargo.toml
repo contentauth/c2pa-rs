@@ -1,6 +1,6 @@
 [package]
 name = "cawg-identity"
-version = "0.7.0"
+version = "0.8.0"
 description = "Rust SDK for CAWG (Creator Assertions Working Group) identity assertion"
 authors = [
     "Eric Scouten <scouten@adobe.com>",
@@ -23,6 +23,9 @@ unexpected_cfgs = { level = "warn", check-cfg = ['cfg(test)'] }
 [package.metadata.docs.rs]
 all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
+
+[features]
+v1_api = ["c2pa/v1_api"]
 
 [dependencies]
 async-trait = "0.1.78"
