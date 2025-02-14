@@ -23,8 +23,10 @@ use crate::{hashed_uri::HashedUri, Result};
 pub enum DynamicAssertionContent {
     /// The assertion is a CBOR-encoded binary blob.
     Cbor(Vec<u8>),
-    /// The assertion is a JSON-encoded Strings.
+
+    /// The assertion is a JSON-encoded string.
     Json(String),
+
     /// The assertion is a binary blob with a content type.
     Binary(String, Vec<u8>),
 }
