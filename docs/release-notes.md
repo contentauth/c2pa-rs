@@ -32,12 +32,12 @@ These features are now standard and the `unstable_api` feature is no longer used
 You can still use the deprecated API by enabling the `v1_api` feature; for example:
 
 ```
-c2pa = {version="0.39.0", features=["v1_api"]}
+c2pa = {version="0.45.2", features=["v1_api"]}
 ```
 
 ### API Changes for C2PA 2.1
 
-The C2PA 2.1 claims are experimental at this point and not fully implemented yet. 
+Support for claims as described in the [C2PA 2.1 specification](https://c2pa.org/specifications/specifications/2.1/specs/C2PA_Specification.html#_claims) is experimental at this point and not fully implemented yet. 
 
 `Reader` has a new method: `validation_state()` which returns the a `ValidationState`.
 The `ValidationState` can be `Invalid`, `Valid` or `Trusted`.
@@ -59,8 +59,6 @@ A `claim_version` field is now allowed in a manifest definition for `Builder` an
 In v2 claims, the first `action` must be `c2pa.created` or `c2pa.opened`. 
 
 There are many more checks and status codes added for v2 claims.
-
-
 
 ## Language binding support
 
