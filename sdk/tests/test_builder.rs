@@ -245,8 +245,8 @@ fn test_dynamic_assertions_builder() -> Result<()> {
         }
     }
 
-    /// This is an signer wrapped around a local temp signer,
-    /// that implements the dynamic assertion trait.
+    /// This is a Signer wrapped around a local temp signer,
+    /// that implements the DynamicAssertion trait.
     struct DynamicSigner(Box<dyn Signer>);
 
     impl DynamicSigner {
