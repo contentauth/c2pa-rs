@@ -203,23 +203,27 @@ pub(crate) fn get_supported_file_extension(path: &Path) -> Option<String> {
 ///
 /// If no output file is given an new file will be created with "-c2pa" appending to file name e.g. "test.jpg" => "test-c2pa.jpg"
 /// If input == output then the input file will be overwritten.
-pub fn save_jumbf_to_file(data: &[u8], in_path: &Path, out_path: Option<&Path>) -> Result<()> {
-    let ext = get_file_extension(in_path).ok_or(Error::UnsupportedType)?;
+pub fn save_jumbf_to_file<P1: AsRef<Path>, P2: AsRef<Path>>(
+    data: &[u8],
+    in_path: P1,
+    out_path: Option<P2>,
+) -> Result<()> {
+    let ext = get_file_extension(in_path.as_ref()).ok_or(Error::UnsupportedType)?;
 
     // if no output path make a new file based off of source file name
-    let asset_out_path: PathBuf = match out_path {
-        Some(p) => p.to_owned(),
+    let asset_out_path: PathBuf = match out_path.as_ref() {
+        Some(p) => p.as_ref().to_owned(),
         None => {
-            let filename_osstr = in_path.file_stem().ok_or(Error::UnsupportedType)?;
+            let filename_osstr = in_path.as_ref().file_stem().ok_or(Error::UnsupportedType)?;
             let filename = filename_osstr.to_str().ok_or(Error::UnsupportedType)?;
 
             let out_name = format!("{filename}-c2pa.{ext}");
-            in_path.to_owned().with_file_name(out_name)
+            in_path.as_ref().to_owned().with_file_name(out_name)
         }
     };
 
     // clone output to be overwritten
-    if in_path != asset_out_path {
+    if in_path.as_ref() != asset_out_path {
         fs::copy(in_path, &asset_out_path).map_err(Error::IoError)?;
     }
 
@@ -333,10 +337,10 @@ where
 /// path - path to file to be updated
 /// returns Unsupported type or errors from remove_cai_store
 #[allow(dead_code)]
-pub fn remove_jumbf_from_file(path: &Path) -> Result<()> {
-    let ext = get_file_extension(path).ok_or(Error::UnsupportedType)?;
+pub fn remove_jumbf_from_file<P: AsRef<Path>>(path: P) -> Result<()> {
+    let ext = get_file_extension(path.as_ref()).ok_or(Error::UnsupportedType)?;
     match get_assetio_handler(&ext) {
-        Some(asset_handler) => asset_handler.remove_cai_store(path),
+        Some(asset_handler) => asset_handler.remove_cai_store(path.as_ref()),
         _ => Err(Error::UnsupportedType),
     }
 }
