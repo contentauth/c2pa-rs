@@ -1118,17 +1118,24 @@ impl DataSubBlocks {
     }
 
     fn to_decoded_bytes(&self) -> Vec<u8> {
-        // Amount of bytes - (length markers + terminator).
-        let mut bytes = Vec::with_capacity(self.bytes.len() - (self.bytes.len().div_ceil(255) + 1));
-        for chunk in self.bytes.chunks(256) {
-            bytes.extend_from_slice(&chunk[1..]);
+        let mut bytes = Vec::with_capacity(gif_chunks(&self.bytes).map(|c| c.len()).sum());
+        for chunk in gif_chunks(&self.bytes) {
+            bytes.extend_from_slice(chunk);
         }
-
-        // Remove terminator.
-        bytes.truncate(bytes.len() - 1);
-
         bytes
     }
+}
+
+fn gif_chunks(mut encoded_bytes: &[u8]) -> impl Iterator<Item = &[u8]> {
+    std::iter::from_fn(move || {
+        let (&len, rest) = encoded_bytes.split_first()?;
+        if len == 0 {
+            return None;
+        }
+        let (chunk, rest) = rest.split_at_checked(len.into())?;
+        encoded_bytes = rest;
+        Some(chunk)
+    })
 }
 
 #[cfg(test)]
