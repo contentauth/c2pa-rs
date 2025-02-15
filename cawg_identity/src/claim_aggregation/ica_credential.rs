@@ -11,20 +11,31 @@
 // specific language governing permissions and limitations under
 // each license.
 
+use std::collections::BTreeMap;
+
 use chrono::{DateTime, FixedOffset};
-use iref::{Iri, UriBuf};
+use iref::{Iri, IriBuf, UriBuf};
 use non_empty_string::NonEmptyString;
 use nonempty_collections::NEVec;
 use serde::{Deserialize, Serialize};
 
 use crate::{
     claim_aggregation::w3c_vc::credential::{CredentialV2, VerifiableCredentialSubtype},
+    identity_assertion::signature_verifier::ToCredentialSummary,
     SignerPayload,
 };
 
 /// TO DO: Doc -- looks like CredentialV2 for our specific use
 /// case.
 pub type IcaCredential = CredentialV2<IdentityClaimsAggregationVc>;
+
+impl ToCredentialSummary for IcaCredential {
+    type CredentialSummary = IcaCredentialSummary;
+
+    fn to_summary(&self) -> Self::CredentialSummary {
+        IcaCredentialSummary::from_credential(self)
+    }
+}
 
 /// Identity claims aggregation context IRI.
 pub const IDENTITY_CLAIMS_AGGREGATION_CONTEXT_IRI: &Iri =
@@ -174,4 +185,54 @@ pub struct IdentityProvider {
     /// non-empty string. ///The `verifiedIdentities[?].provider.name` property
     /// is the user-visible name of the _identity provider._
     pub name: NonEmptyString,
+}
+
+#[doc(hidden)]
+#[derive(Serialize)]
+pub struct IcaCredentialSummary {
+    #[serde(rename = "@context")]
+    contexts: NEVec<IriBuf>,
+
+    #[serde(
+        default,
+        deserialize_with = "not_null",
+        skip_serializing_if = "Option::is_none"
+    )]
+    id: Option<UriBuf>,
+
+    #[serde(rename = "type")]
+    types: NEVec<String>,
+
+    issuer: UriBuf,
+
+    #[serde(rename = "validFrom")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    valid_from: Option<DateTime<FixedOffset>>,
+
+    #[serde(rename = "validUntil")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    valid_until: Option<DateTime<FixedOffset>>,
+
+    #[serde(rename = "verifiedIdentities")]
+    verified_identities: NEVec<VerifiedIdentity>,
+
+    #[serde(flatten)]
+    extra_properties: BTreeMap<String, serde_json::Value>,
+}
+
+impl IcaCredentialSummary {
+    fn from_credential(ica: &IcaCredential) -> Self {
+        let subject = ica.credential_subjects.first();
+
+        Self {
+            contexts: ica.contexts.clone(),
+            id: ica.id.clone(),
+            issuer: ica.issuer.clone(),
+            types: ica.types.clone(),
+            valid_from: ica.valid_from,
+            valid_until: ica.valid_until,
+            verified_identities: subject.verified_identities.clone(),
+            extra_properties: ica.extra_properties.clone(),
+        }
+    }
 }

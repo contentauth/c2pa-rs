@@ -55,19 +55,12 @@ impl Default for DefaultSalt {
 
 impl SaltGenerator for DefaultSalt {
     fn generate_salt(&self) -> Option<Vec<u8>> {
-        #[cfg(target_arch = "wasm32")]
-        {
-            Some(crate::wasm::util::get_random_values(self.salt_len).ok()?)
-        }
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            use rand::prelude::*;
+        use rand::prelude::*;
 
-            let mut salt = vec![0u8; self.salt_len];
-            let mut rng = rand_chacha::ChaCha20Rng::from_entropy();
-            rng.fill_bytes(&mut salt);
+        let mut salt = vec![0u8; self.salt_len];
+        let mut rng = rand_chacha::ChaCha20Rng::from_entropy();
+        rng.fill_bytes(&mut salt);
 
-            Some(salt)
-        }
+        Some(salt)
     }
 }

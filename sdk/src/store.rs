@@ -44,7 +44,7 @@ use crate::{
     assertions::{
         labels::{self, CLAIM},
         BmffHash, DataBox, DataHash, DataMap, ExclusionsMap, Ingredient, Relationship, SubsetMap,
-        UserCbor,
+        User, UserCbor,
     },
     asset_io::{
         CAIRead, CAIReadWrite, HashBlockObjectType, HashObjectPositions, RemoteRefEmbedType,
@@ -55,7 +55,9 @@ use crate::{
     },
     cose_sign::{cose_sign, cose_sign_async},
     cose_validator::{verify_cose, verify_cose_async},
-    dynamic_assertion::{DynamicAssertion, PreliminaryClaim},
+    dynamic_assertion::{
+        AsyncDynamicAssertion, DynamicAssertion, DynamicAssertionContent, PreliminaryClaim,
+    },
     error::{Error, Result},
     external_manifest::ManifestPatchCallback,
     hash_utils::{hash_by_alg, vec_compare, verify_by_alg},
@@ -139,7 +141,6 @@ impl Store {
             label: label.to_string(),
             ctp: CertificateTrustPolicy::default(),
             provenance_path: None,
-            //dynamic_assertions: Vec::new(),
         };
 
         // load the trust handler settings, don't worry about status as these are checked during setting generation
@@ -2028,6 +2029,10 @@ impl Store {
     }
 
     /// Inserts placeholders for dynamic assertions to be updated later.
+    #[async_generic(async_signature(
+        &mut self,
+        dyn_assertions: &[Box<dyn AsyncDynamicAssertion>],
+    ))]
     fn add_dynamic_assertion_placeholders(
         &mut self,
         dyn_assertions: &[Box<dyn DynamicAssertion>],
@@ -2035,10 +2040,11 @@ impl Store {
         if dyn_assertions.is_empty() {
             return Ok(Vec::new());
         }
-        // two passes since we are accessing two fields in self
+
+        // Two passes since we are accessing two fields in self.
         let mut assertions = Vec::new();
         for da in dyn_assertions.iter() {
-            let reserve_size = da.reserve_size();
+            let reserve_size = da.reserve_size()?;
             let data1 = serde_cbor::ser::to_vec_packed(&vec![0; reserve_size])?;
             let cbor_delta = data1.len() - reserve_size;
             let da_data = serde_cbor::ser::to_vec_packed(&vec![0; reserve_size - cbor_delta])?;
@@ -2053,7 +2059,12 @@ impl Store {
     }
 
     /// Write the dynamic assertions to the manifest.
-    #[async_generic()]
+    #[async_generic(async_signature(
+        &mut self,
+        dyn_assertions: &[Box<dyn AsyncDynamicAssertion>],
+        dyn_uris: &[HashedUri],
+        preliminary_claim: &mut PreliminaryClaim,
+    ))]
     #[allow(unused_variables)]
     fn write_dynamic_assertions(
         &mut self,
@@ -2065,33 +2076,38 @@ impl Store {
             return Ok(false);
         }
 
-        if _sync {
-            Err(Error::NotImplemented(
-                "dynamic_assertions not implemented for sync".to_string(),
-            ))
-        } else {
-            let mut final_assertions = Vec::new();
+        let mut final_assertions = Vec::new();
 
-            for (da, uri) in dyn_assertions.iter().zip(dyn_uris.iter()) {
-                let label = crate::jumbf::labels::assertion_label_from_uri(&uri.url())
-                    .ok_or(Error::BadParam("write_dynamic_assertions".to_string()))?;
+        for (da, uri) in dyn_assertions.iter().zip(dyn_uris.iter()) {
+            let label = crate::jumbf::labels::assertion_label_from_uri(&uri.url())
+                .ok_or(Error::BadParam("write_dynamic_assertions".to_string()))?;
 
-                let da_size = da.reserve_size();
+            let da_size = da.reserve_size()?;
+            let da_data = if _sync {
+                da.content(&label, Some(da_size), preliminary_claim)?
+            } else {
+                da.content(&label, Some(da_size), preliminary_claim).await?
+            };
 
-                let da_data = da.content(&label, Some(da_size), preliminary_claim).await?;
-
-                // TO DO: Add new assertion to preliminary_claim
-
-                final_assertions.push(UserCbor::new(&label, da_data).to_assertion()?);
+            match da_data {
+                DynamicAssertionContent::Cbor(data) => {
+                    final_assertions.push(UserCbor::new(&label, data).to_assertion()?);
+                }
+                DynamicAssertionContent::Json(data) => {
+                    final_assertions.push(User::new(&label, &data).to_assertion()?);
+                }
+                DynamicAssertionContent::Binary(format, data) => {
+                    todo!("Binary dynamic assertions not yet supported");
+                }
             }
-
-            let pc = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
-            for assertion in final_assertions {
-                pc.replace_assertion(assertion)?;
-            }
-
-            Ok(true)
         }
+
+        let pc = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
+        for assertion in final_assertions {
+            pc.replace_assertion(assertion)?;
+        }
+
+        Ok(true)
     }
 
     #[cfg(feature = "file_io")]
@@ -2222,7 +2238,13 @@ impl Store {
         signer: &dyn Signer,
     ) -> Result<Vec<u8>> {
         let dynamic_assertions = signer.dynamic_assertions();
-        let da_uris = self.add_dynamic_assertion_placeholders(&dynamic_assertions)?;
+
+        let da_uris = if _sync {
+            self.add_dynamic_assertion_placeholders(&dynamic_assertions)?
+        } else {
+            self.add_dynamic_assertion_placeholders_async(&dynamic_assertions)
+                .await?
+        };
 
         let intermediate_output: Vec<u8> = Vec::new();
         let mut intermediate_stream = Cursor::new(intermediate_output);
@@ -2244,40 +2266,33 @@ impl Store {
         }
 
         // Now add the dynamic assertions and update the JUMBF.
-        if _sync {
-            if !dynamic_assertions.is_empty() {
-                self.write_dynamic_assertions(
-                    &dynamic_assertions,
-                    &da_uris,
-                    &mut preliminary_claim,
-                )?;
-            }
+        let modified = if _sync {
+            self.write_dynamic_assertions(&dynamic_assertions, &da_uris, &mut preliminary_claim)
         } else {
-            if !dynamic_assertions.is_empty()
-                && self
-                    .write_dynamic_assertions_async(
-                        &dynamic_assertions,
-                        &da_uris,
-                        &mut preliminary_claim,
-                    )
-                    .await?
-            {
-                let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
-                match pc.remote_manifest() {
-                    RemoteManifest::NoRemote | RemoteManifest::EmbedWithRemote(_) => {
-                        jumbf_bytes = self.to_jumbf_internal(signer.reserve_size())?;
+            self.write_dynamic_assertions_async(
+                &dynamic_assertions,
+                &da_uris,
+                &mut preliminary_claim,
+            )
+            .await
+        }?;
+        // update the JUMBF if modified with dynamic assertions
+        if modified {
+            let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
+            match pc.remote_manifest() {
+                RemoteManifest::NoRemote | RemoteManifest::EmbedWithRemote(_) => {
+                    jumbf_bytes = self.to_jumbf_internal(signer.reserve_size())?;
 
-                        intermediate_stream.rewind()?;
-                        save_jumbf_to_stream(
-                            format,
-                            &mut intermediate_stream,
-                            output_stream,
-                            &jumbf_bytes,
-                        )?;
-                    }
-                    _ => (),
-                };
-            }
+                    intermediate_stream.rewind()?;
+                    save_jumbf_to_stream(
+                        format,
+                        &mut intermediate_stream,
+                        output_stream,
+                        &jumbf_bytes,
+                    )?;
+                }
+                _ => (),
+            };
         }
 
         let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
@@ -5120,9 +5135,7 @@ pub mod tests {
         // replace the title that is inside the claim data - should cause signature to not match
         let report = patch_and_report("C.jpg", b"C.jpg", b"X.jpg");
         assert!(!report.logged_items().is_empty());
-        assert!(report.has_error(Error::TimeStampError(
-            c2pa_crypto::time_stamp::TimeStampError::InvalidData
-        )));
+        assert!(report.has_error(c2pa_crypto::time_stamp::TimeStampError::InvalidData));
         assert!(report.has_status(validation_status::TIMESTAMP_MISMATCH));
     }
 
@@ -6118,9 +6131,138 @@ pub mod tests {
         assert!(errors.is_empty());
     }
 
+    #[test]
+    #[cfg(feature = "openssl_sign")]
+    fn test_dynamic_assertions() {
+        #[derive(Serialize)]
+        struct TestAssertion {
+            my_tag: String,
+        }
+
+        #[derive(Debug)]
+        struct TestDynamicAssertion {}
+
+        impl DynamicAssertion for TestDynamicAssertion {
+            fn label(&self) -> String {
+                "com.mycompany.myassertion".to_string()
+            }
+
+            fn reserve_size(&self) -> Result<usize> {
+                let assertion = TestAssertion {
+                    my_tag: "some value I will replace".to_string(),
+                };
+                Ok(serde_cbor::to_vec(&assertion)?.len())
+            }
+
+            fn content(
+                &self,
+                _label: &str,
+                _size: Option<usize>,
+                claim: &PreliminaryClaim,
+            ) -> Result<DynamicAssertionContent> {
+                assert!(claim
+                    .assertions()
+                    .inspect(|a| {
+                        dbg!(a);
+                    })
+                    .any(|a| a.url().contains("c2pa.hash")));
+
+                let assertion = TestAssertion {
+                    my_tag: "some value I will replace".to_string(),
+                };
+
+                Ok(DynamicAssertionContent::Cbor(
+                    serde_cbor::to_vec(&assertion).unwrap(),
+                ))
+            }
+        }
+
+        /// This is an signer wrapped around a local temp signer,
+        /// that implements the dynamic assertion trait.
+        struct DynamicSigner(Box<dyn Signer>);
+
+        impl DynamicSigner {
+            fn new() -> Self {
+                Self(test_signer(SigningAlg::Ps256))
+            }
+        }
+
+        impl crate::Signer for DynamicSigner {
+            fn sign(&self, data: &[u8]) -> crate::error::Result<Vec<u8>> {
+                self.0.sign(data)
+            }
+
+            fn alg(&self) -> SigningAlg {
+                self.0.alg()
+            }
+
+            fn certs(&self) -> crate::Result<Vec<Vec<u8>>> {
+                self.0.certs()
+            }
+
+            fn reserve_size(&self) -> usize {
+                self.0.reserve_size()
+            }
+
+            fn time_authority_url(&self) -> Option<String> {
+                self.0.time_authority_url()
+            }
+
+            fn ocsp_val(&self) -> Option<Vec<u8>> {
+                self.0.ocsp_val()
+            }
+
+            // Returns our dynamic assertion here.
+            fn dynamic_assertions(&self) -> Vec<Box<dyn crate::DynamicAssertion>> {
+                vec![Box::new(TestDynamicAssertion {})]
+            }
+        }
+
+        let file_buffer = include_bytes!("../tests/fixtures/earth_apollo17.jpg").to_vec();
+        // convert buffer to cursor with Read/Write/Seek capability
+        let mut buf_io = Cursor::new(file_buffer);
+
+        // Create claims store.
+        let mut store = Store::new();
+
+        // Create a new claim.
+        let claim1 = create_test_claim().unwrap();
+
+        let signer = DynamicSigner::new();
+
+        store.commit_claim(claim1).unwrap();
+
+        let mut result: Vec<u8> = Vec::new();
+        let mut result_stream = Cursor::new(result);
+
+        store
+            .save_to_stream("jpeg", &mut buf_io, &mut result_stream, &signer)
+            .unwrap();
+
+        // convert our cursor back into a buffer
+        result = result_stream.into_inner();
+
+        // make sure we can read from new file
+        let mut report = DetailedStatusTracker::default();
+        let new_store = Store::load_from_memory("jpeg", &result, false, &mut report).unwrap();
+
+        println!("new_store: {}", new_store);
+
+        Store::verify_store(
+            &new_store,
+            &mut ClaimAssetData::Bytes(&result, "jpg"),
+            &mut report,
+        )
+        .unwrap();
+
+        let errors = report.take_errors();
+        assert!(errors.is_empty());
+        // std::fs::write("target/test.jpg", result).unwrap();
+    }
+
     #[actix::test]
     #[cfg(feature = "openssl_sign")]
-    async fn test_dynamic_assertions() {
+    async fn test_async_dynamic_assertions() {
         use async_trait::async_trait;
 
         #[derive(Serialize)]
@@ -6133,16 +6275,16 @@ pub mod tests {
 
         #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
         #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
-        impl DynamicAssertion for TestDynamicAssertion {
+        impl AsyncDynamicAssertion for TestDynamicAssertion {
             fn label(&self) -> String {
                 "com.mycompany.myassertion".to_string()
             }
 
-            fn reserve_size(&self) -> usize {
+            fn reserve_size(&self) -> Result<usize> {
                 let assertion = TestAssertion {
                     my_tag: "some value I will replace".to_string(),
                 };
-                serde_cbor::to_vec(&assertion).unwrap().len()
+                Ok(serde_cbor::to_vec(&assertion)?.len())
             }
 
             async fn content(
@@ -6150,7 +6292,7 @@ pub mod tests {
                 _label: &str,
                 _size: Option<usize>,
                 claim: &PreliminaryClaim,
-            ) -> Result<Vec<u8>> {
+            ) -> Result<DynamicAssertionContent> {
                 assert!(claim
                     .assertions()
                     .inspect(|a| {
@@ -6162,7 +6304,9 @@ pub mod tests {
                     my_tag: "some value I will replace".to_string(),
                 };
 
-                Ok(serde_cbor::to_vec(&assertion).unwrap())
+                Ok(DynamicAssertionContent::Cbor(
+                    serde_cbor::to_vec(&assertion).unwrap(),
+                ))
             }
         }
 
@@ -6203,7 +6347,7 @@ pub mod tests {
             }
 
             // Returns our dynamic assertion here.
-            fn dynamic_assertions(&self) -> Vec<Box<dyn crate::DynamicAssertion>> {
+            fn dynamic_assertions(&self) -> Vec<Box<dyn crate::AsyncDynamicAssertion>> {
                 vec![Box::new(TestDynamicAssertion {})]
             }
         }

@@ -11,10 +11,11 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use std::io::Cursor;
+use std::io::Write;
 
 use async_generic::async_generic;
 use c2pa_crypto::{
+    base64,
     cose::{
         cert_chain_from_sign1, parse_cose_sign1, signing_alg_from_sign1, signing_time_from_sign1,
         signing_time_from_sign1_async, CertificateInfo, CertificateTrustPolicy, Verifier,
@@ -69,16 +70,38 @@ pub(crate) fn verify_cose(
 
 // internal util function to dump the cert chain in PEM format
 fn dump_cert_chain(certs: &[Vec<u8>]) -> Result<Vec<u8>> {
-    let mut out_buf: Vec<u8> = Vec::new();
-    let mut writer = Cursor::new(out_buf);
+    let mut writer = Vec::new();
+
+    let line_len = 64;
+    let cert_begin = "-----BEGIN CERTIFICATE-----";
+    let cert_end = "-----END CERTIFICATE-----";
 
     for der_bytes in certs {
-        let c = x509_certificate::X509Certificate::from_der(der_bytes)
+        let cert_base_str = base64::encode(der_bytes);
+
+        // break line into fixed len lines
+        let cert_lines = cert_base_str
+            .chars()
+            .collect::<Vec<char>>()
+            .chunks(line_len)
+            .map(|chunk| chunk.iter().collect::<String>())
+            .collect::<Vec<_>>();
+
+        // write lines
+        writer
+            .write_fmt(format_args!("{}\n", cert_begin))
             .map_err(|_e| Error::UnsupportedType)?;
-        c.write_pem(&mut writer)?;
+        for l in cert_lines {
+            writer
+                .write_fmt(format_args!("{}\n", l))
+                .map_err(|_e| Error::UnsupportedType)?;
+        }
+        writer
+            .write_fmt(format_args!("{}\n", cert_end))
+            .map_err(|_e| Error::UnsupportedType)?;
     }
-    out_buf = writer.into_inner();
-    Ok(out_buf)
+
+    Ok(writer)
 }
 
 fn extract_subject_from_cert(cert: &X509Certificate) -> Result<String> {

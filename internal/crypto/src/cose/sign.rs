@@ -11,6 +11,7 @@
 // specific language governing permissions and limitations under
 // each license.
 
+use asn1_rs::FromDer;
 use async_generic::async_generic;
 use ciborium::value::Value;
 use coset::{
@@ -19,10 +20,12 @@ use coset::{
     TaggedCborSerializable,
 };
 use serde_bytes::ByteBuf;
+use x509_parser::prelude::X509Certificate;
 
+use super::cert_chain_from_sign1;
 use crate::{
     cose::{add_sigtst_header, add_sigtst_header_async, CoseError, TimeStampStorage},
-    p1363::{der_to_p1363, parse_ec_der_sig},
+    ec_utils::{der_to_p1363, ec_curve_from_public_key_der, parse_ec_der_sig},
     raw_signature::{AsyncRawSigner, RawSigner, SigningAlg},
 };
 
@@ -154,7 +157,23 @@ pub fn sign_v1(
         SigningAlg::Es256 | SigningAlg::Es384 | SigningAlg::Es512 => {
             if parse_ec_der_sig(&signature).is_ok() {
                 // Fix up DER signature to be in P1363 format.
-                der_to_p1363(&signature, alg)?
+                let certs = cert_chain_from_sign1(&sign1)?;
+
+                let signing_cert = certs.first().ok_or(CoseError::CborGenerationError(
+                    "bad certificate chain".to_string(),
+                ))?;
+
+                let (_, cert) = X509Certificate::from_der(signing_cert).map_err(|_e| {
+                    CoseError::CborGenerationError("incorrect EC signature format".to_string())
+                })?;
+
+                let certificate_public_key = cert.public_key();
+
+                let curve = ec_curve_from_public_key_der(certificate_public_key.raw).ok_or(
+                    CoseError::CborGenerationError("incorrect EC signature format".to_string()),
+                )?;
+
+                der_to_p1363(&signature, curve.p1363_sig_len())?
             } else {
                 signature
             }
@@ -165,6 +184,7 @@ pub fn sign_v1(
     // The payload is provided elsewhere, so we don't need to repeat it in the
     // `Cose_Sign1` structure.
     sign1.payload = None;
+
     pad_cose_sig(&mut sign1, box_size)
 }
 
@@ -217,7 +237,23 @@ pub fn sign_v2(
         SigningAlg::Es256 | SigningAlg::Es384 | SigningAlg::Es512 => {
             if parse_ec_der_sig(&signature).is_ok() {
                 // Fix up DER signature to be in P1363 format.
-                der_to_p1363(&signature, alg)?
+                let certs = cert_chain_from_sign1(&sign1)?;
+
+                let signing_cert = certs.first().ok_or(CoseError::CborGenerationError(
+                    "bad certificate chain".to_string(),
+                ))?;
+
+                let (_, cert) = X509Certificate::from_der(signing_cert).map_err(|_e| {
+                    CoseError::CborGenerationError("incorrect EC signature format".to_string())
+                })?;
+
+                let certificate_public_key = cert.public_key();
+
+                let curve = ec_curve_from_public_key_der(certificate_public_key.raw).ok_or(
+                    CoseError::CborGenerationError("incorrect EC signature format".to_string()),
+                )?;
+
+                der_to_p1363(&signature, curve.p1363_sig_len())?
             } else {
                 signature
             }
@@ -348,7 +384,7 @@ fn pad_cose_sig(sign1: &mut CoseSign1, end_size: Option<usize>) -> Result<Vec<u8
         return Ok(cur_vec);
     }
 
-    // check for box too small and matched size
+    // Check for box too small and matched size.
     if cur_size + PAD_OFFSET > end_size {
         return Err(CoseError::BoxSizeTooSmall);
     }

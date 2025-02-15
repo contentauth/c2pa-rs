@@ -42,7 +42,7 @@ use crate::{
 
 static SUPPORTED_TYPES: [&str; 3] = ["jpg", "jpeg", "image/jpeg"];
 
-const XMP_SIGNATURE: &[u8] = b"http://ns.adobe.com/xap/1.0/";
+const XMP_SIGNATURE: &str = "http://ns.adobe.com/xap/1.0/";
 const XMP_SIGNATURE_BUFFER_SIZE: usize = XMP_SIGNATURE.len() + 1; // skip null or space char at end
 
 const MAX_JPEG_MARKER_SIZE: usize = 64000; // technically it's 64K but a bit smaller is fine
@@ -57,11 +57,10 @@ fn vec_compare(va: &[u8], vb: &[u8]) -> bool {
 }
 
 // Return contents of APP1 segment if it is an XMP segment.
-fn extract_xmp(seg: &JpegSegment) -> Option<String> {
-    let contents = seg.contents();
-    if contents.starts_with(XMP_SIGNATURE) {
-        let rest = contents.slice(XMP_SIGNATURE_BUFFER_SIZE..);
-        String::from_utf8(rest.to_vec()).ok()
+fn extract_xmp(seg: &JpegSegment) -> Option<&str> {
+    let (sig, rest) = seg.contents().split_at_checked(XMP_SIGNATURE_BUFFER_SIZE)?;
+    if sig.starts_with(XMP_SIGNATURE.as_bytes()) {
+        std::str::from_utf8(rest).ok()
     } else {
         None
     }
@@ -69,13 +68,9 @@ fn extract_xmp(seg: &JpegSegment) -> Option<String> {
 
 // Extract XMP from bytes.
 fn xmp_from_bytes(asset_bytes: &[u8]) -> Option<String> {
-    if let Ok(jpeg) = Jpeg::from_bytes(Bytes::copy_from_slice(asset_bytes)) {
-        let segs = jpeg.segments_by_marker(markers::APP1);
-        let xmp: String = segs.filter_map(extract_xmp).collect();
-        Some(xmp)
-    } else {
-        None
-    }
+    let jpeg = Jpeg::from_bytes(Bytes::copy_from_slice(asset_bytes)).ok()?;
+    let mut segs = jpeg.segments_by_marker(markers::APP1);
+    segs.find_map(extract_xmp).map(String::from)
 }
 
 fn add_required_segs_to_stream(
@@ -612,21 +607,21 @@ impl RemoteRefEmbed for JpegIO {
                     Jpeg::from_bytes(buf.into()).map_err(|_err| Error::EmbeddingError)?;
 
                 // find any existing XMP segment and remember where it was
-                let mut xmp = MIN_XMP.to_string(); // default minimal XMP
-                let mut xmp_index = None;
                 let segments = jpeg.segments_mut();
-                for (i, seg) in segments.iter().enumerate() {
-                    if seg.marker() == markers::APP1 && seg.contents().starts_with(XMP_SIGNATURE) {
-                        xmp = extract_xmp(seg).unwrap_or_else(|| xmp.clone());
-                        xmp_index = Some(i);
-                        break;
-                    }
-                }
+                let (xmp_index, xmp) = segments
+                    .iter()
+                    .enumerate()
+                    .find_map(|(i, seg)| {
+                        if seg.marker() == markers::APP1 {
+                            Some((Some(i), extract_xmp(seg)?))
+                        } else {
+                            None
+                        }
+                    })
+                    .unwrap_or_else(|| (None, MIN_XMP));
+
                 // add provenance and JPEG XMP prefix
-                let xmp = format!(
-                    "http://ns.adobe.com/xap/1.0/\0 {}",
-                    add_provenance(&xmp, &manifest_uri)?
-                );
+                let xmp = format!("{XMP_SIGNATURE}\0 {}", add_provenance(&xmp, &manifest_uri)?);
                 let segment = JpegSegment::new_with_contents(markers::APP1, Bytes::from(xmp));
                 // insert or add the segment
                 match xmp_index {
@@ -1134,14 +1129,19 @@ pub mod tests {
         let contents = Bytes::from_static(b"http://ns.adobe.com/xap/1.0/\0stuff");
         let seg = JpegSegment::new_with_contents(markers::APP1, contents);
         let result = extract_xmp(&seg);
-        assert_eq!(result, Some("stuff".to_owned()));
+        assert_eq!(result, Some("stuff"));
 
         let contents = Bytes::from_static(b"http://ns.adobe.com/xap/1.0/ stuff");
         let seg = JpegSegment::new_with_contents(markers::APP1, contents);
         let result = extract_xmp(&seg);
-        assert_eq!(result, Some("stuff".to_owned()));
+        assert_eq!(result, Some("stuff"));
 
         let contents = Bytes::from_static(b"tiny");
+        let seg = JpegSegment::new_with_contents(markers::APP1, contents);
+        let result = extract_xmp(&seg);
+        assert_eq!(result, None);
+
+        let contents = Bytes::from_static(b"http://ns.adobe.com/xap/1.0/");
         let seg = JpegSegment::new_with_contents(markers::APP1, contents);
         let result = extract_xmp(&seg);
         assert_eq!(result, None);

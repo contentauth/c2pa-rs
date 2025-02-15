@@ -6,6 +6,47 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 Since version 0.36.2, the format of this changelog is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.45.3](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.45.2...c2pa-v0.45.3)
+_11 February 2025_
+
+### Fixed
+
+* Restore support for claim_generator_hints (#915)
+
+## [0.45.2](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.45.1...c2pa-v0.45.2)
+_06 February 2025_
+
+### Documented
+
+* Fix reported errors for docs (#903)
+
+### Fixed
+
+* Update error reporting (#906)
+* Repair cargo test (#898)
+
+## [0.45.1](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.45.0...c2pa-v0.45.1)
+_31 January 2025_
+
+### Fixed
+
+* Remove dependency on SubtleCrypto (#881)
+
+## [0.45.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.44.0...c2pa-v0.45.0)
+_30 January 2025_
+
+### Added
+
+* *(cawg_identity)* Split `CredentialHolder` into sync and async versions (#891)
+
+## [0.44.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.43.0...c2pa-v0.44.0)
+_29 January 2025_
+
+### Added
+
+* Allow synchronous DynamicAssertion (#889)
+* Claim v2 (#707)
+
 ## [0.43.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.42.0...c2pa-v0.43.0)
 _24 January 2025_
 

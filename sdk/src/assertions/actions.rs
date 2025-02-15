@@ -32,34 +32,52 @@ pub const CAI_INGREDIENT_IDS: &str = "org.cai.ingredientIds";
 pub mod c2pa_action {
     /// Changes to tone, saturation, etc.
     pub const COLOR_ADJUSTMENTS: &str = "c2pa.color_adjustments";
+
     /// The format of the asset was changed.
     pub const CONVERTED: &str = "c2pa.converted";
+
     /// The asset was first created, usually the asset's origin.
     pub const CREATED: &str = "c2pa.created";
+
     /// Areas of the asset's "editorial" content were cropped out.
     pub const CROPPED: &str = "c2pa.cropped";
+
     /// Changes using drawing tools including brushes or eraser.
     pub const DRAWING: &str = "c2pa.drawing";
+
     /// Generalized actions that affect the "editorial" meaning of the content.
     pub const EDITED: &str = "c2pa.edited";
+
     /// Changes to appearance with applied filters, styles, etc.
     pub const FILTERED: &str = "c2pa.filtered";
+
     /// An existing asset was opened and is being set as the `parentOf` ingredient.
     pub const OPENED: &str = "c2pa.opened";
+
     /// Changes to the direction and position of content.
     pub const ORIENTATION: &str = "c2pa.orientation";
+
     /// Added/Placed a `componentOf` ingredient into the asset.
     pub const PLACED: &str = "c2pa.placed";
+
     /// Asset is released to a wider audience.
     pub const PUBLISHED: &str = "c2pa.published";
+
+    /// Repackage from one container to another.
+    ///
     /// A conversion of one packaging or container format to another. Content may be repackaged without transcoding.
     /// Does not include any adjustments that would affect the "editorial" meaning of the content.
     pub const REPACKAGED: &str = "c2pa.repackaged";
+
     /// Changes to content dimensions and/or file size
     pub const RESIZED: &str = "c2pa.resized";
-    /// A direct conversion of one encoding to another, including resolution scaling, bitrate adjustment and encoding format change.
+
+    /// Direct conversion of one encoding to another.
+    ///
+    /// This included resolution scaling, bitrate adjustment and encoding format change.
     /// Does not include any adjustments that would affect the "editorial" meaning of the content.
     pub const TRANSCODED: &str = "c2pa.transcoded";
+
     /// Something happened, but the claim_generator cannot specify what.
     pub const UNKNOWN: &str = "c2pa.unknown";
 }
@@ -130,8 +148,9 @@ pub struct Action {
 
     /// This is NOT the instanceID in the spec
     /// It is now deprecated but was previously used to map the action to an ingredient
-    #[serde(rename = "instanceId", skip_serializing)] // this should never be written to CBOR
     #[deprecated(since = "0.37.0", note = "Use `org.cai.ingredientIds` instead")]
+    #[serde(skip_serializing)]
+    #[serde(alias = "instanceId", alias = "instanceID")]
     instance_id: Option<String>,
 
     /// Additional parameters of the action. These vary by the type of action.

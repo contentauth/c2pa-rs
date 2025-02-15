@@ -125,7 +125,7 @@ impl ValidationStatus {
 
     /// Returns `true` if this has a successful validation code.
     pub fn passed(&self) -> bool {
-        is_success(&self.code)
+        self.kind != LogKind::Failure
     }
 
     /// Returns the LogKind for this validation status.
@@ -282,6 +282,8 @@ pub fn validation_results_for_store(
 
 // TODO: Does this still need to be public? (I do see one reference in the JS SDK.)
 
+/// Get the validation status for a store.
+///
 /// Given a `Store` and a `StatusTracker`, return `ValidationStatus` items for each
 /// item in the tracker which reflect errors in the active manifest or which would not
 /// be reported as a validation error for any ingredient.
