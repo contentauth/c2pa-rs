@@ -12,7 +12,7 @@
 // each license.
 
 use async_trait::async_trait;
-use c2pa::{AsyncDynamicAssertion, DynamicAssertion, PreliminaryClaim};
+use c2pa::{AsyncDynamicAssertion, DynamicAssertion, DynamicAssertionContent, PreliminaryClaim};
 use serde_bytes::ByteBuf;
 
 use super::{CredentialHolder, IdentityBuilderError};
@@ -50,8 +50,8 @@ impl DynamicAssertion for IdentityAssertionBuilder {
         "cawg.identity".to_string()
     }
 
-    fn reserve_size(&self) -> usize {
-        self.credential_holder.reserve_size()
+    fn reserve_size(&self) -> c2pa::Result<usize> {
+        Ok(self.credential_holder.reserve_size())
         // TO DO: Credential holder will state reserve size for signature.
         // Add additional size for CBOR wrapper outside signature.
     }
@@ -61,7 +61,7 @@ impl DynamicAssertion for IdentityAssertionBuilder {
         _label: &str,
         size: Option<usize>,
         claim: &PreliminaryClaim,
-    ) -> c2pa::Result<Vec<u8>> {
+    ) -> c2pa::Result<DynamicAssertionContent> {
         // TO DO: Better filter for referenced assertions.
         // For now, just require hard binding.
 
@@ -120,8 +120,8 @@ impl AsyncDynamicAssertion for AsyncIdentityAssertionBuilder {
         "cawg.identity".to_string()
     }
 
-    fn reserve_size(&self) -> usize {
-        self.credential_holder.reserve_size()
+    fn reserve_size(&self) -> c2pa::Result<usize> {
+        Ok(self.credential_holder.reserve_size())
         // TO DO: Credential holder will state reserve size for signature.
         // Add additional size for CBOR wrapper outside signature.
     }
@@ -131,7 +131,7 @@ impl AsyncDynamicAssertion for AsyncIdentityAssertionBuilder {
         _label: &str,
         size: Option<usize>,
         claim: &PreliminaryClaim,
-    ) -> c2pa::Result<Vec<u8>> {
+    ) -> c2pa::Result<DynamicAssertionContent> {
         // TO DO: Better filter for referenced assertions.
         // For now, just require hard binding.
 
@@ -158,7 +158,7 @@ fn finalize_identity_assertion(
     signer_payload: SignerPayload,
     size: Option<usize>,
     signature_result: Result<Vec<u8>, IdentityBuilderError>,
-) -> c2pa::Result<Vec<u8>> {
+) -> c2pa::Result<DynamicAssertionContent> {
     // TO DO: Think through how errors map into c2pa::Error.
     let signature = signature_result.map_err(|e| c2pa::Error::BadParam(e.to_string()))?;
 
@@ -202,5 +202,5 @@ fn finalize_identity_assertion(
         assert_eq!(assertion_size, assertion_cbor.len());
     }
 
-    Ok(assertion_cbor)
+    Ok(DynamicAssertionContent::Cbor(assertion_cbor))
 }
