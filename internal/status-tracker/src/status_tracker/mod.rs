@@ -22,6 +22,9 @@ pub trait StatusTracker: Debug + Send {
     /// Return the current list of validation log items.
     fn logged_items(&self) -> &[LogItem];
 
+    /// Return the mutable list of validation log items.
+    fn logged_items_mut(&mut self) -> &mut [LogItem];
+
     /// Appends the contents of another [`StatusTracker`] to this list of
     /// validation log items.
     fn append(&mut self, other: &impl StatusTracker) {
@@ -79,6 +82,16 @@ pub trait StatusTracker: Debug + Send {
                 false
             }
         })
+    }
+
+    /// Keeps track of the current ingredient URI, if any.
+    ///
+    /// The current URI may be added to any log items that are created.
+    fn push_ingredient_uri<S: Into<String>>(&mut self, _uri: S) {}
+
+    /// Removes the current ingredient URI, if any.
+    fn pop_ingredient_uri(&mut self) -> Option<String> {
+        None
     }
 }
 

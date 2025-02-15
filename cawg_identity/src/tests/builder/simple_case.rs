@@ -19,9 +19,12 @@ use serde_json::json;
 use wasm_bindgen_test::wasm_bindgen_test;
 
 use crate::{
-    builder::{IdentityAssertionBuilder, IdentityAssertionSigner},
-    tests::fixtures::{NaiveCredentialHolder, NaiveSignatureVerifier},
-    IdentityAssertion,
+    builder::{
+        AsyncIdentityAssertionBuilder, AsyncIdentityAssertionSigner, IdentityAssertionBuilder,
+        IdentityAssertionSigner,
+    },
+    tests::fixtures::{NaiveAsyncCredentialHolder, NaiveCredentialHolder, NaiveSignatureVerifier},
+    IdentityAssertion, ToCredentialSummary,
 };
 
 const TEST_IMAGE: &[u8] = include_bytes!("../../../../sdk/tests/fixtures/CA.jpg");
@@ -30,6 +33,9 @@ const TEST_THUMBNAIL: &[u8] = include_bytes!("../../../../sdk/tests/fixtures/thu
 #[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
 async fn simple_case() {
+    // NOTE: This needs to be async for now because the verification side is
+    // async-only.
+
     let format = "image/jpeg";
     let mut source = Cursor::new(TEST_IMAGE);
     let mut dest = Cursor::new(Vec::new());
@@ -47,6 +53,56 @@ async fn simple_case() {
 
     let nch = NaiveCredentialHolder {};
     let iab = IdentityAssertionBuilder::for_credential_holder(nch);
+    signer.add_identity_assertion(iab);
+
+    builder
+        .sign(&signer, format, &mut source, &mut dest)
+        .unwrap();
+
+    // Read back the Manifest that was generated.
+    dest.rewind().unwrap();
+
+    let manifest_store = Reader::from_stream(format, &mut dest).unwrap();
+    assert_eq!(manifest_store.validation_status(), None);
+
+    let manifest = manifest_store.active_manifest().unwrap();
+    let mut ia_iter = IdentityAssertion::from_manifest(manifest);
+
+    // Should find exactly one identity assertion.
+    let ia = ia_iter.next().unwrap().unwrap();
+    dbg!(&ia);
+
+    assert!(ia_iter.next().is_none());
+
+    // And that identity assertion should be valid for this manifest.
+    let nsv = NaiveSignatureVerifier {};
+    let naive_credential = ia.validate(manifest, &nsv).await.unwrap();
+
+    let nc_summary = naive_credential.to_summary();
+    let nc_json = serde_json::to_string(&nc_summary).unwrap();
+    assert_eq!(nc_json, "{}");
+}
+
+#[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+async fn simple_case_async() {
+    let format = "image/jpeg";
+    let mut source = Cursor::new(TEST_IMAGE);
+    let mut dest = Cursor::new(Vec::new());
+
+    let mut builder = Builder::from_json(&manifest_json()).unwrap();
+    builder
+        .add_ingredient_from_stream(parent_json(), format, &mut source)
+        .unwrap();
+
+    builder
+        .add_resource("thumbnail.jpg", Cursor::new(TEST_THUMBNAIL))
+        .unwrap();
+
+    let mut signer = AsyncIdentityAssertionSigner::from_test_credentials(SigningAlg::Ps256);
+
+    let nch = NaiveAsyncCredentialHolder {};
+    let iab = AsyncIdentityAssertionBuilder::for_credential_holder(nch);
     signer.add_identity_assertion(iab);
 
     builder
@@ -71,7 +127,11 @@ async fn simple_case() {
 
     // And that identity assertion should be valid for this manifest.
     let nsv = NaiveSignatureVerifier {};
-    ia.validate(manifest, &nsv).await.unwrap();
+    let naive_credential = ia.validate(manifest, &nsv).await.unwrap();
+
+    let nc_summary = naive_credential.to_summary();
+    let nc_json = serde_json::to_string(&nc_summary).unwrap();
+    assert_eq!(nc_json, "{}");
 }
 
 fn manifest_json() -> String {

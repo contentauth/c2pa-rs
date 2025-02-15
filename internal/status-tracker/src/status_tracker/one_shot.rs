@@ -36,4 +36,8 @@ impl StatusTracker for OneShotStatusTracker {
         self.logged_items.push(log_item);
         Err(err)
     }
+
+    fn logged_items_mut(&mut self) -> &mut [LogItem] {
+        &mut self.logged_items
+    }
 }

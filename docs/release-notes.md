@@ -27,19 +27,38 @@ The goals of this release are to provide a consistent, flexible, well-tested API
 
 ### Enabling 
 
-<!-- This requirement should go away with actual 1.0 release, right? -->
+These features are now standard and the `unstable_api` feature is no longer used.
 
-To use the new API, enable the `unstable_api` feature; for example:
-
-```
-c2pa = {version="0.39.0", features=["unstable_api"]}
-```
-
-When version 1.0 of the library is released, the new API will become the default, but you will still be able to use the deprecated API by enabling the `v1_api` feature; for example:
+You can still use the deprecated API by enabling the `v1_api` feature; for example:
 
 ```
-c2pa = {version="0.39.0", features=["v1_api"]}
+c2pa = {version="0.45.2", features=["v1_api"]}
 ```
+
+### API Changes for C2PA 2.1
+
+Support for claims as described in the [C2PA 2.1 specification](https://c2pa.org/specifications/specifications/2.1/specs/C2PA_Specification.html#_claims) is experimental at this point and not fully implemented yet. 
+
+`Reader` has a new method: `validation_state()` which returns the a `ValidationState`.
+The `ValidationState` can be `Invalid`, `Valid` or `Trusted`.
+Use this method instead of checking for `validation_status()` = `None`.
+
+`Reader` also now has a `validation_results()` method that returns `ValidationResults`.
+`ValidationResults` are a more complete form of `ValidationStatus` and will return `success`, `informational` and `failure` codes for the active manifest and ingredients. `ValidationStatus` will be deprecated in favor of `ValidationResults`.
+
+The `Manifest` `title` is optional and `format` is not supported in v2 claims, so these methods now return an `Option<String>` and may not appear in serialized JSON.
+
+The `Ingredient` `title` and `format` are optional in v3 ingredients, so these methods now return an `Option<String>` and may not appear in serialized JSON.
+
+`Ingredient` now supports a `validation_results` method and a `validation_results` field.
+
+An `AssetType` assertion is now supported.
+
+A `claim_version` field is now allowed in a manifest definition for `Builder` and, if set to `2` will generate v2 claims.
+
+In v2 claims, the first `action` must be `c2pa.created` or `c2pa.opened`. 
+
+There are many more checks and status codes added for v2 claims.
 
 ## Language binding support
 

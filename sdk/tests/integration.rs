@@ -123,7 +123,7 @@ mod integration_1 {
         parent.set_is_parent();
         // add an action assertion stating that we imported this file
         actions = actions.add_action(
-            Action::new(c2pa_action::EDITED)
+            Action::new(c2pa_action::OPENED)
                 .set_when("2015-06-26T16:43:23+0200")
                 .set_parameter("name".to_owned(), "import")?
                 .set_parameter("identifier".to_owned(), parent.instance_id().to_owned())?,
@@ -250,12 +250,15 @@ mod integration_1 {
         Ok(())
     }
 
+    #[cfg(feature = "v1_api")]
     struct PlacedCallback {
         path: String,
     }
 
+    #[cfg(feature = "v1_api")]
     use c2pa::{Error, Manifest, ManifestPatchCallback};
 
+    #[cfg(feature = "v1_api")]
     impl ManifestPatchCallback for PlacedCallback {
         fn patch_manifest(&self, manifest_store: &[u8]) -> Result<Vec<u8>> {
             use ::jumbf::parser::SuperBox;
@@ -294,7 +297,7 @@ mod integration_1 {
         }
     }
     #[test]
-    #[cfg(feature = "file_io")]
+    #[cfg(all(feature = "file_io", feature = "v1_api"))]
     fn test_placed_manifest() -> Result<()> {
         // set up parent and destination paths
 
@@ -362,7 +365,7 @@ mod integration_1 {
     }
 
     #[test]
-    #[cfg(feature = "file_io")]
+    #[cfg(all(feature = "file_io", feature = "v1_api"))]
     fn test_placed_manifest_bmff() -> Result<()> {
         // set up parent and destination paths
 

@@ -32,6 +32,3 @@ mod openssl;
 
 mod raw_signature;
 mod signing_alg;
-
-#[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
-mod webcrypto;

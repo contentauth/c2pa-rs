@@ -312,7 +312,6 @@ pub fn check_certificate_profile(
     let mut aki_good = false;
     let mut ski_good = false;
     let mut key_usage_good = false;
-    let mut handled_all_critical = true;
     let extended_key_usage_good = match tbscert
         .extended_key_usage()
         .map_err(|_| CertificateProfileError::InvalidCertificate)?
@@ -417,20 +416,7 @@ pub fn check_certificate_profile(
             ParsedExtension::CRLNumber(_) => (),
             ParsedExtension::ReasonCode(_) => (),
             ParsedExtension::InvalidityDate(_) => (),
-
-            ParsedExtension::Unparsed => {
-                if e.critical {
-                    // Unhandled critical extension.
-                    handled_all_critical = false;
-                }
-            }
-
-            _ => {
-                if e.critical {
-                    // Unhandled critical extension.
-                    handled_all_critical = false;
-                }
-            }
+            _ => (),
         }
     }
 
@@ -438,7 +424,7 @@ pub fn check_certificate_profile(
     ski_good = if tbscert.is_ca() { ski_good } else { true };
 
     // Check all flags.
-    if aki_good && ski_good && key_usage_good && extended_key_usage_good && handled_all_critical {
+    if aki_good && ski_good && key_usage_good && extended_key_usage_good {
         Ok(())
     } else {
         log_item!(
