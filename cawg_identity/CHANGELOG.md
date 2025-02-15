@@ -6,6 +6,13 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 The format of this changelog is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.9.0](https://github.com/contentauth/c2pa-rs/compare/cawg-identity-v0.8.0...cawg-identity-v0.9.0)
+_15 February 2025_
+
+### Added
+
+* Add support for DynamicAssertions in JSON format (#924)
+
 ## [0.8.0](https://github.com/contentauth/c2pa-rs/compare/cawg-identity-v0.7.0...cawg-identity-v0.8.0)
 _12 February 2025_
 
