@@ -2097,7 +2097,7 @@ impl Store {
                     final_assertions.push(User::new(&label, &data).to_assertion()?);
                 }
                 DynamicAssertionContent::Binary(format, data) => {
-                    // todo:: support for pushing binary assertions here
+                    todo!("Binary dynamic assertions not yet supported");
                 }
             }
         }
