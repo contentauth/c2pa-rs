@@ -681,7 +681,7 @@ impl Block {
                     0xf9 => Ok(Block::GraphicControlExtension(
                         GraphicControlExtension::from_stream(stream)?,
                     )),
-                    0x21 => Ok(Block::PlainTextExtension(PlainTextExtension::from_stream(
+                    0x01 => Ok(Block::PlainTextExtension(PlainTextExtension::from_stream(
                         stream,
                     )?)),
                     ext_label => Err(Error::InvalidAsset(format!(
