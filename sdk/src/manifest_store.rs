@@ -30,7 +30,7 @@ use crate::{
     jumbf::labels::{manifest_label_from_uri, to_absolute_uri, to_relative_uri},
     store::Store,
     validation_results::ValidationResults,
-    validation_status::{validation_results_for_store, ValidationStatus},
+    validation_status::ValidationStatus,
     Error, Manifest, Result,
 };
 
@@ -183,7 +183,7 @@ impl ManifestStore {
         validation_log: &impl StatusTracker,
         #[cfg(feature = "file_io")] resource_path: Option<&Path>,
     ) -> ManifestStore {
-        let mut validation_results = validation_results_for_store(&store, validation_log);
+        let mut validation_results = ValidationResults::from_store(&store, validation_log);
 
         let mut manifest_store = ManifestStore::new();
         manifest_store.active_manifest = store.provenance_label();
@@ -220,7 +220,7 @@ impl ManifestStore {
         validation_log: &impl StatusTracker,
         #[cfg(feature = "file_io")] resource_path: Option<&Path>,
     ) -> ManifestStore {
-        let mut validation_results = validation_results_for_store(&store, validation_log);
+        let mut validation_results = ValidationResults::from_store(&store, validation_log);
 
         let mut manifest_store = ManifestStore::new();
         manifest_store.active_manifest = store.provenance_label();
@@ -250,10 +250,6 @@ impl ManifestStore {
         manifest_store.validation_results = Some(validation_results);
 
         manifest_store
-    }
-
-    pub(crate) fn store(&self) -> &Store {
-        &self.store
     }
 
     /// Creates a new Manifest Store from a Manifest

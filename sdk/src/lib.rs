@@ -148,6 +148,7 @@ pub(crate) mod jumbf;
 
 pub(crate) mod manifest;
 pub(crate) mod manifest_assertion;
+#[cfg(feature = "v1_api")]
 pub(crate) mod manifest_store;
 pub(crate) mod manifest_store_report;
 #[allow(dead_code)]

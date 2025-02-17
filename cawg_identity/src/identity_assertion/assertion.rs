@@ -161,8 +161,8 @@ impl IdentityAssertion {
     ///
     /// [`ManifestStore`]: c2pa::ManifestStore
     #[cfg(feature = "v1_api")]
-    pub async fn summarize_manifest_store<SV: SignatureVerifier>(
-        store: &c2pa::ManifestStore,
+    pub async fn summarize_reader<SV: SignatureVerifier>(
+        reader: &c2pa::Reader,
         verifier: &SV,
     ) -> impl Serialize {
         // NOTE: We can't write this using .map(...).collect() because there are async
@@ -174,7 +174,7 @@ impl IdentityAssertion {
             >,
         > = BTreeMap::new();
 
-        for (id, manifest) in store.manifests() {
+        for (id, manifest) in reader.manifests() {
             let report = Self::summarize_all_impl(manifest, verifier).await;
             reports.insert(id.clone(), report);
         }
