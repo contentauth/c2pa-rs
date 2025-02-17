@@ -121,6 +121,7 @@ pub use manifest::{Manifest, SignatureInfo};
 pub use manifest_assertion::{ManifestAssertion, ManifestAssertionKind};
 #[cfg(feature = "v1_api")]
 pub use manifest_store::ManifestStore;
+#[cfg(feature = "v1_api")]
 pub use manifest_store_report::ManifestStoreReport;
 pub use reader::Reader;
 pub use resource_store::{ResourceRef, ResourceStore};

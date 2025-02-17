@@ -11,14 +11,13 @@
 // specific language governing permissions and limitations under
 // each license.
 
+#[cfg(all(feature = "v1_api", feature = "file_io"))]
+use std::fs;
+#[cfg(feature = "file_io")]
+use std::path::{Path, PathBuf};
 use std::{
     collections::HashMap,
     io::{Cursor, Read, Seek},
-};
-#[cfg(feature = "file_io")]
-use std::{
-    fs,
-    path::{Path, PathBuf},
 };
 
 use async_generic::async_generic;
@@ -38,7 +37,7 @@ use crate::jumbf_io::save_jumbf_to_memory;
 use crate::jumbf_io::{
     get_file_extension, get_supported_file_extension, load_jumbf_from_file, save_jumbf_to_file,
 };
-#[cfg(feature = "file_io")]
+#[cfg(all(feature = "v1_api", feature = "file_io"))]
 use crate::jumbf_io::{object_locations, remove_jumbf_from_file};
 use crate::{
     assertion::{
@@ -308,6 +307,7 @@ impl Store {
     /// may be updated to reflect is position in the manifest Store
     /// if there are conflicting label names.  The function
     /// will return the label of the claim used
+    #[cfg(all(feature = "v1_api", feature = "file_io"))]
     pub fn commit_update_manifest(&mut self, mut claim: Claim) -> Result<String> {
         claim.set_update_manifest(true);
 
@@ -767,11 +767,13 @@ impl Store {
     }
 
     /// Convert this claims store to a JUMBF box.
+    #[allow(unused)] // used in tests
     pub fn to_jumbf(&self, signer: &dyn Signer) -> Result<Vec<u8>> {
         self.to_jumbf_internal(signer.reserve_size())
     }
 
     /// Convert this claims store to a JUMBF box.
+    #[cfg(feature = "v1_api")]
     pub fn to_jumbf_async(&self, signer: &dyn AsyncSigner) -> Result<Vec<u8>> {
         self.to_jumbf_internal(signer.reserve_size())
     }
@@ -1540,7 +1542,7 @@ impl Store {
     }
 
     // generate a list of AssetHashes based on the location of objects in the file
-    #[cfg(feature = "file_io")]
+    #[cfg(all(feature = "v1_api", feature = "file_io"))]
     fn generate_data_hashes(
         asset_path: &Path,
         alg: &str,
@@ -1742,7 +1744,7 @@ impl Store {
     }
 
     // move or copy data from source to dest
-    #[cfg(feature = "file_io")]
+    #[cfg(all(feature = "v1_api", feature = "file_io"))]
     fn move_or_copy(source: &Path, dest: &Path) -> Result<()> {
         // copy temp file to asset
         std::fs::rename(source, dest)
@@ -1752,7 +1754,7 @@ impl Store {
     }
 
     // copy output and possibly the external manifest to final destination
-    #[cfg(feature = "file_io")]
+    #[cfg(all(feature = "v1_api", feature = "file_io"))]
     fn copy_c2pa_to_output(source: &Path, dest: &Path, remote_type: RemoteManifest) -> Result<()> {
         match remote_type {
             RemoteManifest::NoRemote => Store::move_or_copy(source, dest)?,
@@ -2588,7 +2590,7 @@ impl Store {
     }
 
     /// Embed the claims store as jumbf into an asset. Updates XMP with provenance record.
-    #[cfg(feature = "file_io")]
+    #[cfg(all(feature = "v1_api", feature = "file_io"))]
     pub fn save_to_asset(
         &mut self,
         asset_path: &Path,
@@ -2642,7 +2644,7 @@ impl Store {
     }
 
     /// Embed the claims store as jumbf into an asset using an async signer. Updates XMP with provenance record.
-    #[cfg(feature = "file_io")]
+    #[cfg(all(feature = "v1_api", feature = "file_io"))]
     pub async fn save_to_asset_async(
         &mut self,
         asset_path: &Path,
@@ -2995,7 +2997,7 @@ impl Store {
         ))
     }
 
-    #[cfg(feature = "file_io")]
+    #[cfg(all(feature = "v1_api", feature = "file_io"))]
     fn start_save(
         &mut self,
         asset_path: &Path,
@@ -3302,6 +3304,7 @@ impl Store {
     }
 
     /// Return Store from in memory asset
+    #[cfg(any(feature = "file_io", feature = "v1_api"))]
     fn load_cai_from_memory(
         asset_type: &str,
         data: &[u8],
@@ -3383,7 +3386,7 @@ impl Store {
     ///
     /// in_path -  path to source file
     /// validation_log - optional vec to contain addition info about the asset
-    #[cfg(feature = "file_io")]
+    #[cfg(all(feature = "v1_api", feature = "file_io"))]
     fn load_cai_from_file(
         in_path: &Path,
         validation_log: &mut impl StatusTracker,
@@ -3401,7 +3404,7 @@ impl Store {
     /// asset_path: path to input asset
     /// verify: determines whether to verify the contents of the provenance claim.  Must be set true to use validation_log
     /// validation_log: If present all found errors are logged and returned, otherwise first error causes exit and is returned  
-    #[cfg(feature = "file_io")]
+    #[cfg(all(feature = "v1_api", feature = "file_io"))]
     pub fn load_from_asset(
         asset_path: &Path,
         verify: bool,
@@ -3423,6 +3426,7 @@ impl Store {
             })
     }
 
+    #[cfg(feature = "v1_api")]
     pub fn get_store_from_memory(
         asset_type: &str,
         data: &[u8],
@@ -3438,6 +3442,7 @@ impl Store {
     /// Returns embedded remote manifest URL if available
     /// asset_type: extensions or mime type of the data
     /// data: byte array containing the asset
+    #[allow(unused)] // we don't use this anywhere now, but we should!
     pub fn get_remote_manifest_url(asset_type: &str, data: &[u8]) -> Option<String> {
         let mut buf_reader = Cursor::new(data);
 
@@ -3466,6 +3471,7 @@ impl Store {
     /// data: reference to bytes of the the file
     /// verify: if true will run verification checks when loading
     /// validation_log: If present all found errors are logged and returned, otherwise first error causes exit and is returned
+    #[cfg(feature = "v1_api")]
     pub fn load_from_memory(
         asset_type: &str,
         data: &[u8],
@@ -3532,7 +3538,7 @@ impl Store {
         let mut init_seg_data = Vec::new();
         init_segment.read_to_end(&mut init_seg_data)?;
 
-        Store::get_store_from_memory(asset_type, &init_seg_data, validation_log).and_then(|store| {
+        Self::load_cai_from_memory(asset_type, &init_seg_data, validation_log).and_then(|store| {
             // verify the store
             if verify {
                 // verify store and claims
@@ -3553,6 +3559,7 @@ impl Store {
     /// stream: reference to initial segment asset
     /// fragment: reference to fragment asset
     /// validation_log: If present all found errors are logged and returned, otherwise first error causes exit and is returned
+    #[allow(unused)] // todo: we don't use this anywhere now, but we should!
     #[async_generic()]
     pub fn load_fragment_from_stream(
         format: &str,
@@ -3617,6 +3624,7 @@ impl Store {
     /// fragment: reference to bytes of the fragment to validate
     /// verify: if true will run verification checks when loading
     /// validation_log: If present all found errors are logged and returned, otherwise first error causes exit and is returned
+    #[cfg(feature = "v1_api")]
     pub async fn load_fragment_from_memory_async(
         asset_type: &str,
         init_segment: &[u8],
@@ -4255,7 +4263,7 @@ pub mod tests {
         assert_eq!(claim2_label, c3.unwrap().label());
 
         // Do we generate JUMBF
-        let jumbf_bytes = store.to_jumbf_async(&signer).unwrap();
+        let jumbf_bytes = store.to_jumbf_internal(signer.reserve_size()).unwrap();
         assert!(!jumbf_bytes.is_empty());
 
         // write to new file

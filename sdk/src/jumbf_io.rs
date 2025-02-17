@@ -282,7 +282,7 @@ pub fn load_jumbf_from_file<P: AsRef<Path>>(in_path: P) -> Result<Vec<u8>> {
     }
 }
 
-#[cfg(feature = "file_io")]
+#[cfg(all(feature = "v1_api", feature = "file_io"))]
 pub(crate) fn object_locations(in_path: &Path) -> Result<Vec<HashObjectPositions>> {
     let ext = get_file_extension(in_path).ok_or(Error::UnsupportedType)?;
 

@@ -33,11 +33,12 @@ use crate::{
     claim::ClaimAssetData,
     error::{Error, Result},
     jumbf::labels::{manifest_label_from_uri, to_absolute_uri, to_relative_uri},
+    manifest_store_report::ManifestStoreReport,
     settings::get_settings_value,
     store::Store,
     validation_results::{ValidationResults, ValidationState},
     validation_status::ValidationStatus,
-    Manifest, ManifestStoreReport,
+    Manifest,
 };
 
 /// A reader for the manifest store.

@@ -268,7 +268,6 @@ impl ManifestStore {
     }
 
     /// Generate a Store from a format string and bytes.
-    #[cfg(feature = "v1_api")]
     #[deprecated(since = "0.38.0", note = "Please use Reader::from_stream() instead")]
     #[cfg(feature = "v1_api")]
     #[async_generic]
