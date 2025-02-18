@@ -161,8 +161,8 @@ impl IdentityAssertion {
     ///
     /// [`ManifestStore`]: c2pa::ManifestStore
     #[cfg(feature = "v1_api")]
-    pub async fn summarize_reader<SV: SignatureVerifier>(
-        reader: &c2pa::Reader,
+    pub async fn summarize_manifest_store<SV: SignatureVerifier>(
+        store: &c2pa::ManifestStore,
         verifier: &SV,
     ) -> impl Serialize {
         // NOTE: We can't write this using .map(...).collect() because there are async
@@ -174,7 +174,7 @@ impl IdentityAssertion {
             >,
         > = BTreeMap::new();
 
-        for (id, manifest) in reader.manifests() {
+        for (id, manifest) in store.manifests() {
             let report = Self::summarize_all_impl(manifest, verifier).await;
             reports.insert(id.clone(), report);
         }
@@ -200,13 +200,9 @@ impl IdentityAssertion {
             >,
         > = BTreeMap::new();
 
-        for manifest in reader.iter_manifests() {
+        for (id, manifest) in reader.manifests() {
             let report = Self::summarize_all_impl(manifest, verifier).await;
-
-            // TO DO: What to do if manifest doesn't have a label?
-            if let Some(label) = manifest.label() {
-                reports.insert(label.to_owned(), report);
-            }
+            reports.insert(id.clone(), report);
         }
 
         IdentityAssertionsForManifestStore::<
