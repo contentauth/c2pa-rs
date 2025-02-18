@@ -1112,7 +1112,7 @@ mod tests {
 
     use c2pa_crypto::raw_signature::SigningAlg;
     use serde_json::json;
-    #[cfg(target_arch = "wasm32")]
+    #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
     use wasm_bindgen_test::*;
 
     use super::*;
@@ -1125,7 +1125,7 @@ mod tests {
         Reader,
     };
 
-    #[cfg(target_arch = "wasm32")]
+    #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
     wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
 
     fn parent_json() -> String {
@@ -1190,7 +1190,7 @@ mod tests {
         .to_string()
     }
 
-    #[cfg(all(feature = "openssl_sign", not(target_arch = "wasm32")))]
+    #[cfg(any(feature = "file_io", feature = "openssl_sign"))]
     const TEST_IMAGE_CLEAN: &[u8] = include_bytes!("../tests/fixtures/IMG_0003.jpg");
     const TEST_IMAGE: &[u8] = include_bytes!("../tests/fixtures/CA.jpg");
     const TEST_THUMBNAIL: &[u8] = include_bytes!("../tests/fixtures/thumbnail.jpg");
@@ -1329,6 +1329,7 @@ mod tests {
         builder.to_archive(&mut zipped).unwrap();
 
         // write the zipped stream to a file for debugging
+        #[cfg(not(target_os = "wasi"))] // target directory is outside of sandbox
         std::fs::write("../target/test.zip", zipped.get_ref()).unwrap();
 
         // unzip the manifest builder from the zipped stream
@@ -1357,8 +1358,10 @@ mod tests {
     #[test]
     #[cfg(feature = "file_io")]
     fn test_builder_sign_file() {
+        use crate::utils::io_utils::tempdirectory;
+
         let source = "tests/fixtures/CA.jpg";
-        let dir = tempfile::tempdir().unwrap();
+        let dir = tempdirectory().unwrap();
         let dest = dir.path().join("test_file.jpg");
 
         let mut builder = Builder::from_json(&manifest_json()).unwrap();
@@ -1452,8 +1455,12 @@ mod tests {
     }
 
     #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
-    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    #[cfg_attr(
+        all(target_arch = "wasm32", not(target_os = "wasi")),
+        wasm_bindgen_test
+    )]
     #[cfg_attr(not(any(target_arch = "wasm32", feature = "openssl_sign")), ignore)]
+    #[cfg_attr(target_os = "wasi", wstd::test)]
     async fn test_builder_remote_sign() {
         let format = "image/jpeg";
         let mut source = Cursor::new(TEST_IMAGE);
@@ -1584,7 +1591,11 @@ mod tests {
     }
 
     #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
-    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    #[cfg_attr(
+        all(target_arch = "wasm32", not(target_os = "wasi")),
+        wasm_bindgen_test
+    )]
+    #[cfg_attr(target_os = "wasi", wstd::test)]
     #[cfg(any(
         target_arch = "wasm32",
         all(feature = "openssl_sign", feature = "file_io")

@@ -21,7 +21,7 @@ mod common;
 use common::{compare_stream_to_known_good, fixtures_path, test_signer};
 
 #[test]
-#[cfg_attr(not(any(target_arch = "wasm32", feature = "openssl")), ignore)]
+#[cfg(all(feature = "add_thumbnails", feature = "file_io"))]
 fn test_builder_ca_jpg() -> Result<()> {
     let manifest_def = std::fs::read_to_string(fixtures_path("simple_manifest.json"))?;
     let mut builder = Builder::from_json(&manifest_def)?;
@@ -61,11 +61,11 @@ fn test_builder_riff() -> Result<()> {
 #[test]
 #[cfg(feature = "file_io")]
 fn test_builder_fragmented() -> Result<()> {
-    use tempfile::tempdir;
+    use common::tempdirectory;
 
     let manifest_def = include_str!("fixtures/simple_manifest.json");
     let mut builder = Builder::from_json(manifest_def)?;
-    let tempdir = tempdir().expect("temp dir");
+    let tempdir = tempdirectory().expect("temp dir");
     let output_path = tempdir.into_path();
     let mut init_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     init_path.push("tests/fixtures/bunny/**/BigBuckBunny_2s_init.mp4");

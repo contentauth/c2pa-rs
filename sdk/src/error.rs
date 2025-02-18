@@ -191,10 +191,10 @@ pub enum Error {
     #[error("required JUMBF box not found")]
     JumbfBoxNotFound,
 
-    #[error("could not fetch the remote manifest")]
+    #[error("could not fetch the remote manifest {0}")]
     RemoteManifestFetch(String),
 
-    #[error("must fetch remote manifests from url")]
+    #[error("must fetch remote manifests from url {0}")]
     RemoteManifestUrl(String),
 
     #[error("stopped because of logged error")]
@@ -282,7 +282,7 @@ pub enum Error {
     JsonError(#[from] serde_json::Error),
 
     #[error(transparent)]
-    #[cfg(all(not(target_arch = "wasm32"), feature = "add_thumbnails"))]
+    #[cfg(feature = "add_thumbnails")]
     ImageError(#[from] image::ImageError),
 
     #[error(transparent)]
