@@ -447,6 +447,14 @@ impl std::fmt::Debug for Reader {
     }
 }
 
+impl TryInto<serde_json::Value> for Reader {
+    type Error = crate::Error;
+
+    fn try_into(self) -> Result<serde_json::Value> {
+        serde_json::to_value(self.manifest_store).map_err(crate::Error::JsonError)
+    }
+}
+
 #[cfg(test)]
 pub mod tests {
     #![allow(clippy::expect_used)]
@@ -524,6 +532,112 @@ pub mod tests {
         assert_eq!(reader.validation_status(), None);
         reader.to_folder("../target/reader_folder")?;
         assert!(std::path::Path::new("../target/reader_folder/manifest.json").exists());
+        Ok(())
+    }
+
+    use c2pa_crypto::base64;
+    use serde_json::Value;
+    fn update_assertions(
+        mut reader_json: Value,
+        labels: &[&str],
+        update: &dyn Fn(&str, &Value) -> Value,
+    ) -> Value {
+        if let Some(manifests) = reader_json
+            .get_mut("manifests")
+            .and_then(|m| m.as_object_mut())
+        {
+            for (_manifest_label, manifest) in manifests.iter_mut() {
+                if let Some(assertions) = manifest
+                    .get_mut("assertions")
+                    .and_then(|a| a.as_array_mut())
+                {
+                    for assertion in assertions.iter_mut() {
+                        if let Some(lbl) = assertion.get("label").and_then(|l| l.as_str()) {
+                            if labels.contains(&lbl) {
+                                if let Some(data) = assertion.get("data") {
+                                    let updated_data = update(lbl, data);
+                                    assertion
+                                        .as_object_mut()
+                                        .unwrap()
+                                        .insert("data".to_string(), updated_data);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        reader_json
+    }
+
+    /// convert any hash field in the value to base64
+    fn hash_to_b64(mut value: Value) -> Value {
+        fn visitor(value: &mut Value) {
+            if let Value::Array(hash_arr) = &value["hash"] {
+                let hash_bytes: Vec<u8> = hash_arr
+                    .iter()
+                    .filter_map(|v| v.as_u64().map(|n| n as u8))
+                    .collect();
+                let hash_str = base64::encode(&hash_bytes);
+                value["hash"] = serde_json::Value::String(hash_str);
+            }
+            match value {
+                Value::Object(obj) => {
+                    for v in obj.values_mut() {
+                        visitor(v);
+                    }
+                }
+                Value::Array(arr) => {
+                    for v in arr.iter_mut() {
+                        visitor(v);
+                    }
+                }
+                _ => {}
+            }
+        }
+        visitor(&mut value);
+        value
+    }
+
+    #[test]
+    #[cfg(feature = "file_io")]
+    fn test_reader_from_file_replace_assertion() -> Result<()> {
+        let reader = Reader::from_file("tests/fixtures/CA.jpg")?;
+
+        let json: serde_json::Value = reader.try_into()?;
+
+        let json = update_assertions(
+            json,
+            &[
+                "cawg.identity",
+                "stds.schema-org.CreativeWork",
+                "c2pa.actions",
+            ],
+            &|label, data| {
+                match label {
+                    "cawg.identity" => serde_json::json!({
+                        "role": "foo",
+                        "identities": []
+                    }),
+                    "stds.schema-org.CreativeWork" => {
+                        let mut data = data.clone();
+                        // insert a new field into the data object
+                        data["role"] = serde_json::json!("investigator");
+                        data
+                    }
+                    "c2pa.actions" => {
+                        let data = data.clone();
+                        hash_to_b64(data)
+                    }
+                    // this should never happen unless you don't handle an assertion in labels
+                    _ => data.clone(),
+                }
+            },
+        );
+
+        // Serialize the updated JSON back to a string
+        let updated_json_str = serde_json::to_string_pretty(&json)?;
+        println!("{}", updated_json_str);
         Ok(())
     }
 }
