@@ -14,14 +14,17 @@
 use c2pa_status_tracker::{
     validation_codes::SIGNING_CREDENTIAL_EXPIRED, DetailedStatusTracker, StatusTracker,
 };
-#[cfg(target_arch = "wasm32")]
+#[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
 use wasm_bindgen_test::wasm_bindgen_test;
 use x509_parser::pem::Pem;
 
 use crate::cose::{check_certificate_profile, CertificateTrustPolicy};
 
 #[test]
-#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+#[cfg_attr(
+    all(target_arch = "wasm32", not(target_os = "wasi")),
+    wasm_bindgen_test
+)]
 fn expired_cert() {
     let ctp = CertificateTrustPolicy::default();
     let mut validation_log = DetailedStatusTracker::default();
@@ -41,7 +44,10 @@ fn expired_cert() {
 }
 
 #[test]
-#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+#[cfg_attr(
+    all(target_arch = "wasm32", not(target_os = "wasi")),
+    wasm_bindgen_test
+)]
 fn cert_algorithms() {
     let ctp = CertificateTrustPolicy::default();
 

@@ -21,10 +21,8 @@ use std::{
 };
 
 use async_trait::async_trait;
-#[cfg(any(feature = "openssl_sign", target_arch = "wasm32"))]
-use c2pa_crypto::cose::TimeStampStorage;
 use c2pa_crypto::{
-    cose::CertificateTrustPolicy,
+    cose::{CertificateTrustPolicy, TimeStampStorage},
     raw_signature::{AsyncRawSigner, RawSignerError, SigningAlg},
     time_stamp::{AsyncTimeStampProvider, TimeStampError},
 };
@@ -190,6 +188,11 @@ pub fn create_test_store() -> Result<Store> {
 
 /// returns a path to a file in the fixtures folder
 pub fn fixture_path(file_name: &str) -> PathBuf {
+    // File paths are relative to directory specified in dir argument.
+    // This assumes `wasmtime --dir .`
+    #[cfg(target_os = "wasi")]
+    let mut path = PathBuf::from("/");
+    #[cfg(not(target_os = "wasi"))]
     let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     path.push("tests/fixtures");
     path.push(file_name);
@@ -385,107 +388,6 @@ impl crate::signer::RemoteSigner for TempRemoteSigner {
         10000
     }
 }
-
-/* todo: This test should be replaced by a rust_native signer if desired to sign from wasm
-#[cfg(target_arch = "wasm32")]
-struct WebCryptoSigner {
-    signing_alg: SigningAlg,
-    signing_alg_name: String,
-    certs: Vec<Vec<u8>>,
-    key: Vec<u8>,
-}
-
-#[cfg(target_arch = "wasm32")]
-impl WebCryptoSigner {
-    pub fn new(alg: &str, cert: &str, key: &str) -> Self {
-        static START_CERTIFICATE: &str = "-----BEGIN CERTIFICATE-----";
-        static END_CERTIFICATE: &str = "-----END CERTIFICATE-----";
-        static START_KEY: &str = "-----BEGIN PRIVATE KEY-----";
-        static END_KEY: &str = "-----END PRIVATE KEY-----";
-
-        let mut name = alg.to_owned().to_uppercase();
-        name.insert(2, '-');
-
-        let key = key
-            .replace("\n", "")
-            .replace(START_KEY, "")
-            .replace(END_KEY, "");
-        let key = c2pa_crypto::base64::decode(&key).unwrap();
-
-        let certs = cert
-            .replace("\n", "")
-            .replace(START_CERTIFICATE, "")
-            .split(END_CERTIFICATE)
-            .map(|x| c2pa_crypto::base64::decode(x).unwrap())
-            .collect();
-
-        Self {
-            signing_alg: alg.parse().unwrap(),
-            signing_alg_name: name,
-            certs,
-            key,
-        }
-    }
-}
-
-#[cfg(target_arch = "wasm32")]
-#[async_trait::async_trait(?Send)]
-impl AsyncSigner for WebCryptoSigner {
-    fn alg(&self) -> SigningAlg {
-        self.signing_alg
-    }
-
-    fn certs(&self) -> Result<Vec<Vec<u8>>> {
-        Ok(self.certs.clone())
-    }
-
-    async fn sign(&self, claim_bytes: Vec<u8>) -> crate::error::Result<Vec<u8>> {
-        use c2pa_crypto::raw_signature::webcrypto::WindowOrWorker;
-        use js_sys::{Array, Object, Reflect, Uint8Array};
-        use wasm_bindgen_futures::JsFuture;
-        use web_sys::CryptoKey;
-        let context = WindowOrWorker::new().unwrap();
-        let crypto = context.subtle_crypto().unwrap();
-
-        let mut data = claim_bytes.clone();
-        let promise = crypto
-            .digest_with_str_and_u8_array("SHA-256", &mut data)
-            .unwrap();
-        let result = JsFuture::from(promise).await.unwrap();
-        let mut digest = Uint8Array::new(&result).to_vec();
-
-        let key = Uint8Array::new_with_length(self.key.len() as u32);
-        key.copy_from(&self.key);
-        let usages = Array::new();
-        usages.push(&"sign".into());
-        let alg = Object::new();
-        Reflect::set(&alg, &"name".into(), &"ECDSA".into()).unwrap();
-        Reflect::set(&alg, &"namedCurve".into(), &"P-256".into()).unwrap();
-
-        let promise = crypto
-            .import_key_with_object("pkcs8", &key, &alg, true, &usages)
-            .unwrap();
-        let key: CryptoKey = JsFuture::from(promise).await.unwrap().into();
-
-        let alg = Object::new();
-        Reflect::set(&alg, &"name".into(), &"ECDSA".into()).unwrap();
-        Reflect::set(&alg, &"hash".into(), &"SHA-256".into()).unwrap();
-        let promise = crypto
-            .sign_with_object_and_u8_array(&alg, &key, &mut digest)
-            .unwrap();
-        let result = JsFuture::from(promise).await.unwrap();
-        Ok(Uint8Array::new(&result).to_vec())
-    }
-
-    fn reserve_size(&self) -> usize {
-        10000
-    }
-
-    async fn send_timestamp_request(&self, _: &[u8]) -> Option<Result<Vec<u8>>> {
-        None
-    }
-}
-*/
 
 /// Create a [`RemoteSigner`] instance that can be used for testing purposes.
 ///

@@ -21,7 +21,6 @@ use std::{
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use conv::ValueFrom;
 use riff::*;
-use tempfile::Builder;
 
 use crate::{
     asset_io::{
@@ -31,7 +30,7 @@ use crate::{
     },
     error::{Error, Result},
     utils::{
-        io_utils::stream_len,
+        io_utils::{stream_len, tempfile_builder},
         xmp_inmemory_utils::{add_provenance, MIN_XMP},
     },
 };
@@ -363,10 +362,7 @@ impl AssetIO for RiffIO {
     fn save_cai_store(&self, asset_path: &Path, store_bytes: &[u8]) -> Result<()> {
         let mut input_stream = File::open(asset_path)?;
 
-        let mut temp_file = Builder::new()
-            .prefix("c2pa_temp")
-            .rand_bytes(5)
-            .tempfile()?;
+        let mut temp_file = tempfile_builder("c2pa_temp")?;
 
         self.write_cai(&mut input_stream, &mut temp_file, store_bytes)?;
 
@@ -632,11 +628,10 @@ pub mod tests {
 
     use std::panic;
 
-    use tempfile::tempdir;
-
     use super::*;
     use crate::utils::{
         hash_utils::vec_compare,
+        io_utils::tempdirectory,
         test::{fixture_path, temp_dir_path},
         xmp_inmemory_utils::extract_provenance,
     };
@@ -647,7 +642,7 @@ pub mod tests {
         let source = fixture_path("sample1.wav");
 
         let mut success = false;
-        if let Ok(temp_dir) = tempdir() {
+        if let Ok(temp_dir) = tempdirectory() {
             let output = temp_dir_path(&temp_dir, "sample1-wav.wav");
 
             if let Ok(_size) = std::fs::copy(source, &output) {
@@ -685,7 +680,7 @@ pub mod tests {
         let mut source = File::open(fixture_path("sample1.wav")).unwrap();
 
         let riff_io = RiffIO::new("wav");
-        if let Ok(temp_dir) = tempdir() {
+        if let Ok(temp_dir) = tempdirectory() {
             let output = temp_dir_path(&temp_dir, "sample1-wav.wav");
 
             let mut output_stream = File::create(&output).unwrap();
@@ -706,7 +701,7 @@ pub mod tests {
         let source = fixture_path("sample1.wav");
 
         let mut success = false;
-        if let Ok(temp_dir) = tempdir() {
+        if let Ok(temp_dir) = tempdirectory() {
             let output = temp_dir_path(&temp_dir, "sample1-wav.wav");
 
             if let Ok(_size) = std::fs::copy(source, &output) {
@@ -735,7 +730,7 @@ pub mod tests {
     fn test_remove_c2pa() {
         let source = fixture_path("sample1.wav");
 
-        let temp_dir = tempdir().unwrap();
+        let temp_dir = tempdirectory().unwrap();
         let output = temp_dir_path(&temp_dir, "sample1-wav.wav");
 
         std::fs::copy(source, &output).unwrap();
@@ -767,7 +762,7 @@ pub mod tests {
         let source = fixture_path("test_xmp.webp");
 
         let mut success = false;
-        if let Ok(temp_dir) = tempdir() {
+        if let Ok(temp_dir) = tempdirectory() {
             let output = temp_dir_path(&temp_dir, "test_xmp.webp");
 
             std::fs::copy(source, &output).unwrap();
@@ -803,7 +798,7 @@ pub mod tests {
         let source = fixture_path("test.webp");
 
         let mut success = false;
-        if let Ok(temp_dir) = tempdir() {
+        if let Ok(temp_dir) = tempdirectory() {
             let output = temp_dir_path(&temp_dir, "test.webp");
 
             std::fs::copy(source, &output).unwrap();
@@ -839,7 +834,7 @@ pub mod tests {
         let source = fixture_path("test_lossless.webp");
 
         let mut success = false;
-        if let Ok(temp_dir) = tempdir() {
+        if let Ok(temp_dir) = tempdirectory() {
             let output = temp_dir_path(&temp_dir, "test_lossless.webp");
 
             std::fs::copy(source, &output).unwrap();

@@ -12,7 +12,7 @@
 // each license.
 
 use asn1_rs::{oid, Oid};
-#[cfg(target_arch = "wasm32")]
+#[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
 use wasm_bindgen_test::wasm_bindgen_test;
 use x509_parser::{extensions::ExtendedKeyUsage, pem::Pem};
 
@@ -22,14 +22,20 @@ use crate::{
 };
 
 #[test]
-#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+#[cfg_attr(
+    all(target_arch = "wasm32", not(target_os = "wasi")),
+    wasm_bindgen_test
+)]
 fn impl_debug() {
     let ctp = CertificateTrustPolicy::new();
     let _ = format!("{ctp:#?}");
 }
 
 #[test]
-#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+#[cfg_attr(
+    all(target_arch = "wasm32", not(target_os = "wasi")),
+    wasm_bindgen_test
+)]
 fn new() {
     let ctp = CertificateTrustPolicy::new();
 
@@ -52,7 +58,10 @@ fn new() {
 }
 
 #[test]
-#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+#[cfg_attr(
+    all(target_arch = "wasm32", not(target_os = "wasi")),
+    wasm_bindgen_test
+)]
 fn default() {
     let ctp = CertificateTrustPolicy::default();
 
@@ -78,7 +87,10 @@ fn default() {
 }
 
 #[test]
-#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+#[cfg_attr(
+    all(target_arch = "wasm32", not(target_os = "wasi")),
+    wasm_bindgen_test
+)]
 fn clear() {
     let mut ctp = CertificateTrustPolicy::default();
     ctp.clear();
@@ -102,7 +114,10 @@ fn clear() {
 }
 
 #[test]
-#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+#[cfg_attr(
+    all(target_arch = "wasm32", not(target_os = "wasi")),
+    wasm_bindgen_test
+)]
 fn add_valid_ekus_err_bad_utf8() {
     let mut ctp = CertificateTrustPolicy::new();
     ctp.add_valid_ekus(&[128, 0]);
@@ -126,28 +141,40 @@ fn add_valid_ekus_err_bad_utf8() {
 }
 
 #[test]
-#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+#[cfg_attr(
+    all(target_arch = "wasm32", not(target_os = "wasi")),
+    wasm_bindgen_test
+)]
 fn add_trust_anchors_err_bad_pem() {
     let mut ctp = CertificateTrustPolicy::new();
     assert!(ctp.add_trust_anchors(BAD_PEM.as_bytes()).is_err());
 }
 
 #[test]
-#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+#[cfg_attr(
+    all(target_arch = "wasm32", not(target_os = "wasi")),
+    wasm_bindgen_test
+)]
 fn add_end_entity_credentials_err_bad_pem() {
     let mut ctp = CertificateTrustPolicy::new();
     assert!(ctp.add_end_entity_credentials(BAD_PEM.as_bytes()).is_err());
 }
 
 #[test]
-#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+#[cfg_attr(
+    all(target_arch = "wasm32", not(target_os = "wasi")),
+    wasm_bindgen_test
+)]
 fn err_to_string() {
     let ice = InvalidCertificateError("foo".to_string());
     assert_eq!(ice.to_string(), "Unable to parse certificate list: foo");
 }
 
 #[test]
-#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+#[cfg_attr(
+    all(target_arch = "wasm32", not(target_os = "wasi")),
+    wasm_bindgen_test
+)]
 fn err_debug() {
     let ice = InvalidCertificateError("foo".to_string());
     assert_eq!(
@@ -237,16 +264,22 @@ fn test_trust_store() {
     let ps256 = test_signer(SigningAlg::Ps256);
     let ps384 = test_signer(SigningAlg::Ps384);
     let ps512 = test_signer(SigningAlg::Ps512);
+    #[cfg(not(target_arch = "wasm32"))]
     let es256 = test_signer(SigningAlg::Es256);
+    #[cfg(not(target_arch = "wasm32"))]
     let es384 = test_signer(SigningAlg::Es384);
+    #[cfg(not(target_arch = "wasm32"))]
     let es512 = test_signer(SigningAlg::Es512);
     let ed25519 = test_signer(SigningAlg::Ed25519);
 
     let ps256_certs = ps256.cert_chain().unwrap();
     let ps384_certs = ps384.cert_chain().unwrap();
     let ps512_certs = ps512.cert_chain().unwrap();
+    #[cfg(not(target_arch = "wasm32"))]
     let es256_certs = es256.cert_chain().unwrap();
+    #[cfg(not(target_arch = "wasm32"))]
     let es384_certs = es384.cert_chain().unwrap();
+    #[cfg(not(target_arch = "wasm32"))]
     let es512_certs = es512.cert_chain().unwrap();
     let ed25519_certs = ed25519.cert_chain().unwrap();
 
@@ -256,10 +289,13 @@ fn test_trust_store() {
         .unwrap();
     ctp.check_certificate_trust(&ps512_certs[1..], &ps512_certs[0], None)
         .unwrap();
+    #[cfg(not(target_arch = "wasm32"))]
     ctp.check_certificate_trust(&es256_certs[1..], &es256_certs[0], None)
         .unwrap();
+    #[cfg(not(target_arch = "wasm32"))]
     ctp.check_certificate_trust(&es384_certs[1..], &es384_certs[0], None)
         .unwrap();
+    #[cfg(not(target_arch = "wasm32"))]
     ctp.check_certificate_trust(&es512_certs[1..], &es512_certs[0], None)
         .unwrap();
     ctp.check_certificate_trust(&ed25519_certs[1..], &ed25519_certs[0], None)
@@ -267,7 +303,11 @@ fn test_trust_store() {
 }
 
 #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
-#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+#[cfg_attr(
+    all(target_arch = "wasm32", not(target_os = "wasi")),
+    wasm_bindgen_test
+)]
+#[cfg_attr(target_os = "wasi", wstd::test)]
 async fn test_trust_store_async() {
     let ctp = CertificateTrustPolicy::default();
 
@@ -309,16 +349,22 @@ fn test_broken_trust_chain() {
     let ps256 = test_signer(SigningAlg::Ps256);
     let ps384 = test_signer(SigningAlg::Ps384);
     let ps512 = test_signer(SigningAlg::Ps512);
+    #[cfg(not(target_arch = "wasm32"))]
     let es256 = test_signer(SigningAlg::Es256);
+    #[cfg(not(target_arch = "wasm32"))]
     let es384 = test_signer(SigningAlg::Es384);
+    #[cfg(not(target_arch = "wasm32"))]
     let es512 = test_signer(SigningAlg::Es512);
     let ed25519 = test_signer(SigningAlg::Ed25519);
 
     let ps256_certs = ps256.cert_chain().unwrap();
     let ps384_certs = ps384.cert_chain().unwrap();
     let ps512_certs = ps512.cert_chain().unwrap();
+    #[cfg(not(target_arch = "wasm32"))]
     let es256_certs = es256.cert_chain().unwrap();
+    #[cfg(not(target_arch = "wasm32"))]
     let es384_certs = es384.cert_chain().unwrap();
+    #[cfg(not(target_arch = "wasm32"))]
     let es512_certs = es512.cert_chain().unwrap();
     let ed25519_certs = ed25519.cert_chain().unwrap();
 
@@ -347,18 +393,21 @@ fn test_broken_trust_chain() {
         CertificateTrustError::CertificateNotTrusted
     );
 
+    #[cfg(not(target_arch = "wasm32"))]
     assert_eq!(
         ctp.check_certificate_trust(&es256_certs[2..], &es256_certs[0], None)
             .unwrap_err(),
         CertificateTrustError::CertificateNotTrusted
     );
 
+    #[cfg(not(target_arch = "wasm32"))]
     assert_eq!(
         ctp.check_certificate_trust(&es384_certs[2..], &es384_certs[0], None)
             .unwrap_err(),
         CertificateTrustError::CertificateNotTrusted
     );
 
+    #[cfg(not(target_arch = "wasm32"))]
     assert_eq!(
         ctp.check_certificate_trust(&es512_certs[2..], &es512_certs[0], None)
             .unwrap_err(),
@@ -373,7 +422,11 @@ fn test_broken_trust_chain() {
 }
 
 #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
-#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+#[cfg_attr(
+    all(target_arch = "wasm32", not(target_os = "wasi")),
+    wasm_bindgen_test
+)]
+#[cfg_attr(target_os = "wasi", wstd::test)]
 async fn test_broken_trust_chain_async() {
     let ctp = CertificateTrustPolicy::default();
 
@@ -465,16 +518,22 @@ fn test_allowed_list() {
     let ps256 = test_signer(SigningAlg::Ps256);
     let ps384 = test_signer(SigningAlg::Ps384);
     let ps512 = test_signer(SigningAlg::Ps512);
+    #[cfg(not(target_arch = "wasm32"))]
     let es256 = test_signer(SigningAlg::Es256);
+    #[cfg(not(target_arch = "wasm32"))]
     let es384 = test_signer(SigningAlg::Es384);
+    #[cfg(not(target_arch = "wasm32"))]
     let es512 = test_signer(SigningAlg::Es512);
     let ed25519 = test_signer(SigningAlg::Ed25519);
 
     let ps256_certs = ps256.cert_chain().unwrap();
     let ps384_certs = ps384.cert_chain().unwrap();
     let ps512_certs = ps512.cert_chain().unwrap();
+    #[cfg(not(target_arch = "wasm32"))]
     let es256_certs = es256.cert_chain().unwrap();
+    #[cfg(not(target_arch = "wasm32"))]
     let es384_certs = es384.cert_chain().unwrap();
+    #[cfg(not(target_arch = "wasm32"))]
     let es512_certs = es512.cert_chain().unwrap();
     let ed25519_certs = ed25519.cert_chain().unwrap();
 
@@ -484,10 +543,13 @@ fn test_allowed_list() {
         .unwrap();
     ctp.check_certificate_trust(&ps512_certs[1..], &ps512_certs[0], None)
         .unwrap();
+    #[cfg(not(target_arch = "wasm32"))]
     ctp.check_certificate_trust(&es256_certs[1..], &es256_certs[0], None)
         .unwrap();
+    #[cfg(not(target_arch = "wasm32"))]
     ctp.check_certificate_trust(&es384_certs[1..], &es384_certs[0], None)
         .unwrap();
+    #[cfg(not(target_arch = "wasm32"))]
     ctp.check_certificate_trust(&es512_certs[1..], &es512_certs[0], None)
         .unwrap();
     ctp.check_certificate_trust(&ed25519_certs[1..], &ed25519_certs[0], None)
@@ -495,7 +557,11 @@ fn test_allowed_list() {
 }
 
 #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
-#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+#[cfg_attr(
+    all(target_arch = "wasm32", not(target_os = "wasi")),
+    wasm_bindgen_test
+)]
+#[cfg_attr(target_os = "wasi", wstd::test)]
 async fn test_allowed_list_async() {
     let mut ctp = CertificateTrustPolicy::new();
 
@@ -579,7 +645,11 @@ fn test_allowed_list_hashes() {
 }
 
 #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
-#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+#[cfg_attr(
+    all(target_arch = "wasm32", not(target_os = "wasi")),
+    wasm_bindgen_test
+)]
+#[cfg_attr(target_os = "wasi", wstd::test)]
 async fn test_allowed_list_hashes_async() {
     let mut ctp = CertificateTrustPolicy::new();
 

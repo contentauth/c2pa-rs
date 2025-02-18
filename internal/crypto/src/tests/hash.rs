@@ -11,13 +11,16 @@
 // specific language governing permissions and limitations under
 // each license.
 
-#[cfg(target_arch = "wasm32")]
+#[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
 use wasm_bindgen_test::wasm_bindgen_test;
 
 use crate::hash::{sha1, sha256};
 
 #[test]
-#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+#[cfg_attr(
+    all(target_arch = "wasm32", not(target_os = "wasi")),
+    wasm_bindgen_test
+)]
 fn test_sha1() {
     let hash = sha1(b"test message");
     assert_eq!(
@@ -30,7 +33,10 @@ fn test_sha1() {
 }
 
 #[test]
-#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+#[cfg_attr(
+    all(target_arch = "wasm32", not(target_os = "wasi")),
+    wasm_bindgen_test
+)]
 fn test_sha256() {
     let hash = sha256(b"test message");
     assert_eq!(

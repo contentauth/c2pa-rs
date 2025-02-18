@@ -22,7 +22,6 @@ use std::{
 use atree::{Arena, Token};
 use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
 use conv::ValueFrom;
-use tempfile::Builder;
 
 use crate::{
     assertions::{BmffMerkleMap, ExclusionsMap},
@@ -33,7 +32,7 @@ use crate::{
     error::{Error, Result},
     utils::{
         hash_utils::{vec_compare, HashRange},
-        io_utils::{stream_len, ReaderUtils},
+        io_utils::{stream_len, tempfile_builder, ReaderUtils},
         xmp_inmemory_utils::{add_provenance, MIN_XMP},
     },
 };
@@ -1278,10 +1277,7 @@ impl AssetIO for BmffIO {
             .open(asset_path)
             .map_err(Error::IoError)?;
 
-        let mut temp_file = Builder::new()
-            .prefix("c2pa_temp")
-            .rand_bytes(5)
-            .tempfile()?;
+        let mut temp_file = tempfile_builder("c2pa_temp")?;
 
         self.write_cai(&mut input_stream, &mut temp_file, store_bytes)?;
 
@@ -1300,10 +1296,7 @@ impl AssetIO for BmffIO {
     fn remove_cai_store(&self, asset_path: &Path) -> Result<()> {
         let mut input_file = std::fs::File::open(asset_path)?;
 
-        let mut temp_file = Builder::new()
-            .prefix("c2pa_temp")
-            .rand_bytes(5)
-            .tempfile()?;
+        let mut temp_file = tempfile_builder("c2pa_temp")?;
 
         self.remove_cai_store_from_stream(&mut input_file, &mut temp_file)?;
 
@@ -1842,17 +1835,18 @@ impl RemoteRefEmbed for BmffIO {
         }
     }
 }
+
 #[cfg(test)]
 pub mod tests {
     #![allow(clippy::expect_used)]
     #![allow(clippy::panic)]
     #![allow(clippy::unwrap_used)]
 
-    use tempfile::tempdir;
-
     use super::*;
-    use crate::utils::test::{fixture_path, temp_dir_path};
-
+    use crate::utils::{
+        io_utils::tempdirectory,
+        test::{fixture_path, temp_dir_path},
+    };
     #[cfg(all(feature = "openssl", feature = "file_io"))]
     #[test]
     fn test_read_mp4() {
@@ -1878,7 +1872,7 @@ pub mod tests {
         let data = "some test data";
         let source = fixture_path("video1.mp4");
 
-        let temp_dir = tempdir().unwrap();
+        let temp_dir = tempdirectory().unwrap();
         let output = temp_dir_path(&temp_dir, "video1-out.mp4");
 
         std::fs::copy(source, &output).unwrap();
@@ -1904,7 +1898,7 @@ pub mod tests {
         let source = fixture_path("video1.mp4");
 
         let mut success = false;
-        if let Ok(temp_dir) = tempdir() {
+        if let Ok(temp_dir) = tempdirectory() {
             let output = temp_dir_path(&temp_dir, "mp4_test.mp4");
 
             if let Ok(_size) = std::fs::copy(source, &output) {
@@ -1928,7 +1922,7 @@ pub mod tests {
         let source = fixture_path("video1.mp4");
 
         let mut success = false;
-        if let Ok(temp_dir) = tempdir() {
+        if let Ok(temp_dir) = tempdirectory() {
             let output = temp_dir_path(&temp_dir, "mp4_test.mp4");
 
             if let Ok(_size) = std::fs::copy(&source, &output) {
@@ -1954,7 +1948,7 @@ pub mod tests {
         let source = fixture_path("video1.mp4");
 
         let mut success = false;
-        if let Ok(temp_dir) = tempdir() {
+        if let Ok(temp_dir) = tempdirectory() {
             let output = temp_dir_path(&temp_dir, "mp4_test.mp4");
 
             if let Ok(_size) = std::fs::copy(source, &output) {
@@ -1981,7 +1975,7 @@ pub mod tests {
     fn test_remove_c2pa() {
         let source = fixture_path("video1.mp4");
 
-        let temp_dir = tempdir().unwrap();
+        let temp_dir = tempdirectory().unwrap();
         let output = temp_dir_path(&temp_dir, "mp4_test.mp4");
 
         std::fs::copy(source, &output).unwrap();

@@ -22,6 +22,8 @@ use std::{
 
 use c2pa::{format_from_path, Reader, Result};
 pub use compare_readers::compare_readers;
+#[allow(unused)] // different code path for WASI
+use tempfile::{tempdir, TempDir};
 #[allow(unused)]
 pub use test_signer::test_signer;
 
@@ -109,4 +111,13 @@ pub fn check_validation_status(reader: &Reader, code: &str) {
     } else {
         panic!("Expected to find validation status");
     }
+}
+
+#[allow(unused)]
+pub fn tempdirectory() -> Result<TempDir> {
+    #[cfg(target_os = "wasi")]
+    return TempDir::new_in("/").map_err(c2pa::Error::IoError);
+
+    #[cfg(not(target_os = "wasi"))]
+    return tempdir().map_err(c2pa::Error::IoError);
 }

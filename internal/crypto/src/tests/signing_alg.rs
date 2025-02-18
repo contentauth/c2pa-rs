@@ -11,13 +11,16 @@
 // specific language governing permissions and limitations under
 // each license.
 
-#[cfg(target_arch = "wasm32")]
+#[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
 use wasm_bindgen_test::wasm_bindgen_test;
 
 use crate::raw_signature::{SigningAlg, UnknownAlgorithmError};
 
 #[test]
-#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+#[cfg_attr(
+    all(target_arch = "wasm32", not(target_os = "wasi")),
+    wasm_bindgen_test
+)]
 fn alg_from_str() {
     assert_eq!("es256".parse(), Ok(SigningAlg::Es256));
     assert_eq!("es384".parse(), Ok(SigningAlg::Es384));
@@ -32,7 +35,10 @@ fn alg_from_str() {
 }
 
 #[test]
-#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+#[cfg_attr(
+    all(target_arch = "wasm32", not(target_os = "wasi")),
+    wasm_bindgen_test
+)]
 fn signing_alg_impl_display() {
     assert_eq!(format!("{}", SigningAlg::Es256), "es256");
     assert_eq!(format!("{}", SigningAlg::Es384), "es384");
@@ -44,7 +50,10 @@ fn signing_alg_impl_display() {
 }
 
 #[test]
-#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+#[cfg_attr(
+    all(target_arch = "wasm32", not(target_os = "wasi")),
+    wasm_bindgen_test
+)]
 fn err_impl_display() {
     assert_eq!(
         format!("{}", UnknownAlgorithmError("bogus".to_owned())),

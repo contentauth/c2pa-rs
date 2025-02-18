@@ -27,7 +27,6 @@ use img_parts::{
     Bytes, DynImage,
 };
 use serde_bytes::ByteBuf;
-use tempfile::Builder;
 
 use crate::{
     assertions::{BoxMap, C2PA_BOXHASH},
@@ -37,7 +36,10 @@ use crate::{
         RemoteRefEmbedType,
     },
     error::{Error, Result},
-    utils::xmp_inmemory_utils::{add_provenance, MIN_XMP},
+    utils::{
+        io_utils::tempfile_builder,
+        xmp_inmemory_utils::{add_provenance, MIN_XMP},
+    },
 };
 
 static SUPPORTED_TYPES: [&str; 3] = ["jpg", "jpeg", "image/jpeg"];
@@ -481,10 +483,7 @@ impl AssetIO for JpegIO {
             .open(asset_path)
             .map_err(Error::IoError)?;
 
-        let mut temp_file = Builder::new()
-            .prefix("c2pa_temp")
-            .rand_bytes(5)
-            .tempfile()?;
+        let mut temp_file = tempfile_builder("c2pa_temp")?;
 
         self.write_cai(&mut input_stream, &mut temp_file, store_bytes)?;
 
@@ -1120,10 +1119,11 @@ pub mod tests {
 
     use std::io::{Read, Seek};
 
-    #[cfg(target_arch = "wasm32")]
+    #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
     use wasm_bindgen_test::*;
 
     use super::*;
+    use crate::utils::io_utils::tempdirectory;
     #[test]
     fn test_extract_xmp() {
         let contents = Bytes::from_static(b"http://ns.adobe.com/xap/1.0/\0stuff");
@@ -1151,7 +1151,7 @@ pub mod tests {
     fn test_remove_c2pa() {
         let source = crate::utils::test::fixture_path("CA.jpg");
 
-        let temp_dir = tempfile::tempdir().unwrap();
+        let temp_dir = tempdirectory().unwrap();
         let output = crate::utils::test::temp_dir_path(&temp_dir, "CA_test.jpg");
 
         std::fs::copy(source, &output).unwrap();
@@ -1195,7 +1195,7 @@ pub mod tests {
     fn test_xmp_read_write() {
         let source = crate::utils::test::fixture_path("CA.jpg");
 
-        let temp_dir = tempfile::tempdir().unwrap();
+        let temp_dir = tempdirectory().unwrap();
         let output = crate::utils::test::temp_dir_path(&temp_dir, "CA_test.jpg");
 
         std::fs::copy(source, &output).unwrap();
@@ -1223,7 +1223,11 @@ pub mod tests {
     }
 
     #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
-    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    #[cfg_attr(
+        all(target_arch = "wasm32", not(target_os = "wasi")),
+        wasm_bindgen_test
+    )]
+    #[allow(unused)] // not run for WASI
     async fn test_xmp_read_write_stream() {
         let source_bytes = include_bytes!("../../tests/fixtures/CA.jpg");
 
@@ -1273,7 +1277,7 @@ pub mod tests {
             .unwrap();
         let curr_manifest = jpeg_io.read_cai_store(&source).unwrap();
 
-        let temp_dir = tempfile::tempdir().unwrap();
+        let temp_dir = tempdirectory().unwrap();
         let output = crate::utils::test::temp_dir_path(&temp_dir, "CA_test.jpg");
 
         std::fs::copy(source, &output).unwrap();

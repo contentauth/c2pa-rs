@@ -1491,7 +1491,7 @@ impl IngredientOptions for DefaultOptions {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(target_os = "wasi")))]
 mod tests {
     #![allow(clippy::expect_used)]
     #![allow(clippy::unwrap_used)]
@@ -1702,12 +1702,12 @@ mod tests_file_io {
     #![allow(clippy::expect_used)]
     #![allow(clippy::unwrap_used)]
 
-    #[cfg(target_arch = "wasm32")]
+    #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
     use wasm_bindgen_test::*;
 
     use super::*;
     use crate::utils::test::fixture_path;
-    #[cfg(target_arch = "wasm32")]
+    #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
     wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
 
     const NO_MANIFEST_JPEG: &str = "earth_apollo17.jpg";
