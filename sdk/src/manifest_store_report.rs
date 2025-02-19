@@ -26,7 +26,7 @@ use serde_json::Value;
 
 use crate::{
     assertion::AssertionData, claim::Claim, store::Store, validation_results::ValidationResults,
-    validation_status::ValidationStatus, Result,
+    validation_status::ValidationStatus, Result, ValidationState,
 };
 
 /// Low level JSON based representation of Manifest Store - used for debugging
@@ -39,6 +39,7 @@ pub struct ManifestStoreReport {
     #[serde(skip_serializing_if = "Option::is_none")]
     validation_status: Option<Vec<ValidationStatus>>,
     pub(crate) validation_results: Option<ValidationResults>,
+    pub(crate) validation_state: Option<ValidationState>,
 }
 
 impl ManifestStoreReport {
@@ -54,7 +55,18 @@ impl ManifestStoreReport {
             manifests,
             validation_status: None,
             validation_results: None,
+            validation_state: None,
         })
+    }
+
+    pub(crate) fn from_store_with_results(
+        store: &Store,
+        validation_results: &ValidationResults,
+    ) -> Result<Self> {
+        let mut report = Self::from_store(store)?;
+        report.validation_results = Some(validation_results.clone());
+        report.validation_state = Some(validation_results.validation_state());
+        Ok(report)
     }
 
     /// Prints tree view of manifest store

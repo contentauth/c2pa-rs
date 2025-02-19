@@ -45,7 +45,7 @@ use crate::{
     store::Store,
     utils::xmp_inmemory_utils::XmpInfo,
     validation_results::ValidationResults,
-    validation_status::{self, validation_results_for_store, ValidationStatus},
+    validation_status::{self, ValidationStatus},
 };
 
 #[derive(Debug, Default, Deserialize, Serialize)]
@@ -589,7 +589,7 @@ impl Ingredient {
         match result {
             Ok(store) => {
                 // generate validation results from the store
-                let validation_results = validation_results_for_store(&store, validation_log);
+                let validation_results = ValidationResults::from_store(&store, validation_log);
 
                 if let Some(claim) = store.provenance_claim() {
                     // if the parent claim is valid and has a thumbnail, use it

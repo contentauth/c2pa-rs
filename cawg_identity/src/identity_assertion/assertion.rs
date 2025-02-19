@@ -200,13 +200,9 @@ impl IdentityAssertion {
             >,
         > = BTreeMap::new();
 
-        for manifest in reader.iter_manifests() {
+        for (id, manifest) in reader.manifests() {
             let report = Self::summarize_all_impl(manifest, verifier).await;
-
-            // TO DO: What to do if manifest doesn't have a label?
-            if let Some(label) = manifest.label() {
-                reports.insert(label.to_owned(), report);
-            }
+            reports.insert(id.clone(), report);
         }
 
         IdentityAssertionsForManifestStore::<

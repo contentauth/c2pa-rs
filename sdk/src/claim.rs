@@ -81,6 +81,7 @@ static _V2_SPEC_DEPRECATED_ASSERTIONS: [&str; 4] = [
 // Enum to encapsulate the data type of the source asset.  This simplifies
 // having different implementations for functions as a single entry point can be
 // used to handle different data types.
+#[allow(dead_code)] // Bytes and third param in StreamFragment not used without v1_api feature
 pub enum ClaimAssetData<'a> {
     #[cfg(feature = "file_io")]
     Path(&'a Path),

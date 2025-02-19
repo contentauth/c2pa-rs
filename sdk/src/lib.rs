@@ -121,6 +121,7 @@ pub use manifest::{Manifest, SignatureInfo};
 pub use manifest_assertion::{ManifestAssertion, ManifestAssertionKind};
 #[cfg(feature = "v1_api")]
 pub use manifest_store::ManifestStore;
+#[cfg(feature = "v1_api")]
 pub use manifest_store_report::ManifestStoreReport;
 pub use reader::Reader;
 pub use resource_store::{ResourceRef, ResourceStore};
@@ -148,6 +149,7 @@ pub(crate) mod jumbf;
 
 pub(crate) mod manifest;
 pub(crate) mod manifest_assertion;
+#[cfg(feature = "v1_api")]
 pub(crate) mod manifest_store;
 pub(crate) mod manifest_store_report;
 #[allow(dead_code)]

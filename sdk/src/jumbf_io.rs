@@ -282,7 +282,7 @@ pub fn load_jumbf_from_file<P: AsRef<Path>>(in_path: P) -> Result<Vec<u8>> {
     }
 }
 
-#[cfg(feature = "file_io")]
+#[cfg(all(feature = "v1_api", feature = "file_io"))]
 pub(crate) fn object_locations(in_path: &Path) -> Result<Vec<HashObjectPositions>> {
     let ext = get_file_extension(in_path).ok_or(Error::UnsupportedType)?;
 
@@ -329,14 +329,13 @@ where
     }
 }
 
-#[cfg(feature = "file_io")]
 /// removes the C2PA JUMBF from an asset
 /// Note: Use with caution since this deletes C2PA data
 /// It is useful when creating remote manifests from embedded manifests
 ///
 /// path - path to file to be updated
 /// returns Unsupported type or errors from remove_cai_store
-#[allow(dead_code)]
+#[cfg(feature = "file_io")]
 pub fn remove_jumbf_from_file<P: AsRef<Path>>(path: P) -> Result<()> {
     let ext = get_file_extension(path.as_ref()).ok_or(Error::UnsupportedType)?;
     match get_assetio_handler(&ext) {

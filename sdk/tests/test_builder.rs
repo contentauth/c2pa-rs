@@ -18,7 +18,9 @@ use c2pa::{
 };
 
 mod common;
-use common::{compare_stream_to_known_good, fixtures_path, test_signer};
+#[cfg(all(feature = "add_thumbnails", feature = "file_io"))]
+use common::compare_stream_to_known_good;
+use common::{fixtures_path, test_signer};
 
 #[test]
 #[cfg(all(feature = "add_thumbnails", feature = "file_io"))]
