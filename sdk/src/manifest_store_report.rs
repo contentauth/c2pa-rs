@@ -419,7 +419,7 @@ fn b64_tag(mut json: String, tag: &str) -> String {
         if let Some(idx2) = json[index..].find(']') {
             let idx3 = json[index..].find('[').unwrap_or_default(); // ok since we just found it
             let bytes: Vec<u8> =
-                serde_json::from_slice(json[index + idx3..index + idx2 + 1].as_bytes())
+                serde_json::from_slice(&json.as_bytes()[index + idx3..index + idx2 + 1])
                     .unwrap_or_default();
             json = format!(
                 "{}\"{}\": \"{}\"{}",
