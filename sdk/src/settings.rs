@@ -293,14 +293,9 @@ pub(crate) fn get_settings() -> Option<Settings> {
             let source = c.clone(); // clone required since deserialize consumes object
             let cloned_config = Config::builder().add_source(source).build();
 
-            if let Ok(cloned_config) = cloned_config {
-                match cloned_config.try_deserialize::<Settings>() {
-                    Ok(s) => Some(s),
-                    Err(_) => None,
-                }
-            } else {
-                None
-            }
+            cloned_config
+                .ok()
+                .and_then(|s| s.try_deserialize::<Settings>().ok())
         }
         Err(_) => None,
     }

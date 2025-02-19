@@ -86,10 +86,7 @@ pub fn get_thumbnail_instance(label: &str) -> Option<usize> {
             let components: Vec<&str> = label.split("__").collect();
             if components.len() == 2 {
                 let subparts: Vec<&str> = components[1].split('.').collect();
-                match subparts[0].parse::<usize>() {
-                    Ok(i) => Some(i),
-                    Err(_e) => None,
-                }
+                subparts[0].parse::<usize>().ok()
             } else {
                 Some(0)
             }
