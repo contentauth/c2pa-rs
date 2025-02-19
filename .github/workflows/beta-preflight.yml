@@ -1,0 +1,236 @@
+# IMPORTANT: Run this manually shortly before a new Rust stable release
+# is expected. This job should be kept the same as ci.yml, except for the
+# following changes:
+#
+# * All instances of `stable` should be replaced with `beta`.
+# * All jobs that require Rust `nightly` should be deleted.
+
+name: Preflight with Rust beta
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - beta-preflight
+
+jobs:
+  tests:
+    name: Unit tests
+
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest, ubuntu-latest]
+        rust_version: [beta]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ matrix.rust_version }}
+          components: llvm-tools-preview
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@cargo-llvm-cov
+
+      - name: Generate code coverage
+        env:
+          RUST_BACKTRACE: "1"
+        run: cargo llvm-cov --lib --all-features --lcov --output-path lcov.info
+
+  tests-cli:
+    name: Unit tests (c2patool)
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest, ubuntu-latest]
+        rust_version: [beta]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ matrix.rust_version }}
+          components: llvm-tools-preview
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@cargo-llvm-cov
+
+      - name: Generate code coverage
+        env:
+          RUST_BACKTRACE: "1"
+        run: cargo llvm-cov --bins --all-features --lcov --output-path lcov.info
+
+  doc-tests:
+    name: Doc tests (requires nightly Rust)
+    # TODO: Remove this once cargo-llvm-cov can run doc tests and generate
+    # coverage. (This requires a bug fix that is only available in nightly Rust.)
+    # Watch https://github.com/taiki-e/cargo-llvm-cov/issues/2
+    # for progress.
+
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest, ubuntu-latest]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@beta
+      # - name: Install Rust toolchain
+      #   uses: dtolnay/rust-toolchain@nightly
+      #   with:
+      #     components: llvm-tools-preview
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@cargo-llvm-cov
+
+      # Disabling code coverage for doc tests due to a new bug in Rust nightly
+      # as of 2025-01-08. Will investigate later to see if there's a repro case.
+      # Meanwhile, simply run the tests so we know if there are any failing
+      # doc tests.
+
+      - name: Run doc tests (COVERAGE DISABLED)
+        run:
+          cargo test --workspace --all-features --doc
+      
+      # - name: Generate code coverage
+      #   env:
+      #     RUST_BACKTRACE: "1"
+      #   run: cargo llvm-cov --workspace --all-features --lcov --doctests --output-path lcov.info
+
+      # Tokens aren't available for PRs originating from forks,
+      # so we don't attempt to upload code coverage in that case.
+      # - name: Upload code coverage results
+      #   if: |
+      #     github.event_name != 'pull_request' ||
+      #     github.event.pull_request.author_association == 'COLLABORATOR' ||
+      #     github.event.pull_request.author_association == 'MEMBER' ||
+      #     github.event.pull_request.user.login == 'dependabot[bot]'
+      #   uses: codecov/codecov-action@v5
+      #   with:
+      #     token: ${{ secrets.CODECOV_TOKEN }}
+      #     fail_ci_if_error: true
+      #     verbose: true
+
+  cargo-check:
+    name: Default features build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@beta
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: "`cargo check` with default features"
+        run: cargo check
+        
+  tests-cross:
+    name: Unit tests
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [aarch64-unknown-linux-gnu]
+        rust_version: [beta]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ matrix.rust_version }}
+          targets: ${{ matrix.target }}
+
+      - name: Install cross-compilation toolset
+        run: cargo install cross
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+
+      # Note that we do not run code coverage because
+      # it isn't readily accessible from cross-compilation
+      # environment. (A PR to fix this would be welcomed!)
+
+      - name: Run unit tests (cross build)
+        run: cross test --all-targets --all-features --target ${{ matrix.target }}
+
+  tests-wasm:
+    name: Unit tests (WASM)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@beta
+
+      - name: Install wasm-pack
+        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+
+      - name: Run Wasm tests (c2pa-crypto)
+        run: wasm-pack test --chrome --headless
+        working-directory: ./internal/crypto
+
+      - name: Run Wasm tests (c2pa-status-tracker)
+        run: wasm-pack test --chrome --headless
+        working-directory: ./internal/status-tracker
+
+      - name: Run Wasm tests (c2pa-rs)
+        run: wasm-pack test --chrome --headless
+        working-directory: ./sdk
+
+      - name: Run Wasm tests (cawg-identity)
+        run: wasm-pack test --chrome --headless
+        working-directory: ./cawg_identity
+
+  clippy_check:
+    name: Clippy
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@beta
+        with:
+          components: clippy
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: Run Clippy
+        run: cargo clippy --all-features --all-targets -- -Dwarnings
