@@ -1476,7 +1476,7 @@ mod tests {
             .add("thumbnail.jpg", TEST_THUMBNAIL.to_vec())
             .unwrap();
 
-        // sign the ManifestStoreBuilder and write it to the output stream
+        // sign the Builder and write it to the output stream
         let signer = crate::utils::test::temp_async_remote_signer();
         builder
             .sign_async(signer.as_ref(), format, &mut source, &mut dest)
@@ -1511,7 +1511,7 @@ mod tests {
             .add_resource("thumbnail.jpg", Cursor::new(TEST_THUMBNAIL))
             .unwrap();
 
-        // sign the ManifestStoreBuilder and write it to the output stream
+        // sign the Builder and write it to the output stream
         let signer = test_signer(SigningAlg::Ps256);
         let manifest_data = builder
             .sign(signer.as_ref(), "image/jpeg", &mut source, &mut dest)
@@ -1680,7 +1680,7 @@ mod tests {
         zipped.rewind().unwrap();
         let mut builder = Builder::from_archive(&mut zipped).unwrap();
 
-        // sign the ManifestStoreBuilder and write it to the output stream
+        // sign the Builder and write it to the output stream
         let signer = test_signer(SigningAlg::Ps256);
         let _manifest_data = builder
             .sign(signer.as_ref(), "image/jpeg", &mut source, &mut dest)
@@ -1866,6 +1866,7 @@ mod tests {
             .expect("builder sign");
 
         output.set_position(0);
+        println!("output len: {}", output.get_ref().len());
         let reader = Reader::from_stream("jpeg", &mut output).expect("from_bytes");
         println!("reader = {reader}");
         let m = reader.active_manifest().unwrap();

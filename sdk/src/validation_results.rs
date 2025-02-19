@@ -12,12 +12,15 @@
 // each license.
 
 pub use c2pa_status_tracker::validation_codes::*;
-use c2pa_status_tracker::LogKind;
+use c2pa_status_tracker::{LogKind, StatusTracker};
 #[cfg(feature = "json_schema")]
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::validation_status::ValidationStatus;
+use crate::{
+    assertion::AssertionBase, assertions::Ingredient, jumbf::labels::manifest_label_from_uri,
+    store::Store, validation_status::ValidationStatus,
+};
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "json_schema", derive(JsonSchema))]
@@ -95,6 +98,75 @@ pub struct ValidationResults {
 }
 
 impl ValidationResults {
+    pub(crate) fn from_store(store: &Store, validation_log: &impl StatusTracker) -> Self {
+        let mut results = ValidationResults::default();
+
+        let mut statuses: Vec<ValidationStatus> = validation_log
+            .logged_items()
+            .iter()
+            .filter_map(ValidationStatus::from_log_item)
+            .collect();
+
+        // Filter out any status that is already captured in an ingredient assertion.
+        if let Some(claim) = store.provenance_claim() {
+            let active_manifest = Some(claim.label().to_string());
+
+            // This closure returns true if the URI references the store's active manifest.
+            let is_active_manifest = |uri: Option<&str>| {
+                uri.is_some_and(|uri| manifest_label_from_uri(uri) == active_manifest)
+            };
+
+            let make_absolute = |i: Ingredient| {
+                // Get a flat list of validation statuses from the ingredient.
+                let validation_status = match i.validation_results {
+                    Some(v) => Some(v.validation_status()),
+                    None => i.validation_status.map(|s| s.to_owned()),
+                };
+
+                // Convert any relative manifest urls found in ingredient validation statuses to absolute.
+                validation_status.map(|mut statuses| {
+                    if let Some(label) = i
+                        .active_manifest
+                        .as_ref()
+                        .or(i.c2pa_manifest.as_ref())
+                        .map(|m| m.url())
+                        .and_then(|uri| manifest_label_from_uri(&uri))
+                    {
+                        for status in &mut statuses {
+                            status.make_absolute(&label)
+                        }
+                    }
+                    statuses
+                })
+            };
+
+            // We only need to do the more detailed filtering if there are any status
+            // reports that reference ingredients.
+            if statuses.iter().any(|s| !is_active_manifest(s.url())) {
+                // Collect all the ValidationStatus records from all the ingredients in the store.
+                // Since we need to process v1,v2 and v3 ingredients, we process all in the same format.
+                let ingredient_statuses: Vec<ValidationStatus> = store
+                    .claims()
+                    .iter()
+                    .flat_map(|c| c.ingredient_assertions())
+                    .filter_map(|a| Ingredient::from_assertion(a).ok())
+                    .filter_map(make_absolute)
+                    .flatten()
+                    .collect();
+
+                // Filter statuses to only contain those from the active manifest and those not found in any ingredient.
+                statuses.retain(|s| {
+                    is_active_manifest(s.url()) || !ingredient_statuses.iter().any(|i| i == s)
+                })
+            }
+            let active_manifest_label = claim.label().to_string();
+            for status in statuses {
+                results.add_status(&active_manifest_label, status);
+            }
+        }
+        results
+    }
+
     /// Returns the [ValidationState] of the manifest store based on the validation results.
     pub fn validation_state(&self) -> ValidationState {
         let mut is_trusted = true; // Assume the state is trusted until proven otherwise

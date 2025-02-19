@@ -16,32 +16,54 @@
 
 #[cfg(feature = "file_io")]
 use std::fs::{read, File};
-use std::io::{Read, Seek, Write};
+use std::{
+    collections::HashMap,
+    io::{Read, Seek, Write},
+};
 
 use async_generic::async_generic;
+use c2pa_crypto::base64;
 use c2pa_status_tracker::DetailedStatusTracker;
 #[cfg(feature = "json_schema")]
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use serde_with::skip_serializing_none;
 
-#[cfg(feature = "file_io")]
-use crate::error::Error;
 use crate::{
     claim::ClaimAssetData,
-    error::Result,
-    manifest_store::ManifestStore,
+    error::{Error, Result},
+    jumbf::labels::{manifest_label_from_uri, to_absolute_uri, to_relative_uri},
+    manifest_store_report::ManifestStoreReport,
     settings::get_settings_value,
     store::Store,
     validation_results::{ValidationResults, ValidationState},
     validation_status::ValidationStatus,
-    Manifest, ManifestStoreReport,
+    Manifest,
 };
 
 /// A reader for the manifest store.
+#[skip_serializing_none]
 #[derive(Serialize, Deserialize)]
 #[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 pub struct Reader {
-    pub(crate) manifest_store: ManifestStore,
+    /// A label for the active (most recent) manifest in the store
+    active_manifest: Option<String>,
+
+    /// A HashMap of Manifests
+    manifests: HashMap<String, Manifest>,
+
+    /// ValidationStatus generated when loading the ManifestStore from an asset
+    validation_status: Option<Vec<ValidationStatus>>,
+
+    /// ValidationStatus generated when loading the ManifestStore from an asset
+    validation_results: Option<ValidationResults>,
+
+    /// The validation state of the manifest store
+    validation_state: Option<ValidationState>,
+
+    #[serde(skip)]
+    /// We keep this around so we can generate a detailed report if needed
+    store: Store,
 }
 
 impl Reader {
@@ -65,16 +87,13 @@ impl Reader {
     /// ```
     #[async_generic()]
     pub fn from_stream(format: &str, mut stream: impl Read + Seek + Send) -> Result<Reader> {
-        let verify = get_settings_value::<bool>("verify.verify_after_reading")?; // defaults to true
-        #[allow(deprecated)]
-        let reader = if _sync {
-            ManifestStore::from_stream(format, &mut stream, verify)
+        let manifest_bytes = Store::load_jumbf_from_stream(format, &mut stream)?;
+
+        if _sync {
+            Self::from_manifest_data_and_stream(&manifest_bytes, format, &mut stream)
         } else {
-            ManifestStore::from_stream_async(format, &mut stream, verify).await
-        }?;
-        Ok(Reader {
-            manifest_store: reader,
-        })
+            Self::from_manifest_data_and_stream_async(&manifest_bytes, format, &mut stream).await
+        }
     }
 
     #[cfg(feature = "file_io")]
@@ -135,8 +154,7 @@ impl Reader {
     /// # WARNING
     /// This function is intended for use in testing. Don't use it in an implementation.
     pub fn from_json(json: &str) -> Result<Reader> {
-        let manifest_store = serde_json::from_str(json)?;
-        Ok(Reader { manifest_store })
+        serde_json::from_str(json).map_err(crate::Error::JsonError)
     }
 
     /// Create a manifest store [`Reader`] from existing `c2pa_data` and a stream.
@@ -163,28 +181,16 @@ impl Reader {
 
         let verify = get_settings_value::<bool>("verify.verify_after_reading")?; // defaults to true
 
-        if _sync {
-            if verify {
-                Store::verify_store(
-                    &store,
-                    &mut ClaimAssetData::Stream(&mut stream, format),
-                    &mut validation_log,
-                )?;
-            }
-        } else {
-            if verify {
-                Store::verify_store_async(
-                    &store,
-                    &mut ClaimAssetData::Stream(&mut stream, format),
-                    &mut validation_log,
-                )
-                .await?;
-            }
+        if verify {
+            let mut asset_data = ClaimAssetData::Stream(&mut stream, format);
+            if _sync {
+                Store::verify_store(&store, &mut asset_data, &mut validation_log)
+            } else {
+                Store::verify_store_async(&store, &mut asset_data, &mut validation_log).await
+            }?;
         }
 
-        Ok(Reader {
-            manifest_store: ManifestStore::from_store(store, &validation_log),
-        })
+        Ok(Self::from_store(store, &validation_log))
     }
 
     /// Create a [`Reader`] from an initial segment and a fragment stream.
@@ -213,17 +219,13 @@ impl Reader {
         if verify {
             let mut fragment = ClaimAssetData::StreamFragment(&mut stream, &mut fragment, format);
             if _sync {
-                // verify store and claims
                 Store::verify_store(&store, &mut fragment, &mut validation_log)
             } else {
-                // verify store and claims
                 Store::verify_store_async(&store, &mut fragment, &mut validation_log).await
             }?;
         };
 
-        Ok(Self {
-            manifest_store: ManifestStore::from_store(store, &validation_log),
-        })
+        Ok(Self::from_store(store, &validation_log))
     }
 
     #[cfg(feature = "file_io")]
@@ -235,15 +237,70 @@ impl Reader {
         fragments: &Vec<std::path::PathBuf>,
     ) -> Result<Reader> {
         let verify = get_settings_value::<bool>("verify.verify_after_reading")?; // defaults to true
-        #[allow(deprecated)]
-        Ok(Reader {
-            manifest_store: ManifestStore::from_fragments(path, fragments, verify)?,
-        })
+
+        let mut validation_log = DetailedStatusTracker::default();
+
+        let asset_type = crate::jumbf_io::get_supported_file_extension(path.as_ref())
+            .ok_or(crate::Error::UnsupportedType)?;
+
+        let mut init_segment = std::fs::File::open(path.as_ref())?;
+
+        match Store::load_from_file_and_fragments(
+            &asset_type,
+            &mut init_segment,
+            fragments,
+            verify,
+            &mut validation_log,
+        ) {
+            Ok(store) => Ok(Self::from_store(store, &validation_log)),
+            Err(e) => Err(e),
+        }
     }
 
     /// Get the manifest store as a JSON string
     pub fn json(&self) -> String {
-        self.manifest_store.to_string()
+        let mut json = serde_json::to_string_pretty(self).unwrap_or_default();
+
+        fn omit_tag(mut json: String, tag: &str) -> String {
+            while let Some(index) = json.find(&format!("\"{tag}\": [")) {
+                if let Some(idx2) = json[index..].find(']') {
+                    json = format!(
+                        "{}\"{}\": \"<omitted>\"{}",
+                        &json[..index],
+                        tag,
+                        &json[index + idx2 + 1..]
+                    );
+                }
+            }
+            json
+        }
+
+        // Make a base64 hash from Vec<u8> values.
+        fn b64_tag(mut json: String, tag: &str) -> String {
+            while let Some(index) = json.find(&format!("\"{tag}\": [")) {
+                if let Some(idx2) = json[index..].find(']') {
+                    let idx3 = json[index..].find('[').unwrap_or_default();
+
+                    let bytes: Vec<u8> =
+                        serde_json::from_slice(json[index + idx3..index + idx2 + 1].as_bytes())
+                            .unwrap_or_default();
+
+                    json = format!(
+                        "{}\"{}\": \"{}\"{}",
+                        &json[..index],
+                        tag,
+                        base64::encode(&bytes),
+                        &json[index + idx2 + 1..]
+                    );
+                }
+            }
+
+            json
+        }
+
+        json = b64_tag(json, "hash");
+        json = omit_tag(json, "pad");
+        json
     }
 
     /// Get the [`ValidationStatus`] array of the manifest store if it exists.
@@ -260,7 +317,7 @@ impl Reader {
     /// let status = reader.validation_status();
     /// ```
     pub fn validation_status(&self) -> Option<&[ValidationStatus]> {
-        self.manifest_store.validation_status()
+        self.validation_status.as_deref()
     }
 
     /// Get the [`ValidationResults`] map of an asset if it exists.
@@ -281,12 +338,12 @@ impl Reader {
     /// let status = reader.validation_results();
     /// ```
     pub fn validation_results(&self) -> Option<&ValidationResults> {
-        self.manifest_store.validation_results()
+        self.validation_results.as_ref()
     }
 
     /// Get the [`ValidationState`] of the manifest store.
     pub fn validation_state(&self) -> ValidationState {
-        if let Some(validation_results) = self.manifest_store.validation_results() {
+        if let Some(validation_results) = self.validation_results() {
             return validation_results.validation_state();
         }
 
@@ -319,24 +376,33 @@ impl Reader {
 
     /// Return the active [`Manifest`], or `None` if there's no active manifest.
     pub fn active_manifest(&self) -> Option<&Manifest> {
-        self.manifest_store.get_active()
+        if let Some(label) = self.active_manifest.as_ref() {
+            self.manifests.get(label)
+        } else {
+            None
+        }
     }
 
     /// Return the active [`Manifest`], or `None` if there's no active manifest.
     pub fn active_label(&self) -> Option<&str> {
-        self.manifest_store.active_label()
+        self.active_manifest.as_deref()
     }
 
     /// Returns an iterator over a collection of [`Manifest`] structs.
     pub fn iter_manifests(&self) -> impl Iterator<Item = &Manifest> + '_ {
-        self.manifest_store.manifests().values()
+        self.manifests.values()
+    }
+
+    /// Returns a reference to the [`Manifest`] collection.
+    pub fn manifests(&self) -> &HashMap<String, Manifest> {
+        &self.manifests
     }
 
     /// Given a label, return the associated [`Manifest`], if it exists.
     /// # Arguments
     /// * `label` - The label of the requested [`Manifest`].
     pub fn get_manifest(&self, label: &str) -> Option<&Manifest> {
-        self.manifest_store.get(label)
+        self.manifests.get(label)
     }
 
     /// Write a resource identified by URI to the given stream.
@@ -362,11 +428,48 @@ impl Reader {
     pub fn resource_to_stream(
         &self,
         uri: &str,
-        mut stream: impl Write + Read + Seek + Send,
+        stream: impl Write + Read + Seek + Send,
     ) -> Result<usize> {
-        self.manifest_store
-            .get_resource(uri, &mut stream)
-            .map(|size| size as usize)
+        // get the manifest referenced by the uri, or the active one if None
+        // add logic to search for local or absolute uri identifiers
+        let (manifest, label) = match manifest_label_from_uri(uri) {
+            Some(label) => (self.manifests.get(&label), label),
+            None => (
+                self.active_manifest(),
+                self.active_label().unwrap_or_default().to_string(),
+            ),
+        };
+        let relative_uri = to_relative_uri(uri);
+        let absolute_uri = to_absolute_uri(&label, uri);
+
+        if let Some(manifest) = manifest {
+            let find_resource = |uri: &str| -> Result<&crate::ResourceStore> {
+                let mut resources = manifest.resources();
+                if !resources.exists(uri) {
+                    // also search ingredients resources to support Reader model
+                    for ingredient in manifest.ingredients() {
+                        if ingredient.resources().exists(uri) {
+                            resources = ingredient.resources();
+                            return Ok(resources);
+                        }
+                    }
+                } else {
+                    return Ok(resources);
+                }
+                Err(Error::ResourceNotFound(uri.to_owned()))
+            };
+            let result = find_resource(&relative_uri);
+            match result {
+                Ok(resource) => resource.write_stream(&relative_uri, stream),
+                Err(_) => match find_resource(&absolute_uri) {
+                    Ok(resource) => resource.write_stream(&absolute_uri, stream),
+                    Err(e) => Err(e),
+                },
+            }
+        } else {
+            Err(Error::ResourceNotFound(uri.to_owned()))
+        }
+        .map(|size| size as usize)
     }
 
     /// Convert a URI to a file path. (todo: move this to utils)
@@ -406,7 +509,7 @@ impl Reader {
     pub fn to_folder<P: AsRef<std::path::Path>>(&self, path: P) -> Result<()> {
         std::fs::create_dir_all(&path)?;
         std::fs::write(path.as_ref().join("manifest.json"), self.json())?;
-        for manifest in self.manifest_store.manifests().values() {
+        for manifest in self.manifests.values() {
             let resources = manifest.resources();
             for (uri, data) in resources.resources() {
                 let id_path = Self::uri_to_path(uri, manifest.label().unwrap_or("unknown"));
@@ -420,13 +523,72 @@ impl Reader {
         }
         Ok(())
     }
+
+    #[async_generic()]
+    fn from_store(store: Store, validation_log: &DetailedStatusTracker) -> Self {
+        let mut validation_results = ValidationResults::from_store(&store, validation_log);
+
+        let active_manifest = store.provenance_label();
+        let mut manifests = HashMap::new();
+
+        for claim in store.claims() {
+            let manifest_label = claim.label();
+            let result = if _sync {
+                #[cfg(feature = "file_io")]
+                {
+                    Manifest::from_store(&store, manifest_label, None)
+                }
+                #[cfg(not(feature = "file_io"))]
+                Manifest::from_store(&store, manifest_label)
+            } else {
+                #[cfg(feature = "file_io")]
+                {
+                    Manifest::from_store_async(&store, manifest_label, None).await
+                }
+                #[cfg(not(feature = "file_io"))]
+                Manifest::from_store_async(&store, manifest_label).await
+            };
+            match result {
+                Ok(manifest) => {
+                    manifests.insert(manifest_label.to_owned(), manifest);
+                }
+                Err(e) => {
+                    validation_results.add_status(manifest_label, ValidationStatus::from_error(&e));
+                }
+            };
+        }
+
+        let validation_state = validation_results.validation_state();
+        Self {
+            active_manifest,
+            manifests,
+            validation_status: validation_results.validation_errors(),
+            validation_results: Some(validation_results),
+            validation_state: Some(validation_state),
+            store,
+        }
+    }
 }
 
 impl Default for Reader {
     fn default() -> Self {
         Self {
-            manifest_store: ManifestStore::new(),
+            active_manifest: None,
+            manifests: HashMap::<String, Manifest>::new(),
+            validation_status: None,
+            validation_results: None,
+            validation_state: None,
+            store: Store::new(),
         }
+    }
+}
+
+/// Convert the Reader to a JSON value.
+impl TryInto<serde_json::Value> for Reader {
+    type Error = Error;
+
+    fn try_into(self) -> Result<serde_json::Value> {
+        serde_json::to_value(self).map_err(Error::JsonError)
     }
 }
 
@@ -440,9 +602,11 @@ impl std::fmt::Display for Reader {
 /// Prints the full debug details of the manifest data.
 impl std::fmt::Debug for Reader {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let mut report = ManifestStoreReport::from_store(self.manifest_store.store())
-            .map_err(|_| std::fmt::Error)?;
-        report.validation_results = self.manifest_store.validation_results().cloned();
+        let report = match self.validation_results() {
+            Some(results) => ManifestStoreReport::from_store_with_results(&self.store, results),
+            None => ManifestStoreReport::from_store(&self.store),
+        }
+        .map_err(|_| std::fmt::Error)?;
         f.write_str(&report.to_string())
     }
 }
@@ -496,7 +660,7 @@ pub mod tests {
         println!("{reader}");
         assert_eq!(reader.validation_status(), None);
         assert_eq!(reader.validation_state(), ValidationState::Valid);
-        assert_eq!(reader.manifest_store.manifests().len(), 3);
+        assert_eq!(reader.manifests.len(), 3);
         Ok(())
     }
 
@@ -506,7 +670,7 @@ pub mod tests {
         let reader =
             Reader::from_stream("image/jpeg", std::io::Cursor::new(IMAGE_COMPLEX_MANIFEST))?;
         assert_eq!(reader.validation_status(), None);
-        assert_eq!(reader.manifest_store.manifests().len(), 3);
+        assert_eq!(reader.manifests.len(), 3);
         let manifest = reader.active_manifest().unwrap();
         let ingredient = manifest.ingredients().iter().next().unwrap();
         let uri = ingredient.thumbnail_ref().unwrap().identifier.clone();

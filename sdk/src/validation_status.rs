@@ -18,13 +18,17 @@
 #![deny(missing_docs)]
 
 pub use c2pa_status_tracker::validation_codes::*;
-use c2pa_status_tracker::{LogItem, LogKind, StatusTracker};
+#[cfg(feature = "v1_api")]
+use c2pa_status_tracker::StatusTracker;
+use c2pa_status_tracker::{LogItem, LogKind};
 use log::debug;
 #[cfg(feature = "json_schema")]
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::{assertion::AssertionBase, assertions::Ingredient, error::Error, jumbf, store::Store};
+#[cfg(feature = "v1_api")]
+use crate::store::Store;
+use crate::{error::Error, jumbf};
 
 /// A `ValidationStatus` struct describes the validation status of a
 /// specific part of a manifest.
@@ -190,94 +194,22 @@ impl ValidationStatus {
             }),
         }
     }
+
+    // converts a validation status url into and absolute URI given the manifest label.
+    pub(crate) fn make_absolute(&mut self, manifest_label: &str) {
+        if let Some(url) = &self.url {
+            if url.starts_with("self#jumbf") {
+                // Some are just labels (i.e. "Cose_Sign1")
+                self.url = Some(jumbf::labels::to_absolute_uri(manifest_label, url));
+            }
+        }
+    }
 }
 
 impl PartialEq for ValidationStatus {
     fn eq(&self, other: &Self) -> bool {
         self.code == other.code && self.url == other.url
     }
-}
-
-use crate::validation_results::ValidationResults;
-/// Given a `Store` and a `StatusTracker`, return `ValidationResultsMap
-pub fn validation_results_for_store(
-    store: &Store,
-    validation_log: &impl StatusTracker,
-) -> ValidationResults {
-    let mut results = ValidationResults::default();
-
-    let mut statuses: Vec<ValidationStatus> = validation_log
-        .logged_items()
-        .iter()
-        .filter_map(ValidationStatus::from_log_item)
-        .collect();
-
-    // Filter out any status that is already captured in an ingredient assertion.
-    if let Some(claim) = store.provenance_claim() {
-        let active_manifest = Some(claim.label().to_string());
-
-        // This closure returns true if the URI references the store's active manifest.
-        let is_active_manifest = |uri: Option<&str>| {
-            uri.is_some_and(|uri| jumbf::labels::manifest_label_from_uri(uri) == active_manifest)
-        };
-
-        let make_absolute = |i: Ingredient| {
-            // Get a flat list of validation statuses from the ingredient.
-            let validation_status = match i.validation_results {
-                Some(v) => Some(v.validation_status()),
-                None => i.validation_status,
-            };
-
-            // Convert any relative manifest urls found in ingredient validation statuses to absolute.
-            validation_status.map(|mut statuses| {
-                if let Some(label) = i
-                    .active_manifest
-                    .as_ref()
-                    .or(i.c2pa_manifest.as_ref())
-                    .map(|m| m.url())
-                    .and_then(|uri| jumbf::labels::manifest_label_from_uri(&uri))
-                {
-                    for status in &mut statuses {
-                        if let Some(url) = &status.url {
-                            if url.starts_with("self#jumbf") {
-                                // Some are just labels (i.e. "Cose_Sign1")
-                                status.url = Some(jumbf::labels::to_absolute_uri(&label, url));
-                            }
-                        }
-                    }
-                }
-                statuses
-            })
-        };
-
-        // We only need to do the more detailed filtering if there are any status
-        // reports that reference ingredients.
-        if statuses
-            .iter()
-            .any(|s| !is_active_manifest(s.url.as_deref()))
-        {
-            // Collect all the ValidationStatus records from all the ingredients in the store.
-            // Since we need to process v1,v2 and v3 ingredients, we process all in the same format.
-            let ingredient_statuses: Vec<ValidationStatus> = store
-                .claims()
-                .iter()
-                .flat_map(|c| c.ingredient_assertions())
-                .filter_map(|a| Ingredient::from_assertion(a).ok())
-                .filter_map(make_absolute)
-                .flatten()
-                .collect();
-
-            // Filter statuses to only contain those from the active manifest and those not found in any ingredient.
-            statuses.retain(|s| {
-                is_active_manifest(s.url.as_deref()) || !ingredient_statuses.iter().any(|i| i == s)
-            })
-        }
-        let active_manifest_label = claim.label().to_string();
-        for status in statuses {
-            results.add_status(&active_manifest_label, status);
-        }
-    }
-    results
 }
 
 // TODO: Does this still need to be public? (I do see one reference in the JS SDK.)
@@ -287,11 +219,13 @@ pub fn validation_results_for_store(
 /// Given a `Store` and a `StatusTracker`, return `ValidationStatus` items for each
 /// item in the tracker which reflect errors in the active manifest or which would not
 /// be reported as a validation error for any ingredient.
+#[cfg(feature = "v1_api")]
 pub fn status_for_store(
     store: &Store,
     validation_log: &impl StatusTracker,
 ) -> Vec<ValidationStatus> {
-    let validation_results = validation_results_for_store(store, validation_log);
+    let validation_results =
+        crate::validation_results::ValidationResults::from_store(store, validation_log);
     validation_results.validation_errors().unwrap_or_default()
 }
 

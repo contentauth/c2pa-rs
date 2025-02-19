@@ -124,14 +124,14 @@ pub fn compare_readers(reader1: &Reader, reader2: &Reader) -> Result<Vec<String>
 }
 
 // creates list of manifests in the order they are first seen from the active manifest
-fn gather_manifests(manifest_store: &Reader, manifest_label: &str, labels: &mut Vec<String>) {
+fn gather_manifests(reader: &Reader, manifest_label: &str, labels: &mut Vec<String>) {
     if !labels.contains(&manifest_label.to_string()) {
         labels.push(manifest_label.to_string());
     }
-    if let Some(manifest) = manifest_store.get_manifest(manifest_label) {
+    if let Some(manifest) = reader.get_manifest(manifest_label) {
         for ingredient in manifest.ingredients() {
             if let Some(label) = ingredient.active_manifest() {
-                gather_manifests(manifest_store, label, labels);
+                gather_manifests(reader, label, labels);
             }
         }
     }
