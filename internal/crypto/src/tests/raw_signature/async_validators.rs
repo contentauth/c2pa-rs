@@ -11,6 +11,7 @@
 // specific language governing permissions and limitations under
 // each license.
 
+#[cfg(not(target_os = "wasi"))]
 use wasm_bindgen_test::wasm_bindgen_test;
 
 use crate::raw_signature::{
@@ -19,7 +20,11 @@ use crate::raw_signature::{
 
 const SAMPLE_DATA: &[u8] = b"some sample content to sign";
 
-#[wasm_bindgen_test]
+#[cfg_attr(
+    all(target_arch = "wasm32", not(target_os = "wasi")),
+    wasm_bindgen_test
+)]
+#[cfg_attr(target_os = "wasi", wstd::test)]
 async fn es256() {
     let signature = include_bytes!("../fixtures/raw_signature/es256.raw_sig");
     let pub_key = include_bytes!("../fixtures/raw_signature/es256.pub_key");
@@ -32,7 +37,11 @@ async fn es256() {
         .unwrap();
 }
 
-#[wasm_bindgen_test]
+#[cfg_attr(
+    all(target_arch = "wasm32", not(target_os = "wasi")),
+    wasm_bindgen_test
+)]
+#[cfg_attr(target_os = "wasi", wstd::test)]
 async fn es256_bad_signature() {
     let mut signature = include_bytes!("../fixtures/raw_signature/es256.raw_sig").to_vec();
     assert_ne!(signature[10], 10);
@@ -51,7 +60,11 @@ async fn es256_bad_signature() {
     );
 }
 
-#[wasm_bindgen_test]
+#[cfg_attr(
+    all(target_arch = "wasm32", not(target_os = "wasi")),
+    wasm_bindgen_test
+)]
+#[cfg_attr(target_os = "wasi", wstd::test)]
 async fn es256_bad_data() {
     let signature = include_bytes!("../fixtures/raw_signature/es256.raw_sig");
     let pub_key = include_bytes!("../fixtures/raw_signature/es256.pub_key");
@@ -70,7 +83,11 @@ async fn es256_bad_data() {
     );
 }
 
-#[wasm_bindgen_test]
+#[cfg_attr(
+    all(target_arch = "wasm32", not(target_os = "wasi")),
+    wasm_bindgen_test
+)]
+#[cfg_attr(target_os = "wasi", wstd::test)]
 async fn es384() {
     let signature = include_bytes!("../fixtures/raw_signature/es384.raw_sig");
     let pub_key = include_bytes!("../fixtures/raw_signature/es384.pub_key");
@@ -83,7 +100,11 @@ async fn es384() {
         .unwrap();
 }
 
-#[wasm_bindgen_test]
+#[cfg_attr(
+    all(target_arch = "wasm32", not(target_os = "wasi")),
+    wasm_bindgen_test
+)]
+#[cfg_attr(target_os = "wasi", wstd::test)]
 async fn es512() {
     let signature = include_bytes!("../fixtures/raw_signature/es512.raw_sig");
     let pub_key = include_bytes!("../fixtures/raw_signature/es512.pub_key");

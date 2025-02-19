@@ -33,10 +33,6 @@ use log::error;
 
 #[cfg(feature = "v1_api")]
 use crate::jumbf_io::save_jumbf_to_memory;
-#[cfg(feature = "file_io")]
-use crate::jumbf_io::{
-    get_file_extension, get_supported_file_extension, load_jumbf_from_file, save_jumbf_to_file,
-};
 #[cfg(all(feature = "v1_api", feature = "file_io"))]
 use crate::jumbf_io::{object_locations, remove_jumbf_from_file};
 use crate::{
@@ -80,6 +76,13 @@ use crate::{
 };
 #[cfg(feature = "v1_api")]
 use crate::{external_manifest::ManifestPatchCallback, RemoteSigner};
+#[cfg(feature = "file_io")]
+use crate::{
+    jumbf_io::{
+        get_file_extension, get_supported_file_extension, load_jumbf_from_file, save_jumbf_to_file,
+    },
+    utils::io_utils::tempdirectory,
+};
 
 const MANIFEST_STORE_EXT: &str = "c2pa"; // file extension for external manifests
 
@@ -2598,7 +2601,8 @@ impl Store {
         dest_path: &Path,
     ) -> Result<Vec<u8>> {
         // set up temp dir, contents auto deleted
-        let td = tempfile::TempDir::new()?;
+
+        let td = tempdirectory()?;
         let temp_path = td.path();
         let temp_file = temp_path.join(
             dest_path
@@ -2652,7 +2656,7 @@ impl Store {
         dest_path: &Path,
     ) -> Result<Vec<u8>> {
         // set up temp dir, contents auto deleted
-        let td = tempfile::TempDir::new()?;
+        let td = tempdirectory()?;
         let temp_path = td.path();
         let temp_file = temp_path.join(
             dest_path
@@ -2709,7 +2713,7 @@ impl Store {
         dest_path: &Path,
     ) -> Result<Vec<u8>> {
         // set up temp dir, contents auto deleted
-        let td = tempfile::TempDir::new()?;
+        let td = tempdirectory()?;
         let temp_path = td.path();
         let temp_file = temp_path.join(
             dest_path
@@ -3237,7 +3241,7 @@ impl Store {
     }
 
     // fetch remote manifest if possible
-    #[cfg(feature = "fetch_remote_manifests")]
+    #[cfg(all(feature = "fetch_remote_manifests", not(target_os = "wasi")))]
     fn fetch_remote_manifest(url: &str) -> Result<Vec<u8>> {
         use conv::ValueFrom;
         use ureq::Error as uError;
@@ -3281,6 +3285,83 @@ impl Store {
                 resp.status_text()
             ))),
             Err(uError::Transport(_)) => Err(Error::RemoteManifestFetch(url.to_string())),
+        }
+    }
+
+    // fetch remote manifest if possible
+    #[cfg(all(feature = "fetch_remote_manifests", target_os = "wasi"))]
+    fn fetch_remote_manifest(url: &str) -> Result<Vec<u8>> {
+        use url::Url;
+        use wasi::http::{
+            outgoing_handler,
+            types::{Fields, OutgoingRequest, Scheme},
+        };
+
+        //const MANIFEST_CONTENT_TYPE: &str = "application/x-c2pa-manifest-store"; // todo verify once these are served
+        const DEFAULT_MANIFEST_RESPONSE_SIZE: usize = 10 * 1024 * 1024; // 10 MB
+        let parsed_url = Url::parse(url)
+            .map_err(|e| Error::RemoteManifestFetch(format!("invalid URL: {}", e)))?;
+        let authority = parsed_url.authority();
+        let path_with_query = parsed_url[url::Position::AfterPort..].to_string();
+        let scheme = match parsed_url.scheme() {
+            "http" => Scheme::Http,
+            "https" => Scheme::Https,
+            _ => {
+                return Err(Error::RemoteManifestFetch(
+                    "unsupported URL scheme".to_string(),
+                ))
+            }
+        };
+
+        let request = OutgoingRequest::new(Fields::new());
+        request.set_path_with_query(Some(&path_with_query)).unwrap();
+        request.set_authority(Some(&authority)).unwrap();
+        request.set_scheme(Some(&scheme)).unwrap();
+        match outgoing_handler::handle(request, None) {
+            Ok(resp) => {
+                resp.subscribe().block();
+                let response = resp
+                    .get()
+                    .ok_or(Error::RemoteManifestFetch(
+                        "HTTP request response missing".to_string(),
+                    ))?
+                    .map_err(|_| {
+                        Error::RemoteManifestFetch(
+                            "HTTP request response requested more than once".to_string(),
+                        )
+                    })?
+                    .map_err(|_| Error::RemoteManifestFetch("HTTP request failed".to_string()))?;
+                if response.status() == 200 {
+                    let content_length: usize = response
+                        .headers()
+                        .get("Content-Length")
+                        .first()
+                        .and_then(|val| if val.is_empty() { None } else { Some(val) })
+                        .and_then(|val| std::str::from_utf8(val).ok())
+                        .and_then(|str_parsed_header| str_parsed_header.parse().ok())
+                        .unwrap_or(DEFAULT_MANIFEST_RESPONSE_SIZE);
+                    let body = {
+                        let mut buf = Vec::with_capacity(content_length);
+                        let response_body = response
+                            .consume()
+                            .expect("failed to get incoming request body");
+                        let mut stream = response_body
+                            .stream()
+                            .expect("failed to get response body stream");
+                        stream
+                            .read_to_end(&mut buf)
+                            .expect("failed to read response body");
+                        buf
+                    };
+                    Ok(body)
+                } else {
+                    Err(Error::RemoteManifestFetch(format!(
+                        "fetch failed: code: {}",
+                        response.status(),
+                    )))
+                }
+            }
+            Err(e) => Err(Error::RemoteManifestFetch(e.to_string())),
         }
     }
 
@@ -3771,7 +3852,6 @@ pub mod tests {
     use memchr::memmem;
     use serde::Serialize;
     use sha2::{Digest, Sha256};
-    use tempfile::tempdir;
 
     use super::*;
     use crate::{
@@ -3821,7 +3901,7 @@ pub mod tests {
     fn test_jumbf_generation() {
         // test adding to actual image
         let ap = fixture_path("earth_apollo17.jpg");
-        let temp_dir = tempdir().expect("temp dir");
+        let temp_dir = tempdirectory().expect("temp dir");
         let op = temp_dir_path(&temp_dir, "test-image.jpg");
 
         // Create claims store.
@@ -3936,7 +4016,7 @@ pub mod tests {
 
         use crate::ClaimGeneratorInfo;
         let ap = fixture_path("earth_apollo17.jpg");
-        let temp_dir = tempdir().expect("temp dir");
+        let temp_dir = tempdirectory().expect("temp dir");
         let op = temp_dir_path(&temp_dir, "test-image.jpg");
 
         // Create claims store.
@@ -4052,7 +4132,7 @@ pub mod tests {
     fn test_unknown_asset_type_generation() {
         // test adding to actual image
         let ap = fixture_path("unsupported_type.txt");
-        let temp_dir = tempdir().expect("temp dir");
+        let temp_dir = tempdirectory().expect("temp dir");
         let op = temp_dir_path(&temp_dir, "unsupported_type.txt");
 
         // Create claims store.
@@ -4133,7 +4213,7 @@ pub mod tests {
     fn test_detects_unverifiable_signature() {
         // test adding to actual image
         let ap = fixture_path("earth_apollo17.jpg");
-        let temp_dir = tempdir().expect("temp dir");
+        let temp_dir = tempdirectory().expect("temp dir");
         let op = temp_dir_path(&temp_dir, "test-image-unverified.jpg");
 
         let mut store = Store::new();
@@ -4161,7 +4241,7 @@ pub mod tests {
 
         // test adding to actual image
         let ap = fixture_path("earth_apollo17.jpg");
-        let temp_dir = tempdir().expect("temp dir");
+        let temp_dir = tempdirectory().expect("temp dir");
         let op = temp_dir_path(&temp_dir, "test-image-expired-cert.jpg");
 
         let mut store = Store::new();
@@ -4199,7 +4279,7 @@ pub mod tests {
 
         // test adding to actual image
         let ap = fixture_path("prerelease.jpg");
-        let temp_dir = tempdir().expect("temp dir");
+        let temp_dir = tempdirectory().expect("temp dir");
         let op = temp_dir_path(&temp_dir, "replacement_test.jpg");
 
         // grab jumbf from original
@@ -4218,13 +4298,14 @@ pub mod tests {
         assert_eq!(memmem::find(&buf, &original_jumbf[0..1024]), None);
     }
 
-    #[actix::test]
+    #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
+    #[cfg_attr(target_os = "wasi", wstd::test)]
     async fn test_jumbf_generation_async() {
         let signer = async_test_signer(SigningAlg::Ps256);
 
         // test adding to actual image
         let ap = fixture_path("earth_apollo17.jpg");
-        let temp_dir = tempdir().expect("temp dir");
+        let temp_dir = tempdirectory().expect("temp dir");
         let op = temp_dir_path(&temp_dir, "test-async.jpg");
 
         // Create claims store.
@@ -4285,11 +4366,12 @@ pub mod tests {
     }
 
     #[cfg(feature = "v1_api")]
-    #[actix::test]
+    #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
+    #[cfg_attr(target_os = "wasi", wstd::test)]
     async fn test_jumbf_generation_remote() {
         // test adding to actual image
         let ap = fixture_path("earth_apollo17.jpg");
-        let temp_dir = tempdir().expect("temp dir");
+        let temp_dir = tempdirectory().expect("temp dir");
         let op = temp_dir_path(&temp_dir, "test-async.jpg");
 
         // Create claims store.
@@ -4328,7 +4410,7 @@ pub mod tests {
     fn test_png_jumbf_generation() {
         // test adding to actual image
         let ap = fixture_path("libpng-test.png");
-        let temp_dir = tempdir().expect("temp dir");
+        let temp_dir = tempdirectory().expect("temp dir");
         let op = temp_dir_path(&temp_dir, "libpng-test-c2pa.png");
 
         // Create claims store.
@@ -4424,7 +4506,7 @@ pub mod tests {
         #[cfg(feature = "file_io")]
         fn test_arw_jumbf_generation() {
             let ap = fixture_path("sample1.arw");
-            let temp_dir = tempdir().expect("temp dir");
+            let temp_dir = tempdirectory().expect("temp dir");
             let op = temp_dir_path(&temp_dir, "ssample1.arw");
 
             // Create claims store.
@@ -4497,7 +4579,7 @@ pub mod tests {
         #[cfg(feature = "file_io")]
         fn test_nef_jumbf_generation() {
             let ap = fixture_path("sample1.nef");
-            let temp_dir = tempdir().expect("temp dir");
+            let temp_dir = tempdirectory().expect("temp dir");
             let op = temp_dir_path(&temp_dir, "ssample1.nef");
 
             // Create claims store.
@@ -4571,7 +4653,7 @@ pub mod tests {
     #[cfg(feature = "file_io")]
     fn test_wav_jumbf_generation() {
         let ap = fixture_path("sample1.wav");
-        let temp_dir = tempdir().expect("temp dir");
+        let temp_dir = tempdirectory().expect("temp dir");
         let op = temp_dir_path(&temp_dir, "ssample1.wav");
 
         // Create claims store.
@@ -4645,7 +4727,7 @@ pub mod tests {
     #[cfg(feature = "file_io")]
     fn test_avi_jumbf_generation() {
         let ap = fixture_path("test.avi");
-        let temp_dir = tempdir().expect("temp dir");
+        let temp_dir = tempdirectory().expect("temp dir");
         let op = temp_dir_path(&temp_dir, "test.avi");
 
         // Create claims store.
@@ -4719,7 +4801,7 @@ pub mod tests {
     #[cfg(feature = "file_io")]
     fn test_webp_jumbf_generation() {
         let ap = fixture_path("sample1.webp");
-        let temp_dir = tempdir().expect("temp dir");
+        let temp_dir = tempdirectory().expect("temp dir");
         let op = temp_dir_path(&temp_dir, "sample1.webp");
 
         // Create claims store.
@@ -4793,7 +4875,7 @@ pub mod tests {
     #[cfg(feature = "file_io")]
     fn test_heic() {
         let ap = fixture_path("sample1.heic");
-        let temp_dir = tempdir().expect("temp dir");
+        let temp_dir = tempdirectory().expect("temp dir");
         let op = temp_dir_path(&temp_dir, "sample1.heic");
 
         // Create claims store.
@@ -4837,7 +4919,7 @@ pub mod tests {
     #[cfg(feature = "file_io")]
     fn test_avif() {
         let ap = fixture_path("sample1.avif");
-        let temp_dir = tempdir().expect("temp dir");
+        let temp_dir = tempdirectory().expect("temp dir");
         let op = temp_dir_path(&temp_dir, "sample1.avif");
 
         // Create claims store.
@@ -4881,7 +4963,7 @@ pub mod tests {
     #[cfg(feature = "file_io")]
     fn test_heif() {
         let ap = fixture_path("sample1.heif");
-        let temp_dir = tempdir().expect("temp dir");
+        let temp_dir = tempdirectory().expect("temp dir");
         let op = temp_dir_path(&temp_dir, "sample1.heif");
 
         // Create claims store.
@@ -5021,7 +5103,7 @@ pub mod tests {
 
         // test adding to actual image
         let ap = fixture_path("earth_apollo17.jpg");
-        let temp_dir = tempdir().expect("temp dir");
+        let temp_dir = tempdirectory().expect("temp dir");
         let op = temp_dir_path(&temp_dir, "earth_apollo17.jpg");
 
         // get default store with default claim
@@ -5059,7 +5141,7 @@ pub mod tests {
 
         // test adding to actual image
         let ap = fixture_path("earth_apollo17.jpg");
-        let temp_dir = tempdir().expect("temp dir");
+        let temp_dir = tempdirectory().expect("temp dir");
         let op = temp_dir_path(&temp_dir, "earth_apollo17.jpg");
 
         // get default store with default claim
@@ -5096,7 +5178,7 @@ pub mod tests {
         search_bytes: &[u8],
         replace_bytes: &[u8],
     ) -> impl StatusTracker {
-        let temp_dir = tempdir().expect("temp dir");
+        let temp_dir = tempdirectory().expect("temp dir");
         let path = temp_fixture_path(&temp_dir, fixture_name);
         patch_file(&path, search_bytes, replace_bytes).expect("patch_file");
         let mut report = DetailedStatusTracker::default();
@@ -5114,7 +5196,7 @@ pub mod tests {
 
         // test adding to actual image
         let ap = fixture_path("earth_apollo17.jpg");
-        let temp_dir = tempdir().expect("temp dir");
+        let temp_dir = tempdirectory().expect("temp dir");
         let op = temp_dir_path(&temp_dir, "update_manifest.jpg");
 
         // get default store with default claim
@@ -5276,7 +5358,7 @@ pub mod tests {
     fn test_bmff_jumbf_generation() {
         // test adding to actual image
         let ap = fixture_path("video1.mp4");
-        let temp_dir = tempdir().expect("temp dir");
+        let temp_dir = tempdirectory().expect("temp dir");
         let op = temp_dir_path(&temp_dir, "video1.mp4");
 
         // Create claims store.
@@ -5362,7 +5444,7 @@ pub mod tests {
     fn test_external_manifest_sidecar() {
         // test adding to actual image
         let ap = fixture_path("libpng-test.png");
-        let temp_dir = tempdir().expect("temp dir");
+        let temp_dir = tempdirectory().expect("temp dir");
         let op = temp_dir_path(&temp_dir, "libpng-test-c2pa.png");
 
         let sidecar = op.with_extension(MANIFEST_STORE_EXT);
@@ -5401,7 +5483,7 @@ pub mod tests {
         // test adding to actual image
         let ap = fixture_path(file_name);
         let extension = ap.extension().unwrap().to_str().unwrap();
-        let temp_dir = tempdir().expect("temp dir");
+        let temp_dir = tempdirectory().expect("temp dir");
         let mut op = temp_dir_path(&temp_dir, file_name);
         op.set_extension(extension);
 
@@ -5470,7 +5552,7 @@ pub mod tests {
     fn test_user_guid_external_manifest_embedded() {
         // test adding to actual image
         let ap = fixture_path("libpng-test.png");
-        let temp_dir = tempdir().expect("temp dir");
+        let temp_dir = tempdirectory().expect("temp dir");
         let op = temp_dir_path(&temp_dir, "libpng-test-c2pa.png");
 
         let sidecar = op.with_extension(MANIFEST_STORE_EXT);
@@ -5522,7 +5604,7 @@ pub mod tests {
     fn test_external_manifest_from_memory() {
         // test adding to actual image
         let ap = fixture_path("libpng-test.png");
-        let temp_dir = tempdir().expect("temp dir");
+        let temp_dir = tempdirectory().expect("temp dir");
         let op = temp_dir_path(&temp_dir, "libpng-test-c2pa.png");
 
         let sidecar = op.with_extension(MANIFEST_STORE_EXT);
@@ -5578,7 +5660,8 @@ pub mod tests {
         }
     }
 
-    #[actix::test]
+    #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
+    #[cfg_attr(target_os = "wasi", wstd::test)]
     async fn test_jumbf_generation_stream() {
         let file_buffer = include_bytes!("../tests/fixtures/earth_apollo17.jpg").to_vec();
         // convert buffer to cursor with Read/Write/Seek capability
@@ -5626,7 +5709,7 @@ pub mod tests {
     fn test_tiff_jumbf_generation() {
         // test adding to actual image
         let ap = fixture_path("TUSCANY.TIF");
-        let temp_dir = tempdir().expect("temp dir");
+        let temp_dir = tempdirectory().expect("temp dir");
         let op = temp_dir_path(&temp_dir, "TUSCANY-OUTPUT.TIF");
 
         // Create claims store.
@@ -5692,7 +5775,8 @@ pub mod tests {
         }
     }
 
-    #[actix::test]
+    #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
+    #[cfg_attr(target_os = "wasi", wstd::test)]
     #[cfg(feature = "file_io")]
     async fn test_boxhash_embeddable_manifest_async() {
         // test adding to actual image
@@ -5756,7 +5840,7 @@ pub mod tests {
         out_stream.write_all(&after_buf).unwrap();
 
         // save to output file
-        let temp_dir = tempfile::tempdir().unwrap();
+        let temp_dir = tempdirectory().unwrap();
         let output = temp_dir_path(&temp_dir, "boxhash-out.jpg");
         let mut output_file = std::fs::OpenOptions::new()
             .read(true)
@@ -5841,7 +5925,7 @@ pub mod tests {
         out_stream.write_all(&after_buf).unwrap();
 
         // save to output file
-        let temp_dir = tempfile::tempdir().unwrap();
+        let temp_dir = tempdirectory().unwrap();
         let output = temp_dir_path(&temp_dir, "boxhash-out.jpg");
         let mut output_file = std::fs::OpenOptions::new()
             .read(true)
@@ -5859,7 +5943,8 @@ pub mod tests {
         assert!(errors.is_empty());
     }
 
-    #[actix::test]
+    #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
+    #[cfg_attr(target_os = "wasi", wstd::test)]
     #[cfg(feature = "file_io")]
     async fn test_datahash_embeddable_manifest_async() {
         // test adding to actual image
@@ -5883,7 +5968,7 @@ pub mod tests {
             .get_data_hashed_manifest_placeholder(signer.reserve_size(), "jpeg")
             .unwrap();
 
-        let temp_dir = tempfile::tempdir().unwrap();
+        let temp_dir = tempdirectory().unwrap();
         let output = temp_dir_path(&temp_dir, "boxhash-out.jpg");
         let mut output_file = std::fs::OpenOptions::new()
             .read(true)
@@ -5952,7 +6037,7 @@ pub mod tests {
             .get_data_hashed_manifest_placeholder(Signer::reserve_size(&signer), "jpeg")
             .unwrap();
 
-        let temp_dir = tempfile::tempdir().unwrap();
+        let temp_dir = tempdirectory().unwrap();
         let output = temp_dir_path(&temp_dir, "boxhash-out.jpg");
         let mut output_file = std::fs::OpenOptions::new()
             .read(true)
@@ -6024,7 +6109,7 @@ pub mod tests {
             .get_data_hashed_manifest_placeholder(Signer::reserve_size(&signer), "jpeg")
             .unwrap();
 
-        let temp_dir = tempfile::tempdir().unwrap();
+        let temp_dir = tempdirectory().unwrap();
         let output = temp_dir_path(&temp_dir, "boxhash-out.jpg");
         let mut output_file = std::fs::OpenOptions::new()
             .read(true)
@@ -6122,7 +6207,7 @@ pub mod tests {
 
         // test adding to actual image
         let ap = fixture_path("C.jpg");
-        let temp_dir = tempdir().expect("temp dir");
+        let temp_dir = tempdirectory().expect("temp dir");
         let op = temp_dir_path(&temp_dir, "C-placed.jpg");
 
         // Create claims store.
@@ -6315,7 +6400,8 @@ pub mod tests {
         // std::fs::write("target/test.jpg", result).unwrap();
     }
 
-    #[actix::test]
+    #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
+    #[cfg_attr(target_os = "wasi", wstd::test)]
     #[cfg(feature = "openssl_sign")]
     async fn test_async_dynamic_assertions() {
         use async_trait::async_trait;
@@ -6375,7 +6461,8 @@ pub mod tests {
             }
         }
 
-        #[async_trait::async_trait]
+        #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+        #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
         impl crate::AsyncSigner for DynamicSigner {
             async fn sign(&self, data: Vec<u8>) -> crate::error::Result<Vec<u8>> {
                 self.0.sign(data).await
@@ -6456,7 +6543,7 @@ pub mod tests {
     fn test_fragmented_jumbf_generation() {
         // test adding to actual image
 
-        let tempdir = tempdir().expect("temp dir");
+        let tempdir = tempdirectory().expect("temp dir");
         let output_path = tempdir.into_path();
 
         // search folders for init segments

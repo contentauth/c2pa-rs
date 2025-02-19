@@ -11,7 +11,13 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use std::io::{Read, Seek, SeekFrom, Write};
+use std::{
+    ffi::OsStr,
+    io::{Read, Seek, SeekFrom, Write},
+};
+
+#[allow(unused)] // different code path for WASI
+use tempfile::{tempdir, Builder, NamedTempFile, TempDir};
 
 use crate::{Error, Result};
 
@@ -139,6 +145,34 @@ impl<R: Read + Seek> ReaderUtils for R {
 
         Ok(output)
     }
+}
+
+pub(crate) fn tempfile_builder<T: AsRef<OsStr> + Sized>(prefix: T) -> Result<NamedTempFile> {
+    #[cfg(all(target_os = "wasi", target_env = "p1"))]
+    return Error::NotImplemented("tempfile_builder requires wasip2 or later".to_string());
+
+    #[cfg(all(target_os = "wasi", not(target_env = "p1")))]
+    return Builder::new()
+        .prefix(&prefix)
+        .rand_bytes(5)
+        .tempfile_in("/")
+        .map_err(Error::IoError);
+
+    #[cfg(not(target_os = "wasi"))]
+    return Builder::new()
+        .prefix(&prefix)
+        .rand_bytes(5)
+        .tempfile()
+        .map_err(Error::IoError);
+}
+
+#[allow(dead_code)] // used in tests
+pub(crate) fn tempdirectory() -> Result<TempDir> {
+    #[cfg(target_os = "wasi")]
+    return TempDir::new_in("/").map_err(Error::IoError);
+
+    #[cfg(not(target_os = "wasi"))]
+    return tempdir().map_err(Error::IoError);
 }
 
 #[cfg(test)]

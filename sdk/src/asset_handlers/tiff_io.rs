@@ -23,7 +23,6 @@ use atree::{Arena, Token};
 use byteorder::{NativeEndian, ReadBytesExt, WriteBytesExt};
 use byteordered::{with_order, ByteOrdered, Endianness};
 use conv::ValueFrom;
-use tempfile::Builder;
 
 use crate::{
     asset_io::{
@@ -33,7 +32,7 @@ use crate::{
     },
     error::{Error, Result},
     utils::{
-        io_utils::{safe_vec, stream_len, ReaderUtils},
+        io_utils::{safe_vec, stream_len, tempfile_builder, ReaderUtils},
         xmp_inmemory_utils::{add_provenance, MIN_XMP},
     },
 };
@@ -1369,10 +1368,7 @@ impl AssetIO for TiffIO {
             .open(asset_path)
             .map_err(Error::IoError)?;
 
-        let mut temp_file = Builder::new()
-            .prefix("c2pa_temp")
-            .rand_bytes(5)
-            .tempfile()?;
+        let mut temp_file = tempfile_builder("c2pa_temp")?;
 
         self.write_cai(&mut input_stream, &mut temp_file, store_bytes)?;
 
@@ -1393,10 +1389,7 @@ impl AssetIO for TiffIO {
     fn remove_cai_store(&self, asset_path: &std::path::Path) -> Result<()> {
         let mut input_file = std::fs::File::open(asset_path)?;
 
-        let mut temp_file = Builder::new()
-            .prefix("c2pa_temp")
-            .rand_bytes(5)
-            .tempfile()?;
+        let mut temp_file = tempfile_builder("c2pa_temp")?;
 
         self.remove_cai_store_from_stream(&mut input_file, &mut temp_file)?;
 
@@ -1637,18 +1630,15 @@ pub mod tests {
 
     use core::panic;
 
-    use tempfile::tempdir;
-
     use super::*;
-    use crate::utils::test::temp_dir_path;
-
+    use crate::utils::{io_utils::tempdirectory, test::temp_dir_path};
     #[test]
     fn test_read_write_manifest() {
         let data = "some data";
 
         let source = crate::utils::test::fixture_path("TUSCANY.TIF");
 
-        let temp_dir = tempdir().unwrap();
+        let temp_dir = tempdirectory().unwrap();
         let output = temp_dir_path(&temp_dir, "test.tif");
 
         std::fs::copy(source, &output).unwrap();
@@ -1670,7 +1660,7 @@ pub mod tests {
 
         let source = crate::utils::test::fixture_path("TUSCANY.TIF");
 
-        let temp_dir = tempdir().unwrap();
+        let temp_dir = tempdirectory().unwrap();
         let output = temp_dir_path(&temp_dir, "test.tif");
 
         std::fs::copy(source, &output).unwrap();
@@ -1696,7 +1686,7 @@ pub mod tests {
 
         let source = crate::utils::test::fixture_path("TUSCANY.TIF");
 
-        let temp_dir = tempdir().unwrap();
+        let temp_dir = tempdirectory().unwrap();
         let output = temp_dir_path(&temp_dir, "test.tif");
 
         std::fs::copy(source, &output).unwrap();
@@ -1728,7 +1718,7 @@ pub mod tests {
 
         let source = crate::utils::test::fixture_path("TUSCANY.TIF");
 
-        let temp_dir = tempdir().unwrap();
+        let temp_dir = tempdirectory().unwrap();
         let output = temp_dir_path(&temp_dir, "test.tif");
 
         std::fs::copy(source, &output).unwrap();
@@ -1810,7 +1800,7 @@ pub mod tests {
         let source = crate::utils::test::fixture_path("test.DNG");
         //let source = crate::utils::test::fixture_path("sample1.dng");
 
-        let temp_dir = tempdir().unwrap();
+        let temp_dir = tempdirectory().unwrap();
         let output = temp_dir_path(&temp_dir, "test.DNG");
 
         std::fs::copy(&source, &output).unwrap();

@@ -148,12 +148,12 @@ pub mod tests {
 
     use c2pa_crypto::raw_signature::SigningAlg;
     use c2pa_status_tracker::OneShotStatusTracker;
-    use tempfile::tempdir;
 
     use super::{AssetIO, C2paIO, CAIReader, CAIWriter};
     use crate::{
         store::Store,
         utils::{
+            io_utils::tempdirectory,
             test::{fixture_path, temp_dir_path},
             test_signer::test_signer,
         },
@@ -163,7 +163,7 @@ pub mod tests {
     fn c2pa_io_parse() {
         let path = fixture_path("C.jpg");
 
-        let temp_dir = tempdir().expect("temp dir");
+        let temp_dir = tempdirectory().expect("temp dir");
         let temp_path = temp_dir_path(&temp_dir, "test.c2pa");
 
         let c2pa_io = C2paIO {};

@@ -31,6 +31,12 @@ test-wasm:
 test-wasm-web:
 	cd sdk && wasm-pack test --chrome --headless -- --features="serialize_thumbnails"
 
+# WASI testing requires the WASI SDK https://github.com/WebAssembly/wasi-sdk installed in /opt,
+# wasmtime, and the target wasm32-wasip2 on the nightly toolchain
+test-wasi:
+	CC=/opt/wasi-sdk/bin/clang CARGO_TARGET_WASM32_WASIP2_RUNNER="wasmtime -S cli -S http --dir ." cargo +nightly test --target wasm32-wasip2 -p c2pa -p c2pa-crypto --all-features
+	rm -r sdk/Users
+
 # Full local validation, build and test all features including wasm
 # Run this before pushing a PR to pre-validate
 test: check-format check-docs clippy test-local test-wasm-web
