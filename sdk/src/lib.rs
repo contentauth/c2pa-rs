@@ -124,6 +124,7 @@ pub use manifest_store::ManifestStore;
 #[cfg(feature = "v1_api")]
 pub use manifest_store_report::ManifestStoreReport;
 pub use reader::Reader;
+pub use reader_config::{AssertionReader, ReaderConfig};
 pub use resource_store::{ResourceRef, ResourceStore};
 pub use signer::{AsyncSigner, RemoteSigner, Signer};
 pub use utils::mime::format_from_path;
@@ -155,6 +156,7 @@ pub(crate) mod manifest_store_report;
 #[allow(dead_code)]
 // TODO: Remove this when the feature is released (used in tests only for some builds now)
 pub(crate) mod reader;
+pub(crate) mod reader_config;
 pub(crate) mod resource_store;
 pub(crate) mod salt;
 pub(crate) mod signer;
