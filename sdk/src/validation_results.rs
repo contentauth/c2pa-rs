@@ -98,7 +98,7 @@ pub struct ValidationResults {
 }
 
 impl ValidationResults {
-    pub(crate) fn from_store(store: &Store, validation_log: &impl StatusTracker) -> Self {
+    pub(crate) fn from_store(store: &Store, validation_log: &StatusTracker) -> Self {
         let mut results = ValidationResults::default();
 
         let mut statuses: Vec<ValidationStatus> = validation_log

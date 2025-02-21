@@ -16,7 +16,7 @@ use c2pa_crypto::{
     cose::{parse_cose_sign1, CertificateInfo, CoseError, Verifier},
     raw_signature::RawSignatureValidationError,
 };
-use c2pa_status_tracker::DetailedStatusTracker;
+use c2pa_status_tracker::StatusTracker;
 use coset::CoseSign1;
 use serde::Serialize;
 
@@ -58,7 +58,7 @@ impl SignatureVerifier for X509SignatureVerifier {
         let verifier = Verifier::IgnoreProfileAndTrustPolicy;
 
         // TO DO: Figure out how to provide a validation log.
-        let mut validation_log = DetailedStatusTracker::default();
+        let mut validation_log = StatusTracker::default();
 
         let cose_sign1 = parse_cose_sign1(signature, &signer_payload_cbor, &mut validation_log)?;
 

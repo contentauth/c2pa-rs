@@ -13,7 +13,7 @@
 
 //! Tools for working with OCSP responses.
 
-use c2pa_status_tracker::{log_item, validation_codes, DetailedStatusTracker, StatusTracker};
+use c2pa_status_tracker::{log_item, validation_codes, StatusTracker};
 use chrono::{DateTime, NaiveDateTime, Utc};
 use rasn_ocsp::{BasicOcspResponse, CertStatus, OcspResponseStatus};
 use rasn_pkix::CrlReason;
@@ -53,7 +53,7 @@ impl OcspResponse {
     pub(crate) fn from_der_checked(
         der: &[u8],
         signing_time: Option<DateTime<Utc>>,
-        validation_log: &mut impl StatusTracker,
+        validation_log: &mut StatusTracker,
     ) -> Result<Self, OcspError> {
         let mut output = OcspResponse {
             ocsp_der: der.to_vec(),
@@ -79,7 +79,7 @@ impl OcspResponse {
             return Ok(output);
         };
 
-        let mut internal_validation_log = DetailedStatusTracker::default();
+        let mut internal_validation_log = StatusTracker::default();
         let response_data = &basic_response.tbs_response_data;
 
         // get OCSP cert chain if available

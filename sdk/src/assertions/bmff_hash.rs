@@ -1279,7 +1279,7 @@ pub mod tests {
         let mut segment_stream11 = std::fs::File::open(segment_stream_path11).unwrap();
 
 
-        let mut log = DetailedStatusTracker::default();
+        let mut log = ();
 
         let bmff_io = BmffIO::new("mp4");
         let bmff_handler = bmff_io.get_reader();
