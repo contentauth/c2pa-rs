@@ -17,16 +17,10 @@ The new API focuses on streaming I/O and supports the following structs:
 - `validation_state()` returns `ValidationState`, which can be `Invalid`, `Valid` or `Trusted`. Use this method instead of checking for `validation_status() = None`.
 - `validation_results()` returns `ValidationResults`, which is a more complete form of `ValidationStatus` and returns `success`, `informational`, and `failure` codes for the active manifest and ingredients. `ValidationStatus` is deprecated in favor of `ValidationResults`.
 
-The `Manifest.title` is optional and `format` is not supported in v2 claims, so these methods now return an `Option<String>` and may not appear in serialized JSON.
-<!-- "these methods" ... which methods?  -->
-
-The `Ingredient.title` and `format` are optional in v3 ingredients, so these methods now return an `Option<String>` and may not appear in serialized JSON.
-<!-- What are v3 ingredients? I thought this was c2pa v 2.1? -->
-
 `Ingredient` now supports a `validation_results()` method and a `validation_results` field.
 
 An `AssetType` assertion is now supported.
-<!-- Can we say more about this? -->
+<!-- Can we say more about this? ASK MAURICE -->
 
 ### C2PA v2 claims
 
@@ -34,13 +28,11 @@ The library now supports claims as described in the [C2PA 2.1 specification](htt
 
 A `claim_version` field is now allowed in a manifest definition for `Builder` and, if set to `2` will generate v2 claims.
 
+The `title()` and `format()` methods of both `Manifest` and `Ingredient` objects now return an `Option<String>` because in v2 claims, `title` is optional and `format` does not exist.
+
 In v2 claims, the first `action` must be `c2pa.created` or `c2pa.opened`. 
 
 There are many more checks and status codes added for v2 claims.
-
-### Other breaking changes
-
-The signature of the `c2pa.sign_ps256()` method changed.  It used to take a file path argument and the argument is now the PEM certificate string instead. 
 
 ### Using the old API
 
