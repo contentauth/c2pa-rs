@@ -11,14 +11,6 @@ The new API focuses on streaming I/O and supports the following structs:
 - [Reader](https://docs.rs/c2pa/latest/c2pa/struct.Reader.html)
 - [ManifestDefinition](https://docs.rs/c2pa/latest/c2pa/struct.ManifestDefinition.html)
 
-### Using the old API
-
-To use the old deprecated API, enable the `v1_api` feature; for example:
-
-```
-c2pa = {version="0.45.2", features=["v1_api"]}
-```
-
 ### API Changes for C2PA 2.1
 
 The library now supports claims as described in the [C2PA 2.1 specification](https://c2pa.org/specifications/specifications/2.1/specs/C2PA_Specification.html#_claims), however development is still in progress and not fully implemented yet. 
@@ -28,8 +20,10 @@ The library now supports claims as described in the [C2PA 2.1 specification](htt
 - `validation_results()` returns `ValidationResults`, which is a more complete form of `ValidationStatus` and returns `success`, `informational`, and `failure` codes for the active manifest and ingredients. `ValidationStatus` is deprecated in favor of `ValidationResults`.
 
 The `Manifest.title` is optional and `format` is not supported in v2 claims, so these methods now return an `Option<String>` and may not appear in serialized JSON.
+<!-- "these methods" ... which methods?  -->
 
 The `Ingredient.title` and `format` are optional in v3 ingredients, so these methods now return an `Option<String>` and may not appear in serialized JSON.
+<!-- What are v3 ingredients? I thought this was c2pa v 2.1? -->
 
 `Ingredient` now supports a `validation_results()` method and a `validation_results` field.
 
@@ -44,6 +38,14 @@ There are many more checks and status codes added for v2 claims.
 ### Other breaking changes
 
 The signature of the `c2pa.sign_ps256()` method changed.  It used to take a file path argument and the argument is now the PEM certificate string instead. 
+
+### Using the old API
+
+To use the old deprecated API, enable the `v1_api` feature; for example:
+
+```
+c2pa = {version="0.45.2", features=["v1_api"]}
+```
 
 ## Language binding support
 
