@@ -45,7 +45,7 @@ impl StatusTracker {
         &mut self.logged_items
     }
 
-    /// Appends the contents of another  [`StatusTracker`] to this list of
+    /// Appends the contents of another [`StatusTracker`] to this list of
     /// validation log items.
     pub fn append(&mut self, other: &StatusTracker) {
         for log_item in other.logged_items() {
@@ -53,7 +53,7 @@ impl StatusTracker {
         }
     }
 
-    /// Add a non-error [`LogItem`] to this status tracker.
+    /// Adds a non-error [`LogItem`] to this status tracker.
     ///
     /// Primarily intended for use by [`LogItem::success()`]
     /// or [`LogItem::informational()`].
@@ -64,7 +64,7 @@ impl StatusTracker {
         self.logged_items.push(log_item);
     }
 
-    /// Add an error-case [`LogItem`] to this status tracker.
+    /// Adds an error-case [`LogItem`] to this status tracker.
     ///
     /// Will return `Err(err)` if configured to stop immediately on errors.
     /// _(See [`ErrorBehavior`].)_
@@ -83,7 +83,7 @@ impl StatusTracker {
         }
     }
 
-    /// Return the [`LogItem`]s that have error conditions (`err_val` is
+    /// Returns the [`LogItem`]s that have error conditions (`err_val` is
     /// populated).
     ///
     /// Removes matching items from the list of log items.
@@ -93,7 +93,7 @@ impl StatusTracker {
             .filter(|item| item.err_val.is_some())
     }
 
-    /// Return `true` if the validation log contains a specific C2PA status
+    /// Returns `true` if the validation log contains a specific C2PA status
     /// code.
     pub fn has_status(&self, val: &str) -> bool {
         self.logged_items().iter().any(|vi| {
@@ -105,7 +105,7 @@ impl StatusTracker {
         })
     }
 
-    /// Return `true` if the validation log contains a specific error.
+    /// Returns `true` if the validation log contains a specific error.
     pub fn has_error<E: Debug>(&self, err: E) -> bool {
         let err_type = format!("{:?}", &err);
         self.logged_items().iter().any(|vi| {
@@ -129,7 +129,7 @@ impl StatusTracker {
         self.ingredient_uris.pop()
     }
 
-    /// Return the [`LogItem`]s that have error conditions (`err_val` is
+    /// Returns the [`LogItem`]s that have error conditions (`err_val` is
     /// populated).
     ///
     /// Removes matching items from the list of log items.
