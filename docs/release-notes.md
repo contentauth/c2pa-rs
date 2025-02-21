@@ -13,8 +13,6 @@ The new API focuses on streaming I/O and supports the following structs:
 
 ### API Changes for C2PA 2.1
 
-The library now supports claims as described in the [C2PA 2.1 specification](https://c2pa.org/specifications/specifications/2.1/specs/C2PA_Specification.html#_claims), however development is still in progress and not fully implemented yet. 
-
 `Reader` has some new methods: 
 - `validation_state()` returns `ValidationState`, which can be `Invalid`, `Valid` or `Trusted`. Use this method instead of checking for `validation_status() = None`.
 - `validation_results()` returns `ValidationResults`, which is a more complete form of `ValidationStatus` and returns `success`, `informational`, and `failure` codes for the active manifest and ingredients. `ValidationStatus` is deprecated in favor of `ValidationResults`.
@@ -28,6 +26,11 @@ The `Ingredient.title` and `format` are optional in v3 ingredients, so these met
 `Ingredient` now supports a `validation_results()` method and a `validation_results` field.
 
 An `AssetType` assertion is now supported.
+<!-- Can we say more about this? -->
+
+### C2PA v2 claims
+
+The library now supports claims as described in the [C2PA 2.1 specification](https://c2pa.org/specifications/specifications/2.1/specs/C2PA_Specification.html#_claims), however development is still in progress and it is not fully implemented yet. 
 
 A `claim_version` field is now allowed in a manifest definition for `Builder` and, if set to `2` will generate v2 claims.
 
