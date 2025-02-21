@@ -26,9 +26,7 @@ use c2pa_crypto::{
     cose::{parse_cose_sign1, CertificateTrustPolicy, TimeStampStorage},
     hash::sha256,
 };
-#[cfg(feature = "v1_api")]
-use c2pa_status_tracker::DetailedStatusTracker;
-use c2pa_status_tracker::{log_item, OneShotStatusTracker, StatusTracker};
+use c2pa_status_tracker::{log_item, ErrorBehavior, StatusTracker};
 use log::error;
 
 #[cfg(feature = "v1_api")]
@@ -482,7 +480,8 @@ impl Store {
 
         let sig = claim.signature_val();
         let data = claim.data().ok()?;
-        let mut validation_log = OneShotStatusTracker::default();
+        let mut validation_log =
+            StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
 
         let sign1 = parse_cose_sign1(sig, &data, &mut validation_log).ok()?;
         if let Ok(info) = check_ocsp_status(&sign1, &data, &self.ctp, &mut validation_log) {
@@ -546,7 +545,8 @@ impl Store {
                     get_settings_value::<bool>("verify.verify_after_sign")
                 {
                     if verify_after_sign {
-                        let mut cose_log = OneShotStatusTracker::default();
+                        let mut cose_log =
+                            StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
 
                         let result = if _sync {
                             verify_cose(&sig, &claim_bytes, b"", false, &self.ctp, &mut cose_log)
@@ -956,7 +956,7 @@ impl Store {
         true
     }
 
-    pub fn from_jumbf(buffer: &[u8], validation_log: &mut impl StatusTracker) -> Result<Store> {
+    pub fn from_jumbf(buffer: &[u8], validation_log: &mut StatusTracker) -> Result<Store> {
         if buffer.is_empty() {
             return Err(Error::JumbfNotFound);
         }
@@ -1294,7 +1294,7 @@ impl Store {
         store: &Store,
         claim: &Claim,
         asset_data: &mut ClaimAssetData<'_>,
-        validation_log: &mut impl StatusTracker,
+        validation_log: &mut StatusTracker,
     ) -> Result<()> {
         let mut num_parent_ofs = 0;
 
@@ -1409,7 +1409,7 @@ impl Store {
         store: &Store,
         claim: &Claim,
         asset_data: &mut ClaimAssetData<'_>,
-        validation_log: &mut impl StatusTracker,
+        validation_log: &mut StatusTracker,
     ) -> Result<()> {
         // walk the ingredients
         for i in claim.ingredient_assertions() {
@@ -1493,7 +1493,7 @@ impl Store {
     pub async fn verify_store_async(
         store: &Store,
         asset_data: &mut ClaimAssetData<'_>,
-        validation_log: &mut impl StatusTracker,
+        validation_log: &mut StatusTracker,
     ) -> Result<()> {
         let claim = match store.provenance_claim() {
             Some(c) => c,
@@ -1523,7 +1523,7 @@ impl Store {
     pub fn verify_store(
         store: &Store,
         asset_data: &mut ClaimAssetData<'_>,
-        validation_log: &mut impl StatusTracker,
+        validation_log: &mut StatusTracker,
     ) -> Result<()> {
         let claim = match store.provenance_claim() {
             Some(c) => c,
@@ -2203,7 +2203,8 @@ impl Store {
             None => return Err(Error::UnsupportedType),
         }
 
-        let mut validation_log = OneShotStatusTracker::default();
+        let mut validation_log =
+            StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
         let jumbf = self.to_jumbf(signer)?;
 
         // use temp store so mulitple calls will work (the Store is not finalized this way)
@@ -2394,7 +2395,7 @@ impl Store {
             labels::INGREDIENT,
         ];
 
-        let mut validation_log = DetailedStatusTracker::default();
+        let mut validation_log = StatusTracker::default();
         let mut store = Store::from_jumbf(manifest_bytes, &mut validation_log)?;
 
         // todo: what kinds of validation can we do here since the file is not finailized;
@@ -3196,7 +3197,7 @@ impl Store {
     pub fn verify_from_path(
         &mut self,
         asset_path: &'_ Path,
-        validation_log: &mut impl StatusTracker,
+        validation_log: &mut StatusTracker,
     ) -> Result<()> {
         Store::verify_store(self, &mut ClaimAssetData::Path(asset_path), validation_log)
     }
@@ -3207,7 +3208,7 @@ impl Store {
         &mut self,
         buf: &[u8],
         asset_type: &str,
-        validation_log: &mut impl StatusTracker,
+        validation_log: &mut StatusTracker,
     ) -> Result<()> {
         Store::verify_store(
             self,
@@ -3222,7 +3223,7 @@ impl Store {
         &mut self,
         reader: &mut dyn CAIRead,
         asset_type: &str,
-        validation_log: &mut impl StatusTracker,
+        validation_log: &mut StatusTracker,
     ) -> Result<()> {
         if _sync {
             Store::verify_store(
@@ -3389,7 +3390,7 @@ impl Store {
     fn load_cai_from_memory(
         asset_type: &str,
         data: &[u8],
-        validation_log: &mut impl StatusTracker,
+        validation_log: &mut StatusTracker,
     ) -> Result<Store> {
         let mut input_stream = Cursor::new(data);
         Store::load_jumbf_from_stream(asset_type, &mut input_stream)
@@ -3468,10 +3469,7 @@ impl Store {
     /// in_path -  path to source file
     /// validation_log - optional vec to contain addition info about the asset
     #[cfg(all(feature = "v1_api", feature = "file_io"))]
-    fn load_cai_from_file(
-        in_path: &Path,
-        validation_log: &mut impl StatusTracker,
-    ) -> Result<Store> {
+    fn load_cai_from_file(in_path: &Path, validation_log: &mut StatusTracker) -> Result<Store> {
         match Self::load_jumbf_from_path(in_path) {
             Ok(manifest_bytes) => {
                 // load and validate with CAI toolkit
@@ -3489,7 +3487,7 @@ impl Store {
     pub fn load_from_asset(
         asset_path: &Path,
         verify: bool,
-        validation_log: &mut impl StatusTracker,
+        validation_log: &mut StatusTracker,
     ) -> Result<Store> {
         // load jumbf if available
         Self::load_cai_from_file(asset_path, validation_log)
@@ -3511,7 +3509,7 @@ impl Store {
     pub fn get_store_from_memory(
         asset_type: &str,
         data: &[u8],
-        validation_log: &mut impl StatusTracker,
+        validation_log: &mut StatusTracker,
     ) -> Result<Store> {
         // load jumbf if available
         Self::load_cai_from_memory(asset_type, data, validation_log).inspect_err(|e| {
@@ -3557,7 +3555,7 @@ impl Store {
         asset_type: &str,
         data: &[u8],
         verify: bool,
-        validation_log: &mut impl StatusTracker,
+        validation_log: &mut StatusTracker,
     ) -> Result<Store> {
         Store::get_store_from_memory(asset_type, data, validation_log).and_then(|store| {
             // verify the store
@@ -3584,7 +3582,7 @@ impl Store {
         asset_type: &str,
         data: &[u8],
         verify: bool,
-        validation_log: &mut impl StatusTracker,
+        validation_log: &mut StatusTracker,
     ) -> Result<Store> {
         let store = Store::get_store_from_memory(asset_type, data, validation_log)?;
 
@@ -3614,7 +3612,7 @@ impl Store {
         init_segment: &mut dyn CAIRead,
         fragments: &Vec<PathBuf>,
         verify: bool,
-        validation_log: &mut impl StatusTracker,
+        validation_log: &mut StatusTracker,
     ) -> Result<Store> {
         let mut init_seg_data = Vec::new();
         init_segment.read_to_end(&mut init_seg_data)?;
@@ -3646,7 +3644,7 @@ impl Store {
         format: &str,
         mut stream: impl Read + Seek + Send,
         mut fragment: impl Read + Seek + Send,
-        validation_log: &mut impl StatusTracker,
+        validation_log: &mut StatusTracker,
     ) -> Result<Store> {
         let manifest_bytes = Store::load_jumbf_from_stream(format, &mut stream)?;
         let store = Store::from_jumbf(&manifest_bytes, validation_log)?;
@@ -3675,7 +3673,7 @@ impl Store {
         init_segment: &[u8],
         fragment: &[u8],
         verify: bool,
-        validation_log: &mut impl StatusTracker,
+        validation_log: &mut StatusTracker,
     ) -> Result<Store> {
         Store::get_store_from_memory(asset_type, init_segment, validation_log).and_then(|store| {
             // verify the store
@@ -3711,7 +3709,7 @@ impl Store {
         init_segment: &[u8],
         fragment: &[u8],
         verify: bool,
-        validation_log: &mut impl StatusTracker,
+        validation_log: &mut StatusTracker,
     ) -> Result<Store> {
         let store = Store::get_store_from_memory(asset_type, init_segment, validation_log)?;
 
@@ -3746,7 +3744,7 @@ impl Store {
         data: &[u8],
         redactions: Option<Vec<String>>,
     ) -> Result<Store> {
-        let mut report = OneShotStatusTracker::default();
+        let mut report = StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
         let store = Store::from_jumbf(data, &mut report)?;
 
         // make sure the claims stores are compatible
@@ -3848,7 +3846,7 @@ pub mod tests {
     use std::{fs, io::Write};
 
     use c2pa_crypto::raw_signature::SigningAlg;
-    use c2pa_status_tracker::{DetailedStatusTracker, StatusTracker};
+    use c2pa_status_tracker::StatusTracker;
     use memchr::memmem;
     use serde::Serialize;
     use sha2::{Digest, Sha256};
@@ -3947,8 +3945,12 @@ pub mod tests {
         println!("Provenance: {}\n", store.provenance_path().unwrap());
 
         // read from new file
-        let new_store =
-            Store::load_from_asset(&op, true, &mut OneShotStatusTracker::default()).unwrap();
+        let new_store = Store::load_from_asset(
+            &op,
+            true,
+            &mut StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError),
+        )
+        .unwrap();
 
         // can  we get by the ingredient data back
         let _some_binary_data: Vec<u8> = vec![
@@ -3994,8 +3996,12 @@ pub mod tests {
 
         assert_eq!(splice_point, restore_point);
 
-        Store::load_from_asset(&op, true, &mut OneShotStatusTracker::default())
-            .expect("Should still verify");
+        Store::load_from_asset(
+            &op,
+            true,
+            &mut StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError),
+        )
+        .expect("Should still verify");
 
         // test patching jumbf - error should be detected
 
@@ -4005,8 +4011,12 @@ pub mod tests {
 
         assert_eq!(splice_point, restore_point);
 
-        Store::load_from_asset(&op, true, &mut OneShotStatusTracker::default())
-            .expect_err("Should not verify");
+        Store::load_from_asset(
+            &op,
+            true,
+            &mut StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError),
+        )
+        .expect_err("Should not verify");
     }
 
     #[test]
@@ -4065,7 +4075,7 @@ pub mod tests {
         // write to new file
         println!("Provenance: {}\n", store.provenance_path().unwrap());
 
-        let mut report = DetailedStatusTracker::default();
+        let mut report = StatusTracker::default();
 
         // read from new file
         let new_store = Store::load_from_asset(&op, true, &mut report).unwrap();
@@ -4157,8 +4167,12 @@ pub mod tests {
         store.save_to_asset(&ap, signer.as_ref(), &op).unwrap();
 
         // read from new file
-        let new_store =
-            Store::load_from_asset(&op, true, &mut OneShotStatusTracker::default()).unwrap();
+        let new_store = Store::load_from_asset(
+            &op,
+            true,
+            &mut StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError),
+        )
+        .unwrap();
 
         // can  we get by the ingredient data back
 
@@ -4351,7 +4365,7 @@ pub mod tests {
         println!("Provenance: {}\n", store.provenance_path().unwrap());
 
         // make sure we can read from new file
-        let mut report = DetailedStatusTracker::default();
+        let mut report = StatusTracker::default();
         let new_store = Store::load_from_asset(&op, false, &mut report).unwrap();
         Store::verify_store_async(
             &new_store,
@@ -4390,7 +4404,7 @@ pub mod tests {
             .unwrap();
 
         // make sure we can read from new file
-        let mut report = DetailedStatusTracker::default();
+        let mut report = StatusTracker::default();
         let new_store = Store::load_from_asset(&op, false, &mut report).unwrap();
 
         Store::verify_store_async(
@@ -4441,7 +4455,7 @@ pub mod tests {
         // write to new file
         println!("Provenance: {}\n", store.provenance_path().unwrap());
 
-        let mut report = DetailedStatusTracker::default();
+        let mut report = StatusTracker::default();
 
         // read from new file
         let new_store = Store::load_from_asset(&op, true, &mut report).unwrap();
@@ -4537,7 +4551,7 @@ pub mod tests {
             // write to new file
             println!("Provenance: {}\n", store.provenance_path().unwrap());
 
-            let mut report = DetailedStatusTracker::default();
+            let mut report = StatusTracker::default();
 
             // read from new file
             let new_store = Store::load_from_asset(&op, true, &mut report).unwrap();
@@ -4610,7 +4624,7 @@ pub mod tests {
             // write to new file
             println!("Provenance: {}\n", store.provenance_path().unwrap());
 
-            let mut report = DetailedStatusTracker::default();
+            let mut report = StatusTracker::default();
 
             // read from new file
             let new_store = Store::load_from_asset(&op, true, &mut report).unwrap();
@@ -4684,7 +4698,7 @@ pub mod tests {
         // write to new file
         println!("Provenance: {}\n", store.provenance_path().unwrap());
 
-        let mut report = DetailedStatusTracker::default();
+        let mut report = StatusTracker::default();
 
         // read from new file
         let new_store = Store::load_from_asset(&op, true, &mut report).unwrap();
@@ -4758,7 +4772,7 @@ pub mod tests {
         // write to new file
         println!("Provenance: {}\n", store.provenance_path().unwrap());
 
-        let mut report = DetailedStatusTracker::default();
+        let mut report = StatusTracker::default();
 
         // read from new file
         let new_store = Store::load_from_asset(&op, true, &mut report).unwrap();
@@ -4832,7 +4846,7 @@ pub mod tests {
         // write to new file
         println!("Provenance: {}\n", store.provenance_path().unwrap());
 
-        let mut report = DetailedStatusTracker::default();
+        let mut report = StatusTracker::default();
 
         // read from new file
         let new_store = Store::load_from_asset(&op, true, &mut report).unwrap();
@@ -4891,7 +4905,7 @@ pub mod tests {
         store.commit_claim(claim1).unwrap();
         store.save_to_asset(&ap, signer.as_ref(), &op).unwrap();
 
-        let mut report = DetailedStatusTracker::default();
+        let mut report = StatusTracker::default();
 
         // read from new file
         let new_store = Store::load_from_asset(&op, true, &mut report).unwrap();
@@ -4935,7 +4949,7 @@ pub mod tests {
         store.commit_claim(claim1).unwrap();
         store.save_to_asset(&ap, signer.as_ref(), &op).unwrap();
 
-        let mut report = DetailedStatusTracker::default();
+        let mut report = StatusTracker::default();
 
         // read from new file
         let new_store = Store::load_from_asset(&op, true, &mut report).unwrap();
@@ -4979,7 +4993,7 @@ pub mod tests {
         store.commit_claim(claim1).unwrap();
         store.save_to_asset(&ap, signer.as_ref(), &op).unwrap();
 
-        let mut report = DetailedStatusTracker::default();
+        let mut report = StatusTracker::default();
 
         // read from new file
         let new_store = Store::load_from_asset(&op, true, &mut report).unwrap();
@@ -5014,13 +5028,18 @@ pub mod tests {
     #[test]
     fn test_manifest_bad_sig() {
         let ap = fixture_path("CE-sig-CA.jpg");
-        assert!(Store::load_from_asset(&ap, true, &mut OneShotStatusTracker::default()).is_err());
+        assert!(Store::load_from_asset(
+            &ap,
+            true,
+            &mut StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError)
+        )
+        .is_err());
     }
 
     #[test]
     fn test_unsupported_type_without_external_manifest() {
         let ap = fixture_path("Purple Square.psd");
-        let mut report = DetailedStatusTracker::default();
+        let mut report = StatusTracker::default();
         let result = Store::load_from_asset(&ap, true, &mut report);
         assert!(matches!(result, Err(Error::UnsupportedType)));
         println!("Error report for {}: {:?}", ap.display(), report);
@@ -5033,7 +5052,7 @@ pub mod tests {
     fn test_bad_jumbf() {
         // test bad jumbf
         let ap = fixture_path("prerelease.jpg");
-        let mut report = DetailedStatusTracker::default();
+        let mut report = StatusTracker::default();
         let _r = Store::load_from_asset(&ap, true, &mut report);
 
         // error report
@@ -5047,7 +5066,7 @@ pub mod tests {
     fn test_detect_byte_change() {
         // test bad jumbf
         let ap = fixture_path("XCA.jpg");
-        let mut report = DetailedStatusTracker::default();
+        let mut report = StatusTracker::default();
         Store::load_from_asset(&ap, true, &mut report).unwrap();
 
         // error report
@@ -5061,7 +5080,7 @@ pub mod tests {
     #[cfg(feature = "file_io")]
     fn test_file_not_found() {
         let ap = fixture_path("this_does_not_exist.jpg");
-        let mut report = DetailedStatusTracker::default();
+        let mut report = StatusTracker::default();
         let _result = Store::load_from_asset(&ap, true, &mut report);
 
         println!(
@@ -5077,7 +5096,7 @@ pub mod tests {
     #[test]
     fn test_old_manifest() {
         let ap = fixture_path("prerelease.jpg");
-        let mut report = DetailedStatusTracker::default();
+        let mut report = StatusTracker::default();
         let _r = Store::load_from_asset(&ap, true, &mut report);
 
         println!(
@@ -5115,9 +5134,12 @@ pub mod tests {
             .unwrap();
 
         // read back in
-        let restored_store =
-            Store::load_from_asset(op.as_path(), true, &mut OneShotStatusTracker::default())
-                .unwrap();
+        let restored_store = Store::load_from_asset(
+            op.as_path(),
+            true,
+            &mut StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError),
+        )
+        .unwrap();
 
         let pc = restored_store.provenance_claim().unwrap();
 
@@ -5153,9 +5175,12 @@ pub mod tests {
             .unwrap();
 
         // read back in
-        let restored_store =
-            Store::load_from_asset(op.as_path(), true, &mut OneShotStatusTracker::default())
-                .unwrap();
+        let restored_store = Store::load_from_asset(
+            op.as_path(),
+            true,
+            &mut StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError),
+        )
+        .unwrap();
 
         let pc = restored_store.provenance_claim().unwrap();
 
@@ -5177,11 +5202,11 @@ pub mod tests {
         fixture_name: &str,
         search_bytes: &[u8],
         replace_bytes: &[u8],
-    ) -> impl StatusTracker {
+    ) -> StatusTracker {
         let temp_dir = tempdirectory().expect("temp dir");
         let path = temp_fixture_path(&temp_dir, fixture_name);
         patch_file(&path, search_bytes, replace_bytes).expect("patch_file");
-        let mut report = DetailedStatusTracker::default();
+        let mut report = StatusTracker::default();
         let _r = Store::load_from_asset(&path, true, &mut report); // errs are in report
         println!("report: {report:?}");
         report
@@ -5207,7 +5232,7 @@ pub mod tests {
             .save_to_asset(ap.as_path(), signer.as_ref(), op.as_path())
             .unwrap();
 
-        let mut report = OneShotStatusTracker::default();
+        let mut report = StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
         // read back in
         let mut restored_store = Store::load_from_asset(op.as_path(), true, &mut report).unwrap();
 
@@ -5307,7 +5332,7 @@ pub mod tests {
     #[test]
     fn test_display() {
         let ap = fixture_path("CA.jpg");
-        let mut report = DetailedStatusTracker::default();
+        let mut report = StatusTracker::default();
         let store = Store::load_from_asset(&ap, true, &mut report).expect("load_from_asset");
         let _errors = report.take_errors();
 
@@ -5318,7 +5343,7 @@ pub mod tests {
     fn test_legacy_ingredient_hash() {
         // test 1.0 ingredient hash
         let ap = fixture_path("legacy_ingredient_hash.jpg");
-        let mut report = DetailedStatusTracker::default();
+        let mut report = StatusTracker::default();
         let store = Store::load_from_asset(&ap, true, &mut report).expect("load_from_asset");
         println!("store = {store}");
     }
@@ -5327,7 +5352,7 @@ pub mod tests {
     fn test_bmff_legacy() {
         // test 1.0 bmff hash
         let ap = fixture_path("legacy.mp4");
-        let mut report = DetailedStatusTracker::default();
+        let mut report = StatusTracker::default();
         let store = Store::load_from_asset(&ap, true, &mut report).expect("load_from_asset");
         println!("store = {store}");
     }
@@ -5341,7 +5366,7 @@ pub mod tests {
                let init_stream = std::fs::read(init_stream_path).unwrap();
                let segment_stream = std::fs::read(segment_stream_path).unwrap();
 
-               let mut report = DetailedStatusTracker::default();
+               let mut report = StatusTracker::default();
                let store = Store::load_fragment_from_memory(
                    "mp4",
                    &init_stream,
@@ -5373,7 +5398,7 @@ pub mod tests {
         store.commit_claim(claim1).unwrap();
         store.save_to_asset(&ap, signer.as_ref(), &op).unwrap();
 
-        let mut report = DetailedStatusTracker::default();
+        let mut report = StatusTracker::default();
 
         // can we read back in
         let new_store = Store::load_from_asset(&op, true, &mut report).unwrap();
@@ -5414,7 +5439,7 @@ pub mod tests {
             )
             .unwrap();
 
-        let mut report = DetailedStatusTracker::default();
+        let mut report = StatusTracker::default();
 
         let output_data = output_stream.into_inner();
 
@@ -5432,7 +5457,7 @@ pub mod tests {
         // test adding to actual image
         let ap = fixture_path("no_manifest.jpg");
 
-        let mut report = DetailedStatusTracker::default();
+        let mut report = StatusTracker::default();
 
         // can we read back in
         let _store = Store::load_from_asset(&ap, true, &mut report);
@@ -5474,7 +5499,8 @@ pub mod tests {
         assert_eq!(saved_manifest, loaded_manifest);
 
         // test auto loading of sidecar with validation
-        let mut validation_log = OneShotStatusTracker::default();
+        let mut validation_log =
+            StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
         Store::load_from_asset(&op, true, &mut validation_log).unwrap();
     }
 
@@ -5529,7 +5555,8 @@ pub mod tests {
         assert_eq!(ext_ref, url_string);
 
         // make sure it validates
-        let mut validation_log = OneShotStatusTracker::default();
+        let mut validation_log =
+            StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
         Store::load_from_asset(&op, true, &mut validation_log).unwrap();
     }
 
@@ -5596,7 +5623,8 @@ pub mod tests {
         assert_eq!(ext_ref, url_string);
 
         // make sure it validates
-        let mut validation_log = OneShotStatusTracker::default();
+        let mut validation_log =
+            StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
         Store::load_from_asset(&op, true, &mut validation_log).unwrap();
     }
 
@@ -5645,7 +5673,8 @@ pub mod tests {
         // Load the exported file into a buffer
         let file_buffer = std::fs::read(&op).unwrap();
 
-        let mut validation_log = OneShotStatusTracker::default();
+        let mut validation_log =
+            StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
         let result = Store::load_from_memory("png", &file_buffer, true, &mut validation_log);
 
         assert!(result.is_err());
@@ -5688,7 +5717,7 @@ pub mod tests {
         result = result_stream.into_inner();
 
         // make sure we can read from new file
-        let mut report = DetailedStatusTracker::default();
+        let mut report = StatusTracker::default();
         let new_store = Store::load_from_memory("jpeg", &result, false, &mut report).unwrap();
 
         Store::verify_store_async(
@@ -5739,7 +5768,7 @@ pub mod tests {
 
         println!("Provenance: {}\n", store.provenance_path().unwrap());
 
-        let mut report = DetailedStatusTracker::default();
+        let mut report = StatusTracker::default();
 
         // read from new file
         let new_store = Store::load_from_asset(&op, true, &mut report).unwrap();
@@ -5851,7 +5880,7 @@ pub mod tests {
             .unwrap();
         output_file.write_all(&out_stream.into_inner()).unwrap();
 
-        let mut report = DetailedStatusTracker::default();
+        let mut report = StatusTracker::default();
         let new_store = Store::load_from_asset(&output, false, &mut report).unwrap();
 
         Store::verify_store_async(&new_store, &mut ClaimAssetData::Path(&output), &mut report)
@@ -5936,7 +5965,7 @@ pub mod tests {
             .unwrap();
         output_file.write_all(&out_stream.into_inner()).unwrap();
 
-        let mut report = DetailedStatusTracker::default();
+        let mut report = StatusTracker::default();
         let _new_store = Store::load_from_asset(&output, true, &mut report).unwrap();
 
         let errors = report.take_errors();
@@ -6002,7 +6031,7 @@ pub mod tests {
         output_file.seek(SeekFrom::Start(offset as u64)).unwrap();
         output_file.write_all(&cm).unwrap();
 
-        let mut report = DetailedStatusTracker::default();
+        let mut report = StatusTracker::default();
         let new_store = Store::load_from_asset(&output, false, &mut report).unwrap();
 
         Store::verify_store_async(&new_store, &mut ClaimAssetData::Path(&output), &mut report)
@@ -6075,7 +6104,7 @@ pub mod tests {
         output_file.seek(SeekFrom::Start(offset as u64)).unwrap();
         output_file.write_all(&cm).unwrap();
 
-        let mut report = DetailedStatusTracker::default();
+        let mut report = StatusTracker::default();
         let _new_store = Store::load_from_asset(&output, true, &mut report).unwrap();
 
         let errors = report.take_errors();
@@ -6143,7 +6172,7 @@ pub mod tests {
         output_file.seek(SeekFrom::Start(offset as u64)).unwrap();
         output_file.write_all(&cm).unwrap();
 
-        let mut report = DetailedStatusTracker::default();
+        let mut report = StatusTracker::default();
         let _new_store = Store::load_from_asset(&output, true, &mut report).unwrap();
 
         let errors = report.take_errors();
@@ -6264,7 +6293,7 @@ pub mod tests {
         )
         .unwrap();
 
-        let mut report = DetailedStatusTracker::default();
+        let mut report = StatusTracker::default();
         let _new_store = Store::load_from_asset(&op, true, &mut report).unwrap();
 
         let errors = report.take_errors();
@@ -6383,7 +6412,7 @@ pub mod tests {
         result = result_stream.into_inner();
 
         // make sure we can read from new file
-        let mut report = DetailedStatusTracker::default();
+        let mut report = StatusTracker::default();
         let new_store = Store::load_from_memory("jpeg", &result, false, &mut report).unwrap();
 
         println!("new_store: {}", new_store);
@@ -6520,7 +6549,7 @@ pub mod tests {
         result = result_stream.into_inner();
 
         // make sure we can read from new file
-        let mut report = DetailedStatusTracker::default();
+        let mut report = StatusTracker::default();
         let new_store = Store::load_from_memory("jpeg", &result, false, &mut report).unwrap();
 
         println!("new_store: {}", new_store);
@@ -6593,7 +6622,7 @@ pub mod tests {
                     for entry in &fragments {
                         let file_path = new_output_path.join(entry.file_name().unwrap());
 
-                        let mut validation_log = DetailedStatusTracker::default();
+                        let mut validation_log = StatusTracker::default();
 
                         let mut fragment_stream = std::fs::File::open(&file_path).unwrap();
                         let _manifest = Store::load_fragment_from_stream(
@@ -6615,7 +6644,7 @@ pub mod tests {
                     }
 
                     //let mut reader = Cursor::new(init_stream);
-                    let mut validation_log = DetailedStatusTracker::default();
+                    let mut validation_log = StatusTracker::default();
                     let _manifest = Store::load_from_file_and_fragments(
                         "mp4",
                         &mut init_stream,

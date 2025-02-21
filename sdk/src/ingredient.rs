@@ -18,7 +18,7 @@ use std::{borrow::Cow, io::Cursor};
 
 use async_generic::async_generic;
 use c2pa_crypto::base64;
-use c2pa_status_tracker::{log_item, DetailedStatusTracker, StatusTracker};
+use c2pa_status_tracker::{log_item, StatusTracker};
 use log::{debug, error};
 #[cfg(feature = "json_schema")]
 use schemars::JsonSchema;
@@ -583,7 +583,7 @@ impl Ingredient {
         &mut self,
         result: Result<Store>,
         manifest_bytes: Option<Vec<u8>>,
-        validation_log: &impl StatusTracker,
+        validation_log: &StatusTracker,
     ) -> Result<()> {
         let active_manifest = self.active_manifest.as_deref().unwrap_or_default();
         match result {
@@ -746,7 +746,7 @@ impl Ingredient {
         // optionally generate a hash so we know if the file has changed
         ingredient.hash = options.hash(path);
 
-        let mut validation_log = DetailedStatusTracker::default();
+        let mut validation_log = StatusTracker::default();
 
         // retrieve the manifest bytes from embedded, sidecar or remote and convert to store if found
         let (result, manifest_bytes) = match Store::load_jumbf_from_path(path) {
@@ -859,7 +859,7 @@ impl Ingredient {
     // Internal implementation to avoid code bloat.
     #[async_generic()]
     fn add_stream_internal(mut self, format: &str, stream: &mut dyn CAIRead) -> Result<Self> {
-        let mut validation_log = DetailedStatusTracker::default();
+        let mut validation_log = StatusTracker::default();
 
         // retrieve the manifest bytes from embedded, sidecar or remote and convert to store if found
         let jumbf_stream = load_jumbf_from_stream(format, stream);
@@ -939,7 +939,7 @@ impl Ingredient {
         let mut ingredient = Self::from_stream_info(stream, format, "untitled");
         stream.rewind()?;
 
-        let mut validation_log = DetailedStatusTracker::default();
+        let mut validation_log = StatusTracker::default();
 
         // retrieve the manifest bytes from embedded, sidecar or remote and convert to store if found
         let (result, manifest_bytes) = match Store::load_jumbf_from_stream(format, stream) {
@@ -1383,7 +1383,7 @@ impl Ingredient {
     ) -> Result<Self> {
         let mut ingredient = Self::from_stream_info(stream, format, "untitled");
 
-        let mut validation_log = DetailedStatusTracker::default();
+        let mut validation_log = StatusTracker::default();
 
         let manifest_bytes: Vec<u8> = manifest_bytes.into();
         // generate a store from the buffer and then validate from the asset path

@@ -23,7 +23,7 @@ use std::{
 
 use async_generic::async_generic;
 use c2pa_crypto::base64;
-use c2pa_status_tracker::DetailedStatusTracker;
+use c2pa_status_tracker::StatusTracker;
 #[cfg(feature = "json_schema")]
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -174,7 +174,7 @@ impl Reader {
         format: &str,
         mut stream: impl Read + Seek + Send,
     ) -> Result<Reader> {
-        let mut validation_log = DetailedStatusTracker::default();
+        let mut validation_log = StatusTracker::default();
 
         // first we convert the JUMBF into a usable store
         let store = Store::from_jumbf(c2pa_data, &mut validation_log)?;
@@ -210,7 +210,7 @@ impl Reader {
         mut stream: impl Read + Seek + Send,
         mut fragment: impl Read + Seek + Send,
     ) -> Result<Self> {
-        let mut validation_log = DetailedStatusTracker::default();
+        let mut validation_log = StatusTracker::default();
         let manifest_bytes = Store::load_jumbf_from_stream(format, &mut stream)?;
         let store = Store::from_jumbf(&manifest_bytes, &mut validation_log)?;
 
@@ -238,7 +238,7 @@ impl Reader {
     ) -> Result<Reader> {
         let verify = get_settings_value::<bool>("verify.verify_after_reading")?; // defaults to true
 
-        let mut validation_log = DetailedStatusTracker::default();
+        let mut validation_log = StatusTracker::default();
 
         let asset_type = crate::jumbf_io::get_supported_file_extension(path.as_ref())
             .ok_or(crate::Error::UnsupportedType)?;
@@ -525,7 +525,7 @@ impl Reader {
     }
 
     #[async_generic()]
-    fn from_store(store: Store, validation_log: &DetailedStatusTracker) -> Self {
+    fn from_store(store: Store, validation_log: &StatusTracker) -> Self {
         let mut validation_results = ValidationResults::from_store(&store, validation_log);
 
         let active_manifest = store.provenance_label();

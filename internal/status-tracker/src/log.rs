@@ -177,14 +177,14 @@ impl LogItem {
 
     /// Set the log item kind to [`LogKind::Success`] and add it to the
     /// [`StatusTracker`].
-    pub fn success(mut self, tracker: &mut impl StatusTracker) {
+    pub fn success(mut self, tracker: &mut StatusTracker) {
         self.kind = LogKind::Success;
         tracker.add_non_error(self);
     }
 
     /// Set the log item kind to [`LogKind::Informational`] and add it to the
     /// [`StatusTracker`].
-    pub fn informational(mut self, tracker: &mut impl StatusTracker) {
+    pub fn informational(mut self, tracker: &mut StatusTracker) {
         self.kind = LogKind::Informational;
         tracker.add_non_error(self);
     }
@@ -197,7 +197,7 @@ impl LogItem {
     ///
     /// If the implementation is configured to aggregate all log messages, this
     /// function will return `Ok(())`.
-    pub fn failure<E: Debug>(mut self, tracker: &mut impl StatusTracker, err: E) -> Result<(), E> {
+    pub fn failure<E: Debug>(mut self, tracker: &mut StatusTracker, err: E) -> Result<(), E> {
         self.kind = LogKind::Failure;
         self.err_val = Some(format!("{err:?}").into());
         tracker.add_error(self, err)
@@ -208,7 +208,7 @@ impl LogItem {
     ///
     /// Does not return a [`Result`] and thus ignores the [`StatusTracker`]
     /// error-handling configuration.
-    pub fn failure_no_throw<E: Debug>(mut self, tracker: &mut impl StatusTracker, err: E) {
+    pub fn failure_no_throw<E: Debug>(mut self, tracker: &mut StatusTracker, err: E) {
         self.kind = LogKind::Failure;
         self.err_val = Some(format!("{err:?}").into());
 
