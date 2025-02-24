@@ -178,7 +178,6 @@ pub(crate) fn get_signing_info(
 
 #[allow(unused_imports)]
 #[allow(clippy::unwrap_used)]
-#[cfg(feature = "openssl_sign")]
 #[cfg(test)]
 pub mod tests {
     use c2pa_crypto::raw_signature::SigningAlg;
@@ -214,7 +213,6 @@ pub mod tests {
         assert_eq!(signing_time, None);
     }
     #[test]
-    #[cfg(feature = "openssl_sign")]
     fn test_stapled_ocsp() {
         use c2pa_crypto::{
             raw_signature::{signer_from_cert_chain_and_private_key, RawSigner, RawSignerError},

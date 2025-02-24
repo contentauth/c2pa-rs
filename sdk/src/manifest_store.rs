@@ -590,7 +590,7 @@ impl std::fmt::Display for ManifestStore {
     }
 }
 
-#[cfg(all(test, any(target_arch = "wasm32", feature = "openssl")))]
+#[cfg(test)]
 mod tests {
     #![allow(clippy::expect_used)]
     #![allow(clippy::unwrap_used)]
@@ -605,8 +605,6 @@ mod tests {
     #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
     wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
 
-    // #[cfg_attr(not(target_arch = "wasm32"), test)]
-    // #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
     #[cfg_attr(
         all(target_arch = "wasm32", not(target_os = "wasi")),
         wasm_bindgen_test

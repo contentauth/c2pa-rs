@@ -397,7 +397,6 @@ pub fn mime_from_uri(uri: &str) -> String {
 }
 
 #[cfg(test)]
-#[cfg(feature = "openssl_sign")]
 mod tests {
     #![allow(clippy::expect_used)]
     #![allow(clippy::unwrap_used)]
@@ -410,7 +409,6 @@ mod tests {
     use crate::{utils::test_signer::test_signer, Builder, Reader};
 
     #[test]
-    #[cfg(feature = "openssl_sign")]
     fn resource_store() {
         let mut c = ResourceStore::new();
         let value = b"my value";

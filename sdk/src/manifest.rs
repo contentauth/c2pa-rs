@@ -1936,7 +1936,7 @@ pub(crate) mod tests {
         assert_eq!(action2.unwrap().actions()[0].action(), c2pa_action::EDITED);
     }
 
-    #[cfg(all(feature = "file_io", feature = "openssl_sign"))]
+    #[cfg(feature = "file_io")]
     #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
     #[cfg_attr(target_os = "wasi", wstd::test)]
     #[allow(deprecated)]
@@ -1958,7 +1958,7 @@ pub(crate) mod tests {
         );
     }
 
-    #[cfg(all(feature = "file_io", feature = "openssl_sign"))]
+    #[cfg(feature = "file_io")]
     #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
     #[cfg_attr(target_os = "wasi", wstd::test)]
     #[allow(deprecated)]
@@ -2035,7 +2035,6 @@ pub(crate) mod tests {
         wasm_bindgen_test
     )]
     #[allow(deprecated)]
-    #[cfg_attr(not(any(target_arch = "wasm32", feature = "openssl_sign")), ignore)]
     #[cfg_attr(target_os = "wasi", wstd::test)]
     async fn test_embed_jpeg_stream_wasm() {
         use crate::assertions::User;
@@ -2080,7 +2079,6 @@ pub(crate) mod tests {
         wasm_bindgen_test
     )]
     #[allow(deprecated)]
-    #[cfg_attr(not(any(target_arch = "wasm32", feature = "openssl_sign")), ignore)]
     #[cfg_attr(target_os = "wasi", wstd::test)]
     async fn test_embed_png_stream_wasm() {
         use crate::assertions::User;
@@ -2118,7 +2116,6 @@ pub(crate) mod tests {
         wasm_bindgen_test
     )]
     #[allow(deprecated)]
-    #[cfg_attr(not(any(target_arch = "wasm32", feature = "openssl_sign")), ignore)]
     #[cfg_attr(target_os = "wasi", wstd::test)]
     async fn test_embed_webp_stream_wasm() {
         use crate::assertions::User;
@@ -2151,7 +2148,6 @@ pub(crate) mod tests {
     }
 
     #[test]
-    #[cfg_attr(not(any(target_arch = "wasm32", feature = "openssl_sign")), ignore)]
     fn test_embed_stream() {
         use crate::assertions::User;
         let image = include_bytes!("../tests/fixtures/earth_apollo17.jpg");
@@ -2188,19 +2184,13 @@ pub(crate) mod tests {
         //println!("{manifest_store}");main
     }
 
-    #[cfg_attr(
-        all(not(target_arch = "wasm32"), feature = "openssl_sign"),
-        actix::test
-    )]
+    #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
     #[cfg_attr(
         all(target_arch = "wasm32", not(target_os = "wasi")),
         wasm_bindgen_test
     )]
     #[cfg_attr(target_os = "wasi", wstd::test)]
-    #[cfg(any(
-        target_arch = "wasm32",
-        all(feature = "openssl_sign", feature = "file_io")
-    ))]
+    #[cfg(any(target_arch = "wasm32", feature = "file_io"))]
     async fn test_embed_from_memory_async() {
         use crate::assertions::User;
         let image = include_bytes!("../tests/fixtures/earth_apollo17.jpg");
@@ -2330,7 +2320,6 @@ pub(crate) mod tests {
         assert_eq!(image.into_owned(), thumb_data);
     }
 
-    #[cfg(feature = "openssl_sign")]
     const MANIFEST_JSON: &str = r#"{
         "claim_generator": "test",
         "claim_generator_info": [
@@ -2447,7 +2436,6 @@ pub(crate) mod tests {
     }"#;
 
     #[test]
-    #[cfg(feature = "openssl_sign")]
     /// tests and illustrates how to add assets to a non-file based manifest by using a stream
     fn from_json_with_stream() {
         use crate::assertions::Relationship;
@@ -2516,7 +2504,6 @@ pub(crate) mod tests {
     }
 
     #[test]
-    #[cfg(feature = "openssl_sign")]
     #[allow(deprecated)]
     /// tests and illustrates how to add assets to a non-file based manifest by using a memory buffer
     fn from_json_with_memory() {
@@ -2816,7 +2803,7 @@ pub(crate) mod tests {
         assert_eq!(manifest_store.validation_status(), None);
     }
 
-    #[cfg(all(feature = "file_io", feature = "openssl_sign"))]
+    #[cfg(feature = "file_io")]
     #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
     #[cfg_attr(target_os = "wasi", wstd::test)]
     #[allow(deprecated)]

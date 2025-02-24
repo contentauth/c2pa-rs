@@ -32,4 +32,4 @@ tempfile = "3.15.0"
 
 [features]
 # prevents these features from being always enabled in the workspace
-default = ["c2pa/openssl_sign", "c2pa/file_io"]
+default = ["c2pa/file_io"]

@@ -6272,7 +6272,6 @@ pub mod tests {
     }
 
     #[test]
-    #[cfg(feature = "openssl_sign")]
     fn test_dynamic_assertions() {
         #[derive(Serialize)]
         struct TestAssertion {
@@ -6402,7 +6401,6 @@ pub mod tests {
 
     #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
     #[cfg_attr(target_os = "wasi", wstd::test)]
-    #[cfg(feature = "openssl_sign")]
     async fn test_async_dynamic_assertions() {
         use async_trait::async_trait;
 

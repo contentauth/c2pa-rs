@@ -268,12 +268,11 @@ mod tests {
     use c2pa_crypto::raw_signature::SigningAlg;
 
     use super::sign_claim;
-    #[cfg(all(any(feature = "openssl_sign", target_os = "wasi"), feature = "file_io"))]
+    #[cfg(feature = "file_io")]
     use crate::utils::test_signer::async_test_signer;
     use crate::{claim::Claim, utils::test_signer::test_signer, Result, Signer};
 
     #[test]
-    #[cfg_attr(not(any(target_arch = "wasm32", feature = "openssl_sign")), ignore)]
     fn test_sign_claim() {
         let mut claim = Claim::new("extern_sign_test", Some("contentauth"), 1);
         claim.build().unwrap();
@@ -288,7 +287,7 @@ mod tests {
         assert_eq!(cose_sign1.len(), box_size);
     }
 
-    #[cfg(all(any(feature = "openssl_sign", target_os = "wasi"), feature = "file_io"))]
+    #[cfg(feature = "file_io")]
     #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
     #[cfg_attr(target_os = "wasi", wstd::test)]
     async fn test_sign_claim_async() {
@@ -357,7 +356,6 @@ mod tests {
 
         let _cose_sign1 = sign_claim(&claim_bytes, &signer, box_size);
 
-        #[cfg(any(feature = "openssl", target_os = "wasi"))] // there is no verify on sign when openssl is disabled
         assert!(_cose_sign1.is_err());
     }
 }
