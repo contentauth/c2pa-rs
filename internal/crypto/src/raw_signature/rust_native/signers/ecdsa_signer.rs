@@ -142,3 +142,53 @@ impl TimeStampProvider for EcdsaSigner {
         self.time_stamp_service_url.clone()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::raw_signature::SigningAlg;
+
+    #[test]
+    fn test_es512_not_supported() {
+        let cert_chain = include_bytes!("../../../tests/fixtures/raw_signature/es512.pub");
+        let private_key = include_bytes!("../../../tests/fixtures/raw_signature/es512.priv");
+        let algorithm = SigningAlg::Es512;
+        let time_stamp_service_url = None;
+
+        let result = EcdsaSigner::from_cert_chain_and_private_key(
+            cert_chain,
+            private_key,
+            algorithm,
+            time_stamp_service_url,
+        );
+
+        assert!(result.is_err());
+        if let Err(RawSignerError::InvalidSigningCredentials(err_msg)) = result {
+            assert_eq!(err_msg, "Rust Crypto does not support Es512, only OpenSSL");
+        } else {
+            unreachable!("Expected InvalidSigningCredentials error");
+        }
+    }
+
+    #[test]
+    fn test_other_not_supported() {
+        let cert_chain = include_bytes!("../../../tests/fixtures/raw_signature/ps256.pub");
+        let private_key = include_bytes!("../../../tests/fixtures/raw_signature/ps256.priv");
+        let algorithm = SigningAlg::Ps256;
+        let time_stamp_service_url = None;
+
+        let result = EcdsaSigner::from_cert_chain_and_private_key(
+            cert_chain,
+            private_key,
+            algorithm,
+            time_stamp_service_url,
+        );
+
+        assert!(result.is_err());
+        if let Err(RawSignerError::InvalidSigningCredentials(err_msg)) = result {
+            assert_eq!(err_msg, "Unsupported algorithm");
+        } else {
+            unreachable!("Expected InvalidSigningCredentials error");
+        }
+    }
+}
