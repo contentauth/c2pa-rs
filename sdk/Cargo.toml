@@ -32,6 +32,7 @@ serialize_thumbnails = []
 no_interleaved_io = ["file_io"]
 fetch_remote_manifests = ["dep:wasi"]
 json_schema = ["dep:schemars", "c2pa-crypto/json_schema"]
+rust_native_crypto = ["c2pa-crypto/rust_native_crypto"]
 pdf = ["dep:lopdf"]
 v1_api = []
 
