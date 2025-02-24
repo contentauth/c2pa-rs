@@ -264,9 +264,7 @@ fn test_trust_store() {
     let ps256 = test_signer(SigningAlg::Ps256);
     let ps384 = test_signer(SigningAlg::Ps384);
     let ps512 = test_signer(SigningAlg::Ps512);
-    #[cfg(not(target_arch = "wasm32"))]
     let es256 = test_signer(SigningAlg::Es256);
-    #[cfg(not(target_arch = "wasm32"))]
     let es384 = test_signer(SigningAlg::Es384);
     #[cfg(not(target_arch = "wasm32"))]
     let es512 = test_signer(SigningAlg::Es512);
@@ -275,9 +273,7 @@ fn test_trust_store() {
     let ps256_certs = ps256.cert_chain().unwrap();
     let ps384_certs = ps384.cert_chain().unwrap();
     let ps512_certs = ps512.cert_chain().unwrap();
-    #[cfg(not(target_arch = "wasm32"))]
     let es256_certs = es256.cert_chain().unwrap();
-    #[cfg(not(target_arch = "wasm32"))]
     let es384_certs = es384.cert_chain().unwrap();
     #[cfg(not(target_arch = "wasm32"))]
     let es512_certs = es512.cert_chain().unwrap();
@@ -289,10 +285,8 @@ fn test_trust_store() {
         .unwrap();
     ctp.check_certificate_trust(&ps512_certs[1..], &ps512_certs[0], None)
         .unwrap();
-    #[cfg(not(target_arch = "wasm32"))]
     ctp.check_certificate_trust(&es256_certs[1..], &es256_certs[0], None)
         .unwrap();
-    #[cfg(not(target_arch = "wasm32"))]
     ctp.check_certificate_trust(&es384_certs[1..], &es384_certs[0], None)
         .unwrap();
     #[cfg(not(target_arch = "wasm32"))]
@@ -349,9 +343,7 @@ fn test_broken_trust_chain() {
     let ps256 = test_signer(SigningAlg::Ps256);
     let ps384 = test_signer(SigningAlg::Ps384);
     let ps512 = test_signer(SigningAlg::Ps512);
-    #[cfg(not(target_arch = "wasm32"))]
     let es256 = test_signer(SigningAlg::Es256);
-    #[cfg(not(target_arch = "wasm32"))]
     let es384 = test_signer(SigningAlg::Es384);
     #[cfg(not(target_arch = "wasm32"))]
     let es512 = test_signer(SigningAlg::Es512);
@@ -360,9 +352,7 @@ fn test_broken_trust_chain() {
     let ps256_certs = ps256.cert_chain().unwrap();
     let ps384_certs = ps384.cert_chain().unwrap();
     let ps512_certs = ps512.cert_chain().unwrap();
-    #[cfg(not(target_arch = "wasm32"))]
     let es256_certs = es256.cert_chain().unwrap();
-    #[cfg(not(target_arch = "wasm32"))]
     let es384_certs = es384.cert_chain().unwrap();
     #[cfg(not(target_arch = "wasm32"))]
     let es512_certs = es512.cert_chain().unwrap();
@@ -393,14 +383,12 @@ fn test_broken_trust_chain() {
         CertificateTrustError::CertificateNotTrusted
     );
 
-    #[cfg(not(target_arch = "wasm32"))]
     assert_eq!(
         ctp.check_certificate_trust(&es256_certs[2..], &es256_certs[0], None)
             .unwrap_err(),
         CertificateTrustError::CertificateNotTrusted
     );
 
-    #[cfg(not(target_arch = "wasm32"))]
     assert_eq!(
         ctp.check_certificate_trust(&es384_certs[2..], &es384_certs[0], None)
             .unwrap_err(),
@@ -518,9 +506,7 @@ fn test_allowed_list() {
     let ps256 = test_signer(SigningAlg::Ps256);
     let ps384 = test_signer(SigningAlg::Ps384);
     let ps512 = test_signer(SigningAlg::Ps512);
-    #[cfg(not(target_arch = "wasm32"))]
     let es256 = test_signer(SigningAlg::Es256);
-    #[cfg(not(target_arch = "wasm32"))]
     let es384 = test_signer(SigningAlg::Es384);
     #[cfg(not(target_arch = "wasm32"))]
     let es512 = test_signer(SigningAlg::Es512);
@@ -529,9 +515,7 @@ fn test_allowed_list() {
     let ps256_certs = ps256.cert_chain().unwrap();
     let ps384_certs = ps384.cert_chain().unwrap();
     let ps512_certs = ps512.cert_chain().unwrap();
-    #[cfg(not(target_arch = "wasm32"))]
     let es256_certs = es256.cert_chain().unwrap();
-    #[cfg(not(target_arch = "wasm32"))]
     let es384_certs = es384.cert_chain().unwrap();
     #[cfg(not(target_arch = "wasm32"))]
     let es512_certs = es512.cert_chain().unwrap();
@@ -543,10 +527,8 @@ fn test_allowed_list() {
         .unwrap();
     ctp.check_certificate_trust(&ps512_certs[1..], &ps512_certs[0], None)
         .unwrap();
-    #[cfg(not(target_arch = "wasm32"))]
     ctp.check_certificate_trust(&es256_certs[1..], &es256_certs[0], None)
         .unwrap();
-    #[cfg(not(target_arch = "wasm32"))]
     ctp.check_certificate_trust(&es384_certs[1..], &es384_certs[0], None)
         .unwrap();
     #[cfg(not(target_arch = "wasm32"))]

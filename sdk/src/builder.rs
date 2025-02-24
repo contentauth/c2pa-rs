@@ -1485,8 +1485,6 @@ mod tests {
         dest.rewind().unwrap();
         let manifest_store = Reader::from_stream(format, &mut dest).expect("from_bytes");
 
-        //println!("{}", manifest_store);
-        #[cfg(not(target_arch = "wasm32"))] // skip this until we get wasm async signing working
         assert_eq!(manifest_store.validation_status(), None);
 
         assert_eq!(
@@ -1583,7 +1581,6 @@ mod tests {
 
         let reader = crate::Reader::from_stream("image/jpeg", output_stream).unwrap();
         println!("{reader}");
-        #[cfg(not(target_arch = "wasm32"))] // skip this until we get wasm async signing working
         assert_eq!(reader.validation_status(), None);
     }
 
@@ -1653,7 +1650,6 @@ mod tests {
             .await
             .unwrap();
         //println!("{reader}");
-        #[cfg(not(target_arch = "wasm32"))] // skip this until we get wasm async signing working
         assert_eq!(_reader.validation_status(), None);
     }
 
