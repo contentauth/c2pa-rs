@@ -512,6 +512,15 @@ fn test_allowed_list() {
     let es512 = test_signer(SigningAlg::Es512);
     let ed25519 = test_signer(SigningAlg::Ed25519);
 
+    assert_eq!(ps256.alg(), SigningAlg::Ps256);
+    assert_eq!(ps384.alg(), SigningAlg::Ps384);
+    assert_eq!(ps512.alg(), SigningAlg::Ps512);
+    assert_eq!(es256.alg(), SigningAlg::Es256);
+    assert_eq!(es384.alg(), SigningAlg::Es384);
+    #[cfg(not(target_arch = "wasm32"))]
+    assert_eq!(es512.alg(), SigningAlg::Es512);
+    assert_eq!(ed25519.alg(), SigningAlg::Ed25519);
+
     let ps256_certs = ps256.cert_chain().unwrap();
     let ps384_certs = ps384.cert_chain().unwrap();
     let ps512_certs = ps512.cert_chain().unwrap();
