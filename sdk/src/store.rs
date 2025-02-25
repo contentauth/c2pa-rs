@@ -3289,6 +3289,7 @@ impl Store {
     }
 
     // fetch remote manifest if possible
+    // TODO: Switch to reqwest once it supports WASI https://github.com/seanmonstar/reqwest/issues/2294
     #[cfg(all(feature = "fetch_remote_manifests", target_os = "wasi"))]
     fn fetch_remote_manifest(url: &str) -> Result<Vec<u8>> {
         use url::Url;

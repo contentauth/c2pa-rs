@@ -30,10 +30,10 @@ thread_local! {
     pub(crate) static PROXY: RefCell<Option<String>> = const { RefCell::new(None) };
 }
 
-// #[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(target_os = "wasi"))]
 use reqwest::Error as HttpError;
-// #[cfg(target_arch = "wasm32")]
-// use String as HttpError;
+#[cfg(target_os = "wasi")]
+use String as HttpError;
 
 #[derive(Debug, thiserror::Error)]
 pub enum DidWebError {
@@ -81,7 +81,7 @@ pub(crate) async fn resolve(did: &Did<'_>) -> Result<DidDocument, DidWebError> {
 }
 
 async fn get_did_doc(url: &str) -> Result<Vec<u8>, DidWebError> {
-    // #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(not(target_os = "wasi"))]
     {
         use reqwest::header;
 
@@ -116,45 +116,36 @@ async fn get_did_doc(url: &str) -> Result<Vec<u8>, DidWebError> {
         Ok(document.to_vec())
     }
 
-    // #[cfg(target_arch = "wasm32")]
-    // {
-    //     use wasm_bindgen::prelude::*;
-    //     use wasm_bindgen_futures::JsFuture;
-    //     use web_sys::{Request, RequestInit, RequestMode, Response};
+    #[cfg(target_os = "wasi")]
+    {
+        use wstd::{http, io, io::AsyncRead};
 
-    //     let opts = RequestInit::new();
-    //     opts.set_method("GET");
-    //     opts.set_mode(RequestMode::Cors);
+        let request = http::Request::get(url)
+            .header("User-Agent", http::HeaderValue::from_static(USER_AGENT))
+            .header(
+                "Accept",
+                http::HeaderValue::from_static("application/did+json"),
+            )
+            .body(io::empty())
+            .map_err(|e| DidWebError::Request(url.to_owned(), e.to_string()))?;
+        let resp = http::Client::new()
+            .send(request)
+            .await
+            .map_err(|e| DidWebError::Request(url.to_owned(), e.to_string()))?;
 
-    //     let request = Request::new_with_str_and_init(&url, &opts)
-    //         .map_err(|_|
-    // DidWebError::Client("Request::new_with_str_and_init".to_string()))?;
+        let (parts, mut body) = resp.into_parts();
+        match parts.status {
+            http::StatusCode::OK => (),
+            http::StatusCode::NOT_FOUND => return Err(DidWebError::NotFound(url.to_string())),
+            _ => return Err(DidWebError::Server(parts.status.to_string())),
+        };
 
-    //     request
-    //         .headers()
-    //         .set("accept", "application/did+json")
-    //         .map_err(|_| DidWebError::Client("Set headers".to_string()))?;
-
-    //     let window = web_sys::window().unwrap();
-    //     let resp_value = JsFuture::from(window.fetch_with_request(&request))
-    //         .await
-    //         .map_err(|_|
-    // DidWebError::Client("window.fetch_with_request".to_string()))?;
-
-    //     assert!(resp_value.is_instance_of::<Response>());
-    //     let resp: Response = resp_value.dyn_into().unwrap();
-
-    //     JsFuture::from(
-    //         resp.blob()
-    //             .map_err(|_|
-    // DidWebError::Client("window.resp.bytes()".to_string()))?,     )
-    //     .await
-    //     .map(|blob| {
-    //         let array = js_sys::Uint8Array::new(&blob);
-    //         array.to_vec()
-    //     })
-    //     .map_err(|e| DidWebError::Server("resp.blob()".to_string()))
-    // }
+        let mut document = Vec::new();
+        body.read_to_end(&mut document)
+            .await
+            .map_err(|e| DidWebError::Response(e.to_string()))?;
+        Ok(document)
+    }
 }
 
 pub(crate) fn to_url(did: &str) -> Result<String, DidWebError> {

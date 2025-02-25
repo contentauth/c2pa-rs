@@ -19,13 +19,16 @@
 // each license.
 
 mod new {
-    #[cfg(target_arch = "wasm32")]
+    #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
     use wasm_bindgen_test::wasm_bindgen_test;
 
     use crate::claim_aggregation::w3c_vc::did::Did;
 
     #[test]
-    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    #[cfg_attr(
+        all(target_arch = "wasm32", not(target_os = "wasi")),
+        wasm_bindgen_test
+    )]
     fn valid_dids() {
         let did = Did::new("did:method:foo").unwrap();
         assert_eq!(did.method_name(), "method");
@@ -45,7 +48,10 @@ mod new {
     }
 
     #[test]
-    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    #[cfg_attr(
+        all(target_arch = "wasm32", not(target_os = "wasi")),
+        wasm_bindgen_test
+    )]
     fn err_invalid_did() {
         Did::new("http:a:b").unwrap_err();
         Did::new("did::b").unwrap_err();
@@ -54,13 +60,16 @@ mod new {
 }
 
 mod split_fragment {
-    #[cfg(target_arch = "wasm32")]
+    #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
     use wasm_bindgen_test::wasm_bindgen_test;
 
     use crate::claim_aggregation::w3c_vc::did::Did;
 
     #[test]
-    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    #[cfg_attr(
+        all(target_arch = "wasm32", not(target_os = "wasi")),
+        wasm_bindgen_test
+    )]
     fn has_fragment() {
         let did = Did::new("did:method:foo#bar").unwrap();
         assert_eq!(did.method_name(), "method");
@@ -72,7 +81,10 @@ mod split_fragment {
     }
 
     #[test]
-    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    #[cfg_attr(
+        all(target_arch = "wasm32", not(target_os = "wasi")),
+        wasm_bindgen_test
+    )]
     fn no_fragment() {
         let did = Did::new("did:method:foo").unwrap();
         let did2 = Did::new("did:method:foo").unwrap();

@@ -13,13 +13,16 @@
 
 use c2pa::HashedUri;
 use hex_literal::hex;
-#[cfg(target_arch = "wasm32")]
+#[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
 use wasm_bindgen_test::wasm_bindgen_test;
 
 use crate::SignerPayload;
 
 #[test]
-#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+#[cfg_attr(
+    all(target_arch = "wasm32", not(target_os = "wasi")),
+    wasm_bindgen_test
+)]
 fn impl_clone() {
     // Silly test to ensure code coverage on #[derive] line.
 

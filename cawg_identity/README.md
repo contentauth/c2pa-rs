@@ -27,6 +27,8 @@ The toolkit has been tested on the following operating systems:
 
 * Ubuntu Linux on x86 and ARM v8 (aarch64)
 
+* WebAssembly System Interface (WASI)
+
 ## License
 
 The `cawg-identity` crate is distributed under the terms of both the MIT license and the Apache License (Version 2.0).
