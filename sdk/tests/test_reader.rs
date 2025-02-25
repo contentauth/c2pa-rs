@@ -32,7 +32,6 @@ fn test_reader_no_jumbf() -> Result<()> {
 }
 
 #[test]
-#[cfg_attr(not(any(target_arch = "wasm32", feature = "openssl")), ignore)]
 fn test_reader_ca_jpg() -> Result<()> {
     let (format, mut stream) = fixture_stream("CA.jpg")?;
     let reader = Reader::from_stream(&format, &mut stream)?;
@@ -40,7 +39,6 @@ fn test_reader_ca_jpg() -> Result<()> {
 }
 
 #[test]
-#[cfg_attr(not(any(target_arch = "wasm32", feature = "openssl")), ignore)]
 fn test_reader_c_jpg() -> Result<()> {
     let (format, mut stream) = fixture_stream("C.jpg")?;
     let reader = Reader::from_stream(&format, &mut stream)?;
@@ -48,7 +46,6 @@ fn test_reader_c_jpg() -> Result<()> {
 }
 
 #[test]
-#[cfg_attr(not(any(target_arch = "wasm32", feature = "openssl")), ignore)]
 fn test_reader_xca_jpg() -> Result<()> {
     let (format, mut stream) = fixture_stream("XCA.jpg")?;
     let reader = Reader::from_stream(&format, &mut stream)?;

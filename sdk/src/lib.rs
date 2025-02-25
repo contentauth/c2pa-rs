@@ -92,7 +92,6 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 // Public modules
 pub mod assertions;
 pub mod cose_sign;
-#[cfg(feature = "openssl_sign")]
 pub mod create_signer;
 pub mod jumbf_io;
 pub mod settings;

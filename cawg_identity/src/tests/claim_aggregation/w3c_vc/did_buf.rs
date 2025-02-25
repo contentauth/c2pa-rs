@@ -19,13 +19,16 @@
 // each license.
 
 mod new {
-    #[cfg(target_arch = "wasm32")]
+    #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
     use wasm_bindgen_test::wasm_bindgen_test;
 
     use crate::claim_aggregation::w3c_vc::did::DidBuf;
 
     #[test]
-    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    #[cfg_attr(
+        all(target_arch = "wasm32", not(target_os = "wasi")),
+        wasm_bindgen_test
+    )]
     fn valid_dids() {
         let did = DidBuf::new("did:method:foo".to_string()).unwrap();
         let did = did.as_did();
@@ -49,7 +52,10 @@ mod new {
     }
 
     #[test]
-    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    #[cfg_attr(
+        all(target_arch = "wasm32", not(target_os = "wasi")),
+        wasm_bindgen_test
+    )]
     fn err_invalid_did() {
         DidBuf::new("http:a:b".to_string()).unwrap_err();
         DidBuf::new("did::b".to_string()).unwrap_err();
@@ -58,7 +64,7 @@ mod new {
 }
 
 mod impl_serde {
-    #[cfg(target_arch = "wasm32")]
+    #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
     use wasm_bindgen_test::wasm_bindgen_test;
 
     use crate::claim_aggregation::w3c_vc::did::DidBuf;
@@ -72,7 +78,10 @@ mod impl_serde {
     const SAMPLE_WITH_BAD_DID: &str = r#"{"did": "did::b"}"#;
 
     #[test]
-    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    #[cfg_attr(
+        all(target_arch = "wasm32", not(target_os = "wasi")),
+        wasm_bindgen_test
+    )]
     fn from_json() {
         let s: Sample = serde_json::from_str(SAMPLE_WITH_DID).unwrap();
         let did = s.did;
@@ -82,14 +91,20 @@ mod impl_serde {
     }
 
     #[test]
-    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    #[cfg_attr(
+        all(target_arch = "wasm32", not(target_os = "wasi")),
+        wasm_bindgen_test
+    )]
     #[should_panic]
     fn from_json_err_invalid_did() {
         let _: Sample = serde_json::from_str(SAMPLE_WITH_BAD_DID).unwrap();
     }
 
     #[test]
-    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    #[cfg_attr(
+        all(target_arch = "wasm32", not(target_os = "wasi")),
+        wasm_bindgen_test
+    )]
     fn to_json() {
         let s = Sample {
             did: DidBuf::new("did:method:foo".to_string()).unwrap(),

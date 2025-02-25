@@ -1491,20 +1491,23 @@ impl IngredientOptions for DefaultOptions {
     }
 }
 
-#[cfg(all(test, not(target_os = "wasi")))]
+#[cfg(test)]
 mod tests {
     #![allow(clippy::expect_used)]
     #![allow(clippy::unwrap_used)]
 
-    #[cfg(target_arch = "wasm32")]
+    #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
     use wasm_bindgen_test::*;
 
     use super::*;
-    #[cfg(target_arch = "wasm32")]
+    #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
     wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
 
-    #[cfg_attr(not(target_arch = "wasm32"), test)]
-    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    #[test]
+    #[cfg_attr(
+        all(target_arch = "wasm32", not(target_os = "wasi")),
+        wasm_bindgen_test
+    )]
     fn test_ingredient_api() {
         let mut ingredient = Ingredient::new("title", "format", "instance_id");
         ingredient
@@ -1560,8 +1563,11 @@ mod tests {
     }
 
     #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
-    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
-    #[cfg_attr(not(any(target_arch = "wasm32", feature = "openssl")), ignore)]
+    #[cfg_attr(
+        all(target_arch = "wasm32", not(target_os = "wasi")),
+        wasm_bindgen_test
+    )]
+    #[cfg_attr(target_os = "wasi", wstd::test)]
     async fn test_stream_async_jpg() {
         let image_bytes = include_bytes!("../tests/fixtures/CA.jpg");
         let title = "Test Image";
@@ -1576,7 +1582,7 @@ mod tests {
         assert_eq!(ingredient.format(), Some(format));
         assert!(ingredient.manifest_data().is_some());
         assert_eq!(ingredient.metadata(), None);
-        #[cfg(target_arch = "wasm32")]
+        #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
         web_sys::console::debug_2(
             &"ingredient_from_memory_async:".into(),
             &ingredient.to_string().into(),
@@ -1585,8 +1591,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(any(target_arch = "wasm32", not(feature = "openssl")), ignore)]
-    // Note this does not work from wasm32, due to validation issues
     fn test_stream_jpg() {
         let image_bytes = include_bytes!("../tests/fixtures/CA.jpg");
         let title = "Test Image";
@@ -1603,8 +1607,11 @@ mod tests {
     }
 
     #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
-    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
-    #[cfg_attr(not(any(target_arch = "wasm32", feature = "openssl")), ignore)]
+    #[cfg_attr(
+        all(target_arch = "wasm32", not(target_os = "wasi")),
+        wasm_bindgen_test
+    )]
+    #[cfg_attr(target_os = "wasi", wstd::test)]
     async fn test_stream_ogp() {
         let image_bytes = include_bytes!("../tests/fixtures/XCA.jpg");
         let title = "XCA.jpg";
@@ -1630,10 +1637,8 @@ mod tests {
 
     #[allow(dead_code)]
     #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
-    #[cfg_attr(
-        not(all(feature = "openssl", feature = "fetch_remote_manifests")),
-        ignore
-    )]
+    #[cfg_attr(target_os = "wasi", wstd::test)]
+    #[cfg(feature = "fetch_remote_manifests")]
     async fn test_jpg_cloud_from_memory() {
         let image_bytes = include_bytes!("../tests/fixtures/cloud.jpg");
         let format = "image/jpeg";
@@ -1651,14 +1656,17 @@ mod tests {
 
     #[allow(dead_code)]
     #[cfg_attr(not(any(target_arch = "wasm32", feature = "file_io")), actix::test)]
-    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    #[cfg_attr(
+        all(target_arch = "wasm32", not(target_os = "wasi")),
+        wasm_bindgen_test
+    )]
+    #[cfg_attr(all(target_os = "wasi", not(feature = "file_io")), wstd::test)]
     async fn test_jpg_cloud_from_memory_no_file_io() {
         let image_bytes = include_bytes!("../tests/fixtures/cloud.jpg");
         let format = "image/jpeg";
         let ingredient = Ingredient::from_memory_async(format, image_bytes)
             .await
             .expect("from_memory_async");
-        // println!("ingredient = {ingredient}");
         assert!(ingredient.validation_status().is_some());
         assert_eq!(
             ingredient.validation_status().unwrap()[0].code(),
@@ -1672,8 +1680,11 @@ mod tests {
     }
 
     #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
-    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
-    #[cfg_attr(not(any(target_arch = "wasm32", feature = "openssl")), ignore)]
+    #[cfg_attr(
+        all(target_arch = "wasm32", not(target_os = "wasi")),
+        wasm_bindgen_test
+    )]
+    #[cfg_attr(target_os = "wasi", wstd::test)]
     async fn test_jpg_cloud_from_memory_and_manifest() {
         let asset_bytes = include_bytes!("../tests/fixtures/cloud.jpg");
         let manifest_bytes = include_bytes!("../tests/fixtures/cloud_manifest.c2pa");
@@ -1685,7 +1696,7 @@ mod tests {
         )
         .await
         .unwrap();
-        #[cfg(target_arch = "wasm32")]
+        #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
         web_sys::console::debug_2(
             &"ingredient_from_memory_async:".into(),
             &ingredient.to_string().into(),
