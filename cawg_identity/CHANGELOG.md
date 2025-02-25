@@ -6,6 +6,18 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 The format of this changelog is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.10.0](https://github.com/contentauth/c2pa-rs/compare/cawg-identity-v0.9.0...cawg-identity-v0.10.0)
+_25 February 2025_
+
+### Added
+
+* Add WASI support to cawg_identity (#942)
+* Adds validation_state to the json reports from the Reader (#930)
+
+### Other
+
+* Remove `openssl` feature flag (#940)
+
 ## [0.9.0](https://github.com/contentauth/c2pa-rs/compare/cawg-identity-v0.8.0...cawg-identity-v0.9.0)
 _15 February 2025_
 
