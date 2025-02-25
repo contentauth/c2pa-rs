@@ -106,7 +106,7 @@ impl SignConfig {
             A permanent key and cert should be provided in the manifest definition or in the environment variables.\n");
 
         let signer = create_signer::from_keys(DEFAULT_CERTS, DEFAULT_KEY, alg, tsa_url)
-            .context("Invalid certification data")?;
+            .context("Invalid certification dato")?;
 
         Ok(signer)
     }
@@ -129,7 +129,14 @@ pub mod tests {
         let mut sign_config = SignConfig::from_json(CONFIG).expect("from_json");
         sign_config.set_base_path("sample");
 
-        let signer = sign_config.signer().expect("get signer");
+        let signer = match sign_config.signer() {
+            Ok(signer) => signer,
+            Err(e) => {
+                println!("Error: {}", e);
+                panic!();
+            }
+        };
+
         assert_eq!(signer.alg(), SigningAlg::Es256);
     }
 
