@@ -3290,6 +3290,7 @@ impl Store {
     }
 
     // fetch remote manifest if possible
+    // TODO: Switch to reqwest once it supports WASI https://github.com/seanmonstar/reqwest/issues/2294
     #[cfg(all(feature = "fetch_remote_manifests", target_os = "wasi"))]
     fn fetch_remote_manifest(url: &str) -> Result<Vec<u8>> {
         use url::Url;
@@ -6301,7 +6302,6 @@ pub mod tests {
     }
 
     #[test]
-    #[cfg(feature = "openssl_sign")]
     fn test_dynamic_assertions() {
         #[derive(Serialize)]
         struct TestAssertion {
@@ -6431,7 +6431,6 @@ pub mod tests {
 
     #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
     #[cfg_attr(target_os = "wasi", wstd::test)]
-    #[cfg(feature = "openssl_sign")]
     async fn test_async_dynamic_assertions() {
         use async_trait::async_trait;
 

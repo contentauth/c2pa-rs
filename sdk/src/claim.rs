@@ -2847,7 +2847,6 @@ pub(crate) fn check_ocsp_status(
     }
 }
 
-#[cfg(feature = "openssl")]
 #[cfg(test)]
 pub mod tests {
     #![allow(clippy::expect_used)]

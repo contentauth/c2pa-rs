@@ -18,13 +18,16 @@
 // specific language governing permissions and limitations under
 // each license.
 
-#[cfg(target_arch = "wasm32")]
+#[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
 use wasm_bindgen_test::wasm_bindgen_test;
 
 use crate::claim_aggregation::w3c_vc::{did::Did, did_web};
 
 #[test]
-#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+#[cfg_attr(
+    all(target_arch = "wasm32", not(target_os = "wasi")),
+    wasm_bindgen_test
+)]
 fn to_url() {
     // https://w3c-ccg.github.io/did-method-web/#example-3-creating-the-did
     assert_eq!(
@@ -59,8 +62,9 @@ mod resolve {
     };
 
     #[tokio::test]
-    // #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
-    // Can't test this on WASM until we find an httpmock replacement.
+    // #[cfg_attr(all(target_arch = "wasm32", not(target_os = "wasi")),
+    // wasm_bindgen_test)] Can't test this on WASM until we find an httpmock
+    // replacement.
     async fn from_did_key() {
         const DID_JSON: &str = r#"{
             "@context": "https://www.w3.org/ns/did/v1",
@@ -102,7 +106,7 @@ mod resolve {
 
     /*
         #[tokio::test]
-    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    #[cfg_attr(all(target_arch = "wasm32", not(target_os = "wasi")), wasm_bindgen_test)]
         async fn credential_prove_verify_did_web() {
             let didweb = VerificationMethodDIDResolver::new(DIDWeb);
             let params = VerificationParameters::from_resolver(&didweb);
