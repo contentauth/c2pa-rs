@@ -17,7 +17,7 @@ use c2pa::{HashedUri, Reader};
 use chrono::{DateTime, FixedOffset};
 use iref::UriBuf;
 use non_empty_string::NonEmptyString;
-#[cfg(target_arch = "wasm32")]
+#[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
 use wasm_bindgen_test::wasm_bindgen_test;
 
 use crate::{
@@ -26,7 +26,11 @@ use crate::{
 };
 
 #[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
-#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+#[cfg_attr(
+    all(target_arch = "wasm32", not(target_os = "wasi")),
+    wasm_bindgen_test
+)]
+#[cfg_attr(target_os = "wasi", wstd::test)]
 async fn adobe_connected_identities() {
     let format = "image/jpeg";
     let test_image = include_bytes!("../fixtures/claim_aggregation/adobe_connected_identities.jpg");
@@ -102,7 +106,11 @@ async fn adobe_connected_identities() {
 }
 
 #[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
-#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+#[cfg_attr(
+    all(target_arch = "wasm32", not(target_os = "wasi")),
+    wasm_bindgen_test
+)]
+#[cfg_attr(target_os = "wasi", wstd::test)]
 async fn ims_multiple_manifests() {
     let format = "image/jpeg";
     let test_image = include_bytes!("../fixtures/claim_aggregation/ims_multiple_manifests.jpg");
