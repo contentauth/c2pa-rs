@@ -12,13 +12,16 @@
 // each license.
 
 use hex_literal::hex;
-#[cfg(target_arch = "wasm32")]
+#[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
 use wasm_bindgen_test::wasm_bindgen_test;
 
 use crate::internal::debug_byte_slice::*;
 
 #[test]
-#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+#[cfg_attr(
+    all(target_arch = "wasm32", not(target_os = "wasi")),
+    wasm_bindgen_test
+)]
 fn debug_byte_slice() {
     let h = hex!("01020354595f");
     let s = DebugByteSlice(&h);
