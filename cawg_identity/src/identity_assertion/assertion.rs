@@ -17,6 +17,7 @@ use std::{
 };
 
 use c2pa::{Manifest, Reader};
+use c2pa_status_tracker::StatusTracker;
 use serde::{Deserialize, Serialize};
 use serde_bytes::ByteBuf;
 
@@ -63,9 +64,10 @@ impl IdentityAssertion {
     /// Iterator returns a [`Result`] because each assertion may fail to parse.
     ///
     /// Aside from CBOR parsing, no further validation is performed.
-    pub fn from_manifest(
-        manifest: &Manifest,
-    ) -> impl Iterator<Item = Result<Self, c2pa::Error>> + use<'_> {
+    pub fn from_manifest<'a>(
+        manifest: &'a Manifest,
+        _status_tracker: &'a mut StatusTracker,
+    ) -> impl Iterator<Item = Result<Self, c2pa::Error>> + use<'a> {
         manifest
             .assertions()
             .iter()
@@ -83,17 +85,20 @@ impl IdentityAssertion {
     pub async fn to_summary<SV: SignatureVerifier>(
         &self,
         manifest: &Manifest,
+        status_tracker: &mut StatusTracker,
         verifier: &SV,
     ) -> impl Serialize
     where
         <SV as SignatureVerifier>::Output: 'static,
     {
-        self.to_summary_impl(manifest, verifier).await
+        self.to_summary_impl(manifest, status_tracker, verifier)
+            .await
     }
 
     pub(crate) async fn to_summary_impl<SV: SignatureVerifier>(
         &self,
         manifest: &Manifest,
+        status_tracker: &mut StatusTracker,
         verifier: &SV,
     ) -> IdentityAssertionReport<
         <<SV as SignatureVerifier>::Output as ToCredentialSummary>::CredentialSummary,
@@ -101,7 +106,7 @@ impl IdentityAssertion {
     where
         <SV as SignatureVerifier>::Output: 'static,
     {
-        match self.validate(manifest, verifier).await {
+        match self.validate(manifest, status_tracker, verifier).await {
             Ok(named_actor) => {
                 let summary = named_actor.to_summary();
 
@@ -120,13 +125,15 @@ impl IdentityAssertion {
     /// Summarize all of the identity assertions found for a [`Manifest`].
     pub async fn summarize_all<SV: SignatureVerifier>(
         manifest: &Manifest,
+        status_tracker: &mut StatusTracker,
         verifier: &SV,
     ) -> impl Serialize {
-        Self::summarize_all_impl(manifest, verifier).await
+        Self::summarize_all_impl(manifest, status_tracker, verifier).await
     }
 
     pub(crate) async fn summarize_all_impl<SV: SignatureVerifier>(
         manifest: &Manifest,
+        status_tracker: &mut StatusTracker,
         verifier: &SV,
     ) -> IdentityAssertionsForManifest<
         <<SV as SignatureVerifier>::Output as ToCredentialSummary>::CredentialSummary,
@@ -139,9 +146,16 @@ impl IdentityAssertion {
             >,
         > = vec![];
 
-        for assertion in Self::from_manifest(manifest) {
+        let assertion_results: Vec<Result<IdentityAssertion, c2pa::Error>> =
+            Self::from_manifest(manifest, status_tracker).collect();
+
+        for assertion in assertion_results {
             let report = match assertion {
-                Ok(assertion) => assertion.to_summary_impl(manifest, verifier).await,
+                Ok(assertion) => {
+                    assertion
+                        .to_summary_impl(manifest, status_tracker, verifier)
+                        .await
+                }
                 Err(_) => {
                     todo!("Handle assertion failed to parse case");
                 }
@@ -163,6 +177,7 @@ impl IdentityAssertion {
     #[cfg(feature = "v1_api")]
     pub async fn summarize_manifest_store<SV: SignatureVerifier>(
         store: &c2pa::ManifestStore,
+        status_tracker: &mut StatusTracker,
         verifier: &SV,
     ) -> impl Serialize {
         // NOTE: We can't write this using .map(...).collect() because there are async
@@ -175,7 +190,7 @@ impl IdentityAssertion {
         > = BTreeMap::new();
 
         for (id, manifest) in store.manifests() {
-            let report = Self::summarize_all_impl(manifest, verifier).await;
+            let report = Self::summarize_all_impl(manifest, status_tracker, verifier).await;
             reports.insert(id.clone(), report);
         }
 
@@ -189,6 +204,7 @@ impl IdentityAssertion {
     /// Summarize all of the identity assertions found for a [`Reader`].
     pub async fn summarize_from_reader<SV: SignatureVerifier>(
         reader: &Reader,
+        status_tracker: &mut StatusTracker,
         verifier: &SV,
     ) -> impl Serialize {
         // NOTE: We can't write this using .map(...).collect() because there are async
@@ -201,7 +217,7 @@ impl IdentityAssertion {
         > = BTreeMap::new();
 
         for (id, manifest) in reader.manifests() {
-            let report = Self::summarize_all_impl(manifest, verifier).await;
+            let report = Self::summarize_all_impl(manifest, status_tracker, verifier).await;
             reports.insert(id.clone(), report);
         }
 
@@ -222,6 +238,7 @@ impl IdentityAssertion {
     pub async fn validate<SV: SignatureVerifier>(
         &self,
         manifest: &Manifest,
+        _status_tracker: &mut StatusTracker,
         verifier: &SV,
     ) -> Result<SV::Output, ValidationError<SV::Error>> {
         self.check_padding()?;
