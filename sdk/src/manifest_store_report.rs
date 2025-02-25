@@ -144,7 +144,6 @@ impl ManifestStoreReport {
     }
 
     /// Creates a ManifestStoreReport from an existing Store and a validation log
-    #[cfg(feature = "file_io")]
     #[cfg(feature = "v1_api")]
     pub(crate) fn from_store_with_log(
         store: &Store,
