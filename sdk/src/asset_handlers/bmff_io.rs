@@ -1847,7 +1847,7 @@ pub mod tests {
         io_utils::tempdirectory,
         test::{fixture_path, temp_dir_path},
     };
-    #[cfg(all(feature = "openssl", feature = "file_io"))]
+    #[cfg(all(feature = "v1_api", feature = "file_io"))]
     #[test]
     fn test_read_mp4() {
         use c2pa_status_tracker::DetailedStatusTracker;
