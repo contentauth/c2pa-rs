@@ -4,61 +4,43 @@ Refer to the [CHANGELOG](https://github.com/contentauth/c2pa-rs/blob/main/CHANGE
 
 ## New API 
 
-The current release has a new API that replaces the previous methods of reading and writing C2PA data, which are still supported but will be deprecated.  
+The current release has a new API that replaces the previous methods of reading and writing C2PA data, which are still supported but will be deprecated.  **The new API is now the default**.  Previously, you had to use the `unstable_api` feature to use it; but this feature is no longer used.
 
 The new API focuses on streaming I/O and supports the following structs:
 - [Builder](https://docs.rs/c2pa/latest/c2pa/struct.Builder.html)
 - [Reader](https://docs.rs/c2pa/latest/c2pa/struct.Reader.html)
 - [ManifestDefinition](https://docs.rs/c2pa/latest/c2pa/struct.ManifestDefinition.html)
 
-### Goals
-
-The goals of this release are to provide a consistent, flexible, well-tested API; specifically:
-
-- Move toward a JSON + binary resources model that ports well to multiple languages.
-- Eliminate multiple variations of functions for file/memory/stream, sync/async & etc.
-- Have one stream-based version of each function that works sync and async.
-- Design APIs that work well for multiple language bindings.
-- Enable sign-only/verify-only and support usage without OpenSSL.
-- Support Box Hash and Data Hashed signing models.
-- Enable builds for cameras and other embedded environments.
-- Provide a consistent model for setting runtime options.
-- Keep porting as simple as possible.
-
-### Enabling 
-
-These features are now standard and the `unstable_api` feature is no longer used.
-
-You can still use the deprecated API by enabling the `v1_api` feature; for example:
-
-```
-c2pa = {version="0.45.2", features=["v1_api"]}
-```
-
 ### API Changes for C2PA 2.1
 
-Support for claims as described in the [C2PA 2.1 specification](https://c2pa.org/specifications/specifications/2.1/specs/C2PA_Specification.html#_claims) is experimental at this point and not fully implemented yet. 
+`Reader` has some new methods: 
+- `validation_state()` returns `ValidationState`, which can be `Invalid`, `Valid` or `Trusted`. Use this method instead of checking for `validation_status() = None`.
+- `validation_results()` returns `ValidationResults`, which is a more complete form of `ValidationStatus` and returns `success`, `informational`, and `failure` codes for the active manifest and ingredients. `ValidationStatus` is deprecated in favor of `ValidationResults`.
 
-`Reader` has a new method: `validation_state()` which returns the a `ValidationState`.
-The `ValidationState` can be `Invalid`, `Valid` or `Trusted`.
-Use this method instead of checking for `validation_status()` = `None`.
-
-`Reader` also now has a `validation_results()` method that returns `ValidationResults`.
-`ValidationResults` are a more complete form of `ValidationStatus` and will return `success`, `informational` and `failure` codes for the active manifest and ingredients. `ValidationStatus` will be deprecated in favor of `ValidationResults`.
-
-The `Manifest` `title` is optional and `format` is not supported in v2 claims, so these methods now return an `Option<String>` and may not appear in serialized JSON.
-
-The `Ingredient` `title` and `format` are optional in v3 ingredients, so these methods now return an `Option<String>` and may not appear in serialized JSON.
-
-`Ingredient` now supports a `validation_results` method and a `validation_results` field.
+`Ingredient` now supports a `validation_results()` method and a `validation_results` field.
 
 An `AssetType` assertion is now supported.
+<!-- Can we say more about this? ASK MAURICE -->
+
+### C2PA v2 claims
+
+The library now supports claims as described in the [C2PA 2.1 specification](https://c2pa.org/specifications/specifications/2.1/specs/C2PA_Specification.html#_claims), however development is still in progress and it is not fully implemented yet. 
 
 A `claim_version` field is now allowed in a manifest definition for `Builder` and, if set to `2` will generate v2 claims.
+
+The `title()` and `format()` methods of both `Manifest` and `Ingredient` objects now return an `Option<String>` because in v2 claims, `title` is optional and `format` does not exist.
 
 In v2 claims, the first `action` must be `c2pa.created` or `c2pa.opened`. 
 
 There are many more checks and status codes added for v2 claims.
+
+### Using the old API
+
+To use the old deprecated API, enable the `v1_api` feature; for example:
+
+```
+c2pa = {version="0.45.2", features=["v1_api"]}
+```
 
 ## Language binding support
 
