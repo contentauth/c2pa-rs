@@ -66,8 +66,8 @@ impl StatusTracker {
 
     /// Adds an error-case [`LogItem`] to this status tracker.
     ///
-    /// Will return `Err(err)` if configured to stop immediately on errors.
-    /// _(See [`ErrorBehavior`].)_
+    /// Will return `Err(err)` if configured to stop immediately on errors or
+    /// `Ok(())` if configured to continue on errors. _(See [`ErrorBehavior`].)_
     ///
     /// Primarily intended for use by [`LogItem::failure()`].
     pub fn add_error<E>(&mut self, mut log_item: LogItem, err: E) -> Result<(), E> {
