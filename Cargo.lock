@@ -868,7 +868,6 @@ dependencies = [
  "httpmock",
  "log",
  "mockall",
- "openssl",
  "pem 3.0.4",
  "predicates",
  "reqwest",
@@ -878,6 +877,7 @@ dependencies = [
  "tempfile",
  "treeline",
  "url",
+ "wasi 0.14.1+wasi-0.2.3",
 ]
 
 [[package]]
