@@ -5087,7 +5087,9 @@ pub mod tests {
         );
 
         assert!(!report.logged_items().is_empty());
-        assert!(report.has_any_error());
+
+        let errors: Vec<&LogItem> = report.filter_errors().collect();
+        assert!(errors[0].err_val.as_ref().unwrap().starts_with("IoError"));
     }
 
     #[test]
