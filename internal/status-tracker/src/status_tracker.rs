@@ -87,7 +87,7 @@ impl StatusTracker {
     /// populated).
     ///
     /// Removes matching items from the list of log items.
-    pub fn filter_errors(&mut self) -> impl Iterator<Item = &LogItem> {
+    pub fn filter_errors(&self) -> impl Iterator<Item = &LogItem> {
         self.logged_items()
             .iter()
             .filter(|item| item.err_val.is_some())
@@ -117,6 +117,11 @@ impl StatusTracker {
         })
     }
 
+    /// Returns `true` if the validation log contains any error.
+    pub fn has_any_error(&self) -> bool {
+        self.filter_errors().next().is_some()
+    }
+
     /// Keeps track of the current ingredient URI, if any.
     ///
     /// The current URI may be added to any log items that are created.
@@ -127,24 +132,6 @@ impl StatusTracker {
     /// Removes the current ingredient URI, if any.
     pub fn pop_ingredient_uri(&mut self) -> Option<String> {
         self.ingredient_uris.pop()
-    }
-
-    /// Returns the [`LogItem`]s that have error conditions (`err_val` is
-    /// populated).
-    ///
-    /// Removes matching items from the list of log items.
-    pub fn take_errors(&mut self) -> Vec<LogItem> {
-        let mut output: Vec<LogItem> = Vec::new();
-
-        let mut i = 0;
-        while i < self.logged_items.len() {
-            if self.logged_items[i].err_val.is_some() {
-                output.push(self.logged_items.remove(i));
-            } else {
-                i += 1;
-            }
-        }
-        output
     }
 }
 

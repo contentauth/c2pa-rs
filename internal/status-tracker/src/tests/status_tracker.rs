@@ -41,9 +41,9 @@ mod detailed {
         assert!(!tracker.has_error("Something Else"));
 
         // Verify that one item with error was found.
-        let errors = tracker.take_errors();
+        let errors: Vec<&crate::LogItem> = tracker.filter_errors().collect();
         assert_eq!(errors.len(), 1);
-        assert_eq!(tracker.logged_items().len(), 1);
+        assert_eq!(tracker.logged_items().len(), 2);
     }
 
     #[test]

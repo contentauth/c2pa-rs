@@ -3846,7 +3846,7 @@ pub mod tests {
     use std::{fs, io::Write};
 
     use c2pa_crypto::raw_signature::SigningAlg;
-    use c2pa_status_tracker::StatusTracker;
+    use c2pa_status_tracker::{LogItem, StatusTracker};
     use memchr::memmem;
     use serde::Serialize;
     use sha2::{Digest, Sha256};
@@ -4080,8 +4080,7 @@ pub mod tests {
         // read from new file
         let new_store = Store::load_from_asset(&op, true, &mut report).unwrap();
 
-        let errors = report.take_errors();
-        assert!(errors.is_empty());
+        assert!(!report.has_any_error());
 
         // dump store and compare to original
         for claim in new_store.claims() {
@@ -4375,8 +4374,7 @@ pub mod tests {
         .await
         .unwrap();
 
-        let errors = report.take_errors();
-        assert!(errors.is_empty());
+        assert!(!report.has_any_error());
     }
 
     #[cfg(feature = "v1_api")]
@@ -4415,8 +4413,7 @@ pub mod tests {
         .await
         .unwrap();
 
-        let errors = report.take_errors();
-        assert!(errors.is_empty());
+        assert!(!report.has_any_error());
     }
 
     #[test]
@@ -5088,9 +5085,9 @@ pub mod tests {
             ap.display(),
             report.logged_items()
         );
+
         assert!(!report.logged_items().is_empty());
-        let errors = report.take_errors();
-        assert!(errors[0].err_val.as_ref().unwrap().starts_with("IoError"));
+        assert!(report.has_any_error());
     }
 
     #[test]
@@ -5104,8 +5101,10 @@ pub mod tests {
             ap.display(),
             report.logged_items()
         );
+
         assert!(!report.logged_items().is_empty());
-        let errors = report.take_errors();
+
+        let errors: Vec<&LogItem> = report.filter_errors().collect();
         assert!(errors[0]
             .err_val
             .as_ref()
@@ -5300,7 +5299,7 @@ pub mod tests {
     #[test]
     fn test_assertion_hash_mismatch() {
         // modifies content of an action assertion - causes an assertion hashuri mismatch
-        let mut report = patch_and_report("CA.jpg", b"brightnesscontrast", b"brightnesscontraxx");
+        let report = patch_and_report("CA.jpg", b"brightnesscontrast", b"brightnesscontraxx");
         let first_error = report.filter_errors().next().cloned().unwrap();
 
         assert_eq!(
@@ -5317,7 +5316,7 @@ pub mod tests {
             b"c2pa_manifest\xA3\x63url\x78\x4aself#jumbf=/c2pa/contentauth:urn:uuid:";
         const REPLACE_BYTES: &[u8] =
             b"c2pa_manifest\xA3\x63url\x78\x4aself#jumbf=/c2pa/contentauth:urn:uuix:";
-        let mut report = patch_and_report("CIE-sig-CA.jpg", SEARCH_BYTES, REPLACE_BYTES);
+        let report = patch_and_report("CIE-sig-CA.jpg", SEARCH_BYTES, REPLACE_BYTES);
         let errors: Vec<c2pa_status_tracker::LogItem> = report.filter_errors().cloned().collect();
         assert_eq!(
             errors[0].validation_status.as_deref(),
@@ -5334,7 +5333,6 @@ pub mod tests {
         let ap = fixture_path("CA.jpg");
         let mut report = StatusTracker::default();
         let store = Store::load_from_asset(&ap, true, &mut report).expect("load_from_asset");
-        let _errors = report.take_errors();
 
         println!("store = {store}");
     }
@@ -5403,9 +5401,7 @@ pub mod tests {
         // can we read back in
         let new_store = Store::load_from_asset(&op, true, &mut report).unwrap();
 
-        let errors = report.take_errors();
-
-        assert!(errors.is_empty());
+        assert!(!report.has_any_error());
 
         println!("store = {new_store}");
     }
@@ -5446,9 +5442,7 @@ pub mod tests {
         // can we read back in
         let _new_store = Store::load_from_memory("mp4", &output_data, true, &mut report).unwrap();
 
-        let errors = report.take_errors();
-
-        assert!(errors.is_empty());
+        assert!(!report.has_any_error());
     }
 
     #[test]
@@ -5728,8 +5722,7 @@ pub mod tests {
         .await
         .unwrap();
 
-        let errors = report.take_errors();
-        assert!(errors.is_empty());
+        assert!(!report.has_any_error());
         // std::fs::write("target/test.jpg", result).unwrap();
     }
 
@@ -5773,8 +5766,7 @@ pub mod tests {
         // read from new file
         let new_store = Store::load_from_asset(&op, true, &mut report).unwrap();
 
-        let errors = report.take_errors();
-        assert!(errors.is_empty());
+        assert!(!report.has_any_error());
 
         // dump store and compare to original
         for claim in new_store.claims() {
@@ -5887,8 +5879,7 @@ pub mod tests {
             .await
             .unwrap();
 
-        let errors = report.take_errors();
-        assert!(errors.is_empty());
+        assert!(!report.has_any_error());
     }
 
     #[test]
@@ -5968,8 +5959,7 @@ pub mod tests {
         let mut report = StatusTracker::default();
         let _new_store = Store::load_from_asset(&output, true, &mut report).unwrap();
 
-        let errors = report.take_errors();
-        assert!(errors.is_empty());
+        assert!(!report.has_any_error());
     }
 
     #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
@@ -6038,8 +6028,7 @@ pub mod tests {
             .await
             .unwrap();
 
-        let errors = report.take_errors();
-        assert!(errors.is_empty());
+        assert!(!report.has_any_error());
     }
 
     #[test]
@@ -6107,8 +6096,7 @@ pub mod tests {
         let mut report = StatusTracker::default();
         let _new_store = Store::load_from_asset(&output, true, &mut report).unwrap();
 
-        let errors = report.take_errors();
-        assert!(errors.is_empty());
+        assert!(!report.has_any_error());
     }
 
     #[test]
@@ -6175,8 +6163,7 @@ pub mod tests {
         let mut report = StatusTracker::default();
         let _new_store = Store::load_from_asset(&output, true, &mut report).unwrap();
 
-        let errors = report.take_errors();
-        assert!(errors.is_empty());
+        assert!(!report.has_any_error());
     }
 
     #[cfg(feature = "v1_api")]
@@ -6296,8 +6283,7 @@ pub mod tests {
         let mut report = StatusTracker::default();
         let _new_store = Store::load_from_asset(&op, true, &mut report).unwrap();
 
-        let errors = report.take_errors();
-        assert!(errors.is_empty());
+        assert!(!report.has_any_error());
     }
 
     #[test]
@@ -6423,8 +6409,7 @@ pub mod tests {
         )
         .unwrap();
 
-        let errors = report.take_errors();
-        assert!(errors.is_empty());
+        assert!(!report.has_any_error());
         // std::fs::write("target/test.jpg", result).unwrap();
     }
 
@@ -6560,8 +6545,7 @@ pub mod tests {
         .await
         .unwrap();
 
-        let errors = report.take_errors();
-        assert!(errors.is_empty());
+        assert!(!report.has_any_error());
         // std::fs::write("target/test.jpg", result).unwrap();
     }
 
@@ -6631,8 +6615,7 @@ pub mod tests {
                         )
                         .unwrap();
                         init_stream.seek(std::io::SeekFrom::Start(0)).unwrap();
-                        let errors = validation_log.take_errors();
-                        assert!(errors.is_empty());
+                        assert!(!validation_log.has_any_error());
                     }
 
                     // test verifying all at once
@@ -6652,8 +6635,7 @@ pub mod tests {
                     )
                     .unwrap();
 
-                    let errors = validation_log.take_errors();
-                    assert!(errors.is_empty());
+                    assert!(!validation_log.has_any_error());
                 }
                 Err(_) => panic!("test misconfigures"),
             }

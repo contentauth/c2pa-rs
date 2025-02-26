@@ -1860,8 +1860,7 @@ pub mod tests {
         let mut log = StatusTracker::default();
         let store = Store::load_from_asset(&ap, true, &mut log);
 
-        let errors = log.take_errors();
-        assert!(errors.is_empty());
+        assert!(!log.has_any_error());
 
         if let Ok(s) = store {
             print!("Store: \n{s}");

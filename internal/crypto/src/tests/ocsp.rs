@@ -52,8 +52,6 @@ fn revoked() {
     let ocsp_data =
         OcspResponse::from_der_checked(rsp_data, Some(test_time), &mut validation_log).unwrap();
 
-    let errors = validation_log.take_errors();
-
     assert!(ocsp_data.revoked_at.is_some());
-    assert!(!errors.is_empty());
+    assert!(validation_log.has_any_error());
 }
