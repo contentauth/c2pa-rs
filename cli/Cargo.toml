@@ -39,15 +39,21 @@ serde_json = "1.0"
 tempfile = "3.3"
 treeline = "0.1.0"
 pem = "3.0.3"
-openssl = { version = "0.10.61", features = ["vendored"] }
-reqwest = { version = "0.12.4", features = ["blocking"] }
 url = "2.5.0"
 
+[target.'cfg(not(target_os = "wasi"))'.dependencies]
+reqwest = { version = "0.12.4", features = ["blocking"] }
+
+[target.'cfg(target_os = "wasi")'.dependencies]
+wasi = "0.14"
+
 [dev-dependencies]
+mockall = "0.13.0"
+
+[target.'cfg(not(target_os = "wasi"))'.dev-dependencies]
 assert_cmd = "2.0.14"
 httpmock = "0.7.0"
 predicates = "3.1"
-mockall = "0.13.0"
 
 [package.metadata.binstall]
 # Use defaults
