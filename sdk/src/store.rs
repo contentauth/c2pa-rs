@@ -33,8 +33,14 @@ use log::error;
 
 #[cfg(feature = "v1_api")]
 use crate::jumbf_io::save_jumbf_to_memory;
+#[cfg(feature = "file_io")]
+use crate::jumbf_io::{
+    get_file_extension, get_supported_file_extension, load_jumbf_from_file, save_jumbf_to_file,
+};
 #[cfg(all(feature = "v1_api", feature = "file_io"))]
 use crate::jumbf_io::{object_locations, remove_jumbf_from_file};
+#[cfg(all(feature = "file_io", feature = "v1_api"))]
+use crate::utils::io_utils::tempdirectory;
 use crate::{
     assertion::{
         Assertion, AssertionBase, AssertionData, AssertionDecodeError, AssertionDecodeErrorCause,
@@ -76,13 +82,6 @@ use crate::{
 };
 #[cfg(feature = "v1_api")]
 use crate::{external_manifest::ManifestPatchCallback, RemoteSigner};
-#[cfg(feature = "file_io")]
-use crate::{
-    jumbf_io::{
-        get_file_extension, get_supported_file_extension, load_jumbf_from_file, save_jumbf_to_file,
-    },
-    utils::io_utils::tempdirectory,
-};
 
 const MANIFEST_STORE_EXT: &str = "c2pa"; // file extension for external manifests
 

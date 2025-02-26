@@ -11,6 +11,7 @@
 // specific language governing permissions and limitations under
 // each license.
 
+#![cfg(not(target_os = "wasi"))]
 use std::{error::Error, fs, fs::create_dir_all, path::PathBuf, process::Command};
 
 // Add methods on commands
