@@ -30,7 +30,7 @@ use crate::{
 pub fn parse_cose_sign1(
     cose_bytes: &[u8],
     data: &[u8],
-    validation_log: &mut impl StatusTracker,
+    validation_log: &mut StatusTracker,
 ) -> Result<CoseSign1, CoseError> {
     let mut sign1 = <coset::CoseSign1 as TaggedCborSerializable>::from_tagged_slice(cose_bytes)
         .map_err(|coset_error| {

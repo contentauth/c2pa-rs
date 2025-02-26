@@ -1551,7 +1551,7 @@ pub(crate) mod tests {
 
     use c2pa_crypto::raw_signature::SigningAlg;
     #[cfg(feature = "file_io")]
-    use c2pa_status_tracker::{DetailedStatusTracker, StatusTracker};
+    use c2pa_status_tracker::StatusTracker;
     #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
     use wasm_bindgen_test::*;
 
@@ -1825,7 +1825,7 @@ pub(crate) mod tests {
         let c2pa_data = manifest
             .embed(&output, &output, signer.as_ref())
             .expect("embed");
-        let mut validation_log = DetailedStatusTracker::default();
+        let mut validation_log = StatusTracker::default();
 
         let store1 = Store::load_from_memory("c2pa", &c2pa_data, true, &mut validation_log)
             .expect("load from memory");
@@ -1850,7 +1850,7 @@ pub(crate) mod tests {
             .embed(&output2, &output2, signer.as_ref())
             .expect("embed");
 
-        let mut report = DetailedStatusTracker::default();
+        let mut report = StatusTracker::default();
         let store3 = Store::load_from_asset(&output2, true, &mut report).unwrap();
         let claim2 = store3.provenance_claim().unwrap();
 

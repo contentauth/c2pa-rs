@@ -13,7 +13,7 @@
 
 use std::borrow::Cow;
 
-use crate::{log_item, DetailedStatusTracker, LogItem, LogKind, StatusTracker};
+use crate::{log_item, LogItem, LogKind, StatusTracker};
 
 #[test]
 fn r#macro() {
@@ -66,7 +66,7 @@ fn macro_from_string() {
 
 #[test]
 fn success() {
-    let mut tracker = DetailedStatusTracker::default();
+    let mut tracker = StatusTracker::default();
     log_item!("test1", "test item 1", "test func").success(&mut tracker);
 
     let log_item = tracker.logged_items().first().unwrap();
@@ -91,7 +91,7 @@ fn success() {
 
 #[test]
 fn informational() {
-    let mut tracker = DetailedStatusTracker::default();
+    let mut tracker = StatusTracker::default();
     log_item!("test1", "test item 1", "test func").informational(&mut tracker);
 
     let log_item = tracker.logged_items().first().unwrap();
@@ -116,7 +116,7 @@ fn informational() {
 
 #[test]
 fn failure() {
-    let mut tracker = DetailedStatusTracker::default();
+    let mut tracker = StatusTracker::default();
     log_item!("test1", "test item 1", "test func")
         .failure(&mut tracker, "sample error message")
         .unwrap();
@@ -143,7 +143,7 @@ fn failure() {
 
 #[test]
 fn failure_no_throw() {
-    let mut tracker = DetailedStatusTracker::default();
+    let mut tracker = StatusTracker::default();
     log_item!("test1", "test item 1", "test func")
         .failure_no_throw(&mut tracker, "sample error message");
 

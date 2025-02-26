@@ -1847,20 +1847,20 @@ pub mod tests {
         io_utils::tempdirectory,
         test::{fixture_path, temp_dir_path},
     };
+
     #[cfg(all(feature = "v1_api", feature = "file_io"))]
     #[test]
     fn test_read_mp4() {
-        use c2pa_status_tracker::DetailedStatusTracker;
+        use c2pa_status_tracker::StatusTracker;
 
         use crate::store::Store;
 
         let ap = fixture_path("video1.mp4");
 
-        let mut log = DetailedStatusTracker::default();
+        let mut log = StatusTracker::default();
         let store = Store::load_from_asset(&ap, true, &mut log);
 
-        let errors = log.take_errors();
-        assert!(errors.is_empty());
+        assert!(!log.has_any_error());
 
         if let Ok(s) = store {
             print!("Store: \n{s}");

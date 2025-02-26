@@ -220,10 +220,7 @@ impl PartialEq for ValidationStatus {
 /// item in the tracker which reflect errors in the active manifest or which would not
 /// be reported as a validation error for any ingredient.
 #[cfg(feature = "v1_api")]
-pub fn status_for_store(
-    store: &Store,
-    validation_log: &impl StatusTracker,
-) -> Vec<ValidationStatus> {
+pub fn status_for_store(store: &Store, validation_log: &StatusTracker) -> Vec<ValidationStatus> {
     let validation_results =
         crate::validation_results::ValidationResults::from_store(store, validation_log);
     validation_results.validation_errors().unwrap_or_default()

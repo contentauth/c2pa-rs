@@ -147,7 +147,7 @@ pub mod tests {
     #![allow(clippy::unwrap_used)]
 
     use c2pa_crypto::raw_signature::SigningAlg;
-    use c2pa_status_tracker::OneShotStatusTracker;
+    use c2pa_status_tracker::{ErrorBehavior, StatusTracker};
 
     use super::{AssetIO, C2paIO, CAIReader, CAIWriter};
     use crate::{
@@ -172,8 +172,12 @@ pub mod tests {
             .save_cai_store(&temp_path, &manifest)
             .expect("save cai store");
 
-        let store = Store::load_from_asset(&temp_path, false, &mut OneShotStatusTracker::default())
-            .expect("loading store");
+        let store = Store::load_from_asset(
+            &temp_path,
+            false,
+            &mut StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError),
+        )
+        .expect("loading store");
 
         let signer = test_signer(SigningAlg::Ps256);
 

@@ -48,7 +48,7 @@ pub(crate) fn verify_cose(
     additional_data: &[u8],
     cert_check: bool,
     ctp: &CertificateTrustPolicy,
-    validation_log: &mut impl StatusTracker,
+    validation_log: &mut StatusTracker,
 ) -> Result<CertificateInfo> {
     let verifier = if cert_check {
         match get_settings_value::<bool>("verify.verify_trust") {
@@ -124,7 +124,7 @@ fn extract_serial_from_cert(cert: &X509Certificate) -> BigUint {
 pub(crate) fn get_signing_info(
     cose_bytes: &[u8],
     data: &[u8],
-    validation_log: &mut impl StatusTracker,
+    validation_log: &mut StatusTracker,
 ) -> CertificateInfo {
     let mut date = None;
     let mut issuer_org = None;
@@ -181,7 +181,7 @@ pub(crate) fn get_signing_info(
 #[cfg(test)]
 pub mod tests {
     use c2pa_crypto::raw_signature::SigningAlg;
-    use c2pa_status_tracker::DetailedStatusTracker;
+    use c2pa_status_tracker::StatusTracker;
     use ciborium::Value;
     use coset::Label;
     use sha2::digest::generic_array::sequence::Shorten;
@@ -192,7 +192,7 @@ pub mod tests {
 
     #[test]
     fn test_no_timestamp() {
-        let mut validation_log = DetailedStatusTracker::default();
+        let mut validation_log = StatusTracker::default();
 
         let mut claim = crate::claim::Claim::new("extern_sign_test", Some("contentauth"), 1);
         claim.build().unwrap();
@@ -219,7 +219,7 @@ pub mod tests {
             time_stamp::{TimeStampError, TimeStampProvider},
         };
 
-        let mut validation_log = DetailedStatusTracker::default();
+        let mut validation_log = StatusTracker::default();
 
         let mut claim = crate::claim::Claim::new("ocsp_sign_test", Some("contentauth"), 1);
         claim.build().unwrap();
