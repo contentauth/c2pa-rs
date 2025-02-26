@@ -273,31 +273,38 @@ fn blocking_get(url: &str) -> Result<String> {
         outgoing_handler,
         types::{Fields, OutgoingRequest, Scheme},
     };
+
     let parsed_url =
         Url::parse(url).map_err(|e| Error::ResourceNotFound(format!("invalid URL: {}", e)))?;
     let path_with_query = parsed_url[url::Position::BeforeHost..].to_string();
     let request = OutgoingRequest::new(Fields::new());
     request.set_path_with_query(Some(&path_with_query)).unwrap();
-    // Set the scheme based on the URL
+
+    // Set the scheme based on the URL.
     let scheme = match parsed_url.scheme() {
         "http" => Scheme::Http,
         "https" => Scheme::Https,
         _ => return Err(anyhow!("unsupported URL scheme".to_string(),)),
     };
+
     request.set_scheme(Some(&scheme)).unwrap();
+
     match outgoing_handler::handle(request, None) {
         Ok(resp) => {
             resp.subscribe().block();
+
             let response = resp
                 .get()
                 .expect("HTTP request response missing")
                 .expect("HTTP request response requested more than once")
                 .expect("HTTP request failed");
+
             if response.status() == 200 {
                 let raw_header = response.headers().get("Content-Length");
                 if raw_header.first().map(|val| val.is_empty()).unwrap_or(true) {
                     return Err(anyhow!("url returned no content length".to_string()));
                 }
+
                 let str_parsed_header = match std::str::from_utf8(raw_header.first().unwrap()) {
                     Ok(s) => s,
                     Err(e) => {
@@ -307,6 +314,7 @@ fn blocking_get(url: &str) -> Result<String> {
                         )))
                     }
                 };
+
                 let content_length: usize = match str_parsed_header.parse() {
                     Ok(s) => s,
                     Err(e) => {
@@ -316,6 +324,7 @@ fn blocking_get(url: &str) -> Result<String> {
                         )))
                     }
                 };
+
                 let body = {
                     let mut buf = Vec::with_capacity(content_length);
                     let response_body = response
@@ -329,6 +338,7 @@ fn blocking_get(url: &str) -> Result<String> {
                         .expect("failed to read response body");
                     buf
                 };
+
                 let body_string = std::str::from_utf8(&body)
                     .map_err(|e| anyhow!(format!("invalid UTF-8: {}", e)))?;
                 Ok(body_string.to_string())
@@ -339,6 +349,7 @@ fn blocking_get(url: &str) -> Result<String> {
                 )))
             }
         }
+
         Err(e) => Err(anyhow!(e.to_string())),
     }
 }
