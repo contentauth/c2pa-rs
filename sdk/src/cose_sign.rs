@@ -22,7 +22,7 @@ use c2pa_crypto::{
     raw_signature::{AsyncRawSigner, RawSigner, RawSignerError, SigningAlg},
     time_stamp::{AsyncTimeStampProvider, TimeStampError, TimeStampProvider},
 };
-use c2pa_status_tracker::OneShotStatusTracker;
+use c2pa_status_tracker::{ErrorBehavior, StatusTracker};
 
 use crate::{
     claim::Claim, cose_validator::verify_cose, settings::get_settings_value, AsyncSigner, Error,
@@ -71,7 +71,7 @@ pub fn sign_claim(claim_bytes: &[u8], signer: &dyn Signer, box_size: usize) -> R
     match signed_bytes {
         Ok(signed_bytes) => {
             // Sanity check: Ensure that this signature is valid.
-            let mut cose_log = OneShotStatusTracker::default();
+            let mut cose_log = StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
             let passthrough_cap = CertificateTrustPolicy::default();
 
             match verify_cose(
@@ -141,7 +141,7 @@ pub(crate) fn cose_sign(
 
 fn signing_cert_valid(signing_cert: &[u8]) -> Result<()> {
     // make sure signer certs are valid
-    let mut cose_log = OneShotStatusTracker::default();
+    let mut cose_log = StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
     let mut passthrough_cap = CertificateTrustPolicy::default();
 
     // allow user EKUs through this check if configured
