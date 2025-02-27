@@ -14,7 +14,7 @@
 use std::io::{Cursor, Seek};
 
 use c2pa::{Builder, Reader, SigningAlg};
-use serde_json::json;
+use c2pa_status_tracker::StatusTracker;
 #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
 use wasm_bindgen_test::wasm_bindgen_test;
 
@@ -23,7 +23,10 @@ use crate::{
         AsyncIdentityAssertionBuilder, AsyncIdentityAssertionSigner, IdentityAssertionBuilder,
         IdentityAssertionSigner,
     },
-    tests::fixtures::{NaiveAsyncCredentialHolder, NaiveCredentialHolder, NaiveSignatureVerifier},
+    tests::fixtures::{
+        manifest_json, parent_json, NaiveAsyncCredentialHolder, NaiveCredentialHolder,
+        NaiveSignatureVerifier,
+    },
     IdentityAssertion, ToCredentialSummary,
 };
 
@@ -70,17 +73,17 @@ async fn simple_case() {
     assert_eq!(manifest_store.validation_status(), None);
 
     let manifest = manifest_store.active_manifest().unwrap();
-    let mut ia_iter = IdentityAssertion::from_manifest(manifest);
+    let mut st = StatusTracker::default();
+    let mut ia_iter = IdentityAssertion::from_manifest(manifest, &mut st);
 
     // Should find exactly one identity assertion.
     let ia = ia_iter.next().unwrap().unwrap();
-    dbg!(&ia);
-
     assert!(ia_iter.next().is_none());
+    drop(ia_iter);
 
     // And that identity assertion should be valid for this manifest.
     let nsv = NaiveSignatureVerifier {};
-    let naive_credential = ia.validate(manifest, &nsv).await.unwrap();
+    let naive_credential = ia.validate(manifest, &mut st, &nsv).await.unwrap();
 
     let nc_summary = naive_credential.to_summary();
     let nc_json = serde_json::to_string(&nc_summary).unwrap();
@@ -125,69 +128,19 @@ async fn simple_case_async() {
     assert_eq!(manifest_store.validation_status(), None);
 
     let manifest = manifest_store.active_manifest().unwrap();
-    let mut ia_iter = IdentityAssertion::from_manifest(manifest);
+    let mut st = StatusTracker::default();
+    let mut ia_iter = IdentityAssertion::from_manifest(manifest, &mut st);
 
     // Should find exactly one identity assertion.
     let ia = ia_iter.next().unwrap().unwrap();
-    dbg!(&ia);
-
     assert!(ia_iter.next().is_none());
+    drop(ia_iter);
 
     // And that identity assertion should be valid for this manifest.
     let nsv = NaiveSignatureVerifier {};
-    let naive_credential = ia.validate(manifest, &nsv).await.unwrap();
+    let naive_credential = ia.validate(manifest, &mut st, &nsv).await.unwrap();
 
     let nc_summary = naive_credential.to_summary();
     let nc_json = serde_json::to_string(&nc_summary).unwrap();
     assert_eq!(nc_json, "{}");
-}
-
-fn manifest_json() -> String {
-    json!({
-        "vendor": "test",
-        "claim_generator_info": [
-            {
-                "name": "c2pa_test",
-                "version": "1.0.0"
-            }
-        ],
-        "metadata": [
-            {
-                "dateTime": "1985-04-12T23:20:50.52Z",
-                "my_custom_metadata": "my custom metatdata value"
-            }
-        ],
-        "title": "Test_Manifest",
-        "format": "image/tiff",
-        "instance_id": "1234",
-        "thumbnail": {
-            "format": "image/jpeg",
-            "identifier": "thumbnail.jpg"
-        },
-        "ingredients": [
-            {
-                "title": "Test",
-                "format": "image/jpeg",
-                "instance_id": "12345",
-                "relationship": "componentOf"
-            }
-        ],
-        "assertions": [
-            {
-                "label": "org.test.assertion",
-                "data": "assertion"
-            }
-        ]
-    })
-    .to_string()
-}
-
-fn parent_json() -> String {
-    json!({
-        "title": "Parent Test",
-        "format": "image/jpeg",
-        "instance_id": "12345",
-        "relationship": "parentOf"
-    })
-    .to_string()
 }
