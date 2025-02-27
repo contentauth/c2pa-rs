@@ -11,6 +11,15 @@
 // specific language governing permissions and limitations under
 // each license.
 
+//! This test suite checks the enforcement of generic identity assertion validation as described in [§7.1, Validation method].
+//! 
+//! IMPORTANT: The CAWG SDK does not currently support the optional fields named
+//! * `expected_partial_claim`
+//! * `expected_claim_generator`
+//! * `expected_countersigners`
+//!
+//! [§7.1, Validation method]: https://cawg.io/identity/1.1-draft/#_validation_method
+
 use std::io::Cursor;
 
 use c2pa::Reader;
@@ -27,6 +36,15 @@ use crate::IdentityAssertion;
 )]
 #[cfg_attr(target_os = "wasi", wstd::test)]
 async fn malformed_cbor() {
+    // An identity assertion MUST contain a valid CBOR data structure that contains
+    // the required fields as documented in the identity rule in [Section 5.2, “CBOR
+    // schema”]. The `cawg.identity.cbor.invalid` error code SHALL be used to report
+    // assertions that do not follow this rule. A validator SHALL NOT consider any
+    // extra fields not documented in the `identity` rule during the validation
+    // process.
+    //
+    // [Section 5.2, “CBOR schema”]: https://cawg.io/identity/1.1-draft/#_cbor_schema
+
     let format = "image/jpeg";
     let test_image = include_bytes!("../fixtures/validation_errors/malformed_cbor.jpg");
 
