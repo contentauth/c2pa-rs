@@ -254,12 +254,13 @@ impl IdentityAssertion {
     pub async fn validate<SV: SignatureVerifier>(
         &self,
         manifest: &Manifest,
-        _status_tracker: &mut StatusTracker,
+        status_tracker: &mut StatusTracker,
         verifier: &SV,
     ) -> Result<SV::Output, ValidationError<SV::Error>> {
         self.check_padding()?;
 
-        self.signer_payload.check_against_manifest(manifest)?;
+        self.signer_payload
+            .check_against_manifest(manifest, status_tracker)?;
 
         verifier
             .check_signature(&self.signer_payload, &self.signature)

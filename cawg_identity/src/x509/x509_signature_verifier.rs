@@ -82,6 +82,7 @@ impl SignatureVerifier for X509SignatureVerifier {
 
 /// Contains information the X.509 certificate chain and the COSE signature that
 /// was used to generate this identity assertion signature.
+#[derive(Debug)]
 pub struct X509SignatureInfo {
     /// Parsed COSE signature.
     pub cose_sign1: CoseSign1,

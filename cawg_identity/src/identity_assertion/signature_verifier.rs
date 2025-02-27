@@ -36,7 +36,7 @@ pub trait SignatureVerifier: Sync {
     /// included in the `SignatureError` variant of [`ValidationError`].
     ///
     /// [`ValidationError`]: crate::ValidationError
-    type Error;
+    type Error: std::fmt::Debug;
 
     /// Verify the signature, returning an instance of [`Output`] if the
     /// signature is valid.
