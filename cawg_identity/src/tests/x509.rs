@@ -75,6 +75,17 @@ async fn simple_case() {
     // Read back the Manifest that was generated.
     dest.rewind().unwrap();
 
+    std::fs::write(
+        "src/tests/fixtures/validation_method/extra_assertion_claim_v1.jpg",
+        dest.get_ref(),
+    )
+    .unwrap();
+
+    let test_image =
+        std::fs::read("src/tests/fixtures/validation_method/extra_assertion_claim_v1.jpg").unwrap();
+
+    let mut dest = Cursor::new(test_image);
+
     let manifest_store = Reader::from_stream(format, &mut dest).unwrap();
     assert_eq!(manifest_store.validation_status(), None);
 
