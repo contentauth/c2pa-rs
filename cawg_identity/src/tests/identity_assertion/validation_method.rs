@@ -30,6 +30,12 @@ use wasm_bindgen_test::wasm_bindgen_test;
 
 use crate::IdentityAssertion;
 
+/// An identity assertion MUST contain a valid CBOR data structure that contains
+/// the required fields as documented in the identity rule in [Section 5.2,
+/// “CBOR schema”]. The `cawg.identity.cbor.invalid` error code SHALL be used to
+/// report assertions that do not follow this rule.
+///
+/// [Section 5.2, “CBOR schema”]: https://cawg.io/identity/1.1-draft/#_cbor_schema
 #[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
 #[cfg_attr(
     all(target_arch = "wasm32", not(target_os = "wasi")),
@@ -37,15 +43,6 @@ use crate::IdentityAssertion;
 )]
 #[cfg_attr(target_os = "wasi", wstd::test)]
 async fn malformed_cbor() {
-    // An identity assertion MUST contain a valid CBOR data structure that contains
-    // the required fields as documented in the identity rule in [Section 5.2, “CBOR
-    // schema”]. The `cawg.identity.cbor.invalid` error code SHALL be used to report
-    // assertions that do not follow this rule. A validator SHALL NOT consider any
-    // extra fields not documented in the `identity` rule during the validation
-    // process.
-    //
-    // [Section 5.2, “CBOR schema”]: https://cawg.io/identity/1.1-draft/#_cbor_schema
-
     let format = "image/jpeg";
     let test_image = include_bytes!("../fixtures/validation_method/malformed_cbor.jpg");
 
