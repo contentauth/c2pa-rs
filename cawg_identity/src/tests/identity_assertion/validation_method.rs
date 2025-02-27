@@ -47,7 +47,7 @@ async fn malformed_cbor() {
     // [Section 5.2, “CBOR schema”]: https://cawg.io/identity/1.1-draft/#_cbor_schema
 
     let format = "image/jpeg";
-    let test_image = include_bytes!("../fixtures/validation_errors/malformed_cbor.jpg");
+    let test_image = include_bytes!("../fixtures/validation_method/malformed_cbor.jpg");
 
     let mut test_image = Cursor::new(test_image);
 
