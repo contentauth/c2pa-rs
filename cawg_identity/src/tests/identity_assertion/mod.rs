@@ -12,3 +12,4 @@
 // each license.
 
 mod signer_payload;
+mod validation_errors;

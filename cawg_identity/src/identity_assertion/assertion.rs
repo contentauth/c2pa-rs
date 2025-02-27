@@ -17,7 +17,7 @@ use std::{
 };
 
 use c2pa::{Manifest, Reader};
-use c2pa_status_tracker::StatusTracker;
+use c2pa_status_tracker::{log_item, StatusTracker};
 use serde::{Deserialize, Serialize};
 use serde_bytes::ByteBuf;
 
@@ -66,13 +66,29 @@ impl IdentityAssertion {
     /// Aside from CBOR parsing, no further validation is performed.
     pub fn from_manifest<'a>(
         manifest: &'a Manifest,
-        _status_tracker: &'a mut StatusTracker,
+        status_tracker: &'a mut StatusTracker,
     ) -> impl Iterator<Item = Result<Self, c2pa::Error>> + use<'a> {
         manifest
             .assertions()
             .iter()
             .filter(|a| a.label().starts_with("cawg.identity"))
-            .map(|a| a.to_assertion())
+            .map(|a| (a.label().to_owned(), a.to_assertion()))
+            .inspect(|(label, r)| {
+                if let Err(err) = r {
+                    // TO DO: a.label() is probably wrong (not a full JUMBF URI)
+                    log_item!(
+                        label.clone(),
+                        "invalid CBOR",
+                        "IdentityAssertion::from_manifest"
+                    )
+                    .validation_status("cawg.identity.cbor.invalid")
+                    .failure_no_throw(
+                        status_tracker,
+                        c2pa::Error::AssertionSpecificError(err.to_string()),
+                    );
+                }
+            })
+            .map(move |(_label, r)| r)
     }
 
     /// Create a summary report from this `IdentityAssertion`.
