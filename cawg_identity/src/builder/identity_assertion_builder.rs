@@ -148,16 +148,17 @@ impl AsyncDynamicAssertion for AsyncIdentityAssertionBuilder {
             sig_type: self.credential_holder.sig_type().to_owned(),
         };
 
-        let duplicate_hash_ref = signer_payload
-            .referenced_assertions
-            .iter()
-            .next()
-            .unwrap()
-            .clone();
+        signer_payload.referenced_assertions.clear();
+        // let duplicate_hash_ref = signer_payload
+        //     .referenced_assertions
+        //     .iter()
+        //     .next()
+        //     .unwrap()
+        //     .clone();
 
-        signer_payload
-            .referenced_assertions
-            .push(duplicate_hash_ref);
+        // signer_payload
+        //     .referenced_assertions
+        //     .push(duplicate_hash_ref);
 
         dbg!(&signer_payload);
 

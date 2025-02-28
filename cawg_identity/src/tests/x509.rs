@@ -76,14 +76,13 @@ async fn simple_case() {
     dest.rewind().unwrap();
 
     std::fs::write(
-        "src/tests/fixtures/validation_method/duplicate_assertion_claim_v1.jpg",
+        "src/tests/fixtures/validation_method/no_hard_binding.jpg",
         dest.get_ref(),
     )
     .unwrap();
 
     let test_image =
-        std::fs::read("src/tests/fixtures/validation_method/duplicate_assertion_claim_v1.jpg")
-            .unwrap();
+        std::fs::read("src/tests/fixtures/validation_method/no_hard_binding.jpg").unwrap();
 
     let mut dest = Cursor::new(test_image);
 
