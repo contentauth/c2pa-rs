@@ -70,10 +70,17 @@ async fn x509_signing() {
         .await
         .unwrap();
 
-    // Write the file for
+    // Write the sample file.
     std::fs::write("src/tests/examples/x509_signing.jpg", dest.get_ref()).unwrap();
 
-    // Read back the Manifest that was generated.
+    // --- THE REST OF THIS EXAMPLE IS TEST CODE ONLY. ---
+    //
+    // The following code reads back the content from the file that was just
+    // generated and verifies that it is valid.
+    //
+    // In a normal scenario when generating an asset with a CAWG identity assertion,
+    // you could stop at this point.
+
     dest.rewind().unwrap();
 
     let manifest_store = Reader::from_stream(format, &mut dest).unwrap();
@@ -82,11 +89,9 @@ async fn x509_signing() {
     let manifest = manifest_store.active_manifest().unwrap();
     let mut ia_iter = IdentityAssertion::from_manifest(manifest);
 
-    // Should find exactly one identity assertion.
     let ia = ia_iter.next().unwrap().unwrap();
     assert!(ia_iter.next().is_none());
 
-    // And that identity assertion should be valid for this manifest.
     let x509_verifier = X509SignatureVerifier {};
     let sig_info = ia.validate(manifest, &x509_verifier).await.unwrap();
 
@@ -96,6 +101,4 @@ async fn x509_signing() {
         cert_info.issuer_org.as_ref().unwrap(),
         "C2PA Test Signing Cert"
     );
-
-    // TO DO: Not sure what to check from COSE_Sign1.
 }
