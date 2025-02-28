@@ -11,4 +11,5 @@
 // specific language governing permissions and limitations under
 // each license.
 
+#[cfg(not(target_arch = "wasm32"))]
 mod x509_signing;
