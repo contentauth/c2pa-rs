@@ -315,3 +315,76 @@ async fn duplicate_assertion_reference() {
         "C2PA Test Signing Cert"
     );
 }
+
+/// The validator MUST ensure that `signer_payload.referenced_assertions`
+/// contains at least one _hard binding_ assertion as described in [Section 9.2,
+/// “Hard bindings”] of the C2PA technical specification. The
+/// `cawg.identity.hard_binding_missing` error code SHALL be used to report a
+/// missing hard binding assertion.
+///
+/// [Section 9.2, “Hard bindings”]: https://c2pa.org/specifications/specifications/2.1/specs/C2PA_Specification.html#_hard_bindings
+#[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
+#[cfg_attr(
+    all(target_arch = "wasm32", not(target_os = "wasi")),
+    wasm_bindgen_test
+)]
+#[cfg_attr(target_os = "wasi", wstd::test)]
+async fn no_hard_binding() {
+    // The test asset `duplicate_assertion.jpg` was written using a temporarily
+    // modified version of this SDK that incorrectly added a duplicate hashed URI to
+    // `referenced_assertions`.
+
+    let format = "image/jpeg";
+    let test_image = include_bytes!("../fixtures/validation_method/no_hard_binding.jpg");
+
+    let mut test_image = Cursor::new(test_image);
+
+    // Initial read with default `Reader` should pass without issues.
+    let reader = Reader::from_stream(format, &mut test_image).unwrap();
+    assert_eq!(reader.validation_status(), None);
+
+    // Re-parse with identity assertion code should find extra assertion error.
+    let mut status_tracker = StatusTracker::default();
+
+    let active_manifest = reader.active_manifest().unwrap();
+    let ia_results: Vec<Result<IdentityAssertion, c2pa::Error>> =
+        IdentityAssertion::from_manifest(active_manifest, &mut status_tracker).collect();
+
+    assert_eq!(ia_results.len(), 1);
+
+    // This condition is parseable, but incorrect. There should be a validation
+    // status log for this failure.
+    let ia = ia_results[0].as_ref().unwrap();
+
+    let sp = &ia.signer_payload;
+    assert!(sp.referenced_assertions.is_empty());
+    assert_eq!(sp.sig_type, "cawg.x509.cose".to_owned());
+
+    let x509_verifier = X509SignatureVerifier {};
+    let sig_info = ia
+        .validate(
+            reader.active_manifest().unwrap(),
+            &mut status_tracker,
+            &x509_verifier,
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(status_tracker.logged_items().len(), 1);
+
+    let log = &status_tracker.logged_items()[0];
+    assert_eq!(log.kind, LogKind::Failure);
+    assert_eq!(log.label, "NEED TO FIND LABEL"); // !!!
+    assert_eq!(log.description, "no hard binding assertion");
+    assert_eq!(
+        log.validation_status.as_ref().unwrap().as_ref(),
+        "cawg.identity.hard_binding_missing"
+    );
+
+    let cert_info = &sig_info.cert_info;
+    assert_eq!(cert_info.alg.unwrap(), SigningAlg::Ed25519);
+    assert_eq!(
+        cert_info.issuer_org.as_ref().unwrap(),
+        "C2PA Test Signing Cert"
+    );
+}

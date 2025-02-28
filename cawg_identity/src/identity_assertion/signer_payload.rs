@@ -111,7 +111,14 @@ impl SignerPayload {
                 false
             }
         }) {
-            return Err(ValidationError::NoHardBindingAssertion);
+            // TO DO: Where would we get assertion label?
+            log_item!(
+                "NEED TO FIND LABEL".to_owned(),
+                "no hard binding assertion",
+                "SignerPayload::check_against_manifest"
+            )
+            .validation_status("cawg.identity.hard_binding_missing")
+            .failure(status_tracker, ValidationError::<E>::NoHardBindingAssertion)?;
         }
 
         // Make sure no assertion references are duplicated.
