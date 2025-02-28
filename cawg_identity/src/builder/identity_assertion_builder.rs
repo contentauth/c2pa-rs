@@ -143,24 +143,10 @@ impl AsyncDynamicAssertion for AsyncIdentityAssertionBuilder {
             .cloned()
             .collect();
 
-        let mut signer_payload = SignerPayload {
+        let signer_payload = SignerPayload {
             referenced_assertions,
             sig_type: self.credential_holder.sig_type().to_owned(),
         };
-
-        signer_payload.referenced_assertions.clear();
-        // let duplicate_hash_ref = signer_payload
-        //     .referenced_assertions
-        //     .iter()
-        //     .next()
-        //     .unwrap()
-        //     .clone();
-
-        // signer_payload
-        //     .referenced_assertions
-        //     .push(duplicate_hash_ref);
-
-        dbg!(&signer_payload);
 
         let signature_result = self.credential_holder.sign(&signer_payload).await;
 
