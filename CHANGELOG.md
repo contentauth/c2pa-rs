@@ -6,6 +6,28 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 Since version 0.36.2, the format of this changelog is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.47.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.46.0...c2pa-v0.47.0)
+_28 February 2025_
+
+### Added
+
+* Simplify `StatusTracker` interface (#937)
+* Add WASI to c2patool (#945)
+* Add WASI support to cawg_identity (#942)
+* Add ES256 and ES384 Rust native signing (#941)
+* Adds validation_state to the json reports from the Reader (#930)
+* Wasm32 wasi 0.41.0 (#888)
+
+### Fixed
+
+* Feature flag `v1_api` without `file_io` didn't compile (#944)
+* Use older version of x509-certificate for wasm32-unknown (#934)
+* Fix new Clippy warnings for Rust 1.85.0 (#933)
+
+### Other
+
+* Remove `openssl` feature flag (#940)
+
 ## [0.46.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.45.3...c2pa-v0.46.0)
 _15 February 2025_
 
