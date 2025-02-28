@@ -233,3 +233,85 @@ async fn assertion_not_in_claim_v1() {
 async fn assertion_not_in_claim_v2() {
     todo!("Generate a suitable V2 asset with an extra assertion");
 }
+
+/// The validator SHOULD verify that no entry in
+/// `signer_payload.referenced_assertions` is duplicated. The
+/// `cawg.identity.assertion.duplicate` error code SHALL be used to report
+/// violations of this rule.
+#[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
+#[cfg_attr(
+    all(target_arch = "wasm32", not(target_os = "wasi")),
+    wasm_bindgen_test
+)]
+#[cfg_attr(target_os = "wasi", wstd::test)]
+async fn duplicate_assertion_reference() {
+    // The test asset `duplicate_assertion_reference.jpg` was written using a
+    // temporarily modified version of this SDK that incorrectly added a
+    // duplicate hashed URI to `referenced_assertions`.
+
+    let format = "image/jpeg";
+    let test_image =
+        include_bytes!("../fixtures/validation_method/duplicate_assertion_reference.jpg");
+
+    let mut test_image = Cursor::new(test_image);
+
+    // Initial read with default `Reader` should pass without issues.
+    let reader = Reader::from_stream(format, &mut test_image).unwrap();
+    assert_eq!(reader.validation_status(), None);
+
+    // Re-parse with identity assertion code should find extra assertion error.
+    let mut status_tracker = StatusTracker::default();
+
+    let active_manifest = reader.active_manifest().unwrap();
+    let ia_results: Vec<Result<IdentityAssertion, c2pa::Error>> =
+        IdentityAssertion::from_manifest(active_manifest, &mut status_tracker).collect();
+
+    assert_eq!(ia_results.len(), 1);
+
+    // This condition is parseable, but incorrect. There should be a validation
+    // status log for this failure.
+    let ia = ia_results[0].as_ref().unwrap();
+
+    let sp = &ia.signer_payload;
+    assert_eq!(sp.referenced_assertions.len(), 2);
+
+    assert_eq!(
+        sp.referenced_assertions[0].url(),
+        "self#jumbf=c2pa.assertions/c2pa.hash.data".to_owned()
+    );
+
+    assert_eq!(
+        sp.referenced_assertions[1].url(),
+        "self#jumbf=c2pa.assertions/c2pa.hash.data".to_owned()
+    );
+
+    assert_eq!(sp.sig_type, "cawg.x509.cose".to_owned());
+
+    let x509_verifier = X509SignatureVerifier {};
+    let sig_info = ia
+        .validate(
+            reader.active_manifest().unwrap(),
+            &mut status_tracker,
+            &x509_verifier,
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(status_tracker.logged_items().len(), 1);
+
+    let log = &status_tracker.logged_items()[0];
+    assert_eq!(log.kind, LogKind::Failure);
+    assert_eq!(log.label, "NEED TO FIND LABEL"); // !!!
+    assert_eq!(log.description, "multiple references to same assertion");
+    assert_eq!(
+        log.validation_status.as_ref().unwrap().as_ref(),
+        "cawg.identity.assertion.duplicate"
+    );
+
+    let cert_info = &sig_info.cert_info;
+    assert_eq!(cert_info.alg.unwrap(), SigningAlg::Ed25519);
+    assert_eq!(
+        cert_info.issuer_org.as_ref().unwrap(),
+        "C2PA Test Signing Cert"
+    );
+}

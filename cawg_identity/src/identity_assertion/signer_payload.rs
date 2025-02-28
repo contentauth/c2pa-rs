@@ -120,8 +120,19 @@ impl SignerPayload {
         for label in &ref_assertion_labels {
             let label = label.clone();
             if labels.contains(&label) {
-                return Err(ValidationError::DuplicateAssertionReference(label));
+                // TO DO: Where would we get assertion label?
+                log_item!(
+                    "NEED TO FIND LABEL".to_owned(),
+                    "multiple references to same assertion",
+                    "SignerPayload::check_against_manifest"
+                )
+                .validation_status("cawg.identity.assertion.duplicate")
+                .failure(
+                    status_tracker,
+                    ValidationError::<E>::DuplicateAssertionReference(label.clone()),
+                )?;
             }
+
             labels.insert(label);
         }
 
