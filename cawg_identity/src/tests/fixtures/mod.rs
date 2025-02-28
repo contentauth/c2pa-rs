@@ -13,6 +13,9 @@
 
 #![allow(unused)]
 
+mod manifest_json;
+pub(crate) use manifest_json::{manifest_json, parent_json};
+
 mod naive_credential_holder;
 pub(crate) use naive_credential_holder::{
     NaiveAsyncCredentialHolder, NaiveCredentialHolder, NaiveSignatureVerifier,
