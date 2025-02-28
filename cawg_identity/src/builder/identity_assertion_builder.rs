@@ -148,12 +148,16 @@ impl AsyncDynamicAssertion for AsyncIdentityAssertionBuilder {
             sig_type: self.credential_holder.sig_type().to_owned(),
         };
 
-        let data_hash_ref = c2pa::HashedUri::new(
-            "self#jumbf=c2pa/urn:uuid:F9168C5E-CEB2-4faa-B6BF-329BF39FA1E4/c2pa.assertions/testing.bogus.assertion".to_owned(),
-            Some("sha256".to_owned()),
-            &hex_literal::hex!("0011b2cf4e6d9a97ed9281183fa5d836c32751b9d2fca724b40836befee7d67f"));
+        let duplicate_hash_ref = signer_payload
+            .referenced_assertions
+            .iter()
+            .next()
+            .unwrap()
+            .clone();
 
-        signer_payload.referenced_assertions.push(data_hash_ref);
+        signer_payload
+            .referenced_assertions
+            .push(duplicate_hash_ref);
 
         dbg!(&signer_payload);
 
