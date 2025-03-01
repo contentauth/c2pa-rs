@@ -388,3 +388,171 @@ async fn no_hard_binding() {
         "C2PA Test Signing Cert"
     );
 }
+
+/// The validator MUST maintain a list of valid `signer_payload.sig_type` values
+/// and corresponding code paths for the `signature` values that it is prepared
+/// to accept. Validators SHOULD be prepared to accept all signature types
+/// described in [Section 8, “Credentials, signatures, and validation methods”].
+/// The `cawg.identity.sig_type.unknown` error code SHALL be used to report
+/// assertions that contain unrecognized `signer_payload.sig_type` values.
+///
+/// [Section 8, “Credentials, signatures, and validation methods”]: https://cawg.io/identity/1.1-draft/#_credentials_signatures_and_validation_methods
+///
+/// This test is repeated for each implementation of [`SignatureVerifier`]
+/// because the implementation of that type is the one that reports the error.
+mod invalid_sig_type {
+    use std::io::Cursor;
+
+    use c2pa::Reader;
+    use c2pa_status_tracker::{LogKind, StatusTracker};
+
+    use crate::{
+        claim_aggregation::IcaSignatureVerifier, x509::X509SignatureVerifier, IdentityAssertion,
+    };
+
+    #[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
+    #[cfg_attr(
+        all(target_arch = "wasm32", not(target_os = "wasi")),
+        wasm_bindgen_test
+    )]
+    #[cfg_attr(target_os = "wasi", wstd::test)]
+    async fn x509_signature_verifier() {
+        // The test asset `invalid_sig_type.jpg` was written using a temporarily
+        // modified version of this SDK that added a proof-of-concept signature type
+        // that's not intended for general consumption. The validator in this test case
+        // is not configured to read that signature type.
+
+        let format = "image/jpeg";
+        let test_image = include_bytes!("../fixtures/validation_method/invalid_sig_type.jpg");
+
+        let mut test_image = Cursor::new(test_image);
+
+        // Initial read with default `Reader` should pass without issues.
+        let reader = Reader::from_stream(format, &mut test_image).unwrap();
+        assert_eq!(reader.validation_status(), None);
+
+        // Re-parse with identity assertion code should find extra assertion error.
+        let mut status_tracker = StatusTracker::default();
+
+        let active_manifest = reader.active_manifest().unwrap();
+        let ia_results: Vec<Result<IdentityAssertion, c2pa::Error>> =
+            IdentityAssertion::from_manifest(active_manifest, &mut status_tracker).collect();
+
+        assert_eq!(ia_results.len(), 1);
+
+        // This condition is parseable, but incorrect. There should be a validation
+        // status log for this failure.
+        let ia = ia_results[0].as_ref().unwrap();
+
+        let sp = &ia.signer_payload;
+        assert_eq!(sp.referenced_assertions.len(), 1);
+
+        assert_eq!(
+            sp.referenced_assertions[0].url(),
+            "self#jumbf=c2pa.assertions/c2pa.hash.data".to_owned()
+        );
+
+        assert_eq!(sp.sig_type, "INVALID.identity.naive_credential".to_owned());
+
+        // Intentionally not using NaiveSignatureVerifier here.
+        let x509_verifier = X509SignatureVerifier {};
+        let err = ia
+            .validate(
+                reader.active_manifest().unwrap(),
+                &mut status_tracker,
+                &x509_verifier,
+            )
+            .await
+            .unwrap_err();
+
+        // Comparing via strings since CoseError doesn't impl PartialEq. :-(
+        assert_eq!(
+            err.to_string(),
+            "unable to parse a signature of type \"INVALID.identity.naive_credential\""
+        );
+
+        assert_eq!(status_tracker.logged_items().len(), 1);
+
+        let log = &status_tracker.logged_items()[0];
+        assert_eq!(log.kind, LogKind::Failure);
+        assert_eq!(log.label, "NEED TO FIND LABEL"); // !!!
+        assert_eq!(log.description, "unsupported signature type");
+        assert_eq!(
+            log.validation_status.as_ref().unwrap().as_ref(),
+            "cawg.identity.sig_type.unknown"
+        );
+    }
+
+    #[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
+    #[cfg_attr(
+        all(target_arch = "wasm32", not(target_os = "wasi")),
+        wasm_bindgen_test
+    )]
+    #[cfg_attr(target_os = "wasi", wstd::test)]
+    async fn ica_verifier() {
+        // The test asset `invalid_sig_type.jpg` was written using a temporarily
+        // modified version of this SDK that added a proof-of-concept signature type
+        // that's not intended for general consumption. The validator in this test case
+        // is not configured to read that signature type.
+
+        let format = "image/jpeg";
+        let test_image = include_bytes!("../fixtures/validation_method/invalid_sig_type.jpg");
+
+        let mut test_image = Cursor::new(test_image);
+
+        // Initial read with default `Reader` should pass without issues.
+        let reader = Reader::from_stream(format, &mut test_image).unwrap();
+        assert_eq!(reader.validation_status(), None);
+
+        // Re-parse with identity assertion code should find extra assertion error.
+        let mut status_tracker = StatusTracker::default();
+
+        let active_manifest = reader.active_manifest().unwrap();
+        let ia_results: Vec<Result<IdentityAssertion, c2pa::Error>> =
+            IdentityAssertion::from_manifest(active_manifest, &mut status_tracker).collect();
+
+        assert_eq!(ia_results.len(), 1);
+
+        // This condition is parseable, but incorrect. There should be a validation
+        // status log for this failure.
+        let ia = ia_results[0].as_ref().unwrap();
+
+        let sp = &ia.signer_payload;
+        assert_eq!(sp.referenced_assertions.len(), 1);
+
+        assert_eq!(
+            sp.referenced_assertions[0].url(),
+            "self#jumbf=c2pa.assertions/c2pa.hash.data".to_owned()
+        );
+
+        assert_eq!(sp.sig_type, "INVALID.identity.naive_credential".to_owned());
+
+        // Intentionally not using NaiveSignatureVerifier here.
+        let ica_verifier = IcaSignatureVerifier {};
+        let err = ia
+            .validate(
+                reader.active_manifest().unwrap(),
+                &mut status_tracker,
+                &ica_verifier,
+            )
+            .await
+            .unwrap_err();
+
+        // Comparing via strings since CoseError doesn't impl PartialEq. :-(
+        assert_eq!(
+            err.to_string(),
+            "unable to parse a signature of type \"INVALID.identity.naive_credential\""
+        );
+
+        assert_eq!(status_tracker.logged_items().len(), 1);
+
+        let log = &status_tracker.logged_items()[0];
+        assert_eq!(log.kind, LogKind::Failure);
+        assert_eq!(log.label, "NEED TO FIND LABEL"); // !!!
+        assert_eq!(log.description, "unsupported signature type");
+        assert_eq!(
+            log.validation_status.as_ref().unwrap().as_ref(),
+            "cawg.identity.sig_type.unknown"
+        );
+    }
+}
