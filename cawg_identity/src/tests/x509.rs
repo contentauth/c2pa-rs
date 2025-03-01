@@ -75,7 +75,7 @@ async fn simple_case() {
     dest.rewind().unwrap();
 
     std::fs::write(
-        "src/tests/fixtures/validation_method/no_hard_binding.jpg",
+        "src/tests/fixtures/validation_method/pad1_invalid.jpg",
         dest.get_ref(),
     )
     .unwrap();
