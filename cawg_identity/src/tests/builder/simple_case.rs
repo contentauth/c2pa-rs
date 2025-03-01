@@ -66,12 +66,6 @@ async fn simple_case() {
         .sign(&signer, format, &mut source, &mut dest)
         .unwrap();
 
-    std::fs::write(
-        "src/tests/fixtures/validation_method/invalid_sig_type.jpg",
-        dest.get_ref(),
-    )
-    .unwrap();
-
     // Read back the Manifest that was generated.
     dest.rewind().unwrap();
 

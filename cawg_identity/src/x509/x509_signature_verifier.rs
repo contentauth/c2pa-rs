@@ -67,12 +67,6 @@ impl SignatureVerifier for X509SignatureVerifier {
         ciborium::into_writer(signer_payload, &mut signer_payload_cbor)
             .map_err(|_| ValidationError::InternalError("CBOR serialization error".to_string()))?;
 
-        std::fs::write(
-            "/Users/scouten/Desktop/sp_cbor_as_verified.cbor",
-            &signer_payload_cbor,
-        )
-        .unwrap();
-
         // TO DO: Add options for trust list and certificate policy config.
         let verifier = Verifier::IgnoreProfileAndTrustPolicy;
 
@@ -81,21 +75,15 @@ impl SignatureVerifier for X509SignatureVerifier {
 
         let cose_sign1 = parse_cose_sign1(signature, &signer_payload_cbor, &mut validation_log)?;
 
-        dbg!(&cose_sign1);
-
         let cert_info = verifier
             .verify_signature_async(signature, &signer_payload_cbor, &[], &mut validation_log)
             .await
-            .map_err(|e| {
-                eprintln!("InvSig at check_sig:69 {e:?}");
+            .map_err(|e| match e {
+                CoseError::RawSignatureValidationError(
+                    RawSignatureValidationError::SignatureMismatch,
+                ) => ValidationError::InvalidSignature,
 
-                match e {
-                    CoseError::RawSignatureValidationError(
-                        RawSignatureValidationError::SignatureMismatch,
-                    ) => ValidationError::InvalidSignature,
-
-                    e => ValidationError::SignatureError(e),
-                }
+                e => ValidationError::SignatureError(e),
             })?;
 
         Ok(X509SignatureInfo {
