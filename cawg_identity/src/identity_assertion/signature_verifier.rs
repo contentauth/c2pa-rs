@@ -12,6 +12,7 @@
 // each license.
 
 use async_trait::async_trait;
+use c2pa_status_tracker::StatusTracker;
 use serde::Serialize;
 
 use crate::{SignerPayload, ValidationError};
@@ -36,7 +37,7 @@ pub trait SignatureVerifier: Sync {
     /// included in the `SignatureError` variant of [`ValidationError`].
     ///
     /// [`ValidationError`]: crate::ValidationError
-    type Error;
+    type Error: std::fmt::Debug;
 
     /// Verify the signature, returning an instance of [`Output`] if the
     /// signature is valid.
@@ -46,6 +47,7 @@ pub trait SignatureVerifier: Sync {
         &self,
         signer_payload: &SignerPayload,
         signature: &[u8],
+        status_tracker: &mut StatusTracker,
     ) -> Result<Self::Output, ValidationError<Self::Error>>;
 }
 
@@ -79,6 +81,7 @@ pub trait SignatureVerifier {
         &self,
         signer_payload: &SignerPayload,
         signature: &[u8],
+        status_tracker: &mut StatusTracker,
     ) -> Result<Self::Output, ValidationError<Self::Error>>;
 }
 
