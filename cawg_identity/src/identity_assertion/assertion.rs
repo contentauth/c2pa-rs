@@ -263,7 +263,7 @@ impl IdentityAssertion {
             .check_against_manifest(manifest, status_tracker)?;
 
         verifier
-            .check_signature(&self.signer_payload, &self.signature)
+            .check_signature(&self.signer_payload, &self.signature, status_tracker)
             .await
     }
 

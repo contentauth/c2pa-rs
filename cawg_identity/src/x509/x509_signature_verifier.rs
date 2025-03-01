@@ -16,7 +16,7 @@ use c2pa_crypto::{
     cose::{parse_cose_sign1, CertificateInfo, CoseError, Verifier},
     raw_signature::RawSignatureValidationError,
 };
-use c2pa_status_tracker::StatusTracker;
+use c2pa_status_tracker::{log_item, StatusTracker};
 use coset::CoseSign1;
 use serde::Serialize;
 
@@ -43,8 +43,21 @@ impl SignatureVerifier for X509SignatureVerifier {
         &self,
         signer_payload: &SignerPayload,
         signature: &[u8],
+        status_tracker: &mut StatusTracker,
     ) -> Result<Self::Output, ValidationError<Self::Error>> {
         if signer_payload.sig_type != super::CAWG_X509_SIG_TYPE {
+            // TO DO: Where would we get assertion label?
+            log_item!(
+                "NEED TO FIND LABEL".to_owned(),
+                "unsupported signature type",
+                "X509SignatureVerifier::check_signature"
+            )
+            .validation_status("cawg.identity.sig_type.unknown")
+            .failure_no_throw(
+                status_tracker,
+                ValidationError::<CoseError>::UnknownSignatureType(signer_payload.sig_type.clone()),
+            );
+
             return Err(ValidationError::UnknownSignatureType(
                 signer_payload.sig_type.clone(),
             ));
