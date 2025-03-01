@@ -11,14 +11,14 @@
 // specific language governing permissions and limitations under
 // each license.
 
+//! Test case that demonstrates generating a new C2PA asset (JPEG in this case)
+//! with a C2PA claim signer signature and a CAWG identity assertion with its
+//! own X.509 signature from a different credential holder.
+
 use std::io::{Cursor, Seek};
 
 use c2pa::{Builder, Reader, SigningAlg};
 use c2pa_crypto::raw_signature;
-use c2pa_status_tracker::StatusTracker;
-use serde_json::json;
-#[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
-use wasm_bindgen_test::wasm_bindgen_test;
 
 use crate::{
     builder::{AsyncIdentityAssertionBuilder, AsyncIdentityAssertionSigner},
@@ -27,16 +27,12 @@ use crate::{
     IdentityAssertion,
 };
 
-const TEST_IMAGE: &[u8] = include_bytes!("../../../sdk/tests/fixtures/CA.jpg");
-const TEST_THUMBNAIL: &[u8] = include_bytes!("../../../sdk/tests/fixtures/thumbnail.jpg");
+const TEST_IMAGE: &[u8] = include_bytes!("../../../../sdk/tests/fixtures/CA.jpg");
+const TEST_THUMBNAIL: &[u8] = include_bytes!("../../../../sdk/tests/fixtures/thumbnail.jpg");
 
 #[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
-#[cfg_attr(
-    all(target_arch = "wasm32", not(target_os = "wasi")),
-    wasm_bindgen_test
-)]
-#[cfg_attr(target_os = "wasi", wstd::test)]
-async fn simple_case() {
+#[ignore] // We'll only run this occasionally if we need to update this test.
+async fn x509_signing() {
     let format = "image/jpeg";
     let mut source = Cursor::new(TEST_IMAGE);
     let mut dest = Cursor::new(Vec::new());
@@ -72,38 +68,30 @@ async fn simple_case() {
         .await
         .unwrap();
 
-    // Read back the Manifest that was generated.
+    // Write the sample file.
+    std::fs::write("src/tests/examples/x509_signing.jpg", dest.get_ref()).unwrap();
+
+    // --- THE REST OF THIS EXAMPLE IS TEST CODE ONLY. ---
+    //
+    // The following code reads back the content from the file that was just
+    // generated and verifies that it is valid.
+    //
+    // In a normal scenario when generating an asset with a CAWG identity assertion,
+    // you could stop at this point.
+
     dest.rewind().unwrap();
-
-    std::fs::write(
-        "src/tests/fixtures/validation_method/no_hard_binding.jpg",
-        dest.get_ref(),
-    )
-    .unwrap();
-
-    let test_image =
-        std::fs::read("src/tests/fixtures/validation_method/no_hard_binding.jpg").unwrap();
-
-    let mut dest = Cursor::new(test_image);
 
     let manifest_store = Reader::from_stream(format, &mut dest).unwrap();
     assert_eq!(manifest_store.validation_status(), None);
 
     let manifest = manifest_store.active_manifest().unwrap();
-    let mut st = StatusTracker::default();
-    let mut ia_iter = IdentityAssertion::from_manifest(manifest, &mut st);
+    let mut ia_iter = IdentityAssertion::from_manifest(manifest);
 
-    // Should find exactly one identity assertion.
     let ia = ia_iter.next().unwrap().unwrap();
     assert!(ia_iter.next().is_none());
-    drop(ia_iter);
 
-    // And that identity assertion should be valid for this manifest.
     let x509_verifier = X509SignatureVerifier {};
-    let sig_info = ia
-        .validate(manifest, &mut st, &x509_verifier)
-        .await
-        .unwrap();
+    let sig_info = ia.validate(manifest, &x509_verifier).await.unwrap();
 
     let cert_info = &sig_info.cert_info;
     assert_eq!(cert_info.alg.unwrap(), SigningAlg::Ed25519);
@@ -111,6 +99,4 @@ async fn simple_case() {
         cert_info.issuer_org.as_ref().unwrap(),
         "C2PA Test Signing Cert"
     );
-
-    // TO DO: Not sure what to check from COSE_Sign1.
 }
