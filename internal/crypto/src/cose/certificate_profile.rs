@@ -34,7 +34,7 @@ use crate::{asn1::rfc3161::TstInfo, cose::CertificateTrustPolicy};
 pub fn check_certificate_profile(
     certificate_der: &[u8],
     ctp: &CertificateTrustPolicy,
-    validation_log: &mut impl StatusTracker,
+    validation_log: &mut StatusTracker,
     _tst_info_opt: Option<&TstInfo>,
 ) -> Result<(), CertificateProfileError> {
     let (_rem, signcert) = X509Certificate::from_der(certificate_der).map_err(|_err| {

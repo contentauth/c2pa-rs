@@ -11,13 +11,16 @@
 // specific language governing permissions and limitations under
 // each license.
 
-#[cfg(target_arch = "wasm32")]
+#[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
 use wasm_bindgen_test::wasm_bindgen_test;
 
 use crate::builder::IdentityBuilderError;
 
 #[test]
-#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+#[cfg_attr(
+    all(target_arch = "wasm32", not(target_os = "wasi")),
+    wasm_bindgen_test
+)]
 fn impl_from_ciborium_err() {
     let ciborium_err: ciborium::ser::Error<String> = ciborium::ser::Error::Value("foo".to_string());
     let builder_err: IdentityBuilderError = ciborium_err.into();

@@ -14,13 +14,13 @@
 // Example code (in unit test) for how you might use client DataHash values.  This allows clients
 // to perform the manifest embedding and optionally the hashing
 
-#[cfg(all(feature = "openssl_sign", not(target_arch = "wasm32")))]
+#[cfg(feature = "file_io")]
 use std::{
     io::{Cursor, Read, Seek, Write},
     path::{Path, PathBuf},
 };
 
-#[cfg(all(feature = "openssl_sign", not(target_arch = "wasm32")))]
+#[cfg(feature = "file_io")]
 use c2pa::{
     assertions::{
         c2pa_action, labels::*, Action, Actions, CreativeWork, DataHash, Exif, SchemaDotOrgPerson,
@@ -28,16 +28,16 @@ use c2pa::{
     create_signer, hash_stream_by_alg, Builder, ClaimGeneratorInfo, HashRange, Ingredient, Reader,
     Relationship, Result,
 };
-#[cfg(all(feature = "openssl_sign", not(target_arch = "wasm32")))]
+#[cfg(feature = "file_io")]
 use c2pa_crypto::raw_signature::SigningAlg;
 
 fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     println!("DataHash demo");
 
-    #[cfg(all(feature = "openssl_sign", feature = "file_io"))]
+    #[cfg(feature = "file_io")]
     user_data_hash_with_sdk_hashing()?;
     println!("Done with SDK hashing1");
-    #[cfg(all(feature = "openssl_sign", feature = "file_io"))]
+    #[cfg(feature = "file_io")]
     user_data_hash_with_user_hashing()?;
     println!("Done with SDK hashing2");
     Ok(())
@@ -86,7 +86,7 @@ fn builder_from_source<S: AsRef<Path>>(source: S) -> Result<Builder> {
     Ok(builder)
 }
 
-#[cfg(all(feature = "openssl_sign", feature = "file_io"))]
+#[cfg(feature = "file_io")]
 fn user_data_hash_with_sdk_hashing() -> Result<()> {
     // You will often implement your own Signer trait to perform on device signing
     let signcert_path = "sdk/tests/fixtures/certs/es256.pub";
@@ -146,7 +146,7 @@ fn user_data_hash_with_sdk_hashing() -> Result<()> {
     Ok(())
 }
 
-#[cfg(all(feature = "openssl_sign", feature = "file_io"))]
+#[cfg(feature = "file_io")]
 fn user_data_hash_with_user_hashing() -> Result<()> {
     // You will often implement your own Signer trait to perform on device signing
     let signcert_path = "sdk/tests/fixtures/certs/es256.pub";

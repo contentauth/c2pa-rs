@@ -35,7 +35,7 @@ pub fn check_ocsp_status(
     data: &[u8],
     fetch_policy: OcspFetchPolicy,
     ctp: &CertificateTrustPolicy,
-    validation_log: &mut impl StatusTracker,
+    validation_log: &mut StatusTracker,
 ) -> Result<OcspResponse, CoseError> {
     match get_ocsp_der(sign1) {
         Some(ocsp_response_der) => {
@@ -78,7 +78,7 @@ fn check_stapled_ocsp_response(
     ocsp_response_der: &[u8],
     data: &[u8],
     ctp: &CertificateTrustPolicy,
-    validation_log: &mut impl StatusTracker,
+    validation_log: &mut StatusTracker,
 ) -> Result<OcspResponse, CoseError> {
     let time_stamp_info = if _sync {
         validate_cose_tst_info(sign1, data)
@@ -119,7 +119,7 @@ fn fetch_and_check_ocsp_response(
     sign1: &CoseSign1,
     data: &[u8],
     ctp: &CertificateTrustPolicy,
-    validation_log: &mut impl StatusTracker,
+    validation_log: &mut StatusTracker,
 ) -> Result<OcspResponse, CoseError> {
     #[cfg(target_arch = "wasm32")]
     {

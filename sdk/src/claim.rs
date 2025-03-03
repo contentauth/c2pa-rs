@@ -21,7 +21,7 @@ use c2pa_crypto::{
     cose::{parse_cose_sign1, CertificateInfo, CertificateTrustPolicy, OcspFetchPolicy},
     ocsp::OcspResponse,
 };
-use c2pa_status_tracker::{log_item, OneShotStatusTracker, StatusTracker};
+use c2pa_status_tracker::{log_item, ErrorBehavior, StatusTracker};
 use chrono::{DateTime, Utc};
 use serde::{ser::SerializeStruct, Deserialize, Serialize, Serializer};
 use serde_json::{json, Map, Value};
@@ -81,6 +81,7 @@ static _V2_SPEC_DEPRECATED_ASSERTIONS: [&str; 4] = [
 // Enum to encapsulate the data type of the source asset.  This simplifies
 // having different implementations for functions as a single entry point can be
 // used to handle different data types.
+#[allow(dead_code)] // Bytes and third param in StreamFragment not used without v1_api feature
 pub enum ClaimAssetData<'a> {
     #[cfg(feature = "file_io")]
     Path(&'a Path),
@@ -1687,7 +1688,8 @@ impl Claim {
     pub fn signature_info(&self) -> Option<CertificateInfo> {
         let sig = self.signature_val();
         let data = self.data().ok()?;
-        let mut validation_log = OneShotStatusTracker::default();
+        let mut validation_log =
+            StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
 
         if _sync {
             Some(get_signing_info(sig, &data, &mut validation_log))
@@ -1705,7 +1707,7 @@ impl Claim {
         is_provenance: bool,
         cert_check: bool,
         ctp: &CertificateTrustPolicy,
-        validation_log: &mut impl StatusTracker,
+        validation_log: &mut StatusTracker,
     ) -> Result<()> {
         // Parse COSE signed data (signature) and validate it.
         let sig = claim.signature_val().clone();
@@ -1794,7 +1796,7 @@ impl Claim {
         is_provenance: bool,
         cert_check: bool,
         ctp: &CertificateTrustPolicy,
-        validation_log: &mut impl StatusTracker,
+        validation_log: &mut StatusTracker,
     ) -> Result<()> {
         // Parse COSE signed data (signature) and validate it.
         let sig = claim.signature_val();
@@ -1886,7 +1888,8 @@ impl Claim {
     pub fn get_cert_chain(&self) -> Result<Vec<u8>> {
         let sig = self.signature_val();
         let data = self.data()?;
-        let mut validation_log = OneShotStatusTracker::default();
+        let mut validation_log =
+            StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
 
         let vi = get_signing_info(sig, &data, &mut validation_log);
 
@@ -1898,7 +1901,7 @@ impl Claim {
         asset_data: &mut ClaimAssetData<'_>,
         is_provenance: bool,
         verified: Result<CertificateInfo>,
-        validation_log: &mut impl StatusTracker,
+        validation_log: &mut StatusTracker,
     ) -> Result<()> {
         const UNNAMED: &str = "unnamed";
         let default_str = |s: &String| s.clone();
@@ -2815,7 +2818,7 @@ pub(crate) fn check_ocsp_status(
     sign1: &coset::CoseSign1,
     data: &[u8],
     ctp: &CertificateTrustPolicy,
-    validation_log: &mut impl StatusTracker,
+    validation_log: &mut StatusTracker,
 ) -> Result<OcspResponse> {
     // Moved here instead of c2pa-crypto because of the dependency on settings.
 
@@ -2844,7 +2847,6 @@ pub(crate) fn check_ocsp_status(
     }
 }
 
-#[cfg(feature = "openssl")]
 #[cfg(test)]
 pub mod tests {
     #![allow(clippy::expect_used)]

@@ -18,10 +18,12 @@ use c2pa::{
 };
 
 mod common;
-use common::{compare_stream_to_known_good, fixtures_path, test_signer};
+#[cfg(all(feature = "add_thumbnails", feature = "file_io"))]
+use common::compare_stream_to_known_good;
+use common::{fixtures_path, test_signer};
 
 #[test]
-#[cfg_attr(not(any(target_arch = "wasm32", feature = "openssl")), ignore)]
+#[cfg(all(feature = "add_thumbnails", feature = "file_io"))]
 fn test_builder_ca_jpg() -> Result<()> {
     let manifest_def = std::fs::read_to_string(fixtures_path("simple_manifest.json"))?;
     let mut builder = Builder::from_json(&manifest_def)?;
@@ -45,7 +47,6 @@ fn test_builder_ca_jpg() -> Result<()> {
 
 // Source: https://github.com/contentauth/c2pa-rs/issues/530
 #[test]
-#[cfg_attr(not(any(target_arch = "wasm32", feature = "openssl")), ignore)]
 fn test_builder_riff() -> Result<()> {
     let manifest_def = include_str!("fixtures/simple_manifest.json");
     let mut source = Cursor::new(include_bytes!("fixtures/sample1.wav"));
@@ -61,11 +62,11 @@ fn test_builder_riff() -> Result<()> {
 #[test]
 #[cfg(feature = "file_io")]
 fn test_builder_fragmented() -> Result<()> {
-    use tempfile::tempdir;
+    use common::tempdirectory;
 
     let manifest_def = include_str!("fixtures/simple_manifest.json");
     let mut builder = Builder::from_json(manifest_def)?;
-    let tempdir = tempdir().expect("temp dir");
+    let tempdir = tempdirectory().expect("temp dir");
     let output_path = tempdir.into_path();
     let mut init_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     init_path.push("tests/fixtures/bunny/**/BigBuckBunny_2s_init.mp4");
@@ -123,7 +124,6 @@ fn test_builder_fragmented() -> Result<()> {
 }
 
 #[test]
-#[cfg_attr(not(any(target_arch = "wasm32", feature = "openssl")), ignore)]
 fn test_builder_remote_url_no_embed() -> Result<()> {
     let manifest_def = std::fs::read_to_string(fixtures_path("simple_manifest.json"))?;
     let mut builder = Builder::from_json(&manifest_def)?;
@@ -155,7 +155,6 @@ fn test_builder_remote_url_no_embed() -> Result<()> {
 }
 
 #[test]
-#[cfg_attr(not(any(target_arch = "wasm32", feature = "openssl")), ignore)]
 fn test_builder_embedded_v1_otgp() -> Result<()> {
     let manifest_def = include_str!("fixtures/simple_manifest.json");
     let mut source = Cursor::new(include_bytes!("fixtures/XCA.jpg"));
@@ -179,6 +178,131 @@ fn test_builder_embedded_v1_otgp() -> Result<()> {
             .code(),
         validation_status::ASSERTION_DATAHASH_MISMATCH
     );
+
+    Ok(())
+}
+
+#[test]
+fn test_dynamic_assertions_builder() -> Result<()> {
+    use c2pa::{
+        // assertions::{CreativeWork, SchemaDotOrgPerson},
+        DynamicAssertion,
+        DynamicAssertionContent,
+        PreliminaryClaim,
+        Signer,
+        SigningAlg,
+    };
+    use serde::Serialize;
+    #[derive(Serialize)]
+    struct TestAssertion {
+        my_tag: String,
+    }
+
+    #[derive(Debug)]
+    struct TestDynamicAssertion {}
+
+    impl DynamicAssertion for TestDynamicAssertion {
+        fn label(&self) -> String {
+            //CreativeWork::LABEL.to_string()
+            "com.mycompany.myassertion".to_string()
+        }
+
+        fn reserve_size(&self) -> Result<usize> {
+            let assertion = TestAssertion {
+                my_tag: "some value I will replace".to_string(),
+            };
+            // let assertion = CreativeWork::new()
+            //     .add_author(SchemaDotOrgPerson::new().set_name("me").unwrap())
+            //     .unwrap();
+            Ok(serde_json::to_string(&assertion)?.len())
+        }
+
+        fn content(
+            &self,
+            _label: &str,
+            _size: Option<usize>,
+            claim: &PreliminaryClaim,
+        ) -> Result<DynamicAssertionContent> {
+            assert!(claim
+                .assertions()
+                .inspect(|a| {
+                    dbg!(a);
+                })
+                .any(|a| a.url().contains("c2pa.hash")));
+
+            // let assertion =
+            //     CreativeWork::new().add_author(SchemaDotOrgPerson::new().set_name("me")?)?;
+
+            let assertion = TestAssertion {
+                my_tag: "some value I will replace".to_string(),
+            };
+
+            Ok(DynamicAssertionContent::Json(serde_json::to_string(
+                &assertion,
+            )?))
+        }
+    }
+
+    /// This is a Signer wrapped around a local temp signer,
+    /// that implements the DynamicAssertion trait.
+    struct DynamicSigner(Box<dyn Signer>);
+
+    impl DynamicSigner {
+        fn new() -> Self {
+            Self(Box::new(test_signer()))
+        }
+    }
+
+    impl Signer for DynamicSigner {
+        fn sign(&self, data: &[u8]) -> Result<Vec<u8>> {
+            self.0.sign(data)
+        }
+
+        fn alg(&self) -> SigningAlg {
+            self.0.alg()
+        }
+
+        fn certs(&self) -> crate::Result<Vec<Vec<u8>>> {
+            self.0.certs()
+        }
+
+        fn reserve_size(&self) -> usize {
+            self.0.reserve_size()
+        }
+
+        fn time_authority_url(&self) -> Option<String> {
+            self.0.time_authority_url()
+        }
+
+        fn ocsp_val(&self) -> Option<Vec<u8>> {
+            self.0.ocsp_val()
+        }
+
+        // Returns our dynamic assertion here.
+        fn dynamic_assertions(&self) -> Vec<Box<dyn DynamicAssertion>> {
+            vec![Box::new(TestDynamicAssertion {})]
+        }
+    }
+
+    let manifest_def = std::fs::read_to_string(fixtures_path("simple_manifest.json"))?;
+    let mut builder = Builder::from_json(&manifest_def)?;
+
+    const TEST_IMAGE: &[u8] = include_bytes!("fixtures/CA.jpg");
+    let format = "image/jpeg";
+    let mut source = Cursor::new(TEST_IMAGE);
+
+    let mut dest = Cursor::new(Vec::new());
+
+    let signer = DynamicSigner::new();
+    builder.sign(&signer, format, &mut source, &mut dest)?;
+
+    dest.set_position(0);
+
+    let reader = Reader::from_stream(format, &mut dest).unwrap();
+
+    println!("reader: {}", reader);
+
+    assert_ne!(reader.validation_state(), ValidationState::Invalid);
 
     Ok(())
 }

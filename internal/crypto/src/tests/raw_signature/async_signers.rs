@@ -13,7 +13,7 @@
 
 #![allow(unused)] // test fns appear unused on WASM
 
-#[cfg(target_arch = "wasm32")]
+#[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
 use wasm_bindgen_test::wasm_bindgen_test;
 
 use crate::raw_signature::{
@@ -99,7 +99,11 @@ async fn es512() {
 }
 
 #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
-#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+#[cfg_attr(
+    all(target_arch = "wasm32", not(target_os = "wasi")),
+    wasm_bindgen_test
+)]
+#[cfg_attr(target_os = "wasi", wstd::test)]
 async fn ed25519() {
     let cert_chain = include_bytes!("../fixtures/raw_signature/ed25519.pub");
     let private_key = include_bytes!("../fixtures/raw_signature/ed25519.priv");
@@ -126,6 +130,7 @@ async fn ed25519() {
 
 #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
 // #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+#[cfg_attr(target_os = "wasi", wstd::test)]
 async fn ps256() {
     let cert_chain = include_bytes!("../fixtures/raw_signature/ps256.pub");
     let private_key = include_bytes!("../fixtures/raw_signature/ps256.priv");
@@ -152,6 +157,7 @@ async fn ps256() {
 
 #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
 // #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+#[cfg_attr(target_os = "wasi", wstd::test)]
 async fn ps384() {
     let cert_chain = include_bytes!("../fixtures/raw_signature/ps384.pub");
     let private_key = include_bytes!("../fixtures/raw_signature/ps384.priv");
@@ -178,6 +184,7 @@ async fn ps384() {
 
 #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
 // #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+#[cfg_attr(target_os = "wasi", wstd::test)]
 async fn ps512() {
     let cert_chain = include_bytes!("../fixtures/raw_signature/ps512.pub");
     let private_key = include_bytes!("../fixtures/raw_signature/ps512.priv");

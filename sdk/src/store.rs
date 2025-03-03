@@ -11,14 +11,13 @@
 // specific language governing permissions and limitations under
 // each license.
 
+#[cfg(all(feature = "v1_api", feature = "file_io"))]
+use std::fs;
+#[cfg(feature = "file_io")]
+use std::path::{Path, PathBuf};
 use std::{
     collections::HashMap,
     io::{Cursor, Read, Seek},
-};
-#[cfg(feature = "file_io")]
-use std::{
-    fs,
-    path::{Path, PathBuf},
 };
 
 use async_generic::async_generic;
@@ -27,16 +26,19 @@ use c2pa_crypto::{
     cose::{parse_cose_sign1, CertificateTrustPolicy, TimeStampStorage},
     hash::sha256,
 };
-use c2pa_status_tracker::{log_item, DetailedStatusTracker, OneShotStatusTracker, StatusTracker};
+use c2pa_status_tracker::{log_item, ErrorBehavior, StatusTracker};
 use log::error;
 
 #[cfg(feature = "v1_api")]
 use crate::jumbf_io::save_jumbf_to_memory;
 #[cfg(feature = "file_io")]
 use crate::jumbf_io::{
-    get_file_extension, get_supported_file_extension, load_jumbf_from_file, object_locations,
-    remove_jumbf_from_file, save_jumbf_to_file,
+    get_file_extension, get_supported_file_extension, load_jumbf_from_file, save_jumbf_to_file,
 };
+#[cfg(all(feature = "v1_api", feature = "file_io"))]
+use crate::jumbf_io::{object_locations, remove_jumbf_from_file};
+#[cfg(all(feature = "file_io", feature = "v1_api"))]
+use crate::utils::io_utils::tempdirectory;
 use crate::{
     assertion::{
         Assertion, AssertionBase, AssertionData, AssertionDecodeError, AssertionDecodeErrorCause,
@@ -44,7 +46,7 @@ use crate::{
     assertions::{
         labels::{self, CLAIM},
         BmffHash, DataBox, DataHash, DataMap, ExclusionsMap, Ingredient, Relationship, SubsetMap,
-        UserCbor,
+        User, UserCbor,
     },
     asset_io::{
         CAIRead, CAIReadWrite, HashBlockObjectType, HashObjectPositions, RemoteRefEmbedType,
@@ -55,9 +57,10 @@ use crate::{
     },
     cose_sign::{cose_sign, cose_sign_async},
     cose_validator::{verify_cose, verify_cose_async},
-    dynamic_assertion::{AsyncDynamicAssertion, DynamicAssertion, PreliminaryClaim},
+    dynamic_assertion::{
+        AsyncDynamicAssertion, DynamicAssertion, DynamicAssertionContent, PreliminaryClaim,
+    },
     error::{Error, Result},
-    external_manifest::ManifestPatchCallback,
     hash_utils::{hash_by_alg, vec_compare, verify_by_alg},
     hashed_uri::HashedUri,
     jumbf::{
@@ -73,8 +76,10 @@ use crate::{
     salt::DefaultSalt,
     settings::get_settings_value,
     utils::{hash_utils::HashRange, io_utils::stream_len, patch::patch_bytes},
-    validation_status, AsyncSigner, RemoteSigner, Signer,
+    validation_status, AsyncSigner, Signer,
 };
+#[cfg(feature = "v1_api")]
+use crate::{external_manifest::ManifestPatchCallback, RemoteSigner};
 
 const MANIFEST_STORE_EXT: &str = "c2pa"; // file extension for external manifests
 
@@ -170,6 +175,7 @@ impl Store {
     }
 
     /// Return label for the store
+    #[allow(dead_code)] // doesn't harm to have this
     pub fn label(&self) -> &str {
         &self.label
     }
@@ -197,6 +203,7 @@ impl Store {
     }
 
     /// Clear all existing trust anchors
+    #[cfg(feature = "v1_api")]
     pub fn clear_trust_anchors(&mut self) {
         self.ctp.clear();
     }
@@ -300,6 +307,7 @@ impl Store {
     /// may be updated to reflect is position in the manifest Store
     /// if there are conflicting label names.  The function
     /// will return the label of the claim used
+    #[cfg(all(feature = "v1_api", feature = "file_io"))]
     pub fn commit_update_manifest(&mut self, mut claim: Claim) -> Result<String> {
         claim.set_update_manifest(true);
 
@@ -471,7 +479,8 @@ impl Store {
 
         let sig = claim.signature_val();
         let data = claim.data().ok()?;
-        let mut validation_log = OneShotStatusTracker::default();
+        let mut validation_log =
+            StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
 
         let sign1 = parse_cose_sign1(sig, &data, &mut validation_log).ok()?;
         if let Ok(info) = check_ocsp_status(&sign1, &data, &self.ctp, &mut validation_log) {
@@ -535,7 +544,8 @@ impl Store {
                     get_settings_value::<bool>("verify.verify_after_sign")
                 {
                     if verify_after_sign {
-                        let mut cose_log = OneShotStatusTracker::default();
+                        let mut cose_log =
+                            StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
 
                         let result = if _sync {
                             verify_cose(&sig, &claim_bytes, b"", false, &self.ctp, &mut cose_log)
@@ -759,11 +769,13 @@ impl Store {
     }
 
     /// Convert this claims store to a JUMBF box.
+    #[allow(unused)] // used in tests
     pub fn to_jumbf(&self, signer: &dyn Signer) -> Result<Vec<u8>> {
         self.to_jumbf_internal(signer.reserve_size())
     }
 
     /// Convert this claims store to a JUMBF box.
+    #[cfg(feature = "v1_api")]
     pub fn to_jumbf_async(&self, signer: &dyn AsyncSigner) -> Result<Vec<u8>> {
         self.to_jumbf_internal(signer.reserve_size())
     }
@@ -943,7 +955,7 @@ impl Store {
         true
     }
 
-    pub fn from_jumbf(buffer: &[u8], validation_log: &mut impl StatusTracker) -> Result<Store> {
+    pub fn from_jumbf(buffer: &[u8], validation_log: &mut StatusTracker) -> Result<Store> {
         if buffer.is_empty() {
             return Err(Error::JumbfNotFound);
         }
@@ -1281,7 +1293,7 @@ impl Store {
         store: &Store,
         claim: &Claim,
         asset_data: &mut ClaimAssetData<'_>,
-        validation_log: &mut impl StatusTracker,
+        validation_log: &mut StatusTracker,
     ) -> Result<()> {
         let mut num_parent_ofs = 0;
 
@@ -1396,7 +1408,7 @@ impl Store {
         store: &Store,
         claim: &Claim,
         asset_data: &mut ClaimAssetData<'_>,
-        validation_log: &mut impl StatusTracker,
+        validation_log: &mut StatusTracker,
     ) -> Result<()> {
         // walk the ingredients
         for i in claim.ingredient_assertions() {
@@ -1480,7 +1492,7 @@ impl Store {
     pub async fn verify_store_async(
         store: &Store,
         asset_data: &mut ClaimAssetData<'_>,
-        validation_log: &mut impl StatusTracker,
+        validation_log: &mut StatusTracker,
     ) -> Result<()> {
         let claim = match store.provenance_claim() {
             Some(c) => c,
@@ -1510,7 +1522,7 @@ impl Store {
     pub fn verify_store(
         store: &Store,
         asset_data: &mut ClaimAssetData<'_>,
-        validation_log: &mut impl StatusTracker,
+        validation_log: &mut StatusTracker,
     ) -> Result<()> {
         let claim = match store.provenance_claim() {
             Some(c) => c,
@@ -1532,7 +1544,7 @@ impl Store {
     }
 
     // generate a list of AssetHashes based on the location of objects in the file
-    #[cfg(feature = "file_io")]
+    #[cfg(all(feature = "v1_api", feature = "file_io"))]
     fn generate_data_hashes(
         asset_path: &Path,
         alg: &str,
@@ -1734,7 +1746,7 @@ impl Store {
     }
 
     // move or copy data from source to dest
-    #[cfg(feature = "file_io")]
+    #[cfg(all(feature = "v1_api", feature = "file_io"))]
     fn move_or_copy(source: &Path, dest: &Path) -> Result<()> {
         // copy temp file to asset
         std::fs::rename(source, dest)
@@ -1744,7 +1756,7 @@ impl Store {
     }
 
     // copy output and possibly the external manifest to final destination
-    #[cfg(feature = "file_io")]
+    #[cfg(all(feature = "v1_api", feature = "file_io"))]
     fn copy_c2pa_to_output(source: &Path, dest: &Path, remote_type: RemoteManifest) -> Result<()> {
         match remote_type {
             RemoteManifest::NoRemote => Store::move_or_copy(source, dest)?,
@@ -1923,6 +1935,7 @@ impl Store {
     /// It is an error if `get_data_hashed_manifest_placeholder` was not called first
     /// as this call inserts the DataHash placeholder assertion to reserve space for the
     /// actual hash values not required when using BoxHashes.  
+    #[cfg(feature = "v1_api")]
     pub async fn get_data_hashed_embeddable_manifest_remote(
         &mut self,
         dh: &DataHash,
@@ -2042,7 +2055,7 @@ impl Store {
         // Two passes since we are accessing two fields in self.
         let mut assertions = Vec::new();
         for da in dyn_assertions.iter() {
-            let reserve_size = da.reserve_size();
+            let reserve_size = da.reserve_size()?;
             let data1 = serde_cbor::ser::to_vec_packed(&vec![0; reserve_size])?;
             let cbor_delta = data1.len() - reserve_size;
             let da_data = serde_cbor::ser::to_vec_packed(&vec![0; reserve_size - cbor_delta])?;
@@ -2080,16 +2093,24 @@ impl Store {
             let label = crate::jumbf::labels::assertion_label_from_uri(&uri.url())
                 .ok_or(Error::BadParam("write_dynamic_assertions".to_string()))?;
 
-            let da_size = da.reserve_size();
+            let da_size = da.reserve_size()?;
             let da_data = if _sync {
                 da.content(&label, Some(da_size), preliminary_claim)?
             } else {
                 da.content(&label, Some(da_size), preliminary_claim).await?
             };
 
-            // TO DO: Add new assertion to preliminary_claim
-            // todo: support for non-CBOR asssertions?
-            final_assertions.push(UserCbor::new(&label, da_data).to_assertion()?);
+            match da_data {
+                DynamicAssertionContent::Cbor(data) => {
+                    final_assertions.push(UserCbor::new(&label, data).to_assertion()?);
+                }
+                DynamicAssertionContent::Json(data) => {
+                    final_assertions.push(User::new(&label, &data).to_assertion()?);
+                }
+                DynamicAssertionContent::Binary(format, data) => {
+                    todo!("Binary dynamic assertions not yet supported");
+                }
+            }
         }
 
         let pc = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
@@ -2181,7 +2202,8 @@ impl Store {
             None => return Err(Error::UnsupportedType),
         }
 
-        let mut validation_log = OneShotStatusTracker::default();
+        let mut validation_log =
+            StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
         let jumbf = self.to_jumbf(signer)?;
 
         // use temp store so mulitple calls will work (the Store is not finalized this way)
@@ -2320,6 +2342,7 @@ impl Store {
     /// the Signer you plan to use.  This function is not needed when using Box Hash. This function is used
     /// in conjunction with `embed_placed_manifest`.  `embed_placed_manifest` will accept the manifest to sign and place
     /// in the output.
+    #[cfg(feature = "v1_api")]
     pub fn get_placed_manifest(
         &mut self,
         reserve_size: usize,
@@ -2343,7 +2366,7 @@ impl Store {
     /// 'format' shoould match the type of the input stream..
     /// Upon return, the output stream will contain the new manifest signed with signer
     /// This directly modifies the asset in stream, backup stream first if you need to preserve it.
-
+    #[cfg(feature = "v1_api")]
     #[async_generic(
         async_signature(
             manifest_bytes: &[u8],
@@ -2371,7 +2394,7 @@ impl Store {
             labels::INGREDIENT,
         ];
 
-        let mut validation_log = DetailedStatusTracker::default();
+        let mut validation_log = StatusTracker::default();
         let mut store = Store::from_jumbf(manifest_bytes, &mut validation_log)?;
 
         // todo: what kinds of validation can we do here since the file is not finailized;
@@ -2570,7 +2593,7 @@ impl Store {
     }
 
     /// Embed the claims store as jumbf into an asset. Updates XMP with provenance record.
-    #[cfg(feature = "file_io")]
+    #[cfg(all(feature = "v1_api", feature = "file_io"))]
     pub fn save_to_asset(
         &mut self,
         asset_path: &Path,
@@ -2578,7 +2601,8 @@ impl Store {
         dest_path: &Path,
     ) -> Result<Vec<u8>> {
         // set up temp dir, contents auto deleted
-        let td = tempfile::TempDir::new()?;
+
+        let td = tempdirectory()?;
         let temp_path = td.path();
         let temp_file = temp_path.join(
             dest_path
@@ -2624,7 +2648,7 @@ impl Store {
     }
 
     /// Embed the claims store as jumbf into an asset using an async signer. Updates XMP with provenance record.
-    #[cfg(feature = "file_io")]
+    #[cfg(all(feature = "v1_api", feature = "file_io"))]
     pub async fn save_to_asset_async(
         &mut self,
         asset_path: &Path,
@@ -2632,7 +2656,7 @@ impl Store {
         dest_path: &Path,
     ) -> Result<Vec<u8>> {
         // set up temp dir, contents auto deleted
-        let td = tempfile::TempDir::new()?;
+        let td = tempdirectory()?;
         let temp_path = td.path();
         let temp_file = temp_path.join(
             dest_path
@@ -2681,6 +2705,7 @@ impl Store {
 
     /// Embed the claims store as jumbf into an asset using an CoseSign box generated remotely. Updates XMP with provenance record.
     #[cfg(feature = "file_io")]
+    #[cfg(feature = "v1_api")]
     pub async fn save_to_asset_remote_signed(
         &mut self,
         asset_path: &Path,
@@ -2688,7 +2713,7 @@ impl Store {
         dest_path: &Path,
     ) -> Result<Vec<u8>> {
         // set up temp dir, contents auto deleted
-        let td = tempfile::TempDir::new()?;
+        let td = tempdirectory()?;
         let temp_path = td.path();
         let temp_file = temp_path.join(
             dest_path
@@ -2976,7 +3001,7 @@ impl Store {
         ))
     }
 
-    #[cfg(feature = "file_io")]
+    #[cfg(all(feature = "v1_api", feature = "file_io"))]
     fn start_save(
         &mut self,
         asset_path: &Path,
@@ -3171,17 +3196,18 @@ impl Store {
     pub fn verify_from_path(
         &mut self,
         asset_path: &'_ Path,
-        validation_log: &mut impl StatusTracker,
+        validation_log: &mut StatusTracker,
     ) -> Result<()> {
         Store::verify_store(self, &mut ClaimAssetData::Path(asset_path), validation_log)
     }
 
     // verify from a buffer without file i/o
+    #[cfg(feature = "v1_api")]
     pub fn verify_from_buffer(
         &mut self,
         buf: &[u8],
         asset_type: &str,
-        validation_log: &mut impl StatusTracker,
+        validation_log: &mut StatusTracker,
     ) -> Result<()> {
         Store::verify_store(
             self,
@@ -3196,7 +3222,7 @@ impl Store {
         &mut self,
         reader: &mut dyn CAIRead,
         asset_type: &str,
-        validation_log: &mut impl StatusTracker,
+        validation_log: &mut StatusTracker,
     ) -> Result<()> {
         if _sync {
             Store::verify_store(
@@ -3215,7 +3241,7 @@ impl Store {
     }
 
     // fetch remote manifest if possible
-    #[cfg(feature = "fetch_remote_manifests")]
+    #[cfg(all(feature = "fetch_remote_manifests", not(target_os = "wasi")))]
     fn fetch_remote_manifest(url: &str) -> Result<Vec<u8>> {
         use conv::ValueFrom;
         use ureq::Error as uError;
@@ -3262,6 +3288,84 @@ impl Store {
         }
     }
 
+    // fetch remote manifest if possible
+    // TODO: Switch to reqwest once it supports WASI https://github.com/seanmonstar/reqwest/issues/2294
+    #[cfg(all(feature = "fetch_remote_manifests", target_os = "wasi"))]
+    fn fetch_remote_manifest(url: &str) -> Result<Vec<u8>> {
+        use url::Url;
+        use wasi::http::{
+            outgoing_handler,
+            types::{Fields, OutgoingRequest, Scheme},
+        };
+
+        //const MANIFEST_CONTENT_TYPE: &str = "application/x-c2pa-manifest-store"; // todo verify once these are served
+        const DEFAULT_MANIFEST_RESPONSE_SIZE: usize = 10 * 1024 * 1024; // 10 MB
+        let parsed_url = Url::parse(url)
+            .map_err(|e| Error::RemoteManifestFetch(format!("invalid URL: {}", e)))?;
+        let authority = parsed_url.authority();
+        let path_with_query = parsed_url[url::Position::AfterPort..].to_string();
+        let scheme = match parsed_url.scheme() {
+            "http" => Scheme::Http,
+            "https" => Scheme::Https,
+            _ => {
+                return Err(Error::RemoteManifestFetch(
+                    "unsupported URL scheme".to_string(),
+                ))
+            }
+        };
+
+        let request = OutgoingRequest::new(Fields::new());
+        request.set_path_with_query(Some(&path_with_query)).unwrap();
+        request.set_authority(Some(&authority)).unwrap();
+        request.set_scheme(Some(&scheme)).unwrap();
+        match outgoing_handler::handle(request, None) {
+            Ok(resp) => {
+                resp.subscribe().block();
+                let response = resp
+                    .get()
+                    .ok_or(Error::RemoteManifestFetch(
+                        "HTTP request response missing".to_string(),
+                    ))?
+                    .map_err(|_| {
+                        Error::RemoteManifestFetch(
+                            "HTTP request response requested more than once".to_string(),
+                        )
+                    })?
+                    .map_err(|_| Error::RemoteManifestFetch("HTTP request failed".to_string()))?;
+                if response.status() == 200 {
+                    let content_length: usize = response
+                        .headers()
+                        .get("Content-Length")
+                        .first()
+                        .and_then(|val| if val.is_empty() { None } else { Some(val) })
+                        .and_then(|val| std::str::from_utf8(val).ok())
+                        .and_then(|str_parsed_header| str_parsed_header.parse().ok())
+                        .unwrap_or(DEFAULT_MANIFEST_RESPONSE_SIZE);
+                    let body = {
+                        let mut buf = Vec::with_capacity(content_length);
+                        let response_body = response
+                            .consume()
+                            .expect("failed to get incoming request body");
+                        let mut stream = response_body
+                            .stream()
+                            .expect("failed to get response body stream");
+                        stream
+                            .read_to_end(&mut buf)
+                            .expect("failed to read response body");
+                        buf
+                    };
+                    Ok(body)
+                } else {
+                    Err(Error::RemoteManifestFetch(format!(
+                        "fetch failed: code: {}",
+                        response.status(),
+                    )))
+                }
+            }
+            Err(e) => Err(Error::RemoteManifestFetch(e.to_string())),
+        }
+    }
+
     /// Handles remote manifests when file_io/fetch_remote_manifests feature is enabled
     fn handle_remote_manifest(ext_ref: &str) -> Result<Vec<u8>> {
         // verify provenance path is remote url
@@ -3282,10 +3386,11 @@ impl Store {
     }
 
     /// Return Store from in memory asset
+    #[cfg(any(feature = "file_io", feature = "v1_api"))]
     fn load_cai_from_memory(
         asset_type: &str,
         data: &[u8],
-        validation_log: &mut impl StatusTracker,
+        validation_log: &mut StatusTracker,
     ) -> Result<Store> {
         let mut input_stream = Cursor::new(data);
         Store::load_jumbf_from_stream(asset_type, &mut input_stream)
@@ -3363,11 +3468,8 @@ impl Store {
     ///
     /// in_path -  path to source file
     /// validation_log - optional vec to contain addition info about the asset
-    #[cfg(feature = "file_io")]
-    fn load_cai_from_file(
-        in_path: &Path,
-        validation_log: &mut impl StatusTracker,
-    ) -> Result<Store> {
+    #[cfg(all(feature = "v1_api", feature = "file_io"))]
+    fn load_cai_from_file(in_path: &Path, validation_log: &mut StatusTracker) -> Result<Store> {
         match Self::load_jumbf_from_path(in_path) {
             Ok(manifest_bytes) => {
                 // load and validate with CAI toolkit
@@ -3381,11 +3483,11 @@ impl Store {
     /// asset_path: path to input asset
     /// verify: determines whether to verify the contents of the provenance claim.  Must be set true to use validation_log
     /// validation_log: If present all found errors are logged and returned, otherwise first error causes exit and is returned  
-    #[cfg(feature = "file_io")]
+    #[cfg(all(feature = "v1_api", feature = "file_io"))]
     pub fn load_from_asset(
         asset_path: &Path,
         verify: bool,
-        validation_log: &mut impl StatusTracker,
+        validation_log: &mut StatusTracker,
     ) -> Result<Store> {
         // load jumbf if available
         Self::load_cai_from_file(asset_path, validation_log)
@@ -3403,10 +3505,11 @@ impl Store {
             })
     }
 
+    #[cfg(feature = "v1_api")]
     pub fn get_store_from_memory(
         asset_type: &str,
         data: &[u8],
-        validation_log: &mut impl StatusTracker,
+        validation_log: &mut StatusTracker,
     ) -> Result<Store> {
         // load jumbf if available
         Self::load_cai_from_memory(asset_type, data, validation_log).inspect_err(|e| {
@@ -3418,6 +3521,7 @@ impl Store {
     /// Returns embedded remote manifest URL if available
     /// asset_type: extensions or mime type of the data
     /// data: byte array containing the asset
+    #[allow(unused)] // we don't use this anywhere now, but we should!
     pub fn get_remote_manifest_url(asset_type: &str, data: &[u8]) -> Option<String> {
         let mut buf_reader = Cursor::new(data);
 
@@ -3446,11 +3550,12 @@ impl Store {
     /// data: reference to bytes of the the file
     /// verify: if true will run verification checks when loading
     /// validation_log: If present all found errors are logged and returned, otherwise first error causes exit and is returned
+    #[cfg(feature = "v1_api")]
     pub fn load_from_memory(
         asset_type: &str,
         data: &[u8],
         verify: bool,
-        validation_log: &mut impl StatusTracker,
+        validation_log: &mut StatusTracker,
     ) -> Result<Store> {
         Store::get_store_from_memory(asset_type, data, validation_log).and_then(|store| {
             // verify the store
@@ -3472,11 +3577,12 @@ impl Store {
     /// data: reference to bytes of the file
     /// verify: if true will run verification checks when loading
     /// validation_log: If present all found errors are logged and returned, otherwise first error causes exit and is returned
+    #[cfg(feature = "v1_api")]
     pub async fn load_from_memory_async(
         asset_type: &str,
         data: &[u8],
         verify: bool,
-        validation_log: &mut impl StatusTracker,
+        validation_log: &mut StatusTracker,
     ) -> Result<Store> {
         let store = Store::get_store_from_memory(asset_type, data, validation_log)?;
 
@@ -3506,12 +3612,12 @@ impl Store {
         init_segment: &mut dyn CAIRead,
         fragments: &Vec<PathBuf>,
         verify: bool,
-        validation_log: &mut impl StatusTracker,
+        validation_log: &mut StatusTracker,
     ) -> Result<Store> {
         let mut init_seg_data = Vec::new();
         init_segment.read_to_end(&mut init_seg_data)?;
 
-        Store::get_store_from_memory(asset_type, &init_seg_data, validation_log).and_then(|store| {
+        Self::load_cai_from_memory(asset_type, &init_seg_data, validation_log).and_then(|store| {
             // verify the store
             if verify {
                 // verify store and claims
@@ -3526,17 +3632,48 @@ impl Store {
         })
     }
 
+    /// Load Store from a stream and fragment stream
+    ///
+    /// asset_type: asset extension or mime type
+    /// stream: reference to initial segment asset
+    /// fragment: reference to fragment asset
+    /// validation_log: If present all found errors are logged and returned, otherwise first error causes exit and is returned
+    #[allow(unused)] // todo: we don't use this anywhere now, but we should!
+    #[async_generic()]
+    pub fn load_fragment_from_stream(
+        format: &str,
+        mut stream: impl Read + Seek + Send,
+        mut fragment: impl Read + Seek + Send,
+        validation_log: &mut StatusTracker,
+    ) -> Result<Store> {
+        let manifest_bytes = Store::load_jumbf_from_stream(format, &mut stream)?;
+        let store = Store::from_jumbf(&manifest_bytes, validation_log)?;
+
+        let verify = get_settings_value::<bool>("verify.verify_after_reading")?; // defaults to true
+
+        if verify {
+            let mut fragment = ClaimAssetData::StreamFragment(&mut stream, &mut fragment, format);
+            if _sync {
+                Store::verify_store(&store, &mut fragment, validation_log)
+            } else {
+                Store::verify_store_async(&store, &mut fragment, validation_log).await
+            }?;
+        };
+        Ok(store)
+    }
+
     /// Load Store from a in-memory asset
     /// asset_type: asset extension or mime type
     /// data: reference to bytes of the the file
     /// verify: if true will run verification checks when loading
     /// validation_log: If present all found errors are logged and returned, otherwise first error causes exit and is returned
+    #[cfg(feature = "v1_api")]
     pub fn load_fragment_from_memory(
         asset_type: &str,
         init_segment: &[u8],
         fragment: &[u8],
         verify: bool,
-        validation_log: &mut impl StatusTracker,
+        validation_log: &mut StatusTracker,
     ) -> Result<Store> {
         Store::get_store_from_memory(asset_type, init_segment, validation_log).and_then(|store| {
             // verify the store
@@ -3566,12 +3703,13 @@ impl Store {
     /// fragment: reference to bytes of the fragment to validate
     /// verify: if true will run verification checks when loading
     /// validation_log: If present all found errors are logged and returned, otherwise first error causes exit and is returned
+    #[cfg(feature = "v1_api")]
     pub async fn load_fragment_from_memory_async(
         asset_type: &str,
         init_segment: &[u8],
         fragment: &[u8],
         verify: bool,
-        validation_log: &mut impl StatusTracker,
+        validation_log: &mut StatusTracker,
     ) -> Result<Store> {
         let store = Store::get_store_from_memory(asset_type, init_segment, validation_log)?;
 
@@ -3606,7 +3744,7 @@ impl Store {
         data: &[u8],
         redactions: Option<Vec<String>>,
     ) -> Result<Store> {
-        let mut report = OneShotStatusTracker::default();
+        let mut report = StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
         let store = Store::from_jumbf(data, &mut report)?;
 
         // make sure the claims stores are compatible
@@ -3705,14 +3843,13 @@ pub mod tests {
     #![allow(clippy::panic)]
     #![allow(clippy::unwrap_used)]
 
-    use std::io::Write;
+    use std::{fs, io::Write};
 
     use c2pa_crypto::raw_signature::SigningAlg;
-    use c2pa_status_tracker::StatusTracker;
+    use c2pa_status_tracker::{LogItem, StatusTracker};
     use memchr::memmem;
     use serde::Serialize;
     use sha2::{Digest, Sha256};
-    use tempfile::tempdir;
 
     use super::*;
     use crate::{
@@ -3758,10 +3895,11 @@ pub mod tests {
 
     #[test]
     #[cfg(feature = "file_io")]
+    #[cfg(feature = "v1_api")]
     fn test_jumbf_generation() {
         // test adding to actual image
         let ap = fixture_path("earth_apollo17.jpg");
-        let temp_dir = tempdir().expect("temp dir");
+        let temp_dir = tempdirectory().expect("temp dir");
         let op = temp_dir_path(&temp_dir, "test-image.jpg");
 
         // Create claims store.
@@ -3807,8 +3945,12 @@ pub mod tests {
         println!("Provenance: {}\n", store.provenance_path().unwrap());
 
         // read from new file
-        let new_store =
-            Store::load_from_asset(&op, true, &mut OneShotStatusTracker::default()).unwrap();
+        let new_store = Store::load_from_asset(
+            &op,
+            true,
+            &mut StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError),
+        )
+        .unwrap();
 
         // can  we get by the ingredient data back
         let _some_binary_data: Vec<u8> = vec![
@@ -3854,8 +3996,12 @@ pub mod tests {
 
         assert_eq!(splice_point, restore_point);
 
-        Store::load_from_asset(&op, true, &mut OneShotStatusTracker::default())
-            .expect("Should still verify");
+        Store::load_from_asset(
+            &op,
+            true,
+            &mut StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError),
+        )
+        .expect("Should still verify");
 
         // test patching jumbf - error should be detected
 
@@ -3865,8 +4011,12 @@ pub mod tests {
 
         assert_eq!(splice_point, restore_point);
 
-        Store::load_from_asset(&op, true, &mut OneShotStatusTracker::default())
-            .expect_err("Should not verify");
+        Store::load_from_asset(
+            &op,
+            true,
+            &mut StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError),
+        )
+        .expect_err("Should not verify");
     }
 
     #[test]
@@ -3876,7 +4026,7 @@ pub mod tests {
 
         use crate::ClaimGeneratorInfo;
         let ap = fixture_path("earth_apollo17.jpg");
-        let temp_dir = tempdir().expect("temp dir");
+        let temp_dir = tempdirectory().expect("temp dir");
         let op = temp_dir_path(&temp_dir, "test-image.jpg");
 
         // Create claims store.
@@ -3925,13 +4075,12 @@ pub mod tests {
         // write to new file
         println!("Provenance: {}\n", store.provenance_path().unwrap());
 
-        let mut report = DetailedStatusTracker::default();
+        let mut report = StatusTracker::default();
 
         // read from new file
         let new_store = Store::load_from_asset(&op, true, &mut report).unwrap();
 
-        let errors = report.take_errors();
-        assert!(errors.is_empty());
+        assert!(!report.has_any_error());
 
         // dump store and compare to original
         for claim in new_store.claims() {
@@ -3992,7 +4141,7 @@ pub mod tests {
     fn test_unknown_asset_type_generation() {
         // test adding to actual image
         let ap = fixture_path("unsupported_type.txt");
-        let temp_dir = tempdir().expect("temp dir");
+        let temp_dir = tempdirectory().expect("temp dir");
         let op = temp_dir_path(&temp_dir, "unsupported_type.txt");
 
         // Create claims store.
@@ -4017,8 +4166,12 @@ pub mod tests {
         store.save_to_asset(&ap, signer.as_ref(), &op).unwrap();
 
         // read from new file
-        let new_store =
-            Store::load_from_asset(&op, true, &mut OneShotStatusTracker::default()).unwrap();
+        let new_store = Store::load_from_asset(
+            &op,
+            true,
+            &mut StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError),
+        )
+        .unwrap();
 
         // can  we get by the ingredient data back
 
@@ -4073,7 +4226,7 @@ pub mod tests {
     fn test_detects_unverifiable_signature() {
         // test adding to actual image
         let ap = fixture_path("earth_apollo17.jpg");
-        let temp_dir = tempdir().expect("temp dir");
+        let temp_dir = tempdirectory().expect("temp dir");
         let op = temp_dir_path(&temp_dir, "test-image-unverified.jpg");
 
         let mut store = Store::new();
@@ -4101,7 +4254,7 @@ pub mod tests {
 
         // test adding to actual image
         let ap = fixture_path("earth_apollo17.jpg");
-        let temp_dir = tempdir().expect("temp dir");
+        let temp_dir = tempdirectory().expect("temp dir");
         let op = temp_dir_path(&temp_dir, "test-image-expired-cert.jpg");
 
         let mut store = Store::new();
@@ -4139,7 +4292,7 @@ pub mod tests {
 
         // test adding to actual image
         let ap = fixture_path("prerelease.jpg");
-        let temp_dir = tempdir().expect("temp dir");
+        let temp_dir = tempdirectory().expect("temp dir");
         let op = temp_dir_path(&temp_dir, "replacement_test.jpg");
 
         // grab jumbf from original
@@ -4158,13 +4311,14 @@ pub mod tests {
         assert_eq!(memmem::find(&buf, &original_jumbf[0..1024]), None);
     }
 
-    #[actix::test]
+    #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
+    #[cfg_attr(target_os = "wasi", wstd::test)]
     async fn test_jumbf_generation_async() {
         let signer = async_test_signer(SigningAlg::Ps256);
 
         // test adding to actual image
         let ap = fixture_path("earth_apollo17.jpg");
-        let temp_dir = tempdir().expect("temp dir");
+        let temp_dir = tempdirectory().expect("temp dir");
         let op = temp_dir_path(&temp_dir, "test-async.jpg");
 
         // Create claims store.
@@ -4203,14 +4357,14 @@ pub mod tests {
         assert_eq!(claim2_label, c3.unwrap().label());
 
         // Do we generate JUMBF
-        let jumbf_bytes = store.to_jumbf_async(&signer).unwrap();
+        let jumbf_bytes = store.to_jumbf_internal(signer.reserve_size()).unwrap();
         assert!(!jumbf_bytes.is_empty());
 
         // write to new file
         println!("Provenance: {}\n", store.provenance_path().unwrap());
 
         // make sure we can read from new file
-        let mut report = DetailedStatusTracker::default();
+        let mut report = StatusTracker::default();
         let new_store = Store::load_from_asset(&op, false, &mut report).unwrap();
         Store::verify_store_async(
             &new_store,
@@ -4220,15 +4374,16 @@ pub mod tests {
         .await
         .unwrap();
 
-        let errors = report.take_errors();
-        assert!(errors.is_empty());
+        assert!(!report.has_any_error());
     }
 
-    #[actix::test]
+    #[cfg(feature = "v1_api")]
+    #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
+    #[cfg_attr(target_os = "wasi", wstd::test)]
     async fn test_jumbf_generation_remote() {
         // test adding to actual image
         let ap = fixture_path("earth_apollo17.jpg");
-        let temp_dir = tempdir().expect("temp dir");
+        let temp_dir = tempdirectory().expect("temp dir");
         let op = temp_dir_path(&temp_dir, "test-async.jpg");
 
         // Create claims store.
@@ -4247,7 +4402,7 @@ pub mod tests {
             .unwrap();
 
         // make sure we can read from new file
-        let mut report = DetailedStatusTracker::default();
+        let mut report = StatusTracker::default();
         let new_store = Store::load_from_asset(&op, false, &mut report).unwrap();
 
         Store::verify_store_async(
@@ -4258,8 +4413,7 @@ pub mod tests {
         .await
         .unwrap();
 
-        let errors = report.take_errors();
-        assert!(errors.is_empty());
+        assert!(!report.has_any_error());
     }
 
     #[test]
@@ -4267,7 +4421,7 @@ pub mod tests {
     fn test_png_jumbf_generation() {
         // test adding to actual image
         let ap = fixture_path("libpng-test.png");
-        let temp_dir = tempdir().expect("temp dir");
+        let temp_dir = tempdirectory().expect("temp dir");
         let op = temp_dir_path(&temp_dir, "libpng-test-c2pa.png");
 
         // Create claims store.
@@ -4291,14 +4445,14 @@ pub mod tests {
         store.commit_claim(claim1).unwrap();
         store.save_to_asset(&ap, signer.as_ref(), &op).unwrap();
         store.commit_claim(claim_capture).unwrap();
-        store.save_to_asset(&op, signer.as_ref(), &op).unwrap();
+        store.save_to_asset(&ap, signer.as_ref(), &op).unwrap();
         store.commit_claim(claim2).unwrap();
-        store.save_to_asset(&op, signer.as_ref(), &op).unwrap();
+        store.save_to_asset(&ap, signer.as_ref(), &op).unwrap();
 
         // write to new file
         println!("Provenance: {}\n", store.provenance_path().unwrap());
 
-        let mut report = DetailedStatusTracker::default();
+        let mut report = StatusTracker::default();
 
         // read from new file
         let new_store = Store::load_from_asset(&op, true, &mut report).unwrap();
@@ -4363,7 +4517,7 @@ pub mod tests {
         #[cfg(feature = "file_io")]
         fn test_arw_jumbf_generation() {
             let ap = fixture_path("sample1.arw");
-            let temp_dir = tempdir().expect("temp dir");
+            let temp_dir = tempdirectory().expect("temp dir");
             let op = temp_dir_path(&temp_dir, "ssample1.arw");
 
             // Create claims store.
@@ -4394,7 +4548,7 @@ pub mod tests {
             // write to new file
             println!("Provenance: {}\n", store.provenance_path().unwrap());
 
-            let mut report = DetailedStatusTracker::default();
+            let mut report = StatusTracker::default();
 
             // read from new file
             let new_store = Store::load_from_asset(&op, true, &mut report).unwrap();
@@ -4436,7 +4590,7 @@ pub mod tests {
         #[cfg(feature = "file_io")]
         fn test_nef_jumbf_generation() {
             let ap = fixture_path("sample1.nef");
-            let temp_dir = tempdir().expect("temp dir");
+            let temp_dir = tempdirectory().expect("temp dir");
             let op = temp_dir_path(&temp_dir, "ssample1.nef");
 
             // Create claims store.
@@ -4467,7 +4621,7 @@ pub mod tests {
             // write to new file
             println!("Provenance: {}\n", store.provenance_path().unwrap());
 
-            let mut report = DetailedStatusTracker::default();
+            let mut report = StatusTracker::default();
 
             // read from new file
             let new_store = Store::load_from_asset(&op, true, &mut report).unwrap();
@@ -4510,7 +4664,7 @@ pub mod tests {
     #[cfg(feature = "file_io")]
     fn test_wav_jumbf_generation() {
         let ap = fixture_path("sample1.wav");
-        let temp_dir = tempdir().expect("temp dir");
+        let temp_dir = tempdirectory().expect("temp dir");
         let op = temp_dir_path(&temp_dir, "ssample1.wav");
 
         // Create claims store.
@@ -4541,7 +4695,7 @@ pub mod tests {
         // write to new file
         println!("Provenance: {}\n", store.provenance_path().unwrap());
 
-        let mut report = DetailedStatusTracker::default();
+        let mut report = StatusTracker::default();
 
         // read from new file
         let new_store = Store::load_from_asset(&op, true, &mut report).unwrap();
@@ -4584,7 +4738,7 @@ pub mod tests {
     #[cfg(feature = "file_io")]
     fn test_avi_jumbf_generation() {
         let ap = fixture_path("test.avi");
-        let temp_dir = tempdir().expect("temp dir");
+        let temp_dir = tempdirectory().expect("temp dir");
         let op = temp_dir_path(&temp_dir, "test.avi");
 
         // Create claims store.
@@ -4615,7 +4769,7 @@ pub mod tests {
         // write to new file
         println!("Provenance: {}\n", store.provenance_path().unwrap());
 
-        let mut report = DetailedStatusTracker::default();
+        let mut report = StatusTracker::default();
 
         // read from new file
         let new_store = Store::load_from_asset(&op, true, &mut report).unwrap();
@@ -4658,7 +4812,7 @@ pub mod tests {
     #[cfg(feature = "file_io")]
     fn test_webp_jumbf_generation() {
         let ap = fixture_path("sample1.webp");
-        let temp_dir = tempdir().expect("temp dir");
+        let temp_dir = tempdirectory().expect("temp dir");
         let op = temp_dir_path(&temp_dir, "sample1.webp");
 
         // Create claims store.
@@ -4689,7 +4843,7 @@ pub mod tests {
         // write to new file
         println!("Provenance: {}\n", store.provenance_path().unwrap());
 
-        let mut report = DetailedStatusTracker::default();
+        let mut report = StatusTracker::default();
 
         // read from new file
         let new_store = Store::load_from_asset(&op, true, &mut report).unwrap();
@@ -4732,7 +4886,7 @@ pub mod tests {
     #[cfg(feature = "file_io")]
     fn test_heic() {
         let ap = fixture_path("sample1.heic");
-        let temp_dir = tempdir().expect("temp dir");
+        let temp_dir = tempdirectory().expect("temp dir");
         let op = temp_dir_path(&temp_dir, "sample1.heic");
 
         // Create claims store.
@@ -4748,7 +4902,7 @@ pub mod tests {
         store.commit_claim(claim1).unwrap();
         store.save_to_asset(&ap, signer.as_ref(), &op).unwrap();
 
-        let mut report = DetailedStatusTracker::default();
+        let mut report = StatusTracker::default();
 
         // read from new file
         let new_store = Store::load_from_asset(&op, true, &mut report).unwrap();
@@ -4776,7 +4930,7 @@ pub mod tests {
     #[cfg(feature = "file_io")]
     fn test_avif() {
         let ap = fixture_path("sample1.avif");
-        let temp_dir = tempdir().expect("temp dir");
+        let temp_dir = tempdirectory().expect("temp dir");
         let op = temp_dir_path(&temp_dir, "sample1.avif");
 
         // Create claims store.
@@ -4792,7 +4946,7 @@ pub mod tests {
         store.commit_claim(claim1).unwrap();
         store.save_to_asset(&ap, signer.as_ref(), &op).unwrap();
 
-        let mut report = DetailedStatusTracker::default();
+        let mut report = StatusTracker::default();
 
         // read from new file
         let new_store = Store::load_from_asset(&op, true, &mut report).unwrap();
@@ -4820,7 +4974,7 @@ pub mod tests {
     #[cfg(feature = "file_io")]
     fn test_heif() {
         let ap = fixture_path("sample1.heif");
-        let temp_dir = tempdir().expect("temp dir");
+        let temp_dir = tempdirectory().expect("temp dir");
         let op = temp_dir_path(&temp_dir, "sample1.heif");
 
         // Create claims store.
@@ -4836,7 +4990,7 @@ pub mod tests {
         store.commit_claim(claim1).unwrap();
         store.save_to_asset(&ap, signer.as_ref(), &op).unwrap();
 
-        let mut report = DetailedStatusTracker::default();
+        let mut report = StatusTracker::default();
 
         // read from new file
         let new_store = Store::load_from_asset(&op, true, &mut report).unwrap();
@@ -4871,13 +5025,18 @@ pub mod tests {
     #[test]
     fn test_manifest_bad_sig() {
         let ap = fixture_path("CE-sig-CA.jpg");
-        assert!(Store::load_from_asset(&ap, true, &mut OneShotStatusTracker::default()).is_err());
+        assert!(Store::load_from_asset(
+            &ap,
+            true,
+            &mut StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError)
+        )
+        .is_err());
     }
 
     #[test]
     fn test_unsupported_type_without_external_manifest() {
         let ap = fixture_path("Purple Square.psd");
-        let mut report = DetailedStatusTracker::default();
+        let mut report = StatusTracker::default();
         let result = Store::load_from_asset(&ap, true, &mut report);
         assert!(matches!(result, Err(Error::UnsupportedType)));
         println!("Error report for {}: {:?}", ap.display(), report);
@@ -4890,7 +5049,7 @@ pub mod tests {
     fn test_bad_jumbf() {
         // test bad jumbf
         let ap = fixture_path("prerelease.jpg");
-        let mut report = DetailedStatusTracker::default();
+        let mut report = StatusTracker::default();
         let _r = Store::load_from_asset(&ap, true, &mut report);
 
         // error report
@@ -4904,7 +5063,7 @@ pub mod tests {
     fn test_detect_byte_change() {
         // test bad jumbf
         let ap = fixture_path("XCA.jpg");
-        let mut report = DetailedStatusTracker::default();
+        let mut report = StatusTracker::default();
         Store::load_from_asset(&ap, true, &mut report).unwrap();
 
         // error report
@@ -4918,7 +5077,7 @@ pub mod tests {
     #[cfg(feature = "file_io")]
     fn test_file_not_found() {
         let ap = fixture_path("this_does_not_exist.jpg");
-        let mut report = DetailedStatusTracker::default();
+        let mut report = StatusTracker::default();
         let _result = Store::load_from_asset(&ap, true, &mut report);
 
         println!(
@@ -4926,15 +5085,17 @@ pub mod tests {
             ap.display(),
             report.logged_items()
         );
+
         assert!(!report.logged_items().is_empty());
-        let errors = report.take_errors();
+
+        let errors: Vec<&LogItem> = report.filter_errors().collect();
         assert!(errors[0].err_val.as_ref().unwrap().starts_with("IoError"));
     }
 
     #[test]
     fn test_old_manifest() {
         let ap = fixture_path("prerelease.jpg");
-        let mut report = DetailedStatusTracker::default();
+        let mut report = StatusTracker::default();
         let _r = Store::load_from_asset(&ap, true, &mut report);
 
         println!(
@@ -4942,8 +5103,10 @@ pub mod tests {
             ap.display(),
             report.logged_items()
         );
+
         assert!(!report.logged_items().is_empty());
-        let errors = report.take_errors();
+
+        let errors: Vec<&LogItem> = report.filter_errors().collect();
         assert!(errors[0]
             .err_val
             .as_ref()
@@ -4960,7 +5123,7 @@ pub mod tests {
 
         // test adding to actual image
         let ap = fixture_path("earth_apollo17.jpg");
-        let temp_dir = tempdir().expect("temp dir");
+        let temp_dir = tempdirectory().expect("temp dir");
         let op = temp_dir_path(&temp_dir, "earth_apollo17.jpg");
 
         // get default store with default claim
@@ -4972,9 +5135,12 @@ pub mod tests {
             .unwrap();
 
         // read back in
-        let restored_store =
-            Store::load_from_asset(op.as_path(), true, &mut OneShotStatusTracker::default())
-                .unwrap();
+        let restored_store = Store::load_from_asset(
+            op.as_path(),
+            true,
+            &mut StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError),
+        )
+        .unwrap();
 
         let pc = restored_store.provenance_claim().unwrap();
 
@@ -4998,7 +5164,7 @@ pub mod tests {
 
         // test adding to actual image
         let ap = fixture_path("earth_apollo17.jpg");
-        let temp_dir = tempdir().expect("temp dir");
+        let temp_dir = tempdirectory().expect("temp dir");
         let op = temp_dir_path(&temp_dir, "earth_apollo17.jpg");
 
         // get default store with default claim
@@ -5010,9 +5176,12 @@ pub mod tests {
             .unwrap();
 
         // read back in
-        let restored_store =
-            Store::load_from_asset(op.as_path(), true, &mut OneShotStatusTracker::default())
-                .unwrap();
+        let restored_store = Store::load_from_asset(
+            op.as_path(),
+            true,
+            &mut StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError),
+        )
+        .unwrap();
 
         let pc = restored_store.provenance_claim().unwrap();
 
@@ -5034,11 +5203,11 @@ pub mod tests {
         fixture_name: &str,
         search_bytes: &[u8],
         replace_bytes: &[u8],
-    ) -> impl StatusTracker {
-        let temp_dir = tempdir().expect("temp dir");
+    ) -> StatusTracker {
+        let temp_dir = tempdirectory().expect("temp dir");
         let path = temp_fixture_path(&temp_dir, fixture_name);
         patch_file(&path, search_bytes, replace_bytes).expect("patch_file");
-        let mut report = DetailedStatusTracker::default();
+        let mut report = StatusTracker::default();
         let _r = Store::load_from_asset(&path, true, &mut report); // errs are in report
         println!("report: {report:?}");
         report
@@ -5053,7 +5222,7 @@ pub mod tests {
 
         // test adding to actual image
         let ap = fixture_path("earth_apollo17.jpg");
-        let temp_dir = tempdir().expect("temp dir");
+        let temp_dir = tempdirectory().expect("temp dir");
         let op = temp_dir_path(&temp_dir, "update_manifest.jpg");
 
         // get default store with default claim
@@ -5064,7 +5233,7 @@ pub mod tests {
             .save_to_asset(ap.as_path(), signer.as_ref(), op.as_path())
             .unwrap();
 
-        let mut report = OneShotStatusTracker::default();
+        let mut report = StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
         // read back in
         let mut restored_store = Store::load_from_asset(op.as_path(), true, &mut report).unwrap();
 
@@ -5132,7 +5301,7 @@ pub mod tests {
     #[test]
     fn test_assertion_hash_mismatch() {
         // modifies content of an action assertion - causes an assertion hashuri mismatch
-        let mut report = patch_and_report("CA.jpg", b"brightnesscontrast", b"brightnesscontraxx");
+        let report = patch_and_report("CA.jpg", b"brightnesscontrast", b"brightnesscontraxx");
         let first_error = report.filter_errors().next().cloned().unwrap();
 
         assert_eq!(
@@ -5149,7 +5318,7 @@ pub mod tests {
             b"c2pa_manifest\xA3\x63url\x78\x4aself#jumbf=/c2pa/contentauth:urn:uuid:";
         const REPLACE_BYTES: &[u8] =
             b"c2pa_manifest\xA3\x63url\x78\x4aself#jumbf=/c2pa/contentauth:urn:uuix:";
-        let mut report = patch_and_report("CIE-sig-CA.jpg", SEARCH_BYTES, REPLACE_BYTES);
+        let report = patch_and_report("CIE-sig-CA.jpg", SEARCH_BYTES, REPLACE_BYTES);
         let errors: Vec<c2pa_status_tracker::LogItem> = report.filter_errors().cloned().collect();
         assert_eq!(
             errors[0].validation_status.as_deref(),
@@ -5164,9 +5333,8 @@ pub mod tests {
     #[test]
     fn test_display() {
         let ap = fixture_path("CA.jpg");
-        let mut report = DetailedStatusTracker::default();
+        let mut report = StatusTracker::default();
         let store = Store::load_from_asset(&ap, true, &mut report).expect("load_from_asset");
-        let _errors = report.take_errors();
 
         println!("store = {store}");
     }
@@ -5175,7 +5343,7 @@ pub mod tests {
     fn test_legacy_ingredient_hash() {
         // test 1.0 ingredient hash
         let ap = fixture_path("legacy_ingredient_hash.jpg");
-        let mut report = DetailedStatusTracker::default();
+        let mut report = StatusTracker::default();
         let store = Store::load_from_asset(&ap, true, &mut report).expect("load_from_asset");
         println!("store = {store}");
     }
@@ -5184,7 +5352,7 @@ pub mod tests {
     fn test_bmff_legacy() {
         // test 1.0 bmff hash
         let ap = fixture_path("legacy.mp4");
-        let mut report = DetailedStatusTracker::default();
+        let mut report = StatusTracker::default();
         let store = Store::load_from_asset(&ap, true, &mut report).expect("load_from_asset");
         println!("store = {store}");
     }
@@ -5198,7 +5366,7 @@ pub mod tests {
                let init_stream = std::fs::read(init_stream_path).unwrap();
                let segment_stream = std::fs::read(segment_stream_path).unwrap();
 
-               let mut report = DetailedStatusTracker::default();
+               let mut report = StatusTracker::default();
                let store = Store::load_fragment_from_memory(
                    "mp4",
                    &init_stream,
@@ -5215,7 +5383,7 @@ pub mod tests {
     fn test_bmff_jumbf_generation() {
         // test adding to actual image
         let ap = fixture_path("video1.mp4");
-        let temp_dir = tempdir().expect("temp dir");
+        let temp_dir = tempdirectory().expect("temp dir");
         let op = temp_dir_path(&temp_dir, "video1.mp4");
 
         // Create claims store.
@@ -5230,14 +5398,12 @@ pub mod tests {
         store.commit_claim(claim1).unwrap();
         store.save_to_asset(&ap, signer.as_ref(), &op).unwrap();
 
-        let mut report = DetailedStatusTracker::default();
+        let mut report = StatusTracker::default();
 
         // can we read back in
         let new_store = Store::load_from_asset(&op, true, &mut report).unwrap();
 
-        let errors = report.take_errors();
-
-        assert!(errors.is_empty());
+        assert!(!report.has_any_error());
 
         println!("store = {new_store}");
     }
@@ -5271,16 +5437,14 @@ pub mod tests {
             )
             .unwrap();
 
-        let mut report = DetailedStatusTracker::default();
+        let mut report = StatusTracker::default();
 
         let output_data = output_stream.into_inner();
 
         // can we read back in
         let _new_store = Store::load_from_memory("mp4", &output_data, true, &mut report).unwrap();
 
-        let errors = report.take_errors();
-
-        assert!(errors.is_empty());
+        assert!(!report.has_any_error());
     }
 
     #[test]
@@ -5289,7 +5453,7 @@ pub mod tests {
         // test adding to actual image
         let ap = fixture_path("no_manifest.jpg");
 
-        let mut report = DetailedStatusTracker::default();
+        let mut report = StatusTracker::default();
 
         // can we read back in
         let _store = Store::load_from_asset(&ap, true, &mut report);
@@ -5301,7 +5465,7 @@ pub mod tests {
     fn test_external_manifest_sidecar() {
         // test adding to actual image
         let ap = fixture_path("libpng-test.png");
-        let temp_dir = tempdir().expect("temp dir");
+        let temp_dir = tempdirectory().expect("temp dir");
         let op = temp_dir_path(&temp_dir, "libpng-test-c2pa.png");
 
         let sidecar = op.with_extension(MANIFEST_STORE_EXT);
@@ -5331,7 +5495,8 @@ pub mod tests {
         assert_eq!(saved_manifest, loaded_manifest);
 
         // test auto loading of sidecar with validation
-        let mut validation_log = OneShotStatusTracker::default();
+        let mut validation_log =
+            StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
         Store::load_from_asset(&op, true, &mut validation_log).unwrap();
     }
 
@@ -5340,7 +5505,7 @@ pub mod tests {
         // test adding to actual image
         let ap = fixture_path(file_name);
         let extension = ap.extension().unwrap().to_str().unwrap();
-        let temp_dir = tempdir().expect("temp dir");
+        let temp_dir = tempdirectory().expect("temp dir");
         let mut op = temp_dir_path(&temp_dir, file_name);
         op.set_extension(extension);
 
@@ -5386,7 +5551,8 @@ pub mod tests {
         assert_eq!(ext_ref, url_string);
 
         // make sure it validates
-        let mut validation_log = OneShotStatusTracker::default();
+        let mut validation_log =
+            StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
         Store::load_from_asset(&op, true, &mut validation_log).unwrap();
     }
 
@@ -5409,7 +5575,7 @@ pub mod tests {
     fn test_user_guid_external_manifest_embedded() {
         // test adding to actual image
         let ap = fixture_path("libpng-test.png");
-        let temp_dir = tempdir().expect("temp dir");
+        let temp_dir = tempdirectory().expect("temp dir");
         let op = temp_dir_path(&temp_dir, "libpng-test-c2pa.png");
 
         let sidecar = op.with_extension(MANIFEST_STORE_EXT);
@@ -5453,7 +5619,8 @@ pub mod tests {
         assert_eq!(ext_ref, url_string);
 
         // make sure it validates
-        let mut validation_log = OneShotStatusTracker::default();
+        let mut validation_log =
+            StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
         Store::load_from_asset(&op, true, &mut validation_log).unwrap();
     }
 
@@ -5461,7 +5628,7 @@ pub mod tests {
     fn test_external_manifest_from_memory() {
         // test adding to actual image
         let ap = fixture_path("libpng-test.png");
-        let temp_dir = tempdir().expect("temp dir");
+        let temp_dir = tempdirectory().expect("temp dir");
         let op = temp_dir_path(&temp_dir, "libpng-test-c2pa.png");
 
         let sidecar = op.with_extension(MANIFEST_STORE_EXT);
@@ -5502,7 +5669,8 @@ pub mod tests {
         // Load the exported file into a buffer
         let file_buffer = std::fs::read(&op).unwrap();
 
-        let mut validation_log = OneShotStatusTracker::default();
+        let mut validation_log =
+            StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
         let result = Store::load_from_memory("png", &file_buffer, true, &mut validation_log);
 
         assert!(result.is_err());
@@ -5517,7 +5685,8 @@ pub mod tests {
         }
     }
 
-    #[actix::test]
+    #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
+    #[cfg_attr(target_os = "wasi", wstd::test)]
     async fn test_jumbf_generation_stream() {
         let file_buffer = include_bytes!("../tests/fixtures/earth_apollo17.jpg").to_vec();
         // convert buffer to cursor with Read/Write/Seek capability
@@ -5544,7 +5713,7 @@ pub mod tests {
         result = result_stream.into_inner();
 
         // make sure we can read from new file
-        let mut report = DetailedStatusTracker::default();
+        let mut report = StatusTracker::default();
         let new_store = Store::load_from_memory("jpeg", &result, false, &mut report).unwrap();
 
         Store::verify_store_async(
@@ -5555,8 +5724,7 @@ pub mod tests {
         .await
         .unwrap();
 
-        let errors = report.take_errors();
-        assert!(errors.is_empty());
+        assert!(!report.has_any_error());
         // std::fs::write("target/test.jpg", result).unwrap();
     }
 
@@ -5565,7 +5733,7 @@ pub mod tests {
     fn test_tiff_jumbf_generation() {
         // test adding to actual image
         let ap = fixture_path("TUSCANY.TIF");
-        let temp_dir = tempdir().expect("temp dir");
+        let temp_dir = tempdirectory().expect("temp dir");
         let op = temp_dir_path(&temp_dir, "TUSCANY-OUTPUT.TIF");
 
         // Create claims store.
@@ -5595,13 +5763,12 @@ pub mod tests {
 
         println!("Provenance: {}\n", store.provenance_path().unwrap());
 
-        let mut report = DetailedStatusTracker::default();
+        let mut report = StatusTracker::default();
 
         // read from new file
         let new_store = Store::load_from_asset(&op, true, &mut report).unwrap();
 
-        let errors = report.take_errors();
-        assert!(errors.is_empty());
+        assert!(!report.has_any_error());
 
         // dump store and compare to original
         for claim in new_store.claims() {
@@ -5631,7 +5798,8 @@ pub mod tests {
         }
     }
 
-    #[actix::test]
+    #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
+    #[cfg_attr(target_os = "wasi", wstd::test)]
     #[cfg(feature = "file_io")]
     async fn test_boxhash_embeddable_manifest_async() {
         // test adding to actual image
@@ -5695,7 +5863,7 @@ pub mod tests {
         out_stream.write_all(&after_buf).unwrap();
 
         // save to output file
-        let temp_dir = tempfile::tempdir().unwrap();
+        let temp_dir = tempdirectory().unwrap();
         let output = temp_dir_path(&temp_dir, "boxhash-out.jpg");
         let mut output_file = std::fs::OpenOptions::new()
             .read(true)
@@ -5706,15 +5874,14 @@ pub mod tests {
             .unwrap();
         output_file.write_all(&out_stream.into_inner()).unwrap();
 
-        let mut report = DetailedStatusTracker::default();
+        let mut report = StatusTracker::default();
         let new_store = Store::load_from_asset(&output, false, &mut report).unwrap();
 
         Store::verify_store_async(&new_store, &mut ClaimAssetData::Path(&output), &mut report)
             .await
             .unwrap();
 
-        let errors = report.take_errors();
-        assert!(errors.is_empty());
+        assert!(!report.has_any_error());
     }
 
     #[test]
@@ -5780,7 +5947,7 @@ pub mod tests {
         out_stream.write_all(&after_buf).unwrap();
 
         // save to output file
-        let temp_dir = tempfile::tempdir().unwrap();
+        let temp_dir = tempdirectory().unwrap();
         let output = temp_dir_path(&temp_dir, "boxhash-out.jpg");
         let mut output_file = std::fs::OpenOptions::new()
             .read(true)
@@ -5791,14 +5958,14 @@ pub mod tests {
             .unwrap();
         output_file.write_all(&out_stream.into_inner()).unwrap();
 
-        let mut report = DetailedStatusTracker::default();
+        let mut report = StatusTracker::default();
         let _new_store = Store::load_from_asset(&output, true, &mut report).unwrap();
 
-        let errors = report.take_errors();
-        assert!(errors.is_empty());
+        assert!(!report.has_any_error());
     }
 
-    #[actix::test]
+    #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
+    #[cfg_attr(target_os = "wasi", wstd::test)]
     #[cfg(feature = "file_io")]
     async fn test_datahash_embeddable_manifest_async() {
         // test adding to actual image
@@ -5822,7 +5989,7 @@ pub mod tests {
             .get_data_hashed_manifest_placeholder(signer.reserve_size(), "jpeg")
             .unwrap();
 
-        let temp_dir = tempfile::tempdir().unwrap();
+        let temp_dir = tempdirectory().unwrap();
         let output = temp_dir_path(&temp_dir, "boxhash-out.jpg");
         let mut output_file = std::fs::OpenOptions::new()
             .read(true)
@@ -5856,15 +6023,14 @@ pub mod tests {
         output_file.seek(SeekFrom::Start(offset as u64)).unwrap();
         output_file.write_all(&cm).unwrap();
 
-        let mut report = DetailedStatusTracker::default();
+        let mut report = StatusTracker::default();
         let new_store = Store::load_from_asset(&output, false, &mut report).unwrap();
 
         Store::verify_store_async(&new_store, &mut ClaimAssetData::Path(&output), &mut report)
             .await
             .unwrap();
 
-        let errors = report.take_errors();
-        assert!(errors.is_empty());
+        assert!(!report.has_any_error());
     }
 
     #[test]
@@ -5891,7 +6057,7 @@ pub mod tests {
             .get_data_hashed_manifest_placeholder(Signer::reserve_size(&signer), "jpeg")
             .unwrap();
 
-        let temp_dir = tempfile::tempdir().unwrap();
+        let temp_dir = tempdirectory().unwrap();
         let output = temp_dir_path(&temp_dir, "boxhash-out.jpg");
         let mut output_file = std::fs::OpenOptions::new()
             .read(true)
@@ -5929,15 +6095,15 @@ pub mod tests {
         output_file.seek(SeekFrom::Start(offset as u64)).unwrap();
         output_file.write_all(&cm).unwrap();
 
-        let mut report = DetailedStatusTracker::default();
+        let mut report = StatusTracker::default();
         let _new_store = Store::load_from_asset(&output, true, &mut report).unwrap();
 
-        let errors = report.take_errors();
-        assert!(errors.is_empty());
+        assert!(!report.has_any_error());
     }
 
     #[test]
     #[cfg(feature = "file_io")]
+    #[cfg(feature = "v1_api")]
     fn test_datahash_embeddable_manifest_user_hashed() {
         // test adding to actual image
 
@@ -5962,7 +6128,7 @@ pub mod tests {
             .get_data_hashed_manifest_placeholder(Signer::reserve_size(&signer), "jpeg")
             .unwrap();
 
-        let temp_dir = tempfile::tempdir().unwrap();
+        let temp_dir = tempdirectory().unwrap();
         let output = temp_dir_path(&temp_dir, "boxhash-out.jpg");
         let mut output_file = std::fs::OpenOptions::new()
             .read(true)
@@ -5996,17 +6162,18 @@ pub mod tests {
         output_file.seek(SeekFrom::Start(offset as u64)).unwrap();
         output_file.write_all(&cm).unwrap();
 
-        let mut report = DetailedStatusTracker::default();
+        let mut report = StatusTracker::default();
         let _new_store = Store::load_from_asset(&output, true, &mut report).unwrap();
 
-        let errors = report.take_errors();
-        assert!(errors.is_empty());
+        assert!(!report.has_any_error());
     }
 
+    #[cfg(feature = "v1_api")]
     struct PlacedCallback {
         path: String,
     }
 
+    #[cfg(feature = "v1_api")]
     impl ManifestPatchCallback for PlacedCallback {
         fn patch_manifest(&self, manifest_store: &[u8]) -> Result<Vec<u8>> {
             use ::jumbf::parser::SuperBox;
@@ -6050,6 +6217,7 @@ pub mod tests {
 
     #[test]
     #[cfg(feature = "file_io")]
+    #[cfg(feature = "v1_api")]
     fn test_placed_manifest() {
         use crate::jumbf::labels::to_normalized_uri;
 
@@ -6057,7 +6225,7 @@ pub mod tests {
 
         // test adding to actual image
         let ap = fixture_path("C.jpg");
-        let temp_dir = tempdir().expect("temp dir");
+        let temp_dir = tempdirectory().expect("temp dir");
         let op = temp_dir_path(&temp_dir, "C-placed.jpg");
 
         // Create claims store.
@@ -6114,15 +6282,13 @@ pub mod tests {
         )
         .unwrap();
 
-        let mut report = DetailedStatusTracker::default();
+        let mut report = StatusTracker::default();
         let _new_store = Store::load_from_asset(&op, true, &mut report).unwrap();
 
-        let errors = report.take_errors();
-        assert!(errors.is_empty());
+        assert!(!report.has_any_error());
     }
 
     #[test]
-    #[cfg(feature = "openssl_sign")]
     fn test_dynamic_assertions() {
         #[derive(Serialize)]
         struct TestAssertion {
@@ -6137,11 +6303,11 @@ pub mod tests {
                 "com.mycompany.myassertion".to_string()
             }
 
-            fn reserve_size(&self) -> usize {
+            fn reserve_size(&self) -> Result<usize> {
                 let assertion = TestAssertion {
                     my_tag: "some value I will replace".to_string(),
                 };
-                serde_cbor::to_vec(&assertion).unwrap().len()
+                Ok(serde_cbor::to_vec(&assertion)?.len())
             }
 
             fn content(
@@ -6149,7 +6315,7 @@ pub mod tests {
                 _label: &str,
                 _size: Option<usize>,
                 claim: &PreliminaryClaim,
-            ) -> Result<Vec<u8>> {
+            ) -> Result<DynamicAssertionContent> {
                 assert!(claim
                     .assertions()
                     .inspect(|a| {
@@ -6161,7 +6327,9 @@ pub mod tests {
                     my_tag: "some value I will replace".to_string(),
                 };
 
-                Ok(serde_cbor::to_vec(&assertion).unwrap())
+                Ok(DynamicAssertionContent::Cbor(
+                    serde_cbor::to_vec(&assertion).unwrap(),
+                ))
             }
         }
 
@@ -6231,7 +6399,7 @@ pub mod tests {
         result = result_stream.into_inner();
 
         // make sure we can read from new file
-        let mut report = DetailedStatusTracker::default();
+        let mut report = StatusTracker::default();
         let new_store = Store::load_from_memory("jpeg", &result, false, &mut report).unwrap();
 
         println!("new_store: {}", new_store);
@@ -6243,13 +6411,12 @@ pub mod tests {
         )
         .unwrap();
 
-        let errors = report.take_errors();
-        assert!(errors.is_empty());
+        assert!(!report.has_any_error());
         // std::fs::write("target/test.jpg", result).unwrap();
     }
 
-    #[actix::test]
-    #[cfg(feature = "openssl_sign")]
+    #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
+    #[cfg_attr(target_os = "wasi", wstd::test)]
     async fn test_async_dynamic_assertions() {
         use async_trait::async_trait;
 
@@ -6268,11 +6435,11 @@ pub mod tests {
                 "com.mycompany.myassertion".to_string()
             }
 
-            fn reserve_size(&self) -> usize {
+            fn reserve_size(&self) -> Result<usize> {
                 let assertion = TestAssertion {
                     my_tag: "some value I will replace".to_string(),
                 };
-                serde_cbor::to_vec(&assertion).unwrap().len()
+                Ok(serde_cbor::to_vec(&assertion)?.len())
             }
 
             async fn content(
@@ -6280,7 +6447,7 @@ pub mod tests {
                 _label: &str,
                 _size: Option<usize>,
                 claim: &PreliminaryClaim,
-            ) -> Result<Vec<u8>> {
+            ) -> Result<DynamicAssertionContent> {
                 assert!(claim
                     .assertions()
                     .inspect(|a| {
@@ -6292,7 +6459,9 @@ pub mod tests {
                     my_tag: "some value I will replace".to_string(),
                 };
 
-                Ok(serde_cbor::to_vec(&assertion).unwrap())
+                Ok(DynamicAssertionContent::Cbor(
+                    serde_cbor::to_vec(&assertion).unwrap(),
+                ))
             }
         }
 
@@ -6306,7 +6475,8 @@ pub mod tests {
             }
         }
 
-        #[async_trait::async_trait]
+        #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+        #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
         impl crate::AsyncSigner for DynamicSigner {
             async fn sign(&self, data: Vec<u8>) -> crate::error::Result<Vec<u8>> {
                 self.0.sign(data).await
@@ -6364,7 +6534,7 @@ pub mod tests {
         result = result_stream.into_inner();
 
         // make sure we can read from new file
-        let mut report = DetailedStatusTracker::default();
+        let mut report = StatusTracker::default();
         let new_store = Store::load_from_memory("jpeg", &result, false, &mut report).unwrap();
 
         println!("new_store: {}", new_store);
@@ -6377,8 +6547,7 @@ pub mod tests {
         .await
         .unwrap();
 
-        let errors = report.take_errors();
-        assert!(errors.is_empty());
+        assert!(!report.has_any_error());
         // std::fs::write("target/test.jpg", result).unwrap();
     }
 
@@ -6387,7 +6556,7 @@ pub mod tests {
     fn test_fragmented_jumbf_generation() {
         // test adding to actual image
 
-        let tempdir = tempdir().expect("temp dir");
+        let tempdir = tempdirectory().expect("temp dir");
         let output_path = tempdir.into_path();
 
         // search folders for init segments
@@ -6432,25 +6601,23 @@ pub mod tests {
 
                     // verify the fragments
                     let output_init = new_output_path.join(p.file_name().unwrap());
-                    let init_stream = std::fs::read(output_init).unwrap();
+                    let mut init_stream = std::fs::File::open(&output_init).unwrap();
 
                     for entry in &fragments {
                         let file_path = new_output_path.join(entry.file_name().unwrap());
 
-                        let mut validation_log = DetailedStatusTracker::default();
+                        let mut validation_log = StatusTracker::default();
 
-                        let fragment_stream = std::fs::read(&file_path).unwrap();
-                        let _manifest = Store::load_fragment_from_memory(
+                        let mut fragment_stream = std::fs::File::open(&file_path).unwrap();
+                        let _manifest = Store::load_fragment_from_stream(
                             "mp4",
-                            &init_stream,
-                            &fragment_stream,
-                            true,
+                            &mut init_stream,
+                            &mut fragment_stream,
                             &mut validation_log,
                         )
                         .unwrap();
-
-                        let errors = validation_log.take_errors();
-                        assert!(errors.is_empty());
+                        init_stream.seek(std::io::SeekFrom::Start(0)).unwrap();
+                        assert!(!validation_log.has_any_error());
                     }
 
                     // test verifying all at once
@@ -6459,19 +6626,18 @@ pub mod tests {
                         output_fragments.push(new_output_path.join(entry.file_name().unwrap()));
                     }
 
-                    let mut reader = Cursor::new(init_stream);
-                    let mut validation_log = DetailedStatusTracker::default();
+                    //let mut reader = Cursor::new(init_stream);
+                    let mut validation_log = StatusTracker::default();
                     let _manifest = Store::load_from_file_and_fragments(
                         "mp4",
-                        &mut reader,
+                        &mut init_stream,
                         &output_fragments,
                         true,
                         &mut validation_log,
                     )
                     .unwrap();
 
-                    let errors = validation_log.take_errors();
-                    assert!(errors.is_empty());
+                    assert!(!validation_log.has_any_error());
                 }
                 Err(_) => panic!("test misconfigures"),
             }

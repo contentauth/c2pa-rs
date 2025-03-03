@@ -24,7 +24,6 @@ use quick_xml::{
     events::{BytesText, Event},
     Reader, Writer,
 };
-use tempfile::Builder;
 
 use crate::{
     asset_io::{
@@ -43,7 +42,7 @@ use crate::{
     },
     error::{Error, Result},
     utils::{
-        io_utils::{patch_stream, stream_len, ReaderUtils},
+        io_utils::{patch_stream, stream_len, tempfile_builder, ReaderUtils},
         xmp_inmemory_utils::{self, MIN_XMP},
     },
 };
@@ -125,10 +124,7 @@ impl AssetIO for SvgIO {
             .open(asset_path)
             .map_err(Error::IoError)?;
 
-        let mut temp_file = Builder::new()
-            .prefix("c2pa_temp")
-            .rand_bytes(5)
-            .tempfile()?;
+        let mut temp_file = tempfile_builder("c2pa_temp")?;
 
         self.write_cai(&mut input_stream, &mut temp_file, store_bytes)?;
 
@@ -149,10 +145,7 @@ impl AssetIO for SvgIO {
     fn remove_cai_store(&self, asset_path: &Path) -> Result<()> {
         let mut input_file = File::open(asset_path)?;
 
-        let mut temp_file = Builder::new()
-            .prefix("c2pa_temp")
-            .rand_bytes(5)
-            .tempfile()?;
+        let mut temp_file = tempfile_builder("c2pa_temp")?;
 
         self.remove_cai_store_from_stream(&mut input_file, &mut temp_file)?;
 
@@ -752,12 +745,12 @@ pub mod tests {
 
     use std::io::Read;
 
-    use tempfile::tempdir;
     use xmp_inmemory_utils::extract_provenance;
 
     use super::*;
     use crate::utils::{
         hash_utils::vec_compare,
+        io_utils::tempdirectory,
         test::{fixture_path, temp_dir_path},
     };
 
@@ -767,7 +760,7 @@ pub mod tests {
         let source = fixture_path("sample1.svg");
 
         let mut success = false;
-        if let Ok(temp_dir) = tempdir() {
+        if let Ok(temp_dir) = tempdirectory() {
             let output = temp_dir_path(&temp_dir, "sample1.svg");
 
             if let Ok(_size) = std::fs::copy(source, &output) {
@@ -790,7 +783,7 @@ pub mod tests {
         let source = fixture_path("sample2.svg");
 
         let mut success = false;
-        if let Ok(temp_dir) = tempdir() {
+        if let Ok(temp_dir) = tempdirectory() {
             let output = temp_dir_path(&temp_dir, "sample2.svg");
 
             if let Ok(_size) = std::fs::copy(source, &output) {
@@ -813,7 +806,7 @@ pub mod tests {
         let source = fixture_path("sample3.svg");
 
         let mut success = false;
-        if let Ok(temp_dir) = tempdir() {
+        if let Ok(temp_dir) = tempdirectory() {
             let output = temp_dir_path(&temp_dir, "sample3.svg");
 
             if let Ok(_size) = std::fs::copy(source, &output) {
@@ -836,7 +829,7 @@ pub mod tests {
         let source = fixture_path("sample1.svg");
 
         let mut success = false;
-        if let Ok(temp_dir) = tempdir() {
+        if let Ok(temp_dir) = tempdirectory() {
             let output = temp_dir_path(&temp_dir, "sample1.svg");
 
             if let Ok(_size) = std::fs::copy(source, &output) {
@@ -865,7 +858,7 @@ pub mod tests {
     fn test_remove_c2pa() {
         let source = fixture_path("sample4.svg");
 
-        let temp_dir = tempdir().unwrap();
+        let temp_dir = tempdirectory().unwrap();
         let output = temp_dir_path(&temp_dir, "sample4.svg");
 
         std::fs::copy(source, &output).unwrap();
@@ -886,7 +879,7 @@ pub mod tests {
         let source = fixture_path("sample1.svg");
 
         let mut success = false;
-        if let Ok(temp_dir) = tempdir() {
+        if let Ok(temp_dir) = tempdirectory() {
             let output = temp_dir_path(&temp_dir, "sample1.svg");
 
             if let Ok(_size) = std::fs::copy(source, &output) {

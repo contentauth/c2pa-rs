@@ -293,14 +293,9 @@ pub(crate) fn get_settings() -> Option<Settings> {
             let source = c.clone(); // clone required since deserialize consumes object
             let cloned_config = Config::builder().add_source(source).build();
 
-            if let Ok(cloned_config) = cloned_config {
-                match cloned_config.try_deserialize::<Settings>() {
-                    Ok(s) => Some(s),
-                    Err(_) => None,
-                }
-            } else {
-                None
-            }
+            cloned_config
+                .ok()
+                .and_then(|s| s.try_deserialize::<Settings>().ok())
         }
         Err(_) => None,
     }
@@ -412,6 +407,8 @@ pub mod tests {
     use std::sync::Mutex;
 
     use super::*;
+    #[cfg(feature = "file_io")]
+    use crate::utils::io_utils::tempdirectory;
 
     // prevent tests from polluting the results of each other because of Rust unit test concurrency
     static PROTECT: Mutex<u32> = Mutex::new(1); // prevent tests from polluting the results of each other
@@ -542,7 +539,7 @@ pub mod tests {
     fn test_save_load() {
         let _protect = PROTECT.lock().unwrap();
 
-        let temp_dir = tempfile::tempdir().unwrap();
+        let temp_dir = tempdirectory().unwrap();
         let op = crate::utils::test::temp_dir_path(&temp_dir, "sdk_config.json");
 
         save_settings_as_json(&op).unwrap();
@@ -560,7 +557,7 @@ pub mod tests {
     fn test_save_load_from_string() {
         let _protect = PROTECT.lock().unwrap();
 
-        let temp_dir = tempfile::tempdir().unwrap();
+        let temp_dir = tempdirectory().unwrap();
         let op = crate::utils::test::temp_dir_path(&temp_dir, "sdk_config.json");
 
         save_settings_as_json(&op).unwrap();

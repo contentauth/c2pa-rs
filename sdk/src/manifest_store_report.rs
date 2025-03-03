@@ -19,14 +19,14 @@ use std::path::Path;
 use atree::{Arena, Token};
 use c2pa_crypto::base64;
 #[cfg(feature = "v1_api")]
-use c2pa_status_tracker::{DetailedStatusTracker, StatusTracker};
+use c2pa_status_tracker::StatusTracker;
 use extfmt::Hexlify;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::{
     assertion::AssertionData, claim::Claim, store::Store, validation_results::ValidationResults,
-    validation_status::ValidationStatus, Result,
+    validation_status::ValidationStatus, Result, ValidationState,
 };
 
 /// Low level JSON based representation of Manifest Store - used for debugging
@@ -39,6 +39,7 @@ pub struct ManifestStoreReport {
     #[serde(skip_serializing_if = "Option::is_none")]
     validation_status: Option<Vec<ValidationStatus>>,
     pub(crate) validation_results: Option<ValidationResults>,
+    pub(crate) validation_state: Option<ValidationState>,
 }
 
 impl ManifestStoreReport {
@@ -54,14 +55,25 @@ impl ManifestStoreReport {
             manifests,
             validation_status: None,
             validation_results: None,
+            validation_state: None,
         })
+    }
+
+    pub(crate) fn from_store_with_results(
+        store: &Store,
+        validation_results: &ValidationResults,
+    ) -> Result<Self> {
+        let mut report = Self::from_store(store)?;
+        report.validation_results = Some(validation_results.clone());
+        report.validation_state = Some(validation_results.validation_state());
+        Ok(report)
     }
 
     /// Prints tree view of manifest store
     #[cfg(feature = "file_io")]
     #[cfg(feature = "v1_api")]
     pub fn dump_tree<P: AsRef<Path>>(path: P) -> Result<()> {
-        let mut validation_log = DetailedStatusTracker::default();
+        let mut validation_log = StatusTracker::default();
         let store = crate::store::Store::load_from_asset(path.as_ref(), true, &mut validation_log)?;
 
         let claim = store.provenance_claim().ok_or(crate::Error::ClaimMissing {
@@ -101,7 +113,7 @@ impl ManifestStoreReport {
     #[cfg(feature = "file_io")]
     #[cfg(feature = "v1_api")]
     pub fn dump_cert_chain<P: AsRef<Path>>(path: P) -> Result<()> {
-        let mut validation_log = DetailedStatusTracker::default();
+        let mut validation_log = StatusTracker::default();
         let store = Store::load_from_asset(path.as_ref(), true, &mut validation_log)?;
 
         let cert_str = store.get_provenance_cert_chain()?;
@@ -118,7 +130,7 @@ impl ManifestStoreReport {
     #[cfg(feature = "file_io")]
     #[cfg(feature = "v1_api")]
     pub fn cert_chain<P: AsRef<Path>>(path: P) -> Result<String> {
-        let mut validation_log = DetailedStatusTracker::default();
+        let mut validation_log = StatusTracker::default();
         let store = Store::load_from_asset(path.as_ref(), true, &mut validation_log)?;
         store.get_provenance_cert_chain()
     }
@@ -126,17 +138,16 @@ impl ManifestStoreReport {
     /// Returns the certificate used to sign the active manifest.
     #[cfg(feature = "v1_api")]
     pub fn cert_chain_from_bytes(format: &str, bytes: &[u8]) -> Result<String> {
-        let mut validation_log = DetailedStatusTracker::default();
+        let mut validation_log = StatusTracker::default();
         let store = Store::load_from_memory(format, bytes, true, &mut validation_log)?;
         store.get_provenance_cert_chain()
     }
 
     /// Creates a ManifestStoreReport from an existing Store and a validation log
-    #[cfg(feature = "file_io")]
     #[cfg(feature = "v1_api")]
     pub(crate) fn from_store_with_log(
         store: &Store,
-        validation_log: &impl StatusTracker,
+        validation_log: &StatusTracker,
     ) -> Result<Self> {
         let mut report = Self::from_store(store)?;
 
@@ -161,7 +172,7 @@ impl ManifestStoreReport {
     #[cfg(feature = "v1_api")]
     /// Creates a ManifestStoreReport from image bytes and a format
     pub fn from_bytes(format: &str, image_bytes: &[u8]) -> Result<Self> {
-        let mut validation_log = DetailedStatusTracker::default();
+        let mut validation_log = StatusTracker::default();
         let store = Store::load_from_memory(format, image_bytes, true, &mut validation_log)?;
         Self::from_store_with_log(&store, &validation_log)
     }
@@ -170,7 +181,7 @@ impl ManifestStoreReport {
     /// Creates a ManifestStoreReport from a file
     #[cfg(feature = "file_io")]
     pub fn from_file<P: AsRef<Path>>(path: P) -> Result<Self> {
-        let mut validation_log = DetailedStatusTracker::default();
+        let mut validation_log = StatusTracker::default();
         let store = Store::load_from_asset(path.as_ref(), true, &mut validation_log)?;
         Self::from_store_with_log(&store, &validation_log)
     }
@@ -181,7 +192,7 @@ impl ManifestStoreReport {
         path: P,
         fragments: &Vec<std::path::PathBuf>,
     ) -> Result<Self> {
-        let mut validation_log = DetailedStatusTracker::default();
+        let mut validation_log = StatusTracker::default();
         let asset_type = crate::jumbf_io::get_supported_file_extension(path.as_ref())
             .ok_or(crate::Error::UnsupportedType)?;
 
@@ -419,7 +430,7 @@ fn b64_tag(mut json: String, tag: &str) -> String {
         if let Some(idx2) = json[index..].find(']') {
             let idx3 = json[index..].find('[').unwrap_or_default(); // ok since we just found it
             let bytes: Vec<u8> =
-                serde_json::from_slice(json[index + idx3..index + idx2 + 1].as_bytes())
+                serde_json::from_slice(&json.as_bytes()[index + idx3..index + idx2 + 1])
                     .unwrap_or_default();
             json = format!(
                 "{}\"{}\": \"{}\"{}",
