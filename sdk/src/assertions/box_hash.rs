@@ -13,7 +13,7 @@
 
 use std::{fs::File, io::Cursor, path::*};
 
-use c2pa_status_tracker::validation_codes::ASSERTION_BOXHASH_UNKNOWN;
+use c2pa_status_tracker::validation_codes::ASSERTION_BOXHASH_UNKNOWN_BOX;
 use serde::{Deserialize, Serialize};
 use serde_bytes::ByteBuf;
 
@@ -133,10 +133,16 @@ impl BoxHash {
                                 inclusion.set_length(len_to_this_seg + next_source_bm.range_len);
                             }
                         } else {
-                            return Err(Error::HashMismatch(ASSERTION_BOXHASH_UNKNOWN.to_owned()));
+                            return Err(Error::HashMismatch(
+                                ASSERTION_BOXHASH_UNKNOWN_BOX.to_owned(),
+                            ));
                         }
                     }
-                    None => return Err(Error::HashMismatch(ASSERTION_BOXHASH_UNKNOWN.to_owned())),
+                    None => {
+                        return Err(Error::HashMismatch(
+                            ASSERTION_BOXHASH_UNKNOWN_BOX.to_owned(),
+                        ))
+                    }
                 }
                 source_index += 1;
             }

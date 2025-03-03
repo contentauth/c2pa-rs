@@ -17,6 +17,12 @@ use thiserror::Error;
 
 use crate::raw_signature::SigningAlg;
 
+use super::oids::{
+    ans1_oid_bcder_oid, ECDSA_WITH_SHA256_OID, ECDSA_WITH_SHA384_OID, ECDSA_WITH_SHA512_OID,
+    ED25519_OID, SHA1_OID, SHA1_WITH_RSAENCRYPTION_OID, SHA256_OID, SHA256_WITH_RSAENCRYPTION_OID,
+    SHA384_OID, SHA384_WITH_RSAENCRYPTION_OID, SHA512_OID, SHA512_WITH_RSAENCRYPTION_OID,
+};
+
 /// A `RawSignatureValidator` implementation checks a signature encoded using a
 /// specific signature algorithm and a private/public key pair.
 ///
@@ -84,6 +90,31 @@ pub fn validator_for_signing_alg(alg: SigningAlg) -> Option<Box<dyn RawSignature
     let _ = alg; // this value will be unused in this case
     None
 }
+// Find correct hash choice to the signing alg,
+// this also works as a passthrough if the hash is known.
+fn signing_alg_to_hash_alg(sign_hash_alg: &Oid) -> Oid {
+    let hash = if sign_hash_alg.as_ref() == SHA256_WITH_RSAENCRYPTION_OID.as_bytes() {
+        SHA256_OID.to_owned()
+    } else if sign_hash_alg.as_ref() == SHA384_WITH_RSAENCRYPTION_OID.as_bytes() {
+        SHA384_OID.to_owned()
+    } else if sign_hash_alg.as_ref() == SHA512_WITH_RSAENCRYPTION_OID.as_bytes() {
+        SHA512_OID.to_owned()
+    } else if sign_hash_alg.as_ref() == SHA1_WITH_RSAENCRYPTION_OID.as_bytes() {
+        SHA1_OID.to_owned()
+    } else if sign_hash_alg.as_ref() == ECDSA_WITH_SHA256_OID.as_bytes() {
+        SHA256_OID.to_owned()
+    } else if sign_hash_alg.as_ref() == ECDSA_WITH_SHA384_OID.as_bytes() {
+        SHA384_OID.to_owned()
+    } else if sign_hash_alg.as_ref() == ECDSA_WITH_SHA512_OID.as_bytes() {
+        SHA512_OID.to_owned()
+    } else if sign_hash_alg.as_ref() == ED25519_OID.as_bytes() {
+        SHA512_OID.to_owned()
+    } else {
+        return sign_hash_alg.to_owned();
+    };
+
+    ans1_oid_bcder_oid(&hash).unwrap_or(sign_hash_alg.to_owned())
+}
 
 /// Return a built-in signature validator for the requested signature
 /// algorithm as identified by OID.
@@ -94,12 +125,15 @@ pub(crate) fn validator_for_sig_and_hash_algs(
     sig_alg: &Oid,
     hash_alg: &Oid,
 ) -> Option<Box<dyn RawSignatureValidator>> {
+    // adjust hash if needed
+    let hash_alg = signing_alg_to_hash_alg(hash_alg);
+
     // TO REVIEW: Do we need any of the RSA-PSS algorithms for this use case?
     #[cfg(any(target_arch = "wasm32", feature = "rust_native_crypto"))]
     {
         if let Some(validator) =
             crate::raw_signature::rust_native::validators::validator_for_sig_and_hash_algs(
-                sig_alg, hash_alg,
+                sig_alg, &hash_alg,
             )
         {
             return Some(validator);
@@ -109,7 +143,7 @@ pub(crate) fn validator_for_sig_and_hash_algs(
     #[cfg(not(target_arch = "wasm32"))]
     if let Some(validator) =
         crate::raw_signature::openssl::validators::validator_for_sig_and_hash_algs(
-            sig_alg, hash_alg,
+            sig_alg, &hash_alg,
         )
     {
         return Some(validator);

@@ -25,6 +25,8 @@ use crate::{
     ocsp::OcspResponse,
 };
 
+use super::cert_chain_from_sign1;
+
 /// Given a COSE signature, extract the OCSP data and validate the status of
 /// that report.
 #[async_generic]
@@ -91,9 +93,14 @@ fn check_stapled_ocsp_response(
 
     let signing_time: DateTime<Utc> = tst_info.gen_time.clone().into();
 
-    let Ok(ocsp_data) =
-        OcspResponse::from_der_checked(ocsp_response_der, Some(signing_time), validation_log)
-    else {
+    let certs = cert_chain_from_sign1(sign1)?;
+
+    let Ok(ocsp_data) = OcspResponse::from_der_checked(
+        ocsp_response_der,
+        &certs,
+        Some(signing_time),
+        validation_log,
+    ) else {
         return Ok(OcspResponse::default());
     };
 
@@ -138,9 +145,12 @@ fn fetch_and_check_ocsp_response(
 
         // Check the OCSP response, but only if it is well-formed.
         // Revocation errors are reported in the validation log.
-        let Ok(ocsp_data) =
-            OcspResponse::from_der_checked(&ocsp_response_der, signing_time, validation_log)
-        else {
+        let Ok(ocsp_data) = OcspResponse::from_der_checked(
+            &ocsp_response_der,
+            &certs,
+            signing_time,
+            validation_log,
+        ) else {
             // TO REVIEW: This is how the old code worked, but is it correct to ignore a
             // malformed OCSP response?
             return Ok(OcspResponse::default());
