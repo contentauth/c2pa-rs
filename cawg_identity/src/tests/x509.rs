@@ -15,6 +15,7 @@ use std::io::{Cursor, Seek};
 
 use c2pa::{Builder, Reader, SigningAlg};
 use c2pa_crypto::raw_signature;
+use c2pa_status_tracker::StatusTracker;
 #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
 use wasm_bindgen_test::wasm_bindgen_test;
 
@@ -73,19 +74,35 @@ async fn simple_case() {
     // Read back the Manifest that was generated.
     dest.rewind().unwrap();
 
+    std::fs::write(
+        "src/tests/fixtures/validation_method/pad1_invalid.jpg",
+        dest.get_ref(),
+    )
+    .unwrap();
+
+    let test_image =
+        std::fs::read("src/tests/fixtures/validation_method/no_hard_binding.jpg").unwrap();
+
+    let mut dest = Cursor::new(test_image);
+
     let manifest_store = Reader::from_stream(format, &mut dest).unwrap();
     assert_eq!(manifest_store.validation_status(), None);
 
     let manifest = manifest_store.active_manifest().unwrap();
-    let mut ia_iter = IdentityAssertion::from_manifest(manifest);
+    let mut st = StatusTracker::default();
+    let mut ia_iter = IdentityAssertion::from_manifest(manifest, &mut st);
 
     // Should find exactly one identity assertion.
     let ia = ia_iter.next().unwrap().unwrap();
     assert!(ia_iter.next().is_none());
+    drop(ia_iter);
 
     // And that identity assertion should be valid for this manifest.
     let x509_verifier = X509SignatureVerifier {};
-    let sig_info = ia.validate(manifest, &x509_verifier).await.unwrap();
+    let sig_info = ia
+        .validate(manifest, &mut st, &x509_verifier)
+        .await
+        .unwrap();
 
     let cert_info = &sig_info.cert_info;
     assert_eq!(cert_info.alg.unwrap(), SigningAlg::Ed25519);
