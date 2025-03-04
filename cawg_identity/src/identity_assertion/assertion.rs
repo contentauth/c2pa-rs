@@ -289,7 +289,14 @@ impl IdentityAssertion {
 
         if let Some(pad2) = self.pad2.as_ref() {
             if !pad2.iter().all(|b| *b == 0) {
-                return Err(ValidationError::InvalidPadding);
+                // TO DO: Where would we get assertion label?
+                log_item!(
+                    "NEED TO FIND LABEL".to_owned(),
+                    "invalid value in pad fields",
+                    "SignerPayload::check_padding"
+                )
+                .validation_status("cawg.identity.pad.invalid")
+                .failure(status_tracker, ValidationError::<E>::InvalidPadding)?;
             }
         }
 
