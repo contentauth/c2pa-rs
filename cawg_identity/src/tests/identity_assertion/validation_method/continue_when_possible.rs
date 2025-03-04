@@ -19,7 +19,7 @@ use std::io::Cursor;
 use c2pa::Reader;
 use c2pa_crypto::raw_signature::SigningAlg;
 use c2pa_status_tracker::{LogKind, StatusTracker};
-#[cfg(target_arch = "wasm32")]
+#[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
 use wasm_bindgen_test::wasm_bindgen_test;
 
 use crate::{x509::X509SignatureVerifier, IdentityAssertion};
@@ -399,7 +399,7 @@ mod invalid_sig_type {
 
     use c2pa::Reader;
     use c2pa_status_tracker::{LogKind, StatusTracker};
-    #[cfg(target_arch = "wasm32")]
+    #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
     use wasm_bindgen_test::wasm_bindgen_test;
 
     use crate::{
