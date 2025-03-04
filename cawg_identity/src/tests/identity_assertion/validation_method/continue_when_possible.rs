@@ -399,6 +399,8 @@ mod invalid_sig_type {
 
     use c2pa::Reader;
     use c2pa_status_tracker::{LogKind, StatusTracker};
+    #[cfg(target_arch = "wasm32")]
+    use wasm_bindgen_test::wasm_bindgen_test;
 
     use crate::{
         claim_aggregation::IcaSignatureVerifier, x509::X509SignatureVerifier, IdentityAssertion,
