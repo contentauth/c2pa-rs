@@ -1306,9 +1306,8 @@ impl Claim {
         salt_generator: &impl SaltGenerator,
     ) -> Result<C2PAAssertion> {
         if self.claim_version < 2 {
-            return Err(Error::VersionCompatibility(
-                "Claim version >= 2 required for gathered assertions".into(),
-            ));
+            // if this is called for a v1 claim then just treat is as a normal v1 assertion
+            return self.add_assertion_with_salt(assertion_builder, salt_generator);
         }
 
         match self.add_assertion_with_salt_impl(assertion_builder, salt_generator, false) {
