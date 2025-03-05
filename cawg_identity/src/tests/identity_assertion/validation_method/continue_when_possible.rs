@@ -222,7 +222,7 @@ async fn assertion_not_in_claim_v1() {
     all(target_arch = "wasm32", not(target_os = "wasi")),
     wasm_bindgen_test
 )]
-#[cfg_attr(target_os = "wasi", wstd::test)]
+// #[cfg_attr(target_os = "wasi", wstd::test)] #[ignore] is ignored on WASI
 #[ignore]
 async fn assertion_not_in_claim_v2() {
     todo!("Generate a suitable V2 asset with an extra assertion");
