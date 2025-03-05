@@ -1,4 +1,4 @@
-// Copyright 2024 Adobe. All rights reserved.
+// Copyright 2025 Adobe. All rights reserved.
 // This file is licensed to you under the Apache License,
 // Version 2.0 (http://www.apache.org/licenses/LICENSE-2.0)
 // or the MIT license (http://opensource.org/licenses/MIT),
@@ -11,5 +11,15 @@
 // specific language governing permissions and limitations under
 // each license.
 
-mod signer_payload;
-mod validation_method;
+//! This test suite checks the enforcement of generic identity assertion
+//! validation as described in [§7.1, Validation method].
+//!
+//! IMPORTANT: The CAWG SDK does not currently support the optional fields named
+//! * `expected_partial_claim`
+//! * `expected_claim_generator`
+//! * `expected_countersigners`
+//!
+//! [§7.1, Validation method]: https://cawg.io/identity/1.1-draft/#_validation_method
+
+mod continue_when_possible;
+mod stop_on_error;
