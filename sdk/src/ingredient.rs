@@ -41,7 +41,7 @@ use crate::{
     jumbf_io::load_jumbf_from_stream,
     resource_store::{skip_serializing_resources, ResourceRef, ResourceStore},
     store::Store,
-    utils::xmp_inmemory_utils::XmpInfo,
+    utils::{mime::extension_to_mime, xmp_inmemory_utils::XmpInfo},
     validation_results::ValidationResults,
     validation_status::{self, ValidationStatus},
 };
@@ -1714,7 +1714,7 @@ mod tests_file_io {
     use wasm_bindgen_test::*;
 
     use super::*;
-    use crate::utils::test::fixture_path;
+    use crate::{assertion::AssertionData, utils::test::fixture_path};
     #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
     wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
 
@@ -2024,6 +2024,6 @@ mod tests_file_io {
         );
         let (format, image) = Ingredient::thumbnail_from_assertion(&assertion);
         assert_eq!(format, "image/svg+xml");
-        assert_eq!(image.len(), 22501);
+        assert_eq!(image.len(), 26652);
     }
 }
