@@ -38,7 +38,7 @@ use crate::{
     store::Store,
     validation_results::{ValidationResults, ValidationState},
     validation_status::ValidationStatus,
-    Manifest,
+    Manifest, ReaderConfig,
 };
 
 /// A reader for the manifest store.
@@ -86,8 +86,43 @@ impl Reader {
     /// println!("{}", reader.json());
     /// ```
     #[async_generic()]
-    pub fn from_stream(format: &str, mut stream: impl Read + Seek + Send) -> Result<Reader> {
+    pub fn from_stream(format: &str, stream: impl Read + Seek + Send) -> Result<Reader> {
+        let config = ReaderConfig::default();
+
+        if _sync {
+            Self::from_stream_with_config(format, stream, &config)
+        } else {
+            Self::from_stream_with_config_async(format, stream, &config).await
+        }
+    }
+
+    /// Create a manifest store [`Reader`] from a stream.  A Reader is used to validate C2PA data from an asset.
+    /// # Arguments
+    /// * `format` - The format of the stream.  MIME type or extension that maps to a MIME type.
+    /// * `stream` - The stream to read from.  Must implement the Read and Seek traits. (NOTE: Explain Send trait, required for both sync & async?).
+    /// # Returns
+    /// A Reader for the manifest store.
+    /// # Errors
+    /// Returns an [`Error`] when the manifest data cannot be read.  If there's no error upon reading, you must still check validation status to ensure that the manifest data is validated.  That is, even if there are no errors, the data still might not be valid.
+    /// # Example
+    /// This example reads from a memory buffer and prints out the JSON manifest data.
+    /// ```no_run
+    /// use std::io::Cursor;
+    ///
+    /// use c2pa::Reader;
+    /// let mut stream = Cursor::new(include_bytes!("../tests/fixtures/CA.jpg"));
+    /// let reader = Reader::from_stream("image/jpeg", stream).unwrap();
+    /// println!("{}", reader.json());
+    /// ```
+    #[async_generic()]
+    pub fn from_stream_with_config(
+        format: &str,
+        mut stream: impl Read + Seek + Send,
+        config: &ReaderConfig,
+    ) -> Result<Reader> {
         let manifest_bytes = Store::load_jumbf_from_stream(format, &mut stream)?;
+
+        let _ = config; // TO DO: Actually use the config :-)
 
         if _sync {
             Self::from_manifest_data_and_stream(&manifest_bytes, format, &mut stream)
