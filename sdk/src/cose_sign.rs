@@ -22,7 +22,7 @@ use c2pa_crypto::{
     raw_signature::{AsyncRawSigner, RawSigner, RawSignerError, SigningAlg},
     time_stamp::{AsyncTimeStampProvider, TimeStampError, TimeStampProvider},
 };
-use c2pa_status_tracker::OneShotStatusTracker;
+use c2pa_status_tracker::{ErrorBehavior, StatusTracker};
 
 use crate::{
     claim::Claim, cose_validator::verify_cose, settings::get_settings_value, AsyncSigner, Error,
@@ -54,19 +54,24 @@ use crate::{
 pub fn sign_claim(claim_bytes: &[u8], signer: &dyn Signer, box_size: usize) -> Result<Vec<u8>> {
     // Must be a valid claim.
     let label = "dummy_label";
-    let _claim = Claim::from_data(label, claim_bytes)?;
+    let claim = Claim::from_data(label, claim_bytes)?;
 
-    // TEMPORARY: assume time stamp V1 until we plumb this through further
-    let signed_bytes = if _sync {
-        cose_sign(signer, claim_bytes, box_size, TimeStampStorage::V1_sigTst)
+    let tss = if claim.version() > 1 {
+        TimeStampStorage::V2_sigTst2_CTT
     } else {
-        cose_sign_async(signer, claim_bytes, box_size, TimeStampStorage::V1_sigTst).await
+        TimeStampStorage::V1_sigTst
+    };
+
+    let signed_bytes = if _sync {
+        cose_sign(signer, claim_bytes, box_size, tss)
+    } else {
+        cose_sign_async(signer, claim_bytes, box_size, tss).await
     };
 
     match signed_bytes {
         Ok(signed_bytes) => {
             // Sanity check: Ensure that this signature is valid.
-            let mut cose_log = OneShotStatusTracker::default();
+            let mut cose_log = StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
             let passthrough_cap = CertificateTrustPolicy::default();
 
             match verify_cose(
@@ -115,20 +120,20 @@ pub(crate) fn cose_sign(
 
     if _sync {
         match signer.raw_signer() {
-            Some(raw_signer) => Ok(sign(*raw_signer, data, box_size, time_stamp_storage)?),
+            Some(raw_signer) => Ok(sign(*raw_signer, data, Some(box_size), time_stamp_storage)?),
             None => {
                 let wrapper = SignerWrapper(signer);
-                Ok(sign(&wrapper, data, box_size, time_stamp_storage)?)
+                Ok(sign(&wrapper, data, Some(box_size), time_stamp_storage)?)
             }
         }
     } else {
         match signer.async_raw_signer() {
             Some(raw_signer) => {
-                Ok(sign_async(*raw_signer, data, box_size, time_stamp_storage).await?)
+                Ok(sign_async(*raw_signer, data, Some(box_size), time_stamp_storage).await?)
             }
             None => {
                 let wrapper = AsyncSignerWrapper(signer);
-                Ok(sign_async(&wrapper, data, box_size, time_stamp_storage).await?)
+                Ok(sign_async(&wrapper, data, Some(box_size), time_stamp_storage).await?)
             }
         }
     }
@@ -136,7 +141,7 @@ pub(crate) fn cose_sign(
 
 fn signing_cert_valid(signing_cert: &[u8]) -> Result<()> {
     // make sure signer certs are valid
-    let mut cose_log = OneShotStatusTracker::default();
+    let mut cose_log = StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
     let mut passthrough_cap = CertificateTrustPolicy::default();
 
     // allow user EKUs through this check if configured
@@ -263,14 +268,13 @@ mod tests {
     use c2pa_crypto::raw_signature::SigningAlg;
 
     use super::sign_claim;
-    #[cfg(all(feature = "openssl_sign", not(target_arch = "wasm32")))]
+    #[cfg(feature = "file_io")]
     use crate::utils::test_signer::async_test_signer;
     use crate::{claim::Claim, utils::test_signer::test_signer, Result, Signer};
 
     #[test]
-    #[cfg_attr(not(any(target_arch = "wasm32", feature = "openssl_sign")), ignore)]
     fn test_sign_claim() {
-        let mut claim = Claim::new("extern_sign_test", Some("contentauth"));
+        let mut claim = Claim::new("extern_sign_test", Some("contentauth"), 1);
         claim.build().unwrap();
 
         let claim_bytes = claim.data().unwrap();
@@ -283,14 +287,15 @@ mod tests {
         assert_eq!(cose_sign1.len(), box_size);
     }
 
-    #[cfg(all(feature = "openssl_sign", feature = "file_io"))]
-    #[actix::test]
+    #[cfg(feature = "file_io")]
+    #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
+    #[cfg_attr(target_os = "wasi", wstd::test)]
     async fn test_sign_claim_async() {
         use c2pa_crypto::raw_signature::SigningAlg;
 
         use crate::{cose_sign::sign_claim_async, AsyncSigner};
 
-        let mut claim = Claim::new("extern_sign_test", Some("contentauth"));
+        let mut claim = Claim::new("extern_sign_test", Some("contentauth"), 1);
         claim.build().unwrap();
 
         let claim_bytes = claim.data().unwrap();
@@ -340,7 +345,7 @@ mod tests {
 
     #[test]
     fn test_bogus_signer() {
-        let mut claim = Claim::new("bogus_sign_test", Some("contentauth"));
+        let mut claim = Claim::new("bogus_sign_test", Some("contentauth"), 1);
         claim.build().unwrap();
 
         let claim_bytes = claim.data().unwrap();
@@ -351,7 +356,6 @@ mod tests {
 
         let _cose_sign1 = sign_claim(&claim_bytes, &signer, box_size);
 
-        #[cfg(feature = "openssl")] // there is no verify on sign when openssl is disabled
         assert!(_cose_sign1.is_err());
     }
 }

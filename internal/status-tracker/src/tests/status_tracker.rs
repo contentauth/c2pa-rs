@@ -15,11 +15,11 @@ use std::fmt::{self, Display, Formatter};
 
 mod detailed {
     use super::SampleError;
-    use crate::{log_item, DetailedStatusTracker, StatusTracker};
+    use crate::{log_item, StatusTracker};
 
     #[test]
     fn aggregates_errors() {
-        let mut tracker = DetailedStatusTracker::default();
+        let mut tracker = StatusTracker::default();
 
         // Add an item without an error.
         log_item!("test1", "test item 1", "test func").success(&mut tracker);
@@ -41,15 +41,15 @@ mod detailed {
         assert!(!tracker.has_error("Something Else"));
 
         // Verify that one item with error was found.
-        let errors = tracker.take_errors();
+        let errors: Vec<&crate::LogItem> = tracker.filter_errors().collect();
         assert_eq!(errors.len(), 1);
-        assert_eq!(tracker.logged_items().len(), 1);
+        assert_eq!(tracker.logged_items().len(), 2);
     }
 
     #[test]
     fn append() {
-        let mut tracker1 = DetailedStatusTracker::default();
-        let mut tracker2 = DetailedStatusTracker::default();
+        let mut tracker1 = StatusTracker::default();
+        let mut tracker2 = StatusTracker::default();
 
         log_item!("test1", "test item 1", "test func").success(&mut tracker1);
 
@@ -68,13 +68,11 @@ mod detailed {
 }
 
 mod one_shot {
-    use crate::{
-        log_item, tests::status_tracker::SampleError, OneShotStatusTracker, StatusTracker,
-    };
+    use crate::{log_item, tests::status_tracker::SampleError, ErrorBehavior, StatusTracker};
 
     #[test]
     fn stops_on_first_error() {
-        let mut tracker = OneShotStatusTracker::default();
+        let mut tracker = StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
 
         // Add an item without error.
         log_item!("test1", "test item 1", "test func").success(&mut tracker);

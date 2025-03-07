@@ -26,10 +26,9 @@ use std::{
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-#[cfg(feature = "unstable_api")]
-use crate::asset_io::CAIRead;
 use crate::{
     assertions::{labels, AssetType},
+    asset_io::CAIRead,
     claim::Claim,
     hashed_uri::HashedUri,
     jumbf::labels::{assertion_label_from_uri, to_absolute_uri},
@@ -40,7 +39,10 @@ use crate::{
 /// resources based on the `serialize_resources` flag.
 /// (Serialization is disabled by default.)
 pub(crate) fn skip_serializing_resources(_: &ResourceStore) -> bool {
-    !cfg!(feature = "serialize_thumbnails") || cfg!(test) || cfg!(not(target_arch = "wasm32"))
+    //TODO: Why is this disabled for wasm32?
+    !cfg!(feature = "serialize_thumbnails")
+        || cfg!(test)
+        || cfg!(not(all(target_arch = "wasm32", not(target_os = "wasi"))))
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
@@ -367,13 +369,11 @@ impl Default for ResourceStore {
     }
 }
 
-#[cfg(feature = "unstable_api")]
 pub trait ResourceResolver {
     /// Read the data in a [`ResourceRef`][ResourceRef] via a stream.
     fn open(&self, reference: &ResourceRef) -> Result<Box<dyn CAIRead>>;
 }
 
-#[cfg(feature = "unstable_api")]
 impl ResourceResolver for ResourceStore {
     fn open(&self, reference: &ResourceRef) -> Result<Box<dyn CAIRead>> {
         let data = self.get(&reference.identifier)?.into_owned();
@@ -397,7 +397,6 @@ pub fn mime_from_uri(uri: &str) -> String {
 }
 
 #[cfg(test)]
-#[cfg(feature = "openssl_sign")]
 mod tests {
     #![allow(clippy::expect_used)]
     #![allow(clippy::unwrap_used)]
@@ -410,7 +409,6 @@ mod tests {
     use crate::{utils::test_signer::test_signer, Builder, Reader};
 
     #[test]
-    #[cfg(feature = "openssl_sign")]
     fn resource_store() {
         let mut c = ResourceStore::new();
         let value = b"my value";

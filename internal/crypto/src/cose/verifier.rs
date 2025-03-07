@@ -11,7 +11,7 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use std::io::Cursor;
+use std::io::Write;
 
 use asn1_rs::FromDer;
 use async_generic::async_generic;
@@ -28,12 +28,13 @@ use x509_parser::prelude::X509Certificate;
 
 use crate::{
     asn1::rfc3161::TstInfo,
+    base64::encode,
     cose::{
         cert_chain_from_sign1, check_certificate_profile, parse_cose_sign1, signing_alg_from_sign1,
         validate_cose_tst_info, validate_cose_tst_info_async, CertificateInfo,
         CertificateTrustError, CertificateTrustPolicy, CoseError,
     },
-    p1363::parse_ec_der_sig,
+    ec_utils::parse_ec_der_sig,
     raw_signature::{validator_for_signing_alg, SigningAlg},
     time_stamp::TimeStampError,
 };
@@ -67,7 +68,7 @@ impl Verifier<'_> {
         cose_sign1: &[u8],
         data: &[u8],
         additional_data: &[u8],
-        validation_log: &mut impl StatusTracker,
+        validation_log: &mut StatusTracker,
     ) -> Result<CertificateInfo, CoseError> {
         let mut sign1 = parse_cose_sign1(cose_sign1, data, validation_log)?;
 
@@ -93,9 +94,13 @@ impl Verifier<'_> {
             SigningAlg::Es256 | SigningAlg::Es384 | SigningAlg::Es512 => {
                 if parse_ec_der_sig(&sign1.signature).is_ok() {
                     // Should have been in P1363 format, not DER.
-                    log_item!("Cose_Sign1", "unsupported signature format", "verify_cose")
-                        .validation_status(SIGNING_CREDENTIAL_INVALID)
-                        .failure_no_throw(validation_log, CoseError::InvalidEcdsaSignature);
+                    log_item!(
+                        "Cose_Sign1",
+                        "unsupported signature format (EC signature should be in P1363 r|s format)",
+                        "verify_cose"
+                    )
+                    .validation_status(SIGNING_CREDENTIAL_INVALID)
+                    .failure_no_throw(validation_log, CoseError::InvalidEcdsaSignature);
 
                     // validation_log.log(log_item, CoseError::InvalidEcdsaSignature)?;
                     return Err(CoseError::InvalidEcdsaSignature);
@@ -179,7 +184,7 @@ impl Verifier<'_> {
         &self,
         sign1: &CoseSign1,
         tst_info_res: &Result<TstInfo, CoseError>,
-        validation_log: &mut impl StatusTracker,
+        validation_log: &mut StatusTracker,
     ) -> Result<(), CoseError> {
         let ctp = match self {
             Self::VerifyTrustPolicy(ctp) => *ctp,
@@ -249,7 +254,7 @@ impl Verifier<'_> {
         &self,
         sign1: &CoseSign1,
         tst_info_res: &Result<TstInfo, CoseError>,
-        validation_log: &mut impl StatusTracker,
+        validation_log: &mut StatusTracker,
     ) -> Result<(), CoseError> {
         // IMPORTANT: This function assumes that verify_profile has already been called.
 
@@ -313,18 +318,37 @@ impl Verifier<'_> {
 }
 
 fn dump_cert_chain(certs: &[Vec<u8>]) -> Result<Vec<u8>, CoseError> {
-    let mut out_buf: Vec<u8> = Vec::new();
-    let mut writer = Cursor::new(out_buf);
+    let mut writer = Vec::new();
+
+    let line_len = 64;
+    let cert_begin = "-----BEGIN CERTIFICATE-----";
+    let cert_end = "-----END CERTIFICATE-----";
 
     for der_bytes in certs {
-        let c = x509_certificate::X509Certificate::from_der(der_bytes)
-            .map_err(|_e| CoseError::CborParsingError("invalid X509 certificate".to_string()))?;
+        let cert_base_str = encode(der_bytes);
 
-        c.write_pem(&mut writer).map_err(|_| {
-            CoseError::InternalError("I/O error constructing cert_chain dump".to_string())
-        })?;
+        // Break line into fixed-length lines.
+        let cert_lines = cert_base_str
+            .chars()
+            .collect::<Vec<char>>()
+            .chunks(line_len)
+            .map(|chunk| chunk.iter().collect::<String>())
+            .collect::<Vec<_>>();
+
+        writer
+            .write_fmt(format_args!("{}\n", cert_begin))
+            .map_err(|_e| CoseError::InternalError("could not write PEM".to_string()))?;
+
+        for l in cert_lines {
+            writer
+                .write_fmt(format_args!("{}\n", l))
+                .map_err(|_e| CoseError::InternalError("could not write PEM".to_string()))?;
+        }
+
+        writer
+            .write_fmt(format_args!("{}\n", cert_end))
+            .map_err(|_e| CoseError::InternalError("could not write PEM".to_string()))?;
     }
 
-    out_buf = writer.into_inner();
-    Ok(out_buf)
+    Ok(writer)
 }

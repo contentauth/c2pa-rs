@@ -12,14 +12,14 @@
 
 #![doc = include_str!("../README.md")]
 
-/// Tool to display and create C2PA manifests
+/// Tool to display and create C2PA manifests.
 ///
 /// A file path to an asset must be provided. If only the path
 /// is given, this will generate a summary report of any claims
 /// in that file. If a manifest definition JSON file is specified,
 /// the claim will be added to any existing claims.
 use std::{
-    fs::{create_dir_all, remove_dir_all, File},
+    fs::{create_dir_all, remove_dir_all, remove_file, File},
     io::Write,
     path::{Path, PathBuf},
     str::FromStr,
@@ -195,7 +195,7 @@ struct ManifestDef {
     ingredient_paths: Option<Vec<PathBuf>>,
 }
 
-// convert certain errors to output messages
+// Convert certain errors to output messages.
 fn special_errs(e: c2pa::Error) -> anyhow::Error {
     match e {
         Error::JumbfNotFound => anyhow!("No claim found"),
@@ -206,7 +206,7 @@ fn special_errs(e: c2pa::Error) -> anyhow::Error {
     }
 }
 
-// normalize extensions so we can compare them
+// Normalize extensions so we can compare them.
 fn ext_normal(path: &Path) -> String {
     let ext = path
         .extension()
@@ -252,12 +252,105 @@ fn load_trust_resource(resource: &TrustResource) -> Result<String> {
             Ok(data)
         }
         TrustResource::Url(url) => {
+            #[cfg(not(target_os = "wasi"))]
             let data = reqwest::blocking::get(url.to_string())?
                 .text()
                 .with_context(|| format!("Failed to read trust resource from URL: {}", url))?;
 
+            #[cfg(target_os = "wasi")]
+            let data = blocking_get(&url.to_string())?;
             Ok(data)
         }
+    }
+}
+
+#[cfg(target_os = "wasi")]
+fn blocking_get(url: &str) -> Result<String> {
+    use std::io::Read;
+
+    use url::Url;
+    use wasi::http::{
+        outgoing_handler,
+        types::{Fields, OutgoingRequest, Scheme},
+    };
+
+    let parsed_url =
+        Url::parse(url).map_err(|e| Error::ResourceNotFound(format!("invalid URL: {}", e)))?;
+    let path_with_query = parsed_url[url::Position::BeforeHost..].to_string();
+    let request = OutgoingRequest::new(Fields::new());
+    request.set_path_with_query(Some(&path_with_query)).unwrap();
+
+    // Set the scheme based on the URL.
+    let scheme = match parsed_url.scheme() {
+        "http" => Scheme::Http,
+        "https" => Scheme::Https,
+        _ => return Err(anyhow!("unsupported URL scheme".to_string(),)),
+    };
+
+    request.set_scheme(Some(&scheme)).unwrap();
+
+    match outgoing_handler::handle(request, None) {
+        Ok(resp) => {
+            resp.subscribe().block();
+
+            let response = resp
+                .get()
+                .expect("HTTP request response missing")
+                .expect("HTTP request response requested more than once")
+                .expect("HTTP request failed");
+
+            if response.status() == 200 {
+                let raw_header = response.headers().get("Content-Length");
+                if raw_header.first().map(|val| val.is_empty()).unwrap_or(true) {
+                    return Err(anyhow!("url returned no content length".to_string()));
+                }
+
+                let str_parsed_header = match std::str::from_utf8(raw_header.first().unwrap()) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        return Err(anyhow!(format!(
+                            "error parsing content length header: {}",
+                            e
+                        )))
+                    }
+                };
+
+                let content_length: usize = match str_parsed_header.parse() {
+                    Ok(s) => s,
+                    Err(e) => {
+                        return Err(anyhow!(format!(
+                            "error parsing content length header: {}",
+                            e
+                        )))
+                    }
+                };
+
+                let body = {
+                    let mut buf = Vec::with_capacity(content_length);
+                    let response_body = response
+                        .consume()
+                        .expect("failed to get incoming request body");
+                    let mut stream = response_body
+                        .stream()
+                        .expect("failed to get response body stream");
+                    stream
+                        .read_to_end(&mut buf)
+                        .expect("failed to read response body");
+                    buf
+                };
+
+                let body_string = std::str::from_utf8(&body)
+                    .map_err(|e| anyhow!(format!("invalid UTF-8: {}", e)))?;
+                Ok(body_string.to_string())
+            } else {
+                Err(anyhow!(format!(
+                    "fetch failed: code: {}",
+                    response.status(),
+                )))
+            }
+        }
+
+        Err(e) => Err(anyhow!(e.to_string())),
     }
 }
 
@@ -469,7 +562,7 @@ fn main() -> Result<()> {
     //     match args.output {
     //         Some(output) => {
     //             if output.exists() && !args.force {
-    //                 bail!("Output already exists, use -f/force to force write");
+    //                 bail!("Output already exists; use -f/force to force write");
     //             }
     //             if path != &output {
     //                 std::fs::copy(path, &output)?;
@@ -517,7 +610,7 @@ fn main() -> Result<()> {
         } else {
             manifest.claim_generator_info.insert(1, tool_generator);
         }
-        println!("claim generator {:?}", manifest.claim_generator_info);
+
         // set manifest base path before ingredients so ingredients can override it
         if let Some(base) = base_path.as_ref() {
             builder.base_path = Some(base.clone());
@@ -596,8 +689,12 @@ fn main() -> Result<()> {
                 if ext_normal(&output) != ext_normal(&args.path) {
                     bail!("Output type must match source type");
                 }
-                if output.exists() && !args.force {
-                    bail!("Output already exists, use -f/force to force write");
+                if output.exists() {
+                    if args.force {
+                        remove_file(&output)?;
+                    } else {
+                        bail!("Output already exists; use -f/force to force write");
+                    }
                 }
 
                 if output.file_name().is_none() {
@@ -607,10 +704,15 @@ fn main() -> Result<()> {
                     bail!("Missing extension output");
                 }
 
-                #[allow(deprecated)] // todo: remove when we can
-                builder
+                let manifest_data = builder
                     .sign_file(signer.as_ref(), &args.path, &output)
                     .context("embedding manifest")?;
+
+                if args.sidecar {
+                    let sidecar = output.with_extension("c2pa");
+                    let mut file = File::create(&sidecar)?;
+                    file.write_all(&manifest_data)?;
+                }
 
                 // generate a report on the output file
                 let reader = Reader::from_file(&output).map_err(special_errs)?;
@@ -633,7 +735,7 @@ fn main() -> Result<()> {
             if args.force {
                 remove_dir_all(&output)?;
             } else {
-                bail!("Output already exists, use -f/force to force write");
+                bail!("Output already exists; use -f/force to force write");
             }
         }
         create_dir_all(&output)?;
@@ -690,6 +792,8 @@ fn main() -> Result<()> {
 pub mod tests {
     #![allow(clippy::unwrap_used)]
 
+    use tempfile::TempDir;
+
     use super::*;
 
     const CONFIG: &str = r#"{
@@ -700,17 +804,24 @@ pub mod tests {
         "assertions": [
             {
                 "label": "org.contentauth.test",
-                 "data": {"my_key": "whatever I want"}
+                "data": {"my_key": "whatever I want"}
             }
         ]
     }"#;
 
+    fn tempdirectory() -> Result<TempDir> {
+        #[cfg(target_os = "wasi")]
+        return TempDir::new_in("/").map_err(Into::into);
+
+        #[cfg(not(target_os = "wasi"))]
+        return tempfile::tempdir().map_err(Into::into);
+    }
+
     #[test]
     fn test_manifest_config() {
         const SOURCE_PATH: &str = "tests/fixtures/earth_apollo17.jpg";
-        const OUTPUT_PATH: &str = "target/tmp/unit_out.jpg";
-        create_dir_all("target/tmp").expect("create_dir");
-        std::fs::remove_file(OUTPUT_PATH).ok(); // remove output file if it exists
+        let tempdir = tempdirectory().unwrap();
+        let output_path = tempdir.path().join("unit_out.jpg");
         let mut builder = Builder::from_json(CONFIG).expect("from_json");
 
         let signer = SignConfig::from_json(CONFIG)
@@ -719,12 +830,11 @@ pub mod tests {
             .signer()
             .expect("get_signer");
 
-        #[allow(deprecated)] // todo: remove when we can
         let _result = builder
-            .sign_file(signer.as_ref(), SOURCE_PATH, OUTPUT_PATH)
+            .sign_file(signer.as_ref(), SOURCE_PATH, &output_path)
             .expect("embed");
 
-        let ms = Reader::from_file(OUTPUT_PATH)
+        let ms = Reader::from_file(output_path)
             .expect("from_file")
             .to_string();
         println!("{}", ms);

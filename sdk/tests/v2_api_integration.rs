@@ -13,7 +13,6 @@
 
 /// Complete functional integration test with acquisitions and ingredients.
 //  Isolate from wasm by wrapping in module.
-#[cfg(not(target_arch = "wasm32"))] // wasm doesn't support ed25519 yet
 mod integration_v2 {
     use std::io::{Cursor, Seek};
 
@@ -72,7 +71,7 @@ mod integration_v2 {
                 "data": {
                     "actions": [
                         {
-                            "action": "c2pa.edited",
+                            "action": "c2pa.created",
                             "digitalSourceType": "http://cv.iptc.org/newscodes/digitalsourcetype/trainedAlgorithmicMedia",
                             "softwareAgent": "Adobe Firefly 0.1.0",
                             "parameters": {
@@ -107,7 +106,6 @@ mod integration_v2 {
     }
 
     #[test]
-    #[cfg_attr(not(any(target_arch = "wasm32", feature = "openssl")), ignore)]
     fn test_v2_integration() -> Result<()> {
         let title = "CA.jpg";
         let format = "image/jpeg";
@@ -148,10 +146,13 @@ mod integration_v2 {
             dest
         };
 
-        // write dest to file for debugging
-        let debug_path = format!("{}/../target/v2_test.jpg", env!("CARGO_MANIFEST_DIR"));
-        std::fs::write(debug_path, dest.get_ref())?;
-        dest.rewind()?;
+        #[cfg(not(target_os = "wasi"))]
+        {
+            // write dest to file for debugging
+            let debug_path = format!("{}/../target/v2_test.jpg", env!("CARGO_MANIFEST_DIR"));
+            std::fs::write(debug_path, dest.get_ref())?;
+            dest.rewind()?;
+        }
 
         let reader = Reader::from_stream(format, &mut dest)?;
 

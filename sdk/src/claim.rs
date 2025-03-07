@@ -13,7 +13,7 @@
 
 #[cfg(feature = "file_io")]
 use std::path::Path;
-use std::{collections::HashMap, fmt};
+use std::{borrow::Cow, collections::HashMap, fmt};
 
 use async_generic::async_generic;
 use c2pa_crypto::{
@@ -21,9 +21,9 @@ use c2pa_crypto::{
     cose::{parse_cose_sign1, CertificateInfo, CertificateTrustPolicy, OcspFetchPolicy},
     ocsp::OcspResponse,
 };
-use c2pa_status_tracker::{log_item, OneShotStatusTracker, StatusTracker};
+use c2pa_status_tracker::{log_item, ErrorBehavior, StatusTracker};
 use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
+use serde::{ser::SerializeStruct, Deserialize, Serialize, Serializer};
 use serde_json::{json, Map, Value};
 use uuid::Uuid;
 
@@ -34,21 +34,23 @@ use crate::{
     },
     assertions::{
         self,
-        labels::{self, CLAIM},
-        AssetType, BmffHash, BoxHash, DataBox, DataHash, Metadata,
+        labels::{ACTIONS, BMFF_HASH},
+        Actions, AssetType, BmffHash, BoxHash, DataBox, DataHash, Metadata, V2_DEPRECATED_ACTIONS,
     },
     asset_io::CAIRead,
+    cbor_types::map_cbor_to_type,
     cose_validator::{get_signing_info, get_signing_info_async, verify_cose, verify_cose_async},
     error::{Error, Result},
     hashed_uri::HashedUri,
     jumbf::{
         self,
         boxes::{
-            CAICBORAssertionBox, CAIJSONAssertionBox, CAIUUIDAssertionBox, JumbfEmbeddedFileBox,
+            BMFFBox, CAICBORAssertionBox, CAIJSONAssertionBox, CAISignatureBox,
+            CAIUUIDAssertionBox, JUMBFCBORContentBox, JumbfEmbeddedFileBox,
         },
         labels::{
-            box_name_from_uri, manifest_label_from_uri, to_absolute_uri, to_databox_uri,
-            ASSERTIONS, CREDENTIALS, DATABOX, DATABOXES, SIGNATURE,
+            box_name_from_uri, manifest_label_from_uri, manifest_label_to_parts, to_absolute_uri,
+            to_databox_uri, ASSERTIONS, CLAIM, CREDENTIALS, DATABOX, DATABOXES, SIGNATURE,
         },
     },
     jumbf_io::get_assetio_handler,
@@ -59,16 +61,27 @@ use crate::{
 };
 
 const BUILD_HASH_ALG: &str = "sha256";
+const BUILD_VER_SUPPORT: usize = 2;
 
 /// JSON structure representing an Assertion reference in a Claim's "assertions" list
 use HashedUri as C2PAAssertion;
 
 const GH_FULL_VERSION_LIST: &str = "Sec-CH-UA-Full-Version-List";
 const GH_UA: &str = "Sec-CH-UA";
+const C2PA_NAMESPACE_V2: &str = "urn:c2pa:";
+const C2PA_NAMESPACE_V1: &str = "urn:uuid";
+
+static _V2_SPEC_DEPRECATED_ASSERTIONS: [&str; 4] = [
+    "stds.iptc",
+    "stds.iptc.photo-metadata",
+    "stds.exif",
+    "c2pa.endorsement",
+];
 
 // Enum to encapsulate the data type of the source asset.  This simplifies
 // having different implementations for functions as a single entry point can be
 // used to handle different data types.
+#[allow(dead_code)] // Bytes and third param in StreamFragment not used without v1_api feature
 pub enum ClaimAssetData<'a> {
     #[cfg(feature = "file_io")]
     Path(&'a Path),
@@ -77,6 +90,13 @@ pub enum ClaimAssetData<'a> {
     StreamFragment(&'a mut dyn CAIRead, &'a mut dyn CAIRead, &'a str),
     #[cfg(feature = "file_io")]
     StreamFragments(&'a mut dyn CAIRead, &'a Vec<std::path::PathBuf>, &'a str),
+}
+
+#[derive(PartialEq, Debug, Eq, Clone)]
+pub enum ClaimAssertionType {
+    V1,       // V1 assertion
+    Gathered, // Machine generated assertion
+    Created,  // User generated assertion
 }
 
 // helper struct to allow arbitrary order for assertions stored in jumbf.  The instance is
@@ -90,6 +110,7 @@ pub struct ClaimAssertion {
     hash_val: Vec<u8>,
     hash_alg: String,
     salt: Option<Vec<u8>>,
+    typ: ClaimAssertionType,
 }
 
 impl ClaimAssertion {
@@ -99,6 +120,7 @@ impl ClaimAssertion {
         hashval: &[u8],
         alg: &str,
         salt: Option<Vec<u8>>,
+        typ: ClaimAssertionType,
     ) -> ClaimAssertion {
         ClaimAssertion {
             assertion,
@@ -106,6 +128,7 @@ impl ClaimAssertion {
             hash_val: hashval.to_vec(),
             hash_alg: alg.to_string(),
             salt,
+            typ,
         }
     }
 
@@ -118,7 +141,7 @@ impl ClaimAssertion {
     pub fn label(&self) -> String {
         let al_ref = self.assertion.label();
         if self.instance > 0 {
-            if get_thumbnail_type(&al_ref) == labels::INGREDIENT_THUMBNAIL {
+            if get_thumbnail_type(&al_ref) == assertions::labels::INGREDIENT_THUMBNAIL {
                 format!(
                     "{}__{}.{}",
                     get_thumbnail_type(&al_ref),
@@ -165,13 +188,37 @@ impl ClaimAssertion {
     pub fn is_same_type(&self, input_assertion: &Assertion) -> bool {
         Assertion::assertions_eq(&self.assertion, input_assertion)
     }
+
+    pub fn assertion_type(&self) -> ClaimAssertionType {
+        self.typ.clone()
+    }
 }
 
 impl fmt::Debug for ClaimAssertion {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{:?}, instance: {}", self.assertion, self.instance)
+        write!(
+            f,
+            "{:?}, instance: {}, type: {:?}",
+            self.assertion, self.instance, self.typ
+        )
     }
 }
+
+// Claim field names
+const CLAIM_GENERATOR_F: &str = "claim_generator";
+const CLAIM_GENERATOR_INFO_F: &str = "claim_generator_info";
+const CLAIM_GENERATOR_HINTS_F: &str = "claim_generator_hints";
+const SIGNATURE_F: &str = "signature";
+const ASSERTIONS_F: &str = "assertions";
+const DC_FORMAT_F: &str = "dc:format";
+const INSTANCE_ID_F: &str = "instanceID";
+const DC_TITLE_F: &str = "dc:title";
+const REDACTED_ASSERTIONS_F: &str = "redacted_assertions";
+const ALG_F: &str = "alg";
+const ALG_SOFT_F: &str = "alg_soft";
+const METADATA_F: &str = "metadata";
+const CREATED_ASSERTIONS_F: &str = "created_assertions";
+const GATHERED_ASSERTIONS_F: &str = "gathered_assertions";
 
 /// A `Claim` gathers together all the `Assertion`s about an asset
 /// from an actor at a given time, and may also include one or more
@@ -181,83 +228,68 @@ impl fmt::Debug for ClaimAssertion {
 /// assigned a label (`c2pa.claim.v1`) and being either embedded into the
 /// asset or in the cloud. The claim is cryptographically hashed and
 /// that hash is signed to produce the claim signature.
-#[derive(Deserialize, Serialize, Debug, Default, Clone)]
+#[derive(Debug, Default, Clone)]
 pub struct Claim {
     // external manifest
-    #[serde(skip_deserializing, skip_serializing)]
     remote_manifest: RemoteManifest,
 
     // root of CAI store
-    #[serde(skip_deserializing, skip_serializing)]
     update_manifest: bool,
 
-    #[serde(skip_serializing_if = "Option::is_none", rename = "dc:title")]
     pub title: Option<String>, // title for this claim, generally the name of the containing asset
 
-    #[serde(rename = "dc:format")]
-    pub format: String, // mime format of document containing this claim
+    pub format: Option<String>, // mime format of document containing this claim
 
-    #[serde(rename = "instanceID")]
     pub instance_id: String, // instance Id of document containing this claim
 
     // Internal list of ingredients
-    #[serde(skip_deserializing, skip_serializing)]
     ingredients_store: HashMap<String, Vec<Claim>>,
 
-    #[serde(skip_deserializing, skip_serializing)]
     signature_val: Vec<u8>, // the signature of the loaded/saved claim
 
     // root of CAI store
-    #[serde(skip_deserializing, skip_serializing)]
     #[allow(dead_code)]
     root: String,
 
     // internal scratch objects
-    #[serde(skip_deserializing, skip_serializing)]
     label: String, // label of claim
 
     // Internal list of assertions for claim.
     // These are serialized manually based on need.
-    #[serde(skip_deserializing, skip_serializing)]
     assertion_store: Vec<ClaimAssertion>,
 
     // Internal list of verifiable credentials for claim.
     // These are serialized manually based on need.
-    #[serde(skip_deserializing, skip_serializing)]
-    vc_store: Vec<(HashedUri, AssertionData)>,
+    vc_store: Vec<(HashedUri, AssertionData)>, //  V1 feature
 
-    claim_generator: String, // generator of this claim
+    claim_generator: Option<String>, // generator of this claim
 
     pub(crate) claim_generator_info: Option<Vec<ClaimGeneratorInfo>>, /* detailed generator info of this claim */
 
-    signature: String,              // link to signature box
-    assertions: Vec<C2PAAssertion>, // list of assertion hashed URIs
+    signature: String,                               // link to signature box
+    assertions: Vec<C2PAAssertion>, // list of assertion or created_assertions (V1 assertions or V2 created and gathered combined) hashed URIs.
+    created_assertions: Vec<C2PAAssertion>, // list of assertion or created_assertions (V1) hashed URIs.
+    gathered_assertions: Option<Vec<C2PAAssertion>>, // list of gather_assertions (>= V2)
 
     // original JSON bytes of claim; only present when reading from asset
-    #[serde(skip_deserializing, skip_serializing)]
     original_bytes: Option<Vec<u8>>,
 
     // original JUMBF box order need to recalculate JUMBF box hash
-    #[serde(skip_deserializing, skip_serializing)]
     original_box_order: Option<Vec<&'static str>>,
 
-    #[serde(skip_serializing_if = "Option::is_none")]
     redacted_assertions: Option<Vec<String>>, // list of redacted assertions
 
-    #[serde(skip_serializing_if = "Option::is_none")]
     alg: Option<String>, // hashing algorithm (default to Sha256)
 
-    #[serde(skip_serializing_if = "Option::is_none")]
     alg_soft: Option<String>, // hashing algorithm for soft bindings
 
-    #[serde(skip_serializing_if = "Option::is_none")]
     claim_generator_hints: Option<HashMap<String, Value>>,
 
-    #[serde(skip_serializing_if = "Option::is_none")]
     metadata: Option<Vec<Metadata>>,
 
-    #[serde(skip_deserializing, skip_serializing)]
     data_boxes: Vec<(HashedUri, DataBox)>, /* list of the data boxes and their hashed URIs found for this manifest */
+
+    claim_version: usize,
 }
 
 /// Enum to define how assertions are are stored when output to json
@@ -293,27 +325,61 @@ pub struct JsonOrderedAssertionData {
     mime_type: String,
 }
 
-impl Claim {
-    /// Label prefix for a claim assertion.
-    ///
-    /// See <https://c2pa.org/specifications/specifications/1.0/specs/C2PA_Specification.html#_overview_4>.
-    pub const LABEL: &'static str = assertions::labels::CLAIM;
+impl Serialize for Claim {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        if self.claim_version > 1 {
+            self.serialize_v2(serializer)
+        } else {
+            self.serialize_v1(serializer)
+        }
+    }
+}
 
+impl Claim {
     /// Create a new claim.
     /// vendor: name used to label the claim (unique instance number is automatically calculated)
     /// claim_generator: User agent see c2pa spec for format
-    pub fn new<S: Into<String>>(claim_generator: S, vendor: Option<&str>) -> Self {
+    /// claim_version: the Claim version to generate
+    pub fn new<S: Into<String>>(
+        claim_generator: S,
+        vendor: Option<&str>,
+        claim_version: usize,
+    ) -> Self {
         let urn = Uuid::new_v4();
         let l = match vendor {
-            Some(v) => format!(
-                "{}:{}",
-                v.to_lowercase(),
-                urn.urn().encode_lower(&mut Uuid::encode_buffer())
-            ),
-            None => urn
-                .urn()
-                .encode_lower(&mut Uuid::encode_buffer())
-                .to_string(),
+            Some(v) => {
+                if claim_version == 1 {
+                    format!(
+                        "{}:{}:{}",
+                        v.to_lowercase(),
+                        C2PA_NAMESPACE_V1,
+                        urn.hyphenated().encode_lower(&mut Uuid::encode_buffer())
+                    )
+                } else {
+                    format!(
+                        "{}:{}:{}",
+                        C2PA_NAMESPACE_V2,
+                        urn.hyphenated().encode_lower(&mut Uuid::encode_buffer()),
+                        v.to_lowercase()
+                    )
+                }
+            }
+            None => {
+                if claim_version == 1 {
+                    urn.urn()
+                        .encode_lower(&mut Uuid::encode_buffer())
+                        .to_string()
+                } else {
+                    format!(
+                        "{}:{}",
+                        C2PA_NAMESPACE_V2,
+                        urn.hyphenated().encode_lower(&mut Uuid::encode_buffer())
+                    )
+                }
+            }
         };
 
         Claim {
@@ -324,7 +390,7 @@ impl Claim {
             label: l,
             signature: "".to_string(),
 
-            claim_generator: claim_generator.into(),
+            claim_generator: Some(claim_generator.into()),
             claim_generator_info: None,
             assertion_store: Vec::new(),
             vc_store: Vec::new(),
@@ -337,28 +403,55 @@ impl Claim {
             claim_generator_hints: None,
 
             title: None,
-            format: "".to_string(),
+            format: Some("".to_string()),
             instance_id: "".to_string(),
 
             update_manifest: false,
             data_boxes: Vec::new(),
             metadata: None,
+            claim_version,
+            created_assertions: Vec::new(),
+            gathered_assertions: None,
         }
     }
 
     /// Create a new claim with a user supplied GUID.
     /// user_guid: is user supplied guid conforming the C2PA spec for manifest names
     /// claim_generator: User agent see c2pa spec for format
-    pub fn new_with_user_guid<S: Into<String>>(claim_generator: S, user_guid: S) -> Self {
-        Claim {
+    /// claim_version: the Claim version to generate
+    pub fn new_with_user_guid<S: Into<String>>(
+        claim_generator: S,
+        user_guid: S,
+        claim_version: usize,
+    ) -> Result<Self> {
+        let ug: String = user_guid.into();
+        let uuid =
+            Uuid::try_parse(&ug).map_err(|_e| Error::BadParam("invalid Claim GUID".into()))?;
+        match uuid.get_version() {
+            Some(uuid::Version::Random) => (),
+            _ => return Err(Error::BadParam("invalid Claim GUID".into())),
+        }
+        let label = if claim_version == 1 {
+            uuid.urn()
+                .encode_lower(&mut Uuid::encode_buffer())
+                .to_string()
+        } else {
+            format!(
+                "{}:{}",
+                C2PA_NAMESPACE_V2,
+                uuid.hyphenated().encode_lower(&mut Uuid::encode_buffer())
+            )
+        };
+
+        Ok(Claim {
             remote_manifest: RemoteManifest::NoRemote,
             root: jumbf::labels::MANIFEST_STORE.to_string(),
             signature_val: Vec::new(),
             ingredients_store: HashMap::new(),
-            label: user_guid.into(), // todo figure out how to validate this
+            label,
             signature: "".to_string(),
 
-            claim_generator: claim_generator.into(),
+            claim_generator: Some(claim_generator.into()),
             claim_generator_info: None,
             assertion_store: Vec::new(),
             vc_store: Vec::new(),
@@ -371,13 +464,378 @@ impl Claim {
             claim_generator_hints: None,
 
             title: None,
-            format: "".to_string(),
+            format: None,
             instance_id: "".to_string(),
 
             update_manifest: false,
             data_boxes: Vec::new(),
             metadata: None,
+            claim_version,
+            created_assertions: Vec::new(),
+            gathered_assertions: None,
+        })
+    }
+
+    // Deserializer that maps V1/V2 Claim object into our internal Claim representation.  Note:  Our Claim
+    // structure is not the Claim from the spec but an amalgamation that allows us to represent any version
+    pub fn from_value(claim_value: serde_cbor::Value, label: &str, data: &[u8]) -> Result<Self> {
+        // populate claim from the map
+        // parse possible fields to figure out which version of the claim is possible.
+        let claim_version = if map_cbor_to_type::<Vec<HashedUri>>("assertions", &claim_value)
+            .is_some()
+            && map_cbor_to_type::<Vec<HashedUri>>("created_assertions", &claim_value).is_none()
+        {
+            1
+        } else if map_cbor_to_type::<Vec<HashedUri>>("created_assertions", &claim_value).is_some()
+            && map_cbor_to_type::<Vec<HashedUri>>("assertions", &claim_value).is_none()
+        {
+            2
+        } else {
+            return Err(Error::ClaimDecoding);
+        };
+
+        if claim_version == 1 {
+            /* Claim V1 fields
+            "claim_generator": tstr,
+            "claim_generator_hints",
+            "claim_generator_info": [1* generator-info-map],
+            "signature": jumbf-uri-type,
+            "assertions": [1* $hashed-uri-map],
+            "dc:format": tstr, ;
+            "instanceID": tstr .size (1..max-tstr-length),
+            ? "dc:title": tstr .size (1..max-tstr-length),
+            ? "redacted_assertions": [1* jumbf-uri-type],
+            ? "alg": tstr .size (1..max-tstr-length),
+            ? "alg_soft": tstr .size (1..max-tstr-length),
+            ? "metadata": $assertion-metadata-map,
+            */
+
+            static V1_FIELDS: [&str; 12] = [
+                CLAIM_GENERATOR_F,
+                CLAIM_GENERATOR_HINTS_F,
+                CLAIM_GENERATOR_INFO_F,
+                SIGNATURE_F,
+                ASSERTIONS_F,
+                DC_FORMAT_F,
+                INSTANCE_ID_F,
+                DC_TITLE_F,
+                REDACTED_ASSERTIONS_F,
+                ALG_F,
+                ALG_SOFT_F,
+                METADATA_F,
+            ];
+
+            // make sure only V1 fields are present
+            if let serde_cbor::Value::Map(m) = &claim_value {
+                if !m.keys().all(|v| match v {
+                    serde_cbor::Value::Text(t) => V1_FIELDS.contains(&t.as_str()),
+                    _ => false,
+                }) {
+                    return Err(Error::ClaimDecoding);
+                }
+            } else {
+                return Err(Error::ClaimDecoding);
+            }
+
+            let claim_generator: String =
+                map_cbor_to_type(CLAIM_GENERATOR_F, &claim_value).ok_or(Error::ClaimDecoding)?;
+            let signature: String =
+                map_cbor_to_type(SIGNATURE_F, &claim_value).ok_or(Error::ClaimDecoding)?;
+            let assertions: Vec<HashedUri> =
+                map_cbor_to_type(ASSERTIONS_F, &claim_value).ok_or(Error::ClaimDecoding)?;
+            let format: String =
+                map_cbor_to_type(DC_FORMAT_F, &claim_value).ok_or(Error::ClaimDecoding)?;
+            let instance_id =
+                map_cbor_to_type(INSTANCE_ID_F, &claim_value).ok_or(Error::ClaimDecoding)?;
+
+            // optional V1 fields
+            let claim_generator_info: Option<Vec<ClaimGeneratorInfo>> =
+                map_cbor_to_type(CLAIM_GENERATOR_INFO_F, &claim_value);
+            let claim_generator_hints: Option<HashMap<String, Value>> =
+                map_cbor_to_type(CLAIM_GENERATOR_HINTS_F, &claim_value);
+            let title: Option<String> = map_cbor_to_type(DC_TITLE_F, &claim_value);
+            let redacted_assertions: Option<Vec<String>> =
+                map_cbor_to_type(REDACTED_ASSERTIONS_F, &claim_value);
+            let alg: Option<String> = map_cbor_to_type(ALG_F, &claim_value);
+            let alg_soft: Option<String> = map_cbor_to_type(ALG_SOFT_F, &claim_value);
+            let metadata: Option<Vec<Metadata>> = map_cbor_to_type(METADATA_F, &claim_value);
+
+            Ok(Claim {
+                remote_manifest: RemoteManifest::NoRemote,
+                update_manifest: false,
+                title,
+                format: Some(format),
+                instance_id,
+                ingredients_store: HashMap::new(),
+                signature_val: Vec::new(),
+                root: jumbf::labels::MANIFEST_STORE.to_string(),
+                label: label.to_string(),
+                assertion_store: Vec::new(),
+                vc_store: Vec::new(),
+                claim_generator: Some(claim_generator),
+                claim_generator_info,
+                signature,
+                assertions,
+                original_bytes: Some(data.to_owned()),
+                original_box_order: None,
+                redacted_assertions,
+                alg,
+                alg_soft,
+                claim_generator_hints,
+                metadata,
+                data_boxes: Vec::new(),
+                claim_version,
+                created_assertions: Vec::new(),
+                gathered_assertions: None,
+            })
+        } else {
+            /* Claim V2 fields
+            "instanceID": tstr .size (1..max-tstr-length),
+            "claim_generator_info": $generator-info-map,
+            "signature": jumbf-uri-type,
+            "created_assertions": [1* $hashed-uri-map],
+            ? "gathered_assertions": [1* $hashed-uri-map],
+            ? "dc:title": tstr .size (1..max-tstr-length),
+            ? "redacted_assertions": [1* jumbf-uri-type],
+            ? "alg": tstr .size (1..max-tstr-length),
+            ? "alg_soft": tstr .size (1..max-tstr-length),
+            ? "metadata": $assertion-metadata-map,
+            */
+
+            static V2_FIELDS: [&str; 10] = [
+                INSTANCE_ID_F,
+                CLAIM_GENERATOR_INFO_F,
+                SIGNATURE_F,
+                CREATED_ASSERTIONS_F,
+                GATHERED_ASSERTIONS_F,
+                DC_TITLE_F,
+                REDACTED_ASSERTIONS_F,
+                ALG_F,
+                ALG_SOFT_F,
+                METADATA_F,
+            ];
+
+            // make sure only V2 fields are present
+            if let serde_cbor::Value::Map(m) = &claim_value {
+                if !m.keys().all(|v| match v {
+                    serde_cbor::Value::Text(t) => V2_FIELDS.contains(&t.as_str()),
+                    _ => false,
+                }) {
+                    return Err(Error::ClaimDecoding);
+                }
+            } else {
+                return Err(Error::ClaimDecoding);
+            }
+
+            let instance_id =
+                map_cbor_to_type(INSTANCE_ID_F, &claim_value).ok_or(Error::ClaimDecoding)?;
+            let claim_generator_info: ClaimGeneratorInfo =
+                map_cbor_to_type(CLAIM_GENERATOR_INFO_F, &claim_value)
+                    .ok_or(Error::ClaimDecoding)?;
+            let signature: String =
+                map_cbor_to_type(SIGNATURE_F, &claim_value).ok_or(Error::ClaimDecoding)?;
+            let created_assertions: Vec<HashedUri> =
+                map_cbor_to_type(CREATED_ASSERTIONS_F, &claim_value).ok_or(Error::ClaimDecoding)?;
+
+            // optional V2 fields
+            let gathered_assertions: Option<Vec<HashedUri>> =
+                map_cbor_to_type(GATHERED_ASSERTIONS_F, &claim_value);
+            let title: Option<String> = map_cbor_to_type(DC_TITLE_F, &claim_value);
+            let redacted_assertions: Option<Vec<String>> =
+                map_cbor_to_type(REDACTED_ASSERTIONS_F, &claim_value);
+            let alg: Option<String> = map_cbor_to_type(ALG_F, &claim_value);
+            let alg_soft: Option<String> = map_cbor_to_type(ALG_SOFT_F, &claim_value);
+            let metadata: Option<Vec<Metadata>> = map_cbor_to_type(METADATA_F, &claim_value);
+
+            // create merged list of created and gathered assertions for processing compatibility
+            let mut assertions = created_assertions.clone();
+            if let Some(ga) = &gathered_assertions {
+                assertions.append(&mut ga.clone());
+            }
+
+            Ok(Claim {
+                remote_manifest: RemoteManifest::NoRemote,
+                update_manifest: false,
+                title,
+                format: None,
+                instance_id,
+                ingredients_store: HashMap::new(),
+                signature_val: Vec::new(),
+                root: jumbf::labels::MANIFEST_STORE.to_string(),
+                label: label.to_string(),
+                assertion_store: Vec::new(),
+                vc_store: Vec::new(),
+                claim_generator: None,
+                claim_generator_info: Some([claim_generator_info].to_vec()),
+                signature,
+                assertions,
+                original_bytes: Some(data.to_owned()),
+                original_box_order: None,
+                redacted_assertions,
+                alg,
+                alg_soft,
+                claim_generator_hints: None,
+                metadata,
+                data_boxes: Vec::new(),
+                claim_version,
+                created_assertions,
+                gathered_assertions,
+            })
         }
+    }
+
+    fn serialize_v1<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        /* Claim V1 fields
+            "claim_generator": tstr,
+            "claim_generator_info": [1* generator-info-map],
+            "signature": jumbf-uri-type,
+            "assertions": [1* $hashed-uri-map],
+            "dc:format": tstr, ;
+            "instanceID": tstr .size (1..max-tstr-length),
+            ? "dc:title": tstr .size (1..max-tstr-length),
+            ? "redacted_assertions": [1* jumbf-uri-type],
+            ? "alg": tstr .size (1..max-tstr-length),
+            ? "alg_soft": tstr .size (1..max-tstr-length),
+            ? "metadata": $assertion-metadata-map,
+        */
+        let mut claim_map_len = 6;
+        if self.title().is_some() {
+            claim_map_len += 1
+        }
+        if self.redactions().is_some() {
+            claim_map_len += 1
+        }
+        if self.alg.is_some() {
+            claim_map_len += 1
+        }
+        if self.alg_soft.is_some() {
+            claim_map_len += 1
+        }
+        if self.metadata().is_some() {
+            claim_map_len += 1
+        }
+
+        let mut claim_map = serializer.serialize_struct("Claim", claim_map_len)?;
+
+        // serialize mandatory fields
+        if let Some(cg) = self.claim_generator() {
+            claim_map.serialize_field(CLAIM_GENERATOR_F, cg)?;
+        } // todo: what if there is no claim_generator?
+
+        if let Some(cgi) = self.claim_generator_info() {
+            claim_map.serialize_field(CLAIM_GENERATOR_INFO_F, cgi)?;
+        } else {
+            let v: Vec<ClaimGeneratorInfo> = Vec::new();
+            claim_map.serialize_field(CLAIM_GENERATOR_INFO_F, &v)?;
+        }
+
+        claim_map.serialize_field(SIGNATURE_F, &self.signature)?;
+        claim_map.serialize_field(ASSERTIONS_F, self.assertions())?;
+        if let Some(format) = self.format() {
+            claim_map.serialize_field(DC_FORMAT_F, format)?;
+        } //todo: what if there is no format?
+        claim_map.serialize_field(INSTANCE_ID_F, self.instance_id())?;
+
+        // serialize optional fields
+        if let Some(title) = self.title() {
+            claim_map.serialize_field(DC_TITLE_F, title)?;
+        }
+        if let Some(ra) = self.redactions() {
+            claim_map.serialize_field(REDACTED_ASSERTIONS_F, ra)?;
+        }
+        claim_map.serialize_field(ALG_F, self.alg())?;
+        if let Some(soft) = self.alg_soft() {
+            claim_map.serialize_field(ALG_SOFT_F, soft)?;
+        }
+        if let Some(md) = self.metadata() {
+            claim_map.serialize_field(METADATA_F, md)?;
+        }
+
+        claim_map.end()
+    }
+
+    fn serialize_v2<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        /* Claim V2 fields
+        "instanceID": tstr .size (1..max-tstr-length),
+        "claim_generator_info": $generator-info-map,
+        "signature": jumbf-uri-type,
+        "created_assertions": [1* $hashed-uri-map],
+        ? "gathered_assertions": [1* $hashed-uri-map],
+        ? "dc:title": tstr .size (1..max-tstr-length),
+        ? "redacted_assertions": [1* jumbf-uri-type],
+        ? "alg": tstr .size (1..max-tstr-length),
+        ? "alg_soft": tstr .size (1..max-tstr-length),
+        ? "metadata": $assertion-metadata-map,
+        */
+
+        let mut claim_map_len = 4;
+
+        if self.gathered_assertions.is_some() {
+            claim_map_len += 1
+        }
+        if self.title.is_some() {
+            claim_map_len += 1
+        }
+        if self.redacted_assertions.is_some() {
+            claim_map_len += 1
+        }
+        if self.alg.is_some() {
+            claim_map_len += 1
+        }
+        if self.alg_soft.is_some() {
+            claim_map_len += 1
+        }
+        if self.metadata.is_some() {
+            claim_map_len += 1
+        }
+
+        let mut claim_map = serializer.serialize_struct("Claim", claim_map_len)?;
+
+        // serialize mandatory fields
+        claim_map.serialize_field(INSTANCE_ID_F, self.instance_id())?;
+
+        if let Some(cgi) = self.claim_generator_info() {
+            if !cgi.is_empty() {
+                claim_map.serialize_field(CLAIM_GENERATOR_INFO_F, &cgi[0])?;
+            } else {
+                return Err(serde::ser::Error::custom(
+                    "claim_generator_info is mandatory",
+                ));
+            }
+        } else {
+            return Err(serde::ser::Error::custom(
+                "claim_generator_info is mandatory",
+            ));
+        }
+
+        claim_map.serialize_field(SIGNATURE_F, &self.signature)?;
+        claim_map.serialize_field(CREATED_ASSERTIONS_F, &self.created_assertions)?;
+
+        // serialize optional fields
+        if let Some(ga) = &self.gathered_assertions {
+            claim_map.serialize_field(GATHERED_ASSERTIONS_F, ga)?;
+        }
+        if let Some(title) = self.title() {
+            claim_map.serialize_field(DC_TITLE_F, title)?;
+        }
+        if let Some(ra) = self.redactions() {
+            claim_map.serialize_field(REDACTED_ASSERTIONS_F, ra)?;
+        }
+        claim_map.serialize_field(ALG_F, self.alg())?;
+        if let Some(soft) = self.alg_soft() {
+            claim_map.serialize_field(ALG_SOFT_F, soft)?;
+        }
+        if let Some(md) = self.metadata() {
+            claim_map.serialize_field(METADATA_F, md)?;
+        }
+
+        claim_map.end()
     }
 
     /// Build a claim and verify its integrity.
@@ -387,17 +845,47 @@ impl Claim {
             self.add_signature_box_link();
         }
 
+        // make sure we have a claim_generator_info for v2
+        if self.claim_version > 1 {
+            match &self.claim_generator_info {
+                Some(cgi) => {
+                    if cgi.len() > 1 {
+                        return Err(Error::VersionCompatibility(
+                            "only 1 claim_generator_info allowed".into(),
+                        ));
+                    }
+                }
+                None => {
+                    return Err(Error::VersionCompatibility(
+                        "claim_generator_info is mandatory".into(),
+                    ))
+                }
+            }
+        }
+
         Ok(())
     }
 
-    /// return version this claim supports
-    pub fn build_version() -> &'static str {
-        Self::LABEL
+    /// return max version this Claim supports
+    pub fn build_version_support() -> String {
+        format!("{}.v{}", CLAIM, BUILD_VER_SUPPORT)
     }
 
     /// Return the JUMBF label for this claim.
     pub fn label(&self) -> &str {
         &self.label
+    }
+
+    // Return vendor if part of manifest label
+    pub fn vendor(&self) -> Option<String> {
+        let mp = manifest_label_to_parts(&self.uri())?;
+        mp.vendor
+    }
+
+    // Return version if V2 claim and if part of manifest label
+    pub fn claim_instance_version(&self) -> Option<String> {
+        let mp = manifest_label_to_parts(&self.uri())?;
+        mp.version
     }
 
     /// Return the JUMBF URI for this claim.
@@ -432,13 +920,13 @@ impl Claim {
     }
 
     /// get claim generator
-    pub fn claim_generator(&self) -> &str {
-        &self.claim_generator
+    pub fn claim_generator(&self) -> Option<&str> {
+        self.claim_generator.as_deref()
     }
 
     /// get format
-    pub fn format(&self) -> &str {
-        &self.format
+    pub fn format(&self) -> Option<&str> {
+        self.format.as_deref()
     }
 
     /// get instance_id
@@ -489,6 +977,11 @@ impl Claim {
     /// Is this an update manifest
     pub fn update_manifest(&self) -> bool {
         self.update_manifest
+    }
+
+    // get version of the Claim
+    pub fn version(&self) -> usize {
+        self.claim_version
     }
 
     pub fn set_remote_manifest<S: Into<String> + AsRef<str>>(
@@ -588,6 +1081,21 @@ impl Claim {
         self.claim_generator_hints.as_ref()
     }
 
+    pub fn calc_sig_box_hash(claim: &Claim, alg: &str) -> Result<Vec<u8>> {
+        let mut hash_bytes = Vec::with_capacity(2048);
+
+        // create a signature and add placeholder data to the CAI store.
+        let mut sigb = CAISignatureBox::new();
+        let signed_data = claim.signature_val().clone();
+
+        let sigc = JUMBFCBORContentBox::new(signed_data);
+        sigb.add_signature(Box::new(sigc));
+
+        sigb.write_box_payload(&mut hash_bytes)?;
+
+        Ok(hash_by_alg(alg, &hash_bytes, None))
+    }
+
     pub fn calc_assertion_box_hash(
         label: &str,
         assertion: &Assertion,
@@ -653,12 +1161,69 @@ impl Claim {
         assertion_builder: &impl AssertionBase,
         salt_generator: &impl SaltGenerator,
     ) -> Result<C2PAAssertion> {
+        self.add_assertion_with_salt_impl(assertion_builder, salt_generator, self.version() > 1)
+    }
+
+    fn compatibility_checks(&self, assertion: &Assertion) -> Result<()> {
+        let assertion_version = assertion.get_ver();
+        let assertion_label = assertion.label();
+
+        if assertion_label == ACTIONS {
+            // check for actions V1
+            if assertion_version < 1 {
+                return Err(Error::VersionCompatibility(
+                    "action assertion version too low".into(),
+                ));
+            }
+
+            // check for deprecated actions
+            let ac = Actions::from_assertion(assertion)?;
+            for action in ac.actions() {
+                if V2_DEPRECATED_ACTIONS.contains(&action.action()) {
+                    return Err(Error::VersionCompatibility(
+                        "action assertion has been deprecated".into(),
+                    ));
+                }
+            }
+        }
+
+        // version 1 BMFF hash is deprecated
+        if assertion_label == BMFF_HASH && assertion_version < 2 {
+            return Err(Error::VersionCompatibility(
+                "BMFF hash assertion version too low".into(),
+            ));
+        }
+
+        /*
+        // only allow deprecated assertions in created_assertion list
+        if V2_SPEC_DEPRECATED_ASSERTIONS.contains(&assertion.label().as_str()) {
+            return Err(Error::VersionCompatibility(
+                "C2PA deprecated assertion should be added to gather_assertions".into(),
+            ));
+        }
+        */
+
+        Ok(())
+    }
+
+    fn add_assertion_with_salt_impl(
+        &mut self,
+        assertion_builder: &impl AssertionBase,
+        salt_generator: &impl SaltGenerator,
+        add_as_created_assertion: bool,
+    ) -> Result<C2PAAssertion> {
         // make sure the assertion is valid
         let assertion = assertion_builder.to_assertion()?;
+        let assertion_label = assertion.label();
 
         // Update label if there are multiple instances of
         // the same claim type.
-        let as_label = self.make_assertion_instance_label(assertion.label().as_ref());
+        let as_label = self.make_assertion_instance_label(assertion_label.as_ref());
+
+        // check for deprecated assertions when using Claims > V1
+        if self.version() > 1 {
+            self.compatibility_checks(&assertion)?
+        }
 
         // Get salted hash of the assertion's contents.
         let salt = salt_generator.generate_salt();
@@ -674,11 +1239,91 @@ impl Claim {
 
         // Add to assertion store.
         let (_l, instance) = Claim::assertion_label_from_link(&as_label);
-        let ca = ClaimAssertion::new(assertion, instance, &hash, self.alg(), salt);
+        let ca = ClaimAssertion::new(
+            assertion.clone(),
+            instance,
+            &hash,
+            self.alg(),
+            salt,
+            ClaimAssertionType::V1,
+        );
+
+        if add_as_created_assertion {
+            // enforce actions assertion generation rules during creation
+            if assertion_label == ACTIONS {
+                let ac = Actions::from_assertion(&assertion)?;
+
+                // The first actions assertion must start with c2pa.created or c2pa.opened
+                if !self
+                    .created_assertions
+                    .iter()
+                    .any(|a| a.url().contains(ACTIONS))
+                {
+                    if let Some(first_action) = ac.actions().first() {
+                        if first_action.action() != "c2pa.created"
+                            && first_action.action() != "c2pa.opened"
+                        {
+                            return Err(Error::AssertionEncoding(
+                                "first action must be c2pa.created or c2pa.opened".to_string(),
+                            )); // todo: placeholder until we have 2.x error codes
+                        }
+                    } else {
+                        // must have an action
+                        return Err(Error::AssertionEncoding(
+                            "actions assertion must have an action".to_string(),
+                        )); // todo: placeholder until we have 2.x error codes
+                    }
+                } else {
+                    // any other added actions cannot be created or opened
+                    let current_action = Actions::from_assertion(&assertion)?;
+                    if current_action
+                        .actions()
+                        .iter()
+                        .any(|a| a.action() == "c2pa.created" || a.action() == "c2pa.opened")
+                    {
+                        return Err(Error::AssertionEncoding(
+                            "only the first actions assertion can have c2pa.created or c2pa.opened"
+                                .to_string(),
+                        )); // todo: placeholder until we have 2.x error codes
+                    }
+                }
+            }
+
+            // add to created assertions list
+            self.created_assertions.push(c2pa_assertion.clone());
+        }
+
         self.assertion_store.push(ca);
         self.assertions.push(c2pa_assertion.clone());
 
         Ok(c2pa_assertion)
+    }
+
+    /// Add a gathered assertion to this claim and verify with a salted assertion store
+    pub fn add_gathered_assertion_with_salt(
+        &mut self,
+        assertion_builder: &impl AssertionBase,
+        salt_generator: &impl SaltGenerator,
+    ) -> Result<C2PAAssertion> {
+        if self.claim_version < 2 {
+            return Err(Error::VersionCompatibility(
+                "Claim version >= 2 required for gathered assertions".into(),
+            ));
+        }
+
+        match self.add_assertion_with_salt_impl(assertion_builder, salt_generator, false) {
+            Ok(a) => {
+                match &mut self.gathered_assertions {
+                    Some(ga) => ga.push(a.clone()),
+                    None => {
+                        let new_ga = [a.clone()];
+                        self.gathered_assertions = Some(new_ga.to_vec());
+                    }
+                }
+                Ok(a)
+            }
+            Err(e) => Err(e),
+        }
     }
 
     // Add a new DataBox and return the HashedURI reference
@@ -696,7 +1341,8 @@ impl Claim {
         };
 
         // serialize to cbor
-        let db_cbor = serde_cbor::to_vec(&new_db).map_err(|_err| Error::AssertionEncoding)?;
+        let db_cbor =
+            serde_cbor::to_vec(&new_db).map_err(|err| Error::AssertionEncoding(err.to_string()))?;
 
         // get the index for the new assertion
         let mut index = 0;
@@ -747,8 +1393,8 @@ impl Claim {
         let mut uri = C2PAAssertion::new(link, Some(self.alg().to_string()), &hash);
         uri.add_salt(salt);
 
-        let db: DataBox =
-            serde_cbor::from_slice(databox_cbor).map_err(|_err| Error::AssertionEncoding)?;
+        let db: DataBox = serde_cbor::from_slice(databox_cbor)
+            .map_err(|err| Error::AssertionEncoding(err.to_string()))?;
 
         // add data box  to data box store
         self.data_boxes.push((uri, db));
@@ -808,6 +1454,13 @@ impl Claim {
     /// ```
     // the "id" value will be used as the label in the vcstore
     pub fn add_verifiable_credential(&mut self, vc_json: &str) -> Result<HashedUri> {
+        if self.claim_version > 1 {
+            // VC store is not supported post version 1
+            return Err(Error::VersionCompatibility(
+                "verifiable credentials not supported".into(),
+            ));
+        }
+
         let id = Claim::vc_id(vc_json)?;
         let credential = AssertionData::Json(vc_json.to_string());
 
@@ -922,6 +1575,16 @@ impl Claim {
         // Replace existing hash with newly-calculated hash.
         f.update_hash(target_hash.to_vec());
 
+        // fix up ClaimV2 URI reference too
+        if let Some(f) = self
+            .created_assertions
+            .iter_mut()
+            .find(|f| f.url().contains(&target_label) && vec_compare(&f.hash(), &original_hash))
+        {
+            // Replace existing hash with newly-calculated hash.
+            f.update_hash(target_hash.to_vec());
+        };
+
         // clear original since content has changed
         self.clear_data();
 
@@ -970,7 +1633,7 @@ impl Claim {
     fn redact_assertion(&mut self, assertion_uri: &str) -> Result<()> {
         // cannot redact action assertions per the spec
         let (label, _instance) = Claim::assertion_label_from_link(assertion_uri);
-        if label == labels::ACTIONS {
+        if label == assertions::labels::ACTIONS {
             return Err(Error::AssertionInvalidRedaction);
         }
 
@@ -1025,7 +1688,8 @@ impl Claim {
     pub fn signature_info(&self) -> Option<CertificateInfo> {
         let sig = self.signature_val();
         let data = self.data().ok()?;
-        let mut validation_log = OneShotStatusTracker::default();
+        let mut validation_log =
+            StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
 
         if _sync {
             Some(get_signing_info(sig, &data, &mut validation_log))
@@ -1043,7 +1707,7 @@ impl Claim {
         is_provenance: bool,
         cert_check: bool,
         ctp: &CertificateTrustPolicy,
-        validation_log: &mut impl StatusTracker,
+        validation_log: &mut StatusTracker,
     ) -> Result<()> {
         // Parse COSE signed data (signature) and validate it.
         let sig = claim.signature_val().clone();
@@ -1070,8 +1734,45 @@ impl Claim {
         }
 
         // check certificate revocation
-        let sign1 = parse_cose_sign1(&sig, &data, validation_log)?;
-        check_ocsp_status_async(&sign1, &data, ctp, validation_log).await?;
+        let sign1 = parse_cose_sign1(&sig, &data, validation_log).inspect_err(|_e| {
+            // adjust the error info
+            if let Some(li) = validation_log.logged_items_mut().last_mut() {
+                let mut new_li = li.clone();
+                new_li.label = Cow::from(claim.uri());
+                *li = new_li;
+            }
+        })?;
+        check_ocsp_status(&sign1, &data, ctp, validation_log)
+            .map(|v| {
+                // if a value contains the der response it has successfully returned a good OCSP response
+                if !v.ocsp_der.is_empty() {
+                    // so log the success status
+                    if v.revoked_at.is_none() {
+                        log_item!(
+                            claim.uri(),
+                            "claim signature OCSP value good",
+                            "verify_internal"
+                        )
+                        .validation_status(validation_status::SIGNING_CREDENTIAL_NOT_REVOKED)
+                        .success(validation_log);
+                    } else {
+                        // adjust the error info
+                        if let Some(li) = validation_log.logged_items_mut().last_mut() {
+                            let mut new_li = li.clone();
+                            new_li.label = Cow::from(claim.uri());
+                            *li = new_li;
+                        }
+                    }
+                }
+            })
+            .inspect_err(|_e| {
+                // adjust the error info
+                if let Some(li) = validation_log.logged_items_mut().last_mut() {
+                    let mut new_li = li.clone();
+                    new_li.label = Cow::from(claim.uri());
+                    *li = new_li;
+                }
+            })?;
 
         let verified = verify_cose_async(
             &sig,
@@ -1095,7 +1796,7 @@ impl Claim {
         is_provenance: bool,
         cert_check: bool,
         ctp: &CertificateTrustPolicy,
-        validation_log: &mut impl StatusTracker,
+        validation_log: &mut StatusTracker,
     ) -> Result<()> {
         // Parse COSE signed data (signature) and validate it.
         let sig = claim.signature_val();
@@ -1123,8 +1824,45 @@ impl Claim {
         };
 
         // check certificate revocation
-        let sign1 = parse_cose_sign1(sig, data, validation_log)?;
-        check_ocsp_status(&sign1, data, ctp, validation_log)?;
+        let sign1 = parse_cose_sign1(sig, data, validation_log).inspect_err(|_e| {
+            // adjust the error info
+            if let Some(li) = validation_log.logged_items_mut().last_mut() {
+                let mut new_li = li.clone();
+                new_li.label = Cow::from(claim.uri());
+                *li = new_li;
+            }
+        })?;
+        check_ocsp_status(&sign1, data, ctp, validation_log)
+            .map(|v| {
+                // if a value contains the der response it has successfully returned a good OCSP response
+                if !v.ocsp_der.is_empty() {
+                    // so log the success status
+                    if v.revoked_at.is_none() {
+                        log_item!(
+                            claim.uri(),
+                            "claim signature OCSP value good",
+                            "verify_internal"
+                        )
+                        .validation_status(validation_status::SIGNING_CREDENTIAL_NOT_REVOKED)
+                        .success(validation_log);
+                    } else {
+                        // adjust the error info
+                        if let Some(li) = validation_log.logged_items_mut().last_mut() {
+                            let mut new_li = li.clone();
+                            new_li.label = Cow::from(claim.uri());
+                            *li = new_li;
+                        }
+                    }
+                }
+            })
+            .inspect_err(|_e| {
+                // adjust the error info
+                if let Some(li) = validation_log.logged_items_mut().last_mut() {
+                    let mut new_li = li.clone();
+                    new_li.label = Cow::from(claim.uri());
+                    *li = new_li;
+                }
+            })?;
 
         let verified = verify_cose(
             sig,
@@ -1136,13 +1874,22 @@ impl Claim {
         );
 
         Claim::verify_internal(claim, asset_data, is_provenance, verified, validation_log)
+            .inspect_err(|_e| {
+                // adjust the error info
+                if let Some(li) = validation_log.logged_items_mut().last_mut() {
+                    let mut new_li = li.clone();
+                    new_li.label = Cow::from(claim.uri());
+                    *li = new_li;
+                }
+            })
     }
 
     /// Get the signing certificate chain as PEM bytes
     pub fn get_cert_chain(&self) -> Result<Vec<u8>> {
         let sig = self.signature_val();
         let data = self.data()?;
-        let mut validation_log = OneShotStatusTracker::default();
+        let mut validation_log =
+            StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
 
         let vi = get_signing_info(sig, &data, &mut validation_log);
 
@@ -1154,7 +1901,7 @@ impl Claim {
         asset_data: &mut ClaimAssetData<'_>,
         is_provenance: bool,
         verified: Result<CertificateInfo>,
-        validation_log: &mut impl StatusTracker,
+        validation_log: &mut StatusTracker,
     ) -> Result<()> {
         const UNNAMED: &str = "unnamed";
         let default_str = |s: &String| s.clone();
@@ -1170,6 +1917,28 @@ impl Claim {
                     .validation_status(validation_status::CLAIM_SIGNATURE_MISMATCH)
                     .failure(validation_log, Error::CoseSignature)?;
                 } else {
+                    // update the log_item details
+                    if let Some(li) = validation_log.logged_items_mut().last_mut() {
+                        let mut new_li = li.clone();
+                        new_li.label = Cow::from(claim.uri());
+                        new_li.description = Cow::Borrowed("claim signature valid");
+
+                        if !is_provenance {
+                            new_li = new_li.set_ingredient_uri(claim.uri());
+                        }
+
+                        *li = new_li;
+                    }
+                    // signing cert has not expired
+                    log_item!(
+                        claim.signature_uri(),
+                        "claim signature valid",
+                        "verify_internal"
+                    )
+                    .validation_status(validation_status::CLAIM_SIGNATURE_INSIDE_VALIDITY)
+                    .success(validation_log);
+
+                    // add signature validated status
                     log_item!(
                         claim.signature_uri(),
                         "claim signature valid",
@@ -1179,14 +1948,17 @@ impl Claim {
                     .success(validation_log);
                 }
             }
-            Err(parse_err) => {
-                log_item!(
-                    claim.signature_uri(),
-                    "claim signature is not valid",
-                    "verify_internal"
-                )
-                .validation_status(validation_status::GENERAL_ERROR)
-                .failure(validation_log, parse_err)?;
+            Err(_parse_err) => {
+                // the lower level errors are logged validation_log
+                // continue on to catch other failures.
+
+                // adjust the error info
+                if let Some(li) = validation_log.logged_items_mut().last_mut() {
+                    let mut new_li = li.clone();
+                    new_li.label = Cow::from(claim.uri());
+
+                    *li = new_li;
+                }
             }
         };
 
@@ -1287,6 +2059,17 @@ impl Claim {
                 log_item!(claim.uri(), "claim missing data binding", "verify_internal")
                     .validation_status(validation_status::HARD_BINDINGS_MISSING)
                     .failure(validation_log, Error::ClaimMissingHardBinding)?;
+            }
+
+            // must have exactly one hard binding for normal manifests
+            if claim.hash_assertions().len() != 1 && !claim.update_manifest() {
+                log_item!(
+                    claim.uri(),
+                    "claim has multiple data bindings",
+                    "verify_internal"
+                )
+                .validation_status(validation_status::HARD_BINDINGS_MULTIPLE)
+                .failure(validation_log, Error::ClaimMultipleHardBinding)?;
             }
 
             // update manifests cannot have data hashes
@@ -1534,7 +2317,7 @@ impl Claim {
     /// are resolved at commit time.
     pub fn ingredient_assertions(&self) -> Vec<&Assertion> {
         let dummy_data = AssertionData::Cbor(Vec::new());
-        let dummy_ingredient = Assertion::new(labels::INGREDIENT, None, dummy_data);
+        let dummy_ingredient = Assertion::new(assertions::labels::INGREDIENT, None, dummy_data);
         self.assertions_by_type(&dummy_ingredient)
     }
 
@@ -1562,6 +2345,14 @@ impl Claim {
         mut ingredient: Vec<Claim>,
         redactions_opt: Option<Vec<String>>,
     ) -> Result<()> {
+        // make sure the ingredient is version compatible
+        if ingredient.iter().any(|x| x.claim_version > self.version()) {
+            return Err(Error::VersionCompatibility(format!(
+                "ingredient claim version is newer than claim version {}",
+                self.version()
+            )));
+        }
+
         // redact assertion from incoming ingredients
         if let Some(redactions) = &redactions_opt {
             for redaction in redactions {
@@ -1615,9 +2406,22 @@ impl Claim {
     /// Return reference to the assertions list.
     ///
     /// This list matches item-for-item with the `Assertion`s
-    /// stored in the assertion store.
+    /// stored in the assertion store. For Claim version > 1
+    /// this list includes both created and gathered.  Use
+    /// gathered_assertions() or created_assertions() for specific
+    /// lists when Claim version is 2 or greater,
     pub fn assertions(&self) -> &Vec<C2PAAssertion> {
         &self.assertions
+    }
+
+    /// Returns list of created assertions for Claim V2
+    pub fn created_assertions(&self) -> &Vec<C2PAAssertion> {
+        &self.created_assertions
+    }
+
+    /// Returns list is Claim V2 gathered assertions if available
+    pub fn gathered_assertions(&self) -> Option<&Vec<C2PAAssertion>> {
+        self.gathered_assertions.as_ref()
     }
 
     /// Returns the cbor binary value of the claim data.
@@ -1638,12 +2442,10 @@ impl Claim {
 
     /// Create claim from binary data (not including assertions).
     pub fn from_data(label: &str, data: &[u8]) -> Result<Claim> {
-        let mut claim: Claim = serde_cbor::from_slice(data).map_err(|_err| Error::ClaimDecoding)?;
+        let claim_value: serde_cbor::Value =
+            serde_cbor::from_slice(data).map_err(|_err| Error::ClaimDecoding)?;
 
-        claim.label = label.to_string();
-        claim.original_bytes = Some(data.to_owned());
-
-        Ok(claim)
+        Claim::from_value(claim_value, label, data)
     }
 
     /// Generate a JSON representation of the Claim
@@ -1682,11 +2484,11 @@ impl Claim {
                                 let mut to = serde_json::Serializer::new(buf);
 
                                 serde_transcode::transcode(&mut from, &mut to)
-                                    .map_err(|_err| Error::AssertionEncoding)?;
+                                    .map_err(|err| Error::AssertionEncoding(err.to_string()))?;
                                 let buf2 = to.into_inner();
 
                                 let decoded: Value = serde_json::from_slice(&buf2)
-                                    .map_err(|_err| Error::AssertionEncoding)?;
+                                    .map_err(|err| Error::AssertionEncoding(err.to_string()))?;
 
                                 json_map.insert(label, decoded);
                             }
@@ -1752,7 +2554,7 @@ impl Claim {
                         match claim_assertion.assertion.decode_data() {
                             AssertionData::Json(x) => {
                                 let d: Value = serde_json::from_str(x)
-                                    .map_err(|_err| Error::AssertionEncoding)?;
+                                    .map_err(|err| Error::AssertionEncoding(err.to_string()))?;
 
                                 let j = JsonOrderedAssertionData {
                                     label: claim_assertion.label().to_owned(),
@@ -1772,11 +2574,11 @@ impl Claim {
                                 let mut to = serde_json::Serializer::new(buf);
 
                                 serde_transcode::transcode(&mut from, &mut to)
-                                    .map_err(|_err| Error::AssertionEncoding)?;
+                                    .map_err(|err| Error::AssertionEncoding(err.to_string()))?;
                                 let buf2 = to.into_inner();
 
                                 let d: Value = serde_json::from_slice(&buf2)
-                                    .map_err(|_err| Error::AssertionEncoding)?;
+                                    .map_err(|err| Error::AssertionEncoding(err.to_string()))?;
 
                                 let j = JsonOrderedAssertionData {
                                     label: claim_assertion.label().to_owned(),
@@ -1859,6 +2661,19 @@ impl Claim {
         }
     }
 
+    pub fn box_name_label_instance(box_name: &str) -> (String, usize) {
+        if let Some((l, v)) = box_name.rsplit_once(".") {
+            if v.len() == 2 && v.as_bytes()[0] == b'v' {
+                if let Some(i_str) = v.get(1..) {
+                    if let Ok(i) = i_str.parse::<usize>() {
+                        return (l.into(), i);
+                    }
+                }
+            }
+        }
+        (box_name.into(), 0)
+    }
+
     /// Return the label for this assertion given its link
     pub fn assertion_label_from_link(assertion_link: &str) -> (String, usize) {
         let v = jumbf::labels::to_normalized_uri(assertion_link);
@@ -1866,7 +2681,7 @@ impl Claim {
         let v2: Vec<&str> = v.split('/').collect();
         if let Some(s) = v2.last() {
             // treat ingredient thumbnails differently ingredient.thumbnail
-            if get_thumbnail_type(s) == labels::INGREDIENT_THUMBNAIL {
+            if get_thumbnail_type(s) == assertions::labels::INGREDIENT_THUMBNAIL {
                 let instance = get_thumbnail_instance(s).unwrap_or(0);
                 let label = match get_thumbnail_image_type(s).as_str() {
                     "none" => get_thumbnail_type(s),
@@ -1895,7 +2710,7 @@ impl Claim {
     pub fn label_with_instance(label: &str, instance: usize) -> String {
         if instance == 0 {
             label.to_string()
-        } else if get_thumbnail_type(label) == labels::INGREDIENT_THUMBNAIL {
+        } else if get_thumbnail_type(label) == assertions::labels::INGREDIENT_THUMBNAIL {
             let tn_type = get_thumbnail_image_type(label);
             format!("{}__{}.{}", get_thumbnail_type(label), instance, tn_type)
         } else {
@@ -1986,12 +2801,14 @@ impl Claim {
     }
 
     // Create a JUMBF URI from a claim label.
-    pub(crate) fn to_claim_uri(manifest_label: &str) -> String {
-        format!(
-            "{}/{}",
-            jumbf::labels::to_manifest_uri(manifest_label),
-            Self::LABEL
-        )
+    pub(crate) fn to_claim_uri(&self) -> String {
+        let uri = format!("{}/{}", jumbf::labels::to_manifest_uri(self.label()), CLAIM);
+
+        if self.claim_version > 1 {
+            format!("{}.v{}", uri, self.claim_version)
+        } else {
+            uri
+        }
     }
 }
 
@@ -2001,7 +2818,7 @@ pub(crate) fn check_ocsp_status(
     sign1: &coset::CoseSign1,
     data: &[u8],
     ctp: &CertificateTrustPolicy,
-    validation_log: &mut impl StatusTracker,
+    validation_log: &mut StatusTracker,
 ) -> Result<OcspResponse> {
     // Moved here instead of c2pa-crypto because of the dependency on settings.
 
@@ -2030,7 +2847,6 @@ pub(crate) fn check_ocsp_status(
     }
 }
 
-#[cfg(feature = "openssl")]
 #[cfg(test)]
 pub mod tests {
     #![allow(clippy::expect_used)]

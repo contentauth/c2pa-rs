@@ -12,7 +12,7 @@
 // each license.
 
 mod common;
-use c2pa::{Error, Reader, Result};
+use c2pa::{validation_status, Error, Reader, Result};
 use common::{assert_err, compare_to_known_good, fixture_stream};
 
 #[test]
@@ -32,7 +32,6 @@ fn test_reader_no_jumbf() -> Result<()> {
 }
 
 #[test]
-#[cfg_attr(not(any(target_arch = "wasm32", feature = "openssl")), ignore)]
 fn test_reader_ca_jpg() -> Result<()> {
     let (format, mut stream) = fixture_stream("CA.jpg")?;
     let reader = Reader::from_stream(&format, &mut stream)?;
@@ -40,7 +39,6 @@ fn test_reader_ca_jpg() -> Result<()> {
 }
 
 #[test]
-#[cfg_attr(not(any(target_arch = "wasm32", feature = "openssl")), ignore)]
 fn test_reader_c_jpg() -> Result<()> {
     let (format, mut stream) = fixture_stream("C.jpg")?;
     let reader = Reader::from_stream(&format, &mut stream)?;
@@ -48,10 +46,20 @@ fn test_reader_c_jpg() -> Result<()> {
 }
 
 #[test]
-#[cfg_attr(not(any(target_arch = "wasm32", feature = "openssl")), ignore)]
 fn test_reader_xca_jpg() -> Result<()> {
     let (format, mut stream) = fixture_stream("XCA.jpg")?;
     let reader = Reader::from_stream(&format, &mut stream)?;
+    // validation_results should have the expected failure
+    assert_eq!(
+        reader
+            .validation_results()
+            .unwrap()
+            .active_manifest()
+            .unwrap()
+            .failure[0]
+            .code(),
+        validation_status::ASSERTION_DATAHASH_MISMATCH
+    );
     compare_to_known_good(&reader, "XCA.json")
 }
 

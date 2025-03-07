@@ -15,12 +15,12 @@ This crate has two features, neither of which are enabled by default:
 
 `c2pa-crypto` will use different cryptography libraries depending on which platform and feature flags are used:
 
-### Signing (synchronous or asynchronous)
+### Signing
 
 | C2PA `SigningAlg` | Default (*) | `feature = "rust_native_crypto"` (*) | WASM |
 | --- | --- | --- | --- |
-| `es256` | OpenSSL | OpenSSL | ❌ |
-| `es384` | OpenSSL | OpenSSL | ❌ |
+| `es256` | OpenSSL | `p256` | `p256` |
+| `es384` | OpenSSL | `p384` | `p384` |
 | `es512` | OpenSSL | OpenSSL | ❌ |
 | `ed25519` | OpenSSL | `ed25519-dalek` | `ed25519-dalek` |
 | `ps256` | OpenSSL | `rsa` | `rsa` |
@@ -30,32 +30,17 @@ This crate has two features, neither of which are enabled by default:
 (*) Applies to all supported platforms except WASM <br />
 ❌ = not supported
 
-### Validation (synchronous)
+### Validation
 
-| C2PA `SigningAlg` | Default (*) | `feature = "rust_native_crypto"` (*) | WASM |
-| --- | --- | --- | --- |
-| `es256` | OpenSSL | OpenSSL | `p256` |
-| `es384` | OpenSSL | OpenSSL | `p384` |
-| `es512` | OpenSSL | OpenSSL | ❌ |
-| `ed25519` | OpenSSL | `ed25519-dalek` | `ed25519-dalek` |
-| `ps256` | OpenSSL | `rsa` | `rsa` |
-| `ps384` | OpenSSL | `rsa` | `rsa` |
-| `ps512` | OpenSSL | `rsa` | `rsa` |
-
-(*) Applies to all supported platforms except WASM <br />
-❌ = not supported
-
-### Validation (asynchronous)
-
-| C2PA `SigningAlg` | Default (*) | `feature = "rust_native_crypto"` (*) | WASM |
-| --- | --- | --- | --- |
-| `es256` | OpenSSL | OpenSSL | WebCrypto |
-| `es384` | OpenSSL | OpenSSL | WebCrypto |
-| `es512` | OpenSSL | OpenSSL | WebCrypto |
-| `ed25519` | OpenSSL | `ed25519-dalek` | `ed25519-dalek` |
-| `ps256` | OpenSSL | `rsa` | `rsa` |
-| `ps384` | OpenSSL | `rsa` | `rsa` |
-| `ps512` | OpenSSL | `rsa` | `rsa` |
+| C2PA `SigningAlg` | Default (*) | `feature = "rust_native_crypto"` (*) or WASM |
+| --- | --- | --- |
+| `es256` | OpenSSL | `p256` |
+| `es384` | OpenSSL | `p384` |
+| `es512` | OpenSSL | `p521` |
+| `ed25519` | OpenSSL | `ed25519-dalek` |
+| `ps256` | OpenSSL | `rsa` |
+| `ps384` | OpenSSL | `rsa` |
+| `ps512` | OpenSSL | `rsa` |
 
 (*) Applies to all supported platforms except WASM
 

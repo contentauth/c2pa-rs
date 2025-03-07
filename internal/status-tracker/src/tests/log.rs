@@ -13,7 +13,7 @@
 
 use std::borrow::Cow;
 
-use crate::{log_item, DetailedStatusTracker, LogItem, LogKind, StatusTracker};
+use crate::{log_item, LogItem, LogKind, StatusTracker};
 
 #[test]
 fn r#macro() {
@@ -32,6 +32,7 @@ fn r#macro() {
             line: log.line,
             err_val: None,
             validation_status: None,
+            ..Default::default()
         }
     );
 
@@ -56,6 +57,7 @@ fn macro_from_string() {
             line: log.line,
             err_val: None,
             validation_status: None,
+            ..Default::default()
         }
     );
 
@@ -64,7 +66,7 @@ fn macro_from_string() {
 
 #[test]
 fn success() {
-    let mut tracker = DetailedStatusTracker::default();
+    let mut tracker = StatusTracker::default();
     log_item!("test1", "test item 1", "test func").success(&mut tracker);
 
     let log_item = tracker.logged_items().first().unwrap();
@@ -82,13 +84,14 @@ fn success() {
             line: log_item.line,
             err_val: None,
             validation_status: None,
+            ingredient_uri: None,
         }
     );
 }
 
 #[test]
 fn informational() {
-    let mut tracker = DetailedStatusTracker::default();
+    let mut tracker = StatusTracker::default();
     log_item!("test1", "test item 1", "test func").informational(&mut tracker);
 
     let log_item = tracker.logged_items().first().unwrap();
@@ -106,13 +109,14 @@ fn informational() {
             line: log_item.line,
             err_val: None,
             validation_status: None,
+            ..Default::default()
         }
     );
 }
 
 #[test]
 fn failure() {
-    let mut tracker = DetailedStatusTracker::default();
+    let mut tracker = StatusTracker::default();
     log_item!("test1", "test item 1", "test func")
         .failure(&mut tracker, "sample error message")
         .unwrap();
@@ -132,13 +136,14 @@ fn failure() {
             line: log_item.line,
             err_val: Some(Cow::Borrowed("\"sample error message\"")),
             validation_status: None,
+            ..Default::default()
         }
     );
 }
 
 #[test]
 fn failure_no_throw() {
-    let mut tracker = DetailedStatusTracker::default();
+    let mut tracker = StatusTracker::default();
     log_item!("test1", "test item 1", "test func")
         .failure_no_throw(&mut tracker, "sample error message");
 
@@ -156,7 +161,7 @@ fn failure_no_throw() {
             function: Cow::Borrowed("test func"),
             line: log_item.line,
             err_val: Some(Cow::Borrowed("\"sample error message\"")),
-            validation_status: None,
+            ..Default::default()
         }
     );
 }
@@ -179,6 +184,7 @@ fn validation_status() {
             line: log_item.line,
             err_val: None,
             validation_status: Some(Cow::Borrowed("claim.missing")),
+            ..Default::default()
         }
     );
 }

@@ -107,8 +107,9 @@ impl CallbackSignerConfig {
     pub fn new(sign_config: &SignConfig, reserve_size: usize) -> anyhow::Result<Self> {
         let alg = sign_config
             .alg
-            .clone()
-            .and_then(|alg| alg.parse::<SigningAlg>().ok())
+            .as_deref()
+            .map_or_else(|| "es256".to_string(), |alg| alg.to_lowercase())
+            .parse::<SigningAlg>()
             .context("Invalid signing algorithm provided")?;
 
         let sign_cert_path = sign_config
@@ -191,9 +192,16 @@ mod test {
 
     use super::*;
 
+    fn sign_cert_path() -> PathBuf {
+        #[cfg(not(target_os = "wasi"))]
+        return PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        #[cfg(target_os = "wasi")]
+        return PathBuf::from("/");
+    }
+
     #[test]
     fn test_signing_succeeds_returns_bytes() {
-        let mut sign_cert_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let mut sign_cert_path = sign_cert_path();
         sign_cert_path.push("sample/es256_certs.pem");
 
         let sign_config = SignConfig {
@@ -219,7 +227,7 @@ mod test {
 
     #[test]
     fn test_signing_succeeds_returns_error_embedding() {
-        let mut sign_cert_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let mut sign_cert_path = sign_cert_path();
         sign_cert_path.push("sample/es256_certs.pem");
 
         let sign_config = SignConfig {
@@ -279,7 +287,7 @@ mod test {
 
     #[test]
     fn test_try_from_succeeds_for_valid_sign_config() {
-        let mut sign_cert_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let mut sign_cert_path = sign_cert_path();
         sign_cert_path.push("sample/es256_certs.pem");
 
         let expected_alg = SigningAlg::Es256;
@@ -300,7 +308,7 @@ mod test {
 
     #[test]
     fn test_callback_signer_error_file_not_found() {
-        let mut sign_cert_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let mut sign_cert_path = sign_cert_path();
         sign_cert_path.push("sample/NOT-HERE");
 
         let sign_config = SignConfig {
@@ -318,7 +326,7 @@ mod test {
 
     #[test]
     fn test_callback_signer_error_invalid_cert() {
-        let mut sign_cert_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let mut sign_cert_path = sign_cert_path();
         sign_cert_path.push("sample/test.json");
 
         let sign_config = SignConfig {
@@ -336,7 +344,7 @@ mod test {
 
     #[test]
     fn test_callback_signer_valid_sign_certs() {
-        let mut sign_cert_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let mut sign_cert_path = sign_cert_path();
         sign_cert_path.push("sample/es256_certs.pem");
 
         let sign_config = SignConfig {

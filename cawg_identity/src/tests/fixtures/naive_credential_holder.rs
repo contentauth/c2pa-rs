@@ -23,18 +23,40 @@
 use std::fmt::Debug;
 
 use async_trait::async_trait;
+use serde::Serialize;
 
 use crate::{
-    builder::{CredentialHolder, IdentityBuilderError},
+    builder::{AsyncCredentialHolder, CredentialHolder, IdentityBuilderError},
+    identity_assertion::signature_verifier::ToCredentialSummary,
     SignatureVerifier, SignerPayload, ValidationError,
 };
 
-#[derive(Debug)]
 pub(crate) struct NaiveCredentialHolder {}
+
+impl CredentialHolder for NaiveCredentialHolder {
+    fn sig_type(&self) -> &'static str {
+        "INVALID.identity.naive_credential"
+    }
+
+    fn reserve_size(&self) -> usize {
+        1000
+    }
+
+    fn sign(&self, signer_payload: &SignerPayload) -> Result<Vec<u8>, IdentityBuilderError> {
+        // Naive implementation simply serializes SignerPayload
+        // in CBOR format and calls it a "signature."
+        let mut result: Vec<u8> = vec![];
+        ciborium::into_writer(signer_payload, &mut result)?;
+        Ok(result)
+    }
+}
+
+#[derive(Debug)]
+pub(crate) struct NaiveAsyncCredentialHolder {}
 
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
-impl CredentialHolder for NaiveCredentialHolder {
+impl AsyncCredentialHolder for NaiveAsyncCredentialHolder {
     fn sig_type(&self) -> &'static str {
         "INVALID.identity.naive_credential"
     }
@@ -58,7 +80,7 @@ pub(crate) struct NaiveSignatureVerifier {}
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl SignatureVerifier for NaiveSignatureVerifier {
     type Error = ();
-    type Output = ();
+    type Output = NaiveCredential;
 
     async fn check_signature(
         &self,
@@ -72,7 +94,21 @@ impl SignatureVerifier for NaiveSignatureVerifier {
         if signer_payload_cbor != signature {
             Err(ValidationError::InvalidSignature)
         } else {
-            Ok(())
+            Ok(NaiveCredential {})
         }
     }
 }
+
+pub(crate) struct NaiveCredential {}
+
+impl ToCredentialSummary for NaiveCredential {
+    type CredentialSummary = NaiveCredentialSummary;
+
+    fn to_summary(&self) -> Self::CredentialSummary {
+        NaiveCredentialSummary {}
+    }
+}
+
+#[doc(hidden)]
+#[derive(Serialize)]
+pub struct NaiveCredentialSummary {}

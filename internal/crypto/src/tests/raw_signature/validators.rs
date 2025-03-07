@@ -11,9 +11,11 @@
 // specific language governing permissions and limitations under
 // each license.
 
+use std::str::FromStr;
+
 use bcder::Oid;
 use rasn::types::OctetString;
-#[cfg(target_arch = "wasm32")]
+#[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
 use wasm_bindgen_test::wasm_bindgen_test;
 
 use crate::raw_signature::{
@@ -24,7 +26,10 @@ use crate::raw_signature::{
 const SAMPLE_DATA: &[u8] = b"some sample content to sign";
 
 #[test]
-#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+#[cfg_attr(
+    all(target_arch = "wasm32", not(target_os = "wasi")),
+    wasm_bindgen_test
+)]
 fn es256() {
     let signature = include_bytes!("../fixtures/raw_signature/es256.raw_sig");
     let pub_key = include_bytes!("../fixtures/raw_signature/es256.pub_key");
@@ -35,7 +40,10 @@ fn es256() {
 }
 
 #[test]
-#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+#[cfg_attr(
+    all(target_arch = "wasm32", not(target_os = "wasi")),
+    wasm_bindgen_test
+)]
 fn es256_bad_signature() {
     let mut signature = include_bytes!("../fixtures/raw_signature/es256.raw_sig").to_vec();
     assert_ne!(signature[10], 10);
@@ -54,7 +62,10 @@ fn es256_bad_signature() {
 }
 
 #[test]
-#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+#[cfg_attr(
+    all(target_arch = "wasm32", not(target_os = "wasi")),
+    wasm_bindgen_test
+)]
 fn es256_bad_data() {
     let signature = include_bytes!("../fixtures/raw_signature/es256.raw_sig");
     let pub_key = include_bytes!("../fixtures/raw_signature/es256.pub_key");
@@ -71,7 +82,10 @@ fn es256_bad_data() {
 }
 
 #[test]
-#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+#[cfg_attr(
+    all(target_arch = "wasm32", not(target_os = "wasi")),
+    wasm_bindgen_test
+)]
 fn es384() {
     let signature = include_bytes!("../fixtures/raw_signature/es384.raw_sig");
     let pub_key = include_bytes!("../fixtures/raw_signature/es384.pub_key");
@@ -82,8 +96,8 @@ fn es384() {
 }
 
 #[test]
-// #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)] // ES512 not
-// implemented
+// #[cfg_attr(all(target_arch = "wasm32", not(target_os = "wasi")),
+// wasm_bindgen_test)] // ES512 not implemented
 fn es512() {
     let signature = include_bytes!("../fixtures/raw_signature/es512.raw_sig");
     let pub_key = include_bytes!("../fixtures/raw_signature/es512.pub_key");
@@ -94,7 +108,10 @@ fn es512() {
 }
 
 #[test]
-#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+#[cfg_attr(
+    all(target_arch = "wasm32", not(target_os = "wasi")),
+    wasm_bindgen_test
+)]
 fn ed25519() {
     let signature = include_bytes!("../fixtures/raw_signature/ed25519.raw_sig");
     let pub_key = include_bytes!("../fixtures/raw_signature/ed25519.pub_key");
@@ -105,7 +122,10 @@ fn ed25519() {
 }
 
 #[test]
-#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+#[cfg_attr(
+    all(target_arch = "wasm32", not(target_os = "wasi")),
+    wasm_bindgen_test
+)]
 fn ed25519_bad_data() {
     let signature = include_bytes!("../fixtures/raw_signature/ed25519.raw_sig");
     let pub_key = include_bytes!("../fixtures/raw_signature/ed25519.pub_key");
@@ -123,7 +143,10 @@ fn ed25519_bad_data() {
 }
 
 #[test]
-#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+#[cfg_attr(
+    all(target_arch = "wasm32", not(target_os = "wasi")),
+    wasm_bindgen_test
+)]
 fn ps256() {
     let signature = include_bytes!("../fixtures/raw_signature/ps256.raw_sig");
     let pub_key = include_bytes!("../fixtures/raw_signature/ps256.pub_key");
@@ -134,7 +157,10 @@ fn ps256() {
 }
 
 #[test]
-#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+#[cfg_attr(
+    all(target_arch = "wasm32", not(target_os = "wasi")),
+    wasm_bindgen_test
+)]
 fn ps256_bad_signature() {
     let mut signature = include_bytes!("../fixtures/raw_signature/ps256.raw_sig").to_vec();
     assert_ne!(signature[10], 10);
@@ -153,7 +179,10 @@ fn ps256_bad_signature() {
 }
 
 #[test]
-#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+#[cfg_attr(
+    all(target_arch = "wasm32", not(target_os = "wasi")),
+    wasm_bindgen_test
+)]
 fn ps256_bad_data() {
     let signature = include_bytes!("../fixtures/raw_signature/ps256.raw_sig");
     let pub_key = include_bytes!("../fixtures/raw_signature/ps256.pub_key");
@@ -170,7 +199,10 @@ fn ps256_bad_data() {
 }
 
 #[test]
-#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+#[cfg_attr(
+    all(target_arch = "wasm32", not(target_os = "wasi")),
+    wasm_bindgen_test
+)]
 fn ps384() {
     let signature = include_bytes!("../fixtures/raw_signature/ps384.raw_sig");
     let pub_key = include_bytes!("../fixtures/raw_signature/ps384.pub_key");
@@ -181,7 +213,10 @@ fn ps384() {
 }
 
 #[test]
-#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+#[cfg_attr(
+    all(target_arch = "wasm32", not(target_os = "wasi")),
+    wasm_bindgen_test
+)]
 fn ps512() {
     let signature = include_bytes!("../fixtures/raw_signature/ps512.raw_sig");
     let pub_key = include_bytes!("../fixtures/raw_signature/ps512.pub_key");
@@ -203,10 +238,14 @@ const SHA384_OID: Oid = bcder::Oid(OctetString::from_static(&[96, 134, 72, 1, 10
 
 const SHA512_OID: Oid = bcder::Oid(OctetString::from_static(&[96, 134, 72, 1, 101, 3, 4, 2, 3]));
 
+#[cfg_attr(target_arch = "wasm32", allow(unused))]
 const SHA1_OID: Oid = bcder::Oid(OctetString::from_static(&[43, 14, 3, 2, 26]));
 
 #[test]
-#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+#[cfg_attr(
+    all(target_arch = "wasm32", not(target_os = "wasi")),
+    wasm_bindgen_test
+)]
 fn legacy_rs256() {
     let signature = include_bytes!("../fixtures/raw_signature/legacy/rs256.raw_sig");
     let pub_key = include_bytes!("../fixtures/raw_signature/legacy/rs256.pub_key");
@@ -217,7 +256,10 @@ fn legacy_rs256() {
 }
 
 #[test]
-#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+#[cfg_attr(
+    all(target_arch = "wasm32", not(target_os = "wasi")),
+    wasm_bindgen_test
+)]
 fn legacy_rs256_bad_signature() {
     let mut signature = include_bytes!("../fixtures/raw_signature/legacy/rs256.raw_sig").to_vec();
     assert_ne!(signature[10], 10);
@@ -236,7 +278,10 @@ fn legacy_rs256_bad_signature() {
 }
 
 #[test]
-#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+#[cfg_attr(
+    all(target_arch = "wasm32", not(target_os = "wasi")),
+    wasm_bindgen_test
+)]
 fn legacy_rs256_bad_data() {
     let signature = include_bytes!("../fixtures/raw_signature/legacy/rs256.raw_sig");
     let pub_key = include_bytes!("../fixtures/raw_signature/legacy/rs256.pub_key");
@@ -253,7 +298,10 @@ fn legacy_rs256_bad_data() {
 }
 
 #[test]
-#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+#[cfg_attr(
+    all(target_arch = "wasm32", not(target_os = "wasi")),
+    wasm_bindgen_test
+)]
 fn rs384() {
     let signature = include_bytes!("../fixtures/raw_signature/legacy/rs384.raw_sig");
     let pub_key = include_bytes!("../fixtures/raw_signature/legacy/rs384.pub_key");
@@ -264,7 +312,10 @@ fn rs384() {
 }
 
 #[test]
-#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+#[cfg_attr(
+    all(target_arch = "wasm32", not(target_os = "wasi")),
+    wasm_bindgen_test
+)]
 fn rs512() {
     let signature = include_bytes!("../fixtures/raw_signature/legacy/rs512.raw_sig");
     let pub_key = include_bytes!("../fixtures/raw_signature/legacy/rs512.pub_key");
@@ -275,8 +326,9 @@ fn rs512() {
 }
 
 #[test]
-// #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)] // SHA1 not
+// #[cfg_attr(all(target_arch = "wasm32", not(target_os = "wasi")), wasm_bindgen_test)] // SHA1 not
 // implemented
+#[cfg(not(target_arch = "wasm32"))]
 fn sha1() {
     let signature = include_bytes!("../fixtures/raw_signature/legacy/sha1.raw_sig");
     let pub_key = include_bytes!("../fixtures/raw_signature/legacy/sha1.pub_key");
@@ -284,4 +336,47 @@ fn sha1() {
     let validator = validator_for_sig_and_hash_algs(&RSA_OID, &SHA1_OID).unwrap();
 
     validator.validate(signature, SAMPLE_DATA, pub_key).unwrap();
+}
+
+fn ans1_oid_bcder_oid(asn1_oid: &asn1_rs::Oid) -> bcder::Oid {
+    const TEST_FAIL: Oid = bcder::Oid(OctetString::from_static(&[0, 0, 0, 0]));
+
+    let asn1_oid_str = asn1_oid.to_id_string();
+
+    bcder::Oid::from_str(&asn1_oid_str).unwrap_or(TEST_FAIL.to_owned())
+}
+
+#[test]
+#[cfg_attr(
+    all(target_arch = "wasm32", not(target_os = "wasi")),
+    wasm_bindgen_test
+)]
+fn test_get_by_sig_and_alg() {
+    use crate::raw_signature::oids::*;
+
+    let rsa_oid = ans1_oid_bcder_oid(&RSA_OID);
+    let rsa_pss_oid = ans1_oid_bcder_oid(&RSA_PSS_OID);
+    let ec_pubic_key_oid = ans1_oid_bcder_oid(&EC_PUBLICKEY_OID);
+    let ed25519_oid = ans1_oid_bcder_oid(&ED25519_OID);
+    let sha256 = ans1_oid_bcder_oid(&SHA256_OID);
+    let sha384 = ans1_oid_bcder_oid(&SHA384_OID);
+    let sha512 = ans1_oid_bcder_oid(&SHA512_OID);
+
+    assert!(validator_for_sig_and_hash_algs(&rsa_oid, &sha256).is_some());
+    assert!(validator_for_sig_and_hash_algs(&rsa_oid, &sha384).is_some());
+    assert!(validator_for_sig_and_hash_algs(&rsa_oid, &sha512).is_some());
+
+    assert!(validator_for_sig_and_hash_algs(&rsa_pss_oid, &sha256).is_some());
+    assert!(validator_for_sig_and_hash_algs(&rsa_pss_oid, &sha384).is_some());
+    assert!(validator_for_sig_and_hash_algs(&rsa_pss_oid, &sha512).is_some());
+
+    assert!(validator_for_sig_and_hash_algs(&ec_pubic_key_oid, &sha256).is_some());
+    assert!(validator_for_sig_and_hash_algs(&ec_pubic_key_oid, &sha384).is_some());
+    assert!(validator_for_sig_and_hash_algs(&ec_pubic_key_oid, &sha512).is_some());
+
+    assert!(validator_for_sig_and_hash_algs(&ed25519_oid, &sha512).is_some());
+
+    // test negative case
+    const TEST_FAIL: Oid = bcder::Oid(OctetString::from_static(&[0, 0, 0, 0]));
+    assert!(validator_for_sig_and_hash_algs(&TEST_FAIL, &sha512).is_none());
 }

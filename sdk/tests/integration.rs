@@ -15,7 +15,7 @@
 // Isolate from wasm by wrapping in module.
 #[cfg(feature = "file_io")]
 mod integration_1 {
-    use std::path::PathBuf;
+    use std::{io, path::PathBuf};
 
     use c2pa::{
         assertions::{c2pa_action, Action, Actions},
@@ -24,7 +24,8 @@ mod integration_1 {
         Builder, ClaimGeneratorInfo, Ingredient, Reader, Result, Signer,
     };
     use c2pa_crypto::raw_signature::SigningAlg;
-    use tempfile::tempdir;
+    #[allow(unused)] // different code path for WASI
+    use tempfile::{tempdir, TempDir};
 
     //const GENERATOR: &str = "app";
 
@@ -35,12 +36,26 @@ mod integration_1 {
         let _protect = PROTECT.lock().unwrap();
 
         // sign and embed into the target file
+        #[cfg(target_os = "wasi")]
+        let mut signcert_path = PathBuf::from("/");
+        #[cfg(not(target_os = "wasi"))]
         let mut signcert_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         signcert_path.push("tests/fixtures/certs/ps256.pub");
+        #[cfg(target_os = "wasi")]
+        let mut pkey_path = PathBuf::from("/");
+        #[cfg(not(target_os = "wasi"))]
         let mut pkey_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         pkey_path.push("tests/fixtures/certs/ps256.pem");
         create_signer::from_files(signcert_path, pkey_path, SigningAlg::Ps256, None)
             .expect("get_signer_from_files")
+    }
+
+    fn tempdirectory() -> io::Result<TempDir> {
+        #[cfg(target_os = "wasi")]
+        return TempDir::new_in("/");
+
+        #[cfg(not(target_os = "wasi"))]
+        return tempdir();
     }
 
     fn configure_trust(
@@ -92,10 +107,16 @@ mod integration_1 {
     #[cfg(feature = "file_io")]
     fn test_embed_manifest() -> Result<()> {
         // set up parent and destination paths
-        let dir = tempdir()?;
+        let dir = tempdirectory()?;
         let output_path = dir.path().join("test_file.jpg");
+        #[cfg(target_os = "wasi")]
+        let mut parent_path = PathBuf::from("/");
+        #[cfg(not(target_os = "wasi"))]
         let mut parent_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         parent_path.push("tests/fixtures/earth_apollo17.jpg");
+        #[cfg(target_os = "wasi")]
+        let mut ingredient_path = PathBuf::from("/");
+        #[cfg(not(target_os = "wasi"))]
         let mut ingredient_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         ingredient_path.push("tests/fixtures/libpng-test.png");
 
@@ -123,7 +144,7 @@ mod integration_1 {
         parent.set_is_parent();
         // add an action assertion stating that we imported this file
         actions = actions.add_action(
-            Action::new(c2pa_action::EDITED)
+            Action::new(c2pa_action::OPENED)
                 .set_when("2015-06-26T16:43:23+0200")
                 .set_parameter("name".to_owned(), "import")?
                 .set_parameter("identifier".to_owned(), parent.instance_id().to_owned())?,
@@ -174,9 +195,12 @@ mod integration_1 {
     #[cfg(feature = "file_io")]
     fn test_embed_json_manifest() -> Result<()> {
         // set up parent and destination paths
-        let dir = tempdir()?;
+        let dir = tempdirectory()?;
         let output_path = dir.path().join("test_file.jpg");
 
+        #[cfg(target_os = "wasi")]
+        let mut fixture_path = PathBuf::from("/");
+        #[cfg(not(target_os = "wasi"))]
         let mut fixture_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         fixture_path.push("tests/fixtures");
 
@@ -186,9 +210,15 @@ mod integration_1 {
         manifest_path.push("manifest.json");
 
         let json = std::fs::read_to_string(manifest_path)?;
+        //
+        // WASI does not support canonicalize(), the path is canonical to begin with
+        #[cfg(target_os = "wasi")]
+        let base_path = fixture_path;
+        #[cfg(not(target_os = "wasi"))]
+        let base_path = fixture_path.canonicalize()?;
 
         let mut builder = Builder::from_json(&json)?;
-        builder.base_path = Some(fixture_path.canonicalize()?);
+        builder.base_path = Some(base_path);
 
         // sign and embed into the target file
         let signer = get_temp_signer();
@@ -214,9 +244,12 @@ mod integration_1 {
     #[cfg(feature = "file_io")]
     fn test_embed_bmff_manifest() -> Result<()> {
         // set up parent and destination paths
-        let dir = tempdir()?;
+        let dir = tempdirectory()?;
         let output_path = dir.path().join("test_bmff.heic");
 
+        #[cfg(target_os = "wasi")]
+        let mut fixture_path = PathBuf::from("/");
+        #[cfg(not(target_os = "wasi"))]
         let mut fixture_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         fixture_path.push("tests/fixtures");
 
@@ -227,8 +260,14 @@ mod integration_1 {
 
         let json = std::fs::read_to_string(manifest_path)?;
 
+        // WASI does not support canonicalize(), the path is canonical to begin with
+        #[cfg(target_os = "wasi")]
+        let base_path = fixture_path;
+        #[cfg(not(target_os = "wasi"))]
+        let base_path = fixture_path.canonicalize()?;
+
         let mut builder = Builder::from_json(&json)?;
-        builder.base_path = Some(fixture_path.canonicalize()?);
+        builder.base_path = Some(base_path);
 
         // sign and embed into the target file
         let signer = get_temp_signer();
@@ -250,12 +289,15 @@ mod integration_1 {
         Ok(())
     }
 
+    #[cfg(feature = "v1_api")]
     struct PlacedCallback {
         path: String,
     }
 
+    #[cfg(feature = "v1_api")]
     use c2pa::{Error, Manifest, ManifestPatchCallback};
 
+    #[cfg(feature = "v1_api")]
     impl ManifestPatchCallback for PlacedCallback {
         fn patch_manifest(&self, manifest_store: &[u8]) -> Result<Vec<u8>> {
             use ::jumbf::parser::SuperBox;
@@ -294,14 +336,17 @@ mod integration_1 {
         }
     }
     #[test]
-    #[cfg(feature = "file_io")]
+    #[cfg(all(feature = "file_io", feature = "v1_api"))]
     fn test_placed_manifest() -> Result<()> {
         // set up parent and destination paths
 
         use std::io::Seek;
-        let dir = tempdir()?;
+        let dir = tempdirectory()?;
         let output_path = dir.path().join("test_file.jpg");
 
+        #[cfg(target_os = "wasi")]
+        let mut fixture_path = PathBuf::from("/");
+        #[cfg(not(target_os = "wasi"))]
         let mut fixture_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         fixture_path.push("tests/fixtures");
         let mut manifest_path = fixture_path.clone();
@@ -312,7 +357,12 @@ mod integration_1 {
         let json = std::fs::read_to_string(manifest_path)?;
 
         let mut manifest = Manifest::from_json(&json)?;
-        manifest.with_base_path(fixture_path.canonicalize()?)?;
+        // WASI does not support canonicalize(), but the path is canonical to begin with
+        #[cfg(target_os = "wasi")]
+        let base_path = fixture_path;
+        #[cfg(not(target_os = "wasi"))]
+        let base_path = fixture_path.canonicalize()?;
+        manifest.with_base_path(base_path)?;
 
         // sign and embed into the target file
         let signer = get_temp_signer();
@@ -362,14 +412,17 @@ mod integration_1 {
     }
 
     #[test]
-    #[cfg(feature = "file_io")]
+    #[cfg(all(feature = "file_io", feature = "v1_api"))]
     fn test_placed_manifest_bmff() -> Result<()> {
         // set up parent and destination paths
 
         use std::io::Seek;
-        let dir = tempdir()?;
+        let dir = tempdirectory()?;
         let output_path = dir.path().join("video1.mp4");
 
+        #[cfg(target_os = "wasi")]
+        let mut fixture_path = PathBuf::from("/");
+        #[cfg(not(target_os = "wasi"))]
         let mut fixture_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         fixture_path.push("tests/fixtures");
         let mut manifest_path = fixture_path.clone();
@@ -380,7 +433,12 @@ mod integration_1 {
         let json = std::fs::read_to_string(manifest_path)?;
 
         let mut manifest = Manifest::from_json(&json)?;
-        manifest.with_base_path(fixture_path.canonicalize()?)?;
+        // WASI does not support canonicalize(), but the path is canonical to begin with
+        #[cfg(target_os = "wasi")]
+        let base_path = fixture_path;
+        #[cfg(not(target_os = "wasi"))]
+        let base_path = fixture_path.canonicalize()?;
+        manifest.with_base_path(base_path)?;
 
         // sign and embed into the target file
         let signer = get_temp_signer();

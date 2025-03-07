@@ -44,8 +44,7 @@ use crate::StatusTracker;
 ///         file: Cow::Borrowed(file!()),
 ///         function: Cow::Borrowed("test func"),
 ///         line: log.line,
-///         err_val: None,
-///         validation_status: None,
+///         ..Default::default()
 ///     }
 /// );
 /// #
@@ -63,8 +62,7 @@ macro_rules! log_item {
             function: $function.into(),
             line: line!(),
             description: $description.into(),
-            err_val: None,
-            validation_status: None,
+            ..Default::default()
         }
     }};
 }
@@ -103,6 +101,27 @@ pub struct LogItem {
 
     /// C2PA validation status code
     pub validation_status: Option<Cow<'static, str>>,
+
+    /// Ingredient URI (for ingredient-related logs)
+    pub ingredient_uri: Option<Cow<'static, str>>,
+}
+
+impl Default for LogItem {
+    fn default() -> Self {
+        LogItem {
+            kind: LogKind::Success,
+            label: Cow::Borrowed(""),
+            description: Cow::Borrowed(""),
+            crate_name: env!("CARGO_PKG_NAME").into(),
+            crate_version: env!("CARGO_PKG_VERSION").into(),
+            file: Cow::Borrowed(""),
+            function: Cow::Borrowed(""),
+            line: 0,
+            err_val: None,
+            validation_status: None,
+            ingredient_uri: None,
+        }
+    }
 }
 
 impl LogItem {
@@ -126,8 +145,8 @@ impl LogItem {
     ///         file: Cow::Borrowed(file!()),
     ///         function: Cow::Borrowed("test func"),
     ///         line: 7,
-    ///         err_val: None,
     ///         validation_status: Some(Cow::Borrowed("claim.missing")),
+    ///         ..Default::default()
     ///     }
     /// );
     /// ```
@@ -139,16 +158,33 @@ impl LogItem {
         }
     }
 
+    /// Add an ingredient URI.
+    ///
+    /// ## Example
+    ///
+    /// ```
+    /// # use std::borrow::Cow;
+    /// # use c2pa_status_tracker::{log_item, LogKind, LogItem};
+    /// let log = log_item!("test1", "test item 1", "test func")
+    ///     .set_ingredient_uri("self#jumbf=/c2pa/contentauth:urn:uuid:bef41f24-13aa-4040-8efa-08e5e85c4a00/c2pa.assertions/c2pa.ingredient__1");
+    /// ```
+    pub fn set_ingredient_uri<S: Into<String>>(self, uri: S) -> Self {
+        LogItem {
+            ingredient_uri: Some(uri.into().into()),
+            ..self
+        }
+    }
+
     /// Set the log item kind to [`LogKind::Success`] and add it to the
     /// [`StatusTracker`].
-    pub fn success(mut self, tracker: &mut impl StatusTracker) {
+    pub fn success(mut self, tracker: &mut StatusTracker) {
         self.kind = LogKind::Success;
         tracker.add_non_error(self);
     }
 
     /// Set the log item kind to [`LogKind::Informational`] and add it to the
     /// [`StatusTracker`].
-    pub fn informational(mut self, tracker: &mut impl StatusTracker) {
+    pub fn informational(mut self, tracker: &mut StatusTracker) {
         self.kind = LogKind::Informational;
         tracker.add_non_error(self);
     }
@@ -161,10 +197,9 @@ impl LogItem {
     ///
     /// If the implementation is configured to aggregate all log messages, this
     /// function will return `Ok(())`.
-    pub fn failure<E: Debug>(mut self, tracker: &mut impl StatusTracker, err: E) -> Result<(), E> {
+    pub fn failure<E: Debug>(mut self, tracker: &mut StatusTracker, err: E) -> Result<(), E> {
         self.kind = LogKind::Failure;
         self.err_val = Some(format!("{err:?}").into());
-
         tracker.add_error(self, err)
     }
 
@@ -173,7 +208,7 @@ impl LogItem {
     ///
     /// Does not return a [`Result`] and thus ignores the [`StatusTracker`]
     /// error-handling configuration.
-    pub fn failure_no_throw<E: Debug>(mut self, tracker: &mut impl StatusTracker, err: E) {
+    pub fn failure_no_throw<E: Debug>(mut self, tracker: &mut StatusTracker, err: E) {
         self.kind = LogKind::Failure;
         self.err_val = Some(format!("{err:?}").into());
 

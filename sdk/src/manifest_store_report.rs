@@ -12,21 +12,21 @@
 // each license.
 
 use std::collections::HashMap;
-#[cfg(feature = "file_io")]
 #[cfg(feature = "v1_api")]
+#[cfg(feature = "file_io")]
 use std::path::Path;
 
 use atree::{Arena, Token};
 use c2pa_crypto::base64;
 #[cfg(feature = "v1_api")]
-use c2pa_status_tracker::{DetailedStatusTracker, StatusTracker};
+use c2pa_status_tracker::StatusTracker;
 use extfmt::Hexlify;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::{
-    assertion::AssertionData, claim::Claim, store::Store, validation_status::ValidationStatus,
-    Result,
+    assertion::AssertionData, claim::Claim, store::Store, validation_results::ValidationResults,
+    validation_status::ValidationStatus, Result, ValidationState,
 };
 
 /// Low level JSON based representation of Manifest Store - used for debugging
@@ -38,6 +38,8 @@ pub struct ManifestStoreReport {
     manifests: HashMap<String, ManifestReport>,
     #[serde(skip_serializing_if = "Option::is_none")]
     validation_status: Option<Vec<ValidationStatus>>,
+    pub(crate) validation_results: Option<ValidationResults>,
+    pub(crate) validation_state: Option<ValidationState>,
 }
 
 impl ManifestStoreReport {
@@ -52,14 +54,26 @@ impl ManifestStoreReport {
             active_manifest: store.provenance_label(),
             manifests,
             validation_status: None,
+            validation_results: None,
+            validation_state: None,
         })
+    }
+
+    pub(crate) fn from_store_with_results(
+        store: &Store,
+        validation_results: &ValidationResults,
+    ) -> Result<Self> {
+        let mut report = Self::from_store(store)?;
+        report.validation_results = Some(validation_results.clone());
+        report.validation_state = Some(validation_results.validation_state());
+        Ok(report)
     }
 
     /// Prints tree view of manifest store
     #[cfg(feature = "file_io")]
     #[cfg(feature = "v1_api")]
     pub fn dump_tree<P: AsRef<Path>>(path: P) -> Result<()> {
-        let mut validation_log = DetailedStatusTracker::default();
+        let mut validation_log = StatusTracker::default();
         let store = crate::store::Store::load_from_asset(path.as_ref(), true, &mut validation_log)?;
 
         let claim = store.provenance_claim().ok_or(crate::Error::ClaimMissing {
@@ -99,7 +113,7 @@ impl ManifestStoreReport {
     #[cfg(feature = "file_io")]
     #[cfg(feature = "v1_api")]
     pub fn dump_cert_chain<P: AsRef<Path>>(path: P) -> Result<()> {
-        let mut validation_log = DetailedStatusTracker::default();
+        let mut validation_log = StatusTracker::default();
         let store = Store::load_from_asset(path.as_ref(), true, &mut validation_log)?;
 
         let cert_str = store.get_provenance_cert_chain()?;
@@ -116,7 +130,7 @@ impl ManifestStoreReport {
     #[cfg(feature = "file_io")]
     #[cfg(feature = "v1_api")]
     pub fn cert_chain<P: AsRef<Path>>(path: P) -> Result<String> {
-        let mut validation_log = DetailedStatusTracker::default();
+        let mut validation_log = StatusTracker::default();
         let store = Store::load_from_asset(path.as_ref(), true, &mut validation_log)?;
         store.get_provenance_cert_chain()
     }
@@ -124,16 +138,16 @@ impl ManifestStoreReport {
     /// Returns the certificate used to sign the active manifest.
     #[cfg(feature = "v1_api")]
     pub fn cert_chain_from_bytes(format: &str, bytes: &[u8]) -> Result<String> {
-        let mut validation_log = DetailedStatusTracker::default();
+        let mut validation_log = StatusTracker::default();
         let store = Store::load_from_memory(format, bytes, true, &mut validation_log)?;
         store.get_provenance_cert_chain()
     }
 
-    #[cfg(feature = "v1_api")]
     /// Creates a ManifestStoreReport from an existing Store and a validation log
+    #[cfg(feature = "v1_api")]
     pub(crate) fn from_store_with_log(
         store: &Store,
-        validation_log: &impl StatusTracker,
+        validation_log: &StatusTracker,
     ) -> Result<Self> {
         let mut report = Self::from_store(store)?;
 
@@ -144,6 +158,7 @@ impl ManifestStoreReport {
                 statuses.push(
                     ValidationStatus::new(status.to_string())
                         .set_url(item.label.to_string())
+                        .set_kind(item.kind.clone())
                         .set_explanation(item.description.to_string()),
                 );
             }
@@ -157,7 +172,7 @@ impl ManifestStoreReport {
     #[cfg(feature = "v1_api")]
     /// Creates a ManifestStoreReport from image bytes and a format
     pub fn from_bytes(format: &str, image_bytes: &[u8]) -> Result<Self> {
-        let mut validation_log = DetailedStatusTracker::default();
+        let mut validation_log = StatusTracker::default();
         let store = Store::load_from_memory(format, image_bytes, true, &mut validation_log)?;
         Self::from_store_with_log(&store, &validation_log)
     }
@@ -166,17 +181,18 @@ impl ManifestStoreReport {
     /// Creates a ManifestStoreReport from a file
     #[cfg(feature = "file_io")]
     pub fn from_file<P: AsRef<Path>>(path: P) -> Result<Self> {
-        let mut validation_log = DetailedStatusTracker::default();
+        let mut validation_log = StatusTracker::default();
         let store = Store::load_from_asset(path.as_ref(), true, &mut validation_log)?;
         Self::from_store_with_log(&store, &validation_log)
     }
 
     #[cfg(feature = "file_io")]
+    #[cfg(feature = "v1_api")]
     pub fn from_fragments<P: AsRef<Path>>(
         path: P,
         fragments: &Vec<std::path::PathBuf>,
     ) -> Result<Self> {
-        let mut validation_log = DetailedStatusTracker::default();
+        let mut validation_log = StatusTracker::default();
         let asset_type = crate::jumbf_io::get_supported_file_extension(path.as_ref())
             .ok_or(crate::Error::UnsupportedType)?;
 
@@ -229,13 +245,20 @@ impl ManifestStoreReport {
             // is this an ingredient
             if let Some(ref c2pa_manifest) = &ingredient_assertion.c2pa_manifest {
                 let label = Store::manifest_label_from_path(&c2pa_manifest.url());
+
                 if let Some(hash) = c2pa_manifest.hash().get(0..5) {
                     if let Some(ingredient_claim) = store.get_claim(&label) {
                         // create new node
-                        let data = if name_only {
-                            format!("{}_{}", ingredient_assertion.title, Hexlify(hash))
+                        let title = if let Some(title) = &ingredient_assertion.title {
+                            title.to_owned()
                         } else {
-                            format!("Asset:{}, Manifest:{}", ingredient_assertion.title, label)
+                            "No title".into()
+                        };
+
+                        let data = if name_only {
+                            format!("{}_{}", title, Hexlify(hash))
+                        } else {
+                            format!("Asset:{}, Manifest:{}", title, label)
                         };
 
                         let new_token = current_token.append(tree, data);
@@ -254,9 +277,13 @@ impl ManifestStoreReport {
                     ));
                 }
             } else {
-                let asset_name = &ingredient_assertion.title;
+                let asset_name = if let Some(title) = &ingredient_assertion.title {
+                    title.to_owned()
+                } else {
+                    "No title".into()
+                };
                 let data = if name_only {
-                    asset_name.to_string()
+                    asset_name
                 } else {
                     format!("Asset:{asset_name}")
                 };
@@ -403,7 +430,7 @@ fn b64_tag(mut json: String, tag: &str) -> String {
         if let Some(idx2) = json[index..].find(']') {
             let idx3 = json[index..].find('[').unwrap_or_default(); // ok since we just found it
             let bytes: Vec<u8> =
-                serde_json::from_slice(json[index + idx3..index + idx2 + 1].as_bytes())
+                serde_json::from_slice(&json.as_bytes()[index + idx3..index + idx2 + 1])
                     .unwrap_or_default();
             json = format!(
                 "{}\"{}\": \"{}\"{}",
@@ -425,9 +452,11 @@ mod tests {
     #[cfg(feature = "v1_api")]
     use std::fs;
 
+    #[cfg(feature = "v1_api")]
     use crate::{manifest_store_report::ManifestStoreReport, utils::test::fixture_path};
 
     #[test]
+    #[cfg(feature = "v1_api")]
     fn manifest_store_report() {
         let path = fixture_path("CIE-sig-CA.jpg");
         let report = ManifestStoreReport::from_file(path).expect("load_from_asset");

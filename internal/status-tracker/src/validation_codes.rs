@@ -17,6 +17,8 @@
 //!
 //! [§15.2.1, “Standard Status Codes.”]: https://c2pa.org/specifications/specifications/2.1/specs/C2PA_Specification.html#_standard_status_codes
 
+use crate::log::LogKind;
+
 // -- success codes --
 
 /// The claim signature referenced in the ingredient's claim validated.
@@ -24,10 +26,20 @@
 /// Any corresponding URL should point to a C2PA claim signature box.
 pub const CLAIM_SIGNATURE_VALIDATED: &str = "claimSignature.validated";
 
+/// The claims signing certificate was valid at the time of signing.
+///
+/// Any corresponding URL should point to a C2PA claim box.
+pub const CLAIM_SIGNATURE_INSIDE_VALIDITY: &str = "claimSignature.insideValidity";
+
 /// The signing credential is listed on the validator's trust list.
 ///
 /// Any corresponding URL should point to a C2PA claim signature box.
 pub const SIGNING_CREDENTIAL_TRUSTED: &str = "signingCredential.trusted";
+
+/// The signing credential for the manifest has not been revoked:
+///
+/// Any corresponding URL should point to a C2PA claim
+pub const SIGNING_CREDENTIAL_NOT_REVOKED: &str = "signingCredential.ocsp.notRevoked";
 
 /// The time-stamp credential is listed on the validator's trust list.
 ///
@@ -80,6 +92,11 @@ pub const CLAIM_MULTIPLE: &str = "claim.multiple";
 ///
 /// Any corresponding URL should point to a C2PA claim box.
 pub const HARD_BINDINGS_MISSING: &str = "claim.hardBindings.missing";
+
+// Multiple hard bindings are present in the claim.
+///
+/// Any corresponding URL should point to a C2PA assertion.
+pub const HARD_BINDINGS_MULTIPLE: &str = "assertion.multipleHardBindings";
 
 /// A required field is not present in the claim.
 ///
@@ -297,15 +314,24 @@ pub const GENERAL_ERROR: &str = "general.error";
 /// assert!(!is_success(SIGNING_CREDENTIAL_REVOKED));
 /// ```
 pub fn is_success(status_code: &str) -> bool {
-    matches!(
-        status_code,
+    matches!(log_kind(status_code), LogKind::Success)
+}
+
+/// Returns the [`LogKind`] for a given status code.
+// TODO: This needs to be expanded to include all status codes.
+pub fn log_kind(status_code: &str) -> LogKind {
+    match status_code {
         CLAIM_SIGNATURE_VALIDATED
-            | SIGNING_CREDENTIAL_TRUSTED
-            | TIMESTAMP_TRUSTED
-            | ASSERTION_HASHEDURI_MATCH
-            | ASSERTION_DATAHASH_MATCH
-            | ASSERTION_BMFFHASH_MATCH
-            | ASSERTION_ACCESSIBLE
-            | ASSERTION_BOXHASH_MATCH
-    )
+        | SIGNING_CREDENTIAL_TRUSTED
+        | TIMESTAMP_TRUSTED
+        | ASSERTION_HASHEDURI_MATCH
+        | ASSERTION_DATAHASH_MATCH
+        | ASSERTION_BMFFHASH_MATCH
+        | ASSERTION_ACCESSIBLE
+        | ASSERTION_BOXHASH_MATCH => LogKind::Success,
+        TIMESTAMP_UNTRUSTED | TIMESTAMP_OUTSIDE_VALIDITY | TIMESTAMP_MISMATCH => {
+            LogKind::Informational
+        }
+        _ => LogKind::Failure,
+    }
 }
