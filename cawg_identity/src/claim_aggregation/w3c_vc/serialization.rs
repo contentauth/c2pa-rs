@@ -57,8 +57,6 @@ pub(crate) mod one_or_many {
         where
             M: de::MapAccess<'de>,
         {
-            eprintln!("Yo!");
-
             let one = Deserialize::deserialize(de::value::MapAccessDeserializer::new(map))?;
 
             Ok(nev!(one))

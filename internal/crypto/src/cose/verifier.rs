@@ -68,7 +68,7 @@ impl Verifier<'_> {
         cose_sign1: &[u8],
         data: &[u8],
         additional_data: &[u8],
-        validation_log: &mut impl StatusTracker,
+        validation_log: &mut StatusTracker,
     ) -> Result<CertificateInfo, CoseError> {
         let mut sign1 = parse_cose_sign1(cose_sign1, data, validation_log)?;
 
@@ -184,7 +184,7 @@ impl Verifier<'_> {
         &self,
         sign1: &CoseSign1,
         tst_info_res: &Result<TstInfo, CoseError>,
-        validation_log: &mut impl StatusTracker,
+        validation_log: &mut StatusTracker,
     ) -> Result<(), CoseError> {
         let ctp = match self {
             Self::VerifyTrustPolicy(ctp) => *ctp,
@@ -254,7 +254,7 @@ impl Verifier<'_> {
         &self,
         sign1: &CoseSign1,
         tst_info_res: &Result<TstInfo, CoseError>,
-        validation_log: &mut impl StatusTracker,
+        validation_log: &mut StatusTracker,
     ) -> Result<(), CoseError> {
         // IMPORTANT: This function assumes that verify_profile has already been called.
 

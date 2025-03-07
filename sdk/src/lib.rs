@@ -92,7 +92,6 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 // Public modules
 pub mod assertions;
 pub mod cose_sign;
-#[cfg(feature = "openssl_sign")]
 pub mod create_signer;
 pub mod jumbf_io;
 pub mod settings;
@@ -107,7 +106,9 @@ pub use builder::{Builder, ManifestDefinition};
 pub use c2pa_crypto::raw_signature::SigningAlg;
 pub use callback_signer::{CallbackFunc, CallbackSigner};
 pub use claim_generator_info::ClaimGeneratorInfo;
-pub use dynamic_assertion::{AsyncDynamicAssertion, DynamicAssertion, PreliminaryClaim};
+pub use dynamic_assertion::{
+    AsyncDynamicAssertion, DynamicAssertion, DynamicAssertionContent, PreliminaryClaim,
+};
 pub use error::{Error, Result};
 pub use external_manifest::ManifestPatchCallback;
 pub use hash_utils::{hash_stream_by_alg, HashRange};
@@ -119,6 +120,7 @@ pub use manifest::{Manifest, SignatureInfo};
 pub use manifest_assertion::{ManifestAssertion, ManifestAssertionKind};
 #[cfg(feature = "v1_api")]
 pub use manifest_store::ManifestStore;
+#[cfg(feature = "v1_api")]
 pub use manifest_store_report::ManifestStoreReport;
 pub use reader::Reader;
 pub use resource_store::{ResourceRef, ResourceStore};
@@ -146,6 +148,7 @@ pub(crate) mod jumbf;
 
 pub(crate) mod manifest;
 pub(crate) mod manifest_assertion;
+#[cfg(feature = "v1_api")]
 pub(crate) mod manifest_store;
 pub(crate) mod manifest_store_report;
 #[allow(dead_code)]

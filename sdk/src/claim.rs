@@ -13,7 +13,7 @@
 
 #[cfg(feature = "file_io")]
 use std::path::Path;
-use std::{collections::HashMap, fmt};
+use std::{borrow::Cow, collections::HashMap, fmt};
 
 use async_generic::async_generic;
 use c2pa_crypto::{
@@ -21,7 +21,7 @@ use c2pa_crypto::{
     cose::{parse_cose_sign1, CertificateInfo, CertificateTrustPolicy, OcspFetchPolicy},
     ocsp::OcspResponse,
 };
-use c2pa_status_tracker::{log_item, OneShotStatusTracker, StatusTracker};
+use c2pa_status_tracker::{log_item, ErrorBehavior, StatusTracker};
 use chrono::{DateTime, Utc};
 use serde::{ser::SerializeStruct, Deserialize, Serialize, Serializer};
 use serde_json::{json, Map, Value};
@@ -81,6 +81,7 @@ static _V2_SPEC_DEPRECATED_ASSERTIONS: [&str; 4] = [
 // Enum to encapsulate the data type of the source asset.  This simplifies
 // having different implementations for functions as a single entry point can be
 // used to handle different data types.
+#[allow(dead_code)] // Bytes and third param in StreamFragment not used without v1_api feature
 pub enum ClaimAssetData<'a> {
     #[cfg(feature = "file_io")]
     Path(&'a Path),
@@ -206,6 +207,7 @@ impl fmt::Debug for ClaimAssertion {
 // Claim field names
 const CLAIM_GENERATOR_F: &str = "claim_generator";
 const CLAIM_GENERATOR_INFO_F: &str = "claim_generator_info";
+const CLAIM_GENERATOR_HINTS_F: &str = "claim_generator_hints";
 const SIGNATURE_F: &str = "signature";
 const ASSERTIONS_F: &str = "assertions";
 const DC_FORMAT_F: &str = "dc:format";
@@ -495,6 +497,7 @@ impl Claim {
         if claim_version == 1 {
             /* Claim V1 fields
             "claim_generator": tstr,
+            "claim_generator_hints",
             "claim_generator_info": [1* generator-info-map],
             "signature": jumbf-uri-type,
             "assertions": [1* $hashed-uri-map],
@@ -507,8 +510,9 @@ impl Claim {
             ? "metadata": $assertion-metadata-map,
             */
 
-            static V1_FIELDS: [&str; 11] = [
+            static V1_FIELDS: [&str; 12] = [
                 CLAIM_GENERATOR_F,
+                CLAIM_GENERATOR_HINTS_F,
                 CLAIM_GENERATOR_INFO_F,
                 SIGNATURE_F,
                 ASSERTIONS_F,
@@ -535,9 +539,6 @@ impl Claim {
 
             let claim_generator: String =
                 map_cbor_to_type(CLAIM_GENERATOR_F, &claim_value).ok_or(Error::ClaimDecoding)?;
-            let claim_generator_info: Vec<ClaimGeneratorInfo> =
-                map_cbor_to_type(CLAIM_GENERATOR_INFO_F, &claim_value).unwrap_or_default();
-
             let signature: String =
                 map_cbor_to_type(SIGNATURE_F, &claim_value).ok_or(Error::ClaimDecoding)?;
             let assertions: Vec<HashedUri> =
@@ -548,6 +549,10 @@ impl Claim {
                 map_cbor_to_type(INSTANCE_ID_F, &claim_value).ok_or(Error::ClaimDecoding)?;
 
             // optional V1 fields
+            let claim_generator_info: Option<Vec<ClaimGeneratorInfo>> =
+                map_cbor_to_type(CLAIM_GENERATOR_INFO_F, &claim_value);
+            let claim_generator_hints: Option<HashMap<String, Value>> =
+                map_cbor_to_type(CLAIM_GENERATOR_HINTS_F, &claim_value);
             let title: Option<String> = map_cbor_to_type(DC_TITLE_F, &claim_value);
             let redacted_assertions: Option<Vec<String>> =
                 map_cbor_to_type(REDACTED_ASSERTIONS_F, &claim_value);
@@ -568,7 +573,7 @@ impl Claim {
                 assertion_store: Vec::new(),
                 vc_store: Vec::new(),
                 claim_generator: Some(claim_generator),
-                claim_generator_info: Some(claim_generator_info),
+                claim_generator_info,
                 signature,
                 assertions,
                 original_bytes: Some(data.to_owned()),
@@ -576,7 +581,7 @@ impl Claim {
                 redacted_assertions,
                 alg,
                 alg_soft,
-                claim_generator_hints: None,
+                claim_generator_hints,
                 metadata,
                 data_boxes: Vec::new(),
                 claim_version,
@@ -1683,7 +1688,8 @@ impl Claim {
     pub fn signature_info(&self) -> Option<CertificateInfo> {
         let sig = self.signature_val();
         let data = self.data().ok()?;
-        let mut validation_log = OneShotStatusTracker::default();
+        let mut validation_log =
+            StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
 
         if _sync {
             Some(get_signing_info(sig, &data, &mut validation_log))
@@ -1701,7 +1707,7 @@ impl Claim {
         is_provenance: bool,
         cert_check: bool,
         ctp: &CertificateTrustPolicy,
-        validation_log: &mut impl StatusTracker,
+        validation_log: &mut StatusTracker,
     ) -> Result<()> {
         // Parse COSE signed data (signature) and validate it.
         let sig = claim.signature_val().clone();
@@ -1728,8 +1734,45 @@ impl Claim {
         }
 
         // check certificate revocation
-        let sign1 = parse_cose_sign1(&sig, &data, validation_log)?;
-        check_ocsp_status_async(&sign1, &data, ctp, validation_log).await?;
+        let sign1 = parse_cose_sign1(&sig, &data, validation_log).inspect_err(|_e| {
+            // adjust the error info
+            if let Some(li) = validation_log.logged_items_mut().last_mut() {
+                let mut new_li = li.clone();
+                new_li.label = Cow::from(claim.uri());
+                *li = new_li;
+            }
+        })?;
+        check_ocsp_status(&sign1, &data, ctp, validation_log)
+            .map(|v| {
+                // if a value contains the der response it has successfully returned a good OCSP response
+                if !v.ocsp_der.is_empty() {
+                    // so log the success status
+                    if v.revoked_at.is_none() {
+                        log_item!(
+                            claim.uri(),
+                            "claim signature OCSP value good",
+                            "verify_internal"
+                        )
+                        .validation_status(validation_status::SIGNING_CREDENTIAL_NOT_REVOKED)
+                        .success(validation_log);
+                    } else {
+                        // adjust the error info
+                        if let Some(li) = validation_log.logged_items_mut().last_mut() {
+                            let mut new_li = li.clone();
+                            new_li.label = Cow::from(claim.uri());
+                            *li = new_li;
+                        }
+                    }
+                }
+            })
+            .inspect_err(|_e| {
+                // adjust the error info
+                if let Some(li) = validation_log.logged_items_mut().last_mut() {
+                    let mut new_li = li.clone();
+                    new_li.label = Cow::from(claim.uri());
+                    *li = new_li;
+                }
+            })?;
 
         let verified = verify_cose_async(
             &sig,
@@ -1753,7 +1796,7 @@ impl Claim {
         is_provenance: bool,
         cert_check: bool,
         ctp: &CertificateTrustPolicy,
-        validation_log: &mut impl StatusTracker,
+        validation_log: &mut StatusTracker,
     ) -> Result<()> {
         // Parse COSE signed data (signature) and validate it.
         let sig = claim.signature_val();
@@ -1781,8 +1824,45 @@ impl Claim {
         };
 
         // check certificate revocation
-        let sign1 = parse_cose_sign1(sig, data, validation_log)?;
-        check_ocsp_status(&sign1, data, ctp, validation_log)?;
+        let sign1 = parse_cose_sign1(sig, data, validation_log).inspect_err(|_e| {
+            // adjust the error info
+            if let Some(li) = validation_log.logged_items_mut().last_mut() {
+                let mut new_li = li.clone();
+                new_li.label = Cow::from(claim.uri());
+                *li = new_li;
+            }
+        })?;
+        check_ocsp_status(&sign1, data, ctp, validation_log)
+            .map(|v| {
+                // if a value contains the der response it has successfully returned a good OCSP response
+                if !v.ocsp_der.is_empty() {
+                    // so log the success status
+                    if v.revoked_at.is_none() {
+                        log_item!(
+                            claim.uri(),
+                            "claim signature OCSP value good",
+                            "verify_internal"
+                        )
+                        .validation_status(validation_status::SIGNING_CREDENTIAL_NOT_REVOKED)
+                        .success(validation_log);
+                    } else {
+                        // adjust the error info
+                        if let Some(li) = validation_log.logged_items_mut().last_mut() {
+                            let mut new_li = li.clone();
+                            new_li.label = Cow::from(claim.uri());
+                            *li = new_li;
+                        }
+                    }
+                }
+            })
+            .inspect_err(|_e| {
+                // adjust the error info
+                if let Some(li) = validation_log.logged_items_mut().last_mut() {
+                    let mut new_li = li.clone();
+                    new_li.label = Cow::from(claim.uri());
+                    *li = new_li;
+                }
+            })?;
 
         let verified = verify_cose(
             sig,
@@ -1794,13 +1874,22 @@ impl Claim {
         );
 
         Claim::verify_internal(claim, asset_data, is_provenance, verified, validation_log)
+            .inspect_err(|_e| {
+                // adjust the error info
+                if let Some(li) = validation_log.logged_items_mut().last_mut() {
+                    let mut new_li = li.clone();
+                    new_li.label = Cow::from(claim.uri());
+                    *li = new_li;
+                }
+            })
     }
 
     /// Get the signing certificate chain as PEM bytes
     pub fn get_cert_chain(&self) -> Result<Vec<u8>> {
         let sig = self.signature_val();
         let data = self.data()?;
-        let mut validation_log = OneShotStatusTracker::default();
+        let mut validation_log =
+            StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
 
         let vi = get_signing_info(sig, &data, &mut validation_log);
 
@@ -1812,7 +1901,7 @@ impl Claim {
         asset_data: &mut ClaimAssetData<'_>,
         is_provenance: bool,
         verified: Result<CertificateInfo>,
-        validation_log: &mut impl StatusTracker,
+        validation_log: &mut StatusTracker,
     ) -> Result<()> {
         const UNNAMED: &str = "unnamed";
         let default_str = |s: &String| s.clone();
@@ -1828,6 +1917,28 @@ impl Claim {
                     .validation_status(validation_status::CLAIM_SIGNATURE_MISMATCH)
                     .failure(validation_log, Error::CoseSignature)?;
                 } else {
+                    // update the log_item details
+                    if let Some(li) = validation_log.logged_items_mut().last_mut() {
+                        let mut new_li = li.clone();
+                        new_li.label = Cow::from(claim.uri());
+                        new_li.description = Cow::Borrowed("claim signature valid");
+
+                        if !is_provenance {
+                            new_li = new_li.set_ingredient_uri(claim.uri());
+                        }
+
+                        *li = new_li;
+                    }
+                    // signing cert has not expired
+                    log_item!(
+                        claim.signature_uri(),
+                        "claim signature valid",
+                        "verify_internal"
+                    )
+                    .validation_status(validation_status::CLAIM_SIGNATURE_INSIDE_VALIDITY)
+                    .success(validation_log);
+
+                    // add signature validated status
                     log_item!(
                         claim.signature_uri(),
                         "claim signature valid",
@@ -1837,14 +1948,17 @@ impl Claim {
                     .success(validation_log);
                 }
             }
-            Err(parse_err) => {
-                log_item!(
-                    claim.signature_uri(),
-                    "claim signature is not valid",
-                    "verify_internal"
-                )
-                .validation_status(validation_status::GENERAL_ERROR)
-                .failure(validation_log, parse_err)?;
+            Err(_parse_err) => {
+                // the lower level errors are logged validation_log
+                // continue on to catch other failures.
+
+                // adjust the error info
+                if let Some(li) = validation_log.logged_items_mut().last_mut() {
+                    let mut new_li = li.clone();
+                    new_li.label = Cow::from(claim.uri());
+
+                    *li = new_li;
+                }
             }
         };
 
@@ -2704,7 +2818,7 @@ pub(crate) fn check_ocsp_status(
     sign1: &coset::CoseSign1,
     data: &[u8],
     ctp: &CertificateTrustPolicy,
-    validation_log: &mut impl StatusTracker,
+    validation_log: &mut StatusTracker,
 ) -> Result<OcspResponse> {
     // Moved here instead of c2pa-crypto because of the dependency on settings.
 
@@ -2733,7 +2847,6 @@ pub(crate) fn check_ocsp_status(
     }
 }
 
-#[cfg(feature = "openssl")]
 #[cfg(test)]
 pub mod tests {
     #![allow(clippy::expect_used)]

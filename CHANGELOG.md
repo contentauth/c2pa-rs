@@ -6,6 +6,42 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 Since version 0.36.2, the format of this changelog is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.46.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.45.3...c2pa-v0.46.0)
+_15 February 2025_
+
+### Added
+
+* Add support for DynamicAssertions in JSON format (#924)
+
+### Fixed
+
+* Panic in decoding of GIF chunks (#873)
+* Use correct byte label for GIF Plain Text Extension (#864)
+* Panic in slicing of empty XMP data (#872)
+
+### Other
+
+* Use `AsRef<Path>` in `jumbf_io` functions (#910)
+
+## [0.45.3](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.45.2...c2pa-v0.45.3)
+_11 February 2025_
+
+### Fixed
+
+* Restore support for claim_generator_hints (#915)
+
+## [0.45.2](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.45.1...c2pa-v0.45.2)
+_06 February 2025_
+
+### Documented
+
+* Fix reported errors for docs (#903)
+
+### Fixed
+
+* Update error reporting (#906)
+* Repair cargo test (#898)
+
 ## [0.45.1](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.45.0...c2pa-v0.45.1)
 _31 January 2025_
 

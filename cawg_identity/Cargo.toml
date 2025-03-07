@@ -1,6 +1,6 @@
 [package]
 name = "cawg-identity"
-version = "0.6.0"
+version = "0.9.0"
 description = "Rust SDK for CAWG (Creator Assertions Working Group) identity assertion"
 authors = [
     "Eric Scouten <scouten@adobe.com>",
@@ -24,12 +24,15 @@ unexpected_cfgs = { level = "warn", check-cfg = ['cfg(test)'] }
 all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
+[features]
+v1_api = ["c2pa/v1_api", "c2pa/file_io"]
+
 [dependencies]
 async-trait = "0.1.78"
 base64 = "0.22.1"
-c2pa = { path = "../sdk", version = "0.45.1", features = ["openssl"] }
-c2pa-crypto = { path = "../internal/crypto", version = "0.6.1" }
-c2pa-status-tracker = { path = "../internal/status-tracker", version = "0.4.0" }
+c2pa = { path = "../sdk", version = "0.46.0" }
+c2pa-crypto = { path = "../internal/crypto", version = "0.6.2" }
+c2pa-status-tracker = { path = "../internal/status-tracker", version = "0.5.0" }
 chrono = { version = "0.4.38", features = ["serde"] }
 ciborium = "0.2.2"
 coset = "0.3.8"
@@ -41,7 +44,6 @@ non-empty-string = { version = "=0.2.4", features = ["serde"] }
 nonempty-collections = { version = "0.2.9", features = ["serde"] }
 rand = "0.8.5"
 regex = "1.11"
-reqwest = { version = "0.12.8", default-features = false, features = ["rustls-tls"] }
 serde = { version = "1.0.197", features = ["derive"] }
 serde_bytes = "0.11.14"
 serde_json = "1.0.117"
@@ -49,7 +51,13 @@ static-iref = "3.0"
 thiserror = "1.0.61"
 zeroize = { version = "1.8", features = ["zeroize_derive"] }
 
-[target.'cfg(target_arch = "wasm32")'.dependencies]
+[target.'cfg(target_os = "wasi")'.dependencies]
+wstd = "0.5"
+
+[target.'cfg(not(target_os = "wasi"))'.dependencies]
+reqwest = { version = "0.12.8", default-features = false, features = ["rustls-tls"] }
+
+[target.'cfg(all(target_arch = "wasm32", not(target_os = "wasi")))'.dependencies]
 wasm-bindgen = "0.2.95"
 
 [dev-dependencies]
@@ -59,5 +67,5 @@ serde = { version = "1.0.197", features = ["derive"] }
 httpmock = "0.7.0"
 tokio = { version = "1.42", features = ["macros", "rt"] }
 
-[target.'cfg(target_arch = "wasm32")'.dev-dependencies]
+[target.'cfg(all(target_arch = "wasm32", not(target_os = "wasi")))'.dev-dependencies]
 wasm-bindgen-test = "0.3.31"

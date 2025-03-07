@@ -160,7 +160,6 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-// #[cfg(feature = "openssl")]
 // use openssl::{error::ErrorStack, pkey::PKey};
 // #[cfg(feature = "openssl")]
 // fn ed_sign(data: &[u8], pkey: &[u8]) -> std::result::Result<Vec<u8>, ErrorStack> {
@@ -171,14 +170,14 @@ fn main() -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    #[cfg(target_arch = "wasm32")]
+    #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
     use wasm_bindgen_test::*;
 
     use super::*;
 
     #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
     #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
-    #[cfg_attr(not(any(target_arch = "wasm32", feature = "openssl")), ignore)]
+    #[cfg_attr(target_os = "wasi", wstd::test)]
     async fn test_v2_api() -> Result<()> {
         main()
     }

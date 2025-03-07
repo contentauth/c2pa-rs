@@ -21,7 +21,6 @@ use byteorder::{BigEndian, ReadBytesExt};
 use conv::ValueFrom;
 use png_pong::chunk::InternationalText;
 use serde_bytes::ByteBuf;
-use tempfile::Builder;
 
 use crate::{
     assertions::{BoxMap, C2PA_BOXHASH},
@@ -32,7 +31,7 @@ use crate::{
     },
     error::{Error, Result},
     utils::{
-        io_utils::ReaderUtils,
+        io_utils::{tempfile_builder, ReaderUtils},
         xmp_inmemory_utils::{add_provenance, MIN_XMP},
     },
 };
@@ -479,10 +478,7 @@ impl AssetIO for PngIO {
             .open(asset_path)
             .map_err(Error::IoError)?;
 
-        let mut temp_file = Builder::new()
-            .prefix("c2pa_temp")
-            .rand_bytes(5)
-            .tempfile()?;
+        let mut temp_file = tempfile_builder("c2pa_temp")?;
 
         self.write_cai(&mut stream, &mut temp_file, store_bytes)?;
 
@@ -793,7 +789,10 @@ pub mod tests {
     use memchr::memmem;
 
     use super::*;
-    use crate::utils::test::{self, temp_dir_path};
+    use crate::utils::{
+        io_utils::tempdirectory,
+        test::{self, temp_dir_path},
+    };
 
     #[test]
     fn test_png_xmp() {
@@ -815,7 +814,7 @@ pub mod tests {
         let ap = test::fixture_path("libpng-test.png");
         let mut source_stream = std::fs::File::open(ap).unwrap();
 
-        let temp_dir = tempfile::tempdir().unwrap();
+        let temp_dir = tempdirectory().unwrap();
         let output = temp_dir_path(&temp_dir, "out.png");
         let mut output_stream = std::fs::OpenOptions::new()
             .read(true)
@@ -981,7 +980,7 @@ pub mod tests {
     #[test]
     fn test_remove_c2pa() {
         let source = test::fixture_path("exp-test1.png");
-        let temp_dir = tempfile::tempdir().unwrap();
+        let temp_dir = tempdirectory().unwrap();
         let output = test::temp_dir_path(&temp_dir, "exp-test1_tmp.png");
         std::fs::copy(source, &output).unwrap();
 
@@ -1034,7 +1033,7 @@ pub mod tests {
             .unwrap();
         let curr_manifest = png_io.read_cai_store(&source).unwrap();
 
-        let temp_dir = tempfile::tempdir().unwrap();
+        let temp_dir = tempdirectory().unwrap();
         let output = crate::utils::test::temp_dir_path(&temp_dir, "exp-test1-out.png");
 
         std::fs::copy(source, &output).unwrap();

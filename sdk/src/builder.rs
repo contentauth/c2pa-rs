@@ -1112,20 +1112,20 @@ mod tests {
 
     use c2pa_crypto::raw_signature::SigningAlg;
     use serde_json::json;
-    #[cfg(target_arch = "wasm32")]
+    #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
     use wasm_bindgen_test::*;
 
     use super::*;
-    #[cfg(any(feature = "openssl_sign", target_arch = "wasm32"))]
-    use crate::{assertions::BoxHash, asset_handlers::jpeg_io::JpegIO};
     use crate::{
+        assertions::BoxHash,
+        asset_handlers::jpeg_io::JpegIO,
         hash_stream_by_alg,
         utils::{test::write_jpeg_placeholder_stream, test_signer::test_signer},
         validation_results::ValidationState,
         Reader,
     };
 
-    #[cfg(target_arch = "wasm32")]
+    #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
     wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
 
     fn parent_json() -> String {
@@ -1190,7 +1190,7 @@ mod tests {
         .to_string()
     }
 
-    #[cfg(all(feature = "openssl_sign", not(target_arch = "wasm32")))]
+    #[cfg(feature = "file_io")]
     const TEST_IMAGE_CLEAN: &[u8] = include_bytes!("../tests/fixtures/IMG_0003.jpg");
     const TEST_IMAGE: &[u8] = include_bytes!("../tests/fixtures/CA.jpg");
     const TEST_THUMBNAIL: &[u8] = include_bytes!("../tests/fixtures/thumbnail.jpg");
@@ -1290,7 +1290,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(not(any(target_arch = "wasm32", feature = "openssl_sign")), ignore)]
     fn test_builder_sign() {
         #[derive(Serialize, Deserialize)]
         struct TestAssertion {
@@ -1329,6 +1328,7 @@ mod tests {
         builder.to_archive(&mut zipped).unwrap();
 
         // write the zipped stream to a file for debugging
+        #[cfg(not(target_os = "wasi"))] // target directory is outside of sandbox
         std::fs::write("../target/test.zip", zipped.get_ref()).unwrap();
 
         // unzip the manifest builder from the zipped stream
@@ -1357,8 +1357,10 @@ mod tests {
     #[test]
     #[cfg(feature = "file_io")]
     fn test_builder_sign_file() {
+        use crate::utils::io_utils::tempdirectory;
+
         let source = "tests/fixtures/CA.jpg";
-        let dir = tempfile::tempdir().unwrap();
+        let dir = tempdirectory().unwrap();
         let dest = dir.path().join("test_file.jpg");
 
         let mut builder = Builder::from_json(&manifest_json()).unwrap();
@@ -1452,8 +1454,11 @@ mod tests {
     }
 
     #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
-    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
-    #[cfg_attr(not(any(target_arch = "wasm32", feature = "openssl_sign")), ignore)]
+    #[cfg_attr(
+        all(target_arch = "wasm32", not(target_os = "wasi")),
+        wasm_bindgen_test
+    )]
+    #[cfg_attr(target_os = "wasi", wstd::test)]
     async fn test_builder_remote_sign() {
         let format = "image/jpeg";
         let mut source = Cursor::new(TEST_IMAGE);
@@ -1469,7 +1474,7 @@ mod tests {
             .add("thumbnail.jpg", TEST_THUMBNAIL.to_vec())
             .unwrap();
 
-        // sign the ManifestStoreBuilder and write it to the output stream
+        // sign the Builder and write it to the output stream
         let signer = crate::utils::test::temp_async_remote_signer();
         builder
             .sign_async(signer.as_ref(), format, &mut source, &mut dest)
@@ -1480,8 +1485,6 @@ mod tests {
         dest.rewind().unwrap();
         let manifest_store = Reader::from_stream(format, &mut dest).expect("from_bytes");
 
-        //println!("{}", manifest_store);
-        #[cfg(not(target_arch = "wasm32"))] // skip this until we get wasm async signing working
         assert_eq!(manifest_store.validation_status(), None);
 
         assert_eq!(
@@ -1491,7 +1494,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "openssl_sign")]
+    #[cfg(feature = "file_io")]
     fn test_builder_remote_url() {
         let mut source = Cursor::new(TEST_IMAGE_CLEAN);
         let mut dest = Cursor::new(Vec::new());
@@ -1504,7 +1507,7 @@ mod tests {
             .add_resource("thumbnail.jpg", Cursor::new(TEST_THUMBNAIL))
             .unwrap();
 
-        // sign the ManifestStoreBuilder and write it to the output stream
+        // sign the Builder and write it to the output stream
         let signer = test_signer(SigningAlg::Ps256);
         let manifest_data = builder
             .sign(signer.as_ref(), "image/jpeg", &mut source, &mut dest)
@@ -1524,7 +1527,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(not(any(target_arch = "wasm32", feature = "openssl_sign")), ignore)]
     fn test_builder_data_hashed_embeddable() {
         const CLOUD_IMAGE: &[u8] = include_bytes!("../tests/fixtures/cloud.jpg");
         let mut input_stream = Cursor::new(CLOUD_IMAGE);
@@ -1579,16 +1581,16 @@ mod tests {
 
         let reader = crate::Reader::from_stream("image/jpeg", output_stream).unwrap();
         println!("{reader}");
-        #[cfg(not(target_arch = "wasm32"))] // skip this until we get wasm async signing working
         assert_eq!(reader.validation_status(), None);
     }
 
     #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
-    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
-    #[cfg(any(
-        target_arch = "wasm32",
-        all(feature = "openssl_sign", feature = "file_io")
-    ))]
+    #[cfg_attr(
+        all(target_arch = "wasm32", not(target_os = "wasi")),
+        wasm_bindgen_test
+    )]
+    #[cfg_attr(target_os = "wasi", wstd::test)]
+    #[cfg(any(target_arch = "wasm32", feature = "file_io"))]
     async fn test_builder_box_hashed_embeddable() {
         use crate::asset_io::{CAIWriter, HashBlockObjectType};
         const BOX_HASH_IMAGE: &[u8] = include_bytes!("../tests/fixtures/boxhash.jpg");
@@ -1648,7 +1650,6 @@ mod tests {
             .await
             .unwrap();
         //println!("{reader}");
-        #[cfg(not(target_arch = "wasm32"))] // skip this until we get wasm async signing working
         assert_eq!(_reader.validation_status(), None);
     }
 
@@ -1669,7 +1670,7 @@ mod tests {
         zipped.rewind().unwrap();
         let mut builder = Builder::from_archive(&mut zipped).unwrap();
 
-        // sign the ManifestStoreBuilder and write it to the output stream
+        // sign the Builder and write it to the output stream
         let signer = test_signer(SigningAlg::Ps256);
         let _manifest_data = builder
             .sign(signer.as_ref(), "image/jpeg", &mut source, &mut dest)
@@ -1693,7 +1694,6 @@ mod tests {
         );
     }
 
-    #[cfg(feature = "openssl_sign")]
     const MANIFEST_JSON: &str = r#"{
         "claim_generator": "test",
         "claim_generator_info": [
@@ -1824,7 +1824,6 @@ mod tests {
     }"#;
 
     #[test]
-    #[cfg(feature = "openssl_sign")]
     /// tests and illustrates how to add assets to a non-file based manifest by using a stream
     fn from_json_with_stream_full_resources() {
         use crate::assertions::Relationship;
@@ -1855,6 +1854,7 @@ mod tests {
             .expect("builder sign");
 
         output.set_position(0);
+        println!("output len: {}", output.get_ref().len());
         let reader = Reader::from_stream("jpeg", &mut output).expect("from_bytes");
         println!("reader = {reader}");
         let m = reader.active_manifest().unwrap();

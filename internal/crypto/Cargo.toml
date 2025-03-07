@@ -1,6 +1,6 @@
 [package]
 name = "c2pa-crypto"
-version = "0.6.1"
+version = "0.6.2"
 description = "Cryptography internals for c2pa-rs crate"
 authors = [
     "Maurice Fisher <mfisher@adobe.com>",
@@ -48,7 +48,7 @@ async-trait = "0.1.77"
 base64 = "0.22.1"
 bcder = "0.7.3"
 bytes = "1.7.2"
-c2pa-status-tracker = { path = "../status-tracker", version = "0.4.0" }
+c2pa-status-tracker = { path = "../status-tracker", version = "0.5.0" }
 ciborium = "0.2.2"
 const-hex = "1.14"
 const-oid = { version = "0.9.6", optional = true }
@@ -78,7 +78,6 @@ sha2 = "0.10.6"
 spki = { version = "0.7.3", optional = true }
 thiserror = "2.0.8"
 web-time = "1.1"
-x509-certificate = "0.21.0"
 x509-parser = "0.16.0"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
@@ -89,15 +88,18 @@ url = "2.5.3"
 [package.metadata.cargo-udeps.ignore]
 normal = ["openssl"] # TEMPORARY: Remove after openssl transition complete.
 
-[dependencies.chrono]
+[target.'cfg(all(target_arch = "wasm32", not(target_os = "wasi")))'.dependencies.chrono]
 version = "0.4.39"
 default-features = false
 features = ["wasmbind"]
 
-[target.'cfg(not(target_arch = "wasm32"))'.dependencies.chrono]
+[target.'cfg(any(not(target_arch = "wasm32"), target_os = "wasi"))'.dependencies.chrono]
 version = "0.4.39"
 default-features = false
-features = ["now", "wasmbind"]
+features = ["now"]
+
+[target.'cfg(any(not(target_arch = "wasm32"), target_os = "wasi"))'.dependencies]
+x509-certificate = "0.23.1"
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 async-trait = "0.1.77"
@@ -108,6 +110,11 @@ num-bigint-dig = "0.8.4"
 pkcs1 = "0.7.5"
 rsa = { version = "0.9.7", features = ["pem", "sha2"] }
 spki = "0.7.3"
+
+[target.'cfg(all(target_arch = "wasm32", not(target_os = "wasi")))'.dependencies]
+x509-certificate = "0.21.0"
+getrandom = { version = "0.2.7", features = ["js"] }
+js-sys = "0.3.58"
 wasm-bindgen = "0.2.83"
 wasm-bindgen-futures = "0.4.31"
 web-sys = { version = "0.3.58", features = [
@@ -118,10 +125,6 @@ web-sys = { version = "0.3.58", features = [
     "Window",
     "WorkerGlobalScope",
 ] }
-
-[target.'cfg(all(target_arch = "wasm32", not(target_os = "wasi")))'.dependencies]
-getrandom = { version = "0.2.7", features = ["js"] }
-js-sys = "0.3.58"
 
 [dev-dependencies]
 const-oid = "0.9.6"
@@ -135,5 +138,8 @@ spki = "0.7.3"
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 actix = "0.13.1"
 
-[target.'cfg(target_arch = "wasm32")'.dev-dependencies]
+[target.'cfg(all(target_arch = "wasm32", not(target_os = "wasi")))'.dev-dependencies]
 wasm-bindgen-test = "0.3.31"
+
+[target.'cfg(target_os = "wasi")'.dev-dependencies]
+wstd = "0.5"

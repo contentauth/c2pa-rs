@@ -14,8 +14,7 @@
 use std::io::{Cursor, Seek};
 
 use c2pa::{Builder, Reader, SigningAlg};
-use serde_json::json;
-#[cfg(target_arch = "wasm32")]
+#[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
 use wasm_bindgen_test::wasm_bindgen_test;
 
 use crate::{
@@ -23,15 +22,22 @@ use crate::{
         AsyncIdentityAssertionBuilder, AsyncIdentityAssertionSigner, IdentityAssertionBuilder,
         IdentityAssertionSigner,
     },
-    tests::fixtures::{NaiveAsyncCredentialHolder, NaiveCredentialHolder, NaiveSignatureVerifier},
-    IdentityAssertion,
+    tests::fixtures::{
+        manifest_json, parent_json, NaiveAsyncCredentialHolder, NaiveCredentialHolder,
+        NaiveSignatureVerifier,
+    },
+    IdentityAssertion, ToCredentialSummary,
 };
 
 const TEST_IMAGE: &[u8] = include_bytes!("../../../../sdk/tests/fixtures/CA.jpg");
 const TEST_THUMBNAIL: &[u8] = include_bytes!("../../../../sdk/tests/fixtures/thumbnail.jpg");
 
 #[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
-#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+#[cfg_attr(
+    all(target_arch = "wasm32", not(target_os = "wasi")),
+    wasm_bindgen_test
+)]
+#[cfg_attr(target_os = "wasi", wstd::test)]
 async fn simple_case() {
     // NOTE: This needs to be async for now because the verification side is
     // async-only.
@@ -76,11 +82,19 @@ async fn simple_case() {
 
     // And that identity assertion should be valid for this manifest.
     let nsv = NaiveSignatureVerifier {};
-    ia.validate(manifest, &nsv).await.unwrap();
+    let naive_credential = ia.validate(manifest, &nsv).await.unwrap();
+
+    let nc_summary = naive_credential.to_summary();
+    let nc_json = serde_json::to_string(&nc_summary).unwrap();
+    assert_eq!(nc_json, "{}");
 }
 
 #[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
-#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+#[cfg_attr(
+    all(target_arch = "wasm32", not(target_os = "wasi")),
+    wasm_bindgen_test
+)]
+#[cfg_attr(target_os = "wasi", wstd::test)]
 async fn simple_case_async() {
     let format = "image/jpeg";
     let mut source = Cursor::new(TEST_IMAGE);
@@ -123,55 +137,9 @@ async fn simple_case_async() {
 
     // And that identity assertion should be valid for this manifest.
     let nsv = NaiveSignatureVerifier {};
-    ia.validate(manifest, &nsv).await.unwrap();
-}
+    let naive_credential = ia.validate(manifest, &nsv).await.unwrap();
 
-fn manifest_json() -> String {
-    json!({
-        "vendor": "test",
-        "claim_generator_info": [
-            {
-                "name": "c2pa_test",
-                "version": "1.0.0"
-            }
-        ],
-        "metadata": [
-            {
-                "dateTime": "1985-04-12T23:20:50.52Z",
-                "my_custom_metadata": "my custom metatdata value"
-            }
-        ],
-        "title": "Test_Manifest",
-        "format": "image/tiff",
-        "instance_id": "1234",
-        "thumbnail": {
-            "format": "image/jpeg",
-            "identifier": "thumbnail.jpg"
-        },
-        "ingredients": [
-            {
-                "title": "Test",
-                "format": "image/jpeg",
-                "instance_id": "12345",
-                "relationship": "componentOf"
-            }
-        ],
-        "assertions": [
-            {
-                "label": "org.test.assertion",
-                "data": "assertion"
-            }
-        ]
-    })
-    .to_string()
-}
-
-fn parent_json() -> String {
-    json!({
-        "title": "Parent Test",
-        "format": "image/jpeg",
-        "instance_id": "12345",
-        "relationship": "parentOf"
-    })
-    .to_string()
+    let nc_summary = naive_credential.to_summary();
+    let nc_json = serde_json::to_string(&nc_summary).unwrap();
+    assert_eq!(nc_json, "{}");
 }

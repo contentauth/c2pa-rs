@@ -287,6 +287,56 @@ jobs:
         run: wasm-pack test --chrome --headless
         working-directory: ./cawg_identity
 
+  tests-wasi:
+    name: Unit tests (WASI)
+    if: |
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.author_association == 'COLLABORATOR' ||
+      github.event.pull_request.author_association == 'MEMBER' ||
+      github.event.pull_request.user.login == 'dependabot[bot]' ||
+      contains(github.event.pull_request.labels.*.name, 'safe to test')
+
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+        # nightly required for testing until this issue is resolved:
+        # wasip2 target should not conditionally feature gate stdlib APIs rust-lang/rust#130323 https://github.com/rust-lang/rust/issues/130323
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@nightly
+
+      - name: Install wasmtime
+        run: |
+          curl https://wasmtime.dev/install.sh -sSf | bash
+          echo "$HOME/.wasmtime/bin" >> $GITHUB_PATH
+
+      - name: Install WASI SDK
+        run: |
+          if [ "${RUNNER_ARCH}" = "X64" ]; then
+            ARCH="x86_64";
+          else
+            ARCH="${RUNNER_ARCH}";
+          fi
+          wget https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-25/wasi-sdk-25.0-${ARCH}-${RUNNER_OS}.tar.gz
+          tar xvf wasi-sdk-25.0-${ARCH}-${RUNNER_OS}.tar.gz
+          mv $(echo wasi-sdk-25.0-${ARCH}-${RUNNER_OS} | tr '[:upper:]' '[:lower:]') /opt/wasi-sdk
+
+      - name: Add wasm32-wasip2 target
+        run: rustup target add --toolchain nightly wasm32-wasip2
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: Run WASI tests (c2pa-rs)
+        env:
+          CARGO_TARGET_WASM32_WASIP2_RUNNER: "wasmtime -S cli -S http --dir ."
+          CC: /opt/wasi-sdk/bin/clang
+          WASI_SDK_PATH: /opt/wasi-sdk
+          RUST_MIN_STACK: 16777216
+        run: cargo +nightly test --target wasm32-wasip2 -p c2pa -p c2pa-crypto -p cawg-identity -p c2patool --all-features
+
   test-direct-minimal-versions:
     name: Unit tests with minimum versions of direct dependencies
     if: |

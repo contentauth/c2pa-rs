@@ -147,13 +147,13 @@ pub mod tests {
     #![allow(clippy::unwrap_used)]
 
     use c2pa_crypto::raw_signature::SigningAlg;
-    use c2pa_status_tracker::OneShotStatusTracker;
-    use tempfile::tempdir;
+    use c2pa_status_tracker::{ErrorBehavior, StatusTracker};
 
     use super::{AssetIO, C2paIO, CAIReader, CAIWriter};
     use crate::{
         store::Store,
         utils::{
+            io_utils::tempdirectory,
             test::{fixture_path, temp_dir_path},
             test_signer::test_signer,
         },
@@ -163,7 +163,7 @@ pub mod tests {
     fn c2pa_io_parse() {
         let path = fixture_path("C.jpg");
 
-        let temp_dir = tempdir().expect("temp dir");
+        let temp_dir = tempdirectory().expect("temp dir");
         let temp_path = temp_dir_path(&temp_dir, "test.c2pa");
 
         let c2pa_io = C2paIO {};
@@ -172,8 +172,12 @@ pub mod tests {
             .save_cai_store(&temp_path, &manifest)
             .expect("save cai store");
 
-        let store = Store::load_from_asset(&temp_path, false, &mut OneShotStatusTracker::default())
-            .expect("loading store");
+        let store = Store::load_from_asset(
+            &temp_path,
+            false,
+            &mut StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError),
+        )
+        .expect("loading store");
 
         let signer = test_signer(SigningAlg::Ps256);
 
