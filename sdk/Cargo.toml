@@ -164,7 +164,6 @@ web-sys = { version = "0.3.58", features = [
     "Window",
     "WorkerGlobalScope",
 ] }
-x509-certificate = "0.24.0"
 
 [dev-dependencies]
 anyhow = "1.0.40"
