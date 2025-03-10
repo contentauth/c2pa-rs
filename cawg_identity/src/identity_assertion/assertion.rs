@@ -257,6 +257,9 @@ impl IdentityAssertion {
         status_tracker: &mut StatusTracker,
         verifier: &SV,
     ) -> Result<SV::Output, ValidationError<SV::Error>> {
+        // TO DO: Create new status tracker here and pass it through
+        // the rest of this code. Then we can rewrite the log with
+        // assertion label at the end of this process.
         self.check_padding(status_tracker)?;
 
         self.signer_payload
