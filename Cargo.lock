@@ -787,7 +787,6 @@ dependencies = [
  "wasm-bindgen-test",
  "web-sys",
  "wstd",
- "x509-certificate",
  "x509-parser",
  "zip",
 ]
