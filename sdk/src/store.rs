@@ -26,7 +26,11 @@ use c2pa_crypto::{
     cose::{parse_cose_sign1, CertificateTrustPolicy, TimeStampStorage},
     hash::sha256,
 };
-use c2pa_status_tracker::{log_item, ErrorBehavior, StatusTracker};
+use c2pa_status_tracker::{
+    log_item,
+    validation_codes::{ASSERTION_UNDECLARED, CLAIM_MALFORMED},
+    ErrorBehavior, StatusTracker,
+};
 use log::error;
 
 #[cfg(feature = "v1_api")]
@@ -40,9 +44,7 @@ use crate::jumbf_io::{object_locations, remove_jumbf_from_file};
 #[cfg(all(feature = "file_io", feature = "v1_api"))]
 use crate::utils::io_utils::tempdirectory;
 use crate::{
-    assertion::{
-        Assertion, AssertionBase, AssertionData, AssertionDecodeError, AssertionDecodeErrorCause,
-    },
+    assertion::{Assertion, AssertionBase, AssertionData},
     assertions::{
         labels::{self, CLAIM},
         BmffHash, DataBox, DataHash, DataMap, ExclusionsMap, Ingredient, Relationship, SubsetMap,
@@ -669,6 +671,7 @@ impl Store {
         assertion_box: &JUMBFSuperBox,
         label: &str,
         check_for_legacy_assertion: bool,
+        validation_log: &mut StatusTracker,
     ) -> Result<ClaimAssertion> {
         let assertion_desc_box = assertion_box.desc_box();
 
@@ -677,12 +680,19 @@ impl Store {
         let assertion_hashed_uri = claim
             .assertion_hashed_uri_from_label(&instance_label)
             .ok_or_else(|| {
-                Error::AssertionDecoding(AssertionDecodeError {
-                    label: instance_label.to_string(),
-                    version: None, // TODO: Plumb this through
-                    content_type: "TO DO: Get content type".to_string(),
-                    source: AssertionDecodeErrorCause::AssertionDataIncorrect,
-                })
+                log_item!(
+                    label.to_owned(),
+                    "error loading assertion",
+                    "get_assertion_from_jumbf_store"
+                )
+                .validation_status(ASSERTION_UNDECLARED)
+                .failure(
+                    validation_log,
+                    Error::AssertionMissing {
+                        url: instance_label.to_string(),
+                    },
+                )
+                .unwrap_err()
             })?;
 
         let alg = match assertion_hashed_uri.alg() {
@@ -1144,7 +1154,13 @@ impl Store {
             let cbor_box = claim_superbox
                 .data_box_as_cbor_box(0)
                 .ok_or(Error::JumbfBoxNotFound)?;
-            let mut claim = Claim::from_data(&cai_store_desc_box.label(), cbor_box.cbor())?;
+            let mut claim = Claim::from_data(&cai_store_desc_box.label(), cbor_box.cbor())
+                .map_err(|e| {
+                    log_item!(CLAIM, "CLAIM CBOR could not be decoded", "from_jumbf")
+                        .validation_status(CLAIM_MALFORMED)
+                        .failure(validation_log, e)
+                        .unwrap_err()
+                })?;
 
             // make sure box version label match the read Claim
             if claim.version() > 1 {
@@ -1188,6 +1204,7 @@ impl Store {
                     assertion_box,
                     &label,
                     check_for_legacy_assertion,
+                    validation_log,
                 ) {
                     Ok(assertion) => {
                         claim.put_assertion_store(assertion); // restore assertion data to claim
@@ -1202,10 +1219,8 @@ impl Store {
                                 .failure_no_throw(validation_log, e);
 
                             return Err(Error::PrereleaseError);
-                        } else {
-                            log_item!("JUMBF", "error loading assertion", "from_jumbf")
-                                .failure_no_throw(validation_log, e);
                         }
+                        return Err(e);
                     }
                 }
             }

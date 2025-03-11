@@ -192,6 +192,10 @@ impl ClaimAssertion {
     pub fn assertion_type(&self) -> ClaimAssertionType {
         self.typ.clone()
     }
+
+    pub fn set_assertion_type(&mut self, typ: ClaimAssertionType) {
+        self.typ = typ;
+    }
 }
 
 impl fmt::Debug for ClaimAssertion {
@@ -1239,14 +1243,16 @@ impl Claim {
 
         // Add to assertion store.
         let (_l, instance) = Claim::assertion_label_from_link(&as_label);
-        let ca = ClaimAssertion::new(
-            assertion.clone(),
-            instance,
-            &hash,
-            self.alg(),
-            salt,
-            ClaimAssertionType::V1,
-        );
+        let typ = if self.version() > 1 {
+            if add_as_created_assertion {
+                ClaimAssertionType::Created
+            } else {
+                ClaimAssertionType::Gathered
+            }
+        } else {
+            ClaimAssertionType::V1
+        };
+        let ca = ClaimAssertion::new(assertion.clone(), instance, &hash, self.alg(), salt, typ);
 
         if add_as_created_assertion {
             // enforce actions assertion generation rules during creation

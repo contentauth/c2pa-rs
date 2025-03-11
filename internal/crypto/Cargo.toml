@@ -66,9 +66,9 @@ p521 = { version = "0.13.3", features = ["pkcs8", "digest", "ecdsa"] }
 pkcs1 = { version = "0.7.5", optional = true }
 pkcs8 = "0.10.2"
 rand = "0.8.5"
-rasn = "0.22.0"
-rasn-ocsp = "0.22.0"
-rasn-pkix = "0.22.0"
+rasn = "0.24.0"
+rasn-ocsp = "0.24.0"
+rasn-pkix = "0.24.0"
 rsa = { version = "0.9.7", features = ["pem", "sha2", "std"], optional = true }
 schemars = { version = "0.8.21", optional = true }
 serde = { version = "1.0.197", features = ["derive"] }

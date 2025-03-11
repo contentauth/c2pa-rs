@@ -148,6 +148,11 @@ pub const ALGORITHM_DEPRECATED: &str = "algorithm.deprecated";
 
 // -- failure codes --
 
+/// The claim cbor is invalid
+///
+/// Any corresponding URL should point to a C2PA claim box.
+pub const CLAIM_MALFORMED: &str = "claim.malformed";
+
 /// The referenced claim in the ingredient's manifest cannot be found.
 ///
 /// Any corresponding URL should point to a C2PA claim box.

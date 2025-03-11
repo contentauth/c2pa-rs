@@ -338,6 +338,7 @@ fn sha1() {
     validator.validate(signature, SAMPLE_DATA, pub_key).unwrap();
 }
 
+#[allow(dead_code)]
 fn ans1_oid_bcder_oid(asn1_oid: &asn1_rs::Oid) -> bcder::Oid {
     const TEST_FAIL: Oid = bcder::Oid(OctetString::from_static(&[0, 0, 0, 0]));
 
@@ -354,13 +355,13 @@ fn ans1_oid_bcder_oid(asn1_oid: &asn1_rs::Oid) -> bcder::Oid {
 fn test_get_by_sig_and_alg() {
     use crate::raw_signature::oids::*;
 
-    let rsa_oid = ans1_oid_bcder_oid(&RSA_OID);
-    let rsa_pss_oid = ans1_oid_bcder_oid(&RSA_PSS_OID);
-    let ec_pubic_key_oid = ans1_oid_bcder_oid(&EC_PUBLICKEY_OID);
-    let ed25519_oid = ans1_oid_bcder_oid(&ED25519_OID);
-    let sha256 = ans1_oid_bcder_oid(&SHA256_OID);
-    let sha384 = ans1_oid_bcder_oid(&SHA384_OID);
-    let sha512 = ans1_oid_bcder_oid(&SHA512_OID);
+    let rsa_oid = ans1_oid_bcder_oid(&RSA_OID).unwrap();
+    let rsa_pss_oid = ans1_oid_bcder_oid(&RSA_PSS_OID).unwrap();
+    let ec_pubic_key_oid = ans1_oid_bcder_oid(&EC_PUBLICKEY_OID).unwrap();
+    let ed25519_oid = ans1_oid_bcder_oid(&ED25519_OID).unwrap();
+    let sha256 = ans1_oid_bcder_oid(&SHA256_OID).unwrap();
+    let sha384 = ans1_oid_bcder_oid(&SHA384_OID).unwrap();
+    let sha512 = ans1_oid_bcder_oid(&SHA512_OID).unwrap();
 
     assert!(validator_for_sig_and_hash_algs(&rsa_oid, &sha256).is_some());
     assert!(validator_for_sig_and_hash_algs(&rsa_oid, &sha384).is_some());

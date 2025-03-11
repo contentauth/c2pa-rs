@@ -22,7 +22,7 @@ use crate::{
         check_certificate_profile, validate_cose_tst_info, validate_cose_tst_info_async,
         CertificateTrustPolicy, CoseError,
     },
-    ocsp::OcspResponse,
+    ocsp::{make_ocsp_cert_id, OcspResponse},
 };
 
 use super::cert_chain_from_sign1;
@@ -97,7 +97,7 @@ fn check_stapled_ocsp_response(
 
     let Ok(ocsp_data) = OcspResponse::from_der_checked(
         ocsp_response_der,
-        &certs,
+        make_ocsp_cert_id(&certs),
         Some(signing_time),
         validation_log,
     ) else {
@@ -147,7 +147,7 @@ fn fetch_and_check_ocsp_response(
         // Revocation errors are reported in the validation log.
         let Ok(ocsp_data) = OcspResponse::from_der_checked(
             &ocsp_response_der,
-            &certs,
+            make_ocsp_cert_id(&certs),
             signing_time,
             validation_log,
         ) else {
