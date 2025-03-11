@@ -30,9 +30,12 @@ Add the `add_thumbnails` dependency to generate thumbnails for JPEG and PNG file
 c2pa = { version = "0.45.2", features = ["file_io", "add_thumbnails"] }
 ```
 
+## WebAssembly
+This crate supports compilation to both the `wasm32-unknown-unknown` and `wasm32-wasi*` family of LLVM targets.
+
 ### Building wasm
 
-Building wasm requires LLVM clang due to the `ring` crate. The version of clang that comes with XCode does not support wasm targets.
+Building wasm requires clang due to the `ring` crate. The version of clang that comes with XCode does not support wasm targets.
 
 1. On macOS, install clang with homebrew `brew install llvm`.
 2. Set the `CC` environment variable to the clang binary. Cargo provides a mechanism to do this with .cargo/config.toml in the project root.
@@ -47,7 +50,7 @@ NOTE: As of March 2025, `wasm32-wasip2` still requires the nightly toolchain as 
 - Testing WASI wasm (wasm32-wasip1 and later) requires [wasmtime](https://github.com/bytecodealliance/wasmtime).
 
 ### Example `.cargo/config.toml`
-The following is valid for all macOS targets, not only wasm.
+This config specifies homebrew clang which can build all targets on macOS, not only wasm. The test runner is set for wasm32-wasip2.
 ```
 [env]
 CC = "/opt/homebrew/opt/llvm/bin/clang"
