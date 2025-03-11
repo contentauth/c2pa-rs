@@ -1055,9 +1055,20 @@ impl Builder {
             std::fs::create_dir_all(output_path.as_ref())?;
         } else {
             // if the file exists, we need to remove it
-            return Err(crate::Error::BadParam(
-                "Destination file already exists".to_string(),
-            ));
+            if output_path.as_ref().is_file() {
+                return Err(crate::Error::BadParam(
+                    "output_path must be a folder".to_string(),
+                ));
+            } else {
+                let file_name = asset_path.as_ref().file_name().unwrap_or_default();
+                let mut output_file = output_path.as_ref().to_owned();
+                output_file = output_file.join(file_name);
+                if output_file.exists() {
+                    return Err(crate::Error::BadParam(
+                        "Destination file already exists".to_string(),
+                    ));
+                }
+            }
         }
 
         // convert the manifest to a store
