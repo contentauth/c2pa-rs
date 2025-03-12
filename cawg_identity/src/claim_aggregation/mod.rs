@@ -20,7 +20,9 @@
 //! [§8.1, Identity claims aggregation]: https://creator-assertions.github.io/identity/1.1-draft/#_identity_claims_aggregation
 
 mod ica_credential;
-pub use ica_credential::{IcaCredential, IdentityProvider, VerifiedIdentity};
+pub use ica_credential::{
+    IcaCredential, IdentityClaimsAggregationVc, IdentityProvider, VerifiedIdentity,
+};
 
 mod ica_signature_verifier;
 pub use ica_signature_verifier::IcaSignatureVerifier;
