@@ -211,16 +211,16 @@ async fn assertion_not_in_claim_v1() {
 /// entry must appear in the `assertions` entry.) The
 /// `cawg.identity.assertion.mismatch` error code SHALL be used to report
 /// violations of this rule.
-#[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
-#[cfg_attr(
-    all(target_arch = "wasm32", not(target_os = "wasi")),
-    wasm_bindgen_test
-)]
-// #[cfg_attr(target_os = "wasi", wstd::test)] #[ignore] is ignored on WASI
-#[ignore]
-async fn assertion_not_in_claim_v2() {
-    todo!("Generate a suitable V2 asset with an extra assertion");
-}
+// #[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
+// #[cfg_attr(
+//     all(target_arch = "wasm32", not(target_os = "wasi")),
+//     wasm_bindgen_test
+// )]
+// // #[cfg_attr(target_os = "wasi", wstd::test)] #[ignore] is ignored on WASI
+// #[ignore]
+// async fn assertion_not_in_claim_v2() {
+//     todo!("Generate a suitable V2 asset with an extra assertion");
+// }
 
 /// The validator SHOULD verify that no entry in
 /// `signer_payload.referenced_assertions` is duplicated. The
