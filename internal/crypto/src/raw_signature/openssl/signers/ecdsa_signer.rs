@@ -148,10 +148,7 @@ impl RawSigner for EcdsaSigner {
     fn cert_chain(&self) -> Result<Vec<Vec<u8>>, RawSignerError> {
         let _openssl = OpenSslMutex::acquire()?;
 
-        self.cert_chain
-            .iter()
-            .map(|cert| cert.to_der().map_err(|e| e.into()))
-            .collect()
+        Ok(self.cert_chain.clone())
     }
 }
 
