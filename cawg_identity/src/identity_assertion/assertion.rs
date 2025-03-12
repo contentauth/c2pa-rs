@@ -260,6 +260,9 @@ impl IdentityAssertion {
         // TO DO: Create new status tracker here and pass it through
         // the rest of this code. Then we can rewrite the log with
         // assertion label at the end of this process.
+
+        // UPDATED TO DO: Hold off until Gavin lands the post-validate branch.
+        // Then we'll get the assertion label handed to us nicely.
         self.check_padding(status_tracker)?;
 
         self.signer_payload
