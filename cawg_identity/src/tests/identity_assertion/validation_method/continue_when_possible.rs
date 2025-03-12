@@ -211,12 +211,12 @@ async fn assertion_not_in_claim_v1() {
     );
 }
 
-/// For each entry in `signer_payload.referenced_assertions`, the validator MUST
-/// verify that the same entry exists in either the `created_assertions` or
-/// `gathered_assertions` entry of the C2PA claim. (For version 1 claims, the
-/// entry must appear in the `assertions` entry.) The
-/// `cawg.identity.assertion.mismatch` error code SHALL be used to report
-/// violations of this rule.
+// For each entry in `signer_payload.referenced_assertions`, the validator MUST
+// verify that the same entry exists in either the `created_assertions` or
+// `gathered_assertions` entry of the C2PA claim. (For version 1 claims, the
+// entry must appear in the `assertions` entry.) The
+// `cawg.identity.assertion.mismatch` error code SHALL be used to report
+// violations of this rule.
 // #[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
 // #[cfg_attr(
 //     all(target_arch = "wasm32", not(target_os = "wasi")),

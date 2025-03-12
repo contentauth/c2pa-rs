@@ -205,12 +205,12 @@ async fn assertion_not_in_claim_v1() {
     assert_eq!(err.to_string(), "no assertion with the label \"self#jumbf=c2pa/urn:uuid:F9168C5E-CEB2-4faa-B6BF-329BF39FA1E4/c2pa.assertions/testing.bogus.assertion\" in the claim");
 }
 
-/// For each entry in `signer_payload.referenced_assertions`, the validator MUST
-/// verify that the same entry exists in either the `created_assertions` or
-/// `gathered_assertions` entry of the C2PA claim. (For version 1 claims, the
-/// entry must appear in the `assertions` entry.) The
-/// `cawg.identity.assertion.mismatch` error code SHALL be used to report
-/// violations of this rule.
+// For each entry in `signer_payload.referenced_assertions`, the validator MUST
+// verify that the same entry exists in either the `created_assertions` or
+// `gathered_assertions` entry of the C2PA claim. (For version 1 claims, the
+// entry must appear in the `assertions` entry.) The
+// `cawg.identity.assertion.mismatch` error code SHALL be used to report
+// violations of this rule.
 // #[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
 // #[cfg_attr(
 //     all(target_arch = "wasm32", not(target_os = "wasi")),
