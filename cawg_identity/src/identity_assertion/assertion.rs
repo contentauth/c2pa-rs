@@ -257,7 +257,13 @@ impl IdentityAssertion {
         status_tracker: &mut StatusTracker,
         verifier: &SV,
     ) -> Result<SV::Output, ValidationError<SV::Error>> {
-        self.check_padding()?;
+        // TO DO: Create new status tracker here and pass it through
+        // the rest of this code. Then we can rewrite the log with
+        // assertion label at the end of this process.
+
+        // UPDATED TO DO: Hold off until Gavin lands the post-validate branch.
+        // Then we'll get the assertion label handed to us nicely.
+        self.check_padding(status_tracker)?;
 
         self.signer_payload
             .check_against_manifest(manifest, status_tracker)?;
@@ -267,14 +273,36 @@ impl IdentityAssertion {
             .await
     }
 
-    fn check_padding<E>(&self) -> Result<(), ValidationError<E>> {
+    fn check_padding<E: Debug>(
+        &self,
+        status_tracker: &mut StatusTracker,
+    ) -> Result<(), ValidationError<E>> {
         if !self.pad1.iter().all(|b| *b == 0) {
-            return Err(ValidationError::InvalidPadding);
+            // TO DO: Where would we get assertion label?
+            log_item!(
+                "NEED TO FIND LABEL".to_owned(),
+                "invalid value in pad fields",
+                "SignerPayload::check_padding"
+            )
+            .validation_status("cawg.identity.pad.invalid")
+            .failure(status_tracker, ValidationError::<E>::InvalidPadding)?;
+
+            // We'll only get to this line if `pad1` is invalid and the status tracker is
+            // configured to continue through recoverable errors. In that case, we want to
+            // avoid logging a second "invalid padding" warning if `pad2` is also invalid.
+            return Ok(());
         }
 
         if let Some(pad2) = self.pad2.as_ref() {
             if !pad2.iter().all(|b| *b == 0) {
-                return Err(ValidationError::InvalidPadding);
+                // TO DO: Where would we get assertion label?
+                log_item!(
+                    "NEED TO FIND LABEL".to_owned(),
+                    "invalid value in pad fields",
+                    "SignerPayload::check_padding"
+                )
+                .validation_status("cawg.identity.pad.invalid")
+                .failure(status_tracker, ValidationError::<E>::InvalidPadding)?;
             }
         }
 

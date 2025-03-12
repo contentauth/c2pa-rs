@@ -750,7 +750,7 @@ dependencies = [
  "memchr",
  "mockall",
  "mp4",
- "pem 3.0.4",
+ "pem",
  "png_pong",
  "quick-xml",
  "rand",
@@ -787,8 +787,6 @@ dependencies = [
  "wasm-bindgen-test",
  "web-sys",
  "wstd",
- "x509-certificate 0.21.0",
- "x509-certificate 0.23.1",
  "x509-parser",
  "zip",
 ]
@@ -828,6 +826,7 @@ dependencies = [
  "rasn",
  "rasn-ocsp",
  "rasn-pkix",
+ "ring",
  "rsa",
  "schemars",
  "serde",
@@ -844,8 +843,7 @@ dependencies = [
  "web-sys",
  "web-time",
  "wstd",
- "x509-certificate 0.21.0",
- "x509-certificate 0.23.1",
+ "x509-certificate",
  "x509-parser",
 ]
 
@@ -868,7 +866,7 @@ dependencies = [
  "httpmock",
  "log",
  "mockall",
- "pem 3.0.4",
+ "pem",
  "predicates",
  "reqwest",
  "serde",
@@ -1554,14 +1552,14 @@ dependencies = [
 
 [[package]]
 name = "env_logger"
-version = "0.11.6"
+version = "0.11.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dcaee3d8e3cfc3fd92428d477bc97fc29ec8716d180c0d74c643bb26166660e0"
+checksum = "c3716d7a920fb4fac5d84e9d4bce8ceb321e9414b4409da61b07b75c1e3d0697"
 dependencies = [
  "anstream",
  "anstyle",
  "env_filter",
- "humantime",
+ "jiff",
  "log",
 ]
 
@@ -2058,12 +2056,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "humantime"
-version = "2.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9a3a5bfb195931eeb336b2a7b4d761daec841b97f947d34394601737a7bba5e4"
-
-[[package]]
 name = "hyper"
 version = "0.14.32"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2470,6 +2462,30 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "68cf72bc7b75b6615ffd06bfe6840f3c57e7e4ea615558a2a452f458ebf5551e"
 
 [[package]]
+name = "jiff"
+version = "0.2.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d699bc6dfc879fb1bf9bdff0d4c56f0884fc6f0d0eb0fba397a6d00cd9a6b85e"
+dependencies = [
+ "jiff-static",
+ "log",
+ "portable-atomic",
+ "portable-atomic-util",
+ "serde",
+]
+
+[[package]]
+name = "jiff-static"
+version = "0.2.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8d16e75759ee0aa64c57a56acbf43916987b20c77373cb7e808979e02b93c9f9"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.98",
+]
+
+[[package]]
 name = "jpeg-decoder"
 version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2552,7 +2568,7 @@ version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bbd2bcb4c963f2ddae06a2efc7e9f3591312473c50c6685e1f298068316e66fe"
 dependencies = [
- "spin 0.9.8",
+ "spin",
 ]
 
 [[package]]
@@ -3078,16 +3094,6 @@ dependencies = [
 
 [[package]]
 name = "pem"
-version = "2.0.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6b13fe415cdf3c8e44518e18a7c95a13431d9bdf6d15367d82b23c377fdd441a"
-dependencies = [
- "base64 0.21.7",
- "serde",
-]
-
-[[package]]
-name = "pem"
 version = "3.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8e459365e590736a54c3fa561947c84837534b8e9af6fc5bf781307e82658fae"
@@ -3279,6 +3285,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "portable-atomic"
+version = "1.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "350e9b48cbc6b0e028b0473b114454c6316e57336ee184ceab6e53f72c178b3e"
+
+[[package]]
+name = "portable-atomic-util"
+version = "0.2.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d8a2f0d8d040d7848a709caf78912debcc3f33ee4b3cac47d73d1e1069e83507"
+dependencies = [
+ "portable-atomic",
+]
+
+[[package]]
 name = "powerfmt"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3423,7 +3444,7 @@ dependencies = [
  "bytes",
  "getrandom",
  "rand",
- "ring 0.17.9",
+ "ring",
  "rustc-hash",
  "rustls",
  "rustls-pki-types",
@@ -3730,30 +3751,15 @@ checksum = "3c601484456988d75017d86700d3743b949c21cdc7399f940c75e34680d185c5"
 
 [[package]]
 name = "ring"
-version = "0.16.20"
+version = "0.17.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3053cf52e236a3ed746dfc745aa9cacf1b791d846bdaf412f60a8d7d6e17c8fc"
-dependencies = [
- "cc",
- "libc",
- "once_cell",
- "spin 0.5.2",
- "untrusted 0.7.1",
- "web-sys",
- "winapi",
-]
-
-[[package]]
-name = "ring"
-version = "0.17.9"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e75ec5e92c4d8aede845126adc388046234541629e76029599ed35a003c7ed24"
+checksum = "70ac5d832aa16abd7d1def883a8545280c20a60f523a370aa3a9617c2b8550ee"
 dependencies = [
  "cc",
  "cfg-if",
  "getrandom",
  "libc",
- "untrusted 0.9.0",
+ "untrusted",
  "windows-sys 0.52.0",
 ]
 
@@ -3851,7 +3857,7 @@ checksum = "47796c98c480fce5406ef69d1c76378375492c3b0a0de587be0c1d9feb12f395"
 dependencies = [
  "log",
  "once_cell",
- "ring 0.17.9",
+ "ring",
  "rustls-pki-types",
  "rustls-webpki",
  "subtle",
@@ -3882,9 +3888,9 @@ version = "0.102.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "64ca1bc8749bd4cf37b5ce386cc146580777b4e8572c7b97baf22c83f444bee9"
 dependencies = [
- "ring 0.17.9",
+ "ring",
  "rustls-pki-types",
- "untrusted 0.9.0",
+ "untrusted",
 ]
 
 [[package]]
@@ -4244,12 +4250,6 @@ dependencies = [
  "libc",
  "windows-sys 0.52.0",
 ]
-
-[[package]]
-name = "spin"
-version = "0.5.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6e63cff320ae2c57904679ba7cb63280a3dc4613885beafb148ee7bf9aa9042d"
 
 [[package]]
 name = "spin"
@@ -4730,12 +4730,6 @@ checksum = "ebc1c04c71510c7f702b52b7c350734c9ff1295c464a03335b00bb84fc54f853"
 
 [[package]]
 name = "untrusted"
-version = "0.7.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a156c684c91ea7d62626509bce3cb4e1d9ed5c4d978f7b4352658f96a4c26b4a"
-
-[[package]]
-name = "untrusted"
 version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8ecb6da28b8a351d773b68d5825ac39017e680750f980f3a1a85cd8dd28a47c1"
@@ -5211,35 +5205,17 @@ dependencies = [
 
 [[package]]
 name = "x509-certificate"
-version = "0.21.0"
+version = "0.24.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5e5d27c90840e84503cf44364de338794d5d5680bdd1da6272d13f80b0769ee0"
+checksum = "e57b9f8bcae7c1f36479821ae826d75050c60ce55146fd86d3553ed2573e2762"
 dependencies = [
  "bcder",
  "bytes",
  "chrono",
  "der",
  "hex",
- "pem 2.0.1",
- "ring 0.16.20",
- "signature",
- "spki",
- "thiserror 1.0.69",
-]
-
-[[package]]
-name = "x509-certificate"
-version = "0.23.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "66534846dec7a11d7c50a74b7cdb208b9a581cad890b7866430d438455847c85"
-dependencies = [
- "bcder",
- "bytes",
- "chrono",
- "der",
- "hex",
- "pem 3.0.4",
- "ring 0.17.9",
+ "pem",
+ "ring",
  "signature",
  "spki",
  "thiserror 1.0.69",
