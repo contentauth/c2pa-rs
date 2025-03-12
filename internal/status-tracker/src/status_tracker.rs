@@ -133,6 +133,11 @@ impl StatusTracker {
     pub fn pop_ingredient_uri(&mut self) -> Option<String> {
         self.ingredient_uris.pop()
     }
+
+    /// Returns the current ingredient URI, if any.
+    pub fn ingredient_uri(&self) -> Option<&str> {
+        self.ingredient_uris.last().map(|s| s.as_str())
+    }
 }
 
 /// `ErrorBehavior` configures the behavior of [`StatusTracker`] when its
