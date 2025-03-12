@@ -29,3 +29,5 @@ mod ica_validation_error;
 pub use ica_validation_error::IcaValidationError;
 
 pub(crate) mod w3c_vc;
+
+const CAWG_ICA_SIG_TYPE: &str = "cawg.identity_claims_aggregation";

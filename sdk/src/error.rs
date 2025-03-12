@@ -46,6 +46,9 @@ pub enum Error {
     #[error("could not find the assertion to redact")]
     AssertionRedactionNotFound,
 
+    #[error("assertion-specific error: {0}")]
+    AssertionSpecificError(String),
+
     #[error("bad parameter: {0}")]
     BadParam(String),
 
