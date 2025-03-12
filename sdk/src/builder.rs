@@ -1050,7 +1050,26 @@ impl Builder {
         fragment_paths: &Vec<std::path::PathBuf>,
         output_path: P,
     ) -> Result<()> {
-        self.set_asset_from_dest(output_path.as_ref())?;
+        if !output_path.as_ref().exists() {
+            // ensure the path exists
+            std::fs::create_dir_all(output_path.as_ref())?;
+        } else {
+            // if the file exists, we need to remove it
+            if output_path.as_ref().is_file() {
+                return Err(crate::Error::BadParam(
+                    "output_path must be a folder".to_string(),
+                ));
+            } else {
+                let file_name = asset_path.as_ref().file_name().unwrap_or_default();
+                let mut output_file = output_path.as_ref().to_owned();
+                output_file = output_file.join(file_name);
+                if output_file.exists() {
+                    return Err(crate::Error::BadParam(
+                        "Destination file already exists".to_string(),
+                    ));
+                }
+            }
+        }
 
         // convert the manifest to a store
         let mut store = self.to_store()?;
