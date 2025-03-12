@@ -38,7 +38,7 @@ enum RsaSigningAlg {
 pub(crate) struct RsaSigner {
     alg: RsaSigningAlg,
 
-    cert_chain: Vec<X509>,
+    cert_chain: Vec<Vec<u8>>,
     cert_chain_len: usize,
 
     private_key: PKey<Private>,
@@ -57,13 +57,27 @@ impl RsaSigner {
         let _openssl = OpenSslMutex::acquire()?;
 
         let cert_chain = X509::stack_from_pem(cert_chain)?;
-        let cert_chain_len = cert_chain.len();
 
         if !check_chain_order(&cert_chain) {
             return Err(RawSignerError::InvalidSigningCredentials(
                 "certificate chain in incorrect order".to_string(),
             ));
         }
+
+        // certs in DER format
+        let cert_chain = cert_chain
+            .iter()
+            .map(|cert| {
+                cert.to_der().map_err(|_| {
+                    RawSignerError::CryptoLibraryError(
+                        "could not encode certificate to DER".to_string(),
+                    )
+                })
+            })
+            .collect::<Result<Vec<_>, RawSignerError>>()?;
+
+        // get the actual length of the certificate chain
+        let cert_chain_len = cert_chain.iter().fold(0usize, |sum, c| sum + c.len());
 
         // Rebuild RSA keys to eliminate incompatible values.
         let private_key = Rsa::private_key_from_pem(private_key)?;
@@ -162,10 +176,7 @@ impl RawSigner for RsaSigner {
     fn cert_chain(&self) -> Result<Vec<Vec<u8>>, RawSignerError> {
         let _openssl = OpenSslMutex::acquire()?;
 
-        self.cert_chain
-            .iter()
-            .map(|cert| cert.to_der().map_err(|e| e.into()))
-            .collect()
+        Ok(self.cert_chain.clone())
     }
 
     fn alg(&self) -> SigningAlg {

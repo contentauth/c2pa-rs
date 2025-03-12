@@ -28,7 +28,7 @@ use crate::{
 /// Implements `RawSigner` trait using OpenSSL's implementation of
 /// Edwards Curve encryption.
 pub struct Ed25519Signer {
-    cert_chain: Vec<X509>,
+    cert_chain: Vec<Vec<u8>>,
     cert_chain_len: usize,
 
     private_key: PKey<Private>,
@@ -46,7 +46,6 @@ impl Ed25519Signer {
         let _openssl = OpenSslMutex::acquire()?;
 
         let cert_chain = X509::stack_from_pem(cert_chain)?;
-        let cert_chain_len = cert_chain.len();
 
         if !check_chain_order(&cert_chain) {
             return Err(RawSignerError::InvalidSigningCredentials(
@@ -54,14 +53,27 @@ impl Ed25519Signer {
             ));
         }
 
+        // certs in DER format
+        let cert_chain = cert_chain
+            .iter()
+            .map(|cert| {
+                cert.to_der().map_err(|_| {
+                    RawSignerError::CryptoLibraryError(
+                        "could not encode certificate to DER".to_string(),
+                    )
+                })
+            })
+            .collect::<Result<Vec<_>, RawSignerError>>()?;
+
+        // get the actual length of the certificate chain
+        let cert_chain_len = cert_chain.iter().fold(0usize, |sum, c| sum + c.len());
+
         let private_key = PKey::private_key_from_pem(private_key)?;
 
         Ok(Ed25519Signer {
             cert_chain,
             cert_chain_len,
-
             private_key,
-
             time_stamp_service_url,
             time_stamp_size: 10000,
             // TO DO: Call out to time stamp service to get actual time stamp and use that size?
@@ -89,10 +101,7 @@ impl RawSigner for Ed25519Signer {
     fn cert_chain(&self) -> Result<Vec<Vec<u8>>, RawSignerError> {
         let _openssl = OpenSslMutex::acquire()?;
 
-        self.cert_chain
-            .iter()
-            .map(|cert| cert.to_der().map_err(|e| e.into()))
-            .collect()
+        Ok(self.cert_chain.clone())
     }
 }
 

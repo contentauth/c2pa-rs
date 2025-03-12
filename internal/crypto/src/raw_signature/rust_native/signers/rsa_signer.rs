@@ -68,9 +68,7 @@ impl RsaSigner {
             .collect::<Result<Vec<Vec<u8>>, PEMError>>()
             .map_err(|e| RawSignerError::InvalidSigningCredentials(e.to_string()))?;
 
-        // TO DO: check_chain_order(&cert_chain).await?;
-
-        let cert_chain_len = cert_chain.len();
+        let cert_chain_len = cert_chain.iter().fold(0usize, |sum, c| sum + c.len());
 
         let pem_str = std::str::from_utf8(private_key)
             .map_err(|e| RawSignerError::InvalidSigningCredentials(e.to_string()))?;

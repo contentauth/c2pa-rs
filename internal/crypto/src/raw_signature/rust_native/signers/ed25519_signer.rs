@@ -46,7 +46,7 @@ impl Ed25519Signer {
             .collect::<Result<Vec<Vec<u8>>, PEMError>>()
             .map_err(|e| RawSignerError::InvalidSigningCredentials(e.to_string()))?;
 
-        let cert_chain_len = cert_chain.len();
+        let cert_chain_len = cert_chain.iter().fold(0usize, |sum, c| sum + c.len());
 
         let private_key_pem = std::str::from_utf8(private_key).map_err(|e| {
             RawSignerError::InvalidSigningCredentials(format!("invalid private key: {e}"))
