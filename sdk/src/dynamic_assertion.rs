@@ -85,7 +85,7 @@ pub trait DynamicAssertion {
 /// [`Manifest`]: crate::Manifest
 #[cfg(not(target_arch = "wasm32"))]
 #[async_trait]
-pub trait AsyncDynamicAssertion: Sync {
+pub trait AsyncDynamicAssertion: Sync + Send {
     /// Return the preferred label for this assertion.
     ///
     /// Note that the label may be adjusted in case multiple assertions
