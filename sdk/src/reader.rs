@@ -32,7 +32,7 @@ use serde_with::skip_serializing_none;
 
 use crate::{
     claim::ClaimAssetData,
-    dynamic_assertion::PreliminaryClaim,
+    dynamic_assertion::PartialClaim,
     error::{Error, Result},
     jumbf::labels::{manifest_label_from_uri, to_absolute_uri, to_relative_uri},
     manifest_store_report::ManifestStoreReport,
@@ -50,7 +50,7 @@ pub trait PostValidator {
         label: &str,
         assertion: &ManifestAssertion,
         uri: &str,
-        preliminary_claim: &PreliminaryClaim,
+        preliminary_claim: &PartialClaim,
         tracker: &mut StatusTracker,
     ) -> Result<Option<Value>>;
 }
@@ -674,7 +674,7 @@ impl Reader {
             .ok_or(Error::ClaimMissing {
                 label: manifest_label.to_string(),
             })?;
-        let mut preliminary_claim = crate::dynamic_assertion::PreliminaryClaim::default();
+        let mut preliminary_claim = crate::dynamic_assertion::PartialClaim::default();
         {
             let claim = self
                 .store
@@ -879,7 +879,7 @@ pub mod tests {
                 label: &str,
                 assertion: &ManifestAssertion,
                 uri: &str,
-                _preliminary_claim: &PreliminaryClaim,
+                _preliminary_claim: &PartialClaim,
                 tracker: &mut StatusTracker,
             ) -> Result<Option<Value>> {
                 let desc = tracker

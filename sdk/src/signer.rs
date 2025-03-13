@@ -17,7 +17,10 @@ use c2pa_crypto::{
     time_stamp::{TimeStampError, TimeStampProvider},
 };
 
-use crate::{AsyncDynamicAssertion, DynamicAssertion, Result};
+use crate::{
+    dynamic_assertion::{AsyncDynamicAssertion, DynamicAssertion},
+    Result,
+};
 
 /// The `Signer` trait generates a cryptographic signature over a byte array.
 ///

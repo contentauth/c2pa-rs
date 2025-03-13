@@ -72,7 +72,7 @@ pub trait DynamicAssertion {
         &self,
         label: &str,
         size: Option<usize>,
-        claim: &PreliminaryClaim,
+        claim: &PartialClaim,
     ) -> Result<DynamicAssertionContent>;
 }
 
@@ -120,7 +120,7 @@ pub trait AsyncDynamicAssertion: Sync + Send {
         &self,
         label: &str,
         size: Option<usize>,
-        claim: &PreliminaryClaim,
+        claim: &PartialClaim,
     ) -> Result<DynamicAssertionContent>;
 }
 
@@ -168,18 +168,18 @@ pub trait AsyncDynamicAssertion {
         &self,
         label: &str,
         size: Option<usize>,
-        claim: &PreliminaryClaim,
+        claim: &PartialClaim,
     ) -> Result<DynamicAssertionContent>;
 }
 
 /// Describes information from the preliminary C2PA Claim that may
 /// be helpful in constructing the final content of a [`AsyncDynamicAssertion`].
 #[derive(Debug, Default, Eq, PartialEq)]
-pub struct PreliminaryClaim {
+pub struct PartialClaim {
     assertion_uris: Vec<HashedUri>,
 }
 
-impl PreliminaryClaim {
+impl PartialClaim {
     /// Return an iterator over the assertions in this Claim.
     pub fn assertions(&self) -> Iter<HashedUri> {
         self.assertion_uris.iter()
