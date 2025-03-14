@@ -16,6 +16,9 @@
 use c2pa_crypto::{cose::CoseError, raw_signature::RawSignerError, time_stamp::TimeStampError};
 use thiserror::Error;
 
+use wasm_bindgen::prelude::*;
+use web_sys::console;
+
 /// `Error` enumerates errors returned by most C2PA toolkit operations.
 #[derive(Debug, Error)]
 #[non_exhaustive]
@@ -338,8 +341,14 @@ impl From<CoseError> for Error {
             CoseError::NoTimeStampToken => Self::NotFound,
             CoseError::UnsupportedSigningAlgorithm => Self::CoseSignatureAlgorithmNotSupported,
             CoseError::InvalidEcdsaSignature => Self::InvalidEcdsaSignature,
-            CoseError::CborParsingError(_) => Self::CoseTimeStampGeneration,
-            CoseError::CborGenerationError(_) => Self::CoseTimeStampGeneration,
+            CoseError::CborParsingError(e) => {
+                console::log1(&format!("CborParsingError: {:?}", e).into());
+                Self::CoseTimeStampGeneration
+            }
+            CoseError::CborGenerationError(e) => {
+                console::log1(&format!("CborGenerationError: {:?}", e).into());
+                Self::CoseTimeStampGeneration
+            }
             CoseError::TimeStampError(e) => e.into(),
             CoseError::CertificateProfileError(e) => e.into(),
             CoseError::CertificateTrustError(e) => e.into(),
