@@ -17,6 +17,8 @@ use std::slice::Iter;
 
 use async_trait::async_trait;
 
+// publish PostValidator trait from this module
+pub use crate::reader::{PostValidator, PostValidatorAsync};
 use crate::{hashed_uri::HashedUri, Result};
 
 /// The type of content that can be returned by a [`DynamicAssertion`] content call.

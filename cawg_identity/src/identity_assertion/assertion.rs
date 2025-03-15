@@ -16,11 +16,12 @@ use std::{
     fmt::{Debug, Formatter},
 };
 
-use c2pa::{Manifest, Reader};
+use c2pa::{dynamic_assertion::PartialClaim, Manifest, Reader};
 use serde::{Deserialize, Serialize};
 use serde_bytes::ByteBuf;
 
 use crate::{
+    claim_aggregation::IcaSignatureVerifier,
     identity_assertion::{
         report::{
             IdentityAssertionReport, IdentityAssertionsForManifest,
@@ -29,6 +30,7 @@ use crate::{
         signer_payload::SignerPayload,
     },
     internal::debug_byte_slice::DebugByteSlice,
+    x509::X509SignatureVerifier,
     SignatureVerifier, ToCredentialSummary, ValidationError,
 };
 
@@ -231,6 +233,60 @@ impl IdentityAssertion {
         verifier
             .check_signature(&self.signer_payload, &self.signature)
             .await
+    }
+
+    /// Using the provided [`SignatureVerifier`], check the validity of this
+    /// identity assertion.
+    ///
+    /// If successful, returns the credential-type specific information that can
+    /// be derived from the signature. This is the [`SignatureVerifier::Output`]
+    /// type which typically describes the named actor, but may also contain
+    /// information about the time of signing or the credential's source.
+    // pub async fn validate_partial_claim<SV: SignatureVerifier>(
+    //     &self,
+    //     partial_claim: &PartialClaim,
+    //     verifier: &SV,
+    // ) -> Result<SV::Output, ValidationError<SV::Error>> {
+    //     self.check_padding()?;
+
+    //     self.signer_payload
+    //         .check_against_partial_claim(partial_claim)?;
+
+    //     verifier
+    //         .check_signature(&self.signer_payload, &self.signature)
+    //         .await
+    //
+    pub async fn validate_partial_claim(
+        &self,
+        partial_claim: &PartialClaim,
+    ) -> Result<serde_json::Value, ValidationError<String>> {
+        self.check_padding()?;
+
+        self.signer_payload
+            .check_against_partial_claim(partial_claim)?;
+
+        let sig_type = self.signer_payload.sig_type.as_str();
+        if sig_type == "cawg.x509.cose" {
+            let verifier = X509SignatureVerifier {};
+            let result = verifier
+                .check_signature(&self.signer_payload, &self.signature)
+                .await
+                .map(|v| v.to_summary())
+                .map_err(|e| ValidationError::UnknownSignatureType(e.to_string()))?;
+            return serde_json::to_value(result)
+                .map_err(|e| ValidationError::UnknownSignatureType(e.to_string()));
+        } else if sig_type == "cawg.identity_claims_aggregation" {
+            let verifier = IcaSignatureVerifier {};
+            let result = verifier
+                .check_signature(&self.signer_payload, &self.signature)
+                .await
+                .map(|v| v.to_summary())
+                .map_err(|e| ValidationError::UnknownSignatureType(e.to_string()))?;
+            return serde_json::to_value(result)
+                .map_err(|e| ValidationError::UnknownSignatureType(e.to_string()));
+        } else {
+            return Err(ValidationError::UnknownSignatureType(sig_type.to_string()));
+        }
     }
 
     fn check_padding<E>(&self) -> Result<(), ValidationError<E>> {

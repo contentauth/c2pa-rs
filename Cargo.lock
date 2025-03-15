@@ -726,6 +726,7 @@ dependencies = [
  "bytes",
  "c2pa-crypto",
  "c2pa-status-tracker",
+ "cawg-identity",
  "chrono",
  "ciborium",
  "config",

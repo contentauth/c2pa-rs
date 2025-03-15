@@ -74,6 +74,7 @@ impl SignatureVerifier for X509SignatureVerifier {
             })?;
 
         Ok(X509SignatureInfo {
+            signer_payload: signer_payload.clone(),
             cose_sign1,
             cert_info,
         })
@@ -83,6 +84,9 @@ impl SignatureVerifier for X509SignatureVerifier {
 /// Contains information the X.509 certificate chain and the COSE signature that
 /// was used to generate this identity assertion signature.
 pub struct X509SignatureInfo {
+    /// The signer payload that was used to generate the signature.
+    pub signer_payload: SignerPayload,
+
     /// Parsed COSE signature.
     pub cose_sign1: CoseSign1,
 
@@ -94,19 +98,35 @@ impl ToCredentialSummary for X509SignatureInfo {
     type CredentialSummary = X509SignatureReport;
 
     fn to_summary(&self) -> Self::CredentialSummary {
-        X509SignatureReport {}
+        X509SignatureReport::from_x509_signature_info(self)
     }
 }
 
 // #[derive(Serialize)] <- uncomment once the type is populated
 #[doc(hidden)]
-pub struct X509SignatureReport {}
+#[derive(Serialize)]
+pub struct X509SignatureReport {
+    pub signer_payload: SignerPayload,
+    pub signature_info: c2pa::SignatureInfo,
+}
 
-impl Serialize for X509SignatureReport {
-    fn serialize<S>(&self, _serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        todo!("X509SignatureReport type not defined yet");
+impl X509SignatureReport {
+    fn from_x509_signature_info(info: &X509SignatureInfo) -> Self {
+        X509SignatureReport {
+            signer_payload: info.signer_payload.clone(),
+            signature_info: c2pa::SignatureInfo {
+                alg: info.cert_info.alg,
+                issuer: info.cert_info.issuer_org.clone(),
+                time: info.cert_info.date.map(|d| d.to_rfc3339()),
+                cert_serial_number: info
+                    .cert_info
+                    .cert_serial_number
+                    .as_ref()
+                    .map(|s| s.to_string()),
+                cert_chain: String::from_utf8(info.cert_info.cert_chain.to_vec())
+                    .unwrap_or_default(),
+                revocation_status: info.cert_info.revocation_status,
+            },
+        }
     }
 }
