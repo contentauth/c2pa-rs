@@ -55,6 +55,18 @@ pub trait PostValidator {
     ) -> Result<Option<Value>>;
 }
 
+#[allow(async_fn_in_trait)]
+pub trait PostValidatorAsync {
+    async fn validate(
+        &self,
+        label: &str,
+        assertion: &ManifestAssertion,
+        uri: &str,
+        preliminary_claim: &PartialClaim,
+        tracker: &mut StatusTracker,
+    ) -> Result<Option<Value>>;
+}
+
 /// A reader for the manifest store.
 #[skip_serializing_none]
 #[derive(Serialize, Deserialize)]
@@ -662,67 +674,22 @@ impl Reader {
         }
     }
 
-    // navigates through the manifest tree with ingeredients, validating assertions
-    fn walk_manifest(
-        &self,
-        manifest_label: &str,
-        validator: &impl PostValidator,
-        validation_log: &mut StatusTracker,
-    ) -> Result<HashMap<String, Value>> {
-        let manifest = self
-            .get_manifest(manifest_label)
-            .ok_or(Error::ClaimMissing {
-                label: manifest_label.to_string(),
-            })?;
-        let mut preliminary_claim = crate::dynamic_assertion::PartialClaim::default();
-        {
-            let claim = self
-                .store
-                .get_claim(manifest_label)
-                .ok_or(Error::ClaimEncoding)?;
-            for assertion in claim.assertions() {
-                preliminary_claim.add_assertion(assertion);
-            }
-        }
-        let mut assertion_values = HashMap::new();
-
-        for assertion in manifest.assertions().iter() {
-            let assertion_uri =
-                crate::jumbf::labels::to_assertion_uri(manifest_label, assertion.label());
-            //println!("{}", assertion.label_with_instance());
-            let result = validator.validate(
-                assertion.label(),
-                assertion,
-                &assertion_uri,
-                &preliminary_claim,
-                validation_log,
-            )?;
-            if let Some(value) = result {
-                assertion_values.insert(assertion_uri, value);
-            }
-        }
-
-        for ingredient in manifest.ingredients().iter() {
-            if let Some(label) = ingredient.active_manifest() {
-                let ingredient_uri = crate::jumbf::labels::to_assertion_uri(
-                    manifest_label,
-                    ingredient.label().unwrap_or("unknown"),
-                );
-                validation_log.push_ingredient_uri(ingredient_uri);
-                self.walk_manifest(label, validator, validation_log)?;
-                validation_log.pop_ingredient_uri();
-            }
-        }
-        Ok(assertion_values)
-    }
-
     /// Post-validate the reader. This function is called after the reader is created.
+    #[async_generic(async_signature(
+        &mut self,
+        validator: &impl PostValidatorAsync
+    ))]
     pub fn post_validate(&mut self, validator: &impl PostValidator) -> Result<()> {
         let mut validation_log = StatusTracker::default();
         let mut validation_results = self.validation_results.take().unwrap_or_default();
         let mut assertion_values = HashMap::new();
         if let Some(active_label) = self.active_label() {
-            let values = self.walk_manifest(active_label, validator, &mut validation_log)?;
+            let values = if _sync {
+                self.walk_manifest(active_label, validator, &mut validation_log)
+            } else {
+                self.walk_manifest_async(active_label, validator, &mut validation_log)
+                    .await
+            }?;
             assertion_values.extend(values);
             for log in validation_log.logged_items() {
                 if let Some(status) = ValidationStatus::from_log_item(log) {
@@ -735,6 +702,92 @@ impl Reader {
         self.validation_results = Some(validation_results);
         self.assertion_values.extend(assertion_values);
         Ok(())
+    }
+
+    #[async_generic(async_signature(
+        &self,
+        manifest_label: &str,
+        validator: &impl PostValidatorAsync,
+        validation_log: &mut StatusTracker
+    ))]
+    fn walk_manifest(
+        &self,
+        manifest_label: &str,
+        validator: &impl PostValidator,
+        validation_log: &mut StatusTracker,
+    ) -> Result<HashMap<String, Value>> {
+        let mut assertion_values = HashMap::new();
+        let mut stack: Vec<(String, Option<String>)> = vec![(manifest_label.to_string(), None)];
+
+        while let Some((current_label, parent_uri)) = stack.pop() {
+            // If we're processing an ingredient, push its URI to the validation log
+            if let Some(uri) = &parent_uri {
+                validation_log.push_ingredient_uri(uri.clone());
+            }
+
+            let manifest = self
+                .get_manifest(&current_label)
+                .ok_or(Error::ClaimMissing {
+                    label: current_label.clone(),
+                })?;
+
+            let mut preliminary_claim = crate::dynamic_assertion::PartialClaim::default();
+            {
+                let claim = self
+                    .store
+                    .get_claim(&current_label)
+                    .ok_or(Error::ClaimEncoding)?;
+                for assertion in claim.assertions() {
+                    preliminary_claim.add_assertion(assertion);
+                }
+            }
+
+            // Process assertions for current manifest
+            for assertion in manifest.assertions().iter() {
+                let assertion_uri =
+                    crate::jumbf::labels::to_assertion_uri(&current_label, assertion.label());
+                let result = if _sync {
+                    validator.validate(
+                        assertion.label(),
+                        assertion,
+                        &assertion_uri,
+                        &preliminary_claim,
+                        validation_log,
+                    )
+                } else {
+                    validator
+                        .validate(
+                            assertion.label(),
+                            assertion,
+                            &assertion_uri,
+                            &preliminary_claim,
+                            validation_log,
+                        )
+                        .await
+                }?;
+                if let Some(value) = result {
+                    assertion_values.insert(assertion_uri, value);
+                }
+            }
+
+            // Add ingredients to stack for processing
+            for ingredient in manifest.ingredients().iter() {
+                if let Some(label) = ingredient.active_manifest() {
+                    let ingredient_uri = crate::jumbf::labels::to_assertion_uri(
+                        &current_label,
+                        ingredient.label().unwrap_or("unknown"),
+                    );
+                    stack.push((label.to_string(), Some(ingredient_uri)));
+                }
+            }
+
+            // If we're processing an ingredient, pop its URI from the validation log
+            if parent_uri.is_some() {
+                validation_log.pop_ingredient_uri();
+            }
+        }
+
+        Ok(assertion_values)
     }
 }
 
