@@ -841,7 +841,7 @@ pub mod tests {
     use super::*;
 
     const IMAGE_COMPLEX_MANIFEST: &[u8] = include_bytes!("../tests/fixtures/CACAE-uri-CA.jpg");
-    const IMAGE_WITH_MANIFEST: &[u8] = include_bytes!("../../target/images/CAI.jpg");
+    const IMAGE_WITH_MANIFEST: &[u8] = include_bytes!("../tests/fixtures/CA.jpg");
 
     #[test]
     #[cfg(feature = "file_io")]
