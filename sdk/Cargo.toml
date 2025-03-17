@@ -61,7 +61,7 @@ name = "v2api"
 [[example]]
 name = "cawg"
 required-features = ["file_io"]
-#dependencies = { cawg-identity = { path = "../cawg_identity", version = "0.9.0" }, raw-signature = { path = "../raw-signature" } }
+target = "cfg(not(target_os = \"wasi\"))"
 
 [lib]
 crate-type = ["lib"]
