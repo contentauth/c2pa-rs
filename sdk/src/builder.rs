@@ -1019,7 +1019,7 @@ impl Builder {
                 "Destination file already exists".to_string(),
             ));
         };
-        
+
         self.definition.format =
             crate::format_from_path(path).ok_or(crate::Error::UnsupportedType)?;
         self.definition.instance_id = format!("xmp:iid:{}", Uuid::new_v4());
