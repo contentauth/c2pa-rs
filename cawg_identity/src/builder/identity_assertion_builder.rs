@@ -193,8 +193,6 @@ fn finalize_identity_assertion(
             assertion_size - assertion_cbor.len() - 6
         ]));
 
-        ia.pad2.as_mut().unwrap()[0] = 1; // INVALID
-
         assertion_cbor.clear();
         ciborium::into_writer(&ia, &mut assertion_cbor)
             .map_err(|e| c2pa::Error::BadParam(e.to_string()))?;
