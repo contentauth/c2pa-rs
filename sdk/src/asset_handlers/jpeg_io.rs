@@ -678,7 +678,7 @@ fn get_entropy_size(input_stream: &mut dyn CAIRead) -> Result<usize> {
 }
 
 fn has_length(marker: u8) -> bool {
-    matches!(marker, RST0..=RST7 | APP0..=APP15 | SOF0..=SOF15 | SOS | COM | DQT | DRI)
+    matches!(marker, APP0..=APP15 | SOF0..=SOF15 | SOS | COM | DQT | DRI)
 }
 
 fn get_seg_size(input_stream: &mut dyn CAIRead) -> Result<usize> {
