@@ -33,7 +33,7 @@ mod ocsp;
 pub use ocsp::{check_ocsp_status, check_ocsp_status_async, OcspFetchPolicy};
 
 mod sign;
-pub use sign::{sign, sign_async};
+pub use sign::{sign, sign_async, sign_v2_embedded, sign_v2_embedded_async, CosePayload};
 
 mod sign1;
 pub use sign1::{
