@@ -14,6 +14,7 @@
 use std::{collections::HashSet, fmt::Debug, sync::LazyLock};
 
 use c2pa::{dynamic_assertion::PartialClaim, HashedUri, Manifest};
+use c2pa_status_tracker::{log_item, StatusTracker};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 
@@ -41,9 +42,10 @@ pub struct SignerPayload {
 }
 
 impl SignerPayload {
-    pub(super) fn check_against_partial_claim<E>(
+    pub(super) fn check_against_partial_claim<E: Debug>(
         &self,
         partial_claim: &PartialClaim,
+        status_tracker: &mut StatusTracker,
     ) -> Result<(), ValidationError<E>> {
         // All assertions mentioned in referenced_assertions also need to be referenced
         // in the claim.
@@ -63,27 +65,17 @@ impl SignerPayload {
                         ref_assertion.url().to_owned(),
                     ));
                 }
-
-                // TO REVIEW WITH GAVIN: I'm getting different value for
-                // assertion.alg (None) via the AsyncDynamicAssertion API than
-                // what I'm getting when I read the claim back
-                // on validation (Some("ps256")).
-
-                // if let Some(alg) = claim_assertion.alg().as_ref() {
-                //     if Some(alg) != ref_assertion.alg().as_ref() {
-                //         return Err(ValidationError::AssertionMismatch(
-                //             ref_assertion.url().to_owned(),
-                //         ));
-                //     }
-                // } else {
-                //     return Err(ValidationError::AssertionMismatch(
-                //         ref_assertion.url().to_owned(),
-                //     ));
-                // }
             } else {
-                return Err(ValidationError::AssertionNotInClaim(
-                    ref_assertion.url().to_owned(),
-                ));
+                log_item!(
+                    "NEED TO FIND LABEL".to_owned(),
+                    "referenced assertion not in claim",
+                    "SignerPayload::check_against_manifest"
+                )
+                .validation_status("cawg.identity.assertion.mismatch")
+                .failure(
+                    status_tracker,
+                    ValidationError::<E>::AssertionNotInClaim(ref_assertion.url().to_owned()),
+                )?;
             }
         }
 
@@ -101,7 +93,14 @@ impl SignerPayload {
                 false
             }
         }) {
-            return Err(ValidationError::NoHardBindingAssertion);
+            // TO DO: Where would we get assertion label?
+            log_item!(
+                "NEED TO FIND LABEL".to_owned(),
+                "no hard binding assertion",
+                "SignerPayload::check_against_manifest"
+            )
+            .validation_status("cawg.identity.hard_binding_missing")
+            .failure(status_tracker, ValidationError::<E>::NoHardBindingAssertion)?;
         }
 
         // Make sure no assertion references are duplicated.
@@ -110,7 +109,16 @@ impl SignerPayload {
         for label in &ref_assertion_labels {
             let label = label.clone();
             if labels.contains(&label) {
-                return Err(ValidationError::DuplicateAssertionReference(label));
+                log_item!(
+                    "NEED TO FIND LABEL".to_owned(),
+                    "multiple references to same assertion",
+                    "SignerPayload::check_against_manifest"
+                )
+                .validation_status("cawg.identity.assertion.duplicate")
+                .failure(
+                    status_tracker,
+                    ValidationError::<E>::DuplicateAssertionReference(label.clone()),
+                )?;
             }
             labels.insert(label);
         }
@@ -118,9 +126,10 @@ impl SignerPayload {
         Ok(())
     }
 
-    pub(super) fn check_against_manifest<E>(
+    pub(super) fn check_against_manifest<E: Debug>(
         &self,
         manifest: &Manifest,
+        status_tracker: &mut StatusTracker,
     ) -> Result<(), ValidationError<E>> {
         // All assertions mentioned in referenced_assertions also need to be referenced
         // in the claim.
@@ -158,9 +167,17 @@ impl SignerPayload {
                 //     ));
                 // }
             } else {
-                return Err(ValidationError::AssertionNotInClaim(
-                    ref_assertion.url().to_owned(),
-                ));
+                // TO DO: Where would we get assertion label?
+                log_item!(
+                    "NEED TO FIND LABEL".to_owned(),
+                    "referenced assertion not in claim",
+                    "SignerPayload::check_against_manifest"
+                )
+                .validation_status("cawg.identity.assertion.mismatch")
+                .failure(
+                    status_tracker,
+                    ValidationError::<E>::AssertionNotInClaim(ref_assertion.url().to_owned()),
+                )?;
             }
         }
 
@@ -178,7 +195,14 @@ impl SignerPayload {
                 false
             }
         }) {
-            return Err(ValidationError::NoHardBindingAssertion);
+            // TO DO: Where would we get assertion label?
+            log_item!(
+                "NEED TO FIND LABEL".to_owned(),
+                "no hard binding assertion",
+                "SignerPayload::check_against_manifest"
+            )
+            .validation_status("cawg.identity.hard_binding_missing")
+            .failure(status_tracker, ValidationError::<E>::NoHardBindingAssertion)?;
         }
 
         // Make sure no assertion references are duplicated.
@@ -187,8 +211,19 @@ impl SignerPayload {
         for label in &ref_assertion_labels {
             let label = label.clone();
             if labels.contains(&label) {
-                return Err(ValidationError::DuplicateAssertionReference(label));
+                // TO DO: Where would we get assertion label?
+                log_item!(
+                    "NEED TO FIND LABEL".to_owned(),
+                    "multiple references to same assertion",
+                    "SignerPayload::check_against_manifest"
+                )
+                .validation_status("cawg.identity.assertion.duplicate")
+                .failure(
+                    status_tracker,
+                    ValidationError::<E>::DuplicateAssertionReference(label.clone()),
+                )?;
             }
+
             labels.insert(label);
         }
 

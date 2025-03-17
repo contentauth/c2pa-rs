@@ -22,9 +22,8 @@ use c2pa_crypto::raw_signature;
 use c2pa_status_tracker::{log_item, StatusTracker};
 use cawg_identity::{
     builder::{AsyncIdentityAssertionBuilder, AsyncIdentityAssertionSigner},
-    claim_aggregation::IcaSignatureVerifier,
-    x509::{X509CredentialHolder, X509SignatureVerifier},
-    IdentityAssertion, ToCredentialSummary,
+    x509::X509CredentialHolder,
+    IdentityAssertion,
 };
 use serde_json::{json, Value};
 
@@ -108,7 +107,7 @@ impl PostValidatorAsync for CawgValidator {
             let identity_assertion: IdentityAssertion = assertion.to_assertion()?;
 
             let result = identity_assertion
-                .validate_partial_claim(partial_claim)
+                .validate_partial_claim(partial_claim, tracker)
                 .await
                 .map_err(|e| c2pa::Error::ClaimVerification(e.to_string()))?;
 
