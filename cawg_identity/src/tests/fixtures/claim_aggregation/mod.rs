@@ -1,4 +1,4 @@
-// Copyright 2024 Adobe. All rights reserved.
+// Copyright 2025 Adobe. All rights reserved.
 // This file is licensed to you under the Apache License,
 // Version 2.0 (http://www.apache.org/licenses/LICENSE-2.0)
 // or the MIT license (http://opensource.org/licenses/MIT),
@@ -11,17 +11,4 @@
 // specific language governing permissions and limitations under
 // each license.
 
-#![allow(unused)]
-
-pub(crate) mod claim_aggregation;
-
-mod manifest_json;
-pub(crate) use manifest_json::{manifest_json, parent_json};
-
-mod naive_credential_holder;
-pub(crate) use naive_credential_holder::{
-    NaiveAsyncCredentialHolder, NaiveCredentialHolder, NaiveSignatureVerifier,
-};
-
-mod test_credentials;
-pub(crate) use test_credentials::cert_chain_and_private_key_for_alg;
+pub(crate) mod ica_credential_example;
