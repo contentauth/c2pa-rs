@@ -23,6 +23,6 @@ mod x509_credential_holder;
 pub use x509_credential_holder::X509CredentialHolder;
 
 mod x509_signature_verifier;
-pub use x509_signature_verifier::X509SignatureVerifier;
+pub use x509_signature_verifier::{X509SignatureInfo, X509SignatureReport, X509SignatureVerifier};
 
-const CAWG_X509_SIG_TYPE: &str = "cawg.x509.cose";
+pub(crate) const CAWG_X509_SIG_TYPE: &str = "cawg.x509.cose";
