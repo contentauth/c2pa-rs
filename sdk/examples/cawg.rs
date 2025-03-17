@@ -13,138 +13,161 @@
 
 //! Example App that generates a CAWG manifest for a given file
 //! and validates the identity assertion.
-use anyhow::{bail, Result};
-use c2pa::{
-    dynamic_assertion::{PartialClaim, PostValidatorAsync},
-    AsyncSigner, Builder, ManifestAssertion, Reader, SigningAlg,
-};
-use c2pa_crypto::raw_signature;
-use c2pa_status_tracker::{log_item, StatusTracker};
-use cawg_identity::{
-    builder::{AsyncIdentityAssertionBuilder, AsyncIdentityAssertionSigner},
-    x509::X509CredentialHolder,
-    IdentityAssertion,
-};
-use serde_json::{json, Value};
+//!
+//! This example is not supported on WASI targets.
+//!
+//! ```bash
+//! cargo run --example cawg -- /path/to/source/file /path/to/destination/file
+//! ```
+mod cawg {
+    use std::path::Path;
 
-const CERTS: &[u8] = include_bytes!("../tests/fixtures/certs/ed25519.pub");
-const PRIVATE_KEY: &[u8] = include_bytes!("../tests/fixtures/certs/ed25519.pem");
+    use anyhow::Result;
+    use c2pa::{
+        dynamic_assertion::{PartialClaim, PostValidatorAsync},
+        AsyncSigner, Builder, ManifestAssertion, Reader, SigningAlg,
+    };
+    use c2pa_crypto::raw_signature;
+    use c2pa_status_tracker::{log_item, StatusTracker};
+    use cawg_identity::{
+        builder::{AsyncIdentityAssertionBuilder, AsyncIdentityAssertionSigner},
+        x509::X509CredentialHolder,
+        IdentityAssertion,
+    };
+    use serde_json::{json, Value};
 
-fn manifest_def() -> String {
-    json!({
-        "claim_generator_info": [
-            {
-                "name": "c2pa cawg test",
-                "version": env!("CARGO_PKG_VERSION")
-            }
-        ],
-        "assertions": [
-            {
-                "label": "c2pa.actions",
-                "data": {
-                    "actions": [
-                        {
-                            "action": "c2pa.opened",
-                        }
-                    ]
+    const CERTS: &[u8] = include_bytes!("../tests/fixtures/certs/ed25519.pub");
+    const PRIVATE_KEY: &[u8] = include_bytes!("../tests/fixtures/certs/ed25519.pem");
+
+    fn manifest_def() -> String {
+        json!({
+            "claim_generator_info": [
+                {
+                    "name": "c2pa cawg test",
+                    "version": env!("CARGO_PKG_VERSION")
                 }
-            },
-            {
-                "label": "cawg.training-mining",
-                "data": {
-                "entries": {
-                    "cawg.ai_inference": {
-                    "use": "notAllowed"
-                    },
-                    "cawg.ai_generative_training": {
-                    "use": "notAllowed"
+            ],
+            "assertions": [
+                {
+                    "label": "c2pa.actions",
+                    "data": {
+                        "actions": [
+                            {
+                                "action": "c2pa.opened",
+                            }
+                        ]
+                    }
+                },
+                {
+                    "label": "cawg.training-mining",
+                    "data": {
+                    "entries": {
+                        "cawg.ai_inference": {
+                        "use": "notAllowed"
+                        },
+                        "cawg.ai_generative_training": {
+                        "use": "notAllowed"
+                        }
+                    }
                     }
                 }
-                }
-            }
-        ]
-    })
-    .to_string()
-}
+            ]
+        })
+        .to_string()
+    }
 
-/// Creates a CAWG signer from a certificate chains and private keys.
-fn async_cawg_signer() -> Result<impl AsyncSigner> {
-    let c2pa_raw_signer = raw_signature::async_signer_from_cert_chain_and_private_key(
-        CERTS,
-        PRIVATE_KEY,
-        SigningAlg::Ed25519,
-        None,
-    )?;
+    /// Creates a CAWG signer from a certificate chains and private keys.
+    fn async_cawg_signer() -> Result<impl AsyncSigner> {
+        let c2pa_raw_signer = raw_signature::async_signer_from_cert_chain_and_private_key(
+            CERTS,
+            PRIVATE_KEY,
+            SigningAlg::Ed25519,
+            None,
+        )?;
 
-    let cawg_raw_signer = raw_signature::async_signer_from_cert_chain_and_private_key(
-        CERTS,
-        PRIVATE_KEY,
-        SigningAlg::Ed25519,
-        None,
-    )?;
+        let cawg_raw_signer = raw_signature::async_signer_from_cert_chain_and_private_key(
+            CERTS,
+            PRIVATE_KEY,
+            SigningAlg::Ed25519,
+            None,
+        )?;
 
-    let mut ia_signer = AsyncIdentityAssertionSigner::new(c2pa_raw_signer);
+        let mut ia_signer = AsyncIdentityAssertionSigner::new(c2pa_raw_signer);
 
-    let x509_holder = X509CredentialHolder::from_async_raw_signer(cawg_raw_signer);
-    let iab = AsyncIdentityAssertionBuilder::for_credential_holder(x509_holder);
-    ia_signer.add_identity_assertion(iab);
-    Ok(ia_signer)
-}
+        let x509_holder = X509CredentialHolder::from_async_raw_signer(cawg_raw_signer);
+        let iab = AsyncIdentityAssertionBuilder::for_credential_holder(x509_holder);
+        ia_signer.add_identity_assertion(iab);
+        Ok(ia_signer)
+    }
 
-/// Validates a CAWG identity assertion.
-struct CawgValidator;
-impl PostValidatorAsync for CawgValidator {
-    async fn validate(
-        &self,
-        label: &str,
-        assertion: &ManifestAssertion,
-        uri: &str,
-        partial_claim: &PartialClaim,
-        tracker: &mut StatusTracker,
-    ) -> c2pa::Result<Option<Value>> {
-        #[allow(clippy::single_match)]
-        if label == "cawg.identity" {
-            let identity_assertion: IdentityAssertion = assertion.to_assertion()?;
+    /// Validates a CAWG identity assertion.
+    struct CawgValidator;
+    impl PostValidatorAsync for CawgValidator {
+        async fn validate(
+            &self,
+            label: &str,
+            assertion: &ManifestAssertion,
+            uri: &str,
+            partial_claim: &PartialClaim,
+            tracker: &mut StatusTracker,
+        ) -> c2pa::Result<Option<Value>> {
+            #[allow(clippy::single_match)]
+            if label == "cawg.identity" {
+                let identity_assertion: IdentityAssertion = assertion.to_assertion()?;
 
-            let result = identity_assertion
-                .validate_partial_claim(partial_claim, tracker)
-                .await
-                .map_err(|e| c2pa::Error::ClaimVerification(e.to_string()))?;
+                let result = identity_assertion
+                    .validate_partial_claim(partial_claim, tracker)
+                    .await
+                    .map_err(|e| c2pa::Error::ClaimVerification(e.to_string()))?;
 
-            // let result = serde_json::to_value(ica_validated.to_summary())
-            //     .map_err(|e| c2pa::Error::ClaimVerification(e.to_string()))?;
-            // TODO: pass status_tracker to the validator
-            log_item!(uri.to_string(), "cawg.identity", "test cawg validator")
-                .validation_status("cawg.identity.validated")
-                .success(tracker);
-            return Ok(Some(result));
-        };
-        Ok(None)
+                // let result = serde_json::to_value(ica_validated.to_summary())
+                //     .map_err(|e| c2pa::Error::ClaimVerification(e.to_string()))?;
+                // TODO: pass status_tracker to the validator
+                log_item!(uri.to_string(), "cawg.identity", "test cawg validator")
+                    .validation_status("cawg.identity.validated")
+                    .success(tracker);
+                return Ok(Some(result));
+            };
+            Ok(None)
+        }
+    }
+
+    pub async fn run<S: AsRef<Path>, D: AsRef<Path>>(source: S, dest: D) -> Result<()> {
+        let source = source.as_ref();
+        let dest = dest.as_ref();
+
+        if dest.exists() {
+            // delete the destination file if it exists
+            std::fs::remove_file(&dest)?;
+        }
+
+        let signer = async_cawg_signer()?;
+        let mut builder = Builder::from_json(&manifest_def())?;
+        //builder.definition.claim_version = Some(2); // sets this to claim version 2
+        builder.sign_file_async(&signer, source, &dest).await?;
+
+        let mut reader = Reader::from_file(&dest)?;
+
+        reader.post_validate_async(&CawgValidator {}).await?;
+
+        println!("{reader}");
+        Ok(())
     }
 }
 
+#[cfg(target_os = "wasi")]
+fn main() {
+    println!("This example is not supported on WASI targets.");
+}
+#[cfg(not(target_os = "wasi"))]
 #[tokio::main]
-async fn main() -> Result<()> {
+async fn main() -> anyhow::Result<()> {
     let args: Vec<String> = std::env::args().collect();
     if args.len() < 3 {
-        bail!("Creates a CAWG manifest (requires source and destination file paths)");
+        eprintln!("Creates a CAWG manifest (requires source and destination file paths)");
+        std::process::exit(1);
     }
     let source: std::path::PathBuf = std::path::PathBuf::from(&args[1]);
     let dest: std::path::PathBuf = std::path::PathBuf::from(&args[2]);
-    if dest.exists() {
-        // delete the destination file if it exists
-        std::fs::remove_file(&dest)?;
-    }
-
-    let signer = async_cawg_signer()?;
-    let mut builder = Builder::from_json(&manifest_def())?;
-    //builder.definition.claim_version = Some(2); // sets this to claim version 2
-    builder.sign_file_async(&signer, source, &dest).await?;
-
-    let mut reader = Reader::from_file(&dest)?;
-
-    reader.post_validate_async(&CawgValidator {}).await?;
-
-    println!("{reader}");
-    Ok(())
+    cawg::run(source, dest).await
 }
