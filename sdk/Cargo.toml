@@ -125,7 +125,7 @@ treeline = "0.1.0"
 url = "2.5.3"
 uuid = { version = "=1.12.0", features = ["serde", "v4"] }
 x509-parser = "0.16.0"
-zip = { version = "2.2.1", default-features = false }
+zip = { version = "2.4", default-features = false }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 rsa = { version = "0.9.6", features = ["sha2"] }
