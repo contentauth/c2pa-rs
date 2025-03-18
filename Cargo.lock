@@ -711,7 +711,7 @@ checksum = "d71b6127be86fdcfddb610f7182ac57211d4b18a3e9c82eb2d17662f2227ad6a"
 
 [[package]]
 name = "c2pa"
-version = "0.47.0"
+version = "0.46.0"
 dependencies = [
  "actix",
  "anyhow",
@@ -726,7 +726,6 @@ dependencies = [
  "bytes",
  "c2pa-crypto",
  "c2pa-status-tracker",
- "cawg-identity",
  "chrono",
  "ciborium",
  "config",
@@ -854,7 +853,7 @@ version = "0.6.0"
 
 [[package]]
 name = "c2patool"
-version = "0.15.0"
+version = "0.14.0"
 dependencies = [
  "anyhow",
  "assert_cmd",
@@ -883,7 +882,7 @@ dependencies = [
 
 [[package]]
 name = "cawg-identity"
-version = "0.10.0"
+version = "0.9.0"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
