@@ -12,6 +12,7 @@
 // each license.
 
 pub(crate) mod assertion;
+pub(crate) mod built_in_signature_verifier;
 pub(crate) mod report;
 pub(crate) mod signature_verifier;
 pub(crate) mod signer_payload;
