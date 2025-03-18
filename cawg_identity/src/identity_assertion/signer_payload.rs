@@ -14,7 +14,7 @@
 use std::{collections::HashSet, fmt::Debug, sync::LazyLock};
 
 use c2pa::{dynamic_assertion::PartialClaim, HashedUri, Manifest};
-use c2pa_status_tracker::{log_item, StatusTracker};
+use c2pa_status_tracker::{log_current_item, StatusTracker};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 
@@ -66,8 +66,7 @@ impl SignerPayload {
                     ));
                 }
             } else {
-                log_item!(
-                    "NEED TO FIND LABEL".to_owned(),
+                log_current_item!(
                     "referenced assertion not in claim",
                     "SignerPayload::check_against_manifest"
                 )
@@ -93,9 +92,7 @@ impl SignerPayload {
                 false
             }
         }) {
-            // TO DO: Where would we get assertion label?
-            log_item!(
-                "NEED TO FIND LABEL".to_owned(),
+            log_current_item!(
                 "no hard binding assertion",
                 "SignerPayload::check_against_manifest"
             )
@@ -109,8 +106,7 @@ impl SignerPayload {
         for label in &ref_assertion_labels {
             let label = label.clone();
             if labels.contains(&label) {
-                log_item!(
-                    "NEED TO FIND LABEL".to_owned(),
+                log_current_item!(
                     "multiple references to same assertion",
                     "SignerPayload::check_against_manifest"
                 )
@@ -167,9 +163,7 @@ impl SignerPayload {
                 //     ));
                 // }
             } else {
-                // TO DO: Where would we get assertion label?
-                log_item!(
-                    "NEED TO FIND LABEL".to_owned(),
+                log_current_item!(
                     "referenced assertion not in claim",
                     "SignerPayload::check_against_manifest"
                 )
@@ -195,9 +189,7 @@ impl SignerPayload {
                 false
             }
         }) {
-            // TO DO: Where would we get assertion label?
-            log_item!(
-                "NEED TO FIND LABEL".to_owned(),
+            log_current_item!(
                 "no hard binding assertion",
                 "SignerPayload::check_against_manifest"
             )
@@ -211,9 +203,7 @@ impl SignerPayload {
         for label in &ref_assertion_labels {
             let label = label.clone();
             if labels.contains(&label) {
-                // TO DO: Where would we get assertion label?
-                log_item!(
-                    "NEED TO FIND LABEL".to_owned(),
+                log_current_item!(
                     "multiple references to same assertion",
                     "SignerPayload::check_against_manifest"
                 )

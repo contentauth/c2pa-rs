@@ -23,18 +23,14 @@ mod cawg {
     use std::path::Path;
 
     use anyhow::Result;
-    use c2pa::{
-        dynamic_assertion::{PartialClaim, PostValidatorAsync},
-        AsyncSigner, Builder, ManifestAssertion, Reader, SigningAlg,
-    };
+    use c2pa::{AsyncSigner, Builder, Reader, SigningAlg};
     use c2pa_crypto::raw_signature;
-    use c2pa_status_tracker::{log_item, StatusTracker};
     use cawg_identity::{
         builder::{AsyncIdentityAssertionBuilder, AsyncIdentityAssertionSigner},
+        validator::CawgValidator,
         x509::X509CredentialHolder,
-        IdentityAssertion,
     };
-    use serde_json::{json, Value};
+    use serde_json::json;
 
     const CERTS: &[u8] = include_bytes!("../tests/fixtures/certs/ed25519.pub");
     const PRIVATE_KEY: &[u8] = include_bytes!("../tests/fixtures/certs/ed25519.pem");
@@ -100,45 +96,13 @@ mod cawg {
         Ok(ia_signer)
     }
 
-    /// Validates a CAWG identity assertion.
-    struct CawgValidator;
-    impl PostValidatorAsync for CawgValidator {
-        async fn validate(
-            &self,
-            label: &str,
-            assertion: &ManifestAssertion,
-            uri: &str,
-            partial_claim: &PartialClaim,
-            tracker: &mut StatusTracker,
-        ) -> c2pa::Result<Option<Value>> {
-            #[allow(clippy::single_match)]
-            if label == "cawg.identity" {
-                let identity_assertion: IdentityAssertion = assertion.to_assertion()?;
-
-                let result = identity_assertion
-                    .validate_partial_claim(partial_claim, tracker)
-                    .await
-                    .map_err(|e| c2pa::Error::ClaimVerification(e.to_string()))?;
-
-                // let result = serde_json::to_value(ica_validated.to_summary())
-                //     .map_err(|e| c2pa::Error::ClaimVerification(e.to_string()))?;
-                // TODO: pass status_tracker to the validator
-                log_item!(uri.to_string(), "cawg.identity", "test cawg validator")
-                    .validation_status("cawg.identity.validated")
-                    .success(tracker);
-                return Ok(Some(result));
-            };
-            Ok(None)
-        }
-    }
-
     pub async fn run<S: AsRef<Path>, D: AsRef<Path>>(source: S, dest: D) -> Result<()> {
         let source = source.as_ref();
         let dest = dest.as_ref();
 
         if dest.exists() {
             // delete the destination file if it exists
-            std::fs::remove_file(&dest)?;
+            std::fs::remove_file(dest)?;
         }
 
         let signer = async_cawg_signer()?;
@@ -146,7 +110,7 @@ mod cawg {
         //builder.definition.claim_version = Some(2); // sets this to claim version 2
         builder.sign_file_async(&signer, source, &dest).await?;
 
-        let mut reader = Reader::from_file(&dest)?;
+        let mut reader = Reader::from_file(dest)?;
 
         reader.post_validate_async(&CawgValidator {}).await?;
 

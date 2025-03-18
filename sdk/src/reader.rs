@@ -22,6 +22,7 @@ use std::{
 };
 
 use async_generic::async_generic;
+use async_trait::async_trait;
 use c2pa_crypto::base64;
 use c2pa_status_tracker::StatusTracker;
 #[cfg(feature = "json_schema")]
@@ -55,7 +56,8 @@ pub trait PostValidator {
     ) -> Result<Option<Value>>;
 }
 
-#[allow(async_fn_in_trait)]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 pub trait PostValidatorAsync {
     async fn validate(
         &self,

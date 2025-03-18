@@ -21,9 +21,6 @@ edition = "2021"
 rust-version = "1.82.0"
 exclude = ["tests/fixtures"]
 
-[target.'cfg(target_os = "wasi")'.exclude]
-examples = ["cawg"]
-
 [package.metadata.docs.rs]
 all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
@@ -64,7 +61,6 @@ name = "v2api"
 [[example]]
 name = "cawg"
 required-features = ["file_io"]
-target = "cfg(not(target_os = \"wasi\"))"
 
 [lib]
 crate-type = ["lib"]

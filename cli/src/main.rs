@@ -27,6 +27,7 @@ use std::{
 
 use anyhow::{anyhow, bail, Context, Result};
 use c2pa::{Builder, ClaimGeneratorInfo, Error, Ingredient, ManifestDefinition, Reader, Signer};
+use cawg_identity::validator::CawgValidator;
 use clap::{Parser, Subcommand};
 use log::debug;
 use serde::Deserialize;
@@ -516,7 +517,6 @@ fn verify_fragmented(init_pattern: &Path, frag_pattern: &Path) -> Result<Vec<Rea
 
     Ok(readers)
 }
-
 fn main() -> Result<()> {
     let args = CliArgs::parse();
 
@@ -782,7 +782,11 @@ fn main() -> Result<()> {
             println!("{} Init manifests validated", stores.len());
         }
     } else {
-        println!("{}", Reader::from_file(&args.path).map_err(special_errs)?)
+        let mut reader = Reader::from_file(&args.path).map_err(special_errs)?;
+
+        let runtime = tokio::runtime::Runtime::new()?;
+        runtime.block_on(reader.post_validate_async(&CawgValidator {}))?;
+        println!("{}", reader);
     }
 
     Ok(())

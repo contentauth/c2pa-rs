@@ -17,7 +17,7 @@ use std::{
 };
 
 use c2pa::{dynamic_assertion::PartialClaim, Manifest, Reader};
-use c2pa_status_tracker::{log_item, StatusTracker};
+use c2pa_status_tracker::{log_current_item, log_item, StatusTracker};
 use serde::{Deserialize, Serialize};
 use serde_bytes::ByteBuf;
 
@@ -300,6 +300,12 @@ impl IdentityAssertion {
                 .await
                 .map(|v| v.to_summary())
                 .map_err(|e| ValidationError::UnknownSignatureType(e.to_string()))?;
+            log_current_item!(
+                "cawg x509 identity signature valid",
+                "validate_partial_claim"
+            )
+            .validation_status("cawg.identity.x509.valid")
+            .success(status_tracker);
             serde_json::to_value(result)
                 .map_err(|e| ValidationError::UnknownSignatureType(e.to_string()))
         } else if sig_type == "cawg.identity_claims_aggregation" {
@@ -309,6 +315,12 @@ impl IdentityAssertion {
                 .await
                 .map(|v| v.to_summary())
                 .map_err(|e| ValidationError::UnknownSignatureType(e.to_string()))?;
+            log_current_item!(
+                "cawg identity claims_aggregation signature valid",
+                "validate_partial_claim"
+            )
+            .validation_status("cawg.identity.claims_aggregation.valid")
+            .success(status_tracker);
             serde_json::to_value(result)
                 .map_err(|e| ValidationError::UnknownSignatureType(e.to_string()))
         } else {
@@ -321,9 +333,7 @@ impl IdentityAssertion {
         status_tracker: &mut StatusTracker,
     ) -> Result<(), ValidationError<E>> {
         if !self.pad1.iter().all(|b| *b == 0) {
-            // TO DO: Where would we get assertion label?
-            log_item!(
-                "NEED TO FIND LABEL".to_owned(),
+            log_current_item!(
                 "invalid value in pad fields",
                 "SignerPayload::check_padding"
             )
@@ -338,9 +348,7 @@ impl IdentityAssertion {
 
         if let Some(pad2) = self.pad2.as_ref() {
             if !pad2.iter().all(|b| *b == 0) {
-                // TO DO: Where would we get assertion label?
-                log_item!(
-                    "NEED TO FIND LABEL".to_owned(),
+                log_current_item!(
                     "invalid value in pad fields",
                     "SignerPayload::check_padding"
                 )

@@ -28,6 +28,7 @@ c2pa = { path = "../sdk", version = "0.46.0", features = [
 	"add_thumbnails",
 	"pdf"
 ] }
+cawg-identity = { path = "../cawg_identity", version = "0.9.0"}
 c2pa-crypto = { path = "../internal/crypto", version = "0.6.2" }
 clap = { version = "4.5.10", features = ["derive", "env"] }
 env_logger = "0.11.7"
@@ -37,6 +38,7 @@ serde = { version = "1.0", features = ["derive"] }
 serde_derive = "1.0"
 serde_json = "1.0"
 tempfile = "3.3"
+tokio = { version = "1.36.0", features = ["full"] }
 treeline = "0.1.0"
 pem = "3.0.3"
 url = "2.5.0"

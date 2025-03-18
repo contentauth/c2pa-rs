@@ -39,6 +39,7 @@ use crate::{x509::X509SignatureVerifier, IdentityAssertion};
 async fn malformed_cbor() {
     let format = "image/jpeg";
     let test_image = include_bytes!("../../fixtures/validation_method/malformed_cbor.jpg");
+    const IDENTITY_URI: &str = "self#jumbf=c2pa.assertions/cawg.identity";
 
     let mut test_image = Cursor::new(test_image);
 
@@ -48,6 +49,7 @@ async fn malformed_cbor() {
 
     // Re-parse with identity assertion code should find malformed CBOR error.
     let mut status_tracker = StatusTracker::default();
+    status_tracker.push_current_uri(IDENTITY_URI);
 
     let active_manifest = reader.active_manifest().unwrap();
     let ia_results: Vec<Result<IdentityAssertion, c2pa::Error>> =
@@ -85,7 +87,7 @@ async fn extra_fields() {
 
     let format = "image/jpeg";
     let test_image = include_bytes!("../../fixtures/validation_method/extra_field.jpg");
-
+    const IDENTITY_URI: &str = "self#jumbf=c2pa.assertions/cawg.identity";
     let mut test_image = Cursor::new(test_image);
 
     // Initial read with default `Reader` should pass without issues.
@@ -94,6 +96,7 @@ async fn extra_fields() {
 
     // Re-parse with identity assertion code should find malformed CBOR error.
     let mut status_tracker = StatusTracker::default();
+    status_tracker.push_current_uri(IDENTITY_URI);
 
     let active_manifest = reader.active_manifest().unwrap();
     let ia_results: Vec<Result<IdentityAssertion, c2pa::Error>> =
@@ -148,6 +151,8 @@ async fn assertion_not_in_claim_v1() {
     let test_image =
         include_bytes!("../../fixtures/validation_method/extra_assertion_claim_v1.jpg");
 
+    const IDENTITY_URI: &str = "self#jumbf=c2pa.assertions/cawg.identity";
+
     let mut test_image = Cursor::new(test_image);
 
     // Initial read with default `Reader` should pass without issues.
@@ -156,7 +161,7 @@ async fn assertion_not_in_claim_v1() {
 
     // Re-parse with identity assertion code should find extra assertion error.
     let mut status_tracker = StatusTracker::default();
-
+    status_tracker.push_current_uri(IDENTITY_URI);
     let active_manifest = reader.active_manifest().unwrap();
     let ia_results: Vec<Result<IdentityAssertion, c2pa::Error>> =
         IdentityAssertion::from_manifest(active_manifest, &mut status_tracker).collect();
@@ -196,7 +201,7 @@ async fn assertion_not_in_claim_v1() {
 
     let log = &status_tracker.logged_items()[0];
     assert_eq!(log.kind, LogKind::Failure);
-    assert_eq!(log.label, "NEED TO FIND LABEL"); // !!!
+    assert_eq!(log.label, IDENTITY_URI); // !!!
     assert_eq!(log.description, "referenced assertion not in claim");
     assert_eq!(
         log.validation_status.as_ref().unwrap().as_ref(),
@@ -247,6 +252,8 @@ async fn duplicate_assertion_reference() {
     let test_image =
         include_bytes!("../../fixtures/validation_method/duplicate_assertion_reference.jpg");
 
+    const IDENTITY_URI: &str = "self#jumbf=c2pa.assertions/cawg.identity";
+
     let mut test_image = Cursor::new(test_image);
 
     // Initial read with default `Reader` should pass without issues.
@@ -255,7 +262,7 @@ async fn duplicate_assertion_reference() {
 
     // Re-parse with identity assertion code should find extra assertion error.
     let mut status_tracker = StatusTracker::default();
-
+    status_tracker.push_current_uri(IDENTITY_URI);
     let active_manifest = reader.active_manifest().unwrap();
     let ia_results: Vec<Result<IdentityAssertion, c2pa::Error>> =
         IdentityAssertion::from_manifest(active_manifest, &mut status_tracker).collect();
@@ -295,7 +302,7 @@ async fn duplicate_assertion_reference() {
 
     let log = &status_tracker.logged_items()[0];
     assert_eq!(log.kind, LogKind::Failure);
-    assert_eq!(log.label, "NEED TO FIND LABEL"); // !!!
+    assert_eq!(log.label, IDENTITY_URI); // !!!
     assert_eq!(log.description, "multiple references to same assertion");
     assert_eq!(
         log.validation_status.as_ref().unwrap().as_ref(),
@@ -331,6 +338,8 @@ async fn no_hard_binding() {
     let format = "image/jpeg";
     let test_image = include_bytes!("../../fixtures/validation_method/no_hard_binding.jpg");
 
+    const IDENTITY_URI: &str = "self#jumbf=c2pa.assertions/cawg.identity";
+
     let mut test_image = Cursor::new(test_image);
 
     // Initial read with default `Reader` should pass without issues.
@@ -339,7 +348,7 @@ async fn no_hard_binding() {
 
     // Re-parse with identity assertion code should find extra assertion error.
     let mut status_tracker = StatusTracker::default();
-
+    status_tracker.push_current_uri(IDENTITY_URI);
     let active_manifest = reader.active_manifest().unwrap();
     let ia_results: Vec<Result<IdentityAssertion, c2pa::Error>> =
         IdentityAssertion::from_manifest(active_manifest, &mut status_tracker).collect();
@@ -368,7 +377,7 @@ async fn no_hard_binding() {
 
     let log = &status_tracker.logged_items()[0];
     assert_eq!(log.kind, LogKind::Failure);
-    assert_eq!(log.label, "NEED TO FIND LABEL"); // !!!
+    assert_eq!(log.label, IDENTITY_URI); // !!!
     assert_eq!(log.description, "no hard binding assertion");
     assert_eq!(
         log.validation_status.as_ref().unwrap().as_ref(),
@@ -417,6 +426,7 @@ mod invalid_sig_type {
         // modified version of this SDK that added a proof-of-concept signature type
         // that's not intended for general consumption. The validator in this test case
         // is not configured to read that signature type.
+        const IDENTITY_URI: &str = "self#jumbf=c2pa.assertions/cawg.identity";
 
         let format = "image/jpeg";
         let test_image = include_bytes!("../../fixtures/validation_method/invalid_sig_type.jpg");
@@ -429,6 +439,7 @@ mod invalid_sig_type {
 
         // Re-parse with identity assertion code should find extra assertion error.
         let mut status_tracker = StatusTracker::default();
+        status_tracker.push_current_uri(IDENTITY_URI);
 
         let active_manifest = reader.active_manifest().unwrap();
         let ia_results: Vec<Result<IdentityAssertion, c2pa::Error>> =
@@ -471,7 +482,7 @@ mod invalid_sig_type {
 
         let log = &status_tracker.logged_items()[0];
         assert_eq!(log.kind, LogKind::Failure);
-        assert_eq!(log.label, "NEED TO FIND LABEL"); // !!!
+        assert_eq!(log.label, IDENTITY_URI); // !!!
         assert_eq!(log.description, "unsupported signature type");
         assert_eq!(
             log.validation_status.as_ref().unwrap().as_ref(),
@@ -493,6 +504,7 @@ mod invalid_sig_type {
 
         let format = "image/jpeg";
         let test_image = include_bytes!("../../fixtures/validation_method/invalid_sig_type.jpg");
+        const IDENTITY_URI: &str = "self#jumbf=c2pa.assertions/cawg.identity";
 
         let mut test_image = Cursor::new(test_image);
 
@@ -502,7 +514,7 @@ mod invalid_sig_type {
 
         // Re-parse with identity assertion code should find extra assertion error.
         let mut status_tracker = StatusTracker::default();
-
+        status_tracker.push_current_uri(IDENTITY_URI);
         let active_manifest = reader.active_manifest().unwrap();
         let ia_results: Vec<Result<IdentityAssertion, c2pa::Error>> =
             IdentityAssertion::from_manifest(active_manifest, &mut status_tracker).collect();
@@ -544,7 +556,7 @@ mod invalid_sig_type {
 
         let log = &status_tracker.logged_items()[0];
         assert_eq!(log.kind, LogKind::Failure);
-        assert_eq!(log.label, "NEED TO FIND LABEL"); // !!!
+        assert_eq!(log.label, IDENTITY_URI); // !!!
         assert_eq!(log.description, "unsupported signature type");
         assert_eq!(
             log.validation_status.as_ref().unwrap().as_ref(),
@@ -569,7 +581,7 @@ async fn pad1_invalid() {
 
     let format = "image/jpeg";
     let test_image = include_bytes!("../../fixtures/validation_method/pad1_invalid.jpg");
-
+    const IDENTITY_URI: &str = "self#jumbf=c2pa.assertions/cawg.identity";
     let mut test_image = Cursor::new(test_image);
 
     // Initial read with default `Reader` should pass without issues.
@@ -578,6 +590,7 @@ async fn pad1_invalid() {
 
     // Re-parse with identity assertion code should find invalid pad error.
     let mut status_tracker = StatusTracker::default();
+    status_tracker.push_current_uri(IDENTITY_URI);
 
     let active_manifest = reader.active_manifest().unwrap();
     let ia_results: Vec<Result<IdentityAssertion, c2pa::Error>> =
@@ -613,7 +626,7 @@ async fn pad1_invalid() {
 
     let log = &status_tracker.logged_items()[0];
     assert_eq!(log.kind, LogKind::Failure);
-    assert_eq!(log.label, "NEED TO FIND LABEL"); // !!!
+    assert_eq!(log.label, IDENTITY_URI); // !!!
     assert_eq!(log.description, "invalid value in pad fields");
     assert_eq!(
         log.validation_status.as_ref().unwrap().as_ref(),
@@ -641,6 +654,7 @@ async fn pad2_invalid() {
 
     let format = "image/jpeg";
     let test_image = include_bytes!("../../fixtures/validation_method/pad2_invalid.jpg");
+    const IDENTITY_URI: &str = "self#jumbf=c2pa.assertions/cawg.identity";
 
     let mut test_image = Cursor::new(test_image);
 
@@ -650,6 +664,7 @@ async fn pad2_invalid() {
 
     // Re-parse with identity assertion code should find invalid pad error.
     let mut status_tracker = StatusTracker::default();
+    status_tracker.push_current_uri(IDENTITY_URI);
 
     let active_manifest = reader.active_manifest().unwrap();
     let ia_results: Vec<Result<IdentityAssertion, c2pa::Error>> =
@@ -685,7 +700,7 @@ async fn pad2_invalid() {
 
     let log = &status_tracker.logged_items()[0];
     assert_eq!(log.kind, LogKind::Failure);
-    assert_eq!(log.label, "NEED TO FIND LABEL"); // !!!
+    assert_eq!(log.label, IDENTITY_URI); // !!!
     assert_eq!(log.description, "invalid value in pad fields");
     assert_eq!(
         log.validation_status.as_ref().unwrap().as_ref(),
