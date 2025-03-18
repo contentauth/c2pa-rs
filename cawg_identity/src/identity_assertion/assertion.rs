@@ -304,7 +304,7 @@ impl IdentityAssertion {
                 "cawg x509 identity signature valid",
                 "validate_partial_claim"
             )
-            .validation_status("cawg.identity.x509.valid")
+            .validation_status("cawg.ica.credential_valid")
             .success(status_tracker);
             serde_json::to_value(result)
                 .map_err(|e| ValidationError::UnknownSignatureType(e.to_string()))
@@ -319,7 +319,7 @@ impl IdentityAssertion {
                 "cawg identity claims_aggregation signature valid",
                 "validate_partial_claim"
             )
-            .validation_status("cawg.identity.claims_aggregation.valid")
+            .validation_status("cawg.ica.credential_valid")
             .success(status_tracker);
             serde_json::to_value(result)
                 .map_err(|e| ValidationError::UnknownSignatureType(e.to_string()))

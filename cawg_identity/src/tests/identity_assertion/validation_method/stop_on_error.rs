@@ -201,7 +201,7 @@ async fn assertion_not_in_claim_v1() {
 
     let log = &status_tracker.logged_items()[0];
     assert_eq!(log.kind, LogKind::Failure);
-    assert_eq!(log.label, IDENTITY_URI); // !!!
+    assert_eq!(log.label, IDENTITY_URI);
     assert_eq!(log.description, "referenced assertion not in claim");
     assert_eq!(
         log.validation_status.as_ref().unwrap().as_ref(),
@@ -296,7 +296,7 @@ async fn duplicate_assertion_reference() {
 
     let log = &status_tracker.logged_items()[0];
     assert_eq!(log.kind, LogKind::Failure);
-    assert_eq!(log.label, IDENTITY_URI); // !!!
+    assert_eq!(log.label, IDENTITY_URI);
     assert_eq!(log.description, "multiple references to same assertion");
     assert_eq!(
         log.validation_status.as_ref().unwrap().as_ref(),
@@ -365,7 +365,7 @@ async fn no_hard_binding() {
 
     let log = &status_tracker.logged_items()[0];
     assert_eq!(log.kind, LogKind::Failure);
-    assert_eq!(log.label, IDENTITY_URI); // !!!
+    assert_eq!(log.label, IDENTITY_URI);
     assert_eq!(log.description, "no hard binding assertion");
     assert_eq!(
         log.validation_status.as_ref().unwrap().as_ref(),
@@ -467,7 +467,7 @@ mod invalid_sig_type {
 
         let log = &status_tracker.logged_items()[0];
         assert_eq!(log.kind, LogKind::Failure);
-        assert_eq!(log.label, IDENTITY_URI); // !!!
+        assert_eq!(log.label, IDENTITY_URI);
         assert_eq!(log.description, "unsupported signature type");
         assert_eq!(
             log.validation_status.as_ref().unwrap().as_ref(),
@@ -544,7 +544,7 @@ mod invalid_sig_type {
 
         let log = &status_tracker.logged_items()[0];
         assert_eq!(log.kind, LogKind::Failure);
-        assert_eq!(log.label, IDENTITY_URI); // !!!
+        assert_eq!(log.label, IDENTITY_URI);
         assert_eq!(log.description, "unsupported signature type");
         assert_eq!(
             log.validation_status.as_ref().unwrap().as_ref(),
@@ -616,7 +616,7 @@ async fn pad1_invalid() {
 
     let log = &status_tracker.logged_items()[0];
     assert_eq!(log.kind, LogKind::Failure);
-    assert_eq!(log.label, IDENTITY_URI); // !!!
+    assert_eq!(log.label, IDENTITY_URI);
     assert_eq!(log.description, "invalid value in pad fields");
     assert_eq!(
         log.validation_status.as_ref().unwrap().as_ref(),
@@ -684,7 +684,7 @@ async fn pad2_invalid() {
 
     let log = &status_tracker.logged_items()[0];
     assert_eq!(log.kind, LogKind::Failure);
-    assert_eq!(log.label, IDENTITY_URI); // !!!
+    assert_eq!(log.label, IDENTITY_URI);
     assert_eq!(log.description, "invalid value in pad fields");
     assert_eq!(
         log.validation_status.as_ref().unwrap().as_ref(),

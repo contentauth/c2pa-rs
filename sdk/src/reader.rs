@@ -58,7 +58,7 @@ pub trait PostValidator {
 
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
-pub trait PostValidatorAsync {
+pub trait AsyncPostValidator {
     async fn validate(
         &self,
         label: &str,
@@ -679,7 +679,7 @@ impl Reader {
     /// Post-validate the reader. This function is called after the reader is created.
     #[async_generic(async_signature(
         &mut self,
-        validator: &impl PostValidatorAsync
+        validator: &impl AsyncPostValidator
     ))]
     pub fn post_validate(&mut self, validator: &impl PostValidator) -> Result<()> {
         let mut validation_log = StatusTracker::default();
@@ -709,7 +709,7 @@ impl Reader {
     #[async_generic(async_signature(
         &self,
         manifest_label: &str,
-        validator: &impl PostValidatorAsync,
+        validator: &impl AsyncPostValidator,
         validation_log: &mut StatusTracker
     ))]
     fn walk_manifest(

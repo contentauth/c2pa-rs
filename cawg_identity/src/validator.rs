@@ -16,7 +16,7 @@
 
 use async_trait::async_trait;
 use c2pa::{
-    dynamic_assertion::{PartialClaim, PostValidatorAsync},
+    dynamic_assertion::{AsyncPostValidator, PartialClaim},
     ManifestAssertion,
 };
 use c2pa_status_tracker::StatusTracker;
@@ -28,7 +28,7 @@ use crate::IdentityAssertion;
 pub struct CawgValidator;
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
-impl PostValidatorAsync for CawgValidator {
+impl AsyncPostValidator for CawgValidator {
     async fn validate(
         &self,
         label: &str,
@@ -43,9 +43,10 @@ impl PostValidatorAsync for CawgValidator {
             let result = identity_assertion
                 .validate_partial_claim(partial_claim, tracker)
                 .await
-                .map_err(|e| c2pa::Error::ClaimVerification(e.to_string()))?;
+                .map(Some)
+                .map_err(|e| c2pa::Error::ClaimVerification(e.to_string()));
             tracker.pop_current_uri();
-            return Ok(Some(result));
+            return result;
         };
         Ok(None)
     }

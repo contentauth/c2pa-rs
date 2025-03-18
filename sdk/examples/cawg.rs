@@ -107,7 +107,7 @@ mod cawg {
 
         let signer = async_cawg_signer()?;
         let mut builder = Builder::from_json(&manifest_def())?;
-        //builder.definition.claim_version = Some(2); // sets this to claim version 2
+        builder.definition.claim_version = Some(2); // sets this to claim version 2
         builder.sign_file_async(&signer, source, &dest).await?;
 
         let mut reader = Reader::from_file(dest)?;
