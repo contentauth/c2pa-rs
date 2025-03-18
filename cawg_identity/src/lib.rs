@@ -20,6 +20,7 @@
 
 pub mod builder;
 pub mod claim_aggregation;
+pub mod validator;
 
 mod identity_assertion;
 pub use identity_assertion::{

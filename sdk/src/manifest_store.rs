@@ -204,7 +204,7 @@ impl ManifestStore {
                         .insert(manifest_label.to_owned(), manifest);
                 }
                 Err(e) => {
-                    validation_results.add_status(manifest_label, ValidationStatus::from_error(&e));
+                    validation_results.add_status(ValidationStatus::from_error(&e));
                 }
             };
         }
@@ -241,7 +241,7 @@ impl ManifestStore {
                         .insert(manifest_label.to_owned(), manifest);
                 }
                 Err(e) => {
-                    validation_results.add_status(manifest_label, ValidationStatus::from_error(&e));
+                    validation_results.add_status(ValidationStatus::from_error(&e));
                 }
             };
         }

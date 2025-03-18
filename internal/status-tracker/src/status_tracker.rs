@@ -23,6 +23,7 @@ pub struct StatusTracker {
     error_behavior: ErrorBehavior,
     logged_items: Vec<LogItem>,
     ingredient_uris: Vec<String>,
+    current_uri: Vec<String>,
 }
 
 impl StatusTracker {
@@ -32,6 +33,7 @@ impl StatusTracker {
             error_behavior,
             logged_items: vec![],
             ingredient_uris: vec![],
+            current_uri: vec![],
         }
     }
 
@@ -61,6 +63,11 @@ impl StatusTracker {
         if let Some(ingredient_uri) = self.ingredient_uris.last() {
             log_item.ingredient_uri = Some(ingredient_uri.to_string().into());
         }
+        if log_item.label.is_empty() {
+            if let Some(current_uri) = self.current_uri.last() {
+                log_item.label = std::borrow::Cow::Owned(current_uri.to_string());
+            }
+        }
         self.logged_items.push(log_item);
     }
 
@@ -74,7 +81,11 @@ impl StatusTracker {
         if let Some(ingredient_uri) = self.ingredient_uris.last() {
             log_item.ingredient_uri = Some(ingredient_uri.to_string().into());
         }
-
+        if log_item.label.is_empty() {
+            if let Some(current_uri) = self.current_uri.last() {
+                log_item.label = std::borrow::Cow::Owned(current_uri.to_string());
+            }
+        }
         self.logged_items.push(log_item);
 
         match self.error_behavior {
@@ -132,6 +143,28 @@ impl StatusTracker {
     /// Removes the current ingredient URI, if any.
     pub fn pop_ingredient_uri(&mut self) -> Option<String> {
         self.ingredient_uris.pop()
+    }
+
+    /// Returns the current ingredient URI, if any.
+    pub fn ingredient_uri(&self) -> Option<&str> {
+        self.ingredient_uris.last().map(|s| s.as_str())
+    }
+
+    /// Keeps track of the current URI, if any.
+    ///
+    /// The current URI may be added to any log items that are created.
+    pub fn push_current_uri<S: Into<String>>(&mut self, uri: S) {
+        self.current_uri.push(uri.into());
+    }
+
+    /// Removes the current URI, if any.
+    pub fn pop_current_uri(&mut self) -> Option<String> {
+        self.current_uri.pop()
+    }
+
+    /// Returns the current URI, if any.
+    pub fn current_uri(&self) -> Option<&str> {
+        self.current_uri.last().map(|s| s.as_str())
     }
 }
 

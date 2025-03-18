@@ -23,6 +23,9 @@ use wasm_bindgen_test::wasm_bindgen_test;
 
 use crate::{x509::X509SignatureVerifier, IdentityAssertion};
 
+// This is a test filler for an identity URI.
+const IDENTITY_URI: &str = "self#jumbf=c2pa.assertions/cawg.identity";
+
 /// An identity assertion MUST contain a valid CBOR data structure that contains
 /// the required fields as documented in the identity rule in [Section 5.2,
 /// “CBOR schema”]. The `cawg.identity.cbor.invalid` error code SHALL be used to
@@ -47,6 +50,7 @@ async fn malformed_cbor() {
 
     // Re-parse with identity assertion code should find malformed CBOR error.
     let mut status_tracker = StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
+    status_tracker.push_current_uri(IDENTITY_URI);
 
     let active_manifest = reader.active_manifest().unwrap();
     let ia_results: Vec<Result<IdentityAssertion, c2pa::Error>> =
@@ -93,6 +97,7 @@ async fn extra_fields() {
 
     // Re-parse with identity assertion code should find malformed CBOR error.
     let mut status_tracker = StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
+    status_tracker.push_current_uri(IDENTITY_URI);
 
     let active_manifest = reader.active_manifest().unwrap();
     let ia_results: Vec<Result<IdentityAssertion, c2pa::Error>> =
@@ -155,6 +160,7 @@ async fn assertion_not_in_claim_v1() {
 
     // Re-parse with identity assertion code should find extra assertion error.
     let mut status_tracker = StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
+    status_tracker.push_current_uri(IDENTITY_URI);
 
     let active_manifest = reader.active_manifest().unwrap();
     let ia_results: Vec<Result<IdentityAssertion, c2pa::Error>> =
@@ -195,7 +201,7 @@ async fn assertion_not_in_claim_v1() {
 
     let log = &status_tracker.logged_items()[0];
     assert_eq!(log.kind, LogKind::Failure);
-    assert_eq!(log.label, "NEED TO FIND LABEL"); // !!!
+    assert_eq!(log.label, IDENTITY_URI);
     assert_eq!(log.description, "referenced assertion not in claim");
     assert_eq!(
         log.validation_status.as_ref().unwrap().as_ref(),
@@ -249,6 +255,7 @@ async fn duplicate_assertion_reference() {
 
     // Re-parse with identity assertion code should find extra assertion error.
     let mut status_tracker = StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
+    status_tracker.push_current_uri(IDENTITY_URI);
 
     let active_manifest = reader.active_manifest().unwrap();
     let ia_results: Vec<Result<IdentityAssertion, c2pa::Error>> =
@@ -289,7 +296,7 @@ async fn duplicate_assertion_reference() {
 
     let log = &status_tracker.logged_items()[0];
     assert_eq!(log.kind, LogKind::Failure);
-    assert_eq!(log.label, "NEED TO FIND LABEL"); // !!!
+    assert_eq!(log.label, IDENTITY_URI);
     assert_eq!(log.description, "multiple references to same assertion");
     assert_eq!(
         log.validation_status.as_ref().unwrap().as_ref(),
@@ -328,6 +335,7 @@ async fn no_hard_binding() {
 
     // Re-parse with identity assertion code should find extra assertion error.
     let mut status_tracker = StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
+    status_tracker.push_current_uri(IDENTITY_URI);
 
     let active_manifest = reader.active_manifest().unwrap();
     let ia_results: Vec<Result<IdentityAssertion, c2pa::Error>> =
@@ -357,7 +365,7 @@ async fn no_hard_binding() {
 
     let log = &status_tracker.logged_items()[0];
     assert_eq!(log.kind, LogKind::Failure);
-    assert_eq!(log.label, "NEED TO FIND LABEL"); // !!!
+    assert_eq!(log.label, IDENTITY_URI);
     assert_eq!(log.description, "no hard binding assertion");
     assert_eq!(
         log.validation_status.as_ref().unwrap().as_ref(),
@@ -402,6 +410,8 @@ mod invalid_sig_type {
         // that's not intended for general consumption. The validator in this test case
         // is not configured to read that signature type.
 
+        const IDENTITY_URI: &str = "self#jumbf=c2pa.assertions/cawg.identity";
+
         let format = "image/jpeg";
         let test_image = include_bytes!("../../fixtures/validation_method/invalid_sig_type.jpg");
 
@@ -414,6 +424,7 @@ mod invalid_sig_type {
         // Re-parse with identity assertion code should find extra assertion error.
         let mut status_tracker =
             StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
+        status_tracker.push_current_uri(IDENTITY_URI);
 
         let active_manifest = reader.active_manifest().unwrap();
         let ia_results: Vec<Result<IdentityAssertion, c2pa::Error>> =
@@ -456,7 +467,7 @@ mod invalid_sig_type {
 
         let log = &status_tracker.logged_items()[0];
         assert_eq!(log.kind, LogKind::Failure);
-        assert_eq!(log.label, "NEED TO FIND LABEL"); // !!!
+        assert_eq!(log.label, IDENTITY_URI);
         assert_eq!(log.description, "unsupported signature type");
         assert_eq!(
             log.validation_status.as_ref().unwrap().as_ref(),
@@ -476,6 +487,8 @@ mod invalid_sig_type {
         // that's not intended for general consumption. The validator in this test case
         // is not configured to read that signature type.
 
+        const IDENTITY_URI: &str = "self#jumbf=c2pa.assertions/cawg.identity";
+
         let format = "image/jpeg";
         let test_image = include_bytes!("../../fixtures/validation_method/invalid_sig_type.jpg");
 
@@ -488,6 +501,7 @@ mod invalid_sig_type {
         // Re-parse with identity assertion code should find extra assertion error.
         let mut status_tracker =
             StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
+        status_tracker.push_current_uri(IDENTITY_URI);
 
         let active_manifest = reader.active_manifest().unwrap();
         let ia_results: Vec<Result<IdentityAssertion, c2pa::Error>> =
@@ -530,7 +544,7 @@ mod invalid_sig_type {
 
         let log = &status_tracker.logged_items()[0];
         assert_eq!(log.kind, LogKind::Failure);
-        assert_eq!(log.label, "NEED TO FIND LABEL"); // !!!
+        assert_eq!(log.label, IDENTITY_URI);
         assert_eq!(log.description, "unsupported signature type");
         assert_eq!(
             log.validation_status.as_ref().unwrap().as_ref(),
@@ -553,6 +567,8 @@ async fn pad1_invalid() {
     // modified version of this SDK that incorrectly placed a non-zero value in the
     // `pad1` field.
 
+    const IDENTITY_URI: &str = "self#jumbf=c2pa.assertions/cawg.identity";
+
     let format = "image/jpeg";
     let test_image = include_bytes!("../../fixtures/validation_method/pad1_invalid.jpg");
 
@@ -564,6 +580,7 @@ async fn pad1_invalid() {
 
     // Re-parse with identity assertion code should find invalid pad error.
     let mut status_tracker = StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
+    status_tracker.push_current_uri(IDENTITY_URI);
 
     let active_manifest = reader.active_manifest().unwrap();
     let ia_results: Vec<Result<IdentityAssertion, c2pa::Error>> =
@@ -599,7 +616,7 @@ async fn pad1_invalid() {
 
     let log = &status_tracker.logged_items()[0];
     assert_eq!(log.kind, LogKind::Failure);
-    assert_eq!(log.label, "NEED TO FIND LABEL"); // !!!
+    assert_eq!(log.label, IDENTITY_URI);
     assert_eq!(log.description, "invalid value in pad fields");
     assert_eq!(
         log.validation_status.as_ref().unwrap().as_ref(),
@@ -631,6 +648,7 @@ async fn pad2_invalid() {
 
     // Re-parse with identity assertion code should find invalid pad error.
     let mut status_tracker = StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
+    status_tracker.push_current_uri(IDENTITY_URI);
 
     let active_manifest = reader.active_manifest().unwrap();
     let ia_results: Vec<Result<IdentityAssertion, c2pa::Error>> =
@@ -666,7 +684,7 @@ async fn pad2_invalid() {
 
     let log = &status_tracker.logged_items()[0];
     assert_eq!(log.kind, LogKind::Failure);
-    assert_eq!(log.label, "NEED TO FIND LABEL"); // !!!
+    assert_eq!(log.label, IDENTITY_URI);
     assert_eq!(log.description, "invalid value in pad fields");
     assert_eq!(
         log.validation_status.as_ref().unwrap().as_ref(),

@@ -12,7 +12,9 @@
 // each license.
 
 use async_trait::async_trait;
-use c2pa::{AsyncDynamicAssertion, DynamicAssertion, DynamicAssertionContent, PreliminaryClaim};
+use c2pa::dynamic_assertion::{
+    AsyncDynamicAssertion, DynamicAssertion, DynamicAssertionContent, PartialClaim,
+};
 use serde_bytes::ByteBuf;
 
 use super::{CredentialHolder, IdentityBuilderError};
@@ -60,7 +62,7 @@ impl DynamicAssertion for IdentityAssertionBuilder {
         &self,
         _label: &str,
         size: Option<usize>,
-        claim: &PreliminaryClaim,
+        claim: &PartialClaim,
     ) -> c2pa::Result<DynamicAssertionContent> {
         // TO DO: Better filter for referenced assertions.
         // For now, just require hard binding.
@@ -130,7 +132,7 @@ impl AsyncDynamicAssertion for AsyncIdentityAssertionBuilder {
         &self,
         _label: &str,
         size: Option<usize>,
-        claim: &PreliminaryClaim,
+        claim: &PartialClaim,
     ) -> c2pa::Result<DynamicAssertionContent> {
         // TO DO: Better filter for referenced assertions.
         // For now, just require hard binding.

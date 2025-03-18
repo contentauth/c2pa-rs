@@ -12,7 +12,7 @@
 // each license.
 
 use async_trait::async_trait;
-use c2pa::{AsyncDynamicAssertion, AsyncSigner, Result};
+use c2pa::{dynamic_assertion::AsyncDynamicAssertion, AsyncSigner, Result};
 use c2pa_crypto::raw_signature::{AsyncRawSigner, SigningAlg};
 
 use crate::builder::AsyncIdentityAssertionBuilder;

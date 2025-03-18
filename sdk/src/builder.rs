@@ -1093,6 +1093,12 @@ impl Builder {
     /// * The bytes of c2pa_manifest that was created.
     /// # Errors
     /// * Returns an [`Error`] if the manifest cannot be signed or the destination file already exists.
+    #[async_generic(async_signature(
+        &mut self,
+        signer: &dyn AsyncSigner,
+        source: S,
+        dest: D,
+    ))]
     pub fn sign_file<S, D>(&mut self, signer: &dyn Signer, source: S, dest: D) -> Result<Vec<u8>>
     where
         S: AsRef<std::path::Path>,
@@ -1119,7 +1125,12 @@ impl Builder {
             .create(true)
             .truncate(true)
             .open(dest)?;
-        self.sign(signer, &format, &mut source, &mut dest)
+        if _sync {
+            self.sign(signer, &format, &mut source, &mut dest)
+        } else {
+            self.sign_async(signer, &format, &mut source, &mut dest)
+                .await
+        }
     }
 }
 
@@ -1478,6 +1489,7 @@ mod tests {
         wasm_bindgen_test
     )]
     #[cfg_attr(target_os = "wasi", wstd::test)]
+    #[cfg(feature = "v1_api")]
     async fn test_builder_remote_sign() {
         let format = "image/jpeg";
         let mut source = Cursor::new(TEST_IMAGE);

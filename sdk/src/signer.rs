@@ -17,7 +17,10 @@ use c2pa_crypto::{
     time_stamp::{TimeStampError, TimeStampProvider},
 };
 
-use crate::{AsyncDynamicAssertion, DynamicAssertion, Result};
+use crate::{
+    dynamic_assertion::{AsyncDynamicAssertion, DynamicAssertion},
+    Result,
+};
 
 /// The `Signer` trait generates a cryptographic signature over a byte array.
 ///
@@ -329,6 +332,7 @@ pub trait AsyncSigner {
     }
 }
 
+#[cfg(feature = "v1_api")]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 pub trait RemoteSigner: Sync {

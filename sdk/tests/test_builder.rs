@@ -186,9 +186,7 @@ fn test_builder_embedded_v1_otgp() -> Result<()> {
 fn test_dynamic_assertions_builder() -> Result<()> {
     use c2pa::{
         // assertions::{CreativeWork, SchemaDotOrgPerson},
-        DynamicAssertion,
-        DynamicAssertionContent,
-        PreliminaryClaim,
+        dynamic_assertion::{DynamicAssertion, DynamicAssertionContent, PartialClaim},
         Signer,
         SigningAlg,
     };
@@ -221,7 +219,7 @@ fn test_dynamic_assertions_builder() -> Result<()> {
             &self,
             _label: &str,
             _size: Option<usize>,
-            claim: &PreliminaryClaim,
+            claim: &PartialClaim,
         ) -> Result<DynamicAssertionContent> {
             assert!(claim
                 .assertions()

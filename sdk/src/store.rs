@@ -58,7 +58,7 @@ use crate::{
     cose_sign::{cose_sign, cose_sign_async},
     cose_validator::{verify_cose, verify_cose_async},
     dynamic_assertion::{
-        AsyncDynamicAssertion, DynamicAssertion, DynamicAssertionContent, PreliminaryClaim,
+        AsyncDynamicAssertion, DynamicAssertion, DynamicAssertionContent, PartialClaim,
     },
     error::{Error, Result},
     hash_utils::{hash_by_alg, vec_compare, verify_by_alg},
@@ -2074,14 +2074,14 @@ impl Store {
         &mut self,
         dyn_assertions: &[Box<dyn AsyncDynamicAssertion>],
         dyn_uris: &[HashedUri],
-        preliminary_claim: &mut PreliminaryClaim,
+        preliminary_claim: &mut PartialClaim,
     ))]
     #[allow(unused_variables)]
     fn write_dynamic_assertions(
         &mut self,
         dyn_assertions: &[Box<dyn DynamicAssertion>],
         dyn_uris: &[HashedUri],
-        preliminary_claim: &mut PreliminaryClaim,
+        preliminary_claim: &mut PartialClaim,
     ) -> Result<bool> {
         if dyn_assertions.is_empty() {
             return Ok(false);
@@ -2269,7 +2269,7 @@ impl Store {
             signer.reserve_size(),
         )?;
 
-        let mut preliminary_claim = PreliminaryClaim::default();
+        let mut preliminary_claim = PartialClaim::default();
         {
             let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
             for assertion in pc.assertions() {
@@ -6314,7 +6314,7 @@ pub mod tests {
                 &self,
                 _label: &str,
                 _size: Option<usize>,
-                claim: &PreliminaryClaim,
+                claim: &PartialClaim,
             ) -> Result<DynamicAssertionContent> {
                 assert!(claim
                     .assertions()
@@ -6369,7 +6369,9 @@ pub mod tests {
             }
 
             // Returns our dynamic assertion here.
-            fn dynamic_assertions(&self) -> Vec<Box<dyn crate::DynamicAssertion>> {
+            fn dynamic_assertions(
+                &self,
+            ) -> Vec<Box<dyn crate::dynamic_assertion::DynamicAssertion>> {
                 vec![Box::new(TestDynamicAssertion {})]
             }
         }
@@ -6446,7 +6448,7 @@ pub mod tests {
                 &self,
                 _label: &str,
                 _size: Option<usize>,
-                claim: &PreliminaryClaim,
+                claim: &PartialClaim,
             ) -> Result<DynamicAssertionContent> {
                 assert!(claim
                     .assertions()
@@ -6503,7 +6505,9 @@ pub mod tests {
             }
 
             // Returns our dynamic assertion here.
-            fn dynamic_assertions(&self) -> Vec<Box<dyn crate::AsyncDynamicAssertion>> {
+            fn dynamic_assertions(
+                &self,
+            ) -> Vec<Box<dyn crate::dynamic_assertion::AsyncDynamicAssertion>> {
                 vec![Box::new(TestDynamicAssertion {})]
             }
         }

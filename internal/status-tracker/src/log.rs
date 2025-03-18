@@ -67,6 +67,38 @@ macro_rules! log_item {
     }};
 }
 
+/// Creates a [`LogItem`] struct that is annotated with the source file and line
+/// number where the log condition was discovered.
+///
+/// Takes two parameters, each of which may be a `&'static str` or `String`:
+///
+/// * `description`: human-readable reason for this `LogItem` to have been
+///   generated
+/// * `function`: name of the function generating this `LogItem`
+///
+/// ## Example
+///
+/// ```
+/// # use c2pa_status_tracker::{log_current_item, LogKind, LogItem};
+/// let log = log_current_item!("test item 1", "test func");
+/// ```
+#[macro_export]
+macro_rules! log_current_item {
+    ($description:expr, $function:expr) => {{
+        $crate::LogItem {
+            kind: $crate::LogKind::Informational,
+            label: "".to_owned().into(), // will be set to the current status tracker uri
+            crate_name: env!("CARGO_PKG_NAME").into(),
+            crate_version: env!("CARGO_PKG_VERSION").into(),
+            file: file!().into(),
+            function: $function.into(),
+            line: line!(),
+            description: $description.into(),
+            ..Default::default()
+        }
+    }};
+}
+
 /// Detailed information about an error or other noteworthy condition.
 ///
 /// Use the [`log_item`](crate::log_item) macro to create a `LogItem`.
