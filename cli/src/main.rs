@@ -26,6 +26,7 @@ use std::{
 };
 
 use anyhow::{anyhow, bail, Context, Result};
+use async_std::task;
 use c2pa::{Builder, ClaimGeneratorInfo, Error, Ingredient, ManifestDefinition, Reader, Signer};
 use cawg_identity::validator::CawgValidator;
 use clap::{Parser, Subcommand};
@@ -783,9 +784,9 @@ fn main() -> Result<()> {
         }
     } else {
         let mut reader = Reader::from_file(&args.path).map_err(special_errs)?;
-
-        let runtime = tokio::runtime::Runtime::new()?;
-        runtime.block_on(reader.post_validate_async(&CawgValidator {}))?;
+        
+        task::block_on(reader.post_validate_async(&CawgValidator {}))?;
+        
         println!("{}", reader);
     }
 
