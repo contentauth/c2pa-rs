@@ -1,6 +1,6 @@
 [package]
 name = "c2pa"
-version = "0.47.0"
+version = "0.46.0"
 description = "Rust SDK for C2PA (Coalition for Content Provenance and Authenticity) implementors"
 authors = [
     "Maurice Fisher <mfisher@adobe.com>",
@@ -57,10 +57,6 @@ name = "v2show"
 
 [[example]]
 name = "v2api"
-
-[[example]]
-name = "cawg"
-required-features = ["file_io"]
 
 [lib]
 crate-type = ["lib"]
@@ -170,7 +166,6 @@ web-sys = { version = "0.3.58", features = [
 
 [dev-dependencies]
 anyhow = "1.0.40"
-cawg-identity = { path = "../cawg_identity", version = "0.10.0" }
 glob = "0.3.1"
 hex-literal = "0.4.1"
 jumbf = "0.4.0"
