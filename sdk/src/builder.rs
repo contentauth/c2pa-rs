@@ -780,18 +780,18 @@ impl Builder {
                 CreativeWork::LABEL => {
                     let cw: CreativeWork = manifest_assertion.to_assertion()?;
 
-                    claim.add_assertion_with_salt(&cw, &salt)
+                    claim.add_gathered_assertion_with_salt(&cw, &salt)
                 }
                 Exif::LABEL => {
                     let exif: Exif = manifest_assertion.to_assertion()?;
-                    claim.add_assertion_with_salt(&exif, &salt)
+                    claim.add_gathered_assertion_with_salt(&exif, &salt)
                 }
                 _ => match &manifest_assertion.data {
-                    AssertionData::Json(value) => claim.add_assertion_with_salt(
+                    AssertionData::Json(value) => claim.add_gathered_assertion_with_salt(
                         &User::new(&manifest_assertion.label, &serde_json::to_string(&value)?),
                         &salt,
                     ),
-                    AssertionData::Cbor(value) => claim.add_assertion_with_salt(
+                    AssertionData::Cbor(value) => claim.add_gathered_assertion_with_salt(
                         &UserCbor::new(&manifest_assertion.label, serde_cbor::to_vec(value)?),
                         &salt,
                     ),
