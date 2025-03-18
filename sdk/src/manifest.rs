@@ -696,14 +696,14 @@ impl Manifest {
                     match assertion.decode_data() {
                         AssertionData::Cbor(_) => {
                             let value = assertion.as_json_object()?;
-                            let ma = ManifestAssertion::new(base_label, value)
+                            let ma = ManifestAssertion::new(label, value)
                                 .set_instance(claim_assertion.instance());
 
                             manifest.assertions.push(ma);
                         }
                         AssertionData::Json(_) => {
                             let value = assertion.as_json_object()?;
-                            let ma = ManifestAssertion::new(base_label, value)
+                            let ma = ManifestAssertion::new(label, value)
                                 .set_instance(claim_assertion.instance())
                                 .set_kind(ManifestAssertionKind::Json);
 
@@ -1531,7 +1531,7 @@ pub struct SignatureInfo {
 
     /// The cert chain for this claim.
     #[serde(skip)] // don't serialize this, let someone ask for it
-    cert_chain: String,
+    pub cert_chain: String,
 }
 
 impl SignatureInfo {

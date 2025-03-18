@@ -6,6 +6,25 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 The format of this changelog is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.7.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-crypto-v0.6.2...c2pa-crypto-v0.7.0)
+_18 March 2025_
+
+### Added
+
+* *(crypto)* Add new `sign_v2_embedded` API (#975)
+* Simplify `StatusTracker` interface (#937)
+* Add ES256 and ES384 Rust native signing (#941)
+* Wasm32 wasi 0.41.0 (#888)
+
+### Fixed
+
+* Fix incorrect calculation for the reserved size (#965)
+* Use older version of x509-certificate for wasm32-unknown (#934)
+
+### Updated dependencies
+
+* Bump x509-certificate to 0.24.0 (#957)
+
 ## [0.6.2](https://github.com/contentauth/c2pa-rs/compare/c2pa-crypto-v0.6.1...c2pa-crypto-v0.6.2)
 _06 February 2025_
 

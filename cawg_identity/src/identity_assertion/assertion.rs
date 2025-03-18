@@ -16,12 +16,13 @@ use std::{
     fmt::{Debug, Formatter},
 };
 
-use c2pa::{Manifest, Reader};
-use c2pa_status_tracker::{log_item, StatusTracker};
+use c2pa::{dynamic_assertion::PartialClaim, Manifest, Reader};
+use c2pa_status_tracker::{log_current_item, log_item, StatusTracker};
 use serde::{Deserialize, Serialize};
 use serde_bytes::ByteBuf;
 
 use crate::{
+    claim_aggregation::IcaSignatureVerifier,
     identity_assertion::{
         report::{
             IdentityAssertionReport, IdentityAssertionsForManifest,
@@ -30,6 +31,7 @@ use crate::{
         signer_payload::SignerPayload,
     },
     internal::debug_byte_slice::DebugByteSlice,
+    x509::X509SignatureVerifier,
     SignatureVerifier, ToCredentialSummary, ValidationError,
 };
 
@@ -273,14 +275,65 @@ impl IdentityAssertion {
             .await
     }
 
+    /// Using the provided [`SignatureVerifier`], check the validity of this
+    /// identity assertion.
+    ///
+    /// If successful, returns the credential-type specific information that can
+    /// be derived from the signature. This is the [`SignatureVerifier::Output`]
+    /// type which typically describes the named actor, but may also contain
+    /// information about the time of signing or the credential's source.
+    pub async fn validate_partial_claim(
+        &self,
+        partial_claim: &PartialClaim,
+        status_tracker: &mut StatusTracker,
+    ) -> Result<serde_json::Value, ValidationError<String>> {
+        self.check_padding(status_tracker)?;
+
+        self.signer_payload
+            .check_against_partial_claim(partial_claim, status_tracker)?;
+
+        let sig_type = self.signer_payload.sig_type.as_str();
+        if sig_type == "cawg.x509.cose" {
+            let verifier = X509SignatureVerifier {};
+            let result = verifier
+                .check_signature(&self.signer_payload, &self.signature, status_tracker)
+                .await
+                .map(|v| v.to_summary())
+                .map_err(|e| ValidationError::UnknownSignatureType(e.to_string()))?;
+            log_current_item!(
+                "cawg x509 identity signature valid",
+                "validate_partial_claim"
+            )
+            .validation_status("cawg.ica.credential_valid")
+            .success(status_tracker);
+            serde_json::to_value(result)
+                .map_err(|e| ValidationError::UnknownSignatureType(e.to_string()))
+        } else if sig_type == "cawg.identity_claims_aggregation" {
+            let verifier = IcaSignatureVerifier {};
+            let result = verifier
+                .check_signature(&self.signer_payload, &self.signature, status_tracker)
+                .await
+                .map(|v| v.to_summary())
+                .map_err(|e| ValidationError::UnknownSignatureType(e.to_string()))?;
+            log_current_item!(
+                "cawg identity claims_aggregation signature valid",
+                "validate_partial_claim"
+            )
+            .validation_status("cawg.ica.credential_valid")
+            .success(status_tracker);
+            serde_json::to_value(result)
+                .map_err(|e| ValidationError::UnknownSignatureType(e.to_string()))
+        } else {
+            Err(ValidationError::UnknownSignatureType(sig_type.to_string()))
+        }
+    }
+
     fn check_padding<E: Debug>(
         &self,
         status_tracker: &mut StatusTracker,
     ) -> Result<(), ValidationError<E>> {
         if !self.pad1.iter().all(|b| *b == 0) {
-            // TO DO: Where would we get assertion label?
-            log_item!(
-                "NEED TO FIND LABEL".to_owned(),
+            log_current_item!(
                 "invalid value in pad fields",
                 "SignerPayload::check_padding"
             )
@@ -295,9 +348,7 @@ impl IdentityAssertion {
 
         if let Some(pad2) = self.pad2.as_ref() {
             if !pad2.iter().all(|b| *b == 0) {
-                // TO DO: Where would we get assertion label?
-                log_item!(
-                    "NEED TO FIND LABEL".to_owned(),
+                log_current_item!(
                     "invalid value in pad fields",
                     "SignerPayload::check_padding"
                 )

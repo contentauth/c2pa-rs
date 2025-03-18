@@ -1,6 +1,6 @@
 [package]
 name = "c2pa"
-version = "0.46.0"
+version = "0.47.0"
 description = "Rust SDK for C2PA (Coalition for Content Provenance and Authenticity) implementors"
 authors = [
     "Maurice Fisher <mfisher@adobe.com>",
@@ -58,6 +58,10 @@ name = "v2show"
 [[example]]
 name = "v2api"
 
+[[example]]
+name = "cawg"
+required-features = ["file_io"]
+
 [lib]
 crate-type = ["lib"]
 
@@ -71,8 +75,8 @@ bcder = "0.7.3"
 bytes = "1.7.2"
 byteorder = { version = "1.4.3", default-features = false }
 byteordered = "0.6.0"
-c2pa-crypto = { path = "../internal/crypto", version = "0.6.2" }
-c2pa-status-tracker = { path = "../internal/status-tracker", version = "0.5.0" }
+c2pa-crypto = { path = "../internal/crypto", version = "0.7.0" }
+c2pa-status-tracker = { path = "../internal/status-tracker", version = "0.6.0" }
 chrono = { version = "0.4.39", default-features = false, features = ["serde"] }
 ciborium = "0.2.2"
 config = { version = "0.14.0", default-features = false, features = [
@@ -166,6 +170,7 @@ web-sys = { version = "0.3.58", features = [
 
 [dev-dependencies]
 anyhow = "1.0.40"
+cawg-identity = { path = "../cawg_identity", version = "0.10.0" }
 glob = "0.3.1"
 hex-literal = "0.4.1"
 jumbf = "0.4.0"
