@@ -10,7 +10,12 @@ We welcome contributions to this project. For information on contributing, provi
 
 ## Known limitations
 
-This is very early days for this crate. Many things are subject to change at this point.
+Work is currently underway to add validation status codes using the same mechanism that the core C2PA SDK follows itself. This may result in some API changes.
+
+The CAWG SDK does not currently support the optional fields named:
+* `expected_partial_claim`
+* `expected_claim_generator`
+* `expected_countersigners`
 
 ## Requirements
 
@@ -26,6 +31,8 @@ The toolkit has been tested on the following operating systems:
 * MacOS (Intel and Apple silicon)
 
 * Ubuntu Linux on x86 and ARM v8 (aarch64)
+
+* WebAssembly System Interface (WASI)
 
 ## License
 

@@ -18,7 +18,7 @@ use std::{borrow::Cow, io::Cursor};
 
 use async_generic::async_generic;
 use c2pa_crypto::base64;
-use c2pa_status_tracker::{log_item, DetailedStatusTracker, StatusTracker};
+use c2pa_status_tracker::{log_item, StatusTracker};
 use log::{debug, error};
 #[cfg(feature = "json_schema")]
 use schemars::JsonSchema;
@@ -38,7 +38,7 @@ use crate::{
     hashed_uri::HashedUri,
     jumbf::{
         self,
-        labels::{manifest_label_from_uri, to_assertion_uri},
+        labels::{assertion_label_from_uri, manifest_label_from_uri, to_assertion_uri},
     },
     jumbf_io::load_jumbf_from_stream,
     resource_store::{skip_serializing_resources, ResourceRef, ResourceStore},
@@ -136,6 +136,10 @@ pub struct Ingredient {
     #[serde(skip_serializing_if = "Option::is_none")]
     manifest_data: Option<ResourceRef>,
 
+    /// The ingredient's label as assigned in the manifest.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    label: Option<String>,
+
     #[serde(skip_deserializing)]
     #[serde(skip_serializing_if = "skip_serializing_resources")]
     resources: ResourceStore,
@@ -214,6 +218,11 @@ impl Ingredient {
     /// Returns a user-displayable title for this ingredient.
     pub fn title(&self) -> Option<&str> {
         self.title.as_deref()
+    }
+
+    /// Returns the label for the ingredient if it exists.
+    pub fn label(&self) -> Option<&str> {
+        self.label.as_deref()
     }
 
     /// Returns a MIME content_type for this asset associated with this ingredient.
@@ -583,9 +592,8 @@ impl Ingredient {
         &mut self,
         result: Result<Store>,
         manifest_bytes: Option<Vec<u8>>,
-        validation_log: &impl StatusTracker,
+        validation_log: &StatusTracker,
     ) -> Result<()> {
-        let active_manifest = self.active_manifest.as_deref().unwrap_or_default();
         match result {
             Ok(store) => {
                 // generate validation results from the store
@@ -654,7 +662,7 @@ impl Ingredient {
                         .set_url(url)
                         .set_explanation("Remote manifest not fetched".to_string());
                 let mut validation_results = ValidationResults::default();
-                validation_results.add_status(active_manifest, status.clone());
+                validation_results.add_status(status.clone());
                 self.validation_results = Some(validation_results);
                 self.validation_status = Some(vec![status]);
                 Ok(())
@@ -672,7 +680,7 @@ impl Ingredient {
                     .collect();
 
                 for status in statuses {
-                    results.add_status(active_manifest, status.clone());
+                    results.add_status(status.clone());
                 }
                 self.validation_status = results.validation_errors();
                 self.validation_results = Some(results);
@@ -746,7 +754,7 @@ impl Ingredient {
         // optionally generate a hash so we know if the file has changed
         ingredient.hash = options.hash(path);
 
-        let mut validation_log = DetailedStatusTracker::default();
+        let mut validation_log = StatusTracker::default();
 
         // retrieve the manifest bytes from embedded, sidecar or remote and convert to store if found
         let (result, manifest_bytes) = match Store::load_jumbf_from_path(path) {
@@ -859,7 +867,7 @@ impl Ingredient {
     // Internal implementation to avoid code bloat.
     #[async_generic()]
     fn add_stream_internal(mut self, format: &str, stream: &mut dyn CAIRead) -> Result<Self> {
-        let mut validation_log = DetailedStatusTracker::default();
+        let mut validation_log = StatusTracker::default();
 
         // retrieve the manifest bytes from embedded, sidecar or remote and convert to store if found
         let jumbf_stream = load_jumbf_from_stream(format, stream);
@@ -939,7 +947,7 @@ impl Ingredient {
         let mut ingredient = Self::from_stream_info(stream, format, "untitled");
         stream.rewind()?;
 
-        let mut validation_log = DetailedStatusTracker::default();
+        let mut validation_log = StatusTracker::default();
 
         // retrieve the manifest bytes from embedded, sidecar or remote and convert to store if found
         let (result, manifest_bytes) = match Store::load_jumbf_from_stream(format, stream) {
@@ -1030,6 +1038,8 @@ impl Ingredient {
             ingredient_assertion.title, &active_manifest
         );
 
+        // keep track of the assertion label for this ingredient.
+        let label = assertion_label_from_uri(ingredient_uri);
         let mut ingredient = Ingredient {
             title: ingredient_assertion.title,
             format: ingredient_assertion.format,
@@ -1042,6 +1052,7 @@ impl Ingredient {
             description: ingredient_assertion.description,
             informational_uri: ingredient_assertion.informational_uri,
             data_types: ingredient_assertion.data_types,
+            label,
             ..Default::default()
         };
 
@@ -1383,7 +1394,7 @@ impl Ingredient {
     ) -> Result<Self> {
         let mut ingredient = Self::from_stream_info(stream, format, "untitled");
 
-        let mut validation_log = DetailedStatusTracker::default();
+        let mut validation_log = StatusTracker::default();
 
         let manifest_bytes: Vec<u8> = manifest_bytes.into();
         // generate a store from the buffer and then validate from the asset path
@@ -1491,20 +1502,23 @@ impl IngredientOptions for DefaultOptions {
     }
 }
 
-#[cfg(all(test, not(target_os = "wasi")))]
+#[cfg(test)]
 mod tests {
     #![allow(clippy::expect_used)]
     #![allow(clippy::unwrap_used)]
 
-    #[cfg(target_arch = "wasm32")]
+    #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
     use wasm_bindgen_test::*;
 
     use super::*;
-    #[cfg(target_arch = "wasm32")]
+    #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
     wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
 
-    #[cfg_attr(not(target_arch = "wasm32"), test)]
-    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    #[test]
+    #[cfg_attr(
+        all(target_arch = "wasm32", not(target_os = "wasi")),
+        wasm_bindgen_test
+    )]
     fn test_ingredient_api() {
         let mut ingredient = Ingredient::new("title", "format", "instance_id");
         ingredient
@@ -1560,8 +1574,11 @@ mod tests {
     }
 
     #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
-    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
-    #[cfg_attr(not(any(target_arch = "wasm32", feature = "openssl")), ignore)]
+    #[cfg_attr(
+        all(target_arch = "wasm32", not(target_os = "wasi")),
+        wasm_bindgen_test
+    )]
+    #[cfg_attr(target_os = "wasi", wstd::test)]
     async fn test_stream_async_jpg() {
         let image_bytes = include_bytes!("../tests/fixtures/CA.jpg");
         let title = "Test Image";
@@ -1576,7 +1593,7 @@ mod tests {
         assert_eq!(ingredient.format(), Some(format));
         assert!(ingredient.manifest_data().is_some());
         assert_eq!(ingredient.metadata(), None);
-        #[cfg(target_arch = "wasm32")]
+        #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
         web_sys::console::debug_2(
             &"ingredient_from_memory_async:".into(),
             &ingredient.to_string().into(),
@@ -1585,8 +1602,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(any(target_arch = "wasm32", not(feature = "openssl")), ignore)]
-    // Note this does not work from wasm32, due to validation issues
     fn test_stream_jpg() {
         let image_bytes = include_bytes!("../tests/fixtures/CA.jpg");
         let title = "Test Image";
@@ -1603,8 +1618,11 @@ mod tests {
     }
 
     #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
-    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
-    #[cfg_attr(not(any(target_arch = "wasm32", feature = "openssl")), ignore)]
+    #[cfg_attr(
+        all(target_arch = "wasm32", not(target_os = "wasi")),
+        wasm_bindgen_test
+    )]
+    #[cfg_attr(target_os = "wasi", wstd::test)]
     async fn test_stream_ogp() {
         let image_bytes = include_bytes!("../tests/fixtures/XCA.jpg");
         let title = "XCA.jpg";
@@ -1630,10 +1648,8 @@ mod tests {
 
     #[allow(dead_code)]
     #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
-    #[cfg_attr(
-        not(all(feature = "openssl", feature = "fetch_remote_manifests")),
-        ignore
-    )]
+    #[cfg_attr(target_os = "wasi", wstd::test)]
+    #[cfg(feature = "fetch_remote_manifests")]
     async fn test_jpg_cloud_from_memory() {
         let image_bytes = include_bytes!("../tests/fixtures/cloud.jpg");
         let format = "image/jpeg";
@@ -1651,14 +1667,17 @@ mod tests {
 
     #[allow(dead_code)]
     #[cfg_attr(not(any(target_arch = "wasm32", feature = "file_io")), actix::test)]
-    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    #[cfg_attr(
+        all(target_arch = "wasm32", not(target_os = "wasi")),
+        wasm_bindgen_test
+    )]
+    #[cfg_attr(all(target_os = "wasi", not(feature = "file_io")), wstd::test)]
     async fn test_jpg_cloud_from_memory_no_file_io() {
         let image_bytes = include_bytes!("../tests/fixtures/cloud.jpg");
         let format = "image/jpeg";
         let ingredient = Ingredient::from_memory_async(format, image_bytes)
             .await
             .expect("from_memory_async");
-        // println!("ingredient = {ingredient}");
         assert!(ingredient.validation_status().is_some());
         assert_eq!(
             ingredient.validation_status().unwrap()[0].code(),
@@ -1672,8 +1691,11 @@ mod tests {
     }
 
     #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
-    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
-    #[cfg_attr(not(any(target_arch = "wasm32", feature = "openssl")), ignore)]
+    #[cfg_attr(
+        all(target_arch = "wasm32", not(target_os = "wasi")),
+        wasm_bindgen_test
+    )]
+    #[cfg_attr(target_os = "wasi", wstd::test)]
     async fn test_jpg_cloud_from_memory_and_manifest() {
         let asset_bytes = include_bytes!("../tests/fixtures/cloud.jpg");
         let manifest_bytes = include_bytes!("../tests/fixtures/cloud_manifest.c2pa");
@@ -1685,7 +1707,7 @@ mod tests {
         )
         .await
         .unwrap();
-        #[cfg(target_arch = "wasm32")]
+        #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
         web_sys::console::debug_2(
             &"ingredient_from_memory_async:".into(),
             &ingredient.to_string().into(),

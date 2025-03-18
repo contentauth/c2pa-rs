@@ -13,7 +13,7 @@
 
 use std::cell::RefCell;
 
-use c2pa::{DynamicAssertion, Result, Signer};
+use c2pa::{dynamic_assertion::DynamicAssertion, Result, Signer};
 use c2pa_crypto::raw_signature::{RawSigner, SigningAlg};
 
 use crate::builder::IdentityAssertionBuilder;

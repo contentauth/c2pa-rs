@@ -11,7 +11,7 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use c2pa_status_tracker::DetailedStatusTracker;
+use c2pa_status_tracker::StatusTracker;
 use chrono::{TimeZone, Utc};
 #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
 use wasm_bindgen_test::wasm_bindgen_test;
@@ -26,7 +26,7 @@ use crate::ocsp::OcspResponse;
 fn good() {
     let rsp_data = include_bytes!("fixtures/ocsp/good.data");
 
-    let mut validation_log = DetailedStatusTracker::default();
+    let mut validation_log = StatusTracker::default();
 
     let test_time = Utc.with_ymd_and_hms(2023, 2, 1, 8, 0, 0).unwrap();
 
@@ -45,15 +45,13 @@ fn good() {
 fn revoked() {
     let rsp_data = include_bytes!("fixtures/ocsp/revoked.data");
 
-    let mut validation_log = DetailedStatusTracker::default();
+    let mut validation_log = StatusTracker::default();
 
     let test_time = Utc.with_ymd_and_hms(2024, 2, 1, 8, 0, 0).unwrap();
 
     let ocsp_data =
         OcspResponse::from_der_checked(rsp_data, Some(test_time), &mut validation_log).unwrap();
 
-    let errors = validation_log.take_errors();
-
     assert!(ocsp_data.revoked_at.is_some());
-    assert!(!errors.is_empty());
+    assert!(validation_log.has_any_error());
 }

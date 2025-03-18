@@ -1050,7 +1050,26 @@ impl Builder {
         fragment_paths: &Vec<std::path::PathBuf>,
         output_path: P,
     ) -> Result<()> {
-        self.set_asset_from_dest(output_path.as_ref())?;
+        if !output_path.as_ref().exists() {
+            // ensure the path exists
+            std::fs::create_dir_all(output_path.as_ref())?;
+        } else {
+            // if the file exists, we need to remove it
+            if output_path.as_ref().is_file() {
+                return Err(crate::Error::BadParam(
+                    "output_path must be a folder".to_string(),
+                ));
+            } else {
+                let file_name = asset_path.as_ref().file_name().unwrap_or_default();
+                let mut output_file = output_path.as_ref().to_owned();
+                output_file = output_file.join(file_name);
+                if output_file.exists() {
+                    return Err(crate::Error::BadParam(
+                        "Destination file already exists".to_string(),
+                    ));
+                }
+            }
+        }
 
         // convert the manifest to a store
         let mut store = self.to_store()?;
@@ -1074,6 +1093,12 @@ impl Builder {
     /// * The bytes of c2pa_manifest that was created.
     /// # Errors
     /// * Returns an [`Error`] if the manifest cannot be signed or the destination file already exists.
+    #[async_generic(async_signature(
+        &mut self,
+        signer: &dyn AsyncSigner,
+        source: S,
+        dest: D,
+    ))]
     pub fn sign_file<S, D>(&mut self, signer: &dyn Signer, source: S, dest: D) -> Result<Vec<u8>>
     where
         S: AsRef<std::path::Path>,
@@ -1100,7 +1125,12 @@ impl Builder {
             .create(true)
             .truncate(true)
             .open(dest)?;
-        self.sign(signer, &format, &mut source, &mut dest)
+        if _sync {
+            self.sign(signer, &format, &mut source, &mut dest)
+        } else {
+            self.sign_async(signer, &format, &mut source, &mut dest)
+                .await
+        }
     }
 }
 
@@ -1116,9 +1146,9 @@ mod tests {
     use wasm_bindgen_test::*;
 
     use super::*;
-    #[cfg(any(feature = "openssl_sign", target_arch = "wasm32"))]
-    use crate::{assertions::BoxHash, asset_handlers::jpeg_io::JpegIO};
     use crate::{
+        assertions::BoxHash,
+        asset_handlers::jpeg_io::JpegIO,
         hash_stream_by_alg,
         utils::{test::write_jpeg_placeholder_stream, test_signer::test_signer},
         validation_results::ValidationState,
@@ -1190,7 +1220,7 @@ mod tests {
         .to_string()
     }
 
-    #[cfg(any(feature = "file_io", feature = "openssl_sign"))]
+    #[cfg(feature = "file_io")]
     const TEST_IMAGE_CLEAN: &[u8] = include_bytes!("../tests/fixtures/IMG_0003.jpg");
     const TEST_IMAGE: &[u8] = include_bytes!("../tests/fixtures/CA.jpg");
     const TEST_THUMBNAIL: &[u8] = include_bytes!("../tests/fixtures/thumbnail.jpg");
@@ -1290,7 +1320,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(not(any(target_arch = "wasm32", feature = "openssl_sign")), ignore)]
     fn test_builder_sign() {
         #[derive(Serialize, Deserialize)]
         struct TestAssertion {
@@ -1459,8 +1488,8 @@ mod tests {
         all(target_arch = "wasm32", not(target_os = "wasi")),
         wasm_bindgen_test
     )]
-    #[cfg_attr(not(any(target_arch = "wasm32", feature = "openssl_sign")), ignore)]
     #[cfg_attr(target_os = "wasi", wstd::test)]
+    #[cfg(feature = "v1_api")]
     async fn test_builder_remote_sign() {
         let format = "image/jpeg";
         let mut source = Cursor::new(TEST_IMAGE);
@@ -1487,8 +1516,6 @@ mod tests {
         dest.rewind().unwrap();
         let manifest_store = Reader::from_stream(format, &mut dest).expect("from_bytes");
 
-        //println!("{}", manifest_store);
-        #[cfg(not(target_arch = "wasm32"))] // skip this until we get wasm async signing working
         assert_eq!(manifest_store.validation_status(), None);
 
         assert_eq!(
@@ -1498,7 +1525,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "openssl_sign")]
+    #[cfg(feature = "file_io")]
     fn test_builder_remote_url() {
         let mut source = Cursor::new(TEST_IMAGE_CLEAN);
         let mut dest = Cursor::new(Vec::new());
@@ -1531,7 +1558,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(not(any(target_arch = "wasm32", feature = "openssl_sign")), ignore)]
     fn test_builder_data_hashed_embeddable() {
         const CLOUD_IMAGE: &[u8] = include_bytes!("../tests/fixtures/cloud.jpg");
         let mut input_stream = Cursor::new(CLOUD_IMAGE);
@@ -1586,7 +1612,6 @@ mod tests {
 
         let reader = crate::Reader::from_stream("image/jpeg", output_stream).unwrap();
         println!("{reader}");
-        #[cfg(not(target_arch = "wasm32"))] // skip this until we get wasm async signing working
         assert_eq!(reader.validation_status(), None);
     }
 
@@ -1596,10 +1621,7 @@ mod tests {
         wasm_bindgen_test
     )]
     #[cfg_attr(target_os = "wasi", wstd::test)]
-    #[cfg(any(
-        target_arch = "wasm32",
-        all(feature = "openssl_sign", feature = "file_io")
-    ))]
+    #[cfg(any(target_arch = "wasm32", feature = "file_io"))]
     async fn test_builder_box_hashed_embeddable() {
         use crate::asset_io::{CAIWriter, HashBlockObjectType};
         const BOX_HASH_IMAGE: &[u8] = include_bytes!("../tests/fixtures/boxhash.jpg");
@@ -1659,7 +1681,6 @@ mod tests {
             .await
             .unwrap();
         //println!("{reader}");
-        #[cfg(not(target_arch = "wasm32"))] // skip this until we get wasm async signing working
         assert_eq!(_reader.validation_status(), None);
     }
 
@@ -1704,7 +1725,6 @@ mod tests {
         );
     }
 
-    #[cfg(feature = "openssl_sign")]
     const MANIFEST_JSON: &str = r#"{
         "claim_generator": "test",
         "claim_generator_info": [
@@ -1835,7 +1855,6 @@ mod tests {
     }"#;
 
     #[test]
-    #[cfg(feature = "openssl_sign")]
     /// tests and illustrates how to add assets to a non-file based manifest by using a stream
     fn from_json_with_stream_full_resources() {
         use crate::assertions::Relationship;

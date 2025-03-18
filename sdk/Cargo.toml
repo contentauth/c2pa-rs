@@ -27,13 +27,12 @@ rustdoc-args = ["--cfg", "docsrs"]
 
 [features]
 add_thumbnails = ["image"]
-file_io = ["openssl_sign"]
+file_io = []
 serialize_thumbnails = []
 no_interleaved_io = ["file_io"]
 fetch_remote_manifests = ["dep:wasi"]
-openssl = []
-openssl_sign = ["openssl"]
 json_schema = ["dep:schemars", "c2pa-crypto/json_schema"]
+rust_native_crypto = ["c2pa-crypto/rust_native_crypto"]
 pdf = ["dep:lopdf"]
 v1_api = []
 
@@ -58,6 +57,10 @@ name = "v2show"
 
 [[example]]
 name = "v2api"
+
+[[example]]
+name = "cawg"
+required-features = ["file_io"]
 
 [lib]
 crate-type = ["lib"]
@@ -135,7 +138,6 @@ tempfile = { version = "3.15", features = ["nightly"] }
 ureq = "2.4.0"
 
 [target.'cfg(any(target_os = "wasi", not(target_arch = "wasm32")))'.dependencies]
-x509-certificate = "0.23.1"
 image = { version = "0.24.7", default-features = false, features = [
     "jpeg",
     "png",
@@ -165,10 +167,10 @@ web-sys = { version = "0.3.58", features = [
     "Window",
     "WorkerGlobalScope",
 ] }
-x509-certificate = "0.21.0"
 
 [dev-dependencies]
 anyhow = "1.0.40"
+cawg-identity = { path = "../cawg_identity", version = "0.9.0" }
 glob = "0.3.1"
 hex-literal = "0.4.1"
 jumbf = "0.4.0"

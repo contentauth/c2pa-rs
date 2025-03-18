@@ -31,10 +31,12 @@ test-wasm:
 test-wasm-web:
 	cd sdk && wasm-pack test --chrome --headless -- --features="serialize_thumbnails"
 
-# WASI testing requires the WASI SDK https://github.com/WebAssembly/wasi-sdk installed in /opt,
-# wasmtime, and the target wasm32-wasip2 on the nightly toolchain
+# WASI testing requires upstream llvm clang (not XCode), wasmtime, and the target wasm32-wasip2 on the nightly toolchain
 test-wasi:
-	CC=/opt/wasi-sdk/bin/clang CARGO_TARGET_WASM32_WASIP2_RUNNER="wasmtime -S cli -S http --dir ." cargo +nightly test --target wasm32-wasip2 -p c2pa -p c2pa-crypto --all-features
+ifeq ($(PLATFORM),mac)
+	$(eval CC := /opt/homebrew/opt/llvm/bin/clang)
+endif
+	CC=$(CC) CARGO_TARGET_WASM32_WASIP2_RUNNER="wasmtime -S cli -S http --dir ." cargo +nightly test --target wasm32-wasip2 -p c2pa -p c2pa-crypto -p cawg-identity -p c2patool --all-features
 	rm -r sdk/Users
 
 # Full local validation, build and test all features including wasm

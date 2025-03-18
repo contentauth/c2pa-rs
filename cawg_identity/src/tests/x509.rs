@@ -15,13 +15,13 @@ use std::io::{Cursor, Seek};
 
 use c2pa::{Builder, Reader, SigningAlg};
 use c2pa_crypto::raw_signature;
-use serde_json::json;
-#[cfg(target_arch = "wasm32")]
+use c2pa_status_tracker::StatusTracker;
+#[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
 use wasm_bindgen_test::wasm_bindgen_test;
 
 use crate::{
     builder::{AsyncIdentityAssertionBuilder, AsyncIdentityAssertionSigner},
-    tests::fixtures::cert_chain_and_private_key_for_alg,
+    tests::fixtures::{cert_chain_and_private_key_for_alg, manifest_json, parent_json},
     x509::{X509CredentialHolder, X509SignatureVerifier},
     IdentityAssertion,
 };
@@ -30,7 +30,11 @@ const TEST_IMAGE: &[u8] = include_bytes!("../../../sdk/tests/fixtures/CA.jpg");
 const TEST_THUMBNAIL: &[u8] = include_bytes!("../../../sdk/tests/fixtures/thumbnail.jpg");
 
 #[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
-#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+#[cfg_attr(
+    all(target_arch = "wasm32", not(target_os = "wasi")),
+    wasm_bindgen_test
+)]
+#[cfg_attr(target_os = "wasi", wstd::test)]
 async fn simple_case() {
     let format = "image/jpeg";
     let mut source = Cursor::new(TEST_IMAGE);
@@ -74,15 +78,20 @@ async fn simple_case() {
     assert_eq!(manifest_store.validation_status(), None);
 
     let manifest = manifest_store.active_manifest().unwrap();
-    let mut ia_iter = IdentityAssertion::from_manifest(manifest);
+    let mut st = StatusTracker::default();
+    let mut ia_iter = IdentityAssertion::from_manifest(manifest, &mut st);
 
     // Should find exactly one identity assertion.
     let ia = ia_iter.next().unwrap().unwrap();
     assert!(ia_iter.next().is_none());
+    drop(ia_iter);
 
     // And that identity assertion should be valid for this manifest.
     let x509_verifier = X509SignatureVerifier {};
-    let sig_info = ia.validate(manifest, &x509_verifier).await.unwrap();
+    let sig_info = ia
+        .validate(manifest, &mut st, &x509_verifier)
+        .await
+        .unwrap();
 
     let cert_info = &sig_info.cert_info;
     assert_eq!(cert_info.alg.unwrap(), SigningAlg::Ed25519);
@@ -92,54 +101,4 @@ async fn simple_case() {
     );
 
     // TO DO: Not sure what to check from COSE_Sign1.
-}
-
-fn manifest_json() -> String {
-    json!({
-        "vendor": "test",
-        "claim_generator_info": [
-            {
-                "name": "c2pa_test",
-                "version": "1.0.0"
-            }
-        ],
-        "metadata": [
-            {
-                "dateTime": "1985-04-12T23:20:50.52Z",
-                "my_custom_metadata": "my custom metatdata value"
-            }
-        ],
-        "title": "Test_Manifest",
-        "format": "image/tiff",
-        "instance_id": "1234",
-        "thumbnail": {
-            "format": "image/jpeg",
-            "identifier": "thumbnail.jpg"
-        },
-        "ingredients": [
-            {
-                "title": "Test",
-                "format": "image/jpeg",
-                "instance_id": "12345",
-                "relationship": "componentOf"
-            }
-        ],
-        "assertions": [
-            {
-                "label": "org.test.assertion",
-                "data": "assertion"
-            }
-        ]
-    })
-    .to_string()
-}
-
-fn parent_json() -> String {
-    json!({
-        "title": "Parent Test",
-        "format": "image/jpeg",
-        "instance_id": "12345",
-        "relationship": "parentOf"
-    })
-    .to_string()
 }

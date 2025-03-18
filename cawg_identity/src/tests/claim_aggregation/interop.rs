@@ -14,10 +14,11 @@
 use std::{io::Cursor, str::FromStr};
 
 use c2pa::{HashedUri, Reader};
+use c2pa_status_tracker::StatusTracker;
 use chrono::{DateTime, FixedOffset};
 use iref::UriBuf;
 use non_empty_string::NonEmptyString;
-#[cfg(target_arch = "wasm32")]
+#[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
 use wasm_bindgen_test::wasm_bindgen_test;
 
 use crate::{
@@ -26,7 +27,11 @@ use crate::{
 };
 
 #[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
-#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+#[cfg_attr(
+    all(target_arch = "wasm32", not(target_os = "wasi")),
+    wasm_bindgen_test
+)]
+#[cfg_attr(target_os = "wasi", wstd::test)]
 async fn adobe_connected_identities() {
     let format = "image/jpeg";
     let test_image = include_bytes!("../fixtures/claim_aggregation/adobe_connected_identities.jpg");
@@ -37,15 +42,17 @@ async fn adobe_connected_identities() {
     assert_eq!(reader.validation_status(), None);
 
     let manifest = reader.active_manifest().unwrap();
-    let mut ia_iter = IdentityAssertion::from_manifest(manifest);
+    let mut st = StatusTracker::default();
+    let mut ia_iter = IdentityAssertion::from_manifest(manifest, &mut st);
 
     // Should find exactly one identity assertion.
     let ia = ia_iter.next().unwrap().unwrap();
     assert!(ia_iter.next().is_none());
+    drop(ia_iter);
 
     // And that identity assertion should be valid for this manifest.
     let isv = IcaSignatureVerifier {};
-    let ica = ia.validate(manifest, &isv).await.unwrap();
+    let ica = ia.validate(manifest, &mut st, &isv).await.unwrap();
 
     // There should be exactly one verified identity.
     let ica_vc = ica.credential_subjects.first();
@@ -83,7 +90,8 @@ async fn adobe_connected_identities() {
     );
 
     // Check the summary report for the entire manifest store.
-    let ia_summary = IdentityAssertion::summarize_from_reader(&reader, &isv).await;
+    let mut st = StatusTracker::default();
+    let ia_summary = IdentityAssertion::summarize_from_reader(&reader, &mut st, &isv).await;
     let ia_json = serde_json::to_string(&ia_summary).unwrap();
 
     assert_eq!(
@@ -92,7 +100,8 @@ async fn adobe_connected_identities() {
     );
 
     // Check the summary report for this manifest.
-    let ia_summary = IdentityAssertion::summarize_all(manifest, &isv).await;
+    let mut st = StatusTracker::default();
+    let ia_summary = IdentityAssertion::summarize_all(manifest, &mut st, &isv).await;
     let ia_json = serde_json::to_string(&ia_summary).unwrap();
 
     assert_eq!(
@@ -102,7 +111,11 @@ async fn adobe_connected_identities() {
 }
 
 #[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
-#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+#[cfg_attr(
+    all(target_arch = "wasm32", not(target_os = "wasi")),
+    wasm_bindgen_test
+)]
+#[cfg_attr(target_os = "wasi", wstd::test)]
 async fn ims_multiple_manifests() {
     let format = "image/jpeg";
     let test_image = include_bytes!("../fixtures/claim_aggregation/ims_multiple_manifests.jpg");
@@ -113,8 +126,9 @@ async fn ims_multiple_manifests() {
     assert_eq!(reader.validation_status(), None);
 
     // Check the summary report for the entire manifest store.
+    let mut st = StatusTracker::default();
     let isv = IcaSignatureVerifier {};
-    let ia_summary = IdentityAssertion::summarize_from_reader(&reader, &isv).await;
+    let ia_summary = IdentityAssertion::summarize_from_reader(&reader, &mut st, &isv).await;
     let ia_json = serde_json::to_string(&ia_summary).unwrap();
 
     assert_eq!(
