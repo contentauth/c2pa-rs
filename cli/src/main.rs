@@ -523,11 +523,14 @@ fn verify_fragmented(init_pattern: &Path, frag_pattern: &Path) -> Result<Vec<Rea
 
 // run cawg validation if supported
 fn validate_cawg(reader: &mut Reader) -> Result<()> {
-    if cfg!(not(target_os = "wasi")) {
+    #[cfg(not(target_os = "wasi"))]
+    {
         Runtime::new()?
             .block_on(reader.post_validate_async(&CawgValidator {}))
             .map_err(anyhow::Error::from)
-    } else {
+    }
+    #[cfg(target_os = "wasi")]
+    {
         Ok(())
     }
 }
