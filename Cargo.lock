@@ -711,7 +711,7 @@ checksum = "d71b6127be86fdcfddb610f7182ac57211d4b18a3e9c82eb2d17662f2227ad6a"
 
 [[package]]
 name = "c2pa"
-version = "0.48.1"
+version = "0.48.2"
 dependencies = [
  "actix",
  "anyhow",
@@ -853,7 +853,7 @@ version = "0.6.0"
 
 [[package]]
 name = "c2patool"
-version = "0.16.1"
+version = "0.16.2"
 dependencies = [
  "anyhow",
  "assert_cmd",
