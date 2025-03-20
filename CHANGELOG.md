@@ -6,6 +6,13 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 Since version 0.36.2, the format of this changelog is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.48.1](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.48.0...c2pa-v0.48.1)
+_20 March 2025_
+
+### Fixed
+
+* *(c2patool)* Fixes crash and improves cawg support (#989)
+
 ## [0.48.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.47.0...c2pa-v0.48.0)
 _19 March 2025_
 
