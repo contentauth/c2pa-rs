@@ -293,31 +293,41 @@ impl Reader {
         }
     }
 
+    /// replace byte arrays with base64 encoded strings
     fn hash_to_b64(mut value: Value) -> Value {
-        fn visitor(value: &mut Value) {
-            if let Value::Array(hash_arr) = &value["hash"] {
-                let hash_bytes: Vec<u8> = hash_arr
-                    .iter()
-                    .filter_map(|v| v.as_u64().map(|n| n as u8))
-                    .collect();
-                let hash_str = base64::encode(&hash_bytes);
-                value["hash"] = serde_json::Value::String(hash_str);
-            }
-            match value {
+        use std::collections::VecDeque;
+
+        let mut queue = VecDeque::new();
+        queue.push_back(&mut value);
+
+        while let Some(current) = queue.pop_front() {
+            match current {
                 Value::Object(obj) => {
-                    for v in obj.values_mut() {
-                        visitor(v);
+                    for (_, v) in obj.iter_mut() {
+                        if let Value::Array(hash_arr) = v {
+                            if !hash_arr.is_empty() && hash_arr.iter().all(|x| x.is_number()) {
+                                // Pre-allocate with capacity to avoid reallocations
+                                let mut hash_bytes = Vec::with_capacity(hash_arr.len());
+                                // Convert numbers to bytes safely
+                                for n in hash_arr.iter() {
+                                    if let Some(num) = n.as_u64() {
+                                        hash_bytes.push(num as u8);
+                                    }
+                                }
+                                *v = Value::String(base64::encode(&hash_bytes));
+                            }
+                        }
+                        queue.push_back(v);
                     }
                 }
                 Value::Array(arr) => {
                     for v in arr.iter_mut() {
-                        visitor(v);
+                        queue.push_back(v);
                     }
                 }
                 _ => {}
             }
         }
-        visitor(&mut value);
         value
     }
 
@@ -328,85 +338,65 @@ impl Reader {
     /// The updated reader json
     fn to_json_formatted(&self) -> Result<Value> {
         let mut json = serde_json::to_value(self).map_err(Error::JsonError)?;
+
+        // Process manifests
         if let Some(manifests) = json.get_mut("manifests").and_then(|m| m.as_object_mut()) {
             for (manifest_label, manifest) in manifests.iter_mut() {
+                // Get assertions array once instead of multiple lookups
                 if let Some(assertions) = manifest
                     .get_mut("assertions")
                     .and_then(|a| a.as_array_mut())
                 {
                     for assertion in assertions.iter_mut() {
-                        if let Some(lbl) = assertion.get("label").and_then(|l| l.as_str()) {
-                            let uri = crate::jumbf::labels::to_assertion_uri(manifest_label, lbl);
+                        // Get label once and reuse
+                        if let Some(label) = assertion.get("label").and_then(|l| l.as_str()) {
+                            let uri = crate::jumbf::labels::to_assertion_uri(manifest_label, label);
                             if let Some(value) = self.assertion_values.get(&uri) {
+                                // Only create new string if we need to insert
                                 if let Some(assertion_mut) = assertion.as_object_mut() {
                                     assertion_mut.insert("data".to_string(), value.clone());
                                 }
                             }
                         }
-                        // if any field in the assertion has a tag of "hash" or "pad" replace it was a base64 encoded string
-                        // if let Some(data) = assertion.get("data") {
-                        //     if let Some(data_mut) = data.as_object_mut() {
-                        //         for (key, value) in data_mut.iter_mut() {
-                        //             if key == "hash" || key == "pad" {
-                        //                 *value = serde_json::Value::String(base64::encode(value));
-                        //             }
-                        //         }
-                        //     }
-                        // }
                     }
                 }
             }
         }
+
+        Ok(Self::hash_to_b64(json))
+    }
+
+    fn to_json_detailed_formatted(&self) -> Result<Value> {
+        let report = match self.validation_results() {
+            Some(results) => ManifestStoreReport::from_store_with_results(&self.store, results),
+            None => ManifestStoreReport::from_store(&self.store),
+        }?;
+        let mut json = serde_json::to_value(report).map_err(Error::JsonError)?;
+        if let Some(manifests) = json.get_mut("manifests").and_then(|m| m.as_object_mut()) {
+            for (manifest_label, manifest) in manifests.iter_mut() {
+                if let Some(assertions) = manifest
+                    .get_mut("assertion_store")
+                    .and_then(|a| a.as_object_mut())
+                {
+                    for (label, assertion) in assertions.iter_mut() {
+                        let uri = crate::jumbf::labels::to_assertion_uri(manifest_label, label);
+                        if let Some(value) = self.assertion_values.get(&uri) {
+                            *assertion = value.clone();
+                        }
+                    }
+                }
+            }
+        };
         json = Self::hash_to_b64(json);
         Ok(json)
     }
 
     /// Get the manifest store as a JSON string
     pub fn json(&self) -> String {
-        //let mut json = serde_json::to_string_pretty(self).unwrap_or_default();
-
-        // fn omit_tag(mut json: String, tag: &str) -> String {
-        //     while let Some(index) = json.find(&format!("\"{tag}\": [")) {
-        //         if let Some(idx2) = json[index..].find(']') {
-        //             json = format!(
-        //                 "{}\"{}\": \"<omitted>\"{}",
-        //                 &json[..index],
-        //                 tag,
-        //                 &json[index + idx2 + 1..]
-        //             );
-        //         }
-        //     }
-        //     json
-        // }
-
-        // // Make a base64 hash from Vec<u8> values.
-        // fn b64_tag(mut json: String, tag: &str) -> String {
-        //     while let Some(index) = json.find(&format!("\"{tag}\": [")) {
-        //         if let Some(idx2) = json[index..].find(']') {
-        //             let idx3 = json[index..].find('[').unwrap_or_default();
-
-        //             let bytes: Vec<u8> =
-        //                 serde_json::from_slice(json[index + idx3..index + idx2 + 1].as_bytes())
-        //                     .unwrap_or_default();
-
-        //             json = format!(
-        //                 "{}\"{}\": \"{}\"{}",
-        //                 &json[..index],
-        //                 tag,
-        //                 base64::encode(&bytes),
-        //                 &json[index + idx2 + 1..]
-        //             );
-        //         }
-        //     }
-
-        //     json
-        // }
-
-        // json = b64_tag(json, "hash");
-        // json = omit_tag(json, "pad");
-        let value = self.to_json_formatted().unwrap_or_default();
-        // let mut json = serde_json::to_value(self).unwrap_or_default();
-        serde_json::to_string_pretty(&value).unwrap_or_default()
+        match self.to_json_formatted() {
+            Ok(value) => serde_json::to_string_pretty(&value).unwrap_or_default(),
+            Err(_) => "{}".to_string(),
+        }
     }
 
     /// Get the [`ValidationStatus`] array of the manifest store if it exists.
@@ -826,12 +816,16 @@ impl std::fmt::Display for Reader {
 /// Prints the full debug details of the manifest data.
 impl std::fmt::Debug for Reader {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let report = match self.validation_results() {
-            Some(results) => ManifestStoreReport::from_store_with_results(&self.store, results),
-            None => ManifestStoreReport::from_store(&self.store),
-        }
-        .map_err(|_| std::fmt::Error)?;
-        f.write_str(&report.to_string())
+        let json = self
+            .to_json_detailed_formatted()
+            .map_err(|_| std::fmt::Error)?;
+        // let report = match self.validation_results() {
+        //     Some(results) => ManifestStoreReport::from_store_with_results(&self.store, results),
+        //     None => ManifestStoreReport::from_store(&self.store),
+        // }
+        // .map_err(|_| std::fmt::Error)?;
+        let output = serde_json::to_string_pretty(&json).map_err(|_| std::fmt::Error)?;
+        f.write_str(&output)
     }
 }
 

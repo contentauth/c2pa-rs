@@ -1,7 +1,7 @@
 [package]
 name = "c2patool"
 default-run = "c2patool"
-version = "0.15.0"
+version = "0.16.0"
 description = "Tool for displaying and creating C2PA manifests."
 authors = [
     "Gavin Peacock <gpeacock@adobe.com>",
@@ -28,8 +28,8 @@ c2pa = { path = "../sdk", version = "0.48.0", features = [
 	"add_thumbnails",
 	"pdf"
 ] }
-cawg-identity = { path = "../cawg_identity", version = "0.10.0" }
-c2pa-crypto = { path = "../internal/crypto", version = "0.7.0" }
+cawg-identity = { path = "../cawg_identity", version = "0.10.1" }
+c2pa-crypto = { path = "../internal/crypto", version = "0.7.1" }
 clap = { version = "4.5.10", features = ["derive", "env"] }
 env_logger = "0.11.7"
 glob = "0.3.1"
@@ -45,6 +45,7 @@ url = "2.5.0"
 [target.'cfg(not(target_os = "wasi"))'.dependencies]
 async-std = { version = "1.12", features = ["attributes"] }
 reqwest = { version = "0.12.4", features = ["blocking"] }
+tokio = { version = "1.36.0", features = ["rt", "rt-multi-thread"] }
 
 [target.'cfg(target_os = "wasi")'.dependencies]
 wasi = "0.14"
