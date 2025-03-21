@@ -2,12 +2,12 @@
 
 ## Supported platforms
 
-The C2PA Rust library has been tested on the following operating systems:
+The C2PA Rust library has been tested on:
 
 * Windows (Intel only)
 * MacOS (Intel and Apple silicon)
 * Ubuntu Linux (64-bit Intel and ARM v8)
-* WebAssembly (Wasm)
+* WebAssembly (Wasm); see [Building for WebAssembly](project-contributions.md#building-for-webassembly) for details.
 
 ## Requirements
 
@@ -28,35 +28,6 @@ Add the `add_thumbnails` dependency to generate thumbnails for JPEG and PNG file
 
 ```
 c2pa = { version = "0.45.2", features = ["file_io", "add_thumbnails"] }
-```
-
-## WebAssembly
-This crate supports compilation to both the `wasm32-unknown-unknown` and `wasm32-wasi*` family of LLVM targets.
-
-### Building wasm
-
-Building wasm requires clang due to the `ring` crate. The version of clang that comes with XCode does not support wasm targets.
-
-1. On macOS, install clang with homebrew `brew install llvm`.
-2. Set the `CC` environment variable to the clang binary. Cargo provides a mechanism to do this with .cargo/config.toml in the project root.
-
-NOTE: The only wasm targets capable of using the `file_io` feature are `wasm32-wasip2` and later.
-
-NOTE: As of March 2025, `wasm32-wasip2` still requires the nightly toolchain as tracked by this issue: [wasip2 target should not conditionally feature gate stdlib APIs](https://github.com/rust-lang/rust/issues/130323)
-
-### Testing wasm
-
-- Testing wasm for the browser (wasm32-unknown-unknown) requires [wasm-pack](https://github.com/rustwasm/wasm-pack).
-- Testing WASI wasm (wasm32-wasip1 and later) requires [wasmtime](https://github.com/bytecodealliance/wasmtime).
-
-### Example `.cargo/config.toml`
-This config specifies homebrew clang which can build all targets on macOS, not only wasm. The test runner is set for wasm32-wasip2.
-```
-[env]
-CC = "/opt/homebrew/opt/llvm/bin/clang"
-
-[target.wasm32-wasip2]
-runner = "wasmtime -S cli -S http --dir ."
 ```
 
 ## Features
