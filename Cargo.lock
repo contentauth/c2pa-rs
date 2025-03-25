@@ -885,6 +885,7 @@ dependencies = [
 name = "cawg-identity"
 version = "0.10.2"
 dependencies = [
+ "anyhow",
  "async-trait",
  "base64 0.22.1",
  "c2pa",
