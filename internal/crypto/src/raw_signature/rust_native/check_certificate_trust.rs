@@ -72,7 +72,7 @@ pub(crate) fn check_certificate_trust(
     }
 
     // Work back from last cert in chain against the trust anchors.
-    for cert in chain_der.iter().rev() {
+    for cert in full_chain.iter().rev() {
         let (_, chain_cert) = X509Certificate::from_der(cert)
             .map_err(|_e| CertificateTrustError::CertificateNotTrusted)?;
 
