@@ -1996,10 +1996,10 @@ impl Claim {
         }
 
         // make sure UpdateManifests do not contain actions
-        if claim.update_manifest() && claim.label().contains(assertions::labels::ACTIONS) {
+        if claim.update_manifest() && (claim.label().contains(assertions::labels::ACTIONS) || !claim.hash_assertions().is_empty()) {
             log_item!(
                 claim.uri(),
-                "update manifests cannot contain actions",
+                "update manifests cannot contain actions or hash bindings",
                 "verify_internal"
             )
             .validation_status(validation_status::MANIFEST_UPDATE_INVALID)

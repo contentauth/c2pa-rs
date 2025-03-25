@@ -3864,7 +3864,7 @@ pub mod tests {
     use c2pa_status_tracker::{LogItem, StatusTracker};
     use memchr::memmem;
     use serde::Serialize;
-    use sha2::{Digest, Sha256};
+    use sha2::Sha256;
 
     use super::*;
     use crate::{
@@ -5131,6 +5131,7 @@ pub mod tests {
 
     #[test]
     #[cfg(feature = "file_io")]
+    #[cfg(feature = "v1_api")]
     fn test_verifiable_credentials() {
         use crate::utils::test::create_test_store;
 
@@ -5172,6 +5173,7 @@ pub mod tests {
 
     #[test]
     #[cfg(feature = "file_io")]
+    #[cfg(feature = "v1_api")]
     fn test_data_box_creation() {
         use crate::utils::test::create_test_store;
 
@@ -5230,6 +5232,7 @@ pub mod tests {
 
     #[test]
     #[cfg(feature = "file_io")]
+    #[cfg(feature = "v1_api")]
     fn test_update_manifest() {
         use crate::{hashed_uri::HashedUri, utils::test::create_test_store};
 
@@ -5372,27 +5375,25 @@ pub mod tests {
         println!("store = {store}");
     }
 
-    /*
-           #[test]
-           fn test_bmff_fragments() {
-               let init_stream_path = fixture_path("dashinit.mp4");
-               let segment_stream_path = fixture_path("dash1.m4s");
+    #[test]
+    fn test_bmff_fragments() {
+        let init_stream_path = fixture_path("dashinit.mp4");
+        let segment_stream_path = fixture_path("dash1.m4s");
 
-               let init_stream = std::fs::read(init_stream_path).unwrap();
-               let segment_stream = std::fs::read(segment_stream_path).unwrap();
+        let init_stream = std::fs::read(init_stream_path).unwrap();
+        let segment_stream = std::fs::read(segment_stream_path).unwrap();
 
-               let mut report = StatusTracker::default();
-               let store = Store::load_fragment_from_memory(
-                   "mp4",
-                   &init_stream,
-                   &segment_stream,
-                   true,
-                   &mut report,
-               )
-               .expect("load_from_asset");
-               println!("store = {store}");
-           }
-    */
+        let mut report = StatusTracker::default();
+        let store = Store::load_fragment_from_memory(
+            "mp4",
+            &init_stream,
+            &segment_stream,
+            true,
+            &mut report,
+        )
+        .expect("load_from_asset");
+        println!("store = {store}");
+    }
 
     #[test]
     fn test_bmff_jumbf_generation() {
@@ -5464,6 +5465,7 @@ pub mod tests {
 
     #[test]
     #[cfg(feature = "file_io")]
+    #[cfg(feature = "v1_api")]
     fn test_removed_jumbf() {
         // test adding to actual image
         let ap = fixture_path("no_manifest.jpg");
@@ -5477,6 +5479,8 @@ pub mod tests {
     }
 
     #[test]
+    #[cfg(feature = "file_io")]
+    #[cfg(feature = "v1_api")]
     fn test_external_manifest_sidecar() {
         // test adding to actual image
         let ap = fixture_path("libpng-test.png");
@@ -5516,6 +5520,8 @@ pub mod tests {
     }
 
     // generalize test for multipe file types
+    #[cfg(feature = "file_io")]
+    #[cfg(feature = "v1_api")]
     fn external_manifest_test(file_name: &str) {
         // test adding to actual image
         let ap = fixture_path(file_name);
@@ -5587,6 +5593,8 @@ pub mod tests {
     }
 
     #[test]
+    #[cfg(feature = "file_io")]
+    #[cfg(feature = "v1_api")]
     fn test_user_guid_external_manifest_embedded() {
         // test adding to actual image
         let ap = fixture_path("libpng-test.png");
@@ -5640,6 +5648,8 @@ pub mod tests {
     }
 
     #[test]
+    #[cfg(feature = "file_io")]
+    #[cfg(feature = "v1_api")]
     fn test_external_manifest_from_memory() {
         // test adding to actual image
         let ap = fixture_path("libpng-test.png");
@@ -5702,6 +5712,8 @@ pub mod tests {
 
     #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
     #[cfg_attr(target_os = "wasi", wstd::test)]
+    #[cfg(feature = "file_io")]
+    #[cfg(feature = "v1_api")]
     async fn test_jumbf_generation_stream() {
         let file_buffer = include_bytes!("../tests/fixtures/earth_apollo17.jpg").to_vec();
         // convert buffer to cursor with Read/Write/Seek capability
@@ -5745,6 +5757,7 @@ pub mod tests {
 
     #[test]
     #[cfg(feature = "file_io")]
+    #[cfg(feature = "v1_api")]
     fn test_tiff_jumbf_generation() {
         // test adding to actual image
         let ap = fixture_path("TUSCANY.TIF");
@@ -5816,6 +5829,7 @@ pub mod tests {
     #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
     #[cfg_attr(target_os = "wasi", wstd::test)]
     #[cfg(feature = "file_io")]
+    #[cfg(feature = "v1_api")]
     async fn test_boxhash_embeddable_manifest_async() {
         // test adding to actual image
         let ap = fixture_path("boxhash.jpg");
@@ -5901,6 +5915,7 @@ pub mod tests {
 
     #[test]
     #[cfg(feature = "file_io")]
+    #[cfg(feature = "v1_api")]
     fn test_boxhash_embeddable_manifest() {
         // test adding to actual image
         let ap = fixture_path("boxhash.jpg");
@@ -5982,6 +5997,7 @@ pub mod tests {
     #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
     #[cfg_attr(target_os = "wasi", wstd::test)]
     #[cfg(feature = "file_io")]
+    #[cfg(feature = "v1_api")]
     async fn test_datahash_embeddable_manifest_async() {
         // test adding to actual image
         use std::io::SeekFrom;
@@ -6050,6 +6066,7 @@ pub mod tests {
 
     #[test]
     #[cfg(feature = "file_io")]
+    #[cfg(feature = "v1_api")]
     fn test_datahash_embeddable_manifest() {
         // test adding to actual image
 
@@ -6120,8 +6137,9 @@ pub mod tests {
     #[cfg(feature = "file_io")]
     #[cfg(feature = "v1_api")]
     fn test_datahash_embeddable_manifest_user_hashed() {
-        // test adding to actual image
+        use sha2::Digest;
 
+        // test adding to actual image
         use std::io::SeekFrom;
         let ap = fixture_path("cloud.jpg");
 
@@ -6304,6 +6322,7 @@ pub mod tests {
     }
 
     #[test]
+    #[cfg(feature = "v1_api")]
     fn test_dynamic_assertions() {
         #[derive(Serialize)]
         struct TestAssertion {
@@ -6432,6 +6451,7 @@ pub mod tests {
 
     #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
     #[cfg_attr(target_os = "wasi", wstd::test)]
+    #[cfg(feature = "v1_api")]
     async fn test_async_dynamic_assertions() {
         use async_trait::async_trait;
 
