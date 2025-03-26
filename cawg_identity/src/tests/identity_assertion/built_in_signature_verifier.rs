@@ -44,7 +44,7 @@ const TEST_THUMBNAIL: &[u8] = include_bytes!("../../../../sdk/tests/fixtures/thu
 #[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
 #[cfg_attr(
     all(target_arch = "wasm32", not(target_os = "wasi")),
-    wasm_bindgen_test
+    wasm_bindgen_test::wasm_bindgen_test
 )]
 #[cfg_attr(target_os = "wasi", wstd::test)]
 async fn x509_simple_case() {
@@ -119,7 +119,7 @@ async fn x509_simple_case() {
 #[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
 #[cfg_attr(
     all(target_arch = "wasm32", not(target_os = "wasi")),
-    wasm_bindgen_test
+    wasm_bindgen_test::wasm_bindgen_test
 )]
 #[cfg_attr(target_os = "wasi", wstd::test)]
 async fn adobe_connected_identities() {
@@ -207,7 +207,7 @@ async fn adobe_connected_identities() {
 #[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
 #[cfg_attr(
     all(target_arch = "wasm32", not(target_os = "wasi")),
-    wasm_bindgen_test
+    wasm_bindgen_test::wasm_bindgen_test
 )]
 #[cfg_attr(target_os = "wasi", wstd::test)]
 async fn err_naive_credential_holder() {
