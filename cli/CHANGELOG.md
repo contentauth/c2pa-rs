@@ -9,9 +9,7 @@ Since version 0.10.0, the format of this changelog is based on [Keep a Changelog
 ## [0.16.1](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.16.0...c2patool-v0.16.1)
 _26 March 2025_
 
-### Fixed
-
-* Trigger minor version bumps in c2patool and cawg-identity
+* Update to latest c2pa-crypto crate
 
 ## [0.15.0](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.14.0...c2patool-v0.15.0)
 _18 March 2025_
