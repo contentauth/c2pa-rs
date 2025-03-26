@@ -37,7 +37,8 @@ pub struct BuiltInSignatureVerifier {
     pub x509_verifier: X509SignatureVerifier,
 }
 
-#[async_trait]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl SignatureVerifier for BuiltInSignatureVerifier {
     type Error = BuiltInSignatureError;
     type Output = BuiltInCredential;
