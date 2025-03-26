@@ -27,6 +27,48 @@ use x509_parser::{
 
 use crate::{asn1::rfc3161::TstInfo, cose::CertificateTrustPolicy};
 
+/// Verify that an end-entity X.509 certificate meets the requirements stated in
+/// [§14.5. X.509 Certificates].
+///
+/// [§14.5. X.509 Certificates]: https://c2pa.org/specifications/specifications/2.1/specs/C2PA_Specification.html#x509_certificates
+pub fn check_end_entity_certificate_profile(
+    certificate_der: &[u8],
+    ctp: &CertificateTrustPolicy,
+    validation_log: &mut StatusTracker,
+    tst_info_opt: Option<&TstInfo>,
+) -> Result<(), CertificateProfileError> {
+    check_certificate_profile(certificate_der, ctp, validation_log, tst_info_opt)?;
+
+    let (_rem, signcert) = X509Certificate::from_der(certificate_der).map_err(|_err| {
+        log_item!(
+            "Cose_Sign1",
+            "certificate could not be parsed",
+            "check_certificate_profile"
+        )
+        .validation_status(SIGNING_CREDENTIAL_INVALID)
+        .failure_no_throw(validation_log, CertificateProfileError::InvalidCertificate);
+
+        CertificateProfileError::InvalidCertificate
+    })?;
+
+    let tbscert = &signcert.tbs_certificate;
+
+    // If we are expecting an end-entity cert, make sure that is so
+    if tbscert.is_ca() {
+        log_item!(
+            "Cose_Sign1",
+            "expected end-entity certificate",
+            "check_certificate_profile"
+        )
+        .validation_status(SIGNING_CREDENTIAL_INVALID)
+        .failure_no_throw(validation_log, CertificateProfileError::InvalidCertificate);
+
+        return Err(CertificateProfileError::InvalidCertificate);
+    }
+
+    Ok(())
+}
+
 /// Verify that an X.509 certificate meets the requirements stated in [§14.5.1,
 /// Certificate Profiles].
 ///
@@ -41,7 +83,7 @@ pub fn check_certificate_profile(
         log_item!(
             "Cose_Sign1",
             "certificate could not be parsed",
-            "check_cert_alg"
+            "check_certificate_profile"
         )
         .validation_status(SIGNING_CREDENTIAL_INVALID)
         .failure_no_throw(validation_log, CertificateProfileError::InvalidCertificate);
@@ -54,7 +96,7 @@ pub fn check_certificate_profile(
         log_item!(
             "Cose_Sign1",
             "certificate version incorrect",
-            "check_cert_alg"
+            "check_certificate_profile"
         )
         .validation_status(SIGNING_CREDENTIAL_INVALID)
         .failure_no_throw(
@@ -74,12 +116,16 @@ pub fn check_certificate_profile(
             x509_parser::time::ASN1Time::from_timestamp(signing_time.timestamp())
                 .map_err(|_| CertificateProfileError::InvalidCertificate)?,
         ) {
-            log_item!("Cose_Sign1", "certificate expired", "check_cert_alg")
-                .validation_status(SIGNING_CREDENTIAL_EXPIRED)
-                .failure_no_throw(
-                    validation_log,
-                    CertificateProfileError::CertificateNotValidAtTime,
-                );
+            log_item!(
+                "Cose_Sign1",
+                "certificate expired",
+                "check_certificate_profile"
+            )
+            .validation_status(SIGNING_CREDENTIAL_EXPIRED)
+            .failure_no_throw(
+                validation_log,
+                CertificateProfileError::CertificateNotValidAtTime,
+            );
 
             return Err(CertificateProfileError::CertificateNotValidAtTime);
         }
@@ -96,12 +142,16 @@ pub fn check_certificate_profile(
             x509_parser::time::ASN1Time::from_timestamp(now.as_secs() as i64)
                 .map_err(|_| CertificateProfileError::InvalidCertificate)?,
         ) {
-            log_item!("Cose_Sign1", "certificate expired", "check_cert_alg")
-                .validation_status(SIGNING_CREDENTIAL_EXPIRED)
-                .failure_no_throw(
-                    validation_log,
-                    CertificateProfileError::CertificateNotValidAtTime,
-                );
+            log_item!(
+                "Cose_Sign1",
+                "certificate expired",
+                "check_certificate_profile"
+            )
+            .validation_status(SIGNING_CREDENTIAL_EXPIRED)
+            .failure_no_throw(
+                validation_log,
+                CertificateProfileError::CertificateNotValidAtTime,
+            );
 
             return Err(CertificateProfileError::CertificateNotValidAtTime);
         }
@@ -122,7 +172,7 @@ pub fn check_certificate_profile(
         log_item!(
             "Cose_Sign1",
             "certificate algorithm not supported",
-            "check_cert_alg"
+            "check_certificate_profile"
         )
         .validation_status(SIGNING_CREDENTIAL_INVALID)
         .failure_no_throw(
@@ -183,7 +233,7 @@ pub fn check_certificate_profile(
                 log_item!(
                     "Cose_Sign1",
                     "certificate algorithm error",
-                    "check_cert_alg"
+                    "check_certificate_profile"
                 )
                 .validation_status(SIGNING_CREDENTIAL_INVALID)
                 .failure_no_throw(validation_log, CertificateProfileError::InvalidCertificate);
@@ -199,7 +249,7 @@ pub fn check_certificate_profile(
                 log_item!(
                     "Cose_Sign1",
                     "certificate hash algorithm not supported",
-                    "check_cert_alg"
+                    "check_certificate_profile"
                 )
                 .validation_status(SIGNING_CREDENTIAL_INVALID)
                 .failure_no_throw(validation_log, CertificateProfileError::InvalidCertificate);
@@ -210,7 +260,7 @@ pub fn check_certificate_profile(
             log_item!(
                 "Cose_Sign1",
                 "certificate missing algorithm parameters",
-                "check_cert_alg"
+                "check_certificate_profile"
             )
             .validation_status(SIGNING_CREDENTIAL_INVALID)
             .failure_no_throw(validation_log, CertificateProfileError::InvalidCertificate);
@@ -237,7 +287,7 @@ pub fn check_certificate_profile(
                 log_item!(
                     "Cose_Sign1",
                     "certificate unsupported EC curve",
-                    "check_cert_alg"
+                    "check_certificate_profile"
                 )
                 .validation_status(SIGNING_CREDENTIAL_INVALID)
                 .failure_no_throw(validation_log, CertificateProfileError::InvalidCertificate);
@@ -269,7 +319,7 @@ pub fn check_certificate_profile(
             log_item!(
                 "Cose_Sign1",
                 "certificate key length too short",
-                "check_cert_alg"
+                "check_certificate_profile"
             )
             .validation_status(SIGNING_CREDENTIAL_INVALID)
             .failure_no_throw(validation_log, CertificateProfileError::InvalidCertificate);
@@ -285,7 +335,7 @@ pub fn check_certificate_profile(
         log_item!(
             "Cose_Sign1",
             "certificate issuer and subject cannot be the same (self-signed disallowed)",
-            "check_cert_alg"
+            "check_certificate_profile"
         )
         .validation_status(SIGNING_CREDENTIAL_INVALID)
         .failure_no_throw(
@@ -301,7 +351,7 @@ pub fn check_certificate_profile(
         log_item!(
             "Cose_Sign1",
             "certificate issuer/subject unique ids are not allowed",
-            "check_cert_alg"
+            "check_certificate_profile"
         )
         .validation_status(SIGNING_CREDENTIAL_INVALID)
         .failure_no_throw(validation_log, CertificateProfileError::InvalidCertificate);
@@ -321,7 +371,7 @@ pub fn check_certificate_profile(
                 log_item!(
                     "Cose_Sign1",
                     "certificate 'any' EKU not allowed",
-                    "check_cert_alg"
+                    "check_certificate_profile"
                 )
                 .validation_status(SIGNING_CREDENTIAL_INVALID)
                 .failure_no_throw(validation_log, CertificateProfileError::InvalidCertificate);
@@ -333,7 +383,7 @@ pub fn check_certificate_profile(
                 log_item!(
                     "Cose_Sign1",
                     "certificate missing required EKU",
-                    "check_cert_alg"
+                    "check_certificate_profile"
                 )
                 .validation_status(SIGNING_CREDENTIAL_INVALID)
                 .failure_no_throw(validation_log, CertificateProfileError::InvalidCertificate);
@@ -353,7 +403,7 @@ pub fn check_certificate_profile(
                 log_item!(
                     "Cose_Sign1",
                     "certificate invalid set of EKUs",
-                    "check_cert_alg"
+                    "check_certificate_profile"
                 )
                 .validation_status(SIGNING_CREDENTIAL_INVALID)
                 .failure_no_throw(validation_log, CertificateProfileError::InvalidCertificate);
@@ -382,7 +432,7 @@ pub fn check_certificate_profile(
                         log_item!(
                             "Cose_Sign1",
                             "certificate missing digitalSignature EKU",
-                            "check_cert_alg"
+                            "check_certificate_profile"
                         )
                         .validation_status(SIGNING_CREDENTIAL_INVALID)
                         .failure_no_throw(
@@ -430,7 +480,7 @@ pub fn check_certificate_profile(
         log_item!(
             "Cose_Sign1",
             "certificate params incorrect",
-            "check_cert_alg"
+            "check_certificate_profile"
         )
         .validation_status(SIGNING_CREDENTIAL_INVALID)
         .failure_no_throw(validation_log, CertificateProfileError::InvalidCertificate);
