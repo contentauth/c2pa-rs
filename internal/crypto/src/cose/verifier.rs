@@ -200,6 +200,7 @@ impl Verifier<'_> {
         match tst_info_res {
             Ok(tst_info) => Ok(check_certificate_profile(
                 end_entity_cert_der,
+                true,
                 ctp,
                 validation_log,
                 Some(tst_info),
@@ -207,6 +208,7 @@ impl Verifier<'_> {
 
             Err(CoseError::NoTimeStampToken) => Ok(check_certificate_profile(
                 end_entity_cert_der,
+                true,
                 ctp,
                 validation_log,
                 None,

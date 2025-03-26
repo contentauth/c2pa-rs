@@ -31,7 +31,7 @@ fn expired_cert() {
         "../fixtures/cose/rsa-pss256_key-expired.pub"
     ));
 
-    assert!(check_certificate_profile(&cert_der, &ctp, &mut validation_log, None).is_err());
+    assert!(check_certificate_profile(&cert_der, true, &ctp, &mut validation_log, None).is_err());
 
     assert!(!validation_log.logged_items().is_empty());
 
@@ -56,10 +56,10 @@ fn cert_algorithms() {
     let es512_cert = x509_der_from_pem(include_bytes!("../fixtures/raw_signature/es512.pub"));
     let ps256_cert = x509_der_from_pem(include_bytes!("../fixtures/raw_signature/ps256.pub"));
 
-    check_certificate_profile(&es256_cert, &ctp, &mut validation_log, None).unwrap();
-    check_certificate_profile(&es384_cert, &ctp, &mut validation_log, None).unwrap();
-    check_certificate_profile(&es512_cert, &ctp, &mut validation_log, None).unwrap();
-    check_certificate_profile(&ps256_cert, &ctp, &mut validation_log, None).unwrap();
+    check_certificate_profile(&es256_cert, true, &ctp, &mut validation_log, None).unwrap();
+    check_certificate_profile(&es384_cert, true, &ctp, &mut validation_log, None).unwrap();
+    check_certificate_profile(&es512_cert, true, &ctp, &mut validation_log, None).unwrap();
+    check_certificate_profile(&ps256_cert, true, &ctp, &mut validation_log, None).unwrap();
 }
 
 fn x509_der_from_pem(cert_pem: &[u8]) -> Vec<u8> {

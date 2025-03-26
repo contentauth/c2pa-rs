@@ -151,6 +151,7 @@ fn signing_cert_valid(signing_cert: &[u8]) -> Result<()> {
 
     Ok(check_certificate_profile(
         signing_cert,
+        true,
         &passthrough_cap,
         &mut cose_log,
         None,
