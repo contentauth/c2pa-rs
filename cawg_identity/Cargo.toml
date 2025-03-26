@@ -30,7 +30,7 @@ v1_api = ["c2pa/v1_api", "c2pa/file_io"]
 [dependencies]
 async-trait = "0.1.78"
 base64 = "0.22.1"
-c2pa = { path = "../sdk", version = "0.48.2" }
+c2pa = { path = "../sdk", version = "0.48.1" }
 c2pa-crypto = { path = "../internal/crypto", version = "0.7.1" }
 c2pa-status-tracker = { path = "../internal/status-tracker", version = "0.6.0" }
 chrono = { version = "0.4.38", features = ["serde"] }
