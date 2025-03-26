@@ -100,7 +100,7 @@ fn check_stapled_ocsp_response(
     // If we get a valid response, validate the certs.
     if ocsp_data.revoked_at.is_none() {
         if let Some(ocsp_certs) = &ocsp_data.ocsp_certs {
-            check_certificate_profile(&ocsp_certs[0], false, ctp, validation_log, Some(tst_info))?;
+            check_certificate_profile(&ocsp_certs[0], ctp, validation_log, Some(tst_info))?;
         }
     }
 
@@ -149,7 +149,7 @@ fn fetch_and_check_ocsp_response(
         // If we get a valid response validate the certs.
         if ocsp_data.revoked_at.is_none() {
             if let Some(ocsp_certs) = &ocsp_data.ocsp_certs {
-                check_certificate_profile(&ocsp_certs[0], false, ctp, validation_log, None)?;
+                check_certificate_profile(&ocsp_certs[0], ctp, validation_log, None)?;
             }
         }
 

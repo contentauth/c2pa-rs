@@ -18,7 +18,10 @@
 use async_generic::async_generic;
 use async_trait::async_trait;
 use c2pa_crypto::{
-    cose::{check_certificate_profile, sign, sign_async, CertificateTrustPolicy, TimeStampStorage},
+    cose::{
+        check_end_entity_certificate_profile, sign, sign_async, CertificateTrustPolicy,
+        TimeStampStorage,
+    },
     raw_signature::{AsyncRawSigner, RawSigner, RawSignerError, SigningAlg},
     time_stamp::{AsyncTimeStampProvider, TimeStampError, TimeStampProvider},
 };
@@ -149,9 +152,8 @@ fn signing_cert_valid(signing_cert: &[u8]) -> Result<()> {
         passthrough_cap.add_valid_ekus(trust_config.as_bytes());
     }
 
-    Ok(check_certificate_profile(
+    Ok(check_end_entity_certificate_profile(
         signing_cert,
-        true,
         &passthrough_cap,
         &mut cose_log,
         None,
