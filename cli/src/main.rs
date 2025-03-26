@@ -99,7 +99,7 @@ struct CliArgs {
     #[clap(long = "certs")]
     cert_chain: bool,
 
-    /// Do not perform validation of signature after signing
+    /// Do not perform validation of signature after signing.
     #[clap(long = "no_signing_verify")]
     no_signing_verify: bool,
 
