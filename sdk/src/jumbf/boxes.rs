@@ -2237,10 +2237,7 @@ impl BoxReader {
             return Err(JumbfParseError::UnexpectedEof);
         }
         let box_label = jdesc.label();
-        debug!(
-            "{}",
-            format!("START#Label: {box_label:?}" /* jdesc.label() */)
-        );
+        debug!("START#Label: {box_label:?}");
         let mut sbox = JUMBFSuperBox::from(jdesc);
 
         // read each following box and add it to the sbox
@@ -2286,7 +2283,7 @@ impl BoxReader {
                             .map_err(|_| JumbfParseError::InvalidEmbeddedFileBox)?,
                     ),
                     _ => {
-                        debug!("{}", format!("Unknown Boxtype: {:?}", box_header.name));
+                        debug!("Unknown Boxtype: {:?}", box_header.name);
                         // per the jumbf spec ignore unknown boxes so skip by if possible
                         let header = BoxReader::read_header(reader)
                             .map_err(|_| JumbfParseError::InvalidBoxHeader)?;
@@ -2318,10 +2315,7 @@ impl BoxReader {
             }
         }
 
-        debug!(
-            "{}",
-            format!("END#Label: {box_label:?}" /* jdesc.label() */)
-        );
+        debug!("END#Label: {box_label:?}");
 
         // return the filled out sbox
         Ok(sbox)
