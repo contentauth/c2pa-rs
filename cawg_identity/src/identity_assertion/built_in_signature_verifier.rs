@@ -28,7 +28,6 @@ use crate::{
 
 /// A `BuiltInSignatureVerifier` is an implementation of [`SignatureVerifier`]
 /// that can read all of the signature types that are supported by this SDK.
-#[cfg(not(target_arch = "wasm32"))]
 pub struct BuiltInSignatureVerifier {
     /// Configuration to use when an identity claims aggregation credential is
     /// presented.
