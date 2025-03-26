@@ -1,7 +1,7 @@
 [package]
 name = "c2patool"
 default-run = "c2patool"
-version = "0.16.1"
+version = "0.16.0"
 description = "Tool for displaying and creating C2PA manifests."
 authors = [
     "Gavin Peacock <gpeacock@adobe.com>",
@@ -28,7 +28,7 @@ c2pa = { path = "../sdk", version = "0.48.1", features = [
 	"add_thumbnails",
 	"pdf"
 ] }
-cawg-identity = { path = "../cawg_identity", version = "0.10.2" }
+cawg-identity = { path = "../cawg_identity", version = "0.10.1" }
 c2pa-crypto = { path = "../internal/crypto", version = "0.7.1" }
 clap = { version = "4.5.10", features = ["derive", "env"] }
 env_logger = "0.11.7"
