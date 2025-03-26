@@ -74,7 +74,6 @@ fn map_err_to_built_in<E: Into<BuiltInSignatureError>>(
 ) -> ValidationError<BuiltInSignatureError> {
     match err {
         ValidationError::AssertionNotInClaim(s) => ValidationError::AssertionNotInClaim(s),
-
         ValidationError::AssertionMismatch(s) => ValidationError::AssertionMismatch(s),
 
         ValidationError::DuplicateAssertionReference(s) => {
@@ -82,15 +81,10 @@ fn map_err_to_built_in<E: Into<BuiltInSignatureError>>(
         }
 
         ValidationError::NoHardBindingAssertion => ValidationError::NoHardBindingAssertion,
-
         ValidationError::UnknownSignatureType(s) => ValidationError::UnknownSignatureType(s),
-
         ValidationError::InvalidSignature => ValidationError::InvalidSignature,
-
         ValidationError::InvalidPadding => ValidationError::InvalidPadding,
-
         ValidationError::SignatureError(e) => ValidationError::SignatureError(e.into()),
-
         ValidationError::InternalError(s) => ValidationError::InternalError(s),
     }
 }
