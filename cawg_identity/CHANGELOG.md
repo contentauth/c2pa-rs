@@ -6,6 +6,13 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 The format of this changelog is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.10.2](https://github.com/contentauth/c2pa-rs/compare/cawg-identity-v0.10.1...cawg-identity-v0.10.2)
+_26 March 2025_
+
+### Other
+
+* Revert "chore: publish c2patool and cawg_identity updates ([#992](https://github.com/contentauth/c2pa-rs/pull/992))"
+
 ## [0.10.0](https://github.com/contentauth/c2pa-rs/compare/cawg-identity-v0.9.0...cawg-identity-v0.10.0)
 _18 March 2025_
 

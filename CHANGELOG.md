@@ -6,6 +6,17 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 Since version 0.36.2, the format of this changelog is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.48.2](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.48.1...c2pa-v0.48.2)
+_26 March 2025_
+
+### Fixed
+
+* Make sure manifests are signed with end-entity certs ([#997](https://github.com/contentauth/c2pa-rs/pull/997))
+
+### Other
+
+* Revert "chore: publish c2patool and cawg_identity updates ([#992](https://github.com/contentauth/c2pa-rs/pull/992))"
+
 ## [0.48.1](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.48.0...c2pa-v0.48.1)
 _20 March 2025_
 
