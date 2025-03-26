@@ -54,14 +54,14 @@ impl SignatureVerifier for BuiltInSignatureVerifier {
                 .ica_verifier
                 .check_signature(signer_payload, signature, status_tracker)
                 .await
-                .map(|r| BuiltInCredential::IdentityClaimsAggregationCredential(r))
+                .map(BuiltInCredential::IdentityClaimsAggregationCredential)
                 .map_err(map_err_to_built_in),
 
             crate::x509::CAWG_X509_SIG_TYPE => self
                 .x509_verifier
                 .check_signature(signer_payload, signature, status_tracker)
                 .await
-                .map(|r| BuiltInCredential::X509Signature(r))
+                .map(BuiltInCredential::X509Signature)
                 .map_err(map_err_to_built_in),
 
             sig_type => Err(ValidationError::UnknownSignatureType(sig_type.to_string())),
@@ -90,6 +90,7 @@ fn map_err_to_built_in<E: Into<BuiltInSignatureError>>(
 }
 
 #[derive(Debug)]
+#[allow(clippy::large_enum_variant)]
 #[non_exhaustive]
 pub enum BuiltInCredential {
     IdentityClaimsAggregationCredential(IcaCredential),
