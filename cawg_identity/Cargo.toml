@@ -1,6 +1,6 @@
 [package]
 name = "cawg-identity"
-version = "0.10.2"
+version = "0.10.1"
 description = "Rust SDK for CAWG (Creator Assertions Working Group) identity assertion"
 authors = [
     "Eric Scouten <scouten@adobe.com>",
