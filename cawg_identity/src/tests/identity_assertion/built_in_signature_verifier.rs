@@ -24,15 +24,18 @@ use iref::UriBuf;
 use non_empty_string::NonEmptyString;
 
 use crate::{
-    builder::{AsyncIdentityAssertionBuilder, AsyncIdentityAssertionSigner},
+    builder::{
+        AsyncIdentityAssertionBuilder, AsyncIdentityAssertionSigner, IdentityAssertionBuilder,
+        IdentityAssertionSigner,
+    },
     claim_aggregation::{IdentityProvider, VerifiedIdentity},
     identity_assertion::built_in_signature_verifier::BuiltInCredential,
     tests::fixtures::{
         cert_chain_and_private_key_for_alg, default_built_in_signature_verifier, manifest_json,
-        parent_json,
+        parent_json, NaiveCredentialHolder,
     },
     x509::X509CredentialHolder,
-    IdentityAssertion, SignerPayload,
+    IdentityAssertion, SignerPayload, ValidationError,
 };
 
 const TEST_IMAGE: &[u8] = include_bytes!("../../../../sdk/tests/fixtures/CA.jpg");
@@ -199,4 +202,63 @@ async fn adobe_connected_identities() {
         ia_json,
         r#"[{"sig_type":"cawg.identity_claims_aggregation","referenced_assertions":["c2pa.hash.data"],"named_actor":{"@context":["https://www.w3.org/ns/credentials/v2","https://creator-assertions.github.io/tbd/tbd"],"type":["VerifiableCredential","IdentityClaimsAggregationCredential"],"issuer":"did:web:connected-identities.identity-stage.adobe.com","validFrom":"2024-10-03T21:47:02Z","verifiedIdentities":[{"type":"cawg.social_media","username":"Robert Tiles","uri":"https://net.s2stagehance.com/roberttiles","verifiedAt":"2024-09-24T18:15:11Z","provider":{"id":"https://behance.net","name":"behance"}}],"credentialSchema":[{"id":"https://creator-assertions.github.io/schemas/v1/creator-identity-assertion.json","type":"JSONSchema"}]}}]"#
     );
+}
+
+#[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
+#[cfg_attr(
+    all(target_arch = "wasm32", not(target_os = "wasi")),
+    wasm_bindgen_test
+)]
+#[cfg_attr(target_os = "wasi", wstd::test)]
+async fn err_naive_credential_holder() {
+    let format = "image/jpeg";
+    let mut source = Cursor::new(TEST_IMAGE);
+    let mut dest = Cursor::new(Vec::new());
+
+    let mut builder = Builder::from_json(&manifest_json()).unwrap();
+    builder
+        .add_ingredient_from_stream(parent_json(), format, &mut source)
+        .unwrap();
+
+    builder
+        .add_resource("thumbnail.jpg", Cursor::new(TEST_THUMBNAIL))
+        .unwrap();
+
+    let mut signer = IdentityAssertionSigner::from_test_credentials(SigningAlg::Ps256);
+
+    let nch = NaiveCredentialHolder {};
+    let iab = IdentityAssertionBuilder::for_credential_holder(nch);
+    signer.add_identity_assertion(iab);
+
+    builder
+        .sign(&signer, format, &mut source, &mut dest)
+        .unwrap();
+
+    // Read back the Manifest that was generated.
+    dest.rewind().unwrap();
+
+    let manifest_store = Reader::from_stream(format, &mut dest).unwrap();
+    assert_eq!(manifest_store.validation_status(), None);
+
+    let manifest = manifest_store.active_manifest().unwrap();
+    let mut st = StatusTracker::default();
+    let mut ia_iter = IdentityAssertion::from_manifest(manifest, &mut st);
+
+    // Should find exactly one identity assertion.
+    let ia = ia_iter.next().unwrap().unwrap();
+    assert!(ia_iter.next().is_none());
+    drop(ia_iter);
+
+    // And that identity assertion should be valid for this manifest.
+    let verifier = default_built_in_signature_verifier();
+    let err = ia.validate(manifest, &mut st, &verifier).await.unwrap_err();
+
+    match err {
+        ValidationError::UnknownSignatureType(sig_type) => {
+            assert_eq!(sig_type, "INVALID.identity.naive_credential");
+        }
+        _ => {
+            panic!("Unexpected error type: {err:?}");
+        }
+    }
 }
