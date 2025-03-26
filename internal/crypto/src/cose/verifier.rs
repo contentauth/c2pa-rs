@@ -30,9 +30,9 @@ use crate::{
     asn1::rfc3161::TstInfo,
     base64::encode,
     cose::{
-        cert_chain_from_sign1, check_certificate_profile, parse_cose_sign1, signing_alg_from_sign1,
-        validate_cose_tst_info, validate_cose_tst_info_async, CertificateInfo,
-        CertificateTrustError, CertificateTrustPolicy, CoseError,
+        cert_chain_from_sign1, check_end_entity_certificate_profile, parse_cose_sign1,
+        signing_alg_from_sign1, validate_cose_tst_info, validate_cose_tst_info_async,
+        CertificateInfo, CertificateTrustError, CertificateTrustPolicy, CoseError,
     },
     ec_utils::parse_ec_der_sig,
     raw_signature::{validator_for_signing_alg, SigningAlg},
@@ -198,14 +198,14 @@ impl Verifier<'_> {
         let end_entity_cert_der = &certs[0];
 
         match tst_info_res {
-            Ok(tst_info) => Ok(check_certificate_profile(
+            Ok(tst_info) => Ok(check_end_entity_certificate_profile(
                 end_entity_cert_der,
                 ctp,
                 validation_log,
                 Some(tst_info),
             )?),
 
-            Err(CoseError::NoTimeStampToken) => Ok(check_certificate_profile(
+            Err(CoseError::NoTimeStampToken) => Ok(check_end_entity_certificate_profile(
                 end_entity_cert_der,
                 ctp,
                 validation_log,

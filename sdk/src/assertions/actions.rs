@@ -134,6 +134,10 @@ pub struct Action {
     #[serde(rename = "softwareAgent", skip_serializing_if = "Option::is_none")]
     software_agent: Option<SoftwareAgent>,
 
+    /// 0-based index into the softwareAgents array
+    #[serde(rename = "softwareAgentIndex", skip_serializing_if = "Option::is_none")]
+    pub software_agent_index: Option<usize>,
+
     /// A semicolon-delimited list of the parts of the resource that were changed since the previous event history.
     #[serde(skip_serializing_if = "Option::is_none")]
     changed: Option<String>,
@@ -440,6 +444,10 @@ pub struct ActionTemplate {
     #[serde(rename = "softwareAgent", skip_serializing_if = "Option::is_none")]
     pub software_agent: Option<SoftwareAgent>,
 
+    /// 0-based index into the softwareAgents array
+    #[serde(rename = "softwareAgentIndex", skip_serializing_if = "Option::is_none")]
+    pub software_agent_index: Option<usize>,
+
     /// One of the defined URI values at `<https://cv.iptc.org/newscodes/digitalsourcetype/>`
     #[serde(rename = "digitalSourceType", skip_serializing_if = "Option::is_none")]
     pub source_type: Option<String>,
@@ -450,8 +458,8 @@ pub struct ActionTemplate {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
 
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub parameters: Option<HashMap<String, Value>>,
+    #[serde(rename = "templateParameters", skip_serializing_if = "Option::is_none")]
+    pub template_parameters: Option<HashMap<String, Value>>,
 }
 
 impl ActionTemplate {
@@ -465,7 +473,7 @@ impl ActionTemplate {
 }
 
 /// An `Actions` assertion provides information on edits and other
-/// actions taken that affect the asset’s content.
+/// actions taken that affect the asset's content.
 ///
 /// This assertion contains a list of [`Action`], each one declaring
 /// what took place on the asset, when it took place, along with possible
@@ -477,6 +485,10 @@ impl ActionTemplate {
 pub struct Actions {
     /// A list of [`Action`]s.
     pub actions: Vec<Action>,
+
+    /// If present & true, indicates that no actions took place that were not included in the actions list.
+    #[serde(rename = "allActionsIncluded", skip_serializing_if = "Option::is_none")]
+    pub all_actions_included: Option<bool>,
 
     /// list of templates for the [`Action`]s
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -497,6 +509,7 @@ impl Actions {
     pub fn new() -> Self {
         Self {
             actions: Vec::new(),
+            all_actions_included: None,
             templates: None,
             metadata: None,
         }
@@ -885,9 +898,15 @@ pub mod tests {
                         "name": "Joe's Photo Editor",
                         "version": "2.0",
                         "schema.org.SoftwareApplication.operatingSystem": "Windows 10"
+                    },
+                    "softwareAgentIndex": 1,
+                    "templateParameters": {
+                        "description": "Magic Filter",
+                        "digitalSourceType": "http://cv.iptc.org/newscodes/digitalsourcetype/compositeSynthetic",
                     }
                 }
             ],
+            "allActionsIncluded": true,
             "metadata": {
                 "mytag": "myvalue"
             }
@@ -899,6 +918,7 @@ pub mod tests {
         assert_eq!(result.label(), "c2pa.actions.v2");
         assert_eq!(original.actions, result.actions);
         assert_eq!(original.templates, result.templates);
+        assert_eq!(original.all_actions_included, result.all_actions_included);
         assert_eq!(
             result.actions[1].software_agent().unwrap(),
             &SoftwareAgent::String("TestApp".to_string())

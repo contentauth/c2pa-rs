@@ -6,6 +6,57 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 Since version 0.36.2, the format of this changelog is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.48.1](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.48.0...c2pa-v0.48.1)
+_20 March 2025_
+
+### Fixed
+
+* *(c2patool)* Fixes crash and improves cawg support (#989)
+
+## [0.48.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.47.0...c2pa-v0.48.0)
+_19 March 2025_
+
+### Added
+
+* Adds allActionsIncluded flag to Actions Assertion (#986)
+
+### Fixed
+
+* Generate gathered assertions for v2 claims (#985)
+
+## [0.47.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.46.0...c2pa-v0.47.0)
+_18 March 2025_
+
+### Added
+
+* Adds `reader.post_validate` method for CAWG validation support (#976)
+* Add `StatusTracker` to `IdentityAssertion` parsing and validation APIs (#943)
+* Add `Sync` to `AsyncDynamicAssertion` (#953)
+* Simplify `StatusTracker` interface (#937)
+* Add WASI to c2patool (#945)
+* Add WASI support to cawg_identity (#942)
+* Add ES256 and ES384 Rust native signing (#941)
+* Adds validation_state to the json reports from the Reader (#930)
+* Wasm32 wasi 0.41.0 (#888)
+
+### Fixed
+
+* Remove circular dependency between C2PA and CAWG crates (#982)
+* ISSUE-967: Remove the `RST0..=RST7` check from the `has_length` method for the JPEG asset handler. (#968)
+* Fix broken c2patool fragment feature (#960)
+* Feature flag `v1_api` without `file_io` didn't compile (#944)
+* Use older version of x509-certificate for wasm32-unknown (#934)
+* Fix new Clippy warnings for Rust 1.85.0 (#933)
+
+### Other
+
+* Remove `openssl` feature flag (#940)
+
+### Updated dependencies
+
+* Bump zip crate to 2.4.1 (#981)
+* Bump x509-certificate to 0.24.0 (#957)
+
 ## [0.46.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.45.3...c2pa-v0.46.0)
 _15 February 2025_
 
@@ -116,7 +167,7 @@ _16 January 2025_
 
 ### Fixed
 
-* Make sure `DynamicAssertion::content` gets a properly populated `PreliminaryClaim` (#842)
+* Make sure `DynamicAssertion::content` gets a properly populated `PartialClaim` (#842)
 * Switch to from fast_xml to quick_xml (#805)
 * Update img-parts for jpeg segment underflow fix (#806)
 * Bring `claim_v2` changes from #707 into `c2pa_crypto` (#811)
