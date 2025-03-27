@@ -15,6 +15,9 @@
 
 pub(crate) mod claim_aggregation;
 
+mod default_built_in_signature_verifier;
+pub(crate) use default_built_in_signature_verifier::default_built_in_signature_verifier;
+
 mod manifest_json;
 pub(crate) use manifest_json::{manifest_json, parent_json};
 

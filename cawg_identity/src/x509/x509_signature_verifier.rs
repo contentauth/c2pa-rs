@@ -16,7 +16,7 @@ use c2pa_crypto::{
     cose::{parse_cose_sign1, CertificateInfo, CoseError, Verifier},
     raw_signature::RawSignatureValidationError,
 };
-use c2pa_status_tracker::{log_item, StatusTracker};
+use c2pa_status_tracker::{log_current_item, StatusTracker};
 use coset::CoseSign1;
 use serde::Serialize;
 
@@ -31,7 +31,9 @@ use crate::{
 ///
 /// [`SignatureVerifier`]: crate::SignatureVerifier
 /// [§8.2, X.509 certificates and COSE signatures]: https://cawg.io/identity/1.1-draft/#_x_509_certificates_and_cose_signatures
-pub struct X509SignatureVerifier {}
+pub struct X509SignatureVerifier {
+    // TO DO: Define trust configuration here.
+}
 
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
@@ -46,9 +48,7 @@ impl SignatureVerifier for X509SignatureVerifier {
         status_tracker: &mut StatusTracker,
     ) -> Result<Self::Output, ValidationError<Self::Error>> {
         if signer_payload.sig_type != super::CAWG_X509_SIG_TYPE {
-            // TO DO: Where would we get assertion label?
-            log_item!(
-                "NEED TO FIND LABEL".to_owned(),
+            log_current_item!(
                 "unsupported signature type",
                 "X509SignatureVerifier::check_signature"
             )
@@ -87,6 +87,7 @@ impl SignatureVerifier for X509SignatureVerifier {
             })?;
 
         Ok(X509SignatureInfo {
+            signer_payload: signer_payload.clone(),
             cose_sign1,
             cert_info,
         })
@@ -97,6 +98,9 @@ impl SignatureVerifier for X509SignatureVerifier {
 /// was used to generate this identity assertion signature.
 #[derive(Debug)]
 pub struct X509SignatureInfo {
+    /// The signer payload that was used to generate the signature.
+    pub signer_payload: SignerPayload,
+
     /// Parsed COSE signature.
     pub cose_sign1: CoseSign1,
 
@@ -108,19 +112,35 @@ impl ToCredentialSummary for X509SignatureInfo {
     type CredentialSummary = X509SignatureReport;
 
     fn to_summary(&self) -> Self::CredentialSummary {
-        X509SignatureReport {}
+        X509SignatureReport::from_x509_signature_info(self)
     }
 }
 
 // #[derive(Serialize)] <- uncomment once the type is populated
 #[doc(hidden)]
-pub struct X509SignatureReport {}
+#[derive(Serialize)]
+pub struct X509SignatureReport {
+    pub signer_payload: SignerPayload,
+    pub signature_info: c2pa::SignatureInfo,
+}
 
-impl Serialize for X509SignatureReport {
-    fn serialize<S>(&self, _serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        todo!("X509SignatureReport type not defined yet");
+impl X509SignatureReport {
+    fn from_x509_signature_info(info: &X509SignatureInfo) -> Self {
+        X509SignatureReport {
+            signer_payload: info.signer_payload.clone(),
+            signature_info: c2pa::SignatureInfo {
+                alg: info.cert_info.alg,
+                issuer: info.cert_info.issuer_org.clone(),
+                time: info.cert_info.date.map(|d| d.to_rfc3339()),
+                cert_serial_number: info
+                    .cert_info
+                    .cert_serial_number
+                    .as_ref()
+                    .map(|s| s.to_string()),
+                cert_chain: String::from_utf8(info.cert_info.cert_chain.to_vec())
+                    .unwrap_or_default(),
+                revocation_status: info.cert_info.revocation_status,
+            },
+        }
     }
 }

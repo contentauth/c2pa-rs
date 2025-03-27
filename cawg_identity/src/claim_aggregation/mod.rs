@@ -21,7 +21,8 @@
 
 mod ica_credential;
 pub use ica_credential::{
-    IcaCredential, IdentityClaimsAggregationVc, IdentityProvider, VerifiedIdentity,
+    IcaCredential, IcaCredentialSummary, IdentityClaimsAggregationVc, IdentityProvider,
+    VerifiedIdentity,
 };
 
 mod ica_signature_verifier;
@@ -32,4 +33,4 @@ pub use ica_validation_error::IcaValidationError;
 
 pub(crate) mod w3c_vc;
 
-const CAWG_ICA_SIG_TYPE: &str = "cawg.identity_claims_aggregation";
+pub(crate) const CAWG_ICA_SIG_TYPE: &str = "cawg.identity_claims_aggregation";

@@ -1,4 +1,4 @@
-// Copyright 2024 Adobe. All rights reserved.
+// Copyright 2025 Adobe. All rights reserved.
 // This file is licensed to you under the Apache License,
 // Version 2.0 (http://www.apache.org/licenses/LICENSE-2.0)
 // or the MIT license (http://opensource.org/licenses/MIT),
@@ -11,6 +11,15 @@
 // specific language governing permissions and limitations under
 // each license.
 
-mod built_in_signature_verifier;
-mod signer_payload;
-mod validation_method;
+use crate::{
+    claim_aggregation::IcaSignatureVerifier, x509::X509SignatureVerifier, BuiltInSignatureVerifier,
+};
+
+/// Create a `BuiltInSignatureVerifier` that is configured to read the
+/// credentials used in test.
+pub(crate) fn default_built_in_signature_verifier() -> BuiltInSignatureVerifier {
+    BuiltInSignatureVerifier {
+        ica_verifier: IcaSignatureVerifier {},
+        x509_verifier: X509SignatureVerifier {},
+    }
+}

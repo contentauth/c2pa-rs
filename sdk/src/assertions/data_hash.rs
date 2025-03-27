@@ -273,11 +273,6 @@ impl AssertionBase for DataHash {
     const VERSION: Option<usize> = Some(ASSERTION_CREATION_VERSION);
 
     fn to_assertion(&self) -> Result<Assertion> {
-        if self.hash.is_empty() {
-            return Err(Error::BadParam(
-                "no hash found, gen_hash must be called".to_string(),
-            ));
-        }
         Self::to_cbor_assertion(self)
     }
 

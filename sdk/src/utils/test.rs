@@ -20,14 +20,19 @@ use std::{
     path::PathBuf,
 };
 
+#[cfg(feature = "v1_api")]
 use async_trait::async_trait;
+use c2pa_crypto::{cose::CertificateTrustPolicy, raw_signature::SigningAlg};
+#[cfg(feature = "v1_api")]
 use c2pa_crypto::{
-    cose::{CertificateTrustPolicy, TimeStampStorage},
-    raw_signature::{AsyncRawSigner, RawSignerError, SigningAlg},
+    cose::TimeStampStorage,
+    raw_signature::{AsyncRawSigner, RawSignerError},
     time_stamp::{AsyncTimeStampProvider, TimeStampError},
 };
 use tempfile::TempDir;
 
+#[cfg(feature = "v1_api")]
+use crate::signer::RemoteSigner;
 use crate::{
     assertions::{labels, Action, Actions, Ingredient, ReviewRating, SchemaDotOrg, Thumbnail},
     asset_io::CAIReadWrite,
@@ -36,7 +41,7 @@ use crate::{
     jumbf_io::get_assetio_handler,
     salt::DefaultSalt,
     store::Store,
-    AsyncSigner, RemoteSigner, Result,
+    AsyncSigner, Result,
 };
 
 pub const TEST_SMALL_JPEG: &str = "earth_apollo17.jpg";
@@ -365,10 +370,12 @@ impl AsyncSigner for AsyncTestGoodSigner {
     }
 }
 
+#[cfg(feature = "v1_api")]
 struct TempRemoteSigner {}
 
 #[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
 #[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
+#[cfg(feature = "v1_api")]
 impl crate::signer::RemoteSigner for TempRemoteSigner {
     async fn sign_remote(&self, claim_bytes: &[u8]) -> crate::error::Result<Vec<u8>> {
         let signer = crate::utils::test_signer::async_test_signer(SigningAlg::Ps256);
@@ -393,18 +400,21 @@ impl crate::signer::RemoteSigner for TempRemoteSigner {
 ///
 /// # Returns
 ///
-/// Returns a boxed [`RemoteSigner`] instance.
+/// Returns a boxed [`RemoteSigner`] instance.X509SignatureVerifier
+#[cfg(feature = "v1_api")]
 pub fn temp_remote_signer() -> Box<dyn RemoteSigner> {
     Box::new(TempRemoteSigner {})
 }
 
 /// Create an AsyncSigner that acts as a RemoteSigner
+#[cfg(feature = "v1_api")]
 struct TempAsyncRemoteSigner {
     signer: TempRemoteSigner,
 }
 
 #[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
 #[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
+#[cfg(feature = "v1_api")]
 impl AsyncSigner for TempAsyncRemoteSigner {
     // this will not be called but requires an implementation
     async fn sign(&self, claim_bytes: Vec<u8>) -> Result<Vec<u8>> {
@@ -448,6 +458,7 @@ impl AsyncSigner for TempAsyncRemoteSigner {
 
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg(feature = "v1_api")]
 impl AsyncRawSigner for TempAsyncRemoteSigner {
     async fn sign(&self, _claim_bytes: Vec<u8>) -> std::result::Result<Vec<u8>, RawSignerError> {
         unreachable!("Should not be called");
@@ -468,6 +479,7 @@ impl AsyncRawSigner for TempAsyncRemoteSigner {
 
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg(feature = "v1_api")]
 impl AsyncTimeStampProvider for TempAsyncRemoteSigner {
     async fn send_time_stamp_request(
         &self,
@@ -482,6 +494,7 @@ impl AsyncTimeStampProvider for TempAsyncRemoteSigner {
 /// # Returns
 ///
 /// Returns a boxed [`RemoteSigner`] instance.
+#[cfg(feature = "v1_api")]
 pub fn temp_async_remote_signer() -> Box<dyn crate::signer::AsyncSigner> {
     Box::new(TempAsyncRemoteSigner {
         signer: TempRemoteSigner {},

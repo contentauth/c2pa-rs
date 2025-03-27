@@ -12,7 +12,7 @@
 // each license.
 
 use async_trait::async_trait;
-use c2pa_status_tracker::{log_item, StatusTracker};
+use c2pa_status_tracker::{log_current_item, StatusTracker};
 use coset::{CoseSign1, RegisteredLabelWithPrivate, TaggedCborSerializable};
 
 use crate::{
@@ -51,9 +51,7 @@ impl SignatureVerifier for IcaSignatureVerifier {
         status_tracker: &mut StatusTracker,
     ) -> Result<Self::Output, ValidationError<Self::Error>> {
         if signer_payload.sig_type != super::CAWG_ICA_SIG_TYPE {
-            // TO DO: Where would we get assertion label?
-            log_item!(
-                "NEED TO FIND LABEL".to_owned(),
+            log_current_item!(
                 "unsupported signature type",
                 "X509SignatureVerifier::check_signature"
             )
@@ -174,8 +172,6 @@ impl SignatureVerifier for IcaSignatureVerifier {
                         ),
                     ));
                 };
-
-                dbg!(&jwk_prop);
 
                 // OMG SO HACKY!
                 let Ok(jwk_json) = serde_json::to_string_pretty(jwk_prop) else {
