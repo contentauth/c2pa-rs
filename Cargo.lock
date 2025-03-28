@@ -711,7 +711,7 @@ checksum = "d71b6127be86fdcfddb610f7182ac57211d4b18a3e9c82eb2d17662f2227ad6a"
 
 [[package]]
 name = "c2pa"
-version = "0.48.2"
+version = "0.49.0"
 dependencies = [
  "actix",
  "anyhow",
@@ -883,7 +883,7 @@ dependencies = [
 
 [[package]]
 name = "cawg-identity"
-version = "0.10.2"
+version = "0.11.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -990,9 +990,9 @@ dependencies = [
 
 [[package]]
 name = "clap"
-version = "4.5.33"
+version = "4.5.34"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e2c80cae4c3350dd8f1272c73e83baff9a6ba550b8bfbe651b3c45b78cd1751e"
+checksum = "e958897981290da2a852763fe9cdb89cd36977a5d729023127095fa94d95e2ff"
 dependencies = [
  "clap_builder",
  "clap_derive",
@@ -1000,9 +1000,9 @@ dependencies = [
 
 [[package]]
 name = "clap_builder"
-version = "4.5.33"
+version = "4.5.34"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0123e386f691c90aa228219b5b1ee72d465e8e231c79e9c82324f016a62a741c"
+checksum = "83b0f35019843db2160b5bb19ae09b4e6411ac33fc6a712003c33e03090e2489"
 dependencies = [
  "anstream",
  "anstyle",
@@ -1602,9 +1602,9 @@ dependencies = [
 
 [[package]]
 name = "event-listener-strategy"
-version = "0.5.3"
+version = "0.5.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3c3e4e0dd3673c1139bf041f3008816d9cf2946bbfac2945c09e523b8d7b05b2"
+checksum = "8be9f3dfaaffdae2972880079a491a1a8bb7cbed0b8dd7a347f668b4150a3b93"
 dependencies = [
  "event-listener 5.4.0",
  "pin-project-lite",
@@ -2951,9 +2951,9 @@ dependencies = [
 
 [[package]]
 name = "once_cell"
-version = "1.21.1"
+version = "1.21.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d75b0bedcc4fe52caa0e03d9f1151a323e4aa5e2d78ba3580400cd3c9e2bc4bc"
+checksum = "42f5e15c9953c5e4ccceeb2e7382a716482c34515315f7b03532b8b4e8393d2d"
 
 [[package]]
 name = "openssl"
@@ -4354,9 +4354,9 @@ dependencies = [
 
 [[package]]
 name = "string_cache"
-version = "0.8.8"
+version = "0.8.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "938d512196766101d333398efde81bc1f37b00cb42c2f8350e5df639f040bbbe"
+checksum = "bf776ba3fa74f83bf4b63c3dcbbf82173db2632ed8452cb2d891d33f459de70f"
 dependencies = [
  "new_debug_unreachable",
  "parking_lot",
