@@ -38,6 +38,7 @@ pub fn make_thumbnail(path: &std::path::Path) -> Result<(String, Vec<u8>)> {
     // for other supported types try a jpeg thumbnail
     let (output_format, format) = match format {
         ImageFormat::Png if img.color().has_alpha() => (image::ImageOutputFormat::Png, "image/png"),
+        ImageFormat::WebP => (image::ImageOutputFormat::WebP, "image/webp"),
         _ => (
             image::ImageOutputFormat::Jpeg(THUMBNAIL_JPEG_QUALITY),
             "image/jpeg",
