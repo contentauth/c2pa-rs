@@ -6,6 +6,13 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 The format of this changelog is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.11.0](https://github.com/contentauth/c2pa-rs/compare/cawg-identity-v0.10.2...cawg-identity-v0.11.0)
+_28 March 2025_
+
+### Added
+
+* *(cawg_identity)* Add `BuiltInSignatureVerifier` ([#978](https://github.com/contentauth/c2pa-rs/pull/978))
+
 ## [0.10.2](https://github.com/contentauth/c2pa-rs/compare/cawg-identity-v0.10.1...cawg-identity-v0.10.2)
 _26 March 2025_
 
