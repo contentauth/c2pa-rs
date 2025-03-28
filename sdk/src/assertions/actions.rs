@@ -854,7 +854,8 @@ pub mod tests {
                 {
                     "action": "c2pa.opened",
                     "parameters": {
-                        "description": "import"
+                        "description": "import",
+                        "org.cai.ingredientIds": ["xmp.iid:7b57930e-2f23-47fc-affe-0400d70b738d"]
                     },
                     "digitalSourceType": "http://cv.iptc.org/newscodes/digitalsourcetype/algorithmicMedia",
                     "softwareAgent": {

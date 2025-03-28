@@ -118,6 +118,7 @@ impl ValidationResults {
 
             let make_absolute = |i: Ingredient| {
                 // Get a flat list of validation statuses from the ingredient.
+                // If validation_results are present, use them, otherwise use the ingredient's validation_status.
                 let validation_status = match i.validation_results {
                     Some(v) => Some(v.validation_status()),
                     None => i.validation_status.map(|s| s.to_owned()),
