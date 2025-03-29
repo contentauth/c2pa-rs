@@ -119,11 +119,11 @@ mod cawg {
     }
 }
 
-#[cfg(target_os = "wasi")]
+#[cfg(target_arch = "wasm32")]
 fn main() {
-    println!("This example is not supported on WASI targets.");
+    println!("This example is not supported on Wasm/WASI targets.");
 }
-#[cfg(not(target_os = "wasi"))]
+#[cfg(not(target_arch = "wasm32"))]
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let args: Vec<String> = std::env::args().collect();
