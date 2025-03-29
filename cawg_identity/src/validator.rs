@@ -51,3 +51,77 @@ impl AsyncPostValidator for CawgValidator {
         Ok(None)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used)]
+    use std::io::Cursor;
+
+    use c2pa::{Reader, ValidationState};
+
+    use super::*;
+
+    const CONNECTED_IDENTITIES_VALID: &[u8] =
+        include_bytes!("tests/fixtures/claim_aggregation/adobe_connected_identities.jpg");
+
+    const NO_HARD_BINDING: &[u8] =
+        include_bytes!("tests/fixtures/validation_method/no_hard_binding.jpg");
+
+    const MULTIPLE_IDENTITIES_VALID: &[u8] =
+        include_bytes!("tests/fixtures/claim_aggregation/ims_multiple_manifests.jpg");
+
+    #[tokio::test]
+    async fn test_connected_identities_valid() {
+        let mut stream = Cursor::new(CONNECTED_IDENTITIES_VALID);
+        let mut reader = Reader::from_stream("image/jpeg", &mut stream).unwrap();
+        reader.post_validate_async(&CawgValidator {}).await.unwrap();
+        //println!("validation results: {}", reader);
+        assert_eq!(
+            reader
+                .validation_results()
+                .unwrap()
+                .active_manifest()
+                .unwrap()
+                .success()
+                .last()
+                .unwrap()
+                .code(),
+            "cawg.ica.credential_valid"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_multiple_identities_valid() {
+        let mut stream = Cursor::new(MULTIPLE_IDENTITIES_VALID);
+        let mut reader = Reader::from_stream("image/jpeg", &mut stream).unwrap();
+        reader.post_validate_async(&CawgValidator {}).await.unwrap();
+        println!("validation results: {}", reader);
+        assert_eq!(
+            reader
+                .validation_results()
+                .unwrap()
+                .ingredient_deltas()
+                .unwrap()
+                .len(),
+            2
+        );
+        assert_eq!(reader.validation_state(), ValidationState::Valid);
+    }
+
+    #[tokio::test]
+    async fn test_post_validate_with_hard_binding_missing() {
+        let mut stream = Cursor::new(NO_HARD_BINDING);
+        let mut reader = Reader::from_stream("image/jpeg", &mut stream).unwrap();
+        reader.post_validate_async(&CawgValidator {}).await.unwrap();
+        assert_eq!(
+            reader
+                .validation_results()
+                .unwrap()
+                .active_manifest()
+                .unwrap()
+                .failure()[0]
+                .code(),
+            "cawg.identity.hard_binding_missing"
+        );
+    }
+}
