@@ -251,7 +251,7 @@ jobs:
         run: cross test --all-targets --all-features --target ${{ matrix.target }}
 
   tests-wasm:
-    name: Unit tests (WASM)
+    name: Unit tests (Wasm)
     if: |
       github.event_name != 'pull_request' ||
       github.event.pull_request.author_association == 'COLLABORATOR' ||

@@ -19,6 +19,8 @@
 //! ```bash
 //! cargo run --example cawg -- /path/to/source/file /path/to/destination/file
 //! ```
+
+#[cfg(not(target_arch = "wasm32"))]
 mod cawg {
     use std::path::Path;
 
