@@ -16,8 +16,8 @@ use async_generic::async_generic;
 use ciborium::value::Value;
 use coset::{
     iana::{self, EnumI64},
-    CoseSign1, CoseSign1Builder, Header, HeaderBuilder, Label, ProtectedHeader,
-    TaggedCborSerializable,
+    ContentType, CoseSign1, CoseSign1Builder, Header, HeaderBuilder, Label, ProtectedHeader,
+    RegisteredLabel, TaggedCborSerializable,
 };
 use serde_bytes::ByteBuf;
 use x509_parser::prelude::X509Certificate;
@@ -116,9 +116,9 @@ pub fn sign_v1(
     let alg = signer.alg();
 
     let protected_header = if _sync {
-        build_protected_header(signer, alg)?
+        build_protected_header(signer, alg, None)?
     } else {
-        build_protected_header_async(signer, alg).await?
+        build_protected_header_async(signer, alg, None).await?
     };
 
     // We don't use the additional data header.
@@ -201,9 +201,9 @@ pub fn sign_v2(
     tss: TimeStampStorage,
 ) -> Result<Vec<u8>, CoseError> {
     if _sync {
-        sign_v2_embedded(signer, data, box_size, CosePayload::Detached, tss)
+        sign_v2_embedded(signer, data, box_size, CosePayload::Detached, None, tss)
     } else {
-        sign_v2_embedded_async(signer, data, box_size, CosePayload::Detached, tss).await
+        sign_v2_embedded_async(signer, data, box_size, CosePayload::Detached, None, tss).await
     }
 }
 
@@ -278,6 +278,7 @@ pub enum CosePayload {
     data: &[u8],
     box_size: Option<usize>,
     payload: CosePayload,
+    content_type: Option<ContentType>,
     tss: TimeStampStorage
 ))]
 pub fn sign_v2_embedded(
@@ -285,14 +286,15 @@ pub fn sign_v2_embedded(
     data: &[u8],
     box_size: Option<usize>,
     payload: CosePayload,
+    content_type: Option<ContentType>,
     tss: TimeStampStorage,
 ) -> Result<Vec<u8>, CoseError> {
     let alg = signer.alg();
 
     let protected_header = if _sync {
-        build_protected_header(signer, alg)?
+        build_protected_header(signer, alg, content_type)?
     } else {
-        build_protected_header_async(signer, alg).await?
+        build_protected_header_async(signer, alg, content_type).await?
     };
 
     // We don't use the additional data header.
@@ -371,10 +373,11 @@ pub fn sign_v2_embedded(
     pad_cose_sig(&mut sign1, box_size)
 }
 
-#[async_generic(async_signature(signer: &dyn AsyncRawSigner, alg: SigningAlg))]
+#[async_generic(async_signature(signer: &dyn AsyncRawSigner, alg: SigningAlg, content_type: Option<ContentType>))]
 fn build_protected_header(
     signer: &dyn RawSigner,
     alg: SigningAlg,
+    content_type: Option<ContentType>,
 ) -> Result<ProtectedHeader, CoseError> {
     let mut protected_h = match alg {
         SigningAlg::Ps256 => HeaderBuilder::new().algorithm(iana::Algorithm::PS256),
@@ -398,6 +401,19 @@ fn build_protected_header(
         iana::HeaderParameter::X5Chain.to_i64(),
         sc_der_array_or_bytes.clone(),
     );
+
+    // Add content type to protected header.
+    match content_type {
+        Some(RegisteredLabel::Assigned(n)) => {
+            protected_h = protected_h.content_format(n);
+        }
+
+        Some(RegisteredLabel::Text(t)) => {
+            protected_h = protected_h.content_type(t);
+        }
+
+        None => {}
+    }
 
     let protected_header = protected_h.build();
     let ph2 = ProtectedHeader {
