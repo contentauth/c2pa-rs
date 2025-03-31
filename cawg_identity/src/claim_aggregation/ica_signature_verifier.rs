@@ -144,9 +144,21 @@ impl SignatureVerifier for IcaSignatureVerifier {
                 }
 
                 _ => {
-                    return Err(ValidationError::SignatureError(
+                    let err = ValidationError::SignatureError(
                         IcaValidationError::UnsupportedContentType(format!("{cty:?}")),
-                    ));
+                    );
+
+                    log_current_item!(
+                        "Invalid COSE_Sign1 content type header",
+                        "IcaSignatureVerifier::check_signature"
+                    )
+                    .validation_status("cawg.ica.invalid_content_type")
+                    .failure_no_throw(
+                        status_tracker,
+                        ValidationError::<Self::Error>::from(err.clone()),
+                    );
+
+                    ok = false;
                 }
             }
         } else {
