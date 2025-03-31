@@ -127,10 +127,6 @@ impl AsyncCredentialHolder for IcaExampleCredentialHolder {
             TimeStampStorage::V2_sigTst2_CTT,
         )
         .await
-        .map(|mut sig| {
-            sig[0] = 42; // Write bad COSE data.
-            sig
-        })
         .map_err(|e| IdentityBuilderError::SignerError(e.to_string()))?)
     }
 }
@@ -207,7 +203,7 @@ async fn ica_signing() {
 
     // Write the sample file.
     std::fs::write(
-        "src/tests/fixtures/claim_aggregation/ica_validation/invalid_cose_sign1.jpg",
+        "src/tests/fixtures/claim_aggregation/ica_validation/success.jpg",
         dest.get_ref(),
     )
     .unwrap();
