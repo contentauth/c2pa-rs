@@ -22,7 +22,7 @@ use std::str::FromStr;
 use chrono::{DateTime, FixedOffset};
 use iref::UriBuf;
 use non_empty_string::NonEmptyString;
-use nonempty_collections::nev;
+use nonempty_collections::{nev, NEVec};
 
 use crate::{
     claim_aggregation::{IdentityClaimsAggregationVc, IdentityProvider, VerifiedIdentity},
@@ -35,64 +35,67 @@ pub(crate) fn ica_example() -> IdentityClaimsAggregationVc {
             referenced_assertions: vec![],
             sig_type: "unknown".to_string(),
         },
-        verified_identities: nev![
-            VerifiedIdentity {
-                name: Some(NonEmptyString::new("First-Name Last-Name".to_string()).unwrap()),
-                type_: NonEmptyString::new("cawg.document_verification".to_string()).unwrap(),
-                provider: IdentityProvider {
-                    id: UriBuf::from_str("https://example-id-verifier.com").unwrap(),
-                    name: NonEmptyString::new("Example ID Verifier".to_string()).unwrap(),
-                },
-                address: None,
-                uri: None,
-                username: None,
-                verified_at: "2024-07-26T22:30:15Z"
-                    .parse::<DateTime<FixedOffset>>()
-                    .unwrap(),
-            },
-            VerifiedIdentity {
-                name: None,
-                type_: NonEmptyString::new("cawg.affiliation".to_string()).unwrap(),
-                provider: IdentityProvider {
-                    id: UriBuf::from_str("https://example-affiliated-organization.com").unwrap(),
-                    name: NonEmptyString::new("Example Affiliated Organization".to_string())
-                        .unwrap(),
-                },
-                address: None,
-                uri: None,
-                username: None,
-                verified_at: "2024-07-26T22:29:57Z"
-                    .parse::<DateTime<FixedOffset>>()
-                    .unwrap(),
-            },
-            VerifiedIdentity {
-                type_: NonEmptyString::new("cawg.social_media".to_string()).unwrap(),
-                name: Some(NonEmptyString::new("Silly Cats 929".to_string()).unwrap()),
-                username: Some(NonEmptyString::new("username".to_string()).unwrap()),
-                uri: Some(UriBuf::from_str("https://example-social-network.com/username").unwrap()),
-                provider: IdentityProvider {
-                    id: UriBuf::from_str("https://example-social-network.com").unwrap(),
-                    name: NonEmptyString::new("Example Social Network".to_string()).unwrap(),
-                },
-                address: None,
-                verified_at: "2024-05-27T08:40:39.569856Z"
-                    .parse::<DateTime<FixedOffset>>()
-                    .unwrap(),
-            },
-            VerifiedIdentity {
-                type_: NonEmptyString::new("cawg.crypto_wallet".to_string()).unwrap(),
-                name: None,
-                username: Some(NonEmptyString::new("username".to_string()).unwrap()),
-                uri: Some(UriBuf::from_str("https://example-crypto-wallet.com/username").unwrap()),
-                provider: IdentityProvider {
-                    id: UriBuf::from_str("https://example-crypto-wallet.com").unwrap(),
-                    name: NonEmptyString::new("Example Crypto Wallet".to_string()).unwrap(),
-                },
-                address: None,
-                verified_at: "2024-05-27T08:40:39.569856Z"
-                    .parse::<DateTime<FixedOffset>>()
-                    .unwrap(),
-            }
-        ],
+        verified_identities: ica_example_identities(),
     }
+}
+
+pub(crate) fn ica_example_identities() -> NEVec<VerifiedIdentity> {
+    nev![
+        VerifiedIdentity {
+            name: Some(NonEmptyString::new("First-Name Last-Name".to_string()).unwrap()),
+            type_: NonEmptyString::new("cawg.document_verification".to_string()).unwrap(),
+            provider: IdentityProvider {
+                id: UriBuf::from_str("https://example-id-verifier.com").unwrap(),
+                name: NonEmptyString::new("Example ID Verifier".to_string()).unwrap(),
+            },
+            address: None,
+            uri: None,
+            username: None,
+            verified_at: "2024-07-26T22:30:15Z"
+                .parse::<DateTime<FixedOffset>>()
+                .unwrap(),
+        },
+        VerifiedIdentity {
+            name: None,
+            type_: NonEmptyString::new("cawg.affiliation".to_string()).unwrap(),
+            provider: IdentityProvider {
+                id: UriBuf::from_str("https://example-affiliated-organization.com").unwrap(),
+                name: NonEmptyString::new("Example Affiliated Organization".to_string()).unwrap(),
+            },
+            address: None,
+            uri: None,
+            username: None,
+            verified_at: "2024-07-26T22:29:57Z"
+                .parse::<DateTime<FixedOffset>>()
+                .unwrap(),
+        },
+        VerifiedIdentity {
+            type_: NonEmptyString::new("cawg.social_media".to_string()).unwrap(),
+            name: Some(NonEmptyString::new("Silly Cats 929".to_string()).unwrap()),
+            username: Some(NonEmptyString::new("username".to_string()).unwrap()),
+            uri: Some(UriBuf::from_str("https://example-social-network.com/username").unwrap()),
+            provider: IdentityProvider {
+                id: UriBuf::from_str("https://example-social-network.com").unwrap(),
+                name: NonEmptyString::new("Example Social Network".to_string()).unwrap(),
+            },
+            address: None,
+            verified_at: "2024-05-27T08:40:39.569856Z"
+                .parse::<DateTime<FixedOffset>>()
+                .unwrap(),
+        },
+        VerifiedIdentity {
+            type_: NonEmptyString::new("cawg.crypto_wallet".to_string()).unwrap(),
+            name: None,
+            username: Some(NonEmptyString::new("username".to_string()).unwrap()),
+            uri: Some(UriBuf::from_str("https://example-crypto-wallet.com/username").unwrap()),
+            provider: IdentityProvider {
+                id: UriBuf::from_str("https://example-crypto-wallet.com").unwrap(),
+                name: NonEmptyString::new("Example Crypto Wallet".to_string()).unwrap(),
+            },
+            address: None,
+            verified_at: "2024-05-27T08:40:39.569856Z"
+                .parse::<DateTime<FixedOffset>>()
+                .unwrap(),
+        }
+    ]
 }

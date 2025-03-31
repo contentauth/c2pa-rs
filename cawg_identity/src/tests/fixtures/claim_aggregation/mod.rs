@@ -12,3 +12,6 @@
 // each license.
 
 pub(crate) mod ica_credential_example;
+
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) mod ica_example_credential_holder;
