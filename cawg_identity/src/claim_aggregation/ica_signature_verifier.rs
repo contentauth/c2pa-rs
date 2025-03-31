@@ -50,6 +50,8 @@ impl SignatureVerifier for IcaSignatureVerifier {
         signature: &[u8],
         status_tracker: &mut StatusTracker,
     ) -> Result<Self::Output, ValidationError<Self::Error>> {
+        let ok = true; // TODO: change to mut once we have non-fatal errors
+
         if signer_payload.sig_type != super::CAWG_ICA_SIG_TYPE {
             log_current_item!(
                 "unsupported signature type",
@@ -237,6 +239,15 @@ impl SignatureVerifier for IcaSignatureVerifier {
         // time).
 
         // TO DO: Verify that signer_payload is same as c2paAsset.
+
+        if ok {
+            log_current_item!(
+                "ICA credential is valid",
+                "IcaSignatureVerifier::check_signature"
+            )
+            .validation_status("cawg.ica.credential_valid")
+            .success(status_tracker);
+        }
 
         Ok(ica_credential)
     }
