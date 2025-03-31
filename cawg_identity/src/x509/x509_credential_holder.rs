@@ -58,12 +58,12 @@ impl CredentialHolder for X509CredentialHolder {
         ciborium::into_writer(signer_payload, &mut sp_cbor)
             .map_err(|e| IdentityBuilderError::CborGenerationError(e.to_string()))?;
 
-        Ok(sign(
+        sign(
             self.0.as_ref(),
             &sp_cbor,
             None,
             TimeStampStorage::V2_sigTst2_CTT,
         )
-        .map_err(|e| IdentityBuilderError::SignerError(e.to_string()))?)
+        .map_err(|e| IdentityBuilderError::SignerError(e.to_string()))
     }
 }
