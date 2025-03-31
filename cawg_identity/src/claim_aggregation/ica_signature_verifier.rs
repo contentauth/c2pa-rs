@@ -71,7 +71,14 @@ impl SignatureVerifier for IcaSignatureVerifier {
         }
 
         // The signature should be a `CoseSign1` object.
-        let sign1 = CoseSign1::from_tagged_slice(signature)?;
+        let sign1 = CoseSign1::from_tagged_slice(signature).inspect_err(|err| {
+            log_current_item!(
+                "Invalid COSE_Sign1 data structure",
+                "IcaSignatureVerifier::check_signature"
+            )
+            .validation_status("cawg.ica.invalid_cose_sign1")
+            .failure_no_throw(status_tracker, ValidationError::from(err));
+        })?;
 
         // Identify the signature.
         let _ssi_alg = if let Some(ref alg) = sign1.protected.header.alg {
