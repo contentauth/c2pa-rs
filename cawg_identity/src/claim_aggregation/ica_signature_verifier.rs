@@ -83,14 +83,26 @@ impl SignatureVerifier for IcaSignatureVerifier {
         // Identify the signature.
         let _ssi_alg = if let Some(ref alg) = sign1.protected.header.alg {
             match alg {
-                // TEMPORARY: Require EdDSA algorithm.
+                // TO DO (CAI-7965): Support algorithms other than EdDSA.
                 RegisteredLabelWithPrivate::Assigned(coset::iana::Algorithm::EdDSA) => {
                     Algorithm::EdDsa
                 }
                 _ => {
-                    return Err(ValidationError::SignatureError(
+                    let err = ValidationError::SignatureError(
                         IcaValidationError::UnsupportedSignatureType(format!("{alg:?}")),
-                    ));
+                    );
+
+                    log_current_item!(
+                        "Invalid COSE_Sign1 signature algorithm",
+                        "IcaSignatureVerifier::check_signature"
+                    )
+                    .validation_status("cawg.ica.invalid_alg")
+                    .failure_no_throw(
+                        status_tracker,
+                        ValidationError::<Self::Error>::from(err.clone()),
+                    );
+
+                    return Err(err);
                 }
             }
         } else {

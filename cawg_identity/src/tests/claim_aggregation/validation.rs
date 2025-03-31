@@ -159,3 +159,81 @@ async fn invalid_cose_sign1() {
 
     assert!(log_items.next().is_none());
 }
+
+#[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
+async fn invalid_cose_sign_alg() {
+    // 8.1.7.2.1. Parse the `COSE_Sign1` structure
+    //
+    // The validator SHALL inspect the `COSE_Sign1` protected header `alg` to
+    // determine the cryptographic algorithm used to issue the signature. The `alg`
+    // value MUST be one of the following algorithm labels (corresponding to the
+    // values supported by the C2PA technical specification as of this writing):
+    //
+    // * -7 (ECDSA w/SHA-256)
+    // * -35 (ECDSA w/ SHA-384)
+    // * -36 (ECDSA w/ SHA-512)
+    // * -37 (RSASSA-PSS w/ SHA-256)
+    // * -38 (RSASSA-PSS w/ SHA-384)
+    // * -39 (RSASSA-PSS w/ SHA-512)
+    // * -8 (EdDSA)
+    //
+    // NOTE: Only the Ed25519 instance of EdDSA is supported.
+    //
+    // If the `alg` header contains any other value or is not present, the validator
+    // MUST issue the failure code `cawg.ica.invalid_alg` but MAY continue
+    // validation.
+
+    let format = "image/jpeg";
+    let test_image =
+        include_bytes!("../fixtures/claim_aggregation/ica_validation/invalid_cose_sign_alg.jpg");
+
+    let mut test_image = Cursor::new(test_image);
+
+    let reader = Reader::from_stream(format, &mut test_image).unwrap();
+    assert_eq!(reader.validation_status(), None);
+
+    let manifest = reader.active_manifest().unwrap();
+    let mut st = StatusTracker::default();
+    let mut ia_iter = IdentityAssertion::from_manifest(manifest, &mut st);
+
+    // Should find exactly one identity assertion.
+    let ia = ia_iter.next().unwrap().unwrap();
+    assert!(ia_iter.next().is_none());
+    drop(ia_iter);
+
+    // And that identity assertion should be valid for this manifest.
+    let isv = IcaSignatureVerifier {};
+
+    // HACK: See if we can transition to PostValidate without losing access
+    // to the ica_vc member below.
+    st.push_current_uri("(IA label goes here)");
+    let ica_err = ia.validate(manifest, &mut st, &isv).await.unwrap_err();
+    st.pop_current_uri();
+
+    assert_eq!(
+        ica_err,
+        ValidationError::SignatureError(IcaValidationError::UnsupportedSignatureType(
+            "Assigned(SHA_1)".to_owned()
+        ))
+    );
+
+    let mut log_items = st.logged_items().iter();
+
+    let li = log_items.next().unwrap();
+    dbg!(li);
+
+    assert_eq!(li.kind, LogKind::Failure);
+    assert_eq!(li.label, "(IA label goes here)");
+    assert_eq!(li.description, "Invalid COSE_Sign1 signature algorithm");
+    assert_eq!(li.crate_name, "cawg-identity");
+    assert_eq!(
+        li.err_val.as_ref().unwrap(),
+        "SignatureError(UnsupportedSignatureType(\"Assigned(SHA_1)\"))"
+    );
+    assert_eq!(
+        li.validation_status.as_ref().unwrap(),
+        "cawg.ica.invalid_alg"
+    );
+
+    assert!(log_items.next().is_none());
+}
