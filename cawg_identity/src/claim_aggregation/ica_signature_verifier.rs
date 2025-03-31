@@ -184,7 +184,16 @@ impl SignatureVerifier for IcaSignatureVerifier {
             ));
         };
 
-        let ica_credential: IcaCredential = serde_json::from_slice(payload_bytes)?;
+        // TO DO (CAI-7970): Add support for VC version 1.
+        let ica_credential: IcaCredential =
+            serde_json::from_slice(payload_bytes).inspect_err(|err| {
+                log_current_item!(
+                    "Invalid JSON-LD for verifiable credential",
+                    "IcaSignatureVerifier::check_signature"
+                )
+                .validation_status("cawg.ica.invalid_verifiable_credential")
+                .failure_no_throw(status_tracker, ValidationError::from(err));
+            })?;
 
         // Discover public key for issuer DID and validate signature.
         // TEMPORARY version supports did:jwk and did:web only.

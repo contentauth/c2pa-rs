@@ -479,3 +479,75 @@ async fn missing_content_type() {
 
     assert!(log_items.next().is_none());
 }
+
+#[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
+async fn invalid_vc() {
+    // The validator SHALL obtain the unprotected `payload` of the `COSE_Sign1` data
+    // structure. This payload is the raw JSON-LD content of the verifiable
+    // credential. A validator SHALL attempt to parse the core verifiable credential
+    // data syntax of this credential using the following methods:
+    //
+    // * [Section 6, “Syntaxes,” of Verifiable credentials data model, version 1.1]
+    // * [Section 6, “Syntaxes,” of Verifiable credentials data model, version 2.0]
+    //
+    // If the validator is unable to parse the credential using either version of
+    // the Verifiable credentials data model, the validator MUST stop validation at
+    // this point and issue the failure code
+    // `cawg.ica.invalid_verifiable_credential`.
+    //
+    // [Section 6, “Syntaxes,” of Verifiable credentials data model, version 1.1]: https://www.w3.org/TR/vc-data-model/#syntaxes
+    // [Section 6, “Syntaxes,” of Verifiable credentials data model, version 2.0]: https://www.w3.org/TR/vc-data-model-2.0/#syntaxes
+
+    let format = "image/jpeg";
+    let test_image = include_bytes!("../fixtures/claim_aggregation/ica_validation/invalid_vc.jpg");
+
+    let mut test_image = Cursor::new(test_image);
+
+    let reader = Reader::from_stream(format, &mut test_image).unwrap();
+    assert_eq!(reader.validation_status(), None);
+
+    let manifest = reader.active_manifest().unwrap();
+    let mut st = StatusTracker::default();
+    let mut ia_iter = IdentityAssertion::from_manifest(manifest, &mut st);
+
+    // Should find exactly one identity assertion.
+    let ia = ia_iter.next().unwrap().unwrap();
+    assert!(ia_iter.next().is_none());
+    drop(ia_iter);
+
+    // And that identity assertion should be valid for this manifest.
+    let isv = IcaSignatureVerifier {};
+
+    // HACK: See if we can transition to PostValidate without losing access
+    // to the ica_vc member below.
+    st.push_current_uri("(IA label goes here)");
+    let ica_err = ia.validate(manifest, &mut st, &isv).await.unwrap_err();
+    st.pop_current_uri();
+
+    assert_eq!(
+        ica_err,
+        ValidationError::SignatureError(IcaValidationError::JsonDecodeError(
+            "expected value at line 1 column 1".to_owned()
+        ))
+    );
+
+    let mut log_items = st.logged_items().iter();
+
+    let li = log_items.next().unwrap();
+    dbg!(li);
+
+    assert_eq!(li.kind, LogKind::Failure);
+    assert_eq!(li.label, "(IA label goes here)");
+    assert_eq!(li.description, "Invalid JSON-LD for verifiable credential");
+    assert_eq!(li.crate_name, "cawg-identity");
+    assert_eq!(
+        li.err_val.as_ref().unwrap(),
+        "SignatureError(Error(\"expected value\", line: 1, column: 1))"
+    );
+    assert_eq!(
+        li.validation_status.as_ref().unwrap(),
+        "cawg.ica.invalid_verifiable_credential"
+    );
+
+    assert!(log_items.next().is_none());
+}
