@@ -24,7 +24,7 @@ use c2pa_status_tracker::StatusTracker;
 use crate::{
     builder::{AsyncIdentityAssertionBuilder, AsyncIdentityAssertionSigner},
     tests::fixtures::{cert_chain_and_private_key_for_alg, manifest_json, parent_json},
-    x509::{X509CredentialHolder, X509SignatureVerifier},
+    x509::{AsyncX509CredentialHolder, X509SignatureVerifier},
     IdentityAssertion,
 };
 
@@ -60,7 +60,7 @@ async fn x509_signing() {
     )
     .unwrap();
 
-    let x509_holder = X509CredentialHolder::from_async_raw_signer(cawg_raw_signer);
+    let x509_holder = AsyncX509CredentialHolder::from_async_raw_signer(cawg_raw_signer);
     let iab = AsyncIdentityAssertionBuilder::for_credential_holder(x509_holder);
     c2pa_signer.add_identity_assertion(iab);
 
