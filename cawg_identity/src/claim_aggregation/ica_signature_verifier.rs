@@ -50,7 +50,7 @@ impl SignatureVerifier for IcaSignatureVerifier {
         signature: &[u8],
         status_tracker: &mut StatusTracker,
     ) -> Result<Self::Output, ValidationError<Self::Error>> {
-        let ok = true; // TODO: change to mut once we have non-fatal errors
+        let mut ok = true;
 
         if signer_payload.sig_type != super::CAWG_ICA_SIG_TYPE {
             log_current_item!(
@@ -125,9 +125,21 @@ impl SignatureVerifier for IcaSignatureVerifier {
             match cty {
                 coset::ContentType::Text(ref cty) => {
                     if cty != "application/vc" {
-                        return Err(ValidationError::SignatureError(
+                        let err = ValidationError::SignatureError(
                             IcaValidationError::UnsupportedContentType(format!("{cty:?}")),
-                        ));
+                        );
+
+                        log_current_item!(
+                            "Invalid COSE_Sign1 content type header",
+                            "IcaSignatureVerifier::check_signature"
+                        )
+                        .validation_status("cawg.ica.invalid_content_type")
+                        .failure_no_throw(
+                            status_tracker,
+                            ValidationError::<Self::Error>::from(err.clone()),
+                        );
+
+                        ok = false;
                     }
                 }
                 _ => {
