@@ -99,7 +99,7 @@ impl SignatureVerifier for IcaSignatureVerifier {
                     .validation_status("cawg.ica.invalid_alg")
                     .failure_no_throw(
                         status_tracker,
-                        ValidationError::<Self::Error>::from(err.clone()),
+                        err.clone(),
                     );
 
                     return Err(err);
@@ -115,7 +115,7 @@ impl SignatureVerifier for IcaSignatureVerifier {
             .validation_status("cawg.ica.invalid_alg")
             .failure_no_throw(
                 status_tracker,
-                ValidationError::<Self::Error>::from(err.clone()),
+                err.clone(),
             );
 
             return Err(err);
@@ -136,7 +136,7 @@ impl SignatureVerifier for IcaSignatureVerifier {
                         .validation_status("cawg.ica.invalid_content_type")
                         .failure_no_throw(
                             status_tracker,
-                            ValidationError::<Self::Error>::from(err.clone()),
+                            err.clone(),
                         );
 
                         ok = false;
@@ -155,7 +155,7 @@ impl SignatureVerifier for IcaSignatureVerifier {
                     .validation_status("cawg.ica.invalid_content_type")
                     .failure_no_throw(
                         status_tracker,
-                        ValidationError::<Self::Error>::from(err.clone()),
+                        err.clone(),
                     );
 
                     ok = false;
@@ -171,7 +171,7 @@ impl SignatureVerifier for IcaSignatureVerifier {
             .validation_status("cawg.ica.invalid_content_type")
             .failure_no_throw(
                 status_tracker,
-                ValidationError::<Self::Error>::from(err.clone()),
+                err.clone(),
             );
 
             ok = false;
@@ -188,7 +188,7 @@ impl SignatureVerifier for IcaSignatureVerifier {
             .validation_status("cawg.ica.invalid_verifiable_credential")
             .failure_no_throw(
                 status_tracker,
-                ValidationError::<Self::Error>::from(err.clone()),
+                err.clone(),
             );
 
             return Err(err);
