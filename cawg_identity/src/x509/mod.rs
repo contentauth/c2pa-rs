@@ -19,6 +19,9 @@
 //! [`SignatureVerifier`]: crate::SignatureVerifier
 //! [§8.2, X.509 certificates and COSE signatures]: https://cawg.io/identity/1.1-draft/#_x_509_certificates_and_cose_signatures
 
+mod async_x509_credential_holder;
+pub use async_x509_credential_holder::AsyncX509CredentialHolder;
+
 mod x509_credential_holder;
 pub use x509_credential_holder::X509CredentialHolder;
 

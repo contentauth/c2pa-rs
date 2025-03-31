@@ -34,7 +34,7 @@ use crate::{
         cert_chain_and_private_key_for_alg, default_built_in_signature_verifier, manifest_json,
         parent_json, NaiveCredentialHolder,
     },
-    x509::X509CredentialHolder,
+    x509::AsyncX509CredentialHolder,
     IdentityAssertion, SignerPayload, ValidationError,
 };
 
@@ -74,7 +74,7 @@ async fn x509_simple_case() {
     )
     .unwrap();
 
-    let x509_holder = X509CredentialHolder::from_async_raw_signer(cawg_raw_signer);
+    let x509_holder = AsyncX509CredentialHolder::from_async_raw_signer(cawg_raw_signer);
     let iab = AsyncIdentityAssertionBuilder::for_credential_holder(x509_holder);
     c2pa_signer.add_identity_assertion(iab);
 
