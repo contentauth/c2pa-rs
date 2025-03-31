@@ -298,8 +298,11 @@ async fn missing_cose_sign_alg() {
 
 #[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
 async fn invalid_content_type() {
-    // Same as above, but in this case, NO signature algorithm is specified in the
-    // `COSE_Sign1` data structure.
+    // The validator SHALL inspect the `COSE_Sign1` protected header `content type`
+    // to determine the content type of the enclosed credential. The `content type`
+    // header MUST be the exact value `application/vc`. If it is not, the validator
+    // MUST issue the failure `code cawg.ica.invalid_content_type` but MAY continue
+    // validation.
 
     let format = "image/jpeg";
     let test_image =
@@ -347,6 +350,66 @@ async fn invalid_content_type() {
     assert_eq!(
         li.err_val.as_ref().unwrap(),
         "SignatureError(UnsupportedContentType(\"\\\"application/bogus\\\"\"))"
+    );
+    assert_eq!(
+        li.validation_status.as_ref().unwrap(),
+        "cawg.ica.invalid_content_type"
+    );
+
+    assert!(log_items.next().is_none());
+}
+
+#[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
+async fn missing_content_type() {
+    // Same as above, but in this case, NO content type is specified in the
+    // `COSE_Sign1` data structure.
+
+    let format = "image/jpeg";
+    let test_image =
+        include_bytes!("../fixtures/claim_aggregation/ica_validation/missing_content_type.jpg");
+
+    let mut test_image = Cursor::new(test_image);
+
+    let reader = Reader::from_stream(format, &mut test_image).unwrap();
+    assert_eq!(reader.validation_status(), None);
+
+    let manifest = reader.active_manifest().unwrap();
+    let mut st = StatusTracker::default();
+    let mut ia_iter = IdentityAssertion::from_manifest(manifest, &mut st);
+
+    // Should find exactly one identity assertion.
+    let ia = ia_iter.next().unwrap().unwrap();
+    assert!(ia_iter.next().is_none());
+    drop(ia_iter);
+
+    // And that identity assertion should be valid for this manifest.
+    let isv = IcaSignatureVerifier {};
+
+    // HACK: See if we can transition to PostValidate without losing access
+    // to the ica_vc member below.
+    st.push_current_uri("(IA label goes here)");
+    let ica_vc = ia.validate(manifest, &mut st, &isv).await.unwrap();
+    st.pop_current_uri();
+
+    // Start matching against expected values.
+    let expected_identities = ica_credential_example::ica_example_identities();
+
+    let subject = ica_vc.credential_subjects.first();
+    assert_eq!(subject.verified_identities, expected_identities);
+    assert_eq!(subject.c2pa_asset, ia.signer_payload);
+
+    let mut log_items = st.logged_items().iter();
+
+    let li = log_items.next().unwrap();
+    dbg!(li);
+
+    assert_eq!(li.kind, LogKind::Failure);
+    assert_eq!(li.label, "(IA label goes here)");
+    assert_eq!(li.description, "Invalid COSE_Sign1 content type header");
+    assert_eq!(li.crate_name, "cawg-identity");
+    assert_eq!(
+        li.err_val.as_ref().unwrap(),
+        "SignatureError(ContentTypeMissing)"
     );
     assert_eq!(
         li.validation_status.as_ref().unwrap(),
