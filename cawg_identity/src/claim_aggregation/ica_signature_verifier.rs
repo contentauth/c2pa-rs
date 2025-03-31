@@ -143,6 +143,7 @@ impl SignatureVerifier for IcaSignatureVerifier {
                         ok = false;
                     }
                 }
+
                 _ => {
                     return Err(ValidationError::SignatureError(
                         IcaValidationError::UnsupportedContentType(format!("{cty:?}")),
@@ -150,9 +151,19 @@ impl SignatureVerifier for IcaSignatureVerifier {
                 }
             }
         } else {
-            return Err(ValidationError::SignatureError(
-                IcaValidationError::ContentTypeMissing,
-            ));
+            let err = ValidationError::SignatureError(IcaValidationError::ContentTypeMissing);
+
+            log_current_item!(
+                "Invalid COSE_Sign1 content type header",
+                "IcaSignatureVerifier::check_signature"
+            )
+            .validation_status("cawg.ica.invalid_content_type")
+            .failure_no_throw(
+                status_tracker,
+                ValidationError::<Self::Error>::from(err.clone()),
+            );
+
+            ok = false;
         }
 
         // Interpret the unprotected payload, which should be the raw VC.
