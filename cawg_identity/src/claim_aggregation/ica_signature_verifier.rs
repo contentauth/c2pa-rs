@@ -106,9 +106,19 @@ impl SignatureVerifier for IcaSignatureVerifier {
                 }
             }
         } else {
-            return Err(ValidationError::SignatureError(
-                IcaValidationError::SignatureTypeMissing,
-            ));
+            let err = ValidationError::SignatureError(IcaValidationError::SignatureTypeMissing);
+
+            log_current_item!(
+                "Missing COSE_Sign1 signature algorithm",
+                "IcaSignatureVerifier::check_signature"
+            )
+            .validation_status("cawg.ica.invalid_alg")
+            .failure_no_throw(
+                status_tracker,
+                ValidationError::<Self::Error>::from(err.clone()),
+            );
+
+            return Err(err);
         };
 
         if let Some(ref cty) = sign1.protected.header.content_type {

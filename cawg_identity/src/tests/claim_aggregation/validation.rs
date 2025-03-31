@@ -237,3 +237,61 @@ async fn invalid_cose_sign_alg() {
 
     assert!(log_items.next().is_none());
 }
+
+#[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
+async fn missing_cose_sign_alg() {
+    // Same as above, but in this case, NO signature algorithm is specified in the
+    // `COSE_Sign1` data structure.
+
+    let format = "image/jpeg";
+    let test_image =
+        include_bytes!("../fixtures/claim_aggregation/ica_validation/missing_cose_sign_alg.jpg");
+
+    let mut test_image = Cursor::new(test_image);
+
+    let reader = Reader::from_stream(format, &mut test_image).unwrap();
+    assert_eq!(reader.validation_status(), None);
+
+    let manifest = reader.active_manifest().unwrap();
+    let mut st = StatusTracker::default();
+    let mut ia_iter = IdentityAssertion::from_manifest(manifest, &mut st);
+
+    // Should find exactly one identity assertion.
+    let ia = ia_iter.next().unwrap().unwrap();
+    assert!(ia_iter.next().is_none());
+    drop(ia_iter);
+
+    // And that identity assertion should be valid for this manifest.
+    let isv = IcaSignatureVerifier {};
+
+    // HACK: See if we can transition to PostValidate without losing access
+    // to the ica_vc member below.
+    st.push_current_uri("(IA label goes here)");
+    let ica_err = ia.validate(manifest, &mut st, &isv).await.unwrap_err();
+    st.pop_current_uri();
+
+    assert_eq!(
+        ica_err,
+        ValidationError::SignatureError(IcaValidationError::SignatureTypeMissing)
+    );
+
+    let mut log_items = st.logged_items().iter();
+
+    let li = log_items.next().unwrap();
+    dbg!(li);
+
+    assert_eq!(li.kind, LogKind::Failure);
+    assert_eq!(li.label, "(IA label goes here)");
+    assert_eq!(li.description, "Missing COSE_Sign1 signature algorithm");
+    assert_eq!(li.crate_name, "cawg-identity");
+    assert_eq!(
+        li.err_val.as_ref().unwrap(),
+        "SignatureError(SignatureTypeMissing)"
+    );
+    assert_eq!(
+        li.validation_status.as_ref().unwrap(),
+        "cawg.ica.invalid_alg"
+    );
+
+    assert!(log_items.next().is_none());
+}
