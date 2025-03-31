@@ -30,7 +30,7 @@ mod cawg {
     use cawg_identity::{
         builder::{AsyncIdentityAssertionBuilder, AsyncIdentityAssertionSigner},
         validator::CawgValidator,
-        x509::X509CredentialHolder,
+        x509::AsyncX509CredentialHolder,
     };
     use serde_json::json;
 
@@ -92,7 +92,7 @@ mod cawg {
 
         let mut ia_signer = AsyncIdentityAssertionSigner::new(c2pa_raw_signer);
 
-        let x509_holder = X509CredentialHolder::from_async_raw_signer(cawg_raw_signer);
+        let x509_holder = AsyncX509CredentialHolder::from_async_raw_signer(cawg_raw_signer);
         let iab = AsyncIdentityAssertionBuilder::for_credential_holder(x509_holder);
         ia_signer.add_identity_assertion(iab);
         Ok(ia_signer)
