@@ -20,7 +20,7 @@
 //! cargo run --example cawg -- /path/to/source/file /path/to/destination/file
 //! ```
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(any(target_os = "wasi", not(target_arch = "wasm32")))]
 mod cawg {
     use std::path::Path;
 
@@ -121,12 +121,13 @@ mod cawg {
     }
 }
 
-#[cfg(target_arch = "wasm32")]
+#[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
 fn main() {
-    println!("This example is not supported on Wasm/WASI targets.");
+    println!("This example is not supported on non-WASI Wasm targets.");
 }
-#[cfg(not(target_arch = "wasm32"))]
-#[tokio::main]
+#[cfg(any(target_os = "wasi", not(target_arch = "wasm32")))]
+#[cfg_attr(target_os = "wasi", wstd::main)]
+#[cfg_attr(not(target_arch = "wasm32"), tokio::main)]
 async fn main() -> anyhow::Result<()> {
     let args: Vec<String> = std::env::args().collect();
     if args.len() < 3 {
