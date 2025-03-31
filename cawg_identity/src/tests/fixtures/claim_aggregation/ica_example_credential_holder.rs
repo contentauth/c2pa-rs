@@ -14,7 +14,7 @@
 use std::io::{Cursor, Seek};
 
 use async_trait::async_trait;
-use c2pa::{Builder, Reader, SigningAlg};
+use c2pa::{Builder, HashedUri, Reader, SigningAlg};
 use c2pa_crypto::{
     cose::{sign_async, sign_v2_embedded_async, CosePayload, TimeStampStorage},
     raw_signature::{self, AsyncRawSigner},
@@ -96,6 +96,21 @@ impl AsyncCredentialHolder for IcaExampleCredentialHolder {
         // IMPORTANT: Since this is test-quality code, I am using .unwrap() liberally
         // here. These would need to be replaced with proper error handling in order to
         // make this into production-level code.
+
+        // Pre-process signer_payload to base64 encode the hash references.
+
+        let mut signer_payload = signer_payload.clone();
+
+        let encoded_assertions = signer_payload
+            .referenced_assertions
+            .iter()
+            .map(|a| {
+                let encoded_hash = c2pa_crypto::base64::encode(&a.hash());
+                HashedUri::new(a.url(), a.alg(), encoded_hash.as_bytes())
+            })
+            .collect();
+
+        signer_payload.referenced_assertions = encoded_assertions;
 
         // Generate VC to embed.
         let ica_subject = IdentityClaimsAggregationVc {
@@ -202,6 +217,8 @@ async fn ica_signing() {
         .unwrap();
 
     // Write the sample file.
+    std::fs::create_dir_all("src/tests/fixtures/claim_aggregation/ica_validation").unwrap();
+
     std::fs::write(
         "src/tests/fixtures/claim_aggregation/ica_validation/success.jpg",
         dest.get_ref(),
