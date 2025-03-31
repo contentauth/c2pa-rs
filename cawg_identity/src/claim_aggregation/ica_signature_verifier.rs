@@ -98,10 +98,7 @@ impl SignatureVerifier for IcaSignatureVerifier {
                         "IcaSignatureVerifier::check_signature"
                     )
                     .validation_status("cawg.ica.invalid_alg")
-                    .failure_no_throw(
-                        status_tracker,
-                        ValidationError::<Self::Error>::from(err.clone()),
-                    );
+                    .failure_no_throw(status_tracker, err.clone());
 
                     return Err(err);
                 }
@@ -114,10 +111,7 @@ impl SignatureVerifier for IcaSignatureVerifier {
                 "IcaSignatureVerifier::check_signature"
             )
             .validation_status("cawg.ica.invalid_alg")
-            .failure_no_throw(
-                status_tracker,
-                ValidationError::<Self::Error>::from(err.clone()),
-            );
+            .failure_no_throw(status_tracker, err.clone());
 
             return Err(err);
         };
@@ -135,10 +129,7 @@ impl SignatureVerifier for IcaSignatureVerifier {
                             "IcaSignatureVerifier::check_signature"
                         )
                         .validation_status("cawg.ica.invalid_content_type")
-                        .failure_no_throw(
-                            status_tracker,
-                            ValidationError::<Self::Error>::from(err.clone()),
-                        );
+                        .failure_no_throw(status_tracker, err.clone());
 
                         ok = false;
                     }
@@ -154,10 +145,7 @@ impl SignatureVerifier for IcaSignatureVerifier {
                         "IcaSignatureVerifier::check_signature"
                     )
                     .validation_status("cawg.ica.invalid_content_type")
-                    .failure_no_throw(
-                        status_tracker,
-                        ValidationError::<Self::Error>::from(err.clone()),
-                    );
+                    .failure_no_throw(status_tracker, err.clone());
 
                     ok = false;
                 }
@@ -170,19 +158,23 @@ impl SignatureVerifier for IcaSignatureVerifier {
                 "IcaSignatureVerifier::check_signature"
             )
             .validation_status("cawg.ica.invalid_content_type")
-            .failure_no_throw(
-                status_tracker,
-                ValidationError::<Self::Error>::from(err.clone()),
-            );
+            .failure_no_throw(status_tracker, err.clone());
 
             ok = false;
         }
 
         // Interpret the unprotected payload, which should be the raw VC.
         let Some(ref payload_bytes) = sign1.payload else {
-            return Err(ValidationError::SignatureError(
-                IcaValidationError::CredentialPayloadMissing,
-            ));
+            let err = ValidationError::SignatureError(IcaValidationError::CredentialPayloadMissing);
+
+            log_current_item!(
+                "Missing COSE_Sign1 payload",
+                "IcaSignatureVerifier::check_signature"
+            )
+            .validation_status("cawg.ica.invalid_verifiable_credential")
+            .failure_no_throw(status_tracker, err.clone());
+
+            return Err(err);
         };
 
         // TO DO (CAI-7970): Add support for VC version 1.
