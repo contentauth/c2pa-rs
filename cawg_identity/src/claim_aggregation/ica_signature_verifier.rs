@@ -51,7 +51,7 @@ impl SignatureVerifier for IcaSignatureVerifier {
         signature: &[u8],
         status_tracker: &mut StatusTracker,
     ) -> Result<Self::Output, ValidationError<Self::Error>> {
-        let mut ok = true; // TODO: change to mut once we have non-fatal errors
+        let mut ok = true;
 
         if signer_payload.sig_type != super::CAWG_ICA_SIG_TYPE {
             log_current_item!(
@@ -72,34 +72,75 @@ impl SignatureVerifier for IcaSignatureVerifier {
         }
 
         // The signature should be a `CoseSign1` object.
-        let sign1 = CoseSign1::from_tagged_slice(signature)?;
+        let sign1 = CoseSign1::from_tagged_slice(signature).inspect_err(|err| {
+            log_current_item!(
+                "Invalid COSE_Sign1 data structure",
+                "IcaSignatureVerifier::check_signature"
+            )
+            .validation_status("cawg.ica.invalid_cose_sign1")
+            .failure_no_throw(status_tracker, ValidationError::from(err));
+        })?;
 
         // Identify the signature.
         let _ssi_alg = if let Some(ref alg) = sign1.protected.header.alg {
             match alg {
-                // TEMPORARY: Require EdDSA algorithm.
+                // TO DO (CAI-7965): Support algorithms other than EdDSA.
                 RegisteredLabelWithPrivate::Assigned(coset::iana::Algorithm::EdDSA) => {
                     Algorithm::EdDsa
                 }
                 _ => {
-                    return Err(ValidationError::SignatureError(
+                    let err = ValidationError::SignatureError(
                         IcaValidationError::UnsupportedSignatureType(format!("{alg:?}")),
-                    ));
+                    );
+
+                    log_current_item!(
+                        "Invalid COSE_Sign1 signature algorithm",
+                        "IcaSignatureVerifier::check_signature"
+                    )
+                    .validation_status("cawg.ica.invalid_alg")
+                    .failure_no_throw(
+                        status_tracker,
+                        ValidationError::<Self::Error>::from(err.clone()),
+                    );
+
+                    return Err(err);
                 }
             }
         } else {
-            return Err(ValidationError::SignatureError(
-                IcaValidationError::SignatureTypeMissing,
-            ));
+            let err = ValidationError::SignatureError(IcaValidationError::SignatureTypeMissing);
+
+            log_current_item!(
+                "Missing COSE_Sign1 signature algorithm",
+                "IcaSignatureVerifier::check_signature"
+            )
+            .validation_status("cawg.ica.invalid_alg")
+            .failure_no_throw(
+                status_tracker,
+                ValidationError::<Self::Error>::from(err.clone()),
+            );
+
+            return Err(err);
         };
 
         if let Some(ref cty) = sign1.protected.header.content_type {
             match cty {
                 coset::ContentType::Text(ref cty) => {
                     if cty != "application/vc" {
-                        return Err(ValidationError::SignatureError(
+                        let err = ValidationError::SignatureError(
                             IcaValidationError::UnsupportedContentType(format!("{cty:?}")),
-                        ));
+                        );
+
+                        log_current_item!(
+                            "Invalid COSE_Sign1 content type header",
+                            "IcaSignatureVerifier::check_signature"
+                        )
+                        .validation_status("cawg.ica.invalid_content_type")
+                        .failure_no_throw(
+                            status_tracker,
+                            ValidationError::<Self::Error>::from(err.clone()),
+                        );
+
+                        ok = false;
                     }
                 }
                 _ => {
