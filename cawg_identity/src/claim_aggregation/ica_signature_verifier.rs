@@ -198,15 +198,24 @@ impl SignatureVerifier for IcaSignatureVerifier {
             //
             // In the event that the status tracker is configured to proceed when possible,
             // we log the error condition related to the signature and proceed.
+            ok = false;
+
             match err {
                 ValidationError::SignatureError(IcaValidationError::UnsupportedIssuerDid(_)) => {
-                    ok = false;
-
                     log_current_item!(
                         "Invalid issuer DID",
                         "IcaSignatureVerifier::check_signature"
                     )
                     .validation_status("cawg.ica.invalid_issuer")
+                    .failure(status_tracker, err)?;
+                }
+
+                ValidationError::SignatureError(IcaValidationError::DidResolutionError(_)) => {
+                    log_current_item!(
+                        "Unable to resolve issuer DID",
+                        "IcaSignatureVerifier::check_signature"
+                    )
+                    .validation_status("cawg.ica.did_unavailable")
                     .failure(status_tracker, err)?;
                 }
 
