@@ -59,6 +59,10 @@ pub enum IcaValidationError {
     #[error("unsupported issuer DID ({0})")]
     UnsupportedIssuerDid(String),
 
+    /// DID could not be resolved (network error, etc.).
+    #[error("DID could not be resolved ({0})")]
+    DidResolutionError(String),
+
     /// Issue date is missing.
     #[error("credential does not have a valid_from date")]
     MissingValidFromDate,
@@ -88,6 +92,9 @@ impl From<InvalidDid> for ValidationError<IcaValidationError> {
 
 impl From<DidWebError> for ValidationError<IcaValidationError> {
     fn from(err: DidWebError) -> Self {
-        Self::SignatureError(IcaValidationError::UnsupportedIssuerDid(err.to_string()))
+        match err {
+            DidWebError::Client(_) => Self::InternalError(err.to_string()),
+            _ => Self::SignatureError(IcaValidationError::DidResolutionError(err.to_string())),
+        }
     }
 }

@@ -209,6 +209,15 @@ impl SignatureVerifier for IcaSignatureVerifier {
                     .failure(status_tracker, err)?;
                 }
 
+                ValidationError::SignatureError(IcaValidationError::DidResolutionError(_)) => {
+                    log_current_item!(
+                        "Unable to resolve issuer DID",
+                        "IcaSignatureVerifier::check_signature"
+                    )
+                    .validation_status("cawg.ica.did_unavailable")
+                    .failure(status_tracker, err)?;
+                }
+
                 _ => todo!("Add logging for error condition {err:#?}"),
             }
         }
