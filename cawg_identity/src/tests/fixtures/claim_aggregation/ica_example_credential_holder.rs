@@ -219,7 +219,7 @@ async fn ica_signing() {
     std::fs::create_dir_all("src/tests/fixtures/claim_aggregation/ica_validation").unwrap();
 
     std::fs::write(
-        "src/tests/fixtures/claim_aggregation/ica_validation/valid_time_stamp.jpg",
+        "src/tests/fixtures/claim_aggregation/ica_validation/invalid_time_stamp.jpg",
         dest.get_ref(),
     )
     .unwrap();
