@@ -36,7 +36,9 @@ use crate::{
 /// [`SignatureVerifier`]: crate::SignatureVerifier
 /// [§8.1, Identity claims aggregation]: https://creator-assertions.github.io/identity/1.1-draft/#_identity_claims_aggregation
 /// [§3.3.1 Securing JSON-LD Verifiable Credentials with COSE]: https://w3c.github.io/vc-jose-cose/#securing-vcs-with-cose
-pub struct IcaSignatureVerifier {}
+pub struct IcaSignatureVerifier {
+    // TO DO (CAI-7980): Add option to configure trusted ICA issuers.
+}
 
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
