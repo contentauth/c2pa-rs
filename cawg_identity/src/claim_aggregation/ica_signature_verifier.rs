@@ -12,6 +12,7 @@
 // each license.
 
 use async_trait::async_trait;
+use c2pa_crypto::cose::{validate_cose_tst_info_async, CoseError};
 use c2pa_status_tracker::{log_current_item, StatusTracker};
 use coset::{CoseSign1, RegisteredLabelWithPrivate, TaggedCborSerializable};
 
@@ -179,7 +180,7 @@ impl SignatureVerifier for IcaSignatureVerifier {
         };
 
         // TO DO (CAI-7970): Add support for VC version 1.
-        let ica_credential: IcaCredential =
+        let mut ica_credential: IcaCredential =
             serde_json::from_slice(payload_bytes).inspect_err(|err| {
                 log_current_item!(
                     "Invalid JSON-LD for verifiable credential",
@@ -239,6 +240,27 @@ impl SignatureVerifier for IcaSignatureVerifier {
                 }
 
                 _ => todo!("Add logging for error condition {err:#?}"),
+            }
+        }
+
+        match validate_cose_tst_info_async(&sign1, &payload_bytes).await {
+            Ok(tst_info) => {
+                ica_credential.credential_subjects.first_mut().time_stamp = Some(tst_info);
+
+                log_current_item!(
+                    "Time stamp validated",
+                    "IcaSignatureVerifier::check_signature"
+                )
+                .validation_status("cawg.ica.time_stamp.validated")
+                .success(status_tracker);
+            }
+
+            Err(CoseError::NoTimeStampToken) => {
+                // Ignore. This is OK in CAWG.
+            }
+
+            Err(e) => {
+                todo!("Add handler for time stamp error {e:?}");
             }
         }
 

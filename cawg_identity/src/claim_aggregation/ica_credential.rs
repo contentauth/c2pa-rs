@@ -13,6 +13,7 @@
 
 use std::collections::BTreeMap;
 
+use c2pa_crypto::asn1::rfc3161::TstInfo;
 use chrono::{DateTime, FixedOffset};
 use iref::{Iri, IriBuf, UriBuf};
 use non_empty_string::NonEmptyString;
@@ -69,6 +70,12 @@ pub struct IdentityClaimsAggregationVc {
     /// * The JSON encoding MUST use the field names exactly as specified in [Section 5.1, “Overview”](https://creator-assertions.github.io/identity/1.1-draft/#_overview).
     #[serde(rename = "c2paAsset")]
     pub c2pa_asset: SignerPayload,
+
+    /// Time stamp info, if an RFC 3161 time stamp was used with this
+    /// credential. This is technically not part of the credential. If found
+    /// when reading a credential, this is added in a post-processing step.
+    #[serde(skip)]
+    pub time_stamp: Option<TstInfo>,
 }
 
 impl VerifiableCredentialSubtype for IdentityClaimsAggregationVc {

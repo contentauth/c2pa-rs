@@ -76,6 +76,7 @@ async fn success_case() {
     let subject = ica_vc.credential_subjects.first();
     assert_eq!(subject.verified_identities, expected_identities);
     assert_eq!(subject.c2pa_asset, ia.signer_payload);
+    assert!(subject.time_stamp.is_none());
 
     let mut log_items = st.logged_items().iter();
 
@@ -937,6 +938,88 @@ async fn signature_mismatch() {
     assert_eq!(
         li.validation_status.as_ref().unwrap(),
         "cawg.ica.signature_mismatch"
+    );
+
+    assert!(log_items.next().is_none());
+}
+
+#[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
+async fn valid_time_stamp() {
+    // 8.1.7.2.5. Verify the time stamp, if present
+    //
+    // The validator SHALL inspect the time stamp included in the `COSE_Sign1` data
+    // structure if it is present. This will be stored in a COSE unprotected header
+    // named `sigTst2`. If such a header is found, the validator SHALL follow the
+    // procedure described in Section 10.3.2.5, “Time-stamps,” of the C2PA technical
+    // specification. If the validation is successful, the validator MUST issue the
+    // success code `cawg.ica.time_stamp.validated`. If the validation is not
+    // successful, the validator MUST issue the status code
+    // `cawg.ica.time_stamp.invalid`. It MAY continue validation, but MUST NOT use
+    // the time stamp in any further validation calculation.
+
+    let format = "image/jpeg";
+    let test_image =
+        include_bytes!("../fixtures/claim_aggregation/ica_validation/valid_time_stamp.jpg");
+
+    let mut test_image = Cursor::new(test_image);
+
+    let reader = Reader::from_stream(format, &mut test_image).unwrap();
+    assert_eq!(reader.validation_status(), None);
+
+    let manifest = reader.active_manifest().unwrap();
+    let mut st = StatusTracker::default();
+    let mut ia_iter = IdentityAssertion::from_manifest(manifest, &mut st);
+
+    // Should find exactly one identity assertion.
+    let ia = ia_iter.next().unwrap().unwrap();
+    assert!(ia_iter.next().is_none());
+    drop(ia_iter);
+
+    // And that identity assertion should be valid for this manifest.
+    let isv = IcaSignatureVerifier {};
+
+    // HACK: See if we can transition to PostValidate without losing access
+    // to the ica_vc member below.
+    st.push_current_uri("(IA label goes here)");
+    let ica_vc = ia.validate(manifest, &mut st, &isv).await.unwrap();
+    st.pop_current_uri();
+
+    // Start matching against expected values.
+    let expected_identities = ica_credential_example::ica_example_identities();
+
+    let subject = ica_vc.credential_subjects.first();
+    assert_eq!(subject.verified_identities, expected_identities);
+    assert_eq!(subject.c2pa_asset, ia.signer_payload);
+
+    let tst_info = subject.time_stamp.as_ref().unwrap();
+    dbg!(&tst_info);
+
+    assert_eq!(tst_info.gen_time.to_string(), "20250401223006Z");
+
+    let mut log_items = st.logged_items().iter();
+
+    let li = log_items.next().unwrap();
+    dbg!(li);
+
+    assert_eq!(li.kind, LogKind::Success);
+    assert_eq!(li.label, "(IA label goes here)");
+    assert_eq!(li.description, "Time stamp validated");
+    assert_eq!(li.crate_name, "cawg-identity");
+    assert_eq!(
+        li.validation_status.as_ref().unwrap(),
+        "cawg.ica.time_stamp.validated"
+    );
+
+    let li = log_items.next().unwrap();
+    dbg!(li);
+
+    assert_eq!(li.kind, LogKind::Success);
+    assert_eq!(li.label, "(IA label goes here)");
+    assert_eq!(li.description, "ICA credential is valid");
+    assert_eq!(li.crate_name, "cawg-identity");
+    assert_eq!(
+        li.validation_status.as_ref().unwrap(),
+        "cawg.ica.credential_valid"
     );
 
     assert!(log_items.next().is_none());

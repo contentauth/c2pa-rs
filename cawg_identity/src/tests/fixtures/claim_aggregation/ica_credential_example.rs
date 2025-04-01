@@ -36,6 +36,7 @@ pub(crate) fn ica_example() -> IdentityClaimsAggregationVc {
             sig_type: "unknown".to_string(),
         },
         verified_identities: ica_example_identities(),
+        time_stamp: None,
     }
 }
 
