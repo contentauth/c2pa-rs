@@ -81,7 +81,7 @@ impl SignatureVerifier for X509SignatureVerifier {
             .map_err(|e| match e {
                 CoseError::RawSignatureValidationError(
                     RawSignatureValidationError::SignatureMismatch,
-                ) => ValidationError::InvalidSignature,
+                ) => ValidationError::SignatureMismatch,
 
                 e => ValidationError::SignatureError(e),
             })?;

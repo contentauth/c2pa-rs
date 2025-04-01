@@ -48,7 +48,7 @@ pub enum ValidationError<SignatureError> {
 
     /// The signature is not valid.
     #[error("signature is invalid")]
-    InvalidSignature,
+    SignatureMismatch,
 
     /// The `pad1` or `pad2` fields contain values other than 0x00 bytes.
     #[error("invalid padding")]
