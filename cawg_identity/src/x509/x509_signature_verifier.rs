@@ -32,7 +32,7 @@ use crate::{
 /// [`SignatureVerifier`]: crate::SignatureVerifier
 /// [§8.2, X.509 certificates and COSE signatures]: https://cawg.io/identity/1.1-draft/#_x_509_certificates_and_cose_signatures
 pub struct X509SignatureVerifier {
-    // TO DO: Define trust configuration here.
+    // TO DO (CAI-7980): Add option to configure trust roots and trusted signers.
 }
 
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]

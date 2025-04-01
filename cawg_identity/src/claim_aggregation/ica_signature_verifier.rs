@@ -37,7 +37,9 @@ use crate::{
 /// [`SignatureVerifier`]: crate::SignatureVerifier
 /// [§8.1, Identity claims aggregation]: https://creator-assertions.github.io/identity/1.1-draft/#_identity_claims_aggregation
 /// [§3.3.1 Securing JSON-LD Verifiable Credentials with COSE]: https://w3c.github.io/vc-jose-cose/#securing-vcs-with-cose
-pub struct IcaSignatureVerifier {}
+pub struct IcaSignatureVerifier {
+    // TO DO (CAI-7980): Add option to configure trusted ICA issuers.
+}
 
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
@@ -219,6 +221,15 @@ impl SignatureVerifier for IcaSignatureVerifier {
                     .failure(status_tracker, err)?;
                 }
 
+                ValidationError::SignatureError(IcaValidationError::InvalidDidDocument(_)) => {
+                    log_current_item!(
+                        "Invalid issuer DID document",
+                        "IcaSignatureVerifier::check_signature"
+                    )
+                    .validation_status("cawg.ica.invalid_did_document")
+                    .failure(status_tracker, err)?;
+                }
+
                 _ => todo!("Add logging for error condition {err:#?}"),
             }
         }
@@ -274,13 +285,13 @@ impl IcaSignatureVerifier {
 
                 let jwk =
                     multibase::Base::decode(&multibase::Base::Base64Url, jwk).map_err(|e| {
-                        ValidationError::SignatureError(IcaValidationError::UnsupportedIssuerDid(
+                        ValidationError::SignatureError(IcaValidationError::InvalidDidDocument(
                             e.to_string(),
                         ))
                     })?;
 
                 let jwk: Jwk = serde_json::from_slice(&jwk).map_err(|e| {
-                    ValidationError::SignatureError(IcaValidationError::UnsupportedIssuerDid(
+                    ValidationError::SignatureError(IcaValidationError::InvalidDidDocument(
                         e.to_string(),
                     ))
                 })?;
@@ -293,24 +304,24 @@ impl IcaSignatureVerifier {
 
                 let Some(vm1) = did_doc.verification_relationships.assertion_method.first() else {
                     return Err(ValidationError::SignatureError(
-                        IcaValidationError::UnsupportedIssuerDid(
-                            "DID document doesn't contain an assertion_method entry".to_string(),
+                        IcaValidationError::InvalidDidDocument(
+                            "DID document doesn't contain an assertionMethod entry".to_string(),
                         ),
                     ));
                 };
 
                 let super::w3c_vc::did_doc::ValueOrReference::Value(vm1) = vm1 else {
                     return Err(ValidationError::SignatureError(
-                        IcaValidationError::UnsupportedIssuerDid(
-                            "DID document's assertion_method is not a value".to_string(),
+                        IcaValidationError::InvalidDidDocument(
+                            "DID document's assertionMethod is not a value".to_string(),
                         ),
                     ));
                 };
 
                 let Some(jwk_prop) = vm1.properties.get("publicKeyJwk") else {
                     return Err(ValidationError::SignatureError(
-                        IcaValidationError::UnsupportedIssuerDid(
-                            "DID document's assertion_method doesn't contain a publicKeyJwk entry"
+                        IcaValidationError::InvalidDidDocument(
+                            "DID document's assertionMethod doesn't contain a publicKeyJwk entry"
                                 .to_string(),
                         ),
                     ));
@@ -318,18 +329,14 @@ impl IcaSignatureVerifier {
 
                 // OMG SO HACKY!
                 let Ok(jwk_json) = serde_json::to_string_pretty(jwk_prop) else {
-                    return Err(ValidationError::SignatureError(
-                        IcaValidationError::UnsupportedIssuerDid(
-                            "couldn't re-serialize JWK".to_string(),
-                        ),
+                    return Err(ValidationError::InternalError(
+                        "couldn't re-serialize JWK".to_string(),
                     ));
                 };
 
                 let Ok(jwk) = serde_json::from_str(&jwk_json) else {
-                    return Err(ValidationError::SignatureError(
-                        IcaValidationError::UnsupportedIssuerDid(
-                            "couldn't re-serialize JWK".to_string(),
-                        ),
+                    return Err(ValidationError::InternalError(
+                        "couldn't re-serialize JWK".to_string(),
                     ));
                 };
 
@@ -347,7 +354,7 @@ impl IcaSignatureVerifier {
         let Params::Okp(ref okp) = jwk.params;
         if okp.curve != "Ed25519" {
             return Err(ValidationError::SignatureError(
-                IcaValidationError::UnsupportedIssuerDid(format!(
+                IcaValidationError::InvalidDidDocument(format!(
                     "unsupported OKP curve {}",
                     okp.curve
                 )),

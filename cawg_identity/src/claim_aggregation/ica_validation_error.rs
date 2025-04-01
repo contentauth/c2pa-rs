@@ -63,6 +63,12 @@ pub enum IcaValidationError {
     #[error("DID could not be resolved ({0})")]
     DidResolutionError(String),
 
+    /// Invalid issuer DID document.
+    #[error(
+        "The DID document could not be parsed or did not contain usable public key material ({0})"
+    )]
+    InvalidDidDocument(String),
+
     /// Issue date is missing.
     #[error("credential does not have a valid_from date")]
     MissingValidFromDate,
