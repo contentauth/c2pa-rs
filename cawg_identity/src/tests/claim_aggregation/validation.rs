@@ -867,3 +867,14 @@ async fn did_doc_without_assertion_method() {
 
     assert!(log_items.next().is_none());
 }
+
+#[test]
+#[ignore]
+fn did_is_untrusted() {
+    // The validator SHALL verify that the issuer’s DID is present or can be
+    // traced to its preconfigured list of trustable entities. If the issuer is
+    // not verifiably trusted, the validator MUST issue the failure code
+    // `cawg.ica.untrusted_issuer` but MAY continue validation.
+
+    // TO DO (CAI-7980): Add option to configure trusted ICA issuers.
+}
