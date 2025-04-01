@@ -121,7 +121,7 @@ impl AsyncCredentialHolder for IcaExampleCredentialHolder {
             self.ica_signer.as_ref(),
             ica_json.as_bytes(),
             None,
-            CosePayload::Detached, // WRONG
+            CosePayload::Embedded,
             Some(RegisteredLabel::Text("application/vc".to_string())),
             TimeStampStorage::V2_sigTst2_CTT,
         )
@@ -189,7 +189,7 @@ async fn ica_signing() {
 
     let jwk_id = serde_json::to_string(&jwk).unwrap();
     let jwk_base64 = c2pa_crypto::base64::encode(jwk_id.as_bytes());
-    let issuer_did = format!("did:jwk:{jwk_base64}");
+    let issuer_did = format!("not-did:jwk:{jwk_base64}");
 
     let ica_holder = IcaExampleCredentialHolder::from_async_raw_signer(cawg_raw_signer, issuer_did);
     let iab = AsyncIdentityAssertionBuilder::for_credential_holder(ica_holder);
@@ -202,7 +202,7 @@ async fn ica_signing() {
 
     // Write the sample file.
     std::fs::write(
-        "src/tests/fixtures/claim_aggregation/ica_validation/missing_vc.jpg",
+        "src/tests/fixtures/claim_aggregation/ica_validation/invalid_issuer_did.jpg",
         dest.get_ref(),
     )
     .unwrap();
