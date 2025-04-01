@@ -251,6 +251,9 @@ impl IcaSignatureVerifier {
     ) -> Result<(), ValidationError<IcaValidationError>> {
         // Discover public key for issuer DID and validate signature.
         // TEMPORARY version supports did:jwk and did:web only.
+
+        // TO DO (CAI-7976): Accept issuer DID in either `issuer` or `issuer.id` field.
+        // Currently only `issuer` field is supported.
         let issuer_id = Did::new(&ica_credential.issuer)?;
         let (primary_did, _fragment) = issuer_id.split_fragment();
 
