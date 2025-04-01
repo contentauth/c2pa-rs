@@ -674,3 +674,64 @@ async fn invalid_issuer_did() {
 
     assert!(log_items.next().is_none());
 }
+
+#[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
+async fn unsupported_did_method() {
+    // The validator SHALL resolve the DID document as described in Section 7.1, “DID resolution,” of the DID specification. If the DID uses a DID method that is unsupported by the validator, the validator MUST issue the failure code `cawg.ica.did_unsupported_method` but MAY continue validation.
+
+    let format = "image/jpeg";
+    let test_image =
+        include_bytes!("../fixtures/claim_aggregation/ica_validation/invalid_issuer_did.jpg");
+
+    let mut test_image = Cursor::new(test_image);
+
+    let reader = Reader::from_stream(format, &mut test_image).unwrap();
+    assert_eq!(reader.validation_status(), None);
+
+    let manifest = reader.active_manifest().unwrap();
+    let mut st = StatusTracker::default();
+    let mut ia_iter = IdentityAssertion::from_manifest(manifest, &mut st);
+
+    // Should find exactly one identity assertion.
+    let ia = ia_iter.next().unwrap().unwrap();
+    assert!(ia_iter.next().is_none());
+    drop(ia_iter);
+
+    // And that identity assertion should be valid for this manifest.
+    let isv = IcaSignatureVerifier {};
+
+    // HACK: See if we can transition to PostValidate without losing access
+    // to the ica_vc member below.
+    st.push_current_uri("(IA label goes here)");
+    let ica_vc = ia.validate(manifest, &mut st, &isv).await.unwrap();
+    st.pop_current_uri();
+
+    // Start matching against expected values.
+    let expected_identities = ica_credential_example::ica_example_identities();
+
+    let subject = ica_vc.credential_subjects.first();
+    assert_eq!(subject.verified_identities, expected_identities);
+    assert_eq!(subject.c2pa_asset, ia.signer_payload);
+    let mut log_items = st.logged_items().iter();
+
+    let li = log_items.next().unwrap();
+    dbg!(li);
+
+    assert_eq!(li.kind, LogKind::Failure);
+    assert_eq!(li.label, "(IA label goes here)");
+    assert_eq!(li.description, "Invalid issuer DID");
+    assert_eq!(li.crate_name, "cawg-identity");
+
+    assert!(li
+        .err_val
+        .as_ref()
+        .unwrap()
+        .starts_with("SignatureError(UnsupportedIssuerDid(\"invalid DID `not-did:jwk:"));
+
+    assert_eq!(
+        li.validation_status.as_ref().unwrap(),
+        "cawg.ica.invalid_issuer"
+    );
+
+    assert!(log_items.next().is_none());
+}
