@@ -127,6 +127,9 @@ impl AsyncCredentialHolder for IcaExampleCredentialHolder {
             ica_vc.valid_from = Some(Utc::now().fixed_offset());
         }
 
+        let one_sec = std::time::Duration::from_millis(1000);
+        std::thread::sleep(one_sec);
+
         let ica_json = serde_json::to_string(&ica_vc).unwrap();
 
         // TO DO: Check signing cert validity. (See signing_cert_valid in c2pa-rs's
