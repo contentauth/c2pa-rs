@@ -12,7 +12,10 @@
 // each license.
 
 use async_trait::async_trait;
-use c2pa_crypto::cose::{validate_cose_tst_info_async, CoseError};
+use c2pa_crypto::{
+    cose::{validate_cose_tst_info_async, CoseError},
+    time_stamp::TimeStampError,
+};
 use c2pa_status_tracker::{log_current_item, StatusTracker};
 use coset::{CoseSign1, RegisteredLabelWithPrivate, TaggedCborSerializable};
 
@@ -257,6 +260,20 @@ impl SignatureVerifier for IcaSignatureVerifier {
 
             Err(CoseError::NoTimeStampToken) => {
                 // Ignore. This is OK in CAWG.
+            }
+
+            Err(CoseError::TimeStampError(TimeStampError::InvalidData)) => {
+                ok = false;
+
+                log_current_item!(
+                    "Time stamp does not match credential",
+                    "IcaSignatureVerifier::check_signature"
+                )
+                .validation_status("cawg.ica.time_stamp.invalid")
+                .failure(
+                    status_tracker,
+                    ValidationError::SignatureError(IcaValidationError::InvalidTimeStamp),
+                )?;
             }
 
             Err(e) => {
