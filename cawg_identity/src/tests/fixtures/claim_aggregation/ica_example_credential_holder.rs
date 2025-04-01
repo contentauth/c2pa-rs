@@ -157,7 +157,7 @@ async fn ica_signing() {
         &cawg_cert_chain,
         &cawg_private_key,
         SigningAlg::Ed25519,
-        None,
+        Some("http://timestamp.digicert.com".to_string()),
     )
     .unwrap();
 
@@ -202,7 +202,7 @@ async fn ica_signing() {
 
     // Write the sample file.
     std::fs::write(
-        "src/tests/fixtures/claim_aggregation/ica_validation/signature_mismatch.jpg",
+        "src/tests/fixtures/claim_aggregation/ica_validation/valid_time_stamp.jpg",
         dest.get_ref(),
     )
     .unwrap();
