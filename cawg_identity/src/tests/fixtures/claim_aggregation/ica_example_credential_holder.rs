@@ -150,7 +150,6 @@ const TEST_THUMBNAIL: &[u8] = include_bytes!("../../../../../sdk/tests/fixtures/
 
 #[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
 async fn ica_signing() {
-    #![allow(unused)]
     let format = "image/jpeg";
     let mut source = Cursor::new(TEST_IMAGE);
     let mut dest = Cursor::new(Vec::new());
@@ -205,8 +204,7 @@ async fn ica_signing() {
 
     let jwk_id = serde_json::to_string(&jwk).unwrap();
     let jwk_base64 = c2pa_crypto::base64::encode(jwk_id.as_bytes());
-    // let issuer_did = format!("did:jwk:{jwk_base64}");
-    let issuer_did = "did:web:cawg-test-data.github.io:test-case:no-assertion-method".to_owned();
+    let issuer_did = format!("did:jwk:{jwk_base64}");
 
     let ica_holder = IcaExampleCredentialHolder::from_async_raw_signer(cawg_raw_signer, issuer_did);
     let iab = AsyncIdentityAssertionBuilder::for_credential_holder(ica_holder);
@@ -221,7 +219,7 @@ async fn ica_signing() {
     std::fs::create_dir_all("src/tests/fixtures/claim_aggregation/ica_validation").unwrap();
 
     std::fs::write(
-        "src/tests/fixtures/claim_aggregation/ica_validation/did_doc_without_assertion_method.jpg",
+        "src/tests/fixtures/claim_aggregation/ica_validation/signature_mismatch.jpg",
         dest.get_ref(),
     )
     .unwrap();
