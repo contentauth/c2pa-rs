@@ -230,6 +230,15 @@ impl SignatureVerifier for IcaSignatureVerifier {
                     .failure(status_tracker, err)?;
                 }
 
+                ValidationError::SignatureMismatch => {
+                    log_current_item!(
+                        "Signature does not match credential",
+                        "IcaSignatureVerifier::check_signature"
+                    )
+                    .validation_status("cawg.ica.signature_mismatch")
+                    .failure(status_tracker, err)?;
+                }
+
                 _ => todo!("Add logging for error condition {err:#?}"),
             }
         }
@@ -370,7 +379,7 @@ impl IcaSignatureVerifier {
                 let signature: ed25519_dalek::Signature = sig.try_into().map_err(JwkError::from)?;
                 public_key.verify(data, &signature).map_err(JwkError::from)
             })
-            .map_err(|_e| ValidationError::InvalidSignature)?;
+            .map_err(|_e| ValidationError::SignatureMismatch)?;
 
         // Enforce [§8.1.1.4. Validity].
         //
