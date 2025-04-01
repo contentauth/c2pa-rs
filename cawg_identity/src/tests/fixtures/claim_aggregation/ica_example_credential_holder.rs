@@ -202,7 +202,7 @@ async fn ica_signing() {
 
     // Write the sample file.
     std::fs::write(
-        "src/tests/fixtures/claim_aggregation/ica_validation/valid_time_stamp.jpg",
+        "src/tests/fixtures/claim_aggregation/ica_validation/invalid_time_stamp.jpg",
         dest.get_ref(),
     )
     .unwrap();
