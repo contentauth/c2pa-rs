@@ -300,15 +300,10 @@ pub fn sign_v2_embedded(
     // We don't use the additional data header.
     let aad: &[u8; 0] = b"";
 
-    // ERROR: Sign the wrong data.
-    let mut wrong_data = data.to_vec();
-    wrong_data[0] = b'x';
-    wrong_data[4] = b'z';
-
     // V2: Sign then generate time stamp.
     let sign1_builder = CoseSign1Builder::new()
         .protected(protected_header.header.clone())
-        .payload(wrong_data.to_vec());
+        .payload(data.to_vec());
 
     let mut sign1 = sign1_builder.build();
 
@@ -359,8 +354,6 @@ pub fn sign_v2_embedded(
     // `Cose_Sign1` structure.
     if payload == CosePayload::Detached {
         sign1.payload = None;
-    } else {
-        sign1.payload = Some(data.to_vec());
     }
 
     let sig_data = ByteBuf::from(sign1.signature.clone());
