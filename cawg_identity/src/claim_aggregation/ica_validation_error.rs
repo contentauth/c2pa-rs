@@ -69,6 +69,10 @@ pub enum IcaValidationError {
     )]
     InvalidDidDocument(String),
 
+    /// RFC 3161 time stamp is invalid.
+    #[error("The RFC 3161 time stamp was not valid for this credential")]
+    InvalidTimeStamp,
+
     /// Issue date is missing.
     #[error("credential does not have a valid_from date")]
     MissingValidFromDate,

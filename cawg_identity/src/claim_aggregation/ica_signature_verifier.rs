@@ -13,7 +13,10 @@
 
 use async_trait::async_trait;
 use c2pa::HashedUri;
-use c2pa_crypto::cose::{validate_cose_tst_info_async, CoseError};
+use c2pa_crypto::{
+    cose::{validate_cose_tst_info_async, CoseError},
+    time_stamp::TimeStampError,
+};
 use c2pa_status_tracker::{log_current_item, StatusTracker};
 use coset::{CoseSign1, RegisteredLabelWithPrivate, TaggedCborSerializable};
 
@@ -260,6 +263,20 @@ impl SignatureVerifier for IcaSignatureVerifier {
                 // Ignore. This is OK in CAWG.
             }
 
+            Err(CoseError::TimeStampError(TimeStampError::InvalidData)) => {
+                ok = false;
+
+                log_current_item!(
+                    "Time stamp does not match credential",
+                    "IcaSignatureVerifier::check_signature"
+                )
+                .validation_status("cawg.ica.time_stamp.invalid")
+                .failure(
+                    status_tracker,
+                    ValidationError::SignatureError(IcaValidationError::InvalidTimeStamp),
+                )?;
+            }
+
             Err(e) => {
                 todo!("Add handler for time stamp error {e:?}");
             }
@@ -460,7 +477,19 @@ impl IcaSignatureVerifier {
             signer_payload.referenced_assertions = new_ras;
 
             if &signer_payload != &subject.c2pa_asset {
-                panic!("What did we do in the future?");
+                // TO DO: Move this out of check_issuer_signature.
+                // TO DO: Fix WRONG error code.
+                return Err(ValidationError::SignatureMismatch);
+
+                // log_current_item!(
+                //     "c2paAsset does not match signer_payload",
+                //     "IcaSignatureVerifier::check_signature"
+                // )
+                // .validation_status("cawg.ica.signer_payload.mismatch")
+                // .failure(
+                //     status_tracker,
+                //     ValidationError::SignatureError(IcaValidationError::SignerPayloadMismatch),
+                // )?;
             }
         }
 
