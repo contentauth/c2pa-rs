@@ -248,7 +248,7 @@ impl SignatureVerifier for IcaSignatureVerifier {
             }
         }
 
-        let maybe_tst_info = match validate_cose_tst_info_async(&sign1, &payload_bytes).await {
+        let maybe_tst_info = match validate_cose_tst_info_async(&sign1, payload_bytes).await {
             Ok(tst_info) => {
                 ica_credential.credential_subjects.first_mut().time_stamp = Some(tst_info.clone());
 
