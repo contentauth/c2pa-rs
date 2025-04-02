@@ -1542,7 +1542,7 @@ async fn signer_payload_mismatch() {
 
 #[test]
 #[ignore]
-fn credential_is_revoked() {
+fn verified_identities() {
     // 8.1.7.4. Verify verified identities
     //
     // The validator SHALL inspect the contents of the `verifiedIdentities`
