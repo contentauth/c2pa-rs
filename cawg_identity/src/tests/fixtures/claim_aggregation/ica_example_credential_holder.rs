@@ -109,14 +109,6 @@ impl AsyncCredentialHolder for IcaExampleCredentialHolder {
         // TO DO: Bring in substitute for now() on Wasm.
         #[cfg(not(target_arch = "wasm32"))]
         {
-            ica_vc.valid_from = Some(
-                NaiveDate::from_ymd_opt(2200, 1, 1)
-                    .unwrap()
-                    .and_hms_opt(12, 0, 0)
-                    .unwrap()
-                    .and_utc()
-                    .fixed_offset(),
-            );
             // ica_vc.valid_from = Some(Utc::now().fixed_offset());
         }
 
@@ -210,7 +202,7 @@ async fn ica_signing() {
 
     // Write the sample file.
     std::fs::write(
-        "src/tests/fixtures/claim_aggregation/ica_validation/valid_from_in_future.jpg",
+        "src/tests/fixtures/claim_aggregation/ica_validation/valid_from_missing.jpg",
         dest.get_ref(),
     )
     .unwrap();
