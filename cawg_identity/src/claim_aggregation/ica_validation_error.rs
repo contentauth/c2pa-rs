@@ -73,9 +73,13 @@ pub enum IcaValidationError {
     #[error("The RFC 3161 time stamp was not valid for this credential")]
     InvalidTimeStamp,
 
-    /// Issue date is missing.
-    #[error("credential does not have a valid_from date")]
+    /// `validFrom` date is missing.
+    #[error("credential does not have a validFrom date")]
     MissingValidFromDate,
+
+    /// `validFrom` date is unacceptable.
+    #[error("credential's validFrom date is unacceptable ({0})")]
+    InvalidValidFromDate(String),
 }
 
 impl From<coset::CoseError> for ValidationError<IcaValidationError> {
