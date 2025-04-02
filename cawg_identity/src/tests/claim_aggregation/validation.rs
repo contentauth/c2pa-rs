@@ -1095,3 +1095,74 @@ async fn invalid_time_stamp() {
 
     assert!(log_items.next().is_none());
 }
+
+#[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
+async fn valid_from_missing() {
+    // 8.1.7.2.6. Verify the credential’s validity range
+    //
+    // The validator SHALL inspect the credential’s effective date. This may be
+    // stored as `issuanceDate` or `validFrom`, depending on the version of the
+    // verifiable credentials data model in use. If this field is missing, the
+    // validator MUST issue the failure code `cawg.ica.valid_from.missing` but MAY
+    // continue validation.
+
+    let format = "image/jpeg";
+    let test_image =
+        include_bytes!("../fixtures/claim_aggregation/ica_validation/valid_from_missing.jpg");
+
+    let mut test_image = Cursor::new(test_image);
+
+    let reader = Reader::from_stream(format, &mut test_image).unwrap();
+    assert_eq!(reader.validation_status(), None);
+
+    let manifest = reader.active_manifest().unwrap();
+    let mut st = StatusTracker::default();
+    let mut ia_iter = IdentityAssertion::from_manifest(manifest, &mut st);
+
+    // Should find exactly one identity assertion.
+    let ia = ia_iter.next().unwrap().unwrap();
+    assert!(ia_iter.next().is_none());
+    drop(ia_iter);
+
+    // And that identity assertion should be valid for this manifest.
+    let isv = IcaSignatureVerifier {};
+
+    // HACK: See if we can transition to PostValidate without losing access
+    // to the ica_vc member below.
+    st.push_current_uri("(IA label goes here)");
+    let ica_vc = ia.validate(manifest, &mut st, &isv).await.unwrap();
+    st.pop_current_uri();
+
+    // Start matching against expected values.
+    let expected_identities = ica_credential_example::ica_example_identities();
+
+    let subject = ica_vc.credential_subjects.first();
+    assert_eq!(subject.verified_identities, expected_identities);
+    assert_eq!(subject.c2pa_asset, ia.signer_payload);
+    assert!(ica_vc.valid_from.is_none());
+    assert!(subject.time_stamp.is_none());
+
+    let mut log_items = st.logged_items().iter();
+
+    let li = log_items.next().unwrap();
+    dbg!(li);
+
+    assert_eq!(li.kind, LogKind::Failure);
+    assert_eq!(li.label, "(IA label goes here)");
+    assert_eq!(
+        li.description,
+        "validFrom/issuanceDate missing from credential"
+    );
+    assert_eq!(li.crate_name, "cawg-identity");
+    assert_eq!(
+        li.err_val.as_ref().unwrap(),
+        "SignatureError(MissingValidFromDate)"
+    );
+
+    assert_eq!(
+        li.validation_status.as_ref().unwrap(),
+        "cawg.ica.valid_from.missing"
+    );
+
+    assert!(log_items.next().is_none());
+}

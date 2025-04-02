@@ -284,11 +284,29 @@ impl SignatureVerifier for IcaSignatureVerifier {
         // Enforce [§8.1.1.4. Validity].
         //
         // [§8.1.1.4. Validity]: https://creator-assertions.github.io/identity/1.1-draft/#vc-property-validFrom
-        let Some(_valid_from) = ica_credential.valid_from else {
-            return Err(ValidationError::SignatureError(
-                IcaValidationError::MissingValidFromDate,
-            ));
-        };
+        match ica_credential.valid_from {
+            Some(_valid_from) => {
+                // TO DO: Check against current time, C2PA Manifest time stamp,
+                // and COSE signature time stamp.
+
+                // TO DO (CAI-7988): Enforce validFrom can not be later than
+                // C2PA Manifest time stamp.
+            }
+
+            None => {
+                ok = false;
+
+                log_current_item!(
+                    "validFrom/issuanceDate missing from credential",
+                    "IcaSignatureVerifier::check_signature"
+                )
+                .validation_status("cawg.ica.valid_from.missing")
+                .failure(
+                    status_tracker,
+                    ValidationError::SignatureError(IcaValidationError::MissingValidFromDate),
+                )?;
+            }
+        }
 
         // TO DO: Enforce signer_payload matches what was stated outside the signature.
 
