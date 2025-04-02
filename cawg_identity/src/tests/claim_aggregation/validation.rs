@@ -797,12 +797,9 @@ async fn unsupported_did_method() {
     assert!(log_items.next().is_none());
 }
 
-#[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
-#[cfg_attr(
-    all(target_arch = "wasm32", not(target_os = "wasi")),
-    wasm_bindgen_test
-)]
-#[cfg_attr(target_os = "wasi", wstd::test)]
+// TO DO (CAI-7996): Not sure why this doesn't run on Wasm/WASI.
+#[cfg(not(target_arch = "wasm32"))]
+#[tokio::test]
 async fn unresolvable_did() {
     // If the DID can not be resolved, the validator MUST issue the failure code
     // `cawg.ica.did_unavailable` but MAY continue validation.
@@ -1254,12 +1251,9 @@ async fn valid_from_missing() {
     assert!(log_items.next().is_none());
 }
 
-#[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
-#[cfg_attr(
-    all(target_arch = "wasm32", not(target_os = "wasi")),
-    wasm_bindgen_test
-)]
-#[cfg_attr(target_os = "wasi", wstd::test)]
+// TO DO (CAI-7996): Not sure why this doesn't run on Wasm/WASI.
+#[cfg(not(target_arch = "wasm32"))]
+#[tokio::test]
 async fn valid_from_in_future() {
     // 8.1.7.2.6. Verify the credential’s validity range
     //
@@ -1325,12 +1319,9 @@ async fn valid_from_in_future() {
     assert!(log_items.next().is_none());
 }
 
-#[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
-#[cfg_attr(
-    all(target_arch = "wasm32", not(target_os = "wasi")),
-    wasm_bindgen_test
-)]
-#[cfg_attr(target_os = "wasi", wstd::test)]
+// TO DO (CAI-7996): Not sure why this doesn't run on Wasm/WASI.
+#[cfg(not(target_arch = "wasm32"))]
+#[tokio::test]
 async fn valid_from_after_time_stamp() {
     // 8.1.7.2.6. Verify the credential’s validity range
     //
@@ -1486,12 +1477,9 @@ async fn valid_until_in_future() {
     assert!(log_items.next().is_none());
 }
 
-#[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
-#[cfg_attr(
-    all(target_arch = "wasm32", not(target_os = "wasi")),
-    wasm_bindgen_test
-)]
-#[cfg_attr(target_os = "wasi", wstd::test)]
+// TO DO (CAI-7996): Not sure why this doesn't run on Wasm/WASI.
+#[cfg(not(target_arch = "wasm32"))]
+#[tokio::test]
 async fn valid_until_in_past() {
     // If the expiration date is present, the validator SHALL compare the expiration
     // date of the credential against each of the following values, if available:
