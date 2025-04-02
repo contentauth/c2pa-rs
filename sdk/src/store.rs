@@ -6647,4 +6647,28 @@ pub mod tests {
             }
         }
     }
+
+    #[test]
+    #[cfg(feature = "file_io")]
+    fn test_bogus_cert() {
+        let png = include_bytes!("../tests/fixtures/libpng-test.png"); // Randomly generated local Ed25519
+        let ed25519 = include_bytes!("../tests/fixtures/certs/ed25519.pem");
+        let certs = include_bytes!("../tests/fixtures/certs/es256.pub");
+        let mut builder = crate::Builder::default();
+        let signer =
+            crate::create_signer::from_keys(certs, ed25519, SigningAlg::Ed25519, None).unwrap();
+        let mut dst = Cursor::new(Vec::new());
+
+        // bypass auto sig check
+        crate::settings::load_settings_from_str(r#"{"verify.verify_after_sign": false}"#, "json")
+            .unwrap();
+
+        builder
+            .sign(&signer, "image/png", &mut Cursor::new(png), &mut dst)
+            .unwrap();
+
+        let reader = crate::Reader::from_stream("image/png", &mut dst).unwrap();
+
+        assert_eq!(reader.validation_state(), crate::ValidationState::Invalid);
+    }
 }
