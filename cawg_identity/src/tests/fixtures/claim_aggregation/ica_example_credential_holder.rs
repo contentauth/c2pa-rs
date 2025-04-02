@@ -20,7 +20,7 @@ use c2pa_crypto::{
     raw_signature::{self, AsyncRawSigner},
 };
 use c2pa_status_tracker::StatusTracker;
-use chrono::{DateTime, FixedOffset, Utc};
+use chrono::{DateTime, FixedOffset, NaiveDate, TimeZone, Utc};
 use coset::{iana::OkpKeyParameter, RegisteredLabel};
 use iref::UriBuf;
 use nonempty_collections::{nev, NEVec};
@@ -124,7 +124,15 @@ impl AsyncCredentialHolder for IcaExampleCredentialHolder {
         // TO DO: Bring in substitute for now() on Wasm.
         #[cfg(not(target_arch = "wasm32"))]
         {
-            ica_vc.valid_from = Some(Utc::now().fixed_offset());
+            ica_vc.valid_from = Some(
+                NaiveDate::from_ymd_opt(2200, 1, 1)
+                    .unwrap()
+                    .and_hms_opt(12, 0, 0)
+                    .unwrap()
+                    .and_utc()
+                    .fixed_offset(),
+            );
+            // ica_vc.valid_from = Some(Utc::now().fixed_offset());
         }
 
         let ica_json = serde_json::to_string(&ica_vc).unwrap();
@@ -172,7 +180,7 @@ async fn ica_signing() {
         &cawg_cert_chain,
         &cawg_private_key,
         SigningAlg::Ed25519,
-        Some("http://timestamp.digicert.com".to_string()),
+        None,
     )
     .unwrap();
 
@@ -219,7 +227,7 @@ async fn ica_signing() {
     std::fs::create_dir_all("src/tests/fixtures/claim_aggregation/ica_validation").unwrap();
 
     std::fs::write(
-        "src/tests/fixtures/claim_aggregation/ica_validation/invalid_time_stamp.jpg",
+        "src/tests/fixtures/claim_aggregation/ica_validation/valid_from_in_future.jpg",
         dest.get_ref(),
     )
     .unwrap();
