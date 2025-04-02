@@ -59,9 +59,31 @@ pub enum IcaValidationError {
     #[error("unsupported issuer DID ({0})")]
     UnsupportedIssuerDid(String),
 
-    /// Issue date is missing.
-    #[error("credential does not have a valid_from date")]
+    /// DID could not be resolved (network error, etc.).
+    #[error("DID could not be resolved ({0})")]
+    DidResolutionError(String),
+
+    /// Invalid issuer DID document.
+    #[error(
+        "The DID document could not be parsed or did not contain usable public key material ({0})"
+    )]
+    InvalidDidDocument(String),
+
+    /// RFC 3161 time stamp is invalid.
+    #[error("The RFC 3161 time stamp was not valid for this credential")]
+    InvalidTimeStamp,
+
+    /// `validFrom` date is missing.
+    #[error("credential does not have a validFrom date")]
     MissingValidFromDate,
+
+    /// `validFrom` date is unacceptable.
+    #[error("credential's validFrom date is unacceptable ({0})")]
+    InvalidValidFromDate(String),
+
+    /// `c2paAsset` does not match `signer_payload`
+    #[error("c2paAsset does not match signer_payload")]
+    SignerPayloadMismatch,
 }
 
 impl From<coset::CoseError> for ValidationError<IcaValidationError> {
@@ -88,6 +110,9 @@ impl From<InvalidDid> for ValidationError<IcaValidationError> {
 
 impl From<DidWebError> for ValidationError<IcaValidationError> {
     fn from(err: DidWebError) -> Self {
-        Self::SignatureError(IcaValidationError::UnsupportedIssuerDid(err.to_string()))
+        match err {
+            DidWebError::Client(_) => Self::InternalError(err.to_string()),
+            _ => Self::SignatureError(IcaValidationError::DidResolutionError(err.to_string())),
+        }
     }
 }

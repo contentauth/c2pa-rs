@@ -12,7 +12,13 @@
 // each license.
 
 use async_trait::async_trait;
+use c2pa_crypto::{
+    asn1::rfc3161::TstInfo,
+    cose::{validate_cose_tst_info_async, CoseError},
+    time_stamp::TimeStampError,
+};
 use c2pa_status_tracker::{log_current_item, StatusTracker};
+use chrono::{DateTime, FixedOffset, Utc};
 use coset::{CoseSign1, RegisteredLabelWithPrivate, TaggedCborSerializable};
 
 use crate::{
@@ -36,7 +42,9 @@ use crate::{
 /// [`SignatureVerifier`]: crate::SignatureVerifier
 /// [§8.1, Identity claims aggregation]: https://creator-assertions.github.io/identity/1.1-draft/#_identity_claims_aggregation
 /// [§3.3.1 Securing JSON-LD Verifiable Credentials with COSE]: https://w3c.github.io/vc-jose-cose/#securing-vcs-with-cose
-pub struct IcaSignatureVerifier {}
+pub struct IcaSignatureVerifier {
+    // TO DO (CAI-7980): Add option to configure trusted ICA issuers.
+}
 
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
@@ -50,6 +58,8 @@ impl SignatureVerifier for IcaSignatureVerifier {
         signature: &[u8],
         status_tracker: &mut StatusTracker,
     ) -> Result<Self::Output, ValidationError<Self::Error>> {
+        let mut ok = true;
+
         if signer_payload.sig_type != super::CAWG_ICA_SIG_TYPE {
             log_current_item!(
                 "unsupported signature type",
@@ -69,59 +79,324 @@ impl SignatureVerifier for IcaSignatureVerifier {
         }
 
         // The signature should be a `CoseSign1` object.
-        let sign1 = CoseSign1::from_tagged_slice(signature)?;
+        let sign1 = CoseSign1::from_tagged_slice(signature).inspect_err(|err| {
+            log_current_item!(
+                "Invalid COSE_Sign1 data structure",
+                "IcaSignatureVerifier::check_signature"
+            )
+            .validation_status("cawg.ica.invalid_cose_sign1")
+            .failure_no_throw(status_tracker, ValidationError::from(err));
+        })?;
 
         // Identify the signature.
         let _ssi_alg = if let Some(ref alg) = sign1.protected.header.alg {
             match alg {
-                // TEMPORARY: Require EdDSA algorithm.
+                // TO DO (CAI-7965): Support algorithms other than EdDSA.
                 RegisteredLabelWithPrivate::Assigned(coset::iana::Algorithm::EdDSA) => {
                     Algorithm::EdDsa
                 }
                 _ => {
-                    return Err(ValidationError::SignatureError(
+                    let err = ValidationError::SignatureError(
                         IcaValidationError::UnsupportedSignatureType(format!("{alg:?}")),
-                    ));
+                    );
+
+                    log_current_item!(
+                        "Invalid COSE_Sign1 signature algorithm",
+                        "IcaSignatureVerifier::check_signature"
+                    )
+                    .validation_status("cawg.ica.invalid_alg")
+                    .failure_no_throw(status_tracker, err.clone());
+
+                    return Err(err);
                 }
             }
         } else {
-            return Err(ValidationError::SignatureError(
-                IcaValidationError::SignatureTypeMissing,
-            ));
+            let err = ValidationError::SignatureError(IcaValidationError::SignatureTypeMissing);
+
+            log_current_item!(
+                "Missing COSE_Sign1 signature algorithm",
+                "IcaSignatureVerifier::check_signature"
+            )
+            .validation_status("cawg.ica.invalid_alg")
+            .failure_no_throw(status_tracker, err.clone());
+
+            return Err(err);
         };
 
         if let Some(ref cty) = sign1.protected.header.content_type {
             match cty {
                 coset::ContentType::Text(ref cty) => {
                     if cty != "application/vc" {
-                        return Err(ValidationError::SignatureError(
+                        let err = ValidationError::SignatureError(
                             IcaValidationError::UnsupportedContentType(format!("{cty:?}")),
-                        ));
+                        );
+
+                        log_current_item!(
+                            "Invalid COSE_Sign1 content type header",
+                            "IcaSignatureVerifier::check_signature"
+                        )
+                        .validation_status("cawg.ica.invalid_content_type")
+                        .failure_no_throw(status_tracker, err.clone());
+
+                        ok = false;
                     }
                 }
+
                 _ => {
-                    return Err(ValidationError::SignatureError(
+                    let err = ValidationError::SignatureError(
                         IcaValidationError::UnsupportedContentType(format!("{cty:?}")),
-                    ));
+                    );
+
+                    log_current_item!(
+                        "Invalid COSE_Sign1 content type header",
+                        "IcaSignatureVerifier::check_signature"
+                    )
+                    .validation_status("cawg.ica.invalid_content_type")
+                    .failure_no_throw(status_tracker, err.clone());
+
+                    ok = false;
                 }
             }
         } else {
-            return Err(ValidationError::SignatureError(
-                IcaValidationError::ContentTypeMissing,
-            ));
+            let err = ValidationError::SignatureError(IcaValidationError::ContentTypeMissing);
+
+            log_current_item!(
+                "Invalid COSE_Sign1 content type header",
+                "IcaSignatureVerifier::check_signature"
+            )
+            .validation_status("cawg.ica.invalid_content_type")
+            .failure_no_throw(status_tracker, err.clone());
+
+            ok = false;
         }
 
         // Interpret the unprotected payload, which should be the raw VC.
         let Some(ref payload_bytes) = sign1.payload else {
-            return Err(ValidationError::SignatureError(
-                IcaValidationError::CredentialPayloadMissing,
-            ));
+            let err = ValidationError::SignatureError(IcaValidationError::CredentialPayloadMissing);
+
+            log_current_item!(
+                "Missing COSE_Sign1 payload",
+                "IcaSignatureVerifier::check_signature"
+            )
+            .validation_status("cawg.ica.invalid_verifiable_credential")
+            .failure_no_throw(status_tracker, err.clone());
+
+            return Err(err);
         };
 
-        let ica_credential: IcaCredential = serde_json::from_slice(payload_bytes)?;
+        // TO DO (CAI-7970): Add support for VC version 1.
+        let mut ica_credential: IcaCredential =
+            serde_json::from_slice(payload_bytes).inspect_err(|err| {
+                log_current_item!(
+                    "Invalid JSON-LD for verifiable credential",
+                    "IcaSignatureVerifier::check_signature"
+                )
+                .validation_status("cawg.ica.invalid_verifiable_credential")
+                .failure_no_throw(status_tracker, ValidationError::from(err));
+            })?;
 
+        if let Err(err) = self
+            .check_issuer_signature(&sign1, &ica_credential, status_tracker)
+            .await
+        {
+            // NOTE: We handle logging here because all error conditions that are detectable
+            // in `check_issuer_signature` are fatal to signature verification, BUT they are
+            // not fatal to the overall interpretation of the identity assertion.
+            //
+            // In the event that the status tracker is configured to proceed when possible,
+            // we log the error condition related to the signature and proceed.
+            ok = false;
+
+            match err {
+                ValidationError::SignatureError(IcaValidationError::UnsupportedIssuerDid(_)) => {
+                    log_current_item!(
+                        "Invalid issuer DID",
+                        "IcaSignatureVerifier::check_signature"
+                    )
+                    .validation_status("cawg.ica.invalid_issuer")
+                    .failure(status_tracker, err)?;
+                }
+
+                ValidationError::SignatureError(IcaValidationError::DidResolutionError(_)) => {
+                    log_current_item!(
+                        "Unable to resolve issuer DID",
+                        "IcaSignatureVerifier::check_signature"
+                    )
+                    .validation_status("cawg.ica.did_unavailable")
+                    .failure(status_tracker, err)?;
+                }
+
+                ValidationError::SignatureError(IcaValidationError::InvalidDidDocument(_)) => {
+                    log_current_item!(
+                        "Invalid issuer DID document",
+                        "IcaSignatureVerifier::check_signature"
+                    )
+                    .validation_status("cawg.ica.invalid_did_document")
+                    .failure(status_tracker, err)?;
+                }
+
+                ValidationError::SignatureMismatch => {
+                    log_current_item!(
+                        "Signature does not match credential",
+                        "IcaSignatureVerifier::check_signature"
+                    )
+                    .validation_status("cawg.ica.signature_mismatch")
+                    .failure(status_tracker, err)?;
+                }
+
+                _ => todo!("Add logging for error condition {err:#?}"),
+            }
+        }
+
+        let maybe_tst_info = match validate_cose_tst_info_async(&sign1, payload_bytes).await {
+            Ok(tst_info) => {
+                ica_credential.credential_subjects.first_mut().time_stamp = Some(tst_info.clone());
+
+                log_current_item!(
+                    "Time stamp validated",
+                    "IcaSignatureVerifier::check_signature"
+                )
+                .validation_status("cawg.ica.time_stamp.validated")
+                .success(status_tracker);
+
+                Some(tst_info)
+            }
+
+            Err(CoseError::NoTimeStampToken) => {
+                None
+                // Ignore. This is OK in CAWG.
+            }
+
+            Err(CoseError::TimeStampError(TimeStampError::InvalidData)) => {
+                ok = false;
+
+                log_current_item!(
+                    "Time stamp does not match credential",
+                    "IcaSignatureVerifier::check_signature"
+                )
+                .validation_status("cawg.ica.time_stamp.invalid")
+                .failure(
+                    status_tracker,
+                    ValidationError::SignatureError(IcaValidationError::InvalidTimeStamp),
+                )?;
+
+                None
+            }
+
+            Err(e) => {
+                todo!("Add handler for time stamp error {e:?}");
+            }
+        };
+
+        match ica_credential.valid_from {
+            Some(valid_from) => {
+                if let Err(err) = self
+                    .check_valid_from(&valid_from, maybe_tst_info.as_ref())
+                    .await
+                {
+                    // NOTE: We handle logging here because we want to signal at most one of the
+                    // possible error conditions that are detectable in `check_valid_from`, BUT they
+                    // are not fatal to the overall interpretation of the identity assertion.
+                    //
+                    // In the event that the status tracker is configured to proceed when possible,
+                    // we log the error condition related to the signature and proceed.
+                    ok = false;
+
+                    log_current_item!(err.clone(), "IcaSignatureVerifier::check_signature")
+                        .validation_status("cawg.ica.valid_from.invalid")
+                        .failure(
+                            status_tracker,
+                            ValidationError::SignatureError(
+                                IcaValidationError::InvalidValidFromDate(err),
+                            ),
+                        )?;
+                }
+            }
+
+            None => {
+                ok = false;
+
+                log_current_item!(
+                    "validFrom/issuanceDate missing from credential",
+                    "IcaSignatureVerifier::check_signature"
+                )
+                .validation_status("cawg.ica.valid_from.missing")
+                .failure(
+                    status_tracker,
+                    ValidationError::SignatureError(IcaValidationError::MissingValidFromDate),
+                )?;
+            }
+        }
+
+        // NOTE: It's permissible for validUntil to be omitted.
+        if let Some(valid_until) = ica_credential.valid_until {
+            if let Err(err) = self
+                .check_valid_until(&valid_until, maybe_tst_info.as_ref())
+                .await
+            {
+                // NOTE: We handle logging here because we want to signal at most one of the
+                // possible error conditions that are detectable in `check_valid_until`, BUT
+                // they are not fatal to the overall interpretation of the identity assertion.
+                //
+                // In the event that the status tracker is configured to proceed when possible,
+                // we log the error condition related to the signature and proceed.
+                ok = false;
+
+                log_current_item!(err.clone(), "IcaSignatureVerifier::check_signature")
+                    .validation_status("cawg.ica.valid_until.invalid")
+                    .failure(
+                        status_tracker,
+                        ValidationError::SignatureError(IcaValidationError::InvalidValidFromDate(
+                            err,
+                        )),
+                    )?;
+            }
+        }
+
+        // TO DO (CAI-7993): CAWG SDK should check ICA issuer revocation status.
+
+        let subject = ica_credential.credential_subjects.first();
+        if signer_payload != &subject.c2pa_asset {
+            ok = false;
+
+            log_current_item!(
+                "c2paAsset does not match signer_payload",
+                "IcaSignatureVerifier::check_signature"
+            )
+            .validation_status("cawg.ica.signer_payload.mismatch")
+            .failure(
+                status_tracker,
+                ValidationError::SignatureError(IcaValidationError::SignerPayloadMismatch),
+            )?;
+        }
+
+        // TO DO (CAI-7994): CAWG SDK should inspect verifiedIdentities array.
+
+        if ok {
+            log_current_item!(
+                "ICA credential is valid",
+                "IcaSignatureVerifier::check_signature"
+            )
+            .validation_status("cawg.ica.credential_valid")
+            .success(status_tracker);
+        }
+
+        Ok(ica_credential)
+    }
+}
+
+impl IcaSignatureVerifier {
+    async fn check_issuer_signature(
+        &self,
+        sign1: &CoseSign1,
+        ica_credential: &IcaCredential,
+        _status_tracker: &mut StatusTracker,
+    ) -> Result<(), ValidationError<IcaValidationError>> {
         // Discover public key for issuer DID and validate signature.
         // TEMPORARY version supports did:jwk and did:web only.
+
+        // TO DO (CAI-7976): Accept issuer DID in either `issuer` or `issuer.id` field.
+        // Currently only `issuer` field is supported.
         let issuer_id = Did::new(&ica_credential.issuer)?;
         let (primary_did, _fragment) = issuer_id.split_fragment();
 
@@ -131,13 +406,13 @@ impl SignatureVerifier for IcaSignatureVerifier {
 
                 let jwk =
                     multibase::Base::decode(&multibase::Base::Base64Url, jwk).map_err(|e| {
-                        ValidationError::SignatureError(IcaValidationError::UnsupportedIssuerDid(
+                        ValidationError::SignatureError(IcaValidationError::InvalidDidDocument(
                             e.to_string(),
                         ))
                     })?;
 
                 let jwk: Jwk = serde_json::from_slice(&jwk).map_err(|e| {
-                    ValidationError::SignatureError(IcaValidationError::UnsupportedIssuerDid(
+                    ValidationError::SignatureError(IcaValidationError::InvalidDidDocument(
                         e.to_string(),
                     ))
                 })?;
@@ -150,24 +425,24 @@ impl SignatureVerifier for IcaSignatureVerifier {
 
                 let Some(vm1) = did_doc.verification_relationships.assertion_method.first() else {
                     return Err(ValidationError::SignatureError(
-                        IcaValidationError::UnsupportedIssuerDid(
-                            "DID document doesn't contain an assertion_method entry".to_string(),
+                        IcaValidationError::InvalidDidDocument(
+                            "DID document doesn't contain an assertionMethod entry".to_string(),
                         ),
                     ));
                 };
 
                 let super::w3c_vc::did_doc::ValueOrReference::Value(vm1) = vm1 else {
                     return Err(ValidationError::SignatureError(
-                        IcaValidationError::UnsupportedIssuerDid(
-                            "DID document's assertion_method is not a value".to_string(),
+                        IcaValidationError::InvalidDidDocument(
+                            "DID document's assertionMethod is not a value".to_string(),
                         ),
                     ));
                 };
 
                 let Some(jwk_prop) = vm1.properties.get("publicKeyJwk") else {
                     return Err(ValidationError::SignatureError(
-                        IcaValidationError::UnsupportedIssuerDid(
-                            "DID document's assertion_method doesn't contain a publicKeyJwk entry"
+                        IcaValidationError::InvalidDidDocument(
+                            "DID document's assertionMethod doesn't contain a publicKeyJwk entry"
                                 .to_string(),
                         ),
                     ));
@@ -175,18 +450,14 @@ impl SignatureVerifier for IcaSignatureVerifier {
 
                 // OMG SO HACKY!
                 let Ok(jwk_json) = serde_json::to_string_pretty(jwk_prop) else {
-                    return Err(ValidationError::SignatureError(
-                        IcaValidationError::UnsupportedIssuerDid(
-                            "couldn't re-serialize JWK".to_string(),
-                        ),
+                    return Err(ValidationError::InternalError(
+                        "couldn't re-serialize JWK".to_string(),
                     ));
                 };
 
                 let Ok(jwk) = serde_json::from_str(&jwk_json) else {
-                    return Err(ValidationError::SignatureError(
-                        IcaValidationError::UnsupportedIssuerDid(
-                            "couldn't re-serialize JWK".to_string(),
-                        ),
+                    return Err(ValidationError::InternalError(
+                        "couldn't re-serialize JWK".to_string(),
                     ));
                 };
 
@@ -204,7 +475,7 @@ impl SignatureVerifier for IcaSignatureVerifier {
         let Params::Okp(ref okp) = jwk.params;
         if okp.curve != "Ed25519" {
             return Err(ValidationError::SignatureError(
-                IcaValidationError::UnsupportedIssuerDid(format!(
+                IcaValidationError::InvalidDidDocument(format!(
                     "unsupported OKP curve {}",
                     okp.curve
                 )),
@@ -220,24 +491,68 @@ impl SignatureVerifier for IcaSignatureVerifier {
                 let signature: ed25519_dalek::Signature = sig.try_into().map_err(JwkError::from)?;
                 public_key.verify(data, &signature).map_err(JwkError::from)
             })
-            .map_err(|_e| ValidationError::InvalidSignature)?;
+            .map_err(|_e| ValidationError::SignatureMismatch)?;
 
-        // Enforce [§8.1.1.4. Validity].
-        //
-        // [§8.1.1.4. Validity]: https://creator-assertions.github.io/identity/1.1-draft/#vc-property-validFrom
-        let Some(_valid_from) = ica_credential.valid_from else {
-            return Err(ValidationError::SignatureError(
-                IcaValidationError::MissingValidFromDate,
-            ));
-        };
+        Ok(())
+    }
 
-        // TO DO: Enforce signer_payload matches what was stated outside the signature.
+    async fn check_valid_from(
+        &self,
+        valid_from: &DateTime<FixedOffset>,
+        maybe_tst_info: Option<&TstInfo>,
+    ) -> Result<(), String> {
+        // TO DO: Bring in substitute for now() on Wasm.
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let now = Utc::now().fixed_offset();
 
-        // TO DO: Enforce validity window as compared to sig time (or now if no TSA
-        // time).
+            if now < *valid_from {
+                return Err("validFrom is after current date/time".to_owned());
+            }
+        }
 
-        // TO DO: Verify that signer_payload is same as c2paAsset.
+        if let Some(tst_info) = maybe_tst_info {
+            let cawg_signer_time: DateTime<Utc> = tst_info.gen_time.clone().into();
+            let cawg_signer_time = cawg_signer_time.fixed_offset();
 
-        Ok(ica_credential)
+            if cawg_signer_time < *valid_from {
+                return Err("validFrom is after CAWG signature time stamp".to_owned());
+            }
+        }
+
+        // TO DO (CAI-7988): Enforce validFrom can not be later than
+        // C2PA Manifest time stamp.
+
+        Ok(())
+    }
+
+    async fn check_valid_until(
+        &self,
+        valid_until: &DateTime<FixedOffset>,
+        maybe_tst_info: Option<&TstInfo>,
+    ) -> Result<(), String> {
+        // TO DO: Bring in substitute for now() on Wasm.
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let now = Utc::now().fixed_offset();
+
+            if now > *valid_until {
+                return Err("validUntil is before current date/time".to_owned());
+            }
+        }
+
+        if let Some(tst_info) = maybe_tst_info {
+            let cawg_signer_time: DateTime<Utc> = tst_info.gen_time.clone().into();
+            let cawg_signer_time = cawg_signer_time.fixed_offset();
+
+            if cawg_signer_time > *valid_until {
+                return Err("validUntil is before CAWG signature time stamp".to_owned());
+            }
+        }
+
+        // TO DO (CAI-7988): Enforce validUntil can not be earlier than
+        // C2PA Manifest time stamp.
+
+        Ok(())
     }
 }
