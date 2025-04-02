@@ -913,6 +913,7 @@ dependencies = [
  "wasm-bindgen",
  "wasm-bindgen-test",
  "wstd",
+ "x509-parser",
  "zeroize",
 ]
 
