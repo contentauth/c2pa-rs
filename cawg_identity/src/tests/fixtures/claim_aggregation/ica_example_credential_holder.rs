@@ -112,6 +112,17 @@ impl AsyncCredentialHolder for IcaExampleCredentialHolder {
 
         signer_payload.referenced_assertions = encoded_assertions;
 
+        // WRONG: Tamper with the signer_payload so it doesn't match what's in the outer
+        // wrapper of the identity assertion.
+
+        let ref_0 = signer_payload.referenced_assertions[0].clone();
+        let mut wrong_hash = ref_0.hash();
+        wrong_hash[0] = 42;
+        wrong_hash[4] = 98;
+
+        signer_payload.referenced_assertions[0] =
+            HashedUri::new(ref_0.url(), ref_0.alg(), &wrong_hash);
+
         // Generate VC to embed.
         let ica_subject = IdentityClaimsAggregationVc {
             c2pa_asset: signer_payload.clone(),
@@ -126,15 +137,6 @@ impl AsyncCredentialHolder for IcaExampleCredentialHolder {
         {
             ica_vc.valid_from = Some(Utc::now().fixed_offset());
         }
-
-        ica_vc.valid_until = Some(
-            NaiveDate::from_ymd_opt(1900, 1, 1)
-                .unwrap()
-                .and_hms_opt(12, 0, 0)
-                .unwrap()
-                .and_utc()
-                .fixed_offset(),
-        );
 
         let ica_json = serde_json::to_string(&ica_vc).unwrap();
 
@@ -228,7 +230,7 @@ async fn ica_signing() {
     std::fs::create_dir_all("src/tests/fixtures/claim_aggregation/ica_validation").unwrap();
 
     std::fs::write(
-        "src/tests/fixtures/claim_aggregation/ica_validation/valid_until_in_past.jpg",
+        "src/tests/fixtures/claim_aggregation/ica_validation/signer_payload_mismatch.jpg",
         dest.get_ref(),
     )
     .unwrap();
