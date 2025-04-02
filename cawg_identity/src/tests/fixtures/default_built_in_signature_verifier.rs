@@ -1,4 +1,4 @@
-// Copyright 2024 Adobe. All rights reserved.
+// Copyright 2025 Adobe. All rights reserved.
 // This file is licensed to you under the Apache License,
 // Version 2.0 (http://www.apache.org/licenses/LICENSE-2.0)
 // or the MIT license (http://opensource.org/licenses/MIT),
@@ -11,18 +11,15 @@
 // specific language governing permissions and limitations under
 // each license.
 
-#![allow(unused)]
-
-mod default_built_in_signature_verifier;
-pub(crate) use default_built_in_signature_verifier::default_built_in_signature_verifier;
-
-mod manifest_json;
-pub(crate) use manifest_json::{manifest_json, parent_json};
-
-mod naive_credential_holder;
-pub(crate) use naive_credential_holder::{
-    NaiveAsyncCredentialHolder, NaiveCredentialHolder, NaiveSignatureVerifier,
+use crate::{
+    claim_aggregation::IcaSignatureVerifier, x509::X509SignatureVerifier, BuiltInSignatureVerifier,
 };
 
-mod test_credentials;
-pub(crate) use test_credentials::cert_chain_and_private_key_for_alg;
+/// Create a `BuiltInSignatureVerifier` that is configured to read the
+/// credentials used in test.
+pub(crate) fn default_built_in_signature_verifier() -> BuiltInSignatureVerifier {
+    BuiltInSignatureVerifier {
+        ica_verifier: IcaSignatureVerifier {},
+        x509_verifier: X509SignatureVerifier {},
+    }
+}
