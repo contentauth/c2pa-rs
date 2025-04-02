@@ -1491,3 +1491,85 @@ async fn valid_until_in_past() {
 
     assert!(log_items.next().is_none());
 }
+
+#[test]
+#[ignore]
+fn credential_is_revoked() {
+    // 8.1.7.2.7. Verify the credential’s revocation status
+    //
+    // If the credential contains a `credentialStatus` entry, the validator
+    // SHALL inspect the contents of that entry. If the entry contains an entry
+    // with its `statusPurpose` set to `revocation`, the validator SHALL follow
+    // the procedures described as described by the corresponding `type` entry.
+
+    // TO DO (CAI-7993): CAWG SDK should check ICA issuer revocation status.
+}
+
+#[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
+async fn signer_payload_mismatch() {
+    // 8.1.7.3. Verify binding to C2PA asset
+    //
+    // The validator SHALL take the content of `signer_payload in the identity
+    // assertion and perform the transformations from CBOR to JSON as described in
+    // Section 8.1.2.6, “Binding to C2PA asset”. The validator SHALL then compare
+    // the transformed `signer_payload` data structure to the `c2paAsset` field
+    // contained within the verifiable credential’s `credentialSubject` field. If
+    // the data structures do not match, the validator MUST issue the failure code
+    // `cawg.ica.signer_payload.mismatch` but MAY continue validation.
+
+    let format = "image/jpeg";
+    let test_image =
+        include_bytes!("../fixtures/claim_aggregation/ica_validation/signer_payload_mismatch.jpg");
+
+    let mut test_image = Cursor::new(test_image);
+
+    let reader = Reader::from_stream(format, &mut test_image).unwrap();
+    assert_eq!(reader.validation_status(), None);
+
+    let manifest = reader.active_manifest().unwrap();
+    let mut st = StatusTracker::default();
+    let mut ia_iter = IdentityAssertion::from_manifest(manifest, &mut st);
+
+    // Should find exactly one identity assertion.
+    let ia = ia_iter.next().unwrap().unwrap();
+    assert!(ia_iter.next().is_none());
+    drop(ia_iter);
+
+    // And that identity assertion should be valid for this manifest.
+    let isv = IcaSignatureVerifier {};
+
+    // HACK: See if we can transition to PostValidate without losing access
+    // to the ica_vc member below.
+    st.push_current_uri("(IA label goes here)");
+    let ica_vc = ia.validate(manifest, &mut st, &isv).await.unwrap();
+    st.pop_current_uri();
+
+    // Start matching against expected values.
+    let expected_identities = ica_credential_example::ica_example_identities();
+
+    let subject = ica_vc.credential_subjects.first();
+    assert_eq!(subject.verified_identities, expected_identities);
+    assert_ne!(subject.c2pa_asset, ia.signer_payload);
+    assert!(subject.time_stamp.is_none());
+
+    let mut log_items = st.logged_items().iter();
+
+    let li = log_items.next().unwrap();
+    dbg!(li);
+
+    assert_eq!(li.kind, LogKind::Failure);
+    assert_eq!(li.label, "(IA label goes here)");
+    assert_eq!(li.description, "c2paAsset does not match signer_payload");
+    assert_eq!(li.crate_name, "cawg-identity");
+    assert_eq!(
+        li.err_val.as_ref().unwrap(),
+        "SignatureError(SignerPayloadMismatch)"
+    );
+
+    assert_eq!(
+        li.validation_status.as_ref().unwrap(),
+        "cawg.ica.signer_payload.mismatch"
+    );
+
+    assert!(log_items.next().is_none());
+}
