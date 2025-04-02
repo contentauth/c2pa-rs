@@ -465,7 +465,7 @@ impl IcaSignatureVerifier {
     async fn check_valid_from(
         &self,
         valid_from: &DateTime<FixedOffset>,
-        _maybe_tst_info: Option<&TstInfo>,
+        maybe_tst_info: Option<&TstInfo>,
     ) -> Result<(), String> {
         // TO DO: Bring in substitute for now() on Wasm.
         #[cfg(not(target_arch = "wasm32"))]
@@ -477,13 +477,20 @@ impl IcaSignatureVerifier {
             }
         }
 
-        // if let Some(tst_info) = maybe_tst_info {
-        //     let now = Utc::now().fixed_offset();
+        if let Some(tst_info) = maybe_tst_info {
+            let cawg_signer_time: DateTime<Utc> = tst_info.gen_time.clone().into();
+            let cawg_signer_time = cawg_signer_time.fixed_offset();
 
-        //     if now < valid_from {
-        //         return Err("validFrom is after current date/time".to_owned());
-        //     }
-        // }
+            dbg!(&cawg_signer_time);
+            dbg!(&valid_from);
+
+            if cawg_signer_time < *valid_from {
+                eprintln!("Yes, less than");
+                return Err("validFrom is after CAWG signature time stamp".to_owned());
+            } else {
+                eprintln!("Vert de ferk?");
+            }
+        }
 
         // TO DO (CAI-7988): Enforce validFrom can not be later than
         // C2PA Manifest time stamp.
