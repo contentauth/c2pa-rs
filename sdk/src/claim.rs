@@ -1957,7 +1957,6 @@ impl Claim {
                     new_li.label = Cow::from(claim.uri());
 
                     *li = new_li;
-                    return Err(parse_err);
                 } else {
                     // handle case where lower level failed to log
                     log_item!(
@@ -1966,7 +1965,7 @@ impl Claim {
                         "verify_internal"
                     )
                     .validation_status(validation_status::CLAIM_SIGNATURE_MISMATCH)
-                    .failure(validation_log, parse_err)?;
+                    .failure_no_throw(validation_log, parse_err);
                 }
             }
         };
