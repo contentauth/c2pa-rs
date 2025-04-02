@@ -109,7 +109,7 @@ impl AsyncCredentialHolder for IcaExampleCredentialHolder {
         // TO DO: Bring in substitute for now() on Wasm.
         #[cfg(not(target_arch = "wasm32"))]
         {
-            // ica_vc.valid_from = Some(Utc::now().fixed_offset());
+            ica_vc.valid_from = Some(Utc::now().fixed_offset());
         }
 
         let ica_json = serde_json::to_string(&ica_vc).unwrap();
