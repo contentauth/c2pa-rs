@@ -1457,3 +1457,16 @@ async fn valid_until_in_past() {
 
     assert!(log_items.next().is_none());
 }
+
+#[test]
+#[ignore]
+fn credential_is_revoked() {
+    // 8.1.7.2.7. Verify the credential’s revocation status
+    //
+    // If the credential contains a `credentialStatus` entry, the validator
+    // SHALL inspect the contents of that entry. If the entry contains an entry
+    // with its `statusPurpose` set to `revocation`, the validator SHALL follow
+    // the procedures described as described by the corresponding `type` entry.
+
+    // TO DO (CAI-7993): CAWG SDK should check ICA issuer revocation status.
+}

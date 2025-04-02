@@ -353,6 +353,8 @@ impl SignatureVerifier for IcaSignatureVerifier {
             }
         }
 
+        // TO DO (CAI-7993): CAWG SDK should check ICA issuer revocation status.
+
         // TO DO: Enforce signer_payload matches what was stated outside the signature.
 
         if ok {
