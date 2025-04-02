@@ -288,18 +288,15 @@ impl SignatureVerifier for IcaSignatureVerifier {
             }
         };
 
-        // Enforce [§8.1.1.4. Validity].
-        //
-        // [§8.1.1.4. Validity]: https://creator-assertions.github.io/identity/1.1-draft/#vc-property-validFrom
         match ica_credential.valid_from {
             Some(valid_from) => {
                 if let Err(err) = self
                     .check_valid_from(&valid_from, maybe_tst_info.as_ref())
                     .await
                 {
-                    // NOTE: We handle logging here because all error conditions that are detectable
-                    // in `check_issuer_signature` are fatal to signature verification, BUT they are
-                    // not fatal to the overall interpretation of the identity assertion.
+                    // NOTE: We handle logging here because we want to signal at most one of the
+                    // possible error conditions that are detectable in `check_valid_from`, BUT they
+                    // are not fatal to the overall interpretation of the identity assertion.
                     //
                     // In the event that the status tracker is configured to proceed when possible,
                     // we log the error condition related to the signature and proceed.
@@ -331,12 +328,32 @@ impl SignatureVerifier for IcaSignatureVerifier {
             }
         }
 
+        // NOTE: It's permissible for validUntil to be omitted.
+        if let Some(valid_until) = ica_credential.valid_until {
+            if let Err(err) = self
+                .check_valid_until(&valid_until, maybe_tst_info.as_ref())
+                .await
+            {
+                // NOTE: We handle logging here because we want to signal at most one of the
+                // possible error conditions that are detectable in `check_valid_until`, BUT
+                // they are not fatal to the overall interpretation of the identity assertion.
+                //
+                // In the event that the status tracker is configured to proceed when possible,
+                // we log the error condition related to the signature and proceed.
+                ok = false;
+
+                log_current_item!(err.clone(), "IcaSignatureVerifier::check_signature")
+                    .validation_status("cawg.ica.valid_until.invalid")
+                    .failure(
+                        status_tracker,
+                        ValidationError::SignatureError(IcaValidationError::InvalidValidFromDate(
+                            err,
+                        )),
+                    )?;
+            }
+        }
+
         // TO DO: Enforce signer_payload matches what was stated outside the signature.
-
-        // TO DO: Enforce validity window as compared to sig time (or now if no TSA
-        // time).
-
-        // TO DO: Verify that signer_payload is same as c2paAsset.
 
         if ok {
             log_current_item!(
@@ -481,18 +498,42 @@ impl IcaSignatureVerifier {
             let cawg_signer_time: DateTime<Utc> = tst_info.gen_time.clone().into();
             let cawg_signer_time = cawg_signer_time.fixed_offset();
 
-            dbg!(&cawg_signer_time);
-            dbg!(&valid_from);
-
             if cawg_signer_time < *valid_from {
-                eprintln!("Yes, less than");
                 return Err("validFrom is after CAWG signature time stamp".to_owned());
-            } else {
-                eprintln!("Vert de ferk?");
             }
         }
 
         // TO DO (CAI-7988): Enforce validFrom can not be later than
+        // C2PA Manifest time stamp.
+
+        Ok(())
+    }
+
+    async fn check_valid_until(
+        &self,
+        valid_until: &DateTime<FixedOffset>,
+        maybe_tst_info: Option<&TstInfo>,
+    ) -> Result<(), String> {
+        // TO DO: Bring in substitute for now() on Wasm.
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let now = Utc::now().fixed_offset();
+
+            if now > *valid_until {
+                return Err("validUntil is before current date/time".to_owned());
+            }
+        }
+
+        if let Some(tst_info) = maybe_tst_info {
+            let cawg_signer_time: DateTime<Utc> = tst_info.gen_time.clone().into();
+            let cawg_signer_time = cawg_signer_time.fixed_offset();
+
+            if cawg_signer_time > *valid_until {
+                return Err("validUntil is before CAWG signature time stamp".to_owned());
+            }
+        }
+
+        // TO DO (CAI-7988): Enforce validUntil can not be earlier than
         // C2PA Manifest time stamp.
 
         Ok(())
