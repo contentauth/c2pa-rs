@@ -1947,7 +1947,7 @@ impl Claim {
                     .success(validation_log);
                 }
             }
-            Err(_parse_err) => {
+            Err(parse_err) => {
                 // the lower level errors are logged validation_log
                 // continue on to catch other failures.
 
@@ -1957,6 +1957,15 @@ impl Claim {
                     new_li.label = Cow::from(claim.uri());
 
                     *li = new_li;
+                } else {
+                    // handle case where lower level failed to log
+                    log_item!(
+                        claim.signature_uri(),
+                        "claim signature is not valid",
+                        "verify_internal"
+                    )
+                    .validation_status(validation_status::CLAIM_SIGNATURE_MISMATCH)
+                    .failure_no_throw(validation_log, parse_err);
                 }
             }
         };
