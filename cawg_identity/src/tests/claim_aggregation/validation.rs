@@ -1539,3 +1539,17 @@ async fn signer_payload_mismatch() {
 
     assert!(log_items.next().is_none());
 }
+
+#[test]
+#[ignore]
+fn credential_is_revoked() {
+    // 8.1.7.4. Verify verified identities
+    //
+    // The validator SHALL inspect the contents of the `verifiedIdentities` field contained within the verifiable credential’s `credentialSubject` field. If this field is missing, if it is not a JSON array, or if it is an empty array, the validator MUST issue the failure code `cawg.ica.verified_identities.missing` but MAY continue validation.
+    //
+    // The validator SHALL inspect each entry in the `verifiedIdentities` array. For each entry, it SHALL verify each of the conditions stated in Section 8.1.2.5, “Verified identities” and issue the failure code `cawg.ica.verified_identities.invalid` if any condition stated there is unmet.
+    //
+    // The validator MAY annotate entries in the `verifiedIdentities` array according to its own policies regarding trust or validity of each identity.
+    
+    // TO DO (CAI-7994): CAWG SDK should inspect verifiedIdentities array.
+}

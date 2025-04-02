@@ -370,6 +370,8 @@ impl SignatureVerifier for IcaSignatureVerifier {
             )?;
         }
 
+        // TO DO (CAI-7994): CAWG SDK should inspect verifiedIdentities array.
+
         if ok {
             log_current_item!(
                 "ICA credential is valid",
