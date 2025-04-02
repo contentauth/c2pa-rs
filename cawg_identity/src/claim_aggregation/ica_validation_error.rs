@@ -80,6 +80,10 @@ pub enum IcaValidationError {
     /// `validFrom` date is unacceptable.
     #[error("credential's validFrom date is unacceptable ({0})")]
     InvalidValidFromDate(String),
+
+    /// `c2paAsset` does not match `signer_payload`
+    #[error("c2paAsset does not match signer_payload")]
+    SignerPayloadMismatch,
 }
 
 impl From<coset::CoseError> for ValidationError<IcaValidationError> {

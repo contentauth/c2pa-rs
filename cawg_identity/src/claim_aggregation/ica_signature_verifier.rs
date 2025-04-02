@@ -355,7 +355,20 @@ impl SignatureVerifier for IcaSignatureVerifier {
 
         // TO DO (CAI-7993): CAWG SDK should check ICA issuer revocation status.
 
-        // TO DO: Enforce signer_payload matches what was stated outside the signature.
+        let subject = ica_credential.credential_subjects.first();
+        if signer_payload != &subject.c2pa_asset {
+            ok = false;
+
+            log_current_item!(
+                "c2paAsset does not match signer_payload",
+                "IcaSignatureVerifier::check_signature"
+            )
+            .validation_status("cawg.ica.signer_payload.mismatch")
+            .failure(
+                status_tracker,
+                ValidationError::SignatureError(IcaValidationError::SignerPayloadMismatch),
+            )?;
+        }
 
         if ok {
             log_current_item!(
