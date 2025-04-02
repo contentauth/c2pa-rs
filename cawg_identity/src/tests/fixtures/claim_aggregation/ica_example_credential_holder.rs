@@ -113,7 +113,7 @@ impl AsyncCredentialHolder for IcaExampleCredentialHolder {
         }
 
         ica_vc.valid_until = Some(
-            NaiveDate::from_ymd_opt(2200, 1, 1)
+            NaiveDate::from_ymd_opt(1900, 1, 1)
                 .unwrap()
                 .and_hms_opt(12, 0, 0)
                 .unwrap()
@@ -211,7 +211,7 @@ async fn ica_signing() {
 
     // Write the sample file.
     std::fs::write(
-        "src/tests/fixtures/claim_aggregation/ica_validation/valid_until_in_future.jpg",
+        "src/tests/fixtures/claim_aggregation/ica_validation/valid_until_in_past.jpg",
         dest.get_ref(),
     )
     .unwrap();
