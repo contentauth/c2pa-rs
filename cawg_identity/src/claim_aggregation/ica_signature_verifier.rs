@@ -13,10 +13,12 @@
 
 use async_trait::async_trait;
 use c2pa_crypto::{
+    asn1::rfc3161::TstInfo,
     cose::{validate_cose_tst_info_async, CoseError},
     time_stamp::TimeStampError,
 };
 use c2pa_status_tracker::{log_current_item, StatusTracker};
+use chrono::{DateTime, FixedOffset, Utc};
 use coset::{CoseSign1, RegisteredLabelWithPrivate, TaggedCborSerializable};
 
 use crate::{
@@ -246,9 +248,9 @@ impl SignatureVerifier for IcaSignatureVerifier {
             }
         }
 
-        match validate_cose_tst_info_async(&sign1, &payload_bytes).await {
+        let maybe_tst_info = match validate_cose_tst_info_async(&sign1, &payload_bytes).await {
             Ok(tst_info) => {
-                ica_credential.credential_subjects.first_mut().time_stamp = Some(tst_info);
+                ica_credential.credential_subjects.first_mut().time_stamp = Some(tst_info.clone());
 
                 log_current_item!(
                     "Time stamp validated",
@@ -256,9 +258,12 @@ impl SignatureVerifier for IcaSignatureVerifier {
                 )
                 .validation_status("cawg.ica.time_stamp.validated")
                 .success(status_tracker);
+
+                Some(tst_info)
             }
 
             Err(CoseError::NoTimeStampToken) => {
+                None
                 // Ignore. This is OK in CAWG.
             }
 
@@ -274,23 +279,41 @@ impl SignatureVerifier for IcaSignatureVerifier {
                     status_tracker,
                     ValidationError::SignatureError(IcaValidationError::InvalidTimeStamp),
                 )?;
+
+                None
             }
 
             Err(e) => {
                 todo!("Add handler for time stamp error {e:?}");
             }
-        }
+        };
 
         // Enforce [§8.1.1.4. Validity].
         //
         // [§8.1.1.4. Validity]: https://creator-assertions.github.io/identity/1.1-draft/#vc-property-validFrom
         match ica_credential.valid_from {
-            Some(_valid_from) => {
-                // TO DO: Check against current time, C2PA Manifest time stamp,
-                // and COSE signature time stamp.
+            Some(valid_from) => {
+                if let Err(err) = self
+                    .check_valid_from(&valid_from, maybe_tst_info.as_ref())
+                    .await
+                {
+                    // NOTE: We handle logging here because all error conditions that are detectable
+                    // in `check_issuer_signature` are fatal to signature verification, BUT they are
+                    // not fatal to the overall interpretation of the identity assertion.
+                    //
+                    // In the event that the status tracker is configured to proceed when possible,
+                    // we log the error condition related to the signature and proceed.
+                    ok = false;
 
-                // TO DO (CAI-7988): Enforce validFrom can not be later than
-                // C2PA Manifest time stamp.
+                    log_current_item!(err.clone(), "IcaSignatureVerifier::check_signature")
+                        .validation_status("cawg.ica.valid_from.invalid")
+                        .failure(
+                            status_tracker,
+                            ValidationError::SignatureError(
+                                IcaValidationError::InvalidValidFromDate(err),
+                            ),
+                        )?;
+                }
             }
 
             None => {
@@ -435,6 +458,35 @@ impl IcaSignatureVerifier {
                 public_key.verify(data, &signature).map_err(JwkError::from)
             })
             .map_err(|_e| ValidationError::SignatureMismatch)?;
+
+        Ok(())
+    }
+
+    async fn check_valid_from(
+        &self,
+        valid_from: &DateTime<FixedOffset>,
+        _maybe_tst_info: Option<&TstInfo>,
+    ) -> Result<(), String> {
+        // TO DO: Bring in substitute for now() on Wasm.
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let now = Utc::now().fixed_offset();
+
+            if now < *valid_from {
+                return Err("validFrom is after current date/time".to_owned());
+            }
+        }
+
+        // if let Some(tst_info) = maybe_tst_info {
+        //     let now = Utc::now().fixed_offset();
+
+        //     if now < valid_from {
+        //         return Err("validFrom is after current date/time".to_owned());
+        //     }
+        // }
+
+        // TO DO (CAI-7988): Enforce validFrom can not be later than
+        // C2PA Manifest time stamp.
 
         Ok(())
     }
