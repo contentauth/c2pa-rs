@@ -68,7 +68,7 @@ use HashedUri as C2PAAssertion;
 
 const GH_FULL_VERSION_LIST: &str = "Sec-CH-UA-Full-Version-List";
 const GH_UA: &str = "Sec-CH-UA";
-const C2PA_NAMESPACE_V2: &str = "urn:c2pa:";
+const C2PA_NAMESPACE_V2: &str = "urn:c2pa";
 const C2PA_NAMESPACE_V1: &str = "urn:uuid";
 
 static _V2_SPEC_DEPRECATED_ASSERTIONS: [&str; 4] = [
