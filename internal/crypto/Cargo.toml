@@ -1,6 +1,6 @@
 [package]
 name = "c2pa-crypto"
-version = "0.7.2"
+version = "0.8.0"
 description = "Cryptography internals for c2pa-rs crate"
 authors = [
     "Maurice Fisher <mfisher@adobe.com>",

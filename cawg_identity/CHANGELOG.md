@@ -6,6 +6,19 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 The format of this changelog is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.11.0](https://github.com/contentauth/c2pa-rs/compare/cawg-identity-v0.10.2...cawg-identity-v0.11.0)
+_03 April 2025_
+
+### Added
+
+* Add synchronous version of `X509CredentialHolder` ([#1012](https://github.com/contentauth/c2pa-rs/pull/1012))
+* *(cawg_identity)* Add `BuiltInSignatureVerifier` ([#978](https://github.com/contentauth/c2pa-rs/pull/978))
+
+### Fixed
+
+* Add WASI support for CAWG example ([#1009](https://github.com/contentauth/c2pa-rs/pull/1009))
+* CAWG X.509 example doesn't work on Wasm ([#1008](https://github.com/contentauth/c2pa-rs/pull/1008))
+
 ## [0.10.2](https://github.com/contentauth/c2pa-rs/compare/cawg-identity-v0.10.1...cawg-identity-v0.10.2)
 _26 March 2025_
 
