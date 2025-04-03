@@ -20,6 +20,7 @@ use std::{
 
 use c2pa_crypto::base64;
 use config::{Config, FileFormat};
+#[cfg(feature = "json_schema")]
 use schemars::JsonSchema;
 use serde_derive::{Deserialize, Serialize};
 
