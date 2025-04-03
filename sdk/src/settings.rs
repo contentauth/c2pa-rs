@@ -283,12 +283,7 @@ impl SettingsValidate for Settings {
 // Get snapshot of the Settings objects, returns None if there is an error
 #[allow(unused)]
 pub(crate) fn get_settings() -> Option<Settings> {
-    SETTINGS.with_borrow(
-        |config| match config.clone().try_deserialize::<Settings>() {
-            Ok(s) => Some(s),
-            Err(_) => None,
-        },
-    )
+    SETTINGS.with_borrow(|config| config.clone().try_deserialize::<Settings>().ok())
 }
 
 // Load settings from configuration file
