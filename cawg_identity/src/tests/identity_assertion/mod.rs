@@ -11,4 +11,6 @@
 // specific language governing permissions and limitations under
 // each license.
 
+mod built_in_signature_verifier;
 mod signer_payload;
+mod validation_method;

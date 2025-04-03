@@ -23,6 +23,7 @@
 use std::fmt::Debug;
 
 use async_trait::async_trait;
+use c2pa_status_tracker::StatusTracker;
 use serde::Serialize;
 
 use crate::{
@@ -86,6 +87,7 @@ impl SignatureVerifier for NaiveSignatureVerifier {
         &self,
         signer_payload: &SignerPayload,
         signature: &[u8],
+        _status_tracker: &mut StatusTracker,
     ) -> Result<Self::Output, ValidationError<Self::Error>> {
         let mut signer_payload_cbor: Vec<u8> = vec![];
         ciborium::into_writer(signer_payload, &mut signer_payload_cbor)

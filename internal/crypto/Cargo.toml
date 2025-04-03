@@ -1,6 +1,6 @@
 [package]
 name = "c2pa-crypto"
-version = "0.6.2"
+version = "0.7.2"
 description = "Cryptography internals for c2pa-rs crate"
 authors = [
     "Maurice Fisher <mfisher@adobe.com>",
@@ -48,7 +48,7 @@ async-trait = "0.1.77"
 base64 = "0.22.1"
 bcder = "0.7.3"
 bytes = "1.7.2"
-c2pa-status-tracker = { path = "../status-tracker", version = "0.5.0" }
+c2pa-status-tracker = { path = "../status-tracker", version = "0.6.0" }
 ciborium = "0.2.2"
 const-hex = "1.14"
 const-oid = { version = "0.9.6", optional = true }
@@ -78,6 +78,7 @@ sha2 = "0.10.6"
 spki = { version = "0.7.3", optional = true }
 thiserror = "2.0.8"
 web-time = "1.1"
+x509-certificate = "0.24.0"
 x509-parser = "0.16.0"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
@@ -98,9 +99,6 @@ version = "0.4.39"
 default-features = false
 features = ["now"]
 
-[target.'cfg(any(not(target_arch = "wasm32"), target_os = "wasi"))'.dependencies]
-x509-certificate = "0.23.1"
-
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 async-trait = "0.1.77"
 const-oid = "0.9.6"
@@ -112,9 +110,9 @@ rsa = { version = "0.9.7", features = ["pem", "sha2"] }
 spki = "0.7.3"
 
 [target.'cfg(all(target_arch = "wasm32", not(target_os = "wasi")))'.dependencies]
-x509-certificate = "0.21.0"
 getrandom = { version = "0.2.7", features = ["js"] }
 js-sys = "0.3.58"
+ring = { version = "0.17.13", features = ["wasm32_unknown_unknown_js"] }
 wasm-bindgen = "0.2.83"
 wasm-bindgen-futures = "0.4.31"
 web-sys = { version = "0.3.58", features = [

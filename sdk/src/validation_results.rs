@@ -159,9 +159,8 @@ impl ValidationResults {
                     is_active_manifest(s.url()) || !ingredient_statuses.iter().any(|i| i == s)
                 })
             }
-            let active_manifest_label = claim.label().to_string();
             for status in statuses {
-                results.add_status(&active_manifest_label, status);
+                results.add_status(status);
             }
         }
         results
@@ -230,44 +229,33 @@ impl ValidationResults {
     }
 
     /// Adds a [ValidationStatus] to the [ValidationResults].
-    pub fn add_status(
-        &mut self,
-        active_manifest_label: &str,
-        status: ValidationStatus,
-    ) -> &mut Self {
-        use crate::jumbf::labels::manifest_label_from_uri;
-        let active_manifest_label = active_manifest_label.to_string();
-
-        // This closure returns true if the URI references the store's active manifest.
-        let is_active_manifest = |uri: Option<&str>| {
-            uri.is_some_and(|uri| manifest_label_from_uri(uri) == Some(active_manifest_label))
-        };
-
-        // todo - test if we can just use lack of an ingredient URI to determine if it's the active manifest
-        if is_active_manifest(status.url()) {
-            let scm = self
-                .active_manifest
-                .get_or_insert_with(StatusCodes::default);
-            scm.add_status(status);
-        } else {
-            let ingredient_url = status.ingredient_uri().unwrap_or("NOT FOUND!!!"); //todo: is there an error status for this?
-            let ingredient_vec = self.ingredient_deltas.get_or_insert_with(Vec::new);
-            match ingredient_vec
-                .iter_mut()
-                .find(|idv| idv.ingredient_assertion_uri() == ingredient_url)
-            {
-                Some(idv) => {
-                    idv.validation_deltas_mut().add_status(status);
-                }
-                None => {
-                    let mut idv = IngredientDeltaValidationResult::new(
-                        ingredient_url,
-                        StatusCodes::default(),
-                    );
-                    idv.validation_deltas_mut().add_status(status);
-                    ingredient_vec.push(idv);
-                }
-            };
+    pub fn add_status(&mut self, status: ValidationStatus) -> &mut Self {
+        match status.ingredient_uri() {
+            None => {
+                let scm = self
+                    .active_manifest
+                    .get_or_insert_with(StatusCodes::default);
+                scm.add_status(status);
+            }
+            Some(ingredient_url) => {
+                let ingredient_vec = self.ingredient_deltas.get_or_insert_with(Vec::new);
+                match ingredient_vec
+                    .iter_mut()
+                    .find(|idv| idv.ingredient_assertion_uri() == ingredient_url)
+                {
+                    Some(idv) => {
+                        idv.validation_deltas_mut().add_status(status);
+                    }
+                    None => {
+                        let mut idv = IngredientDeltaValidationResult::new(
+                            ingredient_url,
+                            StatusCodes::default(),
+                        );
+                        idv.validation_deltas_mut().add_status(status);
+                        ingredient_vec.push(idv);
+                    }
+                };
+            }
         }
         self
     }

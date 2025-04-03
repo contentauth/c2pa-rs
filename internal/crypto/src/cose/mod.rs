@@ -24,7 +24,9 @@ pub use certificate_trust_policy::{
 };
 
 mod certificate_profile;
-pub use certificate_profile::{check_certificate_profile, CertificateProfileError};
+pub use certificate_profile::{
+    check_certificate_profile, check_end_entity_certificate_profile, CertificateProfileError,
+};
 
 mod error;
 pub use error::CoseError;
@@ -33,7 +35,7 @@ mod ocsp;
 pub use ocsp::{check_ocsp_status, check_ocsp_status_async, OcspFetchPolicy};
 
 mod sign;
-pub use sign::{sign, sign_async};
+pub use sign::{sign, sign_async, sign_v2_embedded, sign_v2_embedded_async, CosePayload};
 
 mod sign1;
 pub use sign1::{

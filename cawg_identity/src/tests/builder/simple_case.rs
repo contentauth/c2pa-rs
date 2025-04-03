@@ -14,6 +14,7 @@
 use std::io::{Cursor, Seek};
 
 use c2pa::{Builder, Reader, SigningAlg};
+use c2pa_status_tracker::StatusTracker;
 #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
 use wasm_bindgen_test::wasm_bindgen_test;
 
@@ -72,17 +73,17 @@ async fn simple_case() {
     assert_eq!(manifest_store.validation_status(), None);
 
     let manifest = manifest_store.active_manifest().unwrap();
-    let mut ia_iter = IdentityAssertion::from_manifest(manifest);
+    let mut st = StatusTracker::default();
+    let mut ia_iter = IdentityAssertion::from_manifest(manifest, &mut st);
 
     // Should find exactly one identity assertion.
     let ia = ia_iter.next().unwrap().unwrap();
-    dbg!(&ia);
-
     assert!(ia_iter.next().is_none());
+    drop(ia_iter);
 
     // And that identity assertion should be valid for this manifest.
     let nsv = NaiveSignatureVerifier {};
-    let naive_credential = ia.validate(manifest, &nsv).await.unwrap();
+    let naive_credential = ia.validate(manifest, &mut st, &nsv).await.unwrap();
 
     let nc_summary = naive_credential.to_summary();
     let nc_json = serde_json::to_string(&nc_summary).unwrap();
@@ -127,17 +128,17 @@ async fn simple_case_async() {
     assert_eq!(manifest_store.validation_status(), None);
 
     let manifest = manifest_store.active_manifest().unwrap();
-    let mut ia_iter = IdentityAssertion::from_manifest(manifest);
+    let mut st = StatusTracker::default();
+    let mut ia_iter = IdentityAssertion::from_manifest(manifest, &mut st);
 
     // Should find exactly one identity assertion.
     let ia = ia_iter.next().unwrap().unwrap();
-    dbg!(&ia);
-
     assert!(ia_iter.next().is_none());
+    drop(ia_iter);
 
     // And that identity assertion should be valid for this manifest.
     let nsv = NaiveSignatureVerifier {};
-    let naive_credential = ia.validate(manifest, &nsv).await.unwrap();
+    let naive_credential = ia.validate(manifest, &mut st, &nsv).await.unwrap();
 
     let nc_summary = naive_credential.to_summary();
     let nc_json = serde_json::to_string(&nc_summary).unwrap();

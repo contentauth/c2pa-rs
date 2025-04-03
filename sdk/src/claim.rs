@@ -1306,9 +1306,8 @@ impl Claim {
         salt_generator: &impl SaltGenerator,
     ) -> Result<C2PAAssertion> {
         if self.claim_version < 2 {
-            return Err(Error::VersionCompatibility(
-                "Claim version >= 2 required for gathered assertions".into(),
-            ));
+            // if this is called for a v1 claim then just treat is as a normal v1 assertion
+            return self.add_assertion_with_salt(assertion_builder, salt_generator);
         }
 
         match self.add_assertion_with_salt_impl(assertion_builder, salt_generator, false) {
@@ -1948,7 +1947,7 @@ impl Claim {
                     .success(validation_log);
                 }
             }
-            Err(_parse_err) => {
+            Err(parse_err) => {
                 // the lower level errors are logged validation_log
                 // continue on to catch other failures.
 
@@ -1958,6 +1957,15 @@ impl Claim {
                     new_li.label = Cow::from(claim.uri());
 
                     *li = new_li;
+                } else {
+                    // handle case where lower level failed to log
+                    log_item!(
+                        claim.signature_uri(),
+                        "claim signature is not valid",
+                        "verify_internal"
+                    )
+                    .validation_status(validation_status::CLAIM_SIGNATURE_MISMATCH)
+                    .failure_no_throw(validation_log, parse_err);
                 }
             }
         };
