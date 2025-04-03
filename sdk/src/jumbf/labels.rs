@@ -188,60 +188,60 @@ pub(crate) struct ManifestParts {
 
 // Given a JUMBF URI, return the manifest parts contained within it.
 pub(crate) fn manifest_label_to_parts(uri: &str) -> Option<ManifestParts> {
-    if let Some(manifest) = manifest_label_from_uri(uri) {
-        let parts: Vec<&str> = manifest.split(":").collect();
-        if parts.len() < 3 {
-            return None;
-        }
+    let manifest = manifest_label_from_uri(uri).unwrap_or(uri.to_string());
 
-        let guid;
-        let mut vendor = None;
-        let mut version = None;
-        let is_v1;
+    let parts: Vec<&str> = manifest.split(":").collect();
+    if parts.len() < 3 {
+        return None;
+    }
 
-        if parts[0] == "urn" || parts[1] == "urn" {
-            if parts[0] == "urn" {
-                is_v1 = parts[1] == "uuid";
+    let guid;
+    let mut vendor = None;
+    let mut version = None;
+    let is_v1;
 
-                guid = parts[2].to_owned();
+    if parts[0] == "urn" || parts[1] == "urn" {
+        if parts[0] == "urn" {
+            is_v1 = parts[1] == "uuid";
 
-                if !is_v1 {
-                    if parts.len() > 5 {
-                        return None;
-                    }
+            guid = parts[2].to_owned();
 
-                    if parts.len() > 3 && !parts[3].is_empty() {
-                        vendor = Some(parts[3].to_owned());
-                    }
-
-                    if parts.len() > 4 && !parts[4].is_empty() {
-                        version = Some(parts[4].to_owned());
-                    }
-                }
-
-                return Some(ManifestParts {
-                    guid,
-                    is_v1,
-                    vendor,
-                    version,
-                });
-            } else if parts[2] == "uuid" {
-                // this must be a 1.x path to begin with a vendor
-                if parts.len() != 4 {
+            if !is_v1 {
+                if parts.len() > 5 {
                     return None;
                 }
 
-                is_v1 = true;
-                vendor = Some(parts[0].to_owned());
-                guid = parts[3].to_owned();
+                if parts.len() > 3 && !parts[3].is_empty() {
+                    vendor = Some(parts[3].to_owned());
+                }
 
-                return Some(ManifestParts {
-                    guid,
-                    is_v1,
-                    vendor,
-                    version,
-                });
+                if parts.len() > 4 && !parts[4].is_empty() {
+                    version = Some(parts[4].to_owned());
+                }
             }
+
+            return Some(ManifestParts {
+                guid,
+                is_v1,
+                vendor,
+                version,
+            });
+        } else if parts[2] == "uuid" {
+            // this must be a 1.x path to begin with a vendor
+            if parts.len() != 4 {
+                return None;
+            }
+
+            is_v1 = true;
+            vendor = Some(parts[0].to_owned());
+            guid = parts[3].to_owned();
+
+            return Some(ManifestParts {
+                guid,
+                is_v1,
+                vendor,
+                version,
+            });
         }
     }
 
@@ -391,5 +391,12 @@ pub mod tests {
         assert!(manifest_label_to_parts(&l7).is_none());
 
         assert!(manifest_label_to_parts(&l8).is_none());
+
+        let raw_1 =
+            manifest_label_to_parts("urn:c2pa:3fad1ead-8ed5-44d0-873b-ea5f58adea82:acme").unwrap();
+        assert_eq!(raw_1.guid, "3fad1ead-8ed5-44d0-873b-ea5f58adea82");
+        assert!(!raw_1.is_v1);
+        assert_eq!(raw_1.vendor, Some("acme".to_owned()));
+        assert_eq!(raw_1.version, None);
     }
 }
