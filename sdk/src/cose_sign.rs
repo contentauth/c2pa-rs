@@ -282,8 +282,7 @@ mod tests {
         // let passthrough_cap = CertificateTrustPolicy::default();
         // mode which does not pass through the top level (c2pa-rs) unit tests
         //configuration so the test trust list is not loaded
-        crate::settings::load_settings_from_str(r#"{"verify.verify_trust": false}"#, "json")
-            .unwrap();
+        crate::settings::set_settings_value("verify.verify_trust", false).unwrap();
 
         let mut claim = Claim::new("extern_sign_test", Some("contentauth"), 1);
         claim.build().unwrap();
@@ -307,8 +306,7 @@ mod tests {
         // let passthrough_cap = CertificateTrustPolicy::default();
         // mode which does not pass through the top level (c2pa-rs) unit tests
         //configuration so the test trust list is not loaded
-        crate::settings::load_settings_from_str(r#"{"verify.verify_trust": false}"#, "json")
-            .unwrap();
+        crate::settings::set_settings_value("verify.verify_trust", false).unwrap();
 
         use c2pa_crypto::raw_signature::SigningAlg;
 

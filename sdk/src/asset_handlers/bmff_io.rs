@@ -1855,8 +1855,7 @@ pub mod tests {
 
         use crate::store::Store;
 
-        crate::settings::load_settings_from_str(r#"{"verify.verify_trust": false}"#, "json")
-            .unwrap();
+        crate::settings::set_settings_value("verify.verify_trust", false).unwrap();
 
         let ap = fixture_path("video1.mp4");
 

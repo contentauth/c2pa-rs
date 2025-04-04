@@ -872,8 +872,7 @@ pub mod tests {
     /// Test that the reader can validate a file with nested assertion errors
     fn test_reader_from_file_nested_errors() -> Result<()> {
         // disable trust check so that the status is Valid vs Trusted
-        crate::settings::load_settings_from_str(r#"{"verify.verify_trust": false}"#, "json")
-            .unwrap();
+        crate::settings::set_settings_value("verify.verify_trust", false).unwrap();
 
         let reader =
             Reader::from_stream("image/jpeg", std::io::Cursor::new(IMAGE_COMPLEX_MANIFEST))?;

@@ -702,8 +702,7 @@ mod tests {
     #[allow(deprecated)]
     #[cfg(feature = "v1_api")]
     async fn manifest_report_from_manifest_and_asset_bytes_async() {
-        crate::settings::load_settings_from_str(r#"{"verify.verify_trust": false}"#, "json")
-            .unwrap();
+        crate::settings::set_settings_value("verify.verify_trust", false).unwrap();
 
         let asset_bytes = include_bytes!("../tests/fixtures/cloud.jpg");
         let manifest_bytes = include_bytes!("../tests/fixtures/cloud_manifest.c2pa");

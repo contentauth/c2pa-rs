@@ -192,8 +192,7 @@ pub mod tests {
 
     #[test]
     fn test_no_timestamp() {
-        crate::settings::load_settings_from_str(r#"{"verify.verify_trust": false}"#, "json")
-            .unwrap();
+        crate::settings::set_settings_value("verify.verify_trust", false).unwrap();
 
         let mut validation_log = StatusTracker::default();
 
@@ -222,8 +221,7 @@ pub mod tests {
             time_stamp::{TimeStampError, TimeStampProvider},
         };
 
-        crate::settings::load_settings_from_str(r#"{"verify.verify_trust": false}"#, "json")
-            .unwrap();
+        crate::settings::set_settings_value("verify.verify_trust", false).unwrap();
 
         let mut validation_log = StatusTracker::default();
 
