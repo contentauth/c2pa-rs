@@ -6,6 +6,13 @@ This project adheres to [Semantic Versioning](https://semver.org), except that â
 
 Since version 0.10.0, the format of this changelog is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.16.2](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.16.1...c2patool-v0.16.2)
+_04 April 2025_
+
+### Fixed
+
+* Update openssl to address a recently-announced vulnerability ([#1024](https://github.com/contentauth/c2pa-rs/pull/1024))
+
 ## [0.16.1](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.16.0...c2patool-v0.16.1)
 _26 March 2025_
 
