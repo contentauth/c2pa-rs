@@ -192,6 +192,8 @@ pub mod tests {
 
     #[test]
     fn test_no_timestamp() {
+        crate::settings::set_settings_value("verify.verify_trust", false).unwrap();
+
         let mut validation_log = StatusTracker::default();
 
         let mut claim = crate::claim::Claim::new("extern_sign_test", Some("contentauth"), 1);
@@ -218,6 +220,8 @@ pub mod tests {
             raw_signature::{signer_from_cert_chain_and_private_key, RawSigner, RawSignerError},
             time_stamp::{TimeStampError, TimeStampProvider},
         };
+
+        crate::settings::set_settings_value("verify.verify_trust", false).unwrap();
 
         let mut validation_log = StatusTracker::default();
 
