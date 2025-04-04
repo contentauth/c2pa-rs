@@ -156,7 +156,6 @@ fn parse_resource_string(s: &str) -> Result<TrustResource> {
 // We only construct one per invocation, not worth shrinking this.
 #[allow(clippy::large_enum_variant)]
 #[derive(Debug, Subcommand)]
-#[allow(clippy::large_enum_variant)]
 enum Commands {
     /// Sub-command to configure trust store options, "trust --help for more details"
     Trust {
