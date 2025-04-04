@@ -6,6 +6,13 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 The format of this changelog is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.11.1](https://github.com/contentauth/c2pa-rs/compare/cawg-identity-v0.11.0...cawg-identity-v0.11.1)
+_04 April 2025_
+
+### Fixed
+
+* Update openssl to address a recently-announced vulnerability ([#1024](https://github.com/contentauth/c2pa-rs/pull/1024))
+
 ## [0.11.0](https://github.com/contentauth/c2pa-rs/compare/cawg-identity-v0.10.2...cawg-identity-v0.11.0)
 _03 April 2025_
 

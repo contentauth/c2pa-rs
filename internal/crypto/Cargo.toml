@@ -1,6 +1,6 @@
 [package]
 name = "c2pa-crypto"
-version = "0.8.0"
+version = "0.8.1"
 description = "Cryptography internals for c2pa-rs crate"
 authors = [
     "Maurice Fisher <mfisher@adobe.com>",
@@ -82,7 +82,7 @@ x509-certificate = "0.24.0"
 x509-parser = "0.16.0"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-openssl = { version = "0.10.61", features = ["vendored"] }
+openssl = { version = "0.10.72", features = ["vendored"] }
 ureq = "2.4.0"
 url = "2.5.3"
 
