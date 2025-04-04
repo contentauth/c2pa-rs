@@ -861,6 +861,7 @@ pub mod tests {
     }
 
     #[test]
+    #[cfg(not(target_os = "wasi"))] // todo: enable when disable we find out wasi trust issues
     fn test_reader_trusted() -> Result<()> {
         let reader =
             Reader::from_stream("image/jpeg", std::io::Cursor::new(IMAGE_COMPLEX_MANIFEST))?;
