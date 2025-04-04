@@ -39,7 +39,7 @@ pub(crate) trait SettingsValidate {
 }
 
 // Settings for trust list feature
-#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 #[allow(unused)]
 pub(crate) struct Trust {
@@ -95,6 +95,33 @@ impl Trust {
         } else {
             Err(Error::NotFound)
         }
+    }
+}
+
+impl Default for Trust {
+    fn default() -> Self {
+        let mut trust = Self {
+            private_anchors: None,
+            trust_anchors: None,
+            trust_config: None,
+            allowed_list: None,
+        };
+
+        // load test config store for unit tests
+        if cfg!(test) {
+            trust.trust_config = Some(
+                String::from_utf8_lossy(include_bytes!("../tests/fixtures/certs/trust/store.cfg"))
+                    .into_owned(),
+            );
+            trust.trust_anchors = Some(
+                String::from_utf8_lossy(include_bytes!(
+                    "../tests/fixtures/certs/trust/test_cert_root_bundle.pem"
+                ))
+                .into_owned(),
+            );
+        }
+
+        trust
     }
 }
 
@@ -171,7 +198,7 @@ impl Default for Verify {
         Self {
             verify_after_reading: true,
             verify_after_sign: true,
-            verify_trust: false, //cfg!(test),
+            verify_trust: cfg!(test),
             ocsp_fetch: false,
             remote_manifest_fetch: true,
             check_ingredient_trust: true,
