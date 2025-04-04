@@ -37,7 +37,7 @@ impl AsyncPostValidator for CawgValidator {
         partial_claim: &PartialClaim,
         tracker: &mut StatusTracker,
     ) -> c2pa::Result<Option<Value>> {
-        if label == "cawg.identity" {
+        if label.starts_with("cawg.identity") {
             let identity_assertion: IdentityAssertion = assertion.to_assertion()?;
             tracker.push_current_uri(uri);
             let result = identity_assertion
