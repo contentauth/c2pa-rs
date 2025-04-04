@@ -1651,6 +1651,9 @@ mod tests {
     #[cfg_attr(target_os = "wasi", wstd::test)]
     #[cfg(feature = "fetch_remote_manifests")]
     async fn test_jpg_cloud_from_memory() {
+        crate::settings::load_settings_from_str(r#"{"verify.verify_trust": false}"#, "json")
+            .unwrap();
+
         let image_bytes = include_bytes!("../tests/fixtures/cloud.jpg");
         let format = "image/jpeg";
         let ingredient = Ingredient::from_memory_async(format, image_bytes)
@@ -1673,6 +1676,9 @@ mod tests {
     )]
     #[cfg_attr(all(target_os = "wasi", not(feature = "file_io")), wstd::test)]
     async fn test_jpg_cloud_from_memory_no_file_io() {
+        crate::settings::load_settings_from_str(r#"{"verify.verify_trust": false}"#, "json")
+            .unwrap();
+
         let image_bytes = include_bytes!("../tests/fixtures/cloud.jpg");
         let format = "image/jpeg";
         let ingredient = Ingredient::from_memory_async(format, image_bytes)
@@ -1697,6 +1703,9 @@ mod tests {
     )]
     #[cfg_attr(target_os = "wasi", wstd::test)]
     async fn test_jpg_cloud_from_memory_and_manifest() {
+        crate::settings::load_settings_from_str(r#"{"verify.verify_trust": false}"#, "json")
+            .unwrap();
+
         let asset_bytes = include_bytes!("../tests/fixtures/cloud.jpg");
         let manifest_bytes = include_bytes!("../tests/fixtures/cloud_manifest.c2pa");
         let format = "image/jpeg";

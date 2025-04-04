@@ -6662,6 +6662,8 @@ pub mod tests {
         // bypass auto sig check
         crate::settings::load_settings_from_str(r#"{"verify.verify_after_sign": false}"#, "json")
             .unwrap();
+        crate::settings::load_settings_from_str(r#"{"verify.verify_trust": false}"#, "json")
+            .unwrap();
 
         builder
             .sign(&signer, "image/png", &mut Cursor::new(png), &mut dst)

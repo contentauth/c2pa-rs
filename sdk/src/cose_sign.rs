@@ -277,6 +277,14 @@ mod tests {
 
     #[test]
     fn test_sign_claim() {
+        // todo: we have to disable trust checks here for now because these
+        // tests use the passthrough mode:
+        // let passthrough_cap = CertificateTrustPolicy::default();
+        // mode which does not pass through the top level (c2pa-rs) unit tests
+        //configuration so the test trust list is not loaded
+        crate::settings::load_settings_from_str(r#"{"verify.verify_trust": false}"#, "json")
+            .unwrap();
+
         let mut claim = Claim::new("extern_sign_test", Some("contentauth"), 1);
         claim.build().unwrap();
 
@@ -294,6 +302,14 @@ mod tests {
     #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
     #[cfg_attr(target_os = "wasi", wstd::test)]
     async fn test_sign_claim_async() {
+        // todo: we have to disable trust checks here for now because these
+        // tests use the passthrough mode:
+        // let passthrough_cap = CertificateTrustPolicy::default();
+        // mode which does not pass through the top level (c2pa-rs) unit tests
+        //configuration so the test trust list is not loaded
+        crate::settings::load_settings_from_str(r#"{"verify.verify_trust": false}"#, "json")
+            .unwrap();
+
         use c2pa_crypto::raw_signature::SigningAlg;
 
         use crate::{cose_sign::sign_claim_async, AsyncSigner};
