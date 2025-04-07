@@ -66,7 +66,7 @@ serde = { version = "1.0.197", features = ["derive"] }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 httpmock = "0.7.0"
-tokio = { version = "1.42", features = ["macros", "rt"] }
+tokio = { version = "1.44.2", features = ["macros", "rt"] }
 
 [target.'cfg(all(target_arch = "wasm32", not(target_os = "wasi")))'.dev-dependencies]
 wasm-bindgen-test = "0.3.31"
