@@ -6,6 +6,18 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 The format of this changelog is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.12.0](https://github.com/contentauth/c2pa-rs/compare/cawg-identity-v0.11.1...cawg-identity-v0.12.0)
+_07 April 2025_
+
+### Added
+
+* Add support for referenced_assertions and roles ([#1032](https://github.com/contentauth/c2pa-rs/pull/1032))
+
+### Fixed
+
+* Add required dev dependency for CAWG X.509 example ([#1029](https://github.com/contentauth/c2pa-rs/pull/1029))
+* Adjust dependencies to avoid security warnings and yanked versions ([#1031](https://github.com/contentauth/c2pa-rs/pull/1031))
+
 ## [0.11.1](https://github.com/contentauth/c2pa-rs/compare/cawg-identity-v0.11.0...cawg-identity-v0.11.1)
 _04 April 2025_
 
