@@ -179,6 +179,7 @@ async fn adobe_connected_identities() {
                 None,
                 &hex_literal::hex!("58514c7072376d453164794f783477317a716e4f63716159325a594d686a5031526c7a552f7877614259383d")
             )],
+            roles: vec!(),
             sig_type: "cawg.identity_claims_aggregation".to_owned(),
         }
     );
