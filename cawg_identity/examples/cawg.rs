@@ -56,19 +56,6 @@ mod cawg {
                         ]
                     }
                 },
-                {
-                    "label": "cawg.training-mining",
-                    "data": {
-                    "entries": {
-                        "cawg.ai_inference": {
-                        "use": "notAllowed"
-                        },
-                        "cawg.ai_generative_training": {
-                        "use": "notAllowed"
-                        }
-                    }
-                    }
-                }
             ]
         })
         .to_string()
