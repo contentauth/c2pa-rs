@@ -45,7 +45,7 @@ url = "2.5.0"
 [target.'cfg(not(target_os = "wasi"))'.dependencies]
 async-std = { version = "1.12", features = ["attributes"] }
 reqwest = { version = "0.12.4", features = ["blocking"] }
-tokio = { version = "1.36.0", features = ["rt", "rt-multi-thread"] }
+tokio = { version = "1.44.2", features = ["rt", "rt-multi-thread"] }
 
 [target.'cfg(target_os = "wasi")'.dependencies]
 wasi = "0.14"
