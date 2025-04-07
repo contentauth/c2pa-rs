@@ -1,8 +1,8 @@
 # Using the CAWG identity assertion
 
-The CAI Rust library includes an implementation of the core of the [Creator Assertions Working Group identity assertion 1.1 draft specification](https://cawg.io/identity/1.1-draft).
+The CAI Rust library includes an implementation of the [ 1.1 draft of the Creator Assertions Working Group (CAWG) identity assertion specification](https://cawg.io/identity/1.1-draft).
 
-The code in [`cawg_identity/examples/cawg.rs`](https://github.com/contentauth/c2pa-rs/blob/main/cawg_identity/examples/cawg.rs) provides a minimal example of signing a claim including a CAWG identitiy assertion.  Run it by entering the command:
+The code in [`cawg_identity/examples/cawg.rs`](https://github.com/contentauth/c2pa-rs/blob/main/cawg_identity/examples/cawg.rs) provides a minimal example of signing and verifying a claim including a CAWG identitiy assertion.  Run it by entering the command:
 
 ```sh
 cargo run --example cawg -- <SOURCE_FILE> <OUTPUT_FILE>
@@ -13,6 +13,8 @@ Where `<SOURCE_FILE>` is the relative path to the input asset file and `<OUTPUT_
 ```sh
 cargo run --example cawg -- ./sdk/tests/fixtures/CA.jpg cawg-out.jpg
 ```
+
+
 
 Example assertion:
 
