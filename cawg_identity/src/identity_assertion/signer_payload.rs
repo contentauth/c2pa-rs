@@ -37,7 +37,12 @@ pub struct SignerPayload {
 
     /// A string identifying the data type of the `signature` field
     pub sig_type: String,
-    // TO DO: Add role and expected_* fields.
+
+    /// Roles associated with the named actor
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(rename = "role")]
+    pub roles: Vec<String>,
+    // TO DO: Add expected_* fields.
     // (https://github.com/contentauth/c2pa-rs/issues/816)
 }
 
