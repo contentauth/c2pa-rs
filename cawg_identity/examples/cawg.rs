@@ -70,13 +70,6 @@ mod cawg {
             None,
         )?;
 
-        let cawg_raw_signer = raw_signature::async_signer_from_cert_chain_and_private_key(
-            CERTS,
-            PRIVATE_KEY,
-            SigningAlg::Ed25519,
-            None,
-        )?;
-
         let mut ia_signer = AsyncIdentityAssertionSigner::new(c2pa_raw_signer);
 
         let x509_holder = AsyncX509CredentialHolder::from_async_raw_signer(cawg_raw_signer);
