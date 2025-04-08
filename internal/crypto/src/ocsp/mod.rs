@@ -178,7 +178,7 @@ impl OcspResponse {
 
                 if let Some(validator) = validator_for_sig_and_hash_algs(&sig_alg, &hash_alg) {
                     // try next value if no good value has been found
-                    if ocsp_signed == false {
+                    if !ocsp_signed {
                         ocsp_signed = validator
                             .validate(signature_bytes, &tbs_response_data, &signing_key_der)
                             .is_ok()
@@ -249,7 +249,7 @@ impl OcspResponse {
                                 log_item!(
                                     "OCSP_RESPONSE",
                                     "certificate revoked",
-                                    "check_ocsp_response"
+                                    "from_der_checked"
                                 )
                                 .validation_status(validation_codes::SIGNING_CREDENTIAL_REVOKED)
                                 .failure_no_throw(
@@ -300,7 +300,7 @@ impl OcspResponse {
                                         let msg =
                                             format!("certificate revoked at: {}", utc_with_offset);
 
-                                        log_item!("OCSP_RESPONSE", msg, "check_ocsp_response")
+                                        log_item!("OCSP_RESPONSE", msg, "from_der_checked")
                                             .validation_status(
                                                 validation_codes::SIGNING_CREDENTIAL_REVOKED,
                                             )
@@ -337,7 +337,7 @@ impl OcspResponse {
                                         log_item!(
                                             "OCSP_RESPONSE",
                                             format!("certificate revoked at: {}", utc_with_offset),
-                                            "check_ocsp_response"
+                                            "from_der_checked"
                                         )
                                         .validation_status(
                                             validation_codes::SIGNING_CREDENTIAL_REVOKED,
@@ -369,7 +369,7 @@ impl OcspResponse {
 
                                 let msg = format!("certificate revoked at: {}", utc_with_offset);
 
-                                log_item!("OCSP_RESPONSE", msg, "check_ocsp_response")
+                                log_item!("OCSP_RESPONSE", msg, "from_der_checked")
                                     .validation_status(validation_codes::SIGNING_CREDENTIAL_REVOKED)
                                     .failure_no_throw(
                                         &mut internal_validation_log,
@@ -387,7 +387,7 @@ impl OcspResponse {
                             log_item!(
                                 "OCSP_RESPONSE",
                                 "unknown certificate status",
-                                "check_ocsp_response"
+                                "from_der_checked"
                             )
                             .validation_status(validation_codes::SIGNING_CREDENTIAL_OCSP_UNKNOWN)
                             .failure_no_throw(
@@ -403,7 +403,7 @@ impl OcspResponse {
             log_item!(
                 "OCSP_RESPONSE",
                 "OCSP response was not signed",
-                "check_ocsp_response"
+                "from_der_checked"
             )
             .validation_status(validation_codes::SIGNING_CREDENTIAL_OCSP_UNKNOWN)
             .failure(

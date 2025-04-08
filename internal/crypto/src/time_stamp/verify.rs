@@ -158,7 +158,7 @@ pub(crate) fn verify_time_stamp(ts: &[u8], data: &[u8]) -> Result<TstInfo, TimeS
                     let signed_message_digest = message_digest
                         .values
                         .first()
-                        .ok_or(TimeStampError::InternalError(
+                        .ok_or(TimeStampError::DecodeError(
                             "first() failed after checking length".to_string(),
                         ))?
                         .deref()
@@ -197,7 +197,7 @@ pub(crate) fn verify_time_stamp(ts: &[u8], data: &[u8]) -> Result<TstInfo, TimeS
                 }
 
                 None => {
-                    last_err = TimeStampError::InvalidData;
+                    last_err = TimeStampError::DecodeError("no message imprint".to_string());
                     continue;
                 }
             }

@@ -16,7 +16,7 @@ use rasn::{AsnType, Decode, Decoder, Encode, Encoder};
 
 use crate::{
     asn1::{
-        rfc3161::{TimeStampResp, TimeStampToken, TstInfo, OID_CONTENT_TYPE_TST_INFO},
+        rfc3161::{PkiStatus, TimeStampResp, TimeStampToken, TstInfo, OID_CONTENT_TYPE_TST_INFO},
         rfc5652::{SignedData, OID_ID_SIGNED_DATA},
     },
     time_stamp::TimeStampError,
@@ -104,7 +104,14 @@ pub(crate) fn signed_data_from_time_stamp_response(
     })
     .map_err(|e| TimeStampError::DecodeError(e.to_string()))
     {
-        ts.time_stamp_token
+        if ts.status.status == PkiStatus::Granted || ts.status.status == PkiStatus::GrantedWithMods
+        {
+            ts.time_stamp_token
+        } else {
+            return Err(TimeStampError::DecodeError(
+                "time stamp status not granted".to_string(),
+            ));
+        }
     } else if let Ok(ts) = Constructed::decode(ts_resp, bcder::Mode::Der, |cons| {
         TimeStampToken::take_opt_from(cons)
     }) {

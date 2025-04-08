@@ -41,7 +41,8 @@ pub const SIGNING_CREDENTIAL_TRUSTED: &str = "signingCredential.trusted";
 /// Any corresponding URL should point to a C2PA claim
 pub const SIGNING_CREDENTIAL_NOT_REVOKED: &str = "signingCredential.ocsp.notRevoked";
 
-/// The time-stamp credential is well-formed and message imprint and validity are correct.
+/// The time-stamp credential is well-formed and message imprint and validity
+/// are correct.
 ///
 /// Any corresponding URL should point to a C2PA claim signature box.
 pub const TIMESTAMP_VALIDATED: &str = "timeStamp.validated";
@@ -75,7 +76,8 @@ pub const ASSERTION_BMFFHASH_MATCH: &str = "assertion.bmffHash.match";
 /// Any corresponding URL should point to a C2PA assertion.
 pub const ASSERTION_BOXHASH_MATCH: &str = "assertion.boxesHash.match";
 
-/// Hash of all assets contained in collection match hashes declared in Collection Data
+/// Hash of all assets contained in collection match hashes declared
+/// in Collection Data
 /// Hash assertion.
 ///
 /// Any corresponding URL should point to a C2PA assertion.
@@ -104,7 +106,8 @@ pub const INGREDIENT_CLAIM_SIGNATURE_VALIDATED: &str = "ingredient.claimSignatur
 /// Any corresponding URL should point to a C2PA claim signature box.
 pub const SIGNING_CREDENTIAL_OCSP_SKIPPED: &str = "signingCredential.ocsp.skipped";
 
-/// The validator attempted to perform an online OCSP check, but did not receive a response.
+/// The validator attempted to perform an online OCSP check, but did not receive
+/// a response.
 ///
 /// Any corresponding URL should point to a C2PA claim signature box.
 pub const SIGNING_CREDENTIAL_OCSP_INACCESSIBLE: &str = "signingCredential.ocsp.inaccessible";
@@ -392,7 +395,8 @@ pub const MANIFEST_UNREFERENCED: &str = "manifest.unreferenced";
 /// Any corresponding URL should point to a C2PA claim signature box.
 pub const SIGNING_CREDENTIAL_OCSP_UNKNOWN: &str = "signingCredential.ocsp.unknown";
 
-/// An assertion listed in the claim is not in the same C2PA Manifest as the claim.
+/// An assertion listed in the claim is not in the same C2PA Manifest as
+/// the claim.
 ///
 /// Any corresponding URL should point to a C2PA claim  box.
 pub const ASSERTION_OUTSIDE_MANIFEST: &str = "assertion.outsideManifest";
@@ -464,7 +468,8 @@ pub const ASSERTION_METADATA_DISALLOWED: &str = "assertion.metadata.disallowed";
 pub const INGREDIENT_MANIFEST_MISSING: &str = "ingredient.manifest.missing";
 
 /// The hash of an embedded C2PA Manifest does not match the hash declared in
-/// the hashed_uri value of the activeManifest field in the ingredient assertion.
+/// the hashed_uri value of the activeManifest field in the ingredient
+/// assertion.
 ///
 /// Any corresponding URL should point to a C2PA assertion box.
 pub const INGREDIENT_MANIFEST_MISMATCH: &str = "ingredient.manifest.mismatch";
@@ -474,8 +479,9 @@ pub const INGREDIENT_MANIFEST_MISMATCH: &str = "ingredient.manifest.mismatch";
 /// Any corresponding URL should point to a C2PA assertion box.
 pub const INGREDIENT_CLAIM_SIGNATURE_MISSING: &str = "ingredient.claimSignature.missing";
 
-/// The hash of an embedded C2PA Manifest’s C2PA Claim Signature does not match the
-/// hash declared in the hashed_uri value of the claimSignature field in the ingredient assertion.
+/// The hash of an embedded C2PA Manifest’s C2PA Claim Signature does not match
+/// the hash declared in the hashed_uri value of the claimSignature field in the
+/// ingredient assertion.
 ///
 /// Any corresponding URL should point to a C2PA assertion box.
 pub const INGREDIENT_CLAIM_SIGNATURE_MISMATCH: &str = "ingredient.claimSignature.mismatch";

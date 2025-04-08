@@ -27,10 +27,14 @@ use std::{
 
 use anyhow::{anyhow, bail, Context, Result};
 use c2pa::{Builder, ClaimGeneratorInfo, Error, Ingredient, ManifestDefinition, Reader, Signer};
+#[cfg(not(target_os = "wasi"))]
+use cawg_identity::validator::CawgValidator;
 use clap::{Parser, Subcommand};
 use log::debug;
 use serde::Deserialize;
 use signer::SignConfig;
+#[cfg(not(target_os = "wasi"))]
+use tokio::runtime::Runtime;
 use url::Url;
 
 use crate::{
@@ -95,7 +99,7 @@ struct CliArgs {
     #[clap(long = "certs")]
     cert_chain: bool,
 
-    /// Do not perform validation of signature after signing
+    /// Do not perform validation of signature after signing.
     #[clap(long = "no_signing_verify")]
     no_signing_verify: bool,
 
@@ -152,7 +156,6 @@ fn parse_resource_string(s: &str) -> Result<TrustResource> {
 // We only construct one per invocation, not worth shrinking this.
 #[allow(clippy::large_enum_variant)]
 #[derive(Debug, Subcommand)]
-#[allow(clippy::large_enum_variant)]
 enum Commands {
     /// Sub-command to configure trust store options, "trust --help for more details"
     Trust {
@@ -517,6 +520,20 @@ fn verify_fragmented(init_pattern: &Path, frag_pattern: &Path) -> Result<Vec<Rea
     Ok(readers)
 }
 
+// run cawg validation if supported
+fn validate_cawg(reader: &mut Reader) -> Result<()> {
+    #[cfg(not(target_os = "wasi"))]
+    {
+        Runtime::new()?
+            .block_on(reader.post_validate_async(&CawgValidator {}))
+            .map_err(anyhow::Error::from)
+    }
+    #[cfg(target_os = "wasi")]
+    {
+        Ok(())
+    }
+}
+
 fn main() -> Result<()> {
     let args = CliArgs::parse();
 
@@ -534,6 +551,7 @@ fn main() -> Result<()> {
 
     if args.cert_chain {
         let reader = Reader::from_file(path).map_err(special_errs)?;
+        // todo: add cawg certs here??
         if let Some(manifest) = reader.active_manifest() {
             if let Some(si) = manifest.signature_info() {
                 println!("{}", si.cert_chain());
@@ -715,7 +733,8 @@ fn main() -> Result<()> {
                 }
 
                 // generate a report on the output file
-                let reader = Reader::from_file(&output).map_err(special_errs)?;
+                let mut reader = Reader::from_file(&output).map_err(special_errs)?;
+                validate_cawg(&mut reader)?;
                 if args.detailed {
                     println!("{:#?}", reader);
                 } else {
@@ -746,16 +765,14 @@ fn main() -> Result<()> {
             File::create(output.join("ingredient.json"))?.write_all(&report.into_bytes())?;
             println!("Ingredient report written to the directory {:?}", &output);
         } else {
-            let reader = Reader::from_file(&args.path).map_err(special_errs)?;
+            let mut reader = Reader::from_file(&args.path).map_err(special_errs)?;
+            validate_cawg(&mut reader)?;
             reader.to_folder(&output)?;
             let report = reader.to_string();
             if args.detailed {
                 // for a detailed report first call the above to generate the thumbnails
                 // then call this to add the detailed report
-                let detailed = format!(
-                    "{:#?}",
-                    Reader::from_file(&args.path).map_err(special_errs)?
-                );
+                let detailed = format!("{:#?}", reader);
                 File::create(output.join("detailed.json"))?.write_all(&detailed.into_bytes())?;
             }
             File::create(output.join("manifest_store.json"))?.write_all(&report.into_bytes())?;
@@ -767,10 +784,9 @@ fn main() -> Result<()> {
             Ingredient::from_file(&args.path).map_err(special_errs)?
         )
     } else if args.detailed {
-        println!(
-            "{:#?}",
-            Reader::from_file(&args.path).map_err(special_errs)?
-        )
+        let mut reader = Reader::from_file(&args.path).map_err(special_errs)?;
+        validate_cawg(&mut reader)?;
+        println!("{:#?}", reader);
     } else if let Some(Commands::Fragment {
         fragments_glob: Some(fg),
     }) = &args.command
@@ -782,7 +798,9 @@ fn main() -> Result<()> {
             println!("{} Init manifests validated", stores.len());
         }
     } else {
-        println!("{}", Reader::from_file(&args.path).map_err(special_errs)?)
+        let mut reader = Reader::from_file(&args.path).map_err(special_errs)?;
+        validate_cawg(&mut reader)?;
+        println!("{}", reader);
     }
 
     Ok(())

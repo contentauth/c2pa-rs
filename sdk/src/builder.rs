@@ -29,8 +29,8 @@ use zip::{write::SimpleFileOptions, ZipArchive, ZipWriter};
 use crate::{
     assertion::AssertionDecodeError,
     assertions::{
-        labels, Actions, CreativeWork, DataHash, Exif, Metadata, SoftwareAgent, Thumbnail, User,
-        UserCbor,
+        labels, Actions, BmffHash, BoxHash, CreativeWork, DataHash, Exif, Metadata, SoftwareAgent,
+        Thumbnail, User, UserCbor,
     },
     claim::Claim,
     error::{Error, Result},
@@ -780,18 +780,30 @@ impl Builder {
                 CreativeWork::LABEL => {
                     let cw: CreativeWork = manifest_assertion.to_assertion()?;
 
-                    claim.add_assertion_with_salt(&cw, &salt)
+                    claim.add_gathered_assertion_with_salt(&cw, &salt)
                 }
                 Exif::LABEL => {
                     let exif: Exif = manifest_assertion.to_assertion()?;
-                    claim.add_assertion_with_salt(&exif, &salt)
+                    claim.add_gathered_assertion_with_salt(&exif, &salt)
+                }
+                BoxHash::LABEL => {
+                    let box_hash: BoxHash = manifest_assertion.to_assertion()?;
+                    claim.add_assertion_with_salt(&box_hash, &salt)
+                }
+                DataHash::LABEL => {
+                    let data_hash: DataHash = manifest_assertion.to_assertion()?;
+                    claim.add_assertion_with_salt(&data_hash, &salt)
+                }
+                BmffHash::LABEL => {
+                    let bmff_hash: BmffHash = manifest_assertion.to_assertion()?;
+                    claim.add_assertion_with_salt(&bmff_hash, &salt)
                 }
                 _ => match &manifest_assertion.data {
-                    AssertionData::Json(value) => claim.add_assertion_with_salt(
+                    AssertionData::Json(value) => claim.add_gathered_assertion_with_salt(
                         &User::new(&manifest_assertion.label, &serde_json::to_string(&value)?),
                         &salt,
                     ),
-                    AssertionData::Cbor(value) => claim.add_assertion_with_salt(
+                    AssertionData::Cbor(value) => claim.add_gathered_assertion_with_salt(
                         &UserCbor::new(&manifest_assertion.label, serde_cbor::to_vec(value)?),
                         &salt,
                     ),
@@ -1051,7 +1063,26 @@ impl Builder {
         fragment_paths: &Vec<std::path::PathBuf>,
         output_path: P,
     ) -> Result<()> {
-        self.set_asset_from_dest(output_path.as_ref())?;
+        if !output_path.as_ref().exists() {
+            // ensure the path exists
+            std::fs::create_dir_all(output_path.as_ref())?;
+        } else {
+            // if the file exists, we need to remove it
+            if output_path.as_ref().is_file() {
+                return Err(crate::Error::BadParam(
+                    "output_path must be a folder".to_string(),
+                ));
+            } else {
+                let file_name = asset_path.as_ref().file_name().unwrap_or_default();
+                let mut output_file = output_path.as_ref().to_owned();
+                output_file = output_file.join(file_name);
+                if output_file.exists() {
+                    return Err(crate::Error::BadParam(
+                        "Destination file already exists".to_string(),
+                    ));
+                }
+            }
+        }
 
         // convert the manifest to a store
         let mut store = self.to_store()?;
@@ -1075,6 +1106,12 @@ impl Builder {
     /// * The bytes of c2pa_manifest that was created.
     /// # Errors
     /// * Returns an [`Error`] if the manifest cannot be signed or the destination file already exists.
+    #[async_generic(async_signature(
+        &mut self,
+        signer: &dyn AsyncSigner,
+        source: S,
+        dest: D,
+    ))]
     pub fn sign_file<S, D>(&mut self, signer: &dyn Signer, source: S, dest: D) -> Result<Vec<u8>>
     where
         S: AsRef<std::path::Path>,
@@ -1101,7 +1138,12 @@ impl Builder {
             .create(true)
             .truncate(true)
             .open(dest)?;
-        self.sign(signer, &format, &mut source, &mut dest)
+        if _sync {
+            self.sign(signer, &format, &mut source, &mut dest)
+        } else {
+            self.sign_async(signer, &format, &mut source, &mut dest)
+                .await
+        }
     }
 }
 
@@ -1460,6 +1502,7 @@ mod tests {
         wasm_bindgen_test
     )]
     #[cfg_attr(target_os = "wasi", wstd::test)]
+    #[cfg(feature = "v1_api")]
     async fn test_builder_remote_sign() {
         let format = "image/jpeg";
         let mut source = Cursor::new(TEST_IMAGE);

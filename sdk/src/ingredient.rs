@@ -38,7 +38,7 @@ use crate::{
     hashed_uri::HashedUri,
     jumbf::{
         self,
-        labels::{manifest_label_from_uri, to_assertion_uri},
+        labels::{assertion_label_from_uri, manifest_label_from_uri, to_assertion_uri},
     },
     jumbf_io::load_jumbf_from_stream,
     resource_store::{skip_serializing_resources, ResourceRef, ResourceStore},
@@ -136,6 +136,10 @@ pub struct Ingredient {
     #[serde(skip_serializing_if = "Option::is_none")]
     manifest_data: Option<ResourceRef>,
 
+    /// The ingredient's label as assigned in the manifest.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    label: Option<String>,
+
     #[serde(skip_deserializing)]
     #[serde(skip_serializing_if = "skip_serializing_resources")]
     resources: ResourceStore,
@@ -214,6 +218,11 @@ impl Ingredient {
     /// Returns a user-displayable title for this ingredient.
     pub fn title(&self) -> Option<&str> {
         self.title.as_deref()
+    }
+
+    /// Returns the label for the ingredient if it exists.
+    pub fn label(&self) -> Option<&str> {
+        self.label.as_deref()
     }
 
     /// Returns a MIME content_type for this asset associated with this ingredient.
@@ -585,7 +594,6 @@ impl Ingredient {
         manifest_bytes: Option<Vec<u8>>,
         validation_log: &StatusTracker,
     ) -> Result<()> {
-        let active_manifest = self.active_manifest.as_deref().unwrap_or_default();
         match result {
             Ok(store) => {
                 // generate validation results from the store
@@ -654,7 +662,7 @@ impl Ingredient {
                         .set_url(url)
                         .set_explanation("Remote manifest not fetched".to_string());
                 let mut validation_results = ValidationResults::default();
-                validation_results.add_status(active_manifest, status.clone());
+                validation_results.add_status(status.clone());
                 self.validation_results = Some(validation_results);
                 self.validation_status = Some(vec![status]);
                 Ok(())
@@ -672,7 +680,7 @@ impl Ingredient {
                     .collect();
 
                 for status in statuses {
-                    results.add_status(active_manifest, status.clone());
+                    results.add_status(status.clone());
                 }
                 self.validation_status = results.validation_errors();
                 self.validation_results = Some(results);
@@ -1030,6 +1038,8 @@ impl Ingredient {
             ingredient_assertion.title, &active_manifest
         );
 
+        // keep track of the assertion label for this ingredient.
+        let label = assertion_label_from_uri(ingredient_uri);
         let mut ingredient = Ingredient {
             title: ingredient_assertion.title,
             format: ingredient_assertion.format,
@@ -1042,6 +1052,7 @@ impl Ingredient {
             description: ingredient_assertion.description,
             informational_uri: ingredient_assertion.informational_uri,
             data_types: ingredient_assertion.data_types,
+            label,
             ..Default::default()
         };
 
@@ -1141,7 +1152,7 @@ impl Ingredient {
 
         // add the ingredient manifest_data to the claim
         // this is how any existing claims are added to the new store
-        let c2pa_manifest = match self.manifest_data_ref() {
+        let (active_manifest, claim_signature) = match self.manifest_data_ref() {
             Some(resource_ref) => {
                 let manifest_label = self
                     .active_manifest
@@ -1180,14 +1191,13 @@ impl Ingredient {
                         {
                             let hash = ingredient_store
                                 .get_manifest_box_hashes(ingredient_active_claim)
-                                .manifest_box_hash; // get C2PA 1.2 JUMBF box hash
-
-                            // todo: must use this when making v3
-                            let _sig_hash = ingredient_store
+                                .manifest_box_hash; // get C2PA 1.2 JUMBF box
+                            let sig_hash = ingredient_store
                                 .get_manifest_box_hashes(ingredient_active_claim)
                                 .signature_box_hash; // needed for v3 ingredients
 
                             let uri = jumbf::labels::to_manifest_uri(&manifest_label);
+                            let signature_uri = jumbf::labels::to_signature_uri(&manifest_label);
 
                             // if there are validations and they have all passed, then use the parent claim thumbnail if available
                             if let Some(validation_status) = self.validation_status.as_ref() {
@@ -1210,19 +1220,26 @@ impl Ingredient {
                                 }
                             }
                             // generate c2pa_manifest hashed_uri
-                            Some(crate::hashed_uri::HashedUri::new(
-                                uri,
-                                Some(ingredient_active_claim.alg().to_owned()),
-                                hash.as_ref(),
-                            ))
+                            (
+                                Some(crate::hashed_uri::HashedUri::new(
+                                    uri,
+                                    Some(ingredient_active_claim.alg().to_owned()),
+                                    hash.as_ref(),
+                                )),
+                                Some(crate::hashed_uri::HashedUri::new(
+                                    signature_uri,
+                                    Some(ingredient_active_claim.alg().to_owned()),
+                                    sig_hash.as_ref(),
+                                )),
+                            )
                         } else {
-                            None
+                            (None, None)
                         }
                     }
-                    None => None,
+                    None => (None, None),
                 }
             }
-            None => None,
+            None => (None, None),
         };
 
         // if the ingredient defines a thumbnail, add it to the claim
@@ -1310,13 +1327,14 @@ impl Ingredient {
         match claim.version() {
             1 => {
                 ingredient_assertion.document_id = self.document_id.clone();
-                ingredient_assertion.c2pa_manifest = c2pa_manifest;
+                ingredient_assertion.c2pa_manifest = active_manifest;
                 ingredient_assertion
                     .validation_status
                     .clone_from(&self.validation_status);
             }
             2 => {
-                ingredient_assertion.active_manifest = c2pa_manifest;
+                ingredient_assertion.active_manifest = active_manifest;
+                ingredient_assertion.claim_signature = claim_signature;
                 ingredient_assertion.validation_results = self.validation_results.clone();
             }
             _ => {}
@@ -1640,6 +1658,8 @@ mod tests {
     #[cfg_attr(target_os = "wasi", wstd::test)]
     #[cfg(feature = "fetch_remote_manifests")]
     async fn test_jpg_cloud_from_memory() {
+        crate::settings::set_settings_value("verify.verify_trust", false).unwrap();
+
         let image_bytes = include_bytes!("../tests/fixtures/cloud.jpg");
         let format = "image/jpeg";
         let ingredient = Ingredient::from_memory_async(format, image_bytes)
@@ -1662,6 +1682,8 @@ mod tests {
     )]
     #[cfg_attr(all(target_os = "wasi", not(feature = "file_io")), wstd::test)]
     async fn test_jpg_cloud_from_memory_no_file_io() {
+        crate::settings::set_settings_value("verify.verify_trust", false).unwrap();
+
         let image_bytes = include_bytes!("../tests/fixtures/cloud.jpg");
         let format = "image/jpeg";
         let ingredient = Ingredient::from_memory_async(format, image_bytes)
@@ -1686,6 +1708,8 @@ mod tests {
     )]
     #[cfg_attr(target_os = "wasi", wstd::test)]
     async fn test_jpg_cloud_from_memory_and_manifest() {
+        crate::settings::set_settings_value("verify.verify_trust", false).unwrap();
+
         let asset_bytes = include_bytes!("../tests/fixtures/cloud.jpg");
         let manifest_bytes = include_bytes!("../tests/fixtures/cloud_manifest.c2pa");
         let format = "image/jpeg";

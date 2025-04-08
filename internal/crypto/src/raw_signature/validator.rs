@@ -15,13 +15,12 @@ use async_trait::async_trait;
 use bcder::Oid;
 use thiserror::Error;
 
-use crate::raw_signature::SigningAlg;
-
 use super::oids::{
     ans1_oid_bcder_oid, ECDSA_WITH_SHA256_OID, ECDSA_WITH_SHA384_OID, ECDSA_WITH_SHA512_OID,
     ED25519_OID, SHA1_OID, SHA1_WITH_RSAENCRYPTION_OID, SHA256_OID, SHA256_WITH_RSAENCRYPTION_OID,
     SHA384_OID, SHA384_WITH_RSAENCRYPTION_OID, SHA512_OID, SHA512_WITH_RSAENCRYPTION_OID,
 };
+use crate::raw_signature::SigningAlg;
 
 /// A `RawSignatureValidator` implementation checks a signature encoded using a
 /// specific signature algorithm and a private/public key pair.

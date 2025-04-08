@@ -696,14 +696,14 @@ impl Manifest {
                     match assertion.decode_data() {
                         AssertionData::Cbor(_) => {
                             let value = assertion.as_json_object()?;
-                            let ma = ManifestAssertion::new(base_label, value)
+                            let ma = ManifestAssertion::new(label, value)
                                 .set_instance(claim_assertion.instance());
 
                             manifest.assertions.push(ma);
                         }
                         AssertionData::Json(_) => {
                             let value = assertion.as_json_object()?;
-                            let ma = ManifestAssertion::new(base_label, value)
+                            let ma = ManifestAssertion::new(label, value)
                                 .set_instance(claim_assertion.instance())
                                 .set_kind(ManifestAssertionKind::Json);
 
@@ -1531,7 +1531,7 @@ pub struct SignatureInfo {
 
     /// The cert chain for this claim.
     #[serde(skip)] // don't serialize this, let someone ask for it
-    cert_chain: String,
+    pub cert_chain: String,
 }
 
 impl SignatureInfo {
@@ -1567,7 +1567,7 @@ pub(crate) mod tests {
         ingredient::Ingredient,
         reader::Reader,
         store::Store,
-        utils::test::{static_test_uuid, temp_remote_signer, TEST_VC},
+        utils::test::{static_test_v1_uuid, temp_remote_signer, TEST_VC},
         utils::test_signer::{async_test_signer, test_signer},
         Manifest, Result,
     };
@@ -1986,7 +1986,7 @@ pub(crate) mod tests {
     fn test_embed_user_label() {
         let temp_dir = tempdirectory().expect("temp dir");
         let output = temp_fixture_path(&temp_dir, TEST_SMALL_JPEG);
-        let my_guid = static_test_uuid();
+        let my_guid = static_test_v1_uuid();
         let signer = test_signer(SigningAlg::Ps256);
 
         let mut manifest = test_manifest();
@@ -2015,7 +2015,7 @@ pub(crate) mod tests {
         let signer = test_signer(SigningAlg::Ps256);
 
         let mut manifest = test_manifest();
-        manifest.set_label(static_test_uuid());
+        manifest.set_label(static_test_v1_uuid());
         manifest.set_remote_manifest(url);
         let c2pa_data = manifest
             .embed(&output, &output, signer.as_ref())

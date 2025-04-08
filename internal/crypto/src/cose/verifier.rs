@@ -19,7 +19,8 @@ use c2pa_status_tracker::{
     log_item,
     validation_codes::{
         ALGORITHM_UNSUPPORTED, SIGNING_CREDENTIAL_INVALID, SIGNING_CREDENTIAL_TRUSTED,
-        SIGNING_CREDENTIAL_UNTRUSTED, TIMESTAMP_MISMATCH, TIMESTAMP_OUTSIDE_VALIDITY,
+        SIGNING_CREDENTIAL_UNTRUSTED, TIMESTAMP_MALFORMED, TIMESTAMP_MISMATCH,
+        TIMESTAMP_OUTSIDE_VALIDITY,
     },
     StatusTracker,
 };
@@ -30,9 +31,9 @@ use crate::{
     asn1::rfc3161::TstInfo,
     base64::encode,
     cose::{
-        cert_chain_from_sign1, check_certificate_profile, parse_cose_sign1, signing_alg_from_sign1,
-        validate_cose_tst_info, validate_cose_tst_info_async, CertificateInfo,
-        CertificateTrustError, CertificateTrustPolicy, CoseError,
+        cert_chain_from_sign1, check_end_entity_certificate_profile, parse_cose_sign1,
+        signing_alg_from_sign1, validate_cose_tst_info, validate_cose_tst_info_async,
+        CertificateInfo, CertificateTrustError, CertificateTrustPolicy, CoseError,
     },
     ec_utils::parse_ec_der_sig,
     raw_signature::{validator_for_signing_alg, SigningAlg},
@@ -198,14 +199,14 @@ impl Verifier<'_> {
         let end_entity_cert_der = &certs[0];
 
         match tst_info_res {
-            Ok(tst_info) => Ok(check_certificate_profile(
+            Ok(tst_info) => Ok(check_end_entity_certificate_profile(
                 end_entity_cert_der,
                 ctp,
                 validation_log,
                 Some(tst_info),
             )?),
 
-            Err(CoseError::NoTimeStampToken) => Ok(check_certificate_profile(
+            Err(CoseError::NoTimeStampToken) => Ok(check_end_entity_certificate_profile(
                 end_entity_cert_der,
                 ctp,
                 validation_log,
@@ -216,7 +217,7 @@ impl Verifier<'_> {
                 log_item!(
                     "Cose_Sign1",
                     "timestamp did not match signed data",
-                    "verify_cose"
+                    "verify_profile"
                 )
                 .validation_status(TIMESTAMP_MISMATCH)
                 .failure_no_throw(validation_log, TimeStampError::InvalidData);
@@ -228,10 +229,22 @@ impl Verifier<'_> {
                 log_item!(
                     "Cose_Sign1",
                     "timestamp certificate outside of validity",
-                    "verify_cose"
+                    "verify_profile"
                 )
                 .validation_status(TIMESTAMP_OUTSIDE_VALIDITY)
                 .failure_no_throw(validation_log, TimeStampError::ExpiredCertificate);
+
+                Err(TimeStampError::ExpiredCertificate.into())
+            }
+
+            Err(CoseError::TimeStampError(TimeStampError::DecodeError(s))) => {
+                log_item!(
+                    "Cose_Sign1",
+                    "timestamp could not be decoded",
+                    "verify_profile"
+                )
+                .informational(TIMESTAMP_MALFORMED)
+                .failure_no_throw(validation_log, TimeStampError::DecodeError(s.to_owned()));
 
                 Err(TimeStampError::ExpiredCertificate.into())
             }

@@ -6,6 +6,34 @@ This project adheres to [Semantic Versioning](https://semver.org), except that â
 
 Since version 0.10.0, the format of this changelog is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.16.2](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.16.1...c2patool-v0.16.2)
+_04 April 2025_
+
+### Fixed
+
+* Update openssl to address a recently-announced vulnerability ([#1024](https://github.com/contentauth/c2pa-rs/pull/1024))
+
+## [0.16.1](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.16.0...c2patool-v0.16.1)
+_26 March 2025_
+
+* Update to latest c2pa-crypto crate
+
+## [0.15.0](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.14.0...c2patool-v0.15.0)
+_18 March 2025_
+
+### Added
+
+* Adds `reader.post_validate` method for CAWG validation support (#976)
+* Add WASI to c2patool (#945)
+
+### Fixed
+
+* Remove circular dependency between C2PA and CAWG crates (#982)
+
+### Updated dependencies
+
+* Bump env_logger from 0.11.6 to 0.11.7 (#963)
+
 ## [0.13.3](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.13.1...c2patool-v0.13.3)
 _11 February 2025_
 

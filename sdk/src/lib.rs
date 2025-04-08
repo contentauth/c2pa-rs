@@ -16,7 +16,7 @@
 #![deny(clippy::unwrap_used)]
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg, doc_cfg_hide))]
 
-//! This library supports reading, creating and embedding C2PA data
+//! This library supports reading, creating, and embedding C2PA data
 //! with a variety of asset types.
 //!
 //! Some functionality requires you to enable specific crate features,
@@ -90,12 +90,21 @@ pub const NAME: &str = "c2pa-rs";
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 // Public modules
+/// The assertions module contains the definitions for the assertions that are part of the C2PA specification.
 pub mod assertions;
+/// The cose_sign module contains the definitions for the COSE signing algorithms.
 pub mod cose_sign;
+/// The create_signer module contains the definitions for the signers that are part of the C2PA specification.
 pub mod create_signer;
+/// Dynamic assertions are a new feature that allows you to add assertions to a C2PA file as a part of the signing process.
+pub mod dynamic_assertion;
+/// The jumbf_io module contains the definitions for the JUMBF data in assets.
 pub mod jumbf_io;
+/// The settings module provides a way to configure the C2PA SDK.
 pub mod settings;
+/// The validation_results module contains the definitions for the validation results that are part of the C2PA specification.
 pub mod validation_results;
+/// The validation_status module contains the definitions for the validation status that are part of the C2PA specification.
 pub mod validation_status;
 
 // Public exports
@@ -106,9 +115,9 @@ pub use builder::{Builder, ManifestDefinition};
 pub use c2pa_crypto::raw_signature::SigningAlg;
 pub use callback_signer::{CallbackFunc, CallbackSigner};
 pub use claim_generator_info::ClaimGeneratorInfo;
-pub use dynamic_assertion::{
-    AsyncDynamicAssertion, DynamicAssertion, DynamicAssertionContent, PreliminaryClaim,
-};
+// pub use dynamic_assertion::{
+//     AsyncDynamicAssertion, DynamicAssertion, DynamicAssertionContent, PartialClaim,
+// };
 pub use error::{Error, Result};
 pub use external_manifest::ManifestPatchCallback;
 pub use hash_utils::{hash_stream_by_alg, HashRange};
@@ -124,7 +133,9 @@ pub use manifest_store::ManifestStore;
 pub use manifest_store_report::ManifestStoreReport;
 pub use reader::Reader;
 pub use resource_store::{ResourceRef, ResourceStore};
-pub use signer::{AsyncSigner, RemoteSigner, Signer};
+#[cfg(feature = "v1_api")]
+pub use signer::RemoteSigner;
+pub use signer::{AsyncSigner, Signer};
 pub use utils::mime::format_from_path;
 pub use validation_results::{ValidationResults, ValidationState};
 
@@ -137,7 +148,6 @@ pub(crate) mod callback_signer;
 pub(crate) mod claim;
 pub(crate) mod claim_generator_info;
 pub(crate) mod cose_validator;
-pub(crate) mod dynamic_assertion;
 pub(crate) mod error;
 pub(crate) mod external_manifest;
 pub(crate) mod hashed_uri;

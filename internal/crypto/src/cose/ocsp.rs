@@ -12,11 +12,16 @@
 // each license.
 
 use async_generic::async_generic;
-use c2pa_status_tracker::StatusTracker;
+use c2pa_status_tracker::{
+    log_item,
+    validation_codes::{SIGNING_CREDENTIAL_OCSP_INACCESSIBLE, SIGNING_CREDENTIAL_OCSP_SKIPPED},
+    StatusTracker,
+};
 use chrono::{DateTime, Utc};
 use ciborium::value::Value;
 use coset::{CoseSign1, Label};
 
+use super::cert_chain_from_sign1;
 use crate::{
     cose::{
         check_certificate_profile, validate_cose_tst_info, validate_cose_tst_info_async,
@@ -24,8 +29,6 @@ use crate::{
     },
     ocsp::{make_ocsp_cert_id, OcspResponse},
 };
-
-use super::cert_chain_from_sign1;
 
 /// Given a COSE signature, extract the OCSP data and validate the status of
 /// that report.
@@ -57,7 +60,13 @@ pub fn check_ocsp_status(
             OcspFetchPolicy::FetchAllowed => {
                 fetch_and_check_ocsp_response(sign1, data, ctp, validation_log)
             }
-            OcspFetchPolicy::DoNotFetch => Ok(OcspResponse::default()),
+            OcspFetchPolicy::DoNotFetch => {
+                log_item!("", "OCSP fetch skipped", "check_ocsp_status")
+                    .validation_status(SIGNING_CREDENTIAL_OCSP_SKIPPED)
+                    .informational(validation_log);
+
+                Ok(OcspResponse::default())
+            }
         },
     }
 }
@@ -134,6 +143,10 @@ fn fetch_and_check_ocsp_response(
         let certs = cert_chain_from_sign1(sign1)?;
 
         let Some(ocsp_der) = crate::ocsp::fetch_ocsp_response(&certs) else {
+            log_item!("", "OCSP fetch failed", "fetch_and_check_ocsp_response")
+                .validation_status(SIGNING_CREDENTIAL_OCSP_INACCESSIBLE)
+                .informational(validation_log);
+
             return Ok(OcspResponse::default());
         };
 

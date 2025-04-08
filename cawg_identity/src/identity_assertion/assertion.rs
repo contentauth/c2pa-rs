@@ -16,11 +16,13 @@ use std::{
     fmt::{Debug, Formatter},
 };
 
-use c2pa::{Manifest, Reader};
+use c2pa::{dynamic_assertion::PartialClaim, Manifest, Reader};
+use c2pa_status_tracker::{log_current_item, log_item, StatusTracker};
 use serde::{Deserialize, Serialize};
 use serde_bytes::ByteBuf;
 
 use crate::{
+    claim_aggregation::IcaSignatureVerifier,
     identity_assertion::{
         report::{
             IdentityAssertionReport, IdentityAssertionsForManifest,
@@ -29,6 +31,7 @@ use crate::{
         signer_payload::SignerPayload,
     },
     internal::debug_byte_slice::DebugByteSlice,
+    x509::X509SignatureVerifier,
     SignatureVerifier, ToCredentialSummary, ValidationError,
 };
 
@@ -63,14 +66,31 @@ impl IdentityAssertion {
     /// Iterator returns a [`Result`] because each assertion may fail to parse.
     ///
     /// Aside from CBOR parsing, no further validation is performed.
-    pub fn from_manifest(
-        manifest: &Manifest,
-    ) -> impl Iterator<Item = Result<Self, c2pa::Error>> + use<'_> {
+    pub fn from_manifest<'a>(
+        manifest: &'a Manifest,
+        status_tracker: &'a mut StatusTracker,
+    ) -> impl Iterator<Item = Result<Self, c2pa::Error>> + use<'a> {
         manifest
             .assertions()
             .iter()
             .filter(|a| a.label().starts_with("cawg.identity"))
-            .map(|a| a.to_assertion())
+            .map(|a| (a.label().to_owned(), a.to_assertion()))
+            .inspect(|(label, r)| {
+                if let Err(err) = r {
+                    // TO DO: a.label() is probably wrong (not a full JUMBF URI)
+                    log_item!(
+                        label.clone(),
+                        "invalid CBOR",
+                        "IdentityAssertion::from_manifest"
+                    )
+                    .validation_status("cawg.identity.cbor.invalid")
+                    .failure_no_throw(
+                        status_tracker,
+                        c2pa::Error::AssertionSpecificError(err.to_string()),
+                    );
+                }
+            })
+            .map(move |(_label, r)| r)
     }
 
     /// Create a summary report from this `IdentityAssertion`.
@@ -83,17 +103,20 @@ impl IdentityAssertion {
     pub async fn to_summary<SV: SignatureVerifier>(
         &self,
         manifest: &Manifest,
+        status_tracker: &mut StatusTracker,
         verifier: &SV,
     ) -> impl Serialize
     where
         <SV as SignatureVerifier>::Output: 'static,
     {
-        self.to_summary_impl(manifest, verifier).await
+        self.to_summary_impl(manifest, status_tracker, verifier)
+            .await
     }
 
     pub(crate) async fn to_summary_impl<SV: SignatureVerifier>(
         &self,
         manifest: &Manifest,
+        status_tracker: &mut StatusTracker,
         verifier: &SV,
     ) -> IdentityAssertionReport<
         <<SV as SignatureVerifier>::Output as ToCredentialSummary>::CredentialSummary,
@@ -101,7 +124,7 @@ impl IdentityAssertion {
     where
         <SV as SignatureVerifier>::Output: 'static,
     {
-        match self.validate(manifest, verifier).await {
+        match self.validate(manifest, status_tracker, verifier).await {
             Ok(named_actor) => {
                 let summary = named_actor.to_summary();
 
@@ -120,13 +143,15 @@ impl IdentityAssertion {
     /// Summarize all of the identity assertions found for a [`Manifest`].
     pub async fn summarize_all<SV: SignatureVerifier>(
         manifest: &Manifest,
+        status_tracker: &mut StatusTracker,
         verifier: &SV,
     ) -> impl Serialize {
-        Self::summarize_all_impl(manifest, verifier).await
+        Self::summarize_all_impl(manifest, status_tracker, verifier).await
     }
 
     pub(crate) async fn summarize_all_impl<SV: SignatureVerifier>(
         manifest: &Manifest,
+        status_tracker: &mut StatusTracker,
         verifier: &SV,
     ) -> IdentityAssertionsForManifest<
         <<SV as SignatureVerifier>::Output as ToCredentialSummary>::CredentialSummary,
@@ -139,9 +164,16 @@ impl IdentityAssertion {
             >,
         > = vec![];
 
-        for assertion in Self::from_manifest(manifest) {
+        let assertion_results: Vec<Result<IdentityAssertion, c2pa::Error>> =
+            Self::from_manifest(manifest, status_tracker).collect();
+
+        for assertion in assertion_results {
             let report = match assertion {
-                Ok(assertion) => assertion.to_summary_impl(manifest, verifier).await,
+                Ok(assertion) => {
+                    assertion
+                        .to_summary_impl(manifest, status_tracker, verifier)
+                        .await
+                }
                 Err(_) => {
                     todo!("Handle assertion failed to parse case");
                 }
@@ -163,6 +195,7 @@ impl IdentityAssertion {
     #[cfg(feature = "v1_api")]
     pub async fn summarize_manifest_store<SV: SignatureVerifier>(
         store: &c2pa::ManifestStore,
+        status_tracker: &mut StatusTracker,
         verifier: &SV,
     ) -> impl Serialize {
         // NOTE: We can't write this using .map(...).collect() because there are async
@@ -175,7 +208,7 @@ impl IdentityAssertion {
         > = BTreeMap::new();
 
         for (id, manifest) in store.manifests() {
-            let report = Self::summarize_all_impl(manifest, verifier).await;
+            let report = Self::summarize_all_impl(manifest, status_tracker, verifier).await;
             reports.insert(id.clone(), report);
         }
 
@@ -189,6 +222,7 @@ impl IdentityAssertion {
     /// Summarize all of the identity assertions found for a [`Reader`].
     pub async fn summarize_from_reader<SV: SignatureVerifier>(
         reader: &Reader,
+        status_tracker: &mut StatusTracker,
         verifier: &SV,
     ) -> impl Serialize {
         // NOTE: We can't write this using .map(...).collect() because there are async
@@ -201,7 +235,7 @@ impl IdentityAssertion {
         > = BTreeMap::new();
 
         for (id, manifest) in reader.manifests() {
-            let report = Self::summarize_all_impl(manifest, verifier).await;
+            let report = Self::summarize_all_impl(manifest, status_tracker, verifier).await;
             reports.insert(id.clone(), report);
         }
 
@@ -222,25 +256,104 @@ impl IdentityAssertion {
     pub async fn validate<SV: SignatureVerifier>(
         &self,
         manifest: &Manifest,
+        status_tracker: &mut StatusTracker,
         verifier: &SV,
     ) -> Result<SV::Output, ValidationError<SV::Error>> {
-        self.check_padding()?;
+        // TO DO: Create new status tracker here and pass it through
+        // the rest of this code. Then we can rewrite the log with
+        // assertion label at the end of this process.
 
-        self.signer_payload.check_against_manifest(manifest)?;
+        // UPDATED TO DO: Hold off until Gavin lands the post-validate branch.
+        // Then we'll get the assertion label handed to us nicely.
+        self.check_padding(status_tracker)?;
+
+        self.signer_payload
+            .check_against_manifest(manifest, status_tracker)?;
 
         verifier
-            .check_signature(&self.signer_payload, &self.signature)
+            .check_signature(&self.signer_payload, &self.signature, status_tracker)
             .await
     }
 
-    fn check_padding<E>(&self) -> Result<(), ValidationError<E>> {
+    /// Using the provided [`SignatureVerifier`], check the validity of this
+    /// identity assertion.
+    ///
+    /// If successful, returns the credential-type specific information that can
+    /// be derived from the signature. This is the [`SignatureVerifier::Output`]
+    /// type which typically describes the named actor, but may also contain
+    /// information about the time of signing or the credential's source.
+    pub async fn validate_partial_claim(
+        &self,
+        partial_claim: &PartialClaim,
+        status_tracker: &mut StatusTracker,
+    ) -> Result<serde_json::Value, ValidationError<String>> {
+        self.check_padding(status_tracker)?;
+
+        self.signer_payload
+            .check_against_partial_claim(partial_claim, status_tracker)?;
+
+        let sig_type = self.signer_payload.sig_type.as_str();
+        if sig_type == "cawg.x509.cose" {
+            let verifier = X509SignatureVerifier {};
+            let result = verifier
+                .check_signature(&self.signer_payload, &self.signature, status_tracker)
+                .await
+                .map(|v| v.to_summary())
+                .map_err(|e| ValidationError::UnknownSignatureType(e.to_string()))?;
+            log_current_item!(
+                "cawg x509 identity signature valid",
+                "validate_partial_claim"
+            )
+            .validation_status("cawg.ica.credential_valid")
+            .success(status_tracker);
+            serde_json::to_value(result)
+                .map_err(|e| ValidationError::UnknownSignatureType(e.to_string()))
+        } else if sig_type == "cawg.identity_claims_aggregation" {
+            let verifier = IcaSignatureVerifier {};
+            let result = verifier
+                .check_signature(&self.signer_payload, &self.signature, status_tracker)
+                .await
+                .map(|v| v.to_summary())
+                .map_err(|e| ValidationError::UnknownSignatureType(e.to_string()))?;
+            log_current_item!(
+                "cawg identity claims_aggregation signature valid",
+                "validate_partial_claim"
+            )
+            .validation_status("cawg.ica.credential_valid")
+            .success(status_tracker);
+            serde_json::to_value(result)
+                .map_err(|e| ValidationError::UnknownSignatureType(e.to_string()))
+        } else {
+            Err(ValidationError::UnknownSignatureType(sig_type.to_string()))
+        }
+    }
+
+    fn check_padding<E: Debug>(
+        &self,
+        status_tracker: &mut StatusTracker,
+    ) -> Result<(), ValidationError<E>> {
         if !self.pad1.iter().all(|b| *b == 0) {
-            return Err(ValidationError::InvalidPadding);
+            log_current_item!(
+                "invalid value in pad fields",
+                "SignerPayload::check_padding"
+            )
+            .validation_status("cawg.identity.pad.invalid")
+            .failure(status_tracker, ValidationError::<E>::InvalidPadding)?;
+
+            // We'll only get to this line if `pad1` is invalid and the status tracker is
+            // configured to continue through recoverable errors. In that case, we want to
+            // avoid logging a second "invalid padding" warning if `pad2` is also invalid.
+            return Ok(());
         }
 
         if let Some(pad2) = self.pad2.as_ref() {
             if !pad2.iter().all(|b| *b == 0) {
-                return Err(ValidationError::InvalidPadding);
+                log_current_item!(
+                    "invalid value in pad fields",
+                    "SignerPayload::check_padding"
+                )
+                .validation_status("cawg.identity.pad.invalid")
+                .failure(status_tracker, ValidationError::<E>::InvalidPadding)?;
             }
         }
 

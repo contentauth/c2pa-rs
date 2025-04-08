@@ -12,6 +12,7 @@
 // each license.
 
 use async_trait::async_trait;
+use c2pa_status_tracker::{log_current_item, StatusTracker};
 use coset::{CoseSign1, RegisteredLabelWithPrivate, TaggedCborSerializable};
 
 use crate::{
@@ -45,13 +46,32 @@ impl SignatureVerifier for IcaSignatureVerifier {
 
     async fn check_signature(
         &self,
-        _signer_payload: &SignerPayload,
+        signer_payload: &SignerPayload,
         signature: &[u8],
+        status_tracker: &mut StatusTracker,
     ) -> Result<Self::Output, ValidationError<Self::Error>> {
+        if signer_payload.sig_type != super::CAWG_ICA_SIG_TYPE {
+            log_current_item!(
+                "unsupported signature type",
+                "X509SignatureVerifier::check_signature"
+            )
+            .validation_status("cawg.identity.sig_type.unknown")
+            .failure_no_throw(
+                status_tracker,
+                ValidationError::<IcaValidationError>::UnknownSignatureType(
+                    signer_payload.sig_type.clone(),
+                ),
+            );
+
+            return Err(ValidationError::UnknownSignatureType(
+                signer_payload.sig_type.clone(),
+            ));
+        }
+
         // The signature should be a `CoseSign1` object.
         let sign1 = CoseSign1::from_tagged_slice(signature)?;
 
-        // Identify the signature
+        // Identify the signature.
         let _ssi_alg = if let Some(ref alg) = sign1.protected.header.alg {
             match alg {
                 // TEMPORARY: Require EdDSA algorithm.
@@ -152,8 +172,6 @@ impl SignatureVerifier for IcaSignatureVerifier {
                         ),
                     ));
                 };
-
-                dbg!(&jwk_prop);
 
                 // OMG SO HACKY!
                 let Ok(jwk_json) = serde_json::to_string_pretty(jwk_prop) else {
