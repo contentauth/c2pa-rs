@@ -6,6 +6,15 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 Since version 0.36.2, the format of this changelog is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.49.2](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.49.1...c2pa-v0.49.2)
+_07 April 2025_
+
+### Fixed
+
+* Populates claim signature field in ingredient v3. ([#1027](https://github.com/contentauth/c2pa-rs/pull/1027))
+* Adjust dependencies to avoid security warnings and yanked versions ([#1031](https://github.com/contentauth/c2pa-rs/pull/1031))
+* Enable trust checks for all unit tests ([#1022](https://github.com/contentauth/c2pa-rs/pull/1022))
+
 ## [0.49.1](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.49.0...c2pa-v0.49.1)
 _04 April 2025_
 
