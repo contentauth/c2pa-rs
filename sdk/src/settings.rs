@@ -108,7 +108,8 @@ impl Default for Trust {
         };
 
         // load test config store for unit tests
-        if cfg!(test) {
+        #[cfg(test)]
+        {
             trust.trust_config = Some(
                 String::from_utf8_lossy(include_bytes!("../tests/fixtures/certs/trust/store.cfg"))
                     .into_owned(),
