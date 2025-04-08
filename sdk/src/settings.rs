@@ -98,18 +98,19 @@ impl Trust {
     }
 }
 
+#[allow(clippy::derivable_impls)]
 impl Default for Trust {
     fn default() -> Self {
-        let mut trust = Self {
-            private_anchors: None,
-            trust_anchors: None,
-            trust_config: None,
-            allowed_list: None,
-        };
-
         // load test config store for unit tests
         #[cfg(test)]
         {
+            let mut trust = Self {
+                private_anchors: None,
+                trust_anchors: None,
+                trust_config: None,
+                allowed_list: None,
+            };
+
             trust.trust_config = Some(
                 String::from_utf8_lossy(include_bytes!("../tests/fixtures/certs/trust/store.cfg"))
                     .into_owned(),
@@ -120,9 +121,18 @@ impl Default for Trust {
                 ))
                 .into_owned(),
             );
-        }
 
-        trust
+            trust
+        }
+        #[cfg(not(test))]
+        {
+            Self {
+                private_anchors: None,
+                trust_anchors: None,
+                trust_config: None,
+                allowed_list: None,
+            }
+        }
     }
 }
 
