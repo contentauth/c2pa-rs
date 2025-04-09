@@ -42,7 +42,11 @@ c2patool -h
 
 NOTE: You also may want to get some of the example files provided in the repository `sample` directory.   To do so, clone the repository with `git clone https://github.com/contentauth/c2pa-rs.git`.
 
-#### Upgrading
+### Installing from source
+
+Instead of installing a prebuilt binary, you can [build the project from source](https://github.com/contentauth/c2pa-rs/blob/docs/no-c2patool-binstall/cli/docs/project-contributions.md#building-from-source).
+
+### Upgrading
 
 To display the version of C2PA Tool that you have, enter this command:
 
@@ -50,5 +54,4 @@ To display the version of C2PA Tool that you have, enter this command:
 c2patool -V
 ```
 
-The tool will display the version installed. Compare the version number displayed with the latest release version shown in the [repository releases page filtered for c2patool](https://github.com/contentauth/c2pa-rs/releases](https://github.com/contentauth/c2pa-rs/releases?q=c2patool). 
-
+The tool will display the version installed. Compare the version number displayed with the latest release version shown in the [repository releases page filtered for c2patool](https://github.com/contentauth/c2pa-rs/releases](https://github.com/contentauth/c2pa-rs/releases?q=c2patool).  To update the tool, simply install the latest version.
