@@ -1892,12 +1892,16 @@ mod tests_file_io {
         assert_eq!(ingredient.format(), Some("image/jpeg"));
         test_thumbnail(&ingredient, "image/jpeg");
         assert!(ingredient.manifest_data().is_some());
-        assert!(ingredient.validation_status().is_some());
-        assert!(ingredient
-            .validation_status()
-            .unwrap()
-            .iter()
-            .any(|s| s.code() == validation_status::TIMESTAMP_MISMATCH));
+        assert_eq!(
+            ingredient
+                .validation_results()
+                .unwrap()
+                .active_manifest()
+                .unwrap()
+                .informational[0]
+                .code(),
+            validation_status::TIMESTAMP_MISMATCH
+        );
     }
 
     #[test]
