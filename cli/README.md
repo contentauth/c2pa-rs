@@ -33,6 +33,7 @@ To install a prebuilt binary of C2PA Tool:
    - Linux: `c2patool-vx.y.z-x86_64-unknown-linux-gnu.tar.gz`
 1. Download and extract the archive file.
 1. Copy the `c2patool` executable file to a location on your `PATH`.
+ from an unknown source; for example, on macOS, see [If you want to open an app that hasn’t been notarized or is from an unidentified developer](https://support.apple.com/en-us/102445#openanyway).
 
 Confirm that you can run the tool by entering a command such as:
 ```
@@ -40,7 +41,6 @@ c2patool -h
 ```
 
 NOTE: You also may want to get some of the example files provided in the repository `sample` directory.   To do so, clone the repository with `git clone https://github.com/contentauth/c2pa-rs.git`.
-
 
 #### Upgrading
 
