@@ -54,4 +54,4 @@ To display the version of C2PA Tool that you have, enter this command:
 c2patool -V
 ```
 
-The tool will display the version installed. Compare the version number displayed with the latest release version shown in the [repository releases page filtered for c2patool](https://github.com/contentauth/c2pa-rs/releases?q=c2patool).  If you don't have the latest version, update the tool by installing the latest version.
+The tool will display the version installed. Compare the version number displayed with the latest release version shown in the [repository releases page filtered for c2patool](https://github.com/contentauth/c2pa-rs/releases?q=c2patool).  If you don't have the latest version, simply reinstall to get the latest version.
