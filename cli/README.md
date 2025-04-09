@@ -8,7 +8,7 @@ Use the tool on a file in one of the [supported formats](https://github.com/cont
 - Read a low-level report of C2PA manifest data.
 - Add a C2PA manifest to the file.
 
-For a simple example of calling c2patool from a Node.js server application, see the [c2pa-service-example](https://github.com/contentauth/c2patool-service-example) repository.
+For a simple example of calling c2patool from a Node.js server application, see the [c2patool-service-example](https://github.com/contentauth/c2patool-service-example) repository.
 
 <div style={{display: 'none'}}>
 
