@@ -19,7 +19,8 @@ use c2pa_status_tracker::{
     log_item,
     validation_codes::{
         ALGORITHM_UNSUPPORTED, SIGNING_CREDENTIAL_INVALID, SIGNING_CREDENTIAL_TRUSTED,
-        SIGNING_CREDENTIAL_UNTRUSTED, TIMESTAMP_MISMATCH, TIMESTAMP_OUTSIDE_VALIDITY,
+        SIGNING_CREDENTIAL_UNTRUSTED, TIMESTAMP_MALFORMED, TIMESTAMP_MISMATCH,
+        TIMESTAMP_OUTSIDE_VALIDITY,
     },
     StatusTracker,
 };
@@ -219,7 +220,7 @@ impl Verifier<'_> {
                     "verify_cose"
                 )
                 .validation_status(TIMESTAMP_MISMATCH)
-                .failure_no_throw(validation_log, TimeStampError::InvalidData);
+                .informational(validation_log);
 
                 Err(TimeStampError::InvalidData.into())
             }
@@ -231,14 +232,15 @@ impl Verifier<'_> {
                     "verify_cose"
                 )
                 .validation_status(TIMESTAMP_OUTSIDE_VALIDITY)
-                .failure_no_throw(validation_log, TimeStampError::ExpiredCertificate);
+                .informational(validation_log);
 
                 Err(TimeStampError::ExpiredCertificate.into())
             }
 
             Err(e) => {
                 log_item!("Cose_Sign1", "error parsing timestamp", "verify_cose")
-                    .failure_no_throw(validation_log, e);
+                    .validation_status(TIMESTAMP_MALFORMED)
+                    .informational(validation_log);
 
                 // Frustratingly, we can't clone CoseError. The likely cases are already handled
                 // above, so we'll call this an internal error.

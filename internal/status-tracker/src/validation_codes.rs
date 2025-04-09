@@ -191,6 +191,12 @@ pub const TIMESTAMP_UNTRUSTED: &str = "timeStamp.untrusted";
 /// Any corresponding URL should point to a C2PA claim signature box.
 pub const TIMESTAMP_OUTSIDE_VALIDITY: &str = "timeStamp.outsideValidity";
 
+/// The time-stamp response included in the claim signature header is not
+/// properly formed, as per RFC 3161
+///
+/// Any corresponding URL should point to a C2PA claim signature box.
+pub const TIMESTAMP_MALFORMED: &str = "timeStamp.malformed";
+
 /// The hash of the the referenced assertion in the manifest does not
 /// match the corresponding hash in the assertion's hashed URI in the claim.
 ///
@@ -329,9 +335,10 @@ pub fn log_kind(status_code: &str) -> LogKind {
         | ASSERTION_BMFFHASH_MATCH
         | ASSERTION_ACCESSIBLE
         | ASSERTION_BOXHASH_MATCH => LogKind::Success,
-        TIMESTAMP_UNTRUSTED | TIMESTAMP_OUTSIDE_VALIDITY | TIMESTAMP_MISMATCH => {
-            LogKind::Informational
-        }
+        TIMESTAMP_UNTRUSTED
+        | TIMESTAMP_OUTSIDE_VALIDITY
+        | TIMESTAMP_MISMATCH
+        | TIMESTAMP_MALFORMED => LogKind::Informational,
         _ => LogKind::Failure,
     }
 }
