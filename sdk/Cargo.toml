@@ -71,8 +71,8 @@ bcder = "0.7.3"
 bytes = "1.7.2"
 byteorder = { version = "1.4.3", default-features = false }
 byteordered = "0.6.0"
-c2pa-crypto = { path = "../internal/crypto", version = "0.8.1" }
-c2pa-status-tracker = { path = "../internal/status-tracker", version = "0.6.0" }
+c2pa-crypto = { path = "../internal/crypto", version = "0.8.2" }
+c2pa-status-tracker = { path = "../internal/status-tracker", version = "0.6.1" }
 chrono = { version = "0.4.39", default-features = false, features = ["serde"] }
 ciborium = "0.2.2"
 config = { version = "0.14.0", default-features = false, features = [
