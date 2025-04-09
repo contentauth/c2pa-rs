@@ -19,11 +19,12 @@ use std::io::{Cursor, Seek};
 
 use c2pa::{Builder, Reader, SigningAlg};
 use c2pa_crypto::raw_signature;
+use c2pa_status_tracker::StatusTracker;
 
 use crate::{
     builder::{AsyncIdentityAssertionBuilder, AsyncIdentityAssertionSigner},
     tests::fixtures::{cert_chain_and_private_key_for_alg, manifest_json, parent_json},
-    x509::{X509CredentialHolder, X509SignatureVerifier},
+    x509::{AsyncX509CredentialHolder, X509SignatureVerifier},
     IdentityAssertion,
 };
 
@@ -59,7 +60,7 @@ async fn x509_signing() {
     )
     .unwrap();
 
-    let x509_holder = X509CredentialHolder::from_async_raw_signer(cawg_raw_signer);
+    let x509_holder = AsyncX509CredentialHolder::from_async_raw_signer(cawg_raw_signer);
     let iab = AsyncIdentityAssertionBuilder::for_credential_holder(x509_holder);
     c2pa_signer.add_identity_assertion(iab);
 
@@ -85,13 +86,18 @@ async fn x509_signing() {
     assert_eq!(manifest_store.validation_status(), None);
 
     let manifest = manifest_store.active_manifest().unwrap();
-    let mut ia_iter = IdentityAssertion::from_manifest(manifest);
+    let mut st = StatusTracker::default();
+    let mut ia_iter = IdentityAssertion::from_manifest(manifest, &mut st);
 
     let ia = ia_iter.next().unwrap().unwrap();
     assert!(ia_iter.next().is_none());
+    drop(ia_iter);
 
     let x509_verifier = X509SignatureVerifier {};
-    let sig_info = ia.validate(manifest, &x509_verifier).await.unwrap();
+    let sig_info = ia
+        .validate(manifest, &mut st, &x509_verifier)
+        .await
+        .unwrap();
 
     let cert_info = &sig_info.cert_info;
     assert_eq!(cert_info.alg.unwrap(), SigningAlg::Ed25519);

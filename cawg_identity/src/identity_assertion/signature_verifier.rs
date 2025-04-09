@@ -11,14 +11,17 @@
 // specific language governing permissions and limitations under
 // each license.
 
+use std::fmt::Debug;
+
 use async_trait::async_trait;
+use c2pa_status_tracker::StatusTracker;
 use serde::Serialize;
 
 use crate::{SignerPayload, ValidationError};
 
-/// A `Verifier` can read one or more kinds of signature from an identity
-/// assertion, assess the validity of the signature, and return information
-/// about the corresponding credential subject.
+/// A `SignatureVerifier` can read one or more kinds of signature from an
+/// identity assertion, assess the validity of the signature, and return
+/// information about the corresponding credential subject.
 ///
 /// The associated type `Output` describes the information which can be derived
 /// from the credential and signature.
@@ -36,7 +39,7 @@ pub trait SignatureVerifier: Sync {
     /// included in the `SignatureError` variant of [`ValidationError`].
     ///
     /// [`ValidationError`]: crate::ValidationError
-    type Error;
+    type Error: Debug;
 
     /// Verify the signature, returning an instance of [`Output`] if the
     /// signature is valid.
@@ -46,6 +49,7 @@ pub trait SignatureVerifier: Sync {
         &self,
         signer_payload: &SignerPayload,
         signature: &[u8],
+        status_tracker: &mut StatusTracker,
     ) -> Result<Self::Output, ValidationError<Self::Error>>;
 }
 
@@ -69,7 +73,7 @@ pub trait SignatureVerifier {
     /// included in the `SignatureError` variant of [`ValidationError`].
     ///
     /// [`ValidationError`]: crate::ValidationError
-    type Error;
+    type Error: Debug;
 
     /// Verify the signature, returning an instance of [`Output`] if the
     /// signature is valid.
@@ -79,6 +83,7 @@ pub trait SignatureVerifier {
         &self,
         signer_payload: &SignerPayload,
         signature: &[u8],
+        status_tracker: &mut StatusTracker,
     ) -> Result<Self::Output, ValidationError<Self::Error>>;
 }
 

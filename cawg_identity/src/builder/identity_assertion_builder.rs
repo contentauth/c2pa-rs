@@ -11,8 +11,12 @@
 // specific language governing permissions and limitations under
 // each license.
 
+use std::collections::HashSet;
+
 use async_trait::async_trait;
-use c2pa::{AsyncDynamicAssertion, DynamicAssertion, DynamicAssertionContent, PreliminaryClaim};
+use c2pa::dynamic_assertion::{
+    AsyncDynamicAssertion, DynamicAssertion, DynamicAssertionContent, PartialClaim,
+};
 use serde_bytes::ByteBuf;
 
 use super::{CredentialHolder, IdentityBuilderError};
@@ -32,7 +36,8 @@ use crate::{builder::AsyncCredentialHolder, IdentityAssertion, SignerPayload};
 /// [`IdentityAssertionSigner`]: crate::builder::IdentityAssertionSigner
 pub struct IdentityAssertionBuilder {
     credential_holder: Box<dyn CredentialHolder>,
-    // referenced_assertions: Vec<MumbleSomething>,
+    referenced_assertions: HashSet<String>,
+    roles: Vec<String>,
 }
 
 impl IdentityAssertionBuilder {
@@ -41,6 +46,30 @@ impl IdentityAssertionBuilder {
     pub fn for_credential_holder<CH: CredentialHolder + 'static>(credential_holder: CH) -> Self {
         Self {
             credential_holder: Box::new(credential_holder),
+            referenced_assertions: HashSet::new(),
+            roles: vec![],
+        }
+    }
+
+    /// Add assertion labels to consider as referenced_assertions.
+    ///
+    /// If any of these labels match assertions that are present in the partial
+    /// claim submitted during signing, they will be added to the
+    /// `referenced_assertions` list for this identity assertion.
+    pub fn add_referenced_assertions(&mut self, labels: &[&str]) {
+        for label in labels {
+            self.referenced_assertions.insert(label.to_string());
+        }
+    }
+
+    /// Add roles to attach to the named actor for this identity assertion.
+    ///
+    /// See [§5.1.2, “Named actor roles,”] for more information.
+    ///
+    /// [§5.1.2, “Named actor roles,”]: https://cawg.io/identity/1.1-draft/#_named_actor_roles
+    pub fn add_roles(&mut self, roles: &[&str]) {
+        for role in roles {
+            self.roles.push(role.to_string());
         }
     }
 }
@@ -60,22 +89,33 @@ impl DynamicAssertion for IdentityAssertionBuilder {
         &self,
         _label: &str,
         size: Option<usize>,
-        claim: &PreliminaryClaim,
+        claim: &PartialClaim,
     ) -> c2pa::Result<DynamicAssertionContent> {
-        // TO DO: Better filter for referenced assertions.
-        // For now, just require hard binding.
-
         // TO DO: Update to respond correctly when identity assertions refer to each
         // other.
         let referenced_assertions = claim
             .assertions()
-            .filter(|a| a.url().contains("c2pa.assertions/c2pa.hash."))
+            .filter(|a| {
+                // Always accept the hard binding assertion.
+                if a.url().contains("c2pa.assertions/c2pa.hash.") {
+                    return true;
+                }
+
+                let label = if let Some((_, label)) = a.url().rsplit_once('/') {
+                    label.to_string()
+                } else {
+                    a.url()
+                };
+
+                self.referenced_assertions.contains(&label)
+            })
             .cloned()
             .collect();
 
         let signer_payload = SignerPayload {
             referenced_assertions,
             sig_type: self.credential_holder.sig_type().to_owned(),
+            roles: self.roles.clone(),
         };
 
         let signature_result = self.credential_holder.sign(&signer_payload);
@@ -98,7 +138,9 @@ pub struct AsyncIdentityAssertionBuilder {
 
     #[cfg(target_arch = "wasm32")]
     credential_holder: Box<dyn AsyncCredentialHolder>,
-    // referenced_assertions: Vec<MumbleSomething>,
+
+    referenced_assertions: HashSet<String>,
+    roles: Vec<String>,
 }
 
 impl AsyncIdentityAssertionBuilder {
@@ -109,6 +151,30 @@ impl AsyncIdentityAssertionBuilder {
     ) -> Self {
         Self {
             credential_holder: Box::new(credential_holder),
+            referenced_assertions: HashSet::new(),
+            roles: vec![],
+        }
+    }
+
+    /// Add assertion labels to consider as referenced_assertions.
+    ///
+    /// If any of these labels match assertions that are present in the partial
+    /// claim submitted during signing, they will be added to the
+    /// `referenced_assertions` list for this identity assertion.
+    pub fn add_referenced_assertions(&mut self, labels: &[&str]) {
+        for label in labels {
+            self.referenced_assertions.insert(label.to_string());
+        }
+    }
+
+    /// Add roles to attach to the named actor for this identity assertion.
+    ///
+    /// See [§5.1.2, “Named actor roles,”] for more information.
+    ///
+    /// [§5.1.2, “Named actor roles,”]: https://cawg.io/identity/1.1-draft/#_named_actor_roles
+    pub fn add_roles(&mut self, roles: &[&str]) {
+        for role in roles {
+            self.roles.push(role.to_string());
         }
     }
 }
@@ -130,22 +196,33 @@ impl AsyncDynamicAssertion for AsyncIdentityAssertionBuilder {
         &self,
         _label: &str,
         size: Option<usize>,
-        claim: &PreliminaryClaim,
+        claim: &PartialClaim,
     ) -> c2pa::Result<DynamicAssertionContent> {
-        // TO DO: Better filter for referenced assertions.
-        // For now, just require hard binding.
-
         // TO DO: Update to respond correctly when identity assertions refer to each
         // other.
         let referenced_assertions = claim
             .assertions()
-            .filter(|a| a.url().contains("c2pa.assertions/c2pa.hash."))
+            .filter(|a| {
+                // Always accept the hard binding assertion.
+                if a.url().contains("c2pa.assertions/c2pa.hash.") {
+                    return true;
+                }
+
+                let label = if let Some((_, label)) = a.url().rsplit_once('/') {
+                    label.to_string()
+                } else {
+                    a.url()
+                };
+
+                self.referenced_assertions.contains(&label)
+            })
             .cloned()
             .collect();
 
         let signer_payload = SignerPayload {
             referenced_assertions,
             sig_type: self.credential_holder.sig_type().to_owned(),
+            roles: self.roles.clone(),
         };
 
         let signature_result = self.credential_holder.sign(&signer_payload).await;

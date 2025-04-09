@@ -204,7 +204,7 @@ impl ManifestStore {
                         .insert(manifest_label.to_owned(), manifest);
                 }
                 Err(e) => {
-                    validation_results.add_status(manifest_label, ValidationStatus::from_error(&e));
+                    validation_results.add_status(ValidationStatus::from_error(&e));
                 }
             };
         }
@@ -241,7 +241,7 @@ impl ManifestStore {
                         .insert(manifest_label.to_owned(), manifest);
                 }
                 Err(e) => {
-                    validation_results.add_status(manifest_label, ValidationStatus::from_error(&e));
+                    validation_results.add_status(ValidationStatus::from_error(&e));
                 }
             };
         }
@@ -702,6 +702,8 @@ mod tests {
     #[allow(deprecated)]
     #[cfg(feature = "v1_api")]
     async fn manifest_report_from_manifest_and_asset_bytes_async() {
+        crate::settings::set_settings_value("verify.verify_trust", false).unwrap();
+
         let asset_bytes = include_bytes!("../tests/fixtures/cloud.jpg");
         let manifest_bytes = include_bytes!("../tests/fixtures/cloud_manifest.c2pa");
 

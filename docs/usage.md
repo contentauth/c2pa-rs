@@ -2,12 +2,12 @@
 
 ## Supported platforms
 
-The C2PA Rust library has been tested on the following operating systems:
+The C2PA Rust library has been tested on:
 
 * Windows (Intel only)
 * MacOS (Intel and Apple silicon)
 * Ubuntu Linux (64-bit Intel and ARM v8)
-* WebAssembly (Wasm)
+* WebAssembly (Wasm); see [Building for WebAssembly](project-contributions.md#building-for-webassembly) for details.
 
 ## Requirements
 
@@ -29,8 +29,6 @@ Add the `add_thumbnails` dependency to generate thumbnails for JPEG and PNG file
 ```
 c2pa = { version = "0.45.2", features = ["file_io", "add_thumbnails"] }
 ```
-
-NOTE: If you are building for WASM, omit the `file_io` dependency.
 
 ## Features
 

@@ -20,10 +20,12 @@
 
 pub mod builder;
 pub mod claim_aggregation;
+pub mod validator;
 
 mod identity_assertion;
 pub use identity_assertion::{
     assertion::IdentityAssertion,
+    built_in_signature_verifier::BuiltInSignatureVerifier,
     signature_verifier::{SignatureVerifier, ToCredentialSummary},
     signer_payload::SignerPayload,
     validation_error::ValidationError,

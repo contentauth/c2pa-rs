@@ -68,7 +68,7 @@ use HashedUri as C2PAAssertion;
 
 const GH_FULL_VERSION_LIST: &str = "Sec-CH-UA-Full-Version-List";
 const GH_UA: &str = "Sec-CH-UA";
-const C2PA_NAMESPACE_V2: &str = "urn:c2pa:";
+const C2PA_NAMESPACE_V2: &str = "urn:c2pa";
 const C2PA_NAMESPACE_V1: &str = "urn:uuid";
 
 static _V2_SPEC_DEPRECATED_ASSERTIONS: [&str; 4] = [
@@ -424,23 +424,54 @@ impl Claim {
         user_guid: S,
         claim_version: usize,
     ) -> Result<Self> {
-        let ug: String = user_guid.into();
+        let mparts = manifest_label_to_parts(&user_guid.into())
+            .ok_or(Error::BadParam("invalid Claim GUID".into()))?;
+
+        if claim_version == 1 && !mparts.is_v1 || claim_version > 1 && mparts.is_v1 {
+            return Err(Error::BadParam("invalid Claim GUID".into()));
+        }
+
+        let ug = &mparts.guid;
         let uuid =
-            Uuid::try_parse(&ug).map_err(|_e| Error::BadParam("invalid Claim GUID".into()))?;
+            Uuid::try_parse(ug).map_err(|_e| Error::BadParam("invalid Claim GUID".into()))?;
         match uuid.get_version() {
             Some(uuid::Version::Random) => (),
             _ => return Err(Error::BadParam("invalid Claim GUID".into())),
         }
-        let label = if claim_version == 1 {
-            uuid.urn()
-                .encode_lower(&mut Uuid::encode_buffer())
-                .to_string()
-        } else {
-            format!(
-                "{}:{}",
-                C2PA_NAMESPACE_V2,
-                uuid.hyphenated().encode_lower(&mut Uuid::encode_buffer())
-            )
+
+        let label = match mparts.vendor {
+            Some(v) => {
+                if mparts.is_v1 {
+                    format!(
+                        "{}:{}:{}",
+                        v.to_lowercase(),
+                        C2PA_NAMESPACE_V1,
+                        uuid.hyphenated().encode_lower(&mut Uuid::encode_buffer())
+                    )
+                } else {
+                    format!(
+                        "{}:{}:{}",
+                        C2PA_NAMESPACE_V2,
+                        uuid.hyphenated().encode_lower(&mut Uuid::encode_buffer()),
+                        v.to_lowercase()
+                    )
+                }
+            }
+            None => {
+                if mparts.is_v1 {
+                    format!(
+                        "{}:{}",
+                        C2PA_NAMESPACE_V1,
+                        uuid.hyphenated().encode_lower(&mut Uuid::encode_buffer())
+                    )
+                } else {
+                    format!(
+                        "{}:{}",
+                        C2PA_NAMESPACE_V2,
+                        uuid.hyphenated().encode_lower(&mut Uuid::encode_buffer())
+                    )
+                }
+            }
         };
 
         Ok(Claim {
@@ -1306,9 +1337,8 @@ impl Claim {
         salt_generator: &impl SaltGenerator,
     ) -> Result<C2PAAssertion> {
         if self.claim_version < 2 {
-            return Err(Error::VersionCompatibility(
-                "Claim version >= 2 required for gathered assertions".into(),
-            ));
+            // if this is called for a v1 claim then just treat is as a normal v1 assertion
+            return self.add_assertion_with_salt(assertion_builder, salt_generator);
         }
 
         match self.add_assertion_with_salt_impl(assertion_builder, salt_generator, false) {
@@ -1802,6 +1832,9 @@ impl Claim {
         let sig = claim.signature_val();
         let additional_bytes: Vec<u8> = Vec::new();
 
+        // use the signature uri as the current uri while validating the signature info
+        validation_log.push_current_uri(claim.signature.clone());
+
         // make sure signature manifest if present points to this manifest
         let sig_box_err = match jumbf::labels::manifest_label_from_uri(&claim.signature) {
             Some(signature_url) if signature_url != claim.label() => true,
@@ -1872,6 +1905,8 @@ impl Claim {
             ctp,
             validation_log,
         );
+
+        validation_log.pop_current_uri(); // back to the manifest url
 
         Claim::verify_internal(claim, asset_data, is_provenance, verified, validation_log)
             .inspect_err(|_e| {
@@ -1948,7 +1983,7 @@ impl Claim {
                     .success(validation_log);
                 }
             }
-            Err(_parse_err) => {
+            Err(parse_err) => {
                 // the lower level errors are logged validation_log
                 // continue on to catch other failures.
 
@@ -1958,6 +1993,15 @@ impl Claim {
                     new_li.label = Cow::from(claim.uri());
 
                     *li = new_li;
+                } else {
+                    // handle case where lower level failed to log
+                    log_item!(
+                        claim.signature_uri(),
+                        "claim signature is not valid",
+                        "verify_internal"
+                    )
+                    .validation_status(validation_status::CLAIM_SIGNATURE_MISMATCH)
+                    .failure_no_throw(validation_log, parse_err);
                 }
             }
         };
@@ -2935,5 +2979,48 @@ pub mod tests {
         if let UriOrResource::HashedUri(r) = cgi[0].icon.as_ref().unwrap() {
             assert_eq!(r.hash(), b"hashed");
         }
+    }
+
+    #[test]
+    fn test_new_with_user_guid() {
+        // good v1
+        Claim::new_with_user_guid(
+            "claim_generator",
+            "acme:urn:uuid:3fad1ead-8ed5-44d0-873b-ea5f58adea82",
+            1,
+        )
+        .unwrap();
+
+        // good v2
+        Claim::new_with_user_guid(
+            "claim_generator",
+            "urn:c2pa:3fad1ead-8ed5-44d0-873b-ea5f58adea82:acme",
+            2,
+        )
+        .unwrap();
+
+        // feature incompatible
+        let c2 = Claim::new_with_user_guid(
+            "claim_generator",
+            "urn:c2pa:3fad1ead-8ed5-44d0-873b-ea5f58adea82:acme",
+            1,
+        );
+        assert!(c2.is_err());
+
+        // version incompatible
+        let c3 = Claim::new_with_user_guid(
+            "claim_generator",
+            "acme:urn:uuid:3fad1ead-8ed5-44d0-873b-ea5f58adea82",
+            2,
+        );
+        assert!(c3.is_err());
+
+        // malformed
+        let c4 = Claim::new_with_user_guid(
+            "claim_generator",
+            "urn:c2pa:3fad1ead-8ed5-44d0-873b-ea5f58adea82:acme",
+            1,
+        );
+        assert!(c4.is_err());
     }
 }

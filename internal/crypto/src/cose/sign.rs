@@ -16,8 +16,8 @@ use async_generic::async_generic;
 use ciborium::value::Value;
 use coset::{
     iana::{self, EnumI64},
-    CoseSign1, CoseSign1Builder, Header, HeaderBuilder, Label, ProtectedHeader,
-    TaggedCborSerializable,
+    ContentType, CoseSign1, CoseSign1Builder, Header, HeaderBuilder, Label, ProtectedHeader,
+    RegisteredLabel, TaggedCborSerializable,
 };
 use serde_bytes::ByteBuf;
 use x509_parser::prelude::X509Certificate;
@@ -116,9 +116,9 @@ pub fn sign_v1(
     let alg = signer.alg();
 
     let protected_header = if _sync {
-        build_protected_header(signer, alg)?
+        build_protected_header(signer, alg, None)?
     } else {
-        build_protected_header_async(signer, alg).await?
+        build_protected_header_async(signer, alg, None).await?
     };
 
     // We don't use the additional data header.
@@ -200,12 +200,101 @@ pub fn sign_v2(
     box_size: Option<usize>,
     tss: TimeStampStorage,
 ) -> Result<Vec<u8>, CoseError> {
+    if _sync {
+        sign_v2_embedded(signer, data, box_size, CosePayload::Detached, None, tss)
+    } else {
+        sign_v2_embedded_async(signer, data, box_size, CosePayload::Detached, None, tss).await
+    }
+}
+
+/// Configure whether the COSE payload is embedded or detached.
+///
+/// In C2PA usage, the payload is always detached; in other usages, it may be
+/// embedded.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum CosePayload {
+    /// Remove the payload from the signature body because it is available
+    /// elsewhere.
+    Detached,
+
+    /// Include the payload in the signature body because it is not available
+    /// elsewhere.
+    Embedded,
+}
+
+/// Given an arbitrary block of data and a [`RawSigner`] or [`AsyncRawSigner`]
+/// instance, generate a COSE signature for that block of data.
+///
+/// The `payload` flag allows you to configure whether the payload is detached
+/// (default ofor C2PA use cases) or embedded (may be useful in other
+/// applications).
+///
+/// Returns a byte vector that is a `Cose_Sign1` data structure.
+///
+/// From [§14.5, X.509 Certificates] of the C2PA Technical Specification:
+///
+/// > X.509 Certificates are stored as defined by [RFC 9360] (CBOR Object
+/// > Signing and Encryption (COSE): Header Parameters for Carrying and
+/// > Referencing X.509 Certificates). For convenience, the definition of
+/// > `x5chain` is copied below.
+/// >
+/// > ...
+/// >
+/// > `x5chain`: This header parameter contains an ordered array of X.509
+/// > certificates. The certificates are to be ordered starting with the
+/// > certificate containing the end-entity key followed by the certificate that
+/// > signed it, and so on. There is no requirement for the entire chain to be
+/// > present in the element if there is reason to believe that the relying
+/// > party already has, or can locate, the missing certificates. This means
+/// > that the relying party is still required to do path building but that a
+/// > candidate path is proposed in this header parameter.
+/// >
+/// > The trust mechanism MUST process any certificates in this parameter as
+/// > untrusted input. The presence of a self-signed certificate in the
+/// > parameter MUST NOT cause the update of the set of trust anchors without
+/// > some out-of-band confirmation. As the contents of this header parameter
+/// > are untrusted input, the header parameter can be in either the protected
+/// > or unprotected header bucket. Sending the header parameter in the
+/// > unprotected header bucket allows an intermediary to remove or add
+/// > certificates.
+/// >
+/// > The end-entity certificate MUST be integrity protected by COSE. This can,
+/// > for example, be done by sending the header parameter in the protected
+/// > header, sending an `x5chain` in the unprotected header combined with an
+/// > `x5t` in the protected header, or including the end-entity certificate in
+/// > the `external_aad`.
+/// >
+/// > This header parameter allows for a single X.509 certificate or a chain of
+/// > X.509 certificates to be carried in the message.
+/// >
+/// > * If a single certificate is conveyed, it is placed in a CBOR byte string.
+/// > * If multiple certificates are conveyed, a CBOR array of byte strings is
+/// > used, with each certificate being in its own byte string.
+///
+/// [§14.5, X.509 Certificates]: https://c2pa.org/specifications/specifications/2.1/specs/C2PA_Specification.html#x509_certificates
+/// [RFC 9360]: https://datatracker.ietf.org/doc/html/rfc9360
+#[async_generic(async_signature(
+    signer: &dyn AsyncRawSigner,
+    data: &[u8],
+    box_size: Option<usize>,
+    payload: CosePayload,
+    content_type: Option<ContentType>,
+    tss: TimeStampStorage
+))]
+pub fn sign_v2_embedded(
+    signer: &dyn RawSigner,
+    data: &[u8],
+    box_size: Option<usize>,
+    payload: CosePayload,
+    content_type: Option<ContentType>,
+    tss: TimeStampStorage,
+) -> Result<Vec<u8>, CoseError> {
     let alg = signer.alg();
 
     let protected_header = if _sync {
-        build_protected_header(signer, alg)?
+        build_protected_header(signer, alg, content_type)?
     } else {
-        build_protected_header_async(signer, alg).await?
+        build_protected_header_async(signer, alg, content_type).await?
     };
 
     // We don't use the additional data header.
@@ -261,9 +350,11 @@ pub fn sign_v2(
         _ => signature,
     };
 
-    // The payload is provided elsewhere, so we don't need to repeat it in the
+    // If the payload is provided elsewhere, we don't need to repeat it in the
     // `Cose_Sign1` structure.
-    sign1.payload = None;
+    if payload == CosePayload::Detached {
+        sign1.payload = None;
+    }
 
     let sig_data = ByteBuf::from(sign1.signature.clone());
     let mut sig_data_cbor: Vec<u8> = vec![];
@@ -282,10 +373,11 @@ pub fn sign_v2(
     pad_cose_sig(&mut sign1, box_size)
 }
 
-#[async_generic(async_signature(signer: &dyn AsyncRawSigner, alg: SigningAlg))]
+#[async_generic(async_signature(signer: &dyn AsyncRawSigner, alg: SigningAlg, content_type: Option<ContentType>))]
 fn build_protected_header(
     signer: &dyn RawSigner,
     alg: SigningAlg,
+    content_type: Option<ContentType>,
 ) -> Result<ProtectedHeader, CoseError> {
     let mut protected_h = match alg {
         SigningAlg::Ps256 => HeaderBuilder::new().algorithm(iana::Algorithm::PS256),
@@ -309,6 +401,19 @@ fn build_protected_header(
         iana::HeaderParameter::X5Chain.to_i64(),
         sc_der_array_or_bytes.clone(),
     );
+
+    // Add content type to protected header.
+    match content_type {
+        Some(RegisteredLabel::Assigned(n)) => {
+            protected_h = protected_h.content_format(n);
+        }
+
+        Some(RegisteredLabel::Text(t)) => {
+            protected_h = protected_h.content_type(t);
+        }
+
+        None => {}
+    }
 
     let protected_header = protected_h.build();
     let ph2 = ProtectedHeader {
