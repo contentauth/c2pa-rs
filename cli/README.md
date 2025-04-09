@@ -26,7 +26,7 @@ For a simple example of calling c2patool from a Node.js server application, see 
 
 To install a prebuilt binary of C2PA Tool:
 
-1. Go to the [Releases page and filter for c2patool](https://github.com/contentauth/c2pa-rs/releases](https://github.com/contentauth/c2pa-rs/releases?q=c2patool). 
+1. Go to the [Releases page and filter for c2patool](https://github.com/contentauth/c2pa-rs/releases?q=c2patool). 
 1. Under **Assets**, click on the archive file for your operating system:
    - MacOS: `c2patool-vx.y.z-universal-apple-darwin.zip`
    - Windows: `c2patool-vx.y.z-x86_64-pc-windows-msvc.zip`
