@@ -1832,6 +1832,9 @@ impl Claim {
         let sig = claim.signature_val();
         let additional_bytes: Vec<u8> = Vec::new();
 
+        // use the signature uri as the current uri while validating the signature info
+        validation_log.push_current_uri(claim.signature.clone());
+
         // make sure signature manifest if present points to this manifest
         let sig_box_err = match jumbf::labels::manifest_label_from_uri(&claim.signature) {
             Some(signature_url) if signature_url != claim.label() => true,
@@ -1902,6 +1905,8 @@ impl Claim {
             ctp,
             validation_log,
         );
+
+        validation_log.pop_current_uri(); // back to the manifest url
 
         Claim::verify_internal(claim, asset_data, is_provenance, verified, validation_log)
             .inspect_err(|_e| {
