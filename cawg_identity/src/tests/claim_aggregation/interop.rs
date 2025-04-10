@@ -65,10 +65,10 @@ async fn adobe_connected_identities() {
         &VerifiedIdentity {
             type_: NonEmptyString::new("cawg.social_media".to_string(),).unwrap(),
             name: None,
-            username: Some(NonEmptyString::new("Robert Tiles".to_string(),).unwrap(),),
+            username: Some(NonEmptyString::new("testuser23".to_string(),).unwrap(),),
             address: None,
-            uri: Some(UriBuf::from_str("https://net.s2stagehance.com/roberttiles").unwrap(),),
-            verified_at: DateTime::<FixedOffset>::parse_from_rfc3339("2024-09-24T18:15:11+00:00")
+            uri: Some(UriBuf::from_str("https://net.s2stagehance.com/testuser23").unwrap(),),
+            verified_at: DateTime::<FixedOffset>::parse_from_rfc3339("2025-04-09T22:45:26+00:00")
                 .unwrap(),
             provider: IdentityProvider {
                 id: UriBuf::from_str("https://behance.net").unwrap(),
@@ -77,13 +77,18 @@ async fn adobe_connected_identities() {
         }
     );
 
+    let expected_hex_literal: &[u8] = &[
+        51, 103, 122, 43, 73, 89, 111, 89, 50, 70, 108, 75, 119, 105, 122, 75, 47, 117, 112, 80,
+        114, 122, 111, 102, 56, 52, 50, 80, 80, 72, 71, 71, 85, 86, 85, 73, 43, 70, 97, 110, 48,
+        55, 73, 61,
+    ];
     assert_eq!(
         ica_vc.c2pa_asset,
         SignerPayload {
             referenced_assertions: vec![HashedUri::new(
                 "self#jumbf=c2pa.assertions/c2pa.hash.data".to_owned(),
-                None,
-                &hex_literal::hex!("58514c7072376d453164794f783477317a716e4f63716159325a594d686a5031526c7a552f7877614259383d")
+                Some("sha256".to_string()),
+                expected_hex_literal
             )],
             roles: vec!(),
             sig_type: "cawg.identity_claims_aggregation".to_owned(),
@@ -97,7 +102,7 @@ async fn adobe_connected_identities() {
 
     assert_eq!(
         ia_json,
-        r#"{"urn:uuid:b55062ef-96b6-4f6e-bb7d-9c415f130471":[{"sig_type":"cawg.identity_claims_aggregation","referenced_assertions":["c2pa.hash.data"],"named_actor":{"@context":["https://www.w3.org/ns/credentials/v2","https://creator-assertions.github.io/tbd/tbd"],"type":["VerifiableCredential","IdentityClaimsAggregationCredential"],"issuer":"did:web:connected-identities.identity-stage.adobe.com","validFrom":"2024-10-03T21:47:02Z","verifiedIdentities":[{"type":"cawg.social_media","username":"Robert Tiles","uri":"https://net.s2stagehance.com/roberttiles","verifiedAt":"2024-09-24T18:15:11Z","provider":{"id":"https://behance.net","name":"behance"}}],"credentialSchema":[{"id":"https://creator-assertions.github.io/schemas/v1/creator-identity-assertion.json","type":"JSONSchema"}]}}]}"#
+        r#"{"urn:uuid:19e83793-4427-4161-b682-a53b975a6f72":[{"sig_type":"cawg.identity_claims_aggregation","referenced_assertions":["c2pa.hash.data"],"named_actor":{"@context":["https://www.w3.org/ns/credentials/v2","https://cawg.io/identity/1.1/ica/context/"],"type":["VerifiableCredential","IdentityClaimsAggregationCredential"],"issuer":"did:web:connected-identities.identity-stage.adobe.com","validFrom":"2025-04-09T22:46:13Z","verifiedIdentities":[{"type":"cawg.social_media","username":"testuser23","uri":"https://net.s2stagehance.com/testuser23","verifiedAt":"2025-04-09T22:45:26Z","provider":{"id":"https://behance.net","name":"behance"}}],"credentialSchema":[{"id":"https://cawg.io/identity/1.1/ica/schema/","type":"JSONSchema"}]}}]}"#
     );
 
     // Check the summary report for this manifest.
@@ -107,7 +112,7 @@ async fn adobe_connected_identities() {
 
     assert_eq!(
         ia_json,
-        r#"[{"sig_type":"cawg.identity_claims_aggregation","referenced_assertions":["c2pa.hash.data"],"named_actor":{"@context":["https://www.w3.org/ns/credentials/v2","https://creator-assertions.github.io/tbd/tbd"],"type":["VerifiableCredential","IdentityClaimsAggregationCredential"],"issuer":"did:web:connected-identities.identity-stage.adobe.com","validFrom":"2024-10-03T21:47:02Z","verifiedIdentities":[{"type":"cawg.social_media","username":"Robert Tiles","uri":"https://net.s2stagehance.com/roberttiles","verifiedAt":"2024-09-24T18:15:11Z","provider":{"id":"https://behance.net","name":"behance"}}],"credentialSchema":[{"id":"https://creator-assertions.github.io/schemas/v1/creator-identity-assertion.json","type":"JSONSchema"}]}}]"#
+        r#"[{"sig_type":"cawg.identity_claims_aggregation","referenced_assertions":["c2pa.hash.data"],"named_actor":{"@context":["https://www.w3.org/ns/credentials/v2","https://cawg.io/identity/1.1/ica/context/"],"type":["VerifiableCredential","IdentityClaimsAggregationCredential"],"issuer":"did:web:connected-identities.identity-stage.adobe.com","validFrom":"2025-04-09T22:46:13Z","verifiedIdentities":[{"type":"cawg.social_media","username":"testuser23","uri":"https://net.s2stagehance.com/testuser23","verifiedAt":"2025-04-09T22:45:26Z","provider":{"id":"https://behance.net","name":"behance"}}],"credentialSchema":[{"id":"https://cawg.io/identity/1.1/ica/schema/","type":"JSONSchema"}]}}]"#
     );
 }
 
@@ -134,6 +139,6 @@ async fn ims_multiple_manifests() {
 
     assert_eq!(
         ia_json,
-        r#"{"urn:uuid:7256ca36-2a90-44ec-914d-f17c8d70c31f":[{"sig_type":"cawg.identity_claims_aggregation","referenced_assertions":["c2pa.hash.data"],"named_actor":{"@context":["https://www.w3.org/ns/credentials/v2","https://creator-assertions.github.io/tbd/tbd"],"type":["VerifiableCredential","IdentityClaimsAggregationCredential"],"issuer":"did:web:connected-identities.identity-stage.adobe.com","validFrom":"2025-02-13T00:40:47Z","verifiedIdentities":[{"type":"cawg.social_media","username":"firstlast555","uri":"https://net.s2stagehance.com/firstlast555","verifiedAt":"2025-01-10T19:53:59Z","provider":{"id":"https://behance.net","name":"behance"}}],"credentialSchema":[{"id":"https://cawg.io/schemas/v1/creator-identity-assertion.json","type":"JSONSchema"}]}}],"urn:uuid:b55062ef-96b6-4f6e-bb7d-9c415f130471":[{"sig_type":"cawg.identity_claims_aggregation","referenced_assertions":["c2pa.hash.data"],"named_actor":{"@context":["https://www.w3.org/ns/credentials/v2","https://creator-assertions.github.io/tbd/tbd"],"type":["VerifiableCredential","IdentityClaimsAggregationCredential"],"issuer":"did:web:connected-identities.identity-stage.adobe.com","validFrom":"2024-10-03T21:47:02Z","verifiedIdentities":[{"type":"cawg.social_media","username":"Robert Tiles","uri":"https://net.s2stagehance.com/roberttiles","verifiedAt":"2024-09-24T18:15:11Z","provider":{"id":"https://behance.net","name":"behance"}}],"credentialSchema":[{"id":"https://creator-assertions.github.io/schemas/v1/creator-identity-assertion.json","type":"JSONSchema"}]}}]}"#
+        r#"{"contentauth:urn:uuid:b2b1f7fa-b119-4de1-9c0d-c97fbea3f2c3":[],"urn:uuid:6aba7a19-9f59-44c1-8e1f-1fb396aa06f8":[{"sig_type":"cawg.identity_claims_aggregation","referenced_assertions":["c2pa.hash.data"],"named_actor":{"@context":["https://www.w3.org/ns/credentials/v2","https://cawg.io/identity/1.1/ica/context/"],"type":["VerifiableCredential","IdentityClaimsAggregationCredential"],"issuer":"did:web:connected-identities.identity-stage.adobe.com","validFrom":"2025-04-09T22:46:13Z","verifiedIdentities":[{"type":"cawg.social_media","username":"testuser23","uri":"https://net.s2stagehance.com/testuser23","verifiedAt":"2025-04-09T22:45:26Z","provider":{"id":"https://behance.net","name":"behance"}}],"credentialSchema":[{"id":"https://cawg.io/identity/1.1/ica/schema/","type":"JSONSchema"}]}}]}"#
     );
 }
