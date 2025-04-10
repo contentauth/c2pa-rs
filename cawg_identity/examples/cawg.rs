@@ -56,19 +56,6 @@ mod cawg {
                         ]
                     }
                 },
-                {
-                    "label": "cawg.training-mining",
-                    "data": {
-                    "entries": {
-                        "cawg.ai_inference": {
-                        "use": "notAllowed"
-                        },
-                        "cawg.ai_generative_training": {
-                        "use": "notAllowed"
-                        }
-                    }
-                    }
-                }
             ]
         })
         .to_string()
@@ -77,13 +64,6 @@ mod cawg {
     /// Creates a CAWG signer from a certificate chains and private keys.
     fn async_cawg_signer() -> Result<impl AsyncSigner> {
         let c2pa_raw_signer = raw_signature::async_signer_from_cert_chain_and_private_key(
-            CERTS,
-            PRIVATE_KEY,
-            SigningAlg::Ed25519,
-            None,
-        )?;
-
-        let cawg_raw_signer = raw_signature::async_signer_from_cert_chain_and_private_key(
             CERTS,
             PRIVATE_KEY,
             SigningAlg::Ed25519,
