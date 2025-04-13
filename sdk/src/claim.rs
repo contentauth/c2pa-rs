@@ -898,6 +898,46 @@ impl Claim {
             }
         }
 
+        // enforce actions assertion generation rules during creation
+        if self.claim_version > 1 {
+            // The first actions assertion must start with c2pa.created or c2pa.opened
+            // For C2PA 2.2 the action can appear in either list
+            //let created_actions = self.created_assertions().iter().find(|a| a.url().contains("ACTIONS")).iter().collect::<Vec<_>>();
+            //let gathered_actions = self.gathered_assertions().into_iter().find(|a| a.url().contains("ACTIONS")).iter().collect::<Vec<_>>();
+
+            /*
+            {
+                if let Some(first_action) = ac.actions().first() {
+                    if first_action.action() != "c2pa.created"
+                        && first_action.action() != "c2pa.opened"
+                    {
+                        return Err(Error::AssertionEncoding(
+                            "first action must be c2pa.created or c2pa.opened".to_string(),
+                        )); // todo: placeholder until we have 2.x error codes
+                    }
+                } else {
+                    // must have an action
+                    return Err(Error::AssertionEncoding(
+                        "actions assertion must have an action".to_string(),
+                    )); // todo: placeholder until we have 2.x error codes
+                }
+            } else {
+                // any other added actions cannot be created or opened
+                let current_action = Actions::from_assertion(&assertion)?;
+                if current_action
+                    .actions()
+                    .iter()
+                    .any(|a| a.action() == "c2pa.created" || a.action() == "c2pa.opened")
+                {
+                    return Err(Error::AssertionEncoding(
+                        "only the first actions assertion can have c2pa.created or c2pa.opened"
+                            .to_string(),
+                    )); // todo: placeholder until we have 2.x error codes
+                }
+            }
+            */
+        }
+
         Ok(())
     }
 
@@ -1286,46 +1326,6 @@ impl Claim {
         let ca = ClaimAssertion::new(assertion.clone(), instance, &hash, self.alg(), salt, typ);
 
         if add_as_created_assertion {
-            // enforce actions assertion generation rules during creation
-            if assertion_label == ACTIONS {
-                let ac = Actions::from_assertion(&assertion)?;
-
-                // The first actions assertion must start with c2pa.created or c2pa.opened
-                if !self
-                    .created_assertions
-                    .iter()
-                    .any(|a| a.url().contains(ACTIONS))
-                {
-                    if let Some(first_action) = ac.actions().first() {
-                        if first_action.action() != "c2pa.created"
-                            && first_action.action() != "c2pa.opened"
-                        {
-                            return Err(Error::AssertionEncoding(
-                                "first action must be c2pa.created or c2pa.opened".to_string(),
-                            )); // todo: placeholder until we have 2.x error codes
-                        }
-                    } else {
-                        // must have an action
-                        return Err(Error::AssertionEncoding(
-                            "actions assertion must have an action".to_string(),
-                        )); // todo: placeholder until we have 2.x error codes
-                    }
-                } else {
-                    // any other added actions cannot be created or opened
-                    let current_action = Actions::from_assertion(&assertion)?;
-                    if current_action
-                        .actions()
-                        .iter()
-                        .any(|a| a.action() == "c2pa.created" || a.action() == "c2pa.opened")
-                    {
-                        return Err(Error::AssertionEncoding(
-                            "only the first actions assertion can have c2pa.created or c2pa.opened"
-                                .to_string(),
-                        )); // todo: placeholder until we have 2.x error codes
-                    }
-                }
-            }
-
             // add to created assertions list
             self.created_assertions.push(c2pa_assertion.clone());
         }
@@ -2048,14 +2048,71 @@ impl Claim {
             .failure(validation_log, Error::UpdateManifestInvalid)?;
         }
 
+        // make sure there are no extra assertions
+        if claim.claim_assertion_store().len() != claim.assertions().len() {
+            log_item!(
+                claim.uri(),
+                "number of assertions different than number declared",
+                "verify_internal"
+            )
+            .validation_status(validation_status::ASSERTION_UNDECLARED)
+            .failure(
+                validation_log,
+                Error::AssertionMissing {
+                    url: "undeclared".to_owned(),
+                },
+            )?;
+        }
+
         // verify assertion structure comparing hashes from assertion list to contents of assertion store
         for assertion in claim.assertions() {
             let (label, instance) = Claim::assertion_label_from_link(&assertion.url());
             let assertion_absolute_uri = if assertion.is_relative_url() {
                 to_absolute_uri(claim.label(), &assertion.url())
             } else {
+                // match sure the assertion points to this assertion store
+                let assertion_manifest = manifest_label_from_uri(&assertion.url()).ok_or(
+                    /*
+                    log_item!(
+                        assertion.url(),
+                        format!("assertion URI malformed: {}", assertion.url()),
+                        "verify_internal"
+                    )
+                    .validation_status(validation_status::ASSERTION_HASHEDURI_MISMATCH)
+                    .failure(
+                        validation_log,
+                        Error::AssertionMissing {
+                            url: assertion.url(),
+                        },
+                    )
+                    .unwrap_err(),
+                    */
+                    Error::AssertionMissing {
+                        url: assertion.url(),
+                    }
+                )?;
+
+                if &assertion_manifest != claim.label() {
+                    log_item!(
+                        assertion.url(),
+                        format!(
+                            "assertion reference to external assertion store: {}",
+                            assertion.url()
+                        ),
+                        "verify_internal"
+                    )
+                    .validation_status(validation_status::ASSERTION_OUTSIDE_MANIFEST)
+                    .failure(
+                        validation_log,
+                        Error::AssertionMissing {
+                            url: assertion.url(),
+                        },
+                    )?;
+                }
+
                 assertion.url()
             };
+
             match claim.get_claim_assertion(&label, instance) {
                 // get the assertion if label and hash match
                 Some(ca) => {

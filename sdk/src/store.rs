@@ -28,7 +28,9 @@ use c2pa_crypto::{
 };
 use c2pa_status_tracker::{
     log_item,
-    validation_codes::{ASSERTION_UNDECLARED, CLAIM_MALFORMED},
+    validation_codes::{
+        ASSERTION_CBOR_INVALID, ASSERTION_JSON_INVALID, ASSERTION_MISSING, CLAIM_MALFORMED,
+    },
     ErrorBehavior, StatusTracker,
 };
 use log::error;
@@ -44,7 +46,7 @@ use crate::jumbf_io::{object_locations, remove_jumbf_from_file};
 #[cfg(all(feature = "file_io", feature = "v1_api"))]
 use crate::utils::io_utils::tempdirectory;
 use crate::{
-    assertion::{Assertion, AssertionBase, AssertionData},
+    assertion::{Assertion, AssertionBase, AssertionData, AssertionDecodeError},
     assertions::{
         labels::{self, CLAIM},
         BmffHash, DataBox, DataHash, DataMap, ExclusionsMap, Ingredient, Relationship, SubsetMap,
@@ -685,7 +687,7 @@ impl Store {
                     "error loading assertion",
                     "get_assertion_from_jumbf_store"
                 )
-                .validation_status(ASSERTION_UNDECLARED)
+                .validation_status(ASSERTION_MISSING)
                 .failure(
                     validation_log,
                     Error::AssertionMissing {
@@ -710,7 +712,25 @@ impl Store {
                 let json_box = assertion_box
                     .data_box_as_json_box(0)
                     .ok_or(Error::JumbfBoxNotFound)?;
+
                 let assertion = Assertion::from_data_json(&raw_label, json_box.json())?;
+
+                // make sure it is JSON
+                if let Err(e) = serde_json::from_slice::<serde_json::Value>(json_box.json()) {
+                    log_item!(
+                        label.to_owned(),
+                        "invalid assertion json",
+                        "get_assertion_from_jumbf_store"
+                    )
+                    .validation_status(ASSERTION_JSON_INVALID)
+                    .failure(
+                        validation_log,
+                        Error::AssertionDecoding(
+                            AssertionDecodeError::from_assertion_and_json_err(&assertion, e),
+                        ),
+                    )?;
+                }
+
                 let hash = Claim::calc_assertion_box_hash(label, &assertion, salt.clone(), &alg)?;
                 Ok(ClaimAssertion::new(
                     assertion, instance, &hash, &alg, salt, at,
@@ -736,6 +756,23 @@ impl Store {
                     .data_box_as_cbor_box(0)
                     .ok_or(Error::JumbfBoxNotFound)?;
                 let assertion = Assertion::from_data_cbor(&raw_label, cbor_box.cbor());
+
+                // make sure it is CBOR
+                if let Err(e) = serde_cbor::from_slice::<serde_cbor::Value>(cbor_box.cbor()) {
+                    log_item!(
+                        label.to_owned(),
+                        "invalid assertion cbor",
+                        "get_assertion_from_jumbf_store"
+                    )
+                    .validation_status(ASSERTION_CBOR_INVALID)
+                    .failure(
+                        validation_log,
+                        Error::AssertionDecoding(
+                            AssertionDecodeError::from_assertion_and_cbor_err(&assertion, e),
+                        ),
+                    )?;
+                }
+
                 let hash = Claim::calc_assertion_box_hash(label, &assertion, salt.clone(), &alg)?;
                 Ok(ClaimAssertion::new(
                     assertion, instance, &hash, &alg, salt, at,
@@ -1189,7 +1226,7 @@ impl Store {
 
             let num_assertions = assertion_store_box.data_box_count();
 
-            // loop over all assertions...
+            // loop over all assertions in assertion store...
             let mut check_for_legacy_assertion = true;
             for idx in 0..num_assertions {
                 let assertion_box = assertion_store_box

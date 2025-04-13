@@ -237,16 +237,16 @@ impl Verifier<'_> {
                 Err(TimeStampError::ExpiredCertificate.into())
             }
 
-            Err(CoseError::TimeStampError(TimeStampError::DecodeError(s))) => {
+            Err(CoseError::TimeStampError(TimeStampError::DecodeError(_s))) => {
                 log_item!(
                     "Cose_Sign1",
                     "timestamp could not be decoded",
                     "verify_profile"
                 )
-                .informational(TIMESTAMP_MALFORMED)
-                .failure_no_throw(validation_log, TimeStampError::DecodeError(s.to_owned()));
+                .validation_status(TIMESTAMP_MALFORMED)
+                .informational(validation_log);
 
-                Err(TimeStampError::ExpiredCertificate.into())
+                Ok(())
             }
 
             Err(e) => {
