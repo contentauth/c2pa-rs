@@ -244,7 +244,16 @@ impl SignatureVerifier for IcaSignatureVerifier {
                     .failure(status_tracker, err)?;
                 }
 
-                _ => todo!("Add logging for error condition {err:#?}"),
+                _ => {
+                    // TO REVIEW: Is there a better CAWG status code to use here? We don't expect
+                    // this code path to be reached, but it's a fallback to avoid a panic.
+                    log_current_item!(
+                        "Unexpected error condition",
+                        "IcaSignatureVerifier::check_signature"
+                    )
+                    .validation_status("cawg.ica.did_unavailable")
+                    .failure(status_tracker, err)?;
+                }
             }
         }
 
@@ -283,8 +292,18 @@ impl SignatureVerifier for IcaSignatureVerifier {
                 None
             }
 
-            Err(e) => {
-                todo!("Add handler for time stamp error {e:?}");
+            Err(_e) => {
+                log_current_item!(
+                    "Unable to process time stamp",
+                    "IcaSignatureVerifier::check_signature"
+                )
+                .validation_status("cawg.ica.time_stamp.invalid")
+                .failure(
+                    status_tracker,
+                    ValidationError::SignatureError(IcaValidationError::InvalidTimeStamp),
+                )?;
+
+                None
             }
         };
 
