@@ -1855,6 +1855,8 @@ pub mod tests {
 
         use crate::store::Store;
 
+        crate::settings::set_settings_value("verify.verify_trust", false).unwrap();
+
         let ap = fixture_path("video1.mp4");
 
         let mut log = StatusTracker::default();

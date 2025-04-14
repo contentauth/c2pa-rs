@@ -5294,7 +5294,7 @@ pub mod tests {
         // replace the title that is inside the claim data - should cause signature to not match
         let report = patch_and_report("C.jpg", b"C.jpg", b"X.jpg");
         assert!(!report.logged_items().is_empty());
-        assert!(report.has_error(c2pa_crypto::time_stamp::TimeStampError::InvalidData));
+        // note in the older validation statuses, this was an error, but now it is informational
         assert!(report.has_status(validation_status::TIMESTAMP_MISMATCH));
     }
 
@@ -6660,8 +6660,8 @@ pub mod tests {
         let mut dst = Cursor::new(Vec::new());
 
         // bypass auto sig check
-        crate::settings::load_settings_from_str(r#"{"verify.verify_after_sign": false}"#, "json")
-            .unwrap();
+        crate::settings::set_settings_value("verify.verify_after_sign", false).unwrap();
+        crate::settings::set_settings_value("verify.verify_trust", false).unwrap();
 
         builder
             .sign(&signer, "image/png", &mut Cursor::new(png), &mut dst)

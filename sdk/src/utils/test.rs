@@ -82,8 +82,8 @@ pub(crate) fn gen_c2pa_uuid() -> String {
 }
 
 // Returns a non-changing C2PA compatible UUID for testing
-pub(crate) fn static_test_uuid() -> &'static str {
-    const TEST_GUID: &str = "f75ddc48-cdc8-4723-bcfe-77a8d68a5920";
+pub(crate) fn static_test_v1_uuid() -> &'static str {
+    const TEST_GUID: &str = "urn:uuid:f75ddc48-cdc8-4723-bcfe-77a8d68a5920";
     TEST_GUID
 }
 
