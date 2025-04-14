@@ -33,7 +33,7 @@ To install a prebuilt binary of C2PA Tool:
    - Linux: `c2patool-vx.y.z-x86_64-unknown-linux-gnu.tar.gz`
 1. Download and extract the archive file.
 1. Copy the `c2patool` executable file to a location on your `PATH`.
- from an unknown source; for example, on macOS, see [If you want to open an app that hasn’t been notarized or is from an unidentified developer](https://support.apple.com/en-us/102445#openanyway).
+<!-- from an unknown source; for example, on macOS, see [If you want to open an app that hasn’t been notarized or is from an unidentified developer](https://support.apple.com/en-us/102445#openanyway). -->
 
 Confirm that you can run the tool by entering a command such as:
 ```
