@@ -88,7 +88,6 @@ async fn success_case() {
     let mut log_items = st.logged_items().iter();
 
     let li = log_items.next().unwrap();
-    dbg!(li);
 
     assert_eq!(li.kind, LogKind::Success);
     assert_eq!(li.label, "(IA label goes here)");
@@ -155,7 +154,6 @@ async fn invalid_cose_sign1() {
     let mut log_items = st.logged_items().iter();
 
     let li = log_items.next().unwrap();
-    dbg!(li);
 
     assert_eq!(li.kind, LogKind::Failure);
     assert_eq!(li.label, "(IA label goes here)");
@@ -238,7 +236,6 @@ async fn invalid_cose_sign_alg() {
     let mut log_items = st.logged_items().iter();
 
     let li = log_items.next().unwrap();
-    dbg!(li);
 
     assert_eq!(li.kind, LogKind::Failure);
     assert_eq!(li.label, "(IA label goes here)");
@@ -301,7 +298,6 @@ async fn missing_cose_sign_alg() {
     let mut log_items = st.logged_items().iter();
 
     let li = log_items.next().unwrap();
-    dbg!(li);
 
     assert_eq!(li.kind, LogKind::Failure);
     assert_eq!(li.label, "(IA label goes here)");
@@ -369,7 +365,6 @@ async fn invalid_content_type() {
     let mut log_items = st.logged_items().iter();
 
     let li = log_items.next().unwrap();
-    dbg!(li);
 
     assert_eq!(li.kind, LogKind::Failure);
     assert_eq!(li.label, "(IA label goes here)");
@@ -435,7 +430,6 @@ async fn invalid_content_type_assigned() {
     let mut log_items = st.logged_items().iter();
 
     let li = log_items.next().unwrap();
-    dbg!(li);
 
     assert_eq!(li.kind, LogKind::Failure);
     assert_eq!(li.label, "(IA label goes here)");
@@ -500,7 +494,6 @@ async fn missing_content_type() {
     let mut log_items = st.logged_items().iter();
 
     let li = log_items.next().unwrap();
-    dbg!(li);
 
     assert_eq!(li.kind, LogKind::Failure);
     assert_eq!(li.label, "(IA label goes here)");
@@ -575,7 +568,6 @@ async fn missing_vc() {
     let mut log_items = st.logged_items().iter();
 
     let li = log_items.next().unwrap();
-    dbg!(li);
 
     assert_eq!(li.kind, LogKind::Failure);
     assert_eq!(li.label, "(IA label goes here)");
@@ -638,7 +630,6 @@ async fn invalid_vc() {
     let mut log_items = st.logged_items().iter();
 
     let li = log_items.next().unwrap();
-    dbg!(li);
 
     assert_eq!(li.kind, LogKind::Failure);
     assert_eq!(li.label, "(IA label goes here)");
@@ -707,7 +698,6 @@ async fn invalid_issuer_did() {
     let mut log_items = st.logged_items().iter();
 
     let li = log_items.next().unwrap();
-    dbg!(li);
 
     assert_eq!(li.kind, LogKind::Failure);
     assert_eq!(li.label, "(IA label goes here)");
@@ -776,7 +766,6 @@ async fn unsupported_did_method() {
     let mut log_items = st.logged_items().iter();
 
     let li = log_items.next().unwrap();
-    dbg!(li);
 
     assert_eq!(li.kind, LogKind::Failure);
     assert_eq!(li.label, "(IA label goes here)");
@@ -840,7 +829,6 @@ async fn unresolvable_did() {
     let mut log_items = st.logged_items().iter();
 
     let li = log_items.next().unwrap();
-    dbg!(li);
 
     assert_eq!(li.kind, LogKind::Failure);
     assert_eq!(li.label, "(IA label goes here)");
@@ -912,7 +900,6 @@ async fn did_doc_without_assertion_method() {
     let mut log_items = st.logged_items().iter();
 
     let li = log_items.next().unwrap();
-    dbg!(li);
 
     assert_eq!(li.kind, LogKind::Failure);
     assert_eq!(li.label, "(IA label goes here)");
@@ -995,7 +982,6 @@ async fn signature_mismatch() {
     let mut log_items = st.logged_items().iter();
 
     let li = log_items.next().unwrap();
-    dbg!(li);
 
     assert_eq!(li.kind, LogKind::Failure);
     assert_eq!(li.label, "(IA label goes here)");
@@ -1066,14 +1052,12 @@ async fn valid_time_stamp() {
     assert_eq!(subject.c2pa_asset, ia.signer_payload);
 
     let tst_info = subject.time_stamp.as_ref().unwrap();
-    dbg!(&tst_info);
 
     assert_eq!(tst_info.gen_time.to_string(), "20250401223006Z");
 
     let mut log_items = st.logged_items().iter();
 
     let li = log_items.next().unwrap();
-    dbg!(li);
 
     assert_eq!(li.kind, LogKind::Success);
     assert_eq!(li.label, "(IA label goes here)");
@@ -1085,7 +1069,6 @@ async fn valid_time_stamp() {
     );
 
     let li = log_items.next().unwrap();
-    dbg!(li);
 
     assert_eq!(li.kind, LogKind::Success);
     assert_eq!(li.label, "(IA label goes here)");
@@ -1156,7 +1139,6 @@ async fn invalid_time_stamp() {
     let mut log_items = st.logged_items().iter();
 
     let li = log_items.next().unwrap();
-    dbg!(li);
 
     assert_eq!(li.kind, LogKind::Failure);
     assert_eq!(li.label, "(IA label goes here)");
@@ -1229,7 +1211,6 @@ async fn valid_from_missing() {
     let mut log_items = st.logged_items().iter();
 
     let li = log_items.next().unwrap();
-    dbg!(li);
 
     assert_eq!(li.kind, LogKind::Failure);
     assert_eq!(li.label, "(IA label goes here)");
@@ -1300,7 +1281,6 @@ async fn valid_from_in_future() {
     let mut log_items = st.logged_items().iter();
 
     let li = log_items.next().unwrap();
-    dbg!(li);
 
     assert_eq!(li.kind, LogKind::Failure);
     assert_eq!(li.label, "(IA label goes here)");
@@ -1370,7 +1350,6 @@ async fn valid_from_after_time_stamp() {
     let mut log_items = st.logged_items().iter();
 
     let li = log_items.next().unwrap();
-    dbg!(li);
 
     assert_eq!(li.kind, LogKind::Success);
     assert_eq!(li.label, "(IA label goes here)");
@@ -1382,7 +1361,6 @@ async fn valid_from_after_time_stamp() {
     );
 
     let li = log_items.next().unwrap();
-    dbg!(li);
 
     assert_eq!(li.kind, LogKind::Failure);
     assert_eq!(li.label, "(IA label goes here)");
@@ -1463,7 +1441,6 @@ async fn valid_until_in_future() {
     let mut log_items = st.logged_items().iter();
 
     let li = log_items.next().unwrap();
-    dbg!(li);
 
     assert_eq!(li.kind, LogKind::Success);
     assert_eq!(li.label, "(IA label goes here)");
@@ -1534,7 +1511,6 @@ async fn valid_until_in_past() {
     let mut log_items = st.logged_items().iter();
 
     let li = log_items.next().unwrap();
-    dbg!(li);
 
     assert_eq!(li.kind, LogKind::Failure);
     assert_eq!(li.label, "(IA label goes here)");
@@ -1622,7 +1598,6 @@ async fn signer_payload_mismatch() {
     let mut log_items = st.logged_items().iter();
 
     let li = log_items.next().unwrap();
-    dbg!(li);
 
     assert_eq!(li.kind, LogKind::Failure);
     assert_eq!(li.label, "(IA label goes here)");
