@@ -63,7 +63,18 @@ mod cawg {
 
     /// Creates a CAWG signer from a certificate chains and private keys.
     fn async_cawg_signer() -> Result<impl AsyncSigner> {
+        // Typically, this would be a certificate for the C2PA claim generator, which
+        // represents the hardware or software implementing the C2PA Technical Specification.
         let c2pa_raw_signer = raw_signature::async_signer_from_cert_chain_and_private_key(
+            CERTS,
+            PRIVATE_KEY,
+            SigningAlg::Ed25519,
+            None,
+        )?;
+
+        // Typically, this would be a certificate that would describe an organization's
+        // identity, which is separate from the claim signer.
+        let cawg_raw_signer = raw_signature::async_signer_from_cert_chain_and_private_key(
             CERTS,
             PRIVATE_KEY,
             SigningAlg::Ed25519,
