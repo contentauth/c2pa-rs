@@ -94,7 +94,7 @@ impl SignatureVerifier for NaiveSignatureVerifier {
             .map_err(|_| ValidationError::InternalError("CBOR serialization error".to_string()))?;
 
         if signer_payload_cbor != signature {
-            Err(ValidationError::InvalidSignature)
+            Err(ValidationError::SignatureMismatch)
         } else {
             Ok(NaiveCredential {})
         }
