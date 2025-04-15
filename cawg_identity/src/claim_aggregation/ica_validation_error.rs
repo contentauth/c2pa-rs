@@ -65,12 +65,12 @@ pub enum IcaValidationError {
 
     /// Invalid issuer DID document.
     #[error(
-        "The DID document could not be parsed or did not contain usable public key material ({0})"
+        "the DID document could not be parsed or did not contain usable public key material ({0})"
     )]
     InvalidDidDocument(String),
 
     /// RFC 3161 time stamp is invalid.
-    #[error("The RFC 3161 time stamp was not valid for this credential")]
+    #[error("the RFC 3161 time stamp was not valid for this credential")]
     InvalidTimeStamp,
 
     /// `validFrom` date is missing.
