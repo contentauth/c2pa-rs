@@ -77,7 +77,9 @@ pub enum IcaValidationError {
     #[error("credential does not have a validFrom date")]
     MissingValidFromDate,
 
-    /// `validFrom` date is unacceptable.
+    /// `validFrom` date is unacceptable. As an example, the `validFrom` date
+    /// this is later than the RFC 3161 time stamp for the credential or the
+    /// C2PA manifest would be deemed unacceptable.
     #[error("credential's validFrom date is unacceptable ({0})")]
     InvalidValidFromDate(String),
 
