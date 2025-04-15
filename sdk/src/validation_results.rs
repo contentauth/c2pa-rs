@@ -121,7 +121,16 @@ impl ValidationResults {
                 // If validation_results are present, use them, otherwise use the ingredient's validation_status.
                 let validation_status = match i.validation_results {
                     Some(v) => Some(v.validation_status()),
-                    None => i.validation_status.map(|s| s.to_owned()),
+                    None => i.validation_status.map(|s| {
+                        s.iter()
+                            .map(|s| {
+                                let status = s.to_owned();
+                                // We need to fix up kind since the older validation statuses don't have it set.
+                                let kind = log_kind(status.code());
+                                status.set_kind(kind)
+                            })
+                            .collect()
+                    }),
                 };
 
                 // Convert any relative manifest urls found in ingredient validation statuses to absolute.

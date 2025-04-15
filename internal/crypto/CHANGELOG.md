@@ -6,6 +6,27 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 The format of this changelog is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.8.2](https://github.com/contentauth/c2pa-rs/compare/c2pa-crypto-v0.8.1...c2pa-crypto-v0.8.2)
+_09 April 2025_
+
+### Fixed
+
+* Dup check with validation kind ([#1035](https://github.com/contentauth/c2pa-rs/pull/1035))
+
+## [0.8.1](https://github.com/contentauth/c2pa-rs/compare/c2pa-crypto-v0.8.0...c2pa-crypto-v0.8.1)
+_04 April 2025_
+
+### Fixed
+
+* Update openssl to address a recently-announced vulnerability ([#1024](https://github.com/contentauth/c2pa-rs/pull/1024))
+
+## [0.8.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-crypto-v0.7.2...c2pa-crypto-v0.8.0)
+_03 April 2025_
+
+### Added
+
+* *(crypto)* Add ability to specify `content-type` header in `sign_v2_embedded` ([#1007](https://github.com/contentauth/c2pa-rs/pull/1007))
+
 ## [0.7.2](https://github.com/contentauth/c2pa-rs/compare/c2pa-crypto-v0.7.1...c2pa-crypto-v0.7.2)
 _26 March 2025_
 
