@@ -2067,9 +2067,10 @@ impl Store {
         }
 
         let pc = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
+        // always add dynamic assertions as gathered assertions
         assertions
             .iter()
-            .map(|a| pc.add_assertion_with_salt(a, &DefaultSalt::default()))
+            .map(|a| pc.add_gathered_assertion_with_salt(a, &DefaultSalt::default()))
             .collect()
     }
 
