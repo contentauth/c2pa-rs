@@ -6,6 +6,13 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 Since version 0.36.2, the format of this changelog is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.49.3](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.49.2...c2pa-v0.49.3)
+_16 April 2025_
+
+### Fixed
+
+* Dynamic assertions should be gathered assertions ([#1005](https://github.com/contentauth/c2pa-rs/pull/1005))
+
 ## [0.49.2](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.49.1...c2pa-v0.49.2)
 _07 April 2025_
 
