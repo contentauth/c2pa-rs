@@ -233,36 +233,7 @@ impl AsyncDynamicAssertion for AsyncIdentityAssertionBuilder {
     }
 }
 
-/// Finalizes the creation of an identity assertion.
-///
-/// This function takes the signer payload, an optional size constraint, and the
-/// result of a signature operation. It serializes the identity assertion into
-/// CBOR format, optionally padding it to meet the specified size, and returns
-/// the serialized assertion as `DynamicAssertionContent`.
-///
-/// # Arguments
-///
-/// * `signer_payload` - The payload containing the data to be signed and
-///   metadata about the signing process.
-/// * `size` - An optional size constraint for the serialized assertion. If
-///   provided, the function ensures the serialized assertion does not exceed
-///   this size, adding padding if necessary.
-/// * `signature_result` - The result of the signature operation, containing the
-///   signature bytes or an error.
-///
-/// # Returns
-///
-/// Returns a `c2pa::Result` containing the serialized `DynamicAssertionContent`
-/// if successful, or an error if the operation fails (e.g., due to
-/// serialization issues or size constraints).
-///
-/// # Errors
-///
-/// This function returns a `c2pa::Error` in the following cases:
-/// - If the signature operation fails.
-/// - If the serialized assertion exceeds the specified size constraint.
-/// - If CBOR serialization fails.
-pub fn finalize_identity_assertion(
+fn finalize_identity_assertion(
     signer_payload: SignerPayload,
     size: Option<usize>,
     signature_result: Result<Vec<u8>, IdentityBuilderError>,
