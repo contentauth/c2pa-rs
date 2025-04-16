@@ -6,6 +6,17 @@ This project adheres to [Semantic Versioning](https://semver.org), except that â
 
 Since version 0.10.0, the format of this changelog is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.16.4](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.16.3...c2patool-v0.16.4)
+_16 April 2025_
+
+### Documented
+
+* Remove instructions to install c2patool using binstall ([#1038](https://github.com/contentauth/c2pa-rs/pull/1038))
+
+### Fixed
+
+* Dynamic assertions should be gathered assertions ([#1005](https://github.com/contentauth/c2pa-rs/pull/1005))
+
 ## [0.16.3](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.16.2...c2patool-v0.16.3)
 _07 April 2025_
 

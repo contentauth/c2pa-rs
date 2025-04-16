@@ -723,14 +723,14 @@ impl Reader {
                     label: current_label.clone(),
                 })?;
 
-            let mut preliminary_claim = crate::dynamic_assertion::PartialClaim::default();
+            let mut partial_claim = crate::dynamic_assertion::PartialClaim::default();
             {
                 let claim = self
                     .store
                     .get_claim(&current_label)
                     .ok_or(Error::ClaimEncoding)?;
                 for assertion in claim.assertions() {
-                    preliminary_claim.add_assertion(assertion);
+                    partial_claim.add_assertion(assertion);
                 }
             }
 
@@ -743,7 +743,7 @@ impl Reader {
                         assertion.label(),
                         assertion,
                         &assertion_uri,
-                        &preliminary_claim,
+                        &partial_claim,
                         validation_log,
                     )
                 } else {
@@ -752,7 +752,7 @@ impl Reader {
                             assertion.label(),
                             assertion,
                             &assertion_uri,
-                            &preliminary_claim,
+                            &partial_claim,
                             validation_log,
                         )
                         .await
