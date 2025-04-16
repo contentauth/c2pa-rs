@@ -27,7 +27,7 @@ use crate::{
 ///
 /// [`SignatureVerifier`]: crate::SignatureVerifier
 /// [§8.2, X.509 certificates and COSE signatures]: https://cawg.io/identity/1.1-draft/#_x_509_certificates_and_cose_signatures
-pub struct X509CredentialHolder(Box<dyn RawSigner + 'static>);
+pub struct X509CredentialHolder(Box<dyn RawSigner + Sync + Send + 'static>);
 
 impl X509CredentialHolder {
     /// Create an `X509CredentialHolder` instance by wrapping an instance of
@@ -37,7 +37,7 @@ impl X509CredentialHolder {
     /// the relevant certificates and private key material.
     ///
     /// [`RawSigner`]: c2pa_crypto::raw_signature::RawSigner
-    pub fn from_raw_signer(signer: Box<dyn RawSigner + 'static>) -> Self {
+    pub fn from_raw_signer(signer: Box<dyn RawSigner + Sync + Send + 'static>) -> Self {
         Self(signer)
     }
 }

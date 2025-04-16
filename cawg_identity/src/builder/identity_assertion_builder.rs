@@ -35,7 +35,7 @@ use crate::{builder::AsyncCredentialHolder, IdentityAssertion, SignerPayload};
 ///
 /// [`IdentityAssertionSigner`]: crate::builder::IdentityAssertionSigner
 pub struct IdentityAssertionBuilder {
-    credential_holder: Box<dyn CredentialHolder>,
+    credential_holder: Box<dyn CredentialHolder + Sync + Send>,
     referenced_assertions: HashSet<String>,
     roles: Vec<String>,
 }
@@ -43,7 +43,9 @@ pub struct IdentityAssertionBuilder {
 impl IdentityAssertionBuilder {
     /// Create an `IdentityAssertionBuilder` for the given `CredentialHolder`
     /// instance.
-    pub fn for_credential_holder<CH: CredentialHolder + 'static>(credential_holder: CH) -> Self {
+    pub fn for_credential_holder<CH: CredentialHolder + 'static + Send + Sync>(
+        credential_holder: CH,
+    ) -> Self {
         Self {
             credential_holder: Box::new(credential_holder),
             referenced_assertions: HashSet::new(),
