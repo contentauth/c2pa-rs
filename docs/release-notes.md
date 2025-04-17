@@ -24,7 +24,7 @@ An `AssetType` assertion is now supported.
 
 ### C2PA v2 claims
 
-**NOTE**: The library now supports [C2PA v2.1 claims](https://c2pa.org/specifications/specifications/2.1/specs/C2PA_Specification.html#_claims), however development is still in progress and all features are not fully implemented yet. While you can experiment with this functionality, it is not recommended for production use at this time.
+**NOTE**: The library now supports [C2PA v2 claims](https://c2pa.org/specifications/specifications/2.1/specs/C2PA_Specification.html#_claims), however development is still in progress and all features are not fully implemented yet. While you can experiment with this functionality, it is not recommended for production use at this time.
 
 To generate v2 claims, set the `Builder` manifest definition `claim_version` field to `2`.
 
