@@ -24,15 +24,15 @@ An `AssetType` assertion is now supported.
 
 ### C2PA v2 claims
 
-The library now supports claims as described in the [C2PA 2.1 specification](https://c2pa.org/specifications/specifications/2.1/specs/C2PA_Specification.html#_claims), however development is still in progress and it is not fully implemented yet. 
+**NOTE**: The library now supports [C2PA v2.1 claims](https://c2pa.org/specifications/specifications/2.1/specs/C2PA_Specification.html#_claims), however development is still in progress and all features are not fully implemented yet. While you can experiment with this functionality, it is not recommended for production use at this time.
 
-A `claim_version` field is now allowed in a manifest definition for `Builder` and, if set to `2` will generate v2 claims.
+To generate v2 claims, set the `Builder` manifest definition `claim_version` field to `2`.
 
 The `title()` and `format()` methods of both `Manifest` and `Ingredient` objects now return an `Option<String>` because in v2 claims, `title` is optional and `format` does not exist.
 
 In v2 claims, the first `action` must be `c2pa.created` or `c2pa.opened`. 
 
-There are many more checks and status codes added for v2 claims.
+V2 claims have many new checks and status codes.
 
 ### Using the old API
 
