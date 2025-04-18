@@ -891,6 +891,7 @@ dependencies = [
  "c2pa",
  "c2pa-crypto",
  "c2pa-status-tracker",
+ "cawg-test-macro",
  "chrono",
  "ciborium",
  "coset",
@@ -914,6 +915,16 @@ dependencies = [
  "wasm-bindgen-test",
  "wstd",
  "zeroize",
+]
+
+[[package]]
+name = "cawg-test-macro"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.100",
+ "wasm-bindgen-test",
 ]
 
 [[package]]

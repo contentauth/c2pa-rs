@@ -58,8 +58,7 @@ mod tests {
     use std::io::Cursor;
 
     use c2pa::{Reader, ValidationState};
-    #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
-    use wasm_bindgen_test::wasm_bindgen_test;
+    use cawg_test_macro::cawg_test;
 
     use super::*;
 
@@ -72,17 +71,11 @@ mod tests {
     const MULTIPLE_IDENTITIES_VALID: &[u8] =
         include_bytes!("tests/fixtures/claim_aggregation/ims_multiple_manifests.jpg");
 
-    #[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
-    #[cfg_attr(
-        all(target_arch = "wasm32", not(target_os = "wasi")),
-        wasm_bindgen_test
-    )]
-    #[cfg_attr(target_os = "wasi", wstd::test)]
+    #[cawg_test]
     async fn test_connected_identities_valid() {
         let mut stream = Cursor::new(CONNECTED_IDENTITIES_VALID);
         let mut reader = Reader::from_stream("image/jpeg", &mut stream).unwrap();
         reader.post_validate_async(&CawgValidator {}).await.unwrap();
-        //println!("validation results: {}", reader);
         assert_eq!(
             reader
                 .validation_results()
@@ -97,12 +90,7 @@ mod tests {
         );
     }
 
-    #[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
-    #[cfg_attr(
-        all(target_arch = "wasm32", not(target_os = "wasi")),
-        wasm_bindgen_test
-    )]
-    #[cfg_attr(target_os = "wasi", wstd::test)]
+    #[cawg_test]
     async fn test_multiple_identities_valid() {
         let mut stream = Cursor::new(MULTIPLE_IDENTITIES_VALID);
         let mut reader = Reader::from_stream("image/jpeg", &mut stream).unwrap();
@@ -120,12 +108,7 @@ mod tests {
         assert_eq!(reader.validation_state(), ValidationState::Valid);
     }
 
-    #[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
-    #[cfg_attr(
-        all(target_arch = "wasm32", not(target_os = "wasi")),
-        wasm_bindgen_test
-    )]
-    #[cfg_attr(target_os = "wasi", wstd::test)]
+    #[cawg_test]
     async fn test_post_validate_with_hard_binding_missing() {
         let mut stream = Cursor::new(NO_HARD_BINDING);
         let mut reader = Reader::from_stream("image/jpeg", &mut stream).unwrap();

@@ -50,6 +50,7 @@ serde_json = "1.0.117"
 static-iref = "3.0"
 thiserror = "1.0.61"
 zeroize = { version = "1.8", features = ["zeroize_derive"] }
+cawg-test-macro = { path = "../cawg-test-macro", features = ["wasm"] }
 
 [target.'cfg(target_os = "wasi")'.dependencies]
 wstd = "0.5"

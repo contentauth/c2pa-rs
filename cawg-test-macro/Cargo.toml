@@ -1,0 +1,16 @@
+[package]
+name = "cawg-test-macro"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+proc-macro = true
+
+[dependencies]
+syn = { version = "2.0", features = ["full"] }
+quote = "1.0"
+proc-macro2 = "1.0"
+wasm-bindgen-test = { version = "0.3.31", optional = true }
+
+[features]
+wasm = ["wasm-bindgen-test"]
