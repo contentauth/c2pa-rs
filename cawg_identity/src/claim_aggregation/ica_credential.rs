@@ -39,7 +39,7 @@ impl ToCredentialSummary for IcaCredential {
 
 /// Identity claims aggregation context IRI.
 pub const IDENTITY_CLAIMS_AGGREGATION_CONTEXT_IRI: &Iri =
-    static_iref::iri!("https://creator-assertions.github.io/tbd/tbd");
+    static_iref::iri!("https://cawg.io/identity/1.1/ica/context/");
 
 /// Identity claims aggregation credential type name.
 pub const IDENTITY_CLAIMS_AGGREGATION_CREDENTIAL_TYPE: &str = "IdentityClaimsAggregationCredential";

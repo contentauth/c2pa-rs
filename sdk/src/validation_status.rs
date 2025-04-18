@@ -208,7 +208,7 @@ impl ValidationStatus {
 
 impl PartialEq for ValidationStatus {
     fn eq(&self, other: &Self) -> bool {
-        self.code == other.code && self.url == other.url
+        self.code == other.code && self.url == other.url && self.kind == other.kind
     }
 }
 

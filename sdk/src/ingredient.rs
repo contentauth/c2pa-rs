@@ -1152,7 +1152,7 @@ impl Ingredient {
 
         // add the ingredient manifest_data to the claim
         // this is how any existing claims are added to the new store
-        let c2pa_manifest = match self.manifest_data_ref() {
+        let (active_manifest, claim_signature) = match self.manifest_data_ref() {
             Some(resource_ref) => {
                 let manifest_label = self
                     .active_manifest
@@ -1191,14 +1191,13 @@ impl Ingredient {
                         {
                             let hash = ingredient_store
                                 .get_manifest_box_hashes(ingredient_active_claim)
-                                .manifest_box_hash; // get C2PA 1.2 JUMBF box hash
-
-                            // todo: must use this when making v3
-                            let _sig_hash = ingredient_store
+                                .manifest_box_hash; // get C2PA 1.2 JUMBF box
+                            let sig_hash = ingredient_store
                                 .get_manifest_box_hashes(ingredient_active_claim)
                                 .signature_box_hash; // needed for v3 ingredients
 
                             let uri = jumbf::labels::to_manifest_uri(&manifest_label);
+                            let signature_uri = jumbf::labels::to_signature_uri(&manifest_label);
 
                             // if there are validations and they have all passed, then use the parent claim thumbnail if available
                             if let Some(validation_status) = self.validation_status.as_ref() {
@@ -1221,19 +1220,26 @@ impl Ingredient {
                                 }
                             }
                             // generate c2pa_manifest hashed_uri
-                            Some(crate::hashed_uri::HashedUri::new(
-                                uri,
-                                Some(ingredient_active_claim.alg().to_owned()),
-                                hash.as_ref(),
-                            ))
+                            (
+                                Some(crate::hashed_uri::HashedUri::new(
+                                    uri,
+                                    Some(ingredient_active_claim.alg().to_owned()),
+                                    hash.as_ref(),
+                                )),
+                                Some(crate::hashed_uri::HashedUri::new(
+                                    signature_uri,
+                                    Some(ingredient_active_claim.alg().to_owned()),
+                                    sig_hash.as_ref(),
+                                )),
+                            )
                         } else {
-                            None
+                            (None, None)
                         }
                     }
-                    None => None,
+                    None => (None, None),
                 }
             }
-            None => None,
+            None => (None, None),
         };
 
         // if the ingredient defines a thumbnail, add it to the claim
@@ -1321,13 +1327,14 @@ impl Ingredient {
         match claim.version() {
             1 => {
                 ingredient_assertion.document_id = self.document_id.clone();
-                ingredient_assertion.c2pa_manifest = c2pa_manifest;
+                ingredient_assertion.c2pa_manifest = active_manifest;
                 ingredient_assertion
                     .validation_status
                     .clone_from(&self.validation_status);
             }
             2 => {
-                ingredient_assertion.active_manifest = c2pa_manifest;
+                ingredient_assertion.active_manifest = active_manifest;
+                ingredient_assertion.claim_signature = claim_signature;
                 ingredient_assertion.validation_results = self.validation_results.clone();
             }
             _ => {}
@@ -1885,12 +1892,16 @@ mod tests_file_io {
         assert_eq!(ingredient.format(), Some("image/jpeg"));
         test_thumbnail(&ingredient, "image/jpeg");
         assert!(ingredient.manifest_data().is_some());
-        assert!(ingredient.validation_status().is_some());
-        assert!(ingredient
-            .validation_status()
-            .unwrap()
-            .iter()
-            .any(|s| s.code() == validation_status::TIMESTAMP_MISMATCH));
+        assert_eq!(
+            ingredient
+                .validation_results()
+                .unwrap()
+                .active_manifest()
+                .unwrap()
+                .informational[0]
+                .code(),
+            validation_status::TIMESTAMP_MISMATCH
+        );
     }
 
     #[test]

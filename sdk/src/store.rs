@@ -2063,9 +2063,10 @@ impl Store {
         }
 
         let pc = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
+        // always add dynamic assertions as gathered assertions
         assertions
             .iter()
-            .map(|a| pc.add_assertion_with_salt(a, &DefaultSalt::default()))
+            .map(|a| pc.add_gathered_assertion_with_salt(a, &DefaultSalt::default()))
             .collect()
     }
 
@@ -5294,7 +5295,7 @@ pub mod tests {
         // replace the title that is inside the claim data - should cause signature to not match
         let report = patch_and_report("C.jpg", b"C.jpg", b"X.jpg");
         assert!(!report.logged_items().is_empty());
-        assert!(report.has_error(c2pa_crypto::time_stamp::TimeStampError::InvalidData));
+        // note in the older validation statuses, this was an error, but now it is informational
         assert!(report.has_status(validation_status::TIMESTAMP_MISMATCH));
     }
 
