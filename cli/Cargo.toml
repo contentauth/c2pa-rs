@@ -28,7 +28,7 @@ c2pa = { path = "../sdk", version = "0.49.3", features = [
 	"add_thumbnails",
 	"pdf"
 ] }
-cawg-identity = { path = "../cawg_identity", version = "0.12.2" }
+cawg-identity = { path = "../cawg_identity", version = "0.13.0" }
 c2pa-crypto = { path = "../internal/crypto", version = "0.8.2" }
 clap = { version = "4.5.10", features = ["derive", "env"] }
 env_logger = "0.11.7"
