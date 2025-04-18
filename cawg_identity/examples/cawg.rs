@@ -34,11 +34,15 @@ mod cawg {
     };
     use serde_json::json;
 
-    const CERTS: &[u8] = include_bytes!("../../sdk/tests/fixtures/certs/ed25519.pub");
-    const PRIVATE_KEY: &[u8] = include_bytes!("../../sdk/tests/fixtures/certs/ed25519.pem");
+    const CERTS: &[u8] = include_bytes!("../../sdk/tests/fixtures/certs/es256.pub");
+    const PRIVATE_KEY: &[u8] = include_bytes!("../../sdk/tests/fixtures/certs/es256.pem");
+
+    const CAWG_CERTS: &[u8] = include_bytes!("../../sdk/tests/fixtures/certs/ed25519.pub");
+    const CAWG_PRIVATE_KEY: &[u8] = include_bytes!("../../sdk/tests/fixtures/certs/ed25519.pem");
 
     fn manifest_def() -> String {
         json!({
+            "claim_version": 2,
             "claim_generator_info": [
                 {
                     "name": "c2pa cawg test",
@@ -51,32 +55,42 @@ mod cawg {
                     "data": {
                         "actions": [
                             {
-                                "action": "c2pa.opened",
+                                "action": "c2pa.created",
+                                "digitalSourceType": " http://cv.iptc.org/newscodes/digitalsourcetype/digitalCapture"
                             }
                         ]
                     }
                 },
+                {
+                    "label": "cawg.training-mining",
+                    "data": {
+                    "entries": {
+                        "cawg.ai_inference": {
+                        "use": "notAllowed"
+                        },
+                        "cawg.ai_generative_training": {
+                        "use": "notAllowed"
+                        }
+                    }
+                    }
+                }
             ]
         })
         .to_string()
     }
 
     /// Creates a CAWG signer from a certificate chains and private keys.
-    fn async_cawg_signer() -> Result<impl AsyncSigner> {
-        // Typically, this would be a certificate for the C2PA claim generator, which
-        // represents the hardware or software implementing the C2PA Technical Specification.
+    fn async_cawg_signer(referenced_assertions: &[&str]) -> Result<impl AsyncSigner> {
         let c2pa_raw_signer = raw_signature::async_signer_from_cert_chain_and_private_key(
             CERTS,
             PRIVATE_KEY,
-            SigningAlg::Ed25519,
+            SigningAlg::Es256,
             None,
         )?;
 
-        // Typically, this would be a certificate that would describe an organization's
-        // identity, which is separate from the claim signer.
         let cawg_raw_signer = raw_signature::async_signer_from_cert_chain_and_private_key(
-            CERTS,
-            PRIVATE_KEY,
+            CAWG_CERTS,
+            CAWG_PRIVATE_KEY,
             SigningAlg::Ed25519,
             None,
         )?;
@@ -84,7 +98,9 @@ mod cawg {
         let mut ia_signer = AsyncIdentityAssertionSigner::new(c2pa_raw_signer);
 
         let x509_holder = AsyncX509CredentialHolder::from_async_raw_signer(cawg_raw_signer);
-        let iab = AsyncIdentityAssertionBuilder::for_credential_holder(x509_holder);
+        let mut iab = AsyncIdentityAssertionBuilder::for_credential_holder(x509_holder);
+        iab.add_referenced_assertions(referenced_assertions);
+
         ia_signer.add_identity_assertion(iab);
         Ok(ia_signer)
     }
@@ -98,9 +114,13 @@ mod cawg {
             std::fs::remove_file(dest)?;
         }
 
-        let signer = async_cawg_signer()?;
         let mut builder = Builder::from_json(&manifest_def())?;
-        builder.definition.claim_version = Some(2); // sets this to claim version 2
+        builder.definition.claim_version = Some(2); // CAWG should only be used on v2 claims
+
+        // This example will generate a CAWG manifest referencing the training-mining
+        // assertion.
+        let signer = async_cawg_signer(&["cawg.training-mining"])?;
+
         builder.sign_file_async(&signer, source, &dest).await?;
 
         let mut reader = Reader::from_file(dest)?;
