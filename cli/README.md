@@ -27,19 +27,19 @@ For a simple example of calling c2patool from a Node.js server application, see 
 To install a prebuilt binary of C2PA Tool:
 
 1. Go to the [Releases page and filter for c2patool](https://github.com/contentauth/c2pa-rs/releases?q=c2patool). 
-1. Under **Assets**, click on the archive file for your operating system:
+2. Under **Assets**, click on the archive file for your operating system:
    - MacOS: `c2patool-vx.y.z-universal-apple-darwin.zip`
    - Windows: `c2patool-vx.y.z-x86_64-pc-windows-msvc.zip`
    - Linux: `c2patool-vx.y.z-x86_64-unknown-linux-gnu.tar.gz`
-1. Download and extract the archive file.
-1. Copy the `c2patool` executable file to a location on your `PATH`.
-1. You may need to take additional actions to run an executable from an unknown source; for example, on macOS see [If you want to open an app that hasn’t been notarized or is from an unidentified developer](https://support.apple.com/en-us/102445#openanyway).
-
-Confirm that you can run the tool by entering a command such as:
-
+3. Download and extract the archive file.
+4. Copy the `c2patool` executable file to a location on your `PATH`.
+5. Confirm that you can run the tool by entering a command such as:
 ```
 c2patool -h
 ```
+
+You may need to set execution permission for the tool on your system. 
+For macOS, see [If you want to open an app that hasn’t been notarized or is from an unidentified developer](https://support.apple.com/en-us/102445#openanyway).
 
 NOTE: You also may want to get some of the example files provided in the repository `sample` directory.   To do so, clone the repository with `git clone https://github.com/contentauth/c2pa-rs.git`.
 
