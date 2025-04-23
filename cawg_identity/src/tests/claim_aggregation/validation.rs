@@ -1172,24 +1172,6 @@ async fn invalid_time_stamp() {
         "cawg.ica.time_stamp.invalid"
     );
 
-    // TO DO: Fix WRONG error code after history merge.
-    // let li = log_items.next().unwrap();
-    // dbg!(li);
-
-    // assert_eq!(li.kind, LogKind::Failure);
-    // assert_eq!(li.label, "(IA label goes here)");
-    // assert_eq!(li.description, "c2paAsset does not match signer_payload");
-    // assert_eq!(li.crate_name, "cawg-identity");
-    // assert_eq!(
-    //     li.err_val.as_ref().unwrap(),
-    //     "SignatureError(SignerPayloadMismatch)"
-    // );
-
-    // assert_eq!(
-    //     li.validation_status.as_ref().unwrap(),
-    //     "cawg.ica.signer_payload.mismatch"
-    // );
-
     assert!(log_items.next().is_none());
 }
 
