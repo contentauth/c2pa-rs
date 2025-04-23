@@ -1,4 +1,4 @@
-// Copyright 2023 Adobe. All rights reserved.
+.// Copyright 2023 Adobe. All rights reserved.
 // This file is licensed to you under the Apache License,
 // Version 2.0 (http://www.apache.org/licenses/LICENSE-2.0)
 // or the MIT license (http://opensource.org/licenses/MIT),
@@ -11,11 +11,12 @@
 // specific language governing permissions and limitations under
 // each license.
 
-//! This script generates a zip file containing the C2PA C API header and dynamic library
+//! This script generates a ZIP file containing the C2PA C API header and dynamic library
 //! for the specified target platform. It is intended to be run after the build process.
-//! The zip file will be created in the `artifacts` directory located two levels up from the
+//! The ZIP file will be created in the `artifacts` directory located two levels up from the
 //! target directory.
-//! The zip file will be named `c2pa-v<version>-<target>.zip`, where `<version>` is the version
+//!
+//! The ZIP file will be named `c2pa-v<version>-<target>.zip`, where `<version>` is the version.
 use std::{fs, path::Path};
 
 use zip::{write::SimpleFileOptions, ZipWriter};
@@ -26,29 +27,32 @@ fn main() -> Result<(), std::io::Error> {
     Ok(())
 }
 
-/// Generates the zip file for the release build
+/// Generates the ZIP file for the release build.
 fn generate_zip_file(target_dir: &Path) {
     let target = get_target(target_dir);
     let version = fs::read_to_string(target_dir.join("c2pa_version.txt"))
         .expect("could not read version from c2pa_version.txt");
-    // Create the zip file name
+
+    // Create the ZIP file name.
     let zip_file_name = format!("c2pa-v{}-{}.zip", version, target);
     let artifacts_dir = target_dir
         .ancestors()
         .nth(2)
         .expect("Failed to get parent directory")
         .join("artifacts");
-    // Create the artifacts directory if it doesn't exist
+
+    // Create the artifacts directory if it doesn't exist.
     if !artifacts_dir.exists() {
         fs::create_dir_all(&artifacts_dir).expect("Failed to create artifacts directory");
     }
+
     let zip_file_path = artifacts_dir.join(&zip_file_name);
 
-    // Create the zip file
+    // Create the ZIP file.
     let zip_file = fs::File::create(&zip_file_path).expect("Failed to create zip file");
     let mut zip = ZipWriter::new(zip_file);
 
-    // Add files to the zip archive
+    // Add files to the ZIP archive.
     add_file_to_zip(&mut zip, &target_dir.join("c2pa.h"), "include/c2pa.h")
         .expect("Failed to add c2pa.h to zip");
     // add_file_to_zip(
@@ -64,7 +68,7 @@ fn generate_zip_file(target_dir: &Path) {
     // )
     // .expect("Failed to add CHANGELOG.md to zip");
 
-    // Add the correct dynamic library for the platform
+    // Add the correct dynamic library for the platform.
     let lib_name = if target.contains("apple-darwin") {
         "libc2pa_c.dylib"
     } else if target.contains("windows") {
@@ -79,13 +83,13 @@ fn generate_zip_file(target_dir: &Path) {
     add_file_to_zip(&mut zip, &lib_path, &format!("lib/{}", lib_name))
         .expect("Failed to add dynamic library to zip");
 
-    // Finish the zip archive
+    // Finish the ZIP archive.
     zip.finish().expect("Failed to finalize zip archive");
 
     println!("Packaged release into {}", zip_file_path.display());
 }
 
-/// Helper function to add a file to the zip archive
+/// Helper function to add a file to the ZIP archive.
 fn add_file_to_zip<W: std::io::Write + std::io::Seek>(
     zip: &mut ZipWriter<W>,
     file_path: &Path,
