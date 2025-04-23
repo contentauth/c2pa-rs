@@ -196,10 +196,50 @@ impl SignatureVerifier for IcaSignatureVerifier {
                 .failure_no_throw(status_tracker, ValidationError::from(err));
             })?;
 
-        if let Err(err) = self
-            .check_issuer_signature(&sign1, &signer_payload, &mut ica_credential, status_tracker)
-            .await
+        // Post-process c2pa_asset to decode from base64 to raw binary.
+
         {
+            let subject = ica_credential.credential_subjects.first_mut();
+
+            let decoded_assertions = subject
+                .c2pa_asset
+                .referenced_assertions
+                .iter()
+                .map(|a| {
+                    let base64_hash =
+                        String::from_utf8(a.hash()).unwrap_or_else(|_| "invalid UTF8".to_string());
+
+                    let decoded_hash = c2pa_crypto::base64::decode(&base64_hash)
+                        .unwrap_or_else(|_| b"invalid base64".to_vec());
+
+                    HashedUri::new(a.url(), a.alg(), &decoded_hash)
+                })
+                .collect();
+
+            subject.c2pa_asset.referenced_assertions = decoded_assertions;
+
+            // The `DynamicAssertion` mechanism doesn't always populate the `alg` field when
+            // offering the partial claim for signature but some signers fill that in with a
+            // default value. Work around this by copying only the `alg` value from inside
+            // the VC.
+            let mut signer_payload = signer_payload.clone();
+            let new_ras = signer_payload
+                .referenced_assertions
+                .iter()
+                .zip(subject.c2pa_asset.referenced_assertions.iter())
+                .map(|(sp_ra, vc_ra)| {
+                    if sp_ra.alg().is_none() {
+                        HashedUri::new(sp_ra.url(), vc_ra.alg(), &sp_ra.hash())
+                    } else {
+                        sp_ra.clone()
+                    }
+                })
+                .collect();
+
+            signer_payload.referenced_assertions = new_ras;
+        }
+
+        if let Err(err) = self.check_issuer_signature(&sign1, &ica_credential).await {
             // NOTE: We handle logging here because all error conditions that are detectable
             // in `check_issuer_signature` are fatal to signature verification, BUT they are
             // not fatal to the overall interpretation of the identity assertion.
@@ -375,61 +415,22 @@ impl SignatureVerifier for IcaSignatureVerifier {
 
         // TO DO (CAI-7993): CAWG SDK should check ICA issuer revocation status.
 
-        // Post-process c2pa_asset to decode from base64 to raw binary.
+        // Verify that signer_payload is the same as credential issuer signed.
 
-        {
-            let subject = ica_credential.credential_subjects.first_mut();
+        let subject = ica_credential.credential_subjects.first();
 
-            let decoded_assertions = subject
-                .c2pa_asset
-                .referenced_assertions
-                .iter()
-                .map(|a| {
-                    let base64_hash =
-                        String::from_utf8(a.hash()).unwrap_or_else(|_| "invalid UTF8".to_string());
+        if signer_payload != &subject.c2pa_asset {
+            ok = false;
 
-                    let decoded_hash = c2pa_crypto::base64::decode(&base64_hash)
-                        .unwrap_or_else(|_| b"invalid base64".to_vec());
-
-                    HashedUri::new(a.url(), a.alg(), &decoded_hash)
-                })
-                .collect();
-
-            subject.c2pa_asset.referenced_assertions = decoded_assertions;
-
-            // The DynamicAssertion mechanism doesn't always populate the `alg` field when
-            // offering the partial claim for signature but some signers fill that in with a
-            // default value. Work around this by copying only the `alg` value from inside
-            // the VC.
-            let mut signer_payload = signer_payload.clone();
-            let new_ras = signer_payload
-                .referenced_assertions
-                .iter()
-                .zip(subject.c2pa_asset.referenced_assertions.iter())
-                .map(|(sp_ra, vc_ra)| {
-                    if sp_ra.alg().is_none() {
-                        HashedUri::new(sp_ra.url(), vc_ra.alg(), &sp_ra.hash())
-                    } else {
-                        sp_ra.clone()
-                    }
-                })
-                .collect();
-
-            signer_payload.referenced_assertions = new_ras;
-
-            if &signer_payload != &subject.c2pa_asset {
-                ok = false;
-
-                log_current_item!(
-                    "c2paAsset does not match signer_payload",
-                    "IcaSignatureVerifier::check_signature"
-                )
-                .validation_status("cawg.ica.signer_payload.mismatch")
-                .failure(
-                    status_tracker,
-                    ValidationError::SignatureError(IcaValidationError::SignerPayloadMismatch),
-                )?;
-            }
+            log_current_item!(
+                "c2paAsset does not match signer_payload",
+                "IcaSignatureVerifier::check_signature"
+            )
+            .validation_status("cawg.ica.signer_payload.mismatch")
+            .failure(
+                status_tracker,
+                ValidationError::SignatureError(IcaValidationError::SignerPayloadMismatch),
+            )?;
         }
 
         // TO DO (CAI-7994): CAWG SDK should inspect verifiedIdentities array.
@@ -451,9 +452,7 @@ impl IcaSignatureVerifier {
     async fn check_issuer_signature(
         &self,
         sign1: &CoseSign1,
-        signer_payload: &SignerPayload,
-        ica_credential: &mut IcaCredential,
-        _status_tracker: &mut StatusTracker,
+        ica_credential: &IcaCredential,
     ) -> Result<(), ValidationError<IcaValidationError>> {
         // Discover public key for issuer DID and validate signature.
         // TEMPORARY version supports did:jwk and did:web only.
@@ -569,65 +568,6 @@ impl IcaSignatureVerifier {
 
         // TO DO: Enforce validity window as compared to sig time (or now if no TSA
         // time).
-
-        // Post-process c2pa_asset to decode from base64 to raw binary.
-
-        {
-            let subject = ica_credential.credential_subjects.first_mut();
-
-            let decoded_assertions = subject
-                .c2pa_asset
-                .referenced_assertions
-                .iter()
-                .map(|a| {
-                    let base64_hash =
-                        String::from_utf8(a.hash()).unwrap_or_else(|_| "invalid UTF8".to_string());
-
-                    let decoded_hash = c2pa_crypto::base64::decode(&base64_hash)
-                        .unwrap_or_else(|_| b"invalid base64".to_vec());
-
-                    HashedUri::new(a.url(), a.alg(), &decoded_hash)
-                })
-                .collect();
-
-            subject.c2pa_asset.referenced_assertions = decoded_assertions;
-
-            // The DynamicAssertion mechanism doesn't always populate the `alg` field when
-            // offering the partial claim for signature but some signers fill that in with a
-            // default value. Work around this by copying only the `alg` value from inside
-            // the VC.
-            let mut signer_payload = signer_payload.clone();
-            let new_ras = signer_payload
-                .referenced_assertions
-                .iter()
-                .zip(subject.c2pa_asset.referenced_assertions.iter())
-                .map(|(sp_ra, vc_ra)| {
-                    if sp_ra.alg().is_none() {
-                        HashedUri::new(sp_ra.url(), vc_ra.alg(), &sp_ra.hash())
-                    } else {
-                        sp_ra.clone()
-                    }
-                })
-                .collect();
-
-            signer_payload.referenced_assertions = new_ras;
-
-            if &signer_payload != &subject.c2pa_asset {
-                // TO DO: Move this out of check_issuer_signature.
-                // TO DO: Fix WRONG error code.
-                return Err(ValidationError::SignatureMismatch);
-
-                // log_current_item!(
-                //     "c2paAsset does not match signer_payload",
-                //     "IcaSignatureVerifier::check_signature"
-                // )
-                // .validation_status("cawg.ica.signer_payload.mismatch")
-                // .failure(
-                //     status_tracker,
-                //     ValidationError::SignatureError(IcaValidationError::SignerPayloadMismatch),
-                // )?;
-            }
-        }
 
         Ok(())
     }
