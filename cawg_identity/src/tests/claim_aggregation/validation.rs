@@ -694,9 +694,7 @@ async fn invalid_issuer_did() {
 
     let subject = ica_vc.credential_subjects.first();
     assert_eq!(subject.verified_identities, expected_identities);
-
-    // assert_eq!(subject.c2pa_asset, ia.signer_payload);
-    // TO DO: Re-check this after completing the history merge.
+    assert_eq!(subject.c2pa_asset, ia.signer_payload);
 
     let mut log_items = st.logged_items().iter();
 
@@ -765,9 +763,7 @@ async fn unsupported_did_method() {
 
     let subject = ica_vc.credential_subjects.first();
     assert_eq!(subject.verified_identities, expected_identities);
-
-    // assert_eq!(subject.c2pa_asset, ia.signer_payload);
-    // TO DO: Re-check this after completing the history merge.
+    assert_eq!(subject.c2pa_asset, ia.signer_payload);
 
     let mut log_items = st.logged_items().iter();
 
@@ -831,9 +827,7 @@ async fn unresolvable_did() {
 
     let subject = ica_vc.credential_subjects.first();
     assert_eq!(subject.verified_identities, expected_identities);
-
-    // assert_eq!(subject.c2pa_asset, ia.signer_payload);
-    // TO DO: Re-check this after completing the history merge.
+    assert_eq!(subject.c2pa_asset, ia.signer_payload);
 
     let mut log_items = st.logged_items().iter();
 
@@ -905,9 +899,7 @@ async fn did_doc_without_assertion_method() {
 
     let subject = ica_vc.credential_subjects.first();
     assert_eq!(subject.verified_identities, expected_identities);
-
-    // assert_eq!(subject.c2pa_asset, ia.signer_payload);
-    // TO DO: Re-check this after completing the history merge.
+    assert_eq!(subject.c2pa_asset, ia.signer_payload);
 
     let mut log_items = st.logged_items().iter();
 
@@ -990,9 +982,7 @@ async fn signature_mismatch() {
 
     let subject = ica_vc.credential_subjects.first();
     assert_eq!(subject.verified_identities, expected_identities);
-
-    // assert_eq!(subject.c2pa_asset, ia.signer_payload);
-    // TO DO: Re-check this after completing the history merge.
+    assert_eq!(subject.c2pa_asset, ia.signer_payload);
 
     let mut log_items = st.logged_items().iter();
 
@@ -1148,9 +1138,7 @@ async fn invalid_time_stamp() {
 
     let subject = ica_vc.credential_subjects.first();
     assert_eq!(subject.verified_identities, expected_identities);
-
-    // assert_eq!(subject.c2pa_asset, ia.signer_payload);
-    // TO DO: Re-check this after completing the history merge.
+    assert_eq!(subject.c2pa_asset, ia.signer_payload);
 
     assert!(subject.time_stamp.is_none());
 
@@ -1175,7 +1163,6 @@ async fn invalid_time_stamp() {
     assert!(log_items.next().is_none());
 }
 
-#[ignore] // TO DO: Re-enable after finishing history merge
 #[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
 #[cfg_attr(
     all(target_arch = "wasm32", not(target_os = "wasi")),
