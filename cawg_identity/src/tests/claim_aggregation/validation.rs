@@ -1009,7 +1009,7 @@ async fn valid_time_stamp() {
     let tst_info = subject.time_stamp.as_ref().unwrap();
     dbg!(&tst_info);
 
-    assert_eq!(tst_info.gen_time.to_string(), "20250423181349Z");
+    assert_eq!(tst_info.gen_time.to_string(), "20250423194523Z");
 
     let mut log_items = st.logged_items().iter();
 
@@ -1257,6 +1257,89 @@ async fn valid_from_in_future() {
     assert_eq!(
         li.err_val.as_ref().unwrap(),
         "SignatureError(InvalidValidFromDate(\"validFrom is after current date/time\"))"
+    );
+
+    assert_eq!(
+        li.validation_status.as_ref().unwrap(),
+        "cawg.ica.valid_from.invalid"
+    );
+
+    assert!(log_items.next().is_none());
+}
+
+#[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
+async fn valid_from_after_time_stamp() {
+    // 8.1.7.2.6. Verify the credential’s validity range
+    //
+    // The validator SHALL compare the effective date of the credential against each
+    // of the following values, if available:
+    //
+    // * Time stamp for the COSE signature as described in Section 8.1.6,
+    //   “Verifiable credential proof mechanism”
+
+    let format = "image/jpeg";
+    let test_image = include_bytes!(
+        "../fixtures/claim_aggregation/ica_validation/valid_from_after_time_stamp.jpg"
+    );
+
+    let mut test_image = Cursor::new(test_image);
+
+    let reader = Reader::from_stream(format, &mut test_image).unwrap();
+    assert_eq!(reader.validation_status(), None);
+
+    let manifest = reader.active_manifest().unwrap();
+    let mut st = StatusTracker::default();
+    let mut ia_iter = IdentityAssertion::from_manifest(manifest, &mut st);
+
+    // Should find exactly one identity assertion.
+    let ia = ia_iter.next().unwrap().unwrap();
+    assert!(ia_iter.next().is_none());
+    drop(ia_iter);
+
+    // And that identity assertion should be valid for this manifest.
+    let isv = IcaSignatureVerifier {};
+
+    // HACK: See if we can transition to PostValidate without losing access
+    // to the ica_vc member below.
+    st.push_current_uri("(IA label goes here)");
+    let ica_vc = ia.validate(manifest, &mut st, &isv).await.unwrap();
+    st.pop_current_uri();
+
+    // Start matching against expected values.
+    let expected_identities = ica_credential_example::ica_example_identities();
+
+    let subject = ica_vc.credential_subjects.first();
+    assert_eq!(subject.verified_identities, expected_identities);
+    assert_eq!(subject.c2pa_asset, ia.signer_payload);
+    assert!(subject.time_stamp.is_some());
+
+    let mut log_items = st.logged_items().iter();
+
+    let li = log_items.next().unwrap();
+    dbg!(li);
+
+    assert_eq!(li.kind, LogKind::Success);
+    assert_eq!(li.label, "(IA label goes here)");
+    assert_eq!(li.description, "Time stamp validated");
+    assert_eq!(li.crate_name, "cawg-identity");
+    assert_eq!(
+        li.validation_status.as_ref().unwrap(),
+        "cawg.ica.time_stamp.validated"
+    );
+
+    let li = log_items.next().unwrap();
+    dbg!(li);
+
+    assert_eq!(li.kind, LogKind::Failure);
+    assert_eq!(li.label, "(IA label goes here)");
+    assert_eq!(
+        li.description,
+        "validFrom is after CAWG signature time stamp"
+    );
+    assert_eq!(li.crate_name, "cawg-identity");
+    assert_eq!(
+        li.err_val.as_ref().unwrap(),
+        "SignatureError(InvalidValidFromDate(\"validFrom is after CAWG signature time stamp\"))"
     );
 
     assert_eq!(
