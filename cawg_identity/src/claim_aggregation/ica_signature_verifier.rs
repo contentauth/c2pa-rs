@@ -245,11 +245,20 @@ impl SignatureVerifier for IcaSignatureVerifier {
                     .failure(status_tracker, err)?;
                 }
 
-                _ => todo!("Add logging for error condition {err:#?}"),
+                _ => {
+                    // TO REVIEW: Is there a better CAWG status code to use here? We don't expect
+                    // this code path to be reached, but it's a fallback to avoid a panic.
+                    log_current_item!(
+                        "Unexpected error condition",
+                        "IcaSignatureVerifier::check_signature"
+                    )
+                    .validation_status("cawg.ica.did_unavailable")
+                    .failure(status_tracker, err)?;
+                }
             }
         }
 
-        let maybe_tst_info = match validate_cose_tst_info_async(&sign1, &payload_bytes).await {
+        let maybe_tst_info = match validate_cose_tst_info_async(&sign1, payload_bytes).await {
             Ok(tst_info) => {
                 ica_credential.credential_subjects.first_mut().time_stamp = Some(tst_info.clone());
 
@@ -284,8 +293,18 @@ impl SignatureVerifier for IcaSignatureVerifier {
                 None
             }
 
-            Err(e) => {
-                todo!("Add handler for time stamp error {e:?}");
+            Err(_e) => {
+                log_current_item!(
+                    "Unable to process time stamp",
+                    "IcaSignatureVerifier::check_signature"
+                )
+                .validation_status("cawg.ica.time_stamp.invalid")
+                .failure(
+                    status_tracker,
+                    ValidationError::SignatureError(IcaValidationError::InvalidTimeStamp),
+                )?;
+
+                None
             }
         };
 
@@ -356,20 +375,64 @@ impl SignatureVerifier for IcaSignatureVerifier {
 
         // TO DO (CAI-7993): CAWG SDK should check ICA issuer revocation status.
 
-        let subject = ica_credential.credential_subjects.first();
-        if signer_payload != &subject.c2pa_asset {
-            ok = false;
+        // Post-process c2pa_asset to decode from base64 to raw binary.
 
-            log_current_item!(
-                "c2paAsset does not match signer_payload",
-                "IcaSignatureVerifier::check_signature"
-            )
-            .validation_status("cawg.ica.signer_payload.mismatch")
-            .failure(
-                status_tracker,
-                ValidationError::SignatureError(IcaValidationError::SignerPayloadMismatch),
-            )?;
+        {
+            let subject = ica_credential.credential_subjects.first_mut();
+
+            let decoded_assertions = subject
+                .c2pa_asset
+                .referenced_assertions
+                .iter()
+                .map(|a| {
+                    let base64_hash =
+                        String::from_utf8(a.hash()).unwrap_or_else(|_| "invalid UTF8".to_string());
+
+                    let decoded_hash = c2pa_crypto::base64::decode(&base64_hash)
+                        .unwrap_or_else(|_| b"invalid base64".to_vec());
+
+                    HashedUri::new(a.url(), a.alg(), &decoded_hash)
+                })
+                .collect();
+
+            subject.c2pa_asset.referenced_assertions = decoded_assertions;
+
+            // The DynamicAssertion mechanism doesn't always populate the `alg` field when
+            // offering the partial claim for signature but some signers fill that in with a
+            // default value. Work around this by copying only the `alg` value from inside
+            // the VC.
+            let mut signer_payload = signer_payload.clone();
+            let new_ras = signer_payload
+                .referenced_assertions
+                .iter()
+                .zip(subject.c2pa_asset.referenced_assertions.iter())
+                .map(|(sp_ra, vc_ra)| {
+                    if sp_ra.alg().is_none() {
+                        HashedUri::new(sp_ra.url(), vc_ra.alg(), &sp_ra.hash())
+                    } else {
+                        sp_ra.clone()
+                    }
+                })
+                .collect();
+
+            signer_payload.referenced_assertions = new_ras;
+
+            if &signer_payload != &subject.c2pa_asset {
+                ok = false;
+
+                log_current_item!(
+                    "c2paAsset does not match signer_payload",
+                    "IcaSignatureVerifier::check_signature"
+                )
+                .validation_status("cawg.ica.signer_payload.mismatch")
+                .failure(
+                    status_tracker,
+                    ValidationError::SignatureError(IcaValidationError::SignerPayloadMismatch),
+                )?;
+            }
         }
+
+        // TO DO (CAI-7994): CAWG SDK should inspect verifiedIdentities array.
 
         if ok {
             log_current_item!(

@@ -89,6 +89,7 @@ async fn adobe_connected_identities() {
                 Some("sha256".to_string()),
                 expected_hex_literal
             )],
+            roles: vec!(),
             sig_type: "cawg.identity_claims_aggregation".to_owned(),
         }
     );

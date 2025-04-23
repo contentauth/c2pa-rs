@@ -723,14 +723,14 @@ impl Reader {
                     label: current_label.clone(),
                 })?;
 
-            let mut preliminary_claim = crate::dynamic_assertion::PartialClaim::default();
+            let mut partial_claim = crate::dynamic_assertion::PartialClaim::default();
             {
                 let claim = self
                     .store
                     .get_claim(&current_label)
                     .ok_or(Error::ClaimEncoding)?;
                 for assertion in claim.assertions() {
-                    preliminary_claim.add_assertion(assertion);
+                    partial_claim.add_assertion(assertion);
                 }
             }
 
@@ -743,7 +743,7 @@ impl Reader {
                         assertion.label(),
                         assertion,
                         &assertion_uri,
-                        &preliminary_claim,
+                        &partial_claim,
                         validation_log,
                     )
                 } else {
@@ -752,7 +752,7 @@ impl Reader {
                             assertion.label(),
                             assertion,
                             &assertion_uri,
-                            &preliminary_claim,
+                            &partial_claim,
                             validation_log,
                         )
                         .await
@@ -860,20 +860,21 @@ pub mod tests {
         Ok(())
     }
 
-    // This test is disabled until we can set settings without interfering with other tests
-    // #[test]
-    // fn test_reader_trusted() -> Result<()> {
-    //     const TEST_SETTINGS: &str = include_str!("../tests/fixtures/certs/trust/test_settings.toml");
-    //     crate::settings::load_settings_from_str(TEST_SETTINGS, "toml")?;
-    //     let reader = Reader::from_stream("image/jpeg", std::io::Cursor::new(IMAGE_COMPLEX_MANIFEST))?;
-    //     assert_eq!(reader.validation_state(), ValidationState::Trusted);
-    //     crate::settings::set_settings_value("verify.trusted", false)?;
-    //     Ok(())
-    // }
+    #[test]
+    #[cfg(not(target_os = "wasi"))] // todo: enable when disable we find out wasi trust issues
+    fn test_reader_trusted() -> Result<()> {
+        let reader =
+            Reader::from_stream("image/jpeg", std::io::Cursor::new(IMAGE_COMPLEX_MANIFEST))?;
+        assert_eq!(reader.validation_state(), ValidationState::Trusted);
+        Ok(())
+    }
 
     #[test]
     /// Test that the reader can validate a file with nested assertion errors
     fn test_reader_from_file_nested_errors() -> Result<()> {
+        // disable trust check so that the status is Valid vs Trusted
+        crate::settings::set_settings_value("verify.verify_trust", false).unwrap();
+
         let reader =
             Reader::from_stream("image/jpeg", std::io::Cursor::new(IMAGE_COMPLEX_MANIFEST))?;
         println!("{reader}");

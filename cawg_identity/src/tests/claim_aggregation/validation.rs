@@ -21,6 +21,8 @@ use std::io::Cursor;
 
 use c2pa::Reader;
 use c2pa_status_tracker::{LogKind, StatusTracker};
+#[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
+use wasm_bindgen_test::wasm_bindgen_test;
 
 use crate::{
     claim_aggregation::{IcaSignatureVerifier, IcaValidationError},
@@ -29,6 +31,11 @@ use crate::{
 };
 
 #[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
+#[cfg_attr(
+    all(target_arch = "wasm32", not(target_os = "wasi")),
+    wasm_bindgen_test
+)]
+#[cfg_attr(target_os = "wasi", wstd::test)]
 async fn success_case() {
     // If the value of `signer_payload.sig_type` is
     // `cawg.identity_claims_aggregation`, the validator SHOULD proceed with
@@ -81,7 +88,6 @@ async fn success_case() {
     let mut log_items = st.logged_items().iter();
 
     let li = log_items.next().unwrap();
-    dbg!(li);
 
     assert_eq!(li.kind, LogKind::Success);
     assert_eq!(li.label, "(IA label goes here)");
@@ -96,6 +102,11 @@ async fn success_case() {
 }
 
 #[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
+#[cfg_attr(
+    all(target_arch = "wasm32", not(target_os = "wasi")),
+    wasm_bindgen_test
+)]
+#[cfg_attr(target_os = "wasi", wstd::test)]
 async fn invalid_cose_sign1() {
     // 8.1.7.2.1. Parse the `COSE_Sign1` structure
     //
@@ -143,7 +154,6 @@ async fn invalid_cose_sign1() {
     let mut log_items = st.logged_items().iter();
 
     let li = log_items.next().unwrap();
-    dbg!(li);
 
     assert_eq!(li.kind, LogKind::Failure);
     assert_eq!(li.label, "(IA label goes here)");
@@ -162,6 +172,11 @@ async fn invalid_cose_sign1() {
 }
 
 #[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
+#[cfg_attr(
+    all(target_arch = "wasm32", not(target_os = "wasi")),
+    wasm_bindgen_test
+)]
+#[cfg_attr(target_os = "wasi", wstd::test)]
 async fn invalid_cose_sign_alg() {
     // 8.1.7.2.1. Parse the `COSE_Sign1` structure
     //
@@ -221,7 +236,6 @@ async fn invalid_cose_sign_alg() {
     let mut log_items = st.logged_items().iter();
 
     let li = log_items.next().unwrap();
-    dbg!(li);
 
     assert_eq!(li.kind, LogKind::Failure);
     assert_eq!(li.label, "(IA label goes here)");
@@ -240,6 +254,11 @@ async fn invalid_cose_sign_alg() {
 }
 
 #[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
+#[cfg_attr(
+    all(target_arch = "wasm32", not(target_os = "wasi")),
+    wasm_bindgen_test
+)]
+#[cfg_attr(target_os = "wasi", wstd::test)]
 async fn missing_cose_sign_alg() {
     // Same as above, but in this case, NO signature algorithm is specified in the
     // `COSE_Sign1` data structure.
@@ -279,7 +298,6 @@ async fn missing_cose_sign_alg() {
     let mut log_items = st.logged_items().iter();
 
     let li = log_items.next().unwrap();
-    dbg!(li);
 
     assert_eq!(li.kind, LogKind::Failure);
     assert_eq!(li.label, "(IA label goes here)");
@@ -298,6 +316,11 @@ async fn missing_cose_sign_alg() {
 }
 
 #[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
+#[cfg_attr(
+    all(target_arch = "wasm32", not(target_os = "wasi")),
+    wasm_bindgen_test
+)]
+#[cfg_attr(target_os = "wasi", wstd::test)]
 async fn invalid_content_type() {
     // The validator SHALL inspect the `COSE_Sign1` protected header `content type`
     // to determine the content type of the enclosed credential. The `content type`
@@ -342,7 +365,6 @@ async fn invalid_content_type() {
     let mut log_items = st.logged_items().iter();
 
     let li = log_items.next().unwrap();
-    dbg!(li);
 
     assert_eq!(li.kind, LogKind::Failure);
     assert_eq!(li.label, "(IA label goes here)");
@@ -361,6 +383,11 @@ async fn invalid_content_type() {
 }
 
 #[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
+#[cfg_attr(
+    all(target_arch = "wasm32", not(target_os = "wasi")),
+    wasm_bindgen_test
+)]
+#[cfg_attr(target_os = "wasi", wstd::test)]
 async fn invalid_content_type_assigned() {
     // Same as above, but in this case, an assigned constant content type is
     // specified in the `COSE_Sign1` data structure.
@@ -403,7 +430,6 @@ async fn invalid_content_type_assigned() {
     let mut log_items = st.logged_items().iter();
 
     let li = log_items.next().unwrap();
-    dbg!(li);
 
     assert_eq!(li.kind, LogKind::Failure);
     assert_eq!(li.label, "(IA label goes here)");
@@ -422,6 +448,11 @@ async fn invalid_content_type_assigned() {
 }
 
 #[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
+#[cfg_attr(
+    all(target_arch = "wasm32", not(target_os = "wasi")),
+    wasm_bindgen_test
+)]
+#[cfg_attr(target_os = "wasi", wstd::test)]
 async fn missing_content_type() {
     // Same as above, but in this case, NO content type is specified in the
     // `COSE_Sign1` data structure.
@@ -463,7 +494,6 @@ async fn missing_content_type() {
     let mut log_items = st.logged_items().iter();
 
     let li = log_items.next().unwrap();
-    dbg!(li);
 
     assert_eq!(li.kind, LogKind::Failure);
     assert_eq!(li.label, "(IA label goes here)");
@@ -482,6 +512,11 @@ async fn missing_content_type() {
 }
 
 #[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
+#[cfg_attr(
+    all(target_arch = "wasm32", not(target_os = "wasi")),
+    wasm_bindgen_test
+)]
+#[cfg_attr(target_os = "wasi", wstd::test)]
 async fn missing_vc() {
     // The validator SHALL obtain the unprotected `payload` of the `COSE_Sign1` data
     // structure. This payload is the raw JSON-LD content of the verifiable
@@ -533,7 +568,6 @@ async fn missing_vc() {
     let mut log_items = st.logged_items().iter();
 
     let li = log_items.next().unwrap();
-    dbg!(li);
 
     assert_eq!(li.kind, LogKind::Failure);
     assert_eq!(li.label, "(IA label goes here)");
@@ -552,6 +586,11 @@ async fn missing_vc() {
 }
 
 #[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
+#[cfg_attr(
+    all(target_arch = "wasm32", not(target_os = "wasi")),
+    wasm_bindgen_test
+)]
+#[cfg_attr(target_os = "wasi", wstd::test)]
 async fn invalid_vc() {
     // ^^ Same as above but the VC is corrupted rather than missing.
 
@@ -591,7 +630,6 @@ async fn invalid_vc() {
     let mut log_items = st.logged_items().iter();
 
     let li = log_items.next().unwrap();
-    dbg!(li);
 
     assert_eq!(li.kind, LogKind::Failure);
     assert_eq!(li.label, "(IA label goes here)");
@@ -610,6 +648,11 @@ async fn invalid_vc() {
 }
 
 #[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
+#[cfg_attr(
+    all(target_arch = "wasm32", not(target_os = "wasi")),
+    wasm_bindgen_test
+)]
+#[cfg_attr(target_os = "wasi", wstd::test)]
 async fn invalid_issuer_did() {
     // 8.1.7.2.3. Obtain the credential issuer’s public key
     //
@@ -658,7 +701,6 @@ async fn invalid_issuer_did() {
     let mut log_items = st.logged_items().iter();
 
     let li = log_items.next().unwrap();
-    dbg!(li);
 
     assert_eq!(li.kind, LogKind::Failure);
     assert_eq!(li.label, "(IA label goes here)");
@@ -680,6 +722,11 @@ async fn invalid_issuer_did() {
 }
 
 #[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
+#[cfg_attr(
+    all(target_arch = "wasm32", not(target_os = "wasi")),
+    wasm_bindgen_test
+)]
+#[cfg_attr(target_os = "wasi", wstd::test)]
 async fn unsupported_did_method() {
     // The validator SHALL resolve the DID document as described in Section 7.1,
     // “DID resolution,” of the DID specification. If the DID uses a DID method that
@@ -725,7 +772,6 @@ async fn unsupported_did_method() {
     let mut log_items = st.logged_items().iter();
 
     let li = log_items.next().unwrap();
-    dbg!(li);
 
     assert_eq!(li.kind, LogKind::Failure);
     assert_eq!(li.label, "(IA label goes here)");
@@ -746,7 +792,9 @@ async fn unsupported_did_method() {
     assert!(log_items.next().is_none());
 }
 
-#[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
+// TO DO (CAI-7996): Not sure why this doesn't run on Wasm/WASI.
+#[cfg(not(target_arch = "wasm32"))]
+#[tokio::test]
 async fn unresolvable_did() {
     // If the DID can not be resolved, the validator MUST issue the failure code
     // `cawg.ica.did_unavailable` but MAY continue validation.
@@ -790,7 +838,6 @@ async fn unresolvable_did() {
     let mut log_items = st.logged_items().iter();
 
     let li = log_items.next().unwrap();
-    dbg!(li);
 
     assert_eq!(li.kind, LogKind::Failure);
     assert_eq!(li.label, "(IA label goes here)");
@@ -812,6 +859,11 @@ async fn unresolvable_did() {
 }
 
 #[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
+#[cfg_attr(
+    all(target_arch = "wasm32", not(target_os = "wasi")),
+    wasm_bindgen_test
+)]
+#[cfg_attr(target_os = "wasi", wstd::test)]
 async fn did_doc_without_assertion_method() {
     // The validator SHALL locate within the DID document the `assertionMethod`
     // verification method as described in Section 5.3.2, “Assertion,” of the DID
@@ -860,7 +912,6 @@ async fn did_doc_without_assertion_method() {
     let mut log_items = st.logged_items().iter();
 
     let li = log_items.next().unwrap();
-    dbg!(li);
 
     assert_eq!(li.kind, LogKind::Failure);
     assert_eq!(li.label, "(IA label goes here)");
@@ -881,18 +932,23 @@ async fn did_doc_without_assertion_method() {
     assert!(log_items.next().is_none());
 }
 
-#[test]
-#[ignore]
-fn did_is_untrusted() {
-    // The validator SHALL verify that the issuer’s DID is present or can be
-    // traced to its preconfigured list of trustable entities. If the issuer is
-    // not verifiably trusted, the validator MUST issue the failure code
-    // `cawg.ica.untrusted_issuer` but MAY continue validation.
+// #[test]
+// #[ignore]
+// fn did_is_untrusted() {
+//     // The validator SHALL verify that the issuer’s DID is present or can be
+//     // traced to its preconfigured list of trustable entities. If the issuer
+// is     // not verifiably trusted, the validator MUST issue the failure code
+//     // `cawg.ica.untrusted_issuer` but MAY continue validation.
 
-    // TO DO (CAI-7980): Add option to configure trusted ICA issuers.
-}
+//     // TO DO (CAI-7980): Add option to configure trusted ICA issuers.
+// }
 
 #[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
+#[cfg_attr(
+    all(target_arch = "wasm32", not(target_os = "wasi")),
+    wasm_bindgen_test
+)]
+#[cfg_attr(target_os = "wasi", wstd::test)]
 async fn signature_mismatch() {
     // 8.1.7.2.4. Verify the COSE signature
     //
@@ -941,7 +997,6 @@ async fn signature_mismatch() {
     let mut log_items = st.logged_items().iter();
 
     let li = log_items.next().unwrap();
-    dbg!(li);
 
     assert_eq!(li.kind, LogKind::Failure);
     assert_eq!(li.label, "(IA label goes here)");
@@ -959,6 +1014,11 @@ async fn signature_mismatch() {
 }
 
 #[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
+#[cfg_attr(
+    all(target_arch = "wasm32", not(target_os = "wasi")),
+    wasm_bindgen_test
+)]
+#[cfg_attr(target_os = "wasi", wstd::test)]
 async fn valid_time_stamp() {
     // 8.1.7.2.5. Verify the time stamp, if present
     //
@@ -1007,14 +1067,12 @@ async fn valid_time_stamp() {
     assert_eq!(subject.c2pa_asset, ia.signer_payload);
 
     let tst_info = subject.time_stamp.as_ref().unwrap();
-    dbg!(&tst_info);
 
     assert_eq!(tst_info.gen_time.to_string(), "20250423194523Z");
 
     let mut log_items = st.logged_items().iter();
 
     let li = log_items.next().unwrap();
-    dbg!(li);
 
     assert_eq!(li.kind, LogKind::Success);
     assert_eq!(li.label, "(IA label goes here)");
@@ -1026,7 +1084,6 @@ async fn valid_time_stamp() {
     );
 
     let li = log_items.next().unwrap();
-    dbg!(li);
 
     assert_eq!(li.kind, LogKind::Success);
     assert_eq!(li.label, "(IA label goes here)");
@@ -1041,6 +1098,11 @@ async fn valid_time_stamp() {
 }
 
 #[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
+#[cfg_attr(
+    all(target_arch = "wasm32", not(target_os = "wasi")),
+    wasm_bindgen_test
+)]
+#[cfg_attr(target_os = "wasi", wstd::test)]
 async fn invalid_time_stamp() {
     // 8.1.7.2.5. Verify the time stamp, if present
     //
@@ -1095,7 +1157,6 @@ async fn invalid_time_stamp() {
     let mut log_items = st.logged_items().iter();
 
     let li = log_items.next().unwrap();
-    dbg!(li);
 
     // TO DO: Fix WRONG error code after history merge.
     assert_eq!(li.kind, LogKind::Failure);
@@ -1131,6 +1192,11 @@ async fn invalid_time_stamp() {
 
 #[ignore] // TO DO: Re-enable after finishing history merge
 #[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
+#[cfg_attr(
+    all(target_arch = "wasm32", not(target_os = "wasi")),
+    wasm_bindgen_test
+)]
+#[cfg_attr(target_os = "wasi", wstd::test)]
 async fn valid_from_missing() {
     // 8.1.7.2.6. Verify the credential’s validity range
     //
@@ -1179,7 +1245,6 @@ async fn valid_from_missing() {
     let mut log_items = st.logged_items().iter();
 
     let li = log_items.next().unwrap();
-    dbg!(li);
 
     assert_eq!(li.kind, LogKind::Failure);
     assert_eq!(li.label, "(IA label goes here)");
@@ -1201,7 +1266,9 @@ async fn valid_from_missing() {
     assert!(log_items.next().is_none());
 }
 
-#[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
+// TO DO (CAI-7996): Not sure why this doesn't run on Wasm/WASI.
+#[cfg(not(target_arch = "wasm32"))]
+#[tokio::test]
 async fn valid_from_in_future() {
     // 8.1.7.2.6. Verify the credential’s validity range
     //
@@ -1248,7 +1315,6 @@ async fn valid_from_in_future() {
     let mut log_items = st.logged_items().iter();
 
     let li = log_items.next().unwrap();
-    dbg!(li);
 
     assert_eq!(li.kind, LogKind::Failure);
     assert_eq!(li.label, "(IA label goes here)");
@@ -1267,7 +1333,9 @@ async fn valid_from_in_future() {
     assert!(log_items.next().is_none());
 }
 
-#[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
+// TO DO (CAI-7996): Not sure why this doesn't run on Wasm/WASI.
+#[cfg(not(target_arch = "wasm32"))]
+#[tokio::test]
 async fn valid_from_after_time_stamp() {
     // 8.1.7.2.6. Verify the credential’s validity range
     //
@@ -1316,7 +1384,6 @@ async fn valid_from_after_time_stamp() {
     let mut log_items = st.logged_items().iter();
 
     let li = log_items.next().unwrap();
-    dbg!(li);
 
     assert_eq!(li.kind, LogKind::Success);
     assert_eq!(li.label, "(IA label goes here)");
@@ -1328,7 +1395,6 @@ async fn valid_from_after_time_stamp() {
     );
 
     let li = log_items.next().unwrap();
-    dbg!(li);
 
     assert_eq!(li.kind, LogKind::Failure);
     assert_eq!(li.label, "(IA label goes here)");
@@ -1351,6 +1417,11 @@ async fn valid_from_after_time_stamp() {
 }
 
 #[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
+#[cfg_attr(
+    all(target_arch = "wasm32", not(target_os = "wasi")),
+    wasm_bindgen_test
+)]
+#[cfg_attr(target_os = "wasi", wstd::test)]
 async fn valid_until_in_future() {
     // If the expiration date is present, the validator SHALL compare the expiration
     // date of the credential against each of the following values, if available:
@@ -1404,7 +1475,6 @@ async fn valid_until_in_future() {
     let mut log_items = st.logged_items().iter();
 
     let li = log_items.next().unwrap();
-    dbg!(li);
 
     assert_eq!(li.kind, LogKind::Success);
     assert_eq!(li.label, "(IA label goes here)");
@@ -1418,7 +1488,9 @@ async fn valid_until_in_future() {
     assert!(log_items.next().is_none());
 }
 
-#[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
+// TO DO (CAI-7996): Not sure why this doesn't run on Wasm/WASI.
+#[cfg(not(target_arch = "wasm32"))]
+#[tokio::test]
 async fn valid_until_in_past() {
     // If the expiration date is present, the validator SHALL compare the expiration
     // date of the credential against each of the following values, if available:
@@ -1473,7 +1545,6 @@ async fn valid_until_in_past() {
     let mut log_items = st.logged_items().iter();
 
     let li = log_items.next().unwrap();
-    dbg!(li);
 
     assert_eq!(li.kind, LogKind::Failure);
     assert_eq!(li.label, "(IA label goes here)");
@@ -1492,20 +1563,26 @@ async fn valid_until_in_past() {
     assert!(log_items.next().is_none());
 }
 
-#[test]
-#[ignore]
-fn credential_is_revoked() {
-    // 8.1.7.2.7. Verify the credential’s revocation status
-    //
-    // If the credential contains a `credentialStatus` entry, the validator
-    // SHALL inspect the contents of that entry. If the entry contains an entry
-    // with its `statusPurpose` set to `revocation`, the validator SHALL follow
-    // the procedures described as described by the corresponding `type` entry.
+// #[test]
+// #[ignore]
+// fn credential_is_revoked() {
+//     // 8.1.7.2.7. Verify the credential’s revocation status
+//     //
+//     // If the credential contains a `credentialStatus` entry, the validator
+//     // SHALL inspect the contents of that entry. If the entry contains an
+// entry     // with its `statusPurpose` set to `revocation`, the validator
+// SHALL follow     // the procedures described as described by the
+// corresponding `type` entry.
 
-    // TO DO (CAI-7993): CAWG SDK should check ICA issuer revocation status.
-}
+//     // TO DO (CAI-7993): CAWG SDK should check ICA issuer revocation status.
+// }
 
 #[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
+#[cfg_attr(
+    all(target_arch = "wasm32", not(target_os = "wasi")),
+    wasm_bindgen_test
+)]
+#[cfg_attr(target_os = "wasi", wstd::test)]
 async fn signer_payload_mismatch() {
     // 8.1.7.3. Verify binding to C2PA asset
     //
@@ -1555,7 +1632,6 @@ async fn signer_payload_mismatch() {
     let mut log_items = st.logged_items().iter();
 
     let li = log_items.next().unwrap();
-    dbg!(li);
 
     assert_eq!(li.kind, LogKind::Failure);
     assert_eq!(li.label, "(IA label goes here)");
@@ -1573,3 +1649,27 @@ async fn signer_payload_mismatch() {
 
     assert!(log_items.next().is_none());
 }
+
+// #[test]
+// #[ignore]
+// fn verified_identities() {
+//     // 8.1.7.4. Verify verified identities
+//     //
+//     // The validator SHALL inspect the contents of the `verifiedIdentities`
+//     // field contained within the verifiable credential’s `credentialSubject`
+//     // field. If this field is missing, if it is not a JSON array, or if it
+// is     // an empty array, the validator MUST issue the failure code
+//     // `cawg.ica.verified_identities.missing` but MAY continue validation.
+//     //
+//     // The validator SHALL inspect each entry in the `verifiedIdentities`
+// array.     // For each entry, it SHALL verify each of the conditions stated
+// in Section     // 8.1.2.5, “Verified identities” and issue the failure code
+//     // `cawg.ica.verified_identities.invalid` if any condition stated there
+// is     // unmet.
+//     //
+//     // The validator MAY annotate entries in the `verifiedIdentities` array
+//     // according to its own policies regarding trust or validity of each
+//     // identity.
+
+//     // TO DO (CAI-7994): CAWG SDK should inspect verifiedIdentities array.
+// }

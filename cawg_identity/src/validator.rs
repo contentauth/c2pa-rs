@@ -37,7 +37,7 @@ impl AsyncPostValidator for CawgValidator {
         partial_claim: &PartialClaim,
         tracker: &mut StatusTracker,
     ) -> c2pa::Result<Option<Value>> {
-        if label == "cawg.identity" {
+        if label.starts_with("cawg.identity") {
             let identity_assertion: IdentityAssertion = assertion.to_assertion()?;
             tracker.push_current_uri(uri);
             let result = identity_assertion
@@ -49,5 +49,96 @@ impl AsyncPostValidator for CawgValidator {
             return result;
         };
         Ok(None)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used)]
+    use std::io::Cursor;
+
+    use c2pa::{Reader, ValidationState};
+    #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
+    use wasm_bindgen_test::wasm_bindgen_test;
+
+    use super::*;
+
+    const CONNECTED_IDENTITIES_VALID: &[u8] =
+        include_bytes!("tests/fixtures/claim_aggregation/adobe_connected_identities.jpg");
+
+    const NO_HARD_BINDING: &[u8] =
+        include_bytes!("tests/fixtures/validation_method/no_hard_binding.jpg");
+
+    const MULTIPLE_IDENTITIES_VALID: &[u8] =
+        include_bytes!("tests/fixtures/claim_aggregation/ims_multiple_manifests.jpg");
+
+    #[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
+    #[cfg_attr(
+        all(target_arch = "wasm32", not(target_os = "wasi")),
+        wasm_bindgen_test
+    )]
+    #[cfg_attr(target_os = "wasi", wstd::test)]
+    async fn test_connected_identities_valid() {
+        let mut stream = Cursor::new(CONNECTED_IDENTITIES_VALID);
+        let mut reader = Reader::from_stream("image/jpeg", &mut stream).unwrap();
+        reader.post_validate_async(&CawgValidator {}).await.unwrap();
+        //println!("validation results: {}", reader);
+        assert_eq!(
+            reader
+                .validation_results()
+                .unwrap()
+                .active_manifest()
+                .unwrap()
+                .success()
+                .last()
+                .unwrap()
+                .code(),
+            "cawg.ica.credential_valid"
+        );
+    }
+
+    #[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
+    #[cfg_attr(
+        all(target_arch = "wasm32", not(target_os = "wasi")),
+        wasm_bindgen_test
+    )]
+    #[cfg_attr(target_os = "wasi", wstd::test)]
+    async fn test_multiple_identities_valid() {
+        let mut stream = Cursor::new(MULTIPLE_IDENTITIES_VALID);
+        let mut reader = Reader::from_stream("image/jpeg", &mut stream).unwrap();
+        reader.post_validate_async(&CawgValidator {}).await.unwrap();
+        println!("validation results: {}", reader);
+        assert_eq!(
+            reader
+                .validation_results()
+                .unwrap()
+                .ingredient_deltas()
+                .unwrap()
+                .len(),
+            2
+        );
+        assert_eq!(reader.validation_state(), ValidationState::Valid);
+    }
+
+    #[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
+    #[cfg_attr(
+        all(target_arch = "wasm32", not(target_os = "wasi")),
+        wasm_bindgen_test
+    )]
+    #[cfg_attr(target_os = "wasi", wstd::test)]
+    async fn test_post_validate_with_hard_binding_missing() {
+        let mut stream = Cursor::new(NO_HARD_BINDING);
+        let mut reader = Reader::from_stream("image/jpeg", &mut stream).unwrap();
+        reader.post_validate_async(&CawgValidator {}).await.unwrap();
+        assert_eq!(
+            reader
+                .validation_results()
+                .unwrap()
+                .active_manifest()
+                .unwrap()
+                .failure()[0]
+                .code(),
+            "cawg.identity.hard_binding_missing"
+        );
     }
 }

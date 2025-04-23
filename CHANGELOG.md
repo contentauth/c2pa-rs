@@ -6,6 +6,42 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 Since version 0.36.2, the format of this changelog is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.49.3](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.49.2...c2pa-v0.49.3)
+_16 April 2025_
+
+### Fixed
+
+* Dynamic assertions should be gathered assertions ([#1005](https://github.com/contentauth/c2pa-rs/pull/1005))
+
+## [0.49.2](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.49.1...c2pa-v0.49.2)
+_07 April 2025_
+
+### Fixed
+
+* Populates claim signature field in ingredient v3. ([#1027](https://github.com/contentauth/c2pa-rs/pull/1027))
+* Adjust dependencies to avoid security warnings and yanked versions ([#1031](https://github.com/contentauth/c2pa-rs/pull/1031))
+* Enable trust checks for all unit tests ([#1022](https://github.com/contentauth/c2pa-rs/pull/1022))
+
+## [0.49.1](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.49.0...c2pa-v0.49.1)
+_04 April 2025_
+
+### Fixed
+
+* Update openssl to address a recently-announced vulnerability ([#1024](https://github.com/contentauth/c2pa-rs/pull/1024))
+
+## [0.49.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.48.2...c2pa-v0.49.0)
+_03 April 2025_
+
+### Added
+
+* *(cawg_identity)* Add `BuiltInSignatureVerifier` ([#978](https://github.com/contentauth/c2pa-rs/pull/978))
+
+### Fixed
+
+* Thread safe version of settings.rs ([#1018](https://github.com/contentauth/c2pa-rs/pull/1018))
+* Fix support for user supplied labels ([#1017](https://github.com/contentauth/c2pa-rs/pull/1017))
+* Sig check fix ([#1016](https://github.com/contentauth/c2pa-rs/pull/1016))
+
 ## [0.48.2](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.48.1...c2pa-v0.48.2)
 _26 March 2025_
 
