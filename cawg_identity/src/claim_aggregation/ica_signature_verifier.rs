@@ -188,6 +188,69 @@ impl SignatureVerifier for IcaSignatureVerifier {
                 .failure_no_throw(status_tracker, ValidationError::from(err));
             })?;
 
+        if let Err(err) = self
+            .check_issuer_signature(&sign1, &signer_payload, &mut ica_credential, status_tracker)
+            .await
+        {
+            // NOTE: We handle logging here because all error conditions that are detectable
+            // in `check_issuer_signature` are fatal to signature verification, BUT they are
+            // not fatal to the overall interpretation of the identity assertion.
+            //
+            // In the event that the status tracker is configured to proceed when possible,
+            // we log the error condition related to the signature and proceed.
+            match err {
+                ValidationError::SignatureError(IcaValidationError::UnsupportedIssuerDid(_)) => {
+                    ok = false;
+
+                    log_current_item!(
+                        "Invalid issuer DID",
+                        "IcaSignatureVerifier::check_signature"
+                    )
+                    .validation_status("cawg.ica.invalid_issuer")
+                    .failure(status_tracker, err)?;
+                }
+
+                _ => todo!("Add logging for error condition {err:#?}"),
+            }
+        }
+
+        // Enforce [§8.1.1.4. Validity].
+        //
+        // [§8.1.1.4. Validity]: https://creator-assertions.github.io/identity/1.1-draft/#vc-property-validFrom
+        let Some(_valid_from) = ica_credential.valid_from else {
+            return Err(ValidationError::SignatureError(
+                IcaValidationError::MissingValidFromDate,
+            ));
+        };
+
+        // TO DO: Enforce signer_payload matches what was stated outside the signature.
+
+        // TO DO: Enforce validity window as compared to sig time (or now if no TSA
+        // time).
+
+        // TO DO: Verify that signer_payload is same as c2paAsset.
+
+        if ok {
+            log_current_item!(
+                "ICA credential is valid",
+                "IcaSignatureVerifier::check_signature"
+            )
+            .validation_status("cawg.ica.credential_valid")
+            .success(status_tracker);
+        }
+
+        Ok(ica_credential)
+    }
+}
+
+impl IcaSignatureVerifier {
+    async fn check_issuer_signature(
+        &self,
+        sign1: &CoseSign1,
+        signer_payload: &SignerPayload,
+        ica_credential: &mut IcaCredential,
+        _status_tracker: &mut StatusTracker,
+    ) -> Result<(), ValidationError<IcaValidationError>> {
         // Discover public key for issuer DID and validate signature.
         // TEMPORARY version supports did:jwk and did:web only.
         let issuer_id = Did::new(&ica_credential.issuer)?;
@@ -347,29 +410,10 @@ impl SignatureVerifier for IcaSignatureVerifier {
             signer_payload.referenced_assertions = new_ras;
 
             if &signer_payload != &subject.c2pa_asset {
-                ok = false;
-
-                log_current_item!(
-                    "c2paAsset does not match signer_payload",
-                    "IcaSignatureVerifier::check_signature"
-                )
-                .validation_status("cawg.ica.signer_payload.mismatch")
-                .failure(
-                    status_tracker,
-                    ValidationError::InternalError("signer payload mismatch".to_string()),
-                )?;
+                panic!("What did we do in the future?");
             }
         }
 
-        if ok {
-            log_current_item!(
-                "ICA credential is valid",
-                "IcaSignatureVerifier::check_signature"
-            )
-            .validation_status("cawg.ica.credential_valid")
-            .success(status_tracker);
-        }
-
-        Ok(ica_credential)
+        Ok(())
     }
 }

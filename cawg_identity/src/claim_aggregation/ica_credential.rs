@@ -49,7 +49,7 @@ pub const IDENTITY_CLAIMS_AGGREGATION_CREDENTIAL_TYPE: &str = "IdentityClaimsAgg
 /// the _C2PA asset_ in which the **identity assertion** appears.
 ///
 /// [W3C verifiable credential]: https://www.w3.org/TR/vc-data-model-2.0/
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct IdentityClaimsAggregationVc {
     /// ## Verified identities
     ///
