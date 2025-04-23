@@ -2,7 +2,7 @@
 name = "c2pa-c"
 version = { workspace = true }
 edition = "2021"
-authors = ["Gavin Peacock <gpeacock@adobe.com"]
+authors = ["Gavin Peacock <gpeacock@adobe.com>"]
 license = "MIT OR Apache-2.0"
 
 [lib]
