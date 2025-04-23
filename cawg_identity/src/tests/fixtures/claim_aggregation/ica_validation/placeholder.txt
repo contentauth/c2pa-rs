@@ -1,0 +1,1 @@
+No-op to keep the folder alive when switching branches

@@ -64,6 +64,7 @@ wasm-bindgen = "0.2.95"
 anyhow = "1.0.97"
 c2pa = { path = "../sdk", version = "0.49.3", features = ["file_io"] }
 serde = { version = "1.0.197", features = ["derive"] }
+x509-parser = "0.16.0"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 httpmock = "0.7.0"
