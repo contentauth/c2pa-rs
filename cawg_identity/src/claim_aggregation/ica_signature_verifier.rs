@@ -328,6 +328,9 @@ impl SignatureVerifier for IcaSignatureVerifier {
             }
         };
 
+        // Enforce [§8.1.1.4. Validity].
+        //
+        // [§8.1.1.4. Validity]: https://cawg.io/identity/1.1-draft/#vc-property-validFrom
         match ica_credential.valid_from {
             Some(valid_from) => {
                 if let Err(err) = self
@@ -555,15 +558,6 @@ impl IcaSignatureVerifier {
                 public_key.verify(data, &signature).map_err(JwkError::from)
             })
             .map_err(|_e| ValidationError::SignatureMismatch)?;
-
-        // Enforce [§8.1.1.4. Validity].
-        //
-        // [§8.1.1.4. Validity]: https://creator-assertions.github.io/identity/1.1-draft/#vc-property-validFrom
-        let Some(_valid_from) = ica_credential.valid_from else {
-            return Err(ValidationError::SignatureError(
-                IcaValidationError::MissingValidFromDate,
-            ));
-        };
 
         // TO DO: Enforce signer_payload matches what was stated outside the signature.
 
