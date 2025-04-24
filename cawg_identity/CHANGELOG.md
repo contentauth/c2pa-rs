@@ -6,6 +6,13 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 The format of this changelog is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.13.0](https://github.com/contentauth/c2pa-rs/compare/cawg-identity-v0.12.2...cawg-identity-v0.13.0)
+_24 April 2025_
+
+### Added
+
+* Changes required for Node SDK with Neon ([#1043](https://github.com/contentauth/c2pa-rs/pull/1043))
+
 ## [0.12.2](https://github.com/contentauth/c2pa-rs/compare/cawg-identity-v0.12.1...cawg-identity-v0.12.2)
 _16 April 2025_
 
