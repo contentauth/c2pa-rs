@@ -149,6 +149,13 @@ pub const INGREDIENT_UNKNOWN_PROVENANCE: &str = "ingredient.unknownProvenance";
 /// Any corresponding URL should point to a C2PA claim signature box.
 pub const ALGORITHM_DEPRECATED: &str = "algorithm.deprecated";
 
+/// The claimed time of signing (in the iat header of the signature)
+/// is within the validity period of the claim signer’s certificate
+/// chain and before the time in any corresponding trusted timestamp
+///
+/// Any corresponding URL should point to a C2PA claim signature box.
+pub const TIME_OF_SIGNING_INSIDE_VALIDITY: &str = "timeOfSigning.insideValidity";
+
 // -- failure codes --
 
 /// The claim cbor is invalid
@@ -385,11 +392,6 @@ pub const MANIFEST_TIMESTAMP_WRONG_PARENTS: &str = "manifest.timestamp.wrongPare
 /// Any corresponding URL should point to a C2PA claim box.
 pub const MANIFEST_COMPRESSED_INVALID: &str = "manifest.compressed.invalid";
 
-/// The manifest is not referenced via an ingredient assertion.
-///
-/// Any corresponding URL should point to a C2PA claim box.
-pub const MANIFEST_UNREFERENCED: &str = "manifest.unreferenced";
-
 /// The OCSP response contains an unknown status for the signing credential.
 ///
 /// Any corresponding URL should point to a C2PA claim signature box.
@@ -540,7 +542,8 @@ pub fn log_kind(status_code: &str) -> LogKind {
         | TIMESTAMP_MALFORMED
         | MANIFEST_UNKNOWN_PROVENANCE
         | INGREDIENT_UNKNOWN_PROVENANCE
-        | ALGORITHM_DEPRECATED => LogKind::Informational,
+        | ALGORITHM_DEPRECATED
+        | TIME_OF_SIGNING_INSIDE_VALIDITY => LogKind::Informational,
         _ => LogKind::Failure,
     }
 }

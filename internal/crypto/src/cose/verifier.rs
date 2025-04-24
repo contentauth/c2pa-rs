@@ -40,6 +40,8 @@ use crate::{
     time_stamp::TimeStampError,
 };
 
+use super::sign1::iat_from_sign1;
+
 /// A `Verifier` reads a COSE signature and reports on its validity.
 ///
 /// It can provide different levels of verification depending on the enum value
@@ -176,6 +178,7 @@ impl Verifier<'_> {
             validated: true,
             cert_chain: dump_cert_chain(&certs)?,
             revocation_status: Some(true),
+            iat: iat_from_sign1(&sign1),
         })
     }
 

@@ -140,7 +140,7 @@ impl ValidationStatus {
     // Maps errors into validation_status codes.
     fn code_from_error_str(error: &str) -> &str {
         match error {
-            e if e.starts_with("ClaimMissing") => CLAIM_MISSING,
+            e if e == "ClaimMissing" => CLAIM_MISSING,
             e if e.starts_with("AssertionMissing") => ASSERTION_MISSING,
             e if e.starts_with("AssertionDecoding") => ASSERTION_REQUIRED_MISSING,
             e if e.starts_with("HashMismatch") => ASSERTION_DATAHASH_MATCH,

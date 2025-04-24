@@ -94,7 +94,7 @@ pub(crate) fn verify_time_stamp(ts: &[u8], data: &[u8]) -> Result<TstInfo, TimeS
             None => continue,
         };
 
-        // Load unprotected TstInfo. We will verify its contents below against signed
+        // Load TstInfo. We will verify its contents below against signed
         // values.
         let tst_opt = tst_info_from_signed_data(&sd)?;
         let mut tst = tst_opt.ok_or(TimeStampError::DecodeError(

@@ -243,7 +243,7 @@ impl ManifestStoreReport {
                 )?;
 
             // is this an ingredient
-            if let Some(ref c2pa_manifest) = &ingredient_assertion.c2pa_manifest {
+            if let Some(c2pa_manifest) = &ingredient_assertion.c2pa_manifest() {
                 let label = Store::manifest_label_from_path(&c2pa_manifest.url());
 
                 if let Some(hash) = c2pa_manifest.hash().get(0..5) {

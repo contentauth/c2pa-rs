@@ -120,6 +120,25 @@ impl Ingredient {
         }
     }
 
+    pub fn c2pa_manifest(&self) -> Option<HashedUri> {
+        // get correct hashed URI
+        match &self.active_manifest {
+            Some(m) => Some(m.clone()), // > v2 ingredient assertion
+            None => {
+                if let Some(m) = &self.c2pa_manifest {
+                    // v2 ingredient
+                    Some(m.clone())
+                } else {
+                    None
+                }
+            }
+        }
+    }
+
+    pub fn signature(&self) -> Option<HashedUri> {
+        self.claim_signature.clone()
+    }
+
     fn is_v1_compatible(&self) -> bool {
         self.title.is_some()
             && self.format.is_some()

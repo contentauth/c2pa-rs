@@ -16,8 +16,9 @@ use std::fs;
 #[cfg(feature = "file_io")]
 use std::path::{Path, PathBuf};
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     io::{Cursor, Read, Seek},
+    vec,
 };
 
 use async_generic::async_generic;
@@ -70,7 +71,10 @@ use crate::{
     jumbf::{
         self,
         boxes::*,
-        labels::{ASSERTIONS, CREDENTIALS, DATABOXES, SIGNATURE},
+        labels::{
+            manifest_label_from_uri, manifest_label_to_parts, to_assertion_uri, ASSERTIONS,
+            CREDENTIALS, DATABOXES, SIGNATURE,
+        },
     },
     jumbf_io::{
         get_assetio_handler, is_bmff_format, load_jumbf_from_stream, object_locations_from_stream,
@@ -90,6 +94,15 @@ const MANIFEST_STORE_EXT: &str = "c2pa"; // file extension for external manifest
 pub(crate) struct ManifestHashes {
     pub manifest_box_hash: Vec<u8>,
     pub signature_box_hash: Vec<u8>,
+}
+
+// internal struct to pass around info need to to complete validation
+#[derive(Default)]
+pub(crate) struct StoreValidationInfo {
+    pub redactions: Vec<String>, // list of redactions found in claim hierarchy
+    pub ingredient_references: HashMap<String, HashSet<String>>, // mapping in ingredients to list of claims that refernce it
+    pub binding_claim: String, // name of the claim that has the hash binding
+    pub update_offset: usize, // offset needed to correct for update manifests
 }
 
 /// A `Store` maintains a list of `Claim` structs.
@@ -342,8 +355,9 @@ impl Store {
             return Err(Error::IngredientNotFound);
         }
 
+        // FIX_ME!!!!!! it could also point to other update manifests
         // make sure ingredient c2pa.manifest points to provenance claim
-        if let Some(c2pa_manifest) = ingredient_helper.c2pa_manifest {
+        if let Some(c2pa_manifest) = ingredient_helper.c2pa_manifest() {
             // the manifest should refer to provenance claim
             if let Some(pc) = self.provenance_claim() {
                 if !c2pa_manifest.url().contains(pc.label()) {
@@ -1035,6 +1049,7 @@ impl Store {
                 .data_box_as_superbox(idx)
                 .ok_or(Error::JumbfBoxNotFound)?;
             let cai_store_desc_box = cai_store_box.desc_box();
+            let cai_store_size = cai_store_box.box_size()?;
 
             // ignore unknown boxes per the spec
             if cai_store_desc_box.uuid() != CAI_UPDATE_MANIFEST_UUID
@@ -1199,6 +1214,9 @@ impl Store {
                         .unwrap_err()
                 })?;
 
+            // save original manifest box size
+            claim.set_manfest_box_size(usize::try_from(cai_store_size)?);
+
             // make sure box version label match the read Claim
             if claim.version() > 1 {
                 match labels::version(&claim_box_ver) {
@@ -1344,11 +1362,10 @@ impl Store {
     fn ingredient_checks(
         store: &Store,
         claim: &Claim,
+        svi: &StoreValidationInfo,
         asset_data: &mut ClaimAssetData<'_>,
         validation_log: &mut StatusTracker,
     ) -> Result<()> {
-        let mut num_parent_ofs = 0;
-
         // walk the ingredients
         for i in claim.ingredient_assertions() {
             let ingredient_assertion = Ingredient::from_assertion(i)?;
@@ -1357,13 +1374,8 @@ impl Store {
                 .push_ingredient_uri(jumbf::labels::to_assertion_uri(claim.label(), &i.label()));
 
             // is this an ingredient
-            if let Some(ref c2pa_manifest) = &ingredient_assertion.c2pa_manifest {
+            if let Some(c2pa_manifest) = ingredient_assertion.c2pa_manifest() {
                 let label = Store::manifest_label_from_path(&c2pa_manifest.url());
-
-                // check for parentOf relationships
-                if ingredient_assertion.relationship == Relationship::ParentOf {
-                    num_parent_ofs += 1;
-                }
 
                 if let Some(ingredient) = store.get_claim(&label) {
                     let alg = match c2pa_manifest.alg() {
@@ -1399,14 +1411,14 @@ impl Store {
                     Claim::verify_claim(
                         ingredient,
                         asset_data,
-                        false,
+                        svi,
                         check_ingredient_trust,
                         &store.ctp,
                         validation_log,
                     )?;
 
                     // recurse nested ingredients
-                    Store::ingredient_checks(store, ingredient, asset_data, validation_log)?;
+                    Store::ingredient_checks(store, ingredient, svi, asset_data, validation_log)?;
                 } else {
                     log_item!(
                         c2pa_manifest.url(),
@@ -1423,33 +1435,6 @@ impl Store {
             validation_log.pop_ingredient_uri();
         }
 
-        // check ingredient rules
-        if claim.update_manifest() {
-            if !(num_parent_ofs == 1 && claim.ingredient_assertions().len() == 1) {
-                log_item!(
-                    claim.uri(),
-                    "update manifest must have one parent",
-                    "ingredient_checks"
-                )
-                .validation_status(validation_status::MANIFEST_UPDATE_WRONG_PARENTS)
-                .failure(
-                    validation_log,
-                    Error::ClaimVerification("update manifest must have one parent".to_string()),
-                )?;
-            }
-        } else if num_parent_ofs > 1 {
-            log_item!(
-                claim.uri(),
-                "too many ingredient parents",
-                "ingredient_checks"
-            )
-            .validation_status(validation_status::MANIFEST_MULTIPLE_PARENTS)
-            .failure(
-                validation_log,
-                Error::ClaimVerification("ingredient has more than one parent".to_string()),
-            )?;
-        }
-
         Ok(())
     }
 
@@ -1459,6 +1444,7 @@ impl Store {
     async fn ingredient_checks_async(
         store: &Store,
         claim: &Claim,
+        svi: &StoreValidationInfo,
         asset_data: &mut ClaimAssetData<'_>,
         validation_log: &mut StatusTracker,
     ) -> Result<()> {
@@ -1470,7 +1456,7 @@ impl Store {
                 .push_ingredient_uri(jumbf::labels::to_assertion_uri(claim.label(), &i.label()));
 
             // is this an ingredient
-            if let Some(ref c2pa_manifest) = &ingredient_assertion.c2pa_manifest {
+            if let Some(c2pa_manifest) = ingredient_assertion.c2pa_manifest() {
                 let label = Store::manifest_label_from_path(&c2pa_manifest.url());
 
                 if let Some(ingredient) = store.get_claim(&label) {
@@ -1507,7 +1493,7 @@ impl Store {
                     Claim::verify_claim_async(
                         ingredient,
                         asset_data,
-                        false,
+                        svi,
                         check_ingredient_trust,
                         &store.ctp,
                         validation_log,
@@ -1515,8 +1501,14 @@ impl Store {
                     .await?;
 
                     // recurse nested ingredients
-                    Store::ingredient_checks_async(store, ingredient, asset_data, validation_log)
-                        .await?;
+                    Store::ingredient_checks_async(
+                        store,
+                        ingredient,
+                        svi,
+                        asset_data,
+                        validation_log,
+                    )
+                    .await?;
                 } else {
                     log_item!(
                         c2pa_manifest.url(),
@@ -1534,6 +1526,62 @@ impl Store {
         }
 
         Ok(())
+    }
+
+    fn get_store_validation_info(
+        &self,
+        claim: &Claim,
+        asset_data: &mut ClaimAssetData<'_>,
+        validation_log: &mut StatusTracker,
+    ) -> Result<StoreValidationInfo> {
+        let mut redactions = Vec::new();
+        let mut ingredient_references = HashMap::new();
+        Store::get_claim_referenced_manifests(
+            claim,
+            self,
+            &mut ingredient_references,
+            &mut redactions,
+            true,
+        )?;
+
+        // find the manifest with the hash binding
+        let binding_claim = match self.get_hash_binding_manifest(claim) {
+            Some(label) => label,
+            None => {
+                return Err(log_item!(
+                    claim.label().to_owned(),
+                    "could not find manifest with hard binding",
+                    "verify_store"
+                )
+                .validation_status(validation_status::HARD_BINDINGS_MISSING)
+                .failure(validation_log, Error::ClaimMissingHardBinding)
+                .unwrap_err());
+            }
+        };
+
+        // get the manifest offset size if needed
+        let mut update_offset = 0usize;
+        /* 
+        if claim.update_manifest() {
+            let (source, format) = match asset_data {
+                ClaimAssetData::Path(path) => {
+
+                }
+                ClaimAssetData::Bytes(items, _) => todo!(),
+                ClaimAssetData::Stream(cairead, _) => todo!(),
+                ClaimAssetData::StreamFragment(cairead, cairead1, _) => todo!(),
+                ClaimAssetData::StreamFragments(cairead, path_bufs, _) => todo!(),
+            };
+
+        }
+        */
+
+        Ok(StoreValidationInfo {
+            redactions,
+            ingredient_references,
+            binding_claim,
+            update_offset,
+        })
     }
 
     /// Verify Store
@@ -1557,11 +1605,14 @@ impl Store {
             }
         };
 
+        // get info need to complete validation
+        let svi = store.get_store_validation_info(claim, asset_data, validation_log)?;
+
         // verify the provenance claim
-        Claim::verify_claim_async(claim, asset_data, true, true, &store.ctp, validation_log)
+        Claim::verify_claim_async(claim, asset_data, &svi, true, &store.ctp, validation_log)
             .await?;
 
-        Store::ingredient_checks_async(store, claim, asset_data, validation_log).await?;
+        Store::ingredient_checks_async(store, claim, &svi, asset_data, validation_log).await?;
 
         Ok(())
     }
@@ -1587,10 +1638,13 @@ impl Store {
             }
         };
 
-        // verify the provenance claim
-        Claim::verify_claim(claim, asset_data, true, true, &store.ctp, validation_log)?;
+        // get info need to complete validation
+        let svi = store.get_store_validation_info(claim, asset_data, validation_log)?;
 
-        Store::ingredient_checks(store, claim, asset_data, validation_log)?;
+        // verify the provenance claim
+        Claim::verify_claim(claim, asset_data, &svi, true, &store.ctp, validation_log)?;
+
+        Store::ingredient_checks(store, claim, &svi, asset_data, validation_log)?;
 
         Ok(())
     }
@@ -2487,7 +2541,7 @@ impl Store {
                 let ingredient_assertion = Ingredient::from_assertion(i)?;
 
                 // is this an ingredient
-                if let Some(ref c2pa_manifest) = &ingredient_assertion.c2pa_manifest {
+                if let Some(c2pa_manifest) = ingredient_assertion.c2pa_manifest() {
                     let label = Store::manifest_label_from_path(&c2pa_manifest.url());
 
                     if let Some(ingredient) = new_store.get_claim(&label) {
@@ -3786,6 +3840,157 @@ impl Store {
         Ok(store)
     }
 
+    // get the manifest that should be used for hash binding checks
+    fn get_hash_binding_manifest(&self, claim: &Claim) -> Option<String> {
+        // is this claim valid
+        if !claim.update_manifest() && !claim.hash_assertions().is_empty() {
+            return Some(claim.label().to_owned());
+        }
+
+        // walk the update manifest until you find an acceptable claim
+        for i in claim.ingredient_assertions() {
+            let ingredient = Ingredient::from_assertion(i).ok()?;
+            if ingredient.relationship == Relationship::ParentOf {
+                if let Some(parent_uri) = ingredient.c2pa_manifest() {
+                    let parent_label = manifest_label_from_uri(&parent_uri.url())?;
+                    if let Some(parent) = self.get_claim(&parent_label) {
+                        // recurse until we find
+                        if parent.update_manifest() {
+                           self.get_hash_binding_manifest(parent);
+                        } else {
+                            if !parent.hash_assertions().is_empty() {
+                                return Some(parent.label().to_owned());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        None
+    }
+    // determine if the only changes are redacted assertions
+    fn manifest_differs_by_redaction(c1: &Claim, c2: &Claim, redactions: &Vec<String>) -> bool {
+        if let Ok(d1) = c1.data() {
+            if let Ok(d2) = c2.data() {
+                if d1 != d2 {
+                    return false;
+                }
+            } else {
+                return false;
+            }
+        } else {
+            return false;
+        }
+
+        if c1.signature_val() != c2.signature_val() {
+            return false;
+        }
+
+        if c1.databoxes() != c2.databoxes() {
+            return false;
+        }
+
+        // get the assertion store differences
+        let differences: Vec<ClaimAssertion> =
+            if c1.claim_assertion_store().len() > c2.claim_assertion_store().len() {
+                let mut c1_clone = c1.claim_assertion_store().clone();
+                c1_clone.retain(|ca1| {
+                    c2.claim_assertion_store()
+                        .iter()
+                        .find(|ca2| ca1 == *ca2)
+                        .is_none()
+                });
+                c1_clone
+            } else {
+                let mut c2_clone = c2.claim_assertion_store().clone();
+                c2_clone.retain(|ca2| {
+                    c1.claim_assertion_store()
+                        .iter()
+                        .find(|ca1| ca2 == *ca1)
+                        .is_none()
+                });
+                c2_clone
+            };
+
+        // are the assertion differences listed in the redaction list
+        let mut redact_matches = 0;
+        for difference in &differences {
+            let difference_uri = to_assertion_uri(c1.label(), &difference.label());
+
+            // was the difference in the redacted list
+            if redactions
+                .iter()
+                .find(|redaction_uri| redaction_uri.as_str() == difference_uri.as_str())
+                .is_some()
+            {
+                redact_matches += 1;
+            }
+        }
+
+        // if all mismatches are redactions we are good
+        if redact_matches == differences.len() {
+            return true;
+        }
+
+        return false;
+    }
+
+    // build ingredient lists for the Clain in the specified Store
+    // the referenced_ingredients map the ingredient to the claims that reference it
+    // the found_redactions are any redactions found
+    fn get_claim_referenced_manifests(
+        claim: &Claim,
+        store: &Store,
+        referenced_ingredients: &mut HashMap<String, HashSet<String>>,
+        found_redactions: &mut Vec<String>,
+        recurse: bool,
+    ) -> Result<()> {
+        // add in current redactions
+        if let Some(c_redactions) = claim.redactions() {
+            found_redactions.append(&mut c_redactions.clone().into_iter().collect::<Vec<_>>());
+        }
+
+        let claim_label = claim.label().to_owned();
+
+        for i in claim.ingredient_assertions() {
+            let ingredient_assertion = Ingredient::from_assertion(i)?;
+
+            // get correct hashed URI
+            let c2pa_manifest = match ingredient_assertion.c2pa_manifest() {
+                Some(m) => m, // > v2 ingredient assertion
+                None => continue,
+            };
+
+            // is this an ingredient
+            let ingredient_label = Store::manifest_label_from_path(&c2pa_manifest.url());
+
+            if let Some(ingredient) = store.get_claim(&ingredient_label) {
+                // build mapping of ingredients and those claims that reference it
+                referenced_ingredients
+                    .entry(ingredient_label)
+                    .or_insert(HashSet::from_iter(vec![claim_label.clone()].into_iter()))
+                    .insert(claim_label.clone());
+
+                // recurse nested ingredients
+                if recurse {
+                    Store::get_claim_referenced_manifests(
+                        ingredient,
+                        store,
+                        referenced_ingredients,
+                        found_redactions,
+                        recurse,
+                    )?;
+                }
+            } else {
+                return Err(Error::ClaimVerification(format!(
+                    "ingredient: {ingredient_label} is missing"
+                )));
+            }
+        }
+
+        Ok(())
+    }
+
     /// Load Store from memory and add its content as a claim ingredient
     /// claim: claim to add an ingredient
     /// provenance_label: label of the provenance claim used as key into ingredient map
@@ -3796,19 +4001,179 @@ impl Store {
         data: &[u8],
         redactions: Option<Vec<String>>,
     ) -> Result<Store> {
+        // constants for ingredient conflict reasons
+        const CONFLICTING_MANIFEST: usize = 1; // Conflicts with another C2PA Manifest
+
         let mut report = StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
-        let store = Store::from_jumbf(data, &mut report)?;
+        let i_store = Store::from_jumbf(data, &mut report)?;
 
         // make sure the claims stores are compatible
-        let pc = store.provenance_claim().ok_or(Error::OtherError(
+        let ingredient_pc = i_store.provenance_claim().ok_or(Error::OtherError(
             "ingredient missing provenace claim".into(),
         ))?;
-        if claim.version() < pc.version() {
+        if claim.version() < ingredient_pc.version() {
             return Err(Error::OtherError("ingredient version too new".into()));
         }
+        if ingredient_pc.label() != provenance_label {
+            return Err(Error::OtherError(
+                "ingredient provence label is incorrect".into(),
+            ));
+        }
 
-        claim.add_ingredient_data(provenance_label, store.claims.clone(), redactions)?;
-        Ok(store)
+        // get list of referenced manifests and redactions from ingredient provenance claim
+        let mut referenced_ingredients = HashMap::new();
+        let mut ingredient_redactions = Vec::new();
+        Store::get_claim_referenced_manifests(
+            ingredient_pc,
+            &i_store,
+            &mut referenced_ingredients,
+            &mut ingredient_redactions,
+            true,
+        )?;
+
+        // resolve conflicts
+        // for 2.x perform ingredients conflict handling by making new label if needed
+        let skip_resolution =
+            get_settings_value::<bool>("verify.skip_ingredient_conflict_resolution")
+                .unwrap_or(false);
+        if claim.version() > 1 && !skip_resolution {
+            // if the hashes match then the values are OK to add so remove form conflict list
+            // matching manifests are automatically deduped in a later step
+            let potential_conflicts: Vec<_> = i_store
+                .claims()
+                .iter()
+                .filter_map(|i_claim| {
+                    match claim.claim_ingredient(i_claim.label()) {
+                        Some(curr_ingredient) => {
+                            curr_ingredient.iter().find_map(|c| {
+                                if c.label() == i_claim.label() {
+                                    let i_ingredient_hashes =
+                                        i_store.get_manifest_box_hashes(i_claim);
+                                    let current_claim_hashes = i_store.get_manifest_box_hashes(c);
+
+                                    // if they match there is no conflict
+                                    if vec_compare(
+                                        &current_claim_hashes.manifest_box_hash,
+                                        &i_ingredient_hashes.manifest_box_hash,
+                                    ) {
+                                        None
+                                    } else {
+                                        Some(i_claim)
+                                    }
+                                } else {
+                                    None
+                                }
+                            })
+                        }
+                        None => None,
+                    }
+                })
+                .collect();
+
+            if !potential_conflicts.is_empty() {
+                // get info about conflicting Claim from current claim
+                let mut claim_ingredients = HashMap::with_capacity(20);
+                let mut claim_redactions: Vec<String> = redactions.clone().unwrap_or_default();
+                let _conflicting_pc = match claim.claim_ingredient(provenance_label) {
+                    Some(claims) => {
+                        for c in claims {
+                            claim_ingredients.insert(c.label(), c);
+                            if let Some(r) = c.redactions() {
+                                claim_redactions
+                                    .append(&mut r.clone().into_iter().collect::<Vec<_>>());
+                            }
+                        }
+
+                        claims
+                            .iter()
+                            .find(|c| {
+                                if c.label() == provenance_label {
+                                    true
+                                } else {
+                                    false
+                                }
+                            })
+                            .ok_or(Error::OtherError("claim not found in store".into()))?
+                    }
+                    None => return Err(Error::OtherError("claim not found in store".into())),
+                };
+
+                let combined_redactions = HashSet::<_>::from_iter(
+                    vec![claim_redactions.clone(), ingredient_redactions.clone()]
+                        .into_iter()
+                        .flatten(),
+                )
+                .into_iter()
+                .collect();
+
+                // do any of the conflicting manifests contain redactions
+                let mut to_current_claim = Vec::new();
+                let mut to_both = Vec::new();
+                for conflict in potential_conflicts {
+                    // Step 1: was the conflict because of a redaction from the either the current
+                    // claim or the incoming store
+
+                    // can only resolve conflict if the changes were redaction differences
+                    if Store::manifest_differs_by_redaction(claim, conflict, &combined_redactions) {
+                        if !claim_redactions.is_empty() && ingredient_redactions.is_empty() {
+                            // if redactions were only in the claim we can skip bringing the ingredient
+                            continue;
+                        } else if claim_redactions.is_empty() && !ingredient_redactions.is_empty() {
+                            // if redactions were only from the incoming ingredient replace claim
+                            // and add to existing redaction list
+                            to_current_claim.push(conflict.label().to_owned());
+                        } else {
+                            to_both.push(conflict.label().to_owned());
+                        }
+                    } else {
+                        let new_version = match claim
+                            .claim_ingredient_store()
+                            .iter()
+                            .filter_map(|(label, _conflict)| match manifest_label_to_parts(label) {
+                                Some(mp) => mp.version,
+                                None => None,
+                            })
+                            .max()
+                        {
+                            Some(last_conflict_version) => last_conflict_version + 1,
+                            None => {
+                                return Err(Error::OtherError("ingredient label malformed".into()))
+                            }
+                        };
+
+                        // make new ingredient label
+                        let mut new_mp = manifest_label_to_parts(conflict.label())
+                            .ok_or(Error::OtherError("ingredient label malformed".into()))?;
+                        new_mp.version = Some(new_version);
+                        new_mp.reason = Some(CONFLICTING_MANIFEST);
+                        let new_label = new_mp.to_string();
+
+                        // update ingredient manifest label to new label
+                        let mut fixup_claim = i_store
+                            .get_claim(conflict.label())
+                            .ok_or(Error::IngredientNotFound)?
+                            .clone();
+                        fixup_claim.set_conflict_label(new_label.clone());
+
+                        // add relabeled manifest to store as new ingredient
+                        claim.add_ingredient_data(
+                            &new_label,
+                            vec![fixup_claim],
+                            None,
+                            &referenced_ingredients,
+                        )?;
+                    }
+                }
+            }
+        }
+
+        claim.add_ingredient_data(
+            provenance_label,
+            i_store.claims.clone(),
+            redactions,
+            &referenced_ingredients,
+        )?;
+        Ok(i_store)
     }
 }
 

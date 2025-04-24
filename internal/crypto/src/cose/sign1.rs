@@ -12,7 +12,7 @@
 // each license.
 
 use async_generic::async_generic;
-use c2pa_status_tracker::{log_item, validation_codes::CLAIM_SIGNATURE_MISMATCH, StatusTracker};
+use c2pa_status_tracker::{log_item, validation_codes::SIGNING_CREDENTIAL_INVALID, StatusTracker};
 use ciborium::value::Value;
 use coset::{
     iana::{self, Algorithm, EnumI64},
@@ -39,7 +39,7 @@ pub fn parse_cose_sign1(
                 "could not parse signature",
                 "parse_cose_sign1"
             )
-            .validation_status(CLAIM_SIGNATURE_MISMATCH)
+            .validation_status(SIGNING_CREDENTIAL_INVALID)
             .failure_no_throw(
                 validation_log,
                 CoseError::CborParsingError(coset_error.to_string()),
@@ -85,6 +85,27 @@ pub fn signing_alg_from_sign1(sign1: &coset::CoseSign1) -> Result<SigningAlg, Co
 
         _ => Err(CoseError::UnsupportedSigningAlgorithm),
     }
+}
+
+/// get the user attested time if available
+pub fn iat_from_sign1(sign1: &coset::CoseSign1) -> Option<String> {
+    // Check the protected header first.
+    sign1
+        .protected
+        .header
+        .rest
+        .iter()
+        .find_map(|x: &(Label, Value)| {
+            if x.0 == Label::Text("iat".to_string()) {
+                if let Some(t) = x.1.as_text() {
+                    Some(t.to_string())
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        })
 }
 
 /// TO DO: Documentation for this function.

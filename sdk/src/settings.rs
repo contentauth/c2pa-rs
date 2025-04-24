@@ -19,7 +19,7 @@ use std::{
 };
 
 use c2pa_crypto::base64;
-use config::{Config, FileFormat};
+use config::{Config, Environment, FileFormat};
 #[cfg(feature = "json_schema")]
 use schemars::JsonSchema;
 use serde_derive::{Deserialize, Serialize};
@@ -191,6 +191,7 @@ pub(crate) struct Verify {
     ocsp_fetch: bool,
     remote_manifest_fetch: bool,
     check_ingredient_trust: bool,
+    skip_ingredient_conflict_resolution: bool,
 }
 
 impl Default for Verify {
@@ -202,6 +203,7 @@ impl Default for Verify {
             ocsp_fetch: false,
             remote_manifest_fetch: true,
             check_ingredient_trust: true,
+            skip_ingredient_conflict_resolution: false,
         }
     }
 }
@@ -226,18 +228,35 @@ impl Default for Builder {
 
 impl SettingsValidate for Builder {}
 
+const MAJOR_VERSION: usize = 1;
+const MINOR_VERSION: usize = 0;
 // Settings configuration for C2PA-RS.  Default configuration values
 // are lazy loaded on first use.  Values can also be loaded from a configuration
 // file or by setting specific value via code.  There is a single configuration
 // setting for the entire C2PA-RS instance.
-#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 #[allow(unused)]
 pub struct Settings {
+    version_major: usize,
+    version_minor: usize,
     trust: Trust,
     core: Core,
     verify: Verify,
     builder: Builder,
+}
+
+impl Default for Settings {
+    fn default() -> Self {
+        Self {
+            version_major: MAJOR_VERSION,
+            version_minor: MINOR_VERSION,
+            trust: Default::default(),
+            core: Default::default(),
+            verify: Default::default(),
+            builder: Default::default(),
+        }
+    }
 }
 
 impl Settings {
@@ -301,6 +320,11 @@ impl Settings {
 
 impl SettingsValidate for Settings {
     fn validate(&self) -> Result<()> {
+        if self.version_major > MAJOR_VERSION {
+            return Err(Error::VersionCompatibility(
+                "settings version too new".into(),
+            ));
+        }
         self.trust.validate()?;
         self.core.validate()?;
         self.trust.validate()?;
@@ -388,8 +412,13 @@ pub(crate) fn get_settings_value<'de, T: serde::de::Deserialize<'de>>(
     value_path: &str,
 ) -> Result<T> {
     SETTINGS.with_borrow(|current_settings| {
-        current_settings
-            .clone()
+        let update_config = Config::builder()
+            .add_source(current_settings.clone())
+            .add_source(Environment::with_prefix("c2pa").try_parsing(true))
+            .build()
+            .map_err(|_e| Error::OtherError("could not update configuration".into()))?;
+
+        update_config
             .get::<T>(value_path)
             .map_err(|_| Error::NotFound)
     })
@@ -423,8 +452,6 @@ pub mod tests {
         assert_eq!(settings.trust, Trust::default());
         assert_eq!(settings.verify, Verify::default());
         assert_eq!(settings.builder, Builder::default());
-
-        reset_default_settings().unwrap();
     }
 
     #[test]
@@ -483,8 +510,6 @@ pub mod tests {
         assert_eq!(verify, Verify::default());
         assert_eq!(builder, Builder::default());
         assert_eq!(trust, Trust::default());
-
-        reset_default_settings().unwrap();
     }
 
     #[test]
@@ -526,8 +551,6 @@ pub mod tests {
             get_settings_value::<Trust>("trust").unwrap(),
             Trust::default()
         );
-
-        reset_default_settings().unwrap();
     }
 
     #[cfg(feature = "file_io")]
@@ -542,8 +565,6 @@ pub mod tests {
         let settings = get_settings().unwrap();
 
         assert_eq!(settings, Settings::default());
-
-        reset_default_settings().unwrap();
     }
 
     #[cfg(feature = "file_io")]
@@ -560,8 +581,6 @@ pub mod tests {
         let settings = get_settings().unwrap();
 
         assert_eq!(settings, Settings::default());
-
-        reset_default_settings().unwrap();
     }
 
     #[test]
@@ -601,8 +620,6 @@ pub mod tests {
             get_settings_value::<bool>("core.salt_jumbf_boxes").unwrap(),
             Core::default().salt_jumbf_boxes
         );
-
-        reset_default_settings().unwrap();
     }
 
     #[test]
@@ -616,8 +633,6 @@ pub mod tests {
         }"#;
 
         assert!(load_settings_from_str(modified_core, "json").is_err());
-
-        reset_default_settings().unwrap();
     }
     #[test]
     fn test_hidden_setting() {
@@ -640,7 +655,39 @@ pub mod tests {
             get_settings_value::<u32>("hidden.test3").unwrap(),
             123456u32
         );
+    }
 
-        reset_default_settings().unwrap();
+    #[test]
+    fn test_env_override_setting() {
+        // test updating values
+        std::env::set_var("c2pa_core.hash.alg", "sha512");
+        std::env::set_var("c2pa_verify.remote.manifest_fetch", "false");
+        std::env::set_var("c2pa_builder.auto_thumbnail", "false");
+
+        assert_eq!(
+            get_settings_value::<String>("core.hash_alg").unwrap(),
+            "sha512"
+        );
+        assert!(!get_settings_value::<bool>("verify.remote_manifest_fetch").unwrap());
+        assert!(!get_settings_value::<bool>("builder.auto_thumbnail").unwrap());
+
+        // the current config should be different from the defaults
+        assert_ne!(get_settings_value::<Core>("core").unwrap(), Core::default());
+        assert_ne!(
+            get_settings_value::<Verify>("verify").unwrap(),
+            Verify::default()
+        );
+        assert_ne!(
+            get_settings_value::<Builder>("builder").unwrap(),
+            Builder::default()
+        );
+        assert_ne!(
+            get_settings_value::<Trust>("trust").unwrap(),
+            Trust::default()
+        );
+
+        std::env::remove_var("c2pa_core.hash.alg");
+        std::env::remove_var("c2pa_verify.remote.manifest.fetch");
+        std::env::remove_var("c2pa_builder.auto_thumbnail");
     }
 }

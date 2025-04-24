@@ -710,7 +710,7 @@ impl Ingredient {
         (
             format!(
                 "image/{}",
-                get_thumbnail_image_type(&assertion.label_root())
+                get_thumbnail_image_type(&assertion.label_root()).unwrap_or("none".into())
             ),
             assertion.data().to_vec(),
         )
@@ -1022,16 +1022,10 @@ impl Ingredient {
             None => Vec::new(),
         };
 
-        let mut active_manifest = ingredient_assertion
-            .c2pa_manifest
-            .and_then(|hash_url| manifest_label_from_uri(&hash_url.url()));
-
         // use either the active_manifest or c2pa_manifest field
-        if active_manifest.is_none() {
-            active_manifest = ingredient_assertion
-                .active_manifest
-                .and_then(|hash_url| manifest_label_from_uri(&hash_url.url()));
-        }
+        let active_manifest = ingredient_assertion
+            .c2pa_manifest()
+            .and_then(|hash_url| manifest_label_from_uri(&hash_url.url()));
 
         debug!(
             "Adding Ingredient {:?} {:?}",
@@ -1174,6 +1168,8 @@ impl Ingredient {
                 let manifest_data = get_resource(&resource_ref.identifier)?;
 
                 // have Store check and load ingredients and add them to a claim
+                // if there are manifest conflicts new_manifest_label will be
+                // renamed and different from manifest_label
                 let ingredient_store = Store::load_ingredient_to_claim(
                     claim,
                     &manifest_label,

@@ -173,6 +173,7 @@ pub(crate) fn get_signing_info(
         cert_chain: certs,
         cert_serial_number,
         revocation_status: None,
+        iat: None,
     }
 }
 
