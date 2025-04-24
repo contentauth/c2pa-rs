@@ -61,17 +61,8 @@ impl SignatureVerifier for IcaSignatureVerifier {
     ) -> Result<Self::Output, ValidationError<Self::Error>> {
         self.check_sig_type(signer_payload, status_tracker)?;
 
-        let mut ok = true;
-
         // The signature should be a `CoseSign1` object.
-        let sign1 = CoseSign1::from_tagged_slice(signature).inspect_err(|err| {
-            log_current_item!(
-                "Invalid COSE_Sign1 data structure",
-                "IcaSignatureVerifier::check_signature"
-            )
-            .validation_status("cawg.ica.invalid_cose_sign1")
-            .failure_no_throw(status_tracker, ValidationError::from(err));
-        })?;
+        let sign1 = self.decode_cose_sign1(signature, status_tracker)?;
 
         // Identify the signature.
         let _ssi_alg = if let Some(ref alg) = sign1.protected.header.alg {
@@ -107,6 +98,8 @@ impl SignatureVerifier for IcaSignatureVerifier {
 
             return Err(err);
         };
+
+        let mut ok = true;
 
         if let Some(ref cty) = sign1.protected.header.content_type {
             match cty {
@@ -461,6 +454,23 @@ impl IcaSignatureVerifier {
         }
 
         Ok(())
+    }
+
+    fn decode_cose_sign1(
+        &self,
+        signature: &[u8],
+        status_tracker: &mut StatusTracker,
+    ) -> Result<CoseSign1, ValidationError<IcaValidationError>> {
+        CoseSign1::from_tagged_slice(signature)
+            .inspect_err(|err| {
+                log_current_item!(
+                    "Invalid COSE_Sign1 data structure",
+                    "IcaSignatureVerifier::check_signature"
+                )
+                .validation_status("cawg.ica.invalid_cose_sign1")
+                .failure_no_throw(status_tracker, ValidationError::from(err));
+            })
+            .map_err(|e| e.into())
     }
 
     async fn check_issuer_signature(
