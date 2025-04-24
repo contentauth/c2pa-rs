@@ -637,7 +637,7 @@ async fn invalid_vc() {
     assert_eq!(li.crate_name, "cawg-identity");
     assert_eq!(
         li.err_val.as_ref().unwrap(),
-        "SignatureError(Error(\"expected value\", line: 1, column: 1))"
+        "SignatureError(JsonDecodeError(\"expected value at line 1 column 1\"))"
     );
     assert_eq!(
         li.validation_status.as_ref().unwrap(),

@@ -75,38 +75,7 @@ impl SignatureVerifier for IcaSignatureVerifier {
         let payload_bytes = self.payload_bytes(&sign1, status_tracker)?;
 
         // TO DO (CAI-7970): Add support for VC version 1.
-        let mut ica_credential: IcaCredential =
-            serde_json::from_slice(payload_bytes).inspect_err(|err| {
-                log_current_item!(
-                    "Invalid JSON-LD for verifiable credential",
-                    "IcaSignatureVerifier::check_signature"
-                )
-                .validation_status("cawg.ica.invalid_verifiable_credential")
-                .failure_no_throw(status_tracker, ValidationError::from(err));
-            })?;
-
-        // Post-process c2pa_asset to decode from base64 to raw binary.
-
-        {
-            let subject = ica_credential.credential_subjects.first_mut();
-
-            let decoded_assertions = subject
-                .c2pa_asset
-                .referenced_assertions
-                .iter()
-                .map(|a| {
-                    let base64_hash =
-                        String::from_utf8(a.hash()).unwrap_or_else(|_| "invalid UTF8".to_string());
-
-                    let decoded_hash = c2pa_crypto::base64::decode(&base64_hash)
-                        .unwrap_or_else(|_| b"invalid base64".to_vec());
-
-                    HashedUri::new(a.url(), a.alg(), &decoded_hash)
-                })
-                .collect();
-
-            subject.c2pa_asset.referenced_assertions = decoded_assertions;
-        }
+        let mut ica_credential = self.parse_ica_vc_v2(payload_bytes, status_tracker)?;
 
         if let Err(err) = self.check_issuer_signature(&sign1, &ica_credential).await {
             // NOTE: We handle logging here because all error conditions that are detectable
@@ -504,6 +473,48 @@ impl IcaSignatureVerifier {
         };
 
         Ok(payload_bytes)
+    }
+
+    fn parse_ica_vc_v2(
+        &self,
+        payload_bytes: &[u8],
+        status_tracker: &mut StatusTracker,
+    ) -> Result<IcaCredential, ValidationError<IcaValidationError>> {
+        let mut ica_credential: IcaCredential =
+            serde_json::from_slice(payload_bytes).map_err(|err| {
+                let err = ValidationError::from(err);
+
+                log_current_item!(
+                    "Invalid JSON-LD for verifiable credential",
+                    "IcaSignatureVerifier::check_signature"
+                )
+                .validation_status("cawg.ica.invalid_verifiable_credential")
+                .failure_no_throw(status_tracker, err.clone());
+
+                err
+            })?;
+
+        // Post-process c2pa_asset to decode from base64 to raw binary.
+        let subject = ica_credential.credential_subjects.first_mut();
+
+        let decoded_assertions = subject
+            .c2pa_asset
+            .referenced_assertions
+            .iter()
+            .map(|a| {
+                let base64_hash =
+                    String::from_utf8(a.hash()).unwrap_or_else(|_| "invalid UTF8".to_string());
+
+                let decoded_hash = c2pa_crypto::base64::decode(&base64_hash)
+                    .unwrap_or_else(|_| b"invalid base64".to_vec());
+
+                HashedUri::new(a.url(), a.alg(), &decoded_hash)
+            })
+            .collect();
+
+        subject.c2pa_asset.referenced_assertions = decoded_assertions;
+
+        Ok(ica_credential)
     }
 
     async fn check_issuer_signature(
