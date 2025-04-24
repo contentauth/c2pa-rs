@@ -33,6 +33,7 @@ fn impl_clone() {
 
     let signer_payload = SignerPayload {
         referenced_assertions: vec![{ data_hash_ref }],
+        roles: vec![],
         sig_type: "NONSENSE".to_owned(),
     };
 

@@ -16,7 +16,7 @@
 #![deny(clippy::unwrap_used)]
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg, doc_cfg_hide))]
 
-//! This library supports reading, creating and embedding C2PA data
+//! This library supports reading, creating, and embedding C2PA data
 //! with a variety of asset types.
 //!
 //! Some functionality requires you to enable specific crate features,

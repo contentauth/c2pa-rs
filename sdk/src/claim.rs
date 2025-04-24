@@ -1605,7 +1605,7 @@ impl Claim {
         // Replace existing hash with newly-calculated hash.
         f.update_hash(target_hash.to_vec());
 
-        // fix up ClaimV2 URI reference too
+        // fix up ClaimV2 URI reference for created assertions
         if let Some(f) = self
             .created_assertions
             .iter_mut()
@@ -1615,6 +1615,13 @@ impl Claim {
             f.update_hash(target_hash.to_vec());
         };
 
+        // fix up ClaimV2 URI reference for gathered assertions
+        if let Some(f) = self.gathered_assertions.as_mut().and_then(|ga| {
+            ga.iter_mut()
+                .find(|f| f.url().contains(&target_label) && vec_compare(&f.hash(), &original_hash))
+        }) {
+            f.update_hash(target_hash.to_vec())
+        };
         // clear original since content has changed
         self.clear_data();
 
@@ -1832,6 +1839,9 @@ impl Claim {
         let sig = claim.signature_val();
         let additional_bytes: Vec<u8> = Vec::new();
 
+        // use the signature uri as the current uri while validating the signature info
+        validation_log.push_current_uri(claim.signature.clone());
+
         // make sure signature manifest if present points to this manifest
         let sig_box_err = match jumbf::labels::manifest_label_from_uri(&claim.signature) {
             Some(signature_url) if signature_url != claim.label() => true,
@@ -1902,6 +1912,8 @@ impl Claim {
             ctp,
             validation_log,
         );
+
+        validation_log.pop_current_uri(); // back to the manifest url
 
         Claim::verify_internal(claim, asset_data, is_provenance, verified, validation_log)
             .inspect_err(|_e| {
