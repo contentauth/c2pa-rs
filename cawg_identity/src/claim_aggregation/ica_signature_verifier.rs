@@ -72,18 +72,7 @@ impl SignatureVerifier for IcaSignatureVerifier {
         self.check_content_type(&sign1, status_tracker, &mut ok)?;
 
         // Interpret the unprotected payload, which should be the raw VC.
-        let Some(ref payload_bytes) = sign1.payload else {
-            let err = ValidationError::SignatureError(IcaValidationError::CredentialPayloadMissing);
-
-            log_current_item!(
-                "Missing COSE_Sign1 payload",
-                "IcaSignatureVerifier::check_signature"
-            )
-            .validation_status("cawg.ica.invalid_verifiable_credential")
-            .failure_no_throw(status_tracker, err.clone());
-
-            return Err(err);
-        };
+        let payload_bytes = self.payload_bytes(&sign1, status_tracker)?;
 
         // TO DO (CAI-7970): Add support for VC version 1.
         let mut ica_credential: IcaCredential =
@@ -494,6 +483,27 @@ impl IcaSignatureVerifier {
         }
 
         Ok(())
+    }
+
+    fn payload_bytes<'a>(
+        &self,
+        sign1: &'a CoseSign1,
+        status_tracker: &mut StatusTracker,
+    ) -> Result<&'a Vec<u8>, ValidationError<IcaValidationError>> {
+        let Some(ref payload_bytes) = sign1.payload else {
+            let err = ValidationError::SignatureError(IcaValidationError::CredentialPayloadMissing);
+
+            log_current_item!(
+                "Missing COSE_Sign1 payload",
+                "IcaSignatureVerifier::check_signature"
+            )
+            .validation_status("cawg.ica.invalid_verifiable_credential")
+            .failure_no_throw(status_tracker, err.clone());
+
+            return Err(err);
+        };
+
+        Ok(payload_bytes)
     }
 
     async fn check_issuer_signature(
