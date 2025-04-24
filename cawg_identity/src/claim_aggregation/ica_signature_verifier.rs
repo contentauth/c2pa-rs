@@ -19,7 +19,7 @@ use c2pa_crypto::{
     time_stamp::TimeStampError,
 };
 use c2pa_status_tracker::{log_current_item, StatusTracker};
-use chrono::{DateTime, FixedOffset, Utc};
+use chrono::{DateTime, Utc};
 use coset::{CoseSign1, RegisteredLabelWithPrivate, TaggedCborSerializable};
 
 use crate::{
@@ -102,30 +102,12 @@ impl SignatureVerifier for IcaSignatureVerifier {
                 self.handle_non_fatal_error(err, status_tracker)
             })?;
 
-        // NOTE: It's permissible for validUntil to be omitted.
-        if let Some(valid_until) = ica_credential.valid_until {
-            if let Err(err) = self
-                .check_valid_until(&valid_until, maybe_tst_info.as_ref())
-                .await
-            {
-                // NOTE: We handle logging here because we want to signal at most one of the
-                // possible error conditions that are detectable in `check_valid_until`, BUT
-                // they are not fatal to the overall interpretation of the identity assertion.
-                //
-                // In the event that the status tracker is configured to proceed when possible,
-                // we log the error condition related to the signature and proceed.
+        self.check_valid_until(&ica_credential, maybe_tst_info.as_ref())
+            .await
+            .or_else(|err| {
                 ok = false;
-
-                log_current_item!(err.clone(), "IcaSignatureVerifier::check_signature")
-                    .validation_status("cawg.ica.valid_until.invalid")
-                    .failure(
-                        status_tracker,
-                        ValidationError::SignatureError(IcaValidationError::InvalidValidFromDate(
-                            err,
-                        )),
-                    )?;
-            }
-        }
+                self.handle_non_fatal_error(err, status_tracker)
+            })?;
 
         // TO DO (CAI-7993): CAWG SDK should check ICA issuer revocation status.
 
@@ -677,16 +659,27 @@ impl IcaSignatureVerifier {
 
     async fn check_valid_until(
         &self,
-        valid_until: &DateTime<FixedOffset>,
+        ica_credential: &IcaCredential,
         maybe_tst_info: Option<&TstInfo>,
-    ) -> Result<(), String> {
+    ) -> Result<(), (IcaValidationError, &'static str)> {
+        let Some(valid_until) = ica_credential.valid_until else {
+            // CAWG spec does not require a validUntil entry, so if there is not, we exit
+            // quietly here.
+            return Ok(());
+        };
+
         // TO DO: Bring in substitute for now() on Wasm.
         #[cfg(not(target_arch = "wasm32"))]
         {
             let now = Utc::now().fixed_offset();
 
-            if now > *valid_until {
-                return Err("validUntil is before current date/time".to_owned());
+            if now > valid_until {
+                return Err((
+                    IcaValidationError::InvalidValidUntilDate(
+                        "validUntil is before current date/time".to_owned(),
+                    ),
+                    "cawg.ica.valid_until.invalid",
+                ));
             }
         }
 
@@ -694,8 +687,13 @@ impl IcaSignatureVerifier {
             let cawg_signer_time: DateTime<Utc> = tst_info.gen_time.clone().into();
             let cawg_signer_time = cawg_signer_time.fixed_offset();
 
-            if cawg_signer_time > *valid_until {
-                return Err("validUntil is before CAWG signature time stamp".to_owned());
+            if cawg_signer_time > valid_until {
+                return Err((
+                    IcaValidationError::InvalidValidUntilDate(
+                        "validUntil is before CAWG signature time stamp".to_owned(),
+                    ),
+                    "cawg.ica.valid_until.invalid",
+                ));
             }
         }
 

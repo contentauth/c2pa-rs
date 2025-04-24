@@ -1520,11 +1520,14 @@ async fn valid_until_in_past() {
 
     assert_eq!(li.kind, LogKind::Failure);
     assert_eq!(li.label, "(IA label goes here)");
-    assert_eq!(li.description, "validUntil is before current date/time");
+    assert_eq!(
+        li.description,
+        "credential's validUntil date is unacceptable (validUntil is before current date/time)"
+    );
     assert_eq!(li.crate_name, "cawg-identity");
     assert_eq!(
         li.err_val.as_ref().unwrap(),
-        "SignatureError(InvalidValidFromDate(\"validUntil is before current date/time\"))"
+        "SignatureError(InvalidValidUntilDate(\"validUntil is before current date/time\"))"
     );
 
     assert_eq!(

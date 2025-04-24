@@ -83,6 +83,10 @@ pub enum IcaValidationError {
     #[error("credential's validFrom date is unacceptable ({0})")]
     InvalidValidFromDate(String),
 
+    /// `validUntil` date is unacceptable.
+    #[error("credential's validUntil date is unacceptable ({0})")]
+    InvalidValidUntilDate(String),
+
     /// `c2paAsset` does not match `signer_payload`
     #[error("c2paAsset does not match signer_payload")]
     SignerPayloadMismatch,
