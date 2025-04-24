@@ -78,7 +78,8 @@ mod integration_v2 {
                             "when": "2025-04-22T17:25:28Z",
                             "parameters": {
                                 "description": "This image was edited by Adobe Firefly",
-                            }
+                            },
+                            "softwareAgentIndex": 0,
                         }
                     ],
                     "softwareAgents": [
