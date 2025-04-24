@@ -281,7 +281,7 @@ pub const ASSERTION_BOXHASH_MISMATCH: &str = "assertion.boxesHash.mismatch";
 /// for the General Boxes hash assertion.
 ///
 /// Any corresponding URL should point to a C2PA assertion.
-pub const ASSERTION_BOXHASH_UNKNOWN: &str = "assertion.boxesHash.";
+pub const ASSERTION_BOXHASH_UNKNOWN: &str = "assertion.boxesHash.unknownBox";
 
 /// A hard binding assertion is in a cloud data assertion.
 ///
