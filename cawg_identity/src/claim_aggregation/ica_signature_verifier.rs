@@ -77,64 +77,12 @@ impl SignatureVerifier for IcaSignatureVerifier {
         // TO DO (CAI-7970): Add support for VC version 1.
         let mut ica_credential = self.parse_ica_vc_v2(payload_bytes, status_tracker)?;
 
-        if let Err(err) = self.check_issuer_signature(&sign1, &ica_credential).await {
-            // NOTE: We handle logging here because all error conditions that are detectable
-            // in `check_issuer_signature` are fatal to signature verification, BUT they are
-            // not fatal to the overall interpretation of the identity assertion.
-            //
-            // In the event that the status tracker is configured to proceed when possible,
-            // we log the error condition related to the signature and proceed.
-            ok = false;
-
-            match err {
-                ValidationError::SignatureError(IcaValidationError::UnsupportedIssuerDid(_)) => {
-                    log_current_item!(
-                        "Invalid issuer DID",
-                        "IcaSignatureVerifier::check_signature"
-                    )
-                    .validation_status("cawg.ica.invalid_issuer")
-                    .failure(status_tracker, err)?;
-                }
-
-                ValidationError::SignatureError(IcaValidationError::DidResolutionError(_)) => {
-                    log_current_item!(
-                        "Unable to resolve issuer DID",
-                        "IcaSignatureVerifier::check_signature"
-                    )
-                    .validation_status("cawg.ica.did_unavailable")
-                    .failure(status_tracker, err)?;
-                }
-
-                ValidationError::SignatureError(IcaValidationError::InvalidDidDocument(_)) => {
-                    log_current_item!(
-                        "Invalid issuer DID document",
-                        "IcaSignatureVerifier::check_signature"
-                    )
-                    .validation_status("cawg.ica.invalid_did_document")
-                    .failure(status_tracker, err)?;
-                }
-
-                ValidationError::SignatureMismatch => {
-                    log_current_item!(
-                        "Signature does not match credential",
-                        "IcaSignatureVerifier::check_signature"
-                    )
-                    .validation_status("cawg.ica.signature_mismatch")
-                    .failure(status_tracker, err)?;
-                }
-
-                _ => {
-                    // TO REVIEW: Is there a better CAWG status code to use here? We don't expect
-                    // this code path to be reached, but it's a fallback to avoid a panic.
-                    log_current_item!(
-                        "Unexpected error condition",
-                        "IcaSignatureVerifier::check_signature"
-                    )
-                    .validation_status("cawg.ica.did_unavailable")
-                    .failure(status_tracker, err)?;
-                }
-            }
-        }
+        self.check_issuer_signature(&sign1, &ica_credential)
+            .await
+            .or_else(|err| {
+                ok = false;
+                self.handle_signature_error(err, status_tracker)
+            })?;
 
         let maybe_tst_info = match validate_cose_tst_info_async(&sign1, payload_bytes).await {
             Ok(tst_info) => {
@@ -627,6 +575,70 @@ impl IcaSignatureVerifier {
 
         // TO DO: Enforce validity window as compared to sig time (or now if no TSA
         // time).
+
+        Ok(())
+    }
+
+    fn handle_signature_error(
+        &self,
+        err: ValidationError<IcaValidationError>,
+        status_tracker: &mut StatusTracker,
+    ) -> Result<(), ValidationError<IcaValidationError>> {
+        // NOTE: We handle logging here because all error conditions that are detectable
+        // in `check_issuer_signature` are fatal to signature verification, BUT they are
+        // not fatal to the overall interpretation of the identity assertion.
+        //
+        // In the event that the status tracker is configured to proceed when possible,
+        // we log the error condition related to the signature and proceed.
+
+        match err {
+            ValidationError::SignatureError(IcaValidationError::UnsupportedIssuerDid(_)) => {
+                log_current_item!(
+                    "Invalid issuer DID",
+                    "IcaSignatureVerifier::check_signature"
+                )
+                .validation_status("cawg.ica.invalid_issuer")
+                .failure(status_tracker, err)?;
+            }
+
+            ValidationError::SignatureError(IcaValidationError::DidResolutionError(_)) => {
+                log_current_item!(
+                    "Unable to resolve issuer DID",
+                    "IcaSignatureVerifier::check_signature"
+                )
+                .validation_status("cawg.ica.did_unavailable")
+                .failure(status_tracker, err)?;
+            }
+
+            ValidationError::SignatureError(IcaValidationError::InvalidDidDocument(_)) => {
+                log_current_item!(
+                    "Invalid issuer DID document",
+                    "IcaSignatureVerifier::check_signature"
+                )
+                .validation_status("cawg.ica.invalid_did_document")
+                .failure(status_tracker, err)?;
+            }
+
+            ValidationError::SignatureMismatch => {
+                log_current_item!(
+                    "Signature does not match credential",
+                    "IcaSignatureVerifier::check_signature"
+                )
+                .validation_status("cawg.ica.signature_mismatch")
+                .failure(status_tracker, err)?;
+            }
+
+            _ => {
+                // TO REVIEW: Is there a better CAWG status code to use here? We don't expect
+                // this code path to be reached, but it's a fallback to avoid a panic.
+                log_current_item!(
+                    "Unexpected error condition",
+                    "IcaSignatureVerifier::check_signature"
+                )
+                .validation_status("cawg.ica.did_unavailable")
+                .failure(status_tracker, err)?;
+            }
+        }
 
         Ok(())
     }
