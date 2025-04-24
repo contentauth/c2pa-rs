@@ -84,19 +84,11 @@ impl SignatureVerifier for IcaSignatureVerifier {
                 self.handle_signature_error(err, status_tracker)
             })?;
 
-        let maybe_tst_info = match validate_cose_tst_info_async(&sign1, payload_bytes).await {
-            Ok(tst_info) => {
-                ica_credential.credential_subjects.first_mut().time_stamp = Some(tst_info.clone());
-
-                log_current_item!(
-                    "Time stamp validated",
-                    "IcaSignatureVerifier::check_signature"
-                )
-                .validation_status("cawg.ica.time_stamp.validated")
-                .success(status_tracker);
-
-                Some(tst_info)
-            }
+        let maybe_tst_info = match validate_cose_tst_info_async(&sign1, payload_bytes)
+            .await
+            .inspect(|tst_info| self.save_time_stamp(tst_info, &mut ica_credential, status_tracker))
+        {
+            Ok(tst_info) => Some(tst_info),
 
             Err(CoseError::NoTimeStampToken) => {
                 None
@@ -119,7 +111,7 @@ impl SignatureVerifier for IcaSignatureVerifier {
                 None
             }
 
-            Err(_e) => {
+            Err(_) => {
                 log_current_item!(
                     "Unable to process time stamp",
                     "IcaSignatureVerifier::check_signature"
@@ -641,6 +633,22 @@ impl IcaSignatureVerifier {
         }
 
         Ok(())
+    }
+
+    fn save_time_stamp(
+        &self,
+        tst_info: &TstInfo,
+        ica_credential: &mut IcaCredential,
+        status_tracker: &mut StatusTracker,
+    ) {
+        ica_credential.credential_subjects.first_mut().time_stamp = Some(tst_info.clone());
+
+        log_current_item!(
+            "Time stamp validated",
+            "IcaSignatureVerifier::check_signature"
+        )
+        .validation_status("cawg.ica.time_stamp.validated")
+        .success(status_tracker);
     }
 
     async fn check_valid_from(
