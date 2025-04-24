@@ -80,6 +80,11 @@ mod integration_v2 {
                                 "description": "This image was edited by Adobe Firefly",
                             }
                         }
+                    ],
+                    "softwareAgents": [
+                        {
+                            "name": "Adobe Firefly",
+                        }
                     ]
                 }
             },
