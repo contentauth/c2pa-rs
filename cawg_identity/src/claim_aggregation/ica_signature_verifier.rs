@@ -111,44 +111,7 @@ impl SignatureVerifier for IcaSignatureVerifier {
 
         // TO DO (CAI-7993): CAWG SDK should check ICA issuer revocation status.
 
-        // Verify that signer_payload is the same as credential issuer signed.
-        {
-            let subject = ica_credential.credential_subjects.first();
-
-            // The `DynamicAssertion` mechanism doesn't always populate the `alg` field when
-            // offering the partial claim for signature but some signers fill that in with a
-            // default value. Work around this by copying only the `alg` value from inside
-            // the VC.
-            let mut signer_payload = signer_payload.clone();
-            let new_ras = signer_payload
-                .referenced_assertions
-                .iter()
-                .zip(subject.c2pa_asset.referenced_assertions.iter())
-                .map(|(sp_ra, vc_ra)| {
-                    if sp_ra.alg().is_none() {
-                        HashedUri::new(sp_ra.url(), vc_ra.alg(), &sp_ra.hash())
-                    } else {
-                        sp_ra.clone()
-                    }
-                })
-                .collect();
-
-            signer_payload.referenced_assertions = new_ras;
-
-            if signer_payload != subject.c2pa_asset {
-                ok = false;
-
-                log_current_item!(
-                    "c2paAsset does not match signer_payload",
-                    "IcaSignatureVerifier::check_signature"
-                )
-                .validation_status("cawg.ica.signer_payload.mismatch")
-                .failure(
-                    status_tracker,
-                    ValidationError::SignatureError(IcaValidationError::SignerPayloadMismatch),
-                )?;
-            }
-        }
+        self.cross_check_signer_payload(&ica_credential, signer_payload, status_tracker, &mut ok)?;
 
         // TO DO (CAI-7994): CAWG SDK should inspect verifiedIdentities array.
 
@@ -719,6 +682,54 @@ impl IcaSignatureVerifier {
         log_current_item!(err.to_string(), "IcaSignatureVerifier::check_signature")
             .validation_status(msg)
             .failure(status_tracker, ValidationError::SignatureError(err))?;
+
+        Ok(())
+    }
+
+    /// Verify that `signer_payload` is the same as credential issuer signed.
+    fn cross_check_signer_payload(
+        &self,
+        ica_credential: &IcaCredential,
+        signer_payload: &SignerPayload,
+        status_tracker: &mut StatusTracker,
+        ok: &mut bool,
+    ) -> Result<(), ValidationError<IcaValidationError>> {
+        let subject = ica_credential.credential_subjects.first();
+
+        // The `DynamicAssertion` mechanism doesn't always populate the `alg` field when
+        // offering the partial claim for signature but some signers fill that in with a
+        // default value. Work around this by copying only the `alg` value from inside
+        // the VC.
+        let mut signer_payload = signer_payload.clone();
+
+        let new_ras = signer_payload
+            .referenced_assertions
+            .iter()
+            .zip(subject.c2pa_asset.referenced_assertions.iter())
+            .map(|(sp_ra, vc_ra)| {
+                if sp_ra.alg().is_none() {
+                    HashedUri::new(sp_ra.url(), vc_ra.alg(), &sp_ra.hash())
+                } else {
+                    sp_ra.clone()
+                }
+            })
+            .collect();
+
+        signer_payload.referenced_assertions = new_ras;
+
+        if signer_payload != subject.c2pa_asset {
+            *ok = false;
+
+            log_current_item!(
+                "c2paAsset does not match signer_payload",
+                "IcaSignatureVerifier::check_signature"
+            )
+            .validation_status("cawg.ica.signer_payload.mismatch")
+            .failure(
+                status_tracker,
+                ValidationError::SignatureError(IcaValidationError::SignerPayloadMismatch),
+            )?;
+        }
 
         Ok(())
     }
