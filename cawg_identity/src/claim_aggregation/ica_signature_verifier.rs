@@ -64,54 +64,12 @@ impl SignatureVerifier for IcaSignatureVerifier {
         let sign1 = self.decode_cose_sign1(signature, status_tracker)?;
         let _ssi_alg = self.decode_signing_alg(&sign1, status_tracker)?;
 
+        // From this point forward, most errors are recoverable. We can only issue a
+        // "credential valid" status if no errors are detected, so we use the `ok`
+        // variable to keep track of whether any error statuses are logged.
         let mut ok = true;
 
-        if let Some(ref cty) = sign1.protected.header.content_type {
-            match cty {
-                coset::ContentType::Text(ref cty) => {
-                    if cty != "application/vc" {
-                        let err = ValidationError::SignatureError(
-                            IcaValidationError::UnsupportedContentType(format!("{cty:?}")),
-                        );
-
-                        log_current_item!(
-                            "Invalid COSE_Sign1 content type header",
-                            "IcaSignatureVerifier::check_signature"
-                        )
-                        .validation_status("cawg.ica.invalid_content_type")
-                        .failure_no_throw(status_tracker, err.clone());
-
-                        ok = false;
-                    }
-                }
-
-                _ => {
-                    let err = ValidationError::SignatureError(
-                        IcaValidationError::UnsupportedContentType(format!("{cty:?}")),
-                    );
-
-                    log_current_item!(
-                        "Invalid COSE_Sign1 content type header",
-                        "IcaSignatureVerifier::check_signature"
-                    )
-                    .validation_status("cawg.ica.invalid_content_type")
-                    .failure_no_throw(status_tracker, err.clone());
-
-                    ok = false;
-                }
-            }
-        } else {
-            let err = ValidationError::SignatureError(IcaValidationError::ContentTypeMissing);
-
-            log_current_item!(
-                "Invalid COSE_Sign1 content type header",
-                "IcaSignatureVerifier::check_signature"
-            )
-            .validation_status("cawg.ica.invalid_content_type")
-            .failure_no_throw(status_tracker, err.clone());
-
-            ok = false;
-        }
+        self.check_content_type(&sign1, status_tracker, &mut ok)?;
 
         // Interpret the unprotected payload, which should be the raw VC.
         let Some(ref payload_bytes) = sign1.payload else {
@@ -395,32 +353,32 @@ impl SignatureVerifier for IcaSignatureVerifier {
 }
 
 impl IcaSignatureVerifier {
+    /// Signal an error if the `sig_type` value is not
+    /// `cawg.identity_claims_aggregation`.
     fn check_sig_type(
         &self,
         signer_payload: &SignerPayload,
         status_tracker: &mut StatusTracker,
     ) -> Result<(), ValidationError<IcaValidationError>> {
-        if signer_payload.sig_type != super::CAWG_ICA_SIG_TYPE {
+        if signer_payload.sig_type == super::CAWG_ICA_SIG_TYPE {
+            Ok(())
+        } else {
+            let err = ValidationError::<IcaValidationError>::UnknownSignatureType(
+                signer_payload.sig_type.clone(),
+            );
+
             log_current_item!(
                 "unsupported signature type",
                 "X509SignatureVerifier::check_signature"
             )
             .validation_status("cawg.identity.sig_type.unknown")
-            .failure_no_throw(
-                status_tracker,
-                ValidationError::<IcaValidationError>::UnknownSignatureType(
-                    signer_payload.sig_type.clone(),
-                ),
-            );
+            .failure_no_throw(status_tracker, err.clone());
 
-            return Err(ValidationError::UnknownSignatureType(
-                signer_payload.sig_type.clone(),
-            ));
+            Err(err)
         }
-
-        Ok(())
     }
 
+    /// Parse the `signature` value as a [`CoseSign1`] data structure.
     fn decode_cose_sign1(
         &self,
         signature: &[u8],
@@ -438,12 +396,13 @@ impl IcaSignatureVerifier {
             .map_err(|e| e.into())
     }
 
+    /// Read the protected `alg` header from the [`CoseSign1`] data structure
+    /// and convert that to a corresponding [`Algorithm`] type.
     fn decode_signing_alg(
         &self,
         sign1: &CoseSign1,
         status_tracker: &mut StatusTracker,
-    ) -> Result<crate::claim_aggregation::w3c_vc::jwk::Algorithm, ValidationError<IcaValidationError>>
-    {
+    ) -> Result<Algorithm, ValidationError<IcaValidationError>> {
         if let Some(ref alg) = sign1.protected.header.alg {
             match alg {
                 // TO DO (CAI-7965): Support algorithms other than EdDSA.
@@ -477,6 +436,64 @@ impl IcaSignatureVerifier {
 
             Err(err)
         }
+    }
+
+    /// Signal an error if the COSE `content_type` header is anything other than
+    /// `application/vc`.
+    fn check_content_type(
+        &self,
+        sign1: &CoseSign1,
+        status_tracker: &mut StatusTracker,
+        ok: &mut bool,
+    ) -> Result<(), ValidationError<IcaValidationError>> {
+        if let Some(ref cty) = sign1.protected.header.content_type {
+            match cty {
+                coset::ContentType::Text(ref cty) => {
+                    if cty != "application/vc" {
+                        let err = ValidationError::SignatureError(
+                            IcaValidationError::UnsupportedContentType(format!("{cty:?}")),
+                        );
+
+                        log_current_item!(
+                            "Invalid COSE_Sign1 content type header",
+                            "IcaSignatureVerifier::check_signature"
+                        )
+                        .validation_status("cawg.ica.invalid_content_type")
+                        .failure(status_tracker, err.clone())?;
+
+                        *ok = false;
+                    }
+                }
+
+                _ => {
+                    let err = ValidationError::SignatureError(
+                        IcaValidationError::UnsupportedContentType(format!("{cty:?}")),
+                    );
+
+                    log_current_item!(
+                        "Invalid COSE_Sign1 content type header",
+                        "IcaSignatureVerifier::check_signature"
+                    )
+                    .validation_status("cawg.ica.invalid_content_type")
+                    .failure(status_tracker, err.clone())?;
+
+                    *ok = false;
+                }
+            }
+        } else {
+            let err = ValidationError::SignatureError(IcaValidationError::ContentTypeMissing);
+
+            log_current_item!(
+                "Invalid COSE_Sign1 content type header",
+                "IcaSignatureVerifier::check_signature"
+            )
+            .validation_status("cawg.ica.invalid_content_type")
+            .failure(status_tracker, err.clone())?;
+
+            *ok = false;
+        }
+
+        Ok(())
     }
 
     async fn check_issuer_signature(
