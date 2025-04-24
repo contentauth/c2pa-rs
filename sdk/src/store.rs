@@ -6593,7 +6593,6 @@ pub mod tests {
                     // Do we generate JUMBF?
                     let signer = test_signer(SigningAlg::Ps256);
 
-                    // add manifest based on
                     // Use Tempdir for automatic cleanup
                     let new_subdir = tempfile::TempDir::new_in(output_path)
                         .expect("Failed to create temp subdir");
