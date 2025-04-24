@@ -61,43 +61,8 @@ impl SignatureVerifier for IcaSignatureVerifier {
     ) -> Result<Self::Output, ValidationError<Self::Error>> {
         self.check_sig_type(signer_payload, status_tracker)?;
 
-        // The signature should be a `CoseSign1` object.
         let sign1 = self.decode_cose_sign1(signature, status_tracker)?;
-
-        // Identify the signature.
-        let _ssi_alg = if let Some(ref alg) = sign1.protected.header.alg {
-            match alg {
-                // TO DO (CAI-7965): Support algorithms other than EdDSA.
-                RegisteredLabelWithPrivate::Assigned(coset::iana::Algorithm::EdDSA) => {
-                    Algorithm::EdDsa
-                }
-                _ => {
-                    let err = ValidationError::SignatureError(
-                        IcaValidationError::UnsupportedSignatureType(format!("{alg:?}")),
-                    );
-
-                    log_current_item!(
-                        "Invalid COSE_Sign1 signature algorithm",
-                        "IcaSignatureVerifier::check_signature"
-                    )
-                    .validation_status("cawg.ica.invalid_alg")
-                    .failure_no_throw(status_tracker, err.clone());
-
-                    return Err(err);
-                }
-            }
-        } else {
-            let err = ValidationError::SignatureError(IcaValidationError::SignatureTypeMissing);
-
-            log_current_item!(
-                "Missing COSE_Sign1 signature algorithm",
-                "IcaSignatureVerifier::check_signature"
-            )
-            .validation_status("cawg.ica.invalid_alg")
-            .failure_no_throw(status_tracker, err.clone());
-
-            return Err(err);
-        };
+        let _ssi_alg = self.decode_signing_alg(&sign1, status_tracker)?;
 
         let mut ok = true;
 
@@ -471,6 +436,47 @@ impl IcaSignatureVerifier {
                 .failure_no_throw(status_tracker, ValidationError::from(err));
             })
             .map_err(|e| e.into())
+    }
+
+    fn decode_signing_alg(
+        &self,
+        sign1: &CoseSign1,
+        status_tracker: &mut StatusTracker,
+    ) -> Result<crate::claim_aggregation::w3c_vc::jwk::Algorithm, ValidationError<IcaValidationError>>
+    {
+        if let Some(ref alg) = sign1.protected.header.alg {
+            match alg {
+                // TO DO (CAI-7965): Support algorithms other than EdDSA.
+                RegisteredLabelWithPrivate::Assigned(coset::iana::Algorithm::EdDSA) => {
+                    Ok(Algorithm::EdDsa)
+                }
+                _ => {
+                    let err = ValidationError::SignatureError(
+                        IcaValidationError::UnsupportedSignatureType(format!("{alg:?}")),
+                    );
+
+                    log_current_item!(
+                        "Invalid COSE_Sign1 signature algorithm",
+                        "IcaSignatureVerifier::check_signature"
+                    )
+                    .validation_status("cawg.ica.invalid_alg")
+                    .failure_no_throw(status_tracker, err.clone());
+
+                    Err(err)
+                }
+            }
+        } else {
+            let err = ValidationError::SignatureError(IcaValidationError::SignatureTypeMissing);
+
+            log_current_item!(
+                "Missing COSE_Sign1 signature algorithm",
+                "IcaSignatureVerifier::check_signature"
+            )
+            .validation_status("cawg.ica.invalid_alg")
+            .failure_no_throw(status_tracker, err.clone());
+
+            Err(err)
+        }
     }
 
     async fn check_issuer_signature(
