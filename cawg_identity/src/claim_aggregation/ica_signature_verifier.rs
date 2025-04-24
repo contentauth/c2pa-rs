@@ -422,7 +422,7 @@ impl SignatureVerifier for IcaSignatureVerifier {
 
             signer_payload.referenced_assertions = new_ras;
 
-            if &signer_payload != &subject.c2pa_asset {
+            if signer_payload != subject.c2pa_asset {
                 ok = false;
 
                 log_current_item!(
