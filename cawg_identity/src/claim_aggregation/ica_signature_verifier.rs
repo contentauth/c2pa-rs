@@ -95,48 +95,12 @@ impl SignatureVerifier for IcaSignatureVerifier {
             }
         };
 
-        // Enforce [§8.1.1.4. Validity].
-        //
-        // [§8.1.1.4. Validity]: https://cawg.io/identity/1.1-draft/#vc-property-validFrom
-        match ica_credential.valid_from {
-            Some(valid_from) => {
-                if let Err(err) = self
-                    .check_valid_from(&valid_from, maybe_tst_info.as_ref())
-                    .await
-                {
-                    // NOTE: We handle logging here because we want to signal at most one of the
-                    // possible error conditions that are detectable in `check_valid_from`, BUT they
-                    // are not fatal to the overall interpretation of the identity assertion.
-                    //
-                    // In the event that the status tracker is configured to proceed when possible,
-                    // we log the error condition related to the signature and proceed.
-                    ok = false;
-
-                    log_current_item!(err.clone(), "IcaSignatureVerifier::check_signature")
-                        .validation_status("cawg.ica.valid_from.invalid")
-                        .failure(
-                            status_tracker,
-                            ValidationError::SignatureError(
-                                IcaValidationError::InvalidValidFromDate(err),
-                            ),
-                        )?;
-                }
-            }
-
-            None => {
+        self.check_valid_from(&ica_credential, maybe_tst_info.as_ref())
+            .await
+            .or_else(|err| {
                 ok = false;
-
-                log_current_item!(
-                    "validFrom/issuanceDate missing from credential",
-                    "IcaSignatureVerifier::check_signature"
-                )
-                .validation_status("cawg.ica.valid_from.missing")
-                .failure(
-                    status_tracker,
-                    ValidationError::SignatureError(IcaValidationError::MissingValidFromDate),
-                )?;
-            }
-        }
+                self.handle_non_fatal_error(err, status_tracker)
+            })?;
 
         // NOTE: It's permissible for validUntil to be omitted.
         if let Some(valid_until) = ica_credential.valid_until {
@@ -661,18 +625,33 @@ impl IcaSignatureVerifier {
         Ok(())
     }
 
+    // Enforce [§8.1.1.4. Validity].
+    //
+    // [§8.1.1.4. Validity]: https://cawg.io/identity/1.1-draft/
     async fn check_valid_from(
         &self,
-        valid_from: &DateTime<FixedOffset>,
+        ica_credential: &IcaCredential,
         maybe_tst_info: Option<&TstInfo>,
-    ) -> Result<(), String> {
+    ) -> Result<(), (IcaValidationError, &'static str)> {
+        let Some(valid_from) = ica_credential.valid_from else {
+            return Err((
+                IcaValidationError::MissingValidFromDate,
+                "cawg.ica.valid_from.missing",
+            ));
+        };
+
         // TO DO: Bring in substitute for now() on Wasm.
         #[cfg(not(target_arch = "wasm32"))]
         {
             let now = Utc::now().fixed_offset();
 
-            if now < *valid_from {
-                return Err("validFrom is after current date/time".to_owned());
+            if now < valid_from {
+                return Err((
+                    IcaValidationError::InvalidValidFromDate(
+                        "validFrom is after current date/time".to_owned(),
+                    ),
+                    "cawg.ica.valid_from.invalid",
+                ));
             }
         }
 
@@ -680,8 +659,13 @@ impl IcaSignatureVerifier {
             let cawg_signer_time: DateTime<Utc> = tst_info.gen_time.clone().into();
             let cawg_signer_time = cawg_signer_time.fixed_offset();
 
-            if cawg_signer_time < *valid_from {
-                return Err("validFrom is after CAWG signature time stamp".to_owned());
+            if cawg_signer_time < valid_from {
+                return Err((
+                    IcaValidationError::InvalidValidFromDate(
+                        "validFrom is after CAWG signature time stamp".to_string(),
+                    ),
+                    "cawg.ica.valid_from.invalid",
+                ));
             }
         }
 
@@ -717,6 +701,26 @@ impl IcaSignatureVerifier {
 
         // TO DO (CAI-7988): Enforce validUntil can not be earlier than
         // C2PA Manifest time stamp.
+
+        Ok(())
+    }
+
+    fn handle_non_fatal_error(
+        &self,
+        err: (IcaValidationError, &'static str),
+        status_tracker: &mut StatusTracker,
+    ) -> Result<(), ValidationError<IcaValidationError>> {
+        // NOTE: We handle logging here because we want to signal at most one of the
+        // possible error conditions that are detectable in `check_valid_from`, BUT they
+        // are not fatal to the overall interpretation of the identity assertion.
+        //
+        // In the event that the status tracker is configured to proceed when possible,
+        // we log the error condition related to the signature and proceed.
+        let (err, msg) = err;
+
+        log_current_item!(err.to_string(), "IcaSignatureVerifier::check_signature")
+            .validation_status(msg)
+            .failure(status_tracker, ValidationError::SignatureError(err))?;
 
         Ok(())
     }

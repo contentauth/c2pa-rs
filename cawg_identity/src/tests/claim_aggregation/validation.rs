@@ -1220,10 +1220,7 @@ async fn valid_from_missing() {
 
     assert_eq!(li.kind, LogKind::Failure);
     assert_eq!(li.label, "(IA label goes here)");
-    assert_eq!(
-        li.description,
-        "validFrom/issuanceDate missing from credential"
-    );
+    assert_eq!(li.description, "credential does not have a validFrom date");
     assert_eq!(li.crate_name, "cawg-identity");
     assert_eq!(
         li.err_val.as_ref().unwrap(),
@@ -1290,7 +1287,10 @@ async fn valid_from_in_future() {
 
     assert_eq!(li.kind, LogKind::Failure);
     assert_eq!(li.label, "(IA label goes here)");
-    assert_eq!(li.description, "validFrom is after current date/time");
+    assert_eq!(
+        li.description,
+        "credential's validFrom date is unacceptable (validFrom is after current date/time)"
+    );
     assert_eq!(li.crate_name, "cawg-identity");
     assert_eq!(
         li.err_val.as_ref().unwrap(),
@@ -1372,7 +1372,7 @@ async fn valid_from_after_time_stamp() {
     assert_eq!(li.label, "(IA label goes here)");
     assert_eq!(
         li.description,
-        "validFrom is after CAWG signature time stamp"
+        "credential's validFrom date is unacceptable (validFrom is after CAWG signature time stamp)"
     );
     assert_eq!(li.crate_name, "cawg-identity");
     assert_eq!(
