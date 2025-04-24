@@ -59,25 +59,9 @@ impl SignatureVerifier for IcaSignatureVerifier {
         signature: &[u8],
         status_tracker: &mut StatusTracker,
     ) -> Result<Self::Output, ValidationError<Self::Error>> {
+        self.check_sig_type(signer_payload, status_tracker)?;
+
         let mut ok = true;
-
-        if signer_payload.sig_type != super::CAWG_ICA_SIG_TYPE {
-            log_current_item!(
-                "unsupported signature type",
-                "X509SignatureVerifier::check_signature"
-            )
-            .validation_status("cawg.identity.sig_type.unknown")
-            .failure_no_throw(
-                status_tracker,
-                ValidationError::<IcaValidationError>::UnknownSignatureType(
-                    signer_payload.sig_type.clone(),
-                ),
-            );
-
-            return Err(ValidationError::UnknownSignatureType(
-                signer_payload.sig_type.clone(),
-            ));
-        }
 
         // The signature should be a `CoseSign1` object.
         let sign1 = CoseSign1::from_tagged_slice(signature).inspect_err(|err| {
@@ -453,6 +437,32 @@ impl SignatureVerifier for IcaSignatureVerifier {
 }
 
 impl IcaSignatureVerifier {
+    fn check_sig_type(
+        &self,
+        signer_payload: &SignerPayload,
+        status_tracker: &mut StatusTracker,
+    ) -> Result<(), ValidationError<IcaValidationError>> {
+        if signer_payload.sig_type != super::CAWG_ICA_SIG_TYPE {
+            log_current_item!(
+                "unsupported signature type",
+                "X509SignatureVerifier::check_signature"
+            )
+            .validation_status("cawg.identity.sig_type.unknown")
+            .failure_no_throw(
+                status_tracker,
+                ValidationError::<IcaValidationError>::UnknownSignatureType(
+                    signer_payload.sig_type.clone(),
+                ),
+            );
+
+            return Err(ValidationError::UnknownSignatureType(
+                signer_payload.sig_type.clone(),
+            ));
+        }
+
+        Ok(())
+    }
+
     async fn check_issuer_signature(
         &self,
         sign1: &CoseSign1,
