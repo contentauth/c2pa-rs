@@ -176,6 +176,9 @@ pub struct Action {
     // The reason why this action was performed, required when the action is `c2pa.redacted`
     #[serde(skip_serializing_if = "Option::is_none")]
     reason: Option<String>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    description: Option<String>,
 }
 
 impl Action {
@@ -194,7 +197,8 @@ impl Action {
         matches!(
             self.software_agent,
             Some(SoftwareAgent::ClaimGeneratorInfo(_))
-        ) || self.changes.is_some() // only defined for v2
+        ) || self.changes.is_some()
+            || self.description.is_some() // only defined for v2
     }
 
     /// Returns the label for this action.
@@ -486,6 +490,10 @@ pub struct Actions {
     /// A list of [`Action`]s.
     pub actions: Vec<Action>,
 
+    /// A list of of the software/hardware that did the action.
+    #[serde(rename = "softwareAgents", skip_serializing_if = "Option::is_none")]
+    pub software_agents: Option<Vec<ClaimGeneratorInfo>>,
+
     /// If present & true, indicates that no actions took place that were not included in the actions list.
     #[serde(rename = "allActionsIncluded", skip_serializing_if = "Option::is_none")]
     pub all_actions_included: Option<bool>,
@@ -512,6 +520,7 @@ impl Actions {
             all_actions_included: None,
             templates: None,
             metadata: None,
+            software_agents: None,
         }
     }
 
