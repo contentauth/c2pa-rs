@@ -175,6 +175,21 @@ pub(crate) fn tempdirectory() -> Result<TempDir> {
     return tempdir().map_err(Error::IoError);
 }
 
+#[allow(unused)]
+#[cfg(target_os = "wasi")]
+pub fn wasm_remove_dir_all<P: AsRef<std::path::Path>>(path: P) -> Result<()> {
+    for entry in std::fs::read_dir(&path)? {
+        let entry = entry?;
+        if entry.path().is_file() {
+            std::fs::remove_file(entry.path())?;
+        } else if entry.path().is_dir() {
+            wasm_remove_dir_all(entry.path())?;
+        }
+    }
+    std::fs::remove_dir_all(&path)?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     #![allow(clippy::expect_used)]
