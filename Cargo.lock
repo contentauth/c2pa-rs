@@ -879,6 +879,7 @@ dependencies = [
  "treeline",
  "url",
  "wasi 0.14.2+wasi-0.2.4",
+ "wstd",
 ]
 
 [[package]]
