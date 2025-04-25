@@ -17,17 +17,15 @@ use crate::{Error, Result};
 
 /// SignerInfo provides the information needed to create a signer
 /// and sign a manifest.
-///
-/// The signer is created from the signcert and pkey fields.
-///
-/// The alg field is used to determine the signing algorithm.
-///
-/// The tsa_url field is optional and is used to specify a timestamp server.
 #[derive(Clone, Debug, Default, Deserialize)]
 pub struct SignerInfo {
+    /// The alg field is used to determine the signing algorithm.
     pub alg: String,
+    /// The public certificate used to sign the manifest in PEM format.
     pub sign_cert: Vec<u8>,
+    /// The private key used to sign the manifest in PEM format.
     pub private_key: Vec<u8>,
+    /// The ta_url field is an optional URL used to specify a timestamp server.
     pub ta_url: Option<String>,
 }
 

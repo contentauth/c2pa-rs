@@ -13,7 +13,7 @@
 
 //! This creates the c2pa.h header file and the c2pa_version.txt file
 //! in the target directory. It is intended to be run as part of the build process.
-// The crate version is added to the header file.
+//! The crate version is added to the header file.
 use std::{env, path::Path};
 
 fn main() {

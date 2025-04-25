@@ -3,7 +3,7 @@ name: Build and Release
 on:
   push:
     tags:
-      - 'v*' # Trigger on version tags (e.g., v1.0.0)
+      - 'c2pa-v*' # Trigger on version tags (e.g., v1.0.0)
   workflow_dispatch: # Allow manual triggering of the workflow
 
 jobs:
