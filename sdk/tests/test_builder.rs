@@ -67,7 +67,7 @@ fn test_builder_fragmented() -> Result<()> {
     let manifest_def = include_str!("fixtures/simple_manifest.json");
     let mut builder = Builder::from_json(manifest_def)?;
     let tempdir = tempdirectory().expect("temp dir");
-    let output_path = tempdir.into_path();
+    let output_path = tempdir.path();
     let mut init_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     init_path.push("tests/fixtures/bunny/**/BigBuckBunny_2s_init.mp4");
     let pattern = init_path.as_os_str().to_str().unwrap();
