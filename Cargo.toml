@@ -13,7 +13,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.49.3"
+version = "0.49.4"
 
 [profile.release]
 strip = true  # Automatically strip symbols from the binary. 
