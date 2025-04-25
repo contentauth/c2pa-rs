@@ -226,7 +226,7 @@ impl Reader {
             }?;
         }
 
-        Ok(Self::from_store(store, &validation_log))
+        Self::from_store(store, &validation_log)
     }
 
     /// Create a [`Reader`] from an initial segment and a fragment stream.
@@ -261,7 +261,7 @@ impl Reader {
             }?;
         };
 
-        Ok(Self::from_store(store, &validation_log))
+        Self::from_store(store, &validation_log)
     }
 
     #[cfg(feature = "file_io")]
@@ -288,7 +288,7 @@ impl Reader {
             verify,
             &mut validation_log,
         ) {
-            Ok(store) => Ok(Self::from_store(store, &validation_log)),
+            Ok(store) => Self::from_store(store, &validation_log),
             Err(e) => Err(e),
         }
     }
@@ -621,7 +621,7 @@ impl Reader {
     }
 
     #[async_generic()]
-    fn from_store(store: Store, validation_log: &StatusTracker) -> Self {
+    fn from_store(store: Store, validation_log: &StatusTracker) -> Result<Self> {
         let mut validation_results = ValidationResults::from_store(&store, validation_log);
 
         let active_manifest = store.provenance_label();
@@ -650,12 +650,13 @@ impl Reader {
                 }
                 Err(e) => {
                     validation_results.add_status(ValidationStatus::from_error(&e));
+                    return Err(e);
                 }
             };
         }
 
         let validation_state = validation_results.validation_state();
-        Self {
+        Ok(Self {
             active_manifest,
             manifests,
             validation_status: validation_results.validation_errors(),
@@ -663,7 +664,7 @@ impl Reader {
             validation_state: Some(validation_state),
             store,
             assertion_values: HashMap::new(),
-        }
+        })
     }
 
     /// Post-validate the reader. This function is called after the reader is created.
