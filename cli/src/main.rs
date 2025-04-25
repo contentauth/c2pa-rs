@@ -27,7 +27,6 @@ use std::{
 
 use anyhow::{anyhow, bail, Context, Result};
 use c2pa::{Builder, ClaimGeneratorInfo, Error, Ingredient, ManifestDefinition, Reader, Signer};
-#[cfg(not(target_os = "wasi"))]
 use cawg_identity::validator::CawgValidator;
 use clap::{Parser, Subcommand};
 use log::debug;
@@ -36,6 +35,8 @@ use signer::SignConfig;
 #[cfg(not(target_os = "wasi"))]
 use tokio::runtime::Runtime;
 use url::Url;
+#[cfg(target_os = "wasi")]
+use wstd::runtime::block_on;
 
 use crate::{
     callback_signer::{CallbackSigner, CallbackSignerConfig, ExternalProcessRunner},
@@ -530,7 +531,7 @@ fn validate_cawg(reader: &mut Reader) -> Result<()> {
     }
     #[cfg(target_os = "wasi")]
     {
-        Ok(())
+        block_on(reader.post_validate_async(&CawgValidator {})).map_err(anyhow::Error::from)
     }
 }
 
