@@ -912,6 +912,8 @@ pub mod tests {
         reader.to_folder(temp_dir.path())?;
         let path = temp_dir_path(&temp_dir, "manifest.json");
         assert!(path.exists());
+        #[cfg(target_os = "wasi")]
+        crate::utils::io_utils::wasm_remove_dir_all(temp_dir)?;
         Ok(())
     }
 

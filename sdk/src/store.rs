@@ -6562,7 +6562,7 @@ pub mod tests {
         // test adding to actual image
 
         let tempdir = tempdirectory().expect("temp dir");
-        let output_path = tempdir.into_path();
+        let output_path = tempdir.path();
 
         // search folders for init segments
         for init in glob::glob(
@@ -6593,8 +6593,10 @@ pub mod tests {
                     // Do we generate JUMBF?
                     let signer = test_signer(SigningAlg::Ps256);
 
-                    // add manifest based on
-                    let new_output_path = output_path.join(init_dir.file_name().unwrap());
+                    // Use Tempdir for automatic cleanup
+                    let new_subdir = tempfile::TempDir::new_in(output_path)
+                        .expect("Failed to create temp subdir");
+                    let new_output_path = new_subdir.path().join(init_dir.file_name().unwrap());
                     store
                         .save_to_bmff_fragmented(
                             p.as_path(),
