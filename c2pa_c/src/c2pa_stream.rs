@@ -20,42 +20,48 @@ use crate::Error;
 
 #[repr(C)]
 #[derive(Debug)]
-/// An Opaque struct to hold a context value for the stream callbacks
+/// An opaque struct to hold a context value for the stream callbacks.
 pub struct StreamContext;
 
 #[repr(C)]
 #[derive(Debug)]
-/// An enum to define the seek mode for the seek callback
-/// Start - seek from the start of the stream
-/// Current - seek from the current position in the stream
-/// End - seek from the end of the stream
+/// Defines the seek mode for the seek callback.
 pub enum C2paSeekMode {
+    /// Seeks from the start of the stream.
     Start = 0,
+
+    /// Seeks from the current position in the stream.
     Current = 1,
+
+    /// Seeks from the end of the stream.
     End = 2,
 }
 
-/// Defines a callback to read from a stream
-/// The return value is the number of bytes read, or a negative number for an error
+/// Defines a callback to read from a stream.
+///
+/// The return value is the number of bytes read, or a negative number for an error.
 type ReadCallback =
     unsafe extern "C" fn(context: *mut StreamContext, data: *mut u8, len: isize) -> isize;
 
-/// Defines a callback to seek to an offset in a stream
-/// The return value is the new position in the stream, or a negative number for an error
+/// Defines a callback to seek to an offset in a stream.
+///
+/// The return value is the new position in the stream, or a negative number for an error.
 type SeekCallback =
     unsafe extern "C" fn(context: *mut StreamContext, offset: isize, mode: C2paSeekMode) -> isize;
 
-/// Defines a callback to write to a stream
-/// The return value is the number of bytes written, or a negative number for an error
+/// Defines a callback to write to a stream.
+///
+/// The return value is the number of bytes written, or a negative number for an error.
 type WriteCallback =
     unsafe extern "C" fn(context: *mut StreamContext, data: *const u8, len: isize) -> isize;
 
-/// Defines a callback to flush a stream
-/// The return value is 0 for success, or a negative number for an error
+/// Defines a callback to flush a stream.
+///
+/// The return value is 0 for success, or a negative number for an error.
 type FlushCallback = unsafe extern "C" fn(context: *mut StreamContext) -> isize;
 
 #[repr(C)]
-/// A C2paStream is a Rust Read/Write/Seek stream that can be created in C
+/// A C2paStream is a Rust Read/Write/Seek stream that can be created in C.
 #[derive(Debug)]
 pub struct C2paStream {
     context: *mut StreamContext,
@@ -66,17 +72,21 @@ pub struct C2paStream {
 }
 
 impl C2paStream {
-    /// Creates a new C2paStream from context with callbacks
+    /// Creates a new C2paStream from context with callbacks.
+    ///
     /// # Arguments
     /// * `context` - a pointer to a StreamContext
     /// * `read` - a ReadCallback to read from the stream
     /// * `seek` - a SeekCallback to seek in the stream
     /// * `write` - a WriteCallback to write to the stream
     /// * `flush` - a FlushCallback to flush the stream
+    ///
     /// # Safety
-    /// The context must remain valid for the lifetime of the C2paStream
-    /// The read, seek, and write callbacks must be valid for the lifetime of the C2paStream
-    /// The resulting C2paStream must be released by calling c2pa_release_stream
+    /// The context must remain valid for the lifetime of the C2paStream.
+    ///
+    /// The read, seek, and write callbacks must be valid for the lifetime of the C2paStream.
+    ///
+    /// The resulting C2paStream must be released by calling c2pa_release_stream.
     pub unsafe fn new(
         context: *mut StreamContext,
         reader: ReadCallback,
@@ -93,7 +103,7 @@ impl C2paStream {
         }
     }
 
-    /// Extracts the context from the C2paStream (used for testing in Rust)
+    /// Extracts the context from the C2paStream (used for testing in Rust).
     pub fn extract_context(&mut self) -> Box<StreamContext> {
         let context_ptr = std::mem::replace(&mut self.context, std::ptr::null_mut());
         unsafe { Box::from_raw(context_ptr) }
@@ -108,12 +118,15 @@ impl Read for C2paStream {
                 "Read buffer is too large",
             ));
         }
+
         let bytes_read =
             unsafe { (self.reader)(&mut (*self.context), buf.as_mut_ptr(), buf.len() as isize) };
-        // returns a negative number for errors
+
+        // Returns a negative number for errors.
         if bytes_read < 0 {
             return Err(std::io::Error::last_os_error());
         }
+
         Ok(bytes_read as usize)
     }
 }
@@ -159,9 +172,9 @@ impl Write for C2paStream {
 unsafe impl Send for C2paStream {}
 unsafe impl Sync for C2paStream {}
 
-/// Creates a new C2paStream from context with callbacks
+/// Creates a new C2paStream from context with callbacks.
 ///
-/// This allows implementing streams in other languages
+/// This allows implementing streams in other languages.
 ///
 /// # Arguments
 /// * `context` - a pointer to a StreamContext
@@ -170,8 +183,9 @@ unsafe impl Sync for C2paStream {}
 /// * `write` - a WriteCallback to write to the stream
 ///
 /// # Safety
-/// The context must remain valid for the lifetime of the C2paStream
-/// The resulting C2paStream must be released by calling c2pa_release_stream
+/// The context must remain valid for the lifetime of the C2paStream.
+///
+/// The resulting C2paStream must be released by calling c2pa_release_stream.
 #[no_mangle]
 pub unsafe extern "C" fn c2pa_create_stream(
     context: *mut StreamContext,
@@ -185,10 +199,10 @@ pub unsafe extern "C" fn c2pa_create_stream(
     )))
 }
 
-/// Releases a C2paStream allocated by Rust
+/// Releases a C2paStream allocated by Rust.
 ///
 /// # Safety
-/// can only be released once and is invalid after this call
+/// Can only be released once and is invalid after this call.
 #[no_mangle]
 pub unsafe extern "C" fn c2pa_release_stream(stream: *mut C2paStream) {
     if !stream.is_null() {
@@ -196,9 +210,11 @@ pub unsafe extern "C" fn c2pa_release_stream(stream: *mut C2paStream) {
     }
 }
 
-/// This struct is used to test the C2paStream implementation
-/// It is a wrapper around a `Cursor<Vec<u8>>`
-/// It is exported in Rust so that it may be used externally
+/// This struct is used to test the C2paStream implementation.
+///
+/// It is a wrapper around a `Cursor<Vec<u8>>`.
+///
+/// It is exported in Rust so that it may be used externally.
 pub struct TestC2paStream {
     cursor: Cursor<Vec<u8>>,
 }
@@ -233,6 +249,7 @@ impl TestC2paStream {
             C2paSeekMode::Start => {
                 stream.cursor.set_position(offset as u64);
             }
+
             C2paSeekMode::Current => match stream.cursor.seek(SeekFrom::Current(offset as i64)) {
                 Ok(_) => {}
                 Err(e) => {
@@ -240,6 +257,7 @@ impl TestC2paStream {
                     return -1;
                 }
             },
+
             C2paSeekMode::End => match stream.cursor.seek(SeekFrom::End(offset as i64)) {
                 Ok(_) => {}
                 Err(e) => {

@@ -17,10 +17,10 @@
 use std::{env, path::Path};
 
 fn main() {
-    // Get the version from the environment variable set by Cargo
+    // Get the version from the environment variable set by Cargo.
     let version = env::var("CARGO_PKG_VERSION").expect("CARGO_PKG_VERSION is not set");
 
-    // Get the workspace target directory
+    // Get the workspace target directory.
     let out_dir = env::var("OUT_DIR").expect("OUT_DIR environment variable not set");
 
     let workspace_target_dir = Path::new(&out_dir)
@@ -28,12 +28,13 @@ fn main() {
         .nth(3)
         .expect("Invalid OUT_DIR structure");
 
-    // Generate the bindings using cbindgen
+    // Generate the bindings using cbindgen.
     let crate_dir = env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR not set");
     let config_path = Path::new(&crate_dir).join("cbindgen.toml");
 
     let mut config = cbindgen::Config::from_file(config_path).unwrap();
-    // add a version string to the header
+
+    // Add a version string to the header.
     config.header = match config.header {
         Some(ref mut header) => {
             header.push_str(&format!("\n// Version: {}\n", version));
@@ -41,7 +42,8 @@ fn main() {
         }
         None => Some(format!("\n// Version: {}\n", version)),
     };
-    // generate the header file
+
+    // Generate the header file.
     cbindgen::generate_with_config(&crate_dir, config).map_or_else(
         |error| match error {
             cbindgen::Error::ParseSyntaxError { .. } => {}
@@ -52,7 +54,7 @@ fn main() {
         },
     );
 
-    // Write the version to the file
+    // Write the version to the file.
     std::fs::write(workspace_target_dir.join("c2pa_version.txt"), &version)
         .expect("Failed to write version file");
 }
