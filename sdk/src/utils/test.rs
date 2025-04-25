@@ -207,9 +207,7 @@ pub fn fixture_path(file_name: &str) -> PathBuf {
 /// returns a path to a file in the temp_dir folder
 // note, you must pass TempDir from the caller's context
 pub fn temp_dir_path(temp_dir: &TempDir, file_name: &str) -> PathBuf {
-    let mut path = PathBuf::from(temp_dir.path());
-    path.push(file_name);
-    path
+    temp_dir.path().join(file_name)
 }
 
 // copies a fixture to a temp file and returns path to copy
