@@ -52,13 +52,7 @@ Specifically, it performs the following steps when the version number doesn't ma
 * **Creates a [GitHub release](https://docs.github.com/en/repositories/releasing-projects-on-github/managing-releases-in-a-repository)** for the uploaded crate. This creates an annotated git tag of the form `(crate-name)-v(version-number)`, which -- among other things -- is used to drive the previous-version comparison for future release PRs. This also creates a ZIP archive of the source at this crate version which is stored on GitHub with the release.
 * (to do: add link to binary c2pa builds)
 
-## Behind the scenes
-
-Release-plz is two components: a Rust-based command-line tool ([GitHub](https://github.com/release-plz/release-plz)) and a pre-packaged GitHub Actions wrapper ([GitHub](https://github.com/release-plz/action)). We use the pre-packaged GitHub Actions wrapper in this project.
-
-Colin and Eric have both submitted fixes to release-plz. The developer is generally responsive and PRs are typically merged and released within a week or two.
-
-### Related: Commit lint used for PR title enforcement
+## Related: Commit lint used for PR title enforcement
 
 Since release-plz makes use of [Conventional Commit syntax](https://www.conventionalcommits.org/en/v1.0.0/#summary) when generating changelogs, we want all commits to `main` to follow this syntax.
 
@@ -137,4 +131,9 @@ MAINTENANCE NOTE: If this list of rules is changed, please keep in sync with `.g
 * (semver crate?)
 * (nightly build process)
 * (c2patool binary build process)
-* (commit lint check)
+
+## Behind the scenes
+
+Release-plz is two components: a Rust-based command-line tool ([GitHub](https://github.com/release-plz/release-plz)) and a pre-packaged GitHub Actions wrapper ([GitHub](https://github.com/release-plz/action)). We use the pre-packaged GitHub Actions wrapper in this project.
+
+Colin and Eric have both submitted fixes to release-plz. The developer is generally responsive and PRs are typically merged and released within a week or two.
