@@ -44,12 +44,12 @@ IMPORTANT: If the version number of the crate in `main` is _different_ from the 
 
 For each crate in the repo, if the version number of the crate in `main` is _different_ from the version number on [crates.io](https://crates.io), release-plz will attempt to publish the crate to [crates.io](https://crates.io).
 
-Typically, this will happen because a maintainer merged a release PR created from the previous step. However, that is not absolutely required. (This is **strongly discouraged,** but technically you _could_ manually edit the version number in a `Cargo.toml` file and submit that directly to `main` yourself.)
+Typically, this will happen because a maintainer merged a release PR created from the previous step. However, that is not absolutely required. (Though **strongly discouraged,** you technically _could_ manually edit the version number in a `Cargo.toml` file and submit that directly to `main` yourself.)
 
 Specifically, it performs the following steps when the version number doesn't match what's on [crates.io](https://crates.io):
 
 * **Runs [`cargo publish`](https://doc.rust-lang.org/cargo/commands/cargo-publish.html)** for the crate and waits for notification that the crate has been successfully uploaded.
-* **Creates a [GitHub release](https://docs.github.com/en/repositories/releasing-projects-on-github/managing-releases-in-a-repository)** for the uploaded crate. This creates an annotated git tag of the form `(crate-name)-v(version-number)`, which -- among other things -- is used to drive the previous-version comparison for future release PRs. This also creates a ZIP archive of the source at this crate version which is stored on GitHub with the release.
+* **Creates a [GitHub release](https://docs.github.com/en/repositories/releasing-projects-on-github/managing-releases-in-a-repository)** for the uploaded crate. This creates an annotated git tag of the form `(crate-name)-v(version-number)`, which – among other things – is used to drive the previous-version comparison for future release PRs. This also creates a ZIP archive of the source at this crate version which is stored on GitHub with the release.
 
 ### Publish `c2patool` binary builds
 
@@ -69,13 +69,9 @@ For each supported command-line platform (MacOS, Windows, and Ubuntu), it perfor
 
 Since release-plz makes use of [Conventional Commit syntax](https://www.conventionalcommits.org/en/v1.0.0/#summary) when generating changelogs, we want all commits to `main` to follow this syntax.
 
-We [enforce commit squashing](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/configuring-pull-request-merges/configuring-commit-squashing-for-pull-requests) for pull requests in this repo to simplify our git history.
+We [enforce commit squashing](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/configuring-pull-request-merges/configuring-commit-squashing-for-pull-requests) for pull requests in this repo to simplify our git history. When squashing commits for pull request merges, GitHub defaults to using the PR title as the first line of the commit message. For that reason, our [`pr-title.yml`](../.github/workflows/pr-title.yml) task is configured to read the PR title and ensure that it confirms to [Conventional Commit syntax](https://www.conventionalcommits.org/en/v1.0.0/#summary). This enforcement is configured by [`.commitlintrc.yml`](../.commitlintrc.yml), which is the definitive specification of what constitutes an acceptable PR title.
 
-When squashing commits for pull request merges, GitHub defaults to using the PR title as the first line of the commit message, so our [`pr-title.yml`](../.github/workflows/pr-title.yml) task is configured to read the PR title and ensure that it confirms to [Conventional Commit syntax](https://www.conventionalcommits.org/en/v1.0.0/#summary).
-
-This enforcement is configured by [`.commitlintrc.yml](../.commitlintrc.yml), which is the definitive specification of what constitutes an acceptable PR title.
-
-As a quick reminder, the summary line (and thus the PR title) must have this exact format, including punctuation:
+A quick, non-authoritative, summary of the PR title rules follows. As a quick reminder, the summary line (and thus the PR title) must have this exact format, including punctuation:
 
 ```
 type(scope): description
