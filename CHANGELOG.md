@@ -6,6 +6,13 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 Since version 0.36.2, the format of this changelog is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.49.5](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.49.4...c2pa-v0.49.5)
+_25 April 2025_
+
+### Fixed
+
+* Return an error if a manifest cannot be read ([#1051](https://github.com/contentauth/c2pa-rs/pull/1051))
+
 ## [0.49.4](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.49.3...c2pa-v0.49.4)
 _24 April 2025_
 
