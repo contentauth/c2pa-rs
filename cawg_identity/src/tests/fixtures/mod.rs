@@ -13,6 +13,8 @@
 
 #![allow(unused)]
 
+pub(crate) mod claim_aggregation;
+
 mod default_built_in_signature_verifier;
 pub(crate) use default_built_in_signature_verifier::default_built_in_signature_verifier;
 
