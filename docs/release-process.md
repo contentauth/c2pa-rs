@@ -143,6 +143,8 @@ In the meantime, the workaround that seems easiest is to post a no-op change to 
 
 (link to rp-sandbox project)
 
+(how to recover if publish step fails)
+
 ## Behind the scenes
 
 Release-plz is two components: a Rust-based command-line tool ([GitHub](https://github.com/release-plz/release-plz)) and a pre-packaged GitHub Actions wrapper ([GitHub](https://github.com/release-plz/action)). We use the pre-packaged GitHub Actions wrapper in this project.
