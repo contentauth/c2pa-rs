@@ -117,6 +117,10 @@ The "body" of the commit message (everything after the PR title) is not subject 
 
 MAINTENANCE NOTE: If this list of rules is changed, please keep in sync with `.github/workflows/pr_title.yml` and `.commitlintrc`.
 
+## Related: Nightly build process
+
+(to do)
+
 ## Known issues
 
 ### Failure to update downstream crates
@@ -137,13 +141,7 @@ MAINTENANCE NOTE: If this list of rules is changed, please keep in sync with `.g
 
 * [release-plz documentation](https://release-plz.dev/docs)
 * [release-plz GitHub repo (main project)](https://github.com/release-plz/release-plz)
-* [release-plz GitHub repo (GitHub action wrapper)[https://github.com/release-plz/action)
-
-## Related
-
-* (semver crate?)
-* (nightly build process)
-* (c2patool binary build process)
+* [release-plz GitHub repo (GitHub action wrapper)](https://github.com/release-plz/action)
 
 ## Behind the scenes
 
