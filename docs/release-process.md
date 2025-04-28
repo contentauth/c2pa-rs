@@ -38,21 +38,77 @@ For each project that is to be updated, release-plz will generate the following 
 
 IMPORTANT: It _is_ permissible to manually edit the proposed changelog in the PR, but be aware those changes will be overwritten if another update is triggered. release-plz uses force-push to update any existing release PR.
 
-IMPORTANT: If the version number of the crate in `main` is _different_ from the version number on [crates.io](https://crates.io), this job will NOT run.
+IMPORTANT: If the version number of the crate in `main` is _different_ from the version number on [crates.io](https://crates.io), this job will NOT run. (See the next task.)
 
 ### Publish new crates
 
-(to do)
+For each crate in the repo, if the version number of the crate in `main` is _different_ from the version number on [crates.io](https://crates.io), release-plz will attempt to publish the crate to [crates.io](https://crates.io).
+
+Typically, this will happen because a maintainer merged a release PR created from the previous step. However, that is not absolutely required. (This is **strongly discouraged,** but technically you _could_ manually edit the version number in a `Cargo.toml` file and submit that directly to `main` yourself.)
+
+Specifically, it performs the following steps when the version number doesn't match what's on [crates.io](https://crates.io):
+
+* **Runs [`cargo publish`](https://doc.rust-lang.org/cargo/commands/cargo-publish.html)** for the crate and waits for notification that the crate has been successfully uploaded.
+* **Creates a [GitHub release](https://docs.github.com/en/repositories/releasing-projects-on-github/managing-releases-in-a-repository)** for the uploaded crate. This creates an annotated git tag of the form `(crate-name)-v(version-number)`, which -- among other things -- is used to drive the previous-version comparison for future release PRs. This also creates a ZIP archive of the source at this crate version which is stored on GitHub with the release.
+* (to do: add link to binary c2pa builds)
 
 ## Behind the scenes
 
 Release-plz is two components: a Rust-based command-line tool ([GitHub](https://github.com/release-plz/release-plz)) and a pre-packaged GitHub Actions wrapper ([GitHub](https://github.com/release-plz/action)). We use the pre-packaged GitHub Actions wrapper in this project.
 
-Colin and I have both submitted fixes to release-plz. The developer is generally responsive and PRs are typically merged and released within a week or two.
+Colin and Eric have both submitted fixes to release-plz. The developer is generally responsive and PRs are typically merged and released within a week or two.
 
-### Related: commit-lint
+### Related: Commit lint used for PR title enforcement
 
-(reference `.commitlintrc.yml` and how it supports release-plz)
+Since release-plz makes use of [Conventional Commit syntax](https://www.conventionalcommits.org/en/v1.0.0/#summary) when generating changelogs, we want all commits to `main` to follow this syntax.
+
+We [enforce commit squashing](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/configuring-pull-request-merges/configuring-commit-squashing-for-pull-requests) for pull requests in this repo to simplify our git history.
+
+When squashing commits for pull request merges, GitHub defaults to using the PR title as the first line of the commit message, so our [`pr-title.yml`](../.github/workflows/pr-title.yml) task is configured to read the PR title and ensure that it confirms to [Conventional Commit syntax](https://www.conventionalcommits.org/en/v1.0.0/#summary).
+
+This enforcement is configured by [`.commitlintrc.yml](../.commitlintrc.yml), which is the definitive specification of what constitutes an acceptable PR title.
+
+As a quick reminder, the summary line (and thus the PR title) must have this exact format, including punctuation:
+
+```
+type(scope): description
+```
+
+The `type` field describes the nature of changes you are making. This project requires the type to be one of these exact names (bold names are preferred in most cases):
+
+* **`feat`**: Adding a new feature. (Will cause a minor version bump.)
+* **`fix`**: Bug fix. (Will cause a patch version bump.)
+* **`chore`**: Maintenance work. (Will not be included in changelog.)
+* **`docs`**: Revising documentation.
+* `build` or `ci`: Adjusting the build system.
+* `perf`: Performance optimization.
+* `refactor`
+* `revert`
+* `style`
+* `test`
+* `update`: Updating a dependency. (Used by Dependabot.)
+
+The `scope` field describes where the change is made. This project allows the scope to be omitted, but if it is present, it must be one of these exact names:
+
+* `c2patool`
+* `cawg_identity`
+* `crypto`
+* `export_schema`
+* `make_test_images`
+* `sdk`
+
+If `scope` is omitted, the parenthesis must also be omitted.
+
+`description` is a short human-readable summary of the changes being made. It is required. We prefer that the `description` be less than 70 characters and will issue a warning (which you can ignore) if it is longer.
+
+The following items are not enforced, but we ask that you observe the following preferences in `description`:
+
+* The entire description should be written and capitalized as an English-language sentence, except (as noted earlier) that the trailing period must be omitted.
+* Any acronyms such as JSON or YAML should be capitalized as per common usage in English-language sentences.
+
+The "body" of the commit message (everything after the PR title) is not subject to any restrictions and may be empty. GitHub, by default, will create a bullet list of the commits that went into the PR. It is _recommended,_ but not enforced, that you delete this list (because it typically contains a lot of signal noise) and either replace it with additional context of why you made the change or leave it empty.
+
+MAINTENANCE NOTE: If this list of rules is changed, please keep in sync with `.github/workflows/pr_title.yml` and `.commitlintrc`.
 
 ## Known issues
 
