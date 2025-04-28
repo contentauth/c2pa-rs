@@ -1950,9 +1950,13 @@ mod tests_file_io {
     #[test]
     #[cfg(feature = "file_io")]
     fn test_jpg_with_path() {
+        use crate::utils::io_utils::tempdirectory;
+
         let ap = fixture_path("CA.jpg");
-        let mut folder = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        folder.push("../target/tmp/ingredient");
+        let temp_dir = tempdirectory().expect("Failed to create temp directory");
+        let folder = temp_dir.path().join("ingredient");
+        std::fs::create_dir_all(&folder).expect("Failed to create subdirectory");
+
         let ingredient = Ingredient::from_file_with_folder(ap, folder).expect("from_file");
         println!("ingredient = {ingredient}");
         assert_eq!(ingredient.validation_status(), None);
@@ -1964,7 +1968,7 @@ mod tests_file_io {
             .identifier
             .contains(labels::JPEG_CLAIM_THUMBNAIL));
 
-        // verify  manifest_data exists
+        // verify manifest_data exists
         assert!(ingredient.manifest_data_ref().is_some());
         assert_eq!(ingredient.thumbnail_ref().unwrap().format, "image/jpeg");
         assert!(ingredient
