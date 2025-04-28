@@ -2,7 +2,7 @@
 resolver = "2"
 
 members = [
-    "c2pa_c",
+    "c_api",
     "cawg_identity",
     "cli",
     "export_schema",

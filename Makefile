@@ -70,4 +70,4 @@ show:
 	cargo run --example show -- sdk/tests/fixtures/ca.jpg
 
 release:
-	cd c2pa_c && make release
+	cd c_api && make release

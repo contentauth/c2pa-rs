@@ -68,7 +68,7 @@ build-release-linux-musl-arm:
 
 
 # make release
-# Builds and packages a zip for c2pa_c for each platform
+# Builds and packages a zip for c_api for each platform
 ifeq ($(PLATFORM), mac)
 release: build-release-mac-universal
 endif
