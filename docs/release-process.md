@@ -121,7 +121,15 @@ MAINTENANCE NOTE: If this list of rules is changed, please keep in sync with [`.
 
 ### Failure to update downstream crates
 
-(link to open issue and Colin's PR)
+There is a known issue involving repos such as ours which host multiple crates. Consider the dependency tree in our current configuration (`c2pa-crypto` -> `c2pa-rs` -> `c2patool`). It's possible for a crate that's earlier in the dependency cycle (e.g. `c2pa-crypto`) to have changes that warrant a new release and the crate that depends on it (`c2pa-rs` or `c2patool`) to have no commits since their prior releases.
+
+The current behavior of release-plz is to update the version reference in the downstream crate (`c2pa-rs` or `c2patool` in this example), but _not_ to generate a new release of the downstream crate.
+
+I've filed ([issue #2164](https://github.com/release-plz/release-plz/issues/2164)) to describe this issue. The developer of release-plz agrees that this is a bug.
+
+Colin has filed ([PR #2196](https://github.com/release-plz/release-plz/pull/2196)) to fix the issue, but that PR has not been merged as of this writing.
+
+In the meantime, the workaround that seems easiest is to post a no-op change to any downstream crates that need to be re-released. I typically find a whitespace change or a comment that could benefit from some proofreading. Those are enough to cause release-plz to call for a new release.
 
 ### Left-behind release branches
 
