@@ -22,17 +22,17 @@ This runs [`release-plz release-pr`](https://release-plz.dev/docs/usage/release-
 
 For each project that is to be updated, release-plz will generate the following changes:
 
-* `cargo.toml`: Update version number.
+* `cargo.toml`: **Update version number.**
   * If any API breaking changes are detected, bump the minor version number. (This will change to a major version number once we do 1.0 release.)
   * If any feature changes (API additions) are detected, bump the minor version number. (This will _not_ change when we do 1.0 release.)
   * If only bug-fix changes are detected, bump the patch version number.
   * For all crates, `release-plz` will evaluate the commit history since the previous release tag using [Conventional Commit syntax](https://www.conventionalcommits.org/en/v1.0.0/#summary) to determine API breaking changes, feature changes, or only bug-fix changes.
   * For library crates _only,_ `release-plz` will also download the most recent release from [crates.io](https://crates.io) to verify any API surface changes. The larger scope (patch -> minor -> major) will be used to select the new version number.
 
-* `cargo.toml`: Update version references for other crates in the same repo.
+* `cargo.toml`: **Update version references for other crates in the same repo.**
   * For each dependency that also exists in this repo, update the version number to match what is generated for that project.
 
-* `CHANGELOG.md`: Add description of new release
+* `CHANGELOG.md`: **Add description of new release.**
   * This adds a new section to the top of the changelog file with a link to the diffs between this version and the previous release.
   * The changelog section also contains a list of commits that affected this crate's source, grouped by the commit type. (See [Conventional Commit syntax](https://www.conventionalcommits.org/en/v1.0.0/#summary).)
 
