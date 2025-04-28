@@ -6,6 +6,13 @@ This project adheres to [Semantic Versioning](https://semver.org), except that â
 
 Since version 0.10.0, the format of this changelog is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.16.5](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.16.4...c2patool-v0.16.5)
+_25 April 2025_
+
+### Fixed
+
+* Enable post_validate_async for WASI ([#1052](https://github.com/contentauth/c2pa-rs/pull/1052))
+
 ## [0.16.4](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.16.3...c2patool-v0.16.4)
 _16 April 2025_
 
