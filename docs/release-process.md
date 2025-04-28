@@ -79,5 +79,6 @@ Colin and I have both submitted fixes to release-plz. The developer is generally
 ## Related
 
 * (semver crate?)
-* nightly build process
-* c2patool binary build process
+* (nightly build process)
+* (c2patool binary build process)
+* (commit lint check)
