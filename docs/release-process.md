@@ -75,3 +75,9 @@ Colin and I have both submitted fixes to release-plz. The developer is generally
 * [release-plz documentation](https://release-plz.dev/docs)
 * [release-plz GitHub repo (main project)](https://github.com/release-plz/release-plz)
 * [release-plz GitHub repo (GitHub action wrapper)[https://github.com/release-plz/action)
+
+## Related
+
+* (semver crate?)
+* nightly build process
+* c2patool binary build process
