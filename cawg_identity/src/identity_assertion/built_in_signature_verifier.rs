@@ -82,7 +82,7 @@ fn map_err_to_built_in<E: Into<BuiltInSignatureError>>(
 
         ValidationError::NoHardBindingAssertion => ValidationError::NoHardBindingAssertion,
         ValidationError::UnknownSignatureType(s) => ValidationError::UnknownSignatureType(s),
-        ValidationError::InvalidSignature => ValidationError::InvalidSignature,
+        ValidationError::SignatureMismatch => ValidationError::SignatureMismatch,
         ValidationError::InvalidPadding => ValidationError::InvalidPadding,
         ValidationError::SignatureError(e) => ValidationError::SignatureError(e.into()),
         ValidationError::InternalError(s) => ValidationError::InternalError(s),
