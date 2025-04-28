@@ -1,4 +1,4 @@
-// Copyright 2024 Adobe. All rights reserved.
+// Copyright 2025 Adobe. All rights reserved.
 // This file is licensed to you under the Apache License,
 // Version 2.0 (http://www.apache.org/licenses/LICENSE-2.0)
 // or the MIT license (http://opensource.org/licenses/MIT),
@@ -11,6 +11,4 @@
 // specific language governing permissions and limitations under
 // each license.
 
-mod interop;
-mod validation;
-mod w3c_vc;
+pub(crate) mod ica_credential_example;
