@@ -31,10 +31,7 @@ use crate::{
 ///
 /// Return a [`TstInfo`] struct if available and valid.
 #[async_generic]
-pub(crate) fn validate_cose_tst_info(
-    sign1: &coset::CoseSign1,
-    data: &[u8],
-) -> Result<TstInfo, CoseError> {
+pub fn validate_cose_tst_info(sign1: &coset::CoseSign1, data: &[u8]) -> Result<TstInfo, CoseError> {
     let Some((sigtst, tss)) = &sign1
         .unprotected
         .rest
