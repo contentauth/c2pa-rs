@@ -4,7 +4,7 @@ The build process for the crates in this repo is automated using [release-plz](h
 
 Release-plz leverages information contains in the various `Cargo.toml` files and its own [`release-plz.toml`](../release-plz.toml) configuration file. 
 
-There are many options available for [configuring release-plz](https://release-plz.dev/docs/config). In this document, we will talk only about how it is configured for this project.
+There are many options available for [configuring release-plz](https://release-plz.dev/docs/config). In this document, we will talk only about how it is configured for this project. For more detail about how release-plz works, we recommend reading the [release-plz documentation site](https://release-plz.dev/docs), which is quite extensive.
 
 ## How it works
 
@@ -115,7 +115,7 @@ The following items are not enforced, but we ask that you observe the following 
 
 The "body" of the commit message (everything after the PR title) is not subject to any restrictions and may be empty. GitHub, by default, will create a bullet list of the commits that went into the PR. It is _recommended,_ but not enforced, that you delete this list (because it typically contains a lot of signal noise) and either replace it with additional context of why you made the change or leave it empty.
 
-MAINTENANCE NOTE: If this list of rules is changed, please keep in sync with `.github/workflows/pr_title.yml` and `.commitlintrc`.
+MAINTENANCE NOTE: If this list of rules is changed, please keep in sync with [`.github/workflows/pr_title.yml`](../.github/workflows/pr_title.yml) and [`.commitlintrc`](../.commitlintrc).
 
 ## Related: Nightly build process
 
@@ -131,17 +131,13 @@ MAINTENANCE NOTE: If this list of rules is changed, please keep in sync with `.g
 
 (mention job in `release.yml` task)
 
+### `c2pa` crate accidentally published a 1.0.0 release
+
+(watch for this when publishing 1.0)
+
 ## Troubleshooting
 
 (link to rp-sandbox project)
-
-(watch out for 1.0.0 release)
-
-## For more information
-
-* [release-plz documentation](https://release-plz.dev/docs)
-* [release-plz GitHub repo (main project)](https://github.com/release-plz/release-plz)
-* [release-plz GitHub repo (GitHub action wrapper)](https://github.com/release-plz/action)
 
 ## Behind the scenes
 
