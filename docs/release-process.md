@@ -44,7 +44,7 @@ IMPORTANT: If the version number of the crate in `main` is _different_ from the 
 
 For each crate in the repo, if the version number of the crate in `main` is _different_ from the version number on [crates.io](https://crates.io), release-plz will attempt to publish the crate to [crates.io](https://crates.io).
 
-Typically, this will happen because a maintainer merged a release PR created from the previous step. However, that is not absolutely required. (Though **strongly discouraged,** you technically _could_ manually edit the version number in a `Cargo.toml` file and submit that directly to `main` yourself.)
+Typically, this will happen because a maintainer merged a release PR created from the previous step. However, that is not absolutely required. ~~(Though **strongly discouraged,** you technically _could_ manually edit the version number in a `Cargo.toml` file and submit that directly to `main` yourself.)~~ (Turns out I'm wrong about this: release-plz has a specific safeguard that prevents the release process from running unless the last commit is from a release PR.)
 
 Specifically, it performs the following steps when the version number doesn't match what's on [crates.io](https://crates.io):
 
@@ -155,9 +155,27 @@ When building and testing an earlier version of our release tooling (before adop
 
 ## Troubleshooting
 
-(link to rp-sandbox project)
+### How to recover if the publish step fails or partially fails
 
-(how to recover if publish step fails)
+We have safeguards in place to ensure that a release PR will result in a successful publish, but they are not 100% effective. When there is a failure in the workflow, it's important to keep the core mental model in mind. (See "how it works" earlier in this document.) The following strategy _should_ work when release-plz fails to publish one or more crates from this project, though it may need some adaptation based on the specific failure mode:
+
+* **Read the logs to understand why the release did not go as planned.** You'll find this in the ["Release-plz" section of the Actions tab](https://github.com/contentauth/c2pa-rs/actions/workflows/release.yml) for this project. As one example, consider [this recent failure](https://github.com/contentauth/c2pa-rs/actions/runs/14339524696/job/40212226853), in which the crate failed to compile during the publish step. (Be aware that `cargo publish` uses a subtly different compilation environment than typical builds, which appears to be the root cause for this failure.)
+
+* **Resolve the issues indicated by the log.** This will vary depending on the failure mode.
+
+* **_ONLY_ for crates that failed to publish, manually revert `Cargo.toml` and `CHANGELOG.md` files.** Remember that release-plz will only generate a new release PR for crates where the `Cargo.toml` version exactly matches what's published on [crates.io](https://crates.io). Be sure to delete the generated section in `CHANGELOG.md` that failed to publish; otherwise, release-plz will raise an error when trying to generate the next release PR.
+
+* **Revert intra-project version references that failed to publish.** For example, if the main SDK (`c2pa`) failed to publish, it's likely that `c2patool` will have a `Cargo.toml` dependency on the new/unpublished version. You may need to manually revert that change and allow release-plz to re-introduce it. (I'm not 100% sure about this step; experiment as needed to make things work.)
+
+* **Wait for release-plz to create a new release PR with the desired results.**
+
+* **Avoid manually changing `Cargo.toml` files, other than the aforementioned reversions.** In general, I've found that attempting to push release-plz to release outside of its normal process backfire and create more problems to be resolved.
+
+### Using `rp-sandbox` project to preflight release-plz upgrades or strategies
+
+If you have questions about how release-plz works or are wanting to vet a new version of release-plz, I invite you to use the [`rp-sandbox` project](https://github.com/scouten-adobe/rp-sandbox/) to test changes or ideas.
+
+This repo has a dependency structure that is structurally similar to the `c2pa-rs` repo, but has dummy implementations of its three crates. CAI team members can contact me for collaborate access to this repo.
 
 ## Behind the scenes
 
