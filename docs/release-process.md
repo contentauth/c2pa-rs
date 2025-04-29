@@ -18,7 +18,7 @@ This task runs using a GitHub access token tied to Eric's `@scouten-adobe` accou
 
 ### Create a release pull request
 
-This runs [`release-plz release-pr`](https://release-plz.dev/docs/usage/release-pr). For each published crate in the repo, it looks for commits since the last tagged release (ignoring commits with the `chore:` prefix). If it finds any, it will open a new release pull request or update the existing release. (NOTE: When Colin's [PR #2196 to release-plz](https://github.com/release-plz/release-plz/pull/2196) lands there will be a new trigger here which will reference intra-project dependency updates even if the downstream project has no commits of its own.)
+This runs [`release-plz release-pr`](https://release-plz.dev/docs/usage/release-pr). For each published crate in the repo, it looks for certain types of commits since the last tagged release _within_ the source tree for the crate. The exact list of commit types that trigger a release PR is configured by the `release-commits` section of [`release-plz.toml`](../release-plz.toml), but notably is set to ignore `chore` commits and include `feat`, `fix`, and `docs` commits. If it finds any matching, it will open a new release pull request or update the existing release. (NOTE: When Colin's [PR #2196 to release-plz](https://github.com/release-plz/release-plz/pull/2196) lands there will be a new trigger here which will reference intra-project dependency updates even if the downstream project has no commits of its own.)
 
 For each project that is to be updated, release-plz will generate the following changes:
 
