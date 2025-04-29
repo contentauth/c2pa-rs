@@ -21,6 +21,19 @@ use std::{fs, path::Path};
 
 use zip::{write::SimpleFileOptions, ZipWriter};
 
+/// This is the main function that runs the script.
+/// It takes the target directory as an argument and generates the ZIP file.
+/// example `cargo run --release --bin make_zip -- <target_dir>`
+/// This is part of the build process for the C2PA C API.
+/// It generates a ZIP file containing the C2PA C API header and dynamic library
+/// for the specified target platform.
+/// The ZIP file will be created in a `artifacts` directory
+/// It expects the target directory to contain a `c2pa_version.txt` file
+/// with the version information and an include directory with the C2PA header file.
+/// The ZIP file will be named `c2pa-v<version>-<target>.zip`
+/// where `<version>` is the version read from `c2pa_version.txt`
+/// and `<target>` is the target platform (e.g., `x86_64-unknown-linux-gnu`).
+/// The ZIP file will contain the C2PA header file and the dynamic library for the target platform.
 fn main() -> Result<(), std::io::Error> {
     let args: Vec<String> = std::env::args().collect();
     generate_zip_file(Path::new(&args[1]));
@@ -29,6 +42,10 @@ fn main() -> Result<(), std::io::Error> {
 
 /// Generates the ZIP file for the release build.
 fn generate_zip_file(target_dir: &Path) {
+    // first build a target folder with some files, including a version.txt file
+    // then run this script with the target folder as an argument
+    // e.g. cargo run --release --bin make_zip -- target/debug/build/c2pa-capi-1234567890abcdef
+
     let target = get_target(target_dir);
     let version = fs::read_to_string(target_dir.join("c2pa_version.txt"))
         .expect("could not read version from c2pa_version.txt");
@@ -96,7 +113,7 @@ fn add_file_to_zip<W: std::io::Write + std::io::Seek>(
     zip_path: &str,
 ) -> std::io::Result<()> {
     let mut file = fs::File::open(file_path)?;
-    let options = SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
+    let options = SimpleFileOptions::default().compression_method(zip::CompressionMethod::DEFLATE);
     zip.start_file(zip_path, options)?;
     std::io::copy(&mut file, zip)?;
     Ok(())
