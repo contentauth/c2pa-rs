@@ -145,7 +145,9 @@ In the meantime, the workaround that seems easiest is to post a no-op change to 
 
 ### Left-behind release branches
 
-(mention job in `release.yml` task)
+When performing the "Create a release pull request" step described above, release-plz sometimes updates the existing release branch and sometimes creates a new release branch with a new pull request. I don't understand how it makes that choice. When it creates a new pull request, it closes the old pull request, but does not delete the old release branch.
+
+In order to reduce the signal noise in the git repo, I've added a step in the release process to search for and delete old release branches. Search for "Clean up stale release-plz branches" in the [`release.yml`](../.github/workflows/release.yml) task.
 
 ### `c2pa` crate accidentally published a 1.0.0 release
 
