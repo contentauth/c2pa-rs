@@ -135,17 +135,15 @@ There is a known issue involving repos such as ours which host multiple crates. 
 
 The current behavior of release-plz is to update the version reference in the downstream crate (`c2pa-rs` or `c2patool` in this example), but _not_ to generate a new release of the downstream crate.
 
-I've filed ([issue #2164](https://github.com/release-plz/release-plz/issues/2164)) to describe this issue. The developer of release-plz agrees that this is a bug.
+We've filed ([issue #2164](https://github.com/release-plz/release-plz/issues/2164)) to describe this issue and ([PR #2196](https://github.com/release-plz/release-plz/pull/2196)) to fix the issue. The developer of release-plz agrees that this is a bug, but the PR has not been merged as of this writing.
 
-Colin has filed ([PR #2196](https://github.com/release-plz/release-plz/pull/2196)) to fix the issue, but that PR has not been merged as of this writing.
-
-In the meantime, the workaround that seems easiest is to post a no-op change to any downstream crates that need to be re-released. I typically find a whitespace change or a comment that could benefit from some proofreading. Those are enough to cause release-plz to call for a new release.
+In the meantime, the workaround that seems easiest is to post a no-op change to any downstream crates that need to be re-released. A whitespace change or a comment that could benefit from some proofreading is typically enough to cause release-plz to call for a new release.
 
 ### Left-behind release branches
 
-When performing the "Create a release pull request" step described above, release-plz sometimes updates the existing release branch and sometimes creates a new release branch with a new pull request. I don't understand how it makes that choice. When it creates a new pull request, it closes the old pull request, but does not delete the old release branch.
+When performing the "Create a release pull request" step described above, release-plz sometimes updates the existing release branch and sometimes creates a new release branch with a new pull request. We don't understand how it makes that choice. When it creates a new pull request, it closes the old pull request, but does not delete the old release branch.
 
-In order to reduce the signal noise in the git repo, I've added a step in the release process to search for and delete old release branches. Search for "Clean up stale release-plz branches" in the [`release.yml`](../.github/workflows/release.yml) task.
+In order to reduce the signal noise in the git repo, we've added a step in the release process to search for and delete old release branches. Search for "Clean up stale release-plz branches" in the [`release.yml`](../.github/workflows/release.yml) task.
 
 ### `c2pa` crate accidentally published a 1.0.0 release
 
@@ -163,14 +161,12 @@ We have safeguards in place to ensure that a release PR will result in a success
 
 * **_ONLY_ for crates that failed to publish, manually revert `Cargo.toml` and `CHANGELOG.md` files.** Remember that release-plz will only generate a new release PR for crates where the `Cargo.toml` version exactly matches what's published on [crates.io](https://crates.io). Be sure to delete the generated section in `CHANGELOG.md` that failed to publish; otherwise, release-plz will raise an error when trying to generate the next release PR.
 
-* **Revert intra-project version references that failed to publish.** For example, if the main SDK (`c2pa`) failed to publish, it's likely that `c2patool` will have a `Cargo.toml` dependency on the new/unpublished version. You may need to manually revert that change and allow release-plz to re-introduce it. (I'm not 100% sure about this step; experiment as needed to make things work.)
+* **Revert intra-project version references that failed to publish.** For example, if the main SDK (`c2pa`) failed to publish, it's likely that `c2patool` will have a `Cargo.toml` dependency on the new/unpublished version. You may need to manually revert that change and allow release-plz to re-introduce it. _(From Eric: I'm not 100% sure about this step; experiment as needed to make things work.)_
 
 * **Wait for release-plz to create a new release PR with the desired results.**
 
-* **Avoid manually changing `Cargo.toml` files, other than the aforementioned reversions.** In general, I've found that attempting to push release-plz to release outside of its normal process backfire and create more problems to be resolved.
+* **Avoid manually changing `Cargo.toml` files, other than the aforementioned reversions.** In general, attempts to push release-plz to release outside of its normal process create more problems to be resolved.
 
 ### Using `rp-sandbox` project to preflight release-plz upgrades or strategies
 
-If you have questions about how release-plz works or are wanting to vet a new version of release-plz, I invite you to use the [`rp-sandbox` project](https://github.com/scouten-adobe/rp-sandbox/) to test changes or ideas.
-
-This repo has a dependency structure that is structurally similar to the `c2pa-rs` repo, but has dummy implementations of its three crates. CAI team members can contact me for collaborator access to this repo.
+If you have questions about how release-plz works or are wanting to vet a new version of release-plz, CAI team members are invited to use the [`rp-sandbox` project](https://github.com/scouten-adobe/rp-sandbox/) to test changes or ideas. (CAI team members: Please contaact Eric for collaborator access.) This repo has a dependency structure that is structurally similar to the `c2pa-rs` repo, but has dummy implementations of its three crates.
