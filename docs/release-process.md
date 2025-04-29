@@ -78,8 +78,9 @@ type(scope): description
 The `type` field describes the nature of changes you are making. This project requires the type to be one of these exact names (bold names are preferred in most cases):
 
 * **`feat`**: Adding a new feature. (Will cause a minor version bump.)
+  * Use an `!` immediately before the `:` to signal an API breaking change. Once we release 1.0, this will cause a major version bump. Also note that for library crates, release-plz will independently evaluate all changes to the API surface and call for minor or major version bumps as appropriate.
 * **`fix`**: Bug fix. (Will cause a patch version bump.)
-* **`chore`**: Maintenance work. (Will not be included in changelog.)
+* **`chore`**: Maintenance work. (Will not trigger a release PR and will not be included in changelog.)
 * **`docs`**: Revising documentation.
 * `build` or `ci`: Adjusting the build system.
 * `perf`: Performance optimization.
