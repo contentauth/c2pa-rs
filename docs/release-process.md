@@ -1,4 +1,4 @@
-# How we release c2pa-rs and related crates
+# How to release c2pa-rs and related crates
 
 The build process for the crates in this repo is automated using [release-plz](https://release-plz.dev), a Rust-specific CI tool. Release-plz is two components: a Rust-based command-line tool ([GitHub](https://github.com/release-plz/release-plz)) and a pre-packaged GitHub Actions wrapper ([GitHub](https://github.com/release-plz/action)). We use the pre-packaged GitHub Actions wrapper in this project. Colin and Eric have both submitted fixes to release-plz. The developer is generally responsive and PRs are typically merged and released within a week or two.
 
@@ -63,7 +63,7 @@ For each supported command-line platform (MacOS, Windows, and Ubuntu), it perfor
 
 * **Uploads the binary and SBOM files to GitHub.** These are attached as additional outputs to the GitHub release generated in the publish step above.
 
-## Related: Commit lint used for PR title enforcement
+## Commit lint used for PR title enforcement
 
 Since release-plz makes use of [Conventional Commit syntax](https://www.conventionalcommits.org/en/v1.0.0/#summary) when generating changelogs, we want all commits to `main` to follow this syntax.
 
@@ -111,7 +111,7 @@ The "body" of the commit message (everything after the PR title) is not subject 
 
 MAINTENANCE NOTE: If this list of rules is changed, please keep in sync with [`.github/workflows/pr_title.yml`](../.github/workflows/pr_title.yml) and [`.commitlintrc`](../.commitlintrc).
 
-## Related: Nightly build process
+## Nightly build process
 
 We maintain a preflight build tree which is designed to allow downstream projects (notably, language bindings) to verify compatibility with SDK changes before they are pushed to a formal release. We call these "nightly" builds, but in reality there are several triggers which can cause a nightly build to be created:
 
