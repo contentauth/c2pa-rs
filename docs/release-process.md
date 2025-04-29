@@ -2,9 +2,7 @@
 
 The build process for the crates in this repo is automated using [release-plz](https://release-plz.dev), a Rust-specific CI tool. Release-plz is two components: a Rust-based command-line tool ([GitHub](https://github.com/release-plz/release-plz)) and a pre-packaged GitHub Actions wrapper ([GitHub](https://github.com/release-plz/action)). We use the pre-packaged GitHub Actions wrapper in this project. Colin and Eric have both submitted fixes to release-plz. The developer is generally responsive and PRs are typically merged and released within a week or two.
 
-Release-plz leverages information contains in the various `Cargo.toml` files and its own [`release-plz.toml`](../release-plz.toml) configuration file. 
-
-There are many options available for [configuring release-plz](https://release-plz.dev/docs/config). In this document, we will talk only about how it is configured for this project. For more detail about how release-plz works, we recommend reading the [release-plz documentation site](https://release-plz.dev/docs), which is quite extensive.
+Release-plz leverages information contains in the various `Cargo.toml` files and its own [`release-plz.toml`](../release-plz.toml) configuration file. In this document, we will talk only about how it release-plz is configured for this project. For more detail about the available settings in release-plz, we recommend reading the [release-plz documentation site](https://release-plz.dev/docs), which is quite extensive.
 
 ## How it works
 
