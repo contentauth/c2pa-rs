@@ -175,7 +175,7 @@ We have safeguards in place to ensure that a release PR will result in a success
 
 If you have questions about how release-plz works or are wanting to vet a new version of release-plz, I invite you to use the [`rp-sandbox` project](https://github.com/scouten-adobe/rp-sandbox/) to test changes or ideas.
 
-This repo has a dependency structure that is structurally similar to the `c2pa-rs` repo, but has dummy implementations of its three crates. CAI team members can contact me for collaborate access to this repo.
+This repo has a dependency structure that is structurally similar to the `c2pa-rs` repo, but has dummy implementations of its three crates. CAI team members can contact me for collaborator access to this repo.
 
 ## Behind the scenes
 
