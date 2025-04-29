@@ -1,6 +1,6 @@
 # How we release c2pa-rs and related crates
 
-The build process for the crates in this repo is automated using [release-plz](https://release-plz.dev), a Rust-specific CI tool.
+The build process for the crates in this repo is automated using [release-plz](https://release-plz.dev), a Rust-specific CI tool. Release-plz is two components: a Rust-based command-line tool ([GitHub](https://github.com/release-plz/release-plz)) and a pre-packaged GitHub Actions wrapper ([GitHub](https://github.com/release-plz/action)). We use the pre-packaged GitHub Actions wrapper in this project. Colin and Eric have both submitted fixes to release-plz. The developer is generally responsive and PRs are typically merged and released within a week or two.
 
 Release-plz leverages information contains in the various `Cargo.toml` files and its own [`release-plz.toml`](../release-plz.toml) configuration file. 
 
@@ -176,9 +176,3 @@ We have safeguards in place to ensure that a release PR will result in a success
 If you have questions about how release-plz works or are wanting to vet a new version of release-plz, I invite you to use the [`rp-sandbox` project](https://github.com/scouten-adobe/rp-sandbox/) to test changes or ideas.
 
 This repo has a dependency structure that is structurally similar to the `c2pa-rs` repo, but has dummy implementations of its three crates. CAI team members can contact me for collaborator access to this repo.
-
-## Behind the scenes
-
-Release-plz is two components: a Rust-based command-line tool ([GitHub](https://github.com/release-plz/release-plz)) and a pre-packaged GitHub Actions wrapper ([GitHub](https://github.com/release-plz/action)). We use the pre-packaged GitHub Actions wrapper in this project.
-
-Colin and Eric have both submitted fixes to release-plz. The developer is generally responsive and PRs are typically merged and released within a week or two.
