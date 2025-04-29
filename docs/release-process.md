@@ -36,16 +36,16 @@ For each project that is to be updated, release-plz will generate the following 
 
 IMPORTANT: It _is_ permissible to manually edit the proposed changelog in the PR, but be aware those changes will be overwritten if another update is triggered. release-plz uses force-push to update any existing release PR.
 
-IMPORTANT: If the version number of the crate in `main` is _different_ from the version number on [crates.io](https://crates.io), this job will NOT run. (See the next task.)
+IMPORTANT: If the version number of the crate in `main` is _different_ from the version number on [crates.io](https://crates.io), this job will NOT run. (See the next section, "Publish new crates.")
 
 ### Publish new crates
 
-For each crate in the repo, if the version number of the crate in `main` is _different_ from the version number on [crates.io](https://crates.io), release-plz will attempt to publish the crate to [crates.io](https://crates.io).
+For each crate in the repo, if the version number of the crate in `main` is _different_ from the version number on [crates.io](https://crates.io), release-plz will attempt to publish the crate to [crates.io](https://crates.io). This typically occurs after a maintainer has merged a release PR as generated in the previous step.
 
-Typically, this will happen because a maintainer merged a release PR created from the previous step. However, that is not absolutely required. ~~(Though **strongly discouraged,** you technically _could_ manually edit the version number in a `Cargo.toml` file and submit that directly to `main` yourself.)~~ (Turns out I'm wrong about this: release-plz has a specific safeguard that prevents the release process from running unless the last commit is from a release PR.)
+Specifically, it performs the following steps for each commit to `main`:
 
-Specifically, it performs the following steps when the version number doesn't match what's on [crates.io](https://crates.io):
-
+* **Verifies that the most recent commit to `main` is from a release-plz PR.** If not, skips the rest of this process.
+* **Compares the crate version in `Cargo.toml` to what is published on [crates.io](https://crates.io).** If the versions match, skips the rest of this process.
 * **Runs [`cargo publish`](https://doc.rust-lang.org/cargo/commands/cargo-publish.html)** for the crate and waits for notification that the crate has been successfully uploaded.
 * **Creates a [GitHub release](https://docs.github.com/en/repositories/releasing-projects-on-github/managing-releases-in-a-repository)** for the uploaded crate. This creates an annotated git tag of the form `(crate-name)-v(version-number)`, which – among other things – is used to drive the previous-version comparison for future release PRs. This also creates a ZIP archive of the source at this crate version which is stored on GitHub with the release.
 
