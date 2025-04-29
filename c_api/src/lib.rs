@@ -14,6 +14,7 @@
 mod c2pa_stream;
 mod c_api;
 mod error;
+#[cfg(feature = "json_api")]
 mod json_api;
 mod signer_info;
 
@@ -23,5 +24,6 @@ pub use c2pa::{
 pub use c2pa_stream::*;
 pub use c_api::*;
 pub use error::{Error, Result};
+#[cfg(feature = "json_api")]
 pub use json_api::{read_file, read_ingredient_file, sdk_version, sign_file};
 pub use signer_info::SignerInfo;

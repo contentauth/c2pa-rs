@@ -24,12 +24,9 @@ use c2pa::{
 use cawg_identity::validator::CawgValidator;
 use tokio::runtime::Runtime;
 
-use crate::{
-    c2pa_stream::C2paStream,
-    error::Error,
-    json_api::{read_file, read_ingredient_file, sign_file},
-    signer_info::SignerInfo,
-};
+#[cfg(feature = "json_api")]
+use crate::json_api::{read_file, read_ingredient_file, sign_file};
+use crate::{c2pa_stream::C2paStream, error::Error, signer_info::SignerInfo};
 
 // Work around limitations in cbindgen.
 mod cbindgen_fix {
@@ -227,6 +224,7 @@ pub unsafe extern "C" fn c2pa_load_settings(
 /// Reads from NULL-terminated C strings.
 /// The returned value MUST be released by calling release_string
 /// and it is no longer valid after that call.
+#[cfg(feature = "json_api")]
 #[no_mangle]
 pub unsafe extern "C" fn c2pa_read_file(
     path: *const c_char,
@@ -259,6 +257,7 @@ pub unsafe extern "C" fn c2pa_read_file(
 /// Reads from NULL-terminated C strings.
 /// The returned value MUST be released by calling release_string
 /// and it is no longer valid after that call.
+#[cfg(feature = "json_api")]
 #[no_mangle]
 pub unsafe extern "C" fn c2pa_read_ingredient_file(
     path: *const c_char,
@@ -303,6 +302,7 @@ pub struct C2paSignerInfo {
 /// Reads from NULL-terminated C strings.
 /// The returned value MUST be released by calling release_string
 /// and it is no longer valid after that call.
+#[cfg(feature = "json_api")]
 #[no_mangle]
 pub unsafe extern "C" fn c2pa_sign_file(
     source_path: *const c_char,

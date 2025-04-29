@@ -5742,8 +5742,22 @@ dependencies = [
  "arbitrary",
  "crc32fast",
  "crossbeam-utils",
+ "flate2",
  "indexmap 2.9.0",
  "memchr",
+ "zopfli",
+]
+
+[[package]]
+name = "zopfli"
+version = "0.8.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "edfc5ee405f504cd4984ecc6f14d02d55cfda60fa4b689434ef4102aae150cd7"
+dependencies = [
+ "bumpalo",
+ "crc32fast",
+ "log",
+ "simd-adler32",
 ]
 
 [[package]]
