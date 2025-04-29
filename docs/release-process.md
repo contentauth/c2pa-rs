@@ -8,7 +8,7 @@ There are many options available for [configuring release-plz](https://release-p
 
 ## How it works
 
-We use the pre-packaged [GitHub Actions wrapper](https://github.com/release-plz/action) to trigger builds. This is configured in our [`release.yml`](../.github/workflows/release.yml) task.
+We use the pre-packaged [release-plz GitHub Actions wrapper](https://github.com/release-plz/action) to trigger builds. This is configured in our [`release.yml`](../.github/workflows/release.yml) task.
 
 For additional information, please read the [release-plz documentation for GitHub Action](https://release-plz.dev/docs/github/quickstart).
 
