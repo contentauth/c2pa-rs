@@ -151,7 +151,7 @@ In order to reduce the signal noise in the git repo, I've added a step in the re
 
 ### `c2pa` crate accidentally published a 1.0.0 release
 
-(watch for this when publishing 1.0)
+When building and testing an earlier version of our release tooling (before adopting release-plz), we accidentally published a [version 1.0.0 of the `c2pa` crate](https://crates.io/crates/c2pa/1.0.0). We immediately yanked that version, but that means version 1.0.0 is permanently unavailable. When we do decide to release 1.0 of the `c2pa` crate, we will have to manually bump the version number to some other version (probably 1.0.1).
 
 ## Troubleshooting
 
