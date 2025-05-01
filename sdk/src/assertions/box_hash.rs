@@ -324,7 +324,6 @@ mod tests {
 
     use super::*;
     #[cfg(test)]
-    #[cfg_attr(coverage_nightly, coverage(off))]
     use crate::{jumbf_io::get_assetio_handler_from_path, utils::test::fixture_path};
 
     #[test]

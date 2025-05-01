@@ -178,7 +178,6 @@ pub(crate) fn to_url(did: &str) -> Result<String, DidWebError> {
     );
 
     #[cfg(test)]
-    #[cfg_attr(coverage_nightly, coverage(off))]
     PROXY.with(|proxy| {
         if let Some(ref proxy) = *proxy.borrow() {
             if domain_name == "localhost" {

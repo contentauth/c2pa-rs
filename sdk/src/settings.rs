@@ -103,7 +103,6 @@ impl Default for Trust {
     fn default() -> Self {
         // load test config store for unit tests
         #[cfg(test)]
-        #[cfg_attr(coverage_nightly, coverage(off))]
         {
             let mut trust = Self {
                 private_anchors: None,
