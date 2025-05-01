@@ -20,23 +20,21 @@ To use the library, add this to your `Cargo.toml`:
 c2pa = "0.45.2"
 ```
 
-To read or write a manifest file, add the `file_io` dependency to your `Cargo.toml`.
-
 <!-- Check whether thumbnail generation has been removed -->
 
 Add the `add_thumbnails` dependency to generate thumbnails for JPEG and PNG files. For example:
 
 ```
-c2pa = { version = "0.45.2", features = ["file_io", "add_thumbnails"] }
+c2pa = { version = "0.45.2", features = ["add_thumbnails"] }
 ```
 
 ## Features
 
 The Rust library crate provides the following capabilities:
 
-* `add_thumbnails` generates thumbnails automatically for JPEG and PNG files. (no longer included with `file_io`)
+* `add_thumbnails` generates thumbnails automatically for JPEG and PNG files.
 * `fetch_remote_manifests` enables the verification step to retrieve externally referenced manifest stores.  External manifests are only fetched if there is no embedded manifest store and no locally adjacent .c2pa manifest store file of the same name.
-* `file_io` enables manifest generation, signing via OpenSSL, and embedding manifests in [supported file formats](supported-formats.md).
+* `no_file_io` disables direct file system access, restricting all input and output operations to streams. This is useful for environments where file system access is unavailable or undesirable, such as embedded systems or secure sandboxes. This feature has no effect for the target `wasm32_unknown_unknown`, which cannot have file system access.
 * `json_schema` is used by `make schema` to produce a JSON schema document that represents the `ManifestStore` data structures.
 * `no_interleaved_io` forces fully-synchronous I/O; otherwise, the library uses threaded I/O for some operations to improve performance.
 * `serialize_thumbnails` includes binary thumbnail data in the [Serde](https://serde.rs/) serialization output.
@@ -74,7 +72,7 @@ Note that the `file:` and `app:` schemes are only used in the context of Manifes
 
 <!-- Is the above still true? "This is proposal, currently there is no implementation" -->
 
-When `file_io` is enabled, the lack of a scheme will be interpreted as a `file:///` reference, otherwise as an `app:` reference.
+The lack of a scheme will be interpreted as a `file:///` reference, otherwise as an `app:` reference.
 
 ### Source asset vs parent asset
 
