@@ -318,11 +318,13 @@ impl AssertionBase for BoxHash {
 
 #[cfg(feature = "file_io")]
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     #![allow(clippy::unwrap_used)]
 
     use super::*;
     #[cfg(test)]
+    #[cfg_attr(coverage_nightly, coverage(off))]
     use crate::{jumbf_io::get_assetio_handler_from_path, utils::test::fixture_path};
 
     #[test]

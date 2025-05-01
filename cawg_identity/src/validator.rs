@@ -53,6 +53,7 @@ impl AsyncPostValidator for CawgValidator {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     #![allow(clippy::unwrap_used)]
     use std::io::Cursor;

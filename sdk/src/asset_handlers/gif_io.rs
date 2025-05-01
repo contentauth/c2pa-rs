@@ -1139,6 +1139,7 @@ fn gif_chunks(mut encoded_bytes: &[u8]) -> impl Iterator<Item = &[u8]> {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     #![allow(clippy::unwrap_used)]
     use io::{Cursor, Seek};

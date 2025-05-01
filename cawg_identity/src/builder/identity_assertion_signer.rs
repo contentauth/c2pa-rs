@@ -41,6 +41,7 @@ impl IdentityAssertionSigner {
     /// (FOR USE BY INTERNAL TESTS ONLY): Create an IdentityAssertionSigner
     /// using test credentials for a particular algorithm.
     #[cfg(test)]
+    #[cfg_attr(coverage_nightly, coverage(off))]
     pub(crate) fn from_test_credentials(alg: SigningAlg) -> Self {
         use c2pa_crypto::raw_signature::signer_from_cert_chain_and_private_key;
 

@@ -100,6 +100,7 @@ pub(crate) fn verify_trust(
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 #[cfg(feature = "file_io")]
 pub mod tests {
     #![allow(clippy::expect_used)]

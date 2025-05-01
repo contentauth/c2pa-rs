@@ -266,6 +266,7 @@ impl AsyncTimeStampProvider for AsyncSignerWrapper<'_> {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     #![allow(clippy::unwrap_used)]
     use c2pa_crypto::raw_signature::SigningAlg;

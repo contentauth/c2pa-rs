@@ -113,6 +113,7 @@ impl SignConfig {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 pub mod tests {
     #![allow(clippy::unwrap_used)]
 

@@ -1624,6 +1624,7 @@ impl ComposedManifestRef for TiffIO {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 pub mod tests {
     #![allow(clippy::panic)]
     #![allow(clippy::unwrap_used)]

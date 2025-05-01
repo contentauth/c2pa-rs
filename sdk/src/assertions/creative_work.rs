@@ -103,6 +103,7 @@ impl AssertionBase for CreativeWork {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 pub mod tests {
     #![allow(clippy::expect_used)]
     #![allow(clippy::unwrap_used)]

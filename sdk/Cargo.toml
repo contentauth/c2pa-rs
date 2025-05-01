@@ -41,7 +41,7 @@ v1_api = []
 diagnostics = []
 
 [lints.rust]
-unexpected_cfgs = { level = "warn", check-cfg = ['cfg(test)'] }
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(coverage,coverage_nightly,test)'] }
 # Workaround for https://github.com/est31/cargo-udeps/issues/293.
 
 [[example]]

@@ -254,6 +254,7 @@ pub fn save_jumbf_to_file<P1: AsRef<Path>, P2: AsRef<Path>>(
 /// replace_bytes - replacement bytes
 /// returns the location where splice occurred
 #[cfg(test)] // this only used in unit tests
+#[cfg_attr(coverage_nightly, coverage(off))]
 #[cfg(feature = "file_io")]
 pub(crate) fn update_file_jumbf(
     out_path: &Path,
@@ -350,6 +351,7 @@ pub fn get_supported_types() -> Vec<String> {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 pub mod tests {
     #![allow(clippy::panic)]
     #![allow(clippy::unwrap_used)]

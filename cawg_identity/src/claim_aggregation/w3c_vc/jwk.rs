@@ -130,6 +130,7 @@ pub enum Params {
 impl Params {
     /// Strip private key material
     #[cfg(test)] // So far, only used in test code
+    #[cfg_attr(coverage_nightly, coverage(off))]
     pub fn to_public(&self) -> Self {
         match self {
             // Self::EC(params) => Self::EC(params.to_public()),
@@ -182,6 +183,7 @@ type Base64urlUIntString = String;
 
 impl Jwk {
     #[cfg(test)]
+    #[cfg_attr(coverage_nightly, coverage(off))]
     pub fn generate_ed25519() -> Result<Jwk, JwkError> {
         let mut csprng = rand::rngs::OsRng {};
         let secret = ed25519_dalek::SigningKey::generate(&mut csprng);
@@ -194,6 +196,7 @@ impl Jwk {
     }
 
     #[cfg(test)]
+    #[cfg_attr(coverage_nightly, coverage(off))]
     pub fn get_algorithm(&self) -> Option<Algorithm> {
         if let Some(algorithm) = self.algorithm {
             return Some(algorithm);
@@ -209,6 +212,7 @@ impl Jwk {
 
     /// Strip private key material
     #[cfg(test)]
+    #[cfg_attr(coverage_nightly, coverage(off))]
     pub fn to_public(&self) -> Self {
         let mut key = self.clone();
         key.params = key.params.to_public();

@@ -50,6 +50,7 @@ impl Default for CertificateTrustPolicy {
 
         // In testing configs, also add debug/trust anchors.
         #[cfg(test)]
+        #[cfg_attr(coverage_nightly, coverage(off))]
         {
             let _ = this.add_trust_anchors(include_bytes!(
                 "../tests/fixtures/raw_signature/test_cert_root_bundle.pem"

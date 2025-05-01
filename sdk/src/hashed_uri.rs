@@ -103,6 +103,7 @@ impl fmt::Display for HashedUri {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use hex_literal::hex;
 

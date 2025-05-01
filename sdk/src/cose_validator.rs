@@ -178,6 +178,7 @@ pub(crate) fn get_signing_info(
 
 #[allow(unused_imports)]
 #[allow(clippy::unwrap_used)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 #[cfg(test)]
 pub mod tests {
     use c2pa_crypto::raw_signature::SigningAlg;

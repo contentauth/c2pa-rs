@@ -23,9 +23,11 @@ use super::{did::Did, did_doc::DidDocument};
 const USER_AGENT: &str = concat!(env!("CARGO_PKG_NAME"), "/", env!("CARGO_PKG_VERSION"));
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 use std::cell::RefCell;
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 thread_local! {
     pub(crate) static PROXY: RefCell<Option<String>> = const { RefCell::new(None) };
 }
@@ -176,6 +178,7 @@ pub(crate) fn to_url(did: &str) -> Result<String, DidWebError> {
     );
 
     #[cfg(test)]
+    #[cfg_attr(coverage_nightly, coverage(off))]
     PROXY.with(|proxy| {
         if let Some(ref proxy) = *proxy.borrow() {
             if domain_name == "localhost" {

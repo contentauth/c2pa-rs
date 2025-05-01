@@ -136,6 +136,7 @@ impl DidBuf {
     }
 
     #[cfg(test)] // currently only used in test code
+    #[cfg_attr(coverage_nightly, coverage(off))]
     pub fn into_uri(self) -> iref::UriBuf {
         unsafe { iref::UriBuf::new_unchecked(self.0.into_bytes()) }
     }

@@ -781,6 +781,7 @@ impl ComposedManifestRef for PngIO {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 #[allow(clippy::panic)]
 #[allow(clippy::unwrap_used)]
 pub mod tests {

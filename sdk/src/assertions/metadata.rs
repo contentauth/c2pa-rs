@@ -116,6 +116,7 @@ impl Metadata {
 
     /// Sets a [`HashedUri`] reference to another assertion to which this metadata applies.
     #[cfg(test)] // only referenced from test code
+    #[cfg_attr(coverage_nightly, coverage(off))]
     pub(crate) fn set_reference(mut self, reference: HashedUri) -> Self {
         self.reference = Some(reference);
         self
@@ -318,6 +319,7 @@ pub struct DataBox {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 pub mod tests {
     #![allow(clippy::expect_used)]
     #![allow(clippy::unwrap_used)]

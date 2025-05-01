@@ -1542,6 +1542,7 @@ impl SignatureInfo {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 #[cfg(feature = "v1_api")] // todo: convert/move some of these to builder
 pub(crate) mod tests {
     #![allow(clippy::expect_used)]

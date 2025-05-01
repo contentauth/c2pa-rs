@@ -94,6 +94,7 @@ pub fn tree<P: AsRef<Path>>(path: P) -> Result<String> {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
 

@@ -203,6 +203,7 @@ pub fn add_provenance(xmp: &str, provenance: &str) -> Result<String> {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     #![allow(clippy::expect_used)]
     #![allow(clippy::unwrap_used)]

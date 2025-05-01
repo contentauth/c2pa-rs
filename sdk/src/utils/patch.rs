@@ -57,6 +57,7 @@ pub fn patch_file(
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 pub mod tests {
     #![allow(clippy::unwrap_used)]
 

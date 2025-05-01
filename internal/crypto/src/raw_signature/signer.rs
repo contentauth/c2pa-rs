@@ -291,6 +291,7 @@ impl AsyncTimeStampProvider for AsyncRawSignerWrapper {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 #[allow(clippy::unwrap_used)]
 pub(crate) fn test_signer(alg: SigningAlg) -> Box<dyn RawSigner> {
     let (cert_chain, private_key) = match alg {

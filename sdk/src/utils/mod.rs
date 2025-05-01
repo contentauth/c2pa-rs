@@ -30,8 +30,10 @@ pub(crate) mod time_it;
 pub(crate) mod xmp_inmemory_utils;
 // shared unit testing utilities
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 #[allow(dead_code)] // for wasm build
 pub mod test;
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 pub(crate) mod test_signer;

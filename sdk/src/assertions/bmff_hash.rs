@@ -1249,6 +1249,7 @@ fn stsc_index(track: &Mp4Track, sample_id: u32) -> crate::Result<usize> {
 
 /* we need shippable examples
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 pub mod tests {
     #![allow(clippy::expect_used)]
     #![allow(clippy::panic)]

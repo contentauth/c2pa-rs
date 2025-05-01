@@ -1510,6 +1510,7 @@ impl IngredientOptions for DefaultOptions {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     #![allow(clippy::expect_used)]
     #![allow(clippy::unwrap_used)]
@@ -1732,6 +1733,7 @@ mod tests {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 #[cfg(feature = "file_io")]
 mod tests_file_io {
     #![allow(clippy::expect_used)]

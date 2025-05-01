@@ -248,6 +248,7 @@ pub(crate) fn manifest_label_to_parts(uri: &str) -> Option<ManifestParts> {
     None
 }
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 pub mod tests {
     #![allow(clippy::unwrap_used)]
 

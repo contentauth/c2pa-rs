@@ -446,6 +446,7 @@ fn b64_tag(mut json: String, tag: &str) -> String {
 
 #[cfg(feature = "file_io")]
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     #![allow(clippy::expect_used)]
 
