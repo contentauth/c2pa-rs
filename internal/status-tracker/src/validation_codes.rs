@@ -138,6 +138,11 @@ pub const TIMESTAMP_UNTRUSTED: &str = "timeStamp.untrusted";
 /// Any corresponding URL should point to a C2PA assertion.
 pub const MANIFEST_UNKNOWN_PROVENANCE: &str = "manifest.unknownProvenance";
 
+/// The manifest is not referenced via an ingredient assertion.
+///
+/// Any corresponding URL should point to a C2PA assertion.
+pub const MANIFEST_UNREFERENCED: &str = "manifest.unreferenced";
+
 /// The ingredient does not contain a manifest or cannot be interpreted
 /// by this version of the SDK.
 ///
@@ -407,6 +412,11 @@ pub const ASSERTION_OUTSIDE_MANIFEST: &str = "assertion.outsideManifest";
 ///
 /// Any corresponding URL should point to a C2PA assertion box.
 pub const ASSERTION_ACTION_MALFORMED: &str = "assertion.action.malformed";
+
+/// An actions assertion ingredient malformed.
+///
+/// Any corresponding URL should point to a C2PA assertion box.
+pub const ASSERTION_ACTION_INGREDIENT_MISMATCH: &str = "assertion.action.ingredientMismatch";
 
 /// An action that requires an associated redaction either does not have one
 ///  or the one specified cannot be located

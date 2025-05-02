@@ -55,6 +55,9 @@ pub enum Error {
     #[error("required feature missing")]
     MissingFeature(String),
 
+    #[error("validation rule was violated: {0}")]
+    ValidationRule(String),
+
     #[error("feature implementation incomplete")]
     NotImplemented(String),
 

@@ -27,6 +27,7 @@ use c2pa_status_tracker::{
 use coset::CoseSign1;
 use x509_parser::prelude::X509Certificate;
 
+use super::sign1::iat_from_sign1;
 use crate::{
     asn1::rfc3161::TstInfo,
     base64::encode,
@@ -39,8 +40,6 @@ use crate::{
     raw_signature::{validator_for_signing_alg, SigningAlg},
     time_stamp::TimeStampError,
 };
-
-use super::sign1::iat_from_sign1;
 
 /// A `Verifier` reads a COSE signature and reports on its validity.
 ///

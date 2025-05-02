@@ -97,11 +97,7 @@ pub fn iat_from_sign1(sign1: &coset::CoseSign1) -> Option<String> {
         .iter()
         .find_map(|x: &(Label, Value)| {
             if x.0 == Label::Text("iat".to_string()) {
-                if let Some(t) = x.1.as_text() {
-                    Some(t.to_string())
-                } else {
-                    None
-                }
+                x.1.as_text().map(|t| t.to_string())
             } else {
                 None
             }
@@ -126,7 +122,7 @@ pub fn cert_chain_from_sign1(sign1: &coset::CoseSign1) -> Result<Vec<Vec<u8>>, C
             }
         })
     else {
-        // Not there: Also try unprotected header. (This was permitted in older versions
+        // Note: Also try unprotected header. (This was permitted in older versions
         // of C2PA.)
         return get_unprotected_header_certs(sign1);
     };
