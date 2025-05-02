@@ -980,17 +980,17 @@ impl Claim {
 
     /// Return the JUMBF URI for this claim.
     pub fn uri(&self) -> String {
-        jumbf::labels::to_manifest_uri(&self.label())
+        jumbf::labels::to_manifest_uri(self.label())
     }
 
     /// Return the JUMBF URI for an assertion on this claim.
     pub fn assertion_uri(&self, assertion_label: &str) -> String {
-        jumbf::labels::to_assertion_uri(&self.label(), assertion_label)
+        jumbf::labels::to_assertion_uri(self.label(), assertion_label)
     }
 
     /// Return the JUMBF Signature URI for this claim.
     pub fn signature_uri(&self) -> String {
-        jumbf::labels::to_signature_uri(&self.label())
+        jumbf::labels::to_signature_uri(self.label())
     }
 
     // Add link to the signature box for this claim.
@@ -1626,7 +1626,7 @@ impl Claim {
         // Replace existing hash with newly-calculated hash.
         f.update_hash(target_hash.to_vec());
 
-        // fix up ClaimV2 URI reference too
+        // fix up ClaimV2 URI reference for created assertions
         if let Some(f) = self
             .created_assertions
             .iter_mut()
@@ -1636,6 +1636,13 @@ impl Claim {
             f.update_hash(target_hash.to_vec());
         };
 
+        // fix up ClaimV2 URI reference for gathered assertions
+        if let Some(f) = self.gathered_assertions.as_mut().and_then(|ga| {
+            ga.iter_mut()
+                .find(|f| f.url().contains(&target_label) && vec_compare(&f.hash(), &original_hash))
+        }) {
+            f.update_hash(target_hash.to_vec())
+        };
         // clear original since content has changed
         self.clear_data();
 
@@ -1866,6 +1873,9 @@ impl Claim {
         let sig = claim.signature_val();
         let additional_bytes: Vec<u8> = Vec::new();
 
+        // use the signature uri as the current uri while validating the signature info
+        validation_log.push_current_uri(claim.signature.clone());
+
         // make sure signature manifest if present points to this manifest
         let sig_box_err = match jumbf::labels::manifest_label_from_uri(&claim.signature) {
             Some(signature_url) if signature_url != claim.label() => true,
@@ -2083,23 +2093,22 @@ impl Claim {
 
                 // 2.c any other actions assertions cannot contain created or opened actions (v2 claim)
                 if let Some(fa) = first_actions_assertion {
-                    if fa != actions_assertion {
-                        if action.action() == c2pa_action::OPENED
-                            || action.action() == c2pa_action::CREATED
-                        {
-                            log_item!(
-                                label.clone(),
-                                "only first actions can be created or opened",
-                                "verify_actions"
-                            )
-                            .validation_status(validation_status::ASSERTION_ACTION_MALFORMED)
-                            .failure(
-                                validation_log,
-                                Error::ValidationRule(
-                                    "only first actions can be created or opened".into(),
-                                ),
-                            )?;
-                        }
+                    if fa != actions_assertion
+                        && (action.action() == c2pa_action::OPENED
+                            || action.action() == c2pa_action::CREATED)
+                    {
+                        log_item!(
+                            label.clone(),
+                            "only first actions can be created or opened",
+                            "verify_actions"
+                        )
+                        .validation_status(validation_status::ASSERTION_ACTION_MALFORMED)
+                        .failure(
+                            validation_log,
+                            Error::ValidationRule(
+                                "only first actions can be created or opened".into(),
+                            ),
+                        )?;
                     }
                 }
 
@@ -2203,7 +2212,7 @@ impl Claim {
 
                             if let Some(ingredient_label) = manifest_label_from_uri(&h.url()) {
                                 // can we find a reference in the ingredient list
-                                if svi.ingredient_references.get(&ingredient_label).is_some() {
+                                if svi.ingredient_references.contains_key(&ingredient_label) {
                                     // is it referenced from this manifest
                                     if claim.ingredient_assertions().iter().any(|i| {
                                         if let Ok(ingredient) = Ingredient::from_assertion(i) {
@@ -2245,7 +2254,7 @@ impl Claim {
                             for h in h_vec {
                                 if let Some(ingredient_label) = manifest_label_from_uri(&h.url()) {
                                     // can we find a reference in the ingredient list
-                                    if svi.ingredient_references.get(&ingredient_label).is_some() {
+                                    if svi.ingredient_references.contains_key(&ingredient_label) {
                                         // is it referenced from this manifest
                                         if claim.ingredient_assertions().iter().any(|i| {
                                             if let Ok(ingredient) = Ingredient::from_assertion(i) {
@@ -2314,7 +2323,7 @@ impl Claim {
 
                             if let Some(ingredient_label) = manifest_label_from_uri(&h.url()) {
                                 // can we find a reference in the ingredient list
-                                if svi.ingredient_references.get(&ingredient_label).is_some() {
+                                if svi.ingredient_references.contains_key(&ingredient_label) {
                                     // is it referenced from this manifest
                                     if claim.ingredient_assertions().iter().any(|i| {
                                         if let Ok(ingredient) = Ingredient::from_assertion(i) {
@@ -2356,7 +2365,7 @@ impl Claim {
                             for h in h_vec {
                                 if let Some(ingredient_label) = manifest_label_from_uri(&h.url()) {
                                     // can we find a reference in the ingredient list
-                                    if svi.ingredient_references.get(&ingredient_label).is_some() {
+                                    if svi.ingredient_references.contains_key(&ingredient_label) {
                                         // is it referenced from this manifest
                                         if claim.ingredient_assertions().iter().any(|i| {
                                             if let Ok(ingredient) = Ingredient::from_assertion(i) {
@@ -2441,7 +2450,7 @@ impl Claim {
 
                         if let Some(ingredient_label) = manifest_label_from_uri(&h.url()) {
                             // can we find a reference in the ingredient list
-                            if svi.ingredient_references.get(&ingredient_label).is_some() {
+                            if svi.ingredient_references.contains_key(&ingredient_label) {
                                 // is it referenced from this manifest
                                 if claim.ingredient_assertions().iter().any(|i| {
                                     if let Ok(ingredient) = Ingredient::from_assertion(i) {
@@ -2486,7 +2495,7 @@ impl Claim {
                         for h in h_vec {
                             if let Some(ingredient_label) = manifest_label_from_uri(&h.url()) {
                                 // can we find a reference in the ingredient list
-                                if svi.ingredient_references.get(&ingredient_label).is_some() {
+                                if svi.ingredient_references.contains_key(&ingredient_label) {
                                     // is it referenced from this manifest
                                     if claim.ingredient_assertions().iter().any(|i| {
                                         if let Ok(ingredient) = Ingredient::from_assertion(i) {
@@ -2513,25 +2522,20 @@ impl Claim {
                         }
                     }
                     // will only exist if we actual tested for an ingredient
-                    match parent_tested {
-                        Some(v) if v == false => {
-                            log_item!(
-                                label.clone(),
-                                "action must have valid ingredient with ParentOf relationship",
-                                "verify_actions"
-                            )
-                            .validation_status(
-                                validation_status::ASSERTION_ACTION_INGREDIENT_MISMATCH,
-                            )
-                            .failure(
-                                validation_log,
-                                Error::ValidationRule(
-                                    "action must have valid ingredient with ParentOf relationship"
-                                        .into(),
-                                ),
-                            )?;
-                        }
-                        _ => (),
+                    if let Some(false) = parent_tested {
+                        log_item!(
+                            label.clone(),
+                            "action must have valid ingredient with ParentOf relationship",
+                            "verify_actions"
+                        )
+                        .validation_status(validation_status::ASSERTION_ACTION_INGREDIENT_MISMATCH)
+                        .failure(
+                            validation_log,
+                            Error::ValidationRule(
+                                "action must have valid ingredient with ParentOf relationship"
+                                    .into(),
+                            ),
+                        )?;
                     }
                 }
 
@@ -2627,24 +2631,19 @@ impl Claim {
                             }
                         }
                         // will only exist if we actual tested for an ingredient
-                        match parent_tested {
-                            Some(v) if v == false => {
-                                log_item!(
-                                    label.clone(),
-                                    "action must have valid ingredient",
-                                    "verify_actions"
-                                )
-                                .validation_status(
-                                    validation_status::ASSERTION_ACTION_REDACTION_MISMATCH,
-                                )
-                                .failure(
-                                    validation_log,
-                                    Error::ValidationRule(
-                                        "action must have valid ingredient".into(),
-                                    ),
-                                )?;
-                            }
-                            _ => (),
+                        if let Some(false) = parent_tested {
+                            log_item!(
+                                label.clone(),
+                                "action must have valid ingredient",
+                                "verify_actions"
+                            )
+                            .validation_status(
+                                validation_status::ASSERTION_ACTION_REDACTION_MISMATCH,
+                            )
+                            .failure(
+                                validation_log,
+                                Error::ValidationRule("action must have valid ingredient".into()),
+                            )?;
                         }
                     }
                 }
@@ -2928,7 +2927,7 @@ impl Claim {
                         .unwrap_err()
                     })?;
 
-                if &assertion_manifest != claim.label() {
+                if assertion_manifest != claim.label() {
                     log_item!(
                         assertion.url(),
                         format!(
@@ -2952,7 +2951,7 @@ impl Claim {
             // remove from tracking list
             if let Some(index) = ca_tracking_list
                 .iter()
-                .position(|v| v.label_raw().as_str() == &label && v.instance() == instance)
+                .position(|v| v.label_raw().as_str() == label && v.instance() == instance)
             {
                 ca_tracking_list.swap_remove(index);
             }
@@ -2960,8 +2959,8 @@ impl Claim {
             // we can skip if this is a redacted assertion
             if svi.redactions.iter().any(|r| {
                 let r_manifest = manifest_label_from_uri(r).unwrap_or_default();
-                if &r_manifest == claim.label() {
-                    let (r_label, r_instance) = Claim::assertion_label_from_link(&r);
+                if r_manifest == claim.label() {
+                    let (r_label, r_instance) = Claim::assertion_label_from_link(r);
                     r_label == label && r_instance == instance
                 } else {
                     false
@@ -3038,7 +3037,7 @@ impl Claim {
         }
 
         // verify data hashes for provenance claims
-        if claim.label() == &svi.binding_claim {
+        if claim.label() == svi.binding_claim {
             // must have at least one hard binding for normal manifests
             if claim.hash_assertions().is_empty() && !claim.update_manifest() {
                 log_item!(claim.uri(), "claim missing data binding", "verify_internal")
@@ -3140,7 +3139,9 @@ impl Claim {
                         .validation_status(validation_status::ASSERTION_DATAHASH_MISMATCH)
                         .failure(
                             validation_log,
-                            Error::HashMismatch(format!("remote data hash URIs are not supported")),
+                            Error::HashMismatch(
+                                "remote data hash URIs are not supported".to_string(),
+                            ),
                         )?;
                     }
                 } else if hash_binding_assertion.label_root() == BmffHash::LABEL {

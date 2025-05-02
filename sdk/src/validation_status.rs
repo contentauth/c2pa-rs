@@ -140,7 +140,7 @@ impl ValidationStatus {
     // Maps errors into validation_status codes.
     fn code_from_error_str(error: &str) -> &str {
         match error {
-            e if e == "ClaimMissing" => CLAIM_MISSING,
+            "ClaimMissing" => CLAIM_MISSING,
             e if e.starts_with("AssertionMissing") => ASSERTION_MISSING,
             e if e.starts_with("AssertionDecoding") => ASSERTION_REQUIRED_MISSING,
             e if e.starts_with("HashMismatch") => ASSERTION_DATAHASH_MATCH,
@@ -208,7 +208,7 @@ impl ValidationStatus {
 
 impl PartialEq for ValidationStatus {
     fn eq(&self, other: &Self) -> bool {
-        self.code == other.code && self.url == other.url
+        self.code == other.code && self.url == other.url && self.kind == other.kind
     }
 }
 

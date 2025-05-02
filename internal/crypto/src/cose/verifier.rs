@@ -222,7 +222,7 @@ impl Verifier<'_> {
                     "verify_profile"
                 )
                 .validation_status(TIMESTAMP_MISMATCH)
-                .failure_no_throw(validation_log, TimeStampError::InvalidData);
+                .informational(validation_log);
 
                 Err(TimeStampError::InvalidData.into())
             }
@@ -234,7 +234,7 @@ impl Verifier<'_> {
                     "verify_profile"
                 )
                 .validation_status(TIMESTAMP_OUTSIDE_VALIDITY)
-                .failure_no_throw(validation_log, TimeStampError::ExpiredCertificate);
+                .informational(validation_log);
 
                 Err(TimeStampError::ExpiredCertificate.into())
             }
@@ -253,7 +253,8 @@ impl Verifier<'_> {
 
             Err(e) => {
                 log_item!("Cose_Sign1", "error parsing timestamp", "verify_cose")
-                    .failure_no_throw(validation_log, e);
+                    .validation_status(TIMESTAMP_MALFORMED)
+                    .informational(validation_log);
 
                 // Frustratingly, we can't clone CoseError. The likely cases are already handled
                 // above, so we'll call this an internal error.

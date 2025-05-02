@@ -91,6 +91,7 @@ pub fn validator_for_signing_alg(alg: SigningAlg) -> Option<Box<dyn RawSignature
 }
 // Find correct hash choice to the signing alg,
 // this also works as a passthrough if the hash is known.
+#[allow(clippy::if_same_then_else)]
 fn signing_alg_to_hash_alg(sign_hash_alg: &Oid) -> Oid {
     let hash = if sign_hash_alg.as_ref() == SHA256_WITH_RSAENCRYPTION_OID.as_bytes() {
         SHA256_OID.to_owned()

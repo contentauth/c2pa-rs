@@ -17,6 +17,8 @@
 //!
 //! See <https://c2pa.org/specifications/specifications/1.0/specs/C2PA_Specification.html#_c2pa_box_details>.
 
+use std::fmt::Display;
+
 /// Label for the C2PA manifest store.
 ///
 /// This value should be used when possible, since it may contain a version suffix
@@ -188,14 +190,15 @@ pub(crate) struct ManifestParts {
     pub reason: Option<usize>,
 }
 
-impl ManifestParts {
-    // converts manifest part to string
-    pub fn to_string(&self) -> String {
+impl Display for ManifestParts {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         if self.is_v1 {
             if let Some(vendor) = &self.cgi {
-                format!("{}:urn:uuid:{}", vendor, &self.guid)
+                let mp = format!("{}:urn:uuid:{}", vendor, &self.guid);
+                write!(f, "{}", mp)
             } else {
-                format!("urn:uuid:{}", &self.guid)
+                let mp = format!("urn:uuid:{}", &self.guid);
+                write!(f, "{}", mp)
             }
         } else {
             let mut mp = format!("urn:c2pa:{}", self.guid);
@@ -216,7 +219,7 @@ impl ManifestParts {
                     mp = format!("_{}", reason);
                 }
             }
-            mp
+            write!(f, "{}", mp)
         }
     }
 }

@@ -124,14 +124,7 @@ impl Ingredient {
         // get correct hashed URI
         match &self.active_manifest {
             Some(m) => Some(m.clone()), // > v2 ingredient assertion
-            None => {
-                if let Some(m) = &self.c2pa_manifest {
-                    // v2 ingredient
-                    Some(m.clone())
-                } else {
-                    None
-                }
-            }
+            None => self.c2pa_manifest.clone(),
         }
     }
 

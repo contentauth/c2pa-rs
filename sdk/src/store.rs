@@ -1632,14 +1632,14 @@ impl Store {
         let binding_claim = match self.get_hash_binding_manifest(claim) {
             Some(label) => label,
             None => {
-                return Err(log_item!(
+                log_item!(
                     claim.label().to_owned(),
                     "could not find manifest with hard binding",
                     "get_store_validation_info"
                 )
                 .validation_status(validation_status::HARD_BINDINGS_MISSING)
-                .failure(validation_log, Error::ClaimMissingHardBinding)
-                .unwrap_err());
+                .failure(validation_log, Error::ClaimMissingHardBinding)?;
+                return Err(Error::ClaimMissingHardBinding);
             }
         };
 
@@ -1694,7 +1694,7 @@ impl Store {
         if self
             .claims()
             .iter()
-            .any(|c| manifest_map.get(c.label()).is_none())
+            .any(|c| !manifest_map.contains_key(c.label()))
         {
             log_item!(
                 claim.label().to_owned(),
@@ -2299,9 +2299,10 @@ impl Store {
         }
 
         let pc = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
+        // always add dynamic assertions as gathered assertions
         assertions
             .iter()
-            .map(|a| pc.add_assertion_with_salt(a, &DefaultSalt::default()))
+            .map(|a| pc.add_gathered_assertion_with_salt(a, &DefaultSalt::default()))
             .collect()
     }
 
@@ -3987,10 +3988,8 @@ impl Store {
                         // recurse until we find
                         if parent.update_manifest() {
                             self.get_hash_binding_manifest(parent);
-                        } else {
-                            if !parent.hash_assertions().is_empty() {
-                                return Some(parent.label().to_owned());
-                            }
+                        } else if !parent.hash_assertions().is_empty() {
+                            return Some(parent.label().to_owned());
                         }
                     }
                 }
@@ -4000,7 +3999,7 @@ impl Store {
     }
 
     // determine if the only changes are redacted assertions
-    fn manifest_differs_by_redaction(c1: &Claim, c2: &Claim, redactions: &Vec<String>) -> bool {
+    fn manifest_differs_by_redaction(c1: &Claim, c2: &Claim, redactions: &[String]) -> bool {
         if let Ok(d1) = c1.data() {
             if let Ok(d2) = c2.data() {
                 if d1 != d2 {
@@ -4025,21 +4024,11 @@ impl Store {
         let differences: Vec<ClaimAssertion> =
             if c1.claim_assertion_store().len() > c2.claim_assertion_store().len() {
                 let mut c1_clone = c1.claim_assertion_store().clone();
-                c1_clone.retain(|ca1| {
-                    c2.claim_assertion_store()
-                        .iter()
-                        .find(|ca2| ca1 == *ca2)
-                        .is_none()
-                });
+                c1_clone.retain(|ca1| !c2.claim_assertion_store().iter().any(|ca2| ca1 == ca2));
                 c1_clone
             } else {
                 let mut c2_clone = c2.claim_assertion_store().clone();
-                c2_clone.retain(|ca2| {
-                    c1.claim_assertion_store()
-                        .iter()
-                        .find(|ca1| ca2 == *ca1)
-                        .is_none()
-                });
+                c2_clone.retain(|ca2| !c1.claim_assertion_store().iter().any(|ca1| ca2 == ca1));
                 c2_clone
             };
 
@@ -4051,8 +4040,7 @@ impl Store {
             // was the difference in the redacted list
             if redactions
                 .iter()
-                .find(|redaction_uri| redaction_uri.as_str() == difference_uri.as_str())
-                .is_some()
+                .any(|redaction_uri| redaction_uri.as_str() == difference_uri.as_str())
             {
                 redact_matches += 1;
             }
@@ -4063,7 +4051,7 @@ impl Store {
             return true;
         }
 
-        return false;
+        false
     }
 
     // build ingredient lists for the Clain in the specified Store
@@ -4248,13 +4236,7 @@ impl Store {
 
                         claims
                             .iter()
-                            .find(|c| {
-                                if c.label() == provenance_label {
-                                    true
-                                } else {
-                                    false
-                                }
-                            })
+                            .find(|c| c.label() == provenance_label)
                             .ok_or(Error::OtherError("claim not found in store".into()))?
                     }
                     None => return Err(Error::OtherError("claim not found in store".into())),
@@ -4266,7 +4248,7 @@ impl Store {
                         .flatten(),
                 )
                 .into_iter()
-                .collect();
+                .collect::<Vec<String>>();
 
                 // do any of the conflicting manifests contain redactions
                 let mut to_current_claim = Vec::new();
@@ -5879,7 +5861,7 @@ pub mod tests {
         // replace the title that is inside the claim data - should cause signature to not match
         let report = patch_and_report("C.jpg", b"C.jpg", b"X.jpg");
         assert!(!report.logged_items().is_empty());
-        assert!(report.has_error(c2pa_crypto::time_stamp::TimeStampError::InvalidData));
+        // note in the older validation statuses, this was an error, but now it is informational
         assert!(report.has_status(validation_status::TIMESTAMP_MISMATCH));
     }
 
@@ -7164,7 +7146,7 @@ pub mod tests {
         // test adding to actual image
 
         let tempdir = tempdirectory().expect("temp dir");
-        let output_path = tempdir.into_path();
+        let output_path = tempdir.path();
 
         // search folders for init segments
         for init in glob::glob(
@@ -7195,8 +7177,10 @@ pub mod tests {
                     // Do we generate JUMBF?
                     let signer = test_signer(SigningAlg::Ps256);
 
-                    // add manifest based on
-                    let new_output_path = output_path.join(init_dir.file_name().unwrap());
+                    // Use Tempdir for automatic cleanup
+                    let new_subdir = tempfile::TempDir::new_in(output_path)
+                        .expect("Failed to create temp subdir");
+                    let new_output_path = new_subdir.path().join(init_dir.file_name().unwrap());
                     store
                         .save_to_bmff_fragmented(
                             p.as_path(),
