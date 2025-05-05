@@ -711,79 +711,6 @@ checksum = "d71b6127be86fdcfddb610f7182ac57211d4b18a3e9c82eb2d17662f2227ad6a"
 
 [[package]]
 name = "c2pa"
-version = "0.49.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5badbd5c27050552366f4309023e35643d56069a35f45f0efd597952a5de6627"
-dependencies = [
- "asn1-rs",
- "async-generic",
- "async-recursion",
- "async-trait",
- "atree",
- "bcder",
- "byteorder",
- "byteordered",
- "bytes",
- "c2pa-crypto 0.8.2 (registry+https://github.com/rust-lang/crates.io-index)",
- "c2pa-status-tracker 0.6.1",
- "chrono",
- "ciborium",
- "config",
- "console_log",
- "conv",
- "coset",
- "ed25519-dalek",
- "extfmt",
- "getrandom 0.2.16",
- "hex",
- "id3",
- "image 0.24.9",
- "img-parts",
- "jfifdump",
- "js-sys",
- "lazy_static",
- "log",
- "memchr",
- "mp4",
- "pem",
- "png_pong",
- "quick-xml",
- "rand 0.8.5",
- "rand_chacha 0.3.1",
- "rand_core 0.9.3",
- "range-set",
- "rasn",
- "rasn-ocsp",
- "rasn-pkix",
- "riff",
- "rsa",
- "serde",
- "serde-transcode",
- "serde-wasm-bindgen",
- "serde_bytes",
- "serde_cbor",
- "serde_derive",
- "serde_json",
- "serde_with",
- "sha1",
- "sha2",
- "spki",
- "tempfile",
- "thiserror 2.0.12",
- "treeline",
- "ureq",
- "url",
- "uuid",
- "wasi 0.14.2+wasi-0.2.4",
- "wasm-bindgen",
- "wasm-bindgen-futures",
- "web-sys",
- "x509-parser",
- "zip",
-]
-
-[[package]]
-name = "c2pa"
 version = "0.49.5"
 dependencies = [
  "actix",
@@ -797,8 +724,8 @@ dependencies = [
  "byteorder",
  "byteordered",
  "bytes",
- "c2pa-crypto 0.8.2",
- "c2pa-status-tracker 0.6.2",
+ "c2pa-crypto",
+ "c2pa-status-tracker",
  "chrono",
  "ciborium",
  "config",
@@ -868,9 +795,10 @@ dependencies = [
 name = "c2pa-c"
 version = "0.49.5"
 dependencies = [
- "c2pa 0.49.3",
- "cawg-identity 0.12.2",
+ "c2pa",
+ "cawg-identity",
  "cbindgen",
+ "scopeguard",
  "serde",
  "serde_json",
  "thiserror 1.0.69",
@@ -889,7 +817,7 @@ dependencies = [
  "base64 0.22.1",
  "bcder",
  "bytes",
- "c2pa-status-tracker 0.6.2",
+ "c2pa-status-tracker",
  "chrono",
  "ciborium",
  "const-hex",
@@ -935,66 +863,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "c2pa-crypto"
-version = "0.8.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "34c09afad0a3e26b05a53178ff720f514febca752da0f1fa9ab3ec25d330da05"
-dependencies = [
- "asn1-rs",
- "async-generic",
- "async-trait",
- "base64 0.22.1",
- "bcder",
- "bytes",
- "c2pa-status-tracker 0.6.1",
- "chrono",
- "ciborium",
- "const-hex",
- "const-oid",
- "coset",
- "der",
- "ecdsa",
- "ed25519-dalek",
- "getrandom 0.2.16",
- "hex",
- "js-sys",
- "nom",
- "num-bigint-dig",
- "openssl",
- "p256",
- "p384",
- "p521",
- "pkcs1",
- "pkcs8",
- "rand 0.8.5",
- "rasn",
- "rasn-ocsp",
- "rasn-pkix",
- "ring",
- "rsa",
- "serde",
- "serde_bytes",
- "sha1",
- "sha2",
- "spki",
- "thiserror 2.0.12",
- "ureq",
- "url",
- "wasm-bindgen",
- "wasm-bindgen-futures",
- "web-sys",
- "web-time",
- "x509-certificate",
- "x509-parser",
-]
-
-[[package]]
-name = "c2pa-status-tracker"
-version = "0.6.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "65523701dd13e10b1903334a882c7d81c2e3ed4989fec80d2b9a08f732c707a7"
-
-[[package]]
 name = "c2pa-status-tracker"
 version = "0.6.2"
 
@@ -1006,9 +874,9 @@ dependencies = [
  "assert_cmd",
  "async-std",
  "atree",
- "c2pa 0.49.5",
- "c2pa-crypto 0.8.2",
- "cawg-identity 0.13.0",
+ "c2pa",
+ "c2pa-crypto",
+ "cawg-identity",
  "clap",
  "env_logger",
  "glob",
@@ -1031,47 +899,14 @@ dependencies = [
 
 [[package]]
 name = "cawg-identity"
-version = "0.12.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c84d6c4cd03511d0c695be98fad618ecb02a9600917914c959ed6f613c13fd42"
-dependencies = [
- "async-trait",
- "base64 0.22.1",
- "c2pa 0.49.3",
- "c2pa-crypto 0.8.2 (registry+https://github.com/rust-lang/crates.io-index)",
- "c2pa-status-tracker 0.6.1",
- "chrono",
- "ciborium",
- "coset",
- "ed25519-dalek",
- "hex-literal",
- "iref",
- "multibase",
- "non-empty-string",
- "nonempty-collections",
- "rand 0.8.5",
- "regex",
- "reqwest",
- "serde",
- "serde_bytes",
- "serde_json",
- "static-iref",
- "thiserror 1.0.69",
- "wasm-bindgen",
- "wstd",
- "zeroize",
-]
-
-[[package]]
-name = "cawg-identity"
 version = "0.13.0"
 dependencies = [
  "anyhow",
  "async-trait",
  "base64 0.22.1",
- "c2pa 0.49.5",
- "c2pa-crypto 0.8.2",
- "c2pa-status-tracker 0.6.2",
+ "c2pa",
+ "c2pa-crypto",
+ "c2pa-status-tracker",
  "chrono",
  "ciborium",
  "coset",
@@ -1815,7 +1650,7 @@ name = "export_schema"
 version = "0.36.1"
 dependencies = [
  "anyhow",
- "c2pa 0.49.5",
+ "c2pa",
  "schemars",
  "serde_json",
 ]
@@ -2886,7 +2721,7 @@ name = "make_test_images"
 version = "0.49.5"
 dependencies = [
  "anyhow",
- "c2pa 0.49.5",
+ "c2pa",
  "env_logger",
  "image 0.25.6",
  "log",
