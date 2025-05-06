@@ -52,3 +52,5 @@ Example assertion:
   ...
 ]
 ```
+
+C2PA Tool also displays CAWG identity assertions.
