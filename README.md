@@ -12,14 +12,14 @@ You can also read the documentation directly in GitHub:
 
 - [Usage](https://github.com/contentauth/c2pa-rs/blob/main/docs/usage.md)
 - [Supported formats](https://github.com/contentauth/c2pa-rs/blob/main/docs/supported-formats.md)
-- [Release notes](https://github.com/contentauth/c2pa-rs/blob/main/docs/release-notes.md)
+- [Change log](https://github.com/contentauth/c2pa-rs/blob/main/docs/release-notes.md)
 - [Contributing to the project](https://github.com/contentauth/c2pa-rs/blob/main/docs/project-contributions.md)
 
 - [C2PA Tool](https://github.com/contentauth/c2pa-rs/blob/main/cli/README.md) documentation:
   - [Using C2PA Tool](https://github.com/contentauth/c2pa-rs/blob/main/cli/docs/usage.md)
   - [Manifest definition file](https://github.com/contentauth/c2pa-rs/blob/main/cli/docs/manifest.md)
   - [Using an X.509 certificate](https://github.com/contentauth/c2pa-rs/blob/main/cli/docs/x_509.md)
-  - [Release notes](https://github.com/contentauth/c2pa-rs/blob/main/cli/docs/release-notes.md)
+  - [Change log](https://github.com/contentauth/c2pa-rs/blob/main/cli/CHANGELOG.md)
 
 </div>
 
