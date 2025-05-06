@@ -12,7 +12,7 @@ You can also read the documentation directly in GitHub:
 
 - [Usage](https://github.com/contentauth/c2pa-rs/blob/main/docs/usage.md)
 - [Supported formats](https://github.com/contentauth/c2pa-rs/blob/main/docs/supported-formats.md)
-- [Change log](https://github.com/contentauth/c2pa-rs/blob/main/docs/release-notes.md)
+- [Release notes](https://github.com/contentauth/c2pa-rs/blob/main/docs/release-notes.md)
 - [Contributing to the project](https://github.com/contentauth/c2pa-rs/blob/main/docs/project-contributions.md)
 
 - [C2PA Tool](https://github.com/contentauth/c2pa-rs/blob/main/cli/README.md) documentation:
