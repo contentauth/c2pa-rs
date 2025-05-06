@@ -1160,7 +1160,6 @@ impl Builder {
     pub fn composed_manifest(manifest_bytes: &[u8], format: &str) -> Result<Vec<u8>> {
         Store::get_composed_manifest(manifest_bytes, format)
     }
-
 }
 
 #[cfg(test)]
@@ -1970,10 +1969,9 @@ mod tests {
 
     #[test]
     fn test_composed_manifest() {
-        let manifest: &[u8;4] = b"abcd";
+        let manifest: &[u8; 4] = b"abcd";
         let format = "image/jpeg";
         let composed = Builder::composed_manifest(manifest, format).unwrap();
         assert_eq!(composed.len(), 16);
     }
-
 }
