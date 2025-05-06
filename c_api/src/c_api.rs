@@ -495,6 +495,7 @@ pub unsafe extern "C" fn c2pa_reader_free(reader_ptr: *mut C2paReader) {
 /// and it is no longer valid after that call.
 #[no_mangle]
 pub unsafe extern "C" fn c2pa_reader_json(reader_ptr: *mut C2paReader) -> *mut c_char {
+    check_or_return_null!(reader_ptr);
     let c2pa_reader = guard_boxed!(reader_ptr);
 
     to_c_string(c2pa_reader.json())
@@ -1250,14 +1251,121 @@ mod tests {
         unsafe { c2pa_builder_set_no_embed(builder) };
         unsafe { c2pa_builder_free(builder) };
     }
+
     #[test]
-    fn test_c2pa_builder_set_remote_url() {
+    fn test_c2pa_version() {
+        let version = unsafe { c2pa_version() };
+        assert!(!version.is_null());
+        let version_str = unsafe { CString::from_raw(version) };
+        assert!(!version_str.to_str().unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_c2pa_error_no_error() {
+        let error = unsafe { c2pa_error() };
+        assert!(!error.is_null());
+        let error_str = unsafe { CString::from_raw(error) };
+        assert_eq!(error_str.to_str().unwrap(), "");
+    }
+
+    #[test]
+    fn test_c2pa_load_settings() {
+        let settings = CString::new("{}").unwrap();
+        let format = CString::new("json").unwrap();
+        let result = unsafe { c2pa_load_settings(settings.as_ptr(), format.as_ptr()) };
+        assert_eq!(result, 0);
+    }
+
+    #[test]
+    fn test_c2pa_read_file_null_path() {
+        let data_dir = CString::new("/tmp").unwrap();
+        let result = unsafe { c2pa_read_file(std::ptr::null(), data_dir.as_ptr()) };
+        assert!(result.is_null());
+        let error = unsafe { c2pa_error() };
+        let error_str = unsafe { CString::from_raw(error) };
+        assert_eq!(error_str.to_str().unwrap(), "NullParameter path");
+    }
+
+    #[test]
+    fn test_c2pa_read_ingredient_file_null_path() {
+        let data_dir = CString::new("/tmp").unwrap();
+        let result = unsafe { c2pa_read_ingredient_file(std::ptr::null(), data_dir.as_ptr()) };
+        assert!(result.is_null());
+        let error = unsafe { c2pa_error() };
+        let error_str = unsafe { CString::from_raw(error) };
+        assert_eq!(error_str.to_str().unwrap(), "NullParameter path");
+    }
+
+    #[test]
+    fn test_c2pa_sign_file_null_source_path() {
+        let dest_path = CString::new("/tmp/output.jpg").unwrap();
+        let manifest = CString::new("{}").unwrap();
+        let signer_info = C2paSignerInfo {
+            alg: std::ptr::null(),
+            sign_cert: std::ptr::null(),
+            private_key: std::ptr::null(),
+            ta_url: std::ptr::null(),
+        };
+        let result = unsafe {
+            c2pa_sign_file(
+                std::ptr::null(),
+                dest_path.as_ptr(),
+                manifest.as_ptr(),
+                &signer_info,
+                std::ptr::null(),
+            )
+        };
+        assert!(result.is_null());
+        let error = unsafe { c2pa_error() };
+        let error_str = unsafe { CString::from_raw(error) };
+        assert_eq!(error_str.to_str().unwrap(), "NullParameter source_path");
+    }
+
+    #[test]
+    fn test_c2pa_reader_from_stream_null_format() {
+        let mut stream = TestC2paStream::new(Vec::new()).into_c_stream();
+        let result = unsafe { c2pa_reader_from_stream(std::ptr::null(), &mut stream) };
+        assert!(result.is_null());
+        let error = unsafe { c2pa_error() };
+        let error_str = unsafe { CString::from_raw(error) };
+        assert_eq!(error_str.to_str().unwrap(), "NullParameter format");
+        TestC2paStream::drop_c_stream(stream);
+    }
+
+    #[test]
+    fn test_c2pa_reader_json_null_reader() {
+        let result = unsafe { c2pa_reader_json(std::ptr::null_mut()) };
+        assert!(result.is_null());
+        let error = unsafe { c2pa_error() };
+        let error_str = unsafe { CString::from_raw(error) };
+        assert_eq!(error_str.to_str().unwrap(), "NullParameter reader_ptr");
+    }
+
+    #[test]
+    fn test_c2pa_builder_add_resource_null_uri() {
         let manifest_def = CString::new("{}").unwrap();
         let builder = unsafe { c2pa_builder_from_json(manifest_def.as_ptr()) };
         assert!(!builder.is_null());
-        let remote_url = CString::new("https://example.com").unwrap();
-        let result = unsafe { c2pa_builder_set_remote_url(builder, remote_url.as_ptr()) };
-        assert_eq!(result, 0);
+        let mut stream = TestC2paStream::new(Vec::new()).into_c_stream();
+        let result = unsafe { c2pa_builder_add_resource(builder, std::ptr::null(), &mut stream) };
+        assert_eq!(result, -1);
+        let error = unsafe { c2pa_error() };
+        let error_str = unsafe { CString::from_raw(error) };
+        assert_eq!(error_str.to_str().unwrap(), "NullParameter uri");
+        TestC2paStream::drop_c_stream(stream);
+        unsafe { c2pa_builder_free(builder) };
+    }
+
+    #[test]
+    fn test_c2pa_builder_to_archive_null_stream() {
+        let manifest_def = CString::new("{}").unwrap();
+        let builder = unsafe { c2pa_builder_from_json(manifest_def.as_ptr()) };
+        assert!(!builder.is_null());
+        let result = unsafe { c2pa_builder_to_archive(builder, std::ptr::null_mut()) };
+        assert_eq!(result, -1);
+        let error = unsafe { c2pa_error() };
+        let error_str = unsafe { CString::from_raw(error) };
+        assert_eq!(error_str.to_str().unwrap(), "NullParameter stream");
         unsafe { c2pa_builder_free(builder) };
     }
 }
