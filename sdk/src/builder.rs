@@ -1248,8 +1248,8 @@ mod tests {
         .to_string()
     }
 
-    #[cfg(feature = "file_io")]
     const TEST_IMAGE_CLEAN: &[u8] = include_bytes!("../tests/fixtures/IMG_0003.jpg");
+    const TEST_IMAGE_CLOUD: &[u8] = include_bytes!("../tests/fixtures/cloud.jpg");
     const TEST_IMAGE: &[u8] = include_bytes!("../tests/fixtures/CA.jpg");
     const TEST_THUMBNAIL: &[u8] = include_bytes!("../tests/fixtures/thumbnail.jpg");
 
@@ -1973,5 +1973,47 @@ mod tests {
         let format = "image/jpeg";
         let composed = Builder::composed_manifest(manifest, format).unwrap();
         assert_eq!(composed.len(), 16);
+    }
+  
+    #[test]
+    /// example of creating a builder directly with a [`ManifestDefinition`]
+    fn test_add_cloud_ingredient() {
+        let mut input = Cursor::new(TEST_IMAGE_CLEAN);
+        let mut cloud_image = Cursor::new(TEST_IMAGE_CLOUD);
+
+        let definition = ManifestDefinition {
+            claim_generator_info: [ClaimGeneratorInfo::default()].to_vec(),
+            format: "image/jpeg".to_string(),
+            title: Some("Test_Manifest".to_string()),
+            ..Default::default()
+        };
+
+        let mut builder = Builder {
+            definition,
+            ..Default::default()
+        };
+
+        builder
+            .add_ingredient_from_stream(parent_json(), "image/jpeg", &mut cloud_image)
+            .unwrap();
+
+        builder
+            .add_assertion("org.test.assertion", &"assertion".to_string())
+            .unwrap();
+
+        let signer = test_signer(SigningAlg::Ps256);
+        // Embed a manifest using the signer.
+        let mut output = Cursor::new(Vec::new());
+        builder
+            .sign(signer.as_ref(), "jpeg", &mut input, &mut output)
+            .expect("builder sign");
+
+        output.set_position(0);
+
+        let reader = Reader::from_stream("jpeg", &mut output).expect("from_bytes");
+        println!("reader = {reader}");
+        let m = reader.active_manifest().unwrap();
+        assert_eq!(m.ingredients().len(), 1);
+        assert!(m.ingredients()[0].active_manifest().is_some());
     }
 }
