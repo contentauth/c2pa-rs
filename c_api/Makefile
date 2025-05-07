@@ -1,6 +1,9 @@
 # Makefile to aid with local development and testing
 # This is not required for automated builds
 
+# Detect architecture
+ARCH := $(shell uname -m)
+# Detect OS
 ifeq ($(OS),Windows_NT)
 	PLATFORM := win
 else
@@ -73,8 +76,19 @@ ifeq ($(PLATFORM), mac)
 release: build-release-mac-universal
 endif
 ifeq ($(PLATFORM), win)
+ifeq ($(ARCH), x86_64)
 release: build-release-win
 endif
+ifeq ($(ARCH), aarch64)
+echo "No release build for aarch64 on Windows"
+else
+endif
+endif
 ifeq ($(PLATFORM), linux)
+ifeq ($(ARCH), x86_64)
+release: build-release-linux-musl-x86
+endif
+ifeq ($(ARCH), aarch64)
 release: build-release-linux-musl-arm
+endif
 endif

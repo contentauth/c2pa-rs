@@ -8,21 +8,31 @@ on:
 
 jobs:
   build:
+    name: Publish c2pa-library binaries
     runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
-        os: 
-          - ubuntu-latest
-          - ubuntu-latest
-          #- macos-latest
-          - macos-latest
-          - windows-latest
-        target:
-          - x86_64-unknown-linux-gnu
-          - aarch64-unknown-linux-gnu
-          #- x86_64-apple-darwin
-          - aarch64-apple-darwin
-          - x86_64-pc-windows-msvc
+        os: [ macos-latest, ubuntu-latest, windows-latest ]
+        arch: [ x86_64, aarch64 ]
+        rust_version: [ stable ]
+        experimental: [ false ]
+        include:
+          - os: macos-latest
+            arch: aarch64
+            target: aarch64-apple-darwin
+
+          - os: ubuntu-latest
+            arch: x86_64
+            target: x86_64-unknown-linux-musl
+
+          - os: ubuntu-latest
+            arch: aarch64
+            target: aarch64-unknown-linux-musl
+
+          - os: windows-latest
+            arch: x86_64
+            target: x86_64-pc-windows-msvc
 
     steps:
       - name: Checkout code
