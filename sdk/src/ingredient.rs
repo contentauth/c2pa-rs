@@ -38,7 +38,6 @@ use crate::{
         self,
         labels::{assertion_label_from_uri, manifest_label_from_uri, to_assertion_uri},
     },
-    jumbf_io::load_jumbf_from_stream,
     resource_store::{skip_serializing_resources, ResourceRef, ResourceStore},
     store::Store,
     utils::{mime::extension_to_mime, xmp_inmemory_utils::XmpInfo},
@@ -867,7 +866,7 @@ impl Ingredient {
         let mut validation_log = StatusTracker::default();
 
         // retrieve the manifest bytes from embedded, sidecar or remote and convert to store if found
-        let jumbf_stream = load_jumbf_from_stream(format, stream);
+        let jumbf_stream = Store::load_jumbf_from_stream(format, stream);
 
         // We can't use functional combinators since we can't use async callbacks (https://github.com/rust-lang/rust/issues/62290)
         let (result, manifest_bytes) = if let Ok(manifest_bytes) = jumbf_stream {
