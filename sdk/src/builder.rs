@@ -1974,7 +1974,7 @@ mod tests {
         let composed = Builder::composed_manifest(manifest, format).unwrap();
         assert_eq!(composed.len(), 16);
     }
-  
+
     #[test]
     /// example of creating a builder directly with a [`ManifestDefinition`]
     fn test_add_cloud_ingredient() {
