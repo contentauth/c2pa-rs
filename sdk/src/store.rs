@@ -2224,6 +2224,7 @@ impl Store {
         let output_filename = asset_path.file_name().ok_or(Error::NotFound)?;
         let dest_path = output_path.join(output_filename);
 
+        println!("Saving to BMFF fragmented: {:?}", dest_path);
         match temp_store.finish_save(jumbf_bytes, &dest_path, sig, &sig_placeholder) {
             Ok(_) => Ok(()),
             Err(e) => Err(e),

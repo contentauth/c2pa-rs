@@ -43,12 +43,10 @@ use url::Url;
 use crate::callback_signer::{CallbackSigner, CallbackSignerConfig, ExternalProcessRunner};
 use crate::signer::SignConfig;
 use crate::info::info;
-use crate::asset_handlers::dash_io::{DashIO, DashManifest};
 mod info;
 mod tree;
 mod callback_signer;
 mod signer;
-mod asset_handlers;
 
 /// Tool for displaying and creating C2PA manifests.
 #[derive(Parser, Debug)]
@@ -187,23 +185,7 @@ enum Commands {
         /// The fragments_glob pattern should only match fragment file names not the full paths (e.g. "myfile_abc*[0-9].m4s"
         /// to match [myfile_abc1.m4s, myfile_abc2180.m4s, ...] )
         #[arg(long = "fragments_glob", verbatim_doc_comment)]
-        fragments_glob: Option<PathBuf>,
-
-        /// Path to the DASH manifest file (MPD)
-        #[arg(long = "dash_manifest")]
-        dash_manifest: Option<PathBuf>,
-
-        /// Process all adaptation sets in the DASH stream
-        #[arg(long = "all_adaptations")]
-        all_adaptations: bool,
-
-        /// Enable live streaming mode
-        #[arg(long = "live_mode")]
-        live_mode: bool,
-
-        /// Verify all segments in the DASH stream
-        #[arg(long = "verify_all_segments")]
-        verify_all_segments: bool,
+        fragments_glob: Option<PathBuf>
     },
 }
 
@@ -447,192 +429,97 @@ fn sign_fragmented(
     init_pattern: &Path,
     frag_pattern: &PathBuf,
     output_path: &Path,
-    dash_manifest: Option<&Path>,
-    all_adaptations: bool,
-    live_mode: bool,
 ) -> Result<()> {
-    if let Some(dash_manifest_path) = dash_manifest {
-        // Handle DASH stream
-        let dash_io = DashIO::new();
-        let manifest = DashIO::parse_manifest(dash_manifest_path)?;
-        let base_path = init_pattern.parent().context("init segment had no parent dir")?;
-        
-        let init_segments = if all_adaptations {
-            dash_io.get_init_segments(&manifest, base_path)
-        } else {
-            // Only use the first init segment if not processing all adaptations
-            vec![init_pattern.to_str().unwrap_or("").to_string()]
-        };
+    // Original non-DASH handling
+    let ip = init_pattern.to_str().ok_or(c2pa::Error::OtherError(
+        "could not parse source pattern".into(),
+    ))?;
+    let inits = glob::glob(ip).context("could not process glob pattern")?;
+    let mut count = 0;
+    for init in inits {
+        match init {
+            Ok(p) => {
+                let mut fragments = Vec::new();
+                let init_dir = p.parent().context("init segment had no parent dir")?;
+                let seg_glob = init_dir.join(frag_pattern); // segment match pattern
 
-        for init_segment in init_segments {
-            let init_path = Path::new(&init_segment);
-            let mut fragments = Vec::new();
-            let init_dir = init_path.parent().context("init segment had no parent dir")?;
-            
-            // Get fragment pattern from DASH manifest
-            let frag_glob = if let Some(pattern) = frag_pattern.to_str() {
-                init_dir.join(pattern)
-            } else {
-                init_dir.join(dash_io.get_fragment_pattern(&manifest, base_path))
-            };
-
-            // grab the fragments that go with this init segment
-            let seg_glob_str = frag_glob.to_str().context("fragment path not valid")?;
-            let seg_paths = glob::glob(seg_glob_str).context("fragment glob not valid")?;
-            for seg in seg_paths {
-                match seg {
-                    Ok(f) => fragments.push(f),
-                    Err(_) => return Err(anyhow!("fragment path not valid")),
-                }
-            }
-
-            println!("Adding manifest to: {:?}", init_path);
-            let new_output_path = output_path.join(init_dir.file_name().context("invalid file name")?);
-            builder.sign_fragmented_files(signer, init_path, &fragments, &new_output_path)?;
-        }
-    } else {
-        // Original non-DASH handling
-        let ip = init_pattern.to_str().ok_or(c2pa::Error::OtherError(
-            "could not parse source pattern".into(),
-        ))?;
-        let inits = glob::glob(ip).context("could not process glob pattern")?;
-        let mut count = 0;
-        for init in inits {
-            match init {
-                Ok(p) => {
-                    let mut fragments = Vec::new();
-                    let init_dir = p.parent().context("init segment had no parent dir")?;
-                    let seg_glob = init_dir.join(frag_pattern); // segment match pattern
-
-                    // grab the fragments that go with this init segment
-                    let seg_glob_str = seg_glob.to_str().context("fragment path not valid")?;
-                    let seg_paths = glob::glob(seg_glob_str).context("fragment glob not valid")?;
-                    for seg in seg_paths {
-                        match seg {
-                            Ok(f) => fragments.push(f),
-                            Err(_) => return Err(anyhow!("fragment path not valid")),
-                        }
+                // grab the fragments that go with this init segment
+                let seg_glob_str = seg_glob.to_str().context("fragment path not valid")?;
+                let seg_paths = glob::glob(seg_glob_str).context("fragment glob not valid")?;
+                for seg in seg_paths {
+                    match seg {
+                        Ok(f) => fragments.push(f),
+                        Err(_) => return Err(anyhow!("fragment path not valid")),
                     }
-
-                    println!("Adding manifest to: {:?}", p);
-                    let new_output_path =
-                        output_path.join(init_dir.file_name().context("invalid file name")?);
-                    builder.sign_fragmented_files(signer, &p, &fragments, &new_output_path)?;
-
-                    count += 1;
                 }
-                Err(_) => bail!("bad path to init segment"),
+
+                println!("Adding manifest to: {:?}", p);
+                let new_output_path =
+                    output_path.join(init_dir.file_name().context("invalid file name")?);
+                builder.sign_fragmented_files(signer, &p, &fragments, &new_output_path)?;
+
+                count += 1;
             }
-        }
-        if count == 0 {
-            println!("No files matching pattern: {}", ip);
+            Err(_) => bail!("bad path to init segment"),
         }
     }
+    if count == 0 {
+        println!("No files matching pattern: {}", ip);
+    }
+
     Ok(())
 }
 
 fn verify_fragmented(
     init_pattern: &Path,
     frag_pattern: &Path,
-    dash_manifest: Option<&Path>,
-    all_adaptations: bool,
-    live_mode: bool,
-    verify_all_segments: bool,
 ) -> Result<Vec<Reader>> {
     let mut readers = Vec::new();
 
-    if let Some(dash_manifest_path) = dash_manifest {
-        // Handle DASH stream
-        let dash_io = DashIO::new();
-        let manifest = DashIO::parse_manifest(dash_manifest_path)?;
-        let base_path = init_pattern.parent().context("init segment had no parent dir")?;
-        
-        let init_segments = if all_adaptations {
-            dash_io.get_init_segments(&manifest, base_path)
-        } else {
-            // Only use the first init segment if not processing all adaptations
-            vec![init_pattern.to_str().unwrap_or("").to_string()]
-        };
+    // Original non-DASH handling
+    let ip = init_pattern
+        .to_str()
+        .context("could not parse source pattern")?;
+    let inits = glob::glob(ip).context("could not process glob pattern")?;
+    let mut count = 0;
 
-        for init_segment in init_segments {
-            let init_path = Path::new(&init_segment);
-            let mut fragments = Vec::new();
-            let init_dir = init_path.parent().context("init segment had no parent dir")?;
-            
-            // Get fragment pattern from DASH manifest
-            let frag_glob = if let Some(pattern) = frag_pattern.to_str() {
-                init_dir.join(pattern)
-            } else {
-                init_dir.join(dash_io.get_fragment_pattern(&manifest, base_path))
-            };
+    // search folders for init segments
+    for init in inits {
+        match init {
+            Ok(p) => {
+                let mut fragments = Vec::new();
+                let init_dir = p.parent().context("init segment had no parent dir")?;
+                let seg_glob = init_dir.join(frag_pattern); // segment match pattern
 
-            // grab the fragments that go with this init segment
-            let seg_glob_str = frag_glob.to_str().context("fragment path not valid")?;
-            let seg_paths = glob::glob(seg_glob_str).context("fragment glob not valid")?;
-            for seg in seg_paths {
-                match seg {
-                    Ok(f) => fragments.push(f),
-                    Err(_) => return Err(anyhow!("fragment path not valid")),
-                }
-            }
-
-            println!("Verifying manifest: {:?}", init_path);
-            let reader = Reader::from_fragmented_files(init_path, &fragments)?;
-            if let Some(vs) = reader.validation_status() {
-                if let Some(e) = vs.iter().find(|v| !v.passed()) {
-                    eprintln!("Error validating segments: {:?}", e);
-                    return Ok(readers);
-                }
-            }
-
-            readers.push(reader);
-        }
-    } else {
-        // Original non-DASH handling
-        let ip = init_pattern
-            .to_str()
-            .context("could not parse source pattern")?;
-        let inits = glob::glob(ip).context("could not process glob pattern")?;
-        let mut count = 0;
-
-        // search folders for init segments
-        for init in inits {
-            match init {
-                Ok(p) => {
-                    let mut fragments = Vec::new();
-                    let init_dir = p.parent().context("init segment had no parent dir")?;
-                    let seg_glob = init_dir.join(frag_pattern); // segment match pattern
-
-                    // grab the fragments that go with this init segment
-                    let seg_glob_str = seg_glob.to_str().context("fragment path not valid")?;
-                    let seg_paths = glob::glob(seg_glob_str).context("fragment glob not valid")?;
-                    for seg in seg_paths {
-                        match seg {
-                            Ok(f) => fragments.push(f),
-                            Err(_) => return Err(anyhow!("fragment path not valid")),
-                        }
+                // grab the fragments that go with this init segment
+                let seg_glob_str = seg_glob.to_str().context("fragment path not valid")?;
+                let seg_paths = glob::glob(seg_glob_str).context("fragment glob not valid")?;
+                for seg in seg_paths {
+                    match seg {
+                        Ok(f) => fragments.push(f),
+                        Err(_) => return Err(anyhow!("fragment path not valid")),
                     }
-
-                    println!("Verifying manifest: {:?}", p);
-                    let reader = Reader::from_fragmented_files(p, &fragments)?;
-                    if let Some(vs) = reader.validation_status() {
-                        if let Some(e) = vs.iter().find(|v| !v.passed()) {
-                            eprintln!("Error validating segments: {:?}", e);
-                            return Ok(readers);
-                        }
-                    }
-
-                    readers.push(reader);
-
-                    count += 1;
                 }
-                Err(_) => bail!("bad path to init segment"),
-            }
-        }
 
-        if count == 0 {
-            println!("No files matching pattern: {}", ip);
+                println!("Verifying manifest: {:?}", p);
+                let reader = Reader::from_fragmented_files(p, &fragments)?;
+                if let Some(vs) = reader.validation_status() {
+                    if let Some(e) = vs.iter().find(|v| !v.passed()) {
+                        eprintln!("Error validating segments: {:?}", e);
+                        return Ok(readers);
+                    }
+                }
+
+                readers.push(reader);
+
+                count += 1;
+            }
+            Err(_) => bail!("bad path to init segment"),
         }
+    }
+
+    if count == 0 {
+        println!("No files matching pattern: {}", ip);
     }
 
     Ok(readers)
@@ -688,11 +575,7 @@ fn main() -> Result<()> {
     let is_fragment = matches!(
         &args.command,
         Some(Commands::Fragment { 
-            fragments_glob: _,
-            dash_manifest: _,
-            all_adaptations: _,
-            live_mode: _,
-            verify_all_segments: _
+            fragments_glob: _
         })
     );
 
@@ -818,11 +701,7 @@ fn main() -> Result<()> {
         if let Some(output) = args.output {
             // fragmented embedding
             if let Some(Commands::Fragment {
-                fragments_glob,
-                dash_manifest,
-                all_adaptations,
-                live_mode,
-                verify_all_segments,
+                fragments_glob
             }) = &args.command
             {
                 if output.exists() && !output.is_dir() {
@@ -836,9 +715,6 @@ fn main() -> Result<()> {
                         &args.path,
                         fg,
                         &output,
-                        dash_manifest.as_deref(),
-                        *all_adaptations,
-                        *live_mode,
                     );
                 } else {
                     bail!("fragments_glob must be set");
@@ -929,20 +805,12 @@ fn main() -> Result<()> {
         println!("{:#?}", reader);
     } else if let Some(Commands::Fragment {
         fragments_glob,
-        dash_manifest,
-        all_adaptations,
-        live_mode,
-        verify_all_segments,
     }) = &args.command
     {
         if let Some(fg) = fragments_glob {
             let stores = verify_fragmented(
                 &args.path,
                 fg,
-                dash_manifest.as_deref(),
-                *all_adaptations,
-                *live_mode,
-                *verify_all_segments,
             )?;
             if stores.len() == 1 {
                 println!("{}", stores[0]);
