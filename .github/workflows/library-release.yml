@@ -13,8 +13,6 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ macos-latest, ubuntu-latest, windows-latest ]
-        arch: [ x86_64, aarch64 ]
         rust_version: [ stable ]
         experimental: [ false ]
         include:
@@ -44,13 +42,8 @@ jobs:
           toolchain: stable
           target: ${{ matrix.target }}
           override: true
-
-      - name: Install dependencies
-        run: rustup target add ${{ matrix.target }}
-
       - name: Build release
         run: make release
-
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
