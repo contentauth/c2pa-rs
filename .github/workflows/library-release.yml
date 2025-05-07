@@ -42,8 +42,21 @@ jobs:
           toolchain: stable
           target: ${{ matrix.target }}
           override: true
+
+
+      # Install dependencies for Windows
+      - name: Install dependencies for OpenSSL (Windows)
+        if: ${{ matrix.os == 'windows-latest' }}
+        run: |
+          choco install activeperl -y
+          choco install strawberryperl -y
+          choco install nasm -y
+          choco install make -y
+          refreshenv
+          
       - name: Build release
         run: make release
+
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
