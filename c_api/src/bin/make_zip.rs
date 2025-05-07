@@ -128,3 +128,36 @@ fn get_target(path: &Path) -> String {
         .to_string_lossy()
         .to_string()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_get_target() {
+        let path = Path::new("target/debug/build/c2pa-capi-1234567890abcdef");
+        let target = get_target(path);
+        assert_eq!(target, "build");
+    }
+
+    #[test]
+    fn test_generate_zip_file() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let target_dir = temp_dir
+            .path()
+            .join("target/x86_64-unknown-linux-musl/release");
+        fs::create_dir_all(&target_dir).unwrap();
+        fs::write(target_dir.join("c2pa_version.txt"), "1.0.0").unwrap();
+        fs::write(target_dir.join("c2pa.h"), "C2PA Header").unwrap();
+        fs::write(target_dir.join("libc2pa_c.so"), "C2PA Library").unwrap();
+
+        generate_zip_file(&target_dir);
+
+        println!("Generated ZIP file in: {:?}", temp_dir.path());
+
+        let zip_path = temp_dir
+            .path()
+            .join("target/artifacts/c2pa-v1.0.0-x86_64-unknown-linux-musl.zip");
+        assert!(zip_path.exists());
+    }
+}

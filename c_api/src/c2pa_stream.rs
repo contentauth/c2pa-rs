@@ -474,4 +474,31 @@ mod tests {
 
         TestC2paStream::drop_c_stream(c_stream);
     }
+
+    #[test]
+    fn test_create_stream() {
+        let test_stream = TestC2paStream::new(vec![1, 2, 3, 4, 5]);
+        let context = Box::into_raw(Box::new(test_stream));
+        let context_ptr = context as *mut StreamContext;
+
+        let c2pa_stream = unsafe {
+            c2pa_create_stream(
+                context_ptr,
+                TestC2paStream::reader,
+                TestC2paStream::seeker,
+                TestC2paStream::writer,
+                TestC2paStream::flusher,
+            )
+        };
+
+        let c2pa_stream = unsafe { &mut *c2pa_stream };
+        let mut buf = [0u8; 3];
+
+        let result = c2pa_stream.read(&mut buf);
+
+        result.expect("Failed to read from C2paStream");
+        assert_eq!(buf, [1, 2, 3]);
+
+        unsafe { c2pa_release_stream(c2pa_stream) };
+    }
 }
