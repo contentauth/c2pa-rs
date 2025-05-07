@@ -1,0 +1,23 @@
+name: Build and Release
+
+on:
+  push:
+    branches: [ "gpeacock/c2pa_c" ]
+    tags:
+      - 'c2pa-v*' # Trigger on version tags (e.g., v1.0.0)
+  workflow_dispatch: # Allow manual triggering of the workflow
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+    - name: Build
+      run: cargo build --verbose
+    - name: Run tests
+      run: cargo test --verbose
