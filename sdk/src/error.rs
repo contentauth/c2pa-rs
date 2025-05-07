@@ -105,6 +105,9 @@ pub enum Error {
     #[error("more than one manifest store detected")]
     TooManyManifestStores,
 
+    #[error("manifest is not refernced by any ingredient")]
+    UnreferencedManifest,
+
     /// The COSE Sign1 structure can not be parsed.
     #[error("COSE Sign1 structure can not be parsed: {coset_error}")]
     InvalidCoseSignature {

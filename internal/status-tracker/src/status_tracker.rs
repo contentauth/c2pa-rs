@@ -76,8 +76,9 @@ impl StatusTracker {
     /// Will return `Err(err)` if configured to stop immediately on errors or
     /// `Ok(())` if configured to continue on errors. _(See [`ErrorBehavior`].)_
     ///
-    /// Primarily intended for use by [`LogItem::failure()`].
-    pub fn add_error<E>(&mut self, mut log_item: LogItem, err: E) -> Result<(), E> {
+    /// Primarily intended for use by [`LogItem::failure()`]. The error value
+    /// is available regardless of ErrorBehavior.
+    pub fn add_error<E>(&mut self, mut log_item: LogItem, err: E) -> Result<E, E> {
         if let Some(ingredient_uri) = self.ingredient_uris.last() {
             log_item.ingredient_uri = Some(ingredient_uri.to_string().into());
         }
@@ -90,7 +91,7 @@ impl StatusTracker {
 
         match self.error_behavior {
             ErrorBehavior::StopOnFirstError => Err(err),
-            ErrorBehavior::ContinueWhenPossible => Ok(()),
+            ErrorBehavior::ContinueWhenPossible => Ok(err),
         }
     }
 

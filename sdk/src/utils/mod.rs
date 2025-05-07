@@ -35,3 +35,13 @@ pub mod test;
 
 #[cfg(test)]
 pub(crate) mod test_signer;
+
+// fast 0 vector test using byte alignment to perform faster native byte align comparison
+pub(crate) fn is_zero(bytes: &[u8]) -> bool {
+    unsafe {
+        let (prefix, aligned, suffix) = bytes.align_to::<u64>();
+        prefix.iter().all(|&x| x == 0)
+            && aligned.iter().all(|&x| x == 0u64)
+            && suffix.iter().all(|&x| x == 0u8)
+    }
+}

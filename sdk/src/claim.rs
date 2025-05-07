@@ -86,7 +86,7 @@ const _V2_SPEC_DEPRECATED_ASSERTIONS: [&str; 4] = [
     "c2pa.endorsement",
 ];
 
-const ALLOWED_UPDATE_MANIFEST_ACTIONS: [&str; 4] = [
+pub(crate) const ALLOWED_UPDATE_MANIFEST_ACTIONS: [&str; 4] = [
     "c2pa.edited.metadata",
     "c2pa.opened",
     "c2pa.published",
@@ -1983,7 +1983,7 @@ impl Claim {
 
         // make sure every action has an actions array that is not empty
         if let Some(bad_assertion) = all_actions.iter().find(|a| {
-            if let Ok(actions) = Actions::from_assertion(a) {
+            if let Ok(actions) = Actions::from_assertion(a.assertion()) {
                 actions.actions().is_empty()
             } else {
                 false
@@ -1998,28 +1998,27 @@ impl Claim {
                 )?;
         }
 
-        // check Claim.v2 first action rules
-        let first_actions_assertion = if claim.version() > 1 {
-            let assertion = created_actions.first().ok_or(
+        // check Claim.v2 first action rules, do not apply to update manifests
+        let first_actions_assertion = if claim.version() > 1 && !claim.update_manifest() {
+            let assertion = created_actions.first().ok_or_else(|| {
                 log_item!(
                     claim_label.clone(),
                     "must have a created Action",
                     "verify_actions"
                 )
                 .validation_status(validation_status::ASSERTION_ACTION_MALFORMED)
-                .failure(
+                .failure_as_err(
                     validation_log,
                     Error::ValidationRule("No mandatory Actions found".into()),
                 )
-                .unwrap_err(),
-            )?;
+            })?;
 
-            let first_actions = Actions::from_assertion(assertion)?;
+            let first_actions = Actions::from_assertion(assertion.assertion())?;
             let first_actions_first_action = &first_actions.actions()[0];
 
             // 2.b first create_assertion actions assertion must start with an open or created action
-            if first_actions_first_action.action() != c2pa_action::OPENED
-                || first_actions_first_action.action() != c2pa_action::CREATED
+            if !(first_actions_first_action.action() == c2pa_action::OPENED
+                || first_actions_first_action.action() == c2pa_action::CREATED)
             {
                 log_item!(
                     claim_label.clone(),
@@ -2039,7 +2038,7 @@ impl Claim {
 
         // perform all actions checks
         for (index, actions_assertion) in all_actions.iter().enumerate() {
-            let actions = Actions::from_assertion(actions_assertion)?;
+            let actions = Actions::from_assertion(actions_assertion.assertion())?;
             let label = to_assertion_uri(claim.label(), &actions_assertion.label());
 
             // 1. Actions must have actions array
@@ -2074,7 +2073,9 @@ impl Claim {
                 }
             }
             // check top level icons
-            Claim::verify_icons(claim, &icons, validation_log)?;
+            if !icons.is_empty() {
+                Claim::verify_icons(claim, &icons, validation_log)?;
+            }
 
             for action in actions.actions() {
                 // 2.a action must have an action
@@ -2134,7 +2135,7 @@ impl Claim {
                     || action.action() == c2pa_action::PLACED
                     || action.action() == c2pa_action::REMOVED
                 {
-                    let params = action.parameters().ok_or(
+                    let params = action.parameters().ok_or_else(||
                         // 2.e.i
                         log_item!(
                             label.clone(),
@@ -2142,14 +2143,12 @@ impl Claim {
                             "verify_actions"
                         )
                         .validation_status(validation_status::ASSERTION_ACTION_INGREDIENT_MISMATCH)
-                        .failure(
+                        .failure_as_err(
                             validation_log,
                             Error::ValidationRule(
                                 "opened, placed and removed items must have parameters".into(),
                             ),
-                        )
-                        .unwrap_err(),
-                    )?;
+                        ))?;
 
                     // 2.e.ii must have ingredient or ingredients param
                     if params.get("ingredients").is_none() && params.get("ingredient").is_none() {
@@ -2192,7 +2191,7 @@ impl Claim {
                         let mut found_good = 0usize;
 
                         if let Some(v) = params.get("ingredient") {
-                            let h = value_cbor_to_type::<HashedUri>(v).ok_or(
+                            let h = value_cbor_to_type::<HashedUri>(v).ok_or_else(|| {
                                 log_item!(
                                     label.clone(),
                                     "could not parse action ingredient parameter",
@@ -2201,78 +2200,85 @@ impl Claim {
                                 .validation_status(
                                     validation_status::ASSERTION_ACTION_INGREDIENT_MISMATCH,
                                 )
-                                .failure(
+                                .failure_as_err(
                                     validation_log,
                                     Error::ValidationRule(
                                         "could not parse action ingredient parameter".into(),
                                     ),
                                 )
-                                .unwrap_err(),
-                            )?;
+                            })?;
 
-                            if let Some(ingredient_label) = manifest_label_from_uri(&h.url()) {
-                                // can we find a reference in the ingredient list
-                                if svi.ingredient_references.contains_key(&ingredient_label) {
-                                    // is it referenced from this manifest
-                                    if claim.ingredient_assertions().iter().any(|i| {
-                                        if let Ok(ingredient) = Ingredient::from_assertion(i) {
-                                            if let Some(ingredient_parent) =
-                                                ingredient.c2pa_manifest()
+                            // can we find a reference in the ingredient list
+                            // is it referenced from this manifest
+                            if claim.ingredient_assertions().iter().any(|i| {
+                                if let Ok(ingredient) = Ingredient::from_assertion(i.assertion()) {
+                                    if let Some(ingredient_parent_uri) = ingredient.c2pa_manifest()
+                                    {
+                                        if let Some(ingredient_parent) =
+                                            manifest_label_from_uri(&ingredient_parent_uri.url())
+                                        {
+                                            if let Some(target_label) =
+                                                assertion_label_from_uri(&h.url())
                                             {
-                                                return ingredient_parent
-                                                    .url()
-                                                    .contains(&ingredient_label)
+                                                return target_label == i.label()
+                                                    && svi
+                                                        .ingredient_references
+                                                        .contains_key(&ingredient_parent)
                                                     && ingredient.relationship
                                                         == Relationship::ParentOf;
                                             }
                                         }
-                                        false
-                                    }) {
-                                        found_good = 1;
                                     }
                                 }
+                                false
+                            }) {
+                                found_good = 1;
                             }
                         } else if let Some(v) = params.get("ingredients") {
-                            let h_vec = value_cbor_to_type::<Vec<HashedUri>>(v).ok_or(
-                                log_item!(
-                                    label.clone(),
-                                    "could not parse action ingredients parameter",
-                                    "verify_actions"
-                                )
-                                .validation_status(
-                                    validation_status::ASSERTION_ACTION_INGREDIENT_MISMATCH,
-                                )
-                                .failure(
-                                    validation_log,
-                                    Error::ValidationRule(
-                                        "could not parse action ingredients parameter".into(),
-                                    ),
-                                )
-                                .unwrap_err(),
-                            )?;
+                            let h_vec =
+                                value_cbor_to_type::<Vec<HashedUri>>(v).ok_or_else(|| {
+                                    log_item!(
+                                        label.clone(),
+                                        "could not parse action ingredients parameter",
+                                        "verify_actions"
+                                    )
+                                    .validation_status(
+                                        validation_status::ASSERTION_ACTION_INGREDIENT_MISMATCH,
+                                    )
+                                    .failure_as_err(
+                                        validation_log,
+                                        Error::ValidationRule(
+                                            "could not parse action ingredients parameter".into(),
+                                        ),
+                                    )
+                                })?;
 
                             for h in h_vec {
-                                if let Some(ingredient_label) = manifest_label_from_uri(&h.url()) {
-                                    // can we find a reference in the ingredient list
-                                    if svi.ingredient_references.contains_key(&ingredient_label) {
-                                        // is it referenced from this manifest
-                                        if claim.ingredient_assertions().iter().any(|i| {
-                                            if let Ok(ingredient) = Ingredient::from_assertion(i) {
-                                                if let Some(ingredient_parent) =
-                                                    ingredient.c2pa_manifest()
+                                // can we find a reference in the ingredient list
+                                // is it referenced from this manifest
+                                if claim.ingredient_assertions().iter().any(|i| {
+                                    if let Ok(ingredient) = Ingredient::from_assertion(i.assertion()) {
+                                        if let Some(ingredient_parent_uri) = ingredient.c2pa_manifest()
+                                        {
+                                            if let Some(ingredient_parent) =
+                                                manifest_label_from_uri(&ingredient_parent_uri.url())
+                                            {
+                                                if let Some(target_label) =
+                                                    assertion_label_from_uri(&h.url())
                                                 {
-                                                    return ingredient_parent
-                                                        .url()
-                                                        .contains(&ingredient_label)
+                                                    return target_label == i.label()
+                                                        && svi
+                                                            .ingredient_references
+                                                            .contains_key(&ingredient_parent)
                                                         && ingredient.relationship
                                                             == Relationship::ParentOf;
                                                 }
                                             }
-                                            false
-                                        }) {
-                                            found_good += 1;
                                         }
                                     }
+                                    false
+                                }) {
+                                    found_good = 1;
                                 }
                             }
                         }
@@ -2303,7 +2309,7 @@ impl Claim {
                         let mut found_good = 0usize;
 
                         if let Some(v) = params.get("ingredient") {
-                            let h = value_cbor_to_type::<HashedUri>(v).ok_or(
+                            let h = value_cbor_to_type::<HashedUri>(v).ok_or_else(|| {
                                 log_item!(
                                     label.clone(),
                                     "could not parse action ingredient parameter",
@@ -2312,78 +2318,84 @@ impl Claim {
                                 .validation_status(
                                     validation_status::ASSERTION_ACTION_INGREDIENT_MISMATCH,
                                 )
-                                .failure(
+                                .failure_as_err(
                                     validation_log,
                                     Error::ValidationRule(
                                         "could not parse action ingredient parameter".into(),
                                     ),
                                 )
-                                .unwrap_err(),
-                            )?;
+                            })?;
 
-                            if let Some(ingredient_label) = manifest_label_from_uri(&h.url()) {
-                                // can we find a reference in the ingredient list
-                                if svi.ingredient_references.contains_key(&ingredient_label) {
-                                    // is it referenced from this manifest
-                                    if claim.ingredient_assertions().iter().any(|i| {
-                                        if let Ok(ingredient) = Ingredient::from_assertion(i) {
-                                            if let Some(ingredient_parent) =
-                                                ingredient.c2pa_manifest()
+                            // can we find a reference in the ingredient list
+                            // is it referenced from this manifest
+                            if claim.ingredient_assertions().iter().any(|i| {
+                                if let Ok(ingredient) = Ingredient::from_assertion(i.assertion()) {
+                                    if let Some(ingredient_parent_uri) = ingredient.c2pa_manifest()
+                                    {
+                                        if let Some(ingredient_parent) =
+                                            manifest_label_from_uri(&ingredient_parent_uri.url())
+                                        {
+                                            if let Some(target_label) =
+                                                assertion_label_from_uri(&h.url())
                                             {
-                                                return ingredient_parent
-                                                    .url()
-                                                    .contains(&ingredient_label)
+                                                return target_label == i.label()
+                                                    && svi
+                                                        .ingredient_references
+                                                        .contains_key(&ingredient_parent)
                                                     && ingredient.relationship
                                                         == Relationship::ComponentOf;
                                             }
                                         }
-                                        false
-                                    }) {
-                                        found_good = 1;
                                     }
                                 }
+                                false
+                            }) {
+                                found_good = 1;
                             }
                         } else if let Some(v) = params.get("ingredients") {
-                            let h_vec = value_cbor_to_type::<Vec<HashedUri>>(v).ok_or(
-                                log_item!(
-                                    label.clone(),
-                                    "could not parse action ingredients parameter",
-                                    "verify_actions"
-                                )
-                                .validation_status(
-                                    validation_status::ASSERTION_ACTION_INGREDIENT_MISMATCH,
-                                )
-                                .failure(
-                                    validation_log,
-                                    Error::ValidationRule(
-                                        "could not parse action ingredients parameter".into(),
-                                    ),
-                                )
-                                .unwrap_err(),
-                            )?;
+                            let h_vec =
+                                value_cbor_to_type::<Vec<HashedUri>>(v).ok_or_else(|| {
+                                    log_item!(
+                                        label.clone(),
+                                        "could not parse action ingredients parameter",
+                                        "verify_actions"
+                                    )
+                                    .validation_status(
+                                        validation_status::ASSERTION_ACTION_INGREDIENT_MISMATCH,
+                                    )
+                                    .failure_as_err(
+                                        validation_log,
+                                        Error::ValidationRule(
+                                            "could not parse action ingredients parameter".into(),
+                                        ),
+                                    )
+                                })?;
 
                             for h in h_vec {
-                                if let Some(ingredient_label) = manifest_label_from_uri(&h.url()) {
-                                    // can we find a reference in the ingredient list
-                                    if svi.ingredient_references.contains_key(&ingredient_label) {
-                                        // is it referenced from this manifest
-                                        if claim.ingredient_assertions().iter().any(|i| {
-                                            if let Ok(ingredient) = Ingredient::from_assertion(i) {
-                                                if let Some(ingredient_parent) =
-                                                    ingredient.c2pa_manifest()
+                                // can we find a reference in the ingredient list
+                                // is it referenced from this manifest
+                                if claim.ingredient_assertions().iter().any(|i| {
+                                    if let Ok(ingredient) = Ingredient::from_assertion(i.assertion()) {
+                                        if let Some(ingredient_parent_uri) = ingredient.c2pa_manifest() {
+                                            if let Some(ingredient_parent) =
+                                                manifest_label_from_uri(&ingredient_parent_uri.url())
+                                            {
+                                                if let Some(target_label) =
+                                                    assertion_label_from_uri(&h.url())
                                                 {
-                                                    return ingredient_parent
-                                                        .url()
-                                                        .contains(&ingredient_label)
+                                                    return target_label == i.label()
+                                                        && svi
+                                                            .ingredient_references
+                                                            .contains_key(&ingredient_parent)
                                                         && ingredient.relationship
                                                             == Relationship::ComponentOf;
                                                 }
                                             }
-                                            false
-                                        }) {
-                                            found_good += 1;
                                         }
                                     }
+                                        false
+                                    }) {
+                                    found_good = 1;
                                 }
                             }
                         }
@@ -2411,7 +2423,7 @@ impl Claim {
                 if action.action() == c2pa_action::TRANSCODED
                     || action.action() == c2pa_action::REPACKAGED
                 {
-                    let params = action.parameters().ok_or(
+                    let params = action.parameters().ok_or_else(||
                         // 2.e.i
                         log_item!(
                             label.clone(),
@@ -2419,18 +2431,16 @@ impl Claim {
                             "verify_actions"
                         )
                         .validation_status(validation_status::ASSERTION_ACTION_INGREDIENT_MISMATCH)
-                        .failure(
+                        .failure_as_err(
                             validation_log,
                             Error::ValidationRule(
                                 "opened, placed and removed items must have parameters".into(),
                             ),
-                        )
-                        .unwrap_err(),
-                    )?;
+                        ))?;
 
                     let mut parent_tested = None; // on exists if action actually pointed to an ingredient
                     if let Some(v) = params.get("ingredient") {
-                        let h = value_cbor_to_type::<HashedUri>(v).ok_or(
+                        let h = value_cbor_to_type::<HashedUri>(v).ok_or_else(|| {
                             log_item!(
                                 label.clone(),
                                 "could not parse action ingredient parameter",
@@ -2439,42 +2449,46 @@ impl Claim {
                             .validation_status(
                                 validation_status::ASSERTION_ACTION_INGREDIENT_MISMATCH,
                             )
-                            .failure(
+                            .failure_as_err(
                                 validation_log,
                                 Error::ValidationRule(
                                     "could not parse action ingredient parameter".into(),
                                 ),
                             )
-                            .unwrap_err(),
-                        )?;
+                        })?;
 
-                        if let Some(ingredient_label) = manifest_label_from_uri(&h.url()) {
-                            // can we find a reference in the ingredient list
-                            if svi.ingredient_references.contains_key(&ingredient_label) {
-                                // is it referenced from this manifest
-                                if claim.ingredient_assertions().iter().any(|i| {
-                                    if let Ok(ingredient) = Ingredient::from_assertion(i) {
-                                        if let Some(ingredient_parent) = ingredient.c2pa_manifest()
+                        // can we find a reference in the ingredient list
+                        // is it referenced from this manifest
+                        if claim.ingredient_assertions().iter().any(|i| {
+                            if let Ok(ingredient) = Ingredient::from_assertion(i.assertion()) {
+                                if let Some(ingredient_parent_uri) = ingredient.c2pa_manifest() {
+                                    if let Some(ingredient_parent) =
+                                        manifest_label_from_uri(&ingredient_parent_uri.url())
+                                    {
+                                        if let Some(target_label) =
+                                            assertion_label_from_uri(&h.url())
                                         {
-                                            return ingredient_parent
-                                                .url()
-                                                .contains(&ingredient_label)
+                                            return target_label == i.label()
+                                                && svi
+                                                    .ingredient_references
+                                                    .contains_key(&ingredient_parent)
                                                 && ingredient.relationship
                                                     == Relationship::ParentOf;
                                         }
                                     }
-                                    false
-                                }) {
-                                    parent_tested = Some(true);
                                 }
                             }
+                            false
+                        }) {
+                            parent_tested = Some(true);
                         }
+
                         match parent_tested {
                             Some(v) => parent_tested = Some(v),
                             None => parent_tested = Some(false),
                         }
                     } else if let Some(v) = params.get("ingredients") {
-                        let h_vec = value_cbor_to_type::<Vec<HashedUri>>(v).ok_or(
+                        let h_vec = value_cbor_to_type::<Vec<HashedUri>>(v).ok_or_else(|| {
                             log_item!(
                                 label.clone(),
                                 "could not parse action ingredients parameter",
@@ -2483,37 +2497,40 @@ impl Claim {
                             .validation_status(
                                 validation_status::ASSERTION_ACTION_INGREDIENT_MISMATCH,
                             )
-                            .failure(
+                            .failure_as_err(
                                 validation_log,
                                 Error::ValidationRule(
                                     "could not parse action ingredients parameter".into(),
                                 ),
                             )
-                            .unwrap_err(),
-                        )?;
+                        })?;
 
                         for h in h_vec {
-                            if let Some(ingredient_label) = manifest_label_from_uri(&h.url()) {
-                                // can we find a reference in the ingredient list
-                                if svi.ingredient_references.contains_key(&ingredient_label) {
-                                    // is it referenced from this manifest
-                                    if claim.ingredient_assertions().iter().any(|i| {
-                                        if let Ok(ingredient) = Ingredient::from_assertion(i) {
-                                            if let Some(ingredient_parent) =
-                                                ingredient.c2pa_manifest()
+                            // can we find a reference in the ingredient list
+                            // is it referenced from this manifest
+                            if claim.ingredient_assertions().iter().any(|i| {
+                                if let Ok(ingredient) = Ingredient::from_assertion(i.assertion()) {
+                                    if let Some(ingredient_parent_uri) = ingredient.c2pa_manifest()
+                                    {
+                                        if let Some(ingredient_parent) =
+                                            manifest_label_from_uri(&ingredient_parent_uri.url())
+                                        {
+                                            if let Some(target_label) =
+                                                assertion_label_from_uri(&h.url())
                                             {
-                                                return ingredient_parent
-                                                    .url()
-                                                    .contains(&ingredient_label)
+                                                return target_label == i.label()
+                                                    && svi
+                                                        .ingredient_references
+                                                        .contains_key(&ingredient_parent)
                                                     && ingredient.relationship
                                                         == Relationship::ParentOf;
                                             }
                                         }
-                                        false
-                                    }) {
-                                        parent_tested = Some(true);
                                     }
                                 }
+                                false
+                            }) {
+                                parent_tested = Some(true);
                             }
                         }
                         match parent_tested {
@@ -2543,31 +2560,31 @@ impl Claim {
                 if action.action() == c2pa_action::REDACTED {
                     if let Some(params) = action.parameters() {
                         let mut parent_tested = None; // on exists if action actually pointed to an ingredient
-                        if let Some(v) = params.get("ingredient") {
-                            let h = value_cbor_to_type::<HashedUri>(v).ok_or(
-                                log_item!(
-                                    label.clone(),
-                                    "could not parse action ingredient parameter",
-                                    "verify_actions"
-                                )
-                                .validation_status(
-                                    validation_status::ASSERTION_ACTION_INGREDIENT_MISMATCH,
-                                )
-                                .failure(
-                                    validation_log,
-                                    Error::ValidationRule(
-                                        "could not parse action ingredient parameter".into(),
-                                    ),
-                                )
-                                .unwrap_err(),
-                            )?;
+                        if let Some(v) = params.get("redacted") {
+                            let redacted_uri =
+                                value_cbor_to_type::<String>(v).ok_or_else(|| {
+                                    log_item!(
+                                        label.clone(),
+                                        "could not parse action redacted parameter",
+                                        "verify_actions"
+                                    )
+                                    .validation_status(
+                                        validation_status::ASSERTION_ACTION_MALFORMED,
+                                    )
+                                    .failure_as_err(
+                                        validation_log,
+                                        Error::ValidationRule(
+                                            "could not parse action redacted parameter".into(),
+                                        ),
+                                    )
+                                })?;
 
-                            if let Some(ingredient_label) = manifest_label_from_uri(&h.url()) {
+                            if let Some(ingredient_label) = manifest_label_from_uri(&redacted_uri) {
                                 // can we find a reference in the ingredient list
                                 if let Some(ingredient) = svi.manifest_map.get(&ingredient_label) {
                                     // does the assertion exist
                                     if let Some(readaction_label) =
-                                        assertion_label_from_uri(&h.url())
+                                        assertion_label_from_uri(&redacted_uri)
                                     {
                                         let (label, instance) =
                                             Claim::assertion_label_from_link(&readaction_label);
@@ -2581,55 +2598,10 @@ impl Claim {
                             }
                             match parent_tested {
                                 Some(v) => parent_tested = Some(v),
-                                None => parent_tested = Some(false),
-                            }
-                        } else if let Some(v) = params.get("ingredients") {
-                            let h_vec = value_cbor_to_type::<Vec<HashedUri>>(v).ok_or(
-                                log_item!(
-                                    label.clone(),
-                                    "could not parse action ingredients parameter",
-                                    "verify_actions"
-                                )
-                                .validation_status(
-                                    validation_status::ASSERTION_ACTION_INGREDIENT_MISMATCH,
-                                )
-                                .failure(
-                                    validation_log,
-                                    Error::ValidationRule(
-                                        "could not parse action ingredients parameter".into(),
-                                    ),
-                                )
-                                .unwrap_err(),
-                            )?;
-
-                            for h in h_vec {
-                                if let Some(ingredient_label) = manifest_label_from_uri(&h.url()) {
-                                    // can we find a reference in the ingredient list
-                                    if let Some(ingredient) =
-                                        svi.manifest_map.get(&ingredient_label)
-                                    {
-                                        // does the assertion exist
-                                        if let Some(readaction_label) =
-                                            assertion_label_from_uri(&h.url())
-                                        {
-                                            let (label, instance) =
-                                                Claim::assertion_label_from_link(&readaction_label);
-                                            parent_tested = Some(
-                                                ingredient
-                                                    .get_assertion(&label, instance)
-                                                    .is_some(),
-                                            );
-                                        } else {
-                                            parent_tested = Some(false);
-                                        }
-                                    }
-                                }
-                            }
-                            match parent_tested {
-                                Some(v) => parent_tested = Some(v),
-                                None => parent_tested = Some(false),
+                                None => parent_tested = Some(false), // if test fail early this is a tested failure
                             }
                         }
+
                         // will only exist if we actual tested for an ingredient
                         if let Some(false) = parent_tested {
                             log_item!(
@@ -2657,7 +2629,9 @@ impl Claim {
                         icons.push(icon);
                     }
                 }
-                Claim::verify_icons(claim, &icons, validation_log)?;
+                if !icons.is_empty() {
+                    Claim::verify_icons(claim, &icons, validation_log)?;
+                }
             }
         }
 
@@ -2782,7 +2756,9 @@ impl Claim {
                     icons.push(icon);
                 }
             }
-            Claim::verify_icons(claim, &icons, validation_log)?;
+            if !icons.is_empty() {
+                Claim::verify_icons(claim, &icons, validation_log)?;
+            }
         }
 
         // check for self redacted assertions and illegal redactions
@@ -2817,7 +2793,7 @@ impl Claim {
             .ingredient_assertions()
             .iter()
             .filter(|a| {
-                if let Ok(ingredient) = Ingredient::from_assertion(a) {
+                if let Ok(ingredient) = Ingredient::from_assertion(a.assertion()) {
                     return ingredient.relationship == Relationship::ParentOf;
                 }
                 false
@@ -2828,7 +2804,7 @@ impl Claim {
         if claim.update_manifest() {
             // must be one of the allowed actions
             for aa in claim.action_assertions() {
-                let actions = Actions::from_assertion(aa)?;
+                let actions = Actions::from_assertion(aa.assertion())?;
                 for action in actions.actions() {
                     if !ALLOWED_UPDATE_MANIFEST_ACTIONS
                         .iter()
@@ -2918,13 +2894,12 @@ impl Claim {
                             "verify_internal"
                         )
                         .validation_status(validation_status::ASSERTION_HASHEDURI_MISMATCH)
-                        .failure(
+                        .failure_as_err(
                             validation_log,
                             Error::AssertionMissing {
                                 url: assertion.url(),
                             },
                         )
-                        .unwrap_err()
                     })?;
 
                 if assertion_manifest != claim.label() {
@@ -3069,8 +3044,8 @@ impl Claim {
 
             // while this is a vec the spec only expects one at the moment and is checked above
             for hash_binding_assertion in claim.hash_assertions() {
-                if hash_binding_assertion.label_root() == DataHash::LABEL {
-                    let mut dh = DataHash::from_assertion(hash_binding_assertion)?;
+                if hash_binding_assertion.label_raw() == DataHash::LABEL {
+                    let mut dh = DataHash::from_assertion(hash_binding_assertion.assertion())?;
                     let name = dh.name.as_ref().map_or(UNNAMED.to_string(), default_str);
 
                     // update with any needed update hash adjustments
@@ -3144,9 +3119,9 @@ impl Claim {
                             ),
                         )?;
                     }
-                } else if hash_binding_assertion.label_root() == BmffHash::LABEL {
+                } else if hash_binding_assertion.label_raw() == BmffHash::LABEL {
                     // handle BMFF data hashes
-                    let dh = BmffHash::from_assertion(hash_binding_assertion)?;
+                    let dh = BmffHash::from_assertion(hash_binding_assertion.assertion())?;
 
                     let name = dh.name().map_or("unnamed".to_string(), default_str);
 
@@ -3201,10 +3176,10 @@ impl Claim {
                             )?;
                         }
                     }
-                } else if hash_binding_assertion.label_root() == BoxHash::LABEL {
+                } else if hash_binding_assertion.label_raw() == BoxHash::LABEL {
                     // box hash case
                     // handle BMFF data hashes
-                    let bh = BoxHash::from_assertion(hash_binding_assertion)?;
+                    let bh = BoxHash::from_assertion(hash_binding_assertion.assertion())?;
 
                     let hash_result = match asset_data {
                         #[cfg(feature = "file_io")]
@@ -3299,7 +3274,7 @@ impl Claim {
     }
 
     /// Return list of data hash assertions
-    pub fn hash_assertions(&self) -> Vec<&Assertion> {
+    pub fn hash_assertions(&self) -> Vec<&ClaimAssertion> {
         let dummy_data = AssertionData::Cbor(Vec::new());
         let dummy_hash = Assertion::new(DataHash::LABEL, None, dummy_data);
         let mut data_hashes = self.assertions_by_type(&dummy_hash, None);
@@ -3317,14 +3292,14 @@ impl Claim {
         data_hashes
     }
 
-    pub fn bmff_hash_assertions(&self) -> Vec<&Assertion> {
+    pub fn bmff_hash_assertions(&self) -> Vec<&ClaimAssertion> {
         // add in an BMFF hashes
         let dummy_bmff_data = AssertionData::Cbor(Vec::new());
         let dummy_bmff_hash = Assertion::new(assertions::labels::BMFF_HASH, None, dummy_bmff_data);
         self.assertions_by_type(&dummy_bmff_hash, None)
     }
 
-    pub fn box_hash_assertions(&self) -> Vec<&Assertion> {
+    pub fn box_hash_assertions(&self) -> Vec<&ClaimAssertion> {
         // add in an BMFF hashes
         let dummy_box_data = AssertionData::Cbor(Vec::new());
         let dummy_box_hash = Assertion::new(assertions::labels::BOX_HASH, None, dummy_box_data);
@@ -3334,28 +3309,28 @@ impl Claim {
     /// Return list of ingredient assertions. This function
     /// is only useful on committed or loaded claims since ingredients
     /// are resolved at commit time.
-    pub fn ingredient_assertions(&self) -> Vec<&Assertion> {
+    pub fn ingredient_assertions(&self) -> Vec<&ClaimAssertion> {
         let dummy_data = AssertionData::Cbor(Vec::new());
         let dummy_ingredient = Assertion::new(assertions::labels::INGREDIENT, None, dummy_data);
         self.assertions_by_type(&dummy_ingredient, None)
     }
 
     /// Return list of action assertions.
-    pub fn action_assertions(&self) -> Vec<&Assertion> {
+    pub fn action_assertions(&self) -> Vec<&ClaimAssertion> {
         let dummy_data = AssertionData::Cbor(Vec::new());
         let dummy_ingredient = Assertion::new(assertions::labels::ACTIONS, None, dummy_data);
         self.assertions_by_type(&dummy_ingredient, None)
     }
 
     /// Return list of gathered action assertions.
-    pub fn gathered_action_assertions(&self) -> Vec<&Assertion> {
+    pub fn gathered_action_assertions(&self) -> Vec<&ClaimAssertion> {
         let dummy_data = AssertionData::Cbor(Vec::new());
         let dummy_ingredient = Assertion::new(assertions::labels::ACTIONS, None, dummy_data);
         self.assertions_by_type(&dummy_ingredient, Some(ClaimAssertionType::Gathered))
     }
 
     /// Return list of action assertions.
-    pub fn created_action_assertions(&self) -> Vec<&Assertion> {
+    pub fn created_action_assertions(&self) -> Vec<&ClaimAssertion> {
         let dummy_data = AssertionData::Cbor(Vec::new());
         let dummy_ingredient = Assertion::new(assertions::labels::ACTIONS, None, dummy_data);
         self.assertions_by_type(&dummy_ingredient, Some(ClaimAssertionType::Created))
@@ -3445,22 +3420,18 @@ impl Claim {
         &self,
         assertion_proto: &Assertion,
         assertion_type: Option<ClaimAssertionType>,
-    ) -> Vec<&Assertion> {
+    ) -> Vec<&ClaimAssertion> {
         self.assertion_store
             .iter()
-            .filter_map(|x| {
+            .filter(|x| {
                 if Assertion::assertions_eq(assertion_proto, x.assertion()) {
                     if let Some(assertion_type) = &assertion_type {
-                        if x.assertion_type() == *assertion_type {
-                            Some(&x.assertion)
-                        } else {
-                            None
-                        }
+                        x.assertion_type() == *assertion_type
                     } else {
-                        Some(&x.assertion)
+                        true
                     }
                 } else {
-                    None
+                    false
                 }
             })
             .collect()
@@ -3785,10 +3756,31 @@ impl Claim {
         }
     }
 
-    pub fn assertion_hashed_uri_from_label(&self, assertion_label: &str) -> Option<&C2PAAssertion> {
-        self.assertions()
+    pub fn assertion_hashed_uri_from_label(
+        &self,
+        assertion_label: &str,
+    ) -> Option<(&C2PAAssertion, ClaimAssertionType)> {
+        if self.version() < 2 {
+            let a = self
+                .assertions()
+                .iter()
+                .find(|hashed_uri| hashed_uri.url().contains(assertion_label))?;
+
+            Some((a, ClaimAssertionType::V1))
+        } else if let Some(a) = self
+            .created_assertions()
             .iter()
             .find(|hashed_uri| hashed_uri.url().contains(assertion_label))
+        {
+            Some((a, ClaimAssertionType::Created))
+        } else {
+            let a = self
+                .gathered_assertions()?
+                .iter()
+                .find(|hashed_uri| hashed_uri.url().contains(assertion_label))?;
+
+            Some((a, ClaimAssertionType::Gathered))
+        }
     }
 
     // Given a proposed label, make a new label that is unique within this

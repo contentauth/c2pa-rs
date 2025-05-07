@@ -159,7 +159,7 @@ impl ValidationResults {
                     .claims()
                     .iter()
                     .flat_map(|c| c.ingredient_assertions())
-                    .filter_map(|a| Ingredient::from_assertion(a).ok())
+                    .filter_map(|a| Ingredient::from_assertion(a.assertion()).ok())
                     .filter_map(make_absolute)
                     .flatten()
                     .collect();

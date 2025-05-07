@@ -239,7 +239,7 @@ impl ManifestStoreReport {
         for i in claim.ingredient_assertions() {
             let ingredient_assertion =
                 <crate::assertions::Ingredient as crate::assertion::AssertionBase>::from_assertion(
-                    i,
+                    i.assertion(),
                 )?;
 
             // is this an ingredient

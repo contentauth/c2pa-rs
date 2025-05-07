@@ -101,6 +101,7 @@ pub fn create_test_claim() -> Result<Claim> {
 
     // Add assertions.
     let actions = Actions::new()
+        .add_action(Action::new("c2pa.created"))
         .add_action(
             Action::new("c2pa.cropped")
                 .set_parameter(
