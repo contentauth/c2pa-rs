@@ -1,0 +1,408 @@
+{
+  "active_manifest": "adobetest:urn:uuid:fd9c04fe-5084-42b8-8065-f1a3a26094c7",
+  "manifests": {
+    "adobetest:urn:uuid:ac39fe0b-7b99-49b8-9760-dfa4ca0053e3": {
+      "vendor": "adobetest",
+      "claim_generator": "C2PA Testing",
+      "asset": {
+        "title": "CI.jpg",
+        "format": "image/jpeg",
+        "instance_id": "xmp:iid:ea15bd03-bcc9-44ad-aeb5-43507fc8b572",
+        "thumbnail": {
+          "format": "image/jpeg",
+          "image": "<omitted>"
+        }
+      },
+      "ingredients": [
+        {
+          "title": "I.jpg",
+          "format": "image/jpeg",
+          "document_id": "xmp.did:eb00056d-7202-4f8e-b919-11b7fdab5898",
+          "instance_id": "xmp.iid:eb00056d-7202-4f8e-b919-11b7fdab5898",
+          "thumbnail": {
+            "format": "image/jpeg",
+            "image": "<omitted>"
+          }
+        }
+      ],
+      "credentials": [
+        {
+          "@context": ["https://www.w3.org/2018/credentials/v1"],
+          "credentialSubject": {
+            "id": "did:adobe:f78db44b3d758bbf1ac2b1da23d6a9bc8d4554bbc7ca6f78f5536d6cf813d218e",
+            "name": "Gavin Peacock"
+          },
+          "id": "did:adobe:f78db44b3d758bbf1ac2b1da23d6a9bc8d4554bbc7ca6f78f5536d6cf813d218e",
+          "proof": {
+            "created": "2022-01-06T05:40:52.737829354Z",
+            "proof_purpose": "Ed25519Signature2018",
+            "proof_type": "Ed25519Signature2018",
+            "proof_value": "f7d0ded35fcbf3d63078c4fe729460a67ea4c78a1cce073c2f8d3277b96f02caf373fcd4dd67b8c9c94c1e4f48f43d0ac9a4294a2aa06a64aafa574323da11403",
+            "verification_method": "did:adobe:f78db44b3d758bbf1ac2b1da23d6a9bc8d4554bbc7ca6f78f5536d6cf813d218e"
+          },
+          "type": ["VerifiableCredential"]
+        }
+      ],
+      "assertions": [
+        {
+          "label": "adobe.beta",
+          "data": {
+            "version": "0.12.5"
+          }
+        },
+        {
+          "label": "stds.schema-org.CreativeWork",
+          "data": {
+            "@context": "http://schema.org/",
+            "@type": "CreativeWork",
+            "author": [
+              {
+                "@type": "Person",
+                "credential": [
+                  {
+                    "alg": "sha256",
+                    "hash": "+DRejdrWU37/3HlejxKmW2nhYvOLH1F9/dsPG7RO1bU=",
+                    "url": "self#jumbf=/c2pa/adobetest:urn:uuid:ac39fe0b-7b99-49b8-9760-dfa4ca0053e3/c2pa.credentials/did:adobe:f78db44b3d758bbf1ac2b1da23d6a9bc8d4554bbc7ca6f78f5536d6cf813d218e"
+                  }
+                ],
+                "identifier": "did:adobe:f78db44b3d758bbf1ac2b1da23d6a9bc8d4554bbc7ca6f78f5536d6cf813d218e",
+                "name": "Gavin Peacock"
+              },
+              {
+                "@id": "https://www.twitter.com/gvnpeacock",
+                "@type": "Person",
+                "identifier": "https://cai-identity.adobe.io/identities/did:adobe:f78db44b3d758bbf1ac2b1da23d6a9bc8d4554bbc7ca6f78f5536d6cf813d218e?service=VerifiableCredentials",
+                "name": "gvnpeacock"
+              }
+            ]
+          }
+        },
+        {
+          "label": "c2pa.actions",
+          "data": {
+            "actions": [
+              {
+                "action": "c2pa.edited",
+                "parameters": {
+                  "name": "gradient"
+                }
+              },
+              {
+                "action": "c2pa.edited",
+                "parameters": {
+                  "name": "import"
+                }
+              },
+              {
+                "action": "c2pa.edited",
+                "parameters": {
+                  "name": "resize"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "label": "adobe.dictionary",
+          "data": {
+            "url": "https://cai-assertions.adobe.com/photoshop/dictionary.json"
+          }
+        },
+        {
+          "label": "c2pa.hash.data",
+          "data": {
+            "alg": "sha256",
+            "exclusions": [
+              {
+                "length": 332315,
+                "start": 20
+              }
+            ],
+            "hash": "6ww7zCehpTvkNLZZxLpVIggripQlOpdqKSMUShyQazw=",
+            "name": "jumbf manifest",
+            "pad": "ICAgICAgIA=="
+          }
+        }
+      ],
+      "signature": {
+        "issuer": "Adobe, Inc.",
+        "time": "2022-04-20T22:44:37+00:00"
+      }
+    },
+    "adobetest:urn:uuid:879beec2-74bb-4150-8245-9176dd6a8972": {
+      "vendor": "adobetest",
+      "claim_generator": "C2PA Testing",
+      "asset": {
+        "title": "CA.jpg",
+        "format": "image/jpeg",
+        "instance_id": "xmp:iid:e2f7e389-7286-4c97-9004-7b9185cdb862",
+        "thumbnail": {
+          "format": "image/jpeg",
+          "image": "<omitted>"
+        }
+      },
+      "ingredients": [
+        {
+          "title": "A.jpg",
+          "format": "image/jpeg",
+          "document_id": "xmp.did:cb9f5498-bb58-4572-8043-8c369e6bfb9b",
+          "instance_id": "xmp.iid:cb9f5498-bb58-4572-8043-8c369e6bfb9b",
+          "thumbnail": {
+            "format": "image/jpeg",
+            "image": "<omitted>"
+          },
+          "is_parent": true
+        }
+      ],
+      "credentials": [
+        {
+          "@context": ["https://www.w3.org/2018/credentials/v1"],
+          "credentialSubject": {
+            "id": "did:adobe:f78db44b3d758bbf1ac2b1da23d6a9bc8d4554bbc7ca6f78f5536d6cf813d218e",
+            "name": "Gavin Peacock"
+          },
+          "id": "did:adobe:f78db44b3d758bbf1ac2b1da23d6a9bc8d4554bbc7ca6f78f5536d6cf813d218e",
+          "proof": {
+            "created": "2022-01-06T05:40:52.737829354Z",
+            "proof_purpose": "Ed25519Signature2018",
+            "proof_type": "Ed25519Signature2018",
+            "proof_value": "f7d0ded35fcbf3d63078c4fe729460a67ea4c78a1cce073c2f8d3277b96f02caf373fcd4dd67b8c9c94c1e4f48f43d0ac9a4294a2aa06a64aafa574323da11403",
+            "verification_method": "did:adobe:f78db44b3d758bbf1ac2b1da23d6a9bc8d4554bbc7ca6f78f5536d6cf813d218e"
+          },
+          "type": ["VerifiableCredential"]
+        }
+      ],
+      "assertions": [
+        {
+          "label": "adobe.beta",
+          "data": {
+            "version": "0.12.5"
+          }
+        },
+        {
+          "label": "stds.schema-org.CreativeWork",
+          "data": {
+            "@context": "http://schema.org/",
+            "@type": "CreativeWork",
+            "author": [
+              {
+                "@type": "Person",
+                "credential": [
+                  {
+                    "alg": "sha256",
+                    "hash": "+DRejdrWU37/3HlejxKmW2nhYvOLH1F9/dsPG7RO1bU=",
+                    "url": "self#jumbf=/c2pa/adobetest:urn:uuid:879beec2-74bb-4150-8245-9176dd6a8972/c2pa.credentials/did:adobe:f78db44b3d758bbf1ac2b1da23d6a9bc8d4554bbc7ca6f78f5536d6cf813d218e"
+                  }
+                ],
+                "identifier": "did:adobe:f78db44b3d758bbf1ac2b1da23d6a9bc8d4554bbc7ca6f78f5536d6cf813d218e",
+                "name": "Gavin Peacock"
+              },
+              {
+                "@id": "https://www.twitter.com/gvnpeacock",
+                "@type": "Person",
+                "identifier": "https://cai-identity.adobe.io/identities/did:adobe:f78db44b3d758bbf1ac2b1da23d6a9bc8d4554bbc7ca6f78f5536d6cf813d218e?service=VerifiableCredentials",
+                "name": "gvnpeacock"
+              }
+            ]
+          }
+        },
+        {
+          "label": "c2pa.actions",
+          "data": {
+            "actions": [
+              {
+                "action": "c2pa.edited",
+                "parameters": {
+                  "name": "import"
+                }
+              },
+              {
+                "action": "c2pa.edited",
+                "parameters": {
+                  "name": "brightnesscontrast"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "label": "adobe.dictionary",
+          "data": {
+            "url": "https://cai-assertions.adobe.com/photoshop/dictionary.json"
+          }
+        },
+        {
+          "label": "c2pa.hash.data",
+          "data": {
+            "alg": "sha256",
+            "exclusions": [
+              {
+                "length": 157251,
+                "start": 20
+              }
+            ],
+            "hash": "yGskY8ddSbmx9FHzxgqpQj1Y52qs5bDXeFx5trY8fS8=",
+            "name": "jumbf manifest",
+            "pad": "ICAgICAgIA=="
+          }
+        }
+      ],
+      "signature": {
+        "issuer": "Adobe, Inc.",
+        "time": "2022-04-20T22:44:35+00:00"
+      }
+    },
+    "adobetest:urn:uuid:fd9c04fe-5084-42b8-8065-f1a3a26094c7": {
+      "vendor": "adobetest",
+      "claim_generator": "C2PA Testing",
+      "asset": {
+        "title": "CAIXCI.jpg",
+        "format": "image/jpeg",
+        "instance_id": "xmp:iid:b3ec4ebd-0b29-47cf-8024-d6336343b70b",
+        "thumbnail": {
+          "format": "image/jpeg",
+          "image": "<omitted>"
+        }
+      },
+      "ingredients": [
+        {
+          "title": "CA.jpg",
+          "format": "image/jpeg",
+          "instance_id": "xmp:iid:42f93af5-c326-4b89-99c1-c76aefa7352d",
+          "thumbnail": {
+            "format": "image/jpeg",
+            "image": "<omitted>"
+          },
+          "is_parent": true,
+          "active_manifest": "adobetest:urn:uuid:879beec2-74bb-4150-8245-9176dd6a8972"
+        },
+        {
+          "title": "XCI.jpg",
+          "format": "image/jpeg",
+          "instance_id": "xmp:iid:d344ce1e-72b4-441e-80bd-35bc3223d0e4",
+          "thumbnail": {
+            "format": "image/jpeg",
+            "image": "<omitted>"
+          },
+          "active_manifest": "adobetest:urn:uuid:ac39fe0b-7b99-49b8-9760-dfa4ca0053e3",
+          "validation_status": [
+            {
+              "code": "assertion.dataHash.mismatch",
+              "url": "self#jumbf=/c2pa/adobetest:urn:uuid:ac39fe0b-7b99-49b8-9760-dfa4ca0053e3/c2pa.assertions/c2pa.hash.data",
+              "explanation": "asset hash error, name: jumbf manifest, error: hash verification( Hashes do not match )"
+            }
+          ]
+        }
+      ],
+      "credentials": [
+        {
+          "@context": ["https://www.w3.org/2018/credentials/v1"],
+          "credentialSubject": {
+            "id": "did:adobe:f78db44b3d758bbf1ac2b1da23d6a9bc8d4554bbc7ca6f78f5536d6cf813d218e",
+            "name": "Gavin Peacock"
+          },
+          "id": "did:adobe:f78db44b3d758bbf1ac2b1da23d6a9bc8d4554bbc7ca6f78f5536d6cf813d218e",
+          "proof": {
+            "created": "2022-01-06T05:40:52.737829354Z",
+            "proof_purpose": "Ed25519Signature2018",
+            "proof_type": "Ed25519Signature2018",
+            "proof_value": "f7d0ded35fcbf3d63078c4fe729460a67ea4c78a1cce073c2f8d3277b96f02caf373fcd4dd67b8c9c94c1e4f48f43d0ac9a4294a2aa06a64aafa574323da11403",
+            "verification_method": "did:adobe:f78db44b3d758bbf1ac2b1da23d6a9bc8d4554bbc7ca6f78f5536d6cf813d218e"
+          },
+          "type": ["VerifiableCredential"]
+        }
+      ],
+      "assertions": [
+        {
+          "label": "adobe.beta",
+          "data": {
+            "version": "0.12.5"
+          }
+        },
+        {
+          "label": "stds.schema-org.CreativeWork",
+          "data": {
+            "@context": "http://schema.org/",
+            "@type": "CreativeWork",
+            "author": [
+              {
+                "@type": "Person",
+                "credential": [
+                  {
+                    "alg": "sha256",
+                    "hash": "+DRejdrWU37/3HlejxKmW2nhYvOLH1F9/dsPG7RO1bU=",
+                    "url": "self#jumbf=/c2pa/adobetest:urn:uuid:fd9c04fe-5084-42b8-8065-f1a3a26094c7/c2pa.credentials/did:adobe:f78db44b3d758bbf1ac2b1da23d6a9bc8d4554bbc7ca6f78f5536d6cf813d218e"
+                  }
+                ],
+                "identifier": "did:adobe:f78db44b3d758bbf1ac2b1da23d6a9bc8d4554bbc7ca6f78f5536d6cf813d218e",
+                "name": "Gavin Peacock"
+              },
+              {
+                "@id": "https://www.twitter.com/gvnpeacock",
+                "@type": "Person",
+                "identifier": "https://cai-identity.adobe.io/identities/did:adobe:f78db44b3d758bbf1ac2b1da23d6a9bc8d4554bbc7ca6f78f5536d6cf813d218e?service=VerifiableCredentials",
+                "name": "gvnpeacock"
+              }
+            ]
+          }
+        },
+        {
+          "label": "c2pa.actions",
+          "data": {
+            "actions": [
+              {
+                "action": "c2pa.edited",
+                "parameters": {
+                  "name": "import"
+                }
+              },
+              {
+                "action": "c2pa.edited",
+                "parameters": {
+                  "name": "brightnesscontrast"
+                }
+              },
+              {
+                "action": "c2pa.edited",
+                "parameters": {
+                  "name": "import"
+                }
+              },
+              {
+                "action": "c2pa.edited",
+                "parameters": {
+                  "name": "resize"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "label": "adobe.dictionary",
+          "data": {
+            "url": "https://cai-assertions.adobe.com/photoshop/dictionary.json"
+          }
+        },
+        {
+          "label": "c2pa.hash.data",
+          "data": {
+            "alg": "sha256",
+            "exclusions": [
+              {
+                "length": 698275,
+                "start": 20
+              }
+            ],
+            "hash": "TDlEJEuBcYUauYiQhkd4+hIs+olbzReytOW7+Wl1ReQ=",
+            "name": "jumbf manifest",
+            "pad": "ICAgICAgIA=="
+          }
+        }
+      ],
+      "signature": {
+        "issuer": "Adobe, Inc.",
+        "time": "2022-04-20T22:44:43+00:00"
+      }
+    }
+  }
+}

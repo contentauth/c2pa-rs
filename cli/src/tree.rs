@@ -13,8 +13,9 @@
 use std::path::Path;
 
 use atree::{Arena, Token};
-use c2pa::{Reader, Result};
+use c2pa::{Reader, Result as C2paResult};
 use treeline::Tree;
+use anyhow::{anyhow, Result};
 
 fn populate_node(
     tree: &mut Arena<String>,
@@ -76,7 +77,7 @@ pub fn tree<P: AsRef<Path>>(path: P) -> Result<String> {
     let os_filename = path
         .as_ref()
         .file_name()
-        .ok_or_else(|| crate::Error::BadParam("bad filename".to_string()))?;
+        .ok_or_else(|| anyhow!("bad filename"))?;
     let asset_name = os_filename.to_string_lossy().into_owned();
 
     let reader = Reader::from_file(path)?;

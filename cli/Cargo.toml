@@ -34,6 +34,7 @@ clap = { version = "4.5.10", features = ["derive", "env"] }
 env_logger = "0.11.7"
 glob = "0.3.1"
 log = "0.4"
+quick-xml = { version = "0.31", features = ["serialize"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_derive = "1.0"
 serde_json = "1.0"
@@ -41,6 +42,7 @@ tempfile = "3.3"
 treeline = "0.1.0"
 pem = "3.0.3"
 url = "2.5.0"
+futures = "0.3"
 
 [target.'cfg(not(target_os = "wasi"))'.dependencies]
 async-std = { version = "1.12", features = ["attributes"] }
@@ -61,3 +63,7 @@ predicates = "3.1"
 
 [package.metadata.binstall]
 # Use defaults
+
+[features]
+default = []
+wasi = ["c2pa/fetch_remote_manifests"]

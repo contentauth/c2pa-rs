@@ -54,6 +54,7 @@ required-features = ["file_io"]
 
 [[example]]
 name = "v2show"
+required-features = ["file_io", "quick_xml"]
 
 [[example]]
 name = "v2api"
@@ -62,6 +63,7 @@ name = "v2api"
 crate-type = ["lib"]
 
 [dependencies]
+anyhow = "1.0"
 asn1-rs = "0.6.2"
 async-generic = "1.1"
 async-recursion = "1.1.1"
@@ -86,7 +88,7 @@ conv = "0.3.3"
 coset = "0.3.8"
 extfmt = "0.1.1"
 ed25519-dalek = "2.1.1"
-quick-xml = "0.37.1"
+quick-xml = { version = "0.37.1", features = ["serialize"] }
 hex = "0.4.3"
 id3 = "=1.16.1"
 img-parts = "0.3.2"

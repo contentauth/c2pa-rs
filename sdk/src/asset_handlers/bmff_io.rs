@@ -65,13 +65,14 @@ const FULL_BOX_TYPES: &[&str; 80] = &[
     "txtC", "mime", "uri ", "uriI", "hmhd", "sthd", "vvhd", "medc",
 ];
 
-static SUPPORTED_TYPES: [&str; 13] = [
+static SUPPORTED_TYPES: [&str; 14] = [
     "avif",
     "heif",
     "heic",
     "mp4",
     "m4a",
     "mov",
+    "m4s",
     "application/mp4",
     "audio/mp4",
     "image/avif",
