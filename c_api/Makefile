@@ -18,6 +18,23 @@ endif
 
 TARGET_DIR := $(realpath ../target)
 
+# Helper function to create a zip file
+define make_zip
+    echo "Reading version from $(1)/c2pa.h"; \
+    if [ "$(PLATFORM)" = "win" ]; then \
+        VERSION=$$(for /F "tokens=2 delims=: " %A in ('findstr "^// Version:" $(1)/c2pa.h') do @echo %A); \
+    else \
+        VERSION=$$(grep '^// Version:' $(1)/c2pa.h | sed 's/^\/\/ Version: //'); \
+    fi; \
+    ZIP_NAME=$(TARGET_DIR)/artifacts/c2pa-v$${VERSION}-$(2).zip; \
+    echo "Creating zip file: $${ZIP_NAME}"; \
+    mkdir -p $(TARGET_DIR)/artifacts $(1)/include $(1)/lib; \
+    cp $(1)/c2pa.h $(1)/include/; \
+    cp $(1)/libc2pa_c.* $(1)/lib/; \
+    cd $(1) && zip -r $${ZIP_NAME} include lib; \
+    echo "Zip file created: $${ZIP_NAME}"
+endef
+
 check-format:
 	cargo +nightly fmt -- --check
 
@@ -38,47 +55,34 @@ fmt:
 release-win:
 	rustup target add x86_64-pc-windows-msvc
 	cargo build --target=x86_64-pc-windows-msvc --release
-	cargo run --release --bin make_zip $(TARGET_DIR)/x86_64-pc-windows-msvc/release
+	@$(call make_zip,$(TARGET_DIR)/x86_64-pc-windows-msvc/release,x86_64-pc-windows-msvc)	
 
 release-mac-arm:
 	rustup target add aarch64-apple-darwin
 	MACOSX_DEPLOYMENT_TARGET=11.1 cargo build --target=aarch64-apple-darwin --release
-	cargo run --release --bin make_zip $(TARGET_DIR)/aarch64-apple-darwin/release
+	@$(call make_zip,$(TARGET_DIR)/aarch64-apple-darwin/release,aarch64-apple-darwin)
 
 release-mac-x86:
 	rustup target add x86_64-apple-darwin
 	MACOSX_DEPLOYMENT_TARGET=10.15 cargo build --target=x86_64-apple-darwin --release
-	cargo run --release --bin make_zip $(TARGET_DIR)/x86_64-apple-darwin/release
+	@$(call make_zip,$(TARGET_DIR)/x86_64-apple-darwin/release,x86_64-apple-darwin)
 
 release-mac-universal: release-mac-arm release-mac-x86
 	rm -rf $(TARGET_DIR)/universal-apple-darwin
 	mkdir -p $(TARGET_DIR)/universal-apple-darwin/release
 	lipo -create -output $(TARGET_DIR)/universal-apple-darwin/release/libc2pa_c.dylib $(TARGET_DIR)/aarch64-apple-darwin/release/libc2pa_c.dylib ../target/x86_64-apple-darwin/release/libc2pa_c.dylib
-# copy some files from the arm build to the universal build since we don't directly build this
 	cp $(TARGET_DIR)/aarch64-apple-darwin/release/c2pa.h $(TARGET_DIR)/universal-apple-darwin/release/c2pa.h
-	cp $(TARGET_DIR)/aarch64-apple-darwin/release/c2pa_version.txt $(TARGET_DIR)/universal-apple-darwin/release/c2pa_version.txt
-	cargo run --release --bin make_zip $(TARGET_DIR)/universal-apple-darwin/release
+	@$(call make_zip,$(TARGET_DIR)/universal-apple-darwin/release,universal-apple-darwin)
 
 release-linux-gnu-x86:
 	rustup target add x86_64-unknown-linux-gnu
 	cargo build --target=x86_64-unknown-linux-gnu --release
-	cargo run --release --bin make_zip $(TARGET_DIR)/x86_64-unknown-linux-gnu/release
+	@$(call make_zip,$(TARGET_DIR)/x86_64-unknown-linux-gnu/release,x86_64-unknown-linux-gnu)
 
 release-linux-gnu-arm:
 	rustup target add aarch64-unknown-linux-gnu
 	cargo build --target=aarch64-unknown-linux-gnu --release
-	cargo run --release --bin make_zip $(TARGET_DIR)/aarch64-unknown-linux-gnu/release
-
-release-linux-musl-x86:
-	rustup target add x86_64-unknown-linux-musl
-	cargo build --target=x86_64-unknown-linux-musl --release
-	cargo run --release --bin make_zip $(TARGET_DIR)/x86_64-unknown-linux-musl/release
-
-release-linux-musl-arm:
-	rustup target add aarch64-unknown-linux-musl	
-	cargo build --target=aarch64-unknown-linux-musl --release
-	cargo run --release --bin make_zip $(TARGET_DIR)/aarch64-unknown-linux-musl/release
-
+	@$(call make_zip,$(TARGET_DIR)/aarch64-unknown-linux-gnu/release,aarch64-unknown-linux-gnu)
 
 # make release
 # Builds and packages a zip for c_api for each platform

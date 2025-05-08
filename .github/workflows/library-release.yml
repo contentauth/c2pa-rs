@@ -43,6 +43,7 @@ jobs:
           choco install strawberryperl -y
           choco install nasm -y
           choco install make -y
+          choco install zip -y
           $env:Path += ";C:\Program Files\NASM;C:\Strawberry\perl\bin"
           echo "PERL=$((where.exe perl)[0])" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
           echo "OPENSSL_SRC_PERL=$((where.exe perl)[0])" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
