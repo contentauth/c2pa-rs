@@ -32,18 +32,20 @@ jobs:
 
       - name: Set up Rust
         uses: actions-rust-lang/setup-rust-toolchain@v1
-
-      # Install openssl for Windows
-      - name: Install dependencies for OpenSSL (Windows)
-        if: ${{ matrix.os == 'windows-latest' }}
+        
+      - name: Setup Perl
+        uses: shogo82148/actions-setup-perl@v1
+        with:
+          perl-version: '5.32'
+      
+      - name: Install Locale::Maketext::Simple
         run: |
-          choco install openssl --version=3.5.0 --no-progress
-          $env:PATH += ";C:\Program Files\OpenSSL\bin"
-          openssl version
-          echo "OPENSSL_DIR=C:\Program Files\OpenSSL" >> $env:GITHUB_ENV
-          echo "OPENSSL_STATIC=1" >> $env:GITHUB_ENV
-          dir "C:\Program Files\OpenSSL"
-
+          cpanm Locale::Maketext::Simple
+      
+      - name: Verify Perl Modules
+        run: |
+          perl -MLocale::Maketext::Simple -e "print 'Locale::Maketext::Simple installed successfully\n'"
+      
       - name: Build release
         run: make release
 
