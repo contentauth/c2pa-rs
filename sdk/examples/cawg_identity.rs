@@ -27,7 +27,7 @@ mod cawg {
     use anyhow::Result;
     use c2pa::{AsyncSigner, Builder, Reader, SigningAlg};
     use c2pa_crypto::raw_signature;
-    use cawg_identity::{
+    use c2pa::identity::{
         builder::{AsyncIdentityAssertionBuilder, AsyncIdentityAssertionSigner},
         validator::CawgValidator,
         x509::AsyncX509CredentialHolder,
