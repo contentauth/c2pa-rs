@@ -42,8 +42,8 @@ jobs:
           openssl version
           echo "OPENSSL_DIR=C:\Program Files\OpenSSL" >> $env:GITHUB_ENV
           echo "OPENSSL_STATIC=1" >> $env:GITHUB_ENV
-          dir "C:\Program Files\OpenSSL
-          
+          dir "C:\Program Files\OpenSSL"
+
       - name: Build release
         run: make release
 
