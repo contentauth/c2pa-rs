@@ -11,11 +11,6 @@ rules:
   description-empty:
     level: error
 
-  # The commit description must not end with trailing white space
-  description-format:
-    level: error
-    format: ^[\w ]+[\s\S]*$
-
   # Description should be <70 chars
   description-max-length:
     level: warning
