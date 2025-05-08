@@ -4205,7 +4205,7 @@ impl Store {
                             "ingredient does not have provenance".to_owned()
                         };
                         log_item!(
-                            to_assertion_uri(&claim_label, ingredient_assertion.label()),
+                            to_assertion_uri(&claim_label, &i.label()),
                             description,
                             "get_claim_referenced_manifests"
                         )
