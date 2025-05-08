@@ -88,3 +88,4 @@ jobs:
             echo "Uploading $file..."
             gh release upload "${{ github.ref_name }}" "$file" --clobber
           done
+
