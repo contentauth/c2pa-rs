@@ -98,5 +98,10 @@ echo "No release build for aarch64 on Windows"
 endif
 endif
 ifeq ($(PLATFORM), linux)
-release: release-linux-gnu-x86 release-linux-gnu-arm
+ifeq ($(ARCH), x86_64)
+release: release-linux-gnu-x86
+endif
+ifeq ($(ARCH), aarch64)
+release: release-linux-gnu-arm
+endif
 endif
