@@ -36,17 +36,15 @@ jobs:
       - name: Set up Rust
         uses: actions-rust-lang/setup-rust-toolchain@v1
 
-      # Install dependencies for Windows
+      # Install openssl for Windows
       - name: Install dependencies for OpenSSL (Windows)
         if: ${{ matrix.os == 'windows-latest' }}
         run: |
-          choco install strawberryperl -y
-          choco install nasm -y
-          choco install make -y
-          choco install zip -y
-          $env:Path += ";C:\Program Files\NASM;C:\Strawberry\perl\bin"
-          echo "PERL=$((where.exe perl)[0])" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-          echo "OPENSSL_SRC_PERL=$((where.exe perl)[0])" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          choco install openssl --version=3.5.0
+          echo "OPENSSL_DIR=C:\Program Files\OpenSSL" >> $env:GITHUB_ENV
+          echo "OPENSSL_LIB_DIR=C:\Program Files\OpenSSL\lib" >> $env:GITHUB_ENV
+          echo "OPENSSL_INCLUDE_DIR=C:\Program Files\OpenSSL\include" >> $env:GITHUB_ENV
+          echo "OPENSSL_NO_VENDOR=1" >> $env:GITHUB_ENV
 
       - name: Build release
         run: make release
