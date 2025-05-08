@@ -22,7 +22,7 @@ TARGET_DIR := $(realpath ../target)
 define make_zip
     echo "Reading version from $(1)/c2pa.h"; \
     if [ "$(PLATFORM)" = "win" ]; then \
-        VERSION=$$(for /F "tokens=2 delims=: " %A in ('findstr "^// Version:" $(1)/c2pa.h') do @echo %A); \
+        VERSION=$$(findstr "^// Version:" $(1)/c2pa.h | awk -F": " "{print \$$2}"); \
     else \
         VERSION=$$(grep '^// Version:' $(1)/c2pa.h | sed 's/^\/\/ Version: //'); \
     fi; \
