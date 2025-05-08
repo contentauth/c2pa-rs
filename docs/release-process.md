@@ -160,13 +160,13 @@ We have safeguards in place to ensure that a release PR will result in a success
 
 * **Resolve the issues indicated by the log.** This will vary depending on the failure mode.
 
-* **_ONLY_ for crates that failed to publish, manually revert `Cargo.toml` and `CHANGELOG.md` files.** Remember that release-plz will only generate a new release PR for crates where the `Cargo.toml` version exactly matches what's published on [crates.io](https://crates.io). Be sure to delete the generated section in `CHANGELOG.md` that failed to publish; otherwise, release-plz will raise an error when trying to generate the next release PR.
+* **_ONLY_ for crates that failed to publish, manually revert `Cargo.toml` and `CHANGELOG.md` files.** Remember that release-plz will only generate a new release PR for crates where the `Cargo.toml` version exactly matches what's published on [crates.io](https://crates.io). This change should be made directly to `main` branch or via a new PR that targets `main`. (Remember that the previous release PR will have been merged, so it no longer exists.) Be sure to delete the generated section in `CHANGELOG.md` that failed to publish; otherwise, release-plz will raise an error when trying to generate the next release PR.
 
 * **Revert intra-project version references that failed to publish.** For example, if the main SDK (`c2pa`) failed to publish, it's likely that `c2patool` will have a `Cargo.toml` dependency on the new/unpublished version. You may need to manually revert that change and allow release-plz to re-introduce it. _(From Eric: I'm not 100% sure about this step; experiment as needed to make things work.)_
 
 * **Wait for release-plz to create a new release PR with the desired results.**
 
-* **Avoid manually changing `Cargo.toml` files, other than the aforementioned reversions.** In general, attempts to push release-plz to release outside of its normal process create more problems to be resolved.
+* **Avoid manually changing `Cargo.toml` files, other than the aforementioned reversions.** In general, attempts to push release-plz to release outside of its normal process tend to create more problems to be resolved.
 
 ### Using `rp-sandbox` project to preflight release-plz upgrades or strategies
 
