@@ -6,6 +6,13 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 Since version 0.36.2, the format of this changelog is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.49.6](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.49.5...c2pa-v0.49.6)
+_08 May 2025_
+
+### Fixed
+
+* Ingredient from_stream/memory not loading remote manifests ([#1061](https://github.com/contentauth/c2pa-rs/pull/1061))
+
 ## [0.49.5](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.49.4...c2pa-v0.49.5)
 _25 April 2025_
 
