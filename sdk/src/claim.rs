@@ -1784,6 +1784,9 @@ impl Claim {
         let additional_bytes: Vec<u8> = Vec::new();
         let data = claim.data()?;
 
+        // use the signature uri as the current uri while validating the signature info
+        validation_log.push_current_uri(claim.signature.clone());
+
         // make sure signature manifest if present points to this manifest
         let sig_box_err = match jumbf::labels::manifest_label_from_uri(&claim.signature) {
             Some(signature_url) if signature_url != claim.label() => true,
@@ -1803,47 +1806,24 @@ impl Claim {
             .failure(validation_log, Error::ClaimMissingSignatureBox)?;
         }
 
+        let sign1 = parse_cose_sign1(&sig, &data, validation_log)?;
+
         // check certificate revocation
-        let sign1 = parse_cose_sign1(&sig, &data, validation_log).inspect_err(|_e| {
-            // adjust the error info
-            if let Some(li) = validation_log.logged_items_mut().last_mut() {
-                let mut new_li = li.clone();
-                new_li.label = Cow::from(claim.uri());
-                *li = new_li;
+        check_ocsp_status(&sign1, &data, ctp, validation_log).map(|v| {
+            // if a value contains the der response it has successfully returned a good OCSP response
+            if !v.ocsp_der.is_empty() {
+                // so log the success status
+                if v.revoked_at.is_none() {
+                    log_item!(
+                        claim.uri(),
+                        "claim signature OCSP value good",
+                        "verify_claim_async"
+                    )
+                    .validation_status(validation_status::SIGNING_CREDENTIAL_NOT_REVOKED)
+                    .success(validation_log);
+                }
             }
         })?;
-
-        check_ocsp_status(&sign1, &data, ctp, validation_log)
-            .map(|v| {
-                // if a value contains the der response it has successfully returned a good OCSP response
-                if !v.ocsp_der.is_empty() {
-                    // so log the success status
-                    if v.revoked_at.is_none() {
-                        log_item!(
-                            claim.uri(),
-                            "claim signature OCSP value good",
-                            "verify_claim_async"
-                        )
-                        .validation_status(validation_status::SIGNING_CREDENTIAL_NOT_REVOKED)
-                        .success(validation_log);
-                    } else {
-                        // adjust the error info
-                        if let Some(li) = validation_log.logged_items_mut().last_mut() {
-                            let mut new_li = li.clone();
-                            new_li.label = Cow::from(claim.uri());
-                            *li = new_li;
-                        }
-                    }
-                }
-            })
-            .inspect_err(|_e| {
-                // adjust the error info
-                if let Some(li) = validation_log.logged_items_mut().last_mut() {
-                    let mut new_li = li.clone();
-                    new_li.label = Cow::from(claim.uri());
-                    *li = new_li;
-                }
-            })?;
 
         let verified = verify_cose_async(
             &sig,
@@ -1851,11 +1831,14 @@ impl Claim {
             &additional_bytes,
             cert_check,
             ctp,
+            svi.timestamps.get(claim.label()).cloned(),
             validation_log,
         )
         .await;
 
-        Claim::verify_internal(claim, asset_data, svi, verified, validation_log)
+        let result = Claim::verify_internal(claim, asset_data, svi, verified, validation_log);
+        validation_log.pop_current_uri();
+        result
     }
 
     /// Verify claim signature, assertion store and asset hashes
@@ -1897,46 +1880,24 @@ impl Claim {
             return Err(Error::ClaimDecoding);
         };
 
+        let sign1 = parse_cose_sign1(sig, data, validation_log)?;
+
         // check certificate revocation
-        let sign1 = parse_cose_sign1(sig, data, validation_log).inspect_err(|_e| {
-            // adjust the error info
-            if let Some(li) = validation_log.logged_items_mut().last_mut() {
-                let mut new_li = li.clone();
-                new_li.label = Cow::from(claim.uri());
-                *li = new_li;
+        check_ocsp_status(&sign1, data, ctp, validation_log).map(|v| {
+            // if a value contains the der response it has successfully returned a good OCSP response
+            if !v.ocsp_der.is_empty() {
+                // so log the success status
+                if v.revoked_at.is_none() {
+                    log_item!(
+                        claim.uri(),
+                        "claim signature OCSP value good",
+                        "verify_claim"
+                    )
+                    .validation_status(validation_status::SIGNING_CREDENTIAL_NOT_REVOKED)
+                    .success(validation_log);
+                }
             }
         })?;
-        check_ocsp_status(&sign1, data, ctp, validation_log)
-            .map(|v| {
-                // if a value contains the der response it has successfully returned a good OCSP response
-                if !v.ocsp_der.is_empty() {
-                    // so log the success status
-                    if v.revoked_at.is_none() {
-                        log_item!(
-                            claim.uri(),
-                            "claim signature OCSP value good",
-                            "verify_claim"
-                        )
-                        .validation_status(validation_status::SIGNING_CREDENTIAL_NOT_REVOKED)
-                        .success(validation_log);
-                    } else {
-                        // adjust the error info
-                        if let Some(li) = validation_log.logged_items_mut().last_mut() {
-                            let mut new_li = li.clone();
-                            new_li.label = Cow::from(claim.uri());
-                            *li = new_li;
-                        }
-                    }
-                }
-            })
-            .inspect_err(|_e| {
-                // adjust the error info
-                if let Some(li) = validation_log.logged_items_mut().last_mut() {
-                    let mut new_li = li.clone();
-                    new_li.label = Cow::from(claim.uri());
-                    *li = new_li;
-                }
-            })?;
 
         let verified = verify_cose(
             sig,
@@ -1944,17 +1905,13 @@ impl Claim {
             &additional_bytes,
             cert_check,
             ctp,
+            svi.timestamps.get(claim.label()).cloned(),
             validation_log,
         );
 
-        Claim::verify_internal(claim, asset_data, svi, verified, validation_log).inspect_err(|_e| {
-            // adjust the error info
-            if let Some(li) = validation_log.logged_items_mut().last_mut() {
-                let mut new_li = li.clone();
-                new_li.label = Cow::from(claim.uri());
-                *li = new_li;
-            }
-        })
+        let result = Claim::verify_internal(claim, asset_data, svi, verified, validation_log);
+        validation_log.pop_current_uri();
+        result
     }
 
     /// Get the signing certificate chain as PEM bytes
@@ -2692,18 +2649,6 @@ impl Claim {
                     .validation_status(validation_status::CLAIM_SIGNATURE_MISMATCH)
                     .failure(validation_log, Error::CoseSignature)?;
                 } else {
-                    // update the log_item details
-                    if let Some(li) = validation_log.logged_items_mut().last_mut() {
-                        let mut new_li = li.clone();
-                        new_li.label = Cow::from(claim.uri());
-                        new_li.description = Cow::Borrowed("claim signature valid");
-
-                        if claim.label() != svi.binding_claim.as_str() {
-                            new_li = new_li.set_ingredient_uri(claim.uri());
-                        }
-
-                        *li = new_li;
-                    }
                     // signing cert has not expired
                     log_item!(
                         claim.signature_uri(),
@@ -3313,6 +3258,13 @@ impl Claim {
         let dummy_data = AssertionData::Cbor(Vec::new());
         let dummy_ingredient = Assertion::new(assertions::labels::INGREDIENT, None, dummy_data);
         self.assertions_by_type(&dummy_ingredient, None)
+    }
+
+    /// Return list of timestamp assertions.
+    pub fn timestamp_assertions(&self) -> Vec<&ClaimAssertion> {
+        let dummy_data = AssertionData::Cbor(Vec::new());
+        let dummy_timestamp = Assertion::new(assertions::labels::TIMESTAMP, None, dummy_data);
+        self.assertions_by_type(&dummy_timestamp, None)
     }
 
     /// Return list of action assertions.

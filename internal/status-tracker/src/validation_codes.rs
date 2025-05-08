@@ -64,6 +64,12 @@ pub const ASSERTION_HASHEDURI_MATCH: &str = "assertion.hashedURI.match";
 /// Any corresponding URL should point to a C2PA assertion.
 pub const ASSERTION_DATAHASH_MATCH: &str = "assertion.dataHash.match";
 
+/// Additional exclusions are present in the data hash assertion.
+///
+/// Any corresponding URL should point to a C2PA assertion.
+pub const ASSERTION_DATAHASH_ADDITIONAL_EXCLUSIONS: &str =
+    "assertion.dataHash.additionalExclusionsPresent";
+
 /// Hash of a box-based asset matches the hash declared in the BMFF
 /// hash assertion.
 ///
@@ -508,6 +514,11 @@ pub const HASHED_URI_MISSING: &str = "hashedURI.missing";
 ///
 /// Any corresponding URL should point to a C2PA assertion box.
 pub const HASHED_URI_MISMATCH: &str = "hashedURI.mismatch";
+
+/// The timestamp assertion is malformed.
+///
+/// Any corresponding URL should point to a C2PA assertion box.
+pub const ASSERTION_TIMESTAMP_MALFORMED: &str = "assertion.timestamp.malformed";
 
 /// Returns `true` if the status code is a known C2PA success status code.
 ///

@@ -24,8 +24,10 @@ use std::{
 use async_generic::async_generic;
 use async_recursion::async_recursion;
 use c2pa_crypto::{
+    asn1::rfc3161::TstInfo,
     cose::{parse_cose_sign1, CertificateTrustPolicy, TimeStampStorage},
     hash::sha256,
+    time_stamp::verify_time_stamp,
 };
 use c2pa_status_tracker::{
     log_item,
@@ -51,7 +53,7 @@ use crate::{
     assertions::{
         labels::{self, CLAIM},
         BmffHash, DataBox, DataHash, DataMap, ExclusionsMap, Ingredient, Relationship, SubsetMap,
-        User, UserCbor,
+        TimeStamp, User, UserCbor,
     },
     asset_io::{
         CAIRead, CAIReadWrite, HashBlockObjectType, HashObjectPositions, RemoteRefEmbedType,
@@ -69,8 +71,8 @@ use crate::{
         self,
         boxes::*,
         labels::{
-            manifest_label_from_uri, manifest_label_to_parts, to_assertion_uri, ASSERTIONS,
-            CREDENTIALS, DATABOXES, SIGNATURE,
+            manifest_label_from_uri, manifest_label_to_parts, to_assertion_uri, to_manifest_uri,
+            ASSERTIONS, CREDENTIALS, DATABOXES, SIGNATURE,
         },
     },
     jumbf_io::{
@@ -100,6 +102,7 @@ pub(crate) struct StoreValidationInfo<'a> {
     pub ingredient_references: HashMap<String, HashSet<String>>, // mapping in ingredients to list of claims that reference it
     pub manifest_map: HashMap<String, &'a Claim>, // list of the addressable items in ingredient, saves re-parsing the items during validation
     pub binding_claim: String,                    // name of the claim that has the hash binding
+    pub timestamps: HashMap<String, TstInfo>,     // list of timestamp assertions for each claim
     pub update_manifest_size: usize,              // offset needed to correct for update manifests
 }
 
@@ -587,7 +590,15 @@ impl Store {
                             StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
 
                         let result = if _sync {
-                            verify_cose(&sig, &claim_bytes, b"", false, &self.ctp, &mut cose_log)
+                            verify_cose(
+                                &sig,
+                                &claim_bytes,
+                                b"",
+                                false,
+                                &self.ctp,
+                                None,
+                                &mut cose_log,
+                            )
                         } else {
                             verify_cose_async(
                                 &sig,
@@ -595,6 +606,7 @@ impl Store {
                                 b"",
                                 false,
                                 &self.ctp,
+                                None,
                                 &mut cose_log,
                             )
                             .await
@@ -1488,7 +1500,7 @@ impl Store {
                         )
                         .validation_status(validation_status::INGREDIENT_MANIFEST_VALIDATED)
                         .success(validation_log);
-                        continue;
+                        //continue;
                     }
 
                     // if mismatch is not because of a redaction or this is a claim v2 we can continue else this is a hard error
@@ -1694,21 +1706,11 @@ impl Store {
         asset_data: &mut ClaimAssetData<'_>,
         validation_log: &mut StatusTracker,
     ) -> Result<StoreValidationInfo<'a>> {
-        let mut redactions = Vec::new();
-        let mut ingredient_references = HashMap::new();
-        let mut manifest_map = HashMap::new();
-        Store::get_claim_referenced_manifests(
-            claim,
-            self,
-            &mut ingredient_references,
-            &mut manifest_map,
-            &mut redactions,
-            true,
-            validation_log,
-        )?;
+        let mut svi = StoreValidationInfo::default();
+        Store::get_claim_referenced_manifests(claim, self, &mut svi, true, validation_log)?;
 
         // find the manifest with the hash binding
-        let binding_claim = match self.get_hash_binding_manifest(claim) {
+        svi.binding_claim = match self.get_hash_binding_manifest(claim) {
             Some(label) => label,
             None => {
                 log_item!(
@@ -1723,7 +1725,6 @@ impl Store {
         };
 
         // get the manifest offset size if needed
-        let mut update_manifest_size = 0usize;
         if claim.update_manifest() {
             let locations = match asset_data {
                 ClaimAssetData::Path(path) => {
@@ -1757,7 +1758,7 @@ impl Store {
                 .iter()
                 .find(|o| o.htype == HashBlockObjectType::Cai)
             {
-                update_manifest_size = manifest_loc.length;
+                svi.update_manifest_size = manifest_loc.length;
             } else {
                 log_item!(
                     claim.label().to_owned(),
@@ -1769,11 +1770,53 @@ impl Store {
             }
         }
 
+        // get the timestamp assertions
+        for found_claim in svi.manifest_map.values() {
+            let timestamp_assertions = found_claim.timestamp_assertions();
+            for ta in timestamp_assertions {
+                let timestamp_assertion =
+                    TimeStamp::from_assertion(ta.assertion()).map_err(|_e| {
+                        log_item!(
+                            ta.label(),
+                            "could not parse timestamp assertion",
+                            "get_claim_referenced_manifests"
+                        )
+                        .validation_status(validation_status::ASSERTION_TIMESTAMP_MALFORMED)
+                        .failure_as_err(
+                            validation_log,
+                            Error::OtherError("timestamp assertion malformed".into()),
+                        )
+                    })?;
+
+                // save the timestamps stored in the StoreValidationInfo
+                for (referenced_claim, time_stamp_token) in timestamp_assertion.as_ref() {
+                    if let Some(rc) = svi.manifest_map.get(referenced_claim) {
+                        if let Ok(tst_info) =
+                            verify_time_stamp(time_stamp_token, rc.signature_val())
+                        {
+                            svi.timestamps.insert(rc.label().to_owned(), tst_info);
+                            continue;
+                        }
+                    }
+                    log_item!(
+                        to_manifest_uri(referenced_claim),
+                        "could not validate timestamp assertion",
+                        "get_claim_referenced_manifests"
+                    )
+                    .validation_status(validation_status::ASSERTION_TIMESTAMP_MALFORMED)
+                    .failure(
+                        validation_log,
+                        Error::OtherError("timestamp assertion malformed".into()),
+                    )?;
+                }
+            }
+        }
+
         // make sure there are not unreferenced manifests
         if self
             .claims()
             .iter()
-            .any(|c| !manifest_map.contains_key(c.label()))
+            .any(|c| !svi.manifest_map.contains_key(c.label()))
         {
             log_item!(
                 claim.label().to_owned(),
@@ -1784,13 +1827,7 @@ impl Store {
             .failure(validation_log, Error::UnreferencedManifest)?;
         }
 
-        Ok(StoreValidationInfo {
-            redactions,
-            ingredient_references,
-            binding_claim,
-            update_manifest_size,
-            manifest_map,
-        })
+        Ok(svi)
     }
 
     /// Verify Store
@@ -4139,21 +4176,20 @@ impl Store {
     fn get_claim_referenced_manifests<'a>(
         claim: &'a Claim,
         store: &'a Store,
-        referenced_ingredients: &mut HashMap<String, HashSet<String>>,
-        manifest_map: &mut HashMap<String, &'a Claim>,
-        found_redactions: &mut Vec<String>,
+        svi: &mut StoreValidationInfo<'a>,
         recurse: bool,
         validation_log: &mut StatusTracker,
     ) -> Result<()> {
         // add in current redactions
         if let Some(c_redactions) = claim.redactions() {
-            found_redactions.append(&mut c_redactions.clone().into_iter().collect::<Vec<_>>());
+            svi.redactions
+                .append(&mut c_redactions.clone().into_iter().collect::<Vec<_>>());
         }
 
         let claim_label = claim.label().to_owned();
 
         // save the addressible claims for quicker lookup
-        manifest_map.insert(claim_label.clone(), claim);
+        svi.manifest_map.insert(claim_label.clone(), claim);
 
         for i in claim.ingredient_assertions() {
             let ingredient_assertion = Ingredient::from_assertion(i.assertion())?;
@@ -4163,9 +4199,14 @@ impl Store {
                 Some(m) => m, // > v2 ingredient assertion
                 None => {
                     if ingredient_assertion.relationship != Relationship::InputTo {
+                        let description = if let Some(title) = &ingredient_assertion.title {
+                            format!("{title}: ingredient does not have provenance")
+                        } else {
+                            "ingredient does not have provenance".to_owned()
+                        };
                         log_item!(
-                            ingredient_assertion.label().to_owned(),
-                            "ingredient does not have provenance",
+                            to_assertion_uri(&claim_label, ingredient_assertion.label()),
+                            description,
                             "get_claim_referenced_manifests"
                         )
                         .validation_status(validation_status::INGREDIENT_UNKNOWN_PROVENANCE)
@@ -4180,7 +4221,7 @@ impl Store {
 
             if let Some(ingredient) = store.get_claim(&ingredient_label) {
                 // build mapping of ingredients and those claims that reference it
-                referenced_ingredients
+                svi.ingredient_references
                     .entry(ingredient_label)
                     .or_insert(HashSet::from_iter(vec![claim_label.clone()].into_iter()))
                     .insert(claim_label.clone());
@@ -4190,9 +4231,7 @@ impl Store {
                     Store::get_claim_referenced_manifests(
                         ingredient,
                         store,
-                        referenced_ingredients,
-                        manifest_map,
-                        found_redactions,
+                        svi,
                         recurse,
                         validation_log,
                     )?;
@@ -4248,16 +4287,12 @@ impl Store {
         }
 
         // get list of referenced manifests and redactions from ingredient provenance claim
-        let mut referenced_ingredients = HashMap::new();
-        let mut ingredient_redactions = Vec::new();
-        let mut _manifest_map = HashMap::new();
         let mut validation_log = StatusTracker::default();
+        let mut svi = StoreValidationInfo::default();
         Store::get_claim_referenced_manifests(
             ingredient_pc,
             &i_store,
-            &mut referenced_ingredients,
-            &mut _manifest_map,
-            &mut ingredient_redactions,
+            &mut svi,
             true,
             &mut validation_log,
         )?;
@@ -4324,7 +4359,7 @@ impl Store {
                 };
 
                 let combined_redactions = HashSet::<_>::from_iter(
-                    vec![claim_redactions.clone(), ingredient_redactions.clone()]
+                    vec![claim_redactions.clone(), svi.redactions.clone()]
                         .into_iter()
                         .flatten(),
                 )
@@ -4340,10 +4375,10 @@ impl Store {
 
                     // can only resolve conflict if the changes were redaction differences
                     if Store::manifest_differs_by_redaction(claim, conflict, &combined_redactions) {
-                        if !claim_redactions.is_empty() && ingredient_redactions.is_empty() {
+                        if !claim_redactions.is_empty() && svi.redactions.is_empty() {
                             // if redactions were only in the claim we can skip bringing the ingredient
                             continue;
-                        } else if claim_redactions.is_empty() && !ingredient_redactions.is_empty() {
+                        } else if claim_redactions.is_empty() && !svi.redactions.is_empty() {
                             // if redactions were only from the incoming ingredient replace claim
                             // and add to existing redaction list
                             to_current_claim.push(conflict.label().to_owned());
@@ -4385,7 +4420,7 @@ impl Store {
                             &new_label,
                             vec![fixup_claim],
                             None,
-                            &referenced_ingredients,
+                            &svi.ingredient_references,
                         )?;
                     }
                 }
@@ -4396,7 +4431,7 @@ impl Store {
             provenance_label,
             i_store.claims.clone(),
             redactions,
-            &referenced_ingredients,
+            &svi.ingredient_references,
         )?;
         Ok(i_store)
     }
@@ -5866,7 +5901,7 @@ pub mod tests {
         assert!(!pc.update_manifest());
 
         // create a new update manifest
-        let mut claim = Claim::new("adobe unit test", Some("update_manfifest"), 1);
+        let mut claim = Claim::new("adobe unit test", Some("update_manifest"), 1);
 
         let mut new_store = Store::load_ingredient_to_claim(
             &mut claim,
@@ -5942,7 +5977,7 @@ pub mod tests {
         assert!(!pc.update_manifest());
 
         // create a new update manifest
-        let mut claim = Claim::new("adobe unit test", Some("update_manfifest"), 2);
+        let mut claim = Claim::new("adobe unit test", Some("update_manifest_vendor"), 2);
         // ClaimGeneratorInfo is mandatory in Claim V2
         let cgi = ClaimGeneratorInfo::new("claim_v2_unit_test");
         claim.add_claim_generator_info(cgi);
@@ -5967,12 +6002,14 @@ pub mod tests {
             &ingredient_hashes.signature_box_hash,
         );
 
+        let validation_results = ValidationResults::from_store(&restored_store, &report);
+
         let ingredient = Ingredient::new_v3(Relationship::ParentOf)
             .set_active_manifests_and_signature_from_hashed_uri(
                 Some(parent_hashed_uri),
                 Some(signature_hashed_uri),
             ) // mandatory for v3
-            .set_validation_results(Some(ValidationResults::default())); // mandatory for v3
+            .set_validation_results(Some(validation_results)); // mandatory for v3
 
         claim.add_assertion(&ingredient).unwrap();
 
@@ -5988,18 +6025,27 @@ pub mod tests {
         let opened = Action::new("c2pa.opened")
             .set_parameter("ingredients", vec![ingredient_hashed_uri])
             .unwrap();
-        let actions = Actions::new().add_action(opened);
+        let em = Action::new("c2pa.edited.metadata");
+        let actions = Actions::new().add_action(opened).add_action(em);
 
-        // add mandatory opened action
+        // add action (this is optional for update manifest)
         claim.add_assertion(&actions).unwrap();
+
+        // lets add a timestamp for old manifest
+        let timestamp = send_timestamp_request(pc.signature_val()).unwrap();
+        c2pa_crypto::time_stamp::verify_time_stamp(&timestamp, pc.signature_val()).unwrap();
+        let timestamp_assertion = crate::assertions::TimeStamp::new(pc.label(), &timestamp);
+        claim.add_assertion(&timestamp_assertion).unwrap();
 
         new_store.commit_update_manifest(claim).unwrap();
         new_store
             .save_to_asset(op.as_path(), signer.as_ref(), op.as_path())
             .unwrap();
 
+        let mut um_report = StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
+
         // read back in store with update manifest
-        let um_store = Store::load_from_asset(op.as_path(), true, &mut report).unwrap();
+        let um_store = Store::load_from_asset(op.as_path(), true, &mut um_report).unwrap();
 
         let um = um_store.provenance_claim().unwrap();
 
@@ -6007,7 +6053,7 @@ pub mod tests {
         assert!(um.update_manifest());
 
         // should not have any errors
-        assert!(!report.has_any_error());
+        assert!(!um_report.has_any_error());
     }
 
     #[test]
@@ -6070,6 +6116,21 @@ pub mod tests {
         let store = Store::load_from_asset(&ap, true, &mut report).expect("load_from_asset");
 
         println!("store = {store}");
+    }
+
+    fn send_timestamp_request(message: &[u8]) -> Result<Vec<u8>> {
+        let url = "http://timestamp.digicert.com";
+
+        let body = c2pa_crypto::time_stamp::default_rfc3161_message(message)?;
+        let headers = None;
+
+        let bytes = c2pa_crypto::time_stamp::default_rfc3161_request(url, headers, &body, message)
+            .map_err(|_e| Error::OtherError("timestamp token not found".into()))?;
+
+        let token = c2pa_crypto::cose::timestamptoken_from_timestamprsp(&bytes)
+            .ok_or(Error::OtherError("timestamp token not found".into()))?;
+
+        Ok(token)
     }
 
     #[test]

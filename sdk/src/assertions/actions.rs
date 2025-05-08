@@ -127,7 +127,6 @@ impl From<ClaimGeneratorInfo> for SoftwareAgent {
 ///
 /// See <https://c2pa.org/specifications/specifications/1.0/specs/C2PA_Specification.html#_actions>.
 #[derive(Deserialize, Serialize, Clone, Debug, Default, PartialEq)]
-#[serde(deny_unknown_fields)]
 pub struct Action {
     /// The label associated with this action. See ([`c2pa_action`]).
     action: String,

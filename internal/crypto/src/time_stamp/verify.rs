@@ -37,7 +37,7 @@ use crate::{
 
 /// Decode the TimeStampToken info and verify it against the supplied data.
 #[async_generic]
-pub(crate) fn verify_time_stamp(ts: &[u8], data: &[u8]) -> Result<TstInfo, TimeStampError> {
+pub fn verify_time_stamp(ts: &[u8], data: &[u8]) -> Result<TstInfo, TimeStampError> {
     // Did the time stamp expire between issuance and verification?
     let Some(sd) = signed_data_from_time_stamp_response(ts)? else {
         return Err(TimeStampError::DecodeError(

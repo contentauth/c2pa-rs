@@ -106,12 +106,7 @@ pub fn create_test_claim() -> Result<Claim> {
             Action::new("c2pa.cropped")
                 .set_parameter(
                     "name".to_owned(),
-                    r#"{
-                    "left": 0,
-                    "right": 2000,
-                    "top": 1000,
-                    "bottom": 4000
-                }"#,
+                    r#"{"left": 0, "right": 2000, "top": 1000, "bottom": 4000}"#,
                 )
                 .unwrap(),
         )
