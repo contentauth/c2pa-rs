@@ -22,7 +22,8 @@ fn main() {
 
     // Get the workspace target directory.
     let out_dir = env::var("OUT_DIR").expect("OUT_DIR environment variable not set");
-
+    println!("Running c_api build script: {:?}", out_dir);
+    
     let workspace_target_dir = Path::new(&out_dir)
         .ancestors()
         .nth(3)
@@ -46,15 +47,19 @@ fn main() {
     // Generate the header file.
     cbindgen::generate_with_config(&crate_dir, config).map_or_else(
         |error| match error {
-            cbindgen::Error::ParseSyntaxError { .. } => {}
+            cbindgen::Error::ParseSyntaxError { .. } => {
+                eprintln!("Warning: ParseSyntaxError encountered while generating bindings");
+            }
             e => panic!("{:?}", e),
         },
         |bindings| {
+            println!("Writing c2pa.h to: {:?}", workspace_target_dir.join("c2pa.h"));
             bindings.write_to_file(workspace_target_dir.join("c2pa.h"));
         },
     );
 
     // Write the version to the file.
+    println!("Writing c2pa_version.txt to: {:?}", workspace_target_dir.join("c2pa_version.txt"));
     std::fs::write(workspace_target_dir.join("c2pa_version.txt"), &version)
         .expect("Failed to write version file");
 }
