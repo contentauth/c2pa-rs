@@ -100,7 +100,7 @@ impl CertificateTrustPolicy {
             return Ok(());
         }
 
-        #[cfg(any(target_arch = "wasm32", feature = "rust_native_crypto", test))]
+        #[cfg(not(feature = "openssl"))]
         {
             return crate::raw_signature::rust_native::check_certificate_trust::check_certificate_trust(
                 self,
@@ -110,7 +110,7 @@ impl CertificateTrustPolicy {
             );
         }
 
-        #[cfg(not(target_arch = "wasm32"))]
+        #[cfg(feature = "openssl")]
         {
             return crate::raw_signature::openssl::check_certificate_trust::check_certificate_trust(
                 self,
@@ -144,7 +144,7 @@ impl CertificateTrustPolicy {
     /// > List, a validator should allow a user to configure additional trust
     /// > anchor stores, and should provide default options or offer lists
     /// > maintained by external parties that the user may opt into to populate
-    /// > the validator’s trust anchor store for C2PA signers.
+    /// > the validator's trust anchor store for C2PA signers.
     ///
     /// This function reads zero or more X.509 root certificates in PEM format
     /// and configures the trust handler to accept certificates that chain up to
@@ -355,14 +355,14 @@ pub enum CertificateTrustError {
     InternalError(String),
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(feature = "openssl")]
 impl From<openssl::error::ErrorStack> for CertificateTrustError {
     fn from(err: openssl::error::ErrorStack) -> Self {
         Self::CryptoLibraryError(err.to_string())
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(feature = "openssl")]
 impl From<crate::raw_signature::openssl::OpenSslMutexUnavailable> for CertificateTrustError {
     fn from(err: crate::raw_signature::openssl::OpenSslMutexUnavailable) -> Self {
         Self::InternalError(err.to_string())

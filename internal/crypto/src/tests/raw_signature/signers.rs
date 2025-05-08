@@ -19,8 +19,8 @@ use crate::raw_signature::{
 };
 
 #[test]
-// #[cfg_attr(all(target_arch = "wasm32", not(target_os = "wasi")), wasm_bindgen_test)]
-#[cfg(not(target_arch = "wasm32"))]
+// #[cfg_attr(all(target_arch = "wasm32", not(target_os = "wasi")),
+// wasm_bindgen_test)]
 fn es256() {
     let cert_chain = include_bytes!("../fixtures/raw_signature/es256.pub");
     let private_key = include_bytes!("../fixtures/raw_signature/es256.priv");
@@ -42,8 +42,8 @@ fn es256() {
 }
 
 #[test]
-// #[cfg_attr(all(target_arch = "wasm32", not(target_os = "wasi")), wasm_bindgen_test)]
-#[cfg(not(target_arch = "wasm32"))]
+// #[cfg_attr(all(target_arch = "wasm32", not(target_os = "wasi")),
+// wasm_bindgen_test)]
 fn es384() {
     let cert_chain = include_bytes!("../fixtures/raw_signature/es384.pub");
     let private_key = include_bytes!("../fixtures/raw_signature/es384.priv");
@@ -66,7 +66,7 @@ fn es384() {
 
 #[test]
 // #[cfg_attr(all(target_arch = "wasm32", not(target_os = "wasi")), wasm_bindgen_test)]
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(feature = "openssl")]
 fn es512() {
     let cert_chain = include_bytes!("../fixtures/raw_signature/es512.pub");
     let private_key = include_bytes!("../fixtures/raw_signature/es512.priv");

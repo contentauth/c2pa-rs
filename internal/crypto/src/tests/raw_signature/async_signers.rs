@@ -21,6 +21,7 @@ use crate::raw_signature::{
 };
 
 #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
+#[cfg_attr(target_os = "wasi", wstd::test)]
 // #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
 async fn es256() {
     let cert_chain = include_bytes!("../fixtures/raw_signature/es256.pub");
@@ -47,6 +48,7 @@ async fn es256() {
 }
 
 #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
+#[cfg_attr(target_os = "wasi", wstd::test)]
 // #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
 async fn es384() {
     let cert_chain = include_bytes!("../fixtures/raw_signature/es384.pub");
@@ -72,7 +74,7 @@ async fn es384() {
     validator.validate(&signature, data, pub_key).unwrap();
 }
 
-#[cfg_attr(not(target_arch = "wasm32"), actix::test)]
+#[cfg_attr(feature = "openssl", actix::test)]
 // #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
 async fn es512() {
     let cert_chain = include_bytes!("../fixtures/raw_signature/es512.pub");

@@ -335,7 +335,8 @@ jobs:
           CC: /opt/wasi-sdk/bin/clang
           WASI_SDK_PATH: /opt/wasi-sdk
           RUST_MIN_STACK: 16777216
-        run: cargo +nightly test --target wasm32-wasip2 -p c2pa -p c2pa-crypto -p cawg-identity -p c2patool --all-features
+        # test all features except openssl
+        run: cargo +nightly test --target wasm32-wasip2 -p c2pa -p c2pa-crypto -p cawg-identity -p c2patool --features "add_thumbnails file_io serialize_thumbnails no_interleaved_io fetch_remote_manifests json_schema pdf v1_api"
 
   test-direct-minimal-versions:
     name: Unit tests with minimum versions of direct dependencies
