@@ -1144,9 +1144,7 @@ impl Builder {
                 .await
         }
     }
-}
 
-impl Builder {
     /// Converts a manifest into a composed manifest with the specified format.
     /// This wraps the bytes in the container format of the specified format.
     /// So that it can be directly embedded into a stream of that format.

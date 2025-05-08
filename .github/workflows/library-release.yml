@@ -40,11 +40,16 @@ jobs:
       - name: Install dependencies for OpenSSL (Windows)
         if: ${{ matrix.os == 'windows-latest' }}
         run: |
-          choco install openssl --version=3.5.0
+          choco install openssl --version=3.5.0 --no-progress
+          $env:PATH += ";C:\Program Files\OpenSSL\bin"
+          openssl version
           echo "OPENSSL_DIR=C:\Program Files\OpenSSL" >> $env:GITHUB_ENV
           echo "OPENSSL_LIB_DIR=C:\Program Files\OpenSSL\lib" >> $env:GITHUB_ENV
           echo "OPENSSL_INCLUDE_DIR=C:\Program Files\OpenSSL\include" >> $env:GITHUB_ENV
-          echo "OPENSSL_NO_VENDOR=1" >> $env:GITHUB_ENV
+          dir "C:\Program Files\OpenSSL\bin"
+          dir "C:\Program Files\OpenSSL\lib"
+          dir "C:\Program Files\OpenSSL\include"
+
 
       - name: Build release
         run: make release
