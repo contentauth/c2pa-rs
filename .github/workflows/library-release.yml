@@ -33,27 +33,32 @@ jobs:
       - name: Set up Rust
         uses: actions-rust-lang/setup-rust-toolchain@v1
 
-      - name: Setup Perl
+      - name: Setup Strawberry Perl
         if: matrix.os == 'windows-latest'
         uses: shogo82148/actions-setup-perl@v1
         with:
           perl-version: '5.32'
+          distribution: 'strawberry'
       
-      - name: Install Locale::Maketext::Simple
+      # Install Locale::Maketext::Simple only on Windows with explicit paths
+      - name: Install Locale::Maketext::Simple and configure paths
         if: matrix.os == 'windows-latest'
         run: |
-          cpanm Locale::Maketext::Simple
-      
-      - name: Verify Perl Modules
-        if: matrix.os == 'windows-latest'
-        run: |
-          perl -MLocale::Maketext::Simple -e "print 'Locale::Maketext::Simple installed successfully\n'"
-          dir "C:\strawberry\c\lib"
-        env:
-          OPENSSL_PERL_BASE_DIR: C:\strawberry\perl
-          PERL: C:\strawberry\perl\bin\perl.exe
-          run: echo PERL is set to ${{ env.PERL }}
-      
+          cpanm --verbose Locale::Maketext::Simple
+          # List installed modules to confirm installation
+          cpanm --info Locale::Maketext::Simple
+          # Display Perl's include paths
+          perl -e "print join(\"\n\", @INC);"
+          # Create a local copy in the expected path
+          perl -MLocale::Maketext::Simple -e "print \$INC{'Locale/Maketext/Simple.pm'}" > module_path.txt
+          $MODULE_PATH = Get-Content -Path module_path.txt
+          echo "Module found at: $MODULE_PATH"
+          
+          # Create symbolic links to the modules in paths that are being checked
+          # Set environment variable for subsequent steps
+          echo "PERL5LIB=$env:PERL5LIB;D:\a\c2pa-rs\c2pa-rs\target\x86_64-pc-windows-msvc\release\build\openssl-sys-def693d178636927\out\openssl-build\build\src\util\perl" | Out-File -FilePath $env:GITHUB_ENV -Append
+        shell: pwsh
+     
       - name: Build release
         run: make release
 
@@ -72,8 +77,25 @@ jobs:
         with:
           path: artifacts
 
-      - name: Create GitHub Release
+      - name: List downloaded artifacts
+        run: find . -type f | sort
+        
+      - name: Create Release
         id: create_release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            ./ubuntu-latest-x86_64-unknown-linux-gnu-release/ubuntu-latest-x86_64-unknown-linux-gnu-release.tar.gz
+            ./windows-latest-x86_64-pc-windows-msvc-release/windows-latest-x86_64-pc-windows-msvc-release.zip
+            ./macos-latest-x86_64-apple-darwin-release/macos-latest-x86_64-apple-darwin-release.tar.gz
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create GitHub Release old
+        id: create_release_old
         uses: actions/create-release@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -83,7 +105,7 @@ jobs:
           draft: true
           prerelease: true
  
-      - name: Upload Release Assets
+      - name: Upload Release Assets old
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
