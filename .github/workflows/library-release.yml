@@ -17,15 +17,15 @@ jobs:
         experimental: [ false ]
         include:
           - os: macos-latest
-            arch: aarch64
+
             target: aarch64-apple-darwin
 
           - os: ubuntu-latest
-            arch: x86_64
+
             target: x86_64-unknown-linux-musl
 
           - os: ubuntu-latest
-            arch: aarch64
+    
             target: aarch64-unknown-linux-musl
 
           - os: windows-latest
@@ -40,15 +40,14 @@ jobs:
         uses: actions-rs/toolchain@v1
         with:
           toolchain: stable
-          target: ${{ matrix.target }}
-          override: true
+          #target: ${{ matrix.target }}
+          #override: true
 
 
       # Install dependencies for Windows
       - name: Install dependencies for OpenSSL (Windows)
         if: ${{ matrix.os == 'windows-latest' }}
         run: |
-          choco install activeperl -y
           choco install strawberryperl -y
           choco install nasm -y
           choco install make -y
