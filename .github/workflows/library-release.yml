@@ -32,19 +32,27 @@ jobs:
 
       - name: Set up Rust
         uses: actions-rust-lang/setup-rust-toolchain@v1
-        
+
       - name: Setup Perl
+        if: matrix.os == 'windows-latest'
         uses: shogo82148/actions-setup-perl@v1
         with:
           perl-version: '5.32'
       
       - name: Install Locale::Maketext::Simple
+        if: matrix.os == 'windows-latest'
         run: |
           cpanm Locale::Maketext::Simple
       
       - name: Verify Perl Modules
+        if: matrix.os == 'windows-latest'
         run: |
           perl -MLocale::Maketext::Simple -e "print 'Locale::Maketext::Simple installed successfully\n'"
+          dir "C:\strawberry\c\lib"
+        env:
+          OPENSSL_PERL_BASE_DIR: C:\strawberry\perl
+          PERL: C:\strawberry\perl\bin\perl.exe
+          run: echo PERL is set to ${{ env.PERL }}
       
       - name: Build release
         run: make release
