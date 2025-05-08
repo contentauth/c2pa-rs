@@ -2,24 +2,6 @@
 
 The information in this page is primarily for those who wish to contribute to the c2pa-rs library project itself, rather than those who simply wish to use it in an application.  For general contribution guidelines, see [CONTRIBUTING.md](../CONTRIBUTING.md).
 
-## Nightly builds
-
-In most cases, you should depend on this crate as published via [crates.io](https://crates.io/crates/c2pa).
-
-The Adobe team produces nightly snapshots of this crate via a `nightly` branch to test the impact of pending changes to upstream dependencies. To use these builds for your own testing ahead of our releases, include the library by adding the following `Cargo.toml` entry:
-
-```toml
-c2pa = { git = "https://github.com/contentauth/c2pa-rs.git", branch = "nightly", features = [...]}
-```
-
-Commits in this branch have a modified `sdk/Cargo.toml` entry which includes a version number similar to the following:
-
-```toml
-version = "0.25.3-nightly+2023-08-28-2f33ab3"
-```
-
-There is no formal support for code from a nightly release, but if you become aware of any issues, we would appreciate a bug report including this version number.
-
 ## Building for WebAssembly
 
 This crate supports compilation to both the `wasm32-unknown-unknown` and `wasm32-wasi*` family of LLVM targets.
