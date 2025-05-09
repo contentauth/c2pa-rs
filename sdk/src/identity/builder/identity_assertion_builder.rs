@@ -14,13 +14,15 @@
 use std::collections::HashSet;
 
 use async_trait::async_trait;
-use c2pa::dynamic_assertion::{
-    AsyncDynamicAssertion, DynamicAssertion, DynamicAssertionContent, PartialClaim,
-};
 use serde_bytes::ByteBuf;
 
 use super::{CredentialHolder, IdentityBuilderError};
-use crate::{builder::AsyncCredentialHolder, IdentityAssertion, SignerPayload};
+use crate::{
+    dynamic_assertion::{
+        AsyncDynamicAssertion, DynamicAssertion, DynamicAssertionContent, PartialClaim,
+    },
+    identity::{builder::AsyncCredentialHolder, IdentityAssertion, SignerPayload},
+};
 
 /// An `IdentityAssertionBuilder` gathers together the necessary components
 /// for an identity assertion. When added to an [`IdentityAssertionSigner`],
@@ -33,7 +35,7 @@ use crate::{builder::AsyncCredentialHolder, IdentityAssertion, SignerPayload};
 /// path is asynchronous or any network calls will be made by the
 /// [`CredentialHolder`] implementation.
 ///
-/// [`IdentityAssertionSigner`]: crate::builder::IdentityAssertionSigner
+/// [`IdentityAssertionSigner`]: crate::identity::builder::IdentityAssertionSigner
 pub struct IdentityAssertionBuilder {
     credential_holder: Box<dyn CredentialHolder + Sync + Send>,
     referenced_assertions: HashSet<String>,
@@ -81,7 +83,7 @@ impl DynamicAssertion for IdentityAssertionBuilder {
         "cawg.identity".to_string()
     }
 
-    fn reserve_size(&self) -> c2pa::Result<usize> {
+    fn reserve_size(&self) -> crate::Result<usize> {
         Ok(self.credential_holder.reserve_size())
         // TO DO: Credential holder will state reserve size for signature.
         // Add additional size for CBOR wrapper outside signature.
@@ -92,7 +94,7 @@ impl DynamicAssertion for IdentityAssertionBuilder {
         _label: &str,
         size: Option<usize>,
         claim: &PartialClaim,
-    ) -> c2pa::Result<DynamicAssertionContent> {
+    ) -> crate::Result<DynamicAssertionContent> {
         // TO DO: Update to respond correctly when identity assertions refer to each
         // other.
         let referenced_assertions = claim
@@ -133,7 +135,7 @@ impl DynamicAssertion for IdentityAssertionBuilder {
 ///
 /// Use this when the overall C2PA Manifest signing path is asynchronous.
 ///
-/// [`AsyncIdentityAssertionSigner`]: crate::builder::AsyncIdentityAssertionSigner
+/// [`AsyncIdentityAssertionSigner`]: crate::identity::builder::AsyncIdentityAssertionSigner
 pub struct AsyncIdentityAssertionBuilder {
     #[cfg(not(target_arch = "wasm32"))]
     credential_holder: Box<dyn AsyncCredentialHolder + Sync + Send>,
@@ -188,7 +190,7 @@ impl AsyncDynamicAssertion for AsyncIdentityAssertionBuilder {
         "cawg.identity".to_string()
     }
 
-    fn reserve_size(&self) -> c2pa::Result<usize> {
+    fn reserve_size(&self) -> crate::Result<usize> {
         Ok(self.credential_holder.reserve_size())
         // TO DO: Credential holder will state reserve size for signature.
         // Add additional size for CBOR wrapper outside signature.
@@ -199,7 +201,7 @@ impl AsyncDynamicAssertion for AsyncIdentityAssertionBuilder {
         _label: &str,
         size: Option<usize>,
         claim: &PartialClaim,
-    ) -> c2pa::Result<DynamicAssertionContent> {
+    ) -> crate::Result<DynamicAssertionContent> {
         // TO DO: Update to respond correctly when identity assertions refer to each
         // other.
         let referenced_assertions = claim
@@ -237,9 +239,9 @@ fn finalize_identity_assertion(
     signer_payload: SignerPayload,
     size: Option<usize>,
     signature_result: Result<Vec<u8>, IdentityBuilderError>,
-) -> c2pa::Result<DynamicAssertionContent> {
-    // TO DO: Think through how errors map into c2pa::Error.
-    let signature = signature_result.map_err(|e| c2pa::Error::BadParam(e.to_string()))?;
+) -> crate::Result<DynamicAssertionContent> {
+    // TO DO: Think through how errors map into crate::Error.
+    let signature = signature_result.map_err(|e| crate::Error::BadParam(e.to_string()))?;
 
     let mut ia = IdentityAssertion {
         signer_payload,
@@ -250,22 +252,22 @@ fn finalize_identity_assertion(
 
     let mut assertion_cbor: Vec<u8> = vec![];
     ciborium::into_writer(&ia, &mut assertion_cbor)
-        .map_err(|e| c2pa::Error::BadParam(e.to_string()))?;
-    // TO DO: Think through how errors map into c2pa::Error.
+        .map_err(|e| crate::Error::BadParam(e.to_string()))?;
+    // TO DO: Think through how errors map into crate::Error.
 
     if let Some(assertion_size) = size {
         if assertion_cbor.len() > assertion_size {
             // TO DO: Think about how to signal this in such a way that
             // the AsyncCredentialHolder implementor understands the problem.
-            return Err(c2pa::Error::BadParam(format!("Serialized assertion is {len} bytes, which exceeds the planned size of {assertion_size} bytes", len = assertion_cbor.len())));
+            return Err(crate::Error::BadParam(format!("Serialized assertion is {len} bytes, which exceeds the planned size of {assertion_size} bytes", len = assertion_cbor.len())));
         }
 
         ia.pad1 = vec![0u8; assertion_size - assertion_cbor.len() - 15];
 
         assertion_cbor.clear();
         ciborium::into_writer(&ia, &mut assertion_cbor)
-            .map_err(|e| c2pa::Error::BadParam(e.to_string()))?;
-        // TO DO: Think through how errors map into c2pa::Error.
+            .map_err(|e| crate::Error::BadParam(e.to_string()))?;
+        // TO DO: Think through how errors map into crate::Error.
 
         ia.pad2 = Some(ByteBuf::from(vec![
             0u8;
@@ -274,8 +276,8 @@ fn finalize_identity_assertion(
 
         assertion_cbor.clear();
         ciborium::into_writer(&ia, &mut assertion_cbor)
-            .map_err(|e| c2pa::Error::BadParam(e.to_string()))?;
-        // TO DO: Think through how errors map into c2pa::Error.
+            .map_err(|e| crate::Error::BadParam(e.to_string()))?;
+        // TO DO: Think through how errors map into crate::Error.
 
         // TO DO: See if this approach ever fails. IMHO it "should" work for all cases.
         assert_eq!(assertion_size, assertion_cbor.len());

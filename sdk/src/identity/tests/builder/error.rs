@@ -14,7 +14,7 @@
 #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
 use wasm_bindgen_test::wasm_bindgen_test;
 
-use crate::builder::IdentityBuilderError;
+use crate::identity::builder::IdentityBuilderError;
 
 #[test]
 #[cfg_attr(

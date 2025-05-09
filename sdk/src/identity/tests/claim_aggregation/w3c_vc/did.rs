@@ -22,7 +22,7 @@ mod new {
     #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
     use wasm_bindgen_test::wasm_bindgen_test;
 
-    use crate::claim_aggregation::w3c_vc::did::Did;
+    use crate::identity::claim_aggregation::w3c_vc::did::Did;
 
     #[test]
     #[cfg_attr(
@@ -63,7 +63,7 @@ mod split_fragment {
     #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
     use wasm_bindgen_test::wasm_bindgen_test;
 
-    use crate::claim_aggregation::w3c_vc::did::Did;
+    use crate::identity::claim_aggregation::w3c_vc::did::Did;
 
     #[test]
     #[cfg_attr(

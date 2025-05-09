@@ -13,12 +13,11 @@
 
 use std::{collections::HashSet, fmt::Debug, sync::LazyLock};
 
-use c2pa::{dynamic_assertion::PartialClaim, HashedUri, Manifest};
 use c2pa_status_tracker::{log_current_item, StatusTracker};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 
-use crate::ValidationError;
+use crate::{dynamic_assertion::PartialClaim, identity::ValidationError, HashedUri, Manifest};
 
 /// A set of _referenced assertions_ and other related data, known overall as
 /// the **signer payload.** This binding **SHOULD** generally be construed as

@@ -20,7 +20,7 @@ use c2pa_status_tracker::{log_current_item, StatusTracker};
 use coset::CoseSign1;
 use serde::Serialize;
 
-use crate::{
+use crate::identity::{
     identity_assertion::signature_verifier::ToCredentialSummary, SignatureVerifier, SignerPayload,
     ValidationError,
 };
@@ -29,7 +29,7 @@ use crate::{
 /// generated from X.509 credentials as specified in [§8.2, X.509 certificates
 /// and COSE signatures].
 ///
-/// [`SignatureVerifier`]: crate::SignatureVerifier
+/// [`SignatureVerifier`]: crate::identity::SignatureVerifier
 /// [§8.2, X.509 certificates and COSE signatures]: https://cawg.io/identity/1.1-draft/#_x_509_certificates_and_cose_signatures
 pub struct X509SignatureVerifier {
     // TO DO (CAI-7980): Add option to configure trust roots and trusted signers.
@@ -121,14 +121,14 @@ impl ToCredentialSummary for X509SignatureInfo {
 #[derive(Serialize)]
 pub struct X509SignatureReport {
     pub signer_payload: SignerPayload,
-    pub signature_info: c2pa::SignatureInfo,
+    pub signature_info: crate::SignatureInfo,
 }
 
 impl X509SignatureReport {
     fn from_x509_signature_info(info: &X509SignatureInfo) -> Self {
         X509SignatureReport {
             signer_payload: info.signer_payload.clone(),
-            signature_info: c2pa::SignatureInfo {
+            signature_info: crate::SignatureInfo {
                 alg: info.cert_info.alg,
                 issuer: info.cert_info.issuer_org.clone(),
                 time: info.cert_info.date.map(|d| d.to_rfc3339()),

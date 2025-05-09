@@ -16,23 +16,26 @@ use std::{
     fmt::{Debug, Formatter},
 };
 
-use c2pa::{dynamic_assertion::PartialClaim, Manifest, Reader};
 use c2pa_status_tracker::{log_current_item, log_item, StatusTracker};
 use serde::{Deserialize, Serialize};
 use serde_bytes::ByteBuf;
 
 use crate::{
-    claim_aggregation::IcaSignatureVerifier,
-    identity_assertion::{
-        report::{
-            IdentityAssertionReport, IdentityAssertionsForManifest,
-            IdentityAssertionsForManifestStore, SignerPayloadReport,
+    dynamic_assertion::PartialClaim,
+    identity::{
+        claim_aggregation::IcaSignatureVerifier,
+        identity_assertion::{
+            report::{
+                IdentityAssertionReport, IdentityAssertionsForManifest,
+                IdentityAssertionsForManifestStore, SignerPayloadReport,
+            },
+            signer_payload::SignerPayload,
         },
-        signer_payload::SignerPayload,
+        internal::debug_byte_slice::DebugByteSlice,
+        x509::X509SignatureVerifier,
+        SignatureVerifier, ToCredentialSummary, ValidationError,
     },
-    internal::debug_byte_slice::DebugByteSlice,
-    x509::X509SignatureVerifier,
-    SignatureVerifier, ToCredentialSummary, ValidationError,
+    Manifest, Reader,
 };
 
 /// This struct represents the raw content of the identity assertion.
@@ -41,8 +44,8 @@ use crate::{
 /// [`AsyncIdentityAssertionSigner`] -- to ensure correct construction of a new
 /// identity assertion.
 ///
-/// [`AsyncIdentityAssertionBuilder`]: crate::builder::AsyncIdentityAssertionBuilder
-/// [`AsyncIdentityAssertionSigner`]: crate::builder::AsyncIdentityAssertionSigner
+/// [`AsyncIdentityAssertionBuilder`]: crate::identity::builder::AsyncIdentityAssertionBuilder
+/// [`AsyncIdentityAssertionSigner`]: crate::identity::builder::AsyncIdentityAssertionSigner
 #[derive(Deserialize, Serialize)]
 pub struct IdentityAssertion {
     pub(crate) signer_payload: SignerPayload,
@@ -69,7 +72,7 @@ impl IdentityAssertion {
     pub fn from_manifest<'a>(
         manifest: &'a Manifest,
         status_tracker: &'a mut StatusTracker,
-    ) -> impl Iterator<Item = Result<Self, c2pa::Error>> + use<'a> {
+    ) -> impl Iterator<Item = Result<Self, crate::Error>> + use<'a> {
         manifest
             .assertions()
             .iter()
@@ -86,7 +89,7 @@ impl IdentityAssertion {
                     .validation_status("cawg.identity.cbor.invalid")
                     .failure_no_throw(
                         status_tracker,
-                        c2pa::Error::AssertionSpecificError(err.to_string()),
+                        crate::Error::AssertionSpecificError(err.to_string()),
                     );
                 }
             })
@@ -164,7 +167,7 @@ impl IdentityAssertion {
             >,
         > = vec![];
 
-        let assertion_results: Vec<Result<IdentityAssertion, c2pa::Error>> =
+        let assertion_results: Vec<Result<IdentityAssertion, crate::Error>> =
             Self::from_manifest(manifest, status_tracker).collect();
 
         for assertion in assertion_results {
@@ -191,10 +194,10 @@ impl IdentityAssertion {
 
     /// Summarize all of the identity assertions found for a [`ManifestStore`].
     ///
-    /// [`ManifestStore`]: c2pa::ManifestStore
+    /// [`ManifestStore`]: crate::ManifestStore
     #[cfg(feature = "v1_api")]
     pub async fn summarize_manifest_store<SV: SignatureVerifier>(
-        store: &c2pa::ManifestStore,
+        store: &crate::ManifestStore,
         status_tracker: &mut StatusTracker,
         verifier: &SV,
     ) -> impl Serialize {

@@ -12,17 +12,19 @@
 // each license.
 
 use async_trait::async_trait;
-use c2pa::{dynamic_assertion::AsyncDynamicAssertion, AsyncSigner, Result};
 use c2pa_crypto::raw_signature::{AsyncRawSigner, SigningAlg};
 
-use crate::builder::AsyncIdentityAssertionBuilder;
+use crate::{
+    dynamic_assertion::AsyncDynamicAssertion, identity::builder::AsyncIdentityAssertionBuilder,
+    AsyncSigner, Result,
+};
 
 /// An `AsyncIdentityAssertionSigner` extends the [`AsyncSigner`] interface to
 /// add zero or more identity assertions to a C2PA [`Manifest`] that is being
 /// produced.
 ///
-/// [`AsyncSigner`]: c2pa::AsyncSigner
-/// [`Manifest`]: c2pa::Manifest
+/// [`AsyncSigner`]: crate::AsyncSigner
+/// [`Manifest`]: crate::Manifest
 pub struct AsyncIdentityAssertionSigner {
     #[cfg(not(target_arch = "wasm32"))]
     signer: Box<dyn AsyncRawSigner + Sync + Send>,
@@ -64,7 +66,7 @@ impl AsyncIdentityAssertionSigner {
     pub(crate) fn from_test_credentials(alg: SigningAlg) -> Self {
         use c2pa_crypto::raw_signature::async_signer_from_cert_chain_and_private_key;
 
-        use crate::tests::fixtures::cert_chain_and_private_key_for_alg;
+        use crate::identity::tests::fixtures::cert_chain_and_private_key_for_alg;
 
         let (cert_chain, private_key) = cert_chain_and_private_key_for_alg(alg);
 
@@ -97,7 +99,7 @@ impl AsyncIdentityAssertionSigner {
     /// IMPORTANT: When [`sign()`] is called, the list of
     /// [`AsyncIdentityAssertionBuilder`]s will be cleared.
     ///
-    /// [`Manifest`]: c2pa::Manifest
+    /// [`Manifest`]: crate::Manifest
     /// [`sign()`]: Self::sign
     pub fn add_identity_assertion(&mut self, iab: AsyncIdentityAssertionBuilder) {
         #[cfg(not(target_arch = "wasm32"))]

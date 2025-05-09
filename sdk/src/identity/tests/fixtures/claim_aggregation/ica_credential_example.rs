@@ -24,7 +24,7 @@ use iref::UriBuf;
 use non_empty_string::NonEmptyString;
 use nonempty_collections::{nev, NEVec};
 
-use crate::{
+use crate::identity::{
     claim_aggregation::{IdentityClaimsAggregationVc, IdentityProvider, VerifiedIdentity},
     SignerPayload,
 };

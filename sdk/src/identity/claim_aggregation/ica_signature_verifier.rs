@@ -12,7 +12,6 @@
 // each license.
 
 use async_trait::async_trait;
-use c2pa::HashedUri;
 use c2pa_crypto::{
     asn1::rfc3161::TstInfo,
     cose::{validate_cose_tst_info_async, CoseError},
@@ -23,15 +22,18 @@ use chrono::{DateTime, Utc};
 use coset::{CoseSign1, RegisteredLabelWithPrivate, TaggedCborSerializable};
 
 use crate::{
-    claim_aggregation::{
-        w3c_vc::{
-            did::Did,
-            did_web,
-            jwk::{Algorithm, Jwk, JwkError, Params},
+    identity::{
+        claim_aggregation::{
+            w3c_vc::{
+                did::Did,
+                did_web,
+                jwk::{Algorithm, Jwk, JwkError, Params},
+            },
+            IcaCredential, IcaValidationError,
         },
-        IcaCredential, IcaValidationError,
+        SignatureVerifier, SignerPayload, ValidationError,
     },
-    SignatureVerifier, SignerPayload, ValidationError,
+    HashedUri,
 };
 
 /// An implementation of [`SignatureVerifier`] that supports Identity Claims
@@ -40,7 +42,7 @@ use crate::{
 /// specified in [§3.3.1 Securing JSON-LD Verifiable Credentials with COSE] of
 /// _Securing Verifiable Credentials using JOSE and COSE._
 ///
-/// [`SignatureVerifier`]: crate::SignatureVerifier
+/// [`SignatureVerifier`]: crate::identity::SignatureVerifier
 /// [§8.1, Identity claims aggregation]: https://creator-assertions.github.io/identity/1.1-draft/#_identity_claims_aggregation
 /// [§3.3.1 Securing JSON-LD Verifiable Credentials with COSE]: https://w3c.github.io/vc-jose-cose/#securing-vcs-with-cose
 pub struct IcaSignatureVerifier {

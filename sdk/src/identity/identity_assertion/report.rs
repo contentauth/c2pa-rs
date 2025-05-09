@@ -18,7 +18,7 @@ use serde::{
     Serialize,
 };
 
-use crate::identity_assertion::signer_payload::SignerPayload;
+use crate::identity::identity_assertion::signer_payload::SignerPayload;
 
 #[doc(hidden)]
 pub struct IdentityAssertionsForManifestStore<IAR: Serialize> {

@@ -25,13 +25,15 @@ mod cawg {
     use std::path::Path;
 
     use anyhow::Result;
-    use c2pa::{AsyncSigner, Builder, Reader, SigningAlg};
-    use c2pa_crypto::raw_signature;
-    use c2pa::identity::{
-        builder::{AsyncIdentityAssertionBuilder, AsyncIdentityAssertionSigner},
-        validator::CawgValidator,
-        x509::AsyncX509CredentialHolder,
+    use c2pa::{
+        identity::{
+            builder::{AsyncIdentityAssertionBuilder, AsyncIdentityAssertionSigner},
+            validator::CawgValidator,
+            x509::AsyncX509CredentialHolder,
+        },
+        AsyncSigner, Builder, Reader, SigningAlg,
     };
+    use c2pa_crypto::raw_signature;
     use serde_json::json;
 
     const CERTS: &[u8] = include_bytes!("../../sdk/tests/fixtures/certs/es256.pub");

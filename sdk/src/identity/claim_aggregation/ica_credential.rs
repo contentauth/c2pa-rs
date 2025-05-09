@@ -20,7 +20,7 @@ use non_empty_string::NonEmptyString;
 use nonempty_collections::NEVec;
 use serde::{Deserialize, Serialize};
 
-use crate::{
+use crate::identity::{
     claim_aggregation::w3c_vc::credential::{CredentialV2, VerifiableCredentialSubtype},
     identity_assertion::signature_verifier::ToCredentialSummary,
     SignerPayload,

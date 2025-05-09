@@ -21,7 +21,7 @@ use std::fmt::Debug;
 /// [`SignatureVerifier::Error`].
 ///
 /// [§7. Validating the identity assertion]: https://creator-assertions.github.io/identity/1.0-draft/#_validating_the_identity_assertion
-/// [`SignatureVerifier::Error`]: crate::SignatureVerifier::Error
+/// [`SignatureVerifier::Error`]: crate::identity::SignatureVerifier::Error
 #[derive(Clone, Debug, Eq, thiserror::Error, PartialEq)]
 pub enum ValidationError<SignatureError> {
     /// The referenced assertion could not be found in the claim.

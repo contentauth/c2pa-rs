@@ -17,7 +17,7 @@ use async_trait::async_trait;
 use c2pa_status_tracker::StatusTracker;
 use serde::Serialize;
 
-use crate::{SignerPayload, ValidationError};
+use crate::identity::{SignerPayload, ValidationError};
 
 /// A `SignatureVerifier` can read one or more kinds of signature from an
 /// identity assertion, assess the validity of the signature, and return
@@ -38,7 +38,7 @@ pub trait SignatureVerifier: Sync {
     /// identity assertion signature could not be accepted. This value may be
     /// included in the `SignatureError` variant of [`ValidationError`].
     ///
-    /// [`ValidationError`]: crate::ValidationError
+    /// [`ValidationError`]: crate::identity::ValidationError
     type Error: Debug;
 
     /// Verify the signature, returning an instance of [`Output`] if the
@@ -72,7 +72,7 @@ pub trait SignatureVerifier {
     /// identity assertion signature could not be accepted. This value may be
     /// included in the `SignatureError` variant of [`ValidationError`].
     ///
-    /// [`ValidationError`]: crate::ValidationError
+    /// [`ValidationError`]: crate::identity::ValidationError
     type Error: Debug;
 
     /// Verify the signature, returning an instance of [`Output`] if the

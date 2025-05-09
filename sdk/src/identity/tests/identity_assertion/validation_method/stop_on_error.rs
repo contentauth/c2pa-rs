@@ -16,12 +16,14 @@
 
 use std::io::Cursor;
 
-use c2pa::Reader;
 use c2pa_status_tracker::{ErrorBehavior, LogKind, StatusTracker};
 #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
 use wasm_bindgen_test::wasm_bindgen_test;
 
-use crate::{x509::X509SignatureVerifier, IdentityAssertion};
+use crate::{
+    identity::{x509::X509SignatureVerifier, IdentityAssertion},
+    Reader,
+};
 
 // This is a test filler for an identity URI.
 const IDENTITY_URI: &str = "self#jumbf=c2pa.assertions/cawg.identity";
@@ -53,7 +55,7 @@ async fn malformed_cbor() {
     status_tracker.push_current_uri(IDENTITY_URI);
 
     let active_manifest = reader.active_manifest().unwrap();
-    let ia_results: Vec<Result<IdentityAssertion, c2pa::Error>> =
+    let ia_results: Vec<Result<IdentityAssertion, crate::Error>> =
         IdentityAssertion::from_manifest(active_manifest, &mut status_tracker).collect();
 
     assert_eq!(ia_results.len(), 1);
@@ -100,7 +102,7 @@ async fn extra_fields() {
     status_tracker.push_current_uri(IDENTITY_URI);
 
     let active_manifest = reader.active_manifest().unwrap();
-    let ia_results: Vec<Result<IdentityAssertion, c2pa::Error>> =
+    let ia_results: Vec<Result<IdentityAssertion, crate::Error>> =
         IdentityAssertion::from_manifest(active_manifest, &mut status_tracker).collect();
 
     assert_eq!(ia_results.len(), 1);
@@ -163,7 +165,7 @@ async fn assertion_not_in_claim_v1() {
     status_tracker.push_current_uri(IDENTITY_URI);
 
     let active_manifest = reader.active_manifest().unwrap();
-    let ia_results: Vec<Result<IdentityAssertion, c2pa::Error>> =
+    let ia_results: Vec<Result<IdentityAssertion, crate::Error>> =
         IdentityAssertion::from_manifest(active_manifest, &mut status_tracker).collect();
 
     assert_eq!(ia_results.len(), 1);
@@ -258,7 +260,7 @@ async fn duplicate_assertion_reference() {
     status_tracker.push_current_uri(IDENTITY_URI);
 
     let active_manifest = reader.active_manifest().unwrap();
-    let ia_results: Vec<Result<IdentityAssertion, c2pa::Error>> =
+    let ia_results: Vec<Result<IdentityAssertion, crate::Error>> =
         IdentityAssertion::from_manifest(active_manifest, &mut status_tracker).collect();
 
     assert_eq!(ia_results.len(), 1);
@@ -338,7 +340,7 @@ async fn no_hard_binding() {
     status_tracker.push_current_uri(IDENTITY_URI);
 
     let active_manifest = reader.active_manifest().unwrap();
-    let ia_results: Vec<Result<IdentityAssertion, c2pa::Error>> =
+    let ia_results: Vec<Result<IdentityAssertion, crate::Error>> =
         IdentityAssertion::from_manifest(active_manifest, &mut status_tracker).collect();
 
     assert_eq!(ia_results.len(), 1);
@@ -389,13 +391,15 @@ async fn no_hard_binding() {
 mod invalid_sig_type {
     use std::io::Cursor;
 
-    use c2pa::Reader;
     use c2pa_status_tracker::{ErrorBehavior, LogKind, StatusTracker};
     #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
     use wasm_bindgen_test::wasm_bindgen_test;
 
     use crate::{
-        claim_aggregation::IcaSignatureVerifier, x509::X509SignatureVerifier, IdentityAssertion,
+        identity::{
+            claim_aggregation::IcaSignatureVerifier, x509::X509SignatureVerifier, IdentityAssertion,
+        },
+        Reader,
     };
 
     #[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
@@ -427,7 +431,7 @@ mod invalid_sig_type {
         status_tracker.push_current_uri(IDENTITY_URI);
 
         let active_manifest = reader.active_manifest().unwrap();
-        let ia_results: Vec<Result<IdentityAssertion, c2pa::Error>> =
+        let ia_results: Vec<Result<IdentityAssertion, crate::Error>> =
             IdentityAssertion::from_manifest(active_manifest, &mut status_tracker).collect();
 
         assert_eq!(ia_results.len(), 1);
@@ -504,7 +508,7 @@ mod invalid_sig_type {
         status_tracker.push_current_uri(IDENTITY_URI);
 
         let active_manifest = reader.active_manifest().unwrap();
-        let ia_results: Vec<Result<IdentityAssertion, c2pa::Error>> =
+        let ia_results: Vec<Result<IdentityAssertion, crate::Error>> =
             IdentityAssertion::from_manifest(active_manifest, &mut status_tracker).collect();
 
         assert_eq!(ia_results.len(), 1);
@@ -583,7 +587,7 @@ async fn pad1_invalid() {
     status_tracker.push_current_uri(IDENTITY_URI);
 
     let active_manifest = reader.active_manifest().unwrap();
-    let ia_results: Vec<Result<IdentityAssertion, c2pa::Error>> =
+    let ia_results: Vec<Result<IdentityAssertion, crate::Error>> =
         IdentityAssertion::from_manifest(active_manifest, &mut status_tracker).collect();
 
     assert_eq!(ia_results.len(), 1);
@@ -651,7 +655,7 @@ async fn pad2_invalid() {
     status_tracker.push_current_uri(IDENTITY_URI);
 
     let active_manifest = reader.active_manifest().unwrap();
-    let ia_results: Vec<Result<IdentityAssertion, c2pa::Error>> =
+    let ia_results: Vec<Result<IdentityAssertion, crate::Error>> =
         IdentityAssertion::from_manifest(active_manifest, &mut status_tracker).collect();
 
     assert_eq!(ia_results.len(), 1);

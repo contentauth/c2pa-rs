@@ -22,7 +22,7 @@ mod new {
     #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
     use wasm_bindgen_test::wasm_bindgen_test;
 
-    use crate::claim_aggregation::w3c_vc::did::DidBuf;
+    use crate::identity::claim_aggregation::w3c_vc::did::DidBuf;
 
     #[test]
     #[cfg_attr(
@@ -67,7 +67,7 @@ mod impl_serde {
     #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
     use wasm_bindgen_test::wasm_bindgen_test;
 
-    use crate::claim_aggregation::w3c_vc::did::DidBuf;
+    use crate::identity::claim_aggregation::w3c_vc::did::DidBuf;
 
     #[derive(serde::Serialize, serde::Deserialize)]
     struct Sample {

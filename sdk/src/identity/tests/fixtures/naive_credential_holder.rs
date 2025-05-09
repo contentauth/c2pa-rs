@@ -26,7 +26,7 @@ use async_trait::async_trait;
 use c2pa_status_tracker::StatusTracker;
 use serde::Serialize;
 
-use crate::{
+use crate::identity::{
     builder::{AsyncCredentialHolder, CredentialHolder, IdentityBuilderError},
     identity_assertion::signature_verifier::ToCredentialSummary,
     SignatureVerifier, SignerPayload, ValidationError,

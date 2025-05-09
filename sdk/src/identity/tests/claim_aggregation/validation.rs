@@ -19,15 +19,17 @@
 
 use std::io::Cursor;
 
-use c2pa::Reader;
 use c2pa_status_tracker::{LogKind, StatusTracker};
 #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
 use wasm_bindgen_test::wasm_bindgen_test;
 
 use crate::{
-    claim_aggregation::{IcaSignatureVerifier, IcaValidationError},
-    tests::fixtures::claim_aggregation::ica_credential_example,
-    IdentityAssertion, ValidationError,
+    identity::{
+        claim_aggregation::{IcaSignatureVerifier, IcaValidationError},
+        tests::fixtures::claim_aggregation::ica_credential_example,
+        IdentityAssertion, ValidationError,
+    },
+    Reader,
 };
 
 #[cfg_attr(not(target_arch = "wasm32"), tokio::test)]

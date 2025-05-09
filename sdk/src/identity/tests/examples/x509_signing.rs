@@ -17,15 +17,17 @@
 
 use std::io::{Cursor, Seek};
 
-use c2pa::{Builder, Reader, SigningAlg};
 use c2pa_crypto::raw_signature;
 use c2pa_status_tracker::StatusTracker;
 
 use crate::{
-    builder::{AsyncIdentityAssertionBuilder, AsyncIdentityAssertionSigner},
-    tests::fixtures::{cert_chain_and_private_key_for_alg, manifest_json, parent_json},
-    x509::{AsyncX509CredentialHolder, X509SignatureVerifier},
-    IdentityAssertion,
+    identity::{
+        builder::{AsyncIdentityAssertionBuilder, AsyncIdentityAssertionSigner},
+        tests::fixtures::{cert_chain_and_private_key_for_alg, manifest_json, parent_json},
+        x509::{AsyncX509CredentialHolder, X509SignatureVerifier},
+        IdentityAssertion,
+    },
+    Builder, Reader, SigningAlg,
 };
 
 const TEST_IMAGE: &[u8] = include_bytes!("../../../../sdk/tests/fixtures/CA.jpg");

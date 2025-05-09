@@ -15,8 +15,8 @@
 //! [`SignatureVerifier`] for the X.509 certificates credential type described
 //! as specified in [§8.2, X.509 certificates and COSE signatures].
 //!
-//! [`AsyncCredentialHolder`]: crate::builder::AsyncCredentialHolder
-//! [`SignatureVerifier`]: crate::SignatureVerifier
+//! [`AsyncCredentialHolder`]: crate::identity::builder::AsyncCredentialHolder
+//! [`SignatureVerifier`]: crate::identity::SignatureVerifier
 //! [§8.2, X.509 certificates and COSE signatures]: https://cawg.io/identity/1.1-draft/#_x_509_certificates_and_cose_signatures
 
 mod async_x509_credential_holder;

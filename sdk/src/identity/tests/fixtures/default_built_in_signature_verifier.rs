@@ -11,7 +11,7 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use crate::{
+use crate::identity::{
     claim_aggregation::IcaSignatureVerifier, x509::X509SignatureVerifier, BuiltInSignatureVerifier,
 };
 

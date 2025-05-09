@@ -18,7 +18,7 @@ use c2pa_crypto::cose::CoseError;
 use c2pa_status_tracker::StatusTracker;
 use serde::Serialize;
 
-use crate::{
+use crate::identity::{
     claim_aggregation::{
         IcaCredential, IcaCredentialSummary, IcaSignatureVerifier, IcaValidationError,
     },
@@ -50,14 +50,14 @@ impl SignatureVerifier for BuiltInSignatureVerifier {
         status_tracker: &mut StatusTracker,
     ) -> Result<Self::Output, ValidationError<Self::Error>> {
         match signer_payload.sig_type.as_str() {
-            crate::claim_aggregation::CAWG_ICA_SIG_TYPE => self
+            crate::identity::claim_aggregation::CAWG_ICA_SIG_TYPE => self
                 .ica_verifier
                 .check_signature(signer_payload, signature, status_tracker)
                 .await
                 .map(BuiltInCredential::IdentityClaimsAggregationCredential)
                 .map_err(map_err_to_built_in),
 
-            crate::x509::CAWG_X509_SIG_TYPE => self
+            crate::identity::x509::CAWG_X509_SIG_TYPE => self
                 .x509_verifier
                 .check_signature(signer_payload, signature, status_tracker)
                 .await

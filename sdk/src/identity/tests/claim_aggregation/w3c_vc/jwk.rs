@@ -21,7 +21,7 @@
 #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
 use wasm_bindgen_test::wasm_bindgen_test;
 
-use crate::claim_aggregation::w3c_vc::jwk::*;
+use crate::identity::claim_aggregation::w3c_vc::jwk::*;
 
 const ED25519_JSON: &str = r#"{"kty":"OKP","crv":"Ed25519","x":"G80iskrv_nE69qbGLSpeOHJgmV4MKIzsy5l5iT6pCww","d":"39Ev8-k-jkKunJyFWog3k0OwgPjnKv_qwLhfqXdAXTY"}
 "#;

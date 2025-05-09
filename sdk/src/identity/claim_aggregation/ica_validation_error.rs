@@ -13,7 +13,7 @@
 
 use std::fmt::Debug;
 
-use crate::{
+use crate::identity::{
     claim_aggregation::w3c_vc::{did::InvalidDid, did_web::DidWebError},
     ValidationError,
 };
@@ -23,7 +23,7 @@ use crate::{
 ///
 /// Intended to be used as a subtype for [`ValidationError`].
 ///
-/// [`ValidationError`]: crate::ValidationError
+/// [`ValidationError`]: crate::identity::ValidationError
 #[derive(Clone, Debug, Eq, thiserror::Error, PartialEq)]
 pub enum IcaValidationError {
     /// An error occurred while decoding the COSE credential information.

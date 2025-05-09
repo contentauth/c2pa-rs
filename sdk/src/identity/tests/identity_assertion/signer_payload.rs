@@ -11,12 +11,11 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use c2pa::HashedUri;
 use hex_literal::hex;
 #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
 use wasm_bindgen_test::wasm_bindgen_test;
 
-use crate::SignerPayload;
+use crate::{identity::SignerPayload, HashedUri};
 
 #[test]
 #[cfg_attr(

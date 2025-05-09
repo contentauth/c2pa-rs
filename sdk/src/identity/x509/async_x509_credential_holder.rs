@@ -17,7 +17,7 @@ use c2pa_crypto::{
     raw_signature::AsyncRawSigner,
 };
 
-use crate::{
+use crate::identity::{
     builder::{AsyncCredentialHolder, IdentityBuilderError},
     SignerPayload,
 };
@@ -26,7 +26,7 @@ use crate::{
 /// signatures using X.509 credentials as specified in [§8.2, X.509 certificates
 /// and COSE signatures].
 ///
-/// [`SignatureVerifier`]: crate::SignatureVerifier
+/// [`SignatureVerifier`]: crate::identity::SignatureVerifier
 /// [§8.2, X.509 certificates and COSE signatures]: https://cawg.io/identity/1.1-draft/#_x_509_certificates_and_cose_signatures
 #[cfg(not(target_arch = "wasm32"))]
 pub struct AsyncX509CredentialHolder(Box<dyn AsyncRawSigner + Send + Sync + 'static>);
@@ -35,7 +35,7 @@ pub struct AsyncX509CredentialHolder(Box<dyn AsyncRawSigner + Send + Sync + 'sta
 /// signatures using X.509 credentials as specified in [§8.2, X.509 certificates
 /// and COSE signatures].
 ///
-/// [`AsyncCredentialHolder`]: crate::builder::AsyncCredentialHolder
+/// [`AsyncCredentialHolder`]: crate::identity::builder::AsyncCredentialHolder
 /// [§8.2, X.509 certificates and COSE signatures]: https://cawg.io/identity/1.1-draft/#_x_509_certificates_and_cose_signatures
 #[cfg(target_arch = "wasm32")]
 pub struct AsyncX509CredentialHolder(Box<dyn AsyncRawSigner + 'static>);

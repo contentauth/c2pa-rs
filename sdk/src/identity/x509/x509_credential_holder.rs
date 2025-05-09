@@ -16,7 +16,7 @@ use c2pa_crypto::{
     raw_signature::RawSigner,
 };
 
-use crate::{
+use crate::identity::{
     builder::{CredentialHolder, IdentityBuilderError},
     SignerPayload,
 };
@@ -25,7 +25,7 @@ use crate::{
 /// using X.509 credentials as specified in [§8.2, X.509 certificates and COSE
 /// signatures].
 ///
-/// [`SignatureVerifier`]: crate::SignatureVerifier
+/// [`SignatureVerifier`]: crate::identity::SignatureVerifier
 /// [§8.2, X.509 certificates and COSE signatures]: https://cawg.io/identity/1.1-draft/#_x_509_certificates_and_cose_signatures
 pub struct X509CredentialHolder(Box<dyn RawSigner + Sync + Send + 'static>);
 

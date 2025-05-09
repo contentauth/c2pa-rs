@@ -13,7 +13,6 @@
 
 use std::{io::Cursor, str::FromStr};
 
-use c2pa::{HashedUri, Reader};
 use c2pa_status_tracker::StatusTracker;
 use chrono::{DateTime, FixedOffset};
 use iref::UriBuf;
@@ -22,8 +21,11 @@ use non_empty_string::NonEmptyString;
 use wasm_bindgen_test::wasm_bindgen_test;
 
 use crate::{
-    claim_aggregation::{IcaSignatureVerifier, IdentityProvider, VerifiedIdentity},
-    IdentityAssertion, SignerPayload,
+    identity::{
+        claim_aggregation::{IcaSignatureVerifier, IdentityProvider, VerifiedIdentity},
+        IdentityAssertion, SignerPayload,
+    },
+    HashedUri, Reader,
 };
 
 #[cfg_attr(not(target_arch = "wasm32"), tokio::test)]

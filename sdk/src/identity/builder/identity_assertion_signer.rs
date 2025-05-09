@@ -13,16 +13,18 @@
 
 use std::cell::RefCell;
 
-use c2pa::{dynamic_assertion::DynamicAssertion, Result, Signer};
 use c2pa_crypto::raw_signature::{RawSigner, SigningAlg};
 
-use crate::builder::IdentityAssertionBuilder;
+use crate::{
+    dynamic_assertion::DynamicAssertion, identity::builder::IdentityAssertionBuilder, Result,
+    Signer,
+};
 
 /// An `IdentityAssertionSigner` extends the [`Signer`] interface to add zero or
 /// more identity assertions to a C2PA [`Manifest`] that is being produced.
 ///
-/// [`Signer`]: c2pa::Signer
-/// [`Manifest`]: c2pa::Manifest
+/// [`Signer`]: crate::Signer
+/// [`Manifest`]: crate::Manifest
 pub struct IdentityAssertionSigner {
     signer: Box<dyn RawSigner>,
     identity_assertions: RefCell<Vec<IdentityAssertionBuilder>>,
@@ -44,7 +46,7 @@ impl IdentityAssertionSigner {
     pub(crate) fn from_test_credentials(alg: SigningAlg) -> Self {
         use c2pa_crypto::raw_signature::signer_from_cert_chain_and_private_key;
 
-        use crate::tests::fixtures::cert_chain_and_private_key_for_alg;
+        use crate::identity::tests::fixtures::cert_chain_and_private_key_for_alg;
 
         let (cert_chain, private_key) = cert_chain_and_private_key_for_alg(alg);
 
@@ -62,7 +64,7 @@ impl IdentityAssertionSigner {
     /// IMPORTANT: When [`sign()`] is called, the list of
     /// [`IdentityAssertionBuilder`]s will be cleared.
     ///
-    /// [`Manifest`]: c2pa::Manifest
+    /// [`Manifest`]: crate::Manifest
     /// [`sign()`]: Self::sign
     pub fn add_identity_assertion(&mut self, iab: IdentityAssertionBuilder) {
         #[allow(clippy::unwrap_used)]

@@ -13,20 +13,22 @@
 
 use std::io::{Cursor, Seek};
 
-use c2pa::{Builder, Reader, SigningAlg};
 use c2pa_crypto::raw_signature;
 use c2pa_status_tracker::StatusTracker;
 #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
 use wasm_bindgen_test::wasm_bindgen_test;
 
 use crate::{
-    builder::{
-        AsyncIdentityAssertionBuilder, AsyncIdentityAssertionSigner, IdentityAssertionBuilder,
-        IdentityAssertionSigner,
+    identity::{
+        builder::{
+            AsyncIdentityAssertionBuilder, AsyncIdentityAssertionSigner, IdentityAssertionBuilder,
+            IdentityAssertionSigner,
+        },
+        tests::fixtures::{cert_chain_and_private_key_for_alg, manifest_json, parent_json},
+        x509::{AsyncX509CredentialHolder, X509CredentialHolder, X509SignatureVerifier},
+        IdentityAssertion,
     },
-    tests::fixtures::{cert_chain_and_private_key_for_alg, manifest_json, parent_json},
-    x509::{AsyncX509CredentialHolder, X509CredentialHolder, X509SignatureVerifier},
-    IdentityAssertion,
+    Builder, Reader, SigningAlg,
 };
 
 const TEST_IMAGE: &[u8] = include_bytes!("../../../sdk/tests/fixtures/CA.jpg");

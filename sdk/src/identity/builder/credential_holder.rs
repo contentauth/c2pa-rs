@@ -13,7 +13,7 @@
 
 use async_trait::async_trait;
 
-use crate::{builder::IdentityBuilderError, SignerPayload};
+use crate::identity::{builder::IdentityBuilderError, SignerPayload};
 
 /// An implementation of `CredentialHolder` is able to generate a signature
 /// over the [`SignerPayload`] data structure on behalf of a credential holder.

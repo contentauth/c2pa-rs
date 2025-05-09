@@ -16,7 +16,6 @@ use std::{
     str::FromStr,
 };
 
-use c2pa::{Builder, HashedUri, Reader, SigningAlg};
 use c2pa_crypto::raw_signature;
 use c2pa_status_tracker::StatusTracker;
 use chrono::{DateTime, FixedOffset};
@@ -24,18 +23,21 @@ use iref::UriBuf;
 use non_empty_string::NonEmptyString;
 
 use crate::{
-    builder::{
-        AsyncIdentityAssertionBuilder, AsyncIdentityAssertionSigner, IdentityAssertionBuilder,
-        IdentityAssertionSigner,
+    identity::{
+        builder::{
+            AsyncIdentityAssertionBuilder, AsyncIdentityAssertionSigner, IdentityAssertionBuilder,
+            IdentityAssertionSigner,
+        },
+        claim_aggregation::{IdentityProvider, VerifiedIdentity},
+        identity_assertion::built_in_signature_verifier::BuiltInCredential,
+        tests::fixtures::{
+            cert_chain_and_private_key_for_alg, default_built_in_signature_verifier, manifest_json,
+            parent_json, NaiveCredentialHolder,
+        },
+        x509::AsyncX509CredentialHolder,
+        IdentityAssertion, SignerPayload, ValidationError,
     },
-    claim_aggregation::{IdentityProvider, VerifiedIdentity},
-    identity_assertion::built_in_signature_verifier::BuiltInCredential,
-    tests::fixtures::{
-        cert_chain_and_private_key_for_alg, default_built_in_signature_verifier, manifest_json,
-        parent_json, NaiveCredentialHolder,
-    },
-    x509::AsyncX509CredentialHolder,
-    IdentityAssertion, SignerPayload, ValidationError,
+    Builder, HashedUri, Reader, SigningAlg,
 };
 
 const TEST_IMAGE: &[u8] = include_bytes!("../../../../sdk/tests/fixtures/CA.jpg");

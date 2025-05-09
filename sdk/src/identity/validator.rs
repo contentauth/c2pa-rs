@@ -15,14 +15,14 @@
 //! C2PA Manifest that contains one or more CAWG identity assertions.
 
 use async_trait::async_trait;
-use c2pa::{
-    dynamic_assertion::{AsyncPostValidator, PartialClaim},
-    ManifestAssertion,
-};
 use c2pa_status_tracker::StatusTracker;
 use serde_json::Value;
 
-use crate::IdentityAssertion;
+use crate::{
+    dynamic_assertion::{AsyncPostValidator, PartialClaim},
+    identity::IdentityAssertion,
+    ManifestAssertion,
+};
 
 /// Validates a CAWG identity assertion.
 pub struct CawgValidator;
@@ -36,7 +36,7 @@ impl AsyncPostValidator for CawgValidator {
         uri: &str,
         partial_claim: &PartialClaim,
         tracker: &mut StatusTracker,
-    ) -> c2pa::Result<Option<Value>> {
+    ) -> crate::Result<Option<Value>> {
         if label.starts_with("cawg.identity") {
             let identity_assertion: IdentityAssertion = assertion.to_assertion()?;
             tracker.push_current_uri(uri);
@@ -44,7 +44,7 @@ impl AsyncPostValidator for CawgValidator {
                 .validate_partial_claim(partial_claim, tracker)
                 .await
                 .map(Some)
-                .map_err(|e| c2pa::Error::ClaimVerification(e.to_string()));
+                .map_err(|e| crate::Error::ClaimVerification(e.to_string()));
             tracker.pop_current_uri();
             return result;
         };
@@ -57,11 +57,11 @@ mod tests {
     #![allow(clippy::unwrap_used)]
     use std::io::Cursor;
 
-    use c2pa::{Reader, ValidationState};
     #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
     use wasm_bindgen_test::wasm_bindgen_test;
 
     use super::*;
+    use crate::{Reader, ValidationState};
 
     const CONNECTED_IDENTITIES_VALID: &[u8] =
         include_bytes!("tests/fixtures/claim_aggregation/adobe_connected_identities.jpg");
