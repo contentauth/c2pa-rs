@@ -249,6 +249,22 @@ pub unsafe extern "C" fn c2pa_error() -> *mut c_char {
     to_c_string(Error::last_message().unwrap_or_default())
 }
 
+/// Sets the last error message.
+/// This is used by callbacks so they can set a return error message.
+/// THe error should be in the form of "ErrorType: ErrorMessage".
+/// If ErrorType is missing or invalid, it will be set to "Other".
+/// and the message will include the original error string.
+/// Can return -1 if the error string is NULL.
+///
+/// # Safety
+/// Reads from NULL-terminated C strings.
+#[no_mangle]
+pub unsafe extern "C" fn c2pa_error_set_last(error_str: *const c_char) -> c_int {
+    let error_str = from_cstr_or_return_int!(error_str);
+    Error::set_last(Error::from(error_str));
+    0
+}
+
 /// Load Settings from a string.
 ///
 /// # Errors
@@ -1175,7 +1191,7 @@ mod tests {
         assert!(signer.is_null());
         let error = unsafe { c2pa_error() };
         let error = unsafe { CString::from_raw(error) };
-        assert_eq!(error.to_str().unwrap(), "Other Invalid signing algorithm");
+        assert_eq!(error.to_str().unwrap(), "Other: Invalid signing algorithm");
     }
 
     #[test]
@@ -1240,7 +1256,7 @@ mod tests {
         assert_eq!(result, -1);
         let error = unsafe { c2pa_error() };
         let error = unsafe { CString::from_raw(error) };
-        assert_eq!(error.to_str().unwrap(), "NullParameter builder_ptr");
+        assert_eq!(error.to_str().unwrap(), "NullParameter: builder_ptr");
     }
 
     #[test]
@@ -1283,7 +1299,7 @@ mod tests {
         assert!(result.is_null());
         let error = unsafe { c2pa_error() };
         let error_str = unsafe { CString::from_raw(error) };
-        assert_eq!(error_str.to_str().unwrap(), "NullParameter path");
+        assert_eq!(error_str.to_str().unwrap(), "NullParameter: path");
     }
 
     #[test]
@@ -1293,7 +1309,7 @@ mod tests {
         assert!(result.is_null());
         let error = unsafe { c2pa_error() };
         let error_str = unsafe { CString::from_raw(error) };
-        assert_eq!(error_str.to_str().unwrap(), "NullParameter path");
+        assert_eq!(error_str.to_str().unwrap(), "NullParameter: path");
     }
 
     #[test]
@@ -1318,7 +1334,7 @@ mod tests {
         assert!(result.is_null());
         let error = unsafe { c2pa_error() };
         let error_str = unsafe { CString::from_raw(error) };
-        assert_eq!(error_str.to_str().unwrap(), "NullParameter source_path");
+        assert_eq!(error_str.to_str().unwrap(), "NullParameter: source_path");
     }
 
     #[test]
@@ -1328,7 +1344,7 @@ mod tests {
         assert!(result.is_null());
         let error = unsafe { c2pa_error() };
         let error_str = unsafe { CString::from_raw(error) };
-        assert_eq!(error_str.to_str().unwrap(), "NullParameter format");
+        assert_eq!(error_str.to_str().unwrap(), "NullParameter: format");
         TestC2paStream::drop_c_stream(stream);
     }
 
@@ -1338,7 +1354,7 @@ mod tests {
         assert!(result.is_null());
         let error = unsafe { c2pa_error() };
         let error_str = unsafe { CString::from_raw(error) };
-        assert_eq!(error_str.to_str().unwrap(), "NullParameter reader_ptr");
+        assert_eq!(error_str.to_str().unwrap(), "NullParameter: reader_ptr");
     }
 
     #[test]
@@ -1351,7 +1367,7 @@ mod tests {
         assert_eq!(result, -1);
         let error = unsafe { c2pa_error() };
         let error_str = unsafe { CString::from_raw(error) };
-        assert_eq!(error_str.to_str().unwrap(), "NullParameter uri");
+        assert_eq!(error_str.to_str().unwrap(), "NullParameter: uri");
         TestC2paStream::drop_c_stream(stream);
         unsafe { c2pa_builder_free(builder) };
     }
@@ -1365,7 +1381,7 @@ mod tests {
         assert_eq!(result, -1);
         let error = unsafe { c2pa_error() };
         let error_str = unsafe { CString::from_raw(error) };
-        assert_eq!(error_str.to_str().unwrap(), "NullParameter stream");
+        assert_eq!(error_str.to_str().unwrap(), "NullParameter: stream");
         unsafe { c2pa_builder_free(builder) };
     }
 }

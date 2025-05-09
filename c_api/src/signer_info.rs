@@ -94,7 +94,7 @@ mod tests {
         let signer_info = result.unwrap_err();
         assert!(signer_info
             .to_string()
-            .starts_with("Json missing field `private_key`"));
+            .starts_with("Json: missing field `private_key`"));
     }
 
     #[test]
@@ -124,7 +124,7 @@ mod tests {
         assert!(result.is_err());
         assert_eq!(
             result.unwrap_err().to_string(),
-            "Other Invalid signing algorithm"
+            "Other: Invalid signing algorithm"
         );
     }
 
