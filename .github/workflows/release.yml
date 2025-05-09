@@ -1,4 +1,4 @@
-name: Release-plz
+name: Release
 
 permissions:
   pull-requests: write
@@ -10,48 +10,90 @@ on:
       - main
 
 jobs:
-  release-plz:
-    name: Release-plz
+  check-version:
+    name: Check version changes
     runs-on: ubuntu-latest
-
     outputs:
-      c2patool-release-tag: ${{ steps.sniff-c2patool-release-tag.outputs.tag }}
+      c2patool-version: ${{ steps.check-version.outputs.version }}
+      should-release: ${{ steps.check-version.outputs.should_release }}
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          token: ${{ secrets.RELEASE_PLZ_TOKEN }}
 
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Run release-plz
-        id: release-plz
-        uses: MarcoIeni/release-plz-action@v0.5.101
-        env:
-          GITHUB_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_IO_SECRET }}
-
-      - name: Clean up stale release-plz branches
+      - name: Check version changes
+        id: check-version
         run: |
-          git --no-pager branch --remote |\
-            grep 'origin/release-plz-' |\
-            sort -r |\
-            tail -n +2 |\
-            sed 's/origin\///' |\
-            xargs -I {} git push origin --delete {}
-  
-      - name: Identify c2patool release
-        id: sniff-c2patool-release-tag
-        run: |
-          echo tag=`git tag --contains HEAD | grep '^c2patool-'` >> "$GITHUB_OUTPUT" || true
-    
+          # Get the current version from Cargo.toml
+          CURRENT_VERSION=$(grep -m1 '^version = ' cli/Cargo.toml | cut -d '"' -f2)
+          # Get the latest release tag
+          LATEST_TAG=$(git tag --list 'c2patool-*' --sort=-v:refname | head -n1 | sed 's/c2patool-//')
+          
+          if [ -z "$LATEST_TAG" ]; then
+            echo "should_release=true" >> "$GITHUB_OUTPUT"
+            echo "version=c2patool-$CURRENT_VERSION" >> "$GITHUB_OUTPUT"
+          elif [ "$CURRENT_VERSION" != "$LATEST_TAG" ]; then
+            echo "should_release=true" >> "$GITHUB_OUTPUT"
+            echo "version=c2patool-$CURRENT_VERSION" >> "$GITHUB_OUTPUT"
+          else
+            echo "should_release=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  create-release-draft:
+    name: Create Release Draft
+    needs: check-version
+    if: needs.check-version.outputs.should-release == 'true'
+    runs-on: ubuntu-latest
+    outputs:
+      upload_url: ${{ steps.create_release.outputs.upload_url }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Create Release Draft
+        id: create_release
+        uses: softprops/action-gh-release@v1
+        with:
+          name: ${{ needs.check-version.outputs.c2patool-version }}
+          draft: true
+          generate_release_notes: true
+          body: |
+            ## What's Changed
+            
+            This release includes the following changes:
+            
+            ${{ github.event.head_commit.message }}
+            
+            ## Installation
+            
+            ### macOS
+            ```bash
+            curl -L https://github.com/${{ github.repository }}/releases/download/${{ needs.check-version.outputs.c2patool-version }}/${{ needs.check-version.outputs.c2patool-version }}-universal-apple-darwin.zip -o c2patool.zip
+            unzip c2patool.zip
+            ```
+            
+            ### Linux
+            ```bash
+            curl -L https://github.com/${{ github.repository }}/releases/download/${{ needs.check-version.outputs.c2patool-version }}/${{ needs.check-version.outputs.c2patool-version }}-x86_64-unknown-linux-gnu.tar.gz -o c2patool.tar.gz
+            tar -xzf c2patool.tar.gz
+            ```
+            
+            ### Windows
+            ```powershell
+            Invoke-WebRequest -Uri "https://github.com/${{ github.repository }}/releases/download/${{ needs.check-version.outputs.c2patool-version }}/${{ needs.check-version.outputs.c2patool-version }}-x86_64-pc-windows-msvc.zip" -OutFile "c2patool.zip"
+            Expand-Archive -Path c2patool.zip -DestinationPath .
+            ```
+
   publish-c2patool-binaries:
     name: Publish c2patool binaries
     runs-on: ${{ matrix.os }}
-    needs: release-plz
+    needs: [check-version, create-release-draft]
+    if: needs.check-version.outputs.should-release == 'true'
 
     strategy:
       fail-fast: false
@@ -62,64 +104,79 @@ jobs:
         include:
           - os: macos-latest
             artifact_name: c2patool_mac_universal.zip
-            uploaded_asset_name: ${{ needs.release-plz.outputs.c2patool-release-tag }}-universal-apple-darwin.zip
-            sbom_asset_name: ${{ needs.release-plz.outputs.c2patool-release-tag }}-universal-apple-darwin-sbom.json
+            uploaded_asset_name: ${{ needs.check-version.outputs.c2patool-version }}-universal-apple-darwin.zip
+            sbom_asset_name: ${{ needs.check-version.outputs.c2patool-version }}-universal-apple-darwin-sbom.json
+            checksum_name: ${{ needs.check-version.outputs.c2patool-version }}-universal-apple-darwin.sha256
           - os: ubuntu-latest
             artifact_name: c2patool_linux_intel.tar.gz
-            uploaded_asset_name: ${{ needs.release-plz.outputs.c2patool-release-tag }}-x86_64-unknown-linux-gnu.tar.gz
-            sbom_asset_name: ${{ needs.release-plz.outputs.c2patool-release-tag }}-x86_64-unknown-linux-gnu-sbom.json
+            uploaded_asset_name: ${{ needs.check-version.outputs.c2patool-version }}-x86_64-unknown-linux-gnu.tar.gz
+            sbom_asset_name: ${{ needs.check-version.outputs.c2patool-version }}-x86_64-unknown-linux-gnu-sbom.json
+            checksum_name: ${{ needs.check-version.outputs.c2patool-version }}-x86_64-unknown-linux-gnu.sha256
           - os: windows-latest
             artifact_name: c2patool_win_intel.zip
-            uploaded_asset_name: ${{ needs.release-plz.outputs.c2patool-release-tag }}-x86_64-pc-windows-msvc.zip
-            sbom_asset_name: ${{ needs.release-plz.outputs.c2patool-release-tag }}-x86_64-pc-windows-msvc-sbom.json
+            uploaded_asset_name: ${{ needs.check-version.outputs.c2patool-version }}-x86_64-pc-windows-msvc.zip
+            sbom_asset_name: ${{ needs.check-version.outputs.c2patool-version }}-x86_64-pc-windows-msvc-sbom.json
+            checksum_name: ${{ needs.check-version.outputs.c2patool-version }}-x86_64-pc-windows-msvc.sha256
 
     steps:
       - name: Checkout repository
-        if: ${{ needs.release-plz.outputs.c2patool-release-tag }}
         uses: actions/checkout@v4
 
       - name: Install Rust toolchain
-        if: ${{ needs.release-plz.outputs.c2patool-release-tag }}
         uses: dtolnay/rust-toolchain@master
         with:
           toolchain: ${{ matrix.rust_version }}
           components: llvm-tools-preview
 
       - name: Install cargo-sbom
-        if: ${{ needs.release-plz.outputs.c2patool-release-tag }}
         uses: baptiste0928/cargo-install@v3
         with:
           crate: cargo-sbom
           version: '0.9.1'
 
       - name: Cache Rust dependencies
-        if: ${{ needs.release-plz.outputs.c2patool-release-tag }}
         uses: Swatinem/rust-cache@v2
 
       - name: Run make release
-        if: ${{ needs.release-plz.outputs.c2patool-release-tag }}
         run: cd cli && make release
 
+      - name: Generate checksums
+        run: |
+          if [ "${{ matrix.os }}" = "windows-latest" ]; then
+            certutil -hashfile target/${{ matrix.artifact_name }} SHA256 > target/${{ matrix.checksum_name }}
+          else
+            shasum -a 256 target/${{ matrix.artifact_name }} > target/${{ matrix.checksum_name }}
+          fi
+
       - name: Upload binary to GitHub
-        if: ${{ needs.release-plz.outputs.c2patool-release-tag }}
-        uses: svenstaro/upload-release-action@v1-release
+        uses: softprops/action-gh-release@v1
         with:
-          repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: target/${{ matrix.artifact_name }}
-          asset_name: ${{ matrix.uploaded_asset_name }}
-          tag: ${{ needs.release-plz.outputs.c2patool-release-tag }}
-          overwrite: true
+          files: |
+            target/${{ matrix.artifact_name }}
+            target/${{ matrix.checksum_name }}
+          draft: false
+          prerelease: false
 
       - name: Generate SBOM
-        if: ${{ needs.release-plz.outputs.c2patool-release-tag }}
         run: cd cli && cargo sbom > c2patool-sbom.json
 
       - name: Upload SBOM to Github
-        if: ${{ needs.release-plz.outputs.c2patool-release-tag }}
-        uses: svenstaro/upload-release-action@v1-release
+        uses: softprops/action-gh-release@v1
         with:
-          repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: cli/c2patool-sbom.json
-          asset_name: ${{ matrix.sbom_asset_name }}
-          tag: ${{ needs.release-plz.outputs.c2patool-release-tag }}
-          overwrite: true
+          files: cli/c2patool-sbom.json
+          draft: false
+          prerelease: false
+
+  publish-release:
+    name: Publish Release
+    needs: [create-release-draft, publish-c2patool-binaries]
+    if: needs.check-version.outputs.should-release == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Publish Release
+        uses: softprops/action-gh-release@v1
+        with:
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

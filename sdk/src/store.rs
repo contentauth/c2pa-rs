@@ -81,6 +81,8 @@ use crate::{
 #[cfg(feature = "v1_api")]
 use crate::{external_manifest::ManifestPatchCallback, RemoteSigner};
 
+use serde_bytes::ByteBuf;
+
 const MANIFEST_STORE_EXT: &str = "c2pa"; // file extension for external manifests
 
 pub(crate) struct ManifestHashes {
@@ -1706,6 +1708,7 @@ impl Store {
         tfhd.subset = Some(subset_tfhd_vec);
         tfhd.flags = Some(ByteBuf::from([1, 0, 0]));
         exclusions.push(tfhd);
+        */
 
         // /moof/traf/trun exclusion
         let mut trun = ExclusionsMap::new("/moof/traf/trun".to_owned());
@@ -1717,7 +1720,6 @@ impl Store {
         trun.subset = Some(subset_trun_vec);
         trun.flags = Some(ByteBuf::from([1, 0, 0]));
         exclusions.push(trun);
-        */
 
         // enable flat flat files with Merkle trees
         if flat_fragmented_w_merkle {
