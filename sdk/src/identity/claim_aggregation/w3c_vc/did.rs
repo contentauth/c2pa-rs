@@ -18,8 +18,6 @@
 // specific language governing permissions and limitations under
 // each license.
 
-#![allow(unused)] // TEMPORARY
-
 use std::{fmt, ops::Deref, str::FromStr, sync::LazyLock};
 
 use regex::Regex;
@@ -239,3 +237,180 @@ impl<'de> Deserialize<'de> for DidBuf {
 #[derive(Debug, Error)]
 #[error("invalid DID `{0}`")]
 pub struct InvalidDid(pub String);
+
+#[cfg(test)]
+mod tests {
+    mod did {
+        mod new {
+            #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
+            use wasm_bindgen_test::wasm_bindgen_test;
+
+            use crate::identity::claim_aggregation::w3c_vc::did::Did;
+
+            #[test]
+            #[cfg_attr(
+                all(target_arch = "wasm32", not(target_os = "wasi")),
+                wasm_bindgen_test
+            )]
+            fn valid_dids() {
+                let did = Did::new("did:method:foo").unwrap();
+                assert_eq!(did.method_name(), "method");
+                assert_eq!(did.method_specific_id(), "foo");
+
+                let did = Did::new("did:a:b").unwrap();
+                assert_eq!(did.method_name(), "a");
+                assert_eq!(did.method_specific_id(), "b");
+
+                let did = Did::new("did:jwk:eyJjcnYiOiJQLTI1NiIsImt0eSI6IkVDIiwieCI6ImFjYklRaXVNczNpOF91c3pFakoydHBUdFJNNEVVM3l6OTFQSDZDZEgyVjAiLCJ5IjoiX0tjeUxqOXZXTXB0bm1LdG00NkdxRHo4d2Y3NEk1TEtncmwyR3pIM25TRSJ9").unwrap();
+                assert_eq!(did.method_name(), "jwk");
+                assert_eq!(did.method_specific_id(), "eyJjcnYiOiJQLTI1NiIsImt0eSI6IkVDIiwieCI6ImFjYklRaXVNczNpOF91c3pFakoydHBUdFJNNEVVM3l6OTFQSDZDZEgyVjAiLCJ5IjoiX0tjeUxqOXZXTXB0bm1LdG00NkdxRHo4d2Y3NEk1TEtncmwyR3pIM25TRSJ9");
+
+                let did = Did::new("did:web:example.com%3A443:u:bob").unwrap();
+                assert_eq!(did.method_name(), "web");
+                assert_eq!(did.method_specific_id(), "example.com%3A443:u:bob");
+            }
+
+            #[test]
+            #[cfg_attr(
+                all(target_arch = "wasm32", not(target_os = "wasi")),
+                wasm_bindgen_test
+            )]
+            fn err_invalid_did() {
+                Did::new("http:a:b").unwrap_err();
+                Did::new("did::b").unwrap_err();
+                Did::new("did:a:").unwrap_err();
+            }
+        }
+
+        mod split_fragment {
+            #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
+            use wasm_bindgen_test::wasm_bindgen_test;
+
+            use crate::identity::claim_aggregation::w3c_vc::did::Did;
+
+            #[test]
+            #[cfg_attr(
+                all(target_arch = "wasm32", not(target_os = "wasi")),
+                wasm_bindgen_test
+            )]
+            fn has_fragment() {
+                let did = Did::new("did:method:foo#bar").unwrap();
+                assert_eq!(did.method_name(), "method");
+                assert_eq!(did.method_specific_id(), "foo#bar");
+
+                let did_without_fragment = Did::new("did:method:foo").unwrap();
+                let fragment: &str = "bar";
+                assert_eq!(did.split_fragment(), (did_without_fragment, Some(fragment)));
+            }
+
+            #[test]
+            #[cfg_attr(
+                all(target_arch = "wasm32", not(target_os = "wasi")),
+                wasm_bindgen_test
+            )]
+            fn no_fragment() {
+                let did = Did::new("did:method:foo").unwrap();
+                let did2 = Did::new("did:method:foo").unwrap();
+                assert_eq!(did.split_fragment(), (did2, None));
+            }
+        }
+    }
+
+    mod did_buf {
+        mod new {
+            #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
+            use wasm_bindgen_test::wasm_bindgen_test;
+
+            use crate::identity::claim_aggregation::w3c_vc::did::DidBuf;
+
+            #[test]
+            #[cfg_attr(
+                all(target_arch = "wasm32", not(target_os = "wasi")),
+                wasm_bindgen_test
+            )]
+            fn valid_dids() {
+                let did = DidBuf::new("did:method:foo".to_string()).unwrap();
+                let did = did.as_did();
+                assert_eq!(did.method_name(), "method");
+                assert_eq!(did.method_specific_id(), "foo");
+
+                let did = DidBuf::new("did:a:b".to_string()).unwrap();
+                let did = did.as_did();
+                assert_eq!(did.method_name(), "a");
+                assert_eq!(did.method_specific_id(), "b");
+
+                let did = DidBuf::new("did:jwk:eyJjcnYiOiJQLTI1NiIsImt0eSI6IkVDIiwieCI6ImFjYklRaXVNczNpOF91c3pFakoydHBUdFJNNEVVM3l6OTFQSDZDZEgyVjAiLCJ5IjoiX0tjeUxqOXZXTXB0bm1LdG00NkdxRHo4d2Y3NEk1TEtncmwyR3pIM25TRSJ9".to_string()).unwrap();
+                let did = did.as_did();
+                assert_eq!(did.method_name(), "jwk");
+                assert_eq!(did.method_specific_id(), "eyJjcnYiOiJQLTI1NiIsImt0eSI6IkVDIiwieCI6ImFjYklRaXVNczNpOF91c3pFakoydHBUdFJNNEVVM3l6OTFQSDZDZEgyVjAiLCJ5IjoiX0tjeUxqOXZXTXB0bm1LdG00NkdxRHo4d2Y3NEk1TEtncmwyR3pIM25TRSJ9");
+
+                let did = DidBuf::new("did:web:example.com%3A443:u:bob".to_string()).unwrap();
+                let did = did.as_did();
+                assert_eq!(did.method_name(), "web");
+                assert_eq!(did.method_specific_id(), "example.com%3A443:u:bob");
+            }
+
+            #[test]
+            #[cfg_attr(
+                all(target_arch = "wasm32", not(target_os = "wasi")),
+                wasm_bindgen_test
+            )]
+            fn err_invalid_did() {
+                DidBuf::new("http:a:b".to_string()).unwrap_err();
+                DidBuf::new("did::b".to_string()).unwrap_err();
+                DidBuf::new("did:a:".to_string()).unwrap_err();
+            }
+        }
+
+        mod impl_serde {
+            #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
+            use wasm_bindgen_test::wasm_bindgen_test;
+
+            use crate::identity::claim_aggregation::w3c_vc::did::DidBuf;
+
+            #[derive(serde::Serialize, serde::Deserialize)]
+            struct Sample {
+                did: DidBuf,
+            }
+
+            const SAMPLE_WITH_DID: &str = r#"{"did":"did:method:foo"}"#;
+            const SAMPLE_WITH_BAD_DID: &str = r#"{"did": "did::b"}"#;
+
+            #[test]
+            #[cfg_attr(
+                all(target_arch = "wasm32", not(target_os = "wasi")),
+                wasm_bindgen_test
+            )]
+            fn from_json() {
+                let s: Sample = serde_json::from_str(SAMPLE_WITH_DID).unwrap();
+                let did = s.did;
+                let did = did.as_did();
+                assert_eq!(did.method_name(), "method");
+                assert_eq!(did.method_specific_id(), "foo");
+            }
+
+            #[test]
+            #[cfg_attr(
+                all(target_arch = "wasm32", not(target_os = "wasi")),
+                wasm_bindgen_test
+            )]
+            #[should_panic]
+            fn from_json_err_invalid_did() {
+                let _: Sample = serde_json::from_str(SAMPLE_WITH_BAD_DID).unwrap();
+            }
+
+            #[test]
+            #[cfg_attr(
+                all(target_arch = "wasm32", not(target_os = "wasi")),
+                wasm_bindgen_test
+            )]
+            fn to_json() {
+                let s = Sample {
+                    did: DidBuf::new("did:method:foo".to_string()).unwrap(),
+                };
+                let json = serde_json::to_string(&s).unwrap();
+                assert_eq!(&json, SAMPLE_WITH_DID);
+            }
+        }
+    }
+}

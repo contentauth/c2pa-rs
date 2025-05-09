@@ -13,4 +13,3 @@
 
 mod interop;
 mod validation;
-mod w3c_vc;

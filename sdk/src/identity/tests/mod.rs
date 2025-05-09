@@ -11,20 +11,11 @@
 // specific language governing permissions and limitations under
 // each license.
 
-// Tests are grouped under this module so as to avoid
-// having the test code itself included in coverage numbers.
-
 #![allow(clippy::expect_used)]
 #![allow(clippy::panic)]
 #![allow(clippy::unwrap_used)]
 
-mod builder;
 mod claim_aggregation;
 mod examples;
 pub(crate) mod fixtures;
-mod identity_assertion;
-mod internal;
-mod x509;
-
-#[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
-wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
+mod validation_method;

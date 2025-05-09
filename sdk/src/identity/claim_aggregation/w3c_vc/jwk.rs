@@ -18,8 +18,6 @@
 // specific language governing permissions and limitations under
 // each license.
 
-#![allow(unused)] // TEMPORARY
-
 use std::{
     convert::TryFrom, fmt, num::ParseIntError, result::Result, str::FromStr, string::FromUtf8Error,
 };
@@ -364,4 +362,34 @@ pub enum JwkError {
 
     #[error("Invalid coordinates")]
     InvalidCoordinates,
+}
+
+#[cfg(test)]
+mod tests {
+
+    #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
+    use wasm_bindgen_test::wasm_bindgen_test;
+
+    use crate::identity::claim_aggregation::w3c_vc::jwk::*;
+
+    const ED25519_JSON: &str = r#"{"kty":"OKP","crv":"Ed25519","x":"G80iskrv_nE69qbGLSpeOHJgmV4MKIzsy5l5iT6pCww","d":"39Ev8-k-jkKunJyFWog3k0OwgPjnKv_qwLhfqXdAXTY"}
+"#;
+
+    #[test]
+    #[cfg_attr(
+        all(target_arch = "wasm32", not(target_os = "wasi")),
+        wasm_bindgen_test
+    )]
+    fn ed25519_from_str() {
+        let _jwk: Jwk = serde_json::from_str(ED25519_JSON).unwrap();
+    }
+
+    #[test]
+    #[cfg_attr(
+        all(target_arch = "wasm32", not(target_os = "wasi")),
+        wasm_bindgen_test
+    )]
+    fn generate_ed25519() {
+        let _key = Jwk::generate_ed25519().unwrap();
+    }
 }

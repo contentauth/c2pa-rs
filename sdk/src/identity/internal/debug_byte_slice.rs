@@ -29,3 +29,37 @@ impl Debug for DebugByteSlice<'_> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use hex_literal::hex;
+    #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
+    use wasm_bindgen_test::wasm_bindgen_test;
+
+    use crate::identity::internal::debug_byte_slice::*;
+
+    #[test]
+    #[cfg_attr(
+        all(target_arch = "wasm32", not(target_os = "wasi")),
+        wasm_bindgen_test
+    )]
+    fn debug_byte_slice() {
+        let h = hex!("01020354595f");
+        let s = DebugByteSlice(&h);
+        assert_eq!(format!("{s:#?}"), "[01, 02, 03, 54, 59, 5f]");
+
+        let h = hex!("000102030405060708090a0b0c0d0e0f10111213");
+        let s = DebugByteSlice(&h);
+        assert_eq!(
+            format!("{s:#?}"),
+            "[00, 01, 02, 03, 04, 05, 06, 07, 08, 09, 0a, 0b, 0c, 0d, 0e, 0f, 10, 11, 12, 13]"
+        );
+
+        let h = hex!("000102030405060708090a0b0c0d0e0f1011121314");
+        let s = DebugByteSlice(&h);
+        assert_eq!(
+        format!("{s:#?}"),
+        "21 bytes starting with [00, 01, 02, 03, 04, 05, 06, 07, 08, 09, 0a, 0b, 0c, 0d, 0e, 0f, 10, 11, 12, 13]"
+    );
+    }
+}

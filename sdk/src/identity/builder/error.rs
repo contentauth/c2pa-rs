@@ -45,3 +45,27 @@ impl<T: Debug> From<ciborium::ser::Error<T>> for IdentityBuilderError {
         Self::CborGenerationError(err.to_string())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
+    use wasm_bindgen_test::wasm_bindgen_test;
+
+    use crate::identity::builder::IdentityBuilderError;
+
+    #[test]
+    #[cfg_attr(
+        all(target_arch = "wasm32", not(target_os = "wasi")),
+        wasm_bindgen_test
+    )]
+    fn impl_from_ciborium_err() {
+        let ciborium_err: ciborium::ser::Error<String> =
+            ciborium::ser::Error::Value("foo".to_string());
+        let builder_err: IdentityBuilderError = ciborium_err.into();
+
+        assert_eq!(
+            builder_err.to_string(),
+            "error while generating CBOR (Value(\"foo\"))"
+        );
+    }
+}
