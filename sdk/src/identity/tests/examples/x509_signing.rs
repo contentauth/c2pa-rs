@@ -30,8 +30,8 @@ use crate::{
     Builder, Reader, SigningAlg,
 };
 
-const TEST_IMAGE: &[u8] = include_bytes!("../../../../sdk/tests/fixtures/CA.jpg");
-const TEST_THUMBNAIL: &[u8] = include_bytes!("../../../../sdk/tests/fixtures/thumbnail.jpg");
+const TEST_IMAGE: &[u8] = include_bytes!("../../../../tests/fixtures/CA.jpg");
+const TEST_THUMBNAIL: &[u8] = include_bytes!("../../../../tests/fixtures/thumbnail.jpg");
 
 #[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
 #[ignore] // We'll only run this occasionally if we need to update this test.

@@ -16,38 +16,38 @@ use c2pa_crypto::raw_signature::SigningAlg;
 pub(crate) fn cert_chain_and_private_key_for_alg(alg: SigningAlg) -> (Vec<u8>, Vec<u8>) {
     match alg {
         SigningAlg::Ps256 => (
-            include_bytes!("../../../../sdk/tests/fixtures/certs/ps256.pub").to_vec(),
-            include_bytes!("../../../../sdk/tests/fixtures/certs/ps256.pem").to_vec(),
+            include_bytes!("../../../../tests/fixtures/certs/ps256.pub").to_vec(),
+            include_bytes!("../../../../tests/fixtures/certs/ps256.pem").to_vec(),
         ),
 
         SigningAlg::Ps384 => (
-            include_bytes!("../../../../sdk/tests/fixtures/certs/ps384.pub").to_vec(),
-            include_bytes!("../../../../sdk/tests/fixtures/certs/ps384.pem").to_vec(),
+            include_bytes!("../../../../tests/fixtures/certs/ps384.pub").to_vec(),
+            include_bytes!("../../../../tests/fixtures/certs/ps384.pem").to_vec(),
         ),
 
         SigningAlg::Ps512 => (
-            include_bytes!("../../../../sdk/tests/fixtures/certs/ps512.pub").to_vec(),
-            include_bytes!("../../../../sdk/tests/fixtures/certs/ps512.pem").to_vec(),
+            include_bytes!("../../../../tests/fixtures/certs/ps512.pub").to_vec(),
+            include_bytes!("../../../../tests/fixtures/certs/ps512.pem").to_vec(),
         ),
 
         SigningAlg::Es256 => (
-            include_bytes!("../../../../sdk/tests/fixtures/certs/es256.pub").to_vec(),
-            include_bytes!("../../../../sdk/tests/fixtures/certs/es256.pem").to_vec(),
+            include_bytes!("../../../../tests/fixtures/certs/es256.pub").to_vec(),
+            include_bytes!("../../../../tests/fixtures/certs/es256.pem").to_vec(),
         ),
 
         SigningAlg::Es384 => (
-            include_bytes!("../../../../sdk/tests/fixtures/certs/es384.pub").to_vec(),
-            include_bytes!("../../../../sdk/tests/fixtures/certs/es384.pem").to_vec(),
+            include_bytes!("../../../../tests/fixtures/certs/es384.pub").to_vec(),
+            include_bytes!("../../../../tests/fixtures/certs/es384.pem").to_vec(),
         ),
 
         SigningAlg::Es512 => (
-            include_bytes!("../../../../sdk/tests/fixtures/certs/es512.pub").to_vec(),
-            include_bytes!("../../../../sdk/tests/fixtures/certs/es512.pem").to_vec(),
+            include_bytes!("../../../../tests/fixtures/certs/es512.pub").to_vec(),
+            include_bytes!("../../../../tests/fixtures/certs/es512.pem").to_vec(),
         ),
 
         SigningAlg::Ed25519 => (
-            include_bytes!("../../../../sdk/tests/fixtures/certs/ed25519.pub").to_vec(),
-            include_bytes!("../../../../sdk/tests/fixtures/certs/ed25519.pem").to_vec(),
+            include_bytes!("../../../../tests/fixtures/certs/ed25519.pub").to_vec(),
+            include_bytes!("../../../../tests/fixtures/certs/ed25519.pem").to_vec(),
         ),
     }
 }
