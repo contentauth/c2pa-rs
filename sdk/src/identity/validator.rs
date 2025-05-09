@@ -79,6 +79,8 @@ mod tests {
     )]
     #[cfg_attr(target_os = "wasi", wstd::test)]
     async fn test_connected_identities_valid() {
+        crate::settings::set_settings_value("verify.verify_trust", false).unwrap();
+
         let mut stream = Cursor::new(CONNECTED_IDENTITIES_VALID);
         let mut reader = Reader::from_stream("image/jpeg", &mut stream).unwrap();
         reader.post_validate_async(&CawgValidator {}).await.unwrap();
@@ -104,6 +106,8 @@ mod tests {
     )]
     #[cfg_attr(target_os = "wasi", wstd::test)]
     async fn test_multiple_identities_valid() {
+        crate::settings::set_settings_value("verify.verify_trust", false).unwrap();
+
         let mut stream = Cursor::new(MULTIPLE_IDENTITIES_VALID);
         let mut reader = Reader::from_stream("image/jpeg", &mut stream).unwrap();
         reader.post_validate_async(&CawgValidator {}).await.unwrap();

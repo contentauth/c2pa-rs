@@ -35,6 +35,8 @@ use crate::{
 )]
 #[cfg_attr(target_os = "wasi", wstd::test)]
 async fn adobe_connected_identities() {
+    crate::settings::set_settings_value("verify.verify_trust", false).unwrap();
+
     let format = "image/jpeg";
     let test_image = include_bytes!("../fixtures/claim_aggregation/adobe_connected_identities.jpg");
 
@@ -124,6 +126,8 @@ async fn adobe_connected_identities() {
 )]
 #[cfg_attr(target_os = "wasi", wstd::test)]
 async fn ims_multiple_manifests() {
+    crate::settings::set_settings_value("verify.verify_trust", false).unwrap();
+
     let format = "image/jpeg";
     let test_image = include_bytes!("../fixtures/claim_aggregation/ims_multiple_manifests.jpg");
 

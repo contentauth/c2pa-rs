@@ -125,6 +125,8 @@ async fn x509_simple_case() {
 )]
 #[cfg_attr(target_os = "wasi", wstd::test)]
 async fn adobe_connected_identities() {
+    crate::settings::set_settings_value("verify.verify_trust", false).unwrap();
+
     let format = "image/jpeg";
     let test_image = include_bytes!("../fixtures/claim_aggregation/adobe_connected_identities.jpg");
 
