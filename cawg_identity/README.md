@@ -1,41 +1,11 @@
-# Implementation of CAWG identity assertion specification
+# `cawg-identity` crate is DISCONTINUED
 
-[![CI](https://github.com/contentauth/c2pa-rs/actions/workflows/ci.yml/badge.svg)](https://github.com/contentauth/c2pa-rs/actions/workflows/ci.yml) [![Latest Version](https://img.shields.io/crates/v/cawg-identity.svg)](https://crates.io/crates/cawg-identity) [![docs.rs](https://img.shields.io/docsrs/cawg-identity)](https://docs.rs/cawg-identity/) [![codecov](https://codecov.io/gh/contentauth/c2pa-rs/branch/main/graph/badge.svg?token=YVHWI19EGN)](https://codecov.io/gh/contentauth/c2pa-rs)
+This crate has been merged into the [`c2pa` crate](https://crates.io/crates/c2pa). It will no longer be maintained or published as a standalone crate.
 
-Implementation of the core of the [Creator Assertions Working Group identity assertion 1.1 draft specification](https://cawg.io/identity/1.1-draft).
+For the most part, all public APIs can be remapped as follows:
 
-## Contributions and feedback
+> `cawg_identity::xxx` -> `c2pa::identity::xxx`
 
-We welcome contributions to this project. For information on contributing, providing feedback, and about ongoing work, see [Contributing](../CONTRIBUTING.md).
+This version of the `cawg_identity` crate provides `pub use` aliases for all public APIs to match the above remapping. This can be used as a transition measure, but you should change the references in your code as soon as possible.
 
-## Known limitations
-
-Work is currently underway to add validation status codes using the same mechanism that the core C2PA SDK follows itself. This may result in some API changes.
-
-The CAWG SDK does not currently support the optional fields named:
-* `expected_partial_claim`
-* `expected_claim_generator`
-* `expected_countersigners`
-
-## Requirements
-
-The toolkit requires **Rust version 1.82.0** or newer. When a newer version of Rust becomes required, a new minor (0.x.0) version of this crate will be released.
-
-### Supported platforms
-
-The toolkit has been tested on the following operating systems:
-
-* Windows
-  * Only the MSVC build chain is supported on Windows. We would welcome a PR to enable GNU build chain support on Windows.
-
-* MacOS (Intel and Apple silicon)
-
-* Ubuntu Linux on x86 and ARM v8 (aarch64)
-
-* WebAssembly System Interface (WASI)
-
-## License
-
-The `cawg-identity` crate is distributed under the terms of both the MIT license and the Apache License (Version 2.0).
-
-Some components and dependent crates are licensed under different terms; please check the license terms for each crate and component for details.
+There will be no further releases of this crate.
