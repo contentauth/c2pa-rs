@@ -1,6 +1,6 @@
 [package]
 name = "c2pa"
-version = "0.49.6"
+version = "0.49.6-nightly+2025-05-10-11ebafae"
 description = "Rust SDK for C2PA (Coalition for Content Provenance and Authenticity) implementors"
 authors = [
     "Maurice Fisher <mfisher@adobe.com>",
