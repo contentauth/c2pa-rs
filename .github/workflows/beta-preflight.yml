@@ -212,10 +212,6 @@ jobs:
         run: wasm-pack test --chrome --headless
         working-directory: ./sdk
 
-      - name: Run Wasm tests (cawg-identity)
-        run: wasm-pack test --chrome --headless
-        working-directory: ./cawg_identity
-
   clippy_check:
     name: Clippy
     runs-on: ubuntu-latest
