@@ -11,17 +11,19 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use std::collections::HashSet;
-
-use async_trait::async_trait;
-use c2pa::dynamic_assertion::{
-    AsyncDynamicAssertion, DynamicAssertion, DynamicAssertionContent, PartialClaim,
-};
-use serde_bytes::ByteBuf;
-
-use super::{CredentialHolder, IdentityBuilderError};
-use crate::{builder::AsyncCredentialHolder, IdentityAssertion, SignerPayload};
-
+/// An `AsyncIdentityAssertionBuilder` gathers together the necessary components
+/// for an identity assertion. When added to an
+/// [`AsyncIdentityAssertionSigner`], it ensures that the proper data is added
+/// to the final C2PA Manifest.
+///
+/// Use this when the overall C2PA Manifest signing path is asynchronous.
+///
+/// [`AsyncIdentityAssertionSigner`]: crate::builder::AsyncIdentityAssertionSigner
+#[deprecated(
+    since = "0.14.0",
+    note = "Moved to c2pa::identity::builder::AsyncIdentityAssertionBuilder"
+)]
+pub use c2pa::identity::builder::AsyncIdentityAssertionBuilder;
 /// An `IdentityAssertionBuilder` gathers together the necessary components
 /// for an identity assertion. When added to an [`IdentityAssertionSigner`],
 /// it ensures that the proper data is added to the final C2PA Manifest.
@@ -31,255 +33,11 @@ use crate::{builder::AsyncCredentialHolder, IdentityAssertion, SignerPayload};
 ///
 /// Prefer [`AsyncIdentityAssertionBuilder`] when the C2PA Manifest signing
 /// path is asynchronous or any network calls will be made by the
-/// [`CredentialHolder`] implementation.
+/// `CredentialHolder` implementation.
 ///
 /// [`IdentityAssertionSigner`]: crate::builder::IdentityAssertionSigner
-pub struct IdentityAssertionBuilder {
-    credential_holder: Box<dyn CredentialHolder + Sync + Send>,
-    referenced_assertions: HashSet<String>,
-    roles: Vec<String>,
-}
-
-impl IdentityAssertionBuilder {
-    /// Create an `IdentityAssertionBuilder` for the given `CredentialHolder`
-    /// instance.
-    pub fn for_credential_holder<CH: CredentialHolder + 'static + Send + Sync>(
-        credential_holder: CH,
-    ) -> Self {
-        Self {
-            credential_holder: Box::new(credential_holder),
-            referenced_assertions: HashSet::new(),
-            roles: vec![],
-        }
-    }
-
-    /// Add assertion labels to consider as referenced_assertions.
-    ///
-    /// If any of these labels match assertions that are present in the partial
-    /// claim submitted during signing, they will be added to the
-    /// `referenced_assertions` list for this identity assertion.
-    pub fn add_referenced_assertions(&mut self, labels: &[&str]) {
-        for label in labels {
-            self.referenced_assertions.insert(label.to_string());
-        }
-    }
-
-    /// Add roles to attach to the named actor for this identity assertion.
-    ///
-    /// See [§5.1.2, “Named actor roles,”] for more information.
-    ///
-    /// [§5.1.2, “Named actor roles,”]: https://cawg.io/identity/1.1-draft/#_named_actor_roles
-    pub fn add_roles(&mut self, roles: &[&str]) {
-        for role in roles {
-            self.roles.push(role.to_string());
-        }
-    }
-}
-
-impl DynamicAssertion for IdentityAssertionBuilder {
-    fn label(&self) -> String {
-        "cawg.identity".to_string()
-    }
-
-    fn reserve_size(&self) -> c2pa::Result<usize> {
-        Ok(self.credential_holder.reserve_size())
-        // TO DO: Credential holder will state reserve size for signature.
-        // Add additional size for CBOR wrapper outside signature.
-    }
-
-    fn content(
-        &self,
-        _label: &str,
-        size: Option<usize>,
-        claim: &PartialClaim,
-    ) -> c2pa::Result<DynamicAssertionContent> {
-        // TO DO: Update to respond correctly when identity assertions refer to each
-        // other.
-        let referenced_assertions = claim
-            .assertions()
-            .filter(|a| {
-                // Always accept the hard binding assertion.
-                if a.url().contains("c2pa.assertions/c2pa.hash.") {
-                    return true;
-                }
-
-                let label = if let Some((_, label)) = a.url().rsplit_once('/') {
-                    label.to_string()
-                } else {
-                    a.url()
-                };
-
-                self.referenced_assertions.contains(&label)
-            })
-            .cloned()
-            .collect();
-
-        let signer_payload = SignerPayload {
-            referenced_assertions,
-            sig_type: self.credential_holder.sig_type().to_owned(),
-            roles: self.roles.clone(),
-        };
-
-        let signature_result = self.credential_holder.sign(&signer_payload);
-
-        finalize_identity_assertion(signer_payload, size, signature_result)
-    }
-}
-
-/// An `AsyncIdentityAssertionBuilder` gathers together the necessary components
-/// for an identity assertion. When added to an
-/// [`AsyncIdentityAssertionSigner`], it ensures that the proper data is added
-/// to the final C2PA Manifest.
-///
-/// Use this when the overall C2PA Manifest signing path is asynchronous.
-///
-/// [`AsyncIdentityAssertionSigner`]: crate::builder::AsyncIdentityAssertionSigner
-pub struct AsyncIdentityAssertionBuilder {
-    #[cfg(not(target_arch = "wasm32"))]
-    credential_holder: Box<dyn AsyncCredentialHolder + Sync + Send>,
-
-    #[cfg(target_arch = "wasm32")]
-    credential_holder: Box<dyn AsyncCredentialHolder>,
-
-    referenced_assertions: HashSet<String>,
-    roles: Vec<String>,
-}
-
-impl AsyncIdentityAssertionBuilder {
-    /// Create an `AsyncIdentityAssertionBuilder` for the given
-    /// `AsyncCredentialHolder` instance.
-    pub fn for_credential_holder<CH: AsyncCredentialHolder + 'static>(
-        credential_holder: CH,
-    ) -> Self {
-        Self {
-            credential_holder: Box::new(credential_holder),
-            referenced_assertions: HashSet::new(),
-            roles: vec![],
-        }
-    }
-
-    /// Add assertion labels to consider as referenced_assertions.
-    ///
-    /// If any of these labels match assertions that are present in the partial
-    /// claim submitted during signing, they will be added to the
-    /// `referenced_assertions` list for this identity assertion.
-    pub fn add_referenced_assertions(&mut self, labels: &[&str]) {
-        for label in labels {
-            self.referenced_assertions.insert(label.to_string());
-        }
-    }
-
-    /// Add roles to attach to the named actor for this identity assertion.
-    ///
-    /// See [§5.1.2, “Named actor roles,”] for more information.
-    ///
-    /// [§5.1.2, “Named actor roles,”]: https://cawg.io/identity/1.1-draft/#_named_actor_roles
-    pub fn add_roles(&mut self, roles: &[&str]) {
-        for role in roles {
-            self.roles.push(role.to_string());
-        }
-    }
-}
-
-#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
-#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
-impl AsyncDynamicAssertion for AsyncIdentityAssertionBuilder {
-    fn label(&self) -> String {
-        "cawg.identity".to_string()
-    }
-
-    fn reserve_size(&self) -> c2pa::Result<usize> {
-        Ok(self.credential_holder.reserve_size())
-        // TO DO: Credential holder will state reserve size for signature.
-        // Add additional size for CBOR wrapper outside signature.
-    }
-
-    async fn content(
-        &self,
-        _label: &str,
-        size: Option<usize>,
-        claim: &PartialClaim,
-    ) -> c2pa::Result<DynamicAssertionContent> {
-        // TO DO: Update to respond correctly when identity assertions refer to each
-        // other.
-        let referenced_assertions = claim
-            .assertions()
-            .filter(|a| {
-                // Always accept the hard binding assertion.
-                if a.url().contains("c2pa.assertions/c2pa.hash.") {
-                    return true;
-                }
-
-                let label = if let Some((_, label)) = a.url().rsplit_once('/') {
-                    label.to_string()
-                } else {
-                    a.url()
-                };
-
-                self.referenced_assertions.contains(&label)
-            })
-            .cloned()
-            .collect();
-
-        let signer_payload = SignerPayload {
-            referenced_assertions,
-            sig_type: self.credential_holder.sig_type().to_owned(),
-            roles: self.roles.clone(),
-        };
-
-        let signature_result = self.credential_holder.sign(&signer_payload).await;
-
-        finalize_identity_assertion(signer_payload, size, signature_result)
-    }
-}
-
-fn finalize_identity_assertion(
-    signer_payload: SignerPayload,
-    size: Option<usize>,
-    signature_result: Result<Vec<u8>, IdentityBuilderError>,
-) -> c2pa::Result<DynamicAssertionContent> {
-    // TO DO: Think through how errors map into c2pa::Error.
-    let signature = signature_result.map_err(|e| c2pa::Error::BadParam(e.to_string()))?;
-
-    let mut ia = IdentityAssertion {
-        signer_payload,
-        signature,
-        pad1: vec![],
-        pad2: None,
-    };
-
-    let mut assertion_cbor: Vec<u8> = vec![];
-    ciborium::into_writer(&ia, &mut assertion_cbor)
-        .map_err(|e| c2pa::Error::BadParam(e.to_string()))?;
-    // TO DO: Think through how errors map into c2pa::Error.
-
-    if let Some(assertion_size) = size {
-        if assertion_cbor.len() > assertion_size {
-            // TO DO: Think about how to signal this in such a way that
-            // the AsyncCredentialHolder implementor understands the problem.
-            return Err(c2pa::Error::BadParam(format!("Serialized assertion is {len} bytes, which exceeds the planned size of {assertion_size} bytes", len = assertion_cbor.len())));
-        }
-
-        ia.pad1 = vec![0u8; assertion_size - assertion_cbor.len() - 15];
-
-        assertion_cbor.clear();
-        ciborium::into_writer(&ia, &mut assertion_cbor)
-            .map_err(|e| c2pa::Error::BadParam(e.to_string()))?;
-        // TO DO: Think through how errors map into c2pa::Error.
-
-        ia.pad2 = Some(ByteBuf::from(vec![
-            0u8;
-            assertion_size - assertion_cbor.len() - 6
-        ]));
-
-        assertion_cbor.clear();
-        ciborium::into_writer(&ia, &mut assertion_cbor)
-            .map_err(|e| c2pa::Error::BadParam(e.to_string()))?;
-        // TO DO: Think through how errors map into c2pa::Error.
-
-        // TO DO: See if this approach ever fails. IMHO it "should" work for all cases.
-        assert_eq!(assertion_size, assertion_cbor.len());
-    }
-
-    Ok(DynamicAssertionContent::Cbor(assertion_cbor))
-}
+#[deprecated(
+    since = "0.14.0",
+    note = "Moved to c2pa::identity::builder::IdentityAssertionBuilder"
+)]
+pub use c2pa::identity::builder::IdentityAssertionBuilder;

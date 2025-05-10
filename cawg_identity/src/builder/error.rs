@@ -11,37 +11,9 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use std::fmt::Debug;
-
-use thiserror::Error;
-
 /// Describes errors that can occur when building a CAWG identity assertion.
-#[derive(Debug, Error)]
-pub enum IdentityBuilderError {
-    /// The box size provided for the signature is too small.
-    #[error("the signature box is too small")]
-    BoxSizeTooSmall,
-
-    /// An error occurred while generating CBOR.
-    #[error("error while generating CBOR ({0})")]
-    CborGenerationError(String),
-
-    /// The credentials provided could not be used.
-    #[error("credential-related error ({0})")]
-    CredentialError(String),
-
-    /// An error occurred when generating the underlying signature.
-    #[error("error while generating signature ({0})")]
-    SignerError(String),
-
-    /// An unexpected internal error occured while requesting the time stamp
-    /// response.
-    #[error("internal error ({0})")]
-    InternalError(String),
-}
-
-impl<T: Debug> From<ciborium::ser::Error<T>> for IdentityBuilderError {
-    fn from(err: ciborium::ser::Error<T>) -> Self {
-        Self::CborGenerationError(err.to_string())
-    }
-}
+#[deprecated(
+    since = "0.14.0",
+    note = "Moved to c2pa::identity::builder::IdentityBuilderError"
+)]
+pub use c2pa::identity::builder::IdentityBuilderError;

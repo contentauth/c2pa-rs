@@ -31,8 +31,6 @@ pub use identity_assertion::{
     validation_error::ValidationError,
 };
 
-pub(crate) mod internal;
-
 #[cfg(test)]
 pub(crate) mod tests;
 

@@ -108,7 +108,7 @@ async fn extra_fields() {
     let ia = ia_results[0].as_ref().unwrap();
     dbg!(ia);
 
-    let sp = &ia.signer_payload;
+    let sp = ia.signer_payload();
     assert_eq!(sp.referenced_assertions.len(), 1);
 
     assert_eq!(
@@ -172,7 +172,7 @@ async fn assertion_not_in_claim_v1() {
     // status log for this failure.
     let ia = ia_results[0].as_ref().unwrap();
 
-    let sp = &ia.signer_payload;
+    let sp = ia.signer_payload();
     assert_eq!(sp.referenced_assertions.len(), 2);
 
     assert_eq!(
@@ -267,7 +267,7 @@ async fn duplicate_assertion_reference() {
     // status log for this failure.
     let ia = ia_results[0].as_ref().unwrap();
 
-    let sp = &ia.signer_payload;
+    let sp = ia.signer_payload();
     assert_eq!(sp.referenced_assertions.len(), 2);
 
     assert_eq!(
@@ -347,7 +347,7 @@ async fn no_hard_binding() {
     // status log for this failure.
     let ia = ia_results[0].as_ref().unwrap();
 
-    let sp = &ia.signer_payload;
+    let sp = ia.signer_payload();
     assert!(sp.referenced_assertions.is_empty());
     assert_eq!(sp.sig_type, "cawg.x509.cose".to_owned());
 
@@ -436,7 +436,7 @@ mod invalid_sig_type {
         // status log for this failure.
         let ia = ia_results[0].as_ref().unwrap();
 
-        let sp = &ia.signer_payload;
+        let sp = ia.signer_payload();
         assert_eq!(sp.referenced_assertions.len(), 1);
 
         assert_eq!(
@@ -513,7 +513,7 @@ mod invalid_sig_type {
         // status log for this failure.
         let ia = ia_results[0].as_ref().unwrap();
 
-        let sp = &ia.signer_payload;
+        let sp = ia.signer_payload();
         assert_eq!(sp.referenced_assertions.len(), 1);
 
         assert_eq!(
@@ -592,7 +592,7 @@ async fn pad1_invalid() {
     // status log for this failure.
     let ia = ia_results[0].as_ref().unwrap();
 
-    let sp = &ia.signer_payload;
+    let sp = ia.signer_payload();
     assert_eq!(sp.referenced_assertions.len(), 1);
 
     assert_eq!(
@@ -660,7 +660,7 @@ async fn pad2_invalid() {
     // status log for this failure.
     let ia = ia_results[0].as_ref().unwrap();
 
-    let sp = &ia.signer_payload;
+    let sp = ia.signer_payload();
     assert_eq!(sp.referenced_assertions.len(), 1);
 
     assert_eq!(

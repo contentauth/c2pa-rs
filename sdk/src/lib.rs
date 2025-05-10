@@ -98,6 +98,10 @@ pub mod cose_sign;
 pub mod create_signer;
 /// Dynamic assertions are a new feature that allows you to add assertions to a C2PA file as a part of the signing process.
 pub mod dynamic_assertion;
+
+/// The `identity` module provides support for the [CAWG identity assertion](https://cawg.io/identity).
+pub mod identity;
+
 /// The jumbf_io module contains the definitions for the JUMBF data in assets.
 pub mod jumbf_io;
 /// The settings module provides a way to configure the C2PA SDK.
