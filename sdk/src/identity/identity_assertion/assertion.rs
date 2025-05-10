@@ -362,6 +362,11 @@ impl IdentityAssertion {
 
         Ok(())
     }
+
+    /// TO DO: Docs
+    pub fn signer_payload(&self) -> &SignerPayload {
+        &self.signer_payload
+    }
 }
 
 impl Debug for IdentityAssertion {

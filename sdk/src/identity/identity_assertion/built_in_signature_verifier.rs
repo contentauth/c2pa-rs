@@ -89,6 +89,7 @@ fn map_err_to_built_in<E: Into<BuiltInSignatureError>>(
     }
 }
 
+#[allow(missing_docs)]
 #[derive(Debug)]
 #[allow(clippy::large_enum_variant)]
 #[non_exhaustive]
