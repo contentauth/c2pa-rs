@@ -1951,7 +1951,7 @@ mod tests {
         // println!("{manifest_store}");
     }
 
-    #[test]
+    #[cfg_attr(feature = "fetch_remote_manifests", test)]
     /// example of creating a builder directly with a [`ManifestDefinition`]
     fn test_add_cloud_ingredient() {
         let mut input = Cursor::new(TEST_IMAGE_CLEAN);

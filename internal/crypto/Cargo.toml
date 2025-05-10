@@ -31,15 +31,7 @@ rustdoc-args = ["--cfg", "docsrs"]
 
 [features]
 json_schema = ["dep:schemars"]
-rust_native_crypto = [
-    "dep:const-oid",
-    "dep:der",
-    "dep:ed25519-dalek",
-    "dep:num-bigint-dig",
-    "dep:pkcs1",
-    "dep:rsa",
-    "dep:spki",
-]
+openssl = ["dep:openssl"]
 
 [dependencies]
 asn1-rs = "0.6.2"
@@ -51,43 +43,43 @@ bytes = "1.7.2"
 c2pa-status-tracker = { path = "../status-tracker", version = "0.6.2" }
 ciborium = "0.2.2"
 const-hex = "1.14"
-const-oid = { version = "0.9.6", optional = true }
+const-oid = "0.9.6"
 coset = "0.3.8"
-der = { version = "0.7.9", optional = true }
+der = "0.7.9"
 ecdsa = { version = "0.16.9", features = ["digest", "sha2"] }
-ed25519-dalek = { version = "2.1.1", features = ["alloc", "digest", "pem", "pkcs8"], optional = true }
+ed25519-dalek = { version = "2.1.1", features = ["alloc", "digest", "pem", "pkcs8"] }
 getrandom = { version = "0.2.7", features = ["js"] }
 hex = "0.4.3"
 nom = "7.1.3"
-num-bigint-dig = { version = "0.8.4", optional = true }
+num-bigint-dig = "0.8.4"
 p256 = "0.13.2"
 p384 = "0.13.0"
 p521 = { version = "0.13.3", features = ["pkcs8", "digest", "ecdsa"] }
-pkcs1 = { version = "0.7.5", optional = true }
+pkcs1 = "0.7.5"
 pkcs8 = "0.10.2"
 rand = "0.8.5"
 rasn = "0.22.0"
 rasn-ocsp = "0.22.0"
 rasn-pkix = "0.22.0"
-rsa = { version = "0.9.7", features = ["pem", "sha2", "std"], optional = true }
+rsa = { version = "0.9.7", features = ["pem", "sha2", "std"] }
 schemars = { version = "0.8.21", optional = true }
 serde = { version = "1.0.197", features = ["derive"] }
 serde_bytes = "0.11.5"
 sha1 = "0.10.6"
 sha2 = "0.10.6"
-spki = { version = "0.7.3", optional = true }
+spki = "0.7.3"
 thiserror = "2.0.8"
 web-time = "1.1"
 x509-certificate = "0.24.0"
 x509-parser = "0.16.0"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-openssl = { version = "0.10.72", features = ["vendored"] }
+openssl = { version = "0.10.72", features = ["vendored"], optional = true }
 ureq = "2.4.0"
 url = "2.5.3"
 
 [package.metadata.cargo-udeps.ignore]
-normal = ["openssl"] # TEMPORARY: Remove after openssl transition complete.
+normal = ["ecdsa", "ed25519-dalek", "p256", "p384", "p521"] # Unused if openssl selected
 
 [target.'cfg(all(target_arch = "wasm32", not(target_os = "wasi")))'.dependencies.chrono]
 version = "0.4.39"
@@ -127,7 +119,6 @@ web-sys = { version = "0.3.58", features = [
 [dev-dependencies]
 const-oid = "0.9.6"
 der = "0.7.9"
-ed25519-dalek = { version = "2.1.1", features = ["alloc", "digest", "pem", "pkcs8"] }
 num-bigint-dig = "0.8.4"
 pkcs1 = "0.7.5"
 rsa = { version = "0.9.7", features = ["pem", "sha2"] }
