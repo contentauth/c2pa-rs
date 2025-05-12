@@ -3741,7 +3741,6 @@ impl Store {
     /// data: jumbf data block
     pub fn load_ingredient_to_claim(
         claim: &mut Claim,
-        provenance_label: &str,
         data: &[u8],
         redactions: Option<Vec<String>>,
     ) -> Result<Store> {
@@ -3756,7 +3755,7 @@ impl Store {
             return Err(Error::OtherError("ingredient version too new".into()));
         }
 
-        claim.add_ingredient_data(provenance_label, store.claims.clone(), redactions)?;
+        claim.add_ingredient_data(pc.label(), store.claims.clone(), redactions)?;
         Ok(store)
     }
 }

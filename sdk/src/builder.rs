@@ -1236,6 +1236,7 @@ mod tests {
     const TEST_IMAGE_CLOUD: &[u8] = include_bytes!("../tests/fixtures/cloud.jpg");
     const TEST_IMAGE: &[u8] = include_bytes!("../tests/fixtures/CA.jpg");
     const TEST_THUMBNAIL: &[u8] = include_bytes!("../tests/fixtures/thumbnail.jpg");
+    const TEST_MANIFEST_CLOUD: &[u8] = include_bytes!("../tests/fixtures/cloud_manifest.c2pa");
 
     #[test]
     /// example of creating a builder directly with a [`ManifestDefinition`]
@@ -1952,8 +1953,23 @@ mod tests {
     }
 
     #[test]
-    /// example of creating a builder directly with a [`ManifestDefinition`]
-    fn test_add_cloud_ingredient() {
+    fn test_composed_manifest() {
+        let manifest: &[u8; 4] = b"abcd";
+        let format = "image/jpeg";
+        let composed = Builder::composed_manifest(manifest, format).unwrap();
+        assert_eq!(composed.len(), 16);
+    }
+
+    #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
+    #[cfg_attr(
+        all(target_arch = "wasm32", not(target_os = "wasi")),
+        wasm_bindgen_test
+    )]
+    #[cfg_attr(target_os = "wasi", wstd::test)]
+    /// test if the sdk can add a cloud ingredient retrieved from a stream and a cloud manifest
+    // This works with or without the fetch_remote_manifests feature
+    async fn test_add_cloud_ingredient() {
+        crate::settings::set_settings_value("verify.remote_manifest_fetch", false).unwrap();
         let mut input = Cursor::new(TEST_IMAGE_CLEAN);
         let mut cloud_image = Cursor::new(TEST_IMAGE_CLOUD);
 
@@ -1969,8 +1985,28 @@ mod tests {
             ..Default::default()
         };
 
+        let parent_json = json!({
+            "title": "Parent Test",
+            "format": "image/jpeg",
+            "instance_id": "12345",
+            "relationship": "parentOf",
+            "manifest_data": {
+                "format": "application/c2pa",
+                "identifier": "cloud_manifest"
+            }
+        })
+        .to_string();
+
+        // add the cloud manifest data to the builder
         builder
-            .add_ingredient_from_stream(parent_json(), "image/jpeg", &mut cloud_image)
+            .add_resource(
+                "cloud_manifest",
+                Cursor::new(Cursor::new(TEST_MANIFEST_CLOUD).get_ref()),
+            )
+            .unwrap();
+
+        builder
+            .add_ingredient_from_stream(parent_json, "image/jpeg", &mut cloud_image)
             .unwrap();
 
         builder
@@ -1987,7 +2023,6 @@ mod tests {
         output.set_position(0);
 
         let reader = Reader::from_stream("jpeg", &mut output).expect("from_bytes");
-        println!("reader = {reader}");
         let m = reader.active_manifest().unwrap();
         assert_eq!(m.ingredients().len(), 1);
         assert!(m.ingredients()[0].active_manifest().is_some());

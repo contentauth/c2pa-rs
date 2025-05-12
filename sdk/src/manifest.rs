@@ -1561,6 +1561,18 @@ pub(crate) mod tests {
     #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
     wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
 
+    #[cfg(feature = "file_io")]
+    use crate::{
+        assertions::DataHash,
+        error::Error,
+        hash_utils::HashRange,
+        resource_store::ResourceRef,
+        utils::test::{
+            fixture_path, temp_dir_path, temp_fixture_path, write_jpeg_placeholder_file,
+            TEST_SMALL_JPEG,
+        },
+        validation_status,
+    };
     #[allow(unused_imports)]
     use crate::{
         assertions::{c2pa_action, Action, Actions},
@@ -1570,18 +1582,6 @@ pub(crate) mod tests {
         utils::test::{static_test_v1_uuid, temp_remote_signer, TEST_VC},
         utils::test_signer::{async_test_signer, test_signer},
         Manifest, Result,
-    };
-    #[cfg(feature = "file_io")]
-    use crate::{
-        assertions::{labels::ACTIONS, DataHash},
-        error::Error,
-        hash_utils::HashRange,
-        resource_store::ResourceRef,
-        utils::test::{
-            fixture_path, temp_dir_path, temp_fixture_path, write_jpeg_placeholder_file,
-            TEST_SMALL_JPEG,
-        },
-        validation_status,
     };
 
     // example of random data structure as an assertion
@@ -1833,16 +1833,21 @@ pub(crate) mod tests {
         let claim = store1.provenance_claim().unwrap();
         assert!(claim.get_claim_assertion(ASSERTION_LABEL, 0).is_some()); // verify the assertion is there
 
-        // create a new claim and make the previous file a parent
-        let mut manifest2 = test_manifest();
-        manifest2
-            .set_parent(Ingredient::from_file(&output).expect("from_file"))
-            .expect("set_parent");
+        // Add parent_manifest as an ingredient of the new manifest and redact the assertion `c2pa.actions`.
+        let parent_ingredient = Ingredient::from_file(&output).expect("from_file");
 
-        // redact the assertion
-        manifest2
-            .add_redaction(ASSERTION_LABEL)
-            .expect("add_redaction");
+        // get the active manifest label from the parent and add the actions label
+        let ingredient_active_manifest = parent_ingredient
+            .active_manifest()
+            .expect("active_manifest");
+        let redacted_uri =
+            crate::jumbf::labels::to_assertion_uri(ingredient_active_manifest, ASSERTION_LABEL);
+
+        let mut manifest2 = test_manifest();
+        assert!(manifest2.add_redaction(redacted_uri).is_ok());
+        // create a new claim and make the previous file a parent
+
+        manifest2.set_parent(parent_ingredient).expect("set_parent");
 
         //embed a claim in output2
         let signer = test_signer(SigningAlg::Ps256);
@@ -1870,6 +1875,7 @@ pub(crate) mod tests {
     #[test]
     #[cfg(feature = "file_io")]
     #[allow(deprecated)]
+    /// Actiions asssertions cannot be redacted, event though the redaction reference is valid
     fn test_action_assertion_redaction_error() {
         let temp_dir = tempdirectory().expect("temp dir");
         let parent_output = temp_fixture_path(&temp_dir, TEST_SMALL_JPEG);
@@ -1892,11 +1898,18 @@ pub(crate) mod tests {
             .expect("embed");
 
         // Add parent_manifest as an ingredient of the new manifest and redact the assertion `c2pa.actions`.
+        let parent_ingredient = Ingredient::from_file(&parent_output).expect("from_file");
+
+        // get the active manifest label from the parent and add the actions label
+        let ingredient_active_manifest = parent_ingredient
+            .active_manifest()
+            .expect("active_manifest");
+        let ingredient_actions_uri =
+            crate::jumbf::labels::to_assertion_uri(ingredient_active_manifest, Actions::LABEL);
+
         let mut manifest = test_manifest();
-        manifest
-            .set_parent(Ingredient::from_file(&parent_output).expect("from_file"))
-            .expect("set_parent");
-        assert!(manifest.add_redaction(ACTIONS).is_ok());
+        assert!(manifest.add_redaction(ingredient_actions_uri).is_ok());
+        manifest.set_parent(parent_ingredient).expect("set_parent");
 
         // Attempt embedding the manifest with the invalid redaction.
         let redact_output = temp_fixture_path(&temp_dir, TEST_SMALL_JPEG);

@@ -38,7 +38,7 @@ use crate::{
     hashed_uri::HashedUri,
     jumbf::{
         self,
-        labels::{assertion_label_from_uri, manifest_label_from_uri, to_assertion_uri},
+        labels::{assertion_label_from_uri, manifest_label_from_uri},
     },
     resource_store::{skip_serializing_resources, ResourceRef, ResourceStore},
     store::Store,
@@ -869,12 +869,20 @@ impl Ingredient {
         let mut validation_log = StatusTracker::default();
 
         // retrieve the manifest bytes from embedded, sidecar or remote and convert to store if found
-        let jumbf_stream = Store::load_jumbf_from_stream(format, stream);
+        //let jumbf_stream = Store::load_jumbf_from_stream(format, stream);
+        let jumbf_result = match self.manifest_data() {
+            Some(data) => Ok(data.into_owned()),
+            None => Store::load_jumbf_from_stream(format, stream),
+        };
 
         // We can't use functional combinators since we can't use async callbacks (https://github.com/rust-lang/rust/issues/62290)
-        let (result, manifest_bytes) = if let Ok(manifest_bytes) = jumbf_stream {
+        let (result, manifest_bytes) = if let Ok(manifest_bytes) = jumbf_result {
             let jumbf_store = Store::from_jumbf(&manifest_bytes, &mut validation_log);
             let result = if let Ok(mut store) = jumbf_store {
+                // if we don't have an active manifest, set it to the one we just loaded
+                // if self.active_manifest.is_none() {
+                //     self.active_manifest = store.provenance_label();
+                // };
                 if _sync {
                     match store.verify_from_stream(stream, format, &mut validation_log) {
                         Ok(_) => Ok(store),
@@ -895,18 +903,11 @@ impl Ingredient {
                 Err(jumbf_store.unwrap_err())
             };
 
-            (
-                result.inspect_err(|e| {
-                    // add a log entry for the error so we act like verify
-                    log_item!("asset", "error loading file", "Ingredient::from_file")
-                        .failure_no_throw(&mut validation_log, e);
-                }),
-                Some(manifest_bytes),
-            )
+            (result, Some(manifest_bytes))
         } else {
             // This will always be Err in this situation
             #[allow(clippy::unwrap_used)]
-            (Err(jumbf_stream.unwrap_err()), None)
+            (Err(jumbf_result.unwrap_err()), None)
         };
 
         // set validation status from result and log
@@ -1153,90 +1154,74 @@ impl Ingredient {
         // this is how any existing claims are added to the new store
         let (active_manifest, claim_signature) = match self.manifest_data_ref() {
             Some(resource_ref) => {
-                let manifest_label = self
-                    .active_manifest
-                    .clone()
-                    .ok_or(Error::IngredientNotFound)?;
+                // let manifest_label = self
+                //     .active_manifest
+                //     .clone()
+                //     .ok_or(Error::IngredientNotFound)?;
 
                 //if this is the parent ingredient then apply any redactions, converting from labels to uris
-                let redactions = match self.is_parent() {
-                    true => redactions.as_ref().map(|redactions| {
-                        redactions
-                            .iter()
-                            .map(|r| to_assertion_uri(&manifest_label, r))
-                            .collect()
-                    }),
-                    false => None,
-                };
+                // let redactions = match self.is_parent() {
+                //     true => redactions.as_ref().map(|redactions| {
+                //         redactions
+                //             .iter()
+                //             .map(|r| to_assertion_uri(&manifest_label, r))
+                //             .collect()
+                //     }),
+                //     false => None,
+                // };
 
                 // get the c2pa manifest bytes
                 let manifest_data = get_resource(&resource_ref.identifier)?;
 
                 // have Store check and load ingredients and add them to a claim
-                let ingredient_store = Store::load_ingredient_to_claim(
-                    claim,
-                    &manifest_label,
-                    &manifest_data,
-                    redactions,
-                )?;
+                let ingredient_store =
+                    Store::load_ingredient_to_claim(claim, &manifest_data, redactions)?;
 
+                let ingredient_active_claim = ingredient_store
+                    .provenance_claim()
+                    .ok_or(Error::JumbfNotFound)?;
+
+                let manifest_label = ingredient_active_claim.label();
                 // get the ingredient map loaded in previous
-                match claim.claim_ingredient(&manifest_label) {
-                    Some(ingredient_claims) => {
-                        // get the ingredient active claim from the ingredients claim map
-                        if let Some(ingredient_active_claim) = ingredient_claims
+
+                let hash = ingredient_store
+                    .get_manifest_box_hashes(ingredient_active_claim)
+                    .manifest_box_hash; // get C2PA 1.2 JUMBF box
+                let sig_hash = ingredient_store
+                    .get_manifest_box_hashes(ingredient_active_claim)
+                    .signature_box_hash; // needed for v3 ingredients
+
+                let uri = jumbf::labels::to_manifest_uri(manifest_label);
+                let signature_uri = jumbf::labels::to_signature_uri(manifest_label);
+
+                // if there are validations and they have all passed, then use the parent claim thumbnail if available
+                if let Some(validation_status) = self.validation_status.as_ref() {
+                    if validation_status.iter().all(|r| r.passed()) {
+                        thumbnail = ingredient_active_claim
+                            .assertions()
                             .iter()
-                            .find(|c| c.label() == manifest_label)
-                        {
-                            let hash = ingredient_store
-                                .get_manifest_box_hashes(ingredient_active_claim)
-                                .manifest_box_hash; // get C2PA 1.2 JUMBF box
-                            let sig_hash = ingredient_store
-                                .get_manifest_box_hashes(ingredient_active_claim)
-                                .signature_box_hash; // needed for v3 ingredients
-
-                            let uri = jumbf::labels::to_manifest_uri(&manifest_label);
-                            let signature_uri = jumbf::labels::to_signature_uri(&manifest_label);
-
-                            // if there are validations and they have all passed, then use the parent claim thumbnail if available
-                            if let Some(validation_status) = self.validation_status.as_ref() {
-                                if validation_status.iter().all(|r| r.passed()) {
-                                    thumbnail = ingredient_active_claim
-                                        .assertions()
-                                        .iter()
-                                        .find(|hashed_uri| {
-                                            hashed_uri.url().contains(labels::CLAIM_THUMBNAIL)
-                                        })
-                                        .map(|t| {
-                                            // convert ingredient uris to absolute when adding them
-                                            // since this uri references a different manifest
-                                            let url = jumbf::labels::to_absolute_uri(
-                                                &manifest_label,
-                                                &t.url(),
-                                            );
-                                            HashedUri::new(url, t.alg(), &t.hash())
-                                        });
-                                }
-                            }
-                            // generate c2pa_manifest hashed_uri
-                            (
-                                Some(crate::hashed_uri::HashedUri::new(
-                                    uri,
-                                    Some(ingredient_active_claim.alg().to_owned()),
-                                    hash.as_ref(),
-                                )),
-                                Some(crate::hashed_uri::HashedUri::new(
-                                    signature_uri,
-                                    Some(ingredient_active_claim.alg().to_owned()),
-                                    sig_hash.as_ref(),
-                                )),
-                            )
-                        } else {
-                            (None, None)
-                        }
+                            .find(|hashed_uri| hashed_uri.url().contains(labels::CLAIM_THUMBNAIL))
+                            .map(|t| {
+                                // convert ingredient uris to absolute when adding them
+                                // since this uri references a different manifest
+                                let url = jumbf::labels::to_absolute_uri(manifest_label, &t.url());
+                                HashedUri::new(url, t.alg(), &t.hash())
+                            });
                     }
-                    None => (None, None),
                 }
+                // generate c2pa_manifest hashed_uri
+                (
+                    Some(crate::hashed_uri::HashedUri::new(
+                        uri,
+                        Some(ingredient_active_claim.alg().to_owned()),
+                        hash.as_ref(),
+                    )),
+                    Some(crate::hashed_uri::HashedUri::new(
+                        signature_uri,
+                        Some(ingredient_active_claim.alg().to_owned()),
+                        sig_hash.as_ref(),
+                    )),
+                )
             }
             None => (None, None),
         };
