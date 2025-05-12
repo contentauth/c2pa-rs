@@ -97,6 +97,7 @@ impl AsyncCredentialHolder for AsyncX509CredentialHolder {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::panic)]
     #![allow(clippy::unwrap_used)]
 
     use std::io::{Cursor, Seek};

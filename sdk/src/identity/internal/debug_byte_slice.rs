@@ -32,6 +32,7 @@ impl Debug for DebugByteSlice<'_> {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::panic)]
     #![allow(clippy::unwrap_used)]
     use hex_literal::hex;
     #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]

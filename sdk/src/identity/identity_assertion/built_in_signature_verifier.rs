@@ -152,6 +152,7 @@ impl From<CoseError> for BuiltInSignatureError {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::panic)]
     #![allow(clippy::unwrap_used)]
 
     use std::{

@@ -240,6 +240,7 @@ pub struct InvalidDid(pub String);
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::panic)]
     #![allow(clippy::unwrap_used)]
 
     mod did {

@@ -54,6 +54,7 @@ impl AsyncPostValidator for CawgValidator {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::panic)]
     #![allow(clippy::unwrap_used)]
     use std::io::Cursor;
 
