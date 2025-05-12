@@ -68,6 +68,9 @@ jobs:
           fail_ci_if_error: true
           verbose: true
 
+      - name: Run tests without OpenSSL
+        run: cargo test --all-targets --features "add_thumbnails file_io serialize_thumbnails no_interleaved_io fetch_remote_manifests json_schema pdf v1_api"
+
   tests-cli:
     name: Unit tests (c2patool)
     if: |

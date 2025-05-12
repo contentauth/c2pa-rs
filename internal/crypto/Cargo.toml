@@ -81,7 +81,7 @@ ureq = "2.4.0"
 url = "2.5.3"
 
 [package.metadata.cargo-udeps.ignore]
-normal = ["ecdsa", "ed25519-dalek", "p256", "p384", "p521"] # Unused if openssl selected
+normal = ["ecdsa", "ed25519-dalek", "p256", "p384", "p521", "simple_asn1"] # Unused if openssl selected
 
 [target.'cfg(all(target_arch = "wasm32", not(target_os = "wasi")))'.dependencies.chrono]
 version = "0.4.39"
