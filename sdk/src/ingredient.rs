@@ -879,10 +879,6 @@ impl Ingredient {
         let (result, manifest_bytes) = if let Ok(manifest_bytes) = jumbf_result {
             let jumbf_store = Store::from_jumbf(&manifest_bytes, &mut validation_log);
             let result = if let Ok(mut store) = jumbf_store {
-                // if we don't have an active manifest, set it to the one we just loaded
-                // if self.active_manifest.is_none() {
-                //     self.active_manifest = store.provenance_label();
-                // };
                 if _sync {
                     match store.verify_from_stream(stream, format, &mut validation_log) {
                         Ok(_) => Ok(store),
@@ -1154,22 +1150,6 @@ impl Ingredient {
         // this is how any existing claims are added to the new store
         let (active_manifest, claim_signature) = match self.manifest_data_ref() {
             Some(resource_ref) => {
-                // let manifest_label = self
-                //     .active_manifest
-                //     .clone()
-                //     .ok_or(Error::IngredientNotFound)?;
-
-                //if this is the parent ingredient then apply any redactions, converting from labels to uris
-                // let redactions = match self.is_parent() {
-                //     true => redactions.as_ref().map(|redactions| {
-                //         redactions
-                //             .iter()
-                //             .map(|r| to_assertion_uri(&manifest_label, r))
-                //             .collect()
-                //     }),
-                //     false => None,
-                // };
-
                 // get the c2pa manifest bytes
                 let manifest_data = get_resource(&resource_ref.identifier)?;
 
@@ -1209,7 +1189,7 @@ impl Ingredient {
                             });
                     }
                 }
-                // generate c2pa_manifest hashed_uri
+                // generate c2pa_manifest hashed_uris
                 (
                     Some(crate::hashed_uri::HashedUri::new(
                         uri,

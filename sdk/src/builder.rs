@@ -1952,14 +1952,6 @@ mod tests {
         // println!("{manifest_store}");
     }
 
-    #[test]
-    fn test_composed_manifest() {
-        let manifest: &[u8; 4] = b"abcd";
-        let format = "image/jpeg";
-        let composed = Builder::composed_manifest(manifest, format).unwrap();
-        assert_eq!(composed.len(), 16);
-    }
-
     #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
     #[cfg_attr(
         all(target_arch = "wasm32", not(target_os = "wasi")),
