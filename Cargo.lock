@@ -820,6 +820,7 @@ dependencies = [
  "p256",
  "p384",
  "p521",
+ "pem",
  "pkcs1",
  "pkcs8",
  "rand 0.8.5",
@@ -833,6 +834,7 @@ dependencies = [
  "serde_bytes",
  "sha1",
  "sha2",
+ "simple_asn1",
  "spki",
  "thiserror 2.0.12",
  "ureq",
@@ -4247,6 +4249,18 @@ name = "similar"
 version = "2.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bbbb5d9659141646ae647b42fe094daf6c6192d1620870b449d9557f748b2daa"
+
+[[package]]
+name = "simple_asn1"
+version = "0.6.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "297f631f50729c8c99b84667867963997ec0b50f32b2a7dbcab828ef0541e8bb"
+dependencies = [
+ "num-bigint",
+ "num-traits",
+ "thiserror 2.0.12",
+ "time",
+]
 
 [[package]]
 name = "siphasher"

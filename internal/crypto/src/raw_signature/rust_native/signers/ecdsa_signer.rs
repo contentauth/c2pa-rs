@@ -14,7 +14,9 @@
 use ecdsa::signature::Signer;
 use p256::ecdsa::{Signature as P256Signature, SigningKey as P256SigningKey};
 use p384::ecdsa::{Signature as P384Signature, SigningKey as P384SigningKey};
-use pkcs8::DecodePrivateKey;
+use p521::ecdsa::{Signature as P512Signature, SigningKey as P512SigningKey};
+use pkcs8::{DecodePrivateKey, PrivateKeyInfo};
+use simple_asn1::{from_der, ASN1Block};
 use x509_parser::{error::PEMError, pem::Pem};
 
 use crate::{
@@ -26,12 +28,14 @@ use crate::{
 enum EcdsaSigningAlg {
     Es256,
     Es384,
+    Es512,
 }
 
 // Signing keys for ES256 and ES384 are different types
 pub enum EcdsaSigningKey {
     Es256(P256SigningKey),
     Es384(P384SigningKey),
+    Es512(P512SigningKey),
 }
 
 pub struct EcdsaSigner {
@@ -85,9 +89,8 @@ impl EcdsaSigner {
                 (EcdsaSigningKey::Es384(key), EcdsaSigningAlg::Es384)
             }
             SigningAlg::Es512 => {
-                return Err(RawSignerError::InvalidSigningCredentials(
-                    "Rust Crypto does not support Es512, only OpenSSL".to_string(),
-                ))
+                let key = es512_from_pkcs8_pem(private_key_pem)?;
+                (EcdsaSigningKey::Es512(key), EcdsaSigningAlg::Es512)
             }
             _ => {
                 return Err(RawSignerError::InvalidSigningCredentials(
@@ -118,6 +121,10 @@ impl RawSigner for EcdsaSigner {
                 let signature: P384Signature = key.sign(data);
                 Ok(signature.to_vec())
             }
+            EcdsaSigningKey::Es512(ref key) => {
+                let signature: P512Signature = key.sign(data);
+                Ok(signature.to_vec())
+            }
         }
     }
 
@@ -125,6 +132,7 @@ impl RawSigner for EcdsaSigner {
         match self.alg {
             EcdsaSigningAlg::Es256 => SigningAlg::Es256,
             EcdsaSigningAlg::Es384 => SigningAlg::Es384,
+            EcdsaSigningAlg::Es512 => SigningAlg::Es512,
         }
     }
 
@@ -143,13 +151,50 @@ impl TimeStampProvider for EcdsaSigner {
     }
 }
 
+fn es512_from_pkcs8_pem(private_key_pem: &str) -> Result<P512SigningKey, RawSignerError> {
+    // Parse the PEM data to get the private key bytes
+    let pem = pem::parse(private_key_pem).map_err(|e| {
+        RawSignerError::InvalidSigningCredentials(format!("invalid ES512 private key PEM: {e}"))
+    })?;
+    // Parse PKCS#8 structure
+    let pk_info = PrivateKeyInfo::try_from(pem.contents()).map_err(|e| {
+        RawSignerError::InvalidSigningCredentials(format!("invalid ES512 PKCS#8 structure: {e}"))
+    })?;
+    // Parse ECPrivateKey ASN.1 structure using simple_asn1
+    let blocks = from_der(pk_info.private_key).map_err(|e| {
+        RawSignerError::InvalidSigningCredentials(format!("invalid ES512 ECPrivateKey ASN.1: {e}"))
+    })?;
+    let scalar = extract_ec_private_key_scalar(&blocks)?;
+    P512SigningKey::from_slice(scalar).map_err(|e| {
+        RawSignerError::InvalidSigningCredentials(format!("invalid ES512 private key: {e}"))
+    })
+}
+
+// Helper to extract the scalar from ECPrivateKey ASN.1
+fn extract_ec_private_key_scalar(blocks: &[ASN1Block]) -> Result<&[u8], RawSignerError> {
+    if let Some(ASN1Block::Sequence(_, ref items)) = blocks.first() {
+        if items.len() < 2 {
+            return Err(RawSignerError::InvalidSigningCredentials(
+                "ECPrivateKey ASN.1 sequence too short".to_string(),
+            ));
+        }
+        if let ASN1Block::OctetString(_, ref scalar) = items[1] {
+            return Ok(scalar);
+        }
+    }
+    Err(RawSignerError::InvalidSigningCredentials(
+        "ECPrivateKey ASN.1 structure not as expected".to_string(),
+    ))
+}
+
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used)]
     use super::*;
     use crate::raw_signature::SigningAlg;
 
     #[test]
-    fn test_es512_not_supported() {
+    fn test_es512_supported() {
         let cert_chain = include_bytes!("../../../tests/fixtures/raw_signature/es512.pub");
         let private_key = include_bytes!("../../../tests/fixtures/raw_signature/es512.priv");
         let algorithm = SigningAlg::Es512;
@@ -162,12 +207,9 @@ mod tests {
             time_stamp_service_url,
         );
 
-        assert!(result.is_err());
-        if let Err(RawSignerError::InvalidSigningCredentials(err_msg)) = result {
-            assert_eq!(err_msg, "Rust Crypto does not support Es512, only OpenSSL");
-        } else {
-            unreachable!("Expected InvalidSigningCredentials error");
-        }
+        assert!(result.is_ok(), "Expected EcdsaSigner creation to succeed");
+        let signer = result.unwrap();
+        assert_eq!(signer.alg(), SigningAlg::Es512);
     }
 
     #[test]

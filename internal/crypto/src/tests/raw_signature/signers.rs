@@ -65,8 +65,8 @@ fn es384() {
 }
 
 #[test]
-// #[cfg_attr(all(target_arch = "wasm32", not(target_os = "wasi")), wasm_bindgen_test)]
-#[cfg(feature = "openssl")]
+// #[cfg_attr(all(target_arch = "wasm32", not(target_os = "wasi")),
+// wasm_bindgen_test)]
 fn es512() {
     let cert_chain = include_bytes!("../fixtures/raw_signature/es512.pub");
     let private_key = include_bytes!("../fixtures/raw_signature/es512.priv");

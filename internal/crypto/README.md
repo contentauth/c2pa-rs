@@ -9,7 +9,7 @@ This crate contains some of the internal cryptography implementation that is sha
 This crate has two features, neither of which are enabled by default:
 
 * `json_schema`: Used by c2pa-rs documentation code to generate JSON schema for types defined in this crate.
-* `rust_native_crypto`: Where available, prefer Rust-native cryptography libraries for raw signature and validation implementations. (Experimental)
+* `openssl`: Enables OpenSSL-based cryptography implementations for raw signature and validation. When not enabled, Rust-native cryptography libraries are used by default.
 
 ## Cryptographic library support
 
@@ -17,32 +17,31 @@ This crate has two features, neither of which are enabled by default:
 
 ### Signing
 
-| C2PA `SigningAlg` | Default (*) | `feature = "rust_native_crypto"` (*) | WASM |
-| --- | --- | --- | --- |
-| `es256` | OpenSSL | `p256` | `p256` |
-| `es384` | OpenSSL | `p384` | `p384` |
-| `es512` | OpenSSL | OpenSSL | ❌ |
-| `ed25519` | OpenSSL | `ed25519-dalek` | `ed25519-dalek` |
-| `ps256` | OpenSSL | `rsa` | `rsa` |
-| `ps384` | OpenSSL | `rsa` | `rsa` |
-| `ps512` | OpenSSL | `rsa` | `rsa` |
+| C2PA `SigningAlg` | Default | `feature = "openssl"` (*) |
+| --- | --- | --- |
+| `es256` | `p256` | OpenSSL |
+| `es384` | `p384` | OpenSSL |
+| `es512` | `p521`  | OpenSSL |
+| `ed25519` | `ed25519-dalek` | OpenSSL |
+| `ps256` | `rsa` | OpenSSL |
+| `ps384` | `rsa` | OpenSSL |
+| `ps512` | `rsa` | OpenSSL |
 
-(*) Applies to all supported platforms except WASM <br />
-❌ = not supported
+(*) Wasm does not support openssl <br />
 
 ### Validation
 
-| C2PA `SigningAlg` | Default (*) | `feature = "rust_native_crypto"` (*) or WASM |
+| C2PA `SigningAlg` | Default | `feature = "openssl"` (*) |
 | --- | --- | --- |
-| `es256` | OpenSSL | `p256` |
-| `es384` | OpenSSL | `p384` |
-| `es512` | OpenSSL | `p521` |
-| `ed25519` | OpenSSL | `ed25519-dalek` |
-| `ps256` | OpenSSL | `rsa` |
-| `ps384` | OpenSSL | `rsa` |
-| `ps512` | OpenSSL | `rsa` |
+| `es256` | `p256` | OpenSSL |
+| `es384` | `p384` | OpenSSL |
+| `es512` | `p521` | OpenSSL |
+| `ed25519` | `ed25519-dalek` | OpenSSL |
+| `ps256` | `rsa` | OpenSSL |
+| `ps384` | `rsa` | OpenSSL |
+| `ps512` | `rsa` | OpenSSL |
 
-(*) Applies to all supported platforms except WASM
+(*) Wasm does not support openssl
 
 ### Contributions and feedback
 
