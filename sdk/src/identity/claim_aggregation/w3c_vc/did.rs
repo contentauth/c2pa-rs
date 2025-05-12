@@ -240,6 +240,8 @@ pub struct InvalidDid(pub String);
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used)]
+
     mod did {
         mod new {
             #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]

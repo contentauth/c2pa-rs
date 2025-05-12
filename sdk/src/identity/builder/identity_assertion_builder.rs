@@ -288,6 +288,8 @@ fn finalize_identity_assertion(
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used)]
+
     use std::io::{Cursor, Seek};
 
     use c2pa_status_tracker::StatusTracker;

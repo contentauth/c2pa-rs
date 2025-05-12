@@ -152,6 +152,7 @@ impl From<CoseError> for BuiltInSignatureError {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used)]
 
     use std::{
         io::{Cursor, Seek},

@@ -366,6 +366,7 @@ pub enum JwkError {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used)]
 
     #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
     use wasm_bindgen_test::wasm_bindgen_test;

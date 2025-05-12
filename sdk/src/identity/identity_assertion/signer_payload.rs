@@ -230,6 +230,8 @@ static ABSOLUTE_URL_PREFIX: LazyLock<Regex> = LazyLock::new(|| Regex::new("/c2pa
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used)]
+
     use hex_literal::hex;
     #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
     use wasm_bindgen_test::wasm_bindgen_test;

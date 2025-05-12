@@ -70,6 +70,8 @@ impl CredentialHolder for X509CredentialHolder {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used)]
+
     use std::io::{Cursor, Seek};
 
     use c2pa_crypto::raw_signature;

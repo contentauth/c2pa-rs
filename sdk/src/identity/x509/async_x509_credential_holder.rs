@@ -97,6 +97,8 @@ impl AsyncCredentialHolder for AsyncX509CredentialHolder {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used)]
+
     use std::io::{Cursor, Seek};
 
     use c2pa_crypto::raw_signature;
