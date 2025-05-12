@@ -19,7 +19,6 @@
 /// methods] from the CAWG Identity Assertion specification.
 ///
 /// [§8. Credentials, signatures, and validation methods]: https://cawg.io/identity/1.1-draft/#_credentials_signatures_and_validation_methods
-
 #[deprecated(
     since = "0.14.0",
     note = "Moved to c2pa::identity::builder::AsyncCredentialHolder"

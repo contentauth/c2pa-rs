@@ -19,6 +19,5 @@
 ///
 /// [`AsyncIdentityAssertionBuilder`]: crate::builder::AsyncIdentityAssertionBuilder
 /// [`AsyncIdentityAssertionSigner`]: crate::builder::AsyncIdentityAssertionSigner
-
 #[deprecated(since = "0.14.0", note = "Moved to c2pa::identity::IdentityAssertion")]
 pub use c2pa::identity::IdentityAssertion;

@@ -20,7 +20,6 @@
 /// [`SignatureVerifier`]: crate::SignatureVerifier
 /// [§8.1, Identity claims aggregation]: https://creator-assertions.github.io/identity/1.1-draft/#_identity_claims_aggregation
 /// [§3.3.1 Securing JSON-LD Verifiable Credentials with COSE]: https://w3c.github.io/vc-jose-cose/#securing-vcs-with-cose
-
 #[deprecated(
     since = "0.14.0",
     note = "Moved to c2pa::identity::claim_aggregation::IcaSignatureVerifier"
