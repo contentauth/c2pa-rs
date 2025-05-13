@@ -6,6 +6,17 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 The format of this changelog is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.14.0](https://github.com/contentauth/c2pa-rs/compare/cawg-identity-v0.13.0...cawg-identity-v0.14.0)
+_13 May 2025_
+
+### Added
+
+* [**breaking**] Improve error handling for CAWG ICA validation ([#1011](https://github.com/contentauth/c2pa-rs/pull/1011))
+
+### Documented
+
+* Initial docs for CAWG identity ([#1030](https://github.com/contentauth/c2pa-rs/pull/1030))
+
 ## [0.13.0](https://github.com/contentauth/c2pa-rs/compare/cawg-identity-v0.12.2...cawg-identity-v0.13.0)
 _24 April 2025_
 
