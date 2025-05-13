@@ -105,28 +105,12 @@ If `scope` is omitted, the parenthesis must also be omitted.
 
 The following items are not enforced, but we ask that you observe the following preferences in `description`:
 
-* The entire description should be written and capitalized as an English-language sentence, except (as noted earlier) that the trailing period must be omitted.
+* The entire description should be written and capitalized as an English-language sentence, except that the trailing period should be omitted.
 * Any acronyms such as JSON or YAML should be capitalized as per common usage in English-language sentences.
 
 The "body" of the commit message (everything after the PR title) is not subject to any restrictions and may be empty. GitHub, by default, will create a bullet list of the commits that went into the PR. It is _recommended,_ but not enforced, that you delete this list (because it typically contains a lot of signal noise) and either replace it with additional context of why you made the change or leave it empty.
 
 MAINTENANCE NOTE: If this list of rules is changed, please keep in sync with [`.github/workflows/pr_title.yml`](../.github/workflows/pr_title.yml) and [`.commitlintrc`](../.commitlintrc).
-
-## Nightly build process
-
-We maintain a preflight build tree which is designed to allow downstream projects (notably, language bindings) to verify compatibility with SDK changes before they are pushed to a formal release. We call these "nightly" builds, but in reality there are several triggers which can cause a nightly build to be created:
-
-* Any push to `main` branch
-* Any release pull request
-* 0500 UTC every day (typically overnight in North American time zones)
-
-This task is defined in our [`.github/workflows/nightly.yml`](../.github/workflows/nightly.yml) task and performs the following tasks:
-
-* **Identifies the correct base commit for the nightly build.** Typically, this is the latest commit to `main`, but if a release branch exists and is directly derived from `main`, it will use that instead. (The reason for favoring a release branch PR is to pick up the proposed version number.)
-
-* **Creates a temporary version identifier for each crate.** This pushes a nightly-only change to the `Cargo.toml` files for each crate which changes the version number to `(version)-nightly+(date)-(commit ID)` where `(commit ID)` is the commit chosen in the previous step. This information can be shared with bug reports to help identify where a bug was observed.
-
-* _(Planned, not implemented:)_ Publish the binary/built artifacts for the crates. Commented-out code in the `nightly.yml` mimics the `c2patool` binary publish process, but we have not identified how and where to publish said artifacts.
 
 ## Known issues
 
