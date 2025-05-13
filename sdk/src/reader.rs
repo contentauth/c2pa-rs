@@ -36,6 +36,7 @@ use crate::{
     dynamic_assertion::PartialClaim,
     error::{Error, Result},
     jumbf::labels::{manifest_label_from_uri, to_absolute_uri, to_relative_uri},
+    manifest::StoreOptions,
     manifest_store_report::ManifestStoreReport,
     settings::get_settings_value,
     store::Store,
@@ -626,23 +627,14 @@ impl Reader {
 
         let active_manifest = store.provenance_label();
         let mut manifests = HashMap::new();
+        let mut options = StoreOptions::default();
 
         for claim in store.claims() {
             let manifest_label = claim.label();
             let result = if _sync {
-                #[cfg(feature = "file_io")]
-                {
-                    Manifest::from_store(&store, manifest_label, None)
-                }
-                #[cfg(not(feature = "file_io"))]
-                Manifest::from_store(&store, manifest_label)
+                Manifest::from_store(&store, manifest_label, &mut options)
             } else {
-                #[cfg(feature = "file_io")]
-                {
-                    Manifest::from_store_async(&store, manifest_label, None).await
-                }
-                #[cfg(not(feature = "file_io"))]
-                Manifest::from_store_async(&store, manifest_label).await
+                Manifest::from_store_async(&store, manifest_label, &mut options).await
             };
             match result {
                 Ok(manifest) => {
@@ -653,6 +645,31 @@ impl Reader {
                     return Err(e);
                 }
             };
+        }
+
+        // resolve redactions
+        // Even though we validate
+        // compare options.redacted_assertions and options.missing_assertions
+        // remove all overlapping values from both arrays
+        // any remaining redacted assertions are not actually redacted
+        // any remaining missing assertions are not actually missing
+
+        let mut redacted = options.redacted_assertions.clone();
+        let mut missing = options.missing_assertions.clone();
+        redacted.retain(|item| !missing.contains(item));
+        missing.retain(|item| !options.redacted_assertions.contains(item));
+
+        // Add any remaining redacted assertions to the validation results
+        // todo: figure out what to do here!
+        if !redacted.is_empty() {
+            eprintln!("Not Redacted: {:?}", redacted);
+            return Err(Error::AssertionRedactionNotFound);
+        }
+        if !missing.is_empty() {
+            eprintln!("Assertion Missing: {:?}", missing);
+            return Err(Error::AssertionMissing {
+                url: redacted[0].to_owned(),
+            });
         }
 
         let validation_state = validation_results.validation_state();
