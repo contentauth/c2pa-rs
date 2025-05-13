@@ -26,10 +26,11 @@ You can also read the documentation directly in GitHub:
 
 ## Key features
 
-[The c2pa-rs repository](https://github.com/contentauth/c2pa-rs) implements a subset of the [C2PA technical specification](https://c2pa.org/specifications/specifications/2.1/specs/C2PA_Specification.html) in the Rust programming language.
+The [`c2pa` crate](https://crates.io/crates/c2pa) implements a subset of the [C2PA technical specification](https://c2pa.org/specifications/specifications/2.1/specs/C2PA_Specification.html) and the [CAWG identity assertion specification](https://cawg.io/identity) in the Rust programming language.
 
 The library enables a desktop, mobile, or embedded application to:
 * Create and sign C2PA [claims](https://c2pa.org/specifications/specifications/2.1/specs/C2PA_Specification.html#_claims) and [manifests](https://c2pa.org/specifications/specifications/2.1/specs/C2PA_Specification.html#_manifests).
+* Create, sign, and validate [CAWG identity assertions](https://cawg.io/identity) in C2PA manifests.
 * Embed manifests in [supported file formats](docs/supported-formats.md).
 * Parse and validate manifests found in [supported file formats](docs/supported-formats.md).
 
