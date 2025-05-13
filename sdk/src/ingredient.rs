@@ -2055,6 +2055,9 @@ mod tests_file_io {
         );
         let (format, image) = Ingredient::thumbnail_from_assertion(&assertion);
         assert_eq!(format, "image/svg+xml");
-        assert_eq!(image.len(), 26652);
+        assert_eq!(
+            image,
+            include_bytes!("../tests/fixtures/sample1.svg").to_vec()
+        );
     }
 }
