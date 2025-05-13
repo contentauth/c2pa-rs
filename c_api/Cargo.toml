@@ -1,0 +1,36 @@
+[package]
+name = "c2pa-c"
+version = "0.49.5"
+edition = "2021"
+authors = ["Gavin Peacock <gpeacock@adobe.com>"]
+license = "MIT OR Apache-2.0"
+
+[lib]
+crate-type = ["cdylib"]
+
+[features]
+default = ["json_api",]
+json_api = ["c2pa/v1_api"]
+
+[dependencies]
+tokio = { version = "1.36", features = ["rt-multi-thread","rt"] }
+cawg-identity = { path = "../cawg_identity" }
+c2pa = { path = "../sdk",  version = "0.49.3", features = [
+    "file_io",
+    "add_thumbnails",
+    "fetch_remote_manifests",
+    "rust_native_crypto",
+] }
+scopeguard = "1.2.0"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+thiserror = "1.0.64"
+zip = { version = "2.6.1", default-features = false, features = ["deflate"] }
+
+[dev-dependencies]
+tempfile = "3.7.0"
+
+[build-dependencies]
+cbindgen = "0.28"
+
+

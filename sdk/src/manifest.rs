@@ -1910,7 +1910,7 @@ pub(crate) mod tests {
     #[test]
     #[cfg(feature = "file_io")]
     #[allow(deprecated)]
-    /// Actiions asssertions cannot be redacted, event though the redaction reference is valid
+    /// Actions assertions cannot be redacted, even though the redaction reference is valid
     fn test_action_assertion_redaction_error() {
         let temp_dir = tempdirectory().expect("temp dir");
         let parent_output = temp_fixture_path(&temp_dir, TEST_SMALL_JPEG);

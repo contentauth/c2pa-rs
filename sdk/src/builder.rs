@@ -1144,6 +1144,20 @@ impl Builder {
                 .await
         }
     }
+
+    /// Converts a manifest into a composed manifest with the specified format.
+    /// This wraps the bytes in the container format of the specified format.
+    /// So that it can be directly embedded into a stream of that format.
+    /// # Arguments
+    /// * `manifest_bytes` - The bytes of the manifest to convert.
+    /// * `format` - The format to convert to.
+    /// # Returns
+    /// * The bytes of the composed manifest.
+    /// # Errors
+    /// * Returns an [`Error`] if the manifest cannot be converted.
+    pub fn composed_manifest(manifest_bytes: &[u8], format: &str) -> Result<Vec<u8>> {
+        Store::get_composed_manifest(manifest_bytes, format)
+    }
 }
 
 #[cfg(test)]
@@ -1952,6 +1966,15 @@ mod tests {
         // println!("{manifest_store}");
     }
 
+    #[test]
+    fn test_composed_manifest() {
+        let manifest: &[u8; 4] = b"abcd";
+        let format = "image/jpeg";
+        let composed = Builder::composed_manifest(manifest, format).unwrap();
+        assert_eq!(composed.len(), 16);
+    }
+
+    /// example of creating a builder directly with a [`ManifestDefinition`]
     #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
     #[cfg_attr(
         all(target_arch = "wasm32", not(target_os = "wasi")),
