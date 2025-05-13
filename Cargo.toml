@@ -12,8 +12,6 @@ members = [
     "sdk",
 ]
 
-
-
 [profile.release]
 strip = true  # Automatically strip symbols from the binary. 
 opt-level = 3
