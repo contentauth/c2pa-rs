@@ -1,3 +1,7 @@
+# If updating this file, please also review `docs/release-process.md` and
+# `.github/workflows/pr_title.yml` and update the summary of these rules
+# in those files accordingly.
+
 rules:
   # Body may be empty
   body-empty:
@@ -7,7 +11,7 @@ rules:
   description-empty:
     level: error
 
-  # Description must start with a capital letter and must not end with a period or space
+  # The commit description must not end with trailing white space
   description-format:
     level: error
     format: ^[\w ]+[\s\S]*$
