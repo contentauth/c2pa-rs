@@ -876,34 +876,31 @@ impl Ingredient {
         };
 
         // We can't use functional combinators since we can't use async callbacks (https://github.com/rust-lang/rust/issues/62290)
-        let (result, manifest_bytes) = if let Ok(manifest_bytes) = jumbf_result {
-            let jumbf_store = Store::from_jumbf(&manifest_bytes, &mut validation_log);
-            let result = if let Ok(mut store) = jumbf_store {
-                if _sync {
-                    match store.verify_from_stream(stream, format, &mut validation_log) {
-                        Ok(_) => Ok(store),
-                        Err(err) => Err(err),
+        let (result, manifest_bytes) = match jumbf_result {
+            Ok(manifest_bytes) => {
+                let jumbf_store = Store::from_jumbf(&manifest_bytes, &mut validation_log);
+                let result = match jumbf_store {
+                    Ok(mut store) => {
+                        if _sync {
+                            match store.verify_from_stream(stream, format, &mut validation_log) {
+                                Ok(_) => Ok(store),
+                                Err(err) => Err(err),
+                            }
+                        } else {
+                            match store
+                                .verify_from_stream_async(stream, format, &mut validation_log)
+                                .await
+                            {
+                                Ok(_) => Ok(store),
+                                Err(err) => Err(err),
+                            }
+                        }
                     }
-                } else {
-                    match store
-                        .verify_from_stream_async(stream, format, &mut validation_log)
-                        .await
-                    {
-                        Ok(_) => Ok(store),
-                        Err(err) => Err(err),
-                    }
-                }
-            } else {
-                // This will always be Err in this situation
-                #[allow(clippy::unwrap_used)]
-                Err(jumbf_store.unwrap_err())
-            };
-
-            (result, Some(manifest_bytes))
-        } else {
-            // This will always be Err in this situation
-            #[allow(clippy::unwrap_used)]
-            (Err(jumbf_result.unwrap_err()), None)
+                    Err(e) => Err(e),
+                };
+                (result, Some(manifest_bytes))
+            }
+            Err(err) => (Err(err), None),
         };
 
         // set validation status from result and log
