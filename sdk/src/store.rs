@@ -389,8 +389,8 @@ impl Store {
         let (label, instance) = Claim::assertion_label_from_link(uri);
         claim
             .get_claim_assertion(&label, instance)
-            .ok_or_else(|| Error::ClaimMissing {
-                label: label.to_owned(),
+            .ok_or_else(|| Error::AssertionMissing {
+                url: uri.to_owned(),
             })
     }
 
@@ -3745,7 +3745,6 @@ impl Store {
     /// data: jumbf data block
     pub fn load_ingredient_to_claim(
         claim: &mut Claim,
-        provenance_label: &str,
         data: &[u8],
         redactions: Option<Vec<String>>,
     ) -> Result<Store> {
@@ -3760,7 +3759,7 @@ impl Store {
             return Err(Error::OtherError("ingredient version too new".into()));
         }
 
-        claim.add_ingredient_data(provenance_label, store.claims.clone(), redactions)?;
+        claim.add_ingredient_data(pc.label(), store.claims.clone(), redactions)?;
         Ok(store)
     }
 }
