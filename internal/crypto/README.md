@@ -46,7 +46,7 @@ This crate has two features, neither of which are enabled by default:
 
 ### Contributions and feedback
 
-We welcome contributions to this project. For information on contributing, providing feedback, and about ongoing work, see [Contributing](https://github.com/contentauth/c2pa-rs/blob/main/CONTRIBUTING.md). For additional information on nightly builds and testing, see [Contributing to the project](docs/project-contributions.md).
+We welcome contributions to this project. For information on contributing, providing feedback, and about ongoing work, see [Contributing](https://github.com/contentauth/c2pa-rs/blob/main/CONTRIBUTING.md). For additional information on testing, see [Contributing to the project](docs/project-contributions.md).
 
 ## License
 
