@@ -1961,7 +1961,13 @@ mod tests {
     /// test if the sdk can add a cloud ingredient retrieved from a stream and a cloud manifest
     // This works with or without the fetch_remote_manifests feature
     async fn test_add_cloud_ingredient() {
+        // Save original settings
+        let original_remote_fetch =
+            crate::settings::get_settings_value("verify.remote_manifest_fetch").unwrap_or(true);
+
+        // Set our test settings
         crate::settings::set_settings_value("verify.remote_manifest_fetch", false).unwrap();
+
         let mut input = Cursor::new(TEST_IMAGE_CLEAN);
         let mut cloud_image = Cursor::new(TEST_IMAGE_CLOUD);
 
@@ -2018,6 +2024,10 @@ mod tests {
         let m = reader.active_manifest().unwrap();
         assert_eq!(m.ingredients().len(), 1);
         assert!(m.ingredients()[0].active_manifest().is_some());
+
+        // Restore original settings
+        crate::settings::set_settings_value("verify.remote_manifest_fetch", original_remote_fetch)
+            .unwrap();
     }
 
     #[test]
