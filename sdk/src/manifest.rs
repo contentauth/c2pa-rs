@@ -11,7 +11,7 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use std::{borrow::Cow, slice::Iter};
+use std::{borrow::Cow, path::PathBuf, slice::Iter};
 #[cfg(feature = "v1_api")]
 use std::{collections::HashMap, io::Cursor};
 #[cfg(feature = "file_io")]
@@ -35,7 +35,7 @@ use crate::{
     error::{Error, Result},
     hashed_uri::HashedUri,
     ingredient::Ingredient,
-    jumbf::labels::{assertion_label_from_uri, to_absolute_uri, to_assertion_uri},
+    jumbf::labels::{to_absolute_uri, to_assertion_uri},
     manifest_assertion::ManifestAssertion,
     resource_store::{mime_from_uri, skip_serializing_resources, ResourceRef, ResourceStore},
     store::Store,
@@ -49,6 +49,18 @@ use crate::{
     salt::DefaultSalt,
     AsyncSigner, HashRange, ManifestPatchCallback, RemoteSigner, Signer,
 };
+
+/// This is used internally when generating manifests from a Store
+#[derive(Debug, Default)]
+pub(crate) struct StoreOptions {
+    /// Optional alternate path for resources (can reference builder resources)
+    #[allow(dead_code)] // never used in some builds (i.e. wasm)
+    pub(crate) resource_path: Option<PathBuf>,
+    /// List of assertions that were listed and not found
+    pub(crate) missing_assertions: Vec<String>,
+    /// List of all assertions declared as redacted
+    pub(crate) redacted_assertions: Vec<String>,
+}
 
 /// A Manifest represents all the information in a c2pa manifest
 #[derive(Debug, Default, Deserialize, Serialize)]
@@ -543,7 +555,7 @@ impl Manifest {
     pub(crate) fn from_store(
         store: &Store,
         manifest_label: &str,
-        #[cfg(feature = "file_io")] resource_path: Option<&Path>,
+        options: &mut StoreOptions,
     ) -> Result<Self> {
         let claim = store
             .get_claim(manifest_label)
@@ -561,7 +573,7 @@ impl Manifest {
         };
 
         #[cfg(feature = "file_io")]
-        if let Some(base_path) = resource_path {
+        if let Some(base_path) = options.resource_path.as_deref() {
             manifest.with_base_path(base_path)?;
         }
 
@@ -601,7 +613,14 @@ impl Manifest {
 
         manifest.redactions = claim.redactions().map(|rs| {
             rs.iter()
-                .filter_map(|r| assertion_label_from_uri(r))
+                .map(|r| {
+                    if !options.redacted_assertions.contains(r) {
+                        options
+                            .redacted_assertions
+                            .push(to_absolute_uri(claim.label(), r));
+                    }
+                    r.to_owned()
+                })
                 .collect()
         });
 
@@ -616,8 +635,19 @@ impl Manifest {
             .collect();
 
         for assertion in claim.assertions() {
-            let claim_assertion = store
-                .get_claim_assertion_from_uri(&to_absolute_uri(claim.label(), &assertion.url()))?;
+            let claim_assertion = match store
+                .get_claim_assertion_from_uri(&to_absolute_uri(claim.label(), &assertion.url()))
+            {
+                Ok(a) => a,
+                Err(Error::AssertionMissing { url }) => {
+                    // if we are missing an assertion, add it to the list
+                    if !options.missing_assertions.contains(&url) {
+                        options.missing_assertions.push(url);
+                    }
+                    continue;
+                }
+                Err(e) => return Err(e),
+            };
             let assertion = claim_assertion.assertion();
             let label = claim_assertion.label();
             let base_label = assertion.label();
@@ -674,7 +704,7 @@ impl Manifest {
                         manifest_label,
                         &assertion_uri,
                         #[cfg(feature = "file_io")]
-                        resource_path,
+                        options.resource_path.as_deref(),
                     )?;
                     manifest.add_ingredient(ingredient);
                 }
@@ -1555,6 +1585,7 @@ pub(crate) mod tests {
     #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
     use wasm_bindgen_test::*;
 
+    use super::*;
     #[cfg(feature = "file_io")]
     use crate::utils::io_utils::tempdirectory;
 
@@ -1742,8 +1773,12 @@ pub(crate) mod tests {
 
         // convert to store
         let store = manifest.to_store().expect("valid action to_store");
-        let m2 = Manifest::from_store(&store, &store.provenance_label().unwrap(), None)
-            .expect("from_store");
+        let m2 = Manifest::from_store(
+            &store,
+            &store.provenance_label().unwrap(),
+            &mut StoreOptions::default(),
+        )
+        .expect("from_store");
         let actions: Actions = m2
             .find_assertion("c2pa.actions.v2")
             .expect("find_assertion");
@@ -1781,7 +1816,7 @@ pub(crate) mod tests {
             &store,
             &store.provenance_label().unwrap(),
             #[cfg(feature = "file_io")]
-            None,
+            &mut StoreOptions::default(),
         )
         .expect("from_store");
         println!("{store}");
@@ -1934,13 +1969,8 @@ pub(crate) mod tests {
         println!("{store}");
         let active_label = store.provenance_label().unwrap();
 
-        let manifest2 = Manifest::from_store(
-            &store,
-            &active_label,
-            #[cfg(feature = "file_io")]
-            None,
-        )
-        .expect("from_store");
+        let manifest2 = Manifest::from_store(&store, &active_label, &mut StoreOptions::default())
+            .expect("from_store");
         println!("{manifest2}");
 
         // now check to see if we have three separate assertions with different instances
@@ -2598,7 +2628,10 @@ pub(crate) mod tests {
         let m2 = Manifest::from_store(
             &store,
             &store.provenance_label().unwrap(),
-            Some(&resource_path),
+            &mut StoreOptions {
+                resource_path: Some(resource_path),
+                ..Default::default()
+            },
         )
         .expect("from store");
         println!("{m2}");

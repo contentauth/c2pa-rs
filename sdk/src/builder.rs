@@ -1015,7 +1015,7 @@ impl Builder {
     }
 
     #[cfg(feature = "file_io")]
-    // Internal utiltiy to set format and title based on destination filename.
+    // Internal utility to set format and title based on destination filename.
     //
     // Also sets the instance_id to a new UUID and ensures the destination file does not exist.
     fn set_asset_from_dest<P: AsRef<Path>>(&mut self, dest: P) -> Result<()> {
@@ -1150,7 +1150,7 @@ impl Builder {
 mod tests {
     #![allow(clippy::expect_used)]
     #![allow(clippy::unwrap_used)]
-    use std::io::Cursor;
+    use std::{io::Cursor, vec};
 
     use c2pa_crypto::raw_signature::SigningAlg;
     use serde_json::json;
@@ -1159,7 +1159,7 @@ mod tests {
 
     use super::*;
     use crate::{
-        assertions::BoxHash,
+        assertions::{c2pa_action, BoxHash},
         asset_handlers::jpeg_io::JpegIO,
         hash_stream_by_alg,
         utils::{test::write_jpeg_placeholder_stream, test_signer::test_signer},
@@ -2019,4 +2019,119 @@ mod tests {
         assert_eq!(m.ingredients().len(), 1);
         assert!(m.ingredients()[0].active_manifest().is_some());
     }
+
+    #[test]
+    fn test_redaction() {
+        // the label of the assertion we are going to redact
+        const ASSERTION_LABEL: &str = "stds.schema-org.CreativeWork";
+
+        let mut input = Cursor::new(TEST_IMAGE);
+
+        let mut parent =
+            Ingredient::from_stream("image/jpeg", &mut Cursor::new(TEST_IMAGE)).unwrap();
+        parent.set_title("CA.jpg");
+        parent.set_relationship(crate::Relationship::ParentOf);
+
+        let parent_manifest_label = parent.active_manifest().unwrap();
+
+        let redacted_uri =
+            crate::jumbf::labels::to_assertion_uri(parent_manifest_label, ASSERTION_LABEL);
+
+        let parent_manifest_label = parent_manifest_label.to_owned();
+
+        // Create a parent with a c2pa_action type assertion.
+        let opened_action = crate::assertions::Action::new(c2pa_action::OPENED)
+            .set_parameter("org.cai.ingredientIds", [parent.instance_id().to_string()])
+            .unwrap();
+
+        let redacted_action = crate::assertions::Action::new("c2pa.redacted")
+            .set_reason("testing".to_owned())
+            .set_parameter("redacted".to_owned(), redacted_uri.clone())
+            .unwrap();
+
+        let actions = crate::assertions::Actions::new()
+            .add_action(opened_action)
+            .add_action(redacted_action);
+
+        let definition = ManifestDefinition {
+            claim_version: Some(2),
+            claim_generator_info: [ClaimGeneratorInfo::default()].to_vec(),
+            format: "image/jpeg".to_string(),
+            title: Some("Redaction Test".to_string()),
+            ingredients: vec![parent], // add the parent ingredient
+            redactions: Some(vec![redacted_uri]), // add the redaction
+            ..Default::default()
+        };
+
+        let mut builder = Builder {
+            definition,
+            ..Default::default()
+        };
+
+        builder.add_assertion(Actions::LABEL, &actions).unwrap();
+
+        let signer = test_signer(SigningAlg::Ps256);
+        // Embed a manifest using the signer.
+        let mut output = Cursor::new(Vec::new());
+        builder
+            .sign(signer.as_ref(), "jpeg", &mut input, &mut output)
+            .expect("builder sign");
+
+        output.set_position(0);
+
+        let reader = Reader::from_stream("jpeg", &mut output).expect("from_bytes");
+        println!("{reader}");
+        let m = reader.active_manifest().unwrap();
+        assert_eq!(m.ingredients().len(), 1);
+        let parent = reader.get_manifest(&parent_manifest_label).unwrap();
+        assert_eq!(parent.assertions().len(), 1);
+    }
+
+    // #[test]
+    // #[cfg(feature = "file_io")]
+    // #[allow(deprecated)]
+    // /// Actiions asssertions cannot be redacted, event though the redaction reference is valid
+    // fn test_action_assertion_redaction_error() {
+    //     let temp_dir = tempdirectory().expect("temp dir");
+    //     let parent_output = temp_fixture_path(&temp_dir, TEST_SMALL_JPEG);
+
+    //     // Create parent with a c2pa_action type assertion.
+    //     let mut parent_manifest = test_manifest();
+    //     let actions = Actions::new().add_action(
+    //         Action::new(c2pa_action::FILTERED)
+    //             .set_parameter("name".to_owned(), "gaussian blur")
+    //             .unwrap()
+    //             .set_when("2015-06-26T16:43:23+0200"),
+    //     );
+    //     parent_manifest
+    //         .add_assertion(&actions)
+    //         .expect("add_assertion");
+
+    //     let signer = test_signer(SigningAlg::Ps256);
+    //     parent_manifest
+    //         .embed(&parent_output, &parent_output, signer.as_ref())
+    //         .expect("embed");
+
+    //     // Add parent_manifest as an ingredient of the new manifest and redact the assertion `c2pa.actions`.
+    //     let parent_ingredient = Ingredient::from_file(&parent_output).expect("from_file");
+
+    //     // get the active manifest label from the parent and add the actions label
+    //     let ingredient_active_manifest = parent_ingredient
+    //         .active_manifest()
+    //         .expect("active_manifest");
+    //     let ingredient_actions_uri =
+    //         crate::jumbf::labels::to_assertion_uri(ingredient_active_manifest, Actions::LABEL);
+
+    //     let mut manifest = test_manifest();
+    //     assert!(manifest.add_redaction(ingredient_actions_uri).is_ok());
+    //     manifest.set_parent(parent_ingredient).expect("set_parent");
+
+    //     // Attempt embedding the manifest with the invalid redaction.
+    //     let redact_output = temp_fixture_path(&temp_dir, TEST_SMALL_JPEG);
+    //     let embed_result = manifest.embed(&redact_output, &redact_output, signer.as_ref());
+    //     assert!(matches!(
+    //         embed_result.err().unwrap(),
+    //         Error::AssertionInvalidRedaction
+    //     ));
+    // }
 }

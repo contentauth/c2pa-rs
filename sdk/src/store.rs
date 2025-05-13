@@ -389,8 +389,8 @@ impl Store {
         let (label, instance) = Claim::assertion_label_from_link(uri);
         claim
             .get_claim_assertion(&label, instance)
-            .ok_or_else(|| Error::ClaimMissing {
-                label: label.to_owned(),
+            .ok_or_else(|| Error::AssertionMissing {
+                url: uri.to_owned(),
             })
     }
 
