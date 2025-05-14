@@ -14,43 +14,12 @@
 //! This module contains the APIs you will use to validate a
 //! C2PA Manifest that contains one or more CAWG identity assertions.
 
-use async_trait::async_trait;
-use c2pa::{
-    dynamic_assertion::{AsyncPostValidator, PartialClaim},
-    ManifestAssertion,
-};
-use c2pa_status_tracker::StatusTracker;
-use serde_json::Value;
-
-use crate::IdentityAssertion;
-
 /// Validates a CAWG identity assertion.
-pub struct CawgValidator;
-#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
-#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
-impl AsyncPostValidator for CawgValidator {
-    async fn validate(
-        &self,
-        label: &str,
-        assertion: &ManifestAssertion,
-        uri: &str,
-        partial_claim: &PartialClaim,
-        tracker: &mut StatusTracker,
-    ) -> c2pa::Result<Option<Value>> {
-        if label.starts_with("cawg.identity") {
-            let identity_assertion: IdentityAssertion = assertion.to_assertion()?;
-            tracker.push_current_uri(uri);
-            let result = identity_assertion
-                .validate_partial_claim(partial_claim, tracker)
-                .await
-                .map(Some)
-                .map_err(|e| c2pa::Error::ClaimVerification(e.to_string()));
-            tracker.pop_current_uri();
-            return result;
-        };
-        Ok(None)
-    }
-}
+#[deprecated(
+    since = "0.14.0",
+    note = "Use c2pa::identity::validator::CawgValidator instead"
+)]
+pub use c2pa::identity::validator::CawgValidator;
 
 #[cfg(test)]
 mod tests {

@@ -22,7 +22,6 @@ rules:
     optional: true
     options:
       - c2patool
-      - cawg_identity
       - crypto
       - export_schema
       - make_test_images

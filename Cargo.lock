@@ -721,6 +721,7 @@ dependencies = [
  "async-recursion",
  "async-trait",
  "atree",
+ "base64 0.22.1",
  "bcder",
  "byteorder",
  "byteordered",
@@ -739,9 +740,11 @@ dependencies = [
  "glob",
  "hex",
  "hex-literal",
+ "httpmock",
  "id3",
  "image 0.24.9",
  "img-parts",
+ "iref",
  "jfifdump",
  "js-sys",
  "jumbf",
@@ -751,6 +754,9 @@ dependencies = [
  "memchr",
  "mockall",
  "mp4",
+ "multibase",
+ "non-empty-string",
+ "nonempty-collections",
  "pem",
  "png_pong",
  "quick-xml",
@@ -761,6 +767,8 @@ dependencies = [
  "rasn",
  "rasn-ocsp",
  "rasn-pkix",
+ "regex",
+ "reqwest",
  "riff",
  "rsa",
  "schemars",
@@ -775,6 +783,7 @@ dependencies = [
  "sha1",
  "sha2",
  "spki",
+ "static-iref",
  "tempfile",
  "thiserror 2.0.12",
  "tokio",
@@ -789,6 +798,7 @@ dependencies = [
  "web-sys",
  "wstd",
  "x509-parser",
+ "zeroize",
  "zip",
 ]
 
@@ -870,7 +880,7 @@ version = "0.6.2"
 
 [[package]]
 name = "c2patool"
-version = "0.16.6"
+version = "0.16.5"
 dependencies = [
  "anyhow",
  "assert_cmd",
@@ -878,7 +888,6 @@ dependencies = [
  "atree",
  "c2pa",
  "c2pa-crypto",
- "cawg-identity",
  "clap",
  "env_logger",
  "glob",
@@ -901,9 +910,8 @@ dependencies = [
 
 [[package]]
 name = "cawg-identity"
-version = "0.14.0"
+version = "0.13.0"
 dependencies = [
- "anyhow",
  "async-trait",
  "base64 0.22.1",
  "c2pa",
@@ -914,7 +922,6 @@ dependencies = [
  "coset",
  "ed25519-dalek",
  "hex-literal",
- "httpmock",
  "iref",
  "multibase",
  "non-empty-string",

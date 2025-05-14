@@ -12,4 +12,3 @@
 // each license.
 
 mod error;
-mod simple_case;

@@ -82,7 +82,7 @@ async fn success_case() {
 
     let subject = ica_vc.credential_subjects.first();
     assert_eq!(subject.verified_identities, expected_identities);
-    assert_eq!(subject.c2pa_asset, ia.signer_payload);
+    assert_eq!(&subject.c2pa_asset, ia.signer_payload());
     assert!(subject.time_stamp.is_none());
 
     let mut log_items = st.logged_items().iter();
@@ -92,7 +92,7 @@ async fn success_case() {
     assert_eq!(li.kind, LogKind::Success);
     assert_eq!(li.label, "(IA label goes here)");
     assert_eq!(li.description, "ICA credential is valid");
-    assert_eq!(li.crate_name, "cawg-identity");
+    assert_eq!(li.crate_name, "c2pa");
     assert_eq!(
         li.validation_status.as_ref().unwrap(),
         "cawg.ica.credential_valid"
@@ -158,7 +158,7 @@ async fn invalid_cose_sign1() {
     assert_eq!(li.kind, LogKind::Failure);
     assert_eq!(li.label, "(IA label goes here)");
     assert_eq!(li.description, "Invalid COSE_Sign1 data structure");
-    assert_eq!(li.crate_name, "cawg-identity");
+    assert_eq!(li.crate_name, "c2pa");
     assert_eq!(
         li.err_val.as_ref().unwrap(),
         "SignatureError(extraneous data in CBOR input)"
@@ -240,7 +240,7 @@ async fn invalid_cose_sign_alg() {
     assert_eq!(li.kind, LogKind::Failure);
     assert_eq!(li.label, "(IA label goes here)");
     assert_eq!(li.description, "Invalid COSE_Sign1 signature algorithm");
-    assert_eq!(li.crate_name, "cawg-identity");
+    assert_eq!(li.crate_name, "c2pa");
     assert_eq!(
         li.err_val.as_ref().unwrap(),
         "SignatureError(UnsupportedSignatureType(\"Assigned(SHA_1)\"))"
@@ -302,7 +302,7 @@ async fn missing_cose_sign_alg() {
     assert_eq!(li.kind, LogKind::Failure);
     assert_eq!(li.label, "(IA label goes here)");
     assert_eq!(li.description, "Missing COSE_Sign1 signature algorithm");
-    assert_eq!(li.crate_name, "cawg-identity");
+    assert_eq!(li.crate_name, "c2pa");
     assert_eq!(
         li.err_val.as_ref().unwrap(),
         "SignatureError(SignatureTypeMissing)"
@@ -360,7 +360,7 @@ async fn invalid_content_type() {
 
     let subject = ica_vc.credential_subjects.first();
     assert_eq!(subject.verified_identities, expected_identities);
-    assert_eq!(subject.c2pa_asset, ia.signer_payload);
+    assert_eq!(&subject.c2pa_asset, ia.signer_payload());
 
     let mut log_items = st.logged_items().iter();
 
@@ -369,7 +369,7 @@ async fn invalid_content_type() {
     assert_eq!(li.kind, LogKind::Failure);
     assert_eq!(li.label, "(IA label goes here)");
     assert_eq!(li.description, "Invalid COSE_Sign1 content type header");
-    assert_eq!(li.crate_name, "cawg-identity");
+    assert_eq!(li.crate_name, "c2pa");
     assert_eq!(
         li.err_val.as_ref().unwrap(),
         "SignatureError(UnsupportedContentType(\"\\\"application/bogus\\\"\"))"
@@ -425,7 +425,7 @@ async fn invalid_content_type_assigned() {
 
     let subject = ica_vc.credential_subjects.first();
     assert_eq!(subject.verified_identities, expected_identities);
-    assert_eq!(subject.c2pa_asset, ia.signer_payload);
+    assert_eq!(&subject.c2pa_asset, ia.signer_payload());
 
     let mut log_items = st.logged_items().iter();
 
@@ -434,7 +434,7 @@ async fn invalid_content_type_assigned() {
     assert_eq!(li.kind, LogKind::Failure);
     assert_eq!(li.label, "(IA label goes here)");
     assert_eq!(li.description, "Invalid COSE_Sign1 content type header");
-    assert_eq!(li.crate_name, "cawg-identity");
+    assert_eq!(li.crate_name, "c2pa");
     assert_eq!(
         li.err_val.as_ref().unwrap(),
         "SignatureError(UnsupportedContentType(\"Assigned(OctetStream)\"))"
@@ -489,7 +489,7 @@ async fn missing_content_type() {
 
     let subject = ica_vc.credential_subjects.first();
     assert_eq!(subject.verified_identities, expected_identities);
-    assert_eq!(subject.c2pa_asset, ia.signer_payload);
+    assert_eq!(&subject.c2pa_asset, ia.signer_payload());
 
     let mut log_items = st.logged_items().iter();
 
@@ -498,7 +498,7 @@ async fn missing_content_type() {
     assert_eq!(li.kind, LogKind::Failure);
     assert_eq!(li.label, "(IA label goes here)");
     assert_eq!(li.description, "Invalid COSE_Sign1 content type header");
-    assert_eq!(li.crate_name, "cawg-identity");
+    assert_eq!(li.crate_name, "c2pa");
     assert_eq!(
         li.err_val.as_ref().unwrap(),
         "SignatureError(ContentTypeMissing)"
@@ -572,7 +572,7 @@ async fn missing_vc() {
     assert_eq!(li.kind, LogKind::Failure);
     assert_eq!(li.label, "(IA label goes here)");
     assert_eq!(li.description, "Missing COSE_Sign1 payload");
-    assert_eq!(li.crate_name, "cawg-identity");
+    assert_eq!(li.crate_name, "c2pa");
     assert_eq!(
         li.err_val.as_ref().unwrap(),
         "SignatureError(CredentialPayloadMissing)"
@@ -634,7 +634,7 @@ async fn invalid_vc() {
     assert_eq!(li.kind, LogKind::Failure);
     assert_eq!(li.label, "(IA label goes here)");
     assert_eq!(li.description, "Invalid JSON-LD for verifiable credential");
-    assert_eq!(li.crate_name, "cawg-identity");
+    assert_eq!(li.crate_name, "c2pa");
     assert_eq!(
         li.err_val.as_ref().unwrap(),
         "SignatureError(JsonDecodeError(\"expected value at line 1 column 1\"))"
@@ -694,7 +694,7 @@ async fn invalid_issuer_did() {
 
     let subject = ica_vc.credential_subjects.first();
     assert_eq!(subject.verified_identities, expected_identities);
-    assert_eq!(subject.c2pa_asset, ia.signer_payload);
+    assert_eq!(&subject.c2pa_asset, ia.signer_payload());
 
     let mut log_items = st.logged_items().iter();
 
@@ -703,7 +703,7 @@ async fn invalid_issuer_did() {
     assert_eq!(li.kind, LogKind::Failure);
     assert_eq!(li.label, "(IA label goes here)");
     assert_eq!(li.description, "Invalid issuer DID");
-    assert_eq!(li.crate_name, "cawg-identity");
+    assert_eq!(li.crate_name, "c2pa");
 
     assert!(li
         .err_val
@@ -763,7 +763,7 @@ async fn unsupported_did_method() {
 
     let subject = ica_vc.credential_subjects.first();
     assert_eq!(subject.verified_identities, expected_identities);
-    assert_eq!(subject.c2pa_asset, ia.signer_payload);
+    assert_eq!(&subject.c2pa_asset, ia.signer_payload());
 
     let mut log_items = st.logged_items().iter();
 
@@ -772,7 +772,7 @@ async fn unsupported_did_method() {
     assert_eq!(li.kind, LogKind::Failure);
     assert_eq!(li.label, "(IA label goes here)");
     assert_eq!(li.description, "Invalid issuer DID");
-    assert_eq!(li.crate_name, "cawg-identity");
+    assert_eq!(li.crate_name, "c2pa");
 
     assert!(li
         .err_val
@@ -827,7 +827,7 @@ async fn unresolvable_did() {
 
     let subject = ica_vc.credential_subjects.first();
     assert_eq!(subject.verified_identities, expected_identities);
-    assert_eq!(subject.c2pa_asset, ia.signer_payload);
+    assert_eq!(&subject.c2pa_asset, ia.signer_payload());
 
     let mut log_items = st.logged_items().iter();
 
@@ -836,7 +836,7 @@ async fn unresolvable_did() {
     assert_eq!(li.kind, LogKind::Failure);
     assert_eq!(li.label, "(IA label goes here)");
     assert_eq!(li.description, "Unable to resolve issuer DID");
-    assert_eq!(li.crate_name, "cawg-identity");
+    assert_eq!(li.crate_name, "c2pa");
 
     assert_eq!(li
         .err_val
@@ -899,7 +899,7 @@ async fn did_doc_without_assertion_method() {
 
     let subject = ica_vc.credential_subjects.first();
     assert_eq!(subject.verified_identities, expected_identities);
-    assert_eq!(subject.c2pa_asset, ia.signer_payload);
+    assert_eq!(&subject.c2pa_asset, ia.signer_payload());
 
     let mut log_items = st.logged_items().iter();
 
@@ -908,7 +908,7 @@ async fn did_doc_without_assertion_method() {
     assert_eq!(li.kind, LogKind::Failure);
     assert_eq!(li.label, "(IA label goes here)");
     assert_eq!(li.description, "Invalid issuer DID document");
-    assert_eq!(li.crate_name, "cawg-identity");
+    assert_eq!(li.crate_name, "c2pa");
 
     assert_eq!(li
         .err_val
@@ -982,7 +982,7 @@ async fn signature_mismatch() {
 
     let subject = ica_vc.credential_subjects.first();
     assert_eq!(subject.verified_identities, expected_identities);
-    assert_eq!(subject.c2pa_asset, ia.signer_payload);
+    assert_eq!(&subject.c2pa_asset, ia.signer_payload());
 
     let mut log_items = st.logged_items().iter();
 
@@ -991,7 +991,7 @@ async fn signature_mismatch() {
     assert_eq!(li.kind, LogKind::Failure);
     assert_eq!(li.label, "(IA label goes here)");
     assert_eq!(li.description, "Signature does not match credential");
-    assert_eq!(li.crate_name, "cawg-identity");
+    assert_eq!(li.crate_name, "c2pa");
 
     assert_eq!(li.err_val.as_ref().unwrap(), "SignatureMismatch");
 
@@ -1054,7 +1054,7 @@ async fn valid_time_stamp() {
 
     let subject = ica_vc.credential_subjects.first();
     assert_eq!(subject.verified_identities, expected_identities);
-    assert_eq!(subject.c2pa_asset, ia.signer_payload);
+    assert_eq!(&subject.c2pa_asset, ia.signer_payload());
 
     let tst_info = subject.time_stamp.as_ref().unwrap();
 
@@ -1067,7 +1067,7 @@ async fn valid_time_stamp() {
     assert_eq!(li.kind, LogKind::Success);
     assert_eq!(li.label, "(IA label goes here)");
     assert_eq!(li.description, "Time stamp validated");
-    assert_eq!(li.crate_name, "cawg-identity");
+    assert_eq!(li.crate_name, "c2pa");
     assert_eq!(
         li.validation_status.as_ref().unwrap(),
         "cawg.ica.time_stamp.validated"
@@ -1078,7 +1078,7 @@ async fn valid_time_stamp() {
     assert_eq!(li.kind, LogKind::Success);
     assert_eq!(li.label, "(IA label goes here)");
     assert_eq!(li.description, "ICA credential is valid");
-    assert_eq!(li.crate_name, "cawg-identity");
+    assert_eq!(li.crate_name, "c2pa");
     assert_eq!(
         li.validation_status.as_ref().unwrap(),
         "cawg.ica.credential_valid"
@@ -1138,7 +1138,7 @@ async fn invalid_time_stamp() {
 
     let subject = ica_vc.credential_subjects.first();
     assert_eq!(subject.verified_identities, expected_identities);
-    assert_eq!(subject.c2pa_asset, ia.signer_payload);
+    assert_eq!(&subject.c2pa_asset, ia.signer_payload());
 
     assert!(subject.time_stamp.is_none());
 
@@ -1149,7 +1149,7 @@ async fn invalid_time_stamp() {
     assert_eq!(li.kind, LogKind::Failure);
     assert_eq!(li.label, "(IA label goes here)");
     assert_eq!(li.description, "Time stamp does not match credential");
-    assert_eq!(li.crate_name, "cawg-identity");
+    assert_eq!(li.crate_name, "c2pa");
     assert_eq!(
         li.err_val.as_ref().unwrap(),
         "SignatureError(InvalidTimeStamp)"
@@ -1210,7 +1210,7 @@ async fn valid_from_missing() {
 
     let subject = ica_vc.credential_subjects.first();
     assert_eq!(subject.verified_identities, expected_identities);
-    assert_eq!(subject.c2pa_asset, ia.signer_payload);
+    assert_eq!(&subject.c2pa_asset, ia.signer_payload());
     assert!(ica_vc.valid_from.is_none());
     assert!(subject.time_stamp.is_none());
 
@@ -1221,7 +1221,7 @@ async fn valid_from_missing() {
     assert_eq!(li.kind, LogKind::Failure);
     assert_eq!(li.label, "(IA label goes here)");
     assert_eq!(li.description, "credential does not have a validFrom date");
-    assert_eq!(li.crate_name, "cawg-identity");
+    assert_eq!(li.crate_name, "c2pa");
     assert_eq!(
         li.err_val.as_ref().unwrap(),
         "SignatureError(MissingValidFromDate)"
@@ -1278,7 +1278,7 @@ async fn valid_from_in_future() {
 
     let subject = ica_vc.credential_subjects.first();
     assert_eq!(subject.verified_identities, expected_identities);
-    assert_eq!(subject.c2pa_asset, ia.signer_payload);
+    assert_eq!(&subject.c2pa_asset, ia.signer_payload());
     assert!(subject.time_stamp.is_none());
 
     let mut log_items = st.logged_items().iter();
@@ -1291,7 +1291,7 @@ async fn valid_from_in_future() {
         li.description,
         "credential's validFrom date is unacceptable (validFrom is after current date/time)"
     );
-    assert_eq!(li.crate_name, "cawg-identity");
+    assert_eq!(li.crate_name, "c2pa");
     assert_eq!(
         li.err_val.as_ref().unwrap(),
         "SignatureError(InvalidValidFromDate(\"validFrom is after current date/time\"))"
@@ -1350,7 +1350,7 @@ async fn valid_from_after_time_stamp() {
 
     let subject = ica_vc.credential_subjects.first();
     assert_eq!(subject.verified_identities, expected_identities);
-    assert_eq!(subject.c2pa_asset, ia.signer_payload);
+    assert_eq!(&subject.c2pa_asset, ia.signer_payload());
     assert!(subject.time_stamp.is_some());
 
     let mut log_items = st.logged_items().iter();
@@ -1360,7 +1360,7 @@ async fn valid_from_after_time_stamp() {
     assert_eq!(li.kind, LogKind::Success);
     assert_eq!(li.label, "(IA label goes here)");
     assert_eq!(li.description, "Time stamp validated");
-    assert_eq!(li.crate_name, "cawg-identity");
+    assert_eq!(li.crate_name, "c2pa");
     assert_eq!(
         li.validation_status.as_ref().unwrap(),
         "cawg.ica.time_stamp.validated"
@@ -1374,7 +1374,7 @@ async fn valid_from_after_time_stamp() {
         li.description,
         "credential's validFrom date is unacceptable (validFrom is after CAWG signature time stamp)"
     );
-    assert_eq!(li.crate_name, "cawg-identity");
+    assert_eq!(li.crate_name, "c2pa");
     assert_eq!(
         li.err_val.as_ref().unwrap(),
         "SignatureError(InvalidValidFromDate(\"validFrom is after CAWG signature time stamp\"))"
@@ -1442,7 +1442,7 @@ async fn valid_until_in_future() {
 
     let subject = ica_vc.credential_subjects.first();
     assert_eq!(subject.verified_identities, expected_identities);
-    assert_eq!(subject.c2pa_asset, ia.signer_payload);
+    assert_eq!(&subject.c2pa_asset, ia.signer_payload());
 
     let mut log_items = st.logged_items().iter();
 
@@ -1451,7 +1451,7 @@ async fn valid_until_in_future() {
     assert_eq!(li.kind, LogKind::Success);
     assert_eq!(li.label, "(IA label goes here)");
     assert_eq!(li.description, "ICA credential is valid");
-    assert_eq!(li.crate_name, "cawg-identity");
+    assert_eq!(li.crate_name, "c2pa");
     assert_eq!(
         li.validation_status.as_ref().unwrap(),
         "cawg.ica.credential_valid"
@@ -1511,7 +1511,7 @@ async fn valid_until_in_past() {
 
     let subject = ica_vc.credential_subjects.first();
     assert_eq!(subject.verified_identities, expected_identities);
-    assert_eq!(subject.c2pa_asset, ia.signer_payload);
+    assert_eq!(&subject.c2pa_asset, ia.signer_payload());
     assert!(subject.time_stamp.is_none());
 
     let mut log_items = st.logged_items().iter();
@@ -1524,7 +1524,7 @@ async fn valid_until_in_past() {
         li.description,
         "credential's validUntil date is unacceptable (validUntil is before current date/time)"
     );
-    assert_eq!(li.crate_name, "cawg-identity");
+    assert_eq!(li.crate_name, "c2pa");
     assert_eq!(
         li.err_val.as_ref().unwrap(),
         "SignatureError(InvalidValidUntilDate(\"validUntil is before current date/time\"))"
@@ -1601,7 +1601,7 @@ async fn signer_payload_mismatch() {
 
     let subject = ica_vc.credential_subjects.first();
     assert_eq!(subject.verified_identities, expected_identities);
-    assert_ne!(subject.c2pa_asset, ia.signer_payload);
+    assert_ne!(&subject.c2pa_asset, ia.signer_payload());
     assert!(subject.time_stamp.is_none());
 
     let mut log_items = st.logged_items().iter();
@@ -1611,7 +1611,7 @@ async fn signer_payload_mismatch() {
     assert_eq!(li.kind, LogKind::Failure);
     assert_eq!(li.label, "(IA label goes here)");
     assert_eq!(li.description, "c2paAsset does not match signer_payload");
-    assert_eq!(li.crate_name, "cawg-identity");
+    assert_eq!(li.crate_name, "c2pa");
     assert_eq!(
         li.err_val.as_ref().unwrap(),
         "SignatureError(SignerPayloadMismatch)"
