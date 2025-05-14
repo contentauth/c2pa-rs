@@ -14,7 +14,6 @@ json_api = ["c2pa/v1_api"]
 
 [dependencies]
 tokio = { version = "1.36", features = ["rt-multi-thread","rt"] }
-cawg-identity = { path = "../cawg_identity" }
 c2pa = { path = "../sdk", version = "0.51.0", features = [
     "file_io",
     "add_thumbnails",
@@ -32,5 +31,3 @@ tempfile = "3.7.0"
 
 [build-dependencies]
 cbindgen = "0.28"
-
-
