@@ -159,6 +159,10 @@ zeroize = { version = "1.8", features = ["zeroize_derive"] }
 zip = { version = "2.4.1", default-features = false }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
+const-oid = "0.9.6"
+der = "0.7.9"
+num-bigint-dig = "0.8.4"
+pkcs1 = "0.7.5"
 rsa = { version = "0.9.6", features = ["sha2"] }
 spki = "0.7.3"
 
