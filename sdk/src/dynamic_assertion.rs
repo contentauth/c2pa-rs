@@ -17,7 +17,7 @@ use std::slice::Iter;
 
 use async_trait::async_trait;
 
-// publish PostValidator trait from this module
+// Publish PostValidator trait from this module.
 pub use crate::reader::{AsyncPostValidator, PostValidator};
 use crate::{hashed_uri::HashedUri, Result};
 
