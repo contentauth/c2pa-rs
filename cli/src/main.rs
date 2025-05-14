@@ -26,8 +26,10 @@ use std::{
 };
 
 use anyhow::{anyhow, bail, Context, Result};
-use c2pa::{Builder, ClaimGeneratorInfo, Error, Ingredient, ManifestDefinition, Reader, Signer};
-use cawg_identity::validator::CawgValidator;
+use c2pa::{
+    identity::validator::CawgValidator, Builder, ClaimGeneratorInfo, Error, Ingredient,
+    ManifestDefinition, Reader, Signer,
+};
 use clap::{Parser, Subcommand};
 use log::debug;
 use serde::Deserialize;

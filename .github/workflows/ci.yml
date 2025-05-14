@@ -282,10 +282,6 @@ jobs:
         run: wasm-pack test --chrome --headless
         working-directory: ./sdk
 
-      - name: Run Wasm tests (cawg-identity)
-        run: wasm-pack test --chrome --headless
-        working-directory: ./cawg_identity
-
   tests-wasi:
     name: Unit tests (WASI)
     if: |
@@ -334,7 +330,7 @@ jobs:
           CC: /opt/wasi-sdk/bin/clang
           WASI_SDK_PATH: /opt/wasi-sdk
           RUST_MIN_STACK: 16777216
-        run: cargo +nightly test --target wasm32-wasip2 -p c2pa -p c2pa-crypto -p cawg-identity -p c2patool --all-features
+        run: cargo +nightly test --target wasm32-wasip2 -p c2pa -p c2pa-crypto -p c2patool --all-features
 
   test-direct-minimal-versions:
     name: Unit tests with minimum versions of direct dependencies
