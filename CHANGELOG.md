@@ -6,6 +6,19 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 Since version 0.36.2, the format of this changelog is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.50.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.49.5...c2pa-v0.50.0)
+_14 May 2025_
+
+### Added
+
+* Adds c_api for dynamic library releases ([#1047](https://github.com/contentauth/c2pa-rs/pull/1047))
+* SVG thumbnails with a fix to the ingredient thumbnail format detection ([#722](https://github.com/contentauth/c2pa-rs/pull/722))
+* *(sdk)* Support setting the Ingredient manifest_data field for remote manifests using Builder ([#1091](https://github.com/contentauth/c2pa-rs/pull/1091))
+
+### Fixed
+
+* Ingredient from_stream/memory not loading remote manifests ([#1061](https://github.com/contentauth/c2pa-rs/pull/1061))
+
 ## [0.49.5](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.49.4...c2pa-v0.49.5)
 _25 April 2025_
 
