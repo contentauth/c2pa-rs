@@ -154,6 +154,7 @@ image = { version = "0.24.7", default-features = false, features = [
 [target.'cfg(target_os = "wasi")'.dependencies]
 getrandom = "0.2.7"
 wasi = {version = "0.14", optional = true}
+wstd = "0.5"
 
 [target.'cfg(all(target_arch = "wasm32",not(target_os = "wasi")))'.dependencies]
 chrono = { version = "0.4.39", default-features = false, features = [
@@ -196,6 +197,3 @@ wasm-bindgen-test = "0.3.45"
 actix = "0.13.1"
 httpmock = "0.7.0"
 tokio = { version = "1.44.2", features = ["full"] }
-
-[target.'cfg(target_os = "wasi")'.dev-dependencies]
-wstd = "0.5"
