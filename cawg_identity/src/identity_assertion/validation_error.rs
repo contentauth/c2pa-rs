@@ -11,8 +11,6 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use std::fmt::Debug;
-
 /// Describes the ways in which a CAWG identity assertion can fail validation as
 /// described in [§7. Validating the identity assertion].
 ///
@@ -22,44 +20,5 @@ use std::fmt::Debug;
 ///
 /// [§7. Validating the identity assertion]: https://creator-assertions.github.io/identity/1.0-draft/#_validating_the_identity_assertion
 /// [`SignatureVerifier::Error`]: crate::SignatureVerifier::Error
-#[derive(Clone, Debug, Eq, thiserror::Error, PartialEq)]
-pub enum ValidationError<SignatureError> {
-    /// The referenced assertion could not be found in the claim.
-    #[error("no assertion with the label {0:#?} in the claim")]
-    AssertionNotInClaim(String),
-
-    /// The referenced assertion exists in the claim, but the hash does not
-    /// match.
-    #[error("the assertion with the label {0:#?} is not the same as in the claim")]
-    AssertionMismatch(String),
-
-    /// The referenced assertion was referenced more than once by the identity
-    /// assertion.
-    #[error("the named with the label {0:#?} is referenced multiple times")]
-    DuplicateAssertionReference(String),
-
-    /// No hard-binding assertion was referenced by the identity assertion.
-    #[error("no hard binding assertion is referenced")]
-    NoHardBindingAssertion,
-
-    /// The `sig_type` field is not recognized.
-    #[error("unable to parse a signature of type {0:#?}")]
-    UnknownSignatureType(String),
-
-    /// The signature is not valid.
-    #[error("signature is invalid")]
-    SignatureMismatch,
-
-    /// The `pad1` or `pad2` fields contain values other than 0x00 bytes.
-    #[error("invalid padding")]
-    InvalidPadding,
-
-    /// Signature-specific error.
-    #[error(transparent)]
-    SignatureError(#[from] SignatureError),
-
-    /// An unexpected internal error occured while parsing the identity
-    /// assertion.
-    #[error("internal error ({0})")]
-    InternalError(String),
-}
+#[deprecated(since = "0.14.0", note = "Moved to c2pa::identity::ValidationError")]
+pub use c2pa::identity::ValidationError;

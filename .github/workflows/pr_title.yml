@@ -46,7 +46,6 @@ jobs:
           #
           #    * sdk (The primary C2PA Rust SDK)
           #    * c2patool
-          #    * cawg_identity
           #    * crypto
           #    * export_schema
           #    * make_test_images

@@ -17,13 +17,13 @@
 mod async_identity_assertion_signer;
 pub use async_identity_assertion_signer::AsyncIdentityAssertionSigner;
 
-pub(crate) mod credential_holder;
+mod credential_holder;
 pub use credential_holder::{AsyncCredentialHolder, CredentialHolder};
 
 mod error;
 pub use error::IdentityBuilderError;
 
-pub(crate) mod identity_assertion_builder;
+mod identity_assertion_builder;
 pub use identity_assertion_builder::{AsyncIdentityAssertionBuilder, IdentityAssertionBuilder};
 
 mod identity_assertion_signer;

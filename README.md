@@ -26,10 +26,11 @@ You can also read the documentation directly in GitHub:
 
 ## Key features
 
-[The c2pa-rs repository](https://github.com/contentauth/c2pa-rs) implements a subset of the [C2PA technical specification](https://c2pa.org/specifications/specifications/2.1/specs/C2PA_Specification.html) in the Rust programming language.
+The [`c2pa` crate](https://crates.io/crates/c2pa) implements a subset of the [C2PA technical specification](https://c2pa.org/specifications/specifications/2.1/specs/C2PA_Specification.html) and the [CAWG identity assertion specification](https://cawg.io/identity) in the Rust programming language.
 
 The library enables a desktop, mobile, or embedded application to:
 * Create and sign C2PA [claims](https://c2pa.org/specifications/specifications/2.1/specs/C2PA_Specification.html#_claims) and [manifests](https://c2pa.org/specifications/specifications/2.1/specs/C2PA_Specification.html#_manifests).
+* Create, sign, and validate [CAWG identity assertions](https://cawg.io/identity) in C2PA manifests.
 * Embed manifests in [supported file formats](docs/supported-formats.md).
 * Parse and validate manifests found in [supported file formats](docs/supported-formats.md).
 
@@ -47,11 +48,18 @@ This is a beta release (version 0.x.x) of the project. The minor version number 
 
 NOTE: The current release includes a new API that replaces old methods of reading and writing C2PA data, which are deprecated.  See the [release notes](https://opensource.contentauthenticity.org/docs/rust-sdk/docs/release-notes) for more information. 
 
+### CAWG identity assertion: Known limitations
+
+The SDK does not currently support the following optional fields from the CAWG identity assertion:
+* `expected_partial_claim`
+* `expected_claim_generator`
+* `expected_countersigners`
+
 ### Rust language requirement (MSRV)
 
 The `c2pa` crate requires Rust version 1.82.0 or newer. When a newer version of Rust becomes required, a new minor (0.x.0) version of this crate will be released.
 
-### Contributions and feedback
+## Contributions and feedback
 
 We welcome contributions to this project.  For information on contributing, providing feedback, and about ongoing work, see [Contributing](https://github.com/contentauth/c2pa-rs/blob/main/CONTRIBUTING.md).  For additional information on testing, see [Contributing to the project](https://github.com/contentauth/c2pa-rs/blob/main/docs/project-contributions.md).
 
