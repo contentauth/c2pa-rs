@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.17.0](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.16.5...c2patool-v0.17.0)
+_14 May 2025_
+
+### Added
+
+* [**breaking**] Merge CAWG identity SDK into main C2PA crate ([#1089](https://github.com/contentauth/c2pa-rs/pull/1089))
+
+### Documented
+
+* Replace old c2patool release notes with CHANGELOG ([#1063](https://github.com/contentauth/c2pa-rs/pull/1063))
+
 ## [0.16.6](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.16.5...c2patool-v0.16.6)
 _14 May 2025_
 
