@@ -48,11 +48,18 @@ This is a beta release (version 0.x.x) of the project. The minor version number 
 
 NOTE: The current release includes a new API that replaces old methods of reading and writing C2PA data, which are deprecated.  See the [release notes](https://opensource.contentauthenticity.org/docs/rust-sdk/docs/release-notes) for more information. 
 
+### CAWG identity assertion: Known limitations
+
+The SDK does not currently support the following optional fields from the CAWG identity assertion:
+* `expected_partial_claim`
+* `expected_claim_generator`
+* `expected_countersigners`
+
 ### Rust language requirement (MSRV)
 
 The `c2pa` crate requires Rust version 1.82.0 or newer. When a newer version of Rust becomes required, a new minor (0.x.0) version of this crate will be released.
 
-### Contributions and feedback
+## Contributions and feedback
 
 We welcome contributions to this project.  For information on contributing, providing feedback, and about ongoing work, see [Contributing](https://github.com/contentauth/c2pa-rs/blob/main/CONTRIBUTING.md).  For additional information on testing, see [Contributing to the project](https://github.com/contentauth/c2pa-rs/blob/main/docs/project-contributions.md).
 
