@@ -104,7 +104,7 @@ If `scope` is omitted, the parenthesis must also be omitted.
 
 The following items are not enforced, but we ask that you observe the following preferences in `description`:
 
-* The entire description should be written and capitalized as an English-language sentence, except (as noted earlier) that the trailing period must be omitted.
+* The entire description should be written and capitalized as an English-language sentence, except that the trailing period should be omitted.
 * Any acronyms such as JSON or YAML should be capitalized as per common usage in English-language sentences.
 
 The "body" of the commit message (everything after the PR title) is not subject to any restrictions and may be empty. GitHub, by default, will create a bullet list of the commits that went into the PR. It is _recommended,_ but not enforced, that you delete this list (because it typically contains a lot of signal noise) and either replace it with additional context of why you made the change or leave it empty.
