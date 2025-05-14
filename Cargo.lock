@@ -895,7 +895,6 @@ dependencies = [
 name = "cawg-identity"
 version = "0.13.0"
 dependencies = [
- "anyhow",
  "async-trait",
  "base64 0.22.1",
  "c2pa",
@@ -906,7 +905,6 @@ dependencies = [
  "coset",
  "ed25519-dalek",
  "hex-literal",
- "httpmock",
  "iref",
  "multibase",
  "non-empty-string",
