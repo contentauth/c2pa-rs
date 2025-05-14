@@ -30,13 +30,5 @@ all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
 [features]
-json_schema = ["dep:schemars"]
-rust_native_crypto = [
-    "dep:const-oid",
-    "dep:der",
-    "dep:ed25519-dalek",
-    "dep:num-bigint-dig",
-    "dep:pkcs1",
-    "dep:rsa",
-    "dep:spki",
-]
+json_schema = []
+rust_native_crypto = []
