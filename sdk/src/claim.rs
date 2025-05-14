@@ -63,7 +63,7 @@ use crate::{
 const BUILD_HASH_ALG: &str = "sha256";
 const BUILD_VER_SUPPORT: usize = 2;
 
-/// JSON structure representing an Assertion reference in a Claim's "assertions" list
+/// JSON structure representing an Assertion reference in a Claim's "assertions" list.
 use HashedUri as C2PAAssertion;
 
 const GH_FULL_VERSION_LIST: &str = "Sec-CH-UA-Full-Version-List";
