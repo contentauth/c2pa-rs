@@ -6,6 +6,17 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 The format of this changelog is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.9.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-crypto-v0.8.2...c2pa-crypto-v0.9.0)
+_14 May 2025_
+
+### Added
+
+* [**breaking**] Improve error handling for CAWG ICA validation ([#1011](https://github.com/contentauth/c2pa-rs/pull/1011))
+
+### Fixed
+
+* Chore to fix unexpected build error
+
 ## [0.8.2](https://github.com/contentauth/c2pa-rs/compare/c2pa-crypto-v0.8.1...c2pa-crypto-v0.8.2)
 _09 April 2025_
 
