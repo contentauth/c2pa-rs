@@ -10,8 +10,7 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use c2pa::{Ingredient, Manifest, Reader};
-use cawg_identity::validator::CawgValidator;
+use c2pa::{identity::validator::CawgValidator, Ingredient, Manifest, Reader};
 use tokio::runtime::Runtime;
 
 use crate::{Error, Result, SignerInfo};
