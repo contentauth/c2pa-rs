@@ -11,12 +11,13 @@
 // specific language governing permissions and limitations under
 // each license.
 
+//! Implements a subset of the [CAWG identity assertion specification](https://cawg.io/identity/1.1/).
+
 #![deny(clippy::expect_used)]
 #![deny(clippy::panic)]
 #![deny(clippy::unwrap_used)]
 #![deny(missing_docs)]
 #![deny(warnings)]
-#![doc = include_str!("README.md")]
 
 pub mod builder;
 pub mod claim_aggregation;
