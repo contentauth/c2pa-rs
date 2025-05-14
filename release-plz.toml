@@ -53,10 +53,12 @@ name = "c2pa-status-tracker"
 name = "c2pa-crypto"
 
 [[package]]
-name = "cawg-identity"
+name = "c2patool"
 
 [[package]]
-name = "c2patool"
+name = "c2pa-c"
+publish = false
+release = false
 
 [[package]]
 name = "export_schema"

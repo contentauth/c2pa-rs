@@ -807,7 +807,6 @@ name = "c2pa-c"
 version = "0.49.5"
 dependencies = [
  "c2pa",
- "cawg-identity",
  "cbindgen",
  "scopeguard",
  "serde",
@@ -906,39 +905,6 @@ dependencies = [
  "url",
  "wasi 0.14.2+wasi-0.2.4",
  "wstd",
-]
-
-[[package]]
-name = "cawg-identity"
-version = "0.14.0"
-dependencies = [
- "async-trait",
- "base64 0.22.1",
- "c2pa",
- "c2pa-crypto",
- "c2pa-status-tracker",
- "chrono",
- "ciborium",
- "coset",
- "ed25519-dalek",
- "hex-literal",
- "iref",
- "multibase",
- "non-empty-string",
- "nonempty-collections",
- "rand 0.8.5",
- "regex",
- "reqwest",
- "serde",
- "serde_bytes",
- "serde_json",
- "static-iref",
- "thiserror 1.0.69",
- "tokio",
- "wasm-bindgen",
- "wasm-bindgen-test",
- "wstd",
- "zeroize",
 ]
 
 [[package]]
