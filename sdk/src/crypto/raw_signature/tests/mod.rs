@@ -11,6 +11,12 @@
 // specific language governing permissions and limitations under
 // each license.
 
+//! Tests are grouped here because the same test should pass using the same test data regardless of which implementation is used.
+
+#![allow(clippy::expect_used)]
+#![allow(clippy::panic)]
+#![allow(clippy::unwrap_used)]
+
 mod async_signers;
 #[cfg(target_arch = "wasm32")]
 mod async_validators;

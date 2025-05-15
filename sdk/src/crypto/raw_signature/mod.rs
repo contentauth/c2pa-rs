@@ -30,6 +30,9 @@ pub use signer::{
 mod signing_alg;
 pub use signing_alg::{SigningAlg, UnknownAlgorithmError};
 
+#[cfg(test)]
+mod tests;
+
 mod validator;
 #[cfg(target_arch = "wasm32")]
 pub(crate) use validator::async_validator_for_sig_and_hash_algs;

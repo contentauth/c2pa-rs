@@ -22,8 +22,8 @@ use crate::crypto::raw_signature::{
 // #[cfg_attr(all(target_arch = "wasm32", not(target_os = "wasi")), wasm_bindgen_test)]
 #[cfg(not(target_arch = "wasm32"))]
 fn es256() {
-    let cert_chain = include_bytes!("../fixtures/raw_signature/es256.pub");
-    let private_key = include_bytes!("../fixtures/raw_signature/es256.priv");
+    let cert_chain = include_bytes!("../../tests/fixtures/raw_signature/es256.pub");
+    let private_key = include_bytes!("../../tests/fixtures/raw_signature/es256.priv");
 
     let signer =
         signer_from_cert_chain_and_private_key(cert_chain, private_key, SigningAlg::Es256, None)
@@ -35,7 +35,7 @@ fn es256() {
     println!("signature len = {}", signature.len());
     assert!(signature.len() <= signer.reserve_size());
 
-    let pub_key = include_bytes!("../fixtures/raw_signature/es256.pub_key");
+    let pub_key = include_bytes!("../../tests/fixtures/raw_signature/es256.pub_key");
 
     let validator = validator_for_signing_alg(SigningAlg::Es256).unwrap();
     validator.validate(&signature, data, pub_key).unwrap();
@@ -45,8 +45,8 @@ fn es256() {
 // #[cfg_attr(all(target_arch = "wasm32", not(target_os = "wasi")), wasm_bindgen_test)]
 #[cfg(not(target_arch = "wasm32"))]
 fn es384() {
-    let cert_chain = include_bytes!("../fixtures/raw_signature/es384.pub");
-    let private_key = include_bytes!("../fixtures/raw_signature/es384.priv");
+    let cert_chain = include_bytes!("../../tests/fixtures/raw_signature/es384.pub");
+    let private_key = include_bytes!("../../tests/fixtures/raw_signature/es384.priv");
 
     let signer =
         signer_from_cert_chain_and_private_key(cert_chain, private_key, SigningAlg::Es384, None)
@@ -58,7 +58,7 @@ fn es384() {
     println!("signature len = {}", signature.len());
     assert!(signature.len() <= signer.reserve_size());
 
-    let pub_key = include_bytes!("../fixtures/raw_signature/es384.pub_key");
+    let pub_key = include_bytes!("../../tests/fixtures/raw_signature/es384.pub_key");
 
     let validator = validator_for_signing_alg(SigningAlg::Es384).unwrap();
     validator.validate(&signature, data, pub_key).unwrap();
@@ -68,8 +68,8 @@ fn es384() {
 // #[cfg_attr(all(target_arch = "wasm32", not(target_os = "wasi")), wasm_bindgen_test)]
 #[cfg(not(target_arch = "wasm32"))]
 fn es512() {
-    let cert_chain = include_bytes!("../fixtures/raw_signature/es512.pub");
-    let private_key = include_bytes!("../fixtures/raw_signature/es512.priv");
+    let cert_chain = include_bytes!("../../tests/fixtures/raw_signature/es512.pub");
+    let private_key = include_bytes!("../../tests/fixtures/raw_signature/es512.priv");
 
     let signer =
         signer_from_cert_chain_and_private_key(cert_chain, private_key, SigningAlg::Es512, None)
@@ -81,7 +81,7 @@ fn es512() {
     println!("signature len = {}", signature.len());
     assert!(signature.len() <= signer.reserve_size());
 
-    let pub_key = include_bytes!("../fixtures/raw_signature/es512.pub_key");
+    let pub_key = include_bytes!("../../tests/fixtures/raw_signature/es512.pub_key");
 
     let validator = validator_for_signing_alg(SigningAlg::Es512).unwrap();
     validator.validate(&signature, data, pub_key).unwrap();
@@ -93,8 +93,8 @@ fn es512() {
     wasm_bindgen_test
 )]
 fn ed25519() {
-    let cert_chain = include_bytes!("../fixtures/raw_signature/ed25519.pub");
-    let private_key = include_bytes!("../fixtures/raw_signature/ed25519.priv");
+    let cert_chain = include_bytes!("../../tests/fixtures/raw_signature/ed25519.pub");
+    let private_key = include_bytes!("../../tests/fixtures/raw_signature/ed25519.priv");
 
     let signer =
         signer_from_cert_chain_and_private_key(cert_chain, private_key, SigningAlg::Ed25519, None)
@@ -106,7 +106,7 @@ fn ed25519() {
     println!("signature len = {}", signature.len());
     assert!(signature.len() <= signer.reserve_size());
 
-    let pub_key = include_bytes!("../fixtures/raw_signature/ed25519.pub_key");
+    let pub_key = include_bytes!("../../tests/fixtures/raw_signature/ed25519.pub_key");
 
     let validator = validator_for_signing_alg(SigningAlg::Ed25519).unwrap();
     validator.validate(&signature, data, pub_key).unwrap();
@@ -116,8 +116,8 @@ fn ed25519() {
 // #[cfg_attr(all(target_arch = "wasm32", not(target_os = "wasi")),
 // wasm_bindgen_test)]
 fn ps256() {
-    let cert_chain = include_bytes!("../fixtures/raw_signature/ps256.pub");
-    let private_key = include_bytes!("../fixtures/raw_signature/ps256.priv");
+    let cert_chain = include_bytes!("../../tests/fixtures/raw_signature/ps256.pub");
+    let private_key = include_bytes!("../../tests/fixtures/raw_signature/ps256.priv");
 
     let signer =
         signer_from_cert_chain_and_private_key(cert_chain, private_key, SigningAlg::Ps256, None)
@@ -129,7 +129,7 @@ fn ps256() {
     println!("signature len = {}", signature.len());
     assert!(signature.len() <= signer.reserve_size());
 
-    let pub_key = include_bytes!("../fixtures/raw_signature/ps256.pub_key");
+    let pub_key = include_bytes!("../../tests/fixtures/raw_signature/ps256.pub_key");
 
     let validator = validator_for_signing_alg(SigningAlg::Ps256).unwrap();
     validator.validate(&signature, data, pub_key).unwrap();
@@ -139,8 +139,8 @@ fn ps256() {
 // #[cfg_attr(all(target_arch = "wasm32", not(target_os = "wasi")),
 // wasm_bindgen_test)]
 fn ps384() {
-    let cert_chain = include_bytes!("../fixtures/raw_signature/ps384.pub");
-    let private_key = include_bytes!("../fixtures/raw_signature/ps384.priv");
+    let cert_chain = include_bytes!("../../tests/fixtures/raw_signature/ps384.pub");
+    let private_key = include_bytes!("../../tests/fixtures/raw_signature/ps384.priv");
 
     let signer =
         signer_from_cert_chain_and_private_key(cert_chain, private_key, SigningAlg::Ps384, None)
@@ -152,7 +152,7 @@ fn ps384() {
     println!("signature len = {}", signature.len());
     assert!(signature.len() <= signer.reserve_size());
 
-    let pub_key = include_bytes!("../fixtures/raw_signature/ps384.pub_key");
+    let pub_key = include_bytes!("../../tests/fixtures/raw_signature/ps384.pub_key");
 
     let validator = validator_for_signing_alg(SigningAlg::Ps384).unwrap();
     validator.validate(&signature, data, pub_key).unwrap();
@@ -162,8 +162,8 @@ fn ps384() {
 // #[cfg_attr(all(target_arch = "wasm32", not(target_os = "wasi")),
 // wasm_bindgen_test)]
 fn ps512() {
-    let cert_chain = include_bytes!("../fixtures/raw_signature/ps512.pub");
-    let private_key = include_bytes!("../fixtures/raw_signature/ps512.priv");
+    let cert_chain = include_bytes!("../../tests/fixtures/raw_signature/ps512.pub");
+    let private_key = include_bytes!("../../tests/fixtures/raw_signature/ps512.priv");
 
     let signer =
         signer_from_cert_chain_and_private_key(cert_chain, private_key, SigningAlg::Ps512, None)
@@ -175,7 +175,7 @@ fn ps512() {
     println!("signature len = {}", signature.len());
     assert!(signature.len() <= signer.reserve_size());
 
-    let pub_key = include_bytes!("../fixtures/raw_signature/ps512.pub_key");
+    let pub_key = include_bytes!("../../tests/fixtures/raw_signature/ps512.pub_key");
 
     let validator = validator_for_signing_alg(SigningAlg::Ps512).unwrap();
     validator.validate(&signature, data, pub_key).unwrap();

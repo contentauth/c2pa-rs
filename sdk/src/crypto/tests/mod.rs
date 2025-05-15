@@ -28,5 +28,4 @@ mod ocsp;
 #[cfg(not(target_arch = "wasm32"))]
 mod openssl;
 
-mod raw_signature;
 mod signing_alg;

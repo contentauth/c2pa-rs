@@ -31,8 +31,8 @@ const SAMPLE_DATA: &[u8] = b"some sample content to sign";
     wasm_bindgen_test
 )]
 fn es256() {
-    let signature = include_bytes!("../fixtures/raw_signature/es256.raw_sig");
-    let pub_key = include_bytes!("../fixtures/raw_signature/es256.pub_key");
+    let signature = include_bytes!("../../tests/fixtures/raw_signature/es256.raw_sig");
+    let pub_key = include_bytes!("../../tests/fixtures/raw_signature/es256.pub_key");
 
     let validator = validator_for_signing_alg(SigningAlg::Es256).unwrap();
 
@@ -45,11 +45,11 @@ fn es256() {
     wasm_bindgen_test
 )]
 fn es256_bad_signature() {
-    let mut signature = include_bytes!("../fixtures/raw_signature/es256.raw_sig").to_vec();
+    let mut signature = include_bytes!("../../tests/fixtures/raw_signature/es256.raw_sig").to_vec();
     assert_ne!(signature[10], 10);
     signature[10] = 10;
 
-    let pub_key = include_bytes!("../fixtures/raw_signature/es256.pub_key");
+    let pub_key = include_bytes!("../../tests/fixtures/raw_signature/es256.pub_key");
 
     let validator = validator_for_signing_alg(SigningAlg::Es256).unwrap();
 
@@ -67,8 +67,8 @@ fn es256_bad_signature() {
     wasm_bindgen_test
 )]
 fn es256_bad_data() {
-    let signature = include_bytes!("../fixtures/raw_signature/es256.raw_sig");
-    let pub_key = include_bytes!("../fixtures/raw_signature/es256.pub_key");
+    let signature = include_bytes!("../../tests/fixtures/raw_signature/es256.raw_sig");
+    let pub_key = include_bytes!("../../tests/fixtures/raw_signature/es256.pub_key");
 
     let mut data = SAMPLE_DATA.to_vec();
     data[10] = 0;
@@ -87,8 +87,8 @@ fn es256_bad_data() {
     wasm_bindgen_test
 )]
 fn es384() {
-    let signature = include_bytes!("../fixtures/raw_signature/es384.raw_sig");
-    let pub_key = include_bytes!("../fixtures/raw_signature/es384.pub_key");
+    let signature = include_bytes!("../../tests/fixtures/raw_signature/es384.raw_sig");
+    let pub_key = include_bytes!("../../tests/fixtures/raw_signature/es384.pub_key");
 
     let validator = validator_for_signing_alg(SigningAlg::Es384).unwrap();
 
@@ -99,8 +99,8 @@ fn es384() {
 // #[cfg_attr(all(target_arch = "wasm32", not(target_os = "wasi")),
 // wasm_bindgen_test)] // ES512 not implemented
 fn es512() {
-    let signature = include_bytes!("../fixtures/raw_signature/es512.raw_sig");
-    let pub_key = include_bytes!("../fixtures/raw_signature/es512.pub_key");
+    let signature = include_bytes!("../../tests/fixtures/raw_signature/es512.raw_sig");
+    let pub_key = include_bytes!("../../tests/fixtures/raw_signature/es512.pub_key");
 
     let validator = validator_for_signing_alg(SigningAlg::Es512).unwrap();
 
@@ -113,8 +113,8 @@ fn es512() {
     wasm_bindgen_test
 )]
 fn ed25519() {
-    let signature = include_bytes!("../fixtures/raw_signature/ed25519.raw_sig");
-    let pub_key = include_bytes!("../fixtures/raw_signature/ed25519.pub_key");
+    let signature = include_bytes!("../../tests/fixtures/raw_signature/ed25519.raw_sig");
+    let pub_key = include_bytes!("../../tests/fixtures/raw_signature/ed25519.pub_key");
 
     let validator = validator_for_signing_alg(SigningAlg::Ed25519).unwrap();
 
@@ -127,8 +127,8 @@ fn ed25519() {
     wasm_bindgen_test
 )]
 fn ed25519_bad_data() {
-    let signature = include_bytes!("../fixtures/raw_signature/ed25519.raw_sig");
-    let pub_key = include_bytes!("../fixtures/raw_signature/ed25519.pub_key");
+    let signature = include_bytes!("../../tests/fixtures/raw_signature/ed25519.raw_sig");
+    let pub_key = include_bytes!("../../tests/fixtures/raw_signature/ed25519.pub_key");
 
     let mut data = SAMPLE_DATA.to_vec();
     data[5] = 10;
@@ -148,8 +148,8 @@ fn ed25519_bad_data() {
     wasm_bindgen_test
 )]
 fn ps256() {
-    let signature = include_bytes!("../fixtures/raw_signature/ps256.raw_sig");
-    let pub_key = include_bytes!("../fixtures/raw_signature/ps256.pub_key");
+    let signature = include_bytes!("../../tests/fixtures/raw_signature/ps256.raw_sig");
+    let pub_key = include_bytes!("../../tests/fixtures/raw_signature/ps256.pub_key");
 
     let validator = validator_for_signing_alg(SigningAlg::Ps256).unwrap();
 
@@ -162,11 +162,11 @@ fn ps256() {
     wasm_bindgen_test
 )]
 fn ps256_bad_signature() {
-    let mut signature = include_bytes!("../fixtures/raw_signature/ps256.raw_sig").to_vec();
+    let mut signature = include_bytes!("../../tests/fixtures/raw_signature/ps256.raw_sig").to_vec();
     assert_ne!(signature[10], 10);
     signature[10] = 10;
 
-    let pub_key = include_bytes!("../fixtures/raw_signature/ps256.pub_key");
+    let pub_key = include_bytes!("../../tests/fixtures/raw_signature/ps256.pub_key");
 
     let validator = validator_for_signing_alg(SigningAlg::Ps256).unwrap();
 
@@ -184,8 +184,8 @@ fn ps256_bad_signature() {
     wasm_bindgen_test
 )]
 fn ps256_bad_data() {
-    let signature = include_bytes!("../fixtures/raw_signature/ps256.raw_sig");
-    let pub_key = include_bytes!("../fixtures/raw_signature/ps256.pub_key");
+    let signature = include_bytes!("../../tests/fixtures/raw_signature/ps256.raw_sig");
+    let pub_key = include_bytes!("../../tests/fixtures/raw_signature/ps256.pub_key");
 
     let mut data = SAMPLE_DATA.to_vec();
     data[10] = 0;
@@ -204,8 +204,8 @@ fn ps256_bad_data() {
     wasm_bindgen_test
 )]
 fn ps384() {
-    let signature = include_bytes!("../fixtures/raw_signature/ps384.raw_sig");
-    let pub_key = include_bytes!("../fixtures/raw_signature/ps384.pub_key");
+    let signature = include_bytes!("../../tests/fixtures/raw_signature/ps384.raw_sig");
+    let pub_key = include_bytes!("../../tests/fixtures/raw_signature/ps384.pub_key");
 
     let validator = validator_for_signing_alg(SigningAlg::Ps384).unwrap();
 
@@ -218,8 +218,8 @@ fn ps384() {
     wasm_bindgen_test
 )]
 fn ps512() {
-    let signature = include_bytes!("../fixtures/raw_signature/ps512.raw_sig");
-    let pub_key = include_bytes!("../fixtures/raw_signature/ps512.pub_key");
+    let signature = include_bytes!("../../tests/fixtures/raw_signature/ps512.raw_sig");
+    let pub_key = include_bytes!("../../tests/fixtures/raw_signature/ps512.pub_key");
 
     let validator = validator_for_signing_alg(SigningAlg::Ps512).unwrap();
 
@@ -247,8 +247,8 @@ const SHA1_OID: Oid = bcder::Oid(OctetString::from_static(&[43, 14, 3, 2, 26]));
     wasm_bindgen_test
 )]
 fn legacy_rs256() {
-    let signature = include_bytes!("../fixtures/raw_signature/legacy/rs256.raw_sig");
-    let pub_key = include_bytes!("../fixtures/raw_signature/legacy/rs256.pub_key");
+    let signature = include_bytes!("../../tests/fixtures/raw_signature/legacy/rs256.raw_sig");
+    let pub_key = include_bytes!("../../tests/fixtures/raw_signature/legacy/rs256.pub_key");
 
     let validator = validator_for_sig_and_hash_algs(&RSA_OID, &SHA256_OID).unwrap();
 
@@ -261,11 +261,12 @@ fn legacy_rs256() {
     wasm_bindgen_test
 )]
 fn legacy_rs256_bad_signature() {
-    let mut signature = include_bytes!("../fixtures/raw_signature/legacy/rs256.raw_sig").to_vec();
+    let mut signature =
+        include_bytes!("../../tests/fixtures/raw_signature/legacy/rs256.raw_sig").to_vec();
     assert_ne!(signature[10], 10);
     signature[10] = 10;
 
-    let pub_key = include_bytes!("../fixtures/raw_signature/legacy/rs256.pub_key");
+    let pub_key = include_bytes!("../../tests/fixtures/raw_signature/legacy/rs256.pub_key");
 
     let validator = validator_for_sig_and_hash_algs(&RSA_OID, &SHA256_OID).unwrap();
 
@@ -283,8 +284,8 @@ fn legacy_rs256_bad_signature() {
     wasm_bindgen_test
 )]
 fn legacy_rs256_bad_data() {
-    let signature = include_bytes!("../fixtures/raw_signature/legacy/rs256.raw_sig");
-    let pub_key = include_bytes!("../fixtures/raw_signature/legacy/rs256.pub_key");
+    let signature = include_bytes!("../../tests/fixtures/raw_signature/legacy/rs256.raw_sig");
+    let pub_key = include_bytes!("../../tests/fixtures/raw_signature/legacy/rs256.pub_key");
 
     let mut data = SAMPLE_DATA.to_vec();
     data[10] = 0;
@@ -303,8 +304,8 @@ fn legacy_rs256_bad_data() {
     wasm_bindgen_test
 )]
 fn rs384() {
-    let signature = include_bytes!("../fixtures/raw_signature/legacy/rs384.raw_sig");
-    let pub_key = include_bytes!("../fixtures/raw_signature/legacy/rs384.pub_key");
+    let signature = include_bytes!("../../tests/fixtures/raw_signature/legacy/rs384.raw_sig");
+    let pub_key = include_bytes!("../../tests/fixtures/raw_signature/legacy/rs384.pub_key");
 
     let validator = validator_for_sig_and_hash_algs(&RSA_OID, &SHA384_OID).unwrap();
 
@@ -317,8 +318,8 @@ fn rs384() {
     wasm_bindgen_test
 )]
 fn rs512() {
-    let signature = include_bytes!("../fixtures/raw_signature/legacy/rs512.raw_sig");
-    let pub_key = include_bytes!("../fixtures/raw_signature/legacy/rs512.pub_key");
+    let signature = include_bytes!("../../tests/fixtures/raw_signature/legacy/rs512.raw_sig");
+    let pub_key = include_bytes!("../../tests/fixtures/raw_signature/legacy/rs512.pub_key");
 
     let validator = validator_for_sig_and_hash_algs(&RSA_OID, &SHA512_OID).unwrap();
 
@@ -330,8 +331,8 @@ fn rs512() {
 // implemented
 #[cfg(not(target_arch = "wasm32"))]
 fn sha1() {
-    let signature = include_bytes!("../fixtures/raw_signature/legacy/sha1.raw_sig");
-    let pub_key = include_bytes!("../fixtures/raw_signature/legacy/sha1.pub_key");
+    let signature = include_bytes!("../../tests/fixtures/raw_signature/legacy/sha1.raw_sig");
+    let pub_key = include_bytes!("../../tests/fixtures/raw_signature/legacy/sha1.pub_key");
 
     let validator = validator_for_sig_and_hash_algs(&RSA_OID, &SHA1_OID).unwrap();
 
