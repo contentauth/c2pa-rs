@@ -52,7 +52,7 @@ impl Default for CertificateTrustPolicy {
         #[cfg(test)]
         {
             let _ = this.add_trust_anchors(include_bytes!(
-                "../tests/fixtures/raw_signature/test_cert_root_bundle.pem"
+                "../../../tests/fixtures/crypto/raw_signature/test_cert_root_bundle.pem"
             ));
         }
 
@@ -697,20 +697,26 @@ zGxQnM2hCA==
     async fn test_trust_store_async() {
         let ctp = CertificateTrustPolicy::default();
 
-        let ps256_certs =
-            cert_ders_from_pem(include_bytes!("../tests/fixtures/raw_signature/ps256.pub"));
-        let ps384_certs =
-            cert_ders_from_pem(include_bytes!("../tests/fixtures/raw_signature/ps384.pub"));
-        let ps512_certs =
-            cert_ders_from_pem(include_bytes!("../tests/fixtures/raw_signature/ps512.pub"));
-        let es256_certs =
-            cert_ders_from_pem(include_bytes!("../tests/fixtures/raw_signature/es256.pub"));
-        let es384_certs =
-            cert_ders_from_pem(include_bytes!("../tests/fixtures/raw_signature/es384.pub"));
-        let es512_certs =
-            cert_ders_from_pem(include_bytes!("../tests/fixtures/raw_signature/es512.pub"));
+        let ps256_certs = cert_ders_from_pem(include_bytes!(
+            "../../../tests/fixtures/crypto/raw_signature/ps256.pub"
+        ));
+        let ps384_certs = cert_ders_from_pem(include_bytes!(
+            "../../../tests/fixtures/crypto/raw_signature/ps384.pub"
+        ));
+        let ps512_certs = cert_ders_from_pem(include_bytes!(
+            "../../../tests/fixtures/crypto/raw_signature/ps512.pub"
+        ));
+        let es256_certs = cert_ders_from_pem(include_bytes!(
+            "../../../tests/fixtures/crypto/raw_signature/es256.pub"
+        ));
+        let es384_certs = cert_ders_from_pem(include_bytes!(
+            "../../../tests/fixtures/crypto/raw_signature/es384.pub"
+        ));
+        let es512_certs = cert_ders_from_pem(include_bytes!(
+            "../../../tests/fixtures/crypto/raw_signature/es512.pub"
+        ));
         let ed25519_certs = cert_ders_from_pem(include_bytes!(
-            "../tests/fixtures/raw_signature/ed25519.pub"
+            "../../../tests/fixtures/crypto/raw_signature/ed25519.pub"
         ));
 
         ctp.check_certificate_trust_async(&ps256_certs[1..], &ps256_certs[0], None)
@@ -818,20 +824,26 @@ zGxQnM2hCA==
     async fn test_broken_trust_chain_async() {
         let ctp = CertificateTrustPolicy::default();
 
-        let ps256_certs =
-            cert_ders_from_pem(include_bytes!("../tests/fixtures/raw_signature/ps256.pub"));
-        let ps384_certs =
-            cert_ders_from_pem(include_bytes!("../tests/fixtures/raw_signature/ps384.pub"));
-        let ps512_certs =
-            cert_ders_from_pem(include_bytes!("../tests/fixtures/raw_signature/ps512.pub"));
-        let es256_certs =
-            cert_ders_from_pem(include_bytes!("../tests/fixtures/raw_signature/es256.pub"));
-        let es384_certs =
-            cert_ders_from_pem(include_bytes!("../tests/fixtures/raw_signature/es384.pub"));
-        let es512_certs =
-            cert_ders_from_pem(include_bytes!("../tests/fixtures/raw_signature/es512.pub"));
+        let ps256_certs = cert_ders_from_pem(include_bytes!(
+            "../../../tests/fixtures/crypto/raw_signature/ps256.pub"
+        ));
+        let ps384_certs = cert_ders_from_pem(include_bytes!(
+            "../../../tests/fixtures/crypto/raw_signature/ps384.pub"
+        ));
+        let ps512_certs = cert_ders_from_pem(include_bytes!(
+            "../../../tests/fixtures/crypto/raw_signature/ps512.pub"
+        ));
+        let es256_certs = cert_ders_from_pem(include_bytes!(
+            "../../../tests/fixtures/crypto/raw_signature/es256.pub"
+        ));
+        let es384_certs = cert_ders_from_pem(include_bytes!(
+            "../../../tests/fixtures/crypto/raw_signature/es384.pub"
+        ));
+        let es512_certs = cert_ders_from_pem(include_bytes!(
+            "../../../tests/fixtures/crypto/raw_signature/es512.pub"
+        ));
         let ed25519_certs = cert_ders_from_pem(include_bytes!(
-            "../tests/fixtures/raw_signature/ed25519.pub"
+            "../../../tests/fixtures/crypto/raw_signature/ed25519.pub"
         ));
 
         // Break the trust chain by skipping the first intermediate CA.
@@ -897,21 +909,33 @@ zGxQnM2hCA==
         let mut ctp = CertificateTrustPolicy::new();
 
         ctp.add_end_entity_credentials(include_bytes!(
-            "../tests/fixtures/raw_signature/ed25519.pub"
+            "../../../tests/fixtures/crypto/raw_signature/ed25519.pub"
         ))
         .unwrap();
-        ctp.add_end_entity_credentials(include_bytes!("../tests/fixtures/raw_signature/es256.pub"))
-            .unwrap();
-        ctp.add_end_entity_credentials(include_bytes!("../tests/fixtures/raw_signature/es384.pub"))
-            .unwrap();
-        ctp.add_end_entity_credentials(include_bytes!("../tests/fixtures/raw_signature/es512.pub"))
-            .unwrap();
-        ctp.add_end_entity_credentials(include_bytes!("../tests/fixtures/raw_signature/ps256.pub"))
-            .unwrap();
-        ctp.add_end_entity_credentials(include_bytes!("../tests/fixtures/raw_signature/ps384.pub"))
-            .unwrap();
-        ctp.add_end_entity_credentials(include_bytes!("../tests/fixtures/raw_signature/ps512.pub"))
-            .unwrap();
+        ctp.add_end_entity_credentials(include_bytes!(
+            "../../../tests/fixtures/crypto/raw_signature/es256.pub"
+        ))
+        .unwrap();
+        ctp.add_end_entity_credentials(include_bytes!(
+            "../../../tests/fixtures/crypto/raw_signature/es384.pub"
+        ))
+        .unwrap();
+        ctp.add_end_entity_credentials(include_bytes!(
+            "../../../tests/fixtures/crypto/raw_signature/es512.pub"
+        ))
+        .unwrap();
+        ctp.add_end_entity_credentials(include_bytes!(
+            "../../../tests/fixtures/crypto/raw_signature/ps256.pub"
+        ))
+        .unwrap();
+        ctp.add_end_entity_credentials(include_bytes!(
+            "../../../tests/fixtures/crypto/raw_signature/ps384.pub"
+        ))
+        .unwrap();
+        ctp.add_end_entity_credentials(include_bytes!(
+            "../../../tests/fixtures/crypto/raw_signature/ps512.pub"
+        ))
+        .unwrap();
 
         let ps256 = test_signer(SigningAlg::Ps256);
         let ps384 = test_signer(SigningAlg::Ps384);
@@ -967,36 +991,54 @@ zGxQnM2hCA==
         let mut ctp = CertificateTrustPolicy::new();
 
         ctp.add_end_entity_credentials(include_bytes!(
-            "../tests/fixtures/raw_signature/ed25519.pub"
+            "../../../tests/fixtures/crypto/raw_signature/ed25519.pub"
         ))
         .unwrap();
-        ctp.add_end_entity_credentials(include_bytes!("../tests/fixtures/raw_signature/es256.pub"))
-            .unwrap();
-        ctp.add_end_entity_credentials(include_bytes!("../tests/fixtures/raw_signature/es384.pub"))
-            .unwrap();
-        ctp.add_end_entity_credentials(include_bytes!("../tests/fixtures/raw_signature/es512.pub"))
-            .unwrap();
-        ctp.add_end_entity_credentials(include_bytes!("../tests/fixtures/raw_signature/ps256.pub"))
-            .unwrap();
-        ctp.add_end_entity_credentials(include_bytes!("../tests/fixtures/raw_signature/ps384.pub"))
-            .unwrap();
-        ctp.add_end_entity_credentials(include_bytes!("../tests/fixtures/raw_signature/ps512.pub"))
-            .unwrap();
+        ctp.add_end_entity_credentials(include_bytes!(
+            "../../../tests/fixtures/crypto/raw_signature/es256.pub"
+        ))
+        .unwrap();
+        ctp.add_end_entity_credentials(include_bytes!(
+            "../../../tests/fixtures/crypto/raw_signature/es384.pub"
+        ))
+        .unwrap();
+        ctp.add_end_entity_credentials(include_bytes!(
+            "../../../tests/fixtures/crypto/raw_signature/es512.pub"
+        ))
+        .unwrap();
+        ctp.add_end_entity_credentials(include_bytes!(
+            "../../../tests/fixtures/crypto/raw_signature/ps256.pub"
+        ))
+        .unwrap();
+        ctp.add_end_entity_credentials(include_bytes!(
+            "../../../tests/fixtures/crypto/raw_signature/ps384.pub"
+        ))
+        .unwrap();
+        ctp.add_end_entity_credentials(include_bytes!(
+            "../../../tests/fixtures/crypto/raw_signature/ps512.pub"
+        ))
+        .unwrap();
 
-        let ps256_certs =
-            cert_ders_from_pem(include_bytes!("../tests/fixtures/raw_signature/ps256.pub"));
-        let ps384_certs =
-            cert_ders_from_pem(include_bytes!("../tests/fixtures/raw_signature/ps384.pub"));
-        let ps512_certs =
-            cert_ders_from_pem(include_bytes!("../tests/fixtures/raw_signature/ps512.pub"));
-        let es256_certs =
-            cert_ders_from_pem(include_bytes!("../tests/fixtures/raw_signature/es256.pub"));
-        let es384_certs =
-            cert_ders_from_pem(include_bytes!("../tests/fixtures/raw_signature/es384.pub"));
-        let es512_certs =
-            cert_ders_from_pem(include_bytes!("../tests/fixtures/raw_signature/es512.pub"));
+        let ps256_certs = cert_ders_from_pem(include_bytes!(
+            "../../../tests/fixtures/crypto/raw_signature/ps256.pub"
+        ));
+        let ps384_certs = cert_ders_from_pem(include_bytes!(
+            "../../../tests/fixtures/crypto/raw_signature/ps384.pub"
+        ));
+        let ps512_certs = cert_ders_from_pem(include_bytes!(
+            "../../../tests/fixtures/crypto/raw_signature/ps512.pub"
+        ));
+        let es256_certs = cert_ders_from_pem(include_bytes!(
+            "../../../tests/fixtures/crypto/raw_signature/es256.pub"
+        ));
+        let es384_certs = cert_ders_from_pem(include_bytes!(
+            "../../../tests/fixtures/crypto/raw_signature/es384.pub"
+        ));
+        let es512_certs = cert_ders_from_pem(include_bytes!(
+            "../../../tests/fixtures/crypto/raw_signature/es512.pub"
+        ));
         let ed25519_certs = cert_ders_from_pem(include_bytes!(
-            "../tests/fixtures/raw_signature/ed25519.pub"
+            "../../../tests/fixtures/crypto/raw_signature/ed25519.pub"
         ));
 
         ctp.check_certificate_trust_async(&ps256_certs[1..], &ps256_certs[0], None)
@@ -1027,24 +1069,30 @@ zGxQnM2hCA==
         let mut ctp = CertificateTrustPolicy::new();
 
         ctp.add_end_entity_credentials(include_bytes!(
-            "../tests/fixtures/raw_signature/allowed_list.hash"
+            "../../../tests/fixtures/crypto/raw_signature/allowed_list.hash"
         ))
         .unwrap();
 
-        let ps256_certs =
-            cert_ders_from_pem(include_bytes!("../tests/fixtures/raw_signature/ps256.pub"));
-        let ps384_certs =
-            cert_ders_from_pem(include_bytes!("../tests/fixtures/raw_signature/ps384.pub"));
-        let ps512_certs =
-            cert_ders_from_pem(include_bytes!("../tests/fixtures/raw_signature/ps512.pub"));
-        let es256_certs =
-            cert_ders_from_pem(include_bytes!("../tests/fixtures/raw_signature/es256.pub"));
-        let es384_certs =
-            cert_ders_from_pem(include_bytes!("../tests/fixtures/raw_signature/es384.pub"));
-        let es512_certs =
-            cert_ders_from_pem(include_bytes!("../tests/fixtures/raw_signature/es512.pub"));
+        let ps256_certs = cert_ders_from_pem(include_bytes!(
+            "../../../tests/fixtures/crypto/raw_signature/ps256.pub"
+        ));
+        let ps384_certs = cert_ders_from_pem(include_bytes!(
+            "../../../tests/fixtures/crypto/raw_signature/ps384.pub"
+        ));
+        let ps512_certs = cert_ders_from_pem(include_bytes!(
+            "../../../tests/fixtures/crypto/raw_signature/ps512.pub"
+        ));
+        let es256_certs = cert_ders_from_pem(include_bytes!(
+            "../../../tests/fixtures/crypto/raw_signature/es256.pub"
+        ));
+        let es384_certs = cert_ders_from_pem(include_bytes!(
+            "../../../tests/fixtures/crypto/raw_signature/es384.pub"
+        ));
+        let es512_certs = cert_ders_from_pem(include_bytes!(
+            "../../../tests/fixtures/crypto/raw_signature/es512.pub"
+        ));
         let ed25519_certs = cert_ders_from_pem(include_bytes!(
-            "../tests/fixtures/raw_signature/ed25519.pub"
+            "../../../tests/fixtures/crypto/raw_signature/ed25519.pub"
         ));
 
         ctp.check_certificate_trust(&ps256_certs[1..], &ps256_certs[0], None)
@@ -1073,24 +1121,30 @@ zGxQnM2hCA==
         let mut ctp = CertificateTrustPolicy::new();
 
         ctp.add_end_entity_credentials(include_bytes!(
-            "../tests/fixtures/raw_signature/allowed_list.hash"
+            "../../../tests/fixtures/crypto/raw_signature/allowed_list.hash"
         ))
         .unwrap();
 
-        let ps256_certs =
-            cert_ders_from_pem(include_bytes!("../tests/fixtures/raw_signature/ps256.pub"));
-        let ps384_certs =
-            cert_ders_from_pem(include_bytes!("../tests/fixtures/raw_signature/ps384.pub"));
-        let ps512_certs =
-            cert_ders_from_pem(include_bytes!("../tests/fixtures/raw_signature/ps512.pub"));
-        let es256_certs =
-            cert_ders_from_pem(include_bytes!("../tests/fixtures/raw_signature/es256.pub"));
-        let es384_certs =
-            cert_ders_from_pem(include_bytes!("../tests/fixtures/raw_signature/es384.pub"));
-        let es512_certs =
-            cert_ders_from_pem(include_bytes!("../tests/fixtures/raw_signature/es512.pub"));
+        let ps256_certs = cert_ders_from_pem(include_bytes!(
+            "../../../tests/fixtures/crypto/raw_signature/ps256.pub"
+        ));
+        let ps384_certs = cert_ders_from_pem(include_bytes!(
+            "../../../tests/fixtures/crypto/raw_signature/ps384.pub"
+        ));
+        let ps512_certs = cert_ders_from_pem(include_bytes!(
+            "../../../tests/fixtures/crypto/raw_signature/ps512.pub"
+        ));
+        let es256_certs = cert_ders_from_pem(include_bytes!(
+            "../../../tests/fixtures/crypto/raw_signature/es256.pub"
+        ));
+        let es384_certs = cert_ders_from_pem(include_bytes!(
+            "../../../tests/fixtures/crypto/raw_signature/es384.pub"
+        ));
+        let es512_certs = cert_ders_from_pem(include_bytes!(
+            "../../../tests/fixtures/crypto/raw_signature/es512.pub"
+        ));
         let ed25519_certs = cert_ders_from_pem(include_bytes!(
-            "../tests/fixtures/raw_signature/ed25519.pub"
+            "../../../tests/fixtures/crypto/raw_signature/ed25519.pub"
         ));
 
         ctp.check_certificate_trust(&ps256_certs[1..], &ps256_certs[0], None)

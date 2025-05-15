@@ -150,8 +150,10 @@ mod tests {
 
     #[test]
     fn test_es512_not_supported() {
-        let cert_chain = include_bytes!("../../../tests/fixtures/raw_signature/es512.pub");
-        let private_key = include_bytes!("../../../tests/fixtures/raw_signature/es512.priv");
+        let cert_chain =
+            include_bytes!("../../../../../tests/fixtures/crypto/raw_signature/es512.pub");
+        let private_key =
+            include_bytes!("../../../../../tests/fixtures/crypto/raw_signature/es512.priv");
         let algorithm = SigningAlg::Es512;
         let time_stamp_service_url = None;
 
@@ -172,8 +174,10 @@ mod tests {
 
     #[test]
     fn test_other_not_supported() {
-        let cert_chain = include_bytes!("../../../tests/fixtures/raw_signature/ps256.pub");
-        let private_key = include_bytes!("../../../tests/fixtures/raw_signature/ps256.priv");
+        let cert_chain =
+            include_bytes!("../../../../../tests/fixtures/crypto/raw_signature/ps256.pub");
+        let private_key =
+            include_bytes!("../../../../../tests/fixtures/crypto/raw_signature/ps256.priv");
         let algorithm = SigningAlg::Ps256;
         let time_stamp_service_url = None;
 

@@ -584,7 +584,7 @@ mod tests {
         let mut validation_log = StatusTracker::default();
 
         let cert_der = x509_der_from_pem(include_bytes!(
-            "../tests/fixtures//cose/rsa-pss256_key-expired.pub"
+            "../../../tests/fixtures/crypto//cose/rsa-pss256_key-expired.pub"
         ));
 
         assert!(
@@ -610,14 +610,18 @@ mod tests {
 
         let mut validation_log = StatusTracker::default();
 
-        let es256_cert =
-            x509_der_from_pem(include_bytes!("../tests/fixtures/raw_signature/es256.pub"));
-        let es384_cert =
-            x509_der_from_pem(include_bytes!("../tests/fixtures/raw_signature/es384.pub"));
-        let es512_cert =
-            x509_der_from_pem(include_bytes!("../tests/fixtures/raw_signature/es512.pub"));
-        let ps256_cert =
-            x509_der_from_pem(include_bytes!("../tests/fixtures/raw_signature/ps256.pub"));
+        let es256_cert = x509_der_from_pem(include_bytes!(
+            "../../../tests/fixtures/crypto/raw_signature/es256.pub"
+        ));
+        let es384_cert = x509_der_from_pem(include_bytes!(
+            "../../../tests/fixtures/crypto/raw_signature/es384.pub"
+        ));
+        let es512_cert = x509_der_from_pem(include_bytes!(
+            "../../../tests/fixtures/crypto/raw_signature/es512.pub"
+        ));
+        let ps256_cert = x509_der_from_pem(include_bytes!(
+            "../../../tests/fixtures/crypto/raw_signature/ps256.pub"
+        ));
 
         check_end_entity_certificate_profile(&es256_cert, &ctp, &mut validation_log, None).unwrap();
         check_end_entity_certificate_profile(&es384_cert, &ctp, &mut validation_log, None).unwrap();

@@ -320,7 +320,7 @@ mod tests {
         wasm_bindgen_test
     )]
     fn good() {
-        let rsp_data = include_bytes!("../tests/fixtures/ocsp/good.data");
+        let rsp_data = include_bytes!("../../../tests/fixtures/crypto/ocsp/good.data");
 
         let mut validation_log = StatusTracker::default();
 
@@ -339,7 +339,7 @@ mod tests {
         wasm_bindgen_test
     )]
     fn revoked() {
-        let rsp_data = include_bytes!("../tests/fixtures/ocsp/revoked.data");
+        let rsp_data = include_bytes!("../../../tests/fixtures/crypto/ocsp/revoked.data");
 
         let mut validation_log = StatusTracker::default();
 

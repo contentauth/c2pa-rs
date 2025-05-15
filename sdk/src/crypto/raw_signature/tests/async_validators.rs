@@ -26,8 +26,8 @@ const SAMPLE_DATA: &[u8] = b"some sample content to sign";
 )]
 #[cfg_attr(target_os = "wasi", wstd::test)]
 async fn es256() {
-    let signature = include_bytes!("../../tests/fixtures/raw_signature/es256.raw_sig");
-    let pub_key = include_bytes!("../../tests/fixtures/raw_signature/es256.pub_key");
+    let signature = include_bytes!("../../../../tests/fixtures/crypto/raw_signature/es256.raw_sig");
+    let pub_key = include_bytes!("../../../../tests/fixtures/crypto/raw_signature/es256.pub_key");
 
     let validator = async_validator_for_signing_alg(SigningAlg::Es256).unwrap();
 
@@ -43,11 +43,12 @@ async fn es256() {
 )]
 #[cfg_attr(target_os = "wasi", wstd::test)]
 async fn es256_bad_signature() {
-    let mut signature = include_bytes!("../../tests/fixtures/raw_signature/es256.raw_sig").to_vec();
+    let mut signature =
+        include_bytes!("../../../../tests/fixtures/crypto/raw_signature/es256.raw_sig").to_vec();
     assert_ne!(signature[10], 10);
     signature[10] = 10;
 
-    let pub_key = include_bytes!("../../tests/fixtures/raw_signature/es256.pub_key");
+    let pub_key = include_bytes!("../../../../tests/fixtures/crypto/raw_signature/es256.pub_key");
 
     let validator = async_validator_for_signing_alg(SigningAlg::Es256).unwrap();
 
@@ -66,8 +67,8 @@ async fn es256_bad_signature() {
 )]
 #[cfg_attr(target_os = "wasi", wstd::test)]
 async fn es256_bad_data() {
-    let signature = include_bytes!("../../tests/fixtures/raw_signature/es256.raw_sig");
-    let pub_key = include_bytes!("../../tests/fixtures/raw_signature/es256.pub_key");
+    let signature = include_bytes!("../../../../tests/fixtures/crypto/raw_signature/es256.raw_sig");
+    let pub_key = include_bytes!("../../../../tests/fixtures/crypto/raw_signature/es256.pub_key");
 
     let mut data = SAMPLE_DATA.to_vec();
     data[10] = 0;
@@ -89,8 +90,8 @@ async fn es256_bad_data() {
 )]
 #[cfg_attr(target_os = "wasi", wstd::test)]
 async fn es384() {
-    let signature = include_bytes!("../../tests/fixtures/raw_signature/es384.raw_sig");
-    let pub_key = include_bytes!("../../tests/fixtures/raw_signature/es384.pub_key");
+    let signature = include_bytes!("../../../../tests/fixtures/crypto/raw_signature/es384.raw_sig");
+    let pub_key = include_bytes!("../../../../tests/fixtures/crypto/raw_signature/es384.pub_key");
 
     let validator = async_validator_for_signing_alg(SigningAlg::Es384).unwrap();
 
@@ -106,8 +107,8 @@ async fn es384() {
 )]
 #[cfg_attr(target_os = "wasi", wstd::test)]
 async fn es512() {
-    let signature = include_bytes!("../../tests/fixtures/raw_signature/es512.raw_sig");
-    let pub_key = include_bytes!("../../tests/fixtures/raw_signature/es512.pub_key");
+    let signature = include_bytes!("../../../../tests/fixtures/crypto/raw_signature/es512.raw_sig");
+    let pub_key = include_bytes!("../../../../tests/fixtures/crypto/raw_signature/es512.pub_key");
 
     let validator = async_validator_for_signing_alg(SigningAlg::Es512).unwrap();
 
