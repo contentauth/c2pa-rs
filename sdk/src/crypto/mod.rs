@@ -26,6 +26,3 @@ pub(crate) mod internal;
 pub mod ocsp;
 pub mod raw_signature;
 pub mod time_stamp;
-
-#[cfg(test)]
-pub(crate) mod tests;
