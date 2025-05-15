@@ -584,7 +584,7 @@ mod tests {
         let mut validation_log = StatusTracker::default();
 
         let cert_der = x509_der_from_pem(include_bytes!(
-            "../../../tests/fixtures/crypto//cose/rsa-pss256_key-expired.pub"
+            "../../../tests/fixtures/crypto/cose/rsa-pss256_key-expired.pub"
         ));
 
         assert!(
