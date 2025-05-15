@@ -74,6 +74,7 @@ pub trait AsyncPostValidator {
 #[skip_serializing_none]
 #[derive(Serialize, Deserialize)]
 #[cfg_attr(feature = "json_schema", derive(JsonSchema))]
+#[derive(Default)]
 pub struct Reader {
     /// A label for the active (most recent) manifest in the store
     active_manifest: Option<String>,
@@ -801,19 +802,6 @@ impl Reader {
     }
 }
 
-impl Default for Reader {
-    fn default() -> Self {
-        Self {
-            active_manifest: None,
-            manifests: HashMap::<String, Manifest>::new(),
-            validation_status: None,
-            validation_results: None,
-            validation_state: None,
-            store: Store::new(),
-            assertion_values: HashMap::new(),
-        }
-    }
-}
 
 /// Convert the Reader to a JSON value.
 impl TryFrom<Reader> for serde_json::Value {

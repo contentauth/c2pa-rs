@@ -570,8 +570,7 @@ impl Builder {
                     .map_err(|_| Error::BadParam("Invalid ingredient path".to_string()))?;
                 let id = file.name().split('/').nth(2).unwrap_or_default();
                 if index >= builder.definition.ingredients.len() {
-                    return Err(Error::OtherError(Box::new(std::io::Error::new(
-                        std::io::ErrorKind::Other,
+                    return Err(Error::OtherError(Box::new(std::io::Error::other(
                         format!("Invalid ingredient index {}", index),
                     ))))?; // todo add specific error
                 }
