@@ -802,7 +802,6 @@ impl Reader {
     }
 }
 
-
 /// Convert the Reader to a JSON value.
 impl TryFrom<Reader> for serde_json::Value {
     type Error = Error;
