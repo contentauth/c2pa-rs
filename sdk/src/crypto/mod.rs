@@ -17,11 +17,11 @@
 #![deny(missing_docs)]
 #![deny(warnings)]
 
-pub mod asn1; // TEMPORARILY public ... can probably move back to crate-private
-pub mod base64;
+pub(crate) mod asn1;
+pub(crate) mod base64;
 pub mod cose;
 pub(crate) mod ec_utils;
-pub mod hash;
+pub(crate) mod hash;
 pub(crate) mod internal;
 pub mod ocsp;
 pub mod raw_signature;
