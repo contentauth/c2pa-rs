@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to this project will be documented in this file.
+All changes to C2PA Tool are documented in this file.  For additional information on versions 0.9.x and earlier, see the [Archived release motes](../docs/release-notes.md).
 
 This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html), except that – as is typical in the Rust community – the minimum supported Rust version may be increased without a major version increase.
 
@@ -23,16 +23,6 @@ _14 May 2025_
 ### Documented
 
 * Replace old c2patool release notes with CHANGELOG ([#1063](https://github.com/contentauth/c2pa-rs/pull/1063))
-<div class="github-only" >
-  
-# Changelog
-</div>
-
-All changes to C2PA Tool are documented in this file.  For additional information on versions 0.9.x and earlier, see the [Archived release motes](../docs/release-notes.md).
-
-This project adheres to [Semantic Versioning](https://semver.org), except that – as is typical in the Rust community – the minimum supported Rust version may be increased without a major version increase.
-
-Since version 0.10.0, the format of this changelog is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [0.16.5](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.16.4...c2patool-v0.16.5)
 _25 April 2025_
