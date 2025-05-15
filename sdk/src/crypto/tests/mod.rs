@@ -17,9 +17,3 @@
 #![allow(clippy::expect_used)]
 #![allow(clippy::panic)]
 #![allow(clippy::unwrap_used)]
-
-#[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
-wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
-
-#[cfg(not(target_arch = "wasm32"))]
-mod openssl;
