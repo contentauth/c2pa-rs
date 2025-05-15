@@ -115,6 +115,7 @@ impl ToCredentialSummary for BuiltInCredential {
     }
 }
 
+#[allow(clippy::large_enum_variant)]
 #[non_exhaustive]
 pub enum BuiltInCredentialSummary {
     IcaCredentialSummary(IcaCredentialSummary),
