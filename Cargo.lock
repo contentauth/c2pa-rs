@@ -848,7 +848,6 @@ dependencies = [
  "async-std",
  "atree",
  "c2pa",
- "c2pa-crypto",
  "clap",
  "env_logger",
  "glob",
