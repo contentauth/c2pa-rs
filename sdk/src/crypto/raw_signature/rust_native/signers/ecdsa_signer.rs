@@ -145,6 +145,10 @@ impl TimeStampProvider for EcdsaSigner {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::expect_used)]
+    #![allow(clippy::panic)]
+    #![allow(clippy::unwrap_used)]
+
     use super::*;
     use crate::crypto::raw_signature::SigningAlg;
 
