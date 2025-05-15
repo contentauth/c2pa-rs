@@ -23,5 +23,3 @@ wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
 
 #[cfg(not(target_arch = "wasm32"))]
 mod openssl;
-
-mod signing_alg;
