@@ -22,9 +22,7 @@
 wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
 
 mod base64;
-mod cose;
 mod hash;
-mod internal;
 mod ocsp;
 
 #[cfg(not(target_arch = "wasm32"))]
