@@ -14,7 +14,7 @@ json_api = ["c2pa/v1_api"]
 
 [dependencies]
 tokio = { version = "1.36", features = ["rt-multi-thread","rt"] }
-c2pa = { path = "../sdk", version = "0.51.0", features = [
+c2pa = { path = "../sdk", version = "0.51.1", features = [
     "file_io",
     "add_thumbnails",
     "fetch_remote_manifests",
