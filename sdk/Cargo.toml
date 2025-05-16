@@ -36,7 +36,6 @@ pdf = ["dep:lopdf"]
 rust_native_crypto = [
     "dep:const-oid",
     "dep:der",
-    # "dep:ed25519-dalek",
     "dep:num-bigint-dig",
     "dep:pkcs1",
     "dep:rsa",
