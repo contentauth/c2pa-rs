@@ -17,7 +17,6 @@ use std::path::{Path, PathBuf};
 use std::{borrow::Cow, io::Cursor};
 
 use async_generic::async_generic;
-use c2pa_crypto::base64;
 use c2pa_status_tracker::{log_item, StatusTracker};
 use log::{debug, error};
 #[cfg(feature = "json_schema")]
@@ -32,6 +31,7 @@ use crate::{
     assertions::{self, labels, AssetType, Metadata, Relationship, Thumbnail},
     asset_io::CAIRead,
     claim::{Claim, ClaimAssetData},
+    crypto::base64,
     error::{Error, Result},
     hashed_uri::HashedUri,
     jumbf::{

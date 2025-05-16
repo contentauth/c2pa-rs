@@ -11,7 +11,7 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use c2pa_crypto::{cose::CertificateAcceptancePolicy, openssl::OpenSslMutex};
+use crate::crypto::{cose::CertificateAcceptancePolicy, openssl::OpenSslMutex};
 use openssl::x509::verify::X509VerifyFlags;
 
 use crate::Error;
@@ -106,7 +106,7 @@ pub mod tests {
     #![allow(clippy::panic)]
     #![allow(clippy::unwrap_used)]
 
-    use c2pa_crypto::SigningAlg;
+    use crate::crypto::SigningAlg;
 
     use super::*;
     use crate::{utils::test_signer::test_signer, Signer};

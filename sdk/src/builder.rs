@@ -1166,7 +1166,6 @@ mod tests {
     #![allow(clippy::unwrap_used)]
     use std::{io::Cursor, vec};
 
-    use c2pa_crypto::raw_signature::SigningAlg;
     use serde_json::json;
     #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
     use wasm_bindgen_test::*;
@@ -1175,6 +1174,7 @@ mod tests {
     use crate::{
         assertions::{c2pa_action, BoxHash},
         asset_handlers::jpeg_io::JpegIO,
+        crypto::raw_signature::SigningAlg,
         hash_stream_by_alg,
         utils::{test::write_jpeg_placeholder_stream, test_signer::test_signer},
         validation_results::ValidationState,

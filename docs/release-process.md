@@ -93,7 +93,6 @@ The `type` field describes the nature of changes you are making. This project re
 The `scope` field describes where the change is made. This project allows the scope to be omitted, but if it is present, it must be one of these exact names:
 
 * `c2patool`
-* `crypto`
 * `export_schema`
 * `make_test_images`
 * `sdk`

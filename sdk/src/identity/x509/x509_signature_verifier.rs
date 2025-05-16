@@ -12,17 +12,19 @@
 // each license.
 
 use async_trait::async_trait;
-use c2pa_crypto::{
-    cose::{parse_cose_sign1, CertificateInfo, CoseError, Verifier},
-    raw_signature::RawSignatureValidationError,
-};
 use c2pa_status_tracker::{log_current_item, StatusTracker};
 use coset::CoseSign1;
 use serde::Serialize;
 
-use crate::identity::{
-    identity_assertion::signature_verifier::ToCredentialSummary, SignatureVerifier, SignerPayload,
-    ValidationError,
+use crate::{
+    crypto::{
+        cose::{parse_cose_sign1, CertificateInfo, CoseError, Verifier},
+        raw_signature::RawSignatureValidationError,
+    },
+    identity::{
+        identity_assertion::signature_verifier::ToCredentialSummary, SignatureVerifier,
+        SignerPayload, ValidationError,
+    },
 };
 
 /// An implementation of [`SignatureVerifier`] that supports COSE signatures

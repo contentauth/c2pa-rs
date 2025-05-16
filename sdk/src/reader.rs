@@ -23,7 +23,6 @@ use std::{
 
 use async_generic::async_generic;
 use async_trait::async_trait;
-use c2pa_crypto::base64;
 use c2pa_status_tracker::StatusTracker;
 #[cfg(feature = "json_schema")]
 use schemars::JsonSchema;
@@ -33,6 +32,7 @@ use serde_with::skip_serializing_none;
 
 use crate::{
     claim::ClaimAssetData,
+    crypto::base64,
     dynamic_assertion::PartialClaim,
     error::{Error, Result},
     jumbf::labels::{manifest_label_from_uri, to_absolute_uri, to_relative_uri},

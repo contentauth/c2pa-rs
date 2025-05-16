@@ -13,11 +13,11 @@
 
 use std::cell::RefCell;
 
-use c2pa_crypto::raw_signature::{RawSigner, SigningAlg};
-
 use crate::{
-    dynamic_assertion::DynamicAssertion, identity::builder::IdentityAssertionBuilder, Result,
-    Signer,
+    crypto::raw_signature::{RawSigner, SigningAlg},
+    dynamic_assertion::DynamicAssertion,
+    identity::builder::IdentityAssertionBuilder,
+    Result, Signer,
 };
 
 /// An `IdentityAssertionSigner` extends the [`Signer`] interface to add zero or
@@ -44,9 +44,10 @@ impl IdentityAssertionSigner {
     /// using test credentials for a particular algorithm.
     #[cfg(test)]
     pub(crate) fn from_test_credentials(alg: SigningAlg) -> Self {
-        use c2pa_crypto::raw_signature::signer_from_cert_chain_and_private_key;
-
-        use crate::identity::tests::fixtures::cert_chain_and_private_key_for_alg;
+        use crate::{
+            crypto::raw_signature::signer_from_cert_chain_and_private_key,
+            identity::tests::fixtures::cert_chain_and_private_key_for_alg,
+        };
 
         let (cert_chain, private_key) = cert_chain_and_private_key_for_alg(alg);
 
