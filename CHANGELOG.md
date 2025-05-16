@@ -6,6 +6,14 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 Since version 0.36.2, the format of this changelog is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.51.1](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.51.0...c2pa-v0.51.1)
+_16 May 2025_
+
+### Fixed
+
+* Switch zip dependency to a non-yanked version ([#1101](https://github.com/contentauth/c2pa-rs/pull/1101))
+* Fix Clippy warnings for Rust 1.87 ([#1103](https://github.com/contentauth/c2pa-rs/pull/1103))
+
 ## [0.51.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.50.0...c2pa-v0.51.0)
 _14 May 2025_
 
