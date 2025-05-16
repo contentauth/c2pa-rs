@@ -11,7 +11,6 @@ _16 May 2025_
 
 ### Added
 
-* Merge c2pa-crypto crate into c2pa ([#1107](https://github.com/contentauth/c2pa-rs/pull/1107))
 * [**breaking**] Merge c2pa-crypto crate into core c2pa crate ([#1099](https://github.com/contentauth/c2pa-rs/pull/1099))
 
 ## [0.9.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-crypto-v0.8.2...c2pa-crypto-v0.9.0)
