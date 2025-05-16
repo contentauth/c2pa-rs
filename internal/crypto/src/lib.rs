@@ -5,5 +5,5 @@
 
 #[allow(unused)]
 pub(crate) fn hello() {
-    println!("Hello");
+    println!("Hello again");
 }
