@@ -11,7 +11,7 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use c2pa_crypto::raw_signature::SigningAlg;
+use crate::crypto::raw_signature::SigningAlg;
 
 pub(crate) fn cert_chain_and_private_key_for_alg(alg: SigningAlg) -> (Vec<u8>, Vec<u8>) {
     match alg {

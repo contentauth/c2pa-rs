@@ -14,12 +14,15 @@
 #![allow(clippy::unwrap_used)] // This mod is only used in test code.
 
 use async_trait::async_trait;
-use c2pa_crypto::raw_signature::{
-    async_signer_from_cert_chain_and_private_key, signer_from_cert_chain_and_private_key,
-    AsyncRawSigner, SigningAlg,
-};
 
-use crate::{signer::RawSignerWrapper, AsyncSigner, Result, Signer};
+use crate::{
+    crypto::raw_signature::{
+        async_signer_from_cert_chain_and_private_key, signer_from_cert_chain_and_private_key,
+        AsyncRawSigner, SigningAlg,
+    },
+    signer::RawSignerWrapper,
+    AsyncSigner, Result, Signer,
+};
 
 /// Creates a [`Signer`] instance for testing purposes using test credentials.
 pub(crate) fn test_signer(alg: SigningAlg) -> Box<dyn Signer> {

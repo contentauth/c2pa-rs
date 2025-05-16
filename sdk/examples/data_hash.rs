@@ -21,6 +21,8 @@ use std::{
 };
 
 #[cfg(feature = "file_io")]
+use c2pa::crypto::raw_signature::SigningAlg;
+#[cfg(feature = "file_io")]
 use c2pa::{
     assertions::{
         c2pa_action, labels::*, Action, Actions, CreativeWork, DataHash, Exif, SchemaDotOrgPerson,
@@ -28,8 +30,6 @@ use c2pa::{
     create_signer, hash_stream_by_alg, Builder, ClaimGeneratorInfo, HashRange, Ingredient, Reader,
     Relationship, Result,
 };
-#[cfg(feature = "file_io")]
-use c2pa_crypto::raw_signature::SigningAlg;
 
 fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     println!("DataHash demo");

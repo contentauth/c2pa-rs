@@ -403,10 +403,10 @@ mod tests {
 
     use std::io::Cursor;
 
-    use c2pa_crypto::raw_signature::SigningAlg;
-
     use super::*;
-    use crate::{utils::test_signer::test_signer, Builder, Reader};
+    use crate::{
+        crypto::raw_signature::SigningAlg, utils::test_signer::test_signer, Builder, Reader,
+    };
 
     #[test]
     fn resource_store() {

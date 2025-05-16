@@ -13,7 +13,7 @@
 
 use std::convert::TryFrom;
 
-use c2pa_crypto::{webcrypto::WindowOrWorker, SigningAlg};
+use crate::crypto::{webcrypto::WindowOrWorker, SigningAlg};
 use js_sys::{Array, ArrayBuffer, Object, Reflect, Uint8Array};
 use spki::SubjectPublicKeyInfoRef;
 use wasm_bindgen::prelude::*;
@@ -459,7 +459,7 @@ pub async fn validate_async(alg: SigningAlg, sig: &[u8], data: &[u8], pkey: &[u8
 pub mod tests {
     #![allow(clippy::unwrap_used)]
 
-    use c2pa_crypto::SigningAlg;
+    use crate::crypto::SigningAlg;
     #[cfg(target_arch = "wasm32")]
     use wasm_bindgen_test::*;
 

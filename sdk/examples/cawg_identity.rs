@@ -26,6 +26,7 @@ mod cawg {
 
     use anyhow::Result;
     use c2pa::{
+        crypto::raw_signature,
         identity::{
             builder::{AsyncIdentityAssertionBuilder, AsyncIdentityAssertionSigner},
             validator::CawgValidator,
@@ -33,7 +34,6 @@ mod cawg {
         },
         AsyncSigner, Builder, Reader, SigningAlg,
     };
-    use c2pa_crypto::raw_signature;
     use serde_json::json;
 
     const CERTS: &[u8] = include_bytes!("../../sdk/tests/fixtures/certs/es256.pub");

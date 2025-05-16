@@ -12,12 +12,12 @@
 // each license.
 
 use async_trait::async_trait;
-use c2pa_crypto::{
-    raw_signature::{AsyncRawSigner, RawSigner, RawSignerError, SigningAlg},
-    time_stamp::{TimeStampError, TimeStampProvider},
-};
 
 use crate::{
+    crypto::{
+        raw_signature::{AsyncRawSigner, RawSigner, RawSignerError, SigningAlg},
+        time_stamp::{TimeStampError, TimeStampProvider},
+    },
     dynamic_assertion::{AsyncDynamicAssertion, DynamicAssertion},
     Result,
 };
@@ -54,7 +54,7 @@ pub trait Signer {
     }
 
     fn timestamp_request_body(&self, message: &[u8]) -> Result<Vec<u8>> {
-        c2pa_crypto::time_stamp::default_rfc3161_message(message).map_err(|e| e.into())
+        crate::crypto::time_stamp::default_rfc3161_message(message).map_err(|e| e.into())
     }
 
     /// Request RFC 3161 timestamp to be included in the manifest data
@@ -71,8 +71,10 @@ pub trait Signer {
             if let Ok(body) = self.timestamp_request_body(message) {
                 let headers: Option<Vec<(String, String)>> = self.timestamp_request_headers();
                 return Some(
-                    c2pa_crypto::time_stamp::default_rfc3161_request(&url, headers, &body, message)
-                        .map_err(|e| e.into()),
+                    crate::crypto::time_stamp::default_rfc3161_request(
+                        &url, headers, &body, message,
+                    )
+                    .map_err(|e| e.into()),
                 );
             }
         }
@@ -111,7 +113,7 @@ pub trait Signer {
     /// c2pa-rs to other languages, we can not make [`RawSigner`] a supertrait of
     /// this trait. This API is a workaround for that limitation.
     ///
-    /// [`RawSigner`]: c2pa_crypto::raw_signature::RawSigner
+    /// [`RawSigner`]: crate::crypto::raw_signature::RawSigner
     fn raw_signer(&self) -> Option<Box<&dyn RawSigner>> {
         None
     }
@@ -179,7 +181,7 @@ pub trait AsyncSigner: Sync {
     }
 
     fn timestamp_request_body(&self, message: &[u8]) -> Result<Vec<u8>> {
-        c2pa_crypto::time_stamp::default_rfc3161_message(message).map_err(|e| e.into())
+        crate::crypto::time_stamp::default_rfc3161_message(message).map_err(|e| e.into())
     }
 
     /// Request RFC 3161 timestamp to be included in the manifest data
@@ -196,7 +198,7 @@ pub trait AsyncSigner: Sync {
             if let Ok(body) = self.timestamp_request_body(message) {
                 let headers: Option<Vec<(String, String)>> = self.timestamp_request_headers();
                 return Some(
-                    c2pa_crypto::time_stamp::default_rfc3161_request_async(
+                    crate::crypto::time_stamp::default_rfc3161_request_async(
                         &url, headers, &body, message,
                     )
                     .await
@@ -239,7 +241,7 @@ pub trait AsyncSigner: Sync {
     /// c2pa-rs to other languages, we can not make [`AsyncRawSigner`] a supertrait
     /// of this trait. This API is a workaround for that limitation.
     ///
-    /// [`AsyncRawSigner`]: c2pa_crypto::raw_signature::AsyncRawSigner
+    /// [`AsyncRawSigner`]: crate::crypto::raw_signature::AsyncRawSigner
     fn async_raw_signer(&self) -> Option<Box<&dyn AsyncRawSigner>> {
         None
     }
@@ -281,7 +283,7 @@ pub trait AsyncSigner {
     }
 
     fn timestamp_request_body(&self, message: &[u8]) -> Result<Vec<u8>> {
-        c2pa_crypto::time_stamp::default_rfc3161_message(message).map_err(|e| e.into())
+        crate::crypto::time_stamp::default_rfc3161_message(message).map_err(|e| e.into())
     }
 
     /// Request RFC 3161 timestamp to be included in the manifest data
@@ -326,7 +328,7 @@ pub trait AsyncSigner {
     /// c2pa-rs to other languages, we can not make [`AsyncRawSigner`] a supertrait
     /// of this trait. This API is a workaround for that limitation.
     ///
-    /// [`AsyncRawSigner`]: c2pa_crypto::raw_signature::AsyncRawSigner
+    /// [`AsyncRawSigner`]: crate::crypto::raw_signature::AsyncRawSigner
     fn async_raw_signer(&self) -> Option<Box<&dyn AsyncRawSigner>> {
         None
     }

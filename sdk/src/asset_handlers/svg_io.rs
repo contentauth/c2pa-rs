@@ -18,13 +18,13 @@ use std::{
     path::Path,
 };
 
-use c2pa_crypto::base64;
 use conv::ValueFrom;
 use quick_xml::{
     events::{BytesText, Event},
     Reader, Writer,
 };
 
+use crate::crypto::base64;
 use crate::{
     asset_io::{
         rename_or_move,

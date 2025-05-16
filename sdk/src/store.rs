@@ -22,10 +22,6 @@ use std::{
 
 use async_generic::async_generic;
 use async_recursion::async_recursion;
-use c2pa_crypto::{
-    cose::{parse_cose_sign1, CertificateTrustPolicy, TimeStampStorage},
-    hash::sha256,
-};
 use c2pa_status_tracker::{log_item, ErrorBehavior, StatusTracker};
 use log::error;
 
@@ -57,6 +53,10 @@ use crate::{
     },
     cose_sign::{cose_sign, cose_sign_async},
     cose_validator::{verify_cose, verify_cose_async},
+    crypto::{
+        cose::{parse_cose_sign1, CertificateTrustPolicy, TimeStampStorage},
+        hash::sha256,
+    },
     dynamic_assertion::{
         AsyncDynamicAssertion, DynamicAssertion, DynamicAssertionContent, PartialClaim,
     },
@@ -3845,7 +3845,6 @@ pub mod tests {
 
     use std::{fs, io::Write};
 
-    use c2pa_crypto::raw_signature::SigningAlg;
     use c2pa_status_tracker::{LogItem, StatusTracker};
     use memchr::memmem;
     use serde::Serialize;
@@ -3856,6 +3855,7 @@ pub mod tests {
         assertion::AssertionJson,
         assertions::{labels::BOX_HASH, Action, Actions, BoxHash, Uuid},
         claim::AssertionStoreJsonFormat,
+        crypto::raw_signature::SigningAlg,
         hashed_uri::HashedUri,
         jumbf_io::{get_assetio_handler_from_path, update_file_jumbf},
         utils::{
@@ -4248,9 +4248,7 @@ pub mod tests {
     #[test]
     #[cfg(feature = "file_io")]
     fn test_sign_with_expired_cert() {
-        use c2pa_crypto::raw_signature::SigningAlg;
-
-        use crate::create_signer;
+        use crate::{create_signer, crypto::raw_signature::SigningAlg};
 
         // test adding to actual image
         let ap = fixture_path("earth_apollo17.jpg");

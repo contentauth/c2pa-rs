@@ -13,17 +13,19 @@
 
 use std::collections::BTreeMap;
 
-use c2pa_crypto::asn1::rfc3161::TstInfo;
 use chrono::{DateTime, FixedOffset};
 use iref::{Iri, IriBuf, UriBuf};
 use non_empty_string::NonEmptyString;
 use nonempty_collections::NEVec;
 use serde::{Deserialize, Serialize};
 
-use crate::identity::{
-    claim_aggregation::w3c_vc::credential::{CredentialV2, VerifiableCredentialSubtype},
-    identity_assertion::signature_verifier::ToCredentialSummary,
-    SignerPayload,
+use crate::{
+    crypto::asn1::rfc3161::TstInfo,
+    identity::{
+        claim_aggregation::w3c_vc::credential::{CredentialV2, VerifiableCredentialSubtype},
+        identity_assertion::signature_verifier::ToCredentialSummary,
+        SignerPayload,
+    },
 };
 
 /// TO DO: Doc -- looks like CredentialV2 for our specific use

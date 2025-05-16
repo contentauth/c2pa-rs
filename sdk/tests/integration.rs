@@ -20,10 +20,10 @@ mod integration_1 {
     use c2pa::{
         assertions::{c2pa_action, Action, Actions},
         create_signer,
+        crypto::raw_signature::SigningAlg,
         settings::load_settings_from_str,
         Builder, ClaimGeneratorInfo, Ingredient, Reader, Result, Signer,
     };
-    use c2pa_crypto::raw_signature::SigningAlg;
     #[allow(unused)] // different code path for WASI
     use tempfile::{tempdir, TempDir};
 

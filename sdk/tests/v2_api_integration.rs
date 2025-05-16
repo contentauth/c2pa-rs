@@ -17,8 +17,7 @@ mod integration_v2 {
     use std::io::{Cursor, Seek};
 
     use anyhow::Result;
-    use c2pa::{Builder, CallbackSigner, Reader};
-    use c2pa_crypto::raw_signature::SigningAlg;
+    use c2pa::{crypto::raw_signature::SigningAlg, Builder, CallbackSigner, Reader};
     use serde_json::json;
 
     const PARENT_JSON: &str = r#"

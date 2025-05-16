@@ -17,9 +17,8 @@
 //! using a callback and public signing certificates.
 
 use async_trait::async_trait;
-use c2pa_crypto::raw_signature::SigningAlg;
 
-use crate::{AsyncSigner, Error, Result, Signer};
+use crate::{crypto::raw_signature::SigningAlg, AsyncSigner, Error, Result, Signer};
 
 /// Defines a callback function interface for a [`CallbackSigner`].
 ///

@@ -11,8 +11,10 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use c2pa::CallbackSigner;
-use c2pa_crypto::raw_signature::{RawSignerError, SigningAlg};
+use c2pa::{
+    crypto::raw_signature::{RawSignerError, SigningAlg},
+    CallbackSigner,
+};
 
 const CERTS: &[u8] = include_bytes!("../../tests/fixtures/certs/ed25519.pub");
 const PRIVATE_KEY: &[u8] = include_bytes!("../../tests/fixtures/certs/ed25519.pem");
