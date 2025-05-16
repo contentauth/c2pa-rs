@@ -65,7 +65,6 @@ jobs:
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.os }}-${{ matrix.target }}-release
           path: target/artifacts/*
 
   release:
@@ -75,42 +74,21 @@ jobs:
       - name: Download build artifacts
         uses: actions/download-artifact@v4
         with:
-          path: artifacts
+          name: release-artifacts
+          path: .
+          merge-multiple: true
 
       - name: List downloaded artifacts
-        run: find . -type f | sort
-        
+        run: ls -lh
+
       - name: Create Release
         id: create_release
         uses: softprops/action-gh-release@v1
         with:
           files: |
-            ./ubuntu-latest-x86_64-unknown-linux-gnu-release/ubuntu-latest-x86_64-unknown-linux-gnu-release.tar.gz
-            ./windows-latest-x86_64-pc-windows-msvc-release/windows-latest-x86_64-pc-windows-msvc-release.zip
-            ./macos-latest-x86_64-apple-darwin-release/macos-latest-x86_64-apple-darwin-release.tar.gz
-          draft: false
-          prerelease: false
+            ./*
+          draft: true
+          prerelease: true
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Create GitHub Release legacy
-        id: create_release_legacy
-        uses: actions/create-release@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          tag_name: ${{ github.ref_name }}
-          release_name: Release ${{ github.ref_name }}
-          draft: true
-          prerelease: true
- 
-      - name: Upload Release Assets old
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          for file in artifacts/*; do
-            echo "Uploading $file..."
-            gh release upload "${{ github.ref_name }}" "$file" --clobber
-          done
-
