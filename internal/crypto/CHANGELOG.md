@@ -6,6 +6,14 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 The format of this changelog is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.10.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-crypto-v0.9.0...c2pa-crypto-v0.10.0)
+_16 May 2025_
+
+### Added
+
+* Merge c2pa-crypto crate into c2pa ([#1107](https://github.com/contentauth/c2pa-rs/pull/1107))
+* [**breaking**] Merge c2pa-crypto crate into core c2pa crate ([#1099](https://github.com/contentauth/c2pa-rs/pull/1099))
+
 ## [0.9.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-crypto-v0.8.2...c2pa-crypto-v0.9.0)
 _14 May 2025_
 
