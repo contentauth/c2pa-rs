@@ -11,11 +11,7 @@
 // specific language governing permissions and limitations under
 // each license.
 
-#![deny(clippy::expect_used)]
-#![deny(clippy::panic)]
-#![deny(clippy::unwrap_used)]
 #![deny(missing_docs)]
-#![deny(warnings)]
 
 pub(crate) mod asn1;
 pub(crate) mod base64;
