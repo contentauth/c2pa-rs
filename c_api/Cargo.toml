@@ -1,6 +1,6 @@
 [package]
 name = "c2pa-c"
-version = "0.49.5"
+version.workspace = true
 edition = "2021"
 authors = ["Gavin Peacock <gpeacock@adobe.com>"]
 license = "MIT OR Apache-2.0"
@@ -14,7 +14,7 @@ json_api = ["c2pa/v1_api"]
 
 [dependencies]
 tokio = { version = "1.36", features = ["rt-multi-thread","rt"] }
-c2pa = { path = "../sdk", version = "0.51.1", features = [
+c2pa = { workspace = true , features = [
     "file_io",
     "add_thumbnails",
     "fetch_remote_manifests",

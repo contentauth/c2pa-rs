@@ -804,7 +804,7 @@ dependencies = [
 
 [[package]]
 name = "c2pa-c"
-version = "0.49.5"
+version = "0.51.1"
 dependencies = [
  "c2pa",
  "cbindgen",
@@ -2677,7 +2677,7 @@ checksum = "112b39cec0b298b6c1999fee3e31427f74f676e4cb9879ed1a121b43661a4154"
 
 [[package]]
 name = "make_test_images"
-version = "0.49.5"
+version = "0.51.1"
 dependencies = [
  "anyhow",
  "c2pa",
