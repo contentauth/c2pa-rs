@@ -18,10 +18,11 @@ use std::{
 
 // C has no namespace so we prefix things with C2PA to make them unique
 use c2pa::{
-    assertions::DataHash, settings::load_settings_from_str, Builder as C2paBuilder, CallbackSigner,
-    Reader as C2paReader, SigningAlg,
+    assertions::DataHash, identity::validator::CawgValidator, settings::load_settings_from_str,
+    Builder as C2paBuilder, CallbackSigner, Reader as C2paReader, SigningAlg,
 };
 use scopeguard::guard;
+use tokio::runtime::Runtime; // cawg validator requires async
 
 use crate::{
     c2pa_stream::C2paStream,
@@ -428,6 +429,22 @@ pub unsafe extern "C" fn c2pa_string_free(s: *mut c_char) {
     }
 }
 
+// Run CAWG post-validation - this is async and requires a runtime.
+fn post_validate(result: Result<C2paReader, c2pa::Error>) -> Result<C2paReader, c2pa::Error> {
+    match result {
+        Ok(mut reader) => {
+            let runtime = match Runtime::new() {
+                Ok(runtime) => runtime,
+                Err(err) => return Err(c2pa::Error::OtherError(Box::new(err))),
+            };
+            match runtime.block_on(reader.post_validate_async(&CawgValidator {})) {
+                Ok(_) => Ok(reader),
+                Err(err) => Err(err),
+            }
+        }
+        Err(err) => Err(err),
+    }
+}
 /// Creates and verifies a C2paReader from an asset stream with the given format.
 ///
 /// Parameters
@@ -460,7 +477,7 @@ pub unsafe extern "C" fn c2pa_reader_from_stream(
     let format = from_cstr_or_return_null!(format);
 
     let result = C2paReader::from_stream(&format, &mut (*stream));
-    return_boxed!(result)
+    return_boxed!(post_validate(result))
 }
 
 /// Creates and verifies a C2paReader from an asset stream with the given format and manifest data.
@@ -486,11 +503,12 @@ pub unsafe extern "C" fn c2pa_reader_from_manifest_data_and_stream(
     manifest_data: *const c_uchar,
     manifest_size: usize,
 ) -> *mut C2paReader {
+    check_or_return_null!(manifest_data);
     let format = from_cstr_or_return_null!(format);
     let manifest_bytes = std::slice::from_raw_parts(manifest_data, manifest_size);
 
     let result = C2paReader::from_manifest_data_and_stream(manifest_bytes, &format, &mut (*stream));
-    return_boxed!(result)
+    return_boxed!(post_validate(result))
 }
 
 /// Frees a C2paReader allocated by Rust.
@@ -879,7 +897,6 @@ pub unsafe extern "C" fn c2pa_builder_sign_data_hashed_embeddable(
     check_or_return_int!(signer_ptr);
     let data_hash_json = from_cstr_or_return_int!(data_hash);
     let format = from_cstr_or_return_int!(format);
-    check_or_return_int!(asset);
     check_or_return_int!(manifest_bytes_ptr);
 
     let mut data_hash: DataHash = match serde_json::from_str(&data_hash_json) {
@@ -1340,11 +1357,33 @@ mod tests {
     #[test]
     fn test_c2pa_reader_from_stream_null_format() {
         let mut stream = TestC2paStream::new(Vec::new()).into_c_stream();
+
         let result = unsafe { c2pa_reader_from_stream(std::ptr::null(), &mut stream) };
         assert!(result.is_null());
         let error = unsafe { c2pa_error() };
         let error_str = unsafe { CString::from_raw(error) };
         assert_eq!(error_str.to_str().unwrap(), "NullParameter: format");
+        TestC2paStream::drop_c_stream(stream);
+    }
+
+    #[test]
+    fn test_c2pa_reader_from_stream_cawg() {
+        let source_image = include_bytes!(
+            "../../sdk/src/identity/tests/fixtures/claim_aggregation/ica_validation/success.jpg"
+        );
+        let mut stream = TestC2paStream::from_bytes(source_image.to_vec());
+        let format = CString::new("image/jpeg").unwrap();
+        let reader = unsafe { c2pa_reader_from_stream(format.as_ptr(), &mut stream) };
+        assert!(!reader.is_null());
+        let json = unsafe { c2pa_reader_json(reader) };
+        assert!(!json.is_null());
+        let json_str = unsafe { CString::from_raw(json) };
+        println!("json: {}", json_str.to_str().unwrap());
+        assert!(json_str.to_str().unwrap().contains("Silly Cats 929"));
+        assert!(json_str
+            .to_str()
+            .unwrap()
+            .contains("cawg.ica.credential_valid"));
         TestC2paStream::drop_c_stream(stream);
     }
 
