@@ -86,7 +86,8 @@ fn time_stamp_request_http(
         .set("Content-Type", HTTP_CONTENT_TYPE_REQUEST)
         .send_bytes(&body)?;
 
-    if response.status() == 200 && response.content_type() == HTTP_CONTENT_TYPE_RESPONSE {
+    let response_status_is_ok = response.status() >= 200 && response.status() < 300;
+    if response_status_is_ok && response.content_type() == HTTP_CONTENT_TYPE_RESPONSE {
         let len = response
             .header("Content-Length")
             .and_then(|s| s.parse::<usize>().ok())
