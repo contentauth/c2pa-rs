@@ -712,7 +712,7 @@ checksum = "d71b6127be86fdcfddb610f7182ac57211d4b18a3e9c82eb2d17662f2227ad6a"
 
 [[package]]
 name = "c2pa"
-version = "0.51.1"
+version = "0.52.0"
 dependencies = [
  "actix",
  "anyhow",
@@ -833,7 +833,7 @@ dependencies = [
 
 [[package]]
 name = "c2pa-crypto"
-version = "0.9.0"
+version = "0.10.0"
 
 [[package]]
 name = "c2pa-status-tracker"
@@ -841,7 +841,7 @@ version = "0.6.2"
 
 [[package]]
 name = "c2patool"
-version = "0.16.5"
+version = "0.17.0"
 dependencies = [
  "anyhow",
  "assert_cmd",
@@ -889,9 +889,9 @@ dependencies = [
 
 [[package]]
 name = "cc"
-version = "1.2.22"
+version = "1.2.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "32db95edf998450acc7881c932f94cd9b05c87b4b2599e8bab064753da4acfd1"
+checksum = "5f4ac86a9e5bc1e2b3449ab9d7d3a6a405e3d1bb28d7b9be8614f55846ae3766"
 dependencies = [
  "shlex",
 ]
