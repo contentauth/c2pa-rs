@@ -76,7 +76,7 @@ jobs:
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: release-artifacts 
+          name: release-artifacts-${{ matrix.os }}-${{ matrix.target }}
           path: target/artifacts/
 
   release:
@@ -87,7 +87,7 @@ jobs:
       - name: Download build artifacts
         uses: actions/download-artifact@v4
         with:
-          name: release-artifacts
+          pattern: release-artifacts-*
           path: .
           merge-multiple: true
 
