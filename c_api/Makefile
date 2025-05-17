@@ -16,10 +16,11 @@ else
     endif
 endif
 
-TARGET_DIR := $(realpath ../target)
+TARGET_DIR := ../target
 
 # Helper function to create a zip file
 define make_zip
+	set -e; \
     echo "Reading version from $(1)/c2pa.h"; \
     if [ "$(PLATFORM)" = "win" ]; then \
         VERSION=$$(findstr "^// Version:" $(1)/c2pa.h | awk -F": " "{print \$$2}"); \
@@ -31,7 +32,7 @@ define make_zip
     mkdir -p $(TARGET_DIR)/artifacts $(1)/include $(1)/lib; \
     cp $(1)/c2pa.h $(1)/include/; \
     cp $(1)/libc2pa_c.* $(1)/lib/; \
-    cd $(1) && zip -r $${ZIP_NAME} include lib; \
+    zip -r $${ZIP_NAME} $(1)/include $(1)/lib; \
     echo "Zip file created: $${ZIP_NAME}"
 endef
 

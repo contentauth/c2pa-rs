@@ -53,10 +53,11 @@ jobs:
           perl -MLocale::Maketext::Simple -e "print \$INC{'Locale/Maketext/Simple.pm'}" > module_path.txt
           $MODULE_PATH = Get-Content -Path module_path.txt
           echo "Module found at: $MODULE_PATH"
-          
+        
           # Create symbolic links to the modules in paths that are being checked
           # Set environment variable for subsequent steps
           echo "PERL5LIB=$env:PERL5LIB;D:\a\c2pa-rs\c2pa-rs\target\x86_64-pc-windows-msvc\release\build\openssl-sys-def693d178636927\out\openssl-build\build\src\util\perl" | Out-File -FilePath $env:GITHUB_ENV -Append
+          choco install make
         shell: pwsh
      
       - name: Build release
