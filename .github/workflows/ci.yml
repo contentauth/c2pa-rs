@@ -326,7 +326,7 @@ jobs:
           CC: /opt/wasi-sdk/bin/clang
           WASI_SDK_PATH: /opt/wasi-sdk
           RUST_MIN_STACK: 16777216
-        run: cargo +nightly test --target wasm32-wasip2 -p c2pa -p c2pa-crypto -p c2patool --all-features
+        run: cargo +nightly test --target wasm32-wasip2 -p c2pa -p c2patool --all-features
 
   test-direct-minimal-versions:
     name: Unit tests with minimum versions of direct dependencies
