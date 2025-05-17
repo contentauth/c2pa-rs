@@ -832,10 +832,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "c2pa-crypto"
-version = "0.10.0"
-
-[[package]]
 name = "c2pa-status-tracker"
 version = "0.6.2"
 
