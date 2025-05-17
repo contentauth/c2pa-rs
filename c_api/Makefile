@@ -20,20 +20,18 @@ TARGET_DIR := ../target
 
 # Helper function to create a zip file
 define make_zip
-	set -e; \
+    set -e; \
     echo "Reading version from $(1)/c2pa.h"; \
     if [ "$(PLATFORM)" = "win" ]; then \
         VERSION=$$(findstr "^// Version:" $(1)/c2pa.h | awk -F": " "{print \$$2}"); \
     else \
         VERSION=$$(grep '^// Version:' $(1)/c2pa.h | sed 's/^\/\/ Version: //'); \
     fi; \
-    ZIP_NAME=$(TARGET_DIR)/artifacts/c2pa-v$${VERSION}-$(2).zip; \
-    echo "Creating zip file: $${ZIP_NAME}"; \
     mkdir -p $(TARGET_DIR)/artifacts $(1)/include $(1)/lib; \
     cp $(1)/c2pa.h $(1)/include/; \
     cp $(1)/libc2pa_c.* $(1)/lib/; \
-    zip -r $${ZIP_NAME} $(1)/include $(1)/lib; \
-    echo "Zip file created: $${ZIP_NAME}"
+    (cd $(1) && zip -9 -r ../../artifacts/c2pa-v$${VERSION}-$(2).zip include lib); \
+    echo "Zip file created: $(TARGET_DIR)/artifacts/c2pa-v$${VERSION}-$(2).zip"
 endef
 
 check-format:
