@@ -4,8 +4,11 @@ on:
   push:
     tags:
       - 'c2pa-v*' # Trigger on version tags (e.g., v1.0.0)
-  workflow_dispatch: # Allow manual triggering of the workflow
-
+  workflow_dispatch:
+    #inputs:
+    #  tag_name:
+    #    description: 'Release tag (e.g., c2pa-v0.52.0)'
+    #    required: true
 jobs:
   build:
     name: Publish c2pa-library binaries
@@ -66,6 +69,7 @@ jobs:
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
+          name: release-artifacts 
           path: target/artifacts/*
 
   release:
@@ -82,13 +86,22 @@ jobs:
       - name: List downloaded artifacts
         run: ls -lh
 
+      - name: Extract tag_name from zip file
+        id: extract_tag
+        run: |
+          ZIP=$(ls c2pa-v*-*.zip | head -n1)
+          TAG_NAME=$(echo "$ZIP" | sed -E 's/^(c2pa-v[0-9]+\.[0-9]+\.[0-9]+)-.*\.zip/\1/')
+          echo "Found tag: $TAG_NAME"
+          echo "tag_name=$TAG_NAME" >> $GITHUB_OUTPUT
+
       - name: Create Release
         id: create_release
         uses: softprops/action-gh-release@v1
         with:
-          files: |
-            ./*
-          draft: true
+          tag_name: ${{ steps.extract_tag.outputs.tag_name }}
+          #tag_name: ${{ github.event.inputs.tag_name || github.ref_name }}
+          files: ./*
+          draft: false
           prerelease: true
           generate_release_notes: true
         env:
