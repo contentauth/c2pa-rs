@@ -61,6 +61,14 @@ jobs:
           # Set environment variable for subsequent steps
           echo "PERL5LIB=$env:PERL5LIB;D:\a\c2pa-rs\c2pa-rs\target\x86_64-pc-windows-msvc\release\build\openssl-sys-def693d178636927\out\openssl-build\build\src\util\perl" | Out-File -FilePath $env:GITHUB_ENV -Append
           choco install make
+               run: echo "Windows env vars set"
+        env:
+          OPENSSL_CONF: C:\vcpkg\installed\x64-windows-static\tools\openssl\openssl.cnf
+          OPENSSL_DIR: C:\vcpkg\installed\x64-windows-static
+          OPENSSL_NO_VENDOR: 1
+          OPENSSL_STATIC: Yes
+          RUSTFLAGS: -Ctarget-feature=-crt-static
+          VCPKGRS_DYNAMIC: 1
         shell: pwsh
      
       - name: Build release
@@ -104,5 +112,6 @@ jobs:
           draft: false
           prerelease: true
           generate_release_notes: true
+          overwrite: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
