@@ -19,7 +19,6 @@ use std::{
 };
 
 use async_generic::async_generic;
-use c2pa_crypto::base64;
 use c2pa_status_tracker::StatusTracker;
 #[cfg(feature = "json_schema")]
 use schemars::JsonSchema;
@@ -27,6 +26,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     claim::ClaimAssetData,
+    crypto::base64,
     jumbf::labels::{manifest_label_from_uri, to_absolute_uri, to_relative_uri},
     manifest::StoreOptions,
     store::Store,

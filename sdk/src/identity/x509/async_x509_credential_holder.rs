@@ -12,14 +12,16 @@
 // each license.
 
 use async_trait::async_trait;
-use c2pa_crypto::{
-    cose::{sign_async, TimeStampStorage},
-    raw_signature::AsyncRawSigner,
-};
 
-use crate::identity::{
-    builder::{AsyncCredentialHolder, IdentityBuilderError},
-    SignerPayload,
+use crate::{
+    crypto::{
+        cose::{sign_async, TimeStampStorage},
+        raw_signature::AsyncRawSigner,
+    },
+    identity::{
+        builder::{AsyncCredentialHolder, IdentityBuilderError},
+        SignerPayload,
+    },
 };
 
 /// An implementation of [`AsyncCredentialHolder`] that generates COSE
@@ -47,7 +49,7 @@ impl AsyncX509CredentialHolder {
     /// The [`AsyncRawSigner`] implementation actually holds (or has access to)
     /// the relevant certificates and private key material.
     ///
-    /// [`AsyncRawSigner`]: c2pa_crypto::raw_signature::AsyncRawSigner
+    /// [`AsyncRawSigner`]: crate::crypto::raw_signature::AsyncRawSigner
     #[cfg(not(target_arch = "wasm32"))]
     pub fn from_async_raw_signer(signer: Box<dyn AsyncRawSigner + Send + Sync + 'static>) -> Self {
         Self(signer)
@@ -59,7 +61,7 @@ impl AsyncX509CredentialHolder {
     /// The [`AsyncRawSigner`] implementation actually holds (or has access to)
     /// the relevant certificates and private key material.
     ///
-    /// [`AsyncRawSigner`]: c2pa_crypto::raw_signature::AsyncRawSigner
+    /// [`AsyncRawSigner`]: crate::crypto::raw_signature::AsyncRawSigner
     #[cfg(target_arch = "wasm32")]
     pub fn from_async_raw_signer(signer: Box<dyn AsyncRawSigner + 'static>) -> Self {
         Self(signer)
@@ -102,12 +104,12 @@ mod tests {
 
     use std::io::{Cursor, Seek};
 
-    use c2pa_crypto::raw_signature;
     use c2pa_status_tracker::StatusTracker;
     #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
     use wasm_bindgen_test::wasm_bindgen_test;
 
     use crate::{
+        crypto::raw_signature,
         identity::{
             builder::{AsyncIdentityAssertionBuilder, AsyncIdentityAssertionSigner},
             tests::fixtures::{cert_chain_and_private_key_for_alg, manifest_json, parent_json},

@@ -18,7 +18,6 @@ use std::{collections::HashMap, io::Cursor};
 use std::{fs::create_dir_all, path::Path};
 
 use async_generic::async_generic;
-use c2pa_crypto::raw_signature::SigningAlg;
 use log::debug;
 #[cfg(feature = "v1_api")]
 use log::error;
@@ -32,6 +31,7 @@ use crate::{
     assertion::{AssertionBase, AssertionData},
     assertions::{labels, Actions, Metadata, SoftwareAgent, Thumbnail},
     claim::RemoteManifest,
+    crypto::raw_signature::SigningAlg,
     error::{Error, Result},
     hashed_uri::HashedUri,
     ingredient::Ingredient,
@@ -1579,13 +1579,13 @@ pub(crate) mod tests {
 
     use std::io::Cursor;
 
-    use c2pa_crypto::raw_signature::SigningAlg;
     #[cfg(feature = "file_io")]
     use c2pa_status_tracker::StatusTracker;
     #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
     use wasm_bindgen_test::*;
 
     use super::*;
+    use crate::crypto::raw_signature::SigningAlg;
     #[cfg(feature = "file_io")]
     use crate::utils::io_utils::tempdirectory;
 

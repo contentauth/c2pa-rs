@@ -270,10 +270,6 @@ jobs:
       - name: Install wasm-pack
         run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
 
-      - name: Run Wasm tests (c2pa-crypto)
-        run: wasm-pack test --chrome --headless
-        working-directory: ./internal/crypto
-
       - name: Run Wasm tests (c2pa-status-tracker)
         run: wasm-pack test --chrome --headless
         working-directory: ./internal/status-tracker
@@ -330,7 +326,7 @@ jobs:
           CC: /opt/wasi-sdk/bin/clang
           WASI_SDK_PATH: /opt/wasi-sdk
           RUST_MIN_STACK: 16777216
-        run: cargo +nightly test --target wasm32-wasip2 -p c2pa -p c2pa-crypto -p c2patool --all-features
+        run: cargo +nightly test --target wasm32-wasip2 -p c2pa -p c2patool --all-features
 
   test-direct-minimal-versions:
     name: Unit tests with minimum versions of direct dependencies
