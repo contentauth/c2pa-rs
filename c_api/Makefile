@@ -59,19 +59,34 @@ release-win:
 release-mac-arm:
 	rustup target add aarch64-apple-darwin
 	MACOSX_DEPLOYMENT_TARGET=11.1 cargo build --target=aarch64-apple-darwin --release
-	@$(call make_zip,$(TARGET_DIR)/aarch64-apple-darwin/release,aarch64-apple-darwin)
+	install_name_tool -id @rpath/libc2pa_c.dylib $(TARGET_DIR)/aarch64-apple-darwin/release/libc2pa_c.dylib
 
 release-mac-x86:
 	rustup target add x86_64-apple-darwin
 	MACOSX_DEPLOYMENT_TARGET=10.15 cargo build --target=x86_64-apple-darwin --release
-	@$(call make_zip,$(TARGET_DIR)/x86_64-apple-darwin/release,x86_64-apple-darwin)
+	install_name_tool -id @rpath/libc2pa_c.dylib $(TARGET_DIR)/x86_64-apple-darwin/release/libc2pa_c.dylib
 
 release-mac-universal: release-mac-arm release-mac-x86
 	rm -rf $(TARGET_DIR)/universal-apple-darwin
 	mkdir -p $(TARGET_DIR)/universal-apple-darwin/release
 	lipo -create -output $(TARGET_DIR)/universal-apple-darwin/release/libc2pa_c.dylib $(TARGET_DIR)/aarch64-apple-darwin/release/libc2pa_c.dylib ../target/x86_64-apple-darwin/release/libc2pa_c.dylib
 	cp $(TARGET_DIR)/aarch64-apple-darwin/release/c2pa.h $(TARGET_DIR)/universal-apple-darwin/release/c2pa.h
+	install_name_tool -id @rpath/libc2pa_c.dylib $(TARGET_DIR)/universal-apple-darwin/release/libc2pa_c.dylib
+	dsymutil $(TARGET_DIR)/universal-apple-darwin/release/libc2pa_c.dylib
+
+	cd $(TARGET_DIR)/universal-apple-darwin/release && \
+		zip -r9 libc2pa_c.dylib.dSYM.zip libc2pa_c.dylib.dSYM && \
+		rm -rf libc2pa_c.dylib.dSYM && \
+    	ls -l
+
+	strip -x $(TARGET_DIR)/universal-apple-darwin/release/libc2pa_c.dylib
 	@$(call make_zip,$(TARGET_DIR)/universal-apple-darwin/release,universal-apple-darwin)
+
+	strip -x $(TARGET_DIR)/aarch64-apple-darwin/release/libc2pa_c.dylib
+	@$(call make_zip,$(TARGET_DIR)/aarch64-apple-darwin/release,aarch64-apple-darwin)
+	
+	strip -x $(TARGET_DIR)/x86_64-apple-darwin/release/libc2pa_c.dylib
+	@$(call make_zip,$(TARGET_DIR)/x86_64-apple-darwin/release,x86_64-apple-darwin)
 
 release-linux-gnu-x86:
 	rustup target add x86_64-unknown-linux-gnu
