@@ -799,7 +799,7 @@ fn main() -> Result<()> {
             validate_cawg(&mut stores[0])?;
             println!("{}", stores[0]);
         } else {
-            for mut store in &mut stores {
+            for store in &mut stores {
                 validate_cawg(store)?;
             }
             println!("{} Init manifests validated", stores.len());
