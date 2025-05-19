@@ -188,8 +188,8 @@ impl Default for ErrorBehavior {
     }
 }
 
-mod log;
-pub use log::{LogItem, LogKind};
+mod log_item;
+pub use log_item::{LogItem, LogKind};
 
 #[cfg(test)]
 mod tests {
