@@ -800,7 +800,7 @@ fn main() -> Result<()> {
             println!("{}", stores[0]);
         } else {
             for mut store in &mut stores {
-                validate_cawg(&mut store)?;
+                validate_cawg(store)?;
             }
             println!("{} Init manifests validated", stores.len());
         }
