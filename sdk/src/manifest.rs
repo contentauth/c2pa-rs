@@ -1106,6 +1106,7 @@ impl Manifest {
     /// let signer = create_signer::from_files(signcert_path, pkey_path, SigningAlg::Ps256, None)?;
     ///
     /// // Embed a manifest using the signer.
+    /// #[allow(deprecated)]
     /// manifest.embed("tests/fixtures/C.jpg", "../target/test_file.jpg", &*signer)?;
     /// # Ok(())
     /// # }
