@@ -212,6 +212,9 @@ web-sys = { version = "0.3.58", features = [
     "WorkerGlobalScope",
 ] }
 
+[target.'cfg(target_os = "windows")'.dependencies]
+windows-core = "0.61.2" # Override yanked version used in chrono and other crates.
+
 [target.'cfg(not(target_os = "wasi"))'.dependencies]
 reqwest = { version = "0.12.8", default-features = false, features = ["rustls-tls"] }
 
@@ -229,3 +232,7 @@ wasm-bindgen-test = "0.3.45"
 actix = "0.13.1"
 httpmock = "0.7.0"
 tokio = { version = "1.44.2", features = ["full"] }
+
+[package.metadata.cargo-udeps.ignore]
+normal = ["windows-core"]
+    # REMOVE once chrono and other crates update to avoid yanked version of windows-core
