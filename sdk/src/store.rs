@@ -3919,7 +3919,7 @@ pub mod tests {
                 create_test_claim, fixture_path, temp_dir_path, temp_fixture_path,
                 write_jpeg_placeholder_file,
             },
-            test_signer::{async_test_signer, test_signer},
+            test_signer::{async_test_signer, test_cawg_signer, test_signer},
         },
     };
 
@@ -6642,7 +6642,8 @@ pub mod tests {
                     store.commit_claim(claim).unwrap();
 
                     // Do we generate JUMBF?
-                    let signer = test_signer(SigningAlg::Ps256);
+                    let signer =
+                        test_cawg_signer(SigningAlg::Ps256, &[labels::SCHEMA_ORG]).unwrap();
 
                     // Use Tempdir for automatic cleanup
                     let new_subdir = tempfile::TempDir::new_in(output_path)
