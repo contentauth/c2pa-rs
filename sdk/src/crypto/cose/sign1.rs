@@ -12,16 +12,19 @@
 // each license.
 
 use async_generic::async_generic;
-use c2pa_status_tracker::{log_item, validation_codes::CLAIM_SIGNATURE_MISMATCH, StatusTracker};
 use ciborium::value::Value;
 use coset::{
     iana::{self, Algorithm, EnumI64},
     CoseSign1, Label, RegisteredLabelWithPrivate, TaggedCborSerializable,
 };
 
-use crate::crypto::{
-    cose::{validate_cose_tst_info, validate_cose_tst_info_async, CoseError},
-    raw_signature::SigningAlg,
+use crate::{
+    crypto::{
+        cose::{validate_cose_tst_info, validate_cose_tst_info_async, CoseError},
+        raw_signature::SigningAlg,
+    },
+    log_item,
+    status_tracker::{validation_codes::CLAIM_SIGNATURE_MISMATCH, StatusTracker},
 };
 
 /// Parse a byte slice as a COSE Sign1 data structure.

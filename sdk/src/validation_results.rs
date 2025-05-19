@@ -11,15 +11,18 @@
 // specific language governing permissions and limitations under
 // each license.
 
-pub use c2pa_status_tracker::validation_codes::*;
-use c2pa_status_tracker::{LogKind, StatusTracker};
 #[cfg(feature = "json_schema")]
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+pub use crate::status_tracker::validation_codes::*;
 use crate::{
-    assertion::AssertionBase, assertions::Ingredient, jumbf::labels::manifest_label_from_uri,
-    store::Store, validation_status::ValidationStatus,
+    assertion::AssertionBase,
+    assertions::Ingredient,
+    jumbf::labels::manifest_label_from_uri,
+    status_tracker::{LogKind, StatusTracker},
+    store::Store,
+    validation_status::ValidationStatus,
 };
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

@@ -1579,13 +1579,13 @@ pub(crate) mod tests {
 
     use std::io::Cursor;
 
-    #[cfg(feature = "file_io")]
-    use c2pa_status_tracker::StatusTracker;
     #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
     use wasm_bindgen_test::*;
 
     use super::*;
     use crate::crypto::raw_signature::SigningAlg;
+    #[cfg(feature = "file_io")]
+    use crate::status_tracker::StatusTracker;
     #[cfg(feature = "file_io")]
     use crate::utils::io_utils::tempdirectory;
 

@@ -13,13 +13,16 @@
 
 //! Tools for working with OCSP responses.
 
-use c2pa_status_tracker::{log_item, validation_codes, StatusTracker};
 use chrono::{DateTime, NaiveDateTime, Utc};
 use rasn_ocsp::{BasicOcspResponse, CertStatus, OcspResponseStatus};
 use rasn_pkix::CrlReason;
 use thiserror::Error;
 
-use crate::crypto::internal::time;
+use crate::{
+    crypto::internal::time,
+    log_item,
+    status_tracker::{validation_codes, StatusTracker},
+};
 
 /// OcspResponse - struct to contain the OCSPResponse DER and the time
 /// for the next OCSP check
@@ -298,12 +301,11 @@ mod tests {
     #![allow(clippy::panic)]
     #![allow(clippy::unwrap_used)]
 
-    use c2pa_status_tracker::StatusTracker;
     use chrono::{TimeZone, Utc};
     #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
     use wasm_bindgen_test::wasm_bindgen_test;
 
-    use crate::crypto::ocsp::OcspResponse;
+    use crate::{crypto::ocsp::OcspResponse, status_tracker::StatusTracker};
 
     #[test]
     #[cfg_attr(

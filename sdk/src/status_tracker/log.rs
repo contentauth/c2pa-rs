@@ -13,7 +13,7 @@
 
 use std::{borrow::Cow, fmt::Debug};
 
-use crate::StatusTracker;
+use crate::status_tracker::StatusTracker;
 
 /// Creates a [`LogItem`] struct that is annotated with the source file and line
 /// number where the log condition was discovered.
@@ -30,7 +30,7 @@ use crate::StatusTracker;
 ///
 /// ```
 /// # use std::borrow::Cow;
-/// # use c2pa_status_tracker::{log_item, LogKind, LogItem};
+/// # use c2pa::{log_item, status_tracker::{LogKind, LogItem}};
 /// let log = log_item!("test1", "test item 1", "test func");
 ///
 /// assert_eq!(
@@ -53,8 +53,8 @@ use crate::StatusTracker;
 #[macro_export]
 macro_rules! log_item {
     ($label:expr, $description:expr, $function:expr) => {{
-        $crate::LogItem {
-            kind: $crate::LogKind::Informational,
+        $crate::status_tracker::LogItem {
+            kind: $crate::status_tracker::LogKind::Informational,
             label: $label.into(),
             crate_name: env!("CARGO_PKG_NAME").into(),
             crate_version: env!("CARGO_PKG_VERSION").into(),
@@ -79,14 +79,14 @@ macro_rules! log_item {
 /// ## Example
 ///
 /// ```
-/// # use c2pa_status_tracker::{log_current_item, LogKind, LogItem};
+/// # use c2pa::{log_current_item, status_tracker::{LogKind, LogItem}};
 /// let log = log_current_item!("test item 1", "test func");
 /// ```
 #[macro_export]
 macro_rules! log_current_item {
     ($description:expr, $function:expr) => {{
-        $crate::LogItem {
-            kind: $crate::LogKind::Informational,
+        $crate::status_tracker::LogItem {
+            kind: $crate::status_tracker::LogKind::Informational,
             label: "".to_owned().into(), // will be set to the current status tracker uri
             crate_name: env!("CARGO_PKG_NAME").into(),
             crate_version: env!("CARGO_PKG_VERSION").into(),
@@ -163,7 +163,7 @@ impl LogItem {
     ///
     /// ```
     /// # use std::borrow::Cow;
-    /// # use c2pa_status_tracker::{log_item, LogKind, LogItem};
+    /// # use c2pa::{log_item, status_tracker::{LogKind, LogItem}};
     /// let log = log_item!("test1", "test item 1", "test func").validation_status("claim.missing");
     ///
     /// assert_eq!(
@@ -196,7 +196,7 @@ impl LogItem {
     ///
     /// ```
     /// # use std::borrow::Cow;
-    /// # use c2pa_status_tracker::{log_item, LogKind, LogItem};
+    /// # use c2pa::{log_item, status_tracker::{LogKind, LogItem}};
     /// let log = log_item!("test1", "test item 1", "test func")
     ///     .set_ingredient_uri("self#jumbf=/c2pa/contentauth:urn:uuid:bef41f24-13aa-4040-8efa-08e5e85c4a00/c2pa.assertions/c2pa.ingredient__1");
     /// ```
@@ -259,4 +259,197 @@ pub enum LogKind {
 
     /// This [`LogItem`] describes a failure or error condition.
     Failure,
+}
+
+#[cfg(test)]
+mod tests {
+    use std::borrow::Cow;
+
+    use crate::{
+        log_item,
+        status_tracker::{LogItem, LogKind, StatusTracker},
+    };
+
+    #[test]
+    fn r#macro() {
+        let log = log_item!("test1", "test item 1", "test func");
+
+        assert_eq!(
+            log,
+            LogItem {
+                kind: LogKind::Informational,
+                label: Cow::Borrowed("test1"),
+                description: Cow::Borrowed("test item 1"),
+                crate_name: env!("CARGO_PKG_NAME").into(),
+                crate_version: env!("CARGO_PKG_VERSION").into(),
+                file: Cow::Borrowed(file!()),
+                function: Cow::Borrowed("test func"),
+                line: log.line,
+                err_val: None,
+                validation_status: None,
+                ..Default::default()
+            }
+        );
+
+        assert!(log.line > 2);
+    }
+
+    #[test]
+    fn macro_from_string() {
+        let desc = "test item 1".to_string();
+        let log = log_item!("test1", desc, "test func");
+
+        assert_eq!(
+            log,
+            LogItem {
+                kind: crate::status_tracker::LogKind::Informational,
+                label: Cow::Borrowed("test1"),
+                description: Cow::Owned("test item 1".to_string()),
+                crate_name: env!("CARGO_PKG_NAME").into(),
+                crate_version: env!("CARGO_PKG_VERSION").into(),
+                file: Cow::Borrowed(file!()),
+                function: Cow::Borrowed("test func"),
+                line: log.line,
+                err_val: None,
+                validation_status: None,
+                ..Default::default()
+            }
+        );
+
+        assert!(log.line > 2);
+    }
+
+    #[test]
+    fn success() {
+        let mut tracker = StatusTracker::default();
+        log_item!("test1", "test item 1", "test func").success(&mut tracker);
+
+        let log_item = tracker.logged_items().first().unwrap();
+
+        assert_eq!(
+            log_item,
+            &LogItem {
+                kind: LogKind::Success,
+                label: Cow::Borrowed("test1"),
+                description: Cow::Borrowed("test item 1"),
+                crate_name: env!("CARGO_PKG_NAME").into(),
+                crate_version: env!("CARGO_PKG_VERSION").into(),
+                file: Cow::Borrowed(file!()),
+                function: Cow::Borrowed("test func"),
+                line: log_item.line,
+                err_val: None,
+                validation_status: None,
+                ingredient_uri: None,
+            }
+        );
+    }
+
+    #[test]
+    fn informational() {
+        let mut tracker = StatusTracker::default();
+        log_item!("test1", "test item 1", "test func").informational(&mut tracker);
+
+        let log_item = tracker.logged_items().first().unwrap();
+
+        assert_eq!(
+            log_item,
+            &LogItem {
+                kind: LogKind::Informational,
+                label: Cow::Borrowed("test1"),
+                description: Cow::Borrowed("test item 1"),
+                crate_name: env!("CARGO_PKG_NAME").into(),
+                crate_version: env!("CARGO_PKG_VERSION").into(),
+                file: Cow::Borrowed(file!()),
+                function: Cow::Borrowed("test func"),
+                line: log_item.line,
+                err_val: None,
+                validation_status: None,
+                ..Default::default()
+            }
+        );
+    }
+
+    #[test]
+    fn failure() {
+        let mut tracker = StatusTracker::default();
+        log_item!("test1", "test item 1", "test func")
+            .failure(&mut tracker, "sample error message")
+            .unwrap();
+
+        let log_item = tracker.logged_items().first().unwrap();
+
+        assert_eq!(
+            log_item,
+            &LogItem {
+                kind: LogKind::Failure,
+                label: Cow::Borrowed("test1"),
+                description: Cow::Borrowed("test item 1"),
+                crate_name: env!("CARGO_PKG_NAME").into(),
+                crate_version: env!("CARGO_PKG_VERSION").into(),
+                file: Cow::Borrowed(file!()),
+                function: Cow::Borrowed("test func"),
+                line: log_item.line,
+                err_val: Some(Cow::Borrowed("\"sample error message\"")),
+                validation_status: None,
+                ..Default::default()
+            }
+        );
+    }
+
+    #[test]
+    fn failure_no_throw() {
+        let mut tracker = StatusTracker::default();
+        log_item!("test1", "test item 1", "test func")
+            .failure_no_throw(&mut tracker, "sample error message");
+
+        let log_item = tracker.logged_items().first().unwrap();
+
+        assert_eq!(
+            log_item,
+            &LogItem {
+                kind: LogKind::Failure,
+                label: Cow::Borrowed("test1"),
+                description: Cow::Borrowed("test item 1"),
+                crate_name: env!("CARGO_PKG_NAME").into(),
+                crate_version: env!("CARGO_PKG_VERSION").into(),
+                file: Cow::Borrowed(file!()),
+                function: Cow::Borrowed("test func"),
+                line: log_item.line,
+                err_val: Some(Cow::Borrowed("\"sample error message\"")),
+                ..Default::default()
+            }
+        );
+    }
+
+    #[test]
+    fn validation_status() {
+        let log_item =
+            log_item!("test1", "test item 1", "test func").validation_status("claim.missing");
+
+        assert_eq!(
+            log_item,
+            LogItem {
+                kind: LogKind::Informational,
+                label: Cow::Borrowed("test1"),
+                description: Cow::Borrowed("test item 1"),
+                crate_name: env!("CARGO_PKG_NAME").into(),
+                crate_version: env!("CARGO_PKG_VERSION").into(),
+                file: Cow::Borrowed(file!()),
+                function: Cow::Borrowed("test func"),
+                line: log_item.line,
+                err_val: None,
+                validation_status: Some(Cow::Borrowed("claim.missing")),
+                ..Default::default()
+            }
+        );
+    }
+
+    #[test]
+    fn impl_clone() {
+        // Generate coverage for the #[derive(...)] line.
+        let li1 = log_item!("test1", "test item 1", "test func");
+        let li2 = li1.clone();
+
+        assert_eq!(li1, li2);
+    }
 }

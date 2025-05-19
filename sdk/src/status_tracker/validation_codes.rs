@@ -17,7 +17,7 @@
 //!
 //! [§15.2.1, “Standard Status Codes.”]: https://c2pa.org/specifications/specifications/2.1/specs/C2PA_Specification.html#_standard_status_codes
 
-use crate::log::LogKind;
+use crate::status_tracker::log::LogKind;
 
 // -- success codes --
 
@@ -314,7 +314,7 @@ pub const GENERAL_ERROR: &str = "general.error";
 /// ## Examples
 ///
 /// ```
-/// use c2pa_status_tracker::validation_codes::*;
+/// use c2pa::status_tracker::validation_codes::*;
 ///
 /// assert!(is_success(CLAIM_SIGNATURE_VALIDATED));
 /// assert!(!is_success(SIGNING_CREDENTIAL_REVOKED));
