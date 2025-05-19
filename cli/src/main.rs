@@ -792,10 +792,14 @@ fn main() -> Result<()> {
         fragments_glob: Some(fg),
     }) = &args.command
     {
-        let stores = verify_fragmented(&args.path, fg)?;
+        let mut stores = verify_fragmented(&args.path, fg)?;
         if stores.len() == 1 {
+            validate_cawg(&mut stores[0])?;
             println!("{}", stores[0]);
         } else {
+            for mut store in &mut stores {
+                validate_cawg(&mut store)?;
+            }
             println!("{} Init manifests validated", stores.len());
         }
     } else {

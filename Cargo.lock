@@ -896,6 +896,7 @@ dependencies = [
  "ciborium",
  "coset",
  "ed25519-dalek",
+ "glob",
  "hex-literal",
  "httpmock",
  "iref",
