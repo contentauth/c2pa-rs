@@ -263,6 +263,9 @@ pub enum LogKind {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::expect_used)]
+    #![allow(clippy::unwrap_used)]
+
     use std::borrow::Cow;
 
     use crate::{
