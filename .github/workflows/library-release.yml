@@ -5,10 +5,7 @@ on:
     tags:
       - 'c2pa-v*' # Trigger on version tags (e.g., v1.0.0)
   workflow_dispatch:
-    #inputs:
-    #  tag_name:
-    #    description: 'Release tag (e.g., c2pa-v0.52.0)'
-    #    required: true
+
 jobs:
   build:
     name: Publish c2pa-library binaries
@@ -36,40 +33,12 @@ jobs:
       - name: Set up Rust
         uses: actions-rust-lang/setup-rust-toolchain@v1
 
-      - name: Setup Strawberry Perl
+      - name: Setup OpenSSL
         if: matrix.os == 'windows-latest'
-        uses: shogo82148/actions-setup-perl@v1
-        with:
-          perl-version: '5.32'
-          distribution: 'strawberry'
-      
-      # Install Locale::Maketext::Simple only on Windows with explicit paths
-      - name: Install Locale::Maketext::Simple and configure paths
-        if: matrix.os == 'windows-latest'
-        run: |
-          cpanm --verbose Locale::Maketext::Simple
-          # List installed modules to confirm installation
-          cpanm --info Locale::Maketext::Simple
-          # Display Perl's include paths
-          perl -e "print join(\"\n\", @INC);"
-          # Create a local copy in the expected path
-          perl -MLocale::Maketext::Simple -e "print \$INC{'Locale/Maketext/Simple.pm'}" > module_path.txt
-          $MODULE_PATH = Get-Content -Path module_path.txt
-          echo "Module found at: $MODULE_PATH"
-        
-          # Create symbolic links to the modules in paths that are being checked
-          # Set environment variable for subsequent steps
-          echo "PERL5LIB=$env:PERL5LIB;D:\a\c2pa-rs\c2pa-rs\target\x86_64-pc-windows-msvc\release\build\openssl-sys-def693d178636927\out\openssl-build\build\src\util\perl" | Out-File -FilePath $env:GITHUB_ENV -Append
-          choco install make
-        env:
-          OPENSSL_CONF: C:\vcpkg\installed\x64-windows-static\tools\openssl\openssl.cnf
-          OPENSSL_DIR: C:\vcpkg\installed\x64-windows-static
-          OPENSSL_NO_VENDOR: 1
-          OPENSSL_STATIC: Yes
-          RUSTFLAGS: -Ctarget-feature=-crt-static
-          VCPKGRS_DYNAMIC: 1
         shell: pwsh
-     
+        run: |
+          ./setup-rust-openssl.ps1
+        
       - name: Build release
         run: make release
 
