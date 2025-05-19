@@ -2273,6 +2273,7 @@ impl Store {
             };
         }
 
+        // sign the claim
         let pc = temp_store.provenance_claim().ok_or(Error::ClaimEncoding)?;
         let sig = temp_store.sign_claim(pc, signer, signer.reserve_size())?;
         let sig_placeholder = Store::sign_claim_placeholder(pc, signer.reserve_size());
