@@ -1086,7 +1086,7 @@ impl Manifest {
     ///
     /// # Example: Embed a manifest in a file
     ///
-    /// ```
+    ///
     /// # use c2pa::Result;
     /// use c2pa::{create_signer, Manifest, SigningAlg};
     /// use serde::Serialize;
