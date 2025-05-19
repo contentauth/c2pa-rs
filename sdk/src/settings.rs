@@ -18,13 +18,12 @@ use std::{
     io::{BufRead, BufReader, Cursor},
 };
 
-use c2pa_crypto::base64;
 use config::{Config, FileFormat};
 #[cfg(feature = "json_schema")]
 use schemars::JsonSchema;
 use serde_derive::{Deserialize, Serialize};
 
-use crate::{Error, Result};
+use crate::{crypto::base64, Error, Result};
 
 thread_local!(
     static SETTINGS: RefCell<Config> = RefCell::new(Config::try_from(&Settings::default()).unwrap_or_default())

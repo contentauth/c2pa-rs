@@ -96,8 +96,16 @@ pub mod assertions;
 pub mod cose_sign;
 /// The create_signer module contains the definitions for the signers that are part of the C2PA specification.
 pub mod create_signer;
+
+/// Cryptography primitives.
+pub mod crypto;
+
 /// Dynamic assertions are a new feature that allows you to add assertions to a C2PA file as a part of the signing process.
 pub mod dynamic_assertion;
+
+/// The `identity` module provides support for the [CAWG identity assertion](https://cawg.io/identity).
+pub mod identity;
+
 /// The jumbf_io module contains the definitions for the JUMBF data in assets.
 pub mod jumbf_io;
 /// The settings module provides a way to configure the C2PA SDK.
@@ -112,7 +120,6 @@ pub use assertions::Relationship;
 #[cfg(feature = "v1_api")]
 pub use asset_io::{CAIRead, CAIReadWrite};
 pub use builder::{Builder, ManifestDefinition};
-pub use c2pa_crypto::raw_signature::SigningAlg;
 pub use callback_signer::{CallbackFunc, CallbackSigner};
 pub use claim_generator_info::ClaimGeneratorInfo;
 // pub use dynamic_assertion::{
@@ -138,6 +145,8 @@ pub use signer::RemoteSigner;
 pub use signer::{AsyncSigner, Signer};
 pub use utils::mime::format_from_path;
 pub use validation_results::{ValidationResults, ValidationState};
+
+pub use crate::crypto::raw_signature::SigningAlg;
 
 // Internal modules
 pub(crate) mod assertion;

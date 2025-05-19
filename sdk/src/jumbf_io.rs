@@ -356,11 +356,10 @@ pub mod tests {
 
     use std::io::Seek;
 
-    use c2pa_crypto::raw_signature::SigningAlg;
-
     use super::*;
     use crate::{
         asset_io::RemoteRefEmbedType,
+        crypto::raw_signature::SigningAlg,
         utils::{test::create_test_store, test_signer::test_signer},
     };
 

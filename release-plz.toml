@@ -50,13 +50,12 @@ changelog_path = "./CHANGELOG.md"
 name = "c2pa-status-tracker"
 
 [[package]]
-name = "c2pa-crypto"
-
-[[package]]
-name = "cawg-identity"
-
-[[package]]
 name = "c2patool"
+
+[[package]]
+name = "c2pa-c"
+publish = false
+release = false
 
 [[package]]
 name = "export_schema"

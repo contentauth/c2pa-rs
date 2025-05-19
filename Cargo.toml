@@ -2,10 +2,9 @@
 resolver = "2"
 
 members = [
-    "cawg_identity",
+    "c_api",
     "cli",
     "export_schema",
-    "internal/crypto",
     "internal/status-tracker",
     "make_test_images",
     "sdk",

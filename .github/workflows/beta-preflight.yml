@@ -200,10 +200,6 @@ jobs:
       - name: Install wasm-pack
         run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
 
-      - name: Run Wasm tests (c2pa-crypto)
-        run: wasm-pack test --chrome --headless
-        working-directory: ./internal/crypto
-
       - name: Run Wasm tests (c2pa-status-tracker)
         run: wasm-pack test --chrome --headless
         working-directory: ./internal/status-tracker
@@ -211,10 +207,6 @@ jobs:
       - name: Run Wasm tests (c2pa-rs)
         run: wasm-pack test --chrome --headless
         working-directory: ./sdk
-
-      - name: Run Wasm tests (cawg-identity)
-        run: wasm-pack test --chrome --headless
-        working-directory: ./cawg_identity
 
   clippy_check:
     name: Clippy

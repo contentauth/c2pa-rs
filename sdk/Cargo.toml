@@ -1,6 +1,6 @@
 [package]
 name = "c2pa"
-version = "0.49.5"
+version = "0.52.0"
 description = "Rust SDK for C2PA (Coalition for Content Provenance and Authenticity) implementors"
 authors = [
     "Maurice Fisher <mfisher@adobe.com>",
@@ -31,9 +31,16 @@ file_io = []
 serialize_thumbnails = []
 no_interleaved_io = ["file_io"]
 fetch_remote_manifests = ["dep:wasi"]
-json_schema = ["dep:schemars", "c2pa-crypto/json_schema"]
-rust_native_crypto = ["c2pa-crypto/rust_native_crypto"]
+json_schema = ["dep:schemars"]
 pdf = ["dep:lopdf"]
+rust_native_crypto = [
+    "dep:const-oid",
+    "dep:der",
+    "dep:num-bigint-dig",
+    "dep:pkcs1",
+    "dep:rsa",
+    "dep:spki",
+]
 v1_api = []
 
 # The diagnostics feature is unsupported and might be removed.
@@ -43,6 +50,9 @@ diagnostics = []
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(test)'] }
 # Workaround for https://github.com/est31/cargo-udeps/issues/293.
+
+[[example]]
+name = "cawg_identity"
 
 [[example]]
 name = "client"
@@ -65,13 +75,13 @@ crate-type = ["lib"]
 asn1-rs = "0.6.2"
 async-generic = "1.1"
 async-recursion = "1.1.1"
-async-trait = { version = "0.1.77" }
+async-trait = "0.1.78"
 atree = "0.5.2"
+base64 = "0.22.1"
 bcder = "0.7.3"
 bytes = "1.7.2"
 byteorder = { version = "1.4.3", default-features = false }
 byteordered = "0.6.0"
-c2pa-crypto = { path = "../internal/crypto", version = "0.8.2" }
 c2pa-status-tracker = { path = "../internal/status-tracker", version = "0.6.2" }
 chrono = { version = "0.4.39", default-features = false, features = ["serde"] }
 ciborium = "0.2.2"
@@ -82,32 +92,51 @@ config = { version = "0.14.0", default-features = false, features = [
     "ron",
     "ini",
 ] }
+const-hex = "1.14"
+const-oid = { version = "0.9.6", optional = true }
 conv = "0.3.3"
 coset = "0.3.8"
 extfmt = "0.1.1"
-ed25519-dalek = "2.1.1"
-quick-xml = "0.37.1"
+der = { version = "0.7.9", optional = true }
+ecdsa = { version = "0.16.9", features = ["digest", "sha2"] }
+ed25519-dalek = { version = "2.1.1", features = ["alloc", "digest", "pem", "pkcs8", "rand_core"] }
+getrandom = { version = "0.2.7", features = ["js"] }
 hex = "0.4.3"
+hex-literal = "0.4.1"  # Might be only a dev dependency
 id3 = "=1.16.1"
 img-parts = "0.3.2"
+iref = { version = "3.2.2", features = ["serde"] }
 jfifdump = "0.6.0"
 log = "0.4.8"
 lopdf = { version = "0.31.0", optional = true }
 lazy_static = "1.4.0"
 memchr = "2.7.4"
 mp4 = "0.14.0"
+multibase = "0.9.1"
+nom = "7.1.3"
+non-empty-string = { version = "=0.2.4", features = ["serde"] }
+nonempty-collections = { version = "0.2.9", features = ["serde"] }
+num-bigint-dig = { version = "0.8.4", optional = true }
+p256 = "0.13.2"
+p384 = "0.13.0"
+p521 = { version = "0.13.3", features = ["pkcs8", "digest", "ecdsa"] }
 pem = "3.0.2"
+pkcs1 = { version = "0.7.5", optional = true }
+pkcs8 = "0.10.2"
 png_pong = "0.9.1"
+quick-xml = "0.37.1"
 rand = "0.8.5"
 rand_chacha = "0.3.1"
 range-set = "0.0.11"
+rasn = "0.22.0"
 rasn-ocsp = "0.22.0"
 rasn-pkix = "0.22.0"
-rasn = "0.22.0"
+regex = "1.11"
 riff = "2.0.0"
+rsa = { version = "0.9.7", features = ["pem", "sha2", "std"], optional = true }
 schemars = { version = "0.8.21", optional = true }
 serde = { version = "1.0.197", features = ["derive"] }
-serde_bytes = "0.11.5"
+serde_bytes = "0.11.14"
 serde_cbor = "0.11.1"
 serde_derive = "1.0.197"
 serde_json = { version = "1.0.117", features = ["preserve_order"] }
@@ -115,15 +144,24 @@ serde_with = "3.11.0"
 serde-transcode = "1.1.1"
 sha1 = "0.10.6"
 sha2 = "0.10.6"
+spki = { version = "0.7.3", optional = true }
+static-iref = "3.0"
 tempfile = "=3.15.0"
 thiserror = "2.0.8"
 treeline = "0.1.0"
 url = "2.5.3"
 uuid = { version = "=1.12.0", features = ["serde", "v4"] }
+web-time = "1.1"
+x509-certificate = "0.24.0"
 x509-parser = "0.16.0"
-zip = { version = "2.4.1", default-features = false }
+zeroize = { version = "1.8", features = ["zeroize_derive"] }
+zip = { version = "3.0.0", default-features = false }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
+const-oid = "0.9.6"
+der = "0.7.9"
+num-bigint-dig = "0.8.4"
+pkcs1 = "0.7.5"
 rsa = { version = "0.9.6", features = ["sha2"] }
 spki = "0.7.3"
 
@@ -131,7 +169,9 @@ spki = "0.7.3"
 tempfile = { version = "3.15", features = ["nightly"] }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+openssl = { version = "0.10.72", features = ["vendored"] }
 ureq = "2.4.0"
+url = "2.5.3"
 
 [target.'cfg(any(target_os = "wasi", not(target_arch = "wasm32")))'.dependencies]
 image = { version = "0.24.7", default-features = false, features = [
@@ -142,8 +182,14 @@ image = { version = "0.24.7", default-features = false, features = [
 [target.'cfg(target_os = "wasi")'.dependencies]
 getrandom = "0.2.7"
 wasi = {version = "0.14", optional = true}
+wstd = "0.5"
 
-[target.'cfg(all(target_arch = "wasm32",not(target_os = "wasi")))'.dependencies]
+[target.'cfg(any(not(target_arch = "wasm32"), target_os = "wasi"))'.dependencies.chrono]
+version = "0.4.39"
+default-features = false
+features = ["now"]
+
+[target.'cfg(all(target_arch = "wasm32", not(target_os = "wasi")))'.dependencies]
 chrono = { version = "0.4.39", default-features = false, features = [
 	"serde",
 	"wasmbind",
@@ -152,11 +198,13 @@ console_log = { version = "1.0.0", features = ["color"] }
 getrandom = { version = "0.2.7", features = ["js"] }
 js-sys = "0.3.58"
 rand_core = "0.9.0-alpha.2"
+ring = { version = "0.17.13", features = ["wasm32_unknown_unknown_js"] }
 serde-wasm-bindgen = "0.6.5"
 uuid = { version = "1.10.0", features = ["serde", "v4", "js"] }
-wasm-bindgen = "0.2.83"
+wasm-bindgen = "0.2.95"
 wasm-bindgen-futures = "0.4.31"
 web-sys = { version = "0.3.58", features = [
+    "console",
     "Crypto",
     "SubtleCrypto",
     "CryptoKey",
@@ -164,19 +212,20 @@ web-sys = { version = "0.3.58", features = [
     "WorkerGlobalScope",
 ] }
 
+[target.'cfg(not(target_os = "wasi"))'.dependencies]
+reqwest = { version = "0.12.8", default-features = false, features = ["rustls-tls"] }
+
 [dev-dependencies]
-anyhow = "1.0.40"
+anyhow = "1.0.97"
 glob = "0.3.1"
 hex-literal = "0.4.1"
 jumbf = "0.4.0"
 mockall = "0.13.1"
 
-[target.'cfg(all(target_arch = "wasm32",not(target_os = "wasi")))'.dev-dependencies]
+[target.'cfg(all(target_arch = "wasm32", not(target_os = "wasi")))'.dev-dependencies]
 wasm-bindgen-test = "0.3.45"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 actix = "0.13.1"
+httpmock = "0.7.0"
 tokio = { version = "1.44.2", features = ["full"] }
-
-[target.'cfg(target_os = "wasi")'.dev-dependencies]
-wstd = "0.5"
