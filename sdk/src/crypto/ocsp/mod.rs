@@ -19,9 +19,8 @@ use rasn_pkix::CrlReason;
 use thiserror::Error;
 
 use crate::{
-    crypto::internal::time,
-    log_item,
-    status_tracker::{validation_codes, StatusTracker},
+    crypto::internal::time, log_item, status_tracker::StatusTracker,
+    validation_results::validation_codes,
 };
 
 /// OcspResponse - struct to contain the OCSPResponse DER and the time

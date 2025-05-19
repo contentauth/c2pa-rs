@@ -18,5 +18,3 @@ pub use log::{LogItem, LogKind};
 
 mod status_tracker;
 pub use status_tracker::{ErrorBehavior, StatusTracker};
-
-pub mod validation_codes;

@@ -27,7 +27,8 @@ use x509_parser::{
 use crate::{
     crypto::{asn1::rfc3161::TstInfo, cose::CertificateTrustPolicy},
     log_item,
-    status_tracker::{validation_codes::*, StatusTracker},
+    status_tracker::StatusTracker,
+    validation_results::validation_codes::*,
 };
 
 /// Verify that an end-entity X.509 certificate meets the requirements stated in
@@ -567,7 +568,8 @@ mod tests {
 
     use crate::{
         crypto::cose::{check_end_entity_certificate_profile, CertificateTrustPolicy},
-        status_tracker::{validation_codes::SIGNING_CREDENTIAL_EXPIRED, StatusTracker},
+        status_tracker::StatusTracker,
+        validation_results::validation_codes::SIGNING_CREDENTIAL_EXPIRED,
     };
 
     #[test]

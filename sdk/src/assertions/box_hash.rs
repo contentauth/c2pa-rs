@@ -21,8 +21,8 @@ use crate::{
     assertions::labels,
     asset_io::{AssetBoxHash, CAIRead},
     error::{Error, Result},
-    status_tracker::validation_codes::ASSERTION_BOXHASH_UNKNOWN,
     utils::hash_utils::{hash_stream_by_alg, verify_stream_by_alg, HashRange},
+    validation_results::validation_codes::ASSERTION_BOXHASH_UNKNOWN,
 };
 
 const ASSERTION_CREATION_VERSION: usize = 1;

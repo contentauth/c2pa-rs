@@ -32,13 +32,11 @@ use crate::{
         time_stamp::TimeStampError,
     },
     log_item,
-    status_tracker::{
-        validation_codes::{
-            ALGORITHM_UNSUPPORTED, SIGNING_CREDENTIAL_INVALID, SIGNING_CREDENTIAL_TRUSTED,
-            SIGNING_CREDENTIAL_UNTRUSTED, TIMESTAMP_MALFORMED, TIMESTAMP_MISMATCH,
-            TIMESTAMP_OUTSIDE_VALIDITY,
-        },
-        StatusTracker,
+    status_tracker::StatusTracker,
+    validation_results::validation_codes::{
+        ALGORITHM_UNSUPPORTED, SIGNING_CREDENTIAL_INVALID, SIGNING_CREDENTIAL_TRUSTED,
+        SIGNING_CREDENTIAL_UNTRUSTED, TIMESTAMP_MALFORMED, TIMESTAMP_MISMATCH,
+        TIMESTAMP_OUTSIDE_VALIDITY,
     },
 };
 

@@ -24,7 +24,8 @@ use crate::{
         raw_signature::SigningAlg,
     },
     log_item,
-    status_tracker::{validation_codes::CLAIM_SIGNATURE_MISMATCH, StatusTracker},
+    status_tracker::StatusTracker,
+    validation_results::validation_codes::CLAIM_SIGNATURE_MISMATCH,
 };
 
 /// Parse a byte slice as a COSE Sign1 data structure.

@@ -22,11 +22,11 @@ use log::debug;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-pub use crate::status_tracker::validation_codes::*;
 #[cfg(feature = "v1_api")]
 use crate::status_tracker::StatusTracker;
 #[cfg(feature = "v1_api")]
 use crate::store::Store;
+pub use crate::validation_results::validation_codes::*;
 use crate::{
     error::Error,
     jumbf,
