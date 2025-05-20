@@ -6,6 +6,14 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 The format of this changelog is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.7.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-status-tracker-v0.6.2...c2pa-status-tracker-v0.7.0)
+_20 May 2025_
+
+### Added
+
+* Mark c2pa-status-tracker crate as discontinued
+* [**breaking**] Merge `c2pa-status-tracker` crate into `c2pa` ([#1115](https://github.com/contentauth/c2pa-rs/pull/1115))
+
 ## [0.6.2](https://github.com/contentauth/c2pa-rs/compare/c2pa-status-tracker-v0.6.1...c2pa-status-tracker-v0.6.2)
 _24 April 2025_
 
