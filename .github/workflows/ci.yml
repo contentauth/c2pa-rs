@@ -59,7 +59,6 @@ jobs:
       matrix:
         os: [windows-latest, macos-latest, ubuntu-latest]
         rust_version: [stable, 1.82.0]
-        crypto: [rust-native, openssl]
 
     steps:
       - name: Checkout repository
@@ -81,17 +80,15 @@ jobs:
         env:
           RUST_BACKTRACE: "1"
           FEATURES: ${{needs.get-features.outputs.rust_native_crypto-features}}
-        if: matrix.crypto == 'rust-native'
         run: |
-          cargo llvm-cov --lib --features "$FEATURES" --lcov --output-path lcov.info
+          cargo llvm-cov --lib --features "$FEATURES" --lcov --output-path lcov-rust_native_crypto.info
 
       - name: Generate code coverage for openssl
         env:
           RUST_BACKTRACE: "1"
           FEATURES: ${{needs.get-features.outputs.openssl-features}}
-        if: matrix.crypto == 'openssl'
         run: |
-          cargo llvm-cov --lib --features "$FEATURES" --lcov --output-path lcov.info
+          cargo llvm-cov --lib --features "$FEATURES" --lcov --output-path lcov-openssl.info
 
       # Tokens aren't available for PRs originating from forks,
       # so we don't attempt to upload code coverage in that case.
@@ -106,7 +103,7 @@ jobs:
           token: ${{ secrets.CODECOV_TOKEN }}
           fail_ci_if_error: true
           verbose: true
-          files: ./lcov.info
+          files: ./lcov-openssl.info,./lcov-rust_native_crypto.info
 
   tests-cli:
     name: Unit tests (c2patool)
