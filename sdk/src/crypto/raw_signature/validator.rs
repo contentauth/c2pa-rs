@@ -65,7 +65,7 @@ pub trait AsyncRawSignatureValidator {
 /// Which validators are available may vary depending on the platform and
 /// which crate features were enabled.
 pub fn validator_for_signing_alg(alg: SigningAlg) -> Option<Box<dyn RawSignatureValidator>> {
-    #[cfg(any(target_arch = "wasm32", feature = "rust_native_crypto"))]
+    #[cfg(feature = "rust_native_crypto")]
     {
         if let Some(validator) =
             crate::crypto::raw_signature::rust_native::validators::validator_for_signing_alg(alg)
@@ -74,7 +74,7 @@ pub fn validator_for_signing_alg(alg: SigningAlg) -> Option<Box<dyn RawSignature
         }
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(feature = "openssl")]
     if let Some(validator) =
         crate::crypto::raw_signature::openssl::validators::validator_for_signing_alg(alg)
     {
@@ -95,7 +95,7 @@ pub(crate) fn validator_for_sig_and_hash_algs(
     hash_alg: &Oid,
 ) -> Option<Box<dyn RawSignatureValidator>> {
     // TO REVIEW: Do we need any of the RSA-PSS algorithms for this use case?
-    #[cfg(any(target_arch = "wasm32", feature = "rust_native_crypto"))]
+    #[cfg(feature = "rust_native_crypto")]
     {
         if let Some(validator) =
             crate::crypto::raw_signature::rust_native::validators::validator_for_sig_and_hash_algs(
@@ -106,7 +106,7 @@ pub(crate) fn validator_for_sig_and_hash_algs(
         }
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(feature = "openssl")]
     if let Some(validator) =
         crate::crypto::raw_signature::openssl::validators::validator_for_sig_and_hash_algs(
             sig_alg, hash_alg,
@@ -175,14 +175,14 @@ pub enum RawSignatureValidationError {
     InternalError(String),
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(feature = "openssl")]
 impl From<openssl::error::ErrorStack> for RawSignatureValidationError {
     fn from(err: openssl::error::ErrorStack) -> Self {
         Self::CryptoLibraryError(err.to_string())
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(feature = "openssl")]
 impl From<crate::crypto::raw_signature::openssl::OpenSslMutexUnavailable>
     for RawSignatureValidationError
 {

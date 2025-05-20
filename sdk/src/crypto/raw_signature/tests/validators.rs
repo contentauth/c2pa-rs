@@ -97,8 +97,7 @@ fn es384() {
 }
 
 #[test]
-// #[cfg_attr(all(target_arch = "wasm32", not(target_os = "wasi")),
-// wasm_bindgen_test)] // ES512 not implemented
+#[cfg(not(target_arch = "wasm32"))]
 fn es512() {
     let signature = include_bytes!("../../../../tests/fixtures/crypto/raw_signature/es512.raw_sig");
     let pub_key = include_bytes!("../../../../tests/fixtures/crypto/raw_signature/es512.pub_key");
@@ -242,7 +241,7 @@ const SHA384_OID: Oid = bcder::Oid(OctetString::from_static(&[96, 134, 72, 1, 10
 
 const SHA512_OID: Oid = bcder::Oid(OctetString::from_static(&[96, 134, 72, 1, 101, 3, 4, 2, 3]));
 
-#[cfg_attr(target_arch = "wasm32", allow(unused))]
+#[cfg_attr(feature = "rust_native_crypto", allow(unused))]
 const SHA1_OID: Oid = bcder::Oid(OctetString::from_static(&[43, 14, 3, 2, 26]));
 
 #[test]
@@ -341,9 +340,7 @@ fn rs512() {
 }
 
 #[test]
-// #[cfg_attr(all(target_arch = "wasm32", not(target_os = "wasi")), wasm_bindgen_test)] // SHA1 not
-// implemented
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(feature = "openssl")]
 fn sha1() {
     let signature =
         include_bytes!("../../../../tests/fixtures/crypto/raw_signature/legacy/sha1.raw_sig");

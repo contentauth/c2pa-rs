@@ -15,6 +15,11 @@ edition = "2018"
 homepage = "https://contentauthenticity.org"
 repository = "https://github.com/contentauth/c2pa-rs/tree/main/cli"
 
+[features]
+default = ["openssl"]
+openssl = ["c2pa/openssl"]
+rust_native_crypto = ["c2pa/rust_native_crypto"]
+
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(test)'] }
 # Workaround for https://github.com/est31/cargo-udeps/issues/293.
@@ -27,7 +32,7 @@ c2pa = { path = "../sdk", version = "0.53.0", features = [
 	"file_io",
 	"add_thumbnails",
 	"pdf"
-] }
+], default-features = false }
 clap = { version = "4.5.10", features = ["derive", "env"] }
 env_logger = "0.11.7"
 glob = "0.3.1"
