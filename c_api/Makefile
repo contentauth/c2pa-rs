@@ -52,9 +52,7 @@ fmt:
 
 # These are for building the c2patool release bin on various platforms
 release-win:
-	rustup target add x86_64-pc-windows-msvc
-	cargo build --target=x86_64-pc-windows-msvc --release
-	@$(call make_zip,$(TARGET_DIR)/x86_64-pc-windows-msvc/release,x86_64-pc-windows-msvc)	
+    powershell -ExecutionPolicy Bypass -File ../../setup-rust-openssl.ps1
 
 release-mac-arm:
 	rustup target add aarch64-apple-darwin
