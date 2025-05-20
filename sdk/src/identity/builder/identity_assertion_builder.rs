@@ -293,7 +293,6 @@ mod tests {
 
     use std::io::{Cursor, Seek};
 
-    use c2pa_status_tracker::StatusTracker;
     #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
     use wasm_bindgen_test::wasm_bindgen_test;
 
@@ -309,6 +308,7 @@ mod tests {
             },
             IdentityAssertion, ToCredentialSummary,
         },
+        status_tracker::StatusTracker,
         Builder, Reader, SigningAlg,
     };
 

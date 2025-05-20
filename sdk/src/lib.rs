@@ -110,6 +110,10 @@ pub mod identity;
 pub mod jumbf_io;
 /// The settings module provides a way to configure the C2PA SDK.
 pub mod settings;
+
+/// Supports status tracking as defined in the C2PA Technical Specification.
+pub mod status_tracker;
+
 /// The validation_results module contains the definitions for the validation results that are part of the C2PA specification.
 pub mod validation_results;
 /// The validation_status module contains the definitions for the validation status that are part of the C2PA specification.

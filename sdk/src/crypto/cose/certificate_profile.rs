@@ -12,7 +12,6 @@
 // each license.
 
 use asn1_rs::{Any, Class, FromDer, Header, Tag};
-use c2pa_status_tracker::{log_item, validation_codes::*, StatusTracker};
 use chrono::{DateTime, Utc};
 use thiserror::Error;
 use web_time::SystemTime;
@@ -25,7 +24,12 @@ use x509_parser::{
     x509::{AlgorithmIdentifier, X509Version},
 };
 
-use crate::crypto::{asn1::rfc3161::TstInfo, cose::CertificateTrustPolicy};
+use crate::{
+    crypto::{asn1::rfc3161::TstInfo, cose::CertificateTrustPolicy},
+    log_item,
+    status_tracker::StatusTracker,
+    validation_results::validation_codes::*,
+};
 
 /// Verify that an end-entity X.509 certificate meets the requirements stated in
 /// [§14.5. X.509 Certificates].
@@ -558,12 +562,15 @@ mod tests {
     #![allow(clippy::panic)]
     #![allow(clippy::unwrap_used)]
 
-    use c2pa_status_tracker::{validation_codes::SIGNING_CREDENTIAL_EXPIRED, StatusTracker};
     #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
     use wasm_bindgen_test::wasm_bindgen_test;
     use x509_parser::pem::Pem;
 
-    use crate::crypto::cose::{check_end_entity_certificate_profile, CertificateTrustPolicy};
+    use crate::{
+        crypto::cose::{check_end_entity_certificate_profile, CertificateTrustPolicy},
+        status_tracker::StatusTracker,
+        validation_results::validation_codes::SIGNING_CREDENTIAL_EXPIRED,
+    };
 
     #[test]
     #[cfg_attr(
