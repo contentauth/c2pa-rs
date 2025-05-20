@@ -22,7 +22,6 @@ use std::{
 
 use async_generic::async_generic;
 use async_recursion::async_recursion;
-use c2pa_status_tracker::{log_item, ErrorBehavior, StatusTracker};
 use log::error;
 
 #[cfg(feature = "v1_api")]
@@ -72,9 +71,11 @@ use crate::{
         get_assetio_handler, is_bmff_format, load_jumbf_from_stream, object_locations_from_stream,
         save_jumbf_to_stream,
     },
+    log_item,
     manifest_store_report::ManifestStoreReport,
     salt::DefaultSalt,
     settings::get_settings_value,
+    status_tracker::{ErrorBehavior, StatusTracker},
     utils::{hash_utils::HashRange, io_utils::stream_len, patch::patch_bytes},
     validation_status, AsyncSigner, Signer,
 };
@@ -3849,7 +3850,6 @@ pub mod tests {
 
     use std::{fs, io::Write};
 
-    use c2pa_status_tracker::{LogItem, StatusTracker};
     use memchr::memmem;
     use serde::Serialize;
     use sha2::{Digest, Sha256};
@@ -3862,6 +3862,7 @@ pub mod tests {
         crypto::raw_signature::SigningAlg,
         hashed_uri::HashedUri,
         jumbf_io::{get_assetio_handler_from_path, update_file_jumbf},
+        status_tracker::{LogItem, StatusTracker},
         utils::{
             hash_utils::Hasher,
             patch::patch_file,
@@ -5321,7 +5322,7 @@ pub mod tests {
         const REPLACE_BYTES: &[u8] =
             b"c2pa_manifest\xA3\x63url\x78\x4aself#jumbf=/c2pa/contentauth:urn:uuix:";
         let report = patch_and_report("CIE-sig-CA.jpg", SEARCH_BYTES, REPLACE_BYTES);
-        let errors: Vec<c2pa_status_tracker::LogItem> = report.filter_errors().cloned().collect();
+        let errors: Vec<crate::status_tracker::LogItem> = report.filter_errors().cloned().collect();
         assert_eq!(
             errors[0].validation_status.as_deref(),
             Some(validation_status::ASSERTION_HASHEDURI_MISMATCH)

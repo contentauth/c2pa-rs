@@ -14,7 +14,6 @@
 use std::io::Write;
 
 use async_generic::async_generic;
-use c2pa_status_tracker::StatusTracker;
 use x509_parser::{num_bigint::BigUint, prelude::*};
 
 use crate::{
@@ -29,6 +28,7 @@ use crate::{
     },
     error::{Error, Result},
     settings::get_settings_value,
+    status_tracker::StatusTracker,
 };
 
 fn get_sign_cert(sign1: &coset::CoseSign1) -> Result<Vec<u8>> {
@@ -181,14 +181,16 @@ pub(crate) fn get_signing_info(
 #[allow(clippy::unwrap_used)]
 #[cfg(test)]
 pub mod tests {
-    use c2pa_status_tracker::StatusTracker;
     use ciborium::Value;
     use coset::Label;
     use sha2::digest::generic_array::sequence::Shorten;
     use x509_parser::{certificate::X509Certificate, pem::Pem};
 
     use super::*;
-    use crate::{crypto::raw_signature::SigningAlg, utils::test_signer::test_signer, Signer};
+    use crate::{
+        crypto::raw_signature::SigningAlg, status_tracker::StatusTracker,
+        utils::test_signer::test_signer, Signer,
+    };
 
     #[test]
     fn test_no_timestamp() {

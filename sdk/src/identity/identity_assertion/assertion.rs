@@ -16,7 +16,6 @@ use std::{
     fmt::{Debug, Formatter},
 };
 
-use c2pa_status_tracker::{log_current_item, log_item, StatusTracker};
 use serde::{Deserialize, Serialize};
 use serde_bytes::ByteBuf;
 
@@ -35,6 +34,8 @@ use crate::{
         x509::X509SignatureVerifier,
         SignatureVerifier, ToCredentialSummary, ValidationError,
     },
+    log_current_item, log_item,
+    status_tracker::StatusTracker,
     Manifest, Reader,
 };
 
