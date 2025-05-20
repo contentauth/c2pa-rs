@@ -10,8 +10,13 @@ rust-version = "1.82.0"
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(test)'] }
 # Workaround for https://github.com/est31/cargo-udeps/issues/293.
 
+[features]
+default = ["openssl"]
+openssl = ["c2pa/openssl"]
+rust_native_crypto = ["c2pa/rust_native_crypto"]
+
 [dependencies]
 anyhow = "1.0.40"
-c2pa = { path = "../sdk", default-features = false, features = ["json_schema"] }
+c2pa = { path = "../sdk", features = ["json_schema"], default-features = false }
 schemars = "0.8.21"
 serde_json = "1.0.117"
