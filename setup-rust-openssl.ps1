@@ -51,8 +51,24 @@ try {
     tar -xf openssl.tar.gz
 
     # Install required Perl modules
+    Write-Host "Checking for CPAN..."
+    if (-not (Get-Command cpan -ErrorAction SilentlyContinue)) {
+        Write-Error "CPAN is not installed. Please install Strawberry Perl or ActiveState Perl first."
+        exit 1
+    }
+
     Write-Host "Installing Perl module Locale::Maketext::Simple..."
-    cpan -T -i Locale::Maketext::Simple
+    try {
+        cpan -i Locale::Maketext::Simple
+        if (-not (perl -e "use Locale::Maketext::Simple; print 'Module installed successfully'")) {
+            throw "Module installation verification failed"
+        }
+        Write-Host "Successfully installed Locale::Maketext::Simple"
+    }
+    catch {
+        Write-Error "Failed to install Locale::Maketext::Simple: $_"
+        exit 1
+    }
     
     # Setup Visual Studio environment
     Write-Host "Setting up Visual Studio environment..."
