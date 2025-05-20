@@ -6,6 +6,17 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 Since version 0.36.2, the format of this changelog is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.53.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.52.0...c2pa-v0.53.0)
+_20 May 2025_
+
+### Added
+
+* [**breaking**] Merge `c2pa-status-tracker` crate into `c2pa` ([#1115](https://github.com/contentauth/c2pa-rs/pull/1115))
+
+### Fixed
+
+* Avoid yanked version of `windows-core` crate ([#1116](https://github.com/contentauth/c2pa-rs/pull/1116))
+
 ## [0.52.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.51.1...c2pa-v0.52.0)
 _16 May 2025_
 
