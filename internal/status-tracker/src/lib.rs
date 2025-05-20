@@ -13,5 +13,5 @@
 
 #[allow(unused)]
 pub(crate) fn goodbye() {
-    eprintln!("This crate is being discontinued.");
+    println!("This crate is being discontinued.");
 }
