@@ -68,6 +68,10 @@ name = "v2show"
 [[example]]
 name = "v2api"
 
+[[example]]
+name = "fragmented_bmff"
+required-features = ["file_io"]
+
 [lib]
 crate-type = ["lib"]
 
