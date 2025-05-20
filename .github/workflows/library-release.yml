@@ -30,15 +30,13 @@ jobs:
       - name: Set up Rust
         uses: actions-rust-lang/setup-rust-toolchain@v1
 
-      - name: Setup OpenSSL
+      - name: Build Windows release
         if: matrix.os == 'windows-latest'
         shell: pwsh
         run: |
-          "PERL=$((where.exe perl)[0])" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-          echo "OPENSSL_SRC_PERL=$((where.exe perl)[0])" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
           ./setup-rust-openssl.ps1
-        
       - name: Build release
+        if: matrix.os != 'windows-latest'
         run: make release
 
       - name: Upload build artifacts

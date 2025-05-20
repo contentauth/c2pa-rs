@@ -72,9 +72,6 @@ try {
     [Environment]::SetEnvironmentVariable("LC_ALL", "C", [EnvironmentVariableTarget]::Process)
     [Environment]::SetEnvironmentVariable("LANG", "C", [EnvironmentVariableTarget]::Process)
     
-    # Build and install OpenSSL (not needed if rust will be compiling and embedding)
-    #nmake
-    #nmake install_sw
     
     # Set environment variables for Rust
     Write-Host "Setting environment variables for Rust..."
@@ -86,12 +83,7 @@ try {
     $env:OPENSSL_DIR = $OPENSSL_DIR
     $env:OPENSSL_LIB_DIR = "$OPENSSL_DIR\lib"
     $env:OPENSSL_INCLUDE_DIR = "$OPENSSL_DIR\include"
-    
-    # Ensure Rust is using MSVC toolchain
-    Write-Host "Configuring Rust to use MSVC toolchain..."
-    rustup default stable-msvc
-    rustup update stable-msvc
-    
+
     # Add OpenSSL bin to PATH for DLLs
     $current_path = [Environment]::GetEnvironmentVariable("PATH", [EnvironmentVariableTarget]::User)
     $new_path = "$OPENSSL_DIR\bin;$current_path"
@@ -108,7 +100,36 @@ try {
     Write-Host "  OPENSSL_LIB_DIR = $env:OPENSSL_LIB_DIR"
     Write-Host "  OPENSSL_INCLUDE_DIR = $env:OPENSSL_INCLUDE_DIR"
     Write-Host "`nSetup completed successfully!"
-    
+
+    # build with Rust msvc
+    Write-Host "Building Rust project with msvc toolchain ..."
+    rustup update stable-msvc
+    rustup target add x86_64-pc-windows-msvc
+    cargo build --target=x86_64-pc-windows-msvc --release
+
+    # generate zip file with version and platform and add to artifacts folder
+    $platform = "x86_64-pc-windows-msvc"
+    $ReleaseDir = "target\$platform\release"
+    $artifactsDir = "target\artifacts"
+    $includeDir = "$ReleaseDir\include"
+    $libDir = "$ReleaseDir\lib"
+
+    Write-Host "Reading version from $ReleaseDir\c2pa.h"
+    $versionLine = Select-String -Path "$ReleaseDir\c2pa.h" -Pattern "^// Version:" | Select-Object -First 1
+    $version = $versionLine -replace "^// Version: ", ""
+
+    New-Item -ItemType Directory -Force -Path $artifactsDir | Out-Null
+    New-Item -ItemType Directory -Force -Path $includeDir | Out-Null
+    New-Item -ItemType Directory -Force -Path $libDir | Out-Null
+
+    Copy-Item "$ReleaseDir\c2pa.h" $includeDir -Force
+    Copy-Item "$ReleaseDir\libc2pa_c.*" $libDir -Force
+
+    $zipPath = "$artifactsDir\c2pa-v$version-$Platform.zip"
+    Compress-Archive -Path "$includeDir", "$libDir" -DestinationPath $zipPath -Force
+
+    Write-Host "Zip file created: $zipPath"
+
 } catch {
     Write-Host "Error: $_" -ForegroundColor Red
     exit 1
