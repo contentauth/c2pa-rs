@@ -49,6 +49,10 @@ try {
     # Extract OpenSSL
     Write-Host "Extracting OpenSSL source..."
     tar -xf openssl.tar.gz
+
+    # Install required Perl modules
+    Write-Host "Installing Perl module Locale::Maketext::Simple..."
+    cpan -T -i Locale::Maketext::Simple
     
     # Setup Visual Studio environment
     Write-Host "Setting up Visual Studio environment..."
