@@ -74,6 +74,16 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Run tests with rust_native_crypto
+        shell: pwsh
+        if: runner.os == 'Windows'
+        env:
+          RUST_BACKTRACE: "1"
+          FEATURES: ${{needs.get-features.outputs.rust-native-features}}
+        run: |
+          cargo test --no-default-features --features "$env:FEATURES"
+
+      - name: Run tests with rust_native_crypto
+        if: runner.os != 'Windows'
         env:
           RUST_BACKTRACE: "1"
           FEATURES: ${{needs.get-features.outputs.rust-native-features}}
