@@ -11,9 +11,9 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use std::{fmt::Debug, iter::Iterator};
+#![deny(missing_docs)]
 
-use crate::LogItem;
+use std::{fmt::Debug, iter::Iterator};
 
 /// A `StatusTracker` is used in the validation logic of c2pa-rs and
 /// related crates to control error-handling behavior and optionally
@@ -185,5 +185,103 @@ pub enum ErrorBehavior {
 impl Default for ErrorBehavior {
     fn default() -> Self {
         Self::ContinueWhenPossible
+    }
+}
+
+mod log_item;
+pub use log_item::{LogItem, LogKind};
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::expect_used)]
+    #![allow(clippy::unwrap_used)]
+
+    use std::fmt::{self, Display, Formatter};
+
+    mod detailed {
+        use super::SampleError;
+        use crate::{log_item, status_tracker::StatusTracker};
+
+        #[test]
+        fn aggregates_errors() {
+            let mut tracker = StatusTracker::default();
+
+            // Add an item without an error.
+            log_item!("test1", "test item 1", "test func").success(&mut tracker);
+
+            // Add another item with an error. Should not stop.
+            log_item!("test2", "test item 1", "test func")
+                .validation_status("foo.bar")
+                .failure(&mut tracker, SampleError {})
+                .unwrap();
+
+            dbg!(&tracker);
+
+            assert_eq!(tracker.logged_items().len(), 2);
+
+            assert!(tracker.has_status("foo.bar"));
+            assert!(!tracker.has_status("blah"));
+
+            assert!(tracker.has_error(SampleError {}));
+            assert!(!tracker.has_error("Something Else"));
+
+            // Verify that one item with error was found.
+            let errors: Vec<&crate::status_tracker::LogItem> = tracker.filter_errors().collect();
+            assert_eq!(errors.len(), 1);
+            assert_eq!(tracker.logged_items().len(), 2);
+        }
+
+        #[test]
+        fn append() {
+            let mut tracker1 = StatusTracker::default();
+            let mut tracker2 = StatusTracker::default();
+
+            log_item!("test1", "test item 1", "test func").success(&mut tracker1);
+
+            log_item!("test2", "test item 1", "test func")
+                .failure(&mut tracker2, SampleError {})
+                .unwrap();
+
+            assert_eq!(tracker1.logged_items().len(), 1);
+            assert_eq!(tracker2.logged_items().len(), 1);
+
+            tracker1.append(&tracker2);
+
+            assert_eq!(tracker1.logged_items().len(), 2);
+            assert_eq!(tracker2.logged_items().len(), 1);
+        }
+    }
+
+    mod one_shot {
+        use super::SampleError;
+        use crate::{
+            log_item,
+            status_tracker::{ErrorBehavior, StatusTracker},
+        };
+
+        #[test]
+        fn stops_on_first_error() {
+            let mut tracker = StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
+
+            // Add an item without error.
+            log_item!("test1", "test item 1", "test func").success(&mut tracker);
+
+            // Adding an error item should trigger an abort.
+            let err = log_item!("test2", "test item 2 from macro", "test func")
+                .failure(&mut tracker, SampleError {})
+                .unwrap_err();
+
+            assert_eq!(err, SampleError {});
+            assert_eq!(tracker.logged_items().len(), 2);
+        }
+    }
+
+    #[derive(Debug, Eq, PartialEq)]
+    struct SampleError {}
+
+    impl Display for SampleError {
+        fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+            write!(f, "SampleError")
+        }
     }
 }

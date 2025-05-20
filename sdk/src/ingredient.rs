@@ -17,7 +17,6 @@ use std::path::{Path, PathBuf};
 use std::{borrow::Cow, io::Cursor};
 
 use async_generic::async_generic;
-use c2pa_status_tracker::{log_item, StatusTracker};
 use log::{debug, error};
 #[cfg(feature = "json_schema")]
 use schemars::JsonSchema;
@@ -38,7 +37,9 @@ use crate::{
         self,
         labels::{assertion_label_from_uri, manifest_label_from_uri},
     },
+    log_item,
     resource_store::{skip_serializing_resources, ResourceRef, ResourceStore},
+    status_tracker::StatusTracker,
     store::Store,
     utils::{mime::extension_to_mime, xmp_inmemory_utils::XmpInfo},
     validation_results::ValidationResults,

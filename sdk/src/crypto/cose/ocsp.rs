@@ -12,17 +12,19 @@
 // each license.
 
 use async_generic::async_generic;
-use c2pa_status_tracker::StatusTracker;
 use chrono::{DateTime, Utc};
 use ciborium::value::Value;
 use coset::{CoseSign1, Label};
 
-use crate::crypto::{
-    cose::{
-        check_certificate_profile, validate_cose_tst_info, validate_cose_tst_info_async,
-        CertificateTrustPolicy, CoseError,
+use crate::{
+    crypto::{
+        cose::{
+            check_certificate_profile, validate_cose_tst_info, validate_cose_tst_info_async,
+            CertificateTrustPolicy, CoseError,
+        },
+        ocsp::OcspResponse,
     },
-    ocsp::OcspResponse,
+    status_tracker::StatusTracker,
 };
 
 /// Given a COSE signature, extract the OCSP data and validate the status of

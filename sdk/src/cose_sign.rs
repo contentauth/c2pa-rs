@@ -17,7 +17,6 @@
 
 use async_generic::async_generic;
 use async_trait::async_trait;
-use c2pa_status_tracker::{ErrorBehavior, StatusTracker};
 
 use crate::{
     claim::Claim,
@@ -31,6 +30,7 @@ use crate::{
         time_stamp::{AsyncTimeStampProvider, TimeStampError, TimeStampProvider},
     },
     settings::get_settings_value,
+    status_tracker::{ErrorBehavior, StatusTracker},
     AsyncSigner, Error, Result, Signer,
 };
 

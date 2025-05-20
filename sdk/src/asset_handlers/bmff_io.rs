@@ -1851,9 +1851,7 @@ pub mod tests {
     #[cfg(all(feature = "v1_api", feature = "file_io"))]
     #[test]
     fn test_read_mp4() {
-        use c2pa_status_tracker::StatusTracker;
-
-        use crate::store::Store;
+        use crate::{status_tracker::StatusTracker, store::Store};
 
         crate::settings::set_settings_value("verify.verify_trust", false).unwrap();
 

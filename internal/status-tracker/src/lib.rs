@@ -11,21 +11,7 @@
 // specific language governing permissions and limitations under
 // each license.
 
-#![deny(clippy::expect_used)]
-#![deny(clippy::panic)]
-#![deny(clippy::unwrap_used)]
-#![deny(missing_docs)]
-#![deny(warnings)]
-#![doc = include_str!("../README.md")]
-#![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg, doc_cfg_hide))]
-
-mod log;
-pub use log::{LogItem, LogKind};
-
-mod status_tracker;
-pub use status_tracker::{ErrorBehavior, StatusTracker};
-
-pub mod validation_codes;
-
-#[cfg(test)]
-pub(crate) mod tests;
+#[allow(unused)]
+pub(crate) fn goodbye() {
+    eprintln!("This crate is being discontinued.");
+}

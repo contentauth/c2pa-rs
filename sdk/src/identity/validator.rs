@@ -15,12 +15,12 @@
 //! C2PA Manifest that contains one or more CAWG identity assertions.
 
 use async_trait::async_trait;
-use c2pa_status_tracker::StatusTracker;
 use serde_json::Value;
 
 use crate::{
     dynamic_assertion::{AsyncPostValidator, PartialClaim},
     identity::IdentityAssertion,
+    status_tracker::StatusTracker,
     ManifestAssertion,
 };
 

@@ -14,7 +14,6 @@
 use std::fmt::Debug;
 
 use async_trait::async_trait;
-use c2pa_status_tracker::StatusTracker;
 use serde::Serialize;
 
 use crate::{
@@ -26,6 +25,7 @@ use crate::{
         x509::{X509SignatureInfo, X509SignatureReport, X509SignatureVerifier},
         SignatureVerifier, SignerPayload, ToCredentialSummary, ValidationError,
     },
+    status_tracker::StatusTracker,
 };
 
 /// A `BuiltInSignatureVerifier` is an implementation of [`SignatureVerifier`]
@@ -163,7 +163,6 @@ mod tests {
         str::FromStr,
     };
 
-    use c2pa_status_tracker::StatusTracker;
     use chrono::{DateTime, FixedOffset};
     use iref::UriBuf;
     use non_empty_string::NonEmptyString;
@@ -184,6 +183,7 @@ mod tests {
             x509::AsyncX509CredentialHolder,
             IdentityAssertion, SignerPayload, ValidationError,
         },
+        status_tracker::StatusTracker,
         Builder, HashedUri, Reader, SigningAlg,
     };
 

@@ -17,8 +17,6 @@
 
 use std::io::{Cursor, Seek};
 
-use c2pa_status_tracker::StatusTracker;
-
 use crate::{
     crypto::raw_signature,
     identity::{
@@ -27,6 +25,7 @@ use crate::{
         x509::{AsyncX509CredentialHolder, X509SignatureVerifier},
         IdentityAssertion,
     },
+    status_tracker::StatusTracker,
     Builder, Reader, SigningAlg,
 };
 

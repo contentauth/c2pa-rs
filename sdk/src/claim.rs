@@ -16,7 +16,6 @@ use std::path::Path;
 use std::{borrow::Cow, collections::HashMap, fmt};
 
 use async_generic::async_generic;
-use c2pa_status_tracker::{log_item, ErrorBehavior, StatusTracker};
 use chrono::{DateTime, Utc};
 use serde::{ser::SerializeStruct, Deserialize, Serialize, Serializer};
 use serde_json::{json, Map, Value};
@@ -54,8 +53,10 @@ use crate::{
         },
     },
     jumbf_io::get_assetio_handler,
+    log_item,
     salt::{DefaultSalt, SaltGenerator, NO_SALT},
     settings::get_settings_value,
+    status_tracker::{ErrorBehavior, StatusTracker},
     utils::hash_utils::{hash_by_alg, vec_compare, verify_by_alg},
     validation_status, ClaimGeneratorInfo,
 };

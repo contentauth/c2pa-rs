@@ -14,10 +14,12 @@
 use std::fmt::Debug;
 
 use async_trait::async_trait;
-use c2pa_status_tracker::StatusTracker;
 use serde::Serialize;
 
-use crate::identity::{SignerPayload, ValidationError};
+use crate::{
+    identity::{SignerPayload, ValidationError},
+    status_tracker::StatusTracker,
+};
 
 /// A `SignatureVerifier` can read one or more kinds of signature from an
 /// identity assertion, assess the validity of the signature, and return
