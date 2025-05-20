@@ -18,6 +18,10 @@ jobs:
   get-features:
     name: Get features
     runs-on: ubuntu-latest
+    outputs:
+      rust-native-features: ${{ steps.get-features.outputs.rust-native-features }}
+      openssl-features: ${{ steps.get-features.outputs.openssl-features }}
+      wasi-features: ${{ steps.get-features.outputs.wasi-features }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -28,14 +32,15 @@ jobs:
           toolchain: stable
 
       - name: Get all features
+        id: get-features
         run: |
-          cargo metadata --format-version=1 | jq -r '[.packages[] | select(.name=="c2pa" or .name=="c2pa-c") | .features | keys | map(select(. != "default")) | .[]] | unique | join(" ")' > features.txt
-
-      - name: Upload features
-        uses: actions/upload-artifact@v4
-        with:
-          name: features
-          path: features.txt
+          FEATURES=$(cargo metadata --format-version=1 | jq -r '[.packages[] | select(.name=="c2pa" or .name=="c2pa-c") | .features | keys | map(select(. != "default")) | .[]] | unique | join(" ")')
+          RUST_NATIVE_FEATURES=$(echo $FEATURES | sed 's/openssl//g')
+          OPENSSL_FEATURES=$(echo $FEATURES | sed 's/rust_native_crypto//g')
+          WASI_FEATURES=$(echo $RUST_NATIVE_FEATURES | sed 's/json_api//g')
+          echo "rust-native-features=$RUST_NATIVE_FEATURES" >> "$GITHUB_OUTPUT"
+          echo "openssl-features=$OPENSSL_FEATURES" >> "$GITHUB_OUTPUT"
+          echo "wasi-features=$WASI_FEATURES" >> "$GITHUB_OUTPUT"
 
   tests:
     name: Unit tests
@@ -59,11 +64,6 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Download features
-        uses: actions/download-artifact@v4
-        with:
-          name: features
-
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@master
         with:
@@ -74,17 +74,10 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Run tests with rust_native_crypto
-        shell: pwsh
-        if: runner.os == 'Windows'
+        env:
+          RUST_BACKTRACE: "1"
+          FEATURES: ${{needs.get-features.outputs.rust-native-features}}
         run: |
-          $features = Get-Content features.txt
-          $features = $features -replace 'openssl', ''
-          cargo test --no-default-features --features "$features"
-
-      - name: Run tests with rust_native_crypto
-        if: runner.os != 'Windows'
-        run: |
-          FEATURES=$(cat features.txt | sed 's/openssl//g')
           cargo test --no-default-features --features "$FEATURES"
 
       - name: Install cargo-llvm-cov
@@ -93,19 +86,8 @@ jobs:
       - name: Generate code coverage for openssl
         env:
           RUST_BACKTRACE: "1"
-        shell: pwsh
-        if: runner.os == 'Windows'
+          FEATURES: ${{needs.get-features.outputs.openssl-features}}
         run: |
-          $features = Get-Content features.txt
-          $features = $features -replace 'rust_native_crypto', ''
-          cargo llvm-cov --lib --features "$features" --lcov --output-path lcov.info
-
-      - name: Generate code coverage for openssl
-        env:
-          RUST_BACKTRACE: "1"
-        if: runner.os != 'Windows'
-        run: |
-          FEATURES=$(cat features.txt | sed 's/rust_native_crypto//g')
           cargo llvm-cov --lib --features "$FEATURES" --lcov --output-path lcov.info
 
       # Tokens aren't available for PRs originating from forks,
@@ -144,11 +126,6 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Download features
-        uses: actions/download-artifact@v4
-        with:
-          name: features
-
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@master
         with:
@@ -164,19 +141,8 @@ jobs:
       - name: Generate code coverage
         env:
           RUST_BACKTRACE: "1"
-        shell: pwsh
-        if: runner.os == 'Windows'
+          FEATURES: ${{needs.get-features.outputs.openssl-features}}
         run: |
-          $features = Get-Content features.txt
-          $features = $features -replace 'rust_native_crypto', ''
-          cargo llvm-cov --bins --features "$features" --lcov --output-path lcov.info
-
-      - name: Generate code coverage
-        env:
-          RUST_BACKTRACE: "1"
-        if: runner.os != 'Windows'
-        run: |
-          FEATURES=$(cat features.txt | sed 's/rust_native_crypto//g')
           cargo llvm-cov --bins --features "$FEATURES" --lcov --output-path lcov.info
 
       # Tokens aren't available for PRs originating from forks,
@@ -220,11 +186,6 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Download features
-        uses: actions/download-artifact@v4
-        with:
-          name: features
-
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
       # - name: Install Rust toolchain
@@ -244,24 +205,16 @@ jobs:
       # doc tests.
 
       - name: Run doc tests (COVERAGE DISABLED)
-        shell: pwsh
-        if: runner.os == 'Windows'
+        env:
+          FEATURES: ${{needs.get-features.outputs.openssl-features}}
         run: |
-          $features = Get-Content features.txt
-          $features = $features -replace 'rust_native_crypto', ''
-          cargo test --workspace --features "$features" --doc
-
-      - name: Run doc tests (COVERAGE DISABLED)
-        if: runner.os != 'Windows'
-        run: |
-          FEATURES=$(cat features.txt | sed 's/rust_native_crypto//g')
           cargo test --workspace --features "$FEATURES" --doc
 
       # - name: Generate code coverage
       #   env:
       #     RUST_BACKTRACE: "1"
+      #     FEATURES: ${{needs.get-features.outputs.openssl-features}}
       #   run: |
-      #   FEATURES=$(cat features.txt | sed 's/rust_native_crypto//g')
       #   cargo llvm-cov --workspace --features "$FEATURES" --lcov --doctests --output-path lcov.info
 
       # Tokens aren't available for PRs originating from forks,
@@ -301,7 +254,7 @@ jobs:
 
       - name: "`cargo check` with default features"
         run: cargo check
-        
+
   tests-cross:
     name: Unit tests
     needs: get-features
@@ -324,11 +277,6 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Download features
-        uses: actions/download-artifact@v4
-        with:
-          name: features
-
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@master
         with:
@@ -346,8 +294,9 @@ jobs:
       # environment. (A PR to fix this would be welcomed!)
 
       - name: Run unit tests (cross build)
+        env:
+          FEATURES: ${{needs.get-features.outputs.openssl-features}}
         run: |
-          FEATURES=$(cat features.txt | sed 's/rust_native_crypto//g')
           cross test --all-targets --features "$FEATURES" --target ${{ matrix.target }}
 
   tests-wasm:
@@ -392,13 +341,6 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Download features
-        uses: actions/download-artifact@v4
-        with:
-          name: features
-
-        # nightly required for testing until this issue is resolved:
-        # wasip2 target should not conditionally feature gate stdlib APIs rust-lang/rust#130323 https://github.com/rust-lang/rust/issues/130323
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@master
         with:
@@ -419,7 +361,7 @@ jobs:
             ARCH="${RUNNER_ARCH}";
           fi
           wget https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-25/wasi-sdk-25.0-${ARCH}-${RUNNER_OS}.tar.gz
-          tar xvf wasi-sdk-25.0-${ARCH}-${RUNNER_OS}.tar.gz
+          tar xf wasi-sdk-25.0-${ARCH}-${RUNNER_OS}.tar.gz
           mv $(echo wasi-sdk-25.0-${ARCH}-${RUNNER_OS} | tr '[:upper:]' '[:lower:]') /opt/wasi-sdk
 
       - name: Add wasm32-wasip2 target
@@ -434,8 +376,8 @@ jobs:
           CC: /opt/wasi-sdk/bin/clang
           WASI_SDK_PATH: /opt/wasi-sdk
           RUST_MIN_STACK: 16777216
+          FEATURES: ${{needs.get-features.outputs.wasi-features}}
         run: |
-          FEATURES=$(cat features.txt | sed 's/openssl//g' | sed 's/json_api//g')
           cargo +nightly-2025-05-14 test --target wasm32-wasip2 -p c2pa -p c2patool --features "$FEATURES" --no-default-features
 
   test-direct-minimal-versions:
@@ -459,11 +401,6 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Download features
-        uses: actions/download-artifact@v4
-        with:
-          name: features
-
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@master
         with:
@@ -478,17 +415,9 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Run tests
-        shell: pwsh
-        if: runner.os == 'Windows'
+        env:
+          FEATURES: ${{needs.get-features.outputs.openssl-features}}
         run: |
-          $features = Get-Content features.txt
-          $features = $features -replace 'rust_native_crypto', ''
-          cargo +nightly-2025-01-24 test -Z direct-minimal-versions --all-targets --features "$features"
-
-      - name: Run tests
-        if: runner.os != 'Windows'
-        run: |
-          FEATURES=$(cat features.txt | sed 's/rust_native_crypto//g')
           cargo +nightly-2025-01-24 test -Z direct-minimal-versions --all-targets --features "$FEATURES"
 
   clippy_check:
@@ -507,11 +436,6 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Download features
-        uses: actions/download-artifact@v4
-        with:
-          name: features
-
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -521,8 +445,9 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Run Clippy
+        env:
+          FEATURES: ${{needs.get-features.outputs.openssl-features}}
         run: |
-          FEATURES=$(cat features.txt | sed 's/rust_native_crypto//g')
           cargo clippy --features "$FEATURES" --all-targets -- -Dwarnings
 
   cargo_fmt:
@@ -564,11 +489,6 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Download features
-        uses: actions/download-artifact@v4
-        with:
-          name: features
-
       - name: Install nightly Rust toolchain
         # Nightly is used here because the docs.rs build
         # uses nightly and we use doc_cfg features that are
@@ -581,9 +501,9 @@ jobs:
         # if the subsequent release would result in a failed
         # documentation build on docs.rs.
         run: |
-          FEATURES=$(cat features.txt | sed 's/rust_native_crypto//g')
           cargo +nightly doc --workspace --features "$FEATURES" --no-deps
         env:
+          FEATURES: ${{needs.get-features.outputs.openssl-features}}
           RUSTDOCFLAGS: --cfg docsrs
           DOCS_RS: 1
 
@@ -636,17 +556,13 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Download features
-        uses: actions/download-artifact@v4
-        with:
-          name: features
-
       - name: Install nightly Rust toolchain
         uses: dtolnay/rust-toolchain@nightly
 
       - name: Run cargo-udeps
+        env:
+          FEATURES: ${{needs.get-features.outputs.openssl-features}}
         run: |
-          FEATURES=$(cat features.txt | sed 's/rust_native_crypto//g')
           mv ./.github/temp-bin/cargo-udeps /home/runner/.cargo/bin/cargo-udeps
           cargo udeps --all-targets --features "$FEATURES"
           # NOTE: Using pre-built binary as a workaround for
