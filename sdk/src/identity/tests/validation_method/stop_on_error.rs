@@ -16,12 +16,12 @@
 
 use std::io::Cursor;
 
-use c2pa_status_tracker::{ErrorBehavior, LogKind, StatusTracker};
 #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
 use wasm_bindgen_test::wasm_bindgen_test;
 
 use crate::{
     identity::{x509::X509SignatureVerifier, IdentityAssertion},
+    status_tracker::{ErrorBehavior, LogKind, StatusTracker},
     Reader,
 };
 
@@ -390,7 +390,6 @@ async fn no_hard_binding() {
 mod invalid_sig_type {
     use std::io::Cursor;
 
-    use c2pa_status_tracker::{ErrorBehavior, LogKind, StatusTracker};
     #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
     use wasm_bindgen_test::wasm_bindgen_test;
 
@@ -398,6 +397,7 @@ mod invalid_sig_type {
         identity::{
             claim_aggregation::IcaSignatureVerifier, x509::X509SignatureVerifier, IdentityAssertion,
         },
+        status_tracker::{ErrorBehavior, LogKind, StatusTracker},
         Reader,
     };
 

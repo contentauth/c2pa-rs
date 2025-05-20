@@ -17,18 +17,21 @@
 
 #![deny(missing_docs)]
 
-pub use c2pa_status_tracker::validation_codes::*;
-#[cfg(feature = "v1_api")]
-use c2pa_status_tracker::StatusTracker;
-use c2pa_status_tracker::{LogItem, LogKind};
 use log::debug;
 #[cfg(feature = "json_schema")]
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 #[cfg(feature = "v1_api")]
+use crate::status_tracker::StatusTracker;
+#[cfg(feature = "v1_api")]
 use crate::store::Store;
-use crate::{error::Error, jumbf};
+pub use crate::validation_results::validation_codes::*;
+use crate::{
+    error::Error,
+    jumbf,
+    status_tracker::{LogItem, LogKind},
+};
 
 /// A `ValidationStatus` struct describes the validation status of a
 /// specific part of a manifest.

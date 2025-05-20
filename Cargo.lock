@@ -726,7 +726,6 @@ dependencies = [
  "byteorder",
  "byteordered",
  "bytes",
- "c2pa-status-tracker",
  "chrono",
  "ciborium",
  "config",
