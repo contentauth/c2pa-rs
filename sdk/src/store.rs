@@ -22,11 +22,6 @@ use std::{
 
 use async_generic::async_generic;
 use async_recursion::async_recursion;
-use c2pa_crypto::{
-    cose::{parse_cose_sign1, CertificateTrustPolicy, TimeStampStorage},
-    hash::sha256,
-};
-use c2pa_status_tracker::{log_item, ErrorBehavior, StatusTracker};
 use log::error;
 
 #[cfg(feature = "v1_api")]
@@ -57,6 +52,10 @@ use crate::{
     },
     cose_sign::{cose_sign, cose_sign_async},
     cose_validator::{verify_cose, verify_cose_async},
+    crypto::{
+        cose::{parse_cose_sign1, CertificateTrustPolicy, TimeStampStorage},
+        hash::sha256,
+    },
     dynamic_assertion::{
         AsyncDynamicAssertion, DynamicAssertion, DynamicAssertionContent, PartialClaim,
     },
@@ -72,9 +71,11 @@ use crate::{
         get_assetio_handler, is_bmff_format, load_jumbf_from_stream, object_locations_from_stream,
         save_jumbf_to_stream,
     },
+    log_item,
     manifest_store_report::ManifestStoreReport,
     salt::DefaultSalt,
     settings::get_settings_value,
+    status_tracker::{ErrorBehavior, StatusTracker},
     utils::{hash_utils::HashRange, io_utils::stream_len, patch::patch_bytes},
     validation_status, AsyncSigner, Signer,
 };
@@ -2119,6 +2120,9 @@ impl Store {
             pc.replace_assertion(assertion)?;
         }
 
+        // clear the provenance claim data since the contents are now different
+        pc.clear_data();
+
         Ok(true)
     }
 
@@ -2203,26 +2207,77 @@ impl Store {
             None => return Err(Error::UnsupportedType),
         }
 
+        let output_filename = asset_path.file_name().ok_or(Error::NotFound)?;
+        let dest_path = output_path.join(output_filename);
+
         let mut validation_log =
             StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
+
+        // add dynamic assertions to the store
+        let dynamic_assertions = signer.dynamic_assertions();
+        let da_uris = self.add_dynamic_assertion_placeholders(&dynamic_assertions)?;
+
+        // get temp store as JUMBF
         let jumbf = self.to_jumbf(signer)?;
 
-        // use temp store so mulitple calls will work (the Store is not finalized this way)
+        // use temp store so mulitple calls across renditions will work (the Store is not finalized this way)
         let mut temp_store = Store::from_jumbf(&jumbf, &mut validation_log)?;
 
-        let jumbf_bytes = temp_store.start_save_bmff_fragmented(
+        let mut jumbf_bytes = temp_store.start_save_bmff_fragmented(
             asset_path,
             fragments,
             output_path,
             signer.reserve_size(),
         )?;
 
+        let mut preliminary_claim = PartialClaim::default();
+        {
+            let pc = temp_store.provenance_claim().ok_or(Error::ClaimEncoding)?;
+            for assertion in pc.assertions() {
+                preliminary_claim.add_assertion(assertion);
+            }
+        }
+
+        // Now add the dynamic assertions and update the JUMBF.
+        let modified = temp_store.write_dynamic_assertions(
+            &dynamic_assertions,
+            &da_uris,
+            &mut preliminary_claim,
+        )?;
+
+        // update the JUMBF if modified with dynamic assertions
+        if modified {
+            let pc = temp_store.provenance_claim().ok_or(Error::ClaimEncoding)?;
+            match pc.remote_manifest() {
+                RemoteManifest::NoRemote | RemoteManifest::EmbedWithRemote(_) => {
+                    jumbf_bytes = temp_store.to_jumbf_internal(signer.reserve_size())?;
+
+                    // save the jumbf to the output path
+                    save_jumbf_to_file(&jumbf_bytes, &dest_path, Some(&dest_path))?;
+
+                    let pc = temp_store
+                        .provenance_claim_mut()
+                        .ok_or(Error::ClaimEncoding)?;
+                    // generate actual hash values
+                    let bmff_hashes = pc.bmff_hash_assertions();
+
+                    if !bmff_hashes.is_empty() {
+                        let mut bmff_hash = BmffHash::from_assertion(bmff_hashes[0])?;
+                        bmff_hash.update_fragmented_inithash(&dest_path)?;
+                        pc.update_bmff_hash(bmff_hash)?;
+                    }
+
+                    // regenerate the jumbf because the cbor changed
+                    jumbf_bytes = temp_store.to_jumbf_internal(signer.reserve_size())?;
+                }
+                _ => (),
+            };
+        }
+
+        // sign the claim
         let pc = temp_store.provenance_claim().ok_or(Error::ClaimEncoding)?;
         let sig = temp_store.sign_claim(pc, signer, signer.reserve_size())?;
         let sig_placeholder = Store::sign_claim_placeholder(pc, signer.reserve_size());
-
-        let output_filename = asset_path.file_name().ok_or(Error::NotFound)?;
-        let dest_path = output_path.join(output_filename);
 
         match temp_store.finish_save(jumbf_bytes, &dest_path, sig, &sig_placeholder) {
             Ok(_) => Ok(()),
@@ -3845,8 +3900,6 @@ pub mod tests {
 
     use std::{fs, io::Write};
 
-    use c2pa_crypto::raw_signature::SigningAlg;
-    use c2pa_status_tracker::{LogItem, StatusTracker};
     use memchr::memmem;
     use serde::Serialize;
     use sha2::{Digest, Sha256};
@@ -3856,8 +3909,10 @@ pub mod tests {
         assertion::AssertionJson,
         assertions::{labels::BOX_HASH, Action, Actions, BoxHash, Uuid},
         claim::AssertionStoreJsonFormat,
+        crypto::raw_signature::SigningAlg,
         hashed_uri::HashedUri,
         jumbf_io::{get_assetio_handler_from_path, update_file_jumbf},
+        status_tracker::{LogItem, StatusTracker},
         utils::{
             hash_utils::Hasher,
             patch::patch_file,
@@ -3865,7 +3920,7 @@ pub mod tests {
                 create_test_claim, fixture_path, temp_dir_path, temp_fixture_path,
                 write_jpeg_placeholder_file,
             },
-            test_signer::{async_test_signer, test_signer},
+            test_signer::{async_test_signer, test_cawg_signer, test_signer},
         },
     };
 
@@ -4248,9 +4303,7 @@ pub mod tests {
     #[test]
     #[cfg(feature = "file_io")]
     fn test_sign_with_expired_cert() {
-        use c2pa_crypto::raw_signature::SigningAlg;
-
-        use crate::create_signer;
+        use crate::{create_signer, crypto::raw_signature::SigningAlg};
 
         // test adding to actual image
         let ap = fixture_path("earth_apollo17.jpg");
@@ -5319,7 +5372,7 @@ pub mod tests {
         const REPLACE_BYTES: &[u8] =
             b"c2pa_manifest\xA3\x63url\x78\x4aself#jumbf=/c2pa/contentauth:urn:uuix:";
         let report = patch_and_report("CIE-sig-CA.jpg", SEARCH_BYTES, REPLACE_BYTES);
-        let errors: Vec<c2pa_status_tracker::LogItem> = report.filter_errors().cloned().collect();
+        let errors: Vec<crate::status_tracker::LogItem> = report.filter_errors().cloned().collect();
         assert_eq!(
             errors[0].validation_status.as_deref(),
             Some(validation_status::ASSERTION_HASHEDURI_MISMATCH)
@@ -6590,7 +6643,8 @@ pub mod tests {
                     store.commit_claim(claim).unwrap();
 
                     // Do we generate JUMBF?
-                    let signer = test_signer(SigningAlg::Ps256);
+                    let signer =
+                        test_cawg_signer(SigningAlg::Ps256, &[labels::SCHEMA_ORG]).unwrap();
 
                     // Use Tempdir for automatic cleanup
                     let new_subdir = tempfile::TempDir::new_in(output_path)

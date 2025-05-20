@@ -11,14 +11,15 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use c2pa_crypto::{
-    cose::{sign, TimeStampStorage},
-    raw_signature::RawSigner,
-};
-
-use crate::identity::{
-    builder::{CredentialHolder, IdentityBuilderError},
-    SignerPayload,
+use crate::{
+    crypto::{
+        cose::{sign, TimeStampStorage},
+        raw_signature::RawSigner,
+    },
+    identity::{
+        builder::{CredentialHolder, IdentityBuilderError},
+        SignerPayload,
+    },
 };
 
 /// An implementation of [`CredentialHolder`] that generates COSE signatures
@@ -36,7 +37,7 @@ impl X509CredentialHolder {
     /// The [`RawSigner`] implementation actually holds (or has access to)
     /// the relevant certificates and private key material.
     ///
-    /// [`RawSigner`]: c2pa_crypto::raw_signature::RawSigner
+    /// [`RawSigner`]: crate::crypto::raw_signature::RawSigner
     pub fn from_raw_signer(signer: Box<dyn RawSigner + Sync + Send + 'static>) -> Self {
         Self(signer)
     }
@@ -75,18 +76,18 @@ mod tests {
 
     use std::io::{Cursor, Seek};
 
-    use c2pa_crypto::raw_signature;
-    use c2pa_status_tracker::StatusTracker;
     #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
     use wasm_bindgen_test::wasm_bindgen_test;
 
     use crate::{
+        crypto::raw_signature,
         identity::{
             builder::{IdentityAssertionBuilder, IdentityAssertionSigner},
             tests::fixtures::{cert_chain_and_private_key_for_alg, manifest_json, parent_json},
             x509::{X509CredentialHolder, X509SignatureVerifier},
             IdentityAssertion,
         },
+        status_tracker::StatusTracker,
         Builder, Reader, SigningAlg,
     };
 

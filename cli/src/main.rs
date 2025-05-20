@@ -180,7 +180,7 @@ enum Commands {
     ///
     /// c2patool -m test2.json -o /my_output_folder "/my_renditions/**/my_init.mp4" fragment --fragments_glob "myfile_abc*[0-9].m4s"
     ///
-    /// Note: the glob patterns are quoted to prevent shell expansion.
+    /// NOTE: The glob patterns are quoted to prevent shell expansion.
     Fragment {
         /// Glob pattern to find the fragments of the asset. The path is automatically set to be the same as
         /// the init segment.
@@ -794,10 +794,14 @@ fn main() -> Result<()> {
         fragments_glob: Some(fg),
     }) = &args.command
     {
-        let stores = verify_fragmented(&args.path, fg)?;
+        let mut stores = verify_fragmented(&args.path, fg)?;
         if stores.len() == 1 {
+            validate_cawg(&mut stores[0])?;
             println!("{}", stores[0]);
         } else {
+            for store in &mut stores {
+                validate_cawg(store)?;
+            }
             println!("{} Init manifests validated", stores.len());
         }
     } else {

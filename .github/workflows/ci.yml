@@ -15,8 +15,36 @@ on:
     - cron: "0 18 * * 1,4,6" # 1800 UTC every Monday, Thursday, Saturday
 
 jobs:
+  get-features:
+    name: Get features
+    runs-on: ubuntu-latest
+    outputs:
+      rust-native-features: ${{ steps.get-features.outputs.rust-native-features }}
+      openssl-features: ${{ steps.get-features.outputs.openssl-features }}
+      wasi-features: ${{ steps.get-features.outputs.wasi-features }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+
+      - name: Get all features
+        id: get-features
+        run: |
+          FEATURES=$(cargo metadata --format-version=1 | jq -r '[.packages[] | select(.name=="c2pa" or .name=="c2pa-c") | .features | keys | map(select(. != "default")) | .[]] | unique | join(" ")')
+          RUST_NATIVE_FEATURES=$(echo $FEATURES | sed 's/openssl//g')
+          OPENSSL_FEATURES=$(echo $FEATURES | sed 's/rust_native_crypto//g')
+          WASI_FEATURES=$(echo $RUST_NATIVE_FEATURES | sed 's/json_api//g')
+          echo "rust-native-features=$RUST_NATIVE_FEATURES" >> "$GITHUB_OUTPUT"
+          echo "openssl-features=$OPENSSL_FEATURES" >> "$GITHUB_OUTPUT"
+          echo "wasi-features=$WASI_FEATURES" >> "$GITHUB_OUTPUT"
+
   tests:
     name: Unit tests
+    needs: get-features
     if: |
       github.event_name != 'pull_request' ||
       github.event.pull_request.author_association == 'COLLABORATOR' ||
@@ -48,10 +76,19 @@ jobs:
       - name: Install cargo-llvm-cov
         uses: taiki-e/install-action@cargo-llvm-cov
 
-      - name: Generate code coverage
+      - name: Generate code coverage for rust_native_crypto
         env:
           RUST_BACKTRACE: "1"
-        run: cargo llvm-cov --lib --all-features --lcov --output-path lcov.info
+          FEATURES: ${{needs.get-features.outputs.rust_native_crypto-features}}
+        run: |
+          cargo llvm-cov --lib --features "$FEATURES" --lcov --output-path lcov-rust_native_crypto.info
+
+      - name: Generate code coverage for openssl
+        env:
+          RUST_BACKTRACE: "1"
+          FEATURES: ${{needs.get-features.outputs.openssl-features}}
+        run: |
+          cargo llvm-cov --lib --features "$FEATURES" --lcov --output-path lcov-openssl.info
 
       # Tokens aren't available for PRs originating from forks,
       # so we don't attempt to upload code coverage in that case.
@@ -66,9 +103,11 @@ jobs:
           token: ${{ secrets.CODECOV_TOKEN }}
           fail_ci_if_error: true
           verbose: true
+          files: ./lcov-openssl.info,./lcov-rust_native_crypto.info
 
   tests-cli:
     name: Unit tests (c2patool)
+    needs: get-features
     if: |
       github.event_name != 'pull_request' ||
       github.event.pull_request.author_association == 'COLLABORATOR' ||
@@ -103,7 +142,9 @@ jobs:
       - name: Generate code coverage
         env:
           RUST_BACKTRACE: "1"
-        run: cargo llvm-cov --bins --all-features --lcov --output-path lcov.info
+          FEATURES: ${{needs.get-features.outputs.openssl-features}}
+        run: |
+          cargo llvm-cov --bins --features "$FEATURES" --lcov --output-path lcov.info
 
       # Tokens aren't available for PRs originating from forks,
       # so we don't attempt to upload code coverage in that case.
@@ -118,9 +159,11 @@ jobs:
           token: ${{ secrets.CODECOV_TOKEN }}
           fail_ci_if_error: true
           verbose: true
+          files: lcov-*.info
 
   doc-tests:
     name: Doc tests (requires nightly Rust)
+    needs: get-features
     # TODO: Remove this once cargo-llvm-cov can run doc tests and generate
     # coverage. (This requires a bug fix that is only available in nightly Rust.)
     # Watch https://github.com/taiki-e/cargo-llvm-cov/issues/2
@@ -163,13 +206,17 @@ jobs:
       # doc tests.
 
       - name: Run doc tests (COVERAGE DISABLED)
-        run:
-          cargo test --workspace --all-features --doc
-      
+        env:
+          FEATURES: ${{needs.get-features.outputs.openssl-features}}
+        run: |
+          cargo test --workspace --features "$FEATURES" --doc
+
       # - name: Generate code coverage
       #   env:
       #     RUST_BACKTRACE: "1"
-      #   run: cargo llvm-cov --workspace --all-features --lcov --doctests --output-path lcov.info
+      #     FEATURES: ${{needs.get-features.outputs.openssl-features}}
+      #   run: |
+      #   cargo llvm-cov --workspace --features "$FEATURES" --lcov --doctests --output-path lcov.info
 
       # Tokens aren't available for PRs originating from forks,
       # so we don't attempt to upload code coverage in that case.
@@ -208,9 +255,10 @@ jobs:
 
       - name: "`cargo check` with default features"
         run: cargo check
-        
+
   tests-cross:
     name: Unit tests
+    needs: get-features
     if: |
       github.event_name != 'pull_request' ||
       github.event.pull_request.author_association == 'COLLABORATOR' ||
@@ -247,10 +295,14 @@ jobs:
       # environment. (A PR to fix this would be welcomed!)
 
       - name: Run unit tests (cross build)
-        run: cross test --all-targets --all-features --target ${{ matrix.target }}
+        env:
+          FEATURES: ${{needs.get-features.outputs.openssl-features}}
+        run: |
+          cross test --all-targets --features "$FEATURES" --target ${{ matrix.target }}
 
   tests-wasm:
     name: Unit tests (Wasm)
+    needs: get-features
     if: |
       github.event_name != 'pull_request' ||
       github.event.pull_request.author_association == 'COLLABORATOR' ||
@@ -270,20 +322,13 @@ jobs:
       - name: Install wasm-pack
         run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
 
-      - name: Run Wasm tests (c2pa-crypto)
-        run: wasm-pack test --chrome --headless
-        working-directory: ./internal/crypto
-
-      - name: Run Wasm tests (c2pa-status-tracker)
-        run: wasm-pack test --chrome --headless
-        working-directory: ./internal/status-tracker
-
-      - name: Run Wasm tests (c2pa-rs)
-        run: wasm-pack test --chrome --headless
+      - name: Run Wasm tests
+        run: wasm-pack test --chrome --headless --no-default-features --features rust_native_crypto
         working-directory: ./sdk
 
   tests-wasi:
     name: Unit tests (WASI)
+    needs: get-features
     if: |
       github.event_name != 'pull_request' ||
       github.event.pull_request.author_association == 'COLLABORATOR' ||
@@ -300,7 +345,11 @@ jobs:
         # nightly required for testing until this issue is resolved:
         # wasip2 target should not conditionally feature gate stdlib APIs rust-lang/rust#130323 https://github.com/rust-lang/rust/issues/130323
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@nightly
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly-2025-05-14
+          # Pinning to specific nightly build for now. More recent versions seem
+          # be running doc tests that aren't intended for WASI.
 
       - name: Install wasmtime
         run: |
@@ -315,11 +364,11 @@ jobs:
             ARCH="${RUNNER_ARCH}";
           fi
           wget https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-25/wasi-sdk-25.0-${ARCH}-${RUNNER_OS}.tar.gz
-          tar xvf wasi-sdk-25.0-${ARCH}-${RUNNER_OS}.tar.gz
+          tar xf wasi-sdk-25.0-${ARCH}-${RUNNER_OS}.tar.gz
           mv $(echo wasi-sdk-25.0-${ARCH}-${RUNNER_OS} | tr '[:upper:]' '[:lower:]') /opt/wasi-sdk
 
       - name: Add wasm32-wasip2 target
-        run: rustup target add --toolchain nightly wasm32-wasip2
+        run: rustup target add --toolchain nightly-2025-05-14 wasm32-wasip2
 
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
@@ -330,10 +379,13 @@ jobs:
           CC: /opt/wasi-sdk/bin/clang
           WASI_SDK_PATH: /opt/wasi-sdk
           RUST_MIN_STACK: 16777216
-        run: cargo +nightly test --target wasm32-wasip2 -p c2pa -p c2pa-crypto -p c2patool --all-features
+          FEATURES: ${{needs.get-features.outputs.wasi-features}}
+        run: |
+          cargo +nightly-2025-05-14 test --target wasm32-wasip2 -p c2pa -p c2patool --features "$FEATURES" --no-default-features
 
   test-direct-minimal-versions:
     name: Unit tests with minimum versions of direct dependencies
+    needs: get-features
     if: |
       github.event_name != 'pull_request' ||
       github.event.pull_request.author_association == 'COLLABORATOR' ||
@@ -366,10 +418,14 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Run tests
-        run: cargo +nightly-2025-01-24 test -Z direct-minimal-versions --all-targets --all-features
+        env:
+          FEATURES: ${{needs.get-features.outputs.openssl-features}}
+        run: |
+          cargo +nightly-2025-01-24 test -Z direct-minimal-versions --all-targets --features "$FEATURES"
 
   clippy_check:
     name: Clippy
+    needs: get-features
     if: |
       github.event_name != 'pull_request' ||
       github.event.pull_request.author_association == 'COLLABORATOR' ||
@@ -392,7 +448,10 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Run Clippy
-        run: cargo clippy --all-features --all-targets -- -Dwarnings
+        env:
+          FEATURES: ${{needs.get-features.outputs.openssl-features}}
+        run: |
+          cargo clippy --features "$FEATURES" --all-targets -- -Dwarnings
 
   cargo_fmt:
     name: Enforce Rust code format
@@ -419,6 +478,7 @@ jobs:
 
   docs_rs:
     name: Preflight docs.rs build
+    needs: get-features
     if: |
       github.event_name != 'pull_request' ||
       github.event.pull_request.author_association == 'COLLABORATOR' ||
@@ -443,8 +503,9 @@ jobs:
         # environment. The goal is to fail PR validation
         # if the subsequent release would result in a failed
         # documentation build on docs.rs.
-        run: cargo +nightly doc --workspace --all-features --no-deps
+        run: cargo +nightly doc --workspace --features "$FEATURES" --no-deps
         env:
+          FEATURES: ${{needs.get-features.outputs.openssl-features}}
           RUSTDOCFLAGS: --cfg docsrs
           DOCS_RS: 1
 
@@ -480,6 +541,7 @@ jobs:
 
   unused_deps:
     name: Check for unused dependencies
+    needs: get-features
     if: |
       github.event_name != 'pull_request' ||
       github.event.pull_request.author_association == 'COLLABORATOR' ||
@@ -500,8 +562,10 @@ jobs:
         uses: dtolnay/rust-toolchain@nightly
 
       - name: Run cargo-udeps
+        env:
+          FEATURES: ${{needs.get-features.outputs.openssl-features}}
         run: |
           mv ./.github/temp-bin/cargo-udeps /home/runner/.cargo/bin/cargo-udeps
-          cargo udeps --all-targets --all-features
+          cargo udeps --all-targets --features "$FEATURES"
           # NOTE: Using pre-built binary as a workaround for
           # https://github.com/aig787/cargo-udeps-action/issues/6.

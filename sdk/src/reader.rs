@@ -23,8 +23,6 @@ use std::{
 
 use async_generic::async_generic;
 use async_trait::async_trait;
-use c2pa_crypto::base64;
-use c2pa_status_tracker::StatusTracker;
 #[cfg(feature = "json_schema")]
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -33,12 +31,14 @@ use serde_with::skip_serializing_none;
 
 use crate::{
     claim::ClaimAssetData,
+    crypto::base64,
     dynamic_assertion::PartialClaim,
     error::{Error, Result},
     jumbf::labels::{manifest_label_from_uri, to_absolute_uri, to_relative_uri},
     manifest::StoreOptions,
     manifest_store_report::ManifestStoreReport,
     settings::get_settings_value,
+    status_tracker::StatusTracker,
     store::Store,
     validation_results::{ValidationResults, ValidationState},
     validation_status::ValidationStatus,
@@ -924,7 +924,7 @@ pub mod tests {
 
     #[test]
     fn test_reader_post_validate() -> Result<()> {
-        use c2pa_status_tracker::{log_item, StatusTracker};
+        use crate::{log_item, status_tracker::StatusTracker};
 
         let mut reader =
             Reader::from_stream("image/jpeg", std::io::Cursor::new(IMAGE_WITH_MANIFEST))?;

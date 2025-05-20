@@ -17,16 +17,15 @@
 
 use std::io::{Cursor, Seek};
 
-use c2pa_crypto::raw_signature;
-use c2pa_status_tracker::StatusTracker;
-
 use crate::{
+    crypto::raw_signature,
     identity::{
         builder::{AsyncIdentityAssertionBuilder, AsyncIdentityAssertionSigner},
         tests::fixtures::{cert_chain_and_private_key_for_alg, manifest_json, parent_json},
         x509::{AsyncX509CredentialHolder, X509SignatureVerifier},
         IdentityAssertion,
     },
+    status_tracker::StatusTracker,
     Builder, Reader, SigningAlg,
 };
 

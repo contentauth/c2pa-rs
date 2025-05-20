@@ -17,8 +17,6 @@ use std::path::{Path, PathBuf};
 use std::{borrow::Cow, io::Cursor};
 
 use async_generic::async_generic;
-use c2pa_crypto::base64;
-use c2pa_status_tracker::{log_item, StatusTracker};
 use log::{debug, error};
 #[cfg(feature = "json_schema")]
 use schemars::JsonSchema;
@@ -32,13 +30,16 @@ use crate::{
     assertions::{self, labels, AssetType, Metadata, Relationship, Thumbnail},
     asset_io::CAIRead,
     claim::{Claim, ClaimAssetData},
+    crypto::base64,
     error::{Error, Result},
     hashed_uri::HashedUri,
     jumbf::{
         self,
         labels::{assertion_label_from_uri, manifest_label_from_uri},
     },
+    log_item,
     resource_store::{skip_serializing_resources, ResourceRef, ResourceStore},
+    status_tracker::StatusTracker,
     store::Store,
     utils::{mime::extension_to_mime, xmp_inmemory_utils::XmpInfo},
     validation_results::ValidationResults,
@@ -1876,7 +1877,7 @@ mod tests_file_io {
     }
 
     #[test]
-    #[cfg(feature = "file_io")]
+    #[cfg(all(feature = "file_io", feature = "add_thumbnails"))]
     fn test_jpg_prerelease() {
         let ap = fixture_path(PRERELEASE_JPEG);
         let ingredient = Ingredient::from_file(ap).expect("from_file");

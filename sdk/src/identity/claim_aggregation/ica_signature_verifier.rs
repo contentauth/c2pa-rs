@@ -12,16 +12,15 @@
 // each license.
 
 use async_trait::async_trait;
-use c2pa_crypto::{
-    asn1::rfc3161::TstInfo,
-    cose::{validate_cose_tst_info_async, CoseError},
-    time_stamp::TimeStampError,
-};
-use c2pa_status_tracker::{log_current_item, StatusTracker};
 use chrono::{DateTime, Utc};
 use coset::{CoseSign1, RegisteredLabelWithPrivate, TaggedCborSerializable};
 
 use crate::{
+    crypto::{
+        asn1::rfc3161::TstInfo,
+        cose::{validate_cose_tst_info_async, CoseError},
+        time_stamp::TimeStampError,
+    },
     identity::{
         claim_aggregation::{
             w3c_vc::{
@@ -33,6 +32,8 @@ use crate::{
         },
         SignatureVerifier, SignerPayload, ValidationError,
     },
+    log_current_item,
+    status_tracker::StatusTracker,
     HashedUri,
 };
 
@@ -325,7 +326,7 @@ impl IcaSignatureVerifier {
                 let base64_hash =
                     String::from_utf8(a.hash()).unwrap_or_else(|_| "invalid UTF8".to_string());
 
-                let decoded_hash = c2pa_crypto::base64::decode(&base64_hash)
+                let decoded_hash = crate::crypto::base64::decode(&base64_hash)
                     .unwrap_or_else(|_| b"invalid base64".to_vec());
 
                 HashedUri::new(a.url(), a.alg(), &decoded_hash)
