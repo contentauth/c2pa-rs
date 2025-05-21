@@ -51,8 +51,18 @@ fmt:
 	cargo +nightly fmt
 
 # These are for building the c2patool release bin on various platforms
-release-win:
-    powershell -ExecutionPolicy Bypass -File ../../setup-rust-openssl.ps1
+release-win-x86_64:
+    rustup update stable-msvc
+    rustup target add x86_64-pc-windows-msvc
+    cargo build --target=x86_64-pc-windows-msvc --release --no-default-features --features "rust_native_crypto, file_io"
+	cargo test --target=x86_64-pc-windows-msvc --release ---no-default-features --features "rust_native_crypto, file_io"
+#  powershell -ExecutionPolicy Bypass -File ../../setup-rust-openssl.ps1
+
+release-win-aarch64:
+	rustup update stable-msvc
+	rustup target add aarch64-pc-windows-msvc
+	cargo build --target=aarch64-pc-windows-msvc --release
+#  powershell -ExecutionPolicy Bypass -File ../../setup-rust-openssl.ps1
 
 release-mac-arm:
 	rustup target add aarch64-apple-darwin

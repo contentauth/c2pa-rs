@@ -14,7 +14,7 @@ members = [
 version = "0.51.1"
 
 [workspace.dependencies]
-c2pa = { path = "sdk" }
+c2pa = { path = "sdk", default-features = true }
 
 [profile.release]
 strip = true  # Automatically strip symbols from the binary. 

@@ -1,18 +1,17 @@
 [package]
-name = "c2pa-c"
+name = "c_api"
 version.workspace = true
 edition = "2021"
 authors = ["Gavin Peacock <gpeacock@adobe.com>"]
 license = "MIT OR Apache-2.0"
 
 [lib]
+name = "c2pa_c"
 crate-type = ["cdylib"]
 
 [features]
-default = ["json_api", "openssl"]
-json_api = ["c2pa/v1_api"]
-openssl = ["c2pa/openssl"]
 rust_native_crypto = ["c2pa/rust_native_crypto"]
+file_io = ["c2pa/file_io"]
 
 [dependencies]
 tokio = { version = "1.36", features = ["rt-multi-thread","rt"] }
@@ -21,7 +20,7 @@ c2pa = { workspace = true , features = [
     "file_io",
     "add_thumbnails",
     "fetch_remote_manifests",
-], default-features = false }
+]}
 scopeguard = "1.2.0"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
@@ -34,5 +33,3 @@ tempfile = "3.7.0"
 [build-dependencies]
 cbindgen = "0.28"
 
-[target.aarch64-unknown-linux-gnu]
-linker = "aarch64-linux-gnu-gcc"

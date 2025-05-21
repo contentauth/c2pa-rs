@@ -24,12 +24,9 @@ use c2pa::{
 use scopeguard::guard;
 use tokio::runtime::Runtime; // cawg validator requires async
 
-use crate::{
-    c2pa_stream::C2paStream,
-    error::Error,
-    json_api::{read_file, read_ingredient_file, sign_file},
-    signer_info::SignerInfo,
-};
+#[cfg(feature = "file_io")]
+use crate::json_api::{read_file, read_ingredient_file, sign_file};
+use crate::{c2pa_stream::C2paStream, error::Error, signer_info::SignerInfo};
 
 // Work around limitations in cbindgen.
 mod cbindgen_fix {
@@ -297,6 +294,7 @@ pub unsafe extern "C" fn c2pa_load_settings(
 /// Reads from NULL-terminated C strings.
 /// The returned value MUST be released by calling release_string
 /// and it is no longer valid after that call.
+#[cfg(feature = "file_io")]
 #[no_mangle]
 pub unsafe extern "C" fn c2pa_read_file(
     path: *const c_char,
@@ -328,6 +326,7 @@ pub unsafe extern "C" fn c2pa_read_file(
 /// Reads from NULL-terminated C strings.
 /// The returned value MUST be released by calling release_string
 /// and it is no longer valid after that call.
+#[cfg(feature = "file_io")]
 #[no_mangle]
 pub unsafe extern "C" fn c2pa_read_ingredient_file(
     path: *const c_char,
@@ -335,11 +334,10 @@ pub unsafe extern "C" fn c2pa_read_ingredient_file(
 ) -> *mut c_char {
     let path = from_cstr_or_return_null!(path);
     let data_dir = from_cstr_or_return_null!(data_dir);
-
-    let result = read_ingredient_file(&path, &data_dir);
+    result = Ingredient::from_file_with_folder(path, data_dir).map_err(Error::from_c2pa_error);
 
     match result {
-        Ok(json) => to_c_string(json),
+        Ok(ingredient) => to_c_string(ingredient.to_string()),
         Err(err) => {
             err.set_last();
             std::ptr::null_mut()
@@ -372,6 +370,7 @@ pub struct C2paSignerInfo {
 /// Reads from NULL-terminated C strings.
 /// The returned value MUST be released by calling release_string
 /// and it is no longer valid after that call.
+#[cfg(feature = "file_io")]
 #[no_mangle]
 pub unsafe extern "C" fn c2pa_sign_file(
     source_path: *const c_char,
@@ -447,7 +446,7 @@ fn post_validate(result: Result<C2paReader, c2pa::Error>) -> Result<C2paReader, 
 }
 /// Creates and verifies a C2paReader from an asset stream with the given format.
 ///
-/// Parameters
+/// #Parameters
 /// * format: pointer to a C string with the mime type or extension.
 /// * stream: pointer to a C2paStream.
 ///
@@ -477,6 +476,38 @@ pub unsafe extern "C" fn c2pa_reader_from_stream(
     let format = from_cstr_or_return_null!(format);
 
     let result = C2paReader::from_stream(&format, &mut (*stream));
+    return_boxed!(post_validate(result))
+}
+
+/// Creates and verifies a C2paReader from a file path.
+/// This allows a client to use Rust's file I/O to read the file
+/// Parameters
+/// * path: pointer to a C string with the file path in UTF-8.
+///
+/// # Errors
+/// Returns NULL if there were errors, otherwise returns a pointer to a ManifestStore.
+/// The error string can be retrieved by calling c2pa_error.
+///
+/// # Safety
+/// Reads from NULL-terminated C strings.
+/// The returned value MUST be released by calling c2pa_reader_free
+/// and it is no longer valid after that call.
+///
+/// # Example
+/// ```c
+/// auto result = c2pa_reader_from_file("path/to/file.jpg");
+/// if (result == NULL) {
+///    let error = c2pa_error();
+///   printf("Error: %s\n", error);
+///   c2pa_string_free(error);
+/// }
+/// }
+/// ```
+#[cfg(feature = "file_io")]
+#[no_mangle]
+pub unsafe fn c2pa_reader_from_file(path: *const c_char) -> Result<C2paReader, c2pa::Error> {
+    let path = from_cstr_or_return_null!(path);
+    let result = C2paReader::from_file(&path);
     return_boxed!(post_validate(result))
 }
 
@@ -965,8 +996,7 @@ pub unsafe extern "C" fn c2pa_format_embeddable(
     check_or_return_int!(result_bytes_ptr);
     let bytes = std::slice::from_raw_parts(manifest_bytes_ptr, manifest_bytes_size);
 
-    // todo: Add a way to do this without using the v1_api Manifest
-    let result = c2pa::Manifest::composed_manifest(bytes, &format);
+    let result = c2pa::Builder::composed_manifest(bytes, &format);
     ok_or_return_int!(result, |result_bytes: Vec<u8>| {
         let len = result_bytes.len() as i64;
         if !result_bytes_ptr.is_null() {
