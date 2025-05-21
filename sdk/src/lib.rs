@@ -47,7 +47,7 @@
 //!
 //! # Example: Adding a Manifest to a file
 //!
-//!
+//! ```
 //! # use c2pa::Result;
 //! use std::path::PathBuf;
 //!

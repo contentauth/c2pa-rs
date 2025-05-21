@@ -33,6 +33,8 @@ pub(crate) fn test_signer(alg: SigningAlg) -> Box<dyn Signer> {
     ))
 }
 
+#[cfg(feature = "file_io")] // only used in file_io tests currently
+/// Creates a [`Signer`] instance for testing purposes using test credentials.
 pub(crate) fn test_cawg_signer(
     alg: SigningAlg,
     referenced_assertions: &[&str],
