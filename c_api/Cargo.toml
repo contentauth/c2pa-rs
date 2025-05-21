@@ -16,7 +16,7 @@ rust_native_crypto = ["c2pa/rust_native_crypto"]
 
 [dependencies]
 tokio = { version = "1.36", features = ["rt-multi-thread","rt"] }
-c2pa = { path = "../sdk", version = "0.53.0", features = [
+c2pa = { path = "../sdk", version = "0.54.0", features = [
     "file_io",
     "add_thumbnails",
     "fetch_remote_manifests",
