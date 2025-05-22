@@ -146,7 +146,7 @@ mod tests {
         // cargo test -p c2pa --lib identity::x509::x509_credential_holder::tests::simple_case
         // ```
         std::fs::write(
-            "src/identity/tests/fixtures/validation_method/duplicate_assertion_reference.jpg",
+            "src/identity/tests/fixtures/validation_method/no_hard_binding.jpg",
             dest.get_ref(),
         )
         .unwrap();

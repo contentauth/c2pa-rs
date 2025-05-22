@@ -122,17 +122,8 @@ impl DynamicAssertion for IdentityAssertionBuilder {
             roles: self.roles.clone(),
         };
 
-        // WRONG: Reference the same assertion twice.
-        let duplicate_hash_ref = signer_payload
-            .referenced_assertions
-            .iter()
-            .next()
-            .unwrap()
-            .clone();
-
-        signer_payload
-            .referenced_assertions
-            .push(duplicate_hash_ref);
+        // WRONG: Remove the hard binding assertion reference.
+        signer_payload.referenced_assertions.clear();
 
         dbg!(&signer_payload);
 
