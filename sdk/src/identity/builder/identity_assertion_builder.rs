@@ -116,11 +116,21 @@ impl DynamicAssertion for IdentityAssertionBuilder {
             .cloned()
             .collect();
 
-        let signer_payload = SignerPayload {
+        let mut signer_payload = SignerPayload {
             referenced_assertions,
             sig_type: self.credential_holder.sig_type().to_owned(),
             roles: self.roles.clone(),
         };
+
+        // WRONG: Add a referenced assertion that isn't in the Manifest.
+        let data_hash_ref = crate::HashedUri::new(
+            "self#jumbf=c2pa/urn:uuid:F9168C5E-CEB2-4faa-B6BF-329BF39FA1E4/c2pa.assertions/testing.bogus.assertion".to_owned(),
+            Some("sha256".to_owned()),
+            &hex_literal::hex!("0011b2cf4e6d9a97ed9281183fa5d836c32751b9d2fca724b40836befee7d67f"));
+
+        signer_payload.referenced_assertions.push(data_hash_ref);
+
+        dbg!(&signer_payload);
 
         let signature_result = self.credential_holder.sign(&signer_payload);
 
@@ -248,8 +258,6 @@ fn finalize_identity_assertion(
         signature,
         pad1: vec![],
         pad2: None,
-        // WRONG: This field is not in the spec.
-        other_stuff: "This field shouldn't exist!".to_string(),
     };
 
     let mut assertion_cbor: Vec<u8> = vec![];

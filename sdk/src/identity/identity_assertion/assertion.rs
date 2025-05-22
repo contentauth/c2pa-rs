@@ -61,14 +61,6 @@ pub struct IdentityAssertion {
     // does not work with Option<Vec<u8>>.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) pad2: Option<ByteBuf>,
-
-    // WRONG: This field is not in the spec.
-    #[serde(default = "default_other_stuff")]
-    pub(crate) other_stuff: String,
-}
-
-fn default_other_stuff() -> String {
-    "This field shouldn't exist!".to_string()
 }
 
 impl IdentityAssertion {
