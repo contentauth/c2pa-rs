@@ -253,7 +253,7 @@ pub fn save_jumbf_to_file<P1: AsRef<Path>, P2: AsRef<Path>>(
 /// search_bytes - bytes to be replaced
 /// replace_bytes - replacement bytes
 /// returns the location where splice occurred
-#[cfg(feature = "v1_api")] // this only used in Store unit tests, update this when those tests are updated
+#[allow(dead_code)] // this only used in Store unit tests, update this when those tests are updated
 #[cfg(feature = "file_io")]
 pub(crate) fn update_file_jumbf(
     out_path: &Path,
