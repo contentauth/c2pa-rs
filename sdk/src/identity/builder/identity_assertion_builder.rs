@@ -116,16 +116,11 @@ impl DynamicAssertion for IdentityAssertionBuilder {
             .cloned()
             .collect();
 
-        let mut signer_payload = SignerPayload {
+        let signer_payload = SignerPayload {
             referenced_assertions,
             sig_type: self.credential_holder.sig_type().to_owned(),
             roles: self.roles.clone(),
         };
-
-        // WRONG: Remove the hard binding assertion reference.
-        signer_payload.referenced_assertions.clear();
-
-        dbg!(&signer_payload);
 
         let signature_result = self.credential_holder.sign(&signer_payload);
 
