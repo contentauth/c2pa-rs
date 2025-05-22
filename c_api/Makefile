@@ -8,30 +8,30 @@ ifeq ($(OS),Windows_NT)
 	PLATFORM := win
 else
 	UNAME := $(shell uname)
-    ifeq ($(UNAME),Linux)
-        PLATFORM := linux
-    endif
-    ifeq ($(UNAME),Darwin)
-        PLATFORM := mac
-    endif
+	ifeq ($(UNAME),Linux)
+		PLATFORM := linux
+	endif
+	ifeq ($(UNAME),Darwin)
+		PLATFORM := mac
+	endif
 endif
 
 TARGET_DIR := ../target
 
 # Helper function to create a zip file
 define make_zip
-    set -e; \
-    echo "Reading version from $(1)/c2pa.h"; \
-    if [ "$(PLATFORM)" = "win" ]; then \
-        VERSION=$$(findstr "^// Version:" $(1)/c2pa.h | awk -F": " "{print \$$2}"); \
-    else \
-        VERSION=$$(grep '^// Version:' $(1)/c2pa.h | sed 's/^\/\/ Version: //'); \
-    fi; \
-    mkdir -p $(TARGET_DIR)/artifacts $(1)/include $(1)/lib; \
-    cp $(1)/c2pa.h $(1)/include/; \
-    cp $(1)/libc2pa_c.* $(1)/lib/; \
-    (cd $(1) && zip -9 -r ../../artifacts/c2pa-v$${VERSION}-$(2).zip include lib); \
-    echo "Zip file created: $(TARGET_DIR)/artifacts/c2pa-v$${VERSION}-$(2).zip"
+	set -e; \
+	echo "Reading version from $(1)/c2pa.h"; \
+	if [ "$(PLATFORM)" = "win" ]; then \
+		VERSION=$$(findstr "^// Version:" $(1)/c2pa.h | awk -F": " "{print \$$2}"); \
+	else \
+		VERSION=$$(grep '^// Version:' $(1)/c2pa.h | sed 's/^\/\/ Version: //'); \
+	fi; \
+	mkdir -p $(TARGET_DIR)/artifacts $(1)/include $(1)/lib; \
+	cp $(1)/c2pa.h $(1)/include/; \
+	cp $(1)/libc2pa_c.* $(1)/lib/; \
+	(cd $(1) && zip -9 -r ../../artifacts/c2pa-v$${VERSION}-$(2).zip include lib); \
+	echo "Zip file created: $(TARGET_DIR)/artifacts/c2pa-v$${VERSION}-$(2).zip"
 endef
 
 check-format:
@@ -52,9 +52,9 @@ fmt:
 
 # These are for building the c2patool release bin on various platforms
 release-win-x86_64:
-    rustup update stable-msvc
-    rustup target add x86_64-pc-windows-msvc
-    cargo build --target=x86_64-pc-windows-msvc --release --no-default-features --features "rust_native_crypto, file_io"
+	rustup update stable-msvc
+	rustup target add x86_64-pc-windows-msvc
+	cargo build --target=x86_64-pc-windows-msvc --release --no-default-features --features "rust_native_crypto, file_io"
 	cargo test --target=x86_64-pc-windows-msvc --release ---no-default-features --features "rust_native_crypto, file_io"
 #  powershell -ExecutionPolicy Bypass -File ../../setup-rust-openssl.ps1
 
@@ -85,7 +85,7 @@ release-mac-universal: release-mac-arm release-mac-x86
 	cd $(TARGET_DIR)/universal-apple-darwin/release && \
 		zip -r9 libc2pa_c.dylib.dSYM.zip libc2pa_c.dylib.dSYM && \
 		rm -rf libc2pa_c.dylib.dSYM && \
-    	ls -l
+		ls -l
 
 	strip -x $(TARGET_DIR)/universal-apple-darwin/release/libc2pa_c.dylib
 	@$(call make_zip,$(TARGET_DIR)/universal-apple-darwin/release,universal-apple-darwin)

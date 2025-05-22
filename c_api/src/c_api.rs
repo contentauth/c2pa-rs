@@ -16,6 +16,8 @@ use std::{
     os::raw::{c_char, c_int, c_uchar, c_void},
 };
 
+#[cfg(feature = "file_io")]
+use c2pa::Ingredient;
 // C has no namespace so we prefix things with C2PA to make them unique
 use c2pa::{
     assertions::DataHash, identity::validator::CawgValidator, settings::load_settings_from_str,
@@ -25,7 +27,7 @@ use scopeguard::guard;
 use tokio::runtime::Runtime; // cawg validator requires async
 
 #[cfg(feature = "file_io")]
-use crate::json_api::{read_file, read_ingredient_file, sign_file};
+use crate::json_api::{read_file, sign_file};
 use crate::{c2pa_stream::C2paStream, error::Error, signer_info::SignerInfo};
 
 // Work around limitations in cbindgen.
@@ -334,7 +336,7 @@ pub unsafe extern "C" fn c2pa_read_ingredient_file(
 ) -> *mut c_char {
     let path = from_cstr_or_return_null!(path);
     let data_dir = from_cstr_or_return_null!(data_dir);
-    result = Ingredient::from_file_with_folder(path, data_dir).map_err(Error::from_c2pa_error);
+    let result = Ingredient::from_file_with_folder(path, data_dir).map_err(Error::from_c2pa_error);
 
     match result {
         Ok(ingredient) => to_c_string(ingredient.to_string()),
@@ -505,7 +507,7 @@ pub unsafe extern "C" fn c2pa_reader_from_stream(
 /// ```
 #[cfg(feature = "file_io")]
 #[no_mangle]
-pub unsafe fn c2pa_reader_from_file(path: *const c_char) -> Result<C2paReader, c2pa::Error> {
+pub unsafe fn c2pa_reader_from_file(path: *const c_char) -> *mut C2paReader {
     let path = from_cstr_or_return_null!(path);
     let result = C2paReader::from_file(&path);
     return_boxed!(post_validate(result))
@@ -1340,6 +1342,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "file_io")]
     fn test_c2pa_read_file_null_path() {
         let data_dir = CString::new("/tmp").unwrap();
         let result = unsafe { c2pa_read_file(std::ptr::null(), data_dir.as_ptr()) };
@@ -1350,6 +1353,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "file_io")]
     fn test_c2pa_read_ingredient_file_null_path() {
         let data_dir = CString::new("/tmp").unwrap();
         let result = unsafe { c2pa_read_ingredient_file(std::ptr::null(), data_dir.as_ptr()) };
@@ -1360,6 +1364,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "file_io")]
     fn test_c2pa_sign_file_null_source_path() {
         let dest_path = CString::new("/tmp/output.jpg").unwrap();
         let manifest = CString::new("{}").unwrap();
