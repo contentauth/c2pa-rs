@@ -16,7 +16,7 @@ required-features = ["default"]
 
 [dependencies]
 anyhow = "1.0.40"
-c2pa = { path = "../sdk" }
+c2pa = { path = "../sdk", default-features = false }
 env_logger = "0.11"
 log = "0.4.8"
 image = { version = "0.25.2", default-features = false, features = [
@@ -32,4 +32,6 @@ tempfile = "3.15.0"
 
 [features]
 # prevents these features from being always enabled in the workspace
-default = ["c2pa/file_io"]
+default = ["c2pa/file_io", "openssl"]
+openssl = ["c2pa/openssl"]
+rust_native_crypto = ["c2pa/rust_native_crypto"]

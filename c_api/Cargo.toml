@@ -9,8 +9,10 @@ license = "MIT OR Apache-2.0"
 crate-type = ["cdylib"]
 
 [features]
-default = ["json_api",]
+default = ["json_api", "openssl"]
 json_api = ["c2pa/v1_api"]
+openssl = ["c2pa/openssl"]
+rust_native_crypto = ["c2pa/rust_native_crypto"]
 
 [dependencies]
 tokio = { version = "1.36", features = ["rt-multi-thread","rt"] }
@@ -18,8 +20,7 @@ c2pa = { path = "../sdk", version = "0.53.0", features = [
     "file_io",
     "add_thumbnails",
     "fetch_remote_manifests",
-    "rust_native_crypto",
-] }
+], default-features = false }
 scopeguard = "1.2.0"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"

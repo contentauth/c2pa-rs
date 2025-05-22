@@ -47,7 +47,7 @@
 //!
 //! # Example: Adding a Manifest to a file
 //!
-//!
+//! ```
 //! # use c2pa::Result;
 //! use std::path::PathBuf;
 //!
@@ -184,3 +184,12 @@ pub(crate) mod store;
 
 pub(crate) mod utils;
 pub(crate) use utils::{cbor_types, hash_utils};
+
+#[cfg(all(feature = "openssl", feature = "rust_native_crypto"))]
+compile_error!("Features 'openssl' and 'rust_native_crypto' cannot be enabled at the same time.");
+
+#[cfg(not(any(feature = "openssl", feature = "rust_native_crypto")))]
+compile_error!("Either 'openssl' or 'rust_native_crypto' feature must be enabled.");
+
+#[cfg(all(feature = "openssl", target_arch = "wasm32"))]
+compile_error!("Feature 'openssl' is not available for wasm32.");

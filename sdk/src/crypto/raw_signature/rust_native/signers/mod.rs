@@ -351,8 +351,7 @@ mod async_signer_tests {
         validator.validate(&signature, data, pub_key).unwrap();
     }
 
-    #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
-    // #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    #[cfg_attr(feature = "openssl", actix::test)]
     async fn es512() {
         let cert_chain =
             include_bytes!("../../../../../tests/fixtures/crypto/raw_signature/es512.pub");
