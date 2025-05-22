@@ -248,6 +248,8 @@ fn finalize_identity_assertion(
         signature,
         pad1: vec![],
         pad2: None,
+        // WRONG: This field is not in the spec.
+        other_stuff: "This field shouldn't exist!".to_string(),
     };
 
     let mut assertion_cbor: Vec<u8> = vec![];
