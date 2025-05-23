@@ -130,20 +130,18 @@ impl AsyncCredentialHolder for IcaExampleCredentialHolder {
             ica_vc.valid_from = Some(Utc::now().fixed_offset());
         }
 
-        let mut ica_json = serde_json::to_string(&ica_vc).unwrap();
+        let ica_json = serde_json::to_string(&ica_vc).unwrap();
 
         // TO DO: Check signing cert validity. (See signing_cert_valid in c2pa-rs's
         // cose_sign.)
-
-        // WRONG: Create a VC that isn't valid JSON.
-        ica_json = ica_json.replace("{\"", "xxx");
 
         // TO DO: Switch to new v2_embedded API.
         Ok(sign_v2_embedded_async(
             self.ica_signer.as_ref(),
             ica_json.as_bytes(),
             None,
-            CosePayload::Embedded,
+            // WRONG: Don't include the VC in the COSE envelope payload.
+            CosePayload::Detached,
             Some(RegisteredLabel::Text("application/vc".to_string())),
             TimeStampStorage::V2_sigTst2_CTT,
         )
@@ -233,7 +231,7 @@ async fn ica_signing() {
         .unwrap();
 
     std::fs::write(
-        "src/identity/tests/fixtures/claim_aggregation/ica_validation/invalid_vc.jpg",
+        "src/identity/tests/fixtures/claim_aggregation/ica_validation/missing_vc.jpg",
         dest.get_ref(),
     )
     .unwrap();
