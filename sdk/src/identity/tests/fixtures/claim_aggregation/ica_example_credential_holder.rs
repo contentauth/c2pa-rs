@@ -209,8 +209,8 @@ async fn ica_signing() {
     let jwk_id = serde_json::to_string(&jwk).unwrap();
     let jwk_base64 = crate::crypto::base64::encode(jwk_id.as_bytes());
 
-    // WRONG: Generate an issuer DID that isn't actually a DID.
-    let issuer_did = format!("not-did:jwk:{jwk_base64}");
+    // WRONG: Generate issuer DID using an unsupported DID method.
+    let issuer_did = format!("did:example:{jwk_base64}");
 
     let ica_holder = IcaExampleCredentialHolder::from_async_raw_signer(cawg_raw_signer, issuer_did);
     let iab = AsyncIdentityAssertionBuilder::for_credential_holder(ica_holder);
@@ -232,7 +232,7 @@ async fn ica_signing() {
         .unwrap();
 
     std::fs::write(
-        "src/identity/tests/fixtures/claim_aggregation/ica_validation/invalid_issuer_did.jpg",
+        "src/identity/tests/fixtures/claim_aggregation/ica_validation/unsupported_did_method.jpg",
         dest.get_ref(),
     )
     .unwrap();
