@@ -138,21 +138,6 @@ mod tests {
         // Read back the Manifest that was generated.
         dest.rewind().unwrap();
 
-        // TEMPORARY HACK: Write error test case file.
-        // HINT: To cut to the chase and only run this test, run the following
-        // from the command line:
-        //
-        // ```
-        // cargo test -p c2pa --lib identity::x509::x509_credential_holder::tests::simple_case
-        // ```
-        std::fs::write(
-            "src/identity/tests/fixtures/validation_method/extra_field.jpg",
-            dest.get_ref(),
-        )
-        .unwrap();
-
-        dest.rewind().unwrap();
-
         let manifest_store = Reader::from_stream(format, &mut dest).unwrap();
         assert_eq!(manifest_store.validation_status(), None);
 
