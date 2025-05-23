@@ -171,9 +171,17 @@ pub mod tests {
             .save_cai_store(&temp_path, &manifest)
             .expect("save cai store");
 
-        let store = Store::load_from_asset(
-            &temp_path,
-            false,
+        let mut temp_file = std::fs::File::open(&temp_path).expect("open temp file");
+        let manifest_2 = c2pa_io.read_cai(&mut temp_file).expect("read cai store");
+
+        assert_eq!(&manifest, &manifest_2);
+        // validate against our source stream and the saved / loaded manifest
+        let stream = std::fs::File::open(&path).expect("open temp file");
+        let store = Store::from_manifest_data_and_stream(
+            &manifest,
+            "image/jpeg",
+            &stream,
+            true,
             &mut StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError),
         )
         .expect("loading store");

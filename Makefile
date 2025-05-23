@@ -5,12 +5,12 @@ ifeq ($(OS),Windows_NT)
 	PLATFORM := win
 else
 	UNAME := $(shell uname)
-    ifeq ($(UNAME),Linux)
-        PLATFORM := linux
-    endif
-    ifeq ($(UNAME),Darwin)
-        PLATFORM := mac
-    endif
+	ifeq ($(UNAME),Linux)
+		PLATFORM := linux
+	endif
+	ifeq ($(UNAME),Darwin)
+		PLATFORM := mac
+	endif
 endif
 
 check-format:
@@ -22,7 +22,7 @@ clippy:
 	cargo clippy --features="file_io" --all-targets -- -D warnings
 
 test-local:
-	cargo test --features="file_io, fetch_remote_manifests, add_thumbnails" --all-targets
+	cargo test --features="file_io, fetch_remote_manifests, add_thumbnails, v1_api" --all-targets
 # Builds and views documentation
 
 test-wasm:

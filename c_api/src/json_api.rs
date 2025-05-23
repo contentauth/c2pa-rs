@@ -10,15 +10,12 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use c2pa::{identity::validator::CawgValidator, Ingredient, Manifest, Reader};
+use std::path::PathBuf;
+
+use c2pa::{identity::validator::CawgValidator, Ingredient, Reader, Relationship};
 use tokio::runtime::Runtime;
 
 use crate::{Error, Result, SignerInfo};
-
-/// Returns the version of the c2pa SDK used in this library
-pub fn sdk_version() -> String {
-    String::from(c2pa::VERSION)
-}
 
 /// Returns ManifestStore JSON string from a file path.
 ///
@@ -39,15 +36,6 @@ pub fn read_file(path: &str, data_dir: Option<String>) -> Result<String> {
     })
 }
 
-/// Returns an Ingredient JSON string from a file path.
-///
-/// Any thumbnail or c2pa data will be written to data_dir if provided
-pub fn read_ingredient_file(path: &str, data_dir: &str) -> Result<String> {
-    Ok(Ingredient::from_file_with_folder(path, data_dir)
-        .map_err(Error::from_c2pa_error)?
-        .to_string())
-}
-
 /// Adds a manifest to the source file and writes the result to the destination file.
 /// Also returns the binary manifest data for optional cloud storage
 /// A manifest definition must be supplied
@@ -61,29 +49,28 @@ pub fn sign_file(
     signer_info: &SignerInfo,
     data_dir: Option<String>,
 ) -> Result<Vec<u8>> {
-    let mut manifest = Manifest::from_json(manifest_json).map_err(Error::from_c2pa_error)?;
+    let mut builder = c2pa::Builder::from_json(manifest_json).map_err(Error::from_c2pa_error)?;
 
     // if data_dir is provided, set the base path for the manifest
     if let Some(path) = data_dir {
-        manifest
-            .with_base_path(path)
-            .map_err(Error::from_c2pa_error)?;
+        builder.base_path = Some(PathBuf::from(path));
     }
 
     // If the source file has a manifest store, and no parent is specified, treat the source's manifest store as the parent.
-    if manifest.parent().is_none() {
-        let source_ingredient = Ingredient::from_file(source).map_err(Error::from_c2pa_error)?;
+    if !builder.definition.ingredients.iter().any(|i| i.is_parent()) {
+        let mut source_ingredient =
+            Ingredient::from_file(source).map_err(Error::from_c2pa_error)?;
         if source_ingredient.manifest_data().is_some() {
-            manifest
-                .set_parent(source_ingredient)
-                .map_err(Error::from_c2pa_error)?;
+            source_ingredient.set_relationship(Relationship::ParentOf);
+            builder.add_ingredient(source_ingredient);
         }
     }
 
     let signer = signer_info.signer()?;
-    #[allow(deprecated)]
-    manifest
-        .embed(&source, &dest, &*signer)
+
+    // todo allow source =
+    builder
+        .sign_file(&*signer, source, dest)
         .map_err(Error::from_c2pa_error)
 }
 
