@@ -10,10 +10,6 @@ rust-version = "1.82.0"
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(test)'] }
 # Workaround for https://github.com/est31/cargo-udeps/issues/293.
 
-[[bin]]
-name = "make_test_images"
-required-features = ["default"]
-
 [dependencies]
 anyhow = "1.0.40"
 c2pa = { workspace = true }
@@ -30,8 +26,3 @@ serde = "1.0.197"
 serde_json = { version = "1.0.117", features = ["preserve_order"] }
 tempfile = "3.15.0"
 
-[features]
-# prevents these features from being always enabled in the workspace
-default = ["c2pa/file_io", "openssl"]
-openssl = ["c2pa/openssl"]
-rust_native_crypto = ["c2pa/rust_native_crypto"]

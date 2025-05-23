@@ -18,6 +18,8 @@ endif
 
 TARGET_DIR := ../target
 
+CARGO_BUILD_FLAGS = --release --no-default-features --features "rust_native_crypto, file_io"
+
 # Helper function to create a zip file
 define make_zip
 	set -e; \
@@ -54,24 +56,23 @@ fmt:
 release-win-x86_64:
 	rustup update stable-msvc
 	rustup target add x86_64-pc-windows-msvc
-	cargo build --target=x86_64-pc-windows-msvc --release --no-default-features --features "rust_native_crypto, file_io"
-	cargo test --target=x86_64-pc-windows-msvc --release ---no-default-features --features "rust_native_crypto, file_io"
-#  powershell -ExecutionPolicy Bypass -File ../../setup-rust-openssl.ps1
+	cargo build --target=x86_64-pc-windows-msvc $(CARGO_BUILD_FLAGS)
+
 
 release-win-aarch64:
 	rustup update stable-msvc
 	rustup target add aarch64-pc-windows-msvc
-	cargo build --target=aarch64-pc-windows-msvc --release
+	cargo build --target=aarch64-pc-windows-msvc $(CARGO_BUILD_FLAGS)
 #  powershell -ExecutionPolicy Bypass -File ../../setup-rust-openssl.ps1
 
 release-mac-arm:
 	rustup target add aarch64-apple-darwin
-	MACOSX_DEPLOYMENT_TARGET=11.1 cargo build --target=aarch64-apple-darwin --release
+	MACOSX_DEPLOYMENT_TARGET=11.1 cargo build --target=aarch64-apple-darwin $(CARGO_BUILD_FLAGS)
 	install_name_tool -id @rpath/libc2pa_c.dylib $(TARGET_DIR)/aarch64-apple-darwin/release/libc2pa_c.dylib
 
 release-mac-x86:
 	rustup target add x86_64-apple-darwin
-	MACOSX_DEPLOYMENT_TARGET=10.15 cargo build --target=x86_64-apple-darwin --release
+	MACOSX_DEPLOYMENT_TARGET=10.15 cargo build --target=x86_64-apple-darwin $(CARGO_BUILD_FLAGS)
 	install_name_tool -id @rpath/libc2pa_c.dylib $(TARGET_DIR)/x86_64-apple-darwin/release/libc2pa_c.dylib
 
 release-mac-universal: release-mac-arm release-mac-x86
@@ -98,12 +99,12 @@ release-mac-universal: release-mac-arm release-mac-x86
 
 release-linux-gnu-x86:
 	rustup target add x86_64-unknown-linux-gnu
-	cargo build --target=x86_64-unknown-linux-gnu --release
+	cargo build --target=x86_64-unknown-linux-gnu  $(CARGO_BUILD_FLAGS)
 	@$(call make_zip,$(TARGET_DIR)/x86_64-unknown-linux-gnu/release,x86_64-unknown-linux-gnu)
 
 release-linux-gnu-arm:
 	rustup target add aarch64-unknown-linux-gnu
-	cargo build --target=aarch64-unknown-linux-gnu --release
+	cargo build --target=aarch64-unknown-linux-gnu  $(CARGO_BUILD_FLAGS)
 	@$(call make_zip,$(TARGET_DIR)/aarch64-unknown-linux-gnu/release,aarch64-unknown-linux-gnu)
 
 # make release

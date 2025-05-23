@@ -1575,7 +1575,7 @@ dependencies = [
 
 [[package]]
 name = "export_schema"
-version = "0.36.1"
+version = "0.51.1"
 dependencies = [
  "anyhow",
  "c2pa",

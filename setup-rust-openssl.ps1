@@ -60,6 +60,16 @@ try {
             [Environment]::SetEnvironmentVariable($name, $value, [EnvironmentVariableTarget]::Process)
         }
     }
+
+    # Add LLVM (clang) to PATH (Ring requires this)
+    $llvmBin = "C:\Program Files\LLVM\bin"
+    if (Test-Path $llvmBin) {
+        Write-Host "Adding LLVM (clang) to PATH: $llvmBin"
+        $env:PATH = "$llvmBin;$env:PATH"
+        [Environment]::SetEnvironmentVariable("PATH", "$llvmBin;$([Environment]::GetEnvironmentVariable('PATH', [EnvironmentVariableTarget]::User))", [EnvironmentVariableTarget]::User)
+    } else {
+        Write-Host "Warning: LLVM (clang) not found at $llvmBin"
+    }
     
     # Configure and build OpenSSL
     Write-Host "Configuring and building OpenSSL..."
