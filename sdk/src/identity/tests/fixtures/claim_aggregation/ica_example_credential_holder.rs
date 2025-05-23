@@ -14,7 +14,7 @@
 use std::io::{Cursor, Seek};
 
 use async_trait::async_trait;
-use chrono::{DateTime, FixedOffset, NaiveDate, TimeZone, Utc};
+use chrono::{DateTime, FixedOffset, NaiveDate, TimeDelta, TimeZone, Utc};
 use coset::{iana::OkpKeyParameter, RegisteredLabel};
 use iref::UriBuf;
 use nonempty_collections::{nev, NEVec};
@@ -127,8 +127,8 @@ impl AsyncCredentialHolder for IcaExampleCredentialHolder {
         // TO DO: Bring in substitute for now() on Wasm.
         #[cfg(not(target_arch = "wasm32"))]
         {
-            // WRONG: Omit the `valid_from` field.
-            // ica_vc.valid_from = Some(Utc::now().fixed_offset());
+            // WRONG: Generate a `validFrom` that is after the CAWG signer time stamp.
+            ica_vc.valid_from = Some(Utc::now().fixed_offset() + TimeDelta::new(60, 0).unwrap());
         }
 
         let ica_json = serde_json::to_string(&ica_vc).unwrap();
@@ -177,7 +177,7 @@ async fn ica_signing() {
         &cawg_cert_chain,
         &cawg_private_key,
         SigningAlg::Ed25519,
-        None,
+        Some("http://timestamp.digicert.com".to_string()),
     )
     .unwrap();
 
@@ -231,7 +231,7 @@ async fn ica_signing() {
         .unwrap();
 
     std::fs::write(
-        "src/identity/tests/fixtures/claim_aggregation/ica_validation/valid_from_missing.jpg",
+        "src/identity/tests/fixtures/claim_aggregation/ica_validation/valid_from_after_time_stamp.jpg",
         dest.get_ref(),
     )
     .unwrap();
