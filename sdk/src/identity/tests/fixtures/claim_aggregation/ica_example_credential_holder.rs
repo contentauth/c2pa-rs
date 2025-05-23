@@ -141,8 +141,10 @@ impl AsyncCredentialHolder for IcaExampleCredentialHolder {
             ica_json.as_bytes(),
             None,
             CosePayload::Embedded,
-            // WRONG: Omit content-type header.
-            None,
+            // WRONG: Incorrect (assigned value) content type header.
+            Some(RegisteredLabel::Assigned(
+                coset::iana::CoapContentFormat::OctetStream,
+            )),
             TimeStampStorage::V2_sigTst2_CTT,
         )
         .await
@@ -231,7 +233,7 @@ async fn ica_signing() {
         .unwrap();
 
     std::fs::write(
-        "src/identity/tests/fixtures/claim_aggregation/ica_validation/missing_content_type.jpg",
+        "src/identity/tests/fixtures/claim_aggregation/ica_validation/invalid_content_type_assigned.jpg",
         dest.get_ref(),
     )
     .unwrap();
