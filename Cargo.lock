@@ -861,6 +861,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "c_api"
+version = "0.53.0"
+dependencies = [
+ "c2pa",
+ "cbindgen",
+ "scopeguard",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 1.0.69",
+ "tokio",
+ "zip",
+]
+
+[[package]]
 name = "cbindgen"
 version = "0.28.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1575,7 +1590,7 @@ dependencies = [
 
 [[package]]
 name = "export_schema"
-version = "0.36.1"
+version = "0.53.0"
 dependencies = [
  "anyhow",
  "c2pa",
@@ -2630,7 +2645,7 @@ checksum = "112b39cec0b298b6c1999fee3e31427f74f676e4cb9879ed1a121b43661a4154"
 
 [[package]]
 name = "make_test_images"
-version = "0.49.5"
+version = "0.53.0"
 dependencies = [
  "anyhow",
  "c2pa",

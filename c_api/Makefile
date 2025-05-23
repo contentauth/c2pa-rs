@@ -16,7 +16,9 @@ else
     endif
 endif
 
-TARGET_DIR := $(realpath ../target)
+TARGET_DIR := ../target
+
+CARGO_BUILD_FLAGS = --release -p c_api --no-default-features --features "rust_native_crypto, file_io"
 
 # Helper function to create a zip file
 define make_zip

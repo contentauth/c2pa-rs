@@ -9,6 +9,13 @@ members = [
     "sdk",
 ]
 
+# members in this workspace can share this version setting
+[workspace.package]
+version = "0.53.0"
+
+[workspace.dependencies]
+c2pa = { path = "sdk", default-features = false }
+
 [profile.release]
 strip = true  # Automatically strip symbols from the binary. 
 opt-level = 3
