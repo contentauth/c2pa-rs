@@ -154,6 +154,7 @@ const TEST_THUMBNAIL: &[u8] = include_bytes!("../../../../../tests/fixtures/thum
 
 #[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
 async fn ica_signing() {
+    #![allow(unused)]
     let format = "image/jpeg";
     let mut source = Cursor::new(TEST_IMAGE);
     let mut dest = Cursor::new(Vec::new());
@@ -209,8 +210,8 @@ async fn ica_signing() {
     let jwk_id = serde_json::to_string(&jwk).unwrap();
     let jwk_base64 = crate::crypto::base64::encode(jwk_id.as_bytes());
 
-    // WRONG: Generate issuer DID using an unsupported DID method.
-    let issuer_did = format!("did:example:{jwk_base64}");
+    // WRONG: Generate an ICA with an unresolvable did:web URI.
+    let issuer_did = "did:web:example.com".to_owned();
 
     let ica_holder = IcaExampleCredentialHolder::from_async_raw_signer(cawg_raw_signer, issuer_did);
     let iab = AsyncIdentityAssertionBuilder::for_credential_holder(ica_holder);
@@ -232,7 +233,7 @@ async fn ica_signing() {
         .unwrap();
 
     std::fs::write(
-        "src/identity/tests/fixtures/claim_aggregation/ica_validation/unsupported_did_method.jpg",
+        "src/identity/tests/fixtures/claim_aggregation/ica_validation/unresolvable_did.jpg",
         dest.get_ref(),
     )
     .unwrap();
