@@ -210,8 +210,8 @@ async fn ica_signing() {
     let jwk_id = serde_json::to_string(&jwk).unwrap();
     let jwk_base64 = crate::crypto::base64::encode(jwk_id.as_bytes());
 
-    // WRONG: Generate an ICA with an unresolvable did:web URI.
-    let issuer_did = "did:web:example.com".to_owned();
+    // WRONG: Generate an ICA VC whose DID document lacks an assertionMethod entry.
+    let issuer_did = "did:web:cawg-test-data.github.io:test-case:no-assertion-method".to_owned();
 
     let ica_holder = IcaExampleCredentialHolder::from_async_raw_signer(cawg_raw_signer, issuer_did);
     let iab = AsyncIdentityAssertionBuilder::for_credential_holder(ica_holder);
@@ -233,7 +233,7 @@ async fn ica_signing() {
         .unwrap();
 
     std::fs::write(
-        "src/identity/tests/fixtures/claim_aggregation/ica_validation/unresolvable_did.jpg",
+        "src/identity/tests/fixtures/claim_aggregation/ica_validation/did_doc_without_assertion_method.jpg",
         dest.get_ref(),
     )
     .unwrap();
