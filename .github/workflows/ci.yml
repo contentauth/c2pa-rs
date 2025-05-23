@@ -21,7 +21,6 @@ jobs:
     outputs:
       rust-native-features: ${{ steps.get-features.outputs.rust-native-features }}
       openssl-features: ${{ steps.get-features.outputs.openssl-features }}
-      wasi-features: ${{ steps.get-features.outputs.wasi-features }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -37,10 +36,8 @@ jobs:
           FEATURES=$(cargo metadata --format-version=1 | jq -r '[.packages[] | select(.name=="c2pa" or .name=="c2pa-c") | .features | keys | map(select(. != "default")) | .[]] | unique | join(" ")')
           RUST_NATIVE_FEATURES=$(echo $FEATURES | sed 's/openssl//g')
           OPENSSL_FEATURES=$(echo $FEATURES | sed 's/rust_native_crypto//g')
-          WASI_FEATURES=$(echo $RUST_NATIVE_FEATURES | sed 's/json_api//g')
           echo "rust-native-features=$RUST_NATIVE_FEATURES" >> "$GITHUB_OUTPUT"
           echo "openssl-features=$OPENSSL_FEATURES" >> "$GITHUB_OUTPUT"
-          echo "wasi-features=$WASI_FEATURES" >> "$GITHUB_OUTPUT"
 
   tests:
     name: Unit tests
@@ -379,7 +376,7 @@ jobs:
           CC: /opt/wasi-sdk/bin/clang
           WASI_SDK_PATH: /opt/wasi-sdk
           RUST_MIN_STACK: 16777216
-          FEATURES: ${{needs.get-features.outputs.wasi-features}}
+          FEATURES: ${{needs.get-features.outputs.rust-native-features}}
         run: |
           cargo +nightly-2025-05-14 test --target wasm32-wasip2 -p c2pa -p c2patool --features "$FEATURES" --no-default-features
 
