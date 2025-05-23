@@ -18,7 +18,7 @@ endif
 
 TARGET_DIR := ../target
 
-CARGO_BUILD_FLAGS = --release --no-default-features --features "rust_native_crypto, file_io"
+CARGO_BUILD_FLAGS = --release -p c_api --no-default-features --features "rust_native_crypto, file_io"
 
 # Helper function to create a zip file
 define make_zip
