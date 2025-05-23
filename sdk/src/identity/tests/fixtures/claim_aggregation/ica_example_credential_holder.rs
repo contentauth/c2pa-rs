@@ -130,8 +130,9 @@ impl AsyncCredentialHolder for IcaExampleCredentialHolder {
             ica_vc.valid_from = Some(Utc::now().fixed_offset());
         }
 
+        // WRONG: Set valid_until to a date far in the past.
         ica_vc.valid_until = Some(
-            NaiveDate::from_ymd_opt(2200, 1, 1)
+            NaiveDate::from_ymd_opt(1900, 1, 1)
                 .unwrap()
                 .and_hms_opt(12, 0, 0)
                 .unwrap()
@@ -239,7 +240,7 @@ async fn ica_signing() {
         .unwrap();
 
     std::fs::write(
-        "src/identity/tests/fixtures/claim_aggregation/ica_validation/valid_until_in_future.jpg",
+        "src/identity/tests/fixtures/claim_aggregation/ica_validation/valid_until_in_past.jpg",
         dest.get_ref(),
     )
     .unwrap();
