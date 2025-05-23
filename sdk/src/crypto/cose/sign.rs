@@ -386,8 +386,9 @@ fn build_protected_header(
         SigningAlg::Es256 => HeaderBuilder::new().algorithm(iana::Algorithm::ES256),
         SigningAlg::Es384 => HeaderBuilder::new().algorithm(iana::Algorithm::ES384),
         SigningAlg::Es512 => HeaderBuilder::new().algorithm(iana::Algorithm::ES512),
-        // WRONG: Specify unsupported COSE signature algorithm.
-        SigningAlg::Ed25519 => HeaderBuilder::new().algorithm(iana::Algorithm::SHA_1),
+
+        // WRONG: Don't specify a COSE signature algorithm.
+        SigningAlg::Ed25519 => HeaderBuilder::new(),
     };
 
     let certs = signer.cert_chain()?;

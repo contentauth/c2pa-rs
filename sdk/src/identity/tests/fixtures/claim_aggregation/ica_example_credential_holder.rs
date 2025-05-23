@@ -230,7 +230,7 @@ async fn ica_signing() {
         .unwrap();
 
     std::fs::write(
-        "src/identity/tests/fixtures/claim_aggregation/ica_validation/invalid_cose_sign_alg.jpg",
+        "src/identity/tests/fixtures/claim_aggregation/ica_validation/missing_cose_sign_alg.jpg",
         dest.get_ref(),
     )
     .unwrap();
