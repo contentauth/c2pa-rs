@@ -173,12 +173,7 @@ pub(crate) fn add_sigtst_header(
     mut header_builder: HeaderBuilder,
     tss: TimeStampStorage,
 ) -> Result<HeaderBuilder, CoseError> {
-    // WRONG: Make time stamp invalid by signing an incorrect payload.
-    let mut wrong_data = data.to_vec();
-    wrong_data[0] = 42;
-    wrong_data[4] = 98;
-
-    let sd = cose_countersign_data(&wrong_data, p_header);
+    let sd = cose_countersign_data(data, p_header);
 
     let maybe_cts = if _sync {
         ts_provider.send_time_stamp_request(&sd)

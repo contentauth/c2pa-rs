@@ -14,7 +14,7 @@
 use std::io::{Cursor, Seek};
 
 use async_trait::async_trait;
-use chrono::{DateTime, FixedOffset, Utc};
+use chrono::{DateTime, FixedOffset, NaiveDate, TimeZone, Utc};
 use coset::{iana::OkpKeyParameter, RegisteredLabel};
 use iref::UriBuf;
 use nonempty_collections::{nev, NEVec};
@@ -127,12 +127,16 @@ impl AsyncCredentialHolder for IcaExampleCredentialHolder {
         // TO DO: Bring in substitute for now() on Wasm.
         #[cfg(not(target_arch = "wasm32"))]
         {
-            ica_vc.valid_from = Some(Utc::now().fixed_offset());
+            // WRONG: Set `valid_from` to far in the future.
+            ica_vc.valid_from = Some(
+                NaiveDate::from_ymd_opt(2200, 1, 1)
+                    .unwrap()
+                    .and_hms_opt(12, 0, 0)
+                    .unwrap()
+                    .and_utc()
+                    .fixed_offset(),
+            );
         }
-
-        // Avoid race condition (time stamp might precede valid_from).
-        let one_sec = std::time::Duration::from_millis(1000);
-        std::thread::sleep(one_sec);
 
         let ica_json = serde_json::to_string(&ica_vc).unwrap();
 
@@ -180,7 +184,7 @@ async fn ica_signing() {
         &cawg_cert_chain,
         &cawg_private_key,
         SigningAlg::Ed25519,
-        Some("http://timestamp.digicert.com".to_string()),
+        None,
     )
     .unwrap();
 
@@ -234,7 +238,7 @@ async fn ica_signing() {
         .unwrap();
 
     std::fs::write(
-        "src/identity/tests/fixtures/claim_aggregation/ica_validation/invalid_time_stamp.jpg",
+        "src/identity/tests/fixtures/claim_aggregation/ica_validation/valid_from_in_future.jpg",
         dest.get_ref(),
     )
     .unwrap();
