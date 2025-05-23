@@ -146,7 +146,7 @@ mod tests {
         // cargo test -p c2pa --lib identity::x509::x509_credential_holder::tests::simple_case
         // ```
         std::fs::write(
-            "src/identity/tests/fixtures/validation_method/pad1_invalid.jpg",
+            "src/identity/tests/fixtures/validation_method/pad2_invalid.jpg",
             dest.get_ref(),
         )
         .unwrap();

@@ -264,9 +264,6 @@ fn finalize_identity_assertion(
 
         ia.pad1 = vec![0u8; assertion_size - assertion_cbor.len() - 15];
 
-        // WRONG: Non-zero value in pad1 field.
-        ia.pad1[0] = 1; // INVALID
-
         assertion_cbor.clear();
         ciborium::into_writer(&ia, &mut assertion_cbor)
             .map_err(|e| crate::Error::BadParam(e.to_string()))?;
@@ -276,6 +273,9 @@ fn finalize_identity_assertion(
             0u8;
             assertion_size - assertion_cbor.len() - 6
         ]));
+
+        // WRONG: Non-zero value in pad2.
+        ia.pad2.as_mut().unwrap()[0] = 1;
 
         assertion_cbor.clear();
         ciborium::into_writer(&ia, &mut assertion_cbor)
