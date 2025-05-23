@@ -130,6 +130,10 @@ impl AsyncCredentialHolder for IcaExampleCredentialHolder {
             ica_vc.valid_from = Some(Utc::now().fixed_offset());
         }
 
+        // Avoid race condition (time stamp might precede valid_from).
+        let one_sec = std::time::Duration::from_millis(1000);
+        std::thread::sleep(one_sec);
+
         let ica_json = serde_json::to_string(&ica_vc).unwrap();
 
         // TO DO: Check signing cert validity. (See signing_cert_valid in c2pa-rs's
@@ -176,7 +180,7 @@ async fn ica_signing() {
         &cawg_cert_chain,
         &cawg_private_key,
         SigningAlg::Ed25519,
-        None,
+        Some("http://timestamp.digicert.com".to_string()),
     )
     .unwrap();
 
@@ -230,7 +234,7 @@ async fn ica_signing() {
         .unwrap();
 
     std::fs::write(
-        "src/identity/tests/fixtures/claim_aggregation/ica_validation/signature_mismatch.jpg",
+        "src/identity/tests/fixtures/claim_aggregation/ica_validation/valid_time_stamp.jpg",
         dest.get_ref(),
     )
     .unwrap();
