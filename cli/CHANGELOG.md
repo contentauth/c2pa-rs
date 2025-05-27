@@ -6,6 +6,21 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 Since version 0.10.0, the format of this changelog is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.18.0](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.17.0...c2patool-v0.18.0)
+_27 May 2025_
+
+### Added
+
+* Make OpenSSL a default feature ([#1118](https://github.com/contentauth/c2pa-rs/pull/1118))
+
+### Fixed
+
+* Add CAWG support for fragmented BMFF ([#1114](https://github.com/contentauth/c2pa-rs/pull/1114))
+
+### Other
+
+* Integrates prebuilt library release workflow ([#1126](https://github.com/contentauth/c2pa-rs/pull/1126))
+
 ## [0.17.0](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.16.5...c2patool-v0.17.0)
 _16 May 2025_
 
