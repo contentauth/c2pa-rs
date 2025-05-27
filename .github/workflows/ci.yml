@@ -378,7 +378,17 @@ jobs:
           RUST_MIN_STACK: 16777216
           FEATURES: ${{needs.get-features.outputs.rust-native-features}}
         run: |
-          cargo +nightly-2025-05-14 test --target wasm32-wasip2 -p c2pa -p c2patool --features "$FEATURES" --no-default-features
+          cargo +nightly-2025-05-14 test --target wasm32-wasip2 -p c2pa --features "$FEATURES" --no-default-features
+
+      - name: Run WASI tests (c2patool)
+        env:
+          CARGO_TARGET_WASM32_WASIP2_RUNNER: "wasmtime -S cli -S http --dir ."
+          CC: /opt/wasi-sdk/bin/clang
+          WASI_SDK_PATH: /opt/wasi-sdk
+          RUST_MIN_STACK: 16777216
+          FEATURES: ${{needs.get-features.outputs.rust-native-features}}
+        run: |
+          cargo +nightly-2025-05-14 test --target wasm32-wasip2 -p c2patool --features "$FEATURES" --no-default-features
 
   test-direct-minimal-versions:
     name: Unit tests with minimum versions of direct dependencies
