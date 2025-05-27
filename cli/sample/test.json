@@ -1,9 +1,10 @@
 {
-  "alg": "ps256",
-  "private_key": "ps256.pem",
-  "sign_cert": "ps256.pub",
+  "claim_version": 1,
   "ta_url": "http://timestamp.digicert.com",
-  "claim_generator": "TestApp",
+  "claim_generator_info":[{
+    "name": "TestApp",
+    "version": "1.0.0"
+  }],
   "title": "My Title",
   "assertions": [
     {

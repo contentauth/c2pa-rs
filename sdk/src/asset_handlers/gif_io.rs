@@ -25,15 +25,16 @@ use tempfile::Builder;
 use crate::{
     assertions::{BoxMap, C2PA_BOXHASH},
     asset_io::{
-        self, AssetBoxHash, AssetIO, AssetPatch, CAIReader, CAIWriter, ComposedManifestRef,
-        HashBlockObjectType, HashObjectPositions, RemoteRefEmbed, RemoteRefEmbedType,
+        self, AssetBoxHash, AssetIO, AssetPatch, CAIRead, CAIReadWrite, CAIReader, CAIWriter,
+        ComposedManifestRef, HashBlockObjectType, HashObjectPositions, RemoteRefEmbed,
+        RemoteRefEmbedType,
     },
     error::Result,
     utils::{
         io_utils::stream_len,
         xmp_inmemory_utils::{self, MIN_XMP},
     },
-    CAIRead, CAIReadWrite, Error,
+    Error,
 };
 
 // https://www.w3.org/Graphics/GIF/spec-gif89a.txt
@@ -201,7 +202,7 @@ impl RemoteRefEmbed for GifIO {
                     // TODO: we read xmp here, then search for it again after, we can cache it
                     &self
                         .read_xmp(source_stream)
-                        .unwrap_or_else(|| format!("http://ns.adobe.com/xap/1.0/\0 {}", MIN_XMP)),
+                        .unwrap_or_else(|| MIN_XMP.to_string()),
                     &url,
                 )?;
 
@@ -680,7 +681,7 @@ impl Block {
                     0xf9 => Ok(Block::GraphicControlExtension(
                         GraphicControlExtension::from_stream(stream)?,
                     )),
-                    0x21 => Ok(Block::PlainTextExtension(PlainTextExtension::from_stream(
+                    0x01 => Ok(Block::PlainTextExtension(PlainTextExtension::from_stream(
                         stream,
                     )?)),
                     ext_label => Err(Error::InvalidAsset(format!(
@@ -1117,22 +1118,31 @@ impl DataSubBlocks {
     }
 
     fn to_decoded_bytes(&self) -> Vec<u8> {
-        // Amount of bytes - (length markers + terminator).
-        let mut bytes = Vec::with_capacity(self.bytes.len() - (self.bytes.len().div_ceil(255) + 1));
-        for chunk in self.bytes.chunks(256) {
-            bytes.extend_from_slice(&chunk[1..]);
+        let mut bytes = Vec::with_capacity(gif_chunks(&self.bytes).map(|c| c.len()).sum());
+        for chunk in gif_chunks(&self.bytes) {
+            bytes.extend_from_slice(chunk);
         }
-
-        // Remove terminator.
-        bytes.truncate(bytes.len() - 1);
-
         bytes
     }
 }
 
+fn gif_chunks(mut encoded_bytes: &[u8]) -> impl Iterator<Item = &[u8]> {
+    std::iter::from_fn(move || {
+        let (&len, rest) = encoded_bytes.split_first()?;
+        if len == 0 {
+            return None;
+        }
+        let (chunk, rest) = rest.split_at_checked(len.into())?;
+        encoded_bytes = rest;
+        Some(chunk)
+    })
+}
+
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used)]
     use io::{Cursor, Seek};
+    use xmp_inmemory_utils::extract_provenance;
 
     use super::*;
 
@@ -1468,8 +1478,9 @@ mod tests {
             RemoteRefEmbedType::Xmp("Test".to_owned()),
         )?;
 
-        let xmp = gif_io.read_xmp(&mut output_stream1);
-        assert_eq!(xmp, Some("http://ns.adobe.com/xap/1.0/\0<?xpacket begin=\"\" id=\"W5M0MpCehiHzreSzNTczkc9d\"?>\n<x:xmpmeta xmlns:x=\"adobe:ns:meta/\" x:xmptk=\"XMP Core 6.0.0\">\n  <rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\">\n    <rdf:Description rdf:about=\"\" xmlns:dcterms=\"http://purl.org/dc/terms/\" dcterms:provenance=\"Test\">\n    </rdf:Description>\n  </rdf:RDF>\n</x:xmpmeta>".to_owned()));
+        let xmp = gif_io.read_xmp(&mut output_stream1).unwrap();
+        let p = extract_provenance(&xmp).unwrap();
+        assert_eq!(&p, "Test");
 
         Ok(())
     }

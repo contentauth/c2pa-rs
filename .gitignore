@@ -1,9 +1,11 @@
 /target/
 
 **/*.rs.bk
+**/*.tmp*
 
 .DS_Store
 .idea
+.secrets
 .cargo/config.toml
 
 .vscode

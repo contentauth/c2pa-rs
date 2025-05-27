@@ -30,23 +30,23 @@ fn populate_node(
         }
 
         for ingredient in manifest.ingredients().iter() {
+            let title = ingredient.title().unwrap_or("Untitled");
             if let Some(label) = ingredient.active_manifest() {
                 // create new node
                 let data = if name_only {
-                    format!("{}_{}", ingredient.title(), label)
+                    format!("{}_{}", title, label)
                 } else {
-                    format!("Asset:{}, Manifest:{}", ingredient.title(), label)
+                    format!("Asset:{}, Manifest:{}", title, label)
                 };
 
                 let new_token = current_token.append(tree, data);
 
                 populate_node(tree, reader, label, &new_token, name_only)?;
             } else {
-                let asset_name = ingredient.title();
                 let data = if name_only {
-                    asset_name.to_string()
+                    title.to_string()
                 } else {
-                    format!("Asset:{asset_name}")
+                    format!("Asset:{title}")
                 };
                 current_token.append(tree, data);
             }

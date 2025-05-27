@@ -24,7 +24,6 @@ use id3::{
     *,
 };
 use memchr::memmem;
-use tempfile::Builder;
 
 use crate::{
     asset_io::{
@@ -34,7 +33,7 @@ use crate::{
     },
     error::{Error, Result},
     utils::{
-        io_utils::{stream_len, ReaderUtils},
+        io_utils::{stream_len, tempfile_builder, ReaderUtils},
         xmp_inmemory_utils::{self, MIN_XMP},
     },
 };
@@ -94,7 +93,7 @@ impl ID3V2Header {
     }
 
     fn decode_tag_size(n: u32) -> u32 {
-        n & 0xff | (n & 0xff00) >> 1 | (n & 0xff0000) >> 2 | (n & 0xff000000) >> 3
+        (n & 0xff) | ((n & 0xff00) >> 1) | ((n & 0xff0000) >> 2) | ((n & 0xff000000) >> 3)
     }
 
     fn is_mp3_frame_sync(header: &[u8]) -> bool {
@@ -229,7 +228,7 @@ impl RemoteRefEmbed for Mp3IO {
                 let xmp = xmp_inmemory_utils::add_provenance(
                     &self
                         .read_xmp(source_stream)
-                        .unwrap_or_else(|| format!("http://ns.adobe.com/xap/1.0/\0 {}", MIN_XMP)),
+                        .unwrap_or_else(|| MIN_XMP.to_string()),
                     &url,
                 )?;
                 let frame = Frame::with_content(
@@ -318,10 +317,7 @@ impl AssetIO for Mp3IO {
             .open(asset_path)
             .map_err(Error::IoError)?;
 
-        let mut temp_file = Builder::new()
-            .prefix("c2pa_temp")
-            .rand_bytes(5)
-            .tempfile()?;
+        let mut temp_file = tempfile_builder("c2pa_temp")?;
 
         self.write_cai(&mut input_stream, &mut temp_file, store_bytes)?;
 
@@ -506,11 +502,12 @@ pub mod tests {
     #![allow(clippy::panic)]
     #![allow(clippy::unwrap_used)]
 
-    use tempfile::tempdir;
+    use xmp_inmemory_utils::extract_provenance;
 
     use super::*;
     use crate::utils::{
         hash_utils::vec_compare,
+        io_utils::tempdirectory,
         test::{fixture_path, temp_dir_path},
     };
 
@@ -520,7 +517,7 @@ pub mod tests {
         let source = fixture_path("sample1.mp3");
 
         let mut success = false;
-        if let Ok(temp_dir) = tempdir() {
+        if let Ok(temp_dir) = tempdirectory() {
             let output = temp_dir_path(&temp_dir, "sample1-mp3.mp3");
 
             if let Ok(_size) = std::fs::copy(source, &output) {
@@ -543,7 +540,7 @@ pub mod tests {
         let source = fixture_path("sample1.mp3");
 
         let mut success = false;
-        if let Ok(temp_dir) = tempdir() {
+        if let Ok(temp_dir) = tempdirectory() {
             let output = temp_dir_path(&temp_dir, "sample1-mp3.mp3");
 
             if let Ok(_size) = std::fs::copy(source, &output) {
@@ -572,7 +569,7 @@ pub mod tests {
     fn test_remove_c2pa() {
         let source = fixture_path("sample1.mp3");
 
-        let temp_dir = tempdir().unwrap();
+        let temp_dir = tempdirectory().unwrap();
         let output = temp_dir_path(&temp_dir, "sample1-mp3.mp3");
 
         std::fs::copy(source, &output).unwrap();
@@ -603,8 +600,10 @@ pub mod tests {
         )?;
         output_stream1.rewind()?;
 
-        let xmp = mp3_io.read_xmp(&mut output_stream1);
-        assert_eq!(xmp, Some("http://ns.adobe.com/xap/1.0/\0<?xpacket begin=\"\" id=\"W5M0MpCehiHzreSzNTczkc9d\"?>\n<x:xmpmeta xmlns:x=\"adobe:ns:meta/\" x:xmptk=\"XMP Core 6.0.0\">\n  <rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\">\n    <rdf:Description rdf:about=\"\" xmlns:dcterms=\"http://purl.org/dc/terms/\" dcterms:provenance=\"Test\">\n    </rdf:Description>\n  </rdf:RDF>\n</x:xmpmeta>".to_owned()));
+        let xmp = mp3_io.read_xmp(&mut output_stream1).unwrap();
+
+        let p = extract_provenance(&xmp).unwrap();
+        assert_eq!(&p, "Test");
 
         Ok(())
     }

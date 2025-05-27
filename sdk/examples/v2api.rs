@@ -15,8 +15,10 @@
 use std::io::{Cursor, Seek};
 
 use anyhow::Result;
-use c2pa::{settings::load_settings_from_str, Builder, CallbackSigner, Reader};
-use c2pa_crypto::SigningAlg;
+use c2pa::{
+    crypto::raw_signature::SigningAlg, settings::load_settings_from_str,
+    validation_results::ValidationState, Builder, CallbackSigner, Reader,
+};
 use serde_json::json;
 
 const TEST_IMAGE: &[u8] = include_bytes!("../tests/fixtures/CA.jpg");
@@ -151,13 +153,12 @@ fn main() -> Result<()> {
     }
 
     println!("{}", reader.json());
-    assert_eq!(reader.validation_status(), None);
+    assert_ne!(reader.validation_state(), ValidationState::Invalid);
     assert_eq!(reader.active_manifest().unwrap().title().unwrap(), title);
 
     Ok(())
 }
 
-// #[cfg(feature = "openssl")]
 // use openssl::{error::ErrorStack, pkey::PKey};
 // #[cfg(feature = "openssl")]
 // fn ed_sign(data: &[u8], pkey: &[u8]) -> std::result::Result<Vec<u8>, ErrorStack> {
@@ -168,13 +169,14 @@ fn main() -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    #[cfg(target_arch = "wasm32")]
+    #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
     use wasm_bindgen_test::*;
 
     use super::*;
 
     #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
     #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    #[cfg_attr(target_os = "wasi", wstd::test)]
     async fn test_v2_api() -> Result<()> {
         main()
     }

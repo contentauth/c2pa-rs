@@ -17,9 +17,8 @@
 //! using a callback and public signing certificates.
 
 use async_trait::async_trait;
-use c2pa_crypto::SigningAlg;
 
-use crate::{AsyncSigner, Error, Result, Signer};
+use crate::{crypto::raw_signature::SigningAlg, AsyncSigner, Error, Result, Signer};
 
 /// Defines a callback function interface for a [`CallbackSigner`].
 ///
@@ -114,7 +113,7 @@ impl CallbackSigner {
         let pem = parse(private_key).map_err(|e| Error::OtherError(Box::new(e)))?;
 
         // For Ed25519, the key is 32 bytes long, so we skip the first 16 bytes of the PEM data
-        let key_bytes = &pem.contents()[16..];
+        let key_bytes = pem.contents().get(16..).ok_or(Error::InvalidSigningKey)?;
         let signing_key =
             SigningKey::try_from(key_bytes).map_err(|e| Error::OtherError(Box::new(e)))?;
 

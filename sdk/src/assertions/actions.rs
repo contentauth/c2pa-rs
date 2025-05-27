@@ -32,41 +32,70 @@ pub const CAI_INGREDIENT_IDS: &str = "org.cai.ingredientIds";
 pub mod c2pa_action {
     /// Changes to tone, saturation, etc.
     pub const COLOR_ADJUSTMENTS: &str = "c2pa.color_adjustments";
+
     /// The format of the asset was changed.
     pub const CONVERTED: &str = "c2pa.converted";
+
     /// The asset was first created, usually the asset's origin.
     pub const CREATED: &str = "c2pa.created";
+
     /// Areas of the asset's "editorial" content were cropped out.
     pub const CROPPED: &str = "c2pa.cropped";
+
     /// Changes using drawing tools including brushes or eraser.
     pub const DRAWING: &str = "c2pa.drawing";
+
     /// Generalized actions that affect the "editorial" meaning of the content.
     pub const EDITED: &str = "c2pa.edited";
+
     /// Changes to appearance with applied filters, styles, etc.
     pub const FILTERED: &str = "c2pa.filtered";
+
     /// An existing asset was opened and is being set as the `parentOf` ingredient.
     pub const OPENED: &str = "c2pa.opened";
+
     /// Changes to the direction and position of content.
     pub const ORIENTATION: &str = "c2pa.orientation";
+
     /// Added/Placed a `componentOf` ingredient into the asset.
     pub const PLACED: &str = "c2pa.placed";
+
     /// Asset is released to a wider audience.
     pub const PUBLISHED: &str = "c2pa.published";
+
+    /// Repackage from one container to another.
+    ///
     /// A conversion of one packaging or container format to another. Content may be repackaged without transcoding.
     /// Does not include any adjustments that would affect the "editorial" meaning of the content.
     pub const REPACKAGED: &str = "c2pa.repackaged";
+
     /// Changes to content dimensions and/or file size
     pub const RESIZED: &str = "c2pa.resized";
-    /// A direct conversion of one encoding to another, including resolution scaling, bitrate adjustment and encoding format change.
+
+    /// Direct conversion of one encoding to another.
+    ///
+    /// This included resolution scaling, bitrate adjustment and encoding format change.
     /// Does not include any adjustments that would affect the "editorial" meaning of the content.
     pub const TRANSCODED: &str = "c2pa.transcoded";
+
     /// Something happened, but the claim_generator cannot specify what.
     pub const UNKNOWN: &str = "c2pa.unknown";
 }
 
+pub static V2_DEPRECATED_ACTIONS: [&str; 7] = [
+    "c2pa.copied",
+    "c2pa.formatted",
+    "c2pa.version_updated",
+    "c2pa.printed",
+    "c2pa.managed",
+    "c2pa.produced",
+    "c2pa.saved",
+];
+
 /// We use this to allow SourceAgent to be either a string or a ClaimGeneratorInfo
 #[derive(Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
 #[serde(untagged)]
+#[allow(clippy::large_enum_variant)]
 pub enum SoftwareAgent {
     String(String),
     ClaimGeneratorInfo(ClaimGeneratorInfo),
@@ -105,6 +134,10 @@ pub struct Action {
     #[serde(rename = "softwareAgent", skip_serializing_if = "Option::is_none")]
     software_agent: Option<SoftwareAgent>,
 
+    /// 0-based index into the softwareAgents array
+    #[serde(rename = "softwareAgentIndex", skip_serializing_if = "Option::is_none")]
+    pub software_agent_index: Option<usize>,
+
     /// A semicolon-delimited list of the parts of the resource that were changed since the previous event history.
     #[serde(skip_serializing_if = "Option::is_none")]
     changed: Option<String>,
@@ -119,8 +152,9 @@ pub struct Action {
 
     /// This is NOT the instanceID in the spec
     /// It is now deprecated but was previously used to map the action to an ingredient
-    #[serde(rename = "instanceId", skip_serializing)] // this should never be written to CBOR
     #[deprecated(since = "0.37.0", note = "Use `org.cai.ingredientIds` instead")]
+    #[serde(skip_serializing)]
+    #[serde(alias = "instanceId", alias = "instanceID")]
     instance_id: Option<String>,
 
     /// Additional parameters of the action. These vary by the type of action.
@@ -142,6 +176,9 @@ pub struct Action {
     // The reason why this action was performed, required when the action is `c2pa.redacted`
     #[serde(skip_serializing_if = "Option::is_none")]
     reason: Option<String>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    description: Option<String>,
 }
 
 impl Action {
@@ -160,7 +197,8 @@ impl Action {
         matches!(
             self.software_agent,
             Some(SoftwareAgent::ClaimGeneratorInfo(_))
-        ) || self.changes.is_some() // only defined for v2
+        ) || self.changes.is_some()
+            || self.description.is_some() // only defined for v2
     }
 
     /// Returns the label for this action.
@@ -410,6 +448,10 @@ pub struct ActionTemplate {
     #[serde(rename = "softwareAgent", skip_serializing_if = "Option::is_none")]
     pub software_agent: Option<SoftwareAgent>,
 
+    /// 0-based index into the softwareAgents array
+    #[serde(rename = "softwareAgentIndex", skip_serializing_if = "Option::is_none")]
+    pub software_agent_index: Option<usize>,
+
     /// One of the defined URI values at `<https://cv.iptc.org/newscodes/digitalsourcetype/>`
     #[serde(rename = "digitalSourceType", skip_serializing_if = "Option::is_none")]
     pub source_type: Option<String>,
@@ -420,8 +462,8 @@ pub struct ActionTemplate {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
 
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub parameters: Option<HashMap<String, Value>>,
+    #[serde(rename = "templateParameters", skip_serializing_if = "Option::is_none")]
+    pub template_parameters: Option<HashMap<String, Value>>,
 }
 
 impl ActionTemplate {
@@ -435,7 +477,7 @@ impl ActionTemplate {
 }
 
 /// An `Actions` assertion provides information on edits and other
-/// actions taken that affect the asset’s content.
+/// actions taken that affect the asset's content.
 ///
 /// This assertion contains a list of [`Action`], each one declaring
 /// what took place on the asset, when it took place, along with possible
@@ -447,6 +489,14 @@ impl ActionTemplate {
 pub struct Actions {
     /// A list of [`Action`]s.
     pub actions: Vec<Action>,
+
+    /// A list of of the software/hardware that did the action.
+    #[serde(rename = "softwareAgents", skip_serializing_if = "Option::is_none")]
+    pub software_agents: Option<Vec<ClaimGeneratorInfo>>,
+
+    /// If present & true, indicates that no actions took place that were not included in the actions list.
+    #[serde(rename = "allActionsIncluded", skip_serializing_if = "Option::is_none")]
+    pub all_actions_included: Option<bool>,
 
     /// list of templates for the [`Action`]s
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -467,8 +517,10 @@ impl Actions {
     pub fn new() -> Self {
         Self {
             actions: Vec::new(),
+            all_actions_included: None,
             templates: None,
             metadata: None,
+            software_agents: None,
         }
     }
 
@@ -811,7 +863,8 @@ pub mod tests {
                 {
                     "action": "c2pa.opened",
                     "parameters": {
-                        "description": "import"
+                        "description": "import",
+                        "org.cai.ingredientIds": ["xmp.iid:7b57930e-2f23-47fc-affe-0400d70b738d"]
                     },
                     "digitalSourceType": "http://cv.iptc.org/newscodes/digitalsourcetype/algorithmicMedia",
                     "softwareAgent": {
@@ -855,9 +908,15 @@ pub mod tests {
                         "name": "Joe's Photo Editor",
                         "version": "2.0",
                         "schema.org.SoftwareApplication.operatingSystem": "Windows 10"
+                    },
+                    "softwareAgentIndex": 1,
+                    "templateParameters": {
+                        "description": "Magic Filter",
+                        "digitalSourceType": "http://cv.iptc.org/newscodes/digitalsourcetype/compositeSynthetic",
                     }
                 }
             ],
+            "allActionsIncluded": true,
             "metadata": {
                 "mytag": "myvalue"
             }
@@ -869,6 +928,7 @@ pub mod tests {
         assert_eq!(result.label(), "c2pa.actions.v2");
         assert_eq!(original.actions, result.actions);
         assert_eq!(original.templates, result.templates);
+        assert_eq!(original.all_actions_included, result.all_actions_included);
         assert_eq!(
             result.actions[1].software_agent().unwrap(),
             &SoftwareAgent::String("TestApp".to_string())

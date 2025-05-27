@@ -14,15 +14,15 @@
 #![allow(clippy::unwrap_used)] // This mod is only used in test code.
 
 use async_trait::async_trait;
-use c2pa_crypto::{
-    raw_signature::{
-        async_signer_from_cert_chain_and_private_key, signer_from_cert_chain_and_private_key,
-        AsyncRawSigner,
-    },
-    SigningAlg,
-};
 
-use crate::{signer::RawSignerWrapper, AsyncSigner, Result, Signer};
+use crate::{
+    crypto::raw_signature::{
+        async_signer_from_cert_chain_and_private_key, signer_from_cert_chain_and_private_key,
+        AsyncRawSigner, SigningAlg,
+    },
+    signer::RawSignerWrapper,
+    AsyncSigner, Result, Signer,
+};
 
 /// Creates a [`Signer`] instance for testing purposes using test credentials.
 pub(crate) fn test_signer(alg: SigningAlg) -> Box<dyn Signer> {
@@ -33,8 +33,33 @@ pub(crate) fn test_signer(alg: SigningAlg) -> Box<dyn Signer> {
     ))
 }
 
+#[cfg(feature = "v1_api")] // this only used in Store unit tests, update this when those tests are updated
+/// Creates a [`Signer`] instance for testing purposes using test credentials.
+pub(crate) fn test_cawg_signer(
+    alg: SigningAlg,
+    referenced_assertions: &[&str],
+) -> Result<Box<dyn Signer>> {
+    let (cert_chain, private_key) = cert_chain_and_private_key_for_alg(alg);
+
+    let c2pa_raw_signer =
+        signer_from_cert_chain_and_private_key(&cert_chain, &private_key, alg, None).unwrap();
+    let cawg_raw_signer =
+        signer_from_cert_chain_and_private_key(&cert_chain, &private_key, alg, None).unwrap();
+
+    let mut ia_signer = crate::identity::builder::IdentityAssertionSigner::new(c2pa_raw_signer);
+
+    let x509_holder = crate::identity::x509::X509CredentialHolder::from_raw_signer(cawg_raw_signer);
+    let mut iab =
+        crate::identity::builder::IdentityAssertionBuilder::for_credential_holder(x509_holder);
+    iab.add_referenced_assertions(referenced_assertions);
+
+    ia_signer.add_identity_assertion(iab);
+    Ok(Box::new(ia_signer))
+}
+
 /// Creates an [`AsyncSigner`] instance for testing purposes using test credentials.
 #[cfg(not(target_arch = "wasm32"))]
+#[allow(dead_code)]
 pub(crate) fn async_test_signer(alg: SigningAlg) -> Box<dyn AsyncSigner + Sync + Send> {
     let (cert_chain, private_key) = cert_chain_and_private_key_for_alg(alg);
 
@@ -142,5 +167,9 @@ impl AsyncSigner for AsyncRawSignerWrapper {
             .send_time_stamp_request(message)
             .await
             .map(|r| r.map_err(|e| e.into()))
+    }
+
+    fn async_raw_signer(&self) -> Option<Box<&dyn AsyncRawSigner>> {
+        Some(Box::new(&*self.0))
     }
 }

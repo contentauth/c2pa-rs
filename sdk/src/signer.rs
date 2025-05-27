@@ -12,9 +12,15 @@
 // each license.
 
 use async_trait::async_trait;
-use c2pa_crypto::{raw_signature::RawSigner, SigningAlg};
 
-use crate::{DynamicAssertion, Result};
+use crate::{
+    crypto::{
+        raw_signature::{AsyncRawSigner, RawSigner, RawSignerError, SigningAlg},
+        time_stamp::{TimeStampError, TimeStampProvider},
+    },
+    dynamic_assertion::{AsyncDynamicAssertion, DynamicAssertion},
+    Result,
+};
 
 /// The `Signer` trait generates a cryptographic signature over a byte array.
 ///
@@ -48,7 +54,7 @@ pub trait Signer {
     }
 
     fn timestamp_request_body(&self, message: &[u8]) -> Result<Vec<u8>> {
-        c2pa_crypto::time_stamp::default_rfc3161_message(message).map_err(|e| e.into())
+        crate::crypto::time_stamp::default_rfc3161_message(message).map_err(|e| e.into())
     }
 
     /// Request RFC 3161 timestamp to be included in the manifest data
@@ -65,8 +71,10 @@ pub trait Signer {
             if let Ok(body) = self.timestamp_request_body(message) {
                 let headers: Option<Vec<(String, String)>> = self.timestamp_request_headers();
                 return Some(
-                    c2pa_crypto::time_stamp::default_rfc3161_request(&url, headers, &body, message)
-                        .map_err(|e| e.into()),
+                    crate::crypto::time_stamp::default_rfc3161_request(
+                        &url, headers, &body, message,
+                    )
+                    .map_err(|e| e.into()),
                 );
             }
         }
@@ -93,6 +101,21 @@ pub trait Signer {
     /// Returns a list of dynamic assertions that should be included in the manifest.
     fn dynamic_assertions(&self) -> Vec<Box<dyn DynamicAssertion>> {
         Vec::new()
+    }
+
+    /// If this struct also implements or wraps [`RawSigner`], it should
+    /// return a reference to that trait implementation.
+    ///
+    /// If this function returns `None` (the default behavior), a temporary
+    /// wrapper will be constructed for it.
+    ///
+    /// NOTE: Due to limitations in some of the FFI tooling that we use to bridge
+    /// c2pa-rs to other languages, we can not make [`RawSigner`] a supertrait of
+    /// this trait. This API is a workaround for that limitation.
+    ///
+    /// [`RawSigner`]: crate::crypto::raw_signature::RawSigner
+    fn raw_signer(&self) -> Option<Box<&dyn RawSigner>> {
+        None
     }
 }
 
@@ -158,7 +181,7 @@ pub trait AsyncSigner: Sync {
     }
 
     fn timestamp_request_body(&self, message: &[u8]) -> Result<Vec<u8>> {
-        c2pa_crypto::time_stamp::default_rfc3161_message(message).map_err(|e| e.into())
+        crate::crypto::time_stamp::default_rfc3161_message(message).map_err(|e| e.into())
     }
 
     /// Request RFC 3161 timestamp to be included in the manifest data
@@ -175,7 +198,7 @@ pub trait AsyncSigner: Sync {
             if let Ok(body) = self.timestamp_request_body(message) {
                 let headers: Option<Vec<(String, String)>> = self.timestamp_request_headers();
                 return Some(
-                    c2pa_crypto::time_stamp::default_rfc3161_request_async(
+                    crate::crypto::time_stamp::default_rfc3161_request_async(
                         &url, headers, &body, message,
                     )
                     .await
@@ -204,8 +227,23 @@ pub trait AsyncSigner: Sync {
     }
 
     /// Returns a list of dynamic assertions that should be included in the manifest.
-    fn dynamic_assertions(&self) -> Vec<Box<dyn DynamicAssertion>> {
+    fn dynamic_assertions(&self) -> Vec<Box<dyn AsyncDynamicAssertion>> {
         Vec::new()
+    }
+
+    /// If this struct also implements or wraps [`AsyncRawSigner`], it should
+    /// return a reference to that trait implementation.
+    ///
+    /// If this function returns `None` (the default behavior), a temporary
+    /// wrapper will be constructed for it when needed.
+    ///
+    /// NOTE: Due to limitations in some of the FFI tooling that we use to bridge
+    /// c2pa-rs to other languages, we can not make [`AsyncRawSigner`] a supertrait
+    /// of this trait. This API is a workaround for that limitation.
+    ///
+    /// [`AsyncRawSigner`]: crate::crypto::raw_signature::AsyncRawSigner
+    fn async_raw_signer(&self) -> Option<Box<&dyn AsyncRawSigner>> {
+        None
     }
 }
 
@@ -245,7 +283,7 @@ pub trait AsyncSigner {
     }
 
     fn timestamp_request_body(&self, message: &[u8]) -> Result<Vec<u8>> {
-        c2pa_crypto::time_stamp::default_rfc3161_message(message).map_err(|e| e.into())
+        crate::crypto::time_stamp::default_rfc3161_message(message).map_err(|e| e.into())
     }
 
     /// Request RFC 3161 timestamp to be included in the manifest data
@@ -276,11 +314,27 @@ pub trait AsyncSigner {
     }
 
     /// Returns a list of dynamic assertions that should be included in the manifest.
-    fn dynamic_assertions(&self) -> Vec<Box<dyn DynamicAssertion>> {
+    fn dynamic_assertions(&self) -> Vec<Box<dyn AsyncDynamicAssertion>> {
         Vec::new()
+    }
+
+    /// If this struct also implements or wraps [`AsyncRawSigner`], it should
+    /// return a reference to that trait implementation.
+    ///
+    /// If this function returns `None` (the default behavior), a temporary
+    /// wrapper will be constructed for it when needed.
+    ///
+    /// NOTE: Due to limitations in some of the FFI tooling that we use to bridge
+    /// c2pa-rs to other languages, we can not make [`AsyncRawSigner`] a supertrait
+    /// of this trait. This API is a workaround for that limitation.
+    ///
+    /// [`AsyncRawSigner`]: crate::crypto::raw_signature::AsyncRawSigner
+    fn async_raw_signer(&self) -> Option<Box<&dyn AsyncRawSigner>> {
+        None
     }
 }
 
+#[cfg(feature = "v1_api")]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 pub trait RemoteSigner: Sync {
@@ -342,6 +396,59 @@ impl Signer for Box<dyn Signer> {
     fn send_timestamp_request(&self, message: &[u8]) -> Option<Result<Vec<u8>>> {
         (**self).send_timestamp_request(message)
     }
+
+    fn raw_signer(&self) -> Option<Box<&dyn RawSigner>> {
+        (**self).raw_signer()
+    }
+}
+
+impl RawSigner for Box<dyn Signer> {
+    fn sign(&self, data: &[u8]) -> std::result::Result<Vec<u8>, RawSignerError> {
+        Ok(self.as_ref().sign(data)?)
+    }
+
+    fn alg(&self) -> SigningAlg {
+        self.as_ref().alg()
+    }
+
+    fn cert_chain(&self) -> std::result::Result<Vec<Vec<u8>>, RawSignerError> {
+        Ok(self.as_ref().certs()?)
+    }
+
+    fn reserve_size(&self) -> usize {
+        self.as_ref().reserve_size()
+    }
+
+    fn ocsp_response(&self) -> Option<Vec<u8>> {
+        eprintln!("HUH, A DIFFERENT I WANTED @ 397");
+        self.as_ref().ocsp_val()
+    }
+}
+
+impl TimeStampProvider for Box<dyn Signer> {
+    fn time_stamp_service_url(&self) -> Option<String> {
+        self.as_ref().time_authority_url()
+    }
+
+    fn time_stamp_request_headers(&self) -> Option<Vec<(String, String)>> {
+        self.as_ref().timestamp_request_headers()
+    }
+
+    fn time_stamp_request_body(
+        &self,
+        message: &[u8],
+    ) -> std::result::Result<Vec<u8>, TimeStampError> {
+        Ok(self.as_ref().sign(message)?)
+    }
+
+    fn send_time_stamp_request(
+        &self,
+        message: &[u8],
+    ) -> Option<std::result::Result<Vec<u8>, TimeStampError>> {
+        self.as_ref()
+            .send_timestamp_request(message)
+            .map(|r| Ok(r?))
+    }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -387,8 +494,12 @@ impl AsyncSigner for Box<dyn AsyncSigner + Send + Sync> {
         (**self).direct_cose_handling()
     }
 
-    fn dynamic_assertions(&self) -> Vec<Box<dyn DynamicAssertion>> {
+    fn dynamic_assertions(&self) -> Vec<Box<dyn AsyncDynamicAssertion>> {
         (**self).dynamic_assertions()
+    }
+
+    fn async_raw_signer(&self) -> Option<Box<&dyn AsyncRawSigner>> {
+        (**self).async_raw_signer()
     }
 }
 
@@ -435,12 +546,16 @@ impl AsyncSigner for Box<dyn AsyncSigner> {
         (**self).direct_cose_handling()
     }
 
-    fn dynamic_assertions(&self) -> Vec<Box<dyn DynamicAssertion>> {
+    fn dynamic_assertions(&self) -> Vec<Box<dyn AsyncDynamicAssertion>> {
         (**self).dynamic_assertions()
+    }
+
+    fn async_raw_signer(&self) -> Option<Box<&dyn AsyncRawSigner>> {
+        (**self).async_raw_signer()
     }
 }
 
-#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+#[allow(dead_code)] // Not used in all configurations.
 pub(crate) struct RawSignerWrapper(pub(crate) Box<dyn RawSigner>);
 
 impl Signer for RawSignerWrapper {
@@ -482,5 +597,9 @@ impl Signer for RawSignerWrapper {
         self.0
             .send_time_stamp_request(message)
             .map(|r| r.map_err(|e| e.into()))
+    }
+
+    fn raw_signer(&self) -> Option<Box<&dyn RawSigner>> {
+        Some(Box::new(&*self.0))
     }
 }

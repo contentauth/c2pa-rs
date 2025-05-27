@@ -55,28 +55,12 @@ impl Default for DefaultSalt {
 
 impl SaltGenerator for DefaultSalt {
     fn generate_salt(&self) -> Option<Vec<u8>> {
-        #[cfg(feature = "openssl_sign")]
-        {
-            let mut salt = vec![0u8; self.salt_len];
-            openssl::rand::rand_bytes(&mut salt).ok()?;
+        use rand::prelude::*;
 
-            Some(salt)
-        }
-        #[cfg(all(not(feature = "openssl_sign"), target_arch = "wasm32"))]
-        {
-            let salt = crate::wasm::util::get_random_values(self.salt_len).ok()?;
+        let mut salt = vec![0u8; self.salt_len];
+        let mut rng = rand_chacha::ChaCha20Rng::from_entropy();
+        rng.fill_bytes(&mut salt);
 
-            Some(salt)
-        }
-        #[cfg(all(not(feature = "openssl_sign"), not(target_arch = "wasm32")))]
-        {
-            use rand::prelude::*;
-
-            let mut salt = vec![0u8; self.salt_len];
-            let mut rng = rand_chacha::ChaCha20Rng::from_entropy();
-            rng.fill_bytes(&mut salt);
-
-            Some(salt)
-        }
+        Some(salt)
     }
 }

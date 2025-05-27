@@ -117,7 +117,7 @@ pub mod tests {
     #![allow(clippy::unwrap_used)]
 
     use super::*;
-    const CONFIG: &str = r#"{    
+    const CONFIG: &str = r#"{
         "alg": "es256",
         "private_key": "es256_private.key",
         "sign_cert": "es256_certs.pem",

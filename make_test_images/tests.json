@@ -23,7 +23,6 @@
         { "op": "ogp", "parent": "CI", "output": "XCI" },
         { "op": "sig", "parent": "CA", "output": "E-sig-CA" },
         { "op": "uri", "parent": "CA", "output": "E-uri-CA" },
-        { "op": "clm", "parent": "CAICAI", "output": "E-clm-CAICAI" },
         { "op": "make", "ingredients": ["E-sig-CA"], "output": "CIE-sig-CA" },
         { "op": "make", "ingredients": ["E-uri-CA"], "output": "CAE-uri-CA" },
         { "op": "make", "ingredients": ["CAE-uri-CA"], "output": "CACAE-uri-CA" },

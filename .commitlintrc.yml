@@ -1,3 +1,7 @@
+# If updating this file, please also review `docs/release-process.md` and
+# `.github/workflows/pr_title.yml` and update the summary of these rules
+# in those files accordingly.
+
 rules:
   # Body may be empty
   body-empty:
@@ -7,11 +11,6 @@ rules:
   description-empty:
     level: error
 
-  # Description must start with a capital letter and must not end with a period or space
-  description-format:
-    level: error
-    format: ^[A-Z0-9].*[^. ]$
-
   # Description should be <70 chars
   description-max-length:
     level: warning
@@ -20,17 +19,12 @@ rules:
   # Scope must be one of the following
   scope:
     level: error
+    optional: true
     options:
+      - c2patool
       - export_schema
       - make_test_images
       - sdk
-      - c2patool
-
-  # Scope may be empty
-  # (NOTE: Disabled for now while we work around
-  # https://github.com/KeisukeYamashita/commitlint-rs/issues/355.)
-  # scope-empty:
-  #   level: ignore
 
   # Subject line should exist
   subject-empty:
@@ -40,8 +34,15 @@ rules:
   type:
     level: error
     options:
-      - fix
-      - feat
+      - build
       - chore
+      - ci
+      - docs
+      - feat
+      - fix
+      - perf
+      - refactor
+      - revert
+      - style
+      - test
       - update
-      - doc

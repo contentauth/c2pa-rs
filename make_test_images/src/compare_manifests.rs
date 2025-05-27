@@ -15,7 +15,7 @@
 use std::collections::HashMap;
 use std::{fs, path::Path};
 
-use c2pa::{Error, Reader as ManifestStore, Result};
+use c2pa::{Error, Reader, Result};
 
 /// Compares all the files in two directories and returns a list of issues
 pub fn compare_folders<P: AsRef<Path>, Q: AsRef<Path>>(folder1: P, folder2: Q) -> Result<()> {
@@ -79,17 +79,16 @@ pub fn compare_image_manifests<P: AsRef<Path>, Q: AsRef<Path>>(
 ) -> Result<Vec<String>> {
     let manifest_store1 = match m1.as_ref().extension() {
         Some(ext) if ext == "json" => {
-            ManifestStore::from_json(&fs::read_to_string(m1)?)
+            Reader::from_json(&fs::read_to_string(m1)?)
             //serde_json::from_str(&fs::read_to_string(m1)?).map_err(Error::JsonError)
         }
-        _ => ManifestStore::from_file(m1.as_ref()),
+        _ => Reader::from_file(m1.as_ref()),
     };
     let manifest_store2 = match m2.as_ref().extension() {
-        Some(ext) if ext == "json" => ManifestStore::from_json(&fs::read_to_string(m2)?),
-        _ => ManifestStore::from_file(m2.as_ref()),
+        Some(ext) if ext == "json" => Reader::from_json(&fs::read_to_string(m2)?),
+        _ => Reader::from_file(m2.as_ref()),
     };
-    // let manifest_store1 = ManifestStore::from_file(m1);
-    // let manifest_store2 = ManifestStore::from_file(m2);
+
     match (manifest_store1, manifest_store2) {
         (Ok(manifest_store1), Ok(manifest_store2)) => {
             compare_manifests(&manifest_store1, &manifest_store2)
@@ -102,8 +101,8 @@ pub fn compare_image_manifests<P: AsRef<Path>, Q: AsRef<Path>>(
 
 /// Compares two manifest stores and returns a list of issues.
 pub fn compare_manifests(
-    manifest_store1: &ManifestStore,
-    manifest_store2: &ManifestStore,
+    manifest_store1: &Reader,
+    manifest_store2: &Reader,
 ) -> Result<Vec<String>> {
     // first we need to gather all the manifests in the order they are first seen recursively
     let mut labels1 = Vec::new();
@@ -136,11 +135,7 @@ pub fn compare_manifests(
 }
 
 // creates list of manifests in the order they are first seen from the active manifest
-fn gather_manifests(
-    manifest_store: &ManifestStore,
-    manifest_label: &str,
-    labels: &mut Vec<String>,
-) {
+fn gather_manifests(manifest_store: &Reader, manifest_label: &str, labels: &mut Vec<String>) {
     if !labels.contains(&manifest_label.to_string()) {
         labels.push(manifest_label.to_string());
     }

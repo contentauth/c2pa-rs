@@ -12,26 +12,33 @@
 
 #![doc = include_str!("../README.md")]
 
-/// Tool to display and create C2PA manifests
+/// Tool to display and create C2PA manifests.
 ///
 /// A file path to an asset must be provided. If only the path
 /// is given, this will generate a summary report of any claims
 /// in that file. If a manifest definition JSON file is specified,
 /// the claim will be added to any existing claims.
 use std::{
-    fs::{create_dir_all, remove_dir_all, File},
+    fs::{create_dir_all, remove_dir_all, remove_file, File},
     io::Write,
     path::{Path, PathBuf},
     str::FromStr,
 };
 
 use anyhow::{anyhow, bail, Context, Result};
-use c2pa::{Builder, ClaimGeneratorInfo, Error, Ingredient, ManifestDefinition, Reader, Signer};
+use c2pa::{
+    identity::validator::CawgValidator, Builder, ClaimGeneratorInfo, Error, Ingredient,
+    ManifestDefinition, Reader, Signer,
+};
 use clap::{Parser, Subcommand};
 use log::debug;
 use serde::Deserialize;
 use signer::SignConfig;
+#[cfg(not(target_os = "wasi"))]
+use tokio::runtime::Runtime;
 use url::Url;
+#[cfg(target_os = "wasi")]
+use wstd::runtime::block_on;
 
 use crate::{
     callback_signer::{CallbackSigner, CallbackSignerConfig, ExternalProcessRunner},
@@ -95,7 +102,7 @@ struct CliArgs {
     #[clap(long = "certs")]
     cert_chain: bool,
 
-    /// Do not perform validation of signature after signing
+    /// Do not perform validation of signature after signing.
     #[clap(long = "no_signing_verify")]
     no_signing_verify: bool,
 
@@ -152,7 +159,6 @@ fn parse_resource_string(s: &str) -> Result<TrustResource> {
 // We only construct one per invocation, not worth shrinking this.
 #[allow(clippy::large_enum_variant)]
 #[derive(Debug, Subcommand)]
-#[allow(clippy::large_enum_variant)]
 enum Commands {
     /// Sub-command to configure trust store options, "trust --help for more details"
     Trust {
@@ -174,7 +180,7 @@ enum Commands {
     ///
     /// c2patool -m test2.json -o /my_output_folder "/my_renditions/**/my_init.mp4" fragment --fragments_glob "myfile_abc*[0-9].m4s"
     ///
-    /// Note: the glob patterns are quoted to prevent shell expansion.
+    /// NOTE: The glob patterns are quoted to prevent shell expansion.
     Fragment {
         /// Glob pattern to find the fragments of the asset. The path is automatically set to be the same as
         /// the init segment.
@@ -195,7 +201,7 @@ struct ManifestDef {
     ingredient_paths: Option<Vec<PathBuf>>,
 }
 
-// convert certain errors to output messages
+// Convert certain errors to output messages.
 fn special_errs(e: c2pa::Error) -> anyhow::Error {
     match e {
         Error::JumbfNotFound => anyhow!("No claim found"),
@@ -206,7 +212,7 @@ fn special_errs(e: c2pa::Error) -> anyhow::Error {
     }
 }
 
-// normalize extensions so we can compare them
+// Normalize extensions so we can compare them.
 fn ext_normal(path: &Path) -> String {
     let ext = path
         .extension()
@@ -252,12 +258,105 @@ fn load_trust_resource(resource: &TrustResource) -> Result<String> {
             Ok(data)
         }
         TrustResource::Url(url) => {
+            #[cfg(not(target_os = "wasi"))]
             let data = reqwest::blocking::get(url.to_string())?
                 .text()
                 .with_context(|| format!("Failed to read trust resource from URL: {}", url))?;
 
+            #[cfg(target_os = "wasi")]
+            let data = blocking_get(&url.to_string())?;
             Ok(data)
         }
+    }
+}
+
+#[cfg(target_os = "wasi")]
+fn blocking_get(url: &str) -> Result<String> {
+    use std::io::Read;
+
+    use url::Url;
+    use wasi::http::{
+        outgoing_handler,
+        types::{Fields, OutgoingRequest, Scheme},
+    };
+
+    let parsed_url =
+        Url::parse(url).map_err(|e| Error::ResourceNotFound(format!("invalid URL: {}", e)))?;
+    let path_with_query = parsed_url[url::Position::BeforeHost..].to_string();
+    let request = OutgoingRequest::new(Fields::new());
+    request.set_path_with_query(Some(&path_with_query)).unwrap();
+
+    // Set the scheme based on the URL.
+    let scheme = match parsed_url.scheme() {
+        "http" => Scheme::Http,
+        "https" => Scheme::Https,
+        _ => return Err(anyhow!("unsupported URL scheme".to_string(),)),
+    };
+
+    request.set_scheme(Some(&scheme)).unwrap();
+
+    match outgoing_handler::handle(request, None) {
+        Ok(resp) => {
+            resp.subscribe().block();
+
+            let response = resp
+                .get()
+                .expect("HTTP request response missing")
+                .expect("HTTP request response requested more than once")
+                .expect("HTTP request failed");
+
+            if response.status() == 200 {
+                let raw_header = response.headers().get("Content-Length");
+                if raw_header.first().map(|val| val.is_empty()).unwrap_or(true) {
+                    return Err(anyhow!("url returned no content length".to_string()));
+                }
+
+                let str_parsed_header = match std::str::from_utf8(raw_header.first().unwrap()) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        return Err(anyhow!(format!(
+                            "error parsing content length header: {}",
+                            e
+                        )))
+                    }
+                };
+
+                let content_length: usize = match str_parsed_header.parse() {
+                    Ok(s) => s,
+                    Err(e) => {
+                        return Err(anyhow!(format!(
+                            "error parsing content length header: {}",
+                            e
+                        )))
+                    }
+                };
+
+                let body = {
+                    let mut buf = Vec::with_capacity(content_length);
+                    let response_body = response
+                        .consume()
+                        .expect("failed to get incoming request body");
+                    let mut stream = response_body
+                        .stream()
+                        .expect("failed to get response body stream");
+                    stream
+                        .read_to_end(&mut buf)
+                        .expect("failed to read response body");
+                    buf
+                };
+
+                let body_string = std::str::from_utf8(&body)
+                    .map_err(|e| anyhow!(format!("invalid UTF-8: {}", e)))?;
+                Ok(body_string.to_string())
+            } else {
+                Err(anyhow!(format!(
+                    "fetch failed: code: {}",
+                    response.status(),
+                )))
+            }
+        }
+
+        Err(e) => Err(anyhow!(e.to_string())),
     }
 }
 
@@ -424,6 +523,20 @@ fn verify_fragmented(init_pattern: &Path, frag_pattern: &Path) -> Result<Vec<Rea
     Ok(readers)
 }
 
+// run cawg validation if supported
+fn validate_cawg(reader: &mut Reader) -> Result<()> {
+    #[cfg(not(target_os = "wasi"))]
+    {
+        Runtime::new()?
+            .block_on(reader.post_validate_async(&CawgValidator {}))
+            .map_err(anyhow::Error::from)
+    }
+    #[cfg(target_os = "wasi")]
+    {
+        block_on(reader.post_validate_async(&CawgValidator {})).map_err(anyhow::Error::from)
+    }
+}
+
 fn main() -> Result<()> {
     let args = CliArgs::parse();
 
@@ -441,6 +554,7 @@ fn main() -> Result<()> {
 
     if args.cert_chain {
         let reader = Reader::from_file(path).map_err(special_errs)?;
+        // todo: add cawg certs here??
         if let Some(manifest) = reader.active_manifest() {
             if let Some(si) = manifest.signature_info() {
                 println!("{}", si.cert_chain());
@@ -461,11 +575,6 @@ fn main() -> Result<()> {
         Some(Commands::Fragment { fragments_glob: _ })
     );
 
-    // make sure path is not a glob when not fragmented
-    if !args.path.is_file() && !is_fragment {
-        bail!("glob patterns only allowed when using \"fragment\" command")
-    }
-
     // configure the SDK
     configure_sdk(&args).context("Could not configure c2pa-rs")?;
 
@@ -474,7 +583,7 @@ fn main() -> Result<()> {
     //     match args.output {
     //         Some(output) => {
     //             if output.exists() && !args.force {
-    //                 bail!("Output already exists, use -f/force to force write");
+    //                 bail!("Output already exists; use -f/force to force write");
     //             }
     //             if path != &output {
     //                 std::fs::copy(path, &output)?;
@@ -522,7 +631,7 @@ fn main() -> Result<()> {
         } else {
             manifest.claim_generator_info.insert(1, tool_generator);
         }
-        println!("claim generator {:?}", manifest.claim_generator_info);
+
         // set manifest base path before ingredients so ingredients can override it
         if let Some(base) = base_path.as_ref() {
             builder.base_path = Some(base.clone());
@@ -601,8 +710,12 @@ fn main() -> Result<()> {
                 if ext_normal(&output) != ext_normal(&args.path) {
                     bail!("Output type must match source type");
                 }
-                if output.exists() && !args.force {
-                    bail!("Output already exists, use -f/force to force write");
+                if output.exists() {
+                    if args.force {
+                        remove_file(&output)?;
+                    } else {
+                        bail!("Output already exists; use -f/force to force write");
+                    }
                 }
 
                 if output.file_name().is_none() {
@@ -612,13 +725,19 @@ fn main() -> Result<()> {
                     bail!("Missing extension output");
                 }
 
-                #[allow(deprecated)] // todo: remove when we can
-                builder
+                let manifest_data = builder
                     .sign_file(signer.as_ref(), &args.path, &output)
                     .context("embedding manifest")?;
 
+                if args.sidecar {
+                    let sidecar = output.with_extension("c2pa");
+                    let mut file = File::create(&sidecar)?;
+                    file.write_all(&manifest_data)?;
+                }
+
                 // generate a report on the output file
-                let reader = Reader::from_file(&output).map_err(special_errs)?;
+                let mut reader = Reader::from_file(&output).map_err(special_errs)?;
+                validate_cawg(&mut reader)?;
                 if args.detailed {
                     println!("{:#?}", reader);
                 } else {
@@ -638,7 +757,7 @@ fn main() -> Result<()> {
             if args.force {
                 remove_dir_all(&output)?;
             } else {
-                bail!("Output already exists, use -f/force to force write");
+                bail!("Output already exists; use -f/force to force write");
             }
         }
         create_dir_all(&output)?;
@@ -649,16 +768,14 @@ fn main() -> Result<()> {
             File::create(output.join("ingredient.json"))?.write_all(&report.into_bytes())?;
             println!("Ingredient report written to the directory {:?}", &output);
         } else {
-            let reader = Reader::from_file(&args.path).map_err(special_errs)?;
+            let mut reader = Reader::from_file(&args.path).map_err(special_errs)?;
+            validate_cawg(&mut reader)?;
             reader.to_folder(&output)?;
             let report = reader.to_string();
             if args.detailed {
                 // for a detailed report first call the above to generate the thumbnails
                 // then call this to add the detailed report
-                let detailed = format!(
-                    "{:#?}",
-                    Reader::from_file(&args.path).map_err(special_errs)?
-                );
+                let detailed = format!("{:#?}", reader);
                 File::create(output.join("detailed.json"))?.write_all(&detailed.into_bytes())?;
             }
             File::create(output.join("manifest_store.json"))?.write_all(&report.into_bytes())?;
@@ -670,22 +787,27 @@ fn main() -> Result<()> {
             Ingredient::from_file(&args.path).map_err(special_errs)?
         )
     } else if args.detailed {
-        println!(
-            "{:#?}",
-            Reader::from_file(&args.path).map_err(special_errs)?
-        )
+        let mut reader = Reader::from_file(&args.path).map_err(special_errs)?;
+        validate_cawg(&mut reader)?;
+        println!("{:#?}", reader);
     } else if let Some(Commands::Fragment {
         fragments_glob: Some(fg),
     }) = &args.command
     {
-        let stores = verify_fragmented(&args.path, fg)?;
+        let mut stores = verify_fragmented(&args.path, fg)?;
         if stores.len() == 1 {
+            validate_cawg(&mut stores[0])?;
             println!("{}", stores[0]);
         } else {
+            for store in &mut stores {
+                validate_cawg(store)?;
+            }
             println!("{} Init manifests validated", stores.len());
         }
     } else {
-        println!("{}", Reader::from_file(&args.path).map_err(special_errs)?)
+        let mut reader = Reader::from_file(&args.path).map_err(special_errs)?;
+        validate_cawg(&mut reader)?;
+        println!("{}", reader);
     }
 
     Ok(())
@@ -694,6 +816,8 @@ fn main() -> Result<()> {
 #[cfg(test)]
 pub mod tests {
     #![allow(clippy::unwrap_used)]
+
+    use tempfile::TempDir;
 
     use super::*;
 
@@ -705,17 +829,24 @@ pub mod tests {
         "assertions": [
             {
                 "label": "org.contentauth.test",
-                 "data": {"my_key": "whatever I want"}
+                "data": {"my_key": "whatever I want"}
             }
         ]
     }"#;
 
+    fn tempdirectory() -> Result<TempDir> {
+        #[cfg(target_os = "wasi")]
+        return TempDir::new_in("/").map_err(Into::into);
+
+        #[cfg(not(target_os = "wasi"))]
+        return tempfile::tempdir().map_err(Into::into);
+    }
+
     #[test]
     fn test_manifest_config() {
         const SOURCE_PATH: &str = "tests/fixtures/earth_apollo17.jpg";
-        const OUTPUT_PATH: &str = "target/tmp/unit_out.jpg";
-        create_dir_all("target/tmp").expect("create_dir");
-        std::fs::remove_file(OUTPUT_PATH).ok(); // remove output file if it exists
+        let tempdir = tempdirectory().unwrap();
+        let output_path = tempdir.path().join("unit_out.jpg");
         let mut builder = Builder::from_json(CONFIG).expect("from_json");
 
         let signer = SignConfig::from_json(CONFIG)
@@ -724,12 +855,11 @@ pub mod tests {
             .signer()
             .expect("get_signer");
 
-        #[allow(deprecated)] // todo: remove when we can
         let _result = builder
-            .sign_file(signer.as_ref(), SOURCE_PATH, OUTPUT_PATH)
+            .sign_file(signer.as_ref(), SOURCE_PATH, &output_path)
             .expect("embed");
 
-        let ms = Reader::from_file(OUTPUT_PATH)
+        let ms = Reader::from_file(output_path)
             .expect("from_file")
             .to_string();
         println!("{}", ms);

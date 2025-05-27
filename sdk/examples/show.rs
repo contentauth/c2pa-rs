@@ -15,7 +15,6 @@
 use anyhow::Result;
 use c2pa::Reader;
 
-#[cfg(not(target_arch = "wasm32"))]
 fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().collect();
     if args.len() > 1 {

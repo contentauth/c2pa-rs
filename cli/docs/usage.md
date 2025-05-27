@@ -290,3 +290,11 @@ c2patool  /Downloads/1080p_out/avc1/init.mp4 \
 ### Additional option
 
 The `--fragments_glob` option is only available with the `fragment` subcommand and specifies the glob pattern to find the fragments of the asset. The path is automatically set to be the same as the "init" segment, so the pattern must match only segment file names, not full paths.
+
+## WASI
+
+The wasm created for wasm32-wasip2 can be run directly with [wasmtime](https://docs.wasmtime.dev/). It also can be transpiled to a JS + core Wasm for JavaScript execution using [jco](https://bytecodealliance.github.io/jco/transpiling.html).
+```
+wasmtime -S cli -S http --dir . c2patool.wasm [OPTIONS] <PATH> [COMMAND]
+```
+

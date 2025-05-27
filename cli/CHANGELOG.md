@@ -1,10 +1,131 @@
 # Changelog
 
-All changes to this project are documented in this file.
+All changes to C2PA Tool are documented in this file.  For additional information on versions 0.9.x and earlier, see the [Archived release motes](../docs/release-notes.md).
 
-This project adheres to [Semantic Versioning](https://semver.org), except that – as is typical in the Rust community – the minimum supported Rust version may be increased without a major version increase.
+This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html), except that – as is typical in the Rust community – the minimum supported Rust version may be increased without a major version increase.
 
 Since version 0.10.0, the format of this changelog is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
+
+## [0.17.0](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.16.5...c2patool-v0.17.0)
+_16 May 2025_
+
+### Added
+
+* [**breaking**] Merge CAWG identity SDK into main C2PA crate ([#1089](https://github.com/contentauth/c2pa-rs/pull/1089))
+
+### Documented
+
+* Replace old c2patool release notes with CHANGELOG ([#1063](https://github.com/contentauth/c2pa-rs/pull/1063))
+
+## [0.16.6](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.16.5...c2patool-v0.16.6)
+_14 May 2025_
+
+### Documented
+
+* Replace old c2patool release notes with CHANGELOG ([#1063](https://github.com/contentauth/c2pa-rs/pull/1063))
+
+## [0.16.5](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.16.4...c2patool-v0.16.5)
+_25 April 2025_
+
+### Fixed
+
+* Enable post_validate_async for WASI ([#1052](https://github.com/contentauth/c2pa-rs/pull/1052))
+
+## [0.16.4](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.16.3...c2patool-v0.16.4)
+_16 April 2025_
+
+### Documented
+
+* Remove instructions to install c2patool using binstall ([#1038](https://github.com/contentauth/c2pa-rs/pull/1038))
+
+### Fixed
+
+* Dynamic assertions should be gathered assertions ([#1005](https://github.com/contentauth/c2pa-rs/pull/1005))
+
+## [0.16.3](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.16.2...c2patool-v0.16.3)
+_07 April 2025_
+
+### Fixed
+
+* Adjust dependencies to avoid security warnings and yanked versions ([#1031](https://github.com/contentauth/c2pa-rs/pull/1031))
+
+## [0.16.2](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.16.1...c2patool-v0.16.2)
+_04 April 2025_
+
+### Fixed
+
+* Update openssl to address a recently-announced vulnerability ([#1024](https://github.com/contentauth/c2pa-rs/pull/1024))
+
+## [0.16.1](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.16.0...c2patool-v0.16.1)
+_26 March 2025_
+
+* Update to latest c2pa-crypto crate
+
+## [0.15.0](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.14.0...c2patool-v0.15.0)
+_18 March 2025_
+
+### Added
+
+* Adds `reader.post_validate` method for CAWG validation support (#976)
+* Add WASI to c2patool (#945)
+
+### Fixed
+
+* Remove circular dependency between C2PA and CAWG crates (#982)
+
+### Updated dependencies
+
+* Bump env_logger from 0.11.6 to 0.11.7 (#963)
+
+## [0.13.3](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.13.1...c2patool-v0.13.3)
+_11 February 2025_
+
+### Fixed
+
+* Trigger a release of c2patool to pick up latest c2pa-rs changes
+
+## [0.13.1](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.13.0...c2patool-v0.13.1)
+_31 January 2025_
+
+### Fixed
+
+* Trigger a release of c2patool to pick up latest c2pa-rs changes (#895)
+
+## [0.13.0](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.12.0...c2patool-v0.13.0)
+_29 January 2025_
+
+### Added
+
+* Claim v2 (#707)
+
+## [0.12.0](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.11.1...c2patool-v0.12.0)
+_22 January 2025_
+
+### Added
+
+* Change the definition of `Signer.raw_signer()` to return an `Option` defaulting to `None` (#869)
+
+## [0.11.1](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.11.0...c2patool-v0.11.1)
+_18 January 2025_
+
+### Fixed
+
+* Upload a distinct SBOM per platform (#856)
+
+## [0.11.0](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.10.2...c2patool-v0.11.0)
+_16 January 2025_
+
+### Added
+
+* Move COSE signing into `c2pa_crypto` crate (#807)
+
+### Documented
+
+* Post move cleanup (#778)
+
+### Fixed
+
+* Fix: Obscure glob error message for missing files
 
 ## [0.10.2](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.10.1...c2patool-v0.10.2)
 _12 December 2024_

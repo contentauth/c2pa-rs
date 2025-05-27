@@ -146,14 +146,13 @@ pub mod tests {
     #![allow(clippy::expect_used)]
     #![allow(clippy::unwrap_used)]
 
-    use c2pa_crypto::SigningAlg;
-    use c2pa_status_tracker::OneShotStatusTracker;
-    use tempfile::tempdir;
-
     use super::{AssetIO, C2paIO, CAIReader, CAIWriter};
     use crate::{
+        crypto::raw_signature::SigningAlg,
+        status_tracker::{ErrorBehavior, StatusTracker},
         store::Store,
         utils::{
+            io_utils::tempdirectory,
             test::{fixture_path, temp_dir_path},
             test_signer::test_signer,
         },
@@ -163,7 +162,7 @@ pub mod tests {
     fn c2pa_io_parse() {
         let path = fixture_path("C.jpg");
 
-        let temp_dir = tempdir().expect("temp dir");
+        let temp_dir = tempdirectory().expect("temp dir");
         let temp_path = temp_dir_path(&temp_dir, "test.c2pa");
 
         let c2pa_io = C2paIO {};
@@ -172,8 +171,20 @@ pub mod tests {
             .save_cai_store(&temp_path, &manifest)
             .expect("save cai store");
 
-        let store = Store::load_from_asset(&temp_path, false, &mut OneShotStatusTracker::default())
-            .expect("loading store");
+        let mut temp_file = std::fs::File::open(&temp_path).expect("open temp file");
+        let manifest_2 = c2pa_io.read_cai(&mut temp_file).expect("read cai store");
+
+        assert_eq!(&manifest, &manifest_2);
+        // validate against our source stream and the saved / loaded manifest
+        let stream = std::fs::File::open(&path).expect("open temp file");
+        let store = Store::from_manifest_data_and_stream(
+            &manifest,
+            "image/jpeg",
+            &stream,
+            true,
+            &mut StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError),
+        )
+        .expect("loading store");
 
         let signer = test_signer(SigningAlg::Ps256);
 

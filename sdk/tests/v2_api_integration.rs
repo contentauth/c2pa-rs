@@ -13,13 +13,11 @@
 
 /// Complete functional integration test with acquisitions and ingredients.
 //  Isolate from wasm by wrapping in module.
-#[cfg(not(target_arch = "wasm32"))] // wasm doesn't support ed25519 yet
 mod integration_v2 {
     use std::io::{Cursor, Seek};
 
     use anyhow::Result;
-    use c2pa::{Builder, CallbackSigner, Reader};
-    use c2pa_crypto::SigningAlg;
+    use c2pa::{crypto::raw_signature::SigningAlg, Builder, CallbackSigner, Reader};
     use serde_json::json;
 
     const PARENT_JSON: &str = r#"
@@ -72,12 +70,20 @@ mod integration_v2 {
                 "data": {
                     "actions": [
                         {
-                            "action": "c2pa.edited",
+                            "action": "c2pa.created",
                             "digitalSourceType": "http://cv.iptc.org/newscodes/digitalsourcetype/trainedAlgorithmicMedia",
                             "softwareAgent": "Adobe Firefly 0.1.0",
+                            "description": "This image was edited by Adobe Firefly",
+                            "when": "2025-04-22T17:25:28Z",
                             "parameters": {
                                 "description": "This image was edited by Adobe Firefly",
-                            }
+                            },
+                            "softwareAgentIndex": 0,
+                        }
+                    ],
+                    "softwareAgents": [
+                        {
+                            "name": "Adobe Firefly",
                         }
                     ]
                 }
@@ -147,10 +153,13 @@ mod integration_v2 {
             dest
         };
 
-        // write dest to file for debugging
-        let debug_path = format!("{}/../target/v2_test.jpg", env!("CARGO_MANIFEST_DIR"));
-        std::fs::write(debug_path, dest.get_ref())?;
-        dest.rewind()?;
+        #[cfg(not(target_os = "wasi"))]
+        {
+            // write dest to file for debugging
+            let debug_path = format!("{}/../target/v2_test.jpg", env!("CARGO_MANIFEST_DIR"));
+            std::fs::write(debug_path, dest.get_ref())?;
+            dest.rewind()?;
+        }
 
         let reader = Reader::from_stream(format, &mut dest)?;
 

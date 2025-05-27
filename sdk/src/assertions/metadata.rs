@@ -109,7 +109,7 @@ impl Metadata {
     }
 
     /// Sets the ISO 8601 date-time string when the assertion was created/generated.
-    pub fn set_date_time(&mut self, date_time: String) -> &mut Self {
+    pub fn set_date_time(mut self, date_time: String) -> Self {
         self.date_time = Some(DateT(date_time));
         self
     }
@@ -296,6 +296,15 @@ pub struct AssetType {
     pub asset_type: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub version: Option<String>,
+}
+
+impl AssetType {
+    pub fn new<S: Into<String>>(asset_type: S, version: Option<String>) -> Self {
+        AssetType {
+            asset_type: asset_type.into(),
+            version,
+        }
+    }
 }
 
 #[derive(Deserialize, Serialize, Debug, PartialEq, Clone)]
