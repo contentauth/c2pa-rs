@@ -180,7 +180,6 @@ fn es512_from_pkcs8_pem(private_key_pem: &str) -> Result<P512SigningKey, RawSign
         )));
     }
 
-    // Check that algorithm.parameters contains the P-521 OID (1.3.132.0.35)
     let params = pk_info
         .algorithm
         .parameters
@@ -201,24 +200,10 @@ fn es512_from_pkcs8_pem(private_key_pem: &str) -> Result<P512SigningKey, RawSign
         )
     })?;
 
-    // Now compare the parsed OID to your constant
-    if curve_oid.as_bytes() != SECP521R1_OID.as_bytes() {
-        return Err(RawSignerError::InvalidSigningCredentials(
-            "Unexpected curve OID in parameters: expected P-521 (1.3.132.0.35)".to_string(),
-        ));
-    }
     // Parse ECPrivateKey ASN.1 structure using asn1-rs
     let ec_private_key = ECPrivateKey::from_der(pk_info.private_key).map_err(|e| {
         RawSignerError::InvalidSigningCredentials(format!("invalid ES512 ECPrivateKey ASN.1: {e}"))
     })?;
-
-    // Verify the private key scalar is 66 bytes unpadded
-    if ec_private_key.1.private_key.len() != 66 {
-        return Err(RawSignerError::InvalidSigningCredentials(format!(
-            "ES512 private key scalar must be 66 bytes, got {}",
-            ec_private_key.1.private_key.len()
-        )));
-    }
 
     // Check version is 1
     if ec_private_key.1.version != 1 {
