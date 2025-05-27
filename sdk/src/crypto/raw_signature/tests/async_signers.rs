@@ -80,7 +80,12 @@ async fn es384() {
     validator.validate(&signature, data, pub_key).unwrap();
 }
 
-#[cfg_attr(feature = "openssl", actix::test)]
+#[cfg_attr(not(target_arch = "wasm32"), actix::test)]
+#[cfg_attr(
+    all(target_arch = "wasm32", not(target_os = "wasi")),
+    wasm_bindgen_test
+)]
+#[cfg_attr(target_os = "wasi", wstd::test)]
 async fn es512() {
     let cert_chain = include_bytes!("../../../../tests/fixtures/crypto/raw_signature/es512.pub");
     let private_key = include_bytes!("../../../../tests/fixtures/crypto/raw_signature/es512.priv");
