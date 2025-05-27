@@ -1,6 +1,8 @@
 [package]
 name = "c2pa"
-version = "0.52.0"
+
+version.workspace = true
+
 description = "Rust SDK for C2PA (Coalition for Content Provenance and Authenticity) implementors"
 authors = [
     "Maurice Fisher <mfisher@adobe.com>",
@@ -26,17 +28,23 @@ all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
 [features]
+default = ["openssl"]
 add_thumbnails = ["image"]
 file_io = []
 serialize_thumbnails = []
 no_interleaved_io = ["file_io"]
 fetch_remote_manifests = ["dep:wasi"]
 json_schema = ["dep:schemars"]
+openssl = ["dep:openssl"]
 pdf = ["dep:lopdf"]
 rust_native_crypto = [
     "dep:const-oid",
+    "dep:ecdsa",
     "dep:der",
     "dep:num-bigint-dig",
+    "dep:p256",
+    "dep:p384",
+    "dep:p521",
     "dep:pkcs1",
     "dep:rsa",
     "dep:spki",
@@ -68,6 +76,10 @@ name = "v2show"
 [[example]]
 name = "v2api"
 
+[[example]]
+name = "fragmented_bmff"
+required-features = ["file_io"]
+
 [lib]
 crate-type = ["lib"]
 
@@ -82,7 +94,6 @@ bcder = "0.7.3"
 bytes = "1.7.2"
 byteorder = { version = "1.4.3", default-features = false }
 byteordered = "0.6.0"
-c2pa-status-tracker = { path = "../internal/status-tracker", version = "0.6.2" }
 chrono = { version = "0.4.39", default-features = false, features = ["serde"] }
 ciborium = "0.2.2"
 config = { version = "0.14.0", default-features = false, features = [
@@ -98,7 +109,7 @@ conv = "0.3.3"
 coset = "0.3.8"
 extfmt = "0.1.1"
 der = { version = "0.7.9", optional = true }
-ecdsa = { version = "0.16.9", features = ["digest", "sha2"] }
+ecdsa = { version = "0.16.9", features = ["digest", "sha2"], optional = true }
 ed25519-dalek = { version = "2.1.1", features = ["alloc", "digest", "pem", "pkcs8", "rand_core"] }
 getrandom = { version = "0.2.7", features = ["js"] }
 hex = "0.4.3"
@@ -117,9 +128,9 @@ nom = "7.1.3"
 non-empty-string = { version = "=0.2.4", features = ["serde"] }
 nonempty-collections = { version = "0.2.9", features = ["serde"] }
 num-bigint-dig = { version = "0.8.4", optional = true }
-p256 = "0.13.2"
-p384 = "0.13.0"
-p521 = { version = "0.13.3", features = ["pkcs8", "digest", "ecdsa"] }
+p256 = { version = "0.13.2", optional = true }
+p384 = { version = "0.13.0", optional = true }
+p521 = { version = "0.13.3", features = ["pkcs8", "digest", "ecdsa"], optional = true }
 pem = "3.0.2"
 pkcs1 = { version = "0.7.5", optional = true }
 pkcs8 = "0.10.2"
@@ -169,7 +180,7 @@ spki = "0.7.3"
 tempfile = { version = "3.15", features = ["nightly"] }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-openssl = { version = "0.10.72", features = ["vendored"] }
+openssl = { version = "0.10.72", features = ["vendored"], optional = true }
 ureq = "2.4.0"
 url = "2.5.3"
 
@@ -212,6 +223,9 @@ web-sys = { version = "0.3.58", features = [
     "WorkerGlobalScope",
 ] }
 
+[target.'cfg(target_os = "windows")'.dependencies]
+windows-core = "0.61.2" # Override yanked version used in chrono and other crates.
+
 [target.'cfg(not(target_os = "wasi"))'.dependencies]
 reqwest = { version = "0.12.8", default-features = false, features = ["rustls-tls"] }
 
@@ -229,3 +243,7 @@ wasm-bindgen-test = "0.3.45"
 actix = "0.13.1"
 httpmock = "0.7.0"
 tokio = { version = "1.44.2", features = ["full"] }
+
+[package.metadata.cargo-udeps.ignore]
+normal = ["windows-core"]
+    # REMOVE once chrono and other crates update to avoid yanked version of windows-core

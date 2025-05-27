@@ -1083,33 +1083,6 @@ impl Manifest {
     }
 
     /// Embed a signed manifest into the target file using a supplied signer.
-    ///
-    /// # Example: Embed a manifest in a file
-    ///
-    /// ```
-    /// # use c2pa::Result;
-    /// use c2pa::{create_signer, Manifest, SigningAlg};
-    /// use serde::Serialize;
-    ///
-    /// #[derive(Serialize)]
-    /// struct Test {
-    ///     my_tag: usize,
-    /// }
-    ///
-    /// # fn main() -> Result<()> {
-    /// let mut manifest = Manifest::new("my_app".to_owned());
-    /// manifest.add_labeled_assertion("org.contentauth.test", &Test { my_tag: 42 })?;
-    ///
-    /// // Create a PS256 signer using certs and public key files.
-    /// let signcert_path = "tests/fixtures/certs/ps256.pub";
-    /// let pkey_path = "tests/fixtures/certs/ps256.pem";
-    /// let signer = create_signer::from_files(signcert_path, pkey_path, SigningAlg::Ps256, None)?;
-    ///
-    /// // Embed a manifest using the signer.
-    /// manifest.embed("tests/fixtures/C.jpg", "../target/test_file.jpg", &*signer)?;
-    /// # Ok(())
-    /// # }
-    /// ```
     #[cfg(feature = "file_io")]
     #[deprecated(since = "0.35.0", note = "use Builder.sign_file instead")]
     #[cfg(feature = "v1_api")]
@@ -1579,13 +1552,13 @@ pub(crate) mod tests {
 
     use std::io::Cursor;
 
-    #[cfg(feature = "file_io")]
-    use c2pa_status_tracker::StatusTracker;
     #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
     use wasm_bindgen_test::*;
 
     use super::*;
     use crate::crypto::raw_signature::SigningAlg;
+    #[cfg(feature = "file_io")]
+    use crate::status_tracker::StatusTracker;
     #[cfg(feature = "file_io")]
     use crate::utils::io_utils::tempdirectory;
 
@@ -1827,6 +1800,7 @@ pub(crate) mod tests {
 
     #[test]
     #[cfg(feature = "file_io")]
+    #[cfg(feature = "v1_api")]
     #[allow(deprecated)]
     fn test_redaction() {
         const ASSERTION_LABEL: &str = "stds.schema-org.CreativeWork";

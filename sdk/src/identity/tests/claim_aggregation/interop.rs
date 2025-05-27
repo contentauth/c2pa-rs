@@ -13,7 +13,6 @@
 
 use std::{io::Cursor, str::FromStr};
 
-use c2pa_status_tracker::StatusTracker;
 use chrono::{DateTime, FixedOffset};
 use iref::UriBuf;
 use non_empty_string::NonEmptyString;
@@ -25,6 +24,7 @@ use crate::{
         claim_aggregation::{IcaSignatureVerifier, IdentityProvider, VerifiedIdentity},
         IdentityAssertion, SignerPayload,
     },
+    status_tracker::StatusTracker,
     HashedUri, Reader,
 };
 

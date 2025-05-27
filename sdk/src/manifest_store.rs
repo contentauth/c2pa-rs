@@ -19,7 +19,6 @@ use std::{
 };
 
 use async_generic::async_generic;
-use c2pa_status_tracker::StatusTracker;
 #[cfg(feature = "json_schema")]
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -29,6 +28,7 @@ use crate::{
     crypto::base64,
     jumbf::labels::{manifest_label_from_uri, to_absolute_uri, to_relative_uri},
     manifest::StoreOptions,
+    status_tracker::StatusTracker,
     store::Store,
     validation_results::ValidationResults,
     validation_status::ValidationStatus,
@@ -237,7 +237,7 @@ impl ManifestStore {
     #[deprecated(since = "0.38.0", note = "Please use Reader::from_json() instead")]
     #[cfg(feature = "v1_api")]
     pub fn from_manifest(manifest: &Manifest) -> Result<Self> {
-        use c2pa_status_tracker::{ErrorBehavior, StatusTracker};
+        use crate::status_tracker::{ErrorBehavior, StatusTracker};
         let store = manifest.to_store()?;
         let resource_path = manifest.resources().base_path().map(|p| p.to_path_buf());
 
@@ -290,25 +290,8 @@ impl ManifestStore {
     ) -> Result<ManifestStore> {
         let mut validation_log = StatusTracker::default();
 
-        let manifest_bytes = Store::load_jumbf_from_stream(format, &mut stream)?;
-        let store = Store::from_jumbf(&manifest_bytes, &mut validation_log)?;
-        if verify {
-            // verify store and claims
-            if _sync {
-                Store::verify_store(
-                    &store,
-                    &mut ClaimAssetData::Stream(&mut stream, format),
-                    &mut validation_log,
-                )?;
-            } else {
-                Store::verify_store_async(
-                    &store,
-                    &mut ClaimAssetData::Stream(&mut stream, format),
-                    &mut validation_log,
-                )
-                .await?;
-            }
-        }
+        let store = Store::from_stream(format, &mut stream, verify, &mut validation_log)?;
+
         Ok(Self::from_store(store, &validation_log))
     }
 
@@ -582,12 +565,14 @@ mod tests {
     #![allow(clippy::expect_used)]
     #![allow(clippy::unwrap_used)]
 
-    use c2pa_status_tracker::{ErrorBehavior, StatusTracker};
     #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
     use wasm_bindgen_test::*;
 
     use super::*;
-    use crate::utils::test::create_test_store;
+    use crate::{
+        status_tracker::{ErrorBehavior, StatusTracker},
+        utils::test::create_test_store,
+    };
 
     #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
     wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);

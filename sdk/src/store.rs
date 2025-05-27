@@ -22,7 +22,6 @@ use std::{
 
 use async_generic::async_generic;
 use async_recursion::async_recursion;
-use c2pa_status_tracker::{log_item, ErrorBehavior, StatusTracker};
 use log::error;
 
 #[cfg(feature = "v1_api")]
@@ -72,9 +71,11 @@ use crate::{
         get_assetio_handler, is_bmff_format, load_jumbf_from_stream, object_locations_from_stream,
         save_jumbf_to_stream,
     },
+    log_item,
     manifest_store_report::ManifestStoreReport,
     salt::DefaultSalt,
     settings::get_settings_value,
+    status_tracker::{ErrorBehavior, StatusTracker},
     utils::{hash_utils::HashRange, io_utils::stream_len, patch::patch_bytes},
     validation_status, AsyncSigner, Signer,
 };
@@ -2119,6 +2120,9 @@ impl Store {
             pc.replace_assertion(assertion)?;
         }
 
+        // clear the provenance claim data since the contents are now different
+        pc.clear_data();
+
         Ok(true)
     }
 
@@ -2203,26 +2207,77 @@ impl Store {
             None => return Err(Error::UnsupportedType),
         }
 
+        let output_filename = asset_path.file_name().ok_or(Error::NotFound)?;
+        let dest_path = output_path.join(output_filename);
+
         let mut validation_log =
             StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
+
+        // add dynamic assertions to the store
+        let dynamic_assertions = signer.dynamic_assertions();
+        let da_uris = self.add_dynamic_assertion_placeholders(&dynamic_assertions)?;
+
+        // get temp store as JUMBF
         let jumbf = self.to_jumbf(signer)?;
 
-        // use temp store so mulitple calls will work (the Store is not finalized this way)
+        // use temp store so mulitple calls across renditions will work (the Store is not finalized this way)
         let mut temp_store = Store::from_jumbf(&jumbf, &mut validation_log)?;
 
-        let jumbf_bytes = temp_store.start_save_bmff_fragmented(
+        let mut jumbf_bytes = temp_store.start_save_bmff_fragmented(
             asset_path,
             fragments,
             output_path,
             signer.reserve_size(),
         )?;
 
+        let mut preliminary_claim = PartialClaim::default();
+        {
+            let pc = temp_store.provenance_claim().ok_or(Error::ClaimEncoding)?;
+            for assertion in pc.assertions() {
+                preliminary_claim.add_assertion(assertion);
+            }
+        }
+
+        // Now add the dynamic assertions and update the JUMBF.
+        let modified = temp_store.write_dynamic_assertions(
+            &dynamic_assertions,
+            &da_uris,
+            &mut preliminary_claim,
+        )?;
+
+        // update the JUMBF if modified with dynamic assertions
+        if modified {
+            let pc = temp_store.provenance_claim().ok_or(Error::ClaimEncoding)?;
+            match pc.remote_manifest() {
+                RemoteManifest::NoRemote | RemoteManifest::EmbedWithRemote(_) => {
+                    jumbf_bytes = temp_store.to_jumbf_internal(signer.reserve_size())?;
+
+                    // save the jumbf to the output path
+                    save_jumbf_to_file(&jumbf_bytes, &dest_path, Some(&dest_path))?;
+
+                    let pc = temp_store
+                        .provenance_claim_mut()
+                        .ok_or(Error::ClaimEncoding)?;
+                    // generate actual hash values
+                    let bmff_hashes = pc.bmff_hash_assertions();
+
+                    if !bmff_hashes.is_empty() {
+                        let mut bmff_hash = BmffHash::from_assertion(bmff_hashes[0])?;
+                        bmff_hash.update_fragmented_inithash(&dest_path)?;
+                        pc.update_bmff_hash(bmff_hash)?;
+                    }
+
+                    // regenerate the jumbf because the cbor changed
+                    jumbf_bytes = temp_store.to_jumbf_internal(signer.reserve_size())?;
+                }
+                _ => (),
+            };
+        }
+
+        // sign the claim
         let pc = temp_store.provenance_claim().ok_or(Error::ClaimEncoding)?;
         let sig = temp_store.sign_claim(pc, signer, signer.reserve_size())?;
         let sig_placeholder = Store::sign_claim_placeholder(pc, signer.reserve_size());
-
-        let output_filename = asset_path.file_name().ok_or(Error::NotFound)?;
-        let dest_path = output_path.join(output_filename);
 
         match temp_store.finish_save(jumbf_bytes, &dest_path, sig, &sig_placeholder) {
             Ok(_) => Ok(()),
@@ -3217,30 +3272,6 @@ impl Store {
         )
     }
 
-    // verify from a buffer without file i/o
-    #[async_generic()]
-    pub fn verify_from_stream(
-        &mut self,
-        reader: &mut dyn CAIRead,
-        asset_type: &str,
-        validation_log: &mut StatusTracker,
-    ) -> Result<()> {
-        if _sync {
-            Store::verify_store(
-                self,
-                &mut ClaimAssetData::Stream(reader, asset_type),
-                validation_log,
-            )
-        } else {
-            Store::verify_store_async(
-                self,
-                &mut ClaimAssetData::Stream(reader, asset_type),
-                validation_log,
-            )
-            .await
-        }
-    }
-
     // fetch remote manifest if possible
     #[cfg(all(feature = "fetch_remote_manifests", not(target_os = "wasi")))]
     fn fetch_remote_manifest(url: &str) -> Result<Vec<u8>> {
@@ -3546,6 +3577,61 @@ impl Store {
         }
     }
 
+    /// Load store from a stream
+    #[async_generic]
+    pub fn from_stream(
+        format: &str,
+        mut stream: impl Read + Seek + Send,
+        verify: bool,
+        validation_log: &mut StatusTracker,
+    ) -> Result<Self> {
+        let manifest_bytes = Store::load_jumbf_from_stream(format, &mut stream)?;
+
+        if _sync {
+            Self::from_manifest_data_and_stream(
+                &manifest_bytes,
+                format,
+                &mut stream,
+                verify,
+                validation_log,
+            )
+        } else {
+            Self::from_manifest_data_and_stream_async(
+                &manifest_bytes,
+                format,
+                &mut stream,
+                verify,
+                validation_log,
+            )
+            .await
+        }
+    }
+
+    /// Load store from a manifest data and stream
+    #[async_generic()]
+    pub fn from_manifest_data_and_stream(
+        c2pa_data: &[u8],
+        format: &str,
+        mut stream: impl Read + Seek + Send,
+        verify: bool,
+        validation_log: &mut StatusTracker,
+    ) -> Result<Self> {
+        // first we convert the JUMBF into a usable store
+        let store = Store::from_jumbf(c2pa_data, validation_log)?;
+
+        //let verify = get_settings_value::<bool>("verify.verify_after_reading")?; // defaults to true
+
+        if verify {
+            let mut asset_data = ClaimAssetData::Stream(&mut stream, format);
+            if _sync {
+                Store::verify_store(&store, &mut asset_data, validation_log)
+            } else {
+                Store::verify_store_async(&store, &mut asset_data, validation_log).await
+            }?;
+        }
+        Ok(store)
+    }
+
     /// Load Store from a in-memory asset
     /// asset_type: asset extension or mime type
     /// data: reference to bytes of the the file
@@ -3837,6 +3923,7 @@ pub enum InvalidClaimError {
 }
 
 #[cfg(test)]
+#[cfg(feature = "v1_api")] // only test for v1_api until we update these tests
 #[cfg(feature = "file_io")]
 pub mod tests {
     #![allow(clippy::expect_used)]
@@ -3845,27 +3932,32 @@ pub mod tests {
 
     use std::{fs, io::Write};
 
-    use c2pa_status_tracker::{LogItem, StatusTracker};
     use memchr::memmem;
     use serde::Serialize;
-    use sha2::{Digest, Sha256};
+    use sha2::Digest;
+    #[cfg(feature = "file_io")]
+    use sha2::Sha256;
 
     use super::*;
+    #[cfg(all(feature = "file_io", feature = "v1_api"))]
+    use crate::jumbf_io::update_file_jumbf;
     use crate::{
         assertion::AssertionJson,
         assertions::{labels::BOX_HASH, Action, Actions, BoxHash, Uuid},
         claim::AssertionStoreJsonFormat,
         crypto::raw_signature::SigningAlg,
         hashed_uri::HashedUri,
-        jumbf_io::{get_assetio_handler_from_path, update_file_jumbf},
+        jumbf_io::get_assetio_handler_from_path,
+        status_tracker::{LogItem, StatusTracker},
         utils::{
             hash_utils::Hasher,
+            io_utils::tempdirectory,
             patch::patch_file,
             test::{
                 create_test_claim, fixture_path, temp_dir_path, temp_fixture_path,
                 write_jpeg_placeholder_file,
             },
-            test_signer::{async_test_signer, test_signer},
+            test_signer::{async_test_signer, test_cawg_signer, test_signer},
         },
     };
 
@@ -5317,7 +5409,7 @@ pub mod tests {
         const REPLACE_BYTES: &[u8] =
             b"c2pa_manifest\xA3\x63url\x78\x4aself#jumbf=/c2pa/contentauth:urn:uuix:";
         let report = patch_and_report("CIE-sig-CA.jpg", SEARCH_BYTES, REPLACE_BYTES);
-        let errors: Vec<c2pa_status_tracker::LogItem> = report.filter_errors().cloned().collect();
+        let errors: Vec<crate::status_tracker::LogItem> = report.filter_errors().cloned().collect();
         assert_eq!(
             errors[0].validation_status.as_deref(),
             Some(validation_status::ASSERTION_HASHEDURI_MISMATCH)
@@ -5437,11 +5529,21 @@ pub mod tests {
 
         let mut report = StatusTracker::default();
 
-        let output_data = output_stream.into_inner();
+        output_stream.set_position(0);
 
-        // can we read back in
-        let _new_store = Store::load_from_memory("mp4", &output_data, true, &mut report).unwrap();
+        let manifest_bytes = Store::load_jumbf_from_stream("video/mp4", &mut input_stream).unwrap();
 
+        let _new_store = {
+            Store::from_manifest_data_and_stream(
+                &manifest_bytes,
+                "video/mp4",
+                &mut output_stream,
+                false,
+                &mut report,
+            )
+            .unwrap()
+        };
+        println!("report = {report:?}");
         assert!(!report.has_any_error());
     }
 
@@ -5664,12 +5766,12 @@ pub mod tests {
         // compare returned to external
         assert_eq!(saved_manifest, loaded_manifest);
 
-        // Load the exported file into a buffer
-        let file_buffer = std::fs::read(&op).unwrap();
+        // Open the exported file
+        let file = std::fs::File::open(&op).unwrap();
 
         let mut validation_log =
             StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
-        let result = Store::load_from_memory("png", &file_buffer, true, &mut validation_log);
+        let result = Store::from_stream("png", &file, false, &mut validation_log);
 
         assert!(result.is_err());
 
@@ -6524,7 +6626,7 @@ pub mod tests {
 
         store.commit_claim(claim1).unwrap();
 
-        let mut result: Vec<u8> = Vec::new();
+        let result: Vec<u8> = Vec::new();
         let mut result_stream = Cursor::new(result);
 
         store
@@ -6532,14 +6634,15 @@ pub mod tests {
             .await
             .unwrap();
 
-        // convert our cursor back into a buffer
-        result = result_stream.into_inner();
+        result_stream.rewind().unwrap();
 
         // make sure we can read from new file
         let mut report = StatusTracker::default();
-        let new_store = Store::load_from_memory("jpeg", &result, false, &mut report).unwrap();
+        let new_store = Store::from_stream("jpeg", &mut result_stream, true, &mut report).unwrap();
 
         println!("new_store: {}", new_store);
+
+        let result = result_stream.into_inner();
 
         Store::verify_store_async(
             &new_store,
@@ -6588,7 +6691,8 @@ pub mod tests {
                     store.commit_claim(claim).unwrap();
 
                     // Do we generate JUMBF?
-                    let signer = test_signer(SigningAlg::Ps256);
+                    let signer =
+                        test_cawg_signer(SigningAlg::Ps256, &[labels::SCHEMA_ORG]).unwrap();
 
                     // Use Tempdir for automatic cleanup
                     let new_subdir = tempfile::TempDir::new_in(output_path)
@@ -6636,7 +6740,7 @@ pub mod tests {
                         "mp4",
                         &mut init_stream,
                         &output_fragments,
-                        true,
+                        false,
                         &mut validation_log,
                     )
                     .unwrap();

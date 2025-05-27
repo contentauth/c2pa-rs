@@ -17,7 +17,6 @@ use std::path::{Path, PathBuf};
 use std::{borrow::Cow, io::Cursor};
 
 use async_generic::async_generic;
-use c2pa_status_tracker::{log_item, StatusTracker};
 use log::{debug, error};
 #[cfg(feature = "json_schema")]
 use schemars::JsonSchema;
@@ -38,7 +37,9 @@ use crate::{
         self,
         labels::{assertion_label_from_uri, manifest_label_from_uri},
     },
+    log_item,
     resource_store::{skip_serializing_resources, ResourceRef, ResourceStore},
+    status_tracker::StatusTracker,
     store::Store,
     utils::{mime::extension_to_mime, xmp_inmemory_utils::XmpInfo},
     validation_results::ValidationResults,
@@ -866,7 +867,6 @@ impl Ingredient {
         let mut validation_log = StatusTracker::default();
 
         // retrieve the manifest bytes from embedded, sidecar or remote and convert to store if found
-        //let jumbf_stream = Store::load_jumbf_from_stream(format, stream);
         let jumbf_result = match self.manifest_data() {
             Some(data) => Ok(data.into_owned()),
             None => Store::load_jumbf_from_stream(format, stream),
@@ -875,26 +875,13 @@ impl Ingredient {
         // We can't use functional combinators since we can't use async callbacks (https://github.com/rust-lang/rust/issues/62290)
         let (result, manifest_bytes) = match jumbf_result {
             Ok(manifest_bytes) => {
-                let jumbf_store = Store::from_jumbf(&manifest_bytes, &mut validation_log);
-                let result = match jumbf_store {
-                    Ok(mut store) => {
-                        if _sync {
-                            match store.verify_from_stream(stream, format, &mut validation_log) {
-                                Ok(_) => Ok(store),
-                                Err(err) => Err(err),
-                            }
-                        } else {
-                            match store
-                                .verify_from_stream_async(stream, format, &mut validation_log)
-                                .await
-                            {
-                                Ok(_) => Ok(store),
-                                Err(err) => Err(err),
-                            }
-                        }
-                    }
-                    Err(e) => Err(e),
-                };
+                let result = Store::from_manifest_data_and_stream(
+                    &manifest_bytes,
+                    format,
+                    &mut *stream,
+                    true,
+                    &mut validation_log,
+                );
                 (result, Some(manifest_bytes))
             }
             Err(err) => (Err(err), None),
@@ -1876,7 +1863,7 @@ mod tests_file_io {
     }
 
     #[test]
-    #[cfg(feature = "file_io")]
+    #[cfg(all(feature = "file_io", feature = "add_thumbnails"))]
     fn test_jpg_prerelease() {
         let ap = fixture_path(PRERELEASE_JPEG);
         let ingredient = Ingredient::from_file(ap).expect("from_file");

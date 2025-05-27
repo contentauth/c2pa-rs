@@ -110,6 +110,10 @@ pub mod identity;
 pub mod jumbf_io;
 /// The settings module provides a way to configure the C2PA SDK.
 pub mod settings;
+
+/// Supports status tracking as defined in the C2PA Technical Specification.
+pub mod status_tracker;
+
 /// The validation_results module contains the definitions for the validation results that are part of the C2PA specification.
 pub mod validation_results;
 /// The validation_status module contains the definitions for the validation status that are part of the C2PA specification.
@@ -180,3 +184,12 @@ pub(crate) mod store;
 
 pub(crate) mod utils;
 pub(crate) use utils::{cbor_types, hash_utils};
+
+#[cfg(all(feature = "openssl", feature = "rust_native_crypto"))]
+compile_error!("Features 'openssl' and 'rust_native_crypto' cannot be enabled at the same time.");
+
+#[cfg(not(any(feature = "openssl", feature = "rust_native_crypto")))]
+compile_error!("Either 'openssl' or 'rust_native_crypto' feature must be enabled.");
+
+#[cfg(all(feature = "openssl", target_arch = "wasm32"))]
+compile_error!("Feature 'openssl' is not available for wasm32.");

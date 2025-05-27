@@ -15,29 +15,29 @@ use std::io::Write;
 
 use asn1_rs::FromDer;
 use async_generic::async_generic;
-use c2pa_status_tracker::{
+use coset::CoseSign1;
+use x509_parser::prelude::X509Certificate;
+
+use crate::{
+    crypto::{
+        asn1::rfc3161::TstInfo,
+        base64::encode,
+        cose::{
+            cert_chain_from_sign1, check_end_entity_certificate_profile, parse_cose_sign1,
+            signing_alg_from_sign1, validate_cose_tst_info, validate_cose_tst_info_async,
+            CertificateInfo, CertificateTrustError, CertificateTrustPolicy, CoseError,
+        },
+        ec_utils::parse_ec_der_sig,
+        raw_signature::{validator_for_signing_alg, SigningAlg},
+        time_stamp::TimeStampError,
+    },
     log_item,
-    validation_codes::{
+    status_tracker::StatusTracker,
+    validation_results::validation_codes::{
         ALGORITHM_UNSUPPORTED, SIGNING_CREDENTIAL_INVALID, SIGNING_CREDENTIAL_TRUSTED,
         SIGNING_CREDENTIAL_UNTRUSTED, TIMESTAMP_MALFORMED, TIMESTAMP_MISMATCH,
         TIMESTAMP_OUTSIDE_VALIDITY,
     },
-    StatusTracker,
-};
-use coset::CoseSign1;
-use x509_parser::prelude::X509Certificate;
-
-use crate::crypto::{
-    asn1::rfc3161::TstInfo,
-    base64::encode,
-    cose::{
-        cert_chain_from_sign1, check_end_entity_certificate_profile, parse_cose_sign1,
-        signing_alg_from_sign1, validate_cose_tst_info, validate_cose_tst_info_async,
-        CertificateInfo, CertificateTrustError, CertificateTrustPolicy, CoseError,
-    },
-    ec_utils::parse_ec_der_sig,
-    raw_signature::{validator_for_signing_alg, SigningAlg},
-    time_stamp::TimeStampError,
 };
 
 /// A `Verifier` reads a COSE signature and reports on its validity.
