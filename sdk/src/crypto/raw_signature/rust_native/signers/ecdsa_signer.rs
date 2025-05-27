@@ -11,27 +11,36 @@
 // specific language governing permissions and limitations under
 // each license.
 
+use std::str::FromStr;
+
+use asn1_rs::{Any, BitString, DerSequence, FromDer, Sequence};
+use der::{Decode, Encode};
 use ecdsa::signature::Signer;
 use p256::ecdsa::{Signature as P256Signature, SigningKey as P256SigningKey};
 use p384::ecdsa::{Signature as P384Signature, SigningKey as P384SigningKey};
-use pkcs8::DecodePrivateKey;
+use p521::ecdsa::{Signature as P512Signature, SigningKey as P512SigningKey};
+use pkcs8::{DecodePrivateKey, ObjectIdentifier, PrivateKeyInfo};
 use x509_parser::{error::PEMError, pem::Pem};
 
 use crate::crypto::{
-    raw_signature::{RawSigner, RawSignerError, SigningAlg},
+    raw_signature::{
+        oids::{EC_PUBLICKEY_OID, SECP521R1_OID},
+        RawSigner, RawSignerError, SigningAlg,
+    },
     time_stamp::TimeStampProvider,
 };
 
-// Rust native does not support Es512
 enum EcdsaSigningAlg {
     Es256,
     Es384,
+    Es512,
 }
 
-// Signing keys for ES256 and ES384 are different types
+// Signing keys for ES256, ES384, and ES512 are different types
 pub enum EcdsaSigningKey {
     Es256(P256SigningKey),
     Es384(P384SigningKey),
+    Es512(P512SigningKey),
 }
 
 pub struct EcdsaSigner {
@@ -85,9 +94,8 @@ impl EcdsaSigner {
                 (EcdsaSigningKey::Es384(key), EcdsaSigningAlg::Es384)
             }
             SigningAlg::Es512 => {
-                return Err(RawSignerError::InvalidSigningCredentials(
-                    "Rust Crypto does not support Es512, only OpenSSL".to_string(),
-                ))
+                let key = es512_from_pkcs8_pem(private_key_pem)?;
+                (EcdsaSigningKey::Es512(key), EcdsaSigningAlg::Es512)
             }
             _ => {
                 return Err(RawSignerError::InvalidSigningCredentials(
@@ -118,6 +126,10 @@ impl RawSigner for EcdsaSigner {
                 let signature: P384Signature = key.sign(data);
                 Ok(signature.to_vec())
             }
+            EcdsaSigningKey::Es512(ref key) => {
+                let signature: P512Signature = key.sign(data);
+                Ok(signature.to_vec())
+            }
         }
     }
 
@@ -125,6 +137,7 @@ impl RawSigner for EcdsaSigner {
         match self.alg {
             EcdsaSigningAlg::Es256 => SigningAlg::Es256,
             EcdsaSigningAlg::Es384 => SigningAlg::Es384,
+            EcdsaSigningAlg::Es512 => SigningAlg::Es512,
         }
     }
 
@@ -143,6 +156,68 @@ impl TimeStampProvider for EcdsaSigner {
     }
 }
 
+#[derive(DerSequence)]
+struct ECPrivateKey<'a> {
+    version: u32,
+    private_key: &'a [u8], // OCTET STRING content
+    parameters: Option<Any<'a>>,
+    public_key: Option<BitString<'a>>,
+}
+
+fn es512_from_pkcs8_pem(private_key_pem: &str) -> Result<P512SigningKey, RawSignerError> {
+    let pem = pem::parse(private_key_pem).map_err(|e| {
+        RawSignerError::InvalidSigningCredentials(format!("invalid ES512 private key PEM: {e}"))
+    })?;
+    let pk_info = PrivateKeyInfo::try_from(pem.contents()).map_err(|e| {
+        RawSignerError::InvalidSigningCredentials(format!("invalid ES512 PKCS#8 structure: {e}"))
+    })?;
+
+    // Check OID is id-ecPublicKey (1.2.840.10045.2.1)
+    if pk_info.algorithm.oid.as_bytes() != EC_PUBLICKEY_OID.as_bytes() {
+        return Err(RawSignerError::InvalidSigningCredentials(format!(
+            "Unexpected OID: {}, expected id-ecPublicKey {}",
+            pk_info.algorithm.oid, EC_PUBLICKEY_OID
+        )));
+    }
+
+    let params = pk_info
+        .algorithm
+        .parameters
+        .as_ref()
+        .ok_or_else(|| {
+            RawSignerError::InvalidSigningCredentials("Missing algorithm parameters".to_string())
+        })?
+        .to_der()
+        .map_err(|_| {
+            RawSignerError::InvalidSigningCredentials(
+                "Algorithm parameters are not a valid OID".to_string(),
+            )
+        })?;
+    // Parse the parameters as an ASN.1 OID
+    let curve_oid = ObjectIdentifier::from_der(&params).map_err(|_| {
+        RawSignerError::InvalidSigningCredentials(
+            "Algorithm parameters are not a valid OID".to_string(),
+        )
+    })?;
+
+    // Parse ECPrivateKey ASN.1 structure using asn1-rs
+    let ec_private_key = ECPrivateKey::from_der(pk_info.private_key).map_err(|e| {
+        RawSignerError::InvalidSigningCredentials(format!("invalid ES512 ECPrivateKey ASN.1: {e}"))
+    })?;
+
+    // Check version is 1
+    if ec_private_key.1.version != 1 {
+        return Err(RawSignerError::InvalidSigningCredentials(format!(
+            "ECPrivateKey ASN.1 version is {}, expected 1",
+            ec_private_key.1.version
+        )));
+    }
+
+    P512SigningKey::from_slice(ec_private_key.1.private_key).map_err(|e| {
+        RawSignerError::InvalidSigningCredentials(format!("invalid ES512 private key: {e}"))
+    })
+}
+
 #[cfg(test)]
 mod tests {
     #![allow(clippy::expect_used)]
@@ -153,7 +228,7 @@ mod tests {
     use crate::crypto::raw_signature::SigningAlg;
 
     #[test]
-    fn test_es512_not_supported() {
+    fn test_es512_supported() {
         let cert_chain =
             include_bytes!("../../../../../tests/fixtures/crypto/raw_signature/es512.pub");
         let private_key =
@@ -168,9 +243,9 @@ mod tests {
             time_stamp_service_url,
         );
 
-        assert!(result.is_err());
-        if let Err(RawSignerError::InvalidSigningCredentials(err_msg)) = result {
-            assert_eq!(err_msg, "Rust Crypto does not support Es512, only OpenSSL");
+        assert!(result.is_ok());
+        if let Ok(ecdsa_signer) = result {
+            assert_eq!(ecdsa_signer.alg(), SigningAlg::Es512);
         } else {
             unreachable!("Expected InvalidSigningCredentials error");
         }

@@ -52,7 +52,7 @@ pub(crate) fn signer_from_cert_chain_and_private_key(
             )?,
         )),
 
-        SigningAlg::Es256 | SigningAlg::Es384 => Ok(Box::new(
+        SigningAlg::Es256 | SigningAlg::Es384 | SigningAlg::Es512 => Ok(Box::new(
             ecdsa_signer::EcdsaSigner::from_cert_chain_and_private_key(
                 cert_chain,
                 private_key,
