@@ -817,101 +817,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "c2pa"
-version = "0.54.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b3ff3acedd17ff4646a88e823deab77f971e31386ea5a8775ca6d7e6ae4d756a"
-dependencies = [
- "asn1-rs",
- "async-generic",
- "async-recursion",
- "async-trait",
- "atree",
- "base64 0.22.1",
- "bcder",
- "byteorder",
- "byteordered",
- "bytes",
- "chrono",
- "ciborium",
- "config",
- "console_log",
- "const-hex",
- "const-oid",
- "conv",
- "coset",
- "der",
- "ed25519-dalek",
- "extfmt",
- "getrandom 0.2.16",
- "hex",
- "hex-literal",
- "id3",
- "image 0.24.9",
- "img-parts",
- "iref",
- "jfifdump",
- "js-sys",
- "lazy_static",
- "log",
- "lopdf",
- "memchr",
- "mp4",
- "multibase",
- "nom",
- "non-empty-string",
- "nonempty-collections",
- "num-bigint-dig",
- "openssl",
- "pem",
- "pkcs1",
- "pkcs8",
- "png_pong",
- "quick-xml",
- "rand 0.8.5",
- "rand_chacha 0.3.1",
- "rand_core 0.9.3",
- "range-set",
- "rasn",
- "rasn-ocsp",
- "rasn-pkix",
- "regex",
- "reqwest",
- "riff",
- "ring",
- "rsa",
- "serde",
- "serde-transcode",
- "serde-wasm-bindgen",
- "serde_bytes",
- "serde_cbor",
- "serde_derive",
- "serde_json",
- "serde_with",
- "sha1",
- "sha2",
- "spki",
- "static-iref",
- "tempfile",
- "thiserror 2.0.12",
- "treeline",
- "ureq",
- "url",
- "uuid",
- "wasi 0.14.2+wasi-0.2.4",
- "wasm-bindgen",
- "wasm-bindgen-futures",
- "web-sys",
- "web-time",
- "windows-core",
- "wstd",
- "x509-certificate",
- "x509-parser",
- "zeroize",
- "zip",
-]
-
-[[package]]
 name = "c2patool"
 version = "0.17.0"
 dependencies = [
@@ -919,7 +824,7 @@ dependencies = [
  "assert_cmd",
  "async-std",
  "atree",
- "c2pa 0.54.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "c2pa",
  "clap",
  "env_logger",
  "glob",
@@ -944,7 +849,7 @@ dependencies = [
 name = "c_api"
 version = "0.54.0"
 dependencies = [
- "c2pa 0.54.0",
+ "c2pa",
  "cbindgen",
  "scopeguard",
  "serde",
@@ -1673,7 +1578,7 @@ name = "export_schema"
 version = "0.54.0"
 dependencies = [
  "anyhow",
- "c2pa 0.54.0",
+ "c2pa",
  "schemars",
  "serde_json",
 ]
@@ -2734,7 +2639,7 @@ name = "make_test_images"
 version = "0.54.0"
 dependencies = [
  "anyhow",
- "c2pa 0.54.0",
+ "c2pa",
  "env_logger",
  "image 0.25.6",
  "log",
