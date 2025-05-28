@@ -640,14 +640,7 @@ pub unsafe extern "C" fn c2pa_reader_resource_to_stream(
 /// The array and its contents are no longer valid after that call.
 #[no_mangle]
 pub unsafe extern "C" fn c2pa_reader_supported_mime_types(count: *mut usize) -> *mut *mut c_char {
-    let mime_types = c2pa::Reader::supported_mime_types();
-
-    let mut mime_ptrs: Vec<*mut c_char> = mime_types.into_iter().map(|s| to_c_string(s)).collect();
-    *count = mime_ptrs.len();
-
-    let ptr = mime_ptrs.as_mut_ptr();
-    std::mem::forget(mime_ptrs);
-    ptr
+    c2pa_mime_types_to_c_array(C2paReader::supported_mime_types(), count)
 }
 
 /// Creates a C2paBuilder from a JSON manifest definition string.
@@ -713,14 +706,7 @@ pub unsafe extern "C" fn c2pa_builder_from_archive(stream: *mut C2paStream) -> *
 /// The array and its contents are no longer valid after that call.
 #[no_mangle]
 pub unsafe extern "C" fn c2pa_builder_supported_mime_types(count: *mut usize) -> *mut *mut c_char {
-    let mime_types = C2paBuilder::supported_mime_types();
-    let mut mime_ptrs: Vec<*mut c_char> = mime_types.into_iter().map(|s| to_c_string(s)).collect();
-
-    *count = mime_ptrs.len();
-
-    let ptr = mime_ptrs.as_mut_ptr();
-    std::mem::forget(mime_ptrs);
-    ptr
+    c2pa_mime_types_to_c_array(C2paBuilder::supported_mime_types(), count)
 }
 
 /// Frees a C2paBuilder allocated by Rust.
@@ -1248,6 +1234,29 @@ pub unsafe extern "C" fn c2pa_signature_free(signature_ptr: *const u8) {
     if !signature_ptr.is_null() {
         drop(Box::from_raw(signature_ptr as *mut u8));
     }
+}
+
+/// Returns a [*mut *mut c_char] with the contents of of the provided [Vec<String>].
+///
+/// # Parameters
+/// - `strs`: The vector of Rust strings to convert into [CString]s
+/// - `count`: Will be set to the number of strings in the array.
+///
+/// # Safety
+/// - The caller is responsible for eventually freeing each C string and the array itself to
+///   avoid memory leaks [c2pa_free_string_array].
+/// - The function uses `std::mem::forget` to intentionally leak the vector, transferring
+///   ownership of the memory to the caller.
+///
+/// # Returns
+/// - A pointer to the first element of an array of pointers to C strings (`*mut *mut c_char`).
+unsafe fn c2pa_mime_types_to_c_array(strs: Vec<String>, count: *mut usize) -> *mut *mut c_char {
+    let mut mime_ptrs: Vec<*mut c_char> = strs.into_iter().map(|s| to_c_string(s)).collect();
+    *count = mime_ptrs.len();
+
+    let ptr = mime_ptrs.as_mut_ptr();
+    std::mem::forget(mime_ptrs);
+    ptr
 }
 
 #[cfg(test)]
