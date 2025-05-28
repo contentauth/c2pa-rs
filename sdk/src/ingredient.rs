@@ -705,8 +705,9 @@ impl Ingredient {
     }
 
     fn thumbnail_from_assertion(assertion: &Assertion) -> (String, Vec<u8>) {
-        let thumbnail_format =
-            extension_to_mime(get_thumbnail_image_type(&assertion.label_root()).as_str());
+        let thumbnail_format = extension_to_mime(
+            &get_thumbnail_image_type(&assertion.label_root()).unwrap_or("".into()),
+        );
         (
             thumbnail_format.unwrap_or("image/none").to_string(),
             assertion.data().to_vec(),

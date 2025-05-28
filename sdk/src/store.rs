@@ -4593,13 +4593,11 @@ pub mod tests {
 
     use memchr::memmem;
     use serde::Serialize;
-    use sha2::Digest;
     #[cfg(feature = "file_io")]
-    use sha2::Sha256;
+    use sha2::{Digest, Sha256};
 
     use super::*;
     #[cfg(all(feature = "file_io", feature = "v1_api"))]
-    use crate::jumbf_io::update_file_jumbf;
     use crate::{
         assertion::AssertionJson,
         assertions::{labels::BOX_HASH, Action, Actions, BoxHash, Uuid},

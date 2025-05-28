@@ -1848,11 +1848,8 @@ pub mod tests {
         test::{fixture_path, temp_dir_path},
     };
 
-    #[cfg(all(feature = "v1_api", feature = "file_io"))]
     #[test]
     fn test_read_mp4() {
-        use crate::{status_tracker::StatusTracker, store::Store};
-
         crate::settings::set_settings_value("verify.verify_trust", false).unwrap();
 
         let ap = fixture_path("video1.mp4");

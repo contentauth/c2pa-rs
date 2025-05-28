@@ -255,7 +255,6 @@ pub fn save_jumbf_to_file<P1: AsRef<Path>, P2: AsRef<Path>>(
 /// returns the location where splice occurred
 #[allow(dead_code)] // this only used in Store unit tests, update this when those tests are updated
 #[cfg(feature = "file_io")]
-#[allow(dead_code)]
 pub(crate) fn update_file_jumbf(
     out_path: &Path,
     search_bytes: &[u8],

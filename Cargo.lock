@@ -114,6 +114,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "allocator-api2"
+version = "0.2.21"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "683d7910e743518b0e34f1186f92494becacb047c7b6bf616c96772180fef923"
+
+[[package]]
 name = "android-tzdata"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1876,6 +1882,10 @@ name = "hashbrown"
 version = "0.14.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e5274423e17b7c9fc20b6e7e208532f9b19825d82dfd615708b70edd83df41f1"
+dependencies = [
+ "ahash",
+ "allocator-api2",
+]
 
 [[package]]
 name = "hashbrown"
@@ -3578,15 +3588,16 @@ checksum = "d20581732dd76fa913c7dff1a2412b714afe3573e94d41c34719de73337cc8ab"
 
 [[package]]
 name = "rasn"
-version = "0.26.6"
+version = "0.22.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7863f4e3d3cbbe0d3a427aa48447c42b5a74a579cbfa7afa63735b0c10879c44"
+checksum = "9c1d1ed06b066a36d0492d65daaa5f40b7101c24a1228e0af2709712ef1a86e1"
 dependencies = [
  "bitvec",
  "bitvec-nom2",
  "bytes",
  "chrono",
  "either",
+ "hashbrown 0.14.5",
  "nom",
  "num-bigint",
  "num-integer",
@@ -3595,14 +3606,13 @@ dependencies = [
  "rasn-derive",
  "serde_json",
  "snafu",
- "xml-no-std",
 ]
 
 [[package]]
 name = "rasn-derive"
-version = "0.26.6"
+version = "0.22.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7a16f695759320ec969864fe5e7aa8e2a9c5665469565b100b8c8c1a36cd5484"
+checksum = "7f35fecd68ee4d5850baa37ee4520456bbae761fdd42a7fcb95701c268500a93"
 dependencies = [
  "proc-macro2",
  "rasn-derive-impl",
@@ -3611,9 +3621,9 @@ dependencies = [
 
 [[package]]
 name = "rasn-derive-impl"
-version = "0.26.6"
+version = "0.22.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f14454245fd76215b830d083b6b6c6842047e50cb7ee73ce1e769d4b099c89fd"
+checksum = "355eedbab62312d9474e1c2e7963ce5fad99bded7e9abd42ae4f040762a2c5f6"
 dependencies = [
  "either",
  "itertools 0.13.0",
@@ -3625,9 +3635,9 @@ dependencies = [
 
 [[package]]
 name = "rasn-ocsp"
-version = "0.26.6"
+version = "0.22.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5252a65c8d5c8435420db5417b6a881f907c75a394c5f88cd392118f273ddc55"
+checksum = "5cf2cbdf7f5e46d9a4ae4f0cac4bf578b748ccf39e369e7511a94b6f106a8a9e"
 dependencies = [
  "rasn",
  "rasn-pkix",
@@ -3635,9 +3645,9 @@ dependencies = [
 
 [[package]]
 name = "rasn-pkix"
-version = "0.26.6"
+version = "0.22.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0c902bfc1add6e7471323cdb879fe6a3c3122b1cb0247937c0940b28e2334252"
+checksum = "2645f907b8c01fa266c9855d8effd38b63896574a66bbce3114682b30de5d6f1"
 dependencies = [
  "rasn",
 ]
