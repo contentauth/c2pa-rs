@@ -36,7 +36,7 @@ use crate::{
 
 // initialize asset handlers
 lazy_static! {
-    pub(crate) static ref CAI_READERS: HashMap<String, Box<dyn AssetIO>> = {
+    static ref CAI_READERS: HashMap<String, Box<dyn AssetIO>> = {
         let handlers: Vec<Box<dyn AssetIO>> = vec![
             #[cfg(feature = "pdf")]
             Box::new(PdfIO::new("")),
@@ -67,7 +67,7 @@ lazy_static! {
 
 // initialize streaming write handlers
 lazy_static! {
-    pub(crate) static ref CAI_WRITERS: HashMap<String, Box<dyn CAIWriter>> = {
+    static ref CAI_WRITERS: HashMap<String, Box<dyn CAIWriter>> = {
         let handlers: Vec<Box<dyn AssetIO>> = vec![
             Box::new(BmffIO::new("")),
             Box::new(C2paIO::new("")),
@@ -191,6 +191,16 @@ pub(crate) fn get_supported_file_extension(path: &Path) -> Option<String> {
     } else {
         None
     }
+}
+
+/// Returns a [Vec<String>] of supported mime types for reading manifests.
+pub(crate) fn supported_reader_mime_types() -> Vec<String> {
+    CAI_READERS.keys().map(String::to_owned).collect()
+}
+
+/// Returns a [Vec<String>] of mime types that [c2pa-rs] is able to sign.
+pub(crate) fn supported_builder_mime_types() -> Vec<String> {
+    CAI_WRITERS.keys().map(String::to_owned).collect()
 }
 
 #[cfg(feature = "file_io")]

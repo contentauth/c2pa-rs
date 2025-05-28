@@ -442,17 +442,19 @@ pub unsafe extern "C" fn c2pa_string_free(s: *mut c_char) {
 /// * The array and its strings must not have been modified in C.
 /// * The array and its contents can only be freed once and is invalid after this call.
 #[no_mangle]
-pub unsafe extern "C" fn c2pa_free_string_array(ptr: *mut *mut c_char, count: usize) {
+pub unsafe extern "C" fn c2pa_free_string_array(ptr: *const *const c_char, count: usize) {
     if ptr.is_null() {
         return;
     }
+
+    let mut_ptr = ptr as *mut *mut c_char;
     // Free each string directly using the pointer.
     for i in 0..count {
-        c2pa_string_free(*ptr.add(i));
+        c2pa_string_free(*mut_ptr.add(i));
     }
 
     // Free the array.
-    Vec::from_raw_parts(ptr, count, count);
+    Vec::from_raw_parts(mut_ptr, count, count);
 }
 
 // Run CAWG post-validation - this is async and requires a runtime.
@@ -639,7 +641,9 @@ pub unsafe extern "C" fn c2pa_reader_resource_to_stream(
 /// The returned value MUST be released by calling [c2pa_free_string_array].
 /// The array and its contents are no longer valid after that call.
 #[no_mangle]
-pub unsafe extern "C" fn c2pa_reader_supported_mime_types(count: *mut usize) -> *mut *mut c_char {
+pub unsafe extern "C" fn c2pa_reader_supported_mime_types(
+    count: *mut usize,
+) -> *const *const c_char {
     c2pa_mime_types_to_c_array(C2paReader::supported_mime_types(), count)
 }
 
@@ -705,7 +709,9 @@ pub unsafe extern "C" fn c2pa_builder_from_archive(stream: *mut C2paStream) -> *
 /// The returned value MUST be released by calling [c2pa_free_string_array].
 /// The array and its contents are no longer valid after that call.
 #[no_mangle]
-pub unsafe extern "C" fn c2pa_builder_supported_mime_types(count: *mut usize) -> *mut *mut c_char {
+pub unsafe extern "C" fn c2pa_builder_supported_mime_types(
+    count: *mut usize,
+) -> *const *const c_char {
     c2pa_mime_types_to_c_array(C2paBuilder::supported_mime_types(), count)
 }
 
@@ -1236,7 +1242,7 @@ pub unsafe extern "C" fn c2pa_signature_free(signature_ptr: *const u8) {
     }
 }
 
-/// Returns a [*mut *mut c_char] with the contents of of the provided [Vec<String>].
+/// Returns a [*const *const c_char] with the contents of of the provided [Vec<String>].
 ///
 /// # Parameters
 /// - `strs`: The vector of Rust strings to convert into [CString]s
@@ -1249,23 +1255,30 @@ pub unsafe extern "C" fn c2pa_signature_free(signature_ptr: *const u8) {
 ///   ownership of the memory to the caller.
 ///
 /// # Returns
-/// - A pointer to the first element of an array of pointers to C strings (`*mut *mut c_char`).
-unsafe fn c2pa_mime_types_to_c_array(strs: Vec<String>, count: *mut usize) -> *mut *mut c_char {
-    let mut mime_ptrs: Vec<*mut c_char> = strs.into_iter().map(|s| to_c_string(s)).collect();
+/// - A pointer to the first element of an array of pointers to C strings (`*const *const c_char`).
+///
+/// # Note
+/// This should be used internally. We don't want to support this as a public API.
+unsafe fn c2pa_mime_types_to_c_array(strs: Vec<String>, count: *mut usize) -> *const *const c_char {
+    // Even if the array is exposed as a `*const *const c_char` for read-only access,
+    // the underlying memory must be allocated as `*mut *mut c_char` because freeing
+    // or deallocating memory requires a mutable pointer. This ensures the caller can
+    // safely release ownership of both the array and its strings.
+    let mime_ptrs: Vec<*mut c_char> = strs.into_iter().map(|s| to_c_string(s)).collect();
     *count = mime_ptrs.len();
 
-    let ptr = mime_ptrs.as_mut_ptr();
+    let ptr = mime_ptrs.as_ptr();
     std::mem::forget(mime_ptrs);
-    ptr
+
+    ptr as *const *const c_char
 }
 
 #[cfg(test)]
 mod tests {
-    use std::ffi::CString;
+    use std::{ffi::CString, panic::catch_unwind};
 
     use super::*;
     use crate::TestC2paStream;
-    use std::panic::catch_unwind;
 
     macro_rules! fixture_path {
         ($path:expr) => {
@@ -1567,8 +1580,8 @@ mod tests {
     #[test]
     fn test_c2pa_free_string_array_with_count_1() {
         let strings = vec![CString::new("image/jpg").unwrap()];
-        let mut ptrs: Vec<*mut c_char> = strings.into_iter().map(|s| s.into_raw()).collect();
-        let ptr = ptrs.as_mut_ptr();
+        let ptrs: Vec<*mut c_char> = strings.into_iter().map(|s| s.into_raw()).collect();
+        let ptr = ptrs.as_ptr() as *const *const c_char;
         let count = ptrs.len();
         std::mem::forget(ptrs);
 

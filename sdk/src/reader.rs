@@ -346,7 +346,7 @@ impl Reader {
 
     /// Returns a [Vec] of mime types that [c2pa-rs] is able to read.
     pub fn supported_mime_types() -> Vec<String> {
-        jumbf_io::CAI_READERS.keys().map(String::to_owned).collect()
+        jumbf_io::supported_reader_mime_types()
     }
 
     /// replace assertion values in the reader json with the values from the assertion_values map
