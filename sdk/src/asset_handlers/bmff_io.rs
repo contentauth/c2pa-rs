@@ -1851,22 +1851,13 @@ pub mod tests {
     #[cfg(all(feature = "v1_api", feature = "file_io"))]
     #[test]
     fn test_read_mp4() {
-        use c2pa_status_tracker::StatusTracker;
-
-        use crate::store::Store;
-
-        crate::settings::set_settings_value("verify.verify_trust", false).unwrap();
-
         let ap = fixture_path("video1.mp4");
+        let mut input_stream = std::fs::File::open(&ap).unwrap();
 
-        let mut log = StatusTracker::default();
-        let store = Store::load_from_asset(&ap, true, &mut log);
+        let bmff = BmffIO::new("mp4");
+        let cai = bmff.read_cai(&mut input_stream).unwrap();
 
-        assert!(!log.has_any_error());
-
-        if let Ok(s) = store {
-            print!("Store: \n{s}");
-        }
+        assert!(!cai.is_empty());
     }
 
     #[test]

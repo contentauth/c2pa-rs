@@ -1,0 +1,116 @@
+name: Publish c2pa-library binaries
+
+on:
+  push:
+    tags:
+      - 'c2pa-v*' # Trigger on version tags (e.g., v1.0.0)
+  workflow_dispatch: # Allow manual triggering of the workflow
+
+jobs:
+  build:
+    name: Publish c2pa-library binaries
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ macos-latest, ubuntu-latest, windows-latest ]
+        rust_version: [ stable ]
+        experimental: [ false ]
+        include:
+          - os: macos-latest
+            target: aarch64-apple-darwin
+
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Rust
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+
+      - name: Setup Strawberry Perl
+        if: matrix.os == 'windows-latest'
+        uses: shogo82148/actions-setup-perl@v1
+        with:
+          perl-version: '5.32'
+          distribution: 'strawberry'
+      
+      # Install Locale::Maketext::Simple only on Windows with explicit paths
+      - name: Install Locale::Maketext::Simple and configure paths
+        if: matrix.os == 'windows-latest'
+        run: |
+          cpanm --verbose Locale::Maketext::Simple
+          # List installed modules to confirm installation
+          cpanm --info Locale::Maketext::Simple
+          # Display Perl's include paths
+          perl -e "print join(\"\n\", @INC);"
+          # Create a local copy in the expected path
+          perl -MLocale::Maketext::Simple -e "print \$INC{'Locale/Maketext/Simple.pm'}" > module_path.txt
+          $MODULE_PATH = Get-Content -Path module_path.txt
+          echo "Module found at: $MODULE_PATH"
+          
+          # Create symbolic links to the modules in paths that are being checked
+          # Set environment variable for subsequent steps
+          echo "PERL5LIB=$env:PERL5LIB;D:\a\c2pa-rs\c2pa-rs\target\x86_64-pc-windows-msvc\release\build\openssl-sys-def693d178636927\out\openssl-build\build\src\util\perl" | Out-File -FilePath $env:GITHUB_ENV -Append
+        shell: pwsh
+     
+      - name: Build release
+        run: make release
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.os }}-${{ matrix.target }}-release
+          path: target/artifacts/*
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: List downloaded artifacts
+        run: find . -type f | sort
+        
+      - name: Create Release
+        id: create_release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            ./ubuntu-latest-x86_64-unknown-linux-gnu-release/ubuntu-latest-x86_64-unknown-linux-gnu-release.tar.gz
+            ./windows-latest-x86_64-pc-windows-msvc-release/windows-latest-x86_64-pc-windows-msvc-release.zip
+            ./macos-latest-x86_64-apple-darwin-release/macos-latest-x86_64-apple-darwin-release.tar.gz
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create GitHub Release legacy
+        id: create_release_legacy
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ github.ref_name }}
+          release_name: Release ${{ github.ref_name }}
+          draft: true
+          prerelease: true
+ 
+      - name: Upload Release Assets old
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          for file in artifacts/*; do
+            echo "Uploading $file..."
+            gh release upload "${{ github.ref_name }}" "$file" --clobber
+          done
+

@@ -13,8 +13,9 @@
 
 // #![deny(missing_docs)] (we'll turn this on once fully documented)
 
-use c2pa_crypto::{cose::CoseError, raw_signature::RawSignerError, time_stamp::TimeStampError};
 use thiserror::Error;
+
+use crate::crypto::{cose::CoseError, raw_signature::RawSignerError, time_stamp::TimeStampError};
 
 /// `Error` enumerates errors returned by most C2PA toolkit operations.
 #[derive(Debug, Error)]
@@ -313,22 +314,22 @@ pub enum Error {
     OutOfRange,
 
     #[error(transparent)]
-    TimeStampError(#[from] c2pa_crypto::time_stamp::TimeStampError),
+    TimeStampError(#[from] crate::crypto::time_stamp::TimeStampError),
 
     #[error(transparent)]
-    RawSignatureValidationError(#[from] c2pa_crypto::raw_signature::RawSignatureValidationError),
+    RawSignatureValidationError(#[from] crate::crypto::raw_signature::RawSignatureValidationError),
 
     #[error(transparent)]
-    RawSignerError(#[from] c2pa_crypto::raw_signature::RawSignerError),
+    RawSignerError(#[from] crate::crypto::raw_signature::RawSignerError),
 
     #[error(transparent)]
-    CertificateProfileError(#[from] c2pa_crypto::cose::CertificateProfileError),
+    CertificateProfileError(#[from] crate::crypto::cose::CertificateProfileError),
 
     #[error(transparent)]
-    CertificateTrustError(#[from] c2pa_crypto::cose::CertificateTrustError),
+    CertificateTrustError(#[from] crate::crypto::cose::CertificateTrustError),
 
     #[error(transparent)]
-    InvalidCertificateError(#[from] c2pa_crypto::cose::InvalidCertificateError),
+    InvalidCertificateError(#[from] crate::crypto::cose::InvalidCertificateError),
 
     /// An unexpected internal error occured while requesting the time stamp
     /// response.

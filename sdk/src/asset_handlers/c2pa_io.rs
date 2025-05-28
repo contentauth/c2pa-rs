@@ -146,11 +146,10 @@ pub mod tests {
     #![allow(clippy::expect_used)]
     #![allow(clippy::unwrap_used)]
 
-    use c2pa_crypto::raw_signature::SigningAlg;
-    use c2pa_status_tracker::{ErrorBehavior, StatusTracker};
-
     use super::{AssetIO, C2paIO, CAIReader, CAIWriter};
     use crate::{
+        crypto::raw_signature::SigningAlg,
+        status_tracker::{ErrorBehavior, StatusTracker},
         store::Store,
         utils::{
             io_utils::tempdirectory,

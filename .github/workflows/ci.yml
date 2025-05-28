@@ -11,7 +11,6 @@ on:
   push:
     branches:
       - main
-      - nightly
   schedule:
     - cron: "0 18 * * 1,4,6" # 1800 UTC every Monday, Thursday, Saturday
 
@@ -271,21 +270,9 @@ jobs:
       - name: Install wasm-pack
         run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
 
-      - name: Run Wasm tests (c2pa-crypto)
-        run: wasm-pack test --chrome --headless
-        working-directory: ./internal/crypto
-
-      - name: Run Wasm tests (c2pa-status-tracker)
-        run: wasm-pack test --chrome --headless
-        working-directory: ./internal/status-tracker
-
-      - name: Run Wasm tests (c2pa-rs)
+      - name: Run Wasm tests
         run: wasm-pack test --chrome --headless
         working-directory: ./sdk
-
-      - name: Run Wasm tests (cawg-identity)
-        run: wasm-pack test --chrome --headless
-        working-directory: ./cawg_identity
 
   tests-wasi:
     name: Unit tests (WASI)
@@ -305,7 +292,11 @@ jobs:
         # nightly required for testing until this issue is resolved:
         # wasip2 target should not conditionally feature gate stdlib APIs rust-lang/rust#130323 https://github.com/rust-lang/rust/issues/130323
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@nightly
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly-2025-05-14
+          # Pinning to specific nightly build for now. More recent versions seem
+          # be running doc tests that aren't intended for WASI.
 
       - name: Install wasmtime
         run: |
@@ -324,7 +315,7 @@ jobs:
           mv $(echo wasi-sdk-25.0-${ARCH}-${RUNNER_OS} | tr '[:upper:]' '[:lower:]') /opt/wasi-sdk
 
       - name: Add wasm32-wasip2 target
-        run: rustup target add --toolchain nightly wasm32-wasip2
+        run: rustup target add --toolchain nightly-2025-05-14 wasm32-wasip2
 
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
@@ -335,7 +326,7 @@ jobs:
           CC: /opt/wasi-sdk/bin/clang
           WASI_SDK_PATH: /opt/wasi-sdk
           RUST_MIN_STACK: 16777216
-        run: cargo +nightly test --target wasm32-wasip2 -p c2pa -p c2pa-crypto -p cawg-identity -p c2patool --all-features
+        run: cargo +nightly-2025-05-14 test --target wasm32-wasip2 -p c2pa -p c2patool --all-features
 
   test-direct-minimal-versions:
     name: Unit tests with minimum versions of direct dependencies

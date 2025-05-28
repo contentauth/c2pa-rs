@@ -1,3 +1,7 @@
+# If updating this file, please also review `docs/release-process.md` and
+# `.github/workflows/pr_title.yml` and update the summary of these rules
+# in those files accordingly.
+
 rules:
   # Body may be empty
   body-empty:
@@ -6,11 +10,6 @@ rules:
   # Description must not be empty
   description-empty:
     level: error
-
-  # Description must start with a capital letter and must not end with a period or space
-  description-format:
-    level: error
-    format: ^[\w ]+[\s\S]*$
 
   # Description should be <70 chars
   description-max-length:
@@ -23,8 +22,6 @@ rules:
     optional: true
     options:
       - c2patool
-      - cawg_identity
-      - crypto
       - export_schema
       - make_test_images
       - sdk

@@ -23,19 +23,6 @@ use std::{
 
 use async_generic::async_generic;
 use async_recursion::async_recursion;
-use c2pa_crypto::{
-    asn1::rfc3161::TstInfo,
-    cose::{parse_cose_sign1, CertificateTrustPolicy, TimeStampStorage},
-    hash::sha256,
-    time_stamp::verify_time_stamp,
-};
-use c2pa_status_tracker::{
-    log_item,
-    validation_codes::{
-        ASSERTION_CBOR_INVALID, ASSERTION_JSON_INVALID, ASSERTION_MISSING, CLAIM_MALFORMED,
-    },
-    ErrorBehavior, StatusTracker,
-};
 use log::error;
 
 #[cfg(feature = "v1_api")]
@@ -61,6 +48,12 @@ use crate::{
     claim::{check_ocsp_status, Claim, ClaimAssertion, ClaimAssetData, RemoteManifest},
     cose_sign::{cose_sign, cose_sign_async},
     cose_validator::{verify_cose, verify_cose_async},
+    crypto::{
+        asn1::rfc3161::TstInfo,
+        cose::{parse_cose_sign1, CertificateTrustPolicy, TimeStampStorage},
+        hash::sha256,
+        time_stamp::verify_time_stamp,
+    },
     dynamic_assertion::{
         AsyncDynamicAssertion, DynamicAssertion, DynamicAssertionContent, PartialClaim,
     },
@@ -79,10 +72,15 @@ use crate::{
         get_assetio_handler, is_bmff_format, load_jumbf_from_stream, object_locations_from_stream,
         save_jumbf_to_stream,
     },
+    log_item,
     manifest_store_report::ManifestStoreReport,
     salt::DefaultSalt,
     settings::get_settings_value,
+    status_tracker::{ErrorBehavior, StatusTracker},
     utils::{hash_utils::HashRange, io_utils::stream_len, is_zero, patch::patch_bytes},
+    validation_results::validation_codes::{
+        ASSERTION_CBOR_INVALID, ASSERTION_JSON_INVALID, ASSERTION_MISSING, CLAIM_MALFORMED,
+    },
     validation_status, AsyncSigner, Signer,
 };
 #[cfg(feature = "v1_api")]
@@ -95,7 +93,7 @@ pub(crate) struct ManifestHashes {
     pub signature_box_hash: Vec<u8>,
 }
 
-// internal struct to pass around info need to to complete validation
+// internal struct to pass around info needed to optimally complete validation
 #[derive(Default)]
 pub(crate) struct StoreValidationInfo<'a> {
     pub redactions: Vec<String>, // list of redactions found in claim hierarchy
@@ -308,10 +306,20 @@ impl Store {
         for ingredient_claim in ingredient_claims {
             let label = ingredient_claim.label().to_owned();
 
+            // replace claim, conflicts are handled by the load_ingredient_to_claim
+            self.claims_map
+                .entry(label)
+                .and_modify(|v| {
+                    self.claims[*v] = ingredient_claim.clone();
+                })
+                .or_insert(self.claims.push_get_index(ingredient_claim.clone()));
+
+            /*
             if let std::collections::hash_map::Entry::Vacant(e) = self.claims_map.entry(label) {
                 let index = self.claims.push_get_index(ingredient_claim);
                 e.insert(index);
             }
+            */
         }
 
         // add claim to store after ingredients
@@ -431,8 +439,8 @@ impl Store {
         let (label, instance) = Claim::assertion_label_from_link(uri);
         claim
             .get_claim_assertion(&label, instance)
-            .ok_or_else(|| Error::ClaimMissing {
-                label: label.to_owned(),
+            .ok_or_else(|| Error::AssertionMissing {
+                url: uri.to_owned(),
             })
     }
 
@@ -715,43 +723,6 @@ impl Store {
         vec_compare(&old_hash, original_hash)
     }
 
-    fn is_redacted_assertion(assertion_box: &JUMBFSuperBox) -> Result<bool> {
-        let assertion_desc_box = assertion_box.desc_box();
-
-        match assertion_desc_box.uuid().as_ref() {
-            CAI_JSON_ASSERTION_UUID => {
-                let json_box = assertion_box
-                    .data_box_as_json_box(0)
-                    .ok_or(Error::JumbfBoxNotFound)?;
-
-                let data = json_box.json();
-                return Ok(is_zero(data));
-            }
-            CAI_CBOR_ASSERTION_UUID => {
-                let cbor_box = assertion_box
-                    .data_box_as_cbor_box(0)
-                    .ok_or(Error::JumbfBoxNotFound)?;
-
-                let data = cbor_box.cbor();
-                return Ok(is_zero(data));
-            }
-            CAI_UUID_ASSERTION_UUID => {
-                let uuid_box = assertion_box
-                    .data_box_as_uuid_box(0)
-                    .ok_or(Error::JumbfBoxNotFound)?;
-                let uuid_str = hex::encode(uuid_box.uuid()).to_uppercase();
-
-                if uuid_str == C2PA_REDACTION_UUID {
-                    let data = uuid_box.data();
-                    return Ok(is_zero(data));
-                }
-            }
-            _ => (),
-        }
-
-        Ok(false)
-    }
-
     fn get_assertion_from_jumbf_store(
         claim: &Claim,
         assertion_box: &JUMBFSuperBox,
@@ -880,6 +851,27 @@ impl Store {
                     .ok_or(Error::JumbfBoxNotFound)?;
                 let uuid_str = hex::encode(uuid_box.uuid());
                 let assertion = Assertion::from_data_uuid(&raw_label, &uuid_str, uuid_box.data());
+
+                // if a redaction then make sure the data is zeros
+                if uuid_str == C2PA_REDACTION_UUID {
+                    let data = uuid_box.data();
+                    if !is_zero(data) {
+                        let assertion_absolute_uri =
+                            to_assertion_uri(claim.label(), &instance_label);
+                        log_item!(
+                            assertion_absolute_uri,
+                            "redacted assertion data must be zeros or empty",
+                            "get_assertion_from_jumbf_store"
+                        )
+                        .validation_status(validation_status::ASSERTION_NOT_REDACTED)
+                        .failure(
+                            validation_log,
+                            Error::OtherError(
+                                "redacted assertion data must be zeros or empty".into(),
+                            ),
+                        )?;
+                    }
+                }
 
                 let hash = Claim::calc_assertion_box_hash(label, &assertion, salt.clone(), &alg)?;
                 Ok(ClaimAssertion::new(
@@ -1334,11 +1326,6 @@ impl Store {
                     .ok_or(Error::JumbfBoxNotFound)?;
                 let assertion_desc_box = assertion_box.desc_box();
 
-                // skip empty boxes as redactions or redaction UUID boxes
-                if Store::is_redacted_assertion(assertion_box)? {
-                    continue;
-                }
-
                 // Add assertions to claim after validation
                 let label = assertion_desc_box.label();
                 match Store::get_assertion_from_jumbf_store(
@@ -1455,7 +1442,20 @@ impl Store {
     ) -> Result<()> {
         // walk the ingredients
         for i in claim.ingredient_assertions() {
-            let ingredient_assertion = Ingredient::from_assertion(i.assertion())?;
+            let ingredient_assertion = Ingredient::from_assertion(i.assertion()).map_err(|e| {
+                log_item!(
+                    i.label().clone(),
+                    "ingredient assertion could not be parsed",
+                    "ingredient_checks"
+                )
+                .validation_status(validation_status::ASSERTION_INGREDIENT_MALFORMED)
+                .failure_as_err(validation_log, e)
+            })?;
+
+            // we don't care about InputTo ingredients
+            if ingredient_assertion.relationship == Relationship::InputTo {
+                continue;
+            }
 
             validation_log
                 .push_ingredient_uri(jumbf::labels::to_assertion_uri(claim.label(), &i.label()));
@@ -1474,25 +1474,33 @@ impl Store {
                     let ingredient_version = ingredient.version();
                     let has_redactions = svi.redactions.iter().any(|r| r.contains(&label));
 
+                    // only allow the extra ingredient trust checks for 1.x ingredients
+                    // these checks are to prevent the trust spoofing
+                    let check_ingredient_trust: bool = ingredient_version < 2
+                        && crate::settings::get_settings_value("verify.check_ingredient_trust")?;
+
                     // get the 1.1-1.2 box hash
                     let ingredient_hashes = store.get_manifest_box_hashes(ingredient);
 
                     // since no redactions we can try manifest match method
+                    let mut pre_v1_3_hash = false;
                     let manifests_match = if !has_redactions {
                         // test for 1.1 hash then 1.0 version
-                        vec_compare(&c2pa_manifest.hash(), &ingredient_hashes.manifest_box_hash)
-                            || !verify_by_alg(
-                                &alg,
-                                &c2pa_manifest.hash(),
-                                &ingredient.data()?,
-                                None,
-                            )
+                        if !vec_compare(&c2pa_manifest.hash(), &ingredient_hashes.manifest_box_hash)
+                        {
+                            // try legacy hash
+                            pre_v1_3_hash = true;
+                            verify_by_alg(&alg, &c2pa_manifest.hash(), &ingredient.data()?, None)
+                        } else {
+                            true
+                        }
                     } else {
                         false
                     };
 
                     // since the manifest hashes are equal we can short circuit the reset of the validation
-                    if manifests_match {
+                    // we can only do this for post 1.3 Claims since manfiest box hashing was not available
+                    if manifests_match && !pre_v1_3_hash {
                         log_item!(
                             c2pa_manifest.url(),
                             "ingredient hash matched",
@@ -1500,11 +1508,15 @@ impl Store {
                         )
                         .validation_status(validation_status::INGREDIENT_MANIFEST_VALIDATED)
                         .success(validation_log);
-                        //continue;
+
+                        // if we are not checking ingredient trust then we can continue
+                        if !check_ingredient_trust {
+                            continue;
+                        }
                     }
 
-                    // if mismatch is not because of a redaction or this is a claim v2 we can continue else this is a hard error
-                    if !manifests_match && (!has_redactions || ingredient_version < 2) {
+                    // if mismatch is not because of a redaction this is a hard error
+                    if !manifests_match && !has_redactions {
                         log_item!(
                             c2pa_manifest.url(),
                             "ingredient hash incorrect",
@@ -1577,11 +1589,6 @@ impl Store {
                             )); // hard stop regardless of StatusTracker mode
                         }
                     }
-
-                    // only allow the extra ingredient trust checks for 1.x ingredients
-                    // these checks are to prevent the trust spoofing
-                    let check_ingredient_trust: bool = ingredient_version < 2
-                        && crate::settings::get_settings_value("verify.check_ingredient_trust")?;
 
                     // verify the ingredient claim
                     Claim::verify_claim(
@@ -1851,7 +1858,7 @@ impl Store {
             }
         };
 
-        // get info need to complete validation
+        // get info needed to complete validation
         let svi = store.get_store_validation_info(claim, asset_data, validation_log)?;
 
         // verify the provenance claim
@@ -1884,7 +1891,7 @@ impl Store {
             }
         };
 
-        // get info need to complete validation
+        // get info needed to complete validation
         let svi = store.get_store_validation_info(claim, asset_data, validation_log)?;
 
         // verify the provenance claim
@@ -2471,6 +2478,9 @@ impl Store {
             pc.replace_assertion(assertion)?;
         }
 
+        // clear the provenance claim data since the contents are now different
+        pc.clear_data();
+
         Ok(true)
     }
 
@@ -2555,26 +2565,77 @@ impl Store {
             None => return Err(Error::UnsupportedType),
         }
 
+        let output_filename = asset_path.file_name().ok_or(Error::NotFound)?;
+        let dest_path = output_path.join(output_filename);
+
         let mut validation_log =
             StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
+
+        // add dynamic assertions to the store
+        let dynamic_assertions = signer.dynamic_assertions();
+        let da_uris = self.add_dynamic_assertion_placeholders(&dynamic_assertions)?;
+
+        // get temp store as JUMBF
         let jumbf = self.to_jumbf(signer)?;
 
-        // use temp store so mulitple calls will work (the Store is not finalized this way)
+        // use temp store so mulitple calls across renditions will work (the Store is not finalized this way)
         let mut temp_store = Store::from_jumbf(&jumbf, &mut validation_log)?;
 
-        let jumbf_bytes = temp_store.start_save_bmff_fragmented(
+        let mut jumbf_bytes = temp_store.start_save_bmff_fragmented(
             asset_path,
             fragments,
             output_path,
             signer.reserve_size(),
         )?;
 
+        let mut preliminary_claim = PartialClaim::default();
+        {
+            let pc = temp_store.provenance_claim().ok_or(Error::ClaimEncoding)?;
+            for assertion in pc.assertions() {
+                preliminary_claim.add_assertion(assertion);
+            }
+        }
+
+        // Now add the dynamic assertions and update the JUMBF.
+        let modified = temp_store.write_dynamic_assertions(
+            &dynamic_assertions,
+            &da_uris,
+            &mut preliminary_claim,
+        )?;
+
+        // update the JUMBF if modified with dynamic assertions
+        if modified {
+            let pc = temp_store.provenance_claim().ok_or(Error::ClaimEncoding)?;
+            match pc.remote_manifest() {
+                RemoteManifest::NoRemote | RemoteManifest::EmbedWithRemote(_) => {
+                    jumbf_bytes = temp_store.to_jumbf_internal(signer.reserve_size())?;
+
+                    // save the jumbf to the output path
+                    save_jumbf_to_file(&jumbf_bytes, &dest_path, Some(&dest_path))?;
+
+                    let pc = temp_store
+                        .provenance_claim_mut()
+                        .ok_or(Error::ClaimEncoding)?;
+                    // generate actual hash values
+                    let bmff_hashes = pc.bmff_hash_assertions();
+
+                    if !bmff_hashes.is_empty() {
+                        let mut bmff_hash = BmffHash::from_assertion(bmff_hashes[0].assertion())?;
+                        bmff_hash.update_fragmented_inithash(&dest_path)?;
+                        pc.update_bmff_hash(bmff_hash)?;
+                    }
+
+                    // regenerate the jumbf because the cbor changed
+                    jumbf_bytes = temp_store.to_jumbf_internal(signer.reserve_size())?;
+                }
+                _ => (),
+            };
+        }
+
+        // sign the claim
         let pc = temp_store.provenance_claim().ok_or(Error::ClaimEncoding)?;
         let sig = temp_store.sign_claim(pc, signer, signer.reserve_size())?;
         let sig_placeholder = Store::sign_claim_placeholder(pc, signer.reserve_size());
-
-        let output_filename = asset_path.file_name().ok_or(Error::NotFound)?;
-        let dest_path = output_path.join(output_filename);
 
         match temp_store.finish_save(jumbf_bytes, &dest_path, sig, &sig_placeholder) {
             Ok(_) => Ok(()),
@@ -4263,7 +4324,6 @@ impl Store {
     /// ingredients conflicts
     pub fn load_ingredient_to_claim(
         claim: &mut Claim,
-        provenance_label: &str,
         data: &[u8],
         redactions: Option<Vec<String>>,
     ) -> Result<Store> {
@@ -4272,6 +4332,7 @@ impl Store {
 
         let mut report = StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
         let i_store = Store::from_jumbf(data, &mut report)?;
+        let empty_store = Store::default();
 
         // make sure the claims stores are compatible
         let ingredient_pc = i_store.provenance_claim().ok_or(Error::OtherError(
@@ -4280,11 +4341,7 @@ impl Store {
         if claim.version() < ingredient_pc.version() {
             return Err(Error::OtherError("ingredient version too new".into()));
         }
-        if ingredient_pc.label() != provenance_label {
-            return Err(Error::OtherError(
-                "ingredient provence label is incorrect".into(),
-            ));
-        }
+        let provenance_label = ingredient_pc.label();
 
         // get list of referenced manifests and redactions from ingredient provenance claim
         let mut validation_log = StatusTracker::default();
@@ -4308,55 +4365,35 @@ impl Store {
             let potential_conflicts: Vec<_> = i_store
                 .claims()
                 .iter()
-                .filter_map(|i_claim| {
-                    match claim.claim_ingredient(i_claim.label()) {
-                        Some(curr_ingredient) => {
-                            curr_ingredient.iter().find_map(|c| {
-                                if c.label() == i_claim.label() {
-                                    let i_ingredient_hashes =
-                                        i_store.get_manifest_box_hashes(i_claim);
-                                    let current_claim_hashes = i_store.get_manifest_box_hashes(c);
+                .filter(|i_claim| {
+                    for curr_ingredient in claim.claim_ingredient_store().values() {
+                        for c in curr_ingredient {
+                            if c.label() == i_claim.label() {
+                                let i_ingredient_hashes = i_store.get_manifest_box_hashes(i_claim);
+                                let current_claim_hashes = empty_store.get_manifest_box_hashes(c);
 
-                                    // if they match there is no conflict
-                                    if vec_compare(
-                                        &current_claim_hashes.manifest_box_hash,
-                                        &i_ingredient_hashes.manifest_box_hash,
-                                    ) {
-                                        None
-                                    } else {
-                                        Some(i_claim)
-                                    }
-                                } else {
-                                    None
+                                // if they match there is no conflict
+                                if !vec_compare(
+                                    &current_claim_hashes.manifest_box_hash,
+                                    &i_ingredient_hashes.manifest_box_hash,
+                                ) {
+                                    return true;
                                 }
-                            })
+                            }
                         }
-                        None => None,
                     }
+                    false
                 })
                 .collect();
 
             if !potential_conflicts.is_empty() {
                 // get info about conflicting Claim from current claim
-                let mut claim_ingredients = HashMap::with_capacity(20);
                 let mut claim_redactions: Vec<String> = redactions.clone().unwrap_or_default();
-                let _conflicting_pc = match claim.claim_ingredient(provenance_label) {
-                    Some(claims) => {
-                        for c in claims {
-                            claim_ingredients.insert(c.label(), c);
-                            if let Some(r) = c.redactions() {
-                                claim_redactions
-                                    .append(&mut r.clone().into_iter().collect::<Vec<_>>());
-                            }
-                        }
-
-                        claims
-                            .iter()
-                            .find(|c| c.label() == provenance_label)
-                            .ok_or(Error::OtherError("claim not found in store".into()))?
+                for c in claim.claim_ingredients() {
+                    if let Some(r) = c.redactions() {
+                        claim_redactions.append(&mut r.clone().into_iter().collect::<Vec<_>>());
                     }
-                    None => return Err(Error::OtherError("claim not found in store".into())),
-                };
+                }
 
                 let combined_redactions = HashSet::<_>::from_iter(
                     vec![claim_redactions.clone(), svi.redactions.clone()]
@@ -4522,8 +4559,6 @@ pub mod tests {
 
     use std::{fs, io::Write};
 
-    use c2pa_crypto::raw_signature::SigningAlg;
-    use c2pa_status_tracker::{LogItem, StatusTracker};
     use memchr::memmem;
     use serde::Serialize;
     use sha2::Sha256;
@@ -4533,8 +4568,10 @@ pub mod tests {
         assertion::AssertionJson,
         assertions::{labels::BOX_HASH, Action, Actions, BoxHash, Uuid},
         claim::AssertionStoreJsonFormat,
+        crypto::raw_signature::SigningAlg,
         hashed_uri::HashedUri,
-        jumbf_io::{get_assetio_handler_from_path, update_file_jumbf},
+        jumbf_io::get_assetio_handler_from_path,
+        status_tracker::{LogItem, StatusTracker},
         utils::{
             hash_utils::Hasher,
             patch::patch_file,
@@ -4542,8 +4579,9 @@ pub mod tests {
                 create_test_claim, fixture_path, temp_dir_path, temp_fixture_path,
                 write_jpeg_placeholder_file,
             },
-            test_signer::{async_test_signer, test_signer},
+            test_signer::{async_test_signer, test_cawg_signer, test_signer},
         },
+        ClaimGeneratorInfo,
     };
 
     fn create_editing_claim(claim: &mut Claim) -> Result<&mut Claim> {
@@ -4555,6 +4593,10 @@ pub mod tests {
             0x0b, 0x0e,
         ];
 
+        let actions = Actions::new().add_action(Action::new("c2pa.created"));
+
+        claim.add_assertion(&actions)?;
+
         let uuid_assertion = Uuid::new("test uuid", uuid_str.to_string(), some_binary_data);
 
         claim.add_assertion(&uuid_assertion)?;
@@ -4563,7 +4605,9 @@ pub mod tests {
     }
 
     fn create_capture_claim(claim: &mut Claim) -> Result<&mut Claim> {
-        let actions = Actions::new().add_action(Action::new("c2pa.created"));
+        let actions = Actions::new().add_action(
+            Action::new("c2pa.created").set_source_type("http://c2pa.org/digitalsourcetype/empty"),
+        );
 
         claim.add_assertion(&actions)?;
 
@@ -4574,7 +4618,6 @@ pub mod tests {
     #[cfg(feature = "file_io")]
     #[cfg(feature = "v1_api")]
     fn test_jumbf_generation() {
-        // test adding to actual image
         let ap = fixture_path("earth_apollo17.jpg");
         let temp_dir = tempdirectory().expect("temp dir");
         let op = temp_dir_path(&temp_dir, "test-image.jpg");
@@ -4582,58 +4625,26 @@ pub mod tests {
         // Create claims store.
         let mut store = Store::new();
 
-        // Create a new claim.
-        let claim1 = create_test_claim().unwrap();
-
-        // Create a new claim.
-        let mut claim2 = Claim::new("Photoshop", Some("Adobe"), 1);
-        create_editing_claim(&mut claim2).unwrap();
+        // ClaimGeneratorInfo is mandatory in Claim V2
+        let cgi = ClaimGeneratorInfo::new("claim_v1_unit_test");
 
         // Create a 3rd party claim
         let mut claim_capture = Claim::new("capture", Some("claim_capture"), 1);
         create_capture_claim(&mut claim_capture).unwrap();
+        claim_capture.add_claim_generator_info(cgi.clone());
 
-        // Do we generate JUMBF?
         let signer = test_signer(SigningAlg::Ps256);
 
-        // Test generate JUMBF
-        // Get labels for label test
-        let claim1_label = claim1.label().to_string();
-        let capture = claim_capture.label().to_string();
-        let claim2_label = claim2.label().to_string();
-
-        // Move the claim to claims list. Note this is not real, the claims would have to be signed in between commits
-        store.commit_claim(claim1).unwrap();
-        store.save_to_asset(&ap, signer.as_ref(), &op).unwrap();
         store.commit_claim(claim_capture).unwrap();
-        store.save_to_asset(&op, signer.as_ref(), &op).unwrap();
-        store.commit_claim(claim2).unwrap();
-        store.save_to_asset(&op, signer.as_ref(), &op).unwrap();
+        store.save_to_asset(&ap, signer.as_ref(), &op).unwrap();
 
-        // test finding claims by label
-        let c1 = store.get_claim(&claim1_label);
-        let c2 = store.get_claim(&capture);
-        let c3 = store.get_claim(&claim2_label);
-        assert_eq!(&claim1_label, c1.unwrap().label());
-        assert_eq!(&capture, c2.unwrap().label());
-        assert_eq!(claim2_label, c3.unwrap().label());
-
-        // write to new file
-        println!("Provenance: {}\n", store.provenance_path().unwrap());
+        let mut report = StatusTracker::default();
 
         // read from new file
-        let new_store = Store::load_from_asset(
-            &op,
-            true,
-            &mut StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError),
-        )
-        .unwrap();
+        let new_store = Store::load_from_asset(&op, true, &mut report).unwrap();
 
-        // can  we get by the ingredient data back
-        let _some_binary_data: Vec<u8> = vec![
-            0x0d, 0x0e, 0x0a, 0x0d, 0x0b, 0x0e, 0x0e, 0x0f, 0x0a, 0x0d, 0x0b, 0x0e, 0x0a, 0x0d,
-            0x0b, 0x0e,
-        ];
+        // should not have any
+        assert!(!report.has_any_error());
 
         // dump store and compare to original
         for claim in new_store.claims() {
@@ -4645,10 +4656,6 @@ pub mod tests {
                 .unwrap()
                 .to_json(AssertionStoreJsonFormat::OrderedList, false)
                 .unwrap();
-
-            // these better match
-            //assert_eq!(orig_json, restored_json);
-            //assert_eq!(claim.hash(), store.claims()[idx].hash());
 
             println!(
                 "Claim: {} \n{}",
@@ -4663,45 +4670,11 @@ pub mod tests {
                 claim.get_claim_assertion(&label, instance).unwrap();
             }
         }
-
-        // test patch file - bytes should be same so error should not be detected
-        let mut splice_point =
-            patch_file(&op, "thumbnail".as_bytes(), "testme".as_bytes()).unwrap();
-
-        let mut restore_point =
-            patch_file(&op, "testme".as_bytes(), "thumbnail".as_bytes()).unwrap();
-
-        assert_eq!(splice_point, restore_point);
-
-        Store::load_from_asset(
-            &op,
-            true,
-            &mut StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError),
-        )
-        .expect("Should still verify");
-
-        // test patching jumbf - error should be detected
-
-        splice_point = update_file_jumbf(&op, "thumbnail".as_bytes(), "testme".as_bytes()).unwrap();
-        restore_point =
-            update_file_jumbf(&op, "testme".as_bytes(), "thumbnail.v1".as_bytes()).unwrap();
-
-        assert_eq!(splice_point, restore_point);
-
-        Store::load_from_asset(
-            &op,
-            true,
-            &mut StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError),
-        )
-        .expect_err("Should not verify");
     }
 
     #[test]
     #[cfg(feature = "file_io")]
     fn test_claim_v2_generation() {
-        // test adding to actual image
-
-        use crate::ClaimGeneratorInfo;
         let ap = fixture_path("earth_apollo17.jpg");
         let temp_dir = tempdirectory().expect("temp dir");
         let op = temp_dir_path(&temp_dir, "test-image.jpg");
@@ -4717,17 +4690,10 @@ pub mod tests {
         create_capture_claim(&mut claim_capture).unwrap();
         claim_capture.add_claim_generator_info(cgi.clone());
 
-        // Do we generate JUMBF?
         let signer = test_signer(SigningAlg::Ps256);
 
-        // Move the claim to claims list. Note this is not real, the claims would have to be signed in between commits
-        //store.commit_claim(claim1).unwrap();
-        //store.save_to_asset(&ap, signer.as_ref(), &op).unwrap();
         store.commit_claim(claim_capture).unwrap();
         store.save_to_asset(&ap, signer.as_ref(), &op).unwrap();
-
-        // write to new file
-        println!("Provenance: {}\n", store.provenance_path().unwrap());
 
         let mut report = StatusTracker::default();
 
@@ -4766,25 +4732,40 @@ pub mod tests {
     #[test]
     #[cfg(feature = "file_io")]
     fn test_bad_claim_v2_generation() {
-        // first assertion must be Actiion c2pa.opened, c2pa.created
+        let ap = fixture_path("earth_apollo17.jpg");
+        let temp_dir = tempdirectory().expect("temp dir");
+        let op = temp_dir_path(&temp_dir, "test-image.jpg");
+
+        // Create claims store.
+        let mut store = Store::new();
+
+        // ClaimGeneratorInfo is mandatory in Claim V2
+        let cgi = ClaimGeneratorInfo::new("claim_v2_unit_test");
+
+        // Create a 3rd party claim
+        let mut claim_capture = Claim::new("capture", Some("claim_capture"), 2);
+        create_capture_claim(&mut claim_capture).unwrap();
+        claim_capture.add_claim_generator_info(cgi.clone());
+
+        // add second action to claim which is not allowed
         let action = Actions::new().add_action(Action::new("c2pa.opened"));
-        let edit_action = Actions::new().add_action(Action::new("c2pa.edited"));
+        claim_capture.add_assertion(&action).unwrap();
 
-        let my_content = r#"{"my_tag": "some value I will replace"}"#;
-        let my_label = "com.mycompany.myassertion";
-        let user = crate::assertions::User::new(my_label, my_content);
+        let signer = test_signer(SigningAlg::Ps256);
 
-        // test adding non opened or created assertion first
-        let mut claimv2 = Claim::new("Photoshop", Some("Adobe"), 2);
-        // ok to have other assertions first
-        claimv2.add_assertion(&user).unwrap();
-        // not ok to have other actions first
-        claimv2.add_assertion(&edit_action).unwrap_err();
+        store.commit_claim(claim_capture).unwrap();
+        store.save_to_asset(&ap, signer.as_ref(), &op).unwrap();
 
-        // test adding mulitple opened or created
-        let mut claimv2 = Claim::new("Photoshop", Some("Adobe"), 2);
-        claimv2.add_assertion(&action).unwrap();
-        claimv2.add_assertion(&action).unwrap_err();
+        let mut report = StatusTracker::default();
+
+        // read from new file
+        let _new_store = Store::load_from_asset(&op, true, &mut report);
+
+        // should have action errors
+        assert!(report.has_any_error());
+        assert!(report.has_error(Error::ValidationRule(
+            "only first action can be created or opened".to_string()
+        )));
     }
 
     #[test]
@@ -4899,9 +4880,7 @@ pub mod tests {
     #[test]
     #[cfg(feature = "file_io")]
     fn test_sign_with_expired_cert() {
-        use c2pa_crypto::raw_signature::SigningAlg;
-
-        use crate::create_signer;
+        use crate::{create_signer, crypto::raw_signature::SigningAlg};
 
         // test adding to actual image
         let ap = fixture_path("earth_apollo17.jpg");
@@ -5905,7 +5884,6 @@ pub mod tests {
 
         let mut new_store = Store::load_ingredient_to_claim(
             &mut claim,
-            pc.label(),
             &load_jumbf_from_memory("jpg", &ingredient_vec).unwrap(),
             None,
         )
@@ -5984,7 +5962,6 @@ pub mod tests {
 
         let mut new_store = Store::load_ingredient_to_claim(
             &mut claim,
-            pc.label(),
             &load_jumbf_from_memory("jpg", &ingredient_vec).unwrap(),
             None,
         )
@@ -6031,11 +6008,14 @@ pub mod tests {
         // add action (this is optional for update manifest)
         claim.add_assertion(&actions).unwrap();
 
+        /* sample of adding timestamp assertion
+
         // lets add a timestamp for old manifest
         let timestamp = send_timestamp_request(pc.signature_val()).unwrap();
-        c2pa_crypto::time_stamp::verify_time_stamp(&timestamp, pc.signature_val()).unwrap();
+        crate::crypto::time_stamp::verify_time_stamp(&timestamp, pc.signature_val()).unwrap();
         let timestamp_assertion = crate::assertions::TimeStamp::new(pc.label(), &timestamp);
         claim.add_assertion(&timestamp_assertion).unwrap();
+        */
 
         new_store.commit_update_manifest(claim).unwrap();
         new_store
@@ -6055,6 +6035,167 @@ pub mod tests {
         // should not have any errors
         assert!(!um_report.has_any_error());
     }
+
+    #[test]
+    #[cfg(feature = "file_io")]
+    #[cfg(feature = "v1_api")]
+    fn test_update_manifest_with_timestamp_assertion() {
+        // add timestamp assertion to update manifest
+        let ap = fixture_path("update_manifest.jpg");
+
+        let mut report = StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
+        let restored_store = Store::load_from_asset(ap.as_path(), true, &mut report).unwrap();
+        let pc = restored_store.provenance_claim().unwrap();
+
+        // should be an update manifest
+        assert!(pc.update_manifest());
+    }
+
+    /*
+    #[test]
+    #[cfg(feature = "file_io")]
+    #[cfg(feature = "v1_api")]
+    fn test_ingredient_conflict_with_current_manifest() {
+        use crate::{
+            hashed_uri::HashedUri, jumbf::labels::to_signature_uri,
+            jumbf_io::load_jumbf_from_memory, utils::test::create_test_store, ClaimGeneratorInfo,
+            ValidationResults,
+        };
+
+        let signer = test_signer(SigningAlg::Ps256);
+
+        // test adding to actual image
+        let ap = fixture_path("earth_apollo17.jpg");
+        let temp_dir = tempdirectory().expect("temp dir");
+        let op = temp_dir_path(&temp_dir, "update_manifest.jpg");
+
+        // get default store with default claim
+        let mut store = create_test_store().unwrap();
+
+        // save to output
+        store
+            .save_to_asset(ap.as_path(), signer.as_ref(), op.as_path())
+            .unwrap();
+
+        let mut report = StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
+        // read back in
+        let ingredient_vec = std::fs::read(op.as_path()).unwrap();
+        let restored_store =
+            Store::load_from_memory("jpg", &ingredient_vec, true, &mut report).unwrap();
+        let pc = restored_store.provenance_claim().unwrap();
+
+        // should be a regular manifest
+        assert!(!pc.update_manifest());
+
+        // create a new update manifest
+        let mut claim = Claim::new("adobe unit test", Some("update_manifest_1"), 2);
+        // ClaimGeneratorInfo is mandatory in Claim V2
+        let cgi = ClaimGeneratorInfo::new("claim_v2_unit_test");
+        claim.add_claim_generator_info(cgi);
+
+        // created redacted uri
+        let redacted_uri = to_assertion_uri(pc.label(), labels::SCHEMA_ORG);
+
+        let mut redacted_store = Store::load_ingredient_to_claim(
+            &mut claim,
+            &load_jumbf_from_memory("jpg", &ingredient_vec).unwrap(),
+            Some(vec![redacted_uri]),
+        )
+        .unwrap();
+
+        let ingredient_hashes = restored_store.get_manifest_box_hashes(pc);
+        let parent_hashed_uri = HashedUri::new(
+            restored_store.provenance_path().unwrap(),
+            Some(pc.alg().to_string()),
+            &ingredient_hashes.manifest_box_hash,
+        );
+        let signature_hashed_uri = HashedUri::new(
+            to_signature_uri(pc.label()),
+            Some(pc.alg().to_string()),
+            &ingredient_hashes.signature_box_hash,
+        );
+
+        let validation_results = ValidationResults::from_store(&restored_store, &report);
+
+        let ingredient = Ingredient::new_v3(Relationship::ParentOf)
+            .set_active_manifests_and_signature_from_hashed_uri(
+                Some(parent_hashed_uri),
+                Some(signature_hashed_uri),
+            ) // mandatory for v3
+            .set_validation_results(Some(validation_results)); // mandatory for v3
+
+        claim.add_assertion(&ingredient).unwrap();
+
+        // create mandatory opened action (optional for update manifest)
+        let ingredient = claim.ingredient_assertions()[0];
+        let ingregient_uri = to_assertion_uri(claim.label(), &ingredient.label());
+        let ingredient_hashed_uri = HashedUri::new(
+            ingregient_uri,
+            Some(claim.alg().to_owned()),
+            ingredient.hash(),
+        );
+
+        let opened = Action::new("c2pa.opened")
+            .set_parameter("ingredients", vec![ingredient_hashed_uri])
+            .unwrap();
+        let em = Action::new("c2pa.edited.metadata");
+        let actions = Actions::new().add_action(opened).add_action(em);
+
+        // add action (this is optional for update manifest)
+        claim.add_assertion(&actions).unwrap();
+
+        redacted_store.commit_update_manifest(claim).unwrap();
+        redacted_store
+            .save_to_asset(op.as_path(), signer.as_ref(), op.as_path())
+            .unwrap();
+
+        let mut um_report = StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
+
+        // read back in store with update manifest
+        let um_store = Store::load_from_asset(op.as_path(), true, &mut um_report).unwrap();
+
+        let um = um_store.provenance_claim().unwrap();
+
+        // should be an update manifest
+        assert!(um.update_manifest());
+
+        // should not have any errors
+        assert!(!um_report.has_any_error());
+
+        // add ingredient again without redaction to make sure conflict is resolved with current redaction
+        let mut new_claim = Claim::new("adobe unit test", Some("update_manifest_2"), 2);
+        // ClaimGeneratorInfo is mandatory in Claim V2
+        let cgi = ClaimGeneratorInfo::new("claim_v2_unit_test");
+        new_claim.add_claim_generator_info(cgi);
+
+        // load ingredient with redaction
+        Store::load_ingredient_to_claim(
+            &mut new_claim,
+            &load_jumbf_from_file(op.as_path()).unwrap(),
+            None,
+        )
+        .unwrap();
+
+        // load original ingredient without redaction
+        let _conflict_store = Store::load_ingredient_to_claim(
+            &mut new_claim,
+            &load_jumbf_from_memory("jpg", &ingredient_vec).unwrap(),
+            None,
+        )
+        .unwrap();
+    }
+    */
+
+    /*
+        #[test]
+        fn test_ingredient_conflict_with_incoming_manifest() {
+            // add ingredient with same label as current manifest
+            let ap = fixture_path("update_manifest.jpg");
+            let mut report = StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
+            let restored_store = Store::load_from_asset(ap.as_path(), true, &mut report).unwrap();
+            let pc = restored_store.provenance_claim().unwrap();
+        }
+    */
 
     #[test]
     fn test_claim_decoding() {
@@ -6098,15 +6239,9 @@ pub mod tests {
         const REPLACE_BYTES: &[u8] =
             b"c2pa_manifest\xA3\x63url\x78\x4aself#jumbf=/c2pa/contentauth:urn:uuix:";
         let report = patch_and_report("CIE-sig-CA.jpg", SEARCH_BYTES, REPLACE_BYTES);
-        let errors: Vec<c2pa_status_tracker::LogItem> = report.filter_errors().cloned().collect();
-        assert_eq!(
-            errors[0].validation_status.as_deref(),
-            Some(validation_status::ASSERTION_HASHEDURI_MISMATCH)
-        );
-        assert_eq!(
-            errors[1].validation_status.as_deref(),
-            Some(validation_status::CLAIM_MISSING)
-        );
+
+        assert!(report.has_status(validation_status::ASSERTION_HASHEDURI_MISMATCH));
+        assert!(report.has_status(validation_status::CLAIM_MISSING));
     }
 
     #[test]
@@ -6118,20 +6253,23 @@ pub mod tests {
         println!("store = {store}");
     }
 
+    /* sample of adding timestamp assertion
     fn send_timestamp_request(message: &[u8]) -> Result<Vec<u8>> {
         let url = "http://timestamp.digicert.com";
 
-        let body = c2pa_crypto::time_stamp::default_rfc3161_message(message)?;
+        let body = crate::crypto::time_stamp::default_rfc3161_message(message)?;
         let headers = None;
 
-        let bytes = c2pa_crypto::time_stamp::default_rfc3161_request(url, headers, &body, message)
-            .map_err(|_e| Error::OtherError("timestamp token not found".into()))?;
+        let bytes =
+            crate::crypto::time_stamp::default_rfc3161_request(url, headers, &body, message)
+                .map_err(|_e| Error::OtherError("timestamp token not found".into()))?;
 
-        let token = c2pa_crypto::cose::timestamptoken_from_timestamprsp(&bytes)
+        let token = crate::crypto::cose::timestamptoken_from_timestamprsp(&bytes)
             .ok_or(Error::OtherError("timestamp token not found".into()))?;
 
         Ok(token)
     }
+    */
 
     #[test]
     fn test_legacy_ingredient_hash() {
@@ -6144,11 +6282,19 @@ pub mod tests {
 
     #[test]
     fn test_bmff_legacy() {
+        crate::settings::set_settings_value("verify.verify_trust", false).unwrap();
+
         // test 1.0 bmff hash
         let ap = fixture_path("legacy.mp4");
         let mut report = StatusTracker::default();
-        let store = Store::load_from_asset(&ap, true, &mut report).expect("load_from_asset");
-        println!("store = {store}");
+        let store = Store::load_from_asset(&ap, true, &mut report);
+
+        // expect action error
+        assert!(store.is_err());
+        assert!(report.has_error(Error::ValidationRule(
+            "opened, placed and removed items must have parameters".into()
+        )));
+        assert!(report.filter_errors().count() == 2);
     }
 
     #[test]
@@ -7390,7 +7536,8 @@ pub mod tests {
                     store.commit_claim(claim).unwrap();
 
                     // Do we generate JUMBF?
-                    let signer = test_signer(SigningAlg::Ps256);
+                    let signer =
+                        test_cawg_signer(SigningAlg::Ps256, &[labels::SCHEMA_ORG]).unwrap();
 
                     // Use Tempdir for automatic cleanup
                     let new_subdir = tempfile::TempDir::new_in(output_path)

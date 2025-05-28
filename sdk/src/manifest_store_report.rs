@@ -17,16 +17,16 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use atree::{Arena, Token};
-use c2pa_crypto::base64;
-#[cfg(feature = "v1_api")]
-use c2pa_status_tracker::StatusTracker;
 use extfmt::Hexlify;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+#[cfg(feature = "v1_api")]
+use crate::status_tracker::StatusTracker;
 use crate::{
-    assertion::AssertionData, claim::Claim, store::Store, validation_results::ValidationResults,
-    validation_status::ValidationStatus, Result, ValidationState,
+    assertion::AssertionData, claim::Claim, crypto::base64, store::Store,
+    validation_results::ValidationResults, validation_status::ValidationStatus, Result,
+    ValidationState,
 };
 
 /// Low level JSON based representation of Manifest Store - used for debugging

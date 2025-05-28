@@ -255,6 +255,7 @@ pub fn save_jumbf_to_file<P1: AsRef<Path>, P2: AsRef<Path>>(
 /// returns the location where splice occurred
 #[cfg(test)] // this only used in unit tests
 #[cfg(feature = "file_io")]
+#[allow(dead_code)]
 pub(crate) fn update_file_jumbf(
     out_path: &Path,
     search_bytes: &[u8],
@@ -356,11 +357,10 @@ pub mod tests {
 
     use std::io::Seek;
 
-    use c2pa_crypto::raw_signature::SigningAlg;
-
     use super::*;
     use crate::{
         asset_io::RemoteRefEmbedType,
+        crypto::raw_signature::SigningAlg,
         utils::{test::create_test_store, test_signer::test_signer},
     };
 

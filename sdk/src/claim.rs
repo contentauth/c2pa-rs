@@ -14,18 +14,11 @@
 #[cfg(feature = "file_io")]
 use std::path::Path;
 use std::{
-    borrow::Cow,
     collections::{HashMap, HashSet},
     fmt,
 };
 
 use async_generic::async_generic;
-use c2pa_crypto::{
-    base64,
-    cose::{parse_cose_sign1, CertificateInfo, CertificateTrustPolicy, OcspFetchPolicy},
-    ocsp::OcspResponse,
-};
-use c2pa_status_tracker::{log_item, ErrorBehavior, StatusTracker};
 use chrono::{DateTime, Utc};
 use serde::{ser::SerializeStruct, Deserialize, Serialize, Serializer};
 use serde_json::{json, Map, Value};
@@ -38,13 +31,18 @@ use crate::{
     },
     assertions::{
         self, c2pa_action,
-        labels::{ACTIONS, ASSERTION_STORE, BMFF_HASH, CLAIM_THUMBNAIL, DATABOX_STORE},
+        labels::{self, ACTIONS, ASSERTION_STORE, BMFF_HASH, CLAIM_THUMBNAIL, DATABOX_STORE},
         Actions, AssetType, BmffHash, BoxHash, DataBox, DataHash, Ingredient, Metadata,
         Relationship, V2_DEPRECATED_ACTIONS,
     },
     asset_io::CAIRead,
     cbor_types::{map_cbor_to_type, value_cbor_to_type},
     cose_validator::{get_signing_info, get_signing_info_async, verify_cose, verify_cose_async},
+    crypto::{
+        base64,
+        cose::{parse_cose_sign1, CertificateInfo, CertificateTrustPolicy, OcspFetchPolicy},
+        ocsp::OcspResponse,
+    },
     error::{Error, Result},
     hashed_uri::HashedUri,
     jumbf::{
@@ -60,18 +58,20 @@ use crate::{
         },
     },
     jumbf_io::get_assetio_handler,
+    log_item,
     resource_store::UriOrResource,
     salt::{DefaultSalt, SaltGenerator, NO_SALT},
     settings::get_settings_value,
+    status_tracker::{ErrorBehavior, StatusTracker},
     store::StoreValidationInfo,
-    utils::hash_utils::{hash_by_alg, vec_compare, verify_by_alg},
+    utils::hash_utils::{hash_by_alg, vec_compare},
     validation_status, ClaimGeneratorInfo, HashRange,
 };
 
 const BUILD_HASH_ALG: &str = "sha256";
 const BUILD_VER_SUPPORT: usize = 2;
 
-/// JSON structure representing an Assertion reference in a Claim's "assertions" list
+/// JSON structure representing an Assertion reference in a Claim's "assertions" list.
 use HashedUri as C2PAAssertion;
 
 const GH_FULL_VERSION_LIST: &str = "Sec-CH-UA-Full-Version-List";
@@ -704,6 +704,7 @@ impl Claim {
             let metadata: Option<Vec<Metadata>> = map_cbor_to_type(METADATA_F, &claim_value);
 
             // create merged list of created and gathered assertions for processing compatibility
+            // created are added first with highest priority than gathered
             let mut assertions = created_assertions.clone();
             if let Some(ga) = &gathered_assertions {
                 assertions.append(&mut ga.clone());
@@ -1809,21 +1810,7 @@ impl Claim {
         let sign1 = parse_cose_sign1(&sig, &data, validation_log)?;
 
         // check certificate revocation
-        check_ocsp_status(&sign1, &data, ctp, validation_log).map(|v| {
-            // if a value contains the der response it has successfully returned a good OCSP response
-            if !v.ocsp_der.is_empty() {
-                // so log the success status
-                if v.revoked_at.is_none() {
-                    log_item!(
-                        claim.uri(),
-                        "claim signature OCSP value good",
-                        "verify_claim_async"
-                    )
-                    .validation_status(validation_status::SIGNING_CREDENTIAL_NOT_REVOKED)
-                    .success(validation_log);
-                }
-            }
-        })?;
+        check_ocsp_status(&sign1, &data, ctp, validation_log)?;
 
         let verified = verify_cose_async(
             &sig,
@@ -1883,21 +1870,7 @@ impl Claim {
         let sign1 = parse_cose_sign1(sig, data, validation_log)?;
 
         // check certificate revocation
-        check_ocsp_status(&sign1, data, ctp, validation_log).map(|v| {
-            // if a value contains the der response it has successfully returned a good OCSP response
-            if !v.ocsp_der.is_empty() {
-                // so log the success status
-                if v.revoked_at.is_none() {
-                    log_item!(
-                        claim.uri(),
-                        "claim signature OCSP value good",
-                        "verify_claim"
-                    )
-                    .validation_status(validation_status::SIGNING_CREDENTIAL_NOT_REVOKED)
-                    .success(validation_log);
-                }
-            }
-        })?;
+        check_ocsp_status(&sign1, data, ctp, validation_log)?;
 
         let verified = verify_cose(
             sig,
@@ -1936,9 +1909,24 @@ impl Claim {
     ) -> Result<()> {
         let all_actions = claim.action_assertions();
         let created_actions = claim.created_action_assertions();
+        let gathered_actions = claim.gathered_action_assertions();
         let claim_label = claim.label().to_owned();
 
-        // make sure every action has an actions array that is not empty
+        // for v1 claims check the single actions assertion
+        if claim.version() < 2 && all_actions.len() > 1 {
+            log_item!(
+                claim_label.clone(),
+                "only one action assertion allowed for v1 claims",
+                "verify_actions"
+            )
+            .validation_status(validation_status::ASSERTION_ACTION_MALFORMED)
+            .failure(
+                validation_log,
+                Error::ValidationRule("No Action array in Actions".into()),
+            )?;
+        }
+
+        // 1. make sure every action has an actions array that is not empty
         if let Some(bad_assertion) = all_actions.iter().find(|a| {
             if let Ok(actions) = Actions::from_assertion(a.assertion()) {
                 actions.actions().is_empty()
@@ -1955,43 +1943,65 @@ impl Claim {
                 )?;
         }
 
-        // check Claim.v2 first action rules, do not apply to update manifests
-        let first_actions_assertion = if claim.version() > 1 && !claim.update_manifest() {
-            let assertion = created_actions.first().ok_or_else(|| {
-                log_item!(
-                    claim_label.clone(),
-                    "must have a created Action",
-                    "verify_actions"
-                )
-                .validation_status(validation_status::ASSERTION_ACTION_MALFORMED)
-                .failure_as_err(
-                    validation_log,
-                    Error::ValidationRule("No mandatory Actions found".into()),
-                )
-            })?;
+        // check Claim.v2 first action rules
+        let first_actions_assertion = if claim.version() > 1 {
+            // check created actions first
+            let mut found_first_action = None;
 
-            let first_actions = Actions::from_assertion(assertion.assertion())?;
-            let first_actions_first_action = &first_actions.actions()[0];
+            if let Some(assertion) = created_actions.first() {
+                let first_actions = Actions::from_assertion(assertion.assertion())?;
+                let first_actions_first_action = &first_actions.actions()[0];
 
-            // 2.b first create_assertion actions assertion must start with an open or created action
-            if !(first_actions_first_action.action() == c2pa_action::OPENED
-                || first_actions_first_action.action() == c2pa_action::CREATED)
-            {
-                log_item!(
-                    claim_label.clone(),
-                    "first action must be created or opened",
-                    "verify_actions"
-                )
-                .validation_status(validation_status::ASSERTION_ACTION_MALFORMED)
-                .failure(
-                    validation_log,
-                    Error::ValidationRule("first action must be created or opened".into()),
-                )?;
+                if first_actions_first_action.action() == c2pa_action::OPENED
+                    || first_actions_first_action.action() == c2pa_action::CREATED
+                {
+                    found_first_action = Some(assertion);
+                }
             }
-            Some(assertion)
+
+            // check gathered actions if not found in created actions
+            if found_first_action.is_none() {
+                if let Some(assertion) = gathered_actions.first() {
+                    let first_actions = Actions::from_assertion(assertion.assertion())?;
+                    let first_actions_first_action = &first_actions.actions()[0];
+
+                    if first_actions_first_action.action() == c2pa_action::OPENED
+                        || first_actions_first_action.action() == c2pa_action::CREATED
+                    {
+                        found_first_action = Some(assertion);
+                    }
+                }
+            }
+            found_first_action
         } else {
-            None
+            let mut found_first_action = None;
+            // for v1 claims check the single assertion store
+            if let Some(assertion) = all_actions.first() {
+                let first_actions = Actions::from_assertion(assertion.assertion())?;
+                let first_actions_first_action = &first_actions.actions()[0];
+
+                if first_actions_first_action.action() == c2pa_action::OPENED
+                    || first_actions_first_action.action() == c2pa_action::CREATED
+                {
+                    found_first_action = Some(assertion);
+                }
+            }
+            found_first_action
         };
+
+        // 2.a first actions assertion must start with an open or created action, do not apply to update manifests
+        if first_actions_assertion.is_none() && !claim.update_manifest() {
+            log_item!(
+                claim_label,
+                "first action must be created or opened",
+                "verify_actions"
+            )
+            .validation_status(validation_status::ASSERTION_ACTION_MALFORMED)
+            .failure(
+                validation_log,
+                Error::ValidationRule("first action must be created or opened".into()),
+            )?;
+        }
 
         // perform all actions checks
         for (index, actions_assertion) in all_actions.iter().enumerate() {
@@ -2013,7 +2023,7 @@ impl Claim {
             }
 
             let mut icons = Vec::new();
-            // 2.h Actions icons
+            // 2.e.i Actions icons
             if let Some(cgi_vec) = actions.software_agents() {
                 for cgi in cgi_vec {
                     if let Some(UriOrResource::HashedUri(icon)) = cgi.icon() {
@@ -2021,7 +2031,7 @@ impl Claim {
                     }
                 }
             }
-            // 2.i Template icons
+            // 2.f Template icons
             if let Some(template_vec) = actions.templates() {
                 for template in template_vec {
                     if let Some(UriOrResource::HashedUri(icon)) = &template.icon {
@@ -2049,7 +2059,7 @@ impl Claim {
                     )?;
                 }
 
-                // 2.c any other actions assertions cannot contain created or opened actions (v2 claim)
+                // 2.a any other actions assertions cannot contain created or opened actions (v2 claim)
                 if let Some(fa) = first_actions_assertion {
                     if fa != actions_assertion
                         && (action.action() == c2pa_action::OPENED
@@ -2057,20 +2067,20 @@ impl Claim {
                     {
                         log_item!(
                             label.clone(),
-                            "only first actions can be created or opened",
+                            "only first action can be created or opened",
                             "verify_actions"
                         )
                         .validation_status(validation_status::ASSERTION_ACTION_MALFORMED)
                         .failure(
                             validation_log,
                             Error::ValidationRule(
-                                "only first actions can be created or opened".into(),
+                                "only first action can be created or opened".into(),
                             ),
                         )?;
                     }
                 }
 
-                // 2.d created or opened must be first action
+                // 2.a created or opened must be first action
                 if index != 0
                     && (action.action() == c2pa_action::OPENED
                         || action.action() == c2pa_action::CREATED)
@@ -2087,11 +2097,12 @@ impl Claim {
                     )?;
                 }
 
-                // 2.e rules
+                // 2.b rules
                 if action.action() == c2pa_action::OPENED
                     || action.action() == c2pa_action::PLACED
                     || action.action() == c2pa_action::REMOVED
                 {
+                    // 2.b.i must have parameters
                     let params = action.parameters().ok_or_else(||
                         // 2.e.i
                         log_item!(
@@ -2107,7 +2118,7 @@ impl Claim {
                             ),
                         ))?;
 
-                    // 2.e.ii must have ingredient or ingredients param
+                    // 2.b.ii must have ingredient or ingredients param
                     if params.get("ingredients").is_none() && params.get("ingredient").is_none() {
                         log_item!(
                             label.clone(),
@@ -2121,7 +2132,7 @@ impl Claim {
                         )?;
                     }
 
-                    // 2.e.iii if ingredients, must be an array with at least one item
+                    // 2.b.iii if ingredients, must be an array with at least one item
                     if let Some(v) = params.get("ingredients") {
                         let good_val = if let serde_cbor::Value::Array(ingredients) = v {
                             !ingredients.is_empty()
@@ -2143,7 +2154,7 @@ impl Claim {
                         }
                     }
 
-                    // 2.e.iv.A opened must have a parentOf
+                    // 2.b.iv.A opened must have a parentOf
                     if action.action() == c2pa_action::OPENED {
                         let mut found_good = 0usize;
 
@@ -2169,22 +2180,9 @@ impl Claim {
                             // is it referenced from this manifest
                             if claim.ingredient_assertions().iter().any(|i| {
                                 if let Ok(ingredient) = Ingredient::from_assertion(i.assertion()) {
-                                    if let Some(ingredient_parent_uri) = ingredient.c2pa_manifest()
-                                    {
-                                        if let Some(ingredient_parent) =
-                                            manifest_label_from_uri(&ingredient_parent_uri.url())
-                                        {
-                                            if let Some(target_label) =
-                                                assertion_label_from_uri(&h.url())
-                                            {
-                                                return target_label == i.label()
-                                                    && svi
-                                                        .ingredient_references
-                                                        .contains_key(&ingredient_parent)
-                                                    && ingredient.relationship
-                                                        == Relationship::ParentOf;
-                                            }
-                                        }
+                                    if let Some(target_label) = assertion_label_from_uri(&h.url()) {
+                                        return target_label == i.label()
+                                            && ingredient.relationship == Relationship::ParentOf;
                                     }
                                 }
                                 false
@@ -2214,23 +2212,15 @@ impl Claim {
                                 // can we find a reference in the ingredient list
                                 // is it referenced from this manifest
                                 if claim.ingredient_assertions().iter().any(|i| {
-                                    if let Ok(ingredient) = Ingredient::from_assertion(i.assertion()) {
-                                        if let Some(ingredient_parent_uri) = ingredient.c2pa_manifest()
+                                    if let Ok(ingredient) =
+                                        Ingredient::from_assertion(i.assertion())
+                                    {
+                                        if let Some(target_label) =
+                                            assertion_label_from_uri(&h.url())
                                         {
-                                            if let Some(ingredient_parent) =
-                                                manifest_label_from_uri(&ingredient_parent_uri.url())
-                                            {
-                                                if let Some(target_label) =
-                                                    assertion_label_from_uri(&h.url())
-                                                {
-                                                    return target_label == i.label()
-                                                        && svi
-                                                            .ingredient_references
-                                                            .contains_key(&ingredient_parent)
-                                                        && ingredient.relationship
-                                                            == Relationship::ParentOf;
-                                                }
-                                            }
+                                            return target_label == i.label()
+                                                && ingredient.relationship
+                                                    == Relationship::ParentOf;
                                         }
                                     }
                                     false
@@ -2259,7 +2249,7 @@ impl Claim {
                         }
                     }
 
-                    // 2.e.iv.B, 2.e.iv.B must have a ComponentOf
+                    // 2.b.iv.B, 2.b.iv.C must have a ComponentOf
                     if action.action() == c2pa_action::PLACED
                         || action.action() == c2pa_action::REMOVED
                     {
@@ -2287,22 +2277,10 @@ impl Claim {
                             // is it referenced from this manifest
                             if claim.ingredient_assertions().iter().any(|i| {
                                 if let Ok(ingredient) = Ingredient::from_assertion(i.assertion()) {
-                                    if let Some(ingredient_parent_uri) = ingredient.c2pa_manifest()
-                                    {
-                                        if let Some(ingredient_parent) =
-                                            manifest_label_from_uri(&ingredient_parent_uri.url())
-                                        {
-                                            if let Some(target_label) =
-                                                assertion_label_from_uri(&h.url())
-                                            {
-                                                return target_label == i.label()
-                                                    && svi
-                                                        .ingredient_references
-                                                        .contains_key(&ingredient_parent)
-                                                    && ingredient.relationship
-                                                        == Relationship::ComponentOf;
-                                            }
-                                        }
+                                    if let Some(target_label) = assertion_label_from_uri(&h.url()) {
+                                        return target_label == i.label()
+                                            && ingredient.relationship
+                                                == Relationship::ComponentOf;
                                     }
                                 }
                                 false
@@ -2332,26 +2310,19 @@ impl Claim {
                                 // can we find a reference in the ingredient list
                                 // is it referenced from this manifest
                                 if claim.ingredient_assertions().iter().any(|i| {
-                                    if let Ok(ingredient) = Ingredient::from_assertion(i.assertion()) {
-                                        if let Some(ingredient_parent_uri) = ingredient.c2pa_manifest() {
-                                            if let Some(ingredient_parent) =
-                                                manifest_label_from_uri(&ingredient_parent_uri.url())
-                                            {
-                                                if let Some(target_label) =
-                                                    assertion_label_from_uri(&h.url())
-                                                {
-                                                    return target_label == i.label()
-                                                        && svi
-                                                            .ingredient_references
-                                                            .contains_key(&ingredient_parent)
-                                                        && ingredient.relationship
-                                                            == Relationship::ComponentOf;
-                                                }
-                                            }
+                                    if let Ok(ingredient) =
+                                        Ingredient::from_assertion(i.assertion())
+                                    {
+                                        if let Some(target_label) =
+                                            assertion_label_from_uri(&h.url())
+                                        {
+                                            return target_label == i.label()
+                                                && ingredient.relationship
+                                                    == Relationship::ComponentOf;
                                         }
                                     }
-                                        false
-                                    }) {
+                                    false
+                                }) {
                                     found_good = 1;
                                 }
                             }
@@ -2376,7 +2347,7 @@ impl Claim {
                     }
                 }
 
-                // 2.f if ingredient is present it must be a valid parentOf reference
+                // 2.c if ingredient is present it must be a valid parentOf reference
                 if action.action() == c2pa_action::TRANSCODED
                     || action.action() == c2pa_action::REPACKAGED
                 {
@@ -2418,21 +2389,9 @@ impl Claim {
                         // is it referenced from this manifest
                         if claim.ingredient_assertions().iter().any(|i| {
                             if let Ok(ingredient) = Ingredient::from_assertion(i.assertion()) {
-                                if let Some(ingredient_parent_uri) = ingredient.c2pa_manifest() {
-                                    if let Some(ingredient_parent) =
-                                        manifest_label_from_uri(&ingredient_parent_uri.url())
-                                    {
-                                        if let Some(target_label) =
-                                            assertion_label_from_uri(&h.url())
-                                        {
-                                            return target_label == i.label()
-                                                && svi
-                                                    .ingredient_references
-                                                    .contains_key(&ingredient_parent)
-                                                && ingredient.relationship
-                                                    == Relationship::ParentOf;
-                                        }
-                                    }
+                                if let Some(target_label) = assertion_label_from_uri(&h.url()) {
+                                    return target_label == i.label()
+                                        && ingredient.relationship == Relationship::ParentOf;
                                 }
                             }
                             false
@@ -2467,22 +2426,9 @@ impl Claim {
                             // is it referenced from this manifest
                             if claim.ingredient_assertions().iter().any(|i| {
                                 if let Ok(ingredient) = Ingredient::from_assertion(i.assertion()) {
-                                    if let Some(ingredient_parent_uri) = ingredient.c2pa_manifest()
-                                    {
-                                        if let Some(ingredient_parent) =
-                                            manifest_label_from_uri(&ingredient_parent_uri.url())
-                                        {
-                                            if let Some(target_label) =
-                                                assertion_label_from_uri(&h.url())
-                                            {
-                                                return target_label == i.label()
-                                                    && svi
-                                                        .ingredient_references
-                                                        .contains_key(&ingredient_parent)
-                                                    && ingredient.relationship
-                                                        == Relationship::ParentOf;
-                                            }
-                                        }
+                                    if let Some(target_label) = assertion_label_from_uri(&h.url()) {
+                                        return target_label == i.label()
+                                            && ingredient.relationship == Relationship::ParentOf;
                                     }
                                 }
                                 false
@@ -2513,7 +2459,7 @@ impl Claim {
                     }
                 }
 
-                // 2.g if redacted actions contains a redacted parameter if must be a resolvable reference
+                // 2.d if redacted actions contains a redacted parameter if must be a resolvable reference
                 if action.action() == c2pa_action::REDACTED {
                     if let Some(params) = action.parameters() {
                         let mut parent_tested = None; // on exists if action actually pointed to an ingredient
@@ -2669,25 +2615,14 @@ impl Claim {
                 }
             }
             Err(parse_err) => {
-                // the lower level errors are logged validation_log
-                // continue on to catch other failures.
-
-                // adjust the error info
-                if let Some(li) = validation_log.logged_items_mut().last_mut() {
-                    let mut new_li = li.clone();
-                    new_li.label = Cow::from(claim.uri());
-
-                    *li = new_li;
-                } else {
-                    // handle case where lower level failed to log
-                    log_item!(
-                        claim.signature_uri(),
-                        "claim signature is not valid",
-                        "verify_internal"
-                    )
-                    .validation_status(validation_status::CLAIM_SIGNATURE_MISMATCH)
-                    .failure_no_throw(validation_log, parse_err);
-                }
+                // handle case where lower level failed to log
+                log_item!(
+                    claim.signature_uri(),
+                    "claim signature is not valid",
+                    "verify_internal"
+                )
+                .validation_status(validation_status::CLAIM_SIGNATURE_MISMATCH)
+                .failure_no_throw(validation_log, parse_err);
             }
         };
 
@@ -2709,11 +2644,9 @@ impl Claim {
         // check for self redacted assertions and illegal redactions
         if let Some(redactions) = claim.redactions() {
             for r in redactions {
-                let r_manifest = jumbf::labels::manifest_label_from_uri(r)
-                    .ok_or(Error::AssertionInvalidRedaction)?;
-                if claim.label().contains(&r_manifest) {
+                if r.contains(claim.label()) {
                     log_item!(
-                        claim.uri(),
+                        r.to_owned(),
                         "claim contains self redaction",
                         "verify_internal"
                     )
@@ -2721,13 +2654,33 @@ impl Claim {
                     .failure(validation_log, Error::ClaimSelfRedact)?;
                 }
 
-                if r.contains(assertions::labels::ACTIONS) {
+                if r.contains(labels::ACTIONS) {
                     log_item!(
-                        claim.uri(),
+                        r.to_owned(),
                         "redaction of action assertions disallowed",
                         "verify_internal"
                     )
-                    .validation_status(validation_status::ACTION_ASSERTION_REDACTED)
+                    .validation_status(validation_status::ASSERTION_ACTION_REDACTED)
+                    .failure(validation_log, Error::ClaimDisallowedRedaction)?;
+                }
+
+                const DISALLOWED_HASH_REDACTIONS: [&str; 4] = [
+                    labels::DATA_HASH,
+                    labels::BOX_HASH,
+                    labels::BMFF_HASH,
+                    labels::COLLECTION_HASH,
+                ];
+
+                if DISALLOWED_HASH_REDACTIONS
+                    .iter()
+                    .any(|label| r.contains(label))
+                {
+                    log_item!(
+                        r.to_owned(),
+                        "redaction of disallowed hash assertion",
+                        "verify_internal"
+                    )
+                    .validation_status(validation_status::ASSERTION_DATAHASH_REDACTED)
                     .failure(validation_log, Error::ClaimDisallowedRedaction)?;
                 }
             }
@@ -2893,6 +2846,7 @@ impl Claim {
             match claim.get_claim_assertion(&label, instance) {
                 // get the assertion if label and hash match
                 Some(ca) => {
+                    // if not a redaction then we must check the hash
                     if !vec_compare(ca.hash(), &assertion.hash()) {
                         log_item!(
                             assertion_absolute_uri.clone(),
@@ -2958,15 +2912,16 @@ impl Claim {
 
         // verify data hashes for provenance claims
         if claim.label() == svi.binding_claim {
+            let hash_assertions = claim.hash_assertions();
             // must have at least one hard binding for normal manifests
-            if claim.hash_assertions().is_empty() && !claim.update_manifest() {
+            if hash_assertions.is_empty() && !claim.update_manifest() {
                 log_item!(claim.uri(), "claim missing data binding", "verify_internal")
                     .validation_status(validation_status::HARD_BINDINGS_MISSING)
                     .failure(validation_log, Error::ClaimMissingHardBinding)?;
             }
 
             // must have exactly one hard binding for normal manifests
-            if claim.hash_assertions().len() != 1 && !claim.update_manifest() {
+            if hash_assertions.len() != 1 && !claim.update_manifest() {
                 log_item!(
                     claim.uri(),
                     "claim has multiple data bindings",
@@ -2977,7 +2932,7 @@ impl Claim {
             }
 
             // update manifests cannot have data hashes
-            if !claim.hash_assertions().is_empty() && claim.update_manifest() {
+            if !hash_assertions.is_empty() && claim.update_manifest() {
                 log_item!(
                     claim.uri(),
                     "update manifests cannot contain data hash assertions",
@@ -2988,7 +2943,7 @@ impl Claim {
             }
 
             // while this is a vec the spec only expects one at the moment and is checked above
-            for hash_binding_assertion in claim.hash_assertions() {
+            for hash_binding_assertion in hash_assertions {
                 if hash_binding_assertion.label_raw() == DataHash::LABEL {
                     let mut dh = DataHash::from_assertion(hash_binding_assertion.assertion())?;
                     let name = dh.name.as_ref().map_or(UNNAMED.to_string(), default_str);
@@ -3205,19 +3160,6 @@ impl Claim {
         Ok(())
     }
 
-    /// Verify hash against self.  True if match,
-    /// false if no match or unsupported
-    pub fn verify_hash(&self, hash: &[u8]) -> bool {
-        // get hash of self for comparison
-        if let Some(ref original_bytes) = self.original_bytes {
-            verify_by_alg(self.alg(), hash, original_bytes, None)
-        } else if let Ok(claim_data) = self.data() {
-            verify_by_alg(self.alg(), hash, &claim_data, None)
-        } else {
-            false
-        }
-    }
-
     /// Return list of data hash assertions
     pub fn hash_assertions(&self) -> Vec<&ClaimAssertion> {
         let dummy_data = AssertionData::Cbor(Vec::new());
@@ -3268,6 +3210,7 @@ impl Claim {
     }
 
     /// Return list of action assertions.
+    /// Created assertions have higher priority than gathered assertions
     pub fn action_assertions(&self) -> Vec<&ClaimAssertion> {
         let dummy_data = AssertionData::Cbor(Vec::new());
         let dummy_ingredient = Assertion::new(assertions::labels::ACTIONS, None, dummy_data);
@@ -3299,6 +3242,12 @@ impl Claim {
         &self.ingredients_store
     }
 
+    /// Return reference to the internal claim ingredients.
+    /// Used during generation
+    pub fn claim_ingredients(&self) -> Vec<&Claim> {
+        self.ingredients_store.values().flatten().collect()
+    }
+
     /// Return reference to the internal claim ingredient store matching this guid.
     /// Used during generation
     pub fn claim_ingredient(&self, claim_guid: &str) -> Option<&Vec<Claim>> {
@@ -3312,6 +3261,7 @@ impl Claim {
     }
 
     /// Adds ingredients, this data will be written out during commit of the Claim
+    /// redactions are full uris since they refer to external assertions
     pub(crate) fn add_ingredient_data(
         &mut self,
         provenance_label: &str,
@@ -3839,7 +3789,7 @@ pub(crate) fn check_ocsp_status(
     };
 
     if _sync {
-        Ok(c2pa_crypto::cose::check_ocsp_status(
+        Ok(crate::crypto::cose::check_ocsp_status(
             sign1,
             data,
             fetch_policy,
@@ -3847,7 +3797,7 @@ pub(crate) fn check_ocsp_status(
             validation_log,
         )?)
     } else {
-        Ok(c2pa_crypto::cose::check_ocsp_status_async(
+        Ok(crate::crypto::cose::check_ocsp_status_async(
             sign1,
             data,
             fetch_policy,

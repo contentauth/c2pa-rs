@@ -13,6 +13,9 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      # If changing this, please also see `.commitlintrc` and
+      # `docs/release-process.md`.
+
       - name: Check PR title
         env:
           PR_TITLE: ${{ github.event.pull_request.title }}
@@ -49,21 +52,14 @@ jobs:
           # If `scope` is omitted, the parenthesis must also be omitted.
           #
           # `description` is a short human-readable summary of the changes being made.
-          #
-          # This project enforces a few rules over and above the Conventional
-          # Commits definition of `description`:
-          #
-          #    * The `description` must be non-empty.
-          #    * The `description` must start with a capital letter or number.
-          #      (Do not start `description` with a lower-case word.)
-          #    * The `description` must not end with a period.
+          # It is required.
           #
           # This project does not currently enforce the following items, but
           # we ask that you observe the following preferences in `description`:
           #
           #    * The entire description should be written and capitalized as
-          #      an English-language sentence, except (as noted earlier) that
-          #      the trailing period must be omitted.
+          #      an English-language sentence, except that the trailing period
+          #      should be omitted.
           #    * Any acronyms such as JSON or YAML should be capitalized as per
           #      common usage in English-language sentences.
           #

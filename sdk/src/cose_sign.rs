@@ -17,19 +17,21 @@
 
 use async_generic::async_generic;
 use async_trait::async_trait;
-use c2pa_crypto::{
-    cose::{
-        check_end_entity_certificate_profile, sign, sign_async, CertificateTrustPolicy,
-        TimeStampStorage,
-    },
-    raw_signature::{AsyncRawSigner, RawSigner, RawSignerError, SigningAlg},
-    time_stamp::{AsyncTimeStampProvider, TimeStampError, TimeStampProvider},
-};
-use c2pa_status_tracker::{ErrorBehavior, StatusTracker};
 
 use crate::{
-    claim::Claim, cose_validator::verify_cose, settings::get_settings_value, AsyncSigner, Error,
-    Result, Signer,
+    claim::Claim,
+    cose_validator::verify_cose,
+    crypto::{
+        cose::{
+            check_end_entity_certificate_profile, sign, sign_async, CertificateTrustPolicy,
+            TimeStampStorage,
+        },
+        raw_signature::{AsyncRawSigner, RawSigner, RawSignerError, SigningAlg},
+        time_stamp::{AsyncTimeStampProvider, TimeStampError, TimeStampProvider},
+    },
+    settings::get_settings_value,
+    status_tracker::{ErrorBehavior, StatusTracker},
+    AsyncSigner, Error, Result, Signer,
 };
 
 /// Generate a COSE signature for a block of bytes which must be a valid C2PA
@@ -269,12 +271,13 @@ impl AsyncTimeStampProvider for AsyncSignerWrapper<'_> {
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used)]
-    use c2pa_crypto::raw_signature::SigningAlg;
-
     use super::sign_claim;
     #[cfg(feature = "file_io")]
     use crate::utils::test_signer::async_test_signer;
-    use crate::{claim::Claim, utils::test_signer::test_signer, Result, Signer};
+    use crate::{
+        claim::Claim, crypto::raw_signature::SigningAlg, utils::test_signer::test_signer, Result,
+        Signer,
+    };
 
     #[test]
     fn test_sign_claim() {
@@ -309,9 +312,7 @@ mod tests {
         //configuration so the test trust list is not loaded
         crate::settings::set_settings_value("verify.verify_trust", false).unwrap();
 
-        use c2pa_crypto::raw_signature::SigningAlg;
-
-        use crate::{cose_sign::sign_claim_async, AsyncSigner};
+        use crate::{cose_sign::sign_claim_async, crypto::raw_signature::SigningAlg, AsyncSigner};
 
         let mut claim = Claim::new("extern_sign_test", Some("contentauth"), 1);
         claim.build().unwrap();
@@ -342,8 +343,8 @@ mod tests {
             Ok(b"totally bogus signature".to_vec())
         }
 
-        fn alg(&self) -> c2pa_crypto::raw_signature::SigningAlg {
-            c2pa_crypto::raw_signature::SigningAlg::Ps256
+        fn alg(&self) -> crate::crypto::raw_signature::SigningAlg {
+            crate::crypto::raw_signature::SigningAlg::Ps256
         }
 
         fn certs(&self) -> Result<Vec<Vec<u8>>> {

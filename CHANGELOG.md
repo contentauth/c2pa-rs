@@ -6,6 +6,56 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 Since version 0.36.2, the format of this changelog is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.53.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.52.0...c2pa-v0.53.0)
+_20 May 2025_
+
+### Added
+
+* [**breaking**] Merge `c2pa-status-tracker` crate into `c2pa` ([#1115](https://github.com/contentauth/c2pa-rs/pull/1115))
+
+### Fixed
+
+* Avoid yanked version of `windows-core` crate ([#1116](https://github.com/contentauth/c2pa-rs/pull/1116))
+
+## [0.52.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.51.1...c2pa-v0.52.0)
+_16 May 2025_
+
+### Added
+
+* [**breaking**] Merge c2pa-crypto crate into core c2pa crate ([#1099](https://github.com/contentauth/c2pa-rs/pull/1099))
+
+## [0.51.1](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.51.0...c2pa-v0.51.1)
+_16 May 2025_
+
+### Fixed
+
+* Switch zip dependency to a non-yanked version ([#1101](https://github.com/contentauth/c2pa-rs/pull/1101))
+* Fix Clippy warnings for Rust 1.87 ([#1103](https://github.com/contentauth/c2pa-rs/pull/1103))
+
+## [0.51.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.50.0...c2pa-v0.51.0)
+_14 May 2025_
+
+### Added
+
+* [**breaking**] Merge CAWG identity SDK into main C2PA crate ([#1089](https://github.com/contentauth/c2pa-rs/pull/1089))
+
+### Fixed
+
+* Trigger re-publish of c2pa crate
+
+## [0.50.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.49.5...c2pa-v0.50.0)
+_14 May 2025_
+
+### Added
+
+* Adds c_api for dynamic library releases ([#1047](https://github.com/contentauth/c2pa-rs/pull/1047))
+* SVG thumbnails with a fix to the ingredient thumbnail format detection ([#722](https://github.com/contentauth/c2pa-rs/pull/722))
+* *(sdk)* Support setting the Ingredient manifest_data field for remote manifests using Builder ([#1091](https://github.com/contentauth/c2pa-rs/pull/1091))
+
+### Fixed
+
+* Ingredient from_stream/memory not loading remote manifests ([#1061](https://github.com/contentauth/c2pa-rs/pull/1061))
+
 ## [0.49.5](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.49.4...c2pa-v0.49.5)
 _25 April 2025_
 

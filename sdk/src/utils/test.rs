@@ -22,21 +22,21 @@ use std::{
 
 #[cfg(feature = "v1_api")]
 use async_trait::async_trait;
-use c2pa_crypto::{cose::CertificateTrustPolicy, raw_signature::SigningAlg};
+use tempfile::TempDir;
+
 #[cfg(feature = "v1_api")]
-use c2pa_crypto::{
+use crate::crypto::{
     cose::TimeStampStorage,
     raw_signature::{AsyncRawSigner, RawSignerError},
     time_stamp::{AsyncTimeStampProvider, TimeStampError},
 };
-use tempfile::TempDir;
-
 #[cfg(feature = "v1_api")]
 use crate::signer::RemoteSigner;
 use crate::{
     assertions::{labels, Action, Actions, Ingredient, ReviewRating, SchemaDotOrg, Thumbnail},
     asset_io::CAIReadWrite,
     claim::Claim,
+    crypto::{cose::CertificateTrustPolicy, raw_signature::SigningAlg},
     hash_utils::Hasher,
     jumbf_io::get_assetio_handler,
     salt::DefaultSalt,
@@ -244,7 +244,7 @@ pub fn temp_signer_file() -> Box<dyn crate::Signer> {
 
 /// Create a [`CertificateTrustPolicy`] instance that has the test certificate bundles included.
 ///
-/// [`CertificateTrustPolicy`]: c2pa_crypto::cose::CertificateTrustPolicy
+/// [`CertificateTrustPolicy`]: crate::crypto::cose::CertificateTrustPolicy
 pub fn test_certificate_acceptance_policy() -> CertificateTrustPolicy {
     let mut ctp = CertificateTrustPolicy::default();
     ctp.add_trust_anchors(include_bytes!(

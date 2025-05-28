@@ -19,15 +19,16 @@ use std::{
 };
 
 use async_generic::async_generic;
-use c2pa_crypto::base64;
-use c2pa_status_tracker::StatusTracker;
 #[cfg(feature = "json_schema")]
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::{
     claim::ClaimAssetData,
+    crypto::base64,
     jumbf::labels::{manifest_label_from_uri, to_absolute_uri, to_relative_uri},
+    manifest::StoreOptions,
+    status_tracker::StatusTracker,
     store::Store,
     validation_results::ValidationResults,
     validation_status::ValidationStatus,
@@ -150,38 +151,17 @@ impl ManifestStore {
     #[async_generic]
     pub(crate) fn from_store(store: Store, validation_log: &StatusTracker) -> ManifestStore {
         if _sync {
-            Self::from_store_impl(
-                store,
-                validation_log,
-                #[cfg(feature = "file_io")]
-                None,
-            )
+            Self::from_store_impl(store, validation_log, &mut StoreOptions::default())
         } else {
-            Self::from_store_impl_async(
-                store,
-                validation_log,
-                #[cfg(feature = "file_io")]
-                None,
-            )
-            .await
+            Self::from_store_impl_async(store, validation_log, &mut StoreOptions::default()).await
         }
-    }
-
-    /// creates a ManifestStore from a Store writing resources to resource_path
-    #[cfg(all(feature = "file_io", feature = "v1_api"))]
-    pub(crate) fn from_store_with_resources(
-        store: Store,
-        validation_log: &StatusTracker,
-        resource_path: &Path,
-    ) -> ManifestStore {
-        ManifestStore::from_store_impl(store, validation_log, Some(resource_path))
     }
 
     // internal implementation of from_store
     fn from_store_impl(
         store: Store,
         validation_log: &StatusTracker,
-        #[cfg(feature = "file_io")] resource_path: Option<&Path>,
+        options: &mut StoreOptions,
     ) -> ManifestStore {
         let mut validation_results = ValidationResults::from_store(&store, validation_log);
 
@@ -193,7 +173,7 @@ impl ManifestStore {
         for claim in store.claims() {
             let manifest_label = claim.label();
             #[cfg(feature = "file_io")]
-            let result = Manifest::from_store(store, manifest_label, resource_path);
+            let result = Manifest::from_store(store, manifest_label, options);
             #[cfg(not(feature = "file_io"))]
             let result = Manifest::from_store(store, manifest_label);
 
@@ -218,7 +198,7 @@ impl ManifestStore {
     async fn from_store_impl_async(
         store: Store,
         validation_log: &StatusTracker,
-        #[cfg(feature = "file_io")] resource_path: Option<&Path>,
+        options: &mut StoreOptions,
     ) -> ManifestStore {
         let mut validation_results = ValidationResults::from_store(&store, validation_log);
 
@@ -230,7 +210,7 @@ impl ManifestStore {
         for claim in store.claims() {
             let manifest_label = claim.label();
             #[cfg(feature = "file_io")]
-            let result = Manifest::from_store_async(store, manifest_label, resource_path).await;
+            let result = Manifest::from_store_async(store, manifest_label, options).await;
             #[cfg(not(feature = "file_io"))]
             let result = Manifest::from_store_async(store, manifest_label).await;
 
@@ -257,13 +237,17 @@ impl ManifestStore {
     #[deprecated(since = "0.38.0", note = "Please use Reader::from_json() instead")]
     #[cfg(feature = "v1_api")]
     pub fn from_manifest(manifest: &Manifest) -> Result<Self> {
-        use c2pa_status_tracker::{ErrorBehavior, StatusTracker};
+        use crate::status_tracker::{ErrorBehavior, StatusTracker};
         let store = manifest.to_store()?;
+        let resource_path = manifest.resources().base_path().map(|p| p.to_path_buf());
+
         Ok(Self::from_store_impl(
             store,
             &StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError),
-            #[cfg(feature = "file_io")]
-            manifest.resources().base_path(),
+            &mut StoreOptions {
+                resource_path,
+                ..Default::default()
+            },
         ))
     }
 
@@ -378,10 +362,13 @@ impl ManifestStore {
         let mut validation_log = StatusTracker::default();
 
         let store = Store::load_from_asset(path.as_ref(), true, &mut validation_log)?;
-        Ok(Self::from_store_with_resources(
+        Ok(ManifestStore::from_store_impl(
             store,
             &validation_log,
-            resource_path.as_ref(),
+            &mut StoreOptions {
+                resource_path: Some(resource_path.as_ref().to_path_buf()),
+                ..Default::default()
+            },
         ))
     }
 
@@ -595,12 +582,14 @@ mod tests {
     #![allow(clippy::expect_used)]
     #![allow(clippy::unwrap_used)]
 
-    use c2pa_status_tracker::{ErrorBehavior, StatusTracker};
     #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
     use wasm_bindgen_test::*;
 
     use super::*;
-    use crate::utils::test::create_test_store;
+    use crate::{
+        status_tracker::{ErrorBehavior, StatusTracker},
+        utils::test::create_test_store,
+    };
 
     #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
     wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);

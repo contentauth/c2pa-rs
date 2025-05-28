@@ -18,13 +18,12 @@ use std::{
     io::{BufRead, BufReader, Cursor},
 };
 
-use c2pa_crypto::base64;
-use config::{Config, Environment, FileFormat};
+use config::{Config, FileFormat};
 #[cfg(feature = "json_schema")]
 use schemars::JsonSchema;
 use serde_derive::{Deserialize, Serialize};
 
-use crate::{Error, Result};
+use crate::{crypto::base64, Error, Result};
 
 thread_local!(
     static SETTINGS: RefCell<Config> = RefCell::new(Config::try_from(&Settings::default()).unwrap_or_default())
@@ -425,7 +424,6 @@ pub(crate) fn get_settings_value<'de, T: serde::de::Deserialize<'de>>(
     SETTINGS.with_borrow(|current_settings| {
         let update_config = Config::builder()
             .add_source(current_settings.clone())
-            .add_source(Environment::with_prefix("c2pa").try_parsing(true))
             .build()
             .map_err(|_e| Error::OtherError("could not update configuration".into()))?;
 
@@ -463,6 +461,8 @@ pub mod tests {
         assert_eq!(settings.trust, Trust::default());
         assert_eq!(settings.verify, Verify::default());
         assert_eq!(settings.builder, Builder::default());
+
+        reset_default_settings().unwrap();
     }
 
     #[test]
@@ -521,6 +521,8 @@ pub mod tests {
         assert_eq!(verify, Verify::default());
         assert_eq!(builder, Builder::default());
         assert_eq!(trust, Trust::default());
+
+        reset_default_settings().unwrap();
     }
 
     #[test]
@@ -562,6 +564,8 @@ pub mod tests {
             get_settings_value::<Trust>("trust").unwrap(),
             Trust::default()
         );
+
+        reset_default_settings().unwrap();
     }
 
     #[cfg(feature = "file_io")]
@@ -576,6 +580,8 @@ pub mod tests {
         let settings = get_settings().unwrap();
 
         assert_eq!(settings, Settings::default());
+
+        reset_default_settings().unwrap();
     }
 
     #[cfg(feature = "file_io")]
@@ -592,6 +598,8 @@ pub mod tests {
         let settings = get_settings().unwrap();
 
         assert_eq!(settings, Settings::default());
+
+        reset_default_settings().unwrap();
     }
 
     #[test]
@@ -631,6 +639,8 @@ pub mod tests {
             get_settings_value::<bool>("core.salt_jumbf_boxes").unwrap(),
             Core::default().salt_jumbf_boxes
         );
+
+        reset_default_settings().unwrap();
     }
 
     #[test]
@@ -644,6 +654,8 @@ pub mod tests {
         }"#;
 
         assert!(load_settings_from_str(modified_core, "json").is_err());
+
+        reset_default_settings().unwrap();
     }
     #[test]
     fn test_hidden_setting() {
@@ -666,39 +678,7 @@ pub mod tests {
             get_settings_value::<u32>("hidden.test3").unwrap(),
             123456u32
         );
-    }
 
-    #[test]
-    fn test_env_override_setting() {
-        // test updating values
-        std::env::set_var("c2pa_core.hash.alg", "sha512");
-        std::env::set_var("c2pa_verify.remote.manifest_fetch", "false");
-        std::env::set_var("c2pa_builder.auto_thumbnail", "false");
-
-        assert_eq!(
-            get_settings_value::<String>("core.hash_alg").unwrap(),
-            "sha512"
-        );
-        assert!(!get_settings_value::<bool>("verify.remote_manifest_fetch").unwrap());
-        assert!(!get_settings_value::<bool>("builder.auto_thumbnail").unwrap());
-
-        // the current config should be different from the defaults
-        assert_ne!(get_settings_value::<Core>("core").unwrap(), Core::default());
-        assert_ne!(
-            get_settings_value::<Verify>("verify").unwrap(),
-            Verify::default()
-        );
-        assert_ne!(
-            get_settings_value::<Builder>("builder").unwrap(),
-            Builder::default()
-        );
-        assert_ne!(
-            get_settings_value::<Trust>("trust").unwrap(),
-            Trust::default()
-        );
-
-        std::env::remove_var("c2pa_core.hash.alg");
-        std::env::remove_var("c2pa_verify.remote.manifest.fetch");
-        std::env::remove_var("c2pa_builder.auto_thumbnail");
+        reset_default_settings().unwrap();
     }
 }
