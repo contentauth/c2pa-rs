@@ -430,6 +430,31 @@ pub unsafe extern "C" fn c2pa_string_free(s: *mut c_char) {
     }
 }
 
+/// Frees an array of char* pointers created by Rust.
+///
+/// # Parameters
+/// * ptr: pointer to the array of char* pointers.
+/// * count: number of elements in the array.
+///
+/// # Safety
+/// * The ptr passed into this function must point to memory that was allocated
+///   by our library.
+/// * The array and its strings must not have been modified in C.
+/// * The array and its contents can only be freed once and is invalid after this call.
+#[no_mangle]
+pub unsafe extern "C" fn c2pa_free_string_array(ptr: *mut *mut c_char, count: usize) {
+    if ptr.is_null() {
+        return;
+    }
+    // Free each string directly using the pointer.
+    for i in 0..count {
+        c2pa_string_free(*ptr.add(i));
+    }
+
+    // Free the array.
+    Vec::from_raw_parts(ptr, count, count);
+}
+
 // Run CAWG post-validation - this is async and requires a runtime.
 fn post_validate(result: Result<C2paReader, c2pa::Error>) -> Result<C2paReader, c2pa::Error> {
     match result {
@@ -604,6 +629,27 @@ pub unsafe extern "C" fn c2pa_reader_resource_to_stream(
     ok_or_return_int!(result, |len| len as i64)
 }
 
+/// Returns an array of char* pointers to c2pa::Reader's supported mime types.
+/// The caller is responsible for freeing the array.
+///
+/// # Parameters
+/// * count: pointer to a usize to return the number of mime types.
+///
+/// # Safety
+/// The returned value MUST be released by calling [c2pa_free_string_array].
+/// The array and its contents are no longer valid after that call.
+#[no_mangle]
+pub unsafe extern "C" fn c2pa_reader_supported_mime_types(count: *mut usize) -> *mut *mut c_char {
+    let mime_types = c2pa::Reader::supported_mime_types();
+
+    let mut mime_ptrs: Vec<*mut c_char> = mime_types.into_iter().map(|s| to_c_string(s)).collect();
+    *count = mime_ptrs.len();
+
+    let ptr = mime_ptrs.as_mut_ptr();
+    std::mem::forget(mime_ptrs);
+    ptr
+}
+
 /// Creates a C2paBuilder from a JSON manifest definition string.
 ///
 /// # Errors
@@ -656,6 +702,27 @@ pub unsafe extern "C" fn c2pa_builder_from_archive(stream: *mut C2paStream) -> *
     return_boxed!(C2paBuilder::from_archive(&mut (*stream)))
 }
 
+/// Returns an array of char* pointers to the supported mime types.
+/// The caller is responsible for freeing the array.
+///
+/// # Parameters
+/// * count: pointer to a usize to return the number of mime types.
+///
+/// # Safety
+/// The returned value MUST be released by calling [c2pa_free_string_array].
+/// The array and its contents are no longer valid after that call.
+#[no_mangle]
+pub unsafe extern "C" fn c2pa_builder_supported_mime_types(count: *mut usize) -> *mut *mut c_char {
+    let mime_types = C2paBuilder::supported_mime_types();
+    let mut mime_ptrs: Vec<*mut c_char> = mime_types.into_iter().map(|s| to_c_string(s)).collect();
+
+    *count = mime_ptrs.len();
+
+    let ptr = mime_ptrs.as_mut_ptr();
+    std::mem::forget(mime_ptrs);
+    ptr
+}
+
 /// Frees a C2paBuilder allocated by Rust.
 ///
 /// # Safety
@@ -673,7 +740,7 @@ pub unsafe extern "C" fn c2pa_builder_free(builder_ptr: *mut C2paBuilder) {
 /// # Parameters
 /// * builder_ptr: pointer to a Builder.
 /// # Safety
-/// builder_ptr must be a valid pointer to a Builder.   
+/// builder_ptr must be a valid pointer to a Builder.
 #[no_mangle]
 #[allow(clippy::unused_unit)] // clippy doesn't like the () return type for null_check
 pub unsafe extern "C" fn c2pa_builder_set_no_embed(builder_ptr: *mut C2paBuilder) {
@@ -1189,6 +1256,7 @@ mod tests {
 
     use super::*;
     use crate::TestC2paStream;
+    use std::panic::catch_unwind;
 
     macro_rules! fixture_path {
         ($path:expr) => {
@@ -1457,5 +1525,50 @@ mod tests {
         let error_str = unsafe { CString::from_raw(error) };
         assert_eq!(error_str.to_str().unwrap(), "NullParameter: stream");
         unsafe { c2pa_builder_free(builder) };
+    }
+
+    #[test]
+    fn test_c2pa_builder_read_supported_mime_types() {
+        let mut count = 0;
+        let mime_types = unsafe { c2pa_builder_supported_mime_types(&mut count) };
+        assert!(!mime_types.is_null());
+        assert_eq!(count, C2paBuilder::supported_mime_types().len());
+        unsafe { c2pa_free_string_array(mime_types, count) };
+    }
+
+    #[test]
+    fn test_c2pa_reader_read_supported_mime_types() {
+        let mut count = 0;
+        let mime_types = unsafe { c2pa_reader_supported_mime_types(&mut count) };
+        assert!(!mime_types.is_null());
+        assert_eq!(count, C2paReader::supported_mime_types().len());
+        unsafe { c2pa_free_string_array(mime_types, count) };
+    }
+
+    #[test]
+    fn test_c2pa_free_string_array_with_nullptr() {
+        assert!(catch_unwind(|| {
+            unsafe {
+                c2pa_free_string_array(std::ptr::null_mut(), 0);
+            }
+        })
+        .is_ok());
+    }
+
+    #[test]
+    fn test_c2pa_free_string_array_with_count_1() {
+        let strings = vec![CString::new("image/jpg").unwrap()];
+        let mut ptrs: Vec<*mut c_char> = strings.into_iter().map(|s| s.into_raw()).collect();
+        let ptr = ptrs.as_mut_ptr();
+        let count = ptrs.len();
+        std::mem::forget(ptrs);
+
+        // Assert the function doesn't panic
+        assert!(catch_unwind(|| {
+            unsafe {
+                c2pa_free_string_array(ptr, count);
+            }
+        })
+        .is_ok());
     }
 }
