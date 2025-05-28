@@ -24,7 +24,19 @@ rust-version = "1.82.0"
 exclude = ["tests/fixtures"]
 
 [package.metadata.docs.rs]
-all-features = true
+# Build with all features, but not with openssl and rust_native_crypto simulatenously.
+features = [
+    "openssl",
+    "add_thumbnails",
+    "file_io",
+    "serialize_thumbnails",
+    "no_interleaved_io",
+    "fetch_remote_manifests",
+    "json_schema",
+    "pdf",
+    "v1_api",
+    "diagnostics",
+]
 rustdoc-args = ["--cfg", "docsrs"]
 
 [features]
