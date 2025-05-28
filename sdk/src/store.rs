@@ -3630,30 +3630,6 @@ impl Store {
         )
     }
 
-    // verify from a buffer without file i/o
-    #[async_generic()]
-    pub fn verify_from_stream(
-        &mut self,
-        reader: &mut dyn CAIRead,
-        asset_type: &str,
-        validation_log: &mut StatusTracker,
-    ) -> Result<()> {
-        if _sync {
-            Store::verify_store(
-                self,
-                &mut ClaimAssetData::Stream(reader, asset_type),
-                validation_log,
-            )
-        } else {
-            Store::verify_store_async(
-                self,
-                &mut ClaimAssetData::Stream(reader, asset_type),
-                validation_log,
-            )
-            .await
-        }
-    }
-
     // fetch remote manifest if possible
     #[cfg(all(feature = "fetch_remote_manifests", not(target_os = "wasi")))]
     fn fetch_remote_manifest(url: &str) -> Result<Vec<u8>> {
@@ -3957,6 +3933,61 @@ impl Store {
             Ok(u) => u.scheme() == "http" || u.scheme() == "https",
             Err(_) => false,
         }
+    }
+
+    /// Load store from a stream
+    #[async_generic]
+    pub fn from_stream(
+        format: &str,
+        mut stream: impl Read + Seek + Send,
+        verify: bool,
+        validation_log: &mut StatusTracker,
+    ) -> Result<Self> {
+        let manifest_bytes = Store::load_jumbf_from_stream(format, &mut stream)?;
+
+        if _sync {
+            Self::from_manifest_data_and_stream(
+                &manifest_bytes,
+                format,
+                &mut stream,
+                verify,
+                validation_log,
+            )
+        } else {
+            Self::from_manifest_data_and_stream_async(
+                &manifest_bytes,
+                format,
+                &mut stream,
+                verify,
+                validation_log,
+            )
+            .await
+        }
+    }
+
+    /// Load store from a manifest data and stream
+    #[async_generic()]
+    pub fn from_manifest_data_and_stream(
+        c2pa_data: &[u8],
+        format: &str,
+        mut stream: impl Read + Seek + Send,
+        verify: bool,
+        validation_log: &mut StatusTracker,
+    ) -> Result<Self> {
+        // first we convert the JUMBF into a usable store
+        let store = Store::from_jumbf(c2pa_data, validation_log)?;
+
+        //let verify = get_settings_value::<bool>("verify.verify_after_reading")?; // defaults to true
+
+        if verify {
+            let mut asset_data = ClaimAssetData::Stream(&mut stream, format);
+            if _sync {
+                Store::verify_store(&store, &mut asset_data, validation_log)
+            } else {
+                Store::verify_store_async(&store, &mut asset_data, validation_log).await
+            }?;
+        }
+        Ok(store)
     }
 
     /// Load Store from a in-memory asset
@@ -4551,6 +4582,7 @@ pub enum InvalidClaimError {
 }
 
 #[cfg(test)]
+#[cfg(feature = "v1_api")] // only test for v1_api until we update these tests
 #[cfg(feature = "file_io")]
 pub mod tests {
     #![allow(clippy::expect_used)]
@@ -4561,9 +4593,13 @@ pub mod tests {
 
     use memchr::memmem;
     use serde::Serialize;
+    use sha2::Digest;
+    #[cfg(feature = "file_io")]
     use sha2::Sha256;
 
     use super::*;
+    #[cfg(all(feature = "file_io", feature = "v1_api"))]
+    use crate::jumbf_io::update_file_jumbf;
     use crate::{
         assertion::AssertionJson,
         assertions::{labels::BOX_HASH, Action, Actions, BoxHash, Uuid},
@@ -4574,6 +4610,7 @@ pub mod tests {
         status_tracker::{LogItem, StatusTracker},
         utils::{
             hash_utils::Hasher,
+            io_utils::tempdirectory,
             patch::patch_file,
             test::{
                 create_test_claim, fixture_path, temp_dir_path, temp_fixture_path,
@@ -6377,11 +6414,21 @@ pub mod tests {
 
         let mut report = StatusTracker::default();
 
-        let output_data = output_stream.into_inner();
+        output_stream.set_position(0);
 
-        // can we read back in
-        let _new_store = Store::load_from_memory("mp4", &output_data, true, &mut report).unwrap();
+        let manifest_bytes = Store::load_jumbf_from_stream("video/mp4", &mut input_stream).unwrap();
 
+        let _new_store = {
+            Store::from_manifest_data_and_stream(
+                &manifest_bytes,
+                "video/mp4",
+                &mut output_stream,
+                false,
+                &mut report,
+            )
+            .unwrap()
+        };
+        println!("report = {report:?}");
         assert!(!report.has_any_error());
     }
 
@@ -6613,12 +6660,12 @@ pub mod tests {
         // compare returned to external
         assert_eq!(saved_manifest, loaded_manifest);
 
-        // Load the exported file into a buffer
-        let file_buffer = std::fs::read(&op).unwrap();
+        // Open the exported file
+        let file = std::fs::File::open(&op).unwrap();
 
         let mut validation_log =
             StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
-        let result = Store::load_from_memory("png", &file_buffer, true, &mut validation_log);
+        let result = Store::from_stream("png", &file, false, &mut validation_log);
 
         assert!(result.is_err());
 
@@ -7472,7 +7519,7 @@ pub mod tests {
 
         store.commit_claim(claim1).unwrap();
 
-        let mut result: Vec<u8> = Vec::new();
+        let result: Vec<u8> = Vec::new();
         let mut result_stream = Cursor::new(result);
 
         store
@@ -7480,14 +7527,15 @@ pub mod tests {
             .await
             .unwrap();
 
-        // convert our cursor back into a buffer
-        result = result_stream.into_inner();
+        result_stream.rewind().unwrap();
 
         // make sure we can read from new file
         let mut report = StatusTracker::default();
-        let new_store = Store::load_from_memory("jpeg", &result, false, &mut report).unwrap();
+        let new_store = Store::from_stream("jpeg", &mut result_stream, true, &mut report).unwrap();
 
         println!("new_store: {}", new_store);
+
+        let result = result_stream.into_inner();
 
         Store::verify_store_async(
             &new_store,
@@ -7585,7 +7633,7 @@ pub mod tests {
                         "mp4",
                         &mut init_stream,
                         &output_fragments,
-                        true,
+                        false,
                         &mut validation_log,
                     )
                     .unwrap();

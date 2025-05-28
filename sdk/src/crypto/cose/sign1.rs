@@ -25,7 +25,7 @@ use crate::{
     },
     log_item,
     status_tracker::StatusTracker,
-    validation_results::validation_codes::SIGNING_CREDENTIAL_INVALID,
+    validation_results::validation_codes::CLAIM_SIGNATURE_MISMATCH,
 };
 
 /// Parse a byte slice as a COSE Sign1 data structure.
@@ -43,7 +43,7 @@ pub fn parse_cose_sign1(
                 "could not parse signature",
                 "parse_cose_sign1"
             )
-            .validation_status(SIGNING_CREDENTIAL_INVALID)
+            .validation_status(CLAIM_SIGNATURE_MISMATCH)
             .failure_no_throw(
                 validation_log,
                 CoseError::CborParsingError(coset_error.to_string()),
@@ -91,23 +91,6 @@ pub fn signing_alg_from_sign1(sign1: &coset::CoseSign1) -> Result<SigningAlg, Co
     }
 }
 
-/// get the user attested time if available
-pub fn iat_from_sign1(sign1: &coset::CoseSign1) -> Option<String> {
-    // Check the protected header first.
-    sign1
-        .protected
-        .header
-        .rest
-        .iter()
-        .find_map(|x: &(Label, Value)| {
-            if x.0 == Label::Text("iat".to_string()) {
-                x.1.as_text().map(|t| t.to_string())
-            } else {
-                None
-            }
-        })
-}
-
 /// TO DO: Documentation for this function.
 pub fn cert_chain_from_sign1(sign1: &coset::CoseSign1) -> Result<Vec<Vec<u8>>, CoseError> {
     // Check the protected header first.
@@ -126,7 +109,7 @@ pub fn cert_chain_from_sign1(sign1: &coset::CoseSign1) -> Result<Vec<Vec<u8>>, C
             }
         })
     else {
-        // Note: Also try unprotected header. (This was permitted in older versions
+        // Not there: Also try unprotected header. (This was permitted in older versions
         // of C2PA.)
         return get_unprotected_header_certs(sign1);
     };

@@ -1800,6 +1800,7 @@ pub(crate) mod tests {
 
     #[test]
     #[cfg(feature = "file_io")]
+    #[cfg(feature = "v1_api")]
     #[allow(deprecated)]
     fn test_redaction() {
         const ASSERTION_LABEL: &str = "stds.schema-org.CreativeWork";

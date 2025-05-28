@@ -59,13 +59,11 @@ use crate::{
     },
     jumbf_io::get_assetio_handler,
     log_item,
-    resource_store::UriOrResource,
     salt::{DefaultSalt, SaltGenerator, NO_SALT},
     settings::get_settings_value,
     status_tracker::{ErrorBehavior, StatusTracker},
-    store::StoreValidationInfo,
-    utils::hash_utils::{hash_by_alg, vec_compare},
-    validation_status, ClaimGeneratorInfo, HashRange,
+    utils::hash_utils::{hash_by_alg, vec_compare, verify_by_alg},
+    validation_status, ClaimGeneratorInfo,
 };
 
 const BUILD_HASH_ALG: &str = "sha256";

@@ -644,6 +644,18 @@ pub mod validation_codes {
     /// Any corresponding URL should point to a C2PA assertion.
     pub const ASSERTION_CBOR_INVALID: &str = "assertion.cbor.invalid";
 
+    /// An action that requires an associated ingredient either does not have one
+    /// or the one specified cannot be located
+    ///
+    /// Any corresponding URL should point to a C2PA assertion.
+    pub const ACTION_ASSERTION_INGREDIENT_MISMATCH: &str = "assertion.action.ingredientMismatch";
+
+    /// An `action` assertion was redacted when the ingredient's
+    /// claim was created.
+    ///
+    /// Any corresponding URL should point to a C2PA assertion.
+    pub const ACTION_ASSERTION_REDACTED: &str = "assertion.action.redacted";
+
     /// The hash of a byte range of the asset does not match the
     /// hash declared in the data hash assertion.
     ///

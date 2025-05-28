@@ -18,7 +18,6 @@ use async_generic::async_generic;
 use coset::CoseSign1;
 use x509_parser::prelude::X509Certificate;
 
-use super::sign1::iat_from_sign1;
 use crate::{
     crypto::{
         asn1::rfc3161::TstInfo,
@@ -37,7 +36,7 @@ use crate::{
     validation_results::validation_codes::{
         ALGORITHM_UNSUPPORTED, SIGNING_CREDENTIAL_INVALID, SIGNING_CREDENTIAL_TRUSTED,
         SIGNING_CREDENTIAL_UNTRUSTED, TIMESTAMP_MALFORMED, TIMESTAMP_MISMATCH,
-        TIMESTAMP_OUTSIDE_VALIDITY, TIMESTAMP_VALIDATED,
+        TIMESTAMP_OUTSIDE_VALIDITY,
     },
 };
 
@@ -70,29 +69,26 @@ impl Verifier<'_> {
         cose_sign1: &[u8],
         data: &[u8],
         additional_data: &[u8],
-        tst_info: Option<TstInfo>,
         validation_log: &mut StatusTracker,
     ) -> Result<CertificateInfo, CoseError> {
         let mut sign1 = parse_cose_sign1(cose_sign1, data, validation_log)?;
 
         let Ok(alg) = signing_alg_from_sign1(&sign1) else {
-            log_item!("", "unsupported or missing Cose algorithm", "verify_cose")
-                .validation_status(ALGORITHM_UNSUPPORTED)
-                .failure_no_throw(validation_log, CoseError::UnsupportedSigningAlgorithm);
+            log_item!(
+                "Cose_Sign1",
+                "unsupported or missing Cose algorithm",
+                "verify_cose"
+            )
+            .validation_status(ALGORITHM_UNSUPPORTED)
+            .failure_no_throw(validation_log, CoseError::UnsupportedSigningAlgorithm);
 
             return Err(CoseError::UnsupportedSigningAlgorithm);
         };
 
-        // If a timestamp is provided, use it. Otherwise, validate the timestamp from
-        // the signature.
-        let tst_info_res = if let Some(ti) = tst_info {
-            Ok(ti)
+        let tst_info_res = if _sync {
+            validate_cose_tst_info(&sign1, data)
         } else {
-            if _sync {
-                validate_cose_tst_info(&sign1, data)
-            } else {
-                validate_cose_tst_info_async(&sign1, data).await
-            }
+            validate_cose_tst_info_async(&sign1, data).await
         };
 
         match alg {
@@ -100,7 +96,7 @@ impl Verifier<'_> {
                 if parse_ec_der_sig(&sign1.signature).is_ok() {
                     // Should have been in P1363 format, not DER.
                     log_item!(
-                        "",
+                        "Cose_Sign1",
                         "unsupported signature format (EC signature should be in P1363 r|s format)",
                         "verify_cose"
                     )
@@ -165,26 +161,23 @@ impl Verifier<'_> {
             validator.validate(&sign1.signature, &tbs, pk_der)?;
         }
 
-        // not an error if there is no subject
         let subject = sign_cert
             .subject()
             .iter_organization()
             .map(|attr| attr.as_str())
             .last()
-            .and_then(|attr| match attr {
-                Ok(v) => Some(v.to_string()),
-                Err(_) => None,
-            });
+            .ok_or(CoseError::MissingSigningCertificateChain)?
+            .map(|attr| attr.to_string())
+            .map_err(|_| CoseError::MissingSigningCertificateChain)?;
 
         Ok(CertificateInfo {
             alg: Some(alg),
             date: tst_info_res.map(|t| t.gen_time.into()).ok(),
             cert_serial_number: Some(sign_cert.serial.clone()),
-            issuer_org: subject,
+            issuer_org: Some(subject),
             validated: true,
             cert_chain: dump_cert_chain(&certs)?,
             revocation_status: Some(true),
-            iat: iat_from_sign1(&sign1),
         })
     }
 
@@ -208,18 +201,12 @@ impl Verifier<'_> {
         let end_entity_cert_der = &certs[0];
 
         match tst_info_res {
-            Ok(tst_info) => {
-                log_item!("", "timestamp validated", "verify_cose")
-                    .validation_status(TIMESTAMP_VALIDATED)
-                    .success(validation_log);
-
-                Ok(check_end_entity_certificate_profile(
-                    end_entity_cert_der,
-                    ctp,
-                    validation_log,
-                    Some(tst_info),
-                )?)
-            }
+            Ok(tst_info) => Ok(check_end_entity_certificate_profile(
+                end_entity_cert_der,
+                ctp,
+                validation_log,
+                Some(tst_info),
+            )?),
 
             Err(CoseError::NoTimeStampToken) => Ok(check_end_entity_certificate_profile(
                 end_entity_cert_der,
@@ -229,18 +216,22 @@ impl Verifier<'_> {
             )?),
 
             Err(CoseError::TimeStampError(TimeStampError::InvalidData)) => {
-                log_item!("", "timestamp did not match signed data", "verify_profile")
-                    .validation_status(TIMESTAMP_MISMATCH)
-                    .informational(validation_log);
+                log_item!(
+                    "Cose_Sign1",
+                    "timestamp did not match signed data",
+                    "verify_cose"
+                )
+                .validation_status(TIMESTAMP_MISMATCH)
+                .informational(validation_log);
 
                 Err(TimeStampError::InvalidData.into())
             }
 
             Err(CoseError::TimeStampError(TimeStampError::ExpiredCertificate)) => {
                 log_item!(
-                    "",
+                    "Cose_Sign1",
                     "timestamp certificate outside of validity",
-                    "verify_profile"
+                    "verify_cose"
                 )
                 .validation_status(TIMESTAMP_OUTSIDE_VALIDITY)
                 .informational(validation_log);
@@ -248,16 +239,8 @@ impl Verifier<'_> {
                 Err(TimeStampError::ExpiredCertificate.into())
             }
 
-            Err(CoseError::TimeStampError(TimeStampError::DecodeError(_s))) => {
-                log_item!("", "timestamp could not be decoded", "verify_profile")
-                    .validation_status(TIMESTAMP_MALFORMED)
-                    .informational(validation_log);
-
-                Ok(())
-            }
-
             Err(e) => {
-                log_item!("", "error parsing timestamp", "verify_cose")
+                log_item!("Cose_Sign1", "error parsing timestamp", "verify_cose")
                     .validation_status(TIMESTAMP_MALFORMED)
                     .informational(validation_log);
 
@@ -309,7 +292,7 @@ impl Verifier<'_> {
 
         match verify_result {
             Ok(()) => {
-                log_item!("", "signing certificate trusted", "verify_cose")
+                log_item!("Cose_Sign1", "signing certificate trusted", "verify_cose")
                     .validation_status(SIGNING_CREDENTIAL_TRUSTED)
                     .success(validation_log);
 
@@ -317,7 +300,7 @@ impl Verifier<'_> {
             }
 
             Err(CertificateTrustError::CertificateNotTrusted) => {
-                log_item!("", "signing certificate untrusted", "verify_cose")
+                log_item!("Cose_Sign1", "signing certificate untrusted", "verify_cose")
                     .validation_status(SIGNING_CREDENTIAL_UNTRUSTED)
                     .failure_no_throw(validation_log, CertificateTrustError::CertificateNotTrusted);
 
@@ -325,7 +308,7 @@ impl Verifier<'_> {
             }
 
             Err(e) => {
-                log_item!("", "signing certificate untrusted", "verify_cose")
+                log_item!("Cose_Sign1", "signing certificate untrusted", "verify_cose")
                     .validation_status(SIGNING_CREDENTIAL_UNTRUSTED)
                     .failure_no_throw(validation_log, &e);
 

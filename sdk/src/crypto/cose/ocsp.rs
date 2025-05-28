@@ -16,20 +16,15 @@ use chrono::{DateTime, Utc};
 use ciborium::value::Value;
 use coset::{CoseSign1, Label};
 
-use super::cert_chain_from_sign1;
 use crate::{
     crypto::{
         cose::{
             check_certificate_profile, validate_cose_tst_info, validate_cose_tst_info_async,
             CertificateTrustPolicy, CoseError,
         },
-        ocsp::{make_ocsp_cert_id, OcspResponse},
+        ocsp::OcspResponse,
     },
-    log_item,
     status_tracker::StatusTracker,
-    validation_results::validation_codes::{
-        SIGNING_CREDENTIAL_OCSP_INACCESSIBLE, SIGNING_CREDENTIAL_OCSP_SKIPPED,
-    },
 };
 
 /// Given a COSE signature, extract the OCSP data and validate the status of
@@ -62,13 +57,7 @@ pub fn check_ocsp_status(
             OcspFetchPolicy::FetchAllowed => {
                 fetch_and_check_ocsp_response(sign1, data, ctp, validation_log)
             }
-            OcspFetchPolicy::DoNotFetch => {
-                log_item!("", "OCSP fetch skipped", "check_ocsp_status")
-                    .validation_status(SIGNING_CREDENTIAL_OCSP_SKIPPED)
-                    .informational(validation_log);
-
-                Ok(OcspResponse::default())
-            }
+            OcspFetchPolicy::DoNotFetch => Ok(OcspResponse::default()),
         },
     }
 }
@@ -104,14 +93,9 @@ fn check_stapled_ocsp_response(
 
     let signing_time: DateTime<Utc> = tst_info.gen_time.clone().into();
 
-    let certs = cert_chain_from_sign1(sign1)?;
-
-    let Ok(ocsp_data) = OcspResponse::from_der_checked(
-        ocsp_response_der,
-        make_ocsp_cert_id(&certs),
-        Some(signing_time),
-        validation_log,
-    ) else {
+    let Ok(ocsp_data) =
+        OcspResponse::from_der_checked(ocsp_response_der, Some(signing_time), validation_log)
+    else {
         return Ok(OcspResponse::default());
     };
 
@@ -145,10 +129,6 @@ fn fetch_and_check_ocsp_response(
         let certs = cert_chain_from_sign1(sign1)?;
 
         let Some(ocsp_der) = crate::crypto::ocsp::fetch_ocsp_response(&certs) else {
-            log_item!("", "OCSP fetch failed", "fetch_and_check_ocsp_response")
-                .validation_status(SIGNING_CREDENTIAL_OCSP_INACCESSIBLE)
-                .informational(validation_log);
-
             return Ok(OcspResponse::default());
         };
 
@@ -160,12 +140,9 @@ fn fetch_and_check_ocsp_response(
 
         // Check the OCSP response, but only if it is well-formed.
         // Revocation errors are reported in the validation log.
-        let Ok(ocsp_data) = OcspResponse::from_der_checked(
-            &ocsp_response_der,
-            make_ocsp_cert_id(&certs),
-            signing_time,
-            validation_log,
-        ) else {
+        let Ok(ocsp_data) =
+            OcspResponse::from_der_checked(&ocsp_response_der, signing_time, validation_log)
+        else {
             // TO REVIEW: This is how the old code worked, but is it correct to ignore a
             // malformed OCSP response?
             return Ok(OcspResponse::default());

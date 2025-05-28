@@ -44,8 +44,6 @@ pub use sign1::{
 };
 
 mod sigtst;
-#[allow(unused_imports)]
-pub use sigtst::timestamptoken_from_timestamprsp;
 pub(crate) use sigtst::{
     add_sigtst_header, add_sigtst_header_async, validate_cose_tst_info,
     validate_cose_tst_info_async,
