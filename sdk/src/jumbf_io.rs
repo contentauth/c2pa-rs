@@ -36,7 +36,7 @@ use crate::{
 
 // initialize asset handlers
 lazy_static! {
-    static ref ASSET_HANDLERS: HashMap<String, Box<dyn AssetIO>> = {
+    pub(crate) static ref CAI_READERS: HashMap<String, Box<dyn AssetIO>> = {
         let handlers: Vec<Box<dyn AssetIO>> = vec![
             #[cfg(feature = "pdf")]
             Box::new(PdfIO::new("")),
@@ -67,7 +67,7 @@ lazy_static! {
 
 // initialize streaming write handlers
 lazy_static! {
-    static ref CAI_WRITERS: HashMap<String, Box<dyn CAIWriter>> = {
+    pub(crate) static ref CAI_WRITERS: HashMap<String, Box<dyn CAIWriter>> = {
         let handlers: Vec<Box<dyn AssetIO>> = vec![
             Box::new(BmffIO::new("")),
             Box::new(C2paIO::new("")),
@@ -152,19 +152,19 @@ pub fn save_jumbf_to_memory(asset_type: &str, data: &[u8], store_bytes: &[u8]) -
 pub(crate) fn get_assetio_handler_from_path(asset_path: &Path) -> Option<&dyn AssetIO> {
     let ext = get_file_extension(asset_path)?;
 
-    ASSET_HANDLERS.get(&ext).map(|h| h.as_ref())
+    CAI_READERS.get(&ext).map(|h| h.as_ref())
 }
 
 pub(crate) fn get_assetio_handler(ext: &str) -> Option<&dyn AssetIO> {
     let ext = ext.to_lowercase();
 
-    ASSET_HANDLERS.get(&ext).map(|h| h.as_ref())
+    CAI_READERS.get(&ext).map(|h| h.as_ref())
 }
 
 pub(crate) fn get_cailoader_handler(asset_type: &str) -> Option<&dyn CAIReader> {
     let asset_type = asset_type.to_lowercase();
 
-    ASSET_HANDLERS.get(&asset_type).map(|h| h.get_reader())
+    CAI_READERS.get(&asset_type).map(|h| h.get_reader())
 }
 
 pub(crate) fn get_caiwriter_handler(asset_type: &str) -> Option<&dyn CAIWriter> {
@@ -186,7 +186,7 @@ pub(crate) fn get_file_extension(path: &Path) -> Option<String> {
 pub(crate) fn get_supported_file_extension(path: &Path) -> Option<String> {
     let ext = get_file_extension(path)?;
 
-    if ASSET_HANDLERS.get(&ext).is_some() {
+    if CAI_READERS.get(&ext).is_some() {
         Some(ext)
     } else {
         None
@@ -346,7 +346,7 @@ pub fn remove_jumbf_from_file<P: AsRef<Path>>(path: P) -> Result<()> {
 
 /// returns a list of supported file extensions and mime types
 pub fn get_supported_types() -> Vec<String> {
-    ASSET_HANDLERS.keys().map(|k| k.to_owned()).collect()
+    CAI_READERS.keys().map(|k| k.to_owned()).collect()
 }
 
 #[cfg(test)]
