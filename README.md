@@ -54,29 +54,11 @@ NOTE: The current release includes a new API that replaces old methods of readin
 
 **Minimal supported Rust version (MSRV)**: The `c2pa` crate requires Rust version 1.82.0 or newer. When a newer version of Rust becomes required, a new minor (0.x.0) version of this crate will be released.
 
-To use the CAI Rust library, you must install [Cargo](https://doc.rust-lang.org/cargo/index.html), the Rust package manager.
+To use the CAI Rust library, you must install [Rust and Cargo](https://doc.rust-lang.org/cargo/index.html).
 
-Install the current stable release of Rust by using `rustup`, which will also install Cargo. On Linux and macOS systems, enter this command:
+### Add dependency
 
-```sh
-curl https://sh.rustup.rs -sSf | sh
-```
-
-If everything goes well, you’ll see this message in your terminal:
-
-```
-Rust is installed now. Great!
-```
-
-### Install C2PA crate
-
-To install the C2PA crate, run the following Cargo command in your project directory:
-
-```
-cargo add c2pa
-```
-
-Or add the following line to your `Cargo.toml`:
+Add the following line to your `Cargo.toml`:
 
 ```
 c2pa = "<VERSION_NUMBER>"
