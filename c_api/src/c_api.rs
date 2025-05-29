@@ -744,6 +744,21 @@ pub unsafe extern "C" fn c2pa_builder_add_resource(
 ///
 /// # Safety
 /// Reads from NULL-terminated C strings.
+/// 
+/// # Example
+/// ```c
+/// auto result = c2pa_builder_add_ingredient_from_stream(
+///    builder,
+///   "{\"title\": \"Test Ingredient\"}",
+///   "image/jpeg",
+///   stream);
+/// if (result < 0) {
+///    auto error = c2pa_error();
+///   printf("Error: %s\n", error);
+///   c2pa_string_free(error);
+/// }
+/// ```
+/// 
 #[no_mangle]
 pub unsafe extern "C" fn c2pa_builder_add_ingredient_from_stream(
     builder_ptr: *mut C2paBuilder,
