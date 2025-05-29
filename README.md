@@ -30,7 +30,7 @@ The [`c2pa` crate](https://crates.io/crates/c2pa) implements a subset of the [C2
 
 The library enables a desktop, mobile, or embedded application to:
 * Create and sign C2PA [claims](https://c2pa.org/specifications/specifications/2.1/specs/C2PA_Specification.html#_claims) and [manifests](https://c2pa.org/specifications/specifications/2.1/specs/C2PA_Specification.html#_manifests).
-* Create, sign, and validate [CAWG identity assertions](https://cawg.io/identity) in C2PA manifests.
+* Create, sign, and validate [CAWG identity assertions](https://cawg.io/identity) in C2PA manifests.  See [Using the CAWG identity assertion](docs/cawg-identity.md) for more information.
 * Embed manifests in [supported file formats](docs/supported-formats.md).
 * Parse and validate manifests found in [supported file formats](docs/supported-formats.md).
 
@@ -50,11 +50,13 @@ NOTE: The current release includes a new API that replaces old methods of readin
 
 ## Installation
 
-### Prerequisite: Install Rust
+### Prerequisites
+
+**Minimal supported Rust version (MSRV)**: The `c2pa` crate requires Rust version 1.82.0 or newer. When a newer version of Rust becomes required, a new minor (0.x.0) version of this crate will be released.
 
 To use the CAI Rust library, you must install [Cargo](https://doc.rust-lang.org/cargo/index.html), the Rust package manager.
 
-Install the current stable release of Rust by using `rustup`, which will also install cargo. On Linux and macOS systems, enter this command:
+Install the current stable release of Rust by using `rustup`, which will also install Cargo. On Linux and macOS systems, enter this command:
 
 ```sh
 curl https://sh.rustup.rs -sSf | sh
@@ -66,8 +68,6 @@ If everything goes well, you’ll see this message in your terminal:
 Rust is installed now. Great!
 ```
 
-**Minimal supported Rust version (MSRV)**: The `c2pa` crate requires Rust version 1.82.0 or newer. When a newer version of Rust becomes required, a new minor (0.x.0) version of this crate will be released.
-
 ### Install C2PA crate
 
 To install the C2PA crate, run the following Cargo command in your project directory:
@@ -76,7 +76,7 @@ To install the C2PA crate, run the following Cargo command in your project direc
 cargo add c2pa
 ```
 
-Or add the following line to your Cargo.toml:
+Or add the following line to your `Cargo.toml`:
 
 ```
 c2pa = "<VERSION_NUMBER>"
