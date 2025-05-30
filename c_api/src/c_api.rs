@@ -1458,4 +1458,31 @@ mod tests {
         assert_eq!(error_str.to_str().unwrap(), "NullParameter: stream");
         unsafe { c2pa_builder_free(builder) };
     }
+
+    #[test]
+    #[cfg(feature = "file_io")]
+    fn test_reader_from_file_cawg_identity() {
+        use env_logger;
+        std::env::set_var("RUST_LOG", "error");
+        env_logger::init();
+        let base = env!("CARGO_MANIFEST_DIR");
+        let path = CString::new(format!(
+            "{}/../sdk/tests/fixtures/C_with_CAWG_data.jpg",
+            base
+        ))
+        .unwrap();
+        let reader = unsafe { c2pa_reader_from_file(path.as_ptr()) };
+        if reader.is_null() {
+            let error = unsafe { c2pa_error() };
+            let error_str = unsafe { CString::from_raw(error) };
+            panic!("Failed to create reader: {}", error_str.to_str().unwrap());
+        }
+        assert!(!reader.is_null());
+        let json = unsafe { c2pa_reader_json(reader) };
+        assert!(!json.is_null());
+        let json_str = unsafe { CString::from_raw(json) };
+        let json_report = json_str.to_str().unwrap();
+        assert!(json_report.contains("cawg.identity"));
+        assert!(json_report.contains("cawg.ica.credential_valid"));
+    }
 }

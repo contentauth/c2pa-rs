@@ -726,6 +726,7 @@ dependencies = [
  "byteorder",
  "byteordered",
  "bytes",
+ "c2pa_macros",
  "chrono",
  "ciborium",
  "config",
@@ -814,6 +815,14 @@ dependencies = [
  "x509-parser",
  "zeroize",
  "zip",
+]
+
+[[package]]
+name = "c2pa_macros"
+version = "0.55.0"
+dependencies = [
+ "quote",
+ "syn 2.0.101",
 ]
 
 [[package]]
@@ -2657,6 +2666,7 @@ dependencies = [
  "c2pa",
  "env_logger",
  "image 0.25.6",
+ "lazy_static",
  "log",
  "memchr",
  "nom",

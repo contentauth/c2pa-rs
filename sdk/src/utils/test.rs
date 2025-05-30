@@ -33,7 +33,9 @@ use crate::crypto::{
 #[cfg(feature = "v1_api")]
 use crate::signer::RemoteSigner;
 use crate::{
-    assertions::{labels, Action, Actions, Ingredient, ReviewRating, SchemaDotOrg, Thumbnail},
+    assertions::{
+        labels, Action, Actions, Ingredient, Relationship, ReviewRating, SchemaDotOrg, Thumbnail,
+    },
     asset_io::CAIReadWrite,
     claim::Claim,
     crypto::{cose::CertificateTrustPolicy, raw_signature::SigningAlg},
@@ -41,7 +43,7 @@ use crate::{
     jumbf_io::get_assetio_handler,
     salt::DefaultSalt,
     store::Store,
-    AsyncSigner, Result,
+    AsyncSigner, ClaimGeneratorInfo, Result,
 };
 
 pub const TEST_SMALL_JPEG: &str = "earth_apollo17.jpg";
@@ -73,6 +75,13 @@ pub const TEST_VC: &str = r#"{
     }
 }"#;
 
+// pub fn setup_logger() {
+//     static INIT: std::sync::Once = std::sync::Once::new();
+//     INIT.call_once(|| {
+//         let _ = env_logger::builder().is_test(true).try_init();
+//     });
+// }
+
 /// Create new C2PA compatible UUID
 pub(crate) fn gen_c2pa_uuid() -> String {
     let guid = uuid::Uuid::new_v4();
@@ -86,9 +95,68 @@ pub(crate) fn static_test_v1_uuid() -> &'static str {
     const TEST_GUID: &str = "urn:uuid:f75ddc48-cdc8-4723-bcfe-77a8d68a5920";
     TEST_GUID
 }
-
-/// creates a claim for testing
+/// Creates a claim for testing (v2)
 pub fn create_test_claim() -> Result<Claim> {
+    // First create and add a claim thumbnail (we don't need to reference this anywhere)
+    let mut claim = Claim::new("adobe unit test", Some("adobe"), 2);
+
+    let mut cg_info = ClaimGeneratorInfo::new("test app");
+    cg_info.version = Some("2.3.4".to_string());
+    // cg_info.icon = Some(UriOrResource::HashedUri(HashedUri::new(
+    //     "self#jumbf=c2pa.databoxes.data_box".to_string(),
+    //     None,
+    //     b"hashed",
+    // )));
+    cg_info.insert("something", "else");
+
+    claim.add_claim_generator_info(cg_info);
+
+    // Create a thumbnail for the claim
+    let claim_thumbnail =
+        Thumbnail::new(labels::JPEG_CLAIM_THUMBNAIL, vec![0xde, 0xad, 0xbe, 0xef]);
+    let _claim_thumbnail_ref =
+        claim.add_assertion_with_salt(&claim_thumbnail, &DefaultSalt::default())?;
+
+    // Create and add a thumbnail for an ingredient
+    let ingredient_thumbnail = Thumbnail::new(
+        labels::JPEG_INGREDIENT_THUMBNAIL,
+        vec![0xde, 0xad, 0xbe, 0xef],
+    );
+    let ingredient_thumbnail_ref =
+        claim.add_assertion_with_salt(&ingredient_thumbnail, &DefaultSalt::default())?;
+
+    // create a new v3 ingredient and add the thumbnail reference
+    let ingredient = Ingredient::new_v3(Relationship::ComponentOf)
+        .set_title("image_1.jpg")
+        .set_format("image/jpeg")
+        .set_thumbnail(Some(&ingredient_thumbnail_ref));
+    let ingredient_ref = claim.add_assertion_with_salt(&ingredient, &DefaultSalt::default())?;
+
+    // create a second v3 ingredient and add the thumbnail reference
+    let ingredient2 = Ingredient::new_v3(Relationship::ComponentOf)
+        .set_title("image_2.jpg")
+        .set_format("image/png")
+        .set_thumbnail(Some(&ingredient_thumbnail_ref));
+    let ingredient_ref2 = claim.add_assertion_with_salt(&ingredient2, &DefaultSalt::default())?;
+
+    let created_action =
+        Action::new("c2pa.created").set_source_type("http://c2pa.org/digitalsourcetype/empty");
+
+    let placed_action = Action::new("c2pa.placed")
+        .set_parameter("ingredients", vec![ingredient_ref, ingredient_ref2])?;
+
+    // Add assertions.
+    let actions = Actions::new()
+        .add_action(created_action)
+        .add_action(placed_action);
+
+    claim.add_assertion(&actions)?;
+
+    Ok(claim)
+}
+
+/// creates a claim for testing (v1)
+pub fn create_test_claim_v1() -> Result<Claim> {
     let mut claim = Claim::new("adobe unit test", Some("adobe"), 1);
 
     // add some data boxes
@@ -183,6 +251,16 @@ pub fn create_test_store() -> Result<Store> {
     let mut store = Store::new();
 
     let claim = create_test_claim()?;
+    store.commit_claim(claim).unwrap();
+    Ok(store)
+}
+
+/// Creates a store with an unsigned v1 claim for testing
+pub fn create_test_store_v1() -> Result<Store> {
+    // Create claims store.
+    let mut store = Store::new();
+
+    let claim = create_test_claim_v1()?;
     store.commit_claim(claim).unwrap();
     Ok(store)
 }

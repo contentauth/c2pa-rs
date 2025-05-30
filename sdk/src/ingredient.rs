@@ -1845,15 +1845,16 @@ mod tests_file_io {
         assert_eq!(ingredient.format(), Some("image/jpeg"));
         test_thumbnail(&ingredient, "image/jpeg");
         assert!(ingredient.manifest_data().is_some());
-        assert_eq!(
+        assert!(
             ingredient
                 .validation_results()
                 .unwrap()
                 .active_manifest()
                 .unwrap()
-                .informational[0]
-                .code(),
-            validation_status::TIMESTAMP_MISMATCH
+                .informational
+                .iter()
+                .any(|info| info.code() == validation_status::TIMESTAMP_MISMATCH),
+            "No informational item with TIMESTAMP_MISMATCH found"
         );
     }
 
@@ -1879,7 +1880,7 @@ mod tests_file_io {
 
     #[test]
     #[cfg(feature = "file_io")]
-    fn test_jpg_nested() {
+    fn test_jpg_nested_err() {
         let ap = fixture_path("CIE-sig-CA.jpg");
         let ingredient = Ingredient::from_file(ap).expect("from_file");
         // println!("ingredient = {ingredient}");

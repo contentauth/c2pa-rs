@@ -23,6 +23,7 @@ use std::{
 
 use async_generic::async_generic;
 use async_trait::async_trait;
+use log::error;
 #[cfg(feature = "json_schema")]
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -132,9 +133,18 @@ impl Reader {
             Store::from_stream(format, &mut stream, verify, &mut validation_log)
         } else {
             Store::from_stream_async(format, &mut stream, verify, &mut validation_log).await
-        }?;
+        }
+        .inspect_err(|_err| {
+            error!("Reader: validation_log: {validation_log:?}");
+        })?;
 
-        Self::from_store(store, &validation_log)
+        match Self::from_store(store, &validation_log) {
+            Ok(reader) => Ok(reader),
+            Err(err) => {
+                error!("Reader: validation_log: {validation_log:?}");
+                Err(err)
+            }
+        }
     }
 
     #[cfg(feature = "file_io")]
@@ -920,7 +930,6 @@ pub mod tests {
     /// Test that the reader can validate a file with nested assertion errors
     fn test_reader_to_folder() -> Result<()> {
         use crate::utils::{io_utils::tempdirectory, test::temp_dir_path};
-
         let reader = Reader::from_file("tests/fixtures/CACAE-uri-CA.jpg")?;
         assert_eq!(reader.validation_status(), None);
         let temp_dir = tempdirectory().unwrap();
