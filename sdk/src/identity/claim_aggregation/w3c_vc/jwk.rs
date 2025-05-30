@@ -356,10 +356,6 @@ pub enum JwkError {
     #[error("Unexpected length for publicKeyMultibase")]
     MultibaseKeyLength(usize, usize),
 
-    /// Error parsing or producing multibase
-    #[error(transparent)]
-    Multibase(#[from] multibase::Error),
-
     #[error("Invalid coordinates")]
     InvalidCoordinates,
 }

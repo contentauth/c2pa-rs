@@ -24,7 +24,19 @@ rust-version = "1.82.0"
 exclude = ["tests/fixtures"]
 
 [package.metadata.docs.rs]
-all-features = true
+# Build with all features, but not with openssl and rust_native_crypto simulatenously.
+features = [
+    "openssl",
+    "add_thumbnails",
+    "file_io",
+    "serialize_thumbnails",
+    "no_interleaved_io",
+    "fetch_remote_manifests",
+    "json_schema",
+    "pdf",
+    "v1_api",
+    "diagnostics",
+]
 rustdoc-args = ["--cfg", "docsrs"]
 
 [features]
@@ -123,7 +135,6 @@ lopdf = { version = "0.31.0", optional = true }
 lazy_static = "1.4.0"
 memchr = "2.7.4"
 mp4 = "0.14.0"
-multibase = "0.9.1"
 nom = "7.1.3"
 non-empty-string = { version = "=0.2.4", features = ["serde"] }
 nonempty-collections = { version = "0.2.9", features = ["serde"] }
