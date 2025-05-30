@@ -56,6 +56,9 @@ pub enum Error {
     #[error("required feature missing")]
     MissingFeature(String),
 
+    #[error("validation rule was violated: {0}")]
+    ValidationRule(String),
+
     #[error("feature implementation incomplete")]
     NotImplemented(String),
 
@@ -102,6 +105,9 @@ pub enum Error {
 
     #[error("more than one manifest store detected")]
     TooManyManifestStores,
+
+    #[error("manifest is not refernced by any ingredient")]
+    UnreferencedManifest,
 
     /// The COSE Sign1 structure can not be parsed.
     #[error("COSE Sign1 structure can not be parsed: {coset_error}")]

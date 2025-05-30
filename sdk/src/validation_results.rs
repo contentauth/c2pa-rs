@@ -161,7 +161,7 @@ impl ValidationResults {
                     .claims()
                     .iter()
                     .flat_map(|c| c.ingredient_assertions())
-                    .filter_map(|a| Ingredient::from_assertion(a).ok())
+                    .filter_map(|a| Ingredient::from_assertion(a.assertion()).ok())
                     .filter_map(make_absolute)
                     .flatten()
                     .collect();
@@ -364,6 +364,12 @@ pub mod validation_codes {
     /// Any corresponding URL should point to a C2PA claim
     pub const SIGNING_CREDENTIAL_NOT_REVOKED: &str = "signingCredential.ocsp.notRevoked";
 
+    /// The time-stamp credential is well-formed and message imprint and validity
+    /// are correct.
+    ///
+    /// Any corresponding URL should point to a C2PA claim signature box.
+    pub const TIMESTAMP_VALIDATED: &str = "timeStamp.validated";
+
     /// The time-stamp credential is listed on the validator's trust list.
     ///
     /// Any corresponding URL should point to a C2PA claim signature box.
@@ -381,6 +387,12 @@ pub mod validation_codes {
     /// Any corresponding URL should point to a C2PA assertion.
     pub const ASSERTION_DATAHASH_MATCH: &str = "assertion.dataHash.match";
 
+    /// Additional exclusions are present in the data hash assertion.
+    ///
+    /// Any corresponding URL should point to a C2PA assertion.
+    pub const ASSERTION_DATAHASH_ADDITIONAL_EXCLUSIONS: &str =
+        "assertion.dataHash.additionalExclusionsPresent";
+
     /// Hash of a box-based asset matches the hash declared in the BMFF
     /// hash assertion.
     ///
@@ -393,13 +405,97 @@ pub mod validation_codes {
     /// Any corresponding URL should point to a C2PA assertion.
     pub const ASSERTION_BOXHASH_MATCH: &str = "assertion.boxesHash.match";
 
+    /// Hash of all assets contained in collection match hashes declared
+    /// in Collection Data
+    /// Hash assertion.
+    ///
+    /// Any corresponding URL should point to a C2PA assertion.
+    pub const ASSERTION_COLLECTIONHASH_MATCH: &str = "assertion.collectionHash.match";
+
     /// A non-embedded (remote) assertion was accessible at the time of
     /// validation.
     ///
     /// Any corresponding URL should point to a C2PA assertion.
     pub const ASSERTION_ACCESSIBLE: &str = "assertion.accessible";
 
+    /// Hash of the ingredient's C2PA manifest was successfully validated.
+    ///
+    /// Any corresponding URL should point to a C2PA assertion.
+    pub const INGREDIENT_MANIFEST_VALIDATED: &str = "ingredient.manifest.validated";
+
+    /// Hash of the ingredient’s C2PA Claim Signature box was successfully validated
+    ///
+    /// Any corresponding URL should point to a C2PA assertion.
+    pub const INGREDIENT_CLAIM_SIGNATURE_VALIDATED: &str = "ingredient.claimSignature.validated";
+
+    // -- informational codes --
+
+    /// The validator chose not to perform an online OCSP check.
+    ///
+    /// Any corresponding URL should point to a C2PA claim signature box.
+    pub const SIGNING_CREDENTIAL_OCSP_SKIPPED: &str = "signingCredential.ocsp.skipped";
+
+    /// The validator attempted to perform an online OCSP check, but did not receive
+    /// a response.
+    ///
+    /// Any corresponding URL should point to a C2PA claim signature box.
+    pub const SIGNING_CREDENTIAL_OCSP_INACCESSIBLE: &str = "signingCredential.ocsp.inaccessible";
+
+    /// The time-stamp does not correspond to the contents of the claim.
+    ///
+    /// Any corresponding URL should point to a C2PA claim signature box.
+    pub const TIMESTAMP_MISMATCH: &str = "timeStamp.mismatch";
+
+    /// The time-stamp does not correspond to the contents of the claim.
+    ///
+    /// Any corresponding URL should point to a C2PA claim signature box.
+    pub const TIMESTAMP_MALFORMED: &str = "timeStamp.malformed";
+
+    /// The signed time-stamp attribute in the signature falls outside the
+    /// validity window of the signing certificate or the TSA's certificate.
+    ///
+    /// Any corresponding URL should point to a C2PA claim signature box.
+    pub const TIMESTAMP_OUTSIDE_VALIDITY: &str = "timeStamp.outsideValidity";
+
+    /// The time-stamp credential is not listed on the validator's trust list.
+    ///
+    /// Any corresponding URL should point to a C2PA claim signature box.
+    pub const TIMESTAMP_UNTRUSTED: &str = "timeStamp.untrusted";
+
+    /// The asset manifest cannot be interpreted by this version of the SDK.
+    ///
+    /// Any corresponding URL should point to a C2PA assertion.
+    pub const MANIFEST_UNKNOWN_PROVENANCE: &str = "manifest.unknownProvenance";
+
+    /// The manifest is not referenced via an ingredient assertion.
+    ///
+    /// Any corresponding URL should point to a C2PA assertion.
+    pub const MANIFEST_UNREFERENCED: &str = "manifest.unreferenced";
+
+    /// The ingredient does not contain a manifest or cannot be interpreted
+    /// by this version of the SDK.
+    ///
+    /// Any corresponding URL should point to a C2PA assertion.
+    pub const INGREDIENT_UNKNOWN_PROVENANCE: &str = "ingredient.unknownProvenance";
+
+    /// The algorithm has been deprecated.
+    ///
+    /// Any corresponding URL should point to a C2PA claim signature box.
+    pub const ALGORITHM_DEPRECATED: &str = "algorithm.deprecated";
+
+    /// The claimed time of signing (in the iat header of the signature)
+    /// is within the validity period of the claim signer’s certificate
+    /// chain and before the time in any corresponding trusted timestamp
+    ///
+    /// Any corresponding URL should point to a C2PA claim signature box.
+    pub const TIME_OF_SIGNING_INSIDE_VALIDITY: &str = "timeOfSigning.insideValidity";
+
     // -- failure codes --
+
+    /// The claim cbor is invalid
+    ///
+    /// Any corresponding URL should point to a C2PA claim box.
+    pub const CLAIM_MALFORMED: &str = "claim.malformed";
 
     /// The referenced claim in the ingredient's manifest cannot be found.
     ///
@@ -491,34 +587,12 @@ pub mod validation_codes {
     /// The signing credential has been revoked by the issuer.
     ///
     /// Any corresponding URL should point to a C2PA claim signature box.
-    pub const SIGNING_CREDENTIAL_REVOKED: &str = "signingCredential.revoked";
+    pub const SIGNING_CREDENTIAL_REVOKED: &str = "signingCredential.ocsp.revoked";
 
     /// The signing credential has expired.
     ///
     /// Any corresponding URL should point to a C2PA claim signature box.
     pub const SIGNING_CREDENTIAL_EXPIRED: &str = "signingCredential.expired";
-
-    /// The time-stamp does not correspond to the contents of the claim.
-    ///
-    /// Any corresponding URL should point to a C2PA claim signature box.
-    pub const TIMESTAMP_MISMATCH: &str = "timeStamp.mismatch";
-
-    /// The time-stamp credential is not listed on the validator's trust list.
-    ///
-    /// Any corresponding URL should point to a C2PA claim signature box.
-    pub const TIMESTAMP_UNTRUSTED: &str = "timeStamp.untrusted";
-
-    /// The signed time-stamp attribute in the signature falls outside the
-    /// validity window of the signing certificate or the TSA's certificate.
-    ///
-    /// Any corresponding URL should point to a C2PA claim signature box.
-    pub const TIMESTAMP_OUTSIDE_VALIDITY: &str = "timeStamp.outsideValidity";
-
-    /// The time-stamp response included in the claim signature header is not
-    /// properly formed, as per RFC 3161
-    ///
-    /// Any corresponding URL should point to a C2PA claim signature box.
-    pub const TIMESTAMP_MALFORMED: &str = "timeStamp.malformed";
 
     /// The hash of the the referenced assertion in the manifest does not
     /// match the corresponding hash in the assertion's hashed URI in the claim.
@@ -604,7 +678,7 @@ pub mod validation_codes {
     /// for the General Boxes hash assertion.
     ///
     /// Any corresponding URL should point to a C2PA assertion.
-    pub const ASSERTION_BOXHASH_UNKNOWN: &str = "assertion.boxesHash.unknownBox";
+    pub const ASSERTION_BOXHASH_UNKNOWN_BOX: &str = "assertion.boxesHash.unknownBox";
 
     /// A hard binding assertion is in a cloud data assertion.
     ///
@@ -629,6 +703,156 @@ pub mod validation_codes {
     /// Any corresponding URL should point to a C2PA claim box or C2PA assertion.
     pub const GENERAL_ERROR: &str = "general.error";
 
+    /// The claim signature referenced in the claim was created outside the validity
+    /// period of the signing credential
+    ///
+    /// Any corresponding URL should point to a C2PA claim signature box.
+    pub const CLAIM_SIGNATURE_OUTSIDE_VALIDITY: &str = "claimSignature.outsideValidity";
+
+    /// The manifest is a time-stamp manifest, but it contains a
+    /// disallowed (non-ingredient) assertion.
+    ///
+    /// Any corresponding URL should point to a C2PA claim  box.
+    pub const MANIFEST_TIMESTAMP_INVALID: &str = "manifest.timestamp.invalid";
+
+    ///The manifest is an time-stamp manifest, but it contains either zero or
+    ///  multiple parentOf ingredients.
+    ///
+    /// Any corresponding URL should point to a C2PA claim box.
+    pub const MANIFEST_TIMESTAMP_WRONG_PARENTS: &str = "manifest.timestamp.wrongParents";
+
+    /// The compressed manifest was not valid.
+    ///
+    /// Any corresponding URL should point to a C2PA claim box.
+    pub const MANIFEST_COMPRESSED_INVALID: &str = "manifest.compressed.invalid";
+
+    /// The OCSP response contains an unknown status for the signing credential.
+    ///
+    /// Any corresponding URL should point to a C2PA claim signature box.
+    pub const SIGNING_CREDENTIAL_OCSP_UNKNOWN: &str = "signingCredential.ocsp.unknown";
+
+    /// An assertion listed in the claim is not in the same C2PA Manifest as
+    /// the claim.
+    ///
+    /// Any corresponding URL should point to a C2PA claim  box.
+    pub const ASSERTION_OUTSIDE_MANIFEST: &str = "assertion.outsideManifest";
+
+    /// An actions assertion is malformed.
+    ///
+    /// Any corresponding URL should point to a C2PA assertion box.
+    pub const ASSERTION_ACTION_MALFORMED: &str = "assertion.action.malformed";
+
+    /// An actions assertion ingredient malformed.
+    ///
+    /// Any corresponding URL should point to a C2PA assertion box.
+    pub const ASSERTION_ACTION_INGREDIENT_MISMATCH: &str = "assertion.action.ingredientMismatch";
+
+    /// An action that requires an associated redaction either does not have one
+    ///  or the one specified cannot be located
+    ///
+    /// Any corresponding URL should point to a C2PA assertion box.
+    pub const ASSERTION_ACTION_REDACTION_MISMATCH: &str = "assertion.action.redactionMismatch";
+
+    /// An actions assertion was redacted when the claim was created.
+    ///
+    /// Any corresponding URL should point to a C2PA assertion.
+    pub const ASSERTION_ACTION_REDACTED: &str = "assertion.action.redacted";
+
+    /// A data hash assertion is malformed.
+    ///
+    /// Any corresponding URL should point to a C2PA assertion box.
+    pub const ASSERTION_DATAHASH_MALFORMED: &str = "assertion.dataHash.malformed";
+
+    /// A hard binding assertion was redacted when the claim was created.
+    ///
+    /// Any corresponding URL should point to a C2PA assertion box.
+    pub const ASSERTION_DATAHASH_REDACTED: &str = "assertion.dataHash.redacted";
+
+    /// A BMFF hash assertion is malformed.
+    ///
+    /// Any corresponding URL should point to a C2PA assertion box.
+    pub const ASSERTION_BOXHASH_MALFORMED: &str = "assertion.bmffHash.malformed";
+
+    /// The cloud-data assertion was incomplete.
+    ///
+    /// Any corresponding URL should point to a C2PA assertion box.
+    pub const ASSERTION_CLOUD_DATA_MALFORMED: &str = "assertion.cloud-data.malformed";
+
+    /// A hash of an asset in the collection does not match hash declared in
+    /// the collection data hash assertion.
+    ///
+    /// Any corresponding URL should point to a C2PA assertion box.
+    pub const ASSERTION_COLLECTIONHASH_MISMATCH: &str = "assertion.collectionHash.mismatch";
+
+    /// An asset that was listed in the collection data hash assertion is
+    /// missing from the collection.
+    ///
+    /// Any corresponding URL should point to a C2PA assertion box.
+    pub const ASSERTION_COLLECTIONHASH_INCORRECT_FILE_COUNT: &str =
+        "assertion.collectionHash.incorrectFileCount";
+
+    /// A URI of an asset in the collection data hash assertion contains
+    /// the file part '..' or '.'.
+    ///
+    /// Any corresponding URL should point to a C2PA assertion box.
+    pub const ASSERTION_COLLECTIONHASH_INVALID_URI: &str = "assertion.collectionHash.invalidURI";
+
+    /// The collection hash assertion was incomplete.
+    ///
+    /// Any corresponding URL should point to a C2PA assertion box.
+    pub const ASSERTION_COLLECTIONHASH_MALFORMED: &str = "assertion.collectionHash.malformed";
+
+    /// The ingredient assertion was incomplete.
+    ///
+    /// Any corresponding URL should point to a C2PA assertion box.
+    pub const ASSERTION_INGREDIENT_MALFORMED: &str = "assertion.ingredient.malformed";
+
+    /// The C2PA metadata assertion contains a field that is not
+    /// allowed by this specification.
+    ///
+    /// Any corresponding URL should point to a C2PA assertion box.
+    pub const ASSERTION_METADATA_DISALLOWED: &str = "assertion.metadata.disallowed";
+
+    /// The referenced ingredient C2PA Claim Signature was not found.
+    ///
+    /// Any corresponding URL should point to a C2PA assertion box.
+    pub const INGREDIENT_MANIFEST_MISSING: &str = "ingredient.manifest.missing";
+
+    /// The hash of an embedded C2PA Manifest does not match the hash declared in
+    /// the hashed_uri value of the activeManifest field in the ingredient
+    /// assertion.
+    ///
+    /// Any corresponding URL should point to a C2PA assertion box.
+    pub const INGREDIENT_MANIFEST_MISMATCH: &str = "ingredient.manifest.mismatch";
+
+    /// The referenced ingredient C2PA Claim Signature was not found.
+    ///
+    /// Any corresponding URL should point to a C2PA assertion box.
+    pub const INGREDIENT_CLAIM_SIGNATURE_MISSING: &str = "ingredient.claimSignature.missing";
+
+    /// The hash of an embedded C2PA Manifest’s C2PA Claim Signature does not match
+    /// the hash declared in the hashed_uri value of the claimSignature field in the
+    /// ingredient assertion.
+    ///
+    /// Any corresponding URL should point to a C2PA assertion box.
+    pub const INGREDIENT_CLAIM_SIGNATURE_MISMATCH: &str = "ingredient.claimSignature.mismatch";
+
+    /// The data pointed to by a hashed_uri cannot be located.
+    ///
+    /// Any corresponding URL should point to a C2PA assertion box.
+    pub const HASHED_URI_MISSING: &str = "hashedURI.missing";
+
+    /// The hash of a given hashed_uri does not match the corresponding hash
+    /// of the destination URI’s data
+    ///
+    /// Any corresponding URL should point to a C2PA assertion box.
+    pub const HASHED_URI_MISMATCH: &str = "hashedURI.mismatch";
+
+    /// The timestamp assertion is malformed.
+    ///
+    /// Any corresponding URL should point to a C2PA assertion box.
+    pub const ASSERTION_TIMESTAMP_MALFORMED: &str = "assertion.timestamp.malformed";
+
     /// Returns `true` if the status code is a known C2PA success status code.
     ///
     /// Returns `false` if the status code is a known C2PA failure status
@@ -651,17 +875,29 @@ pub mod validation_codes {
     pub fn log_kind(status_code: &str) -> LogKind {
         match status_code {
             CLAIM_SIGNATURE_VALIDATED
+            | CLAIM_SIGNATURE_INSIDE_VALIDITY
             | SIGNING_CREDENTIAL_TRUSTED
+            | SIGNING_CREDENTIAL_NOT_REVOKED
             | TIMESTAMP_TRUSTED
+            | TIMESTAMP_VALIDATED
             | ASSERTION_HASHEDURI_MATCH
             | ASSERTION_DATAHASH_MATCH
             | ASSERTION_BMFFHASH_MATCH
             | ASSERTION_ACCESSIBLE
-            | ASSERTION_BOXHASH_MATCH => LogKind::Success,
-            TIMESTAMP_UNTRUSTED
+            | ASSERTION_BOXHASH_MATCH
+            | ASSERTION_COLLECTIONHASH_MATCH
+            | INGREDIENT_MANIFEST_VALIDATED
+            | INGREDIENT_CLAIM_SIGNATURE_VALIDATED => LogKind::Success,
+            SIGNING_CREDENTIAL_OCSP_SKIPPED
+            | SIGNING_CREDENTIAL_OCSP_INACCESSIBLE
+            | TIMESTAMP_UNTRUSTED
             | TIMESTAMP_OUTSIDE_VALIDITY
             | TIMESTAMP_MISMATCH
-            | TIMESTAMP_MALFORMED => LogKind::Informational,
+            | TIMESTAMP_MALFORMED
+            | MANIFEST_UNKNOWN_PROVENANCE
+            | INGREDIENT_UNKNOWN_PROVENANCE
+            | ALGORITHM_DEPRECATED
+            | TIME_OF_SIGNING_INSIDE_VALIDITY => LogKind::Informational,
             _ => LogKind::Failure,
         }
     }

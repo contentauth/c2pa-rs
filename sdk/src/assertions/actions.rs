@@ -13,6 +13,7 @@
 
 use std::collections::HashMap;
 
+use log::error;
 use serde::{Deserialize, Serialize};
 use serde_cbor::Value;
 
@@ -59,6 +60,12 @@ pub mod c2pa_action {
 
     /// Added/Placed a `componentOf` ingredient into the asset.
     pub const PLACED: &str = "c2pa.placed";
+
+    /// A componentOf ingredient was removed.
+    pub const REMOVED: &str = "c2pa.removed";
+
+    /// A componentOf ingredient was removed.
+    pub const REDACTED: &str = "c2pa.redacted";
 
     /// Asset is released to a wider audience.
     pub const PUBLISHED: &str = "c2pa.published";
@@ -121,7 +128,6 @@ impl From<ClaimGeneratorInfo> for SoftwareAgent {
 ///
 /// See <https://c2pa.org/specifications/specifications/1.0/specs/C2PA_Specification.html#_actions>.
 #[derive(Deserialize, Serialize, Clone, Debug, Default, PartialEq)]
-#[serde(deny_unknown_fields)]
 pub struct Action {
     /// The label associated with this action. See ([`c2pa_action`]).
     action: String,
@@ -330,7 +336,10 @@ impl Action {
                 }
                 Some(result)
             }
-            Some(_) => None, // Invalid format, so ignore it.
+            Some(_) => {
+                error!("Invalid format for org.cai.ingredientIds parameter, expected an array of strings.");
+                None // Invalid format, so ignore it.
+            }
             // If there is no org.cai.ingredientIds parameter, check for the deprecated instance_id
             #[allow(deprecated)]
             None => self.instance_id.as_ref().map(|id| vec![id.to_string()]),
@@ -524,12 +533,40 @@ impl Actions {
         }
     }
 
-    /// determines if actions is V2
+    /// Determines if actions is V2
     fn is_v2(&self) -> bool {
         if self.templates.is_some() {
             return true;
         };
         self.actions.iter().any(|a| a.is_v2())
+    }
+
+    /// Returns desired ClaimGeneratorInfo if present. index is 0 based
+    pub fn software_agent(&self, index: usize) -> Option<&ClaimGeneratorInfo> {
+        if let Some(sa_vec) = &self.software_agents {
+            return sa_vec.get(index);
+        }
+        None
+    }
+
+    // Return softwareAgent list if available
+    pub fn software_agents(&self) -> &Option<Vec<ClaimGeneratorInfo>> {
+        &self.software_agents
+    }
+
+    // Return softwareAgent list if available
+    pub fn templates(&self) -> &Option<Vec<ActionTemplate>> {
+        &self.templates
+    }
+
+    /// Add a top level ClaimGeneratorInfo to the softwareAgent list.  These are
+    /// referenced by indexes in the specific Action
+    pub fn add_software_agent(&mut self, cgi: ClaimGeneratorInfo) {
+        if let Some(sa_vec) = &mut self.software_agents {
+            sa_vec.push(cgi);
+        } else {
+            self.software_agents = Some(vec![cgi]);
+        }
     }
 
     /// Returns the list of [`Action`]s.
@@ -909,7 +946,7 @@ pub mod tests {
                         "version": "2.0",
                         "schema.org.SoftwareApplication.operatingSystem": "Windows 10"
                     },
-                    "softwareAgentIndex": 1,
+                    "softwareAgentIndex": 0,
                     "templateParameters": {
                         "description": "Magic Filter",
                         "digitalSourceType": "http://cv.iptc.org/newscodes/digitalsourcetype/compositeSynthetic",

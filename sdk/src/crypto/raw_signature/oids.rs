@@ -13,11 +13,15 @@
 
 #![allow(dead_code)] // Usage varies by platform.
 
+use std::str::FromStr;
+
 use x509_parser::{der_parser::oid, oid_registry::Oid};
 
+// Oids listed here are asn1_rs::asn1_types::Oid objects
 pub(crate) const RSA_OID: Oid<'static> = oid!(1.2.840 .113549 .1 .1 .1);
 pub(crate) const RSA_PSS_OID: Oid<'static> = oid!(1.2.840 .113549 .1 .1 .10);
 
+pub(crate) const SHA1_WITH_RSAENCRYPTION_OID: Oid<'static> = oid!(1.2.840 .113549 .1 .1 .5);
 pub(crate) const SHA256_WITH_RSAENCRYPTION_OID: Oid<'static> = oid!(1.2.840 .113549 .1 .1 .11);
 pub(crate) const SHA384_WITH_RSAENCRYPTION_OID: Oid<'static> = oid!(1.2.840 .113549 .1 .1 .12);
 pub(crate) const SHA512_WITH_RSAENCRYPTION_OID: Oid<'static> = oid!(1.2.840 .113549 .1 .1 .13);
@@ -37,3 +41,9 @@ pub(crate) const SECP384R1_OID: Oid<'static> = oid!(1.3.132 .0 .34);
 pub(crate) const PRIME256V1_OID: Oid<'static> = oid!(1.2.840 .10045 .3 .1 .7);
 
 pub(crate) const ED25519_OID: Oid<'static> = oid!(1.3.101 .112);
+
+// utility function to make using Oid between crates easier
+pub(crate) fn ans1_oid_bcder_oid(asn1_oid: &asn1_rs::Oid) -> Option<bcder::Oid> {
+    let asn1_oid_str = asn1_oid.to_id_string();
+    bcder::Oid::from_str(&asn1_oid_str).ok()
+}

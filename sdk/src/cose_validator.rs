@@ -18,6 +18,7 @@ use x509_parser::{num_bigint::BigUint, prelude::*};
 
 use crate::{
     crypto::{
+        asn1::rfc3161::TstInfo,
         base64,
         cose::{
             cert_chain_from_sign1, parse_cose_sign1, signing_alg_from_sign1,
@@ -41,6 +42,7 @@ fn get_sign_cert(sign1: &coset::CoseSign1) -> Result<Vec<u8>> {
 /// cose_bytes - byte array containing the raw COSE_SIGN1 data
 /// data:  data that was used to create the cose_bytes, these must match
 /// addition_data: additional optional data that may have been used during signing
+/// tst
 /// returns - Ok on success
 #[async_generic]
 pub(crate) fn verify_cose(
@@ -49,6 +51,7 @@ pub(crate) fn verify_cose(
     additional_data: &[u8],
     cert_check: bool,
     ctp: &CertificateTrustPolicy,
+    tst_info: Option<TstInfo>,
     validation_log: &mut StatusTracker,
 ) -> Result<CertificateInfo> {
     let verifier = if cert_check {
@@ -61,10 +64,16 @@ pub(crate) fn verify_cose(
     };
 
     if _sync {
-        Ok(verifier.verify_signature(cose_bytes, data, additional_data, validation_log)?)
+        Ok(verifier.verify_signature(
+            cose_bytes,
+            data,
+            additional_data,
+            tst_info,
+            validation_log,
+        )?)
     } else {
         Ok(verifier
-            .verify_signature_async(cose_bytes, data, additional_data, validation_log)
+            .verify_signature_async(cose_bytes, data, additional_data, tst_info, validation_log)
             .await?)
     }
 }
@@ -174,6 +183,7 @@ pub(crate) fn get_signing_info(
         cert_chain: certs,
         cert_serial_number,
         revocation_status: None,
+        iat: None,
     }
 }
 

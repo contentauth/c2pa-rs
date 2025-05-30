@@ -19,6 +19,7 @@
 
 use std::io::Cursor;
 
+use c2pa_macros::c2pa_test_async;
 #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
 use wasm_bindgen_test::wasm_bindgen_test;
 
@@ -32,12 +33,7 @@ use crate::{
     Reader,
 };
 
-#[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
-#[cfg_attr(
-    all(target_arch = "wasm32", not(target_os = "wasi")),
-    wasm_bindgen_test
-)]
-#[cfg_attr(target_os = "wasi", wstd::test)]
+#[c2pa_test_async]
 async fn success_case() {
     // If the value of `signer_payload.sig_type` is
     // `cawg.identity_claims_aggregation`, the validator SHOULD proceed with
@@ -103,12 +99,7 @@ async fn success_case() {
     assert!(log_items.next().is_none());
 }
 
-#[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
-#[cfg_attr(
-    all(target_arch = "wasm32", not(target_os = "wasi")),
-    wasm_bindgen_test
-)]
-#[cfg_attr(target_os = "wasi", wstd::test)]
+#[c2pa_test_async]
 async fn invalid_cose_sign1() {
     // 8.1.7.2.1. Parse the `COSE_Sign1` structure
     //
@@ -173,12 +164,7 @@ async fn invalid_cose_sign1() {
     assert!(log_items.next().is_none());
 }
 
-#[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
-#[cfg_attr(
-    all(target_arch = "wasm32", not(target_os = "wasi")),
-    wasm_bindgen_test
-)]
-#[cfg_attr(target_os = "wasi", wstd::test)]
+#[c2pa_test_async]
 async fn invalid_cose_sign_alg() {
     // 8.1.7.2.1. Parse the `COSE_Sign1` structure
     //
@@ -255,12 +241,7 @@ async fn invalid_cose_sign_alg() {
     assert!(log_items.next().is_none());
 }
 
-#[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
-#[cfg_attr(
-    all(target_arch = "wasm32", not(target_os = "wasi")),
-    wasm_bindgen_test
-)]
-#[cfg_attr(target_os = "wasi", wstd::test)]
+#[c2pa_test_async]
 async fn missing_cose_sign_alg() {
     // Same as above, but in this case, NO signature algorithm is specified in the
     // `COSE_Sign1` data structure.
@@ -317,12 +298,7 @@ async fn missing_cose_sign_alg() {
     assert!(log_items.next().is_none());
 }
 
-#[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
-#[cfg_attr(
-    all(target_arch = "wasm32", not(target_os = "wasi")),
-    wasm_bindgen_test
-)]
-#[cfg_attr(target_os = "wasi", wstd::test)]
+#[c2pa_test_async]
 async fn invalid_content_type() {
     // The validator SHALL inspect the `COSE_Sign1` protected header `content type`
     // to determine the content type of the enclosed credential. The `content type`
@@ -384,12 +360,7 @@ async fn invalid_content_type() {
     assert!(log_items.next().is_none());
 }
 
-#[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
-#[cfg_attr(
-    all(target_arch = "wasm32", not(target_os = "wasi")),
-    wasm_bindgen_test
-)]
-#[cfg_attr(target_os = "wasi", wstd::test)]
+#[c2pa_test_async]
 async fn invalid_content_type_assigned() {
     // Same as above, but in this case, an assigned constant content type is
     // specified in the `COSE_Sign1` data structure.
@@ -449,12 +420,7 @@ async fn invalid_content_type_assigned() {
     assert!(log_items.next().is_none());
 }
 
-#[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
-#[cfg_attr(
-    all(target_arch = "wasm32", not(target_os = "wasi")),
-    wasm_bindgen_test
-)]
-#[cfg_attr(target_os = "wasi", wstd::test)]
+#[c2pa_test_async]
 async fn missing_content_type() {
     // Same as above, but in this case, NO content type is specified in the
     // `COSE_Sign1` data structure.
@@ -513,12 +479,7 @@ async fn missing_content_type() {
     assert!(log_items.next().is_none());
 }
 
-#[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
-#[cfg_attr(
-    all(target_arch = "wasm32", not(target_os = "wasi")),
-    wasm_bindgen_test
-)]
-#[cfg_attr(target_os = "wasi", wstd::test)]
+#[c2pa_test_async]
 async fn missing_vc() {
     // The validator SHALL obtain the unprotected `payload` of the `COSE_Sign1` data
     // structure. This payload is the raw JSON-LD content of the verifiable
@@ -587,12 +548,7 @@ async fn missing_vc() {
     assert!(log_items.next().is_none());
 }
 
-#[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
-#[cfg_attr(
-    all(target_arch = "wasm32", not(target_os = "wasi")),
-    wasm_bindgen_test
-)]
-#[cfg_attr(target_os = "wasi", wstd::test)]
+#[c2pa_test_async]
 async fn invalid_vc() {
     // ^^ Same as above but the VC is corrupted rather than missing.
 
@@ -649,12 +605,7 @@ async fn invalid_vc() {
     assert!(log_items.next().is_none());
 }
 
-#[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
-#[cfg_attr(
-    all(target_arch = "wasm32", not(target_os = "wasi")),
-    wasm_bindgen_test
-)]
-#[cfg_attr(target_os = "wasi", wstd::test)]
+#[c2pa_test_async]
 async fn invalid_issuer_did() {
     // 8.1.7.2.3. Obtain the credential issuer’s public key
     //
@@ -721,12 +672,7 @@ async fn invalid_issuer_did() {
     assert!(log_items.next().is_none());
 }
 
-#[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
-#[cfg_attr(
-    all(target_arch = "wasm32", not(target_os = "wasi")),
-    wasm_bindgen_test
-)]
-#[cfg_attr(target_os = "wasi", wstd::test)]
+#[c2pa_test_async]
 async fn unsupported_did_method() {
     // The validator SHALL resolve the DID document as described in Section 7.1,
     // “DID resolution,” of the DID specification. If the DID uses a DID method that
@@ -854,12 +800,7 @@ async fn unresolvable_did() {
     assert!(log_items.next().is_none());
 }
 
-#[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
-#[cfg_attr(
-    all(target_arch = "wasm32", not(target_os = "wasi")),
-    wasm_bindgen_test
-)]
-#[cfg_attr(target_os = "wasi", wstd::test)]
+#[c2pa_test_async]
 async fn did_doc_without_assertion_method() {
     // The validator SHALL locate within the DID document the `assertionMethod`
     // verification method as described in Section 5.3.2, “Assertion,” of the DID
@@ -937,12 +878,7 @@ async fn did_doc_without_assertion_method() {
 //     // TO DO (CAI-7980): Add option to configure trusted ICA issuers.
 // }
 
-#[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
-#[cfg_attr(
-    all(target_arch = "wasm32", not(target_os = "wasi")),
-    wasm_bindgen_test
-)]
-#[cfg_attr(target_os = "wasi", wstd::test)]
+#[c2pa_test_async]
 async fn signature_mismatch() {
     // 8.1.7.2.4. Verify the COSE signature
     //
@@ -1005,12 +941,7 @@ async fn signature_mismatch() {
     assert!(log_items.next().is_none());
 }
 
-#[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
-#[cfg_attr(
-    all(target_arch = "wasm32", not(target_os = "wasi")),
-    wasm_bindgen_test
-)]
-#[cfg_attr(target_os = "wasi", wstd::test)]
+#[c2pa_test_async]
 async fn valid_time_stamp() {
     // 8.1.7.2.5. Verify the time stamp, if present
     //
@@ -1089,12 +1020,7 @@ async fn valid_time_stamp() {
     assert!(log_items.next().is_none());
 }
 
-#[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
-#[cfg_attr(
-    all(target_arch = "wasm32", not(target_os = "wasi")),
-    wasm_bindgen_test
-)]
-#[cfg_attr(target_os = "wasi", wstd::test)]
+#[c2pa_test_async]
 async fn invalid_time_stamp() {
     // 8.1.7.2.5. Verify the time stamp, if present
     //
@@ -1165,12 +1091,7 @@ async fn invalid_time_stamp() {
     assert!(log_items.next().is_none());
 }
 
-#[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
-#[cfg_attr(
-    all(target_arch = "wasm32", not(target_os = "wasi")),
-    wasm_bindgen_test
-)]
-#[cfg_attr(target_os = "wasi", wstd::test)]
+#[c2pa_test_async]
 async fn valid_from_missing() {
     // 8.1.7.2.6. Verify the credential’s validity range
     //
@@ -1390,12 +1311,7 @@ async fn valid_from_after_time_stamp() {
     assert!(log_items.next().is_none());
 }
 
-#[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
-#[cfg_attr(
-    all(target_arch = "wasm32", not(target_os = "wasi")),
-    wasm_bindgen_test
-)]
-#[cfg_attr(target_os = "wasi", wstd::test)]
+#[c2pa_test_async]
 async fn valid_until_in_future() {
     // If the expiration date is present, the validator SHALL compare the expiration
     // date of the credential against each of the following values, if available:
@@ -1554,12 +1470,7 @@ async fn valid_until_in_past() {
 //     // TO DO (CAI-7993): CAWG SDK should check ICA issuer revocation status.
 // }
 
-#[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
-#[cfg_attr(
-    all(target_arch = "wasm32", not(target_os = "wasi")),
-    wasm_bindgen_test
-)]
-#[cfg_attr(target_os = "wasi", wstd::test)]
+#[c2pa_test_async]
 async fn signer_payload_mismatch() {
     // 8.1.7.3. Verify binding to C2PA asset
     //
