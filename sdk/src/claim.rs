@@ -61,7 +61,7 @@ use crate::{
     log_item,
     resource_store::UriOrResource,
     salt::{DefaultSalt, SaltGenerator, NO_SALT},
-    settings::{self, get_settings_value},
+    settings::get_settings_value,
     status_tracker::{ErrorBehavior, StatusTracker},
     store::StoreValidationInfo,
     utils::hash_utils::{hash_by_alg, vec_compare},
@@ -1991,7 +1991,7 @@ impl Claim {
 
         // Skip further checks for v1 claims if not in strict validation mode
         if claim.version() == 1 {
-            if let Ok(false) = settings::get_settings_value::<bool>("verify.ocsp_fetch") {
+            if let Ok(false) = get_settings_value::<bool>("verify.strict_v1_validation") {
                 return Ok(()); // no further checks for v1 claims
             }
         }

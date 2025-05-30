@@ -13,6 +13,7 @@
 
 use std::collections::HashMap;
 
+use log::error;
 use serde::{Deserialize, Serialize};
 use serde_cbor::Value;
 
@@ -335,7 +336,10 @@ impl Action {
                 }
                 Some(result)
             }
-            Some(_) => None, // Invalid format, so ignore it.
+            Some(_) => {
+                error!("Invalid format for org.cai.ingredientIds parameter, expected an array of strings.");
+                None // Invalid format, so ignore it.
+            }
             // If there is no org.cai.ingredientIds parameter, check for the deprecated instance_id
             #[allow(deprecated)]
             None => self.instance_id.as_ref().map(|id| vec![id.to_string()]),

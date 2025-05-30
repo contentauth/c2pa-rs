@@ -22,6 +22,7 @@ use std::{
 
 #[cfg(feature = "v1_api")]
 use async_trait::async_trait;
+use env_logger;
 use tempfile::TempDir;
 
 #[cfg(feature = "v1_api")]
@@ -75,12 +76,12 @@ pub const TEST_VC: &str = r#"{
     }
 }"#;
 
-// pub fn setup_logger() {
-//     static INIT: std::sync::Once = std::sync::Once::new();
-//     INIT.call_once(|| {
-//         let _ = env_logger::builder().is_test(true).try_init();
-//     });
-// }
+pub fn setup_logger() {
+    static INIT: std::sync::Once = std::sync::Once::new();
+    INIT.call_once(|| {
+        let _ = env_logger::builder().is_test(true).try_init();
+    });
+}
 
 /// Create new C2PA compatible UUID
 pub(crate) fn gen_c2pa_uuid() -> String {
