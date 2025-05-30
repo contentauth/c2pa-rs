@@ -107,7 +107,7 @@ pub enum ClaimAssetData<'a> {
     StreamFragments(&'a mut dyn CAIRead, &'a Vec<std::path::PathBuf>, &'a str),
 }
 
-#[derive(PartialEq, Debug, Eq, Clone)]
+#[derive(PartialEq, Debug, Eq, Clone, Hash)]
 pub enum ClaimAssertionType {
     V1,       // V1 assertion
     Gathered, // Machine generated assertion
@@ -118,7 +118,7 @@ pub enum ClaimAssertionType {
 // stored separate from the Assertion to allow for late binding to the label.  Also,
 // we can load assertions in any order and know the position without re-parsing label. We also
 // save on parsing the cbor assertion each time we need its contents
-#[derive(PartialEq, Eq, Clone)]
+#[derive(PartialEq, Eq, Clone, Hash)]
 pub struct ClaimAssertion {
     assertion: Assertion,
     instance: usize,
@@ -262,7 +262,7 @@ pub struct Claim {
     pub instance_id: String, // instance Id of document containing this claim
 
     // Internal list of ingredients
-    ingredients_store: HashMap<String, Vec<Claim>>,
+    ingredients_store: HashMap<String, Claim>,
 
     signature_val: Vec<u8>, // the signature of the loaded/saved claim
 
@@ -3246,25 +3246,31 @@ impl Claim {
 
     /// Return reference to the internal claim ingredient store.
     /// Used during generation
-    pub fn claim_ingredient_store(&self) -> &HashMap<String, Vec<Claim>> {
+    pub fn claim_ingredient_store(&self) -> &HashMap<String, Claim> {
         &self.ingredients_store
+    }
+
+    /// Return mutable reference to the internal claim ingredient store.
+    /// Used during generation
+    pub fn claim_ingredient_store_mut(&mut self) -> &mut HashMap<String, Claim> {
+        &mut self.ingredients_store
     }
 
     /// Return reference to the internal claim ingredients.
     /// Used during generation
     pub fn claim_ingredients(&self) -> Vec<&Claim> {
-        self.ingredients_store.values().flatten().collect()
+        self.ingredients_store.values().collect()
     }
 
     /// Return reference to the internal claim ingredient store matching this guid.
     /// Used during generation
-    pub fn claim_ingredient(&self, claim_guid: &str) -> Option<&Vec<Claim>> {
+    pub fn claim_ingredient(&self, claim_guid: &str) -> Option<&Claim> {
         self.ingredients_store.get(claim_guid)
     }
 
     /// Return mutable reference to the internal claim ingredient store matching this guid.
     /// Used during generation
-    pub fn claim_ingredient_mut(&mut self, claim_guid: &str) -> Option<&mut Vec<Claim>> {
+    pub fn claim_ingredient_mut(&mut self, claim_guid: &str) -> Option<&mut Claim> {
         self.ingredients_store.get_mut(claim_guid)
     }
 
@@ -3272,7 +3278,6 @@ impl Claim {
     /// redactions are full uris since they refer to external assertions
     pub(crate) fn add_ingredient_data(
         &mut self,
-        provenance_label: &str,
         mut ingredient: Vec<Claim>,
         redactions_opt: Option<Vec<String>>,
         _referenced_ingredients: &HashMap<String, HashSet<String>>,
@@ -3304,10 +3309,10 @@ impl Claim {
         // all have been removed (if necessary) so replace redaction list
         self.redacted_assertions = redactions_opt;
 
-        // For 1.x we just overwrite, there is no conflict resolution
-        // or if 2.x with conflict resolved ingredient label
-        self.ingredients_store
-            .insert(provenance_label.into(), ingredient);
+        // just replace the ingredients with new once since conflicts are resolved by the caller
+        for i in ingredient {
+            self.ingredients_store.insert(i.label().into(), i);
+        }
 
         Ok(())
     }

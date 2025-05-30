@@ -36,6 +36,7 @@ use crate::signer::RemoteSigner;
 use crate::{
     assertions::{
         labels, Action, Actions, Ingredient, Relationship, ReviewRating, SchemaDotOrg, Thumbnail,
+        User,
     },
     asset_io::CAIReadWrite,
     claim::Claim,
@@ -50,6 +51,8 @@ use crate::{
 pub const TEST_SMALL_JPEG: &str = "earth_apollo17.jpg";
 
 pub const TEST_WEBP: &str = "mars.webp";
+
+pub const TEST_USER_ASSERTION: &str = "test_label";
 
 pub const TEST_VC: &str = r#"{
     "@context": [
@@ -190,6 +193,10 @@ pub fn create_test_claim_v1() -> Result<Claim> {
         0x0e,
     ];
 
+    let user_assertion_data = r#"{
+        "test_label": "test_value"
+    }"#;
+
     // create a schema.org claim
     let cr = r#"{
         "@context": "https://schema.org",
@@ -204,14 +211,14 @@ pub fn create_test_claim_v1() -> Result<Claim> {
         }
     }"#;
     let claim_review = SchemaDotOrg::from_json_str(cr)?;
-
     let thumbnail_claim = Thumbnail::new(labels::JPEG_CLAIM_THUMBNAIL, some_binary_data.clone());
-
     let thumbnail_ingred = Thumbnail::new(labels::JPEG_INGREDIENT_THUMBNAIL, some_binary_data);
+    let user_assertion = User::new(TEST_USER_ASSERTION, user_assertion_data);
 
     claim.add_assertion(&actions)?;
     claim.add_assertion(&claim_review)?;
     claim.add_assertion(&thumbnail_claim)?;
+    claim.add_assertion(&user_assertion)?;
 
     let thumb_uri = claim.add_assertion_with_salt(&thumbnail_ingred, &DefaultSalt::default())?;
 
@@ -221,7 +228,6 @@ pub fn create_test_claim_v1() -> Result<Claim> {
         1,
     );
 
-    //let data_path = claim.add_ingredient_data("some data".as_bytes());
     let ingredient = Ingredient::new(
         "image 1.jpg",
         "image/jpeg",
