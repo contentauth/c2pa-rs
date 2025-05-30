@@ -6458,7 +6458,7 @@ pub mod tests {
 
         redacted_store.commit_update_manifest(claim).unwrap();
         redacted_store
-            .save_to_asset(op.as_path(), signer.as_ref(), &op_output.as_path())
+            .save_to_asset(op.as_path(), signer.as_ref(), op_output.as_path())
             .unwrap();
 
         let mut um_report = StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
@@ -6532,7 +6532,7 @@ pub mod tests {
 
         redacted_store2.commit_update_manifest(claim2).unwrap();
         redacted_store2
-            .save_to_asset(op.as_path(), signer.as_ref(), &op2_output.as_path())
+            .save_to_asset(op.as_path(), signer.as_ref(), op2_output.as_path())
             .unwrap();
 
         // add ingredient again without redaction to make sure conflict is resolved with current redaction
