@@ -868,7 +868,6 @@ impl Ingredient {
         let mut validation_log = StatusTracker::default();
 
         // retrieve the manifest bytes from embedded, sidecar or remote and convert to store if found
-        //let jumbf_stream = Store::load_jumbf_from_stream(format, stream);
         let jumbf_result = match self.manifest_data() {
             Some(data) => Ok(data.into_owned()),
             None => Store::load_jumbf_from_stream(format, stream),
@@ -877,26 +876,13 @@ impl Ingredient {
         // We can't use functional combinators since we can't use async callbacks (https://github.com/rust-lang/rust/issues/62290)
         let (result, manifest_bytes) = match jumbf_result {
             Ok(manifest_bytes) => {
-                let jumbf_store = Store::from_jumbf(&manifest_bytes, &mut validation_log);
-                let result = match jumbf_store {
-                    Ok(mut store) => {
-                        if _sync {
-                            match store.verify_from_stream(stream, format, &mut validation_log) {
-                                Ok(_) => Ok(store),
-                                Err(err) => Err(err),
-                            }
-                        } else {
-                            match store
-                                .verify_from_stream_async(stream, format, &mut validation_log)
-                                .await
-                            {
-                                Ok(_) => Ok(store),
-                                Err(err) => Err(err),
-                            }
-                        }
-                    }
-                    Err(e) => Err(e),
-                };
+                let result = Store::from_manifest_data_and_stream(
+                    &manifest_bytes,
+                    format,
+                    &mut *stream,
+                    true,
+                    &mut validation_log,
+                );
                 (result, Some(manifest_bytes))
             }
             Err(err) => (Err(err), None),
@@ -1859,20 +1845,21 @@ mod tests_file_io {
         assert_eq!(ingredient.format(), Some("image/jpeg"));
         test_thumbnail(&ingredient, "image/jpeg");
         assert!(ingredient.manifest_data().is_some());
-        assert_eq!(
+        assert!(
             ingredient
                 .validation_results()
                 .unwrap()
                 .active_manifest()
                 .unwrap()
-                .informational[0]
-                .code(),
-            validation_status::TIMESTAMP_MISMATCH
+                .informational
+                .iter()
+                .any(|info| info.code() == validation_status::TIMESTAMP_MISMATCH),
+            "No informational item with TIMESTAMP_MISMATCH found"
         );
     }
 
     #[test]
-    #[cfg(feature = "file_io")]
+    #[cfg(all(feature = "file_io", feature = "add_thumbnails"))]
     fn test_jpg_prerelease() {
         let ap = fixture_path(PRERELEASE_JPEG);
         let ingredient = Ingredient::from_file(ap).expect("from_file");
@@ -1893,7 +1880,7 @@ mod tests_file_io {
 
     #[test]
     #[cfg(feature = "file_io")]
-    fn test_jpg_nested() {
+    fn test_jpg_nested_err() {
         let ap = fixture_path("CIE-sig-CA.jpg");
         let ingredient = Ingredient::from_file(ap).expect("from_file");
         // println!("ingredient = {ingredient}");

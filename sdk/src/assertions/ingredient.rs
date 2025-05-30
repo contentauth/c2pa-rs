@@ -163,6 +163,16 @@ impl Ingredient {
             && self.claim_signature.is_some()
     }
 
+    pub fn set_title<S: Into<String>>(mut self, title: S) -> Self {
+        self.title = Some(title.into());
+        self
+    }
+
+    pub fn set_format<S: Into<String>>(mut self, format: S) -> Self {
+        self.format = Some(format.into());
+        self
+    }
+
     pub fn set_parent(mut self) -> Self {
         self.relationship = Relationship::ParentOf;
         self

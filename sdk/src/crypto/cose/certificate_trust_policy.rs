@@ -100,7 +100,7 @@ impl CertificateTrustPolicy {
             return Ok(());
         }
 
-        #[cfg(any(target_arch = "wasm32", feature = "rust_native_crypto", test))]
+        #[cfg(feature = "rust_native_crypto")]
         {
             return crate::crypto::raw_signature::rust_native::check_certificate_trust::check_certificate_trust(
                 self,
@@ -110,7 +110,7 @@ impl CertificateTrustPolicy {
             );
         }
 
-        #[cfg(not(target_arch = "wasm32"))]
+        #[cfg(feature = "openssl")]
         {
             return crate::crypto::raw_signature::openssl::check_certificate_trust::check_certificate_trust(
                 self,
@@ -355,14 +355,14 @@ pub enum CertificateTrustError {
     InternalError(String),
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(feature = "openssl")]
 impl From<openssl::error::ErrorStack> for CertificateTrustError {
     fn from(err: openssl::error::ErrorStack) -> Self {
         Self::CryptoLibraryError(err.to_string())
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(feature = "openssl")]
 impl From<crate::crypto::raw_signature::openssl::OpenSslMutexUnavailable>
     for CertificateTrustError
 {
@@ -649,7 +649,6 @@ zGxQnM2hCA==
         let ps512 = test_signer(SigningAlg::Ps512);
         let es256 = test_signer(SigningAlg::Es256);
         let es384 = test_signer(SigningAlg::Es384);
-        #[cfg(not(target_arch = "wasm32"))]
         let es512 = test_signer(SigningAlg::Es512);
         let ed25519 = test_signer(SigningAlg::Ed25519);
 
@@ -658,7 +657,6 @@ zGxQnM2hCA==
         let ps512_certs = ps512.cert_chain().unwrap();
         let es256_certs = es256.cert_chain().unwrap();
         let es384_certs = es384.cert_chain().unwrap();
-        #[cfg(not(target_arch = "wasm32"))]
         let es512_certs = es512.cert_chain().unwrap();
         let ed25519_certs = ed25519.cert_chain().unwrap();
 
@@ -672,7 +670,6 @@ zGxQnM2hCA==
             .unwrap();
         ctp.check_certificate_trust(&es384_certs[1..], &es384_certs[0], None)
             .unwrap();
-        #[cfg(not(target_arch = "wasm32"))]
         ctp.check_certificate_trust(&es512_certs[1..], &es512_certs[0], None)
             .unwrap();
         ctp.check_certificate_trust(&ed25519_certs[1..], &ed25519_certs[0], None)
@@ -742,7 +739,6 @@ zGxQnM2hCA==
         let ps512 = test_signer(SigningAlg::Ps512);
         let es256 = test_signer(SigningAlg::Es256);
         let es384 = test_signer(SigningAlg::Es384);
-        #[cfg(not(target_arch = "wasm32"))]
         let es512 = test_signer(SigningAlg::Es512);
         let ed25519 = test_signer(SigningAlg::Ed25519);
 
@@ -751,7 +747,6 @@ zGxQnM2hCA==
         let ps512_certs = ps512.cert_chain().unwrap();
         let es256_certs = es256.cert_chain().unwrap();
         let es384_certs = es384.cert_chain().unwrap();
-        #[cfg(not(target_arch = "wasm32"))]
         let es512_certs = es512.cert_chain().unwrap();
         let ed25519_certs = ed25519.cert_chain().unwrap();
 
@@ -792,7 +787,6 @@ zGxQnM2hCA==
             CertificateTrustError::CertificateNotTrusted
         );
 
-        #[cfg(not(target_arch = "wasm32"))]
         assert_eq!(
             ctp.check_certificate_trust(&es512_certs[2..], &es512_certs[0], None)
                 .unwrap_err(),
@@ -933,7 +927,6 @@ zGxQnM2hCA==
         let ps512 = test_signer(SigningAlg::Ps512);
         let es256 = test_signer(SigningAlg::Es256);
         let es384 = test_signer(SigningAlg::Es384);
-        #[cfg(not(target_arch = "wasm32"))]
         let es512 = test_signer(SigningAlg::Es512);
         let ed25519 = test_signer(SigningAlg::Ed25519);
 
@@ -942,7 +935,6 @@ zGxQnM2hCA==
         assert_eq!(ps512.alg(), SigningAlg::Ps512);
         assert_eq!(es256.alg(), SigningAlg::Es256);
         assert_eq!(es384.alg(), SigningAlg::Es384);
-        #[cfg(not(target_arch = "wasm32"))]
         assert_eq!(es512.alg(), SigningAlg::Es512);
         assert_eq!(ed25519.alg(), SigningAlg::Ed25519);
 
@@ -951,7 +943,6 @@ zGxQnM2hCA==
         let ps512_certs = ps512.cert_chain().unwrap();
         let es256_certs = es256.cert_chain().unwrap();
         let es384_certs = es384.cert_chain().unwrap();
-        #[cfg(not(target_arch = "wasm32"))]
         let es512_certs = es512.cert_chain().unwrap();
         let ed25519_certs = ed25519.cert_chain().unwrap();
 
@@ -965,7 +956,6 @@ zGxQnM2hCA==
             .unwrap();
         ctp.check_certificate_trust(&es384_certs[1..], &es384_certs[0], None)
             .unwrap();
-        #[cfg(not(target_arch = "wasm32"))]
         ctp.check_certificate_trust(&es512_certs[1..], &es512_certs[0], None)
             .unwrap();
         ctp.check_certificate_trust(&ed25519_certs[1..], &ed25519_certs[0], None)

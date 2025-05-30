@@ -479,7 +479,7 @@ pub fn check_certificate_profile(
             }
             _ => {
                 if e.critical {
-                    println!("Oid: {}", e.oid.to_id_string());
+                    //println!("Oid: {}", e.oid.to_id_string());
                     // Unhandled critical extension.
                     handled_all_critical = false;
                 }

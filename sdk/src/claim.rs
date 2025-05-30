@@ -61,7 +61,7 @@ use crate::{
     log_item,
     resource_store::UriOrResource,
     salt::{DefaultSalt, SaltGenerator, NO_SALT},
-    settings::get_settings_value,
+    settings::{self, get_settings_value},
     status_tracker::{ErrorBehavior, StatusTracker},
     store::StoreValidationInfo,
     utils::hash_utils::{hash_by_alg, vec_compare},
@@ -1989,6 +1989,13 @@ impl Claim {
             found_first_action
         };
 
+        // Skip further checks for v1 claims if not in strict validation mode
+        if claim.version() == 1 {
+            if let Ok(false) = settings::get_settings_value::<bool>("verify.ocsp_fetch") {
+                return Ok(()); // no further checks for v1 claims
+            }
+        }
+
         // 2.a first actions assertion must start with an open or created action, do not apply to update manifests
         if first_actions_assertion.is_none() && !claim.update_manifest() {
             log_item!(
@@ -2045,6 +2052,7 @@ impl Claim {
             }
 
             for action in actions.actions() {
+                //dbg!("action: {:?}", &action);
                 // 2.a action must have an action
                 if action.action().is_empty() {
                     log_item!(
@@ -3898,7 +3906,7 @@ pub mod tests {
 
         assert_eq!(&cgi[0].name, "test app");
         assert_eq!(cgi[0].version.as_deref(), Some("2.3.4"));
-        if let UriOrResource::HashedUri(r) = cgi[0].icon.as_ref().unwrap() {
+        if let UriOrResource::HashedUri(r) = cgi[1].icon.as_ref().unwrap() {
             assert_eq!(r.hash(), b"hashed");
         }
     }

@@ -5,9 +5,17 @@ members = [
     "c_api",
     "cli",
     "export_schema",
+    "macros",
     "make_test_images",
     "sdk",
 ]
+
+# members in this workspace can share this version setting
+[workspace.package]
+version = "0.55.0"
+
+[workspace.dependencies]
+c2pa = { path = "sdk", default-features = false }
 
 [profile.release]
 strip = true  # Automatically strip symbols from the binary. 

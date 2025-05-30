@@ -1,6 +1,6 @@
 [package]
 name = "export_schema"
-version = "0.36.1"
+version.workspace = true
 authors = ["Dave Kozma <dkozma@adobe.com>"]
 license = "MIT OR Apache-2.0"
 edition = "2018"
@@ -12,6 +12,6 @@ unexpected_cfgs = { level = "warn", check-cfg = ['cfg(test)'] }
 
 [dependencies]
 anyhow = "1.0.40"
-c2pa = { path = "../sdk", default-features = false, features = ["json_schema"] }
+c2pa = { path = "../sdk", features = ["json_schema"], default-features = false }
 schemars = "0.8.21"
 serde_json = "1.0.117"

@@ -21,7 +21,11 @@ use crate::crypto::raw_signature::{
 };
 
 #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
-// #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+#[cfg_attr(
+    all(target_arch = "wasm32", not(target_os = "wasi")),
+    wasm_bindgen_test
+)]
+#[cfg_attr(target_os = "wasi", wstd::test)]
 async fn es256() {
     let cert_chain = include_bytes!("../../../../tests/fixtures/crypto/raw_signature/es256.pub");
     let private_key = include_bytes!("../../../../tests/fixtures/crypto/raw_signature/es256.priv");
@@ -47,7 +51,11 @@ async fn es256() {
 }
 
 #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
-// #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+#[cfg_attr(
+    all(target_arch = "wasm32", not(target_os = "wasi")),
+    wasm_bindgen_test
+)]
+#[cfg_attr(target_os = "wasi", wstd::test)]
 async fn es384() {
     let cert_chain = include_bytes!("../../../../tests/fixtures/crypto/raw_signature/es384.pub");
     let private_key = include_bytes!("../../../../tests/fixtures/crypto/raw_signature/es384.priv");
@@ -73,7 +81,11 @@ async fn es384() {
 }
 
 #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
-// #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+#[cfg_attr(
+    all(target_arch = "wasm32", not(target_os = "wasi")),
+    wasm_bindgen_test
+)]
+#[cfg_attr(target_os = "wasi", wstd::test)]
 async fn es512() {
     let cert_chain = include_bytes!("../../../../tests/fixtures/crypto/raw_signature/es512.pub");
     let private_key = include_bytes!("../../../../tests/fixtures/crypto/raw_signature/es512.priv");

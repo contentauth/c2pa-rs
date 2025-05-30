@@ -1848,9 +1848,10 @@ pub mod tests {
         test::{fixture_path, temp_dir_path},
     };
 
-    #[cfg(all(feature = "v1_api", feature = "file_io"))]
     #[test]
     fn test_read_mp4() {
+        crate::settings::set_settings_value("verify.verify_trust", false).unwrap();
+
         let ap = fixture_path("video1.mp4");
         let mut input_stream = std::fs::File::open(&ap).unwrap();
 
