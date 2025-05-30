@@ -135,13 +135,13 @@ impl Reader {
             Store::from_stream_async(format, &mut stream, verify, &mut validation_log).await
         }
         .inspect_err(|_err| {
-            error!("Reader: validation_log: {validation_log:?}");
+            error!("Reader: validation_log: {validation_log:#?}");
         })?;
 
         match Self::from_store(store, &validation_log) {
             Ok(reader) => Ok(reader),
             Err(err) => {
-                error!("Reader: validation_log: {validation_log:?}");
+                error!("Reader: validation_log: {validation_log:#?}");
                 Err(err)
             }
         }

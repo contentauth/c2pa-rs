@@ -1484,19 +1484,19 @@ mod tests {
     #[cfg(feature = "file_io")]
     fn test_builder_sign_assets() {
         const TESTFILES: &[&str] = &[
-            // "IMG_0003.jpg",
-            // "sample1.png",
-            // "sample1.webp",
-            // "TUSCANY.TIF",
-            // "sample1.svg",
-            // "sample1.wav",
-            // "test.avi",
-            // "sample1.mp3",
-            // "sample1.avif",
-            // "sample1.heic",
-            // "sample1.heif",
-            // "sample1.m4a",
-            // "video1.mp4",
+            "IMG_0003.jpg",
+            "sample1.png",
+            "sample1.webp",
+            "TUSCANY.TIF",
+            "sample1.svg",
+            "sample1.wav",
+            "test.avi",
+            "sample1.mp3",
+            "sample1.avif",
+            "sample1.heic",
+            "sample1.heif",
+            "sample1.m4a",
+            "video1.mp4",
             "cloud_manifest.c2pa",
         ];
         for file_name in TESTFILES {

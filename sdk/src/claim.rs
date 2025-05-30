@@ -61,7 +61,7 @@ use crate::{
     log_item,
     resource_store::UriOrResource,
     salt::{DefaultSalt, SaltGenerator, NO_SALT},
-    settings::get_settings_value,
+    settings::{self, get_settings_value},
     status_tracker::{ErrorBehavior, StatusTracker},
     store::StoreValidationInfo,
     utils::hash_utils::{hash_by_alg, vec_compare},
@@ -1989,8 +1989,11 @@ impl Claim {
             found_first_action
         };
 
+        // Skip further checks for v1 claims if not in strict validation mode
         if claim.version() == 1 {
-            return Ok(()); // no further checks for v1 claims
+            if let Ok(false) = settings::get_settings_value::<bool>("verify.ocsp_fetch") {
+                return Ok(()); // no further checks for v1 claims
+            }
         }
 
         // 2.a first actions assertion must start with an open or created action, do not apply to update manifests

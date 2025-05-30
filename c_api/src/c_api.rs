@@ -1462,9 +1462,6 @@ mod tests {
     #[test]
     #[cfg(feature = "file_io")]
     fn test_reader_from_file_cawg_identity() {
-        use env_logger;
-        std::env::set_var("RUST_LOG", "error");
-        env_logger::init();
         let base = env!("CARGO_MANIFEST_DIR");
         let path = CString::new(format!(
             "{}/../sdk/tests/fixtures/C_with_CAWG_data.jpg",
