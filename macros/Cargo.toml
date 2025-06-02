@@ -1,7 +1,10 @@
 [package]
 name = "c2pa_macros"
 version.workspace = true
+authors = ["Gavin Peacock <gpeacock@adobe.com>"]
+license = "MIT OR Apache-2.0"
 edition = "2021"
+rust-version = "1.82.0"
 
 [lib]
 proc-macro = true

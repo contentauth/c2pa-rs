@@ -23,7 +23,6 @@ use std::{
 
 use async_generic::async_generic;
 use async_trait::async_trait;
-use log::error;
 #[cfg(feature = "json_schema")]
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -133,18 +132,9 @@ impl Reader {
             Store::from_stream(format, &mut stream, verify, &mut validation_log)
         } else {
             Store::from_stream_async(format, &mut stream, verify, &mut validation_log).await
-        }
-        .inspect_err(|_err| {
-            error!("Reader: validation_log: {validation_log:#?}");
-        })?;
+        }?;
 
-        match Self::from_store(store, &validation_log) {
-            Ok(reader) => Ok(reader),
-            Err(err) => {
-                error!("Reader: validation_log: {validation_log:#?}");
-                Err(err)
-            }
-        }
+        Self::from_store(store, &validation_log)
     }
 
     #[cfg(feature = "file_io")]

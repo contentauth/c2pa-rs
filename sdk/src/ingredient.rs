@@ -237,7 +237,7 @@ impl Ingredient {
     ///
     /// For v2 ingredients this can return an empty string
     pub fn instance_id(&self) -> &str {
-        self.instance_id.as_deref().unwrap_or("")
+        self.instance_id.as_deref().unwrap_or("None") // todo: deprecate and change to Option<&str>
     }
 
     /// Returns the provenance URI if available.
@@ -1983,7 +1983,7 @@ mod tests_file_io {
 
         assert_eq!(ingredient.title(), Some("prompt"));
         assert_eq!(ingredient.format(), Some("text/plain"));
-        assert_eq!(ingredient.instance_id(), "");
+        assert_eq!(ingredient.instance_id(), "None");
         assert_eq!(ingredient.data_ref().unwrap().identifier, "prompt_id");
         assert_eq!(ingredient.data_ref().unwrap().format, "text/plain");
         assert_eq!(ingredient.relationship(), &Relationship::InputTo);
