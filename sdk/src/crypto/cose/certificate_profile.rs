@@ -45,7 +45,7 @@ pub fn check_end_entity_certificate_profile(
 
     let (_rem, signcert) = X509Certificate::from_der(certificate_der).map_err(|_err| {
         log_item!(
-            "Cose_Sign1",
+            "",
             "certificate could not be parsed",
             "check_certificate_profile"
         )
@@ -60,7 +60,7 @@ pub fn check_end_entity_certificate_profile(
     // If we are expecting an end-entity cert, make sure that is so
     if tbscert.is_ca() {
         log_item!(
-            "Cose_Sign1",
+            "",
             "expected end-entity certificate",
             "check_certificate_profile"
         )
@@ -85,7 +85,7 @@ pub fn check_certificate_profile(
 ) -> Result<(), CertificateProfileError> {
     let (_rem, signcert) = X509Certificate::from_der(certificate_der).map_err(|_err| {
         log_item!(
-            "Cose_Sign1",
+            "",
             "certificate could not be parsed",
             "check_certificate_profile"
         )
@@ -98,7 +98,7 @@ pub fn check_certificate_profile(
     // Version shall be v3 as per RFC 5280, section 4.1.2.1.
     if signcert.version() != X509Version::V3 {
         log_item!(
-            "Cose_Sign1",
+            "",
             "certificate version incorrect",
             "check_certificate_profile"
         )
@@ -120,16 +120,12 @@ pub fn check_certificate_profile(
             x509_parser::time::ASN1Time::from_timestamp(signing_time.timestamp())
                 .map_err(|_| CertificateProfileError::InvalidCertificate)?,
         ) {
-            log_item!(
-                "Cose_Sign1",
-                "certificate expired",
-                "check_certificate_profile"
-            )
-            .validation_status(SIGNING_CREDENTIAL_EXPIRED)
-            .failure_no_throw(
-                validation_log,
-                CertificateProfileError::CertificateNotValidAtTime,
-            );
+            log_item!("", "certificate expired", "check_certificate_profile")
+                .validation_status(SIGNING_CREDENTIAL_EXPIRED)
+                .failure_no_throw(
+                    validation_log,
+                    CertificateProfileError::CertificateNotValidAtTime,
+                );
 
             return Err(CertificateProfileError::CertificateNotValidAtTime);
         }
@@ -146,16 +142,12 @@ pub fn check_certificate_profile(
             x509_parser::time::ASN1Time::from_timestamp(now.as_secs() as i64)
                 .map_err(|_| CertificateProfileError::InvalidCertificate)?,
         ) {
-            log_item!(
-                "Cose_Sign1",
-                "certificate expired",
-                "check_certificate_profile"
-            )
-            .validation_status(SIGNING_CREDENTIAL_EXPIRED)
-            .failure_no_throw(
-                validation_log,
-                CertificateProfileError::CertificateNotValidAtTime,
-            );
+            log_item!("", "certificate expired", "check_certificate_profile")
+                .validation_status(SIGNING_CREDENTIAL_EXPIRED)
+                .failure_no_throw(
+                    validation_log,
+                    CertificateProfileError::CertificateNotValidAtTime,
+                );
 
             return Err(CertificateProfileError::CertificateNotValidAtTime);
         }
@@ -174,7 +166,7 @@ pub fn check_certificate_profile(
         || *cert_alg == ED25519_OID)
     {
         log_item!(
-            "Cose_Sign1",
+            "",
             "certificate algorithm not supported",
             "check_certificate_profile"
         )
@@ -235,7 +227,7 @@ pub fn check_certificate_profile(
 
             if ha_alg.algorithm.to_id_string() != mgf_ai_params_algorithm.to_id_string() {
                 log_item!(
-                    "Cose_Sign1",
+                    "",
                     "certificate algorithm error",
                     "check_certificate_profile"
                 )
@@ -251,7 +243,7 @@ pub fn check_certificate_profile(
                 || ha_alg.algorithm == SHA512_OID)
             {
                 log_item!(
-                    "Cose_Sign1",
+                    "",
                     "certificate hash algorithm not supported",
                     "check_certificate_profile"
                 )
@@ -262,7 +254,7 @@ pub fn check_certificate_profile(
             }
         } else {
             log_item!(
-                "Cose_Sign1",
+                "",
                 "certificate missing algorithm parameters",
                 "check_certificate_profile"
             )
@@ -289,7 +281,7 @@ pub fn check_certificate_profile(
                 || named_curve_oid == SECP521R1_OID)
             {
                 log_item!(
-                    "Cose_Sign1",
+                    "",
                     "certificate unsupported EC curve",
                     "check_certificate_profile"
                 )
@@ -321,7 +313,7 @@ pub fn check_certificate_profile(
 
         if modulus.bits() < 2048 {
             log_item!(
-                "Cose_Sign1",
+                "",
                 "certificate key length too short",
                 "check_certificate_profile"
             )
@@ -337,7 +329,7 @@ pub fn check_certificate_profile(
     // Disallow self-signed certificates.
     if tbscert.is_ca() && tbscert.issuer() == tbscert.subject() {
         log_item!(
-            "Cose_Sign1",
+            "",
             "certificate issuer and subject cannot be the same (self-signed disallowed)",
             "check_certificate_profile"
         )
@@ -353,7 +345,7 @@ pub fn check_certificate_profile(
     // Disallow unique IDs.
     if signcert.issuer_uid.is_some() || signcert.subject_uid.is_some() {
         log_item!(
-            "Cose_Sign1",
+            "",
             "certificate issuer/subject unique ids are not allowed",
             "check_certificate_profile"
         )
@@ -374,7 +366,7 @@ pub fn check_certificate_profile(
         Some(BasicExtension { value: eku, .. }) => {
             if eku.any {
                 log_item!(
-                    "Cose_Sign1",
+                    "",
                     "certificate 'any' EKU not allowed",
                     "check_certificate_profile"
                 )
@@ -386,7 +378,7 @@ pub fn check_certificate_profile(
 
             if ctp.has_allowed_eku(eku).is_none() {
                 log_item!(
-                    "Cose_Sign1",
+                    "",
                     "certificate missing required EKU",
                     "check_certificate_profile"
                 )
@@ -406,7 +398,7 @@ pub fn check_certificate_profile(
                         | !eku.other.is_empty()))
             {
                 log_item!(
-                    "Cose_Sign1",
+                    "",
                     "certificate invalid set of EKUs",
                     "check_certificate_profile"
                 )
@@ -435,7 +427,7 @@ pub fn check_certificate_profile(
                 if ku.digital_signature() {
                     if ku.key_cert_sign() && !tbscert.is_ca() {
                         log_item!(
-                            "Cose_Sign1",
+                            "",
                             "certificate missing digitalSignature EKU",
                             "check_certificate_profile"
                         )
@@ -495,7 +487,7 @@ pub fn check_certificate_profile(
         Ok(())
     } else {
         log_item!(
-            "Cose_Sign1",
+            "",
             "certificate params incorrect",
             "check_certificate_profile"
         )
