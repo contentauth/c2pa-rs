@@ -18,6 +18,9 @@ mod error;
 mod json_api;
 mod signer_info;
 
+#[cfg(target_os = "android")]
+mod android;
+
 pub use c2pa::{
     AsyncSigner, Builder, Error as C2paError, Reader, Result as C2paResult, Signer, SigningAlg,
 };
