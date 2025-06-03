@@ -19,7 +19,11 @@ static SUPPORTED_TYPES: [&str; 6] = [
     ""
 ];
 
-const CAI_STORE_PATH: &str = "META-INF/c2pa.json";
+const CAI_STORE_PATHS: [&str; 3] = [
+    "META-INF/c2pa.json",
+    "META-INF/manifest.c2pa",
+    "META-INF/manifest.json",
+];
 
 pub struct EpubIo;
 
@@ -46,7 +50,7 @@ impl AssetIO for EpubIo {
 
     fn read_cai_store(&self, asset_path: &Path) -> Result<Vec<u8>> {
         println!("Attempting to open file: {:?}", asset_path);
-        
+
         // Open the EPUB file
         let file = match File::open(asset_path) {
             Ok(f) => f,
@@ -65,34 +69,43 @@ impl AssetIO for EpubIo {
             }
         };
         
-        println!("ZIP archive created, looking for {}", CAI_STORE_PATH);
-        // Try to find and read the CAI store file
-        let result = {
-            match archive.by_name(CAI_STORE_PATH) {
-                Ok(mut cai_file) => {
-                    println!("Found {} in ZIP archive", CAI_STORE_PATH);
-                    let mut cai_data = Vec::new();
-                    match cai_file.read_to_end(&mut cai_data) {
-                        Ok(_) => {
-                            if cai_data.is_empty() {
-                                println!("CAI data is empty");
-                                Err(Error::JumbfNotFound)
-                            } else {
-                                println!("Successfully read CAI data ({} bytes)", cai_data.len());
-                                Ok(cai_data)
-                            }
-                        }
-                        Err(e) => {
-                            println!("Error reading CAI data: {:?}", e);
-                            Err(e.into())
-                        }
+        println!("ZIP archive created, looking for CAI store in {:?}", CAI_STORE_PATHS);
+        // Try to find and read the CAI store file from any of the possible paths
+        let mut cai_data: Option<Vec<u8>> = None;
+        let mut last_error = None;
+
+        for path in CAI_STORE_PATHS.iter() {
+            match archive.by_name(path) {
+            Ok(mut cai_file) => {
+                println!("Found {} in ZIP archive", path);
+                let mut data = Vec::new();
+                match cai_file.read_to_end(&mut data) {
+                Ok(_) => {
+                    if !data.is_empty() {
+                    println!("Successfully read CAI data ({} bytes)", data.len());
+                    cai_data = Some(data);
+                    break;
+                    } else {
+                    println!("CAI data at {} is empty", path);
+                    last_error = Some(Error::JumbfNotFound);
                     }
                 }
                 Err(e) => {
-                    println!("Error finding {} in ZIP archive: {:?}", CAI_STORE_PATH, e);
-                    Err(Error::JumbfNotFound)
+                    println!("Error reading CAI data at {}: {:?}", path, e);
+                    last_error = Some(e.into());
+                }
                 }
             }
+            Err(e) => {
+                println!("{} not found in ZIP archive: {:?}", path, e);
+                last_error = Some(Error::JumbfNotFound);
+            }
+            }
+        }
+
+        let result = match cai_data {
+            Some(data) => Ok(data),
+            None => Err(last_error.unwrap_or(Error::JumbfNotFound)),
         };
         result
     }
@@ -139,78 +152,20 @@ impl CAIWriter for EpubIo {
 mod tests {
     use super::*;
     use std::path::PathBuf;
-    use tempfile::tempdir;
-    use zip::{ZipArchive, ZipWriter, write::FileOptions};
-    use std::io::Write;
 
-    fn get_sample_epub_path() -> PathBuf {
+    fn get_sample_epub_path(path_str: &str) -> PathBuf {
         let manifest_dir = env!("CARGO_MANIFEST_DIR");
         let mut path = PathBuf::from(manifest_dir);
-        path.push("tests/fixtures/sample.epub");
+        path.push(path_str);
         path
     }
 
-    fn create_test_epub_with_cai() -> Result<PathBuf> {
-        // Create a temporary directory
-        let temp_dir = tempdir()?;
-        let test_epub_path = temp_dir.path().join("test_with_cai.epub");
-        
-        // Read the original sample.epub
-        let sample_path = get_sample_epub_path();
-        let sample_file = File::open(&sample_path)?;
-        let mut archive = ZipArchive::new(sample_file)?;
-        
-        // Create a new EPUB with the fake c2pa.json
-        let test_file = File::create(&test_epub_path)?;
-        let mut writer = ZipWriter::new(test_file);
-        
-        // Copy all files from the original EPUB
-        for i in 0..archive.len() {
-            let mut file = archive.by_index(i)?;
-            let outpath = file.name().to_string();
-            
-            if outpath == CAI_STORE_PATH {
-                continue; // Skip the original c2pa.json if it exists
-            }
-            
-            let options: FileOptions<()> = file.options().into();
-            writer.start_file(outpath, options)?;
-            std::io::copy(&mut file, &mut writer)?;
-        }
-        
-        // Add our fake c2pa.json
-        let fake_cai = r#"{
-            "version": "1.0",
-            "claim_generator": "test",
-            "title": "Test CAI Store",
-            "format": "epub",
-            "instance_id": "test-instance",
-            "claim": {
-                "signature": "test-signature"
-            }
-        }"#;
-        
-        let options: FileOptions<()> = FileOptions::default();
-        writer.start_file(CAI_STORE_PATH, options)?;
-        writer.write_all(fake_cai.as_bytes())?;
-        
-        // Finish writing the ZIP file
-        writer.finish()?;
-        
-        // Keep the temp_dir alive by storing it in a static
-        static mut TEMP_DIR: Option<tempfile::TempDir> = None;
-        unsafe {
-            TEMP_DIR = Some(temp_dir);
-        }
-        
-        Ok(test_epub_path)
-    }
 
     #[test]
     fn test_read_cai_store_without_cai() -> Result<()> {
         println!("\n=== Test: EPUB without CAI store ===");
         println!("1. Getting sample EPUB path");
-        let epub_path = get_sample_epub_path();
+        let epub_path = get_sample_epub_path("tests/fixtures/sample.epub");
         println!("   Path: {:?}", epub_path);
         
         println!("\n2. Attempting to read CAI store");
@@ -234,7 +189,8 @@ mod tests {
         println!("\n=== Test: EPUB with CAI store ===");
         
         println!("1. Creating test EPUB with CAI store");
-        let test_epub_path = create_test_epub_with_cai()?;
+        let test_epub_path = get_sample_epub_path("tests/fixtures/sample_with_manifest.epub");
+        // let test_epub_path = get_sample_epub_path("tests/fixtures/sample_with_manifest_diff_ending.epub"); // manifest.c2pa
         println!("   Path: {:?}", test_epub_path);
         
         println!("\n2. Reading CAI store");
@@ -244,8 +200,9 @@ mod tests {
         
         println!("\n3. Verifying content");
         let content = String::from_utf8(result)?;
+        println!("   - CAI store content:\n{}", content);
         let has_signature = content.contains("test-signature");
-        let has_title = content.contains("Test CAI Store");
+        let has_title = content.contains("Test CAI EPUB");
         
         println!("   - Test signature found: {}", if has_signature { "✓" } else { "✗" });
         println!("   - Test title found: {}", if has_title { "✓" } else { "✗" });
