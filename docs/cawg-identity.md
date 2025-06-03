@@ -2,6 +2,15 @@
 
 The CAI Rust library includes an implementation of the [Creator Assertions Working Group (CAWG) identity assertion specification](https://cawg.io/identity/1.1-draft).
 
+## Known limitations
+
+The library does not currently support the following optional fields from the CAWG identity assertion:
+* `expected_partial_claim`
+* `expected_claim_generator`
+* `expected_countersigners`
+
+## Example
+
 The code in [`sdk/examples/cawg.rs`](https://github.com/contentauth/c2pa-rs/blob/main/sdk/examples/cawg.rs) provides a minimal example of signing and verifying a claim including a CAWG identitiy assertion.  Run it by entering the command:
 
 ```sh
