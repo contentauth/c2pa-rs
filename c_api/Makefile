@@ -111,6 +111,7 @@ release-linux-gnu-x86:
 
 release-linux-gnu-arm:
 	rustup target add aarch64-unknown-linux-gnu
+	sudo apt-get update && sudo apt-get install -y crossbuild-essential-arm64
 	cargo build --target=aarch64-unknown-linux-gnu  $(CARGO_BUILD_FLAGS)
 	@$(call make_zip,$(TARGET_DIR)/aarch64-unknown-linux-gnu/release,aarch64-unknown-linux-gnu)
 
