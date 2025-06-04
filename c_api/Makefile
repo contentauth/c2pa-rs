@@ -156,7 +156,23 @@ release-android-x86_64:
 
 # If TARGET is explicity set, use that
 ifdef TARGET
-ifeq ($(TARGET),aarch64-apple-ios)
+# Desktop targets
+ifeq ($(TARGET),x86_64-pc-windows-msvc)
+release: release-win-x86_64
+else ifeq ($(TARGET),aarch64-pc-windows-msvc)
+release: echo "No release build for aarch64 on Windows"
+else ifeq ($(TARGET),aarch64-apple-darwin)
+release: release-mac-arm
+else ifeq ($(TARGET),x86_64-apple-darwin)
+release: release-mac-x86
+else ifeq ($(TARGET),universal-apple-darwin)
+release: release-mac-universal
+else ifeq ($(TARGET),x86_64-unknown-linux-gnu)
+release: release-linux-gnu-x86
+else ifeq ($(TARGET),aarch64-unknown-linux-gnu)
+release: release-linux-gnu-arm
+# Mobile targets
+else ifeq ($(TARGET),aarch64-apple-ios)
 release: release-ios-arm64
 else ifeq ($(TARGET),x86_64-apple-ios)
 release: release-ios-x86_64
