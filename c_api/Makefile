@@ -20,6 +20,8 @@ TARGET_DIR := ../target
 
 CARGO_BUILD_FLAGS = --release -p c_api --no-default-features --features "rust_native_crypto, file_io"
 
+IPHONEOS_DEPLOYMENT_TARGET ?= 15.0
+
 # Helper function to create a zip file
 define make_zip
 	set -e; \
@@ -93,7 +95,7 @@ release-mac-universal: release-mac-arm release-mac-x86
 
 	strip -x $(TARGET_DIR)/aarch64-apple-darwin/release/libc2pa_c.dylib
 	@$(call make_zip,$(TARGET_DIR)/aarch64-apple-darwin/release,aarch64-apple-darwin)
-	
+
 	strip -x $(TARGET_DIR)/x86_64-apple-darwin/release/libc2pa_c.dylib
 	@$(call make_zip,$(TARGET_DIR)/x86_64-apple-darwin/release,x86_64-apple-darwin)
 
@@ -107,8 +109,72 @@ release-linux-gnu-arm:
 	cargo build --target=aarch64-unknown-linux-gnu  $(CARGO_BUILD_FLAGS)
 	@$(call make_zip,$(TARGET_DIR)/aarch64-unknown-linux-gnu/release,aarch64-unknown-linux-gnu)
 
+release-ios-arm64:
+	rustup target add aarch64-apple-ios
+	SDKROOT=$$(xcrun -sdk iphoneos --show-sdk-path) \
+	IPHONEOS_DEPLOYMENT_TARGET=$(IPHONEOS_DEPLOYMENT_TARGET) \
+	cargo build --target=aarch64-apple-ios $(CARGO_BUILD_FLAGS)
+	@$(call make_zip,$(TARGET_DIR)/aarch64-apple-ios/release,aarch64-apple-ios)
+
+release-ios-x86_64:
+	rustup target add x86_64-apple-ios
+	SDKROOT=$$(xcrun -sdk iphonesimulator --show-sdk-path) \
+	IPHONEOS_DEPLOYMENT_TARGET=$(IPHONEOS_DEPLOYMENT_TARGET) \
+	cargo build --target=x86_64-apple-ios $(CARGO_BUILD_FLAGS)
+	@$(call make_zip,$(TARGET_DIR)/x86_64-apple-ios/release,x86_64-apple-ios)
+
+release-ios-arm64-sim:
+	rustup target add aarch64-apple-ios-sim
+	SDKROOT=$$(xcrun -sdk iphonesimulator --show-sdk-path) \
+	IPHONEOS_DEPLOYMENT_TARGET=$(IPHONEOS_DEPLOYMENT_TARGET) \
+	cargo build --target=aarch64-apple-ios-sim $(CARGO_BUILD_FLAGS)
+	@$(call make_zip,$(TARGET_DIR)/aarch64-apple-ios-sim/release,aarch64-apple-ios-sim)
+
+release-android-arm64:
+	cargo install cross --git https://github.com/cross-rs/cross
+	cross build --target=aarch64-linux-android $(CARGO_BUILD_FLAGS)
+	@$(call make_zip,$(TARGET_DIR)/aarch64-linux-android/release,aarch64-linux-android)
+
+release-android-armv7:
+	cargo install cross --git https://github.com/cross-rs/cross
+	cross build --target=armv7-linux-androideabi $(CARGO_BUILD_FLAGS)
+	@$(call make_zip,$(TARGET_DIR)/armv7-linux-androideabi/release,armv7-linux-androideabi)
+
+release-android-x86:
+	cargo install cross --git https://github.com/cross-rs/cross
+	cross build --target=i686-linux-android $(CARGO_BUILD_FLAGS)
+	@$(call make_zip,$(TARGET_DIR)/i686-linux-android/release,i686-linux-android)
+
+release-android-x86_64:
+	cargo install cross --git https://github.com/cross-rs/cross
+	cross build --target=x86_64-linux-android $(CARGO_BUILD_FLAGS)
+	@$(call make_zip,$(TARGET_DIR)/x86_64-linux-android/release,x86_64-linux-android)
+
+
 # make release
 # Builds and packages a zip for c_api for each platform
+
+# If TARGET is explicity set, use that
+ifdef TARGET
+ifeq ($(TARGET),aarch64-apple-ios)
+release: release-ios-arm64
+else ifeq ($(TARGET),x86_64-apple-ios)
+release: release-ios-x86_64
+else ifeq ($(TARGET),aarch64-apple-ios-sim)
+release: release-ios-arm64-sim
+else ifeq ($(TARGET),aarch64-linux-android)
+release: release-android-arm64
+else ifeq ($(TARGET),armv7-linux-androideabi)
+release: release-android-armv7
+else ifeq ($(TARGET),i686-linux-android)
+release: release-android-x86
+else ifeq ($(TARGET),x86_64-linux-android)
+release: release-android-x86_64
+endif
+endif
+
+# If TARGET is not set, use platform detection
+ifndef TARGET
 ifeq ($(PLATFORM), mac)
 release: release-mac-universal
 endif
@@ -126,5 +192,6 @@ release: release-linux-gnu-x86
 endif
 ifeq ($(ARCH), aarch64)
 release: release-linux-gnu-arm
+endif
 endif
 endif
