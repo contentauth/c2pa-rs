@@ -23,7 +23,7 @@ CARGO_BUILD_FLAGS = --release -p c_api --no-default-features --features "rust_na
 IPHONEOS_DEPLOYMENT_TARGET ?= 15.0
 
 # Workaround for cross installation issue with static-mut-refs warning
-# See: https://github.com/cross-rs/cross/issues/1514
+# See: https://github.com/cross-rs/cross/issues/1561
 # This clears RUSTFLAGS to prevent -D warnings from failing the cross installation
 CROSS_INSTALL_RUSTFLAGS = RUSTFLAGS=""
 
