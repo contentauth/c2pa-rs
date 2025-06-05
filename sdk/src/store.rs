@@ -4219,7 +4219,7 @@ impl Store {
         None
     }
 
-    // build ingredient lists for the Clain in the specified Store
+    // build ingredient lists for the Claim in the specified Store
     // the referenced_ingredients map the ingredient to the claims that reference it
     // the found_redactions are any redactions found
     fn get_claim_referenced_manifests<'a>(
