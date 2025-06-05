@@ -98,12 +98,6 @@ release-mac-universal: release-mac-arm release-mac-x86
 	strip -x $(TARGET_DIR)/universal-apple-darwin/release/libc2pa_c.dylib
 	@$(call make_zip,$(TARGET_DIR)/universal-apple-darwin/release,universal-apple-darwin)
 
-	strip -x $(TARGET_DIR)/aarch64-apple-darwin/release/libc2pa_c.dylib
-	@$(call make_zip,$(TARGET_DIR)/aarch64-apple-darwin/release,aarch64-apple-darwin)
-
-	strip -x $(TARGET_DIR)/x86_64-apple-darwin/release/libc2pa_c.dylib
-	@$(call make_zip,$(TARGET_DIR)/x86_64-apple-darwin/release,x86_64-apple-darwin)
-
 release-linux-gnu-x86:
 	rustup target add x86_64-unknown-linux-gnu
 	cargo build --target=x86_64-unknown-linux-gnu  $(CARGO_BUILD_FLAGS)
@@ -167,10 +161,6 @@ ifeq ($(TARGET),x86_64-pc-windows-msvc)
 release: release-win-x86_64
 else ifeq ($(TARGET),aarch64-pc-windows-msvc)
 release: echo "No release build for aarch64 on Windows"
-else ifeq ($(TARGET),aarch64-apple-darwin)
-release: release-mac-arm
-else ifeq ($(TARGET),x86_64-apple-darwin)
-release: release-mac-x86
 else ifeq ($(TARGET),universal-apple-darwin)
 release: release-mac-universal
 else ifeq ($(TARGET),x86_64-unknown-linux-gnu)
