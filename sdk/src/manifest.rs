@@ -2915,4 +2915,73 @@ pub(crate) mod tests {
         assert!(reader.active_manifest().is_some());
         assert_eq!(reader.validation_status(), None);
     }
+
+    #[test]
+    #[cfg(feature = "file_io")]
+    #[allow(deprecated)]
+    fn test_claimv2_redaction() {
+        const ASSERTION_LABEL: &str = "my.test.assertion";
+
+        let temp_dir = tempdirectory().expect("temp dir");
+        let output = temp_fixture_path(&temp_dir, TEST_SMALL_JPEG);
+        let output2 = temp_fixture_path(&temp_dir, TEST_SMALL_JPEG);
+
+        let mut manifest = test_manifest();
+
+        manifest
+            .add_labeled_assertion(
+                ASSERTION_LABEL,
+                &serde_json::json! (
+                {
+                   "my_test_key":  "my_sample_data",
+                  }),
+            )
+            .expect("add_assertion");
+
+        let signer = test_signer(SigningAlg::Ps256);
+
+        let c2pa_data = manifest
+            .embed(&output, &output, signer.as_ref())
+            .expect("embed");
+        let mut validation_log = StatusTracker::default();
+
+        let store1 = Store::load_from_memory("c2pa", &c2pa_data, true, &mut validation_log)
+            .expect("load from memory");
+        let claim1_label = store1.provenance_label().unwrap();
+        let claim = store1.provenance_claim().unwrap();
+        assert!(claim.get_claim_assertion(ASSERTION_LABEL, 0).is_some()); // verify the assertion is there
+
+        // create a new claim and make the previous file a parent
+        let mut manifest2 = test_manifest();
+        manifest2
+            .set_parent(Ingredient::from_file(&output).expect("from_file"))
+            .expect("set_parent");
+
+        // redact the assertion
+        manifest2
+            .add_redaction(to_assertion_uri(&claim1_label, ASSERTION_LABEL)) // must be full uri
+            .expect("add_redaction");
+
+        //embed a claim in output2
+        let signer = test_signer(SigningAlg::Ps256);
+        let _store2 = manifest2
+            .embed(&output2, &output2, signer.as_ref())
+            .expect("embed");
+
+        let mut report = StatusTracker::default();
+        let store3 = Store::load_from_asset(&output2, true, &mut report).unwrap();
+        let claim2 = store3.provenance_claim().unwrap();
+
+        // assert!(!claim2.get_verifiable_credentials().is_empty());
+
+        // test that the redaction is in the new claim and the assertion is removed from the first one
+
+        assert!(claim2.redactions().is_some());
+        assert!(!claim2.redactions().unwrap().is_empty());
+        assert!(!report.logged_items().is_empty());
+        let redacted_uri = &claim2.redactions().unwrap()[0];
+
+        let claim1 = store3.get_claim(&claim1_label).unwrap();
+        assert_eq!(claim1.get_claim_assertion(redacted_uri, 0), None);
+    }
 }

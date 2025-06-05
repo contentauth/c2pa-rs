@@ -44,6 +44,11 @@ pub const BOX_HASH: &str = "c2pa.hash.boxes";
 /// See <https://c2pa.org/specifications/specifications/1.0/specs/C2PA_Specification.html#_bmff_based_hash>.
 pub const BMFF_HASH: &str = "c2pa.hash.bmff";
 
+/// Label prefix for a collection hash assertion.
+///
+/// See <https://c2pa.org/specifications/specifications/2.1/specs/C2PA_Specification.html#_collection_data_hash>.
+pub const COLLECTION_HASH: &str = "c2pa.hash.collection.data";
+
 /// Label prefix for a soft binding assertion.
 ///
 /// See <https://c2pa.org/specifications/specifications/1.0/specs/C2PA_Specification.html#_soft_binding_2>.
@@ -148,6 +153,17 @@ pub const CLAIM_REVIEW: &str = "stds.schema-org.ClaimReview";
 ///
 /// See <https://c2pa.org/specifications/specifications/1.0/specs/C2PA_Specification.html#_creative_work>.
 pub const CREATIVE_WORK: &str = "stds.schema-org.CreativeWork";
+
+/// Label prefix for a timestamp assertion.
+///
+/// See <https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#timestamp_assertion>.
+pub const TIMESTAMP: &str = "c2pa.time-stamp";
+
+// Assertion store label
+pub(crate) const ASSERTION_STORE: &str = "c2pa.assertions";
+
+// Databoxes label
+pub(crate) const DATABOX_STORE: &str = "c2pa.databoxes";
 
 /// Return the version suffix from an assertion label if it exists.
 ///

@@ -79,7 +79,13 @@ impl SignatureVerifier for X509SignatureVerifier {
         let cose_sign1 = parse_cose_sign1(signature, &signer_payload_cbor, &mut validation_log)?;
 
         let cert_info = verifier
-            .verify_signature_async(signature, &signer_payload_cbor, &[], &mut validation_log)
+            .verify_signature_async(
+                signature,
+                &signer_payload_cbor,
+                &[],
+                None,
+                &mut validation_log,
+            )
             .await
             .map_err(|e| match e {
                 CoseError::RawSignatureValidationError(

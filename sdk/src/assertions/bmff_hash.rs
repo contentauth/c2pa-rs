@@ -791,6 +791,10 @@ impl BmffHash {
             // inithash cache to prevent duplicate work.
             let mut init_hashes = std::collections::HashSet::new();
 
+            if fragment_paths.is_empty() {
+                return Err(Error::HashMismatch("No fragment specified".to_string()));
+            }
+
             for fp in fragment_paths {
                 let mut fragment_stream = std::fs::File::open(fp)?;
 

@@ -66,14 +66,14 @@ pub fn get_thumbnail_type(thumbnail_label: &str) -> String {
     "none".to_string()
 }
 
-pub fn get_thumbnail_image_type(thumbnail_label: &str) -> String {
+pub fn get_thumbnail_image_type(thumbnail_label: &str) -> Option<String> {
     let components: Vec<&str> = thumbnail_label.split('.').collect();
 
     if thumbnail_label.contains("thumbnail") && components.len() >= 4 {
         let image_type: Vec<&str> = components[3].split('_').collect(); // strip and other label adornments
-        image_type[0].to_ascii_lowercase()
+        Some(image_type[0].to_ascii_lowercase())
     } else {
-        "none".to_string()
+        None
     }
 }
 
@@ -177,7 +177,7 @@ pub trait AssertionJson: Serialize + DeserializeOwned + AssertionBase {
 /// the Assertion type (see spec).
 /// For JSON assertions the data is a JSON string and a Vec of u8 values for
 /// binary data and JSON data to be CBOR encoded.
-#[derive(Deserialize, Serialize, PartialEq, Eq, Clone)]
+#[derive(Deserialize, Serialize, PartialEq, Eq, Clone, Hash)]
 pub enum AssertionData {
     Json(String),          // json encoded data
     Binary(Vec<u8>),       // binary data
@@ -215,7 +215,7 @@ impl fmt::Debug for AssertionData {
 /// contain its AssertionData.  For the User Assertion type we
 /// allow a String to set the label. The AssertionData contains
 /// the data payload for the assertion and the version number for its schema (if supported).
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Assertion {
     label: String,
     version: Option<usize>,
@@ -287,9 +287,9 @@ impl Assertion {
     pub(crate) fn label_root(&self) -> String {
         let label = get_mutable_label(&self.label).0;
         // thumbnails need the image_type added
-        match get_thumbnail_image_type(&self.label).as_str() {
-            "none" => label,
-            image_type => format!("{label}.{image_type}"),
+        match get_thumbnail_image_type(&self.label) {
+            None => label,
+            Some(image_type) => format!("{label}.{image_type}"),
         }
     }
 

@@ -31,7 +31,10 @@ use crate::crypto::{
 ///
 /// Return a [`TstInfo`] struct if available and valid.
 #[async_generic]
-pub fn validate_cose_tst_info(sign1: &coset::CoseSign1, data: &[u8]) -> Result<TstInfo, CoseError> {
+pub(crate) fn validate_cose_tst_info(
+    sign1: &coset::CoseSign1,
+    data: &[u8],
+) -> Result<TstInfo, CoseError> {
     let Some((sigtst, tss)) = &sign1
         .unprotected
         .rest
@@ -226,8 +229,8 @@ fn make_cose_timestamp(ts_data: &[u8]) -> TstContainer {
     container
 }
 
-// Return timeStampToken used by sigTst2.
-fn timestamptoken_from_timestamprsp(ts: &[u8]) -> Option<Vec<u8>> {
+/// Return DER encoded TimeStampToken used by sigTst2 from TimeStampResponse.
+pub fn timestamptoken_from_timestamprsp(ts: &[u8]) -> Option<Vec<u8>> {
     let ts_resp = TimeStampResponse(
         Constructed::decode(ts, bcder::Mode::Der, TimeStampResp::take_from).ok()?,
     );
