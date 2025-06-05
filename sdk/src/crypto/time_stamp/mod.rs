@@ -30,4 +30,4 @@ mod response;
 pub(crate) use response::{ContentInfo, TimeStampResponse};
 
 mod verify;
-pub(crate) use verify::{verify_time_stamp, verify_time_stamp_async};
+pub use verify::{verify_time_stamp, verify_time_stamp_async};
