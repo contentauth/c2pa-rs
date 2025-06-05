@@ -720,6 +720,7 @@ dependencies = [
  "byteorder",
  "byteordered",
  "bytes",
+ "c2pa_macros",
  "chrono",
  "ciborium",
  "config",
@@ -731,6 +732,7 @@ dependencies = [
  "der",
  "ecdsa",
  "ed25519-dalek",
+ "env_logger 0.10.2",
  "extfmt",
  "getrandom 0.2.16",
  "glob",
@@ -810,6 +812,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "c2pa_macros"
+version = "0.55.0"
+dependencies = [
+ "quote",
+ "syn 2.0.101",
+]
+
+[[package]]
 name = "c2patool"
 version = "0.18.0"
 dependencies = [
@@ -819,7 +829,7 @@ dependencies = [
  "atree",
  "c2pa",
  "clap",
- "env_logger",
+ "env_logger 0.11.8",
  "glob",
  "httpmock",
  "log",
@@ -1492,6 +1502,19 @@ dependencies = [
 
 [[package]]
 name = "env_logger"
+version = "0.10.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4cd405aab171cb85d6735e5c8d9db038c17d3ca007a4d2c25f337935c3d90580"
+dependencies = [
+ "humantime",
+ "is-terminal",
+ "log",
+ "regex",
+ "termcolor",
+]
+
+[[package]]
+name = "env_logger"
 version = "0.11.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "13c863f0904021b108aa8b2f55046443e6b1ebde8fd4a15c399893aae4fa069f"
@@ -2017,6 +2040,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "humantime"
+version = "2.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9b112acc8b3adf4b107a8ec20977da0273a8c386765a3ec0229bd500a1443f9f"
+
+[[package]]
 name = "hyper"
 version = "0.14.32"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2372,6 +2401,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "is-terminal"
+version = "0.4.16"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e04d7f318608d35d4b61ddd75cbdaee86b023ebe2bd5a66ee0915f0bf93095a9"
+dependencies = [
+ "hermit-abi",
+ "libc",
+ "windows-sys 0.59.0",
+]
+
+[[package]]
 name = "is_terminal_polyfill"
 version = "1.70.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2628,8 +2668,9 @@ version = "0.55.0"
 dependencies = [
  "anyhow",
  "c2pa",
- "env_logger",
+ "env_logger 0.11.8",
  "image 0.25.6",
+ "lazy_static",
  "log",
  "memchr",
  "nom",
@@ -4423,6 +4464,15 @@ dependencies = [
  "dirs-next",
  "rustversion",
  "winapi",
+]
+
+[[package]]
+name = "termcolor"
+version = "1.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "06794f8f6c5c898b3275aebefa6b8a1cb24cd2c6c79397ab15774837a0bc5755"
+dependencies = [
+ "winapi-util",
 ]
 
 [[package]]

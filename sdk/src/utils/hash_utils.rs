@@ -19,7 +19,6 @@ use std::{
 };
 
 //use conv::ValueFrom;
-use log::warn;
 use range_set::RangeSet;
 use serde::{Deserialize, Serialize};
 // direct sha functions
@@ -207,11 +206,7 @@ where
         "sha384" => SHA384(Sha384::new()),
         "sha512" => SHA512(Sha512::new()),
         _ => {
-            warn!(
-                "Unsupported hashing algorithm: {}, substituting sha256",
-                alg
-            );
-            SHA256(Sha256::new())
+            return Err(Error::UnsupportedType);
         }
     };
 
