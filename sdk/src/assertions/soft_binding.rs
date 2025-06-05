@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use super::labels;
 use crate::{
-    assertion::{Assertion, AssertionBase, AssertionCbor, AssertionJson},
+    assertion::{Assertion, AssertionBase, AssertionCbor},
     assertions::region_of_interest::RegionOfInterest,
     cbor_types::UriT,
     Result,
@@ -105,5 +105,4 @@ impl AssertionBase for SoftBinding {
     }
 }
 
-impl AssertionJson for SoftBinding {}
 impl AssertionCbor for SoftBinding {}
