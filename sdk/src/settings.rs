@@ -201,6 +201,8 @@ pub(crate) struct Verify {
     ocsp_fetch: bool,
     remote_manifest_fetch: bool,
     check_ingredient_trust: bool,
+    skip_ingredient_conflict_resolution: bool,
+    strict_v1_validation: bool,
 }
 
 impl Default for Verify {
@@ -212,6 +214,8 @@ impl Default for Verify {
             ocsp_fetch: false,
             remote_manifest_fetch: true,
             check_ingredient_trust: true,
+            skip_ingredient_conflict_resolution: false,
+            strict_v1_validation: false,
         }
     }
 }
@@ -236,18 +240,35 @@ impl Default for Builder {
 
 impl SettingsValidate for Builder {}
 
+const MAJOR_VERSION: usize = 1;
+const MINOR_VERSION: usize = 0;
 // Settings configuration for C2PA-RS.  Default configuration values
 // are lazy loaded on first use.  Values can also be loaded from a configuration
 // file or by setting specific value via code.  There is a single configuration
 // setting for the entire C2PA-RS instance.
-#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 #[allow(unused)]
 pub struct Settings {
+    version_major: usize,
+    version_minor: usize,
     trust: Trust,
     core: Core,
     verify: Verify,
     builder: Builder,
+}
+
+impl Default for Settings {
+    fn default() -> Self {
+        Self {
+            version_major: MAJOR_VERSION,
+            version_minor: MINOR_VERSION,
+            trust: Default::default(),
+            core: Default::default(),
+            verify: Default::default(),
+            builder: Default::default(),
+        }
+    }
 }
 
 impl Settings {
@@ -311,6 +332,11 @@ impl Settings {
 
 impl SettingsValidate for Settings {
     fn validate(&self) -> Result<()> {
+        if self.version_major > MAJOR_VERSION {
+            return Err(Error::VersionCompatibility(
+                "settings version too new".into(),
+            ));
+        }
         self.trust.validate()?;
         self.core.validate()?;
         self.trust.validate()?;
@@ -398,8 +424,12 @@ pub(crate) fn get_settings_value<'de, T: serde::de::Deserialize<'de>>(
     value_path: &str,
 ) -> Result<T> {
     SETTINGS.with_borrow(|current_settings| {
-        current_settings
-            .clone()
+        let update_config = Config::builder()
+            .add_source(current_settings.clone())
+            .build()
+            .map_err(|_e| Error::OtherError("could not update configuration".into()))?;
+
+        update_config
             .get::<T>(value_path)
             .map_err(|_| Error::NotFound)
     })

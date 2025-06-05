@@ -12,6 +12,7 @@
 // each license.
 
 use async_trait::async_trait;
+use base64::{prelude::BASE64_URL_SAFE, Engine};
 use chrono::{DateTime, Utc};
 use coset::{CoseSign1, RegisteredLabelWithPrivate, TaggedCborSerializable};
 
@@ -355,12 +356,11 @@ impl IcaSignatureVerifier {
             "jwk" => {
                 let jwk = primary_did.method_specific_id();
 
-                let jwk =
-                    multibase::Base::decode(&multibase::Base::Base64Url, jwk).map_err(|e| {
-                        ValidationError::SignatureError(IcaValidationError::InvalidDidDocument(
-                            e.to_string(),
-                        ))
-                    })?;
+                let jwk = BASE64_URL_SAFE.decode(jwk).map_err(|e| {
+                    ValidationError::SignatureError(IcaValidationError::InvalidDidDocument(
+                        e.to_string(),
+                    ))
+                })?;
 
                 let jwk: Jwk = serde_json::from_slice(&jwk).map_err(|e| {
                     ValidationError::SignatureError(IcaValidationError::InvalidDidDocument(

@@ -53,6 +53,9 @@ pub use schema_org::{SchemaDotOrg, SchemaDotOrgPerson};
 mod thumbnail;
 pub(crate) use thumbnail::Thumbnail;
 
+mod timestamp;
+pub(crate) use timestamp::TimeStamp;
+
 mod user;
 pub(crate) use user::User;
 
