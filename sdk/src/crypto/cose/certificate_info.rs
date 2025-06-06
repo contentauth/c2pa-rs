@@ -41,9 +41,4 @@ pub struct CertificateInfo {
 
     /// Certificate chain used to validate the signature
     pub cert_chain: Vec<u8>,
-
-    /// Signature revocation status
-    ///
-    /// TO REVIEW: What does this `bool` mean?
-    pub revocation_status: Option<bool>,
 }

@@ -45,7 +45,6 @@ Example assertion:
         "alg": "Ed25519",
         "issuer": "C2PA Test Signing Cert",
         "cert_serial_number": "638838410810235485828984295321338730070538954823",
-        "revocation_status": true
       }
     }
   },

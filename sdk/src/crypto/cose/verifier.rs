@@ -177,7 +177,6 @@ impl Verifier<'_> {
             issuer_org: Some(subject),
             validated: true,
             cert_chain: dump_cert_chain(&certs)?,
-            revocation_status: Some(true),
         })
     }
 

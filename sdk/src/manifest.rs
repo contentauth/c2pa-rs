@@ -763,7 +763,6 @@ impl Manifest {
                 cert_serial_number: signature_info.cert_serial_number.map(|s| s.to_string()),
                 cert_chain: String::from_utf8(signature_info.cert_chain)
                     .map_err(|_e| Error::CoseInvalidCert)?,
-                revocation_status: signature_info.revocation_status,
             }),
             None => None,
         };
@@ -1527,11 +1526,7 @@ pub struct SignatureInfo {
     /// The time the signature was created.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub time: Option<String>,
-
-    /// Revocation status of the certificate.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub revocation_status: Option<bool>,
-
+    
     /// The cert chain for this claim.
     #[serde(skip)] // don't serialize this, let someone ask for it
     pub cert_chain: String,
