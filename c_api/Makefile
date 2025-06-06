@@ -75,16 +75,20 @@ release-mac-arm:
 	rustup target add aarch64-apple-darwin
 	MACOSX_DEPLOYMENT_TARGET=11.1 cargo build --target=aarch64-apple-darwin $(CARGO_BUILD_FLAGS)
 	install_name_tool -id @rpath/libc2pa_c.dylib $(TARGET_DIR)/aarch64-apple-darwin/release/libc2pa_c.dylib
+	strip -x $(TARGET_DIR)/aarch64-apple-darwin/release/libc2pa_c.dylib
+	@$(call make_zip,$(TARGET_DIR)/aarch64-apple-darwin/release,aarch64-apple-darwin)
 
 release-mac-x86:
 	rustup target add x86_64-apple-darwin
 	MACOSX_DEPLOYMENT_TARGET=10.15 cargo build --target=x86_64-apple-darwin $(CARGO_BUILD_FLAGS)
 	install_name_tool -id @rpath/libc2pa_c.dylib $(TARGET_DIR)/x86_64-apple-darwin/release/libc2pa_c.dylib
+	strip -x $(TARGET_DIR)/x86_64-apple-darwin/release/libc2pa_c.dylib
+	@$(call make_zip,$(TARGET_DIR)/x86_64-apple-darwin/release,x86_64-apple-darwin)
 
 release-mac-universal: release-mac-arm release-mac-x86
 	rm -rf $(TARGET_DIR)/universal-apple-darwin
 	mkdir -p $(TARGET_DIR)/universal-apple-darwin/release
-	lipo -create -output $(TARGET_DIR)/universal-apple-darwin/release/libc2pa_c.dylib $(TARGET_DIR)/aarch64-apple-darwin/release/libc2pa_c.dylib ../target/x86_64-apple-darwin/release/libc2pa_c.dylib
+	lipo -create -output $(TARGET_DIR)/universal-apple-darwin/release/libc2pa_c.dylib $(TARGET_DIR)/aarch64-apple-darwin/release/libc2pa_c.dylib $(TARGET_DIR)/x86_64-apple-darwin/release/libc2pa_c.dylib
 	cp $(TARGET_DIR)/aarch64-apple-darwin/release/c2pa.h $(TARGET_DIR)/universal-apple-darwin/release/c2pa.h
 	install_name_tool -id @rpath/libc2pa_c.dylib $(TARGET_DIR)/universal-apple-darwin/release/libc2pa_c.dylib
 	dsymutil $(TARGET_DIR)/universal-apple-darwin/release/libc2pa_c.dylib
@@ -96,12 +100,6 @@ release-mac-universal: release-mac-arm release-mac-x86
 
 	strip -x $(TARGET_DIR)/universal-apple-darwin/release/libc2pa_c.dylib
 	@$(call make_zip,$(TARGET_DIR)/universal-apple-darwin/release,universal-apple-darwin)
-
-	strip -x $(TARGET_DIR)/aarch64-apple-darwin/release/libc2pa_c.dylib
-	@$(call make_zip,$(TARGET_DIR)/aarch64-apple-darwin/release,aarch64-apple-darwin)
-
-	strip -x $(TARGET_DIR)/x86_64-apple-darwin/release/libc2pa_c.dylib
-	@$(call make_zip,$(TARGET_DIR)/x86_64-apple-darwin/release,x86_64-apple-darwin)
 
 release-linux-gnu-x86:
 	rustup target add x86_64-unknown-linux-gnu
