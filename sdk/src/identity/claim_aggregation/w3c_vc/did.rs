@@ -122,6 +122,12 @@ impl DidBuf {
         }
     }
 
+    // mismatched_lifetime_syntaxes reproting an error we are creating a
+    // [Did] from a [&str] reference.
+    //
+    // We are allowing "unknown_lints" because "mismatched_lifetime_syntaxes"
+    // is only in nightly.
+    #[allow(unknown_lints, mismatched_lifetime_syntaxes)]
     pub fn as_did(&self) -> Did {
         unsafe {
             // SAFETY: we validated the data in `Self::new`.
