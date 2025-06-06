@@ -615,7 +615,6 @@ impl RemoteRefEmbed for RiffIO {
             }
             RemoteRefEmbedType::StegoS(_) => Err(Error::UnsupportedType),
             RemoteRefEmbedType::StegoB(_) => Err(Error::UnsupportedType),
-            RemoteRefEmbedType::Watermark(_) => Err(Error::UnsupportedType),
         }
     }
 }

@@ -634,7 +634,6 @@ impl RemoteRefEmbed for PngIO {
             }
             crate::asset_io::RemoteRefEmbedType::StegoS(_) => Err(Error::UnsupportedType),
             crate::asset_io::RemoteRefEmbedType::StegoB(_) => Err(Error::UnsupportedType),
-            crate::asset_io::RemoteRefEmbedType::Watermark(_) => Err(Error::UnsupportedType),
         }
     }
 
@@ -704,7 +703,6 @@ impl RemoteRefEmbed for PngIO {
             }
             crate::asset_io::RemoteRefEmbedType::StegoS(_) => Err(Error::UnsupportedType),
             crate::asset_io::RemoteRefEmbedType::StegoB(_) => Err(Error::UnsupportedType),
-            crate::asset_io::RemoteRefEmbedType::Watermark(_) => Err(Error::UnsupportedType),
         }
     }
 }

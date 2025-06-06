@@ -2771,7 +2771,7 @@ impl Claim {
             if parent_count > 1 {
                 log_item!(
                     claim.uri(),
-                    "too many ingredient parentsf",
+                    "too many ingredient parents",
                     "ingredient_checks"
                 )
                 .validation_status(validation_status::MANIFEST_MULTIPLE_PARENTS)

@@ -15,7 +15,8 @@
 use std::path::{Path, PathBuf};
 use std::{
     collections::HashMap,
-    io::{Read, Seek, Write},
+    fmt,
+    io::{Cursor, Read, Seek, Write},
 };
 
 use async_generic::async_generic;
@@ -38,7 +39,7 @@ use crate::{
     salt::DefaultSalt,
     store::Store,
     utils::mime::format_to_mime,
-    AsyncSigner, ClaimGeneratorInfo, HashRange, Ingredient, Signer,
+    watermark, AsyncSigner, ClaimGeneratorInfo, HashRange, Ingredient, Signer,
 };
 
 /// Version of the Builder Archive file
@@ -158,6 +159,14 @@ impl AssertionDefinition {
     }
 }
 
+pub struct Watermarker(Box<dyn watermark::Watermarker>);
+
+impl fmt::Debug for Watermarker {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("Watermarker")
+    }
+}
+
 /// Use a Builder to add a signed manifest to an asset.
 ///
 /// # Example: Building and signing a manifest:
@@ -226,6 +235,13 @@ pub struct Builder {
     /// Base path to search for resources.
     #[cfg(feature = "file_io")]
     pub base_path: Option<PathBuf>,
+
+    /// Watermarker to do the watermarking.
+    #[serde(skip)]
+    pub watermarker: Option<Watermarker>,
+
+    /// Value to be watermarked.
+    pub watermark_value: Option<String>,
 
     /// Container for binary assets (like thumbnails).
     #[serde(skip)]
@@ -337,6 +353,26 @@ impl Builder {
             self.definition.instance_id.clone(),
         ));
         Ok(self)
+    }
+
+    /// Adds a [c2pa::watermark::Watermarker] to the [Builder] with the specified watermark.
+    ///
+    /// If feature `add_thumbnails` is specified, the watermark will be taken after generating
+    /// the thumbnail.
+    ///
+    /// # Arguments
+    /// * `watermarker` - The watermarker used for watermarking.
+    /// * `value` - The value to be passed to the watermarker.
+    /// # Returns
+    /// * A mutable reference to the [`Builder`].
+    pub fn add_watermarker<W, S>(&mut self, watermarker: W, value: S) -> &mut Self
+    where
+        W: Into<Box<dyn watermark::Watermarker>>,
+        S: Into<String>,
+    {
+        self.watermarker = Some(Watermarker(watermarker.into()));
+        self.watermark_value = Some(value.into());
+        self
     }
 
     /// Adds a CBOR assertion to the manifest.
@@ -1035,16 +1071,52 @@ impl Builder {
         #[cfg(feature = "add_thumbnails")]
         self.maybe_add_thumbnail(&format, source)?;
 
+        let watermarked_source = if let Some(Watermarker(watermarker)) = &self.watermarker {
+            let intermediate_output: Vec<u8> = Vec::new();
+            let mut intermediate_stream = Cursor::new(intermediate_output);
+
+            let soft_binding = watermarker.watermark(
+                &self.watermark_value.take().unwrap(),
+                &format,
+                source,
+                &mut intermediate_stream,
+            )?;
+            self.add_assertion(labels::SOFT_BINDING, &soft_binding)?;
+
+            let mut ingredient =
+                Ingredient::new_v2("TODO: will this title be overwritten?", &format)
+                    .with_stream(&format, source)?;
+            ingredient.set_is_parent();
+            self.add_ingredient(ingredient);
+
+            Some(intermediate_stream)
+        } else {
+            None
+        };
+
         // convert the manifest to a store
         let mut store = self.to_store()?;
 
         // sign and write our store to to the output image file
+        //
+        // unfortunately, since source and watermarked_source are different types, we either need
+        // to duplicate the code and end up with below, or create an enum and reimplement read+seek+write
         if _sync {
-            store.save_to_stream(&format, source, dest, signer)
+            if let Some(mut source) = watermarked_source {
+                store.save_to_stream(&format, &mut source, dest, signer)
+            } else {
+                store.save_to_stream(&format, source, dest, signer)
+            }
         } else {
-            store
-                .save_to_stream_async(&format, source, dest, signer)
-                .await
+            if let Some(mut source) = watermarked_source {
+                store
+                    .save_to_stream_async(&format, &mut source, dest, signer)
+                    .await
+            } else {
+                store
+                    .save_to_stream_async(&format, source, dest, signer)
+                    .await
+            }
         }
     }
 
@@ -1850,7 +1922,7 @@ mod tests {
                                 },
                                 "something": "else"
                             }
-                        },   
+                        },
                         {
                             "action": "c2pa.dubbed",
                             "softwareAgent": {

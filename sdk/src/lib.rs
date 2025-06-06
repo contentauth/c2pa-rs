@@ -148,6 +148,7 @@ pub use signer::RemoteSigner;
 pub use signer::{AsyncSigner, Signer};
 pub use utils::mime::format_from_path;
 pub use validation_results::{ValidationResults, ValidationState};
+pub use watermark::Watermarker;
 
 pub use crate::crypto::raw_signature::SigningAlg;
 
@@ -164,6 +165,7 @@ pub(crate) mod error;
 pub(crate) mod external_manifest;
 pub(crate) mod hashed_uri;
 pub(crate) mod ingredient;
+pub(crate) mod watermark;
 
 #[allow(dead_code)]
 pub(crate) mod jumbf;
