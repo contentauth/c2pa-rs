@@ -107,6 +107,48 @@ release-linux-gnu-arm:
 	cargo build --target=aarch64-unknown-linux-gnu  $(CARGO_BUILD_FLAGS)
 	@$(call make_zip,$(TARGET_DIR)/aarch64-unknown-linux-gnu/release,aarch64-unknown-linux-gnu)
 
+
+##Android NDK needs to be in your environment
+##export ANDROID_NDK_HOME=${NDK_HOME} // https://developer.android.com/ndk
+##we currently recommend: android-ndk-r26d
+
+release-android: release-android-arm64 release-android-x86_64
+
+release-android-arm64: android-install-deps
+	rustup target add aarch64-linux-android
+	RUSTFLAGS='-C link-arg=-s' cargo ndk -t arm64-v8a build $(CARGO_BUILD_FLAGS)
+	@$(call make_zip,$(TARGET_DIR)/aarch64-linux-android/release,aarch64-linux-android)
+
+release-android-x86_64: android-install-deps
+	rustup target add x86_64-linux-android
+	RUSTFLAGS='-C link-arg=-s' cargo ndk -t x86_64 build $(CARGO_BUILD_FLAGS)
+	@$(call make_zip,$(TARGET_DIR)/x86_64-linux-android/release,x86_64-linux-android)
+
+cache/ndk/android-ndk-r26d: cache/ndk.zip
+	unzip -n -d cache/ndk cache/ndk.zip
+	touch cache/ndk.zip #MacOS' unzip might delete the zip file, so recreate an empty file to calm make.
+
+cache/ndk.zip:
+	mkdir -p cache
+
+ifeq ($(OS),Windows_NT)
+	wget https://dl.google.com/android/repository/android-ndk-r26d-windows.zip -O $@
+else ifeq ($(shell uname), Linux)
+	wget https://dl.google.com/android/repository/android-ndk-r26d-linux.zip -O $@
+else ifeq ($(shell uname), Darwin)
+	wget https://dl.google.com/android/repository/android-ndk-r26d-darwin.zip -O $@
+else
+	@echo "No NDK found for your system, please download it by yourself."
+	@false
+endif
+
+android-install-deps: cache/ndk/android-ndk-r26d cargo-ndk
+
+cargo-ndk:
+ifeq ($(shell command -v cargo-ndk),)
+	cargo install cargo-ndk
+endif
+
 # make release
 # Builds and packages a zip for c_api for each platform
 ifeq ($(PLATFORM), mac)
