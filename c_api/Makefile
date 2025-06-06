@@ -37,7 +37,11 @@ define make_zip
 	fi; \
 	mkdir -p $(TARGET_DIR)/artifacts $(1)/include $(1)/lib; \
 	cp $(1)/c2pa.h $(1)/include/; \
-	cp $(1)/libc2pa_c.* $(1)/lib/; \
+	if [[ "$(2)" == *"ios"* ]]; then \
+		cp $(1)/libc2pa_c.a $(1)/lib/; \
+	else \
+		find $(1) -name "libc2pa_c.*" ! -name "*.a" -exec cp {} $(1)/lib/ \;; \
+	fi; \
 	(cd $(1) && zip -9 -r ../../artifacts/c2pa-v$${VERSION}-$(2).zip include lib); \
 	echo "Zip file created: $(TARGET_DIR)/artifacts/c2pa-v$${VERSION}-$(2).zip"
 endef
