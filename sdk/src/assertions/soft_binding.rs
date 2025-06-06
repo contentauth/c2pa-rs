@@ -39,7 +39,7 @@ pub struct SoftBinding {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
 
-    /// CBOR byte string describing parameters of the soft binding algorithm.
+    /// A string describing parameters of the soft binding algorithm.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub alg_params: Option<String>,
 
