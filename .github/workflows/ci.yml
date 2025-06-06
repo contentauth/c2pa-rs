@@ -282,7 +282,7 @@ jobs:
           targets: ${{ matrix.target }}
 
       - name: Install cross-compilation toolset
-        run: cargo install cross
+        run: cargo install cross --git https://github.com/cross-rs/cross
 
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
