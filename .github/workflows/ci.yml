@@ -297,6 +297,54 @@ jobs:
         run: |
           cross test --all-targets --features "$FEATURES" --target ${{ matrix.target }}
 
+  tests-ios:
+    name: Unit tests (iOS)
+    needs: get-features
+    if: |
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.author_association == 'COLLABORATOR' ||
+      github.event.pull_request.author_association == 'MEMBER' ||
+      github.event.pull_request.user.login == 'dependabot[bot]' ||
+      contains(github.event.pull_request.labels.*.name, 'safe to test')
+
+    runs-on: macos-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: aarch64-apple-ios
+            sdk: iphoneos
+          - target: aarch64-apple-ios-sim
+            sdk: iphonesimulator
+        rust_version: [stable, 1.82.0]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ matrix.rust_version }}
+          targets: ${{ matrix.target }}
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+
+      # Note that we do not run code coverage because
+      # it isn't readily accessible from cross-compilation
+      # environment. (A PR to fix this would be welcomed!)
+
+      - name: Run unit tests (iOS)
+        env:
+          FEATURES: ${{needs.get-features.outputs.openssl-features}}
+          SDKROOT: ${{ steps.sdk.outputs.path }}
+          IPHONEOS_DEPLOYMENT_TARGET: "15.0"
+        run: |
+          export SDKROOT=$(xcrun -sdk ${{ matrix.sdk }} --show-sdk-path)
+          cargo test --all-targets --features "$FEATURES" --target ${{ matrix.target }}
+
   tests-wasm:
     name: Unit tests (Wasm)
     needs: get-features
