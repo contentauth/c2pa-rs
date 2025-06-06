@@ -830,7 +830,6 @@ pub unsafe extern "C" fn c2pa_builder_sign(
 
     let mut builder = guard_boxed!(builder_ptr);
     let c2pa_signer = guard_boxed!(signer_ptr);
-
     let result = builder.sign(
         c2pa_signer.signer.as_ref(),
         &format,
@@ -1185,7 +1184,9 @@ pub unsafe extern "C" fn c2pa_signature_free(signature_ptr: *const u8) {
 
 #[cfg(test)]
 mod tests {
-    use std::ffi::CString;
+    use std::{ffi::CString};
+    use c2pa::Reader;
+    use serde_json::json;
 
     use super::*;
     use crate::TestC2paStream;
@@ -1315,6 +1316,84 @@ mod tests {
         assert!(!builder.is_null());
         unsafe { c2pa_builder_set_no_embed(builder) };
         unsafe { c2pa_builder_free(builder) };
+    }
+
+    #[test]
+    fn test_to_archive_and_from_archive_with_ingredient_thumbnail() {
+        let manifest_def = CString::new("{}").unwrap();
+
+        let test_image3 = include_bytes!("A_thumbnail.jpg");
+        let mut test_image3_stream = TestC2paStream::from_bytes(test_image3.to_vec());
+
+        let test_image2 = include_bytes!("A.jpg");
+        let mut test_image2_stream = TestC2paStream::from_bytes(test_image2.to_vec());
+
+        let certs = include_str!(fixture_path!("certs/ed25519.pub"));
+        let private_key = include_bytes!(fixture_path!("certs/ed25519.pem"));
+        let alg = CString::new("Ed25519").unwrap();
+        let sign_cert = CString::new(certs).unwrap();
+        let private_key = CString::new(private_key).unwrap();
+        let signer_info = C2paSignerInfo {
+            alg: alg.as_ptr(),
+            sign_cert: sign_cert.as_ptr(),
+            private_key: private_key.as_ptr(),
+            ta_url: std::ptr::null(),
+        };
+
+        let signer = unsafe { c2pa_signer_from_info(&signer_info) };
+        assert!(!signer.is_null());
+
+        let builder = unsafe { c2pa_builder_from_json(manifest_def.as_ptr()) };
+        assert!(!builder.is_null());
+
+        let ingredient_json = CString::new(r#"{"title": "Test Ingredient"}"#).unwrap();
+        let format = CString::new("image/jpeg").unwrap();
+        let ingredient_json = ingredient_json.as_ptr() as *const i8;
+        let format = format.as_ptr() as *const i8;
+
+        unsafe {
+            c2pa_builder_add_ingredient_from_stream(
+                builder,
+                ingredient_json,
+                format, 
+                &mut test_image3_stream,
+            )
+        };
+
+        let dest_vec = Vec::new();
+        let mut dest_stream = TestC2paStream::new(dest_vec).into_c_stream();
+        
+        let archive = Vec::new();
+        let mut archive = TestC2paStream::from_bytes(archive.to_vec());
+        let res = unsafe { c2pa_builder_to_archive(builder, &mut archive) };
+
+        assert_ne!(res, -1);
+
+        let builder = unsafe { c2pa_builder_from_archive(&mut archive) };
+        assert!(!builder.is_null());
+        let mut manifest_bytes_ptr = std::ptr::null();
+
+        let res = unsafe {
+            c2pa_builder_sign(
+                builder, 
+                format, 
+                &mut test_image2_stream, 
+                &mut dest_stream, 
+                signer, 
+                &mut manifest_bytes_ptr,
+            )
+        };
+
+        assert_ne!(res, -1);
+
+         match Reader::from_stream("image/jpeg", &mut dest_stream) {
+            Ok(reader) => {
+                assert!(reader.json().contains("Test Ingredient"))
+            }
+            Err(_) => {
+            }
+         }
+        
     }
 
     #[test]

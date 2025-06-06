@@ -27,18 +27,10 @@ use uuid::Uuid;
 use zip::{write::SimpleFileOptions, ZipArchive, ZipWriter};
 
 use crate::{
-    assertion::AssertionDecodeError,
-    assertions::{
+    assertion::AssertionDecodeError, assertions::{
         labels, Actions, BmffHash, BoxHash, CreativeWork, DataHash, Exif, Metadata, SoftwareAgent,
         Thumbnail, User, UserCbor,
-    },
-    claim::Claim,
-    error::{Error, Result},
-    resource_store::{ResourceRef, ResourceResolver, ResourceStore},
-    salt::DefaultSalt,
-    store::Store,
-    utils::mime::format_to_mime,
-    AsyncSigner, ClaimGeneratorInfo, HashRange, Ingredient, Signer,
+    }, claim::Claim, error::{Error, Result}, format_from_path, resource_store::{ResourceRef, ResourceResolver, ResourceStore}, salt::DefaultSalt, store::Store, utils::mime::format_to_mime, AsyncSigner, ClaimGeneratorInfo, HashRange, Ingredient, Signer
 };
 
 /// Version of the Builder Archive file
@@ -508,6 +500,13 @@ impl Builder {
                 zip.start_file("manifests/", options)
                     .map_err(|e| Error::OtherError(Box::new(e)))?;
                 for ingredient in self.definition.ingredients.iter() {
+                    // add ingredient resource files to a ingredient folder
+                    for (id, data) in ingredient.resources().resources() {
+                        zip.start_file(format!("ingredients-resources/{}", id), options)
+                            .map_err(|e| Error::OtherError(Box::new(e)))?;
+                        zip.write_all(data)?;
+                    }              
+
                     if let Some(manifest_label) = ingredient.active_manifest() {
                         if let Some(manifest_data) = ingredient.manifest_data() {
                             // Convert to valid archive / file path name
@@ -559,6 +558,24 @@ impl Builder {
                     .ok_or(Error::BadParam("Invalid resource path".to_string()))?;
                 //println!("adding resource {}", id);
                 builder.resources.add(id, data)?;
+            }
+
+            if file.name().starts_with("ingredients-resources/") && file.name() != "ingredients-resources/" {
+                let mut data = Vec::new();
+                file.read_to_end(&mut data)?;
+                let id = file
+                    .name()
+                    .split('/')
+                    .nth(1)
+                    .ok_or(Error::BadParam("Invalid resource path".to_string()))?;
+                    let format = format_from_path(id)
+                        .ok_or(Error::BadParam("Invalid resource path".to_string()))?;
+                    let id = id.replacen(['-'], ":", 1);
+                for ingredient in builder.definition.ingredients.iter_mut() {
+                    if id.starts_with(ingredient.instance_id()) {
+                        ingredient.set_thumbnail(&format, data.clone())?;
+                    }
+                }
             }
 
             // Load the c2pa_manifests.
@@ -709,7 +726,7 @@ impl Builder {
                 None => ingredient.instance_id().to_string(),
             };
 
-            let uri = ingredient.add_to_claim(
+                        let uri = ingredient.add_to_claim(
                 &mut claim,
                 definition.redactions.clone(),
                 Some(&self.resources),
@@ -1034,7 +1051,6 @@ impl Builder {
         // generate thumbnail if we don't already have one
         #[cfg(feature = "add_thumbnails")]
         self.maybe_add_thumbnail(&format, source)?;
-
         // convert the manifest to a store
         let mut store = self.to_store()?;
 
