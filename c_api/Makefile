@@ -114,6 +114,7 @@ release-linux-gnu-arm:
 	CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc cargo build --target=aarch64-unknown-linux-gnu  $(CARGO_BUILD_FLAGS)
 	@$(call make_zip,$(TARGET_DIR)/aarch64-unknown-linux-gnu/release,aarch64-unknown-linux-gnu)
 
+# iOS physical devices
 release-ios-arm64:
 	rustup target add aarch64-apple-ios
 	SDKROOT=$$(xcrun -sdk iphoneos --show-sdk-path) \
@@ -121,6 +122,7 @@ release-ios-arm64:
 	cargo build --target=aarch64-apple-ios $(CARGO_BUILD_FLAGS)
 	@$(call make_zip,$(TARGET_DIR)/aarch64-apple-ios/release,aarch64-apple-ios)
 
+# iOS simulators running on Intel Macs
 release-ios-x86_64:
 	rustup target add x86_64-apple-ios
 	SDKROOT=$$(xcrun -sdk iphonesimulator --show-sdk-path) \
@@ -128,6 +130,7 @@ release-ios-x86_64:
 	cargo build --target=x86_64-apple-ios $(CARGO_BUILD_FLAGS)
 	@$(call make_zip,$(TARGET_DIR)/x86_64-apple-ios/release,x86_64-apple-ios)
 
+# iOS simulators running on Apple Silicon Macs
 release-ios-arm64-sim:
 	rustup target add aarch64-apple-ios-sim
 	SDKROOT=$$(xcrun -sdk iphonesimulator --show-sdk-path) \
@@ -135,21 +138,25 @@ release-ios-arm64-sim:
 	cargo build --target=aarch64-apple-ios-sim $(CARGO_BUILD_FLAGS)
 	@$(call make_zip,$(TARGET_DIR)/aarch64-apple-ios-sim/release,aarch64-apple-ios-sim)
 
+# 64-bit Android devices
 release-android-arm64:
 	$(CROSS_INSTALL_RUSTFLAGS) cargo install cross --git https://github.com/cross-rs/cross
 	cross build --target=aarch64-linux-android $(CARGO_BUILD_FLAGS)
 	@$(call make_zip,$(TARGET_DIR)/aarch64-linux-android/release,aarch64-linux-android)
 
+# 32-bit Android devices
 release-android-armv7:
 	$(CROSS_INSTALL_RUSTFLAGS) cargo install cross --git https://github.com/cross-rs/cross
 	cross build --target=armv7-linux-androideabi $(CARGO_BUILD_FLAGS)
 	@$(call make_zip,$(TARGET_DIR)/armv7-linux-androideabi/release,armv7-linux-androideabi)
 
+# 32-bit x86 Android emulators
 release-android-x86:
 	$(CROSS_INSTALL_RUSTFLAGS) cargo install cross --git https://github.com/cross-rs/cross
 	cross build --target=i686-linux-android $(CARGO_BUILD_FLAGS)
 	@$(call make_zip,$(TARGET_DIR)/i686-linux-android/release,i686-linux-android)
 
+# 64-bit x86 Android emulators
 release-android-x86_64:
 	$(CROSS_INSTALL_RUSTFLAGS) cargo install cross --git https://github.com/cross-rs/cross
 	cross build --target=x86_64-linux-android $(CARGO_BUILD_FLAGS)
