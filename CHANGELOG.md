@@ -6,6 +6,21 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 Since version 0.36.2, the format of this changelog is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.56.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.55.0...c2pa-v0.56.0)
+_06 June 2025_
+
+### Added
+
+* Update Validation for 2.2 spec compliance ([#1144](https://github.com/contentauth/c2pa-rs/pull/1144))
+
+### Documented
+
+* Doc cleanup ([#1143](https://github.com/contentauth/c2pa-rs/pull/1143))
+
+### Fixed
+
+* Docs.rs build using openssl and rust_native_crypto simulatenously ([#1139](https://github.com/contentauth/c2pa-rs/pull/1139))
+
 ## [0.55.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.54.0...c2pa-v0.55.0)
 _27 May 2025_
 
