@@ -156,7 +156,7 @@ jobs:
           token: ${{ secrets.CODECOV_TOKEN }}
           fail_ci_if_error: true
           verbose: true
-          files: lcov-*.info
+          files: ./lcov-openssl.info,./lcov-rust_native_crypto.info
 
   doc-tests:
     name: Doc tests (requires nightly Rust)

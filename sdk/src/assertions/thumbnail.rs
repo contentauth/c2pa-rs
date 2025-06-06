@@ -32,15 +32,18 @@ pub struct Thumbnail {
 impl Thumbnail {
     pub fn new(label: &str, data: Vec<u8>) -> Self {
         let image_type = get_thumbnail_image_type(label);
-        let content_type = match image_type.as_str() {
-            "jpeg" | "jpk2" => "image/jpeg",
-            "png" => "image/png",
-            "bmp" => "image/bmp",
-            "gif" => "image/gif",
-            "tiff" => "image/tiff",
-            "ico" => "image/x-icon",
-            "webp" => "image/webp",
-            _ => "application/octet-stream",
+        let content_type = match &image_type {
+            Some(it) => match it.as_str() {
+                "jpeg" | "jpk2" => "image/jpeg",
+                "png" => "image/png",
+                "bmp" => "image/bmp",
+                "gif" => "image/gif",
+                "tiff" => "image/tiff",
+                "ico" => "image/x-icon",
+                "webp" => "image/webp",
+                _ => "application/octet-stream",
+            },
+            None => "application/octet-stream",
         }
         .to_string();
 

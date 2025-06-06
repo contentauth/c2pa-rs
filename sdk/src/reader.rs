@@ -926,7 +926,6 @@ pub mod tests {
     /// Test that the reader can validate a file with nested assertion errors
     fn test_reader_to_folder() -> Result<()> {
         use crate::utils::{io_utils::tempdirectory, test::temp_dir_path};
-
         let reader = Reader::from_file("tests/fixtures/CACAE-uri-CA.jpg")?;
         assert_eq!(reader.validation_status(), None);
         let temp_dir = tempdirectory().unwrap();

@@ -45,7 +45,7 @@ NOTE: You also may want to get some of the example files provided in the reposit
 
 ### Installing from source
 
-Instead of installing a prebuilt binary, you can [build the project from source](https://github.com/contentauth/c2pa-rs/blob/docs/no-c2patool-binstall/cli/docs/project-contributions.md#building-from-source).
+Instead of installing a prebuilt binary, you can [build the project from source](https://github.com/contentauth/c2pa-rs/blob/main/cli/docs/project-contributions.md#building-from-source).
 
 ### Upgrading
 

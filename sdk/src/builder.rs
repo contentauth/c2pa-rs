@@ -209,7 +209,6 @@ impl AssertionDefinition {
 /// )?;
 /// # Ok(())
 /// # }
-
 #[skip_serializing_none]
 #[derive(Debug, Default, Deserialize, Serialize)]
 #[cfg_attr(feature = "json_schema", derive(JsonSchema))]
@@ -416,6 +415,32 @@ impl Builder {
         } else {
             ingredient.with_stream_async(format, stream).await?
         };
+        // let id = ingredient
+        //     .label()
+        //     .or_else(|| Some(ingredient.instance_id()))
+        //     .map(|s| s.to_string());
+        // let action_type = if ingredient.is_parent() {
+        //     "c2pa.opened"
+        // } else {
+        //     "c2pa.placed"
+        // };
+        // if let Some(id) = id {
+        //     self.add_assertion(
+        //         Actions::LABEL,
+        //         &serde_json::json!(
+        //             {
+        //                 "actions": [
+        //                     {
+        //                         "action": action_type,
+        //                         "parameters": {
+        //                             "org.cai.ingredientIds": [&id]
+        //                         }
+        //                     }
+        //                 ]
+        //             }
+        //         ),
+        //     )?;
+        // };
         self.definition.ingredients.push(ingredient);
         #[allow(clippy::unwrap_used)]
         Ok(self.definition.ingredients.last_mut().unwrap()) // ok since we just added it
@@ -679,16 +704,25 @@ impl Builder {
             }
         }
 
-        let mut ingredient_map = HashMap::new();
         // add all ingredients to the claim
+        // We use a map to track the ingredient IDs and their hashed URIs
+        let mut ingredient_map = HashMap::new();
+
         for ingredient in &definition.ingredients {
-            //let ingredient = ingredient_builder.build(self)?;
+            // use the label if it exists, otherwise use the instance_id
+            let id = match ingredient.label() {
+                Some(label) => label.to_string(),
+                None => ingredient.instance_id().to_string(),
+            };
+
             let uri = ingredient.add_to_claim(
                 &mut claim,
                 definition.redactions.clone(),
                 Some(&self.resources),
             )?;
-            ingredient_map.insert(ingredient.instance_id().to_string(), uri);
+            if !id.is_empty() {
+                ingredient_map.insert(id, uri);
+            }
         }
 
         // add any additional assertions
@@ -698,6 +732,7 @@ impl Builder {
                     let version = labels::version(l);
 
                     let mut actions: Actions = manifest_assertion.to_assertion()?;
+                    //dbg!(format!("Actions: {:?} version: {:?}", actions, version));
 
                     let mut updates = Vec::new();
                     let mut index = 0;
@@ -709,10 +744,9 @@ impl Builder {
                             let mut uris = Vec::new();
                             for id in ids {
                                 if let Some(hash_url) = ingredient_map.get(&id) {
-                                    //updates.push((action_index, hash_url.clone()));
                                     uris.push(hash_url.clone());
                                 } else {
-                                    dbg!(format!("Action ingredientId not found: {id}"));
+                                    log::error!("Action ingredientId not found: {id}");
                                     // return Err(Error::BadParam(format!(
                                     //     "Action ingredientId not found: {id}"
                                     // )));
@@ -1037,6 +1071,7 @@ impl Builder {
                 "Destination file already exists".to_string(),
             ));
         };
+
         self.definition.format =
             crate::format_from_path(path).ok_or(crate::Error::UnsupportedType)?;
         self.definition.instance_id = format!("xmp:iid:{}", Uuid::new_v4());
@@ -1193,9 +1228,8 @@ mod tests {
     fn parent_json() -> String {
         json!({
             "title": "Parent Test",
-            "format": "image/jpeg",
-            "instance_id": "12345",
-            "relationship": "parentOf"
+            "relationship": "parentOf",
+            "label": "INGREDIENT_1",
         })
         .to_string()
     }
@@ -1226,11 +1260,31 @@ mod tests {
                 {
                     "title": "Test",
                     "format": "image/jpeg",
-                    "instance_id": "12345",
-                    "relationship": "componentOf"
+                    "relationship": "componentOf",
+                    "label": "INGREDIENT_2",
                 }
             ],
             "assertions": [
+                {
+                    "label": "c2pa.actions",
+                    "data": {
+                        "actions": [
+                            {
+                                "action": "c2pa.opened",
+                                "parameters": {
+                                    "org.cai.ingredientIds": ["INGREDIENT_1"]
+                                },
+                            },
+                            {
+                                "action": "c2pa.placed",
+                                "parameters": {
+                                    "org.cai.ingredientIds": ["INGREDIENT_2"]
+                                },
+                            }
+
+                        ]
+                    }
+                },
                 {
                     "label": "org.test.assertion",
                     "data": "assertion"
@@ -1332,8 +1386,9 @@ mod tests {
             "thumbnail.jpg"
         );
         assert_eq!(definition.ingredients[0].title(), Some("Test"));
+        assert_eq!(definition.assertions[0].label, "c2pa.actions".to_string());
         assert_eq!(
-            definition.assertions[0].label,
+            definition.assertions[1].label,
             "org.test.assertion".to_string()
         );
 
@@ -1363,7 +1418,6 @@ mod tests {
         let mut dest = Cursor::new(Vec::new());
 
         let mut builder = Builder::from_json(&manifest_json()).unwrap();
-        builder.definition.claim_version = Some(1);
         builder
             .add_ingredient_from_stream(parent_json().to_string(), format, &mut source)
             .unwrap();
@@ -1391,12 +1445,12 @@ mod tests {
         builder.to_archive(&mut zipped).unwrap();
 
         // write the zipped stream to a file for debugging
-        #[cfg(not(target_os = "wasi"))] // target directory is outside of sandbox
-        std::fs::write("../target/test.zip", zipped.get_ref()).unwrap();
+        // #[cfg(not(target_os = "wasi"))] // target directory is outside of sandbox
+        // std::fs::write("../target/test.zip", zipped.get_ref()).unwrap();
 
         // unzip the manifest builder from the zipped stream
         zipped.rewind().unwrap();
-        let mut _builder = Builder::from_archive(&mut zipped).unwrap();
+        let mut builder = Builder::from_archive(&mut zipped).unwrap();
 
         // sign and write to the output stream
         let signer = test_signer(SigningAlg::Ps256);
@@ -1465,7 +1519,7 @@ mod tests {
             "sample1.heif",
             "sample1.m4a",
             "video1.mp4",
-            "cloud_manifest.c2pa",
+            "cloud_manifest.c2pa", // we need a new test for this since it will always fail
         ];
         for file_name in TESTFILES {
             let extension = file_name.split('.').next_back().unwrap();
@@ -1495,7 +1549,7 @@ mod tests {
             dest.rewind().unwrap();
             let manifest_store = Reader::from_stream(format, &mut dest).expect("from_bytes");
 
-            println!("{}", manifest_store);
+            //println!("{}", manifest_store);
             if format != "c2pa" {
                 // c2pa files will not validate since they have no associated asset
                 assert_ne!(manifest_store.validation_state(), ValidationState::Invalid);
@@ -1890,6 +1944,8 @@ mod tests {
     #[test]
     /// tests and illustrates how to add assets to a non-file based manifest by using a stream
     fn from_json_with_stream_full_resources() {
+        use crate::utils::test::setup_logger;
+        setup_logger();
         use crate::assertions::Relationship;
 
         let mut builder = Builder::from_json(MANIFEST_JSON).unwrap();
@@ -2093,7 +2149,7 @@ mod tests {
             .add_action(redacted_action);
 
         let definition = ManifestDefinition {
-            claim_version: Some(2),
+            claim_version: Some(1),
             claim_generator_info: [ClaimGeneratorInfo::default()].to_vec(),
             format: "image/jpeg".to_string(),
             title: Some("Redaction Test".to_string()),
