@@ -4,11 +4,10 @@ use crate::{
 };
 
 use std::{
-    io::Read,
-    path::Path,
-    fs::File,
+    fs::File, io::{Cursor, Read, Write}, path::Path, str::from_utf8
 };
-use zip::ZipArchive;
+// use zip::ZipArchive;
+use zip::{write::{SimpleFileOptions}, ZipArchive, ZipWriter};
 
 static SUPPORTED_TYPES: [&str; 6] = [
     "epub",
@@ -111,7 +110,51 @@ impl AssetIO for EpubIo {
     }
 
     // Stub implementations
+    // fn save_cai_store(&self, _asset_path: &Path, _store_bytes: &[u8]) -> Result<()> {
+    //     Ok(())
+    // }
+
     fn save_cai_store(&self, _asset_path: &Path, _store_bytes: &[u8]) -> Result<()> {
+        let cai_store_str = from_utf8(_store_bytes)?;
+        let mut epub_data = Vec::new();
+        {
+            let mut epub_file = File::open(&_asset_path)?;
+            epub_file.read_to_end(&mut epub_data)?;
+        }
+
+        let reader = Cursor::new(&epub_data);
+        let mut zip = ZipArchive::new(reader)?;
+
+        let mut new_epub_data = Vec::new();
+        {
+            let mut zip_writer = ZipWriter::new(Cursor::new(&mut new_epub_data));
+
+            // Copy all files except the old c2pa.json
+            for i in 0..zip.len() {
+                let mut file = zip.by_index(i)?;
+                let name = file.name().to_string();
+
+                if name == "META-INF/c2pa.json" {
+                    continue;
+                }
+
+                let options = SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
+                zip_writer.start_file(&name, options)?;
+
+                std::io::copy(&mut file, &mut zip_writer)?;
+            }
+
+            // Add or replace c2pa.json
+            zip_writer.start_file("META-INF/c2pa.json", zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored))?;
+            zip_writer.write_all(cai_store_str.as_bytes())?;
+
+            zip_writer.finish()?;
+        }
+
+        // Overwrite the original EPUB with the new content
+        let mut epub_file = File::create(&_asset_path)?;
+        epub_file.write_all(&new_epub_data)?;
+
         Ok(())
     }
 
@@ -119,9 +162,48 @@ impl AssetIO for EpubIo {
         Ok(vec![])
     }
 
+    // fn remove_cai_store(&self, _asset_path: &Path) -> Result<()> {
+    //     Ok(())
+    // }
+
     fn remove_cai_store(&self, _asset_path: &Path) -> Result<()> {
+        let mut epub_data = Vec::new();
+        {
+            let mut epub_file = File::open(&_asset_path)?;
+            epub_file.read_to_end(&mut epub_data)?;
+        }
+
+        let reader = Cursor::new(&epub_data);
+        let mut zip = ZipArchive::new(reader)?;
+
+        let mut new_epub_data = Vec::new();
+        {
+            let mut zip_writer = ZipWriter::new(Cursor::new(&mut new_epub_data));
+
+            // Copy all files except the c2pa.json
+            for i in 0..zip.len() {
+                let mut file = zip.by_index(i)?;
+                let name = file.name().to_string();
+
+                if name == "META-INF/c2pa.json" {
+                    continue;
+                }
+
+                let options = SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
+                zip_writer.start_file(&name, options)?;
+
+                std::io::copy(&mut file, &mut zip_writer)?;
+            }
+
+            zip_writer.finish()?;
+        }
+
+        // Overwrite the original EPUB with the new content
+        let mut epub_file = File::create(&_asset_path)?;
+        epub_file.write_all(&new_epub_data)?;
         Ok(())
     }
+
 }
 
 impl CAIReader for EpubIo {
@@ -150,6 +232,8 @@ impl CAIWriter for EpubIo {
 
 #[cfg(test)]
 mod tests {
+    use serde_json::{json, Value};
+
     use super::*;
     use std::path::PathBuf;
 
@@ -213,4 +297,78 @@ mod tests {
         println!("\n=== Test completed ===\n");
         Ok(())
     }
+
+    #[test]
+    fn test_save_cai_store_with_cai() -> Result<()> {
+        println!("\n=== Test: EPUB with CAI store ===");
+        
+        println!("1. Creating test EPUB with CAI store");
+        let test_epub_path = get_sample_epub_path("tests/fixtures/sample_with_manifest.epub");
+        println!("   Path: {:?}", test_epub_path);
+        println!("\n2. Reading CAI store");
+        let epub_io = EpubIo::new("epub");
+
+        let result = epub_io.read_cai_store(&test_epub_path)?;
+        println!("   ✓ Successfully read {} bytes", result.len());
+        println!("\n3. Verifying content");
+        let content = String::from_utf8(result)?;
+        // let content = "{\"claim_generator\":\"python_test/0.1\",\"title\":\"Test CAI EPUB\",\"format\":\"epub\",\"assertions\":[{\"label\":\"c2pa.training-mining\",\"data\":{\"entries\":{\"c2pa.ai_generative_training\":{\"use\":\"notAllowed\"},\"c2pa.ai_inference\":{\"use\":\"notAllowed\"},\"c2pa.ai_training\":{\"use\":\"notAllowed\"},\"c2pa.data_mining\":{\"use\":\"notAllowed\"}}}}],\"claim\":{\"signature\":\"test-signature\"}}";
+        println!("   - CAI store content:\n{}", content);
+
+        let mut test_content_json: Value = serde_json::from_str(&content).expect("Invalid JSON");
+
+        if let Some(entries) = test_content_json["assertions"][0]["data"]["entries"].as_object_mut() {
+            let save_key = "c2pa.save_times_test";
+            if let Some(save_entry) = entries.get_mut(save_key) {
+                // if entity c2pa.save_times_test exists, times++
+                if let Some(times) = save_entry.get_mut("times") {
+                    if let Some(n) = times.as_u64() {
+                        *times = json!(n + 1);
+                    }
+                }
+            } else {
+                // if not, insert this entity
+                entries.insert(save_key.to_string(), json!({ "times": 1 }));
+            }
+        }
+
+        println!("  - New c2pa.json: \n{}", serde_json::to_string_pretty(&test_content_json).unwrap());
+        
+        let test_content_json_bytes: Vec<u8> = serde_json::to_vec(&test_content_json).expect("Failed to serialize JSON");
+        let test_content_json_slice: &[u8] = &test_content_json_bytes;
+        let _ = epub_io.save_cai_store(&test_epub_path, test_content_json_slice);
+
+        println!("   - New CAI store content:\n{}", String::from_utf8(epub_io.read_cai_store(&test_epub_path)?)?);
+        
+        println!("\n=== Test completed ===\n");
+        Ok(())
+    }
+
+    #[test]
+    fn test_remove_cai_store() -> Result<()> {
+        println!("\n=== Test: Remove CAI store ===");
+        
+        let test_epub_path = get_sample_epub_path("tests/fixtures/sample_with_manifest.epub");
+        println!("   Path: {:?}", test_epub_path);
+        let epub_io = EpubIo::new("epub");
+        let result = epub_io.read_cai_store(&test_epub_path)?;
+        let content = String::from_utf8(result)?;
+        // let content = "{\"claim_generator\":\"python_test/0.1\",\"title\":\"Test CAI EPUB\",\"format\":\"epub\",\"assertions\":[{\"label\":\"c2pa.training-mining\",\"data\":{\"entries\":{\"c2pa.ai_generative_training\":{\"use\":\"notAllowed\"},\"c2pa.ai_inference\":{\"use\":\"notAllowed\"},\"c2pa.ai_training\":{\"use\":\"notAllowed\"},\"c2pa.data_mining\":{\"use\":\"notAllowed\"}}}}],\"claim\":{\"signature\":\"test-signature\"}}";
+        println!("   - CAI store content:\n{}", content);
+
+        let _ = epub_io.remove_cai_store(&test_epub_path);
+
+        let result_new = epub_io.read_cai_store(&test_epub_path);
+        
+        match &result_new {
+            Err(Error::JumbfNotFound) => println!("   ✓ Success: Correctly detected missing CAI store"),
+            Err(e) => println!("   ✗ Error: Unexpected error: {:?}", e),
+            Ok(_) => println!("   ✗ Error: Expected error but got success"),
+        }
+        assert!(matches!(result_new, Err(Error::JumbfNotFound)));
+
+        println!("\n=== Test completed ===\n");
+        Ok(())
+    }
+
 }
