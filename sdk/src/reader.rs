@@ -866,8 +866,10 @@ pub fn manifest_locations_from_stream(
         locations.push(ManifestLocation::Embedded)
     }
 
-    if let Some(_) = XmpInfo::from_source(&mut stream, format).provenance {
-        locations.push(ManifestLocation::Remote)
+    if let Some(ext_ref) = XmpInfo::from_source(&mut stream, format).provenance {
+        if Store::is_valid_remote_url(&ext_ref) {
+            locations.push(ManifestLocation::Remote)
+        }
     }
 
     Ok(locations)
