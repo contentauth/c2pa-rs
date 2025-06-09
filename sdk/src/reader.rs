@@ -35,11 +35,13 @@ use crate::{
     dynamic_assertion::PartialClaim,
     error::{Error, Result},
     jumbf::labels::{manifest_label_from_uri, to_absolute_uri, to_relative_uri},
+    jumbf_io,
     manifest::StoreOptions,
     manifest_store_report::ManifestStoreReport,
     settings::get_settings_value,
     status_tracker::StatusTracker,
-    store::{ManifestLocation, Store},
+    store::{ManifestDataLocation, ManifestLocation, Store},
+    utils::xmp_inmemory_utils::XmpInfo,
     validation_results::{ValidationResults, ValidationState},
     validation_status::ValidationStatus,
     Manifest, ManifestAssertion,
@@ -847,6 +849,28 @@ impl std::fmt::Debug for Reader {
         let output = serde_json::to_string_pretty(&json).map_err(|_| std::fmt::Error)?;
         f.write_str(&output)
     }
+}
+
+/// Returns the locations a C2PA manifest was found within the stream.
+///
+/// This function DOES NOT validate or fetch the C2PA manifest.
+///
+/// Note that this function will never return [`ManifestLoaction::Sidecar`], detection of sidecars
+/// relies of implementation heuristics.
+pub fn manifest_locations_from_stream(
+    format: &str,
+    mut stream: impl Read + Seek + Send,
+) -> Result<Vec<ManifestLocation>> {
+    let mut locations = Vec::new();
+    if let Ok(_) = jumbf_io::load_jumbf_from_stream(format, &mut stream) {
+        locations.push(ManifestLocation::Embedded)
+    }
+
+    if let Some(_) = XmpInfo::from_source(&mut stream, format).provenance {
+        locations.push(ManifestLocation::Remote)
+    }
+
+    Ok(locations)
 }
 
 #[cfg(test)]
