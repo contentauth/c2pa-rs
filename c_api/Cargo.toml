@@ -14,22 +14,22 @@ rust_native_crypto = ["c2pa/rust_native_crypto"]
 file_io = ["c2pa/file_io"]
 
 [dependencies]
-tokio = { version = "1.36", features = ["rt-multi-thread","rt"] }
-c2pa = { workspace = true , features = [
+tokio = { version = "1.36", features = ["rt-multi-thread", "rt"] }
+c2pa = { workspace = true, features = [
 
     "file_io",
     "add_thumbnails",
     "fetch_remote_manifests",
-]}
+] }
 scopeguard = "1.2.0"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 thiserror = "1.0.64"
 zip = { version = "3.0.0", default-features = false, features = ["deflate"] }
+bitflags = "2.9.1"
 
 [dev-dependencies]
 tempfile = "3.7.0"
 
 [build-dependencies]
 cbindgen = "0.28"
-

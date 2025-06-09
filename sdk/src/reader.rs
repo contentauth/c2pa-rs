@@ -40,7 +40,7 @@ use crate::{
     manifest_store_report::ManifestStoreReport,
     settings::get_settings_value,
     status_tracker::StatusTracker,
-    store::{ManifestDataLocation, ManifestLocation, Store},
+    store::{ManifestLocation, Store},
     utils::xmp_inmemory_utils::XmpInfo,
     validation_results::{ValidationResults, ValidationState},
     validation_status::ValidationStatus,
@@ -853,16 +853,15 @@ impl std::fmt::Debug for Reader {
 
 /// Returns the locations a C2PA manifest was found within the stream.
 ///
-/// This function DOES NOT validate or fetch the C2PA manifest.
-///
-/// Note that this function will never return [`ManifestLoaction::Sidecar`], detection of sidecars
-/// relies of implementation heuristics.
+/// This function DOES NOT validate or fetch the C2PA manifest and will never
+/// return [`ManifestLocation::Sidecar`], detection of sidecars depends on
+/// implementation.
 pub fn manifest_locations_from_stream(
     format: &str,
     mut stream: impl Read + Seek + Send,
 ) -> Result<Vec<ManifestLocation>> {
     let mut locations = Vec::new();
-    if let Ok(_) = jumbf_io::load_jumbf_from_stream(format, &mut stream) {
+    if jumbf_io::load_jumbf_from_stream(format, &mut stream).is_ok() {
         locations.push(ManifestLocation::Embedded)
     }
 

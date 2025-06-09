@@ -12,10 +12,11 @@
 // each license.
 
 use std::{
-    ffi::CString,
+    ffi::{CStr, CString},
     os::raw::{c_char, c_int, c_uchar, c_void},
 };
 
+use bitflags::bitflags;
 #[cfg(feature = "file_io")]
 use c2pa::Ingredient;
 // C has no namespace so we prefix things with C2PA to make them unique
@@ -41,20 +42,25 @@ mod cbindgen_fix {
     pub struct C2paReader;
 }
 
-/// The location in which the manifest was read.
-#[repr(C)]
-pub enum C2paManifestLocation {
-    Embedded,
-    Remote,
-    Sidecar,
+bitflags! {
+    /// The location in which the manifest was read.
+    #[repr(transparent)]
+    pub struct C2paManifestLocation: c_int {
+        /// The manifest is embedded in the asset.
+        const EMBEDDED = 0b00000001;
+        /// The manifest is stored remotely.
+        const REMOTE = 0b00000010;
+        /// The manifest is stored separately in a sidecar.
+        const SIDECAR = 0b00000100;
+    }
 }
 
 impl From<ManifestLocation> for C2paManifestLocation {
     fn from(location: ManifestLocation) -> Self {
         match location {
-            ManifestLocation::Embedded => C2paManifestLocation::Embedded,
-            ManifestLocation::Remote => C2paManifestLocation::Remote,
-            ManifestLocation::Sidecar => C2paManifestLocation::Sidecar,
+            ManifestLocation::Embedded => C2paManifestLocation::EMBEDDED,
+            ManifestLocation::Remote => C2paManifestLocation::REMOTE,
+            ManifestLocation::Sidecar => C2paManifestLocation::SIDECAR,
         }
     }
 }
@@ -300,6 +306,43 @@ pub unsafe extern "C" fn c2pa_load_settings(
     let format = from_cstr_or_return_int!(format);
     let result = load_settings_from_str(&settings, &format);
     ok_or_return_int!(result, |_| 0) // returns 0 on success
+}
+
+/// Returns the locations a C2PA manifest was found within the stream.
+///
+/// This function DOES NOT validate or fetch the C2PA manifest and will never
+/// return `C2paManifestLocation_SIDECAR`, detection of sidecars depends on
+/// implementation.
+///
+/// # Errors
+/// Returns -1 if there were errors, otherwise returns bit flags corresponding
+/// to the manifest locations. The error string can be retrieved by calling
+/// c2pa_error.
+///
+/// # Safety
+/// Reads from NULL-terminated C strings.
+#[no_mangle]
+pub unsafe extern "C" fn manifest_locations_from_stream(
+    format: *const c_char,
+    stream: *mut C2paStream,
+) -> c_int {
+    let format = CStr::from_ptr(format).to_string_lossy().into_owned();
+    let result = c2pa::manifest_locations_from_stream(&format, &mut (*stream));
+
+    let mut flags = C2paManifestLocation::empty();
+    match result {
+        Ok(locations) => {
+            for location in locations {
+                flags |= location.into()
+            }
+
+            flags.bits()
+        }
+        Err(err) => {
+            Error::set_last(Error::from_c2pa_error(err));
+            -1
+        }
+    }
 }
 
 /// Returns a ManifestStore JSON string from a file path.
@@ -587,6 +630,7 @@ pub unsafe extern "C" fn c2pa_reader_json(reader_ptr: *mut C2paReader) -> *mut c
 }
 
 /// Returns the location of the manifest read by the C2paReader.
+/// xd
 ///
 /// # Parameters
 /// * reader_ptr: pointer to a C2paReader.
@@ -594,13 +638,11 @@ pub unsafe extern "C" fn c2pa_reader_json(reader_ptr: *mut C2paReader) -> *mut c
 /// # Safety
 /// reader_ptr must be a valid pointer to a C2paReader.
 #[no_mangle]
-pub unsafe extern "C" fn c2pa_reader_manifest_location(
-    reader_ptr: *mut C2paReader,
-) -> C2paManifestLocation {
-    check_or_return_null!(reader_ptr);
+pub unsafe extern "C" fn c2pa_reader_manifest_location(reader_ptr: *mut C2paReader) -> c_int {
+    check_or_return_int!(reader_ptr);
     let c2pa_reader = guard_boxed!(reader_ptr);
 
-    c2pa_reader.manifest_location().into()
+    C2paManifestLocation::from(c2pa_reader.manifest_location()).bits()
 }
 
 /// Writes a C2paReader resource to a stream given a URI.
