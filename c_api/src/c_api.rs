@@ -1322,10 +1322,10 @@ mod tests {
     fn test_to_archive_and_from_archive_with_ingredient_thumbnail() {
         let manifest_def = CString::new("{}").unwrap();
 
-        let test_image3 = include_bytes!("A_thumbnail.jpg");
+        let test_image3 = include_bytes!(fixture_path!("A_thumbnail.jpg"));
         let mut test_image3_stream = TestC2paStream::from_bytes(test_image3.to_vec());
 
-        let test_image2 = include_bytes!("A.jpg");
+        let test_image2 = include_bytes!(fixture_path!("A.jpg"));
         let mut test_image2_stream = TestC2paStream::from_bytes(test_image2.to_vec());
 
         let certs = include_str!(fixture_path!("certs/ed25519.pub"));
@@ -1388,7 +1388,8 @@ mod tests {
 
         match Reader::from_stream("image/jpeg", &mut dest_stream) {
             Ok(reader) => {
-                assert!(reader.json().contains("Test Ingredient"))
+                assert!(reader.json().contains("Test Ingredient"));
+                assert!(reader.json().contains("thumbnail"));
             }
             Err(_) => {}
         }
