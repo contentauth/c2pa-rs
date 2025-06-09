@@ -21,7 +21,7 @@ use c2pa::Ingredient;
 // C has no namespace so we prefix things with C2PA to make them unique
 use c2pa::{
     assertions::DataHash, identity::validator::CawgValidator, settings::load_settings_from_str,
-    Builder as C2paBuilder, CallbackSigner, Reader as C2paReader, SigningAlg,
+    Builder as C2paBuilder, CallbackSigner, ManifestLocation, Reader as C2paReader, SigningAlg,
 };
 use scopeguard::guard;
 use tokio::runtime::Runtime; // cawg validator requires async
@@ -39,6 +39,24 @@ mod cbindgen_fix {
     #[repr(C)]
     #[allow(dead_code)]
     pub struct C2paReader;
+}
+
+/// The location in which the manifest was read.
+#[repr(C)]
+pub enum C2paManifestLocation {
+    Embedded,
+    Remote,
+    Sidecar,
+}
+
+impl From<ManifestLocation> for C2paManifestLocation {
+    fn from(location: ManifestLocation) -> Self {
+        match location {
+            ManifestLocation::Embedded => C2paManifestLocation::Embedded,
+            ManifestLocation::Remote => C2paManifestLocation::Remote,
+            ManifestLocation::Sidecar => C2paManifestLocation::Sidecar,
+        }
+    }
 }
 
 /// List of supported signing algorithms.
@@ -568,6 +586,23 @@ pub unsafe extern "C" fn c2pa_reader_json(reader_ptr: *mut C2paReader) -> *mut c
     to_c_string(c2pa_reader.json())
 }
 
+/// Returns the location of the manifest read by the C2paReader.
+///
+/// # Parameters
+/// * reader_ptr: pointer to a C2paReader.
+///
+/// # Safety
+/// reader_ptr must be a valid pointer to a C2paReader.
+#[no_mangle]
+pub unsafe extern "C" fn c2pa_reader_manifest_location(
+    reader_ptr: *mut C2paReader,
+) -> C2paManifestLocation {
+    check_or_return_null!(reader_ptr);
+    let c2pa_reader = guard_boxed!(reader_ptr);
+
+    c2pa_reader.manifest_location().into()
+}
+
 /// Writes a C2paReader resource to a stream given a URI.
 ///
 /// The resource uri should match an identifier in the the manifest store.
@@ -673,7 +708,7 @@ pub unsafe extern "C" fn c2pa_builder_free(builder_ptr: *mut C2paBuilder) {
 /// # Parameters
 /// * builder_ptr: pointer to a Builder.
 /// # Safety
-/// builder_ptr must be a valid pointer to a Builder.   
+/// builder_ptr must be a valid pointer to a Builder.
 #[no_mangle]
 #[allow(clippy::unused_unit)] // clippy doesn't like the () return type for null_check
 pub unsafe extern "C" fn c2pa_builder_set_no_embed(builder_ptr: *mut C2paBuilder) {
