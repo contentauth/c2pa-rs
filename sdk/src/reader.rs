@@ -865,6 +865,8 @@ pub fn manifest_locations_from_stream(
         locations.push(ManifestLocation::Embedded)
     }
 
+    stream.rewind()?;
+
     if let Some(ext_ref) = XmpInfo::from_source(&mut stream, format).provenance {
         if Store::is_valid_remote_url(&ext_ref) {
             locations.push(ManifestLocation::Remote)
@@ -879,10 +881,42 @@ pub mod tests {
     #![allow(clippy::expect_used)]
     #![allow(clippy::panic)]
     #![allow(clippy::unwrap_used)]
+    use std::io::Cursor;
+
     use super::*;
 
     const IMAGE_COMPLEX_MANIFEST: &[u8] = include_bytes!("../tests/fixtures/CACAE-uri-CA.jpg");
     const IMAGE_WITH_MANIFEST: &[u8] = include_bytes!("../tests/fixtures/CA.jpg");
+    const IMAGE_WITH_REMOTE_MANIFEST: &[u8] = include_bytes!("../tests/fixtures/cloud.jpg");
+
+    #[test]
+    fn test_manifest_locations_from_stream() -> Result<()> {
+        // TODO: use asset w/ embedded and remote
+        let locations =
+            manifest_locations_from_stream("image/jpeg", Cursor::new(IMAGE_WITH_MANIFEST))?;
+        assert_eq!(locations.len(), 1);
+        assert_eq!(locations[0], ManifestLocation::Embedded);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_reader_manifest_location_embedded() -> Result<()> {
+        let location = Reader::from_stream("image/jpeg", Cursor::new(IMAGE_WITH_MANIFEST))?
+            .manifest_location();
+        assert_eq!(location, ManifestLocation::Embedded);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_reader_manifest_location_remote() -> Result<()> {
+        let location = Reader::from_stream("image/jpeg", Cursor::new(IMAGE_WITH_REMOTE_MANIFEST))?
+            .manifest_location();
+        assert_eq!(location, ManifestLocation::Remote);
+
+        Ok(())
+    }
 
     #[test]
     #[cfg(feature = "file_io")]
