@@ -309,9 +309,11 @@ pub unsafe extern "C" fn c2pa_load_settings(
 }
 
 /// Returns the locations a C2PA manifest was found within the stream.
+/// * C2paManifestLocation::EMBEDDED (0x01)
+/// * C2paManifestLocation::REMOTE (0x02)
 ///
 /// This function DOES NOT validate or fetch the C2PA manifest and will never
-/// return `C2paManifestLocation_SIDECAR`, detection of sidecars depends on
+/// return `C2paManifestLocation_EMBEDDED`, detection of sidecars depends on
 /// implementation.
 ///
 /// # Errors
@@ -630,7 +632,9 @@ pub unsafe extern "C" fn c2pa_reader_json(reader_ptr: *mut C2paReader) -> *mut c
 }
 
 /// Returns the location of the manifest read by the C2paReader.
-/// xd
+/// * C2paManifestLocation::EMBEDDED (0x01)
+/// * C2paManifestLocation::REMOTE (0x02)
+/// * C2paManifestLocation::SIDECAR (0x03)
 ///
 /// # Parameters
 /// * reader_ptr: pointer to a C2paReader.
