@@ -27,10 +27,19 @@ use uuid::Uuid;
 use zip::{write::SimpleFileOptions, ZipArchive, ZipWriter};
 
 use crate::{
-    assertion::AssertionDecodeError, assertions::{
+    assertion::AssertionDecodeError,
+    assertions::{
         labels, Actions, BmffHash, BoxHash, CreativeWork, DataHash, Exif, Metadata, SoftwareAgent,
         Thumbnail, User, UserCbor,
-    }, claim::Claim, error::{Error, Result}, format_from_path, resource_store::{ResourceRef, ResourceResolver, ResourceStore}, salt::DefaultSalt, store::Store, utils::mime::format_to_mime, AsyncSigner, ClaimGeneratorInfo, HashRange, Ingredient, Signer
+    },
+    claim::Claim,
+    error::{Error, Result},
+    format_from_path,
+    resource_store::{ResourceRef, ResourceResolver, ResourceStore},
+    salt::DefaultSalt,
+    store::Store,
+    utils::mime::format_to_mime,
+    AsyncSigner, ClaimGeneratorInfo, HashRange, Ingredient, Signer,
 };
 
 /// Version of the Builder Archive file
@@ -502,10 +511,10 @@ impl Builder {
                 for ingredient in self.definition.ingredients.iter() {
                     // add ingredient resource files to a ingredient folder
                     for (id, data) in ingredient.resources().resources() {
-                        zip.start_file(format!("ingredients-resources/{}", id), options)
+                        zip.start_file(format!("ingredient-resources/{}", id), options)
                             .map_err(|e| Error::OtherError(Box::new(e)))?;
                         zip.write_all(data)?;
-                    }              
+                    }
 
                     if let Some(manifest_label) = ingredient.active_manifest() {
                         if let Some(manifest_data) = ingredient.manifest_data() {
@@ -560,7 +569,9 @@ impl Builder {
                 builder.resources.add(id, data)?;
             }
 
-            if file.name().starts_with("ingredients-resources/") && file.name() != "ingredients-resources/" {
+            if file.name().starts_with("ingredient-resources/")
+                && file.name() != "ingredient-resources/"
+            {
                 let mut data = Vec::new();
                 file.read_to_end(&mut data)?;
                 let id = file
@@ -568,13 +579,15 @@ impl Builder {
                     .split('/')
                     .nth(1)
                     .ok_or(Error::BadParam("Invalid resource path".to_string()))?;
-                    let format = format_from_path(id)
-                        .ok_or(Error::BadParam("Invalid resource path".to_string()))?;
-                    let id = id.replacen(['-'], ":", 1);
+                let format = format_from_path(id)
+                    .ok_or(Error::BadParam("Invalid resource path".to_string()))?;
+                let id = id.replacen(['-'], ":", 1);
                 for ingredient in builder.definition.ingredients.iter_mut() {
                     let base_id = ingredient.instance_id().to_string();
                     if id.starts_with(&base_id) {
-                        ingredient.resources_mut().add_with(&base_id, &format, data.clone())?;
+                        ingredient
+                            .resources_mut()
+                            .add_with(&base_id, &format, data.clone())?;
                     }
                 }
             }
@@ -727,7 +740,7 @@ impl Builder {
                 None => ingredient.instance_id().to_string(),
             };
 
-                let uri = ingredient.add_to_claim(
+            let uri = ingredient.add_to_claim(
                 &mut claim,
                 definition.redactions.clone(),
                 Some(&self.resources),

@@ -1348,8 +1348,8 @@ mod tests {
 
         let ingredient_json = CString::new(r#"{"title": "Test Ingredient"}"#).unwrap();
         let format = CString::new("image/jpeg").unwrap();
-        let ingredient_json = ingredient_json.as_ptr() as *const i8;
-        let format = format.as_ptr() as *const i8;
+        let ingredient_json = ingredient_json.as_ptr();
+        let format = format.as_ptr();
 
         unsafe {
             c2pa_builder_add_ingredient_from_stream(
@@ -1386,13 +1386,10 @@ mod tests {
 
         assert_ne!(res, -1);
 
-        match Reader::from_stream("image/jpeg", &mut dest_stream) {
-            Ok(reader) => {
-                assert!(reader.json().contains("Test Ingredient"));
-                assert!(reader.json().contains("thumbnail"));
-            }
-            Err(_) => {}
-        }
+        let reader = Reader::from_stream("image/jpeg", &mut dest_stream).unwrap();
+        let reader_json = reader.json();
+        assert!(reader_json.contains("Test Ingredient"));
+        assert!(reader_json.contains("thumbnail"));
     }
 
     #[test]
