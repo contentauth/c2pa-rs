@@ -574,10 +574,12 @@ impl Builder {
             {
                 let mut data = Vec::new();
                 file.read_to_end(&mut data)?;
+                let test = file.name();
+
                 let id = file
                     .name()
-                    .split('/')
-                    .nth(1)
+                    .split_once('/')
+                    .map(|(_, second)| second)
                     .ok_or(Error::BadParam("Invalid resource path".to_string()))?;
                 let format = format_from_path(id)
                     .ok_or(Error::BadParam("Invalid resource path".to_string()))?;
