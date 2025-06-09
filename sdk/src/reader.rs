@@ -39,7 +39,7 @@ use crate::{
     manifest_store_report::ManifestStoreReport,
     settings::get_settings_value,
     status_tracker::StatusTracker,
-    store::Store,
+    store::{ManifestLocation, Store},
     validation_results::{ValidationResults, ValidationState},
     validation_status::ValidationStatus,
     Manifest, ManifestAssertion,
@@ -259,7 +259,7 @@ impl Reader {
         mut fragment: impl Read + Seek + Send,
     ) -> Result<Self> {
         let mut validation_log = StatusTracker::default();
-        let manifest_bytes = Store::load_jumbf_from_stream(format, &mut stream)?;
+        let manifest_bytes = Store::load_jumbf_from_stream(format, &mut stream)?.into_bytes();
         let store = Store::from_jumbf(&manifest_bytes, &mut validation_log)?;
 
         let verify = get_settings_value::<bool>("verify.verify_after_reading")?; // defaults to true
@@ -409,6 +409,11 @@ impl Reader {
             Ok(value) => serde_json::to_string_pretty(&value).unwrap_or_default(),
             Err(_) => "{}".to_string(),
         }
+    }
+
+    /// Get the location of the manifest loaded into this [`Reader`].
+    pub fn manifest_location(&self) -> ManifestLocation {
+        self.store.location()
     }
 
     /// Get the [`ValidationStatus`] array of the manifest store if it exists.

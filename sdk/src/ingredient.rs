@@ -869,7 +869,8 @@ impl Ingredient {
         // retrieve the manifest bytes from embedded, sidecar or remote and convert to store if found
         let jumbf_result = match self.manifest_data() {
             Some(data) => Ok(data.into_owned()),
-            None => Store::load_jumbf_from_stream(format, stream),
+            None => Store::load_jumbf_from_stream(format, stream)
+                .map(|manifest_bytes| manifest_bytes.into_bytes()),
         };
 
         // We can't use functional combinators since we can't use async callbacks (https://github.com/rust-lang/rust/issues/62290)
@@ -929,6 +930,7 @@ impl Ingredient {
         // retrieve the manifest bytes from embedded, sidecar or remote and convert to store if found
         let (result, manifest_bytes) = match Store::load_jumbf_from_stream(format, stream) {
             Ok(manifest_bytes) => {
+                let manifest_bytes = manifest_bytes.into_bytes();
                 (
                     // generate a store from the buffer and then validate from the asset path
                     match Store::from_jumbf(&manifest_bytes, &mut validation_log) {
