@@ -1184,9 +1184,9 @@ pub unsafe extern "C" fn c2pa_signature_free(signature_ptr: *const u8) {
 
 #[cfg(test)]
 mod tests {
-    use std::{ffi::CString};
+    use std::ffi::CString;
+
     use c2pa::Reader;
-    use serde_json::json;
 
     use super::*;
     use crate::TestC2paStream;
@@ -1355,14 +1355,14 @@ mod tests {
             c2pa_builder_add_ingredient_from_stream(
                 builder,
                 ingredient_json,
-                format, 
+                format,
                 &mut test_image3_stream,
             )
         };
 
         let dest_vec = Vec::new();
         let mut dest_stream = TestC2paStream::new(dest_vec).into_c_stream();
-        
+
         let archive = Vec::new();
         let mut archive = TestC2paStream::from_bytes(archive.to_vec());
         let res = unsafe { c2pa_builder_to_archive(builder, &mut archive) };
@@ -1375,25 +1375,23 @@ mod tests {
 
         let res = unsafe {
             c2pa_builder_sign(
-                builder, 
-                format, 
-                &mut test_image2_stream, 
-                &mut dest_stream, 
-                signer, 
+                builder,
+                format,
+                &mut test_image2_stream,
+                &mut dest_stream,
+                signer,
                 &mut manifest_bytes_ptr,
             )
         };
 
         assert_ne!(res, -1);
 
-         match Reader::from_stream("image/jpeg", &mut dest_stream) {
+        match Reader::from_stream("image/jpeg", &mut dest_stream) {
             Ok(reader) => {
                 assert!(reader.json().contains("Test Ingredient"))
             }
-            Err(_) => {
-            }
-         }
-        
+            Err(_) => {}
+        }
     }
 
     #[test]

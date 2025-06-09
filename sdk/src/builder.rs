@@ -572,8 +572,9 @@ impl Builder {
                         .ok_or(Error::BadParam("Invalid resource path".to_string()))?;
                     let id = id.replacen(['-'], ":", 1);
                 for ingredient in builder.definition.ingredients.iter_mut() {
-                    if id.starts_with(ingredient.instance_id()) {
-                        ingredient.set_thumbnail(&format, data.clone())?;
+                    let base_id = ingredient.instance_id().to_string();
+                    if id.starts_with(&base_id) {
+                        ingredient.resources_mut().add_with(&base_id, &format, data.clone())?;
                     }
                 }
             }
@@ -726,7 +727,7 @@ impl Builder {
                 None => ingredient.instance_id().to_string(),
             };
 
-                        let uri = ingredient.add_to_claim(
+                let uri = ingredient.add_to_claim(
                 &mut claim,
                 definition.redactions.clone(),
                 Some(&self.resources),
