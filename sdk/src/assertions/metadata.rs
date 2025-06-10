@@ -151,6 +151,12 @@ impl Default for Metadata {
     }
 }
 
+impl std::fmt::Display for Metadata {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&serde_json::to_string_pretty(self).unwrap_or_default())
+    }
+}
+
 impl AssertionCbor for Metadata {}
 
 impl AssertionBase for Metadata {
@@ -345,7 +351,7 @@ pub mod tests {
                     ..Default::default()
                 });
         original.insert("foo", test_value);
-        println!("{:?}", &original);
+        println!("{:}", &original);
         let assertion = original.to_assertion().expect("build_assertion");
         assert_eq!(assertion.mime_type(), "application/cbor");
         assert_eq!(assertion.label(), Metadata::LABEL);

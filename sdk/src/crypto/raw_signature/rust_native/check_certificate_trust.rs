@@ -136,11 +136,6 @@ fn check_chain_order(certs: &[Vec<u8>]) -> Result<(), CertificateTrustError> {
     Ok(())
 }
 
-fn ans1_oid_bcder_oid(asn1_oid: &asn1_rs::Oid) -> Option<bcder::Oid> {
-    let asn1_oid_str = asn1_oid.to_id_string();
-    bcder::Oid::from_str(&asn1_oid_str).ok()
-}
-
 fn signing_alg_to_sig_and_hash_oid(alg: &str) -> Option<(bcder::Oid, bcder::Oid)> {
     if alg == "rsa256" {
         Some((

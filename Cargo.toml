@@ -5,6 +5,7 @@ members = [
     "c_api",
     "cli",
     "export_schema",
+    "macros",
     "make_test_images",
     "sdk",
 ]

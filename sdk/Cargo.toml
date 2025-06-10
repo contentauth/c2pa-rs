@@ -123,7 +123,7 @@ extfmt = "0.1.1"
 der = { version = "0.7.9", optional = true }
 ecdsa = { version = "0.16.9", features = ["digest", "sha2"], optional = true }
 ed25519-dalek = { version = "2.1.1", features = ["alloc", "digest", "pem", "pkcs8", "rand_core"] }
-getrandom = { version = "0.2.7", features = ["js"] }
+env_logger = "0.10.0"
 hex = "0.4.3"
 hex-literal = "0.4.1"  # Might be only a dev dependency
 id3 = "=1.16.1"
@@ -245,6 +245,7 @@ anyhow = "1.0.97"
 glob = "0.3.1"
 hex-literal = "0.4.1"
 jumbf = "0.4.0"
+c2pa_macros = { path = "../macros"}
 mockall = "0.13.1"
 
 [target.'cfg(all(target_arch = "wasm32", not(target_os = "wasi")))'.dev-dependencies]
