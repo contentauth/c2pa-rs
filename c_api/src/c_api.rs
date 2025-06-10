@@ -1264,7 +1264,13 @@ unsafe fn c2pa_mime_types_to_c_array(strs: Vec<String>, count: *mut usize) -> *c
     // the underlying memory must be allocated as `*mut *mut c_char` because freeing
     // or deallocating memory requires a mutable pointer. This ensures the caller can
     // safely release ownership of both the array and its strings.
-    let mime_ptrs: Vec<*mut c_char> = strs.into_iter().map(|s| to_c_string(s)).collect();
+    let mut mime_ptrs: Vec<*mut c_char> = strs.into_iter().map(|s| to_c_string(s)).collect();
+    mime_ptrs.shrink_to_fit();
+
+    // verify that the length and capacity of the vector are identitical, as we rely on this later
+    // when de-allocating the memory associated to this vector.
+    debug_assert_eq!(mime_ptrs.len(), mime_ptrs.capacity());
+
     *count = mime_ptrs.len();
 
     let ptr = mime_ptrs.as_ptr();
