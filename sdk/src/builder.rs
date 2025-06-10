@@ -34,6 +34,7 @@ use crate::{
     },
     claim::Claim,
     error::{Error, Result},
+    jumbf_io,
     resource_store::{ResourceRef, ResourceResolver, ResourceStore},
     salt::DefaultSalt,
     store::Store,
@@ -259,6 +260,11 @@ impl Builder {
             definition: serde_json::from_str(json).map_err(Error::JsonError)?,
             ..Default::default()
         })
+    }
+
+    /// Returns a [Vec] of mime types that [c2pa-rs] is able to sign.
+    pub fn supported_mime_types() -> Vec<String> {
+        jumbf_io::supported_builder_mime_types()
     }
 
     pub fn claim_version(&self) -> u8 {
@@ -1850,7 +1856,7 @@ mod tests {
                                 },
                                 "something": "else"
                             }
-                        },   
+                        },
                         {
                             "action": "c2pa.dubbed",
                             "softwareAgent": {
@@ -2174,5 +2180,17 @@ mod tests {
         assert_eq!(m.ingredients().len(), 1);
         let parent = reader.get_manifest(&parent_manifest_label).unwrap();
         assert_eq!(parent.assertions().len(), 1);
+    }
+
+    #[test]
+    fn test_supported_mime_types() {
+        let mime_types = Builder::supported_mime_types();
+        assert!(mime_types.contains(&"image/jpeg".to_string()));
+        assert!(mime_types.contains(&"image/png".to_string()));
+        assert!(mime_types.contains(&"image/gif".to_string()));
+        assert!(mime_types.contains(&"image/webp".to_string()));
+        assert!(mime_types.contains(&"image/avif".to_string()));
+        assert!(mime_types.contains(&"image/heic".to_string()));
+        assert!(mime_types.contains(&"image/heif".to_string()));
     }
 }
