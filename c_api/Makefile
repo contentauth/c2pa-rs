@@ -40,10 +40,10 @@ check-format:
 	cargo +nightly fmt -- --check
 
 clippy:
-	cargo clippy -- -D warnings
+	cargo clippy --features "rust_native_crypto, file_io" -- -D warnings
 
 test-local:
-	cargo test
+	cargo test --features "rust_native_crypto, file_io"
 
 # Full local validation, build and test all features including wasm
 # Run this before pushing a PR to pre-validate
