@@ -40,7 +40,7 @@ use crate::{
     manifest_store_report::ManifestStoreReport,
     settings::get_settings_value,
     status_tracker::StatusTracker,
-    store::{ManifestLocation, Store},
+    store::{ManifestSource, Store},
     validation_results::{ValidationResults, ValidationState},
     validation_status::ValidationStatus,
     Manifest, ManifestAssertion,
@@ -417,9 +417,9 @@ impl Reader {
         }
     }
 
-    /// Get the location of the manifest loaded into this [`Reader`].
-    pub fn manifest_location(&self) -> ManifestLocation {
-        self.store.location()
+    /// Get the source of the manifest loaded into this [`Reader`].
+    pub fn manifest_source(&self) -> ManifestSource {
+        self.store.source()
     }
 
     /// Get the [`ValidationStatus`] array of the manifest store if it exists.
@@ -869,32 +869,32 @@ pub mod tests {
     const IMAGE_WITH_REMOTE_MANIFEST: &[u8] = include_bytes!("../tests/fixtures/cloud.jpg");
 
     #[test]
-    fn test_reader_manifest_location_embedded() -> Result<()> {
-        let location = Reader::from_stream("image/jpeg", Cursor::new(IMAGE_WITH_MANIFEST))?
-            .manifest_location();
-        assert_eq!(location, ManifestLocation::Embedded);
+    fn test_reader_manifest_source_embedded() -> Result<()> {
+        let source =
+            Reader::from_stream("image/jpeg", Cursor::new(IMAGE_WITH_MANIFEST))?.manifest_source();
+        assert_eq!(source, ManifestSource::Embedded);
 
         Ok(())
     }
 
     #[test]
-    fn test_reader_manifest_location_remote() -> Result<()> {
-        let location = Reader::from_stream("image/jpeg", Cursor::new(IMAGE_WITH_REMOTE_MANIFEST))?
-            .manifest_location();
-        assert_eq!(location, ManifestLocation::Remote);
+    fn test_reader_manifest_source_remote() -> Result<()> {
+        let source = Reader::from_stream("image/jpeg", Cursor::new(IMAGE_WITH_REMOTE_MANIFEST))?
+            .manifest_source();
+        assert_eq!(source, ManifestSource::Remote);
 
         Ok(())
     }
 
     #[test]
-    fn test_reader_manifest_location_sidecar() -> Result<()> {
-        let location = Reader::from_manifest_data_and_stream(
+    fn test_reader_manifest_source_sidecar() -> Result<()> {
+        let source = Reader::from_manifest_data_and_stream(
             include_bytes!("../tests/fixtures/cloud_manifest.c2pa"),
             "image/jpeg",
             Cursor::new(IMAGE_WITH_REMOTE_MANIFEST),
         )?
-        .manifest_location();
-        assert_eq!(location, ManifestLocation::Sidecar);
+        .manifest_source();
+        assert_eq!(source, ManifestSource::Sidecar);
 
         Ok(())
     }

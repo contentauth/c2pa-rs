@@ -115,7 +115,7 @@ pub struct Store {
     label: String,
     provenance_path: Option<String>,
     ctp: CertificateTrustPolicy,
-    location: ManifestLocation,
+    source: ManifestSource,
 }
 
 struct ManifestInfo<'a> {
@@ -146,7 +146,7 @@ impl Store {
             label: label.to_string(),
             ctp: CertificateTrustPolicy::default(),
             provenance_path: None,
-            location: ManifestLocation::Sidecar,
+            source: ManifestSource::Sidecar,
         };
 
         // load the trust handler settings, don't worry about status as these are checked during setting generation
@@ -183,9 +183,9 @@ impl Store {
         &self.label
     }
 
-    /// Return location of the manifest loaded into this [`Store`].
-    pub fn location(&self) -> ManifestLocation {
-        self.location
+    /// Return source of the manifest loaded into this [`Store`].
+    pub fn source(&self) -> ManifestSource {
+        self.source
     }
 
     /// Load set of trust anchors used for certificate validation. [u8] containing the
@@ -3760,16 +3760,16 @@ impl Store {
     pub fn load_jumbf_from_stream(
         asset_type: &str,
         stream: &mut dyn CAIRead,
-    ) -> Result<ManifestDataLocation> {
+    ) -> Result<ManifestDataSource> {
         match load_jumbf_from_stream(asset_type, stream) {
-            Ok(manifest_bytes) => Ok(ManifestDataLocation::Embedded(manifest_bytes)),
+            Ok(manifest_bytes) => Ok(ManifestDataSource::Embedded(manifest_bytes)),
             Err(Error::JumbfNotFound) => {
                 stream.rewind()?;
                 if let Some(ext_ref) =
                     crate::utils::xmp_inmemory_utils::XmpInfo::from_source(stream, asset_type)
                         .provenance
                 {
-                    Ok(ManifestDataLocation::Remote(Store::handle_remote_manifest(
+                    Ok(ManifestDataSource::Remote(Store::handle_remote_manifest(
                         &ext_ref,
                     )?))
                 } else {
@@ -3934,7 +3934,7 @@ impl Store {
         };
 
         let mut store = store?;
-        store.location = location_data.manifest_location();
+        store.source = location_data.manifest_source();
 
         Ok(store)
     }
@@ -4521,42 +4521,45 @@ impl std::fmt::Display for Store {
     }
 }
 
-/// The location of the loaded manifest.
+/// The source of the loaded manifest.
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
-pub enum ManifestLocation {
+pub enum ManifestSource {
     /// The manifest is embedded in the asset.
     Embedded,
     /// The manifest is stored remotely.
     Remote,
-    /// The manifest is stored separately in a sidecar.
+    /// The manifest is stored separately from the asset.
+    ///
+    /// This variant occurs when the manifest bytes are passed explicitly such
+    /// as in the case of [Reader::from_manifest_data_and_stream].
     Sidecar,
 }
 
 #[derive(Debug, Clone)]
-pub enum ManifestDataLocation {
+pub enum ManifestDataSource {
     Embedded(Vec<u8>),
     Remote(Vec<u8>),
 }
 
-impl ManifestDataLocation {
-    pub fn manifest_location(&self) -> ManifestLocation {
+impl ManifestDataSource {
+    pub fn manifest_source(&self) -> ManifestSource {
         match self {
-            ManifestDataLocation::Embedded(_) => ManifestLocation::Embedded,
-            ManifestDataLocation::Remote(_) => ManifestLocation::Remote,
+            ManifestDataSource::Embedded(_) => ManifestSource::Embedded,
+            ManifestDataSource::Remote(_) => ManifestSource::Remote,
         }
     }
 
     pub fn as_bytes(&self) -> &[u8] {
         match self {
-            ManifestDataLocation::Embedded(bytes) => bytes,
-            ManifestDataLocation::Remote(bytes) => bytes,
+            ManifestDataSource::Embedded(bytes) => bytes,
+            ManifestDataSource::Remote(bytes) => bytes,
         }
     }
 
     pub fn into_bytes(self) -> Vec<u8> {
         match self {
-            ManifestDataLocation::Embedded(bytes) => bytes,
-            ManifestDataLocation::Remote(bytes) => bytes,
+            ManifestDataSource::Embedded(bytes) => bytes,
+            ManifestDataSource::Remote(bytes) => bytes,
         }
     }
 }
