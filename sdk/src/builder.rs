@@ -34,7 +34,7 @@ use crate::{
     },
     claim::Claim,
     error::{Error, Result},
-    jumbf_io,
+    format_from_path, jumbf_io,
     resource_store::{ResourceRef, ResourceResolver, ResourceStore},
     salt::DefaultSalt,
     store::Store,
@@ -514,6 +514,13 @@ impl Builder {
                 zip.start_file("manifests/", options)
                     .map_err(|e| Error::OtherError(Box::new(e)))?;
                 for ingredient in self.definition.ingredients.iter() {
+                    // add ingredient resource files to a ingredient folder
+                    for (id, data) in ingredient.resources().resources() {
+                        zip.start_file(format!("ingredient-resources/{}", id), options)
+                            .map_err(|e| Error::OtherError(Box::new(e)))?;
+                        zip.write_all(data)?;
+                    }
+
                     if let Some(manifest_label) = ingredient.active_manifest() {
                         if let Some(manifest_data) = ingredient.manifest_data() {
                             // Convert to valid archive / file path name
@@ -565,6 +572,31 @@ impl Builder {
                     .ok_or(Error::BadParam("Invalid resource path".to_string()))?;
                 //println!("adding resource {}", id);
                 builder.resources.add(id, data)?;
+            }
+
+            if file.name().starts_with("ingredient-resources/")
+                && file.name() != "ingredient-resources/"
+            {
+                let mut data = Vec::new();
+                file.read_to_end(&mut data)?;
+
+                let id = file
+                    .name()
+                    .split_once('/')
+                    .map(|(_, second)| second)
+                    .ok_or(Error::BadParam("Invalid resource path".to_string()))?;
+                let format = format_from_path(id)
+                    .ok_or(Error::BadParam("Invalid resource path".to_string()))?;
+                let id = id.replacen(['-'], ":", 1);
+                for ingredient in builder.definition.ingredients.iter_mut() {
+                    let base_id = ingredient.instance_id().to_string();
+                    if id.starts_with(&base_id) {
+                        ingredient
+                            .resources_mut()
+                            .add_with(&base_id, &format, data)?;
+                        break;
+                    }
+                }
             }
 
             // Load the c2pa_manifests.
@@ -1040,7 +1072,6 @@ impl Builder {
         // generate thumbnail if we don't already have one
         #[cfg(feature = "add_thumbnails")]
         self.maybe_add_thumbnail(&format, source)?;
-
         // convert the manifest to a store
         let mut store = self.to_store()?;
 
