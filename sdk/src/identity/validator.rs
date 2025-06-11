@@ -120,7 +120,7 @@ mod tests {
                 .ingredient_deltas()
                 .unwrap()
                 .len(),
-            2
+            1
         );
         assert_eq!(reader.validation_state(), ValidationState::Valid);
     }

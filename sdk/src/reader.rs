@@ -35,6 +35,7 @@ use crate::{
     dynamic_assertion::PartialClaim,
     error::{Error, Result},
     jumbf::labels::{manifest_label_from_uri, to_absolute_uri, to_relative_uri},
+    jumbf_io,
     manifest::StoreOptions,
     manifest_store_report::ManifestStoreReport,
     settings::get_settings_value,
@@ -288,7 +289,7 @@ impl Reader {
 
         let mut validation_log = StatusTracker::default();
 
-        let asset_type = crate::jumbf_io::get_supported_file_extension(path.as_ref())
+        let asset_type = jumbf_io::get_supported_file_extension(path.as_ref())
             .ok_or(crate::Error::UnsupportedType)?;
 
         let mut init_segment = std::fs::File::open(path.as_ref())?;
@@ -341,6 +342,11 @@ impl Reader {
             }
         }
         value
+    }
+
+    /// Returns a [Vec] of mime types that [c2pa-rs] is able to read.
+    pub fn supported_mime_types() -> Vec<String> {
+        jumbf_io::supported_reader_mime_types()
     }
 
     /// replace assertion values in the reader json with the values from the assertion_values map
@@ -959,7 +965,6 @@ pub mod tests {
     /// Test that the reader can validate a file with nested assertion errors
     fn test_reader_to_folder() -> Result<()> {
         use crate::utils::{io_utils::tempdirectory, test::temp_dir_path};
-
         let reader = Reader::from_file("tests/fixtures/CACAE-uri-CA.jpg")?;
         assert_eq!(reader.validation_status(), None);
         let temp_dir = tempdirectory().unwrap();

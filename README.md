@@ -30,7 +30,7 @@ The [`c2pa` crate](https://crates.io/crates/c2pa) implements a subset of the [C2
 
 The library enables a desktop, mobile, or embedded application to:
 * Create and sign C2PA [claims](https://c2pa.org/specifications/specifications/2.1/specs/C2PA_Specification.html#_claims) and [manifests](https://c2pa.org/specifications/specifications/2.1/specs/C2PA_Specification.html#_manifests).
-* Create, sign, and validate [CAWG identity assertions](https://cawg.io/identity) in C2PA manifests.
+* Create, sign, and validate [CAWG identity assertions](https://cawg.io/identity) in C2PA manifests.  See [Using the CAWG identity assertion](docs/cawg-identity.md) for more information.
 * Embed manifests in [supported file formats](docs/supported-formats.md).
 * Parse and validate manifests found in [supported file formats](docs/supported-formats.md).
 
@@ -42,22 +42,54 @@ For details on what you can do with the library, see [Using the Rust library](ht
 
 This is a beta release (version 0.x.x) of the project. The minor version number (0.x.0) is incremented when there are breaking API changes, which may happen frequently.
 
-**NOTE**: The library now supports [C2PA v2 claims](https://c2pa.org/specifications/specifications/2.1/specs/C2PA_Specification.html#_claims), however development is still in progress and all features are not fully implemented yet. While you can experiment with this functionality, it is not recommended for production use at this time.  For details, see [C2PA v2 claims](docs/release-notes.md#c2pa-v2-claims).
+**NOTE**: The library now supports [C2PA v2 claims](https://c2pa.org/specifications/specifications/2.1/specs/C2PA_Specification.html#_claims), however development is still in progress and all features are not fully implemented yet. While you can experiment with this functionality, it is not recommended for production use at this time.  For details, see [C2PA v2 claims](https://opensource.contentauthenticity.org/docs/rust-sdk/docs/release-notes#c2pa-v2-claims).
 
 ### New API
 
 NOTE: The current release includes a new API that replaces old methods of reading and writing C2PA data, which are deprecated.  See the [release notes](https://opensource.contentauthenticity.org/docs/rust-sdk/docs/release-notes) for more information. 
 
-### CAWG identity assertion: Known limitations
+## Installation
 
-The SDK does not currently support the following optional fields from the CAWG identity assertion:
-* `expected_partial_claim`
-* `expected_claim_generator`
-* `expected_countersigners`
+### Prerequisites
 
-### Rust language requirement (MSRV)
+**Install Rust and Cargo**
 
-The `c2pa` crate requires Rust version 1.82.0 or newer. When a newer version of Rust becomes required, a new minor (0.x.0) version of this crate will be released.
+To use the CAI Rust library, you must install [Rust and Cargo](https://doc.rust-lang.org/cargo/index.html).
+
+Minimal supported Rust version (MSRV): The `c2pa` crate requires Rust version 1.82.0 or newer. When a newer version of Rust becomes required, a new minor (0.x.0) version of this crate will be released.
+
+**Install C build tools**
+
+Install the C build tools for your development platoform"
+
+- macOS: XCode with command-line tools
+- Windows: Microsoft Visual C++ (MSVC)
+
+### Build
+
+The easiest way to build the library is by using the `Makefile`.
+
+To build unit tests, use this command:
+
+```
+make test
+```
+
+To build the binary libraries, use this command:
+
+```
+make release
+```
+
+### Add dependency
+
+Add the following line to your `Cargo.toml`:
+
+```
+c2pa = "<VERSION_NUMBER>"
+```
+
+Where `<VERSION_NUMBER>` is the [latest version of the crate as shown on crates.io](https://crates.io/crates/c2pa).
 
 ## Contributions and feedback
 
