@@ -40,7 +40,7 @@ use crate::{
     manifest_store_report::ManifestStoreReport,
     settings::get_settings_value,
     status_tracker::StatusTracker,
-    store::Store,
+    store::{ManifestSource, Store},
     validation_results::{ValidationResults, ValidationState},
     validation_status::ValidationStatus,
     Manifest, ManifestAssertion,
@@ -260,7 +260,7 @@ impl Reader {
         mut fragment: impl Read + Seek + Send,
     ) -> Result<Self> {
         let mut validation_log = StatusTracker::default();
-        let manifest_bytes = Store::load_jumbf_from_stream(format, &mut stream)?;
+        let manifest_bytes = Store::load_jumbf_from_stream(format, &mut stream)?.into_bytes();
         let store = Store::from_jumbf(&manifest_bytes, &mut validation_log)?;
 
         let verify = get_settings_value::<bool>("verify.verify_after_reading")?; // defaults to true
@@ -415,6 +415,11 @@ impl Reader {
             Ok(value) => serde_json::to_string_pretty(&value).unwrap_or_default(),
             Err(_) => "{}".to_string(),
         }
+    }
+
+    /// Get the source of the manifest loaded into this [`Reader`].
+    pub fn manifest_source(&self) -> ManifestSource {
+        self.store.source()
     }
 
     /// Get the [`ValidationStatus`] array of the manifest store if it exists.
@@ -855,10 +860,44 @@ pub mod tests {
     #![allow(clippy::expect_used)]
     #![allow(clippy::panic)]
     #![allow(clippy::unwrap_used)]
+    use std::io::Cursor;
+
     use super::*;
 
     const IMAGE_COMPLEX_MANIFEST: &[u8] = include_bytes!("../tests/fixtures/CACAE-uri-CA.jpg");
     const IMAGE_WITH_MANIFEST: &[u8] = include_bytes!("../tests/fixtures/CA.jpg");
+    const IMAGE_WITH_REMOTE_MANIFEST: &[u8] = include_bytes!("../tests/fixtures/cloud.jpg");
+
+    #[test]
+    fn test_reader_manifest_source_embedded() -> Result<()> {
+        let source =
+            Reader::from_stream("image/jpeg", Cursor::new(IMAGE_WITH_MANIFEST))?.manifest_source();
+        assert_eq!(source, ManifestSource::Embedded);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_reader_manifest_source_remote() -> Result<()> {
+        let source = Reader::from_stream("image/jpeg", Cursor::new(IMAGE_WITH_REMOTE_MANIFEST))?
+            .manifest_source();
+        assert_eq!(source, ManifestSource::Remote);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_reader_manifest_source_sidecar() -> Result<()> {
+        let source = Reader::from_manifest_data_and_stream(
+            include_bytes!("../tests/fixtures/cloud_manifest.c2pa"),
+            "image/jpeg",
+            Cursor::new(IMAGE_WITH_REMOTE_MANIFEST),
+        )?
+        .manifest_source();
+        assert_eq!(source, ManifestSource::Sidecar);
+
+        Ok(())
+    }
 
     #[test]
     #[cfg(feature = "file_io")]

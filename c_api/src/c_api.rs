@@ -21,7 +21,7 @@ use c2pa::Ingredient;
 // C has no namespace so we prefix things with C2PA to make them unique
 use c2pa::{
     assertions::DataHash, identity::validator::CawgValidator, settings::load_settings_from_str,
-    Builder as C2paBuilder, CallbackSigner, Reader as C2paReader, SigningAlg,
+    Builder as C2paBuilder, CallbackSigner, ManifestSource, Reader as C2paReader, SigningAlg,
 };
 use scopeguard::guard;
 use tokio::runtime::Runtime; // cawg validator requires async
@@ -39,6 +39,28 @@ mod cbindgen_fix {
     #[repr(C)]
     #[allow(dead_code)]
     pub struct C2paReader;
+}
+
+/// The source in which the manifest was read.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum C2paManifestSource {
+    /// The manifest is embedded in the asset.
+    Embedded,
+    /// The manifest is stored remotely.
+    Remote,
+    /// The manifest is stored separately in a sidecar.
+    Sidecar,
+}
+
+impl From<ManifestSource> for C2paManifestSource {
+    fn from(source: ManifestSource) -> Self {
+        match source {
+            ManifestSource::Embedded => C2paManifestSource::Embedded,
+            ManifestSource::Remote => C2paManifestSource::Remote,
+            ManifestSource::Sidecar => C2paManifestSource::Sidecar,
+        }
+    }
 }
 
 /// List of supported signing algorithms.
@@ -593,6 +615,26 @@ pub unsafe extern "C" fn c2pa_reader_json(reader_ptr: *mut C2paReader) -> *mut c
     let c2pa_reader = guard_boxed!(reader_ptr);
 
     to_c_string(c2pa_reader.json())
+}
+
+/// Returns the source of the manifest read by the C2paReader.
+/// * C2paManifestSource::Embedded
+/// * C2paManifestSource::Remote
+/// * C2paManifestSource::Sidecar
+///
+/// # Parameters
+/// * reader_ptr: pointer to a C2paReader.
+///
+/// # Safety
+/// reader_ptr must be a valid pointer to a C2paReader.
+#[no_mangle]
+pub unsafe extern "C" fn c2pa_reader_manifest_source(
+    reader_ptr: *mut C2paReader,
+) -> *const C2paManifestSource {
+    check_or_return_null!(reader_ptr);
+    let c2pa_reader = guard_boxed!(reader_ptr);
+
+    &C2paManifestSource::from(c2pa_reader.manifest_source())
 }
 
 /// Writes a C2paReader resource to a stream given a URI.
@@ -1483,6 +1525,20 @@ mod tests {
         let error = unsafe { c2pa_error() };
         let error_str = unsafe { CString::from_raw(error) };
         assert_eq!(error_str.to_str().unwrap(), "NullParameter: source_path");
+    }
+
+    #[test]
+    fn test_c2pa_reader_manifest_source() {
+        let mut stream =
+            TestC2paStream::new(include_bytes!(fixture_path!("CA.jpg")).to_vec()).into_c_stream();
+
+        let format = CString::new("image/jpeg").unwrap();
+        let result = unsafe { c2pa_reader_from_stream(format.as_ptr(), &mut stream) };
+        assert!(!result.is_null());
+        let manifest_source = unsafe { c2pa_reader_manifest_source(result) };
+        assert!(!manifest_source.is_null());
+        assert_eq!(unsafe { *manifest_source }, C2paManifestSource::Embedded);
+        TestC2paStream::drop_c_stream(stream);
     }
 
     #[test]

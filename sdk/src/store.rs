@@ -115,6 +115,7 @@ pub struct Store {
     label: String,
     provenance_path: Option<String>,
     ctp: CertificateTrustPolicy,
+    source: ManifestSource,
 }
 
 struct ManifestInfo<'a> {
@@ -145,6 +146,7 @@ impl Store {
             label: label.to_string(),
             ctp: CertificateTrustPolicy::default(),
             provenance_path: None,
+            source: ManifestSource::Sidecar,
         };
 
         // load the trust handler settings, don't worry about status as these are checked during setting generation
@@ -179,6 +181,11 @@ impl Store {
     #[allow(dead_code)] // doesn't harm to have this
     pub fn label(&self) -> &str {
         &self.label
+    }
+
+    /// Return source of the manifest loaded into this [`Store`].
+    pub fn source(&self) -> ManifestSource {
+        self.source
     }
 
     /// Load set of trust anchors used for certificate validation. [u8] containing the
@@ -399,7 +406,7 @@ impl Store {
     }
 
     /// Returns an Assertion referenced by JUMBF URI.  The URI should be absolute and include
-    /// the desired Claim in the path. If you need to specify the Claim for this URI use  
+    /// the desired Claim in the path. If you need to specify the Claim for this URI use
     /// get_assertion_from_uri_and_claim.
     /// uri - The JUMBF URI for desired Assertion.
     pub fn get_assertion_from_uri(&self, uri: &str) -> Option<&Assertion> {
@@ -1798,7 +1805,7 @@ impl Store {
     /// store: Store to validate
     /// xmp_str: String containing entire XMP block of the asset
     /// asset_bytes: bytes of the asset to be verified
-    /// validation_log: If present all found errors are logged and returned, other wise first error causes exit and is returned  
+    /// validation_log: If present all found errors are logged and returned, other wise first error causes exit and is returned
     pub async fn verify_store_async(
         store: &Store,
         asset_data: &mut ClaimAssetData<'_>,
@@ -1831,7 +1838,7 @@ impl Store {
     /// store: Store to validate
     /// xmp_str: String containing entire XMP block of the asset
     /// asset_bytes: bytes of the asset to be verified
-    /// validation_log: If present all found errors are logged and returned, other wise first error causes exit and is returned  
+    /// validation_log: If present all found errors are logged and returned, other wise first error causes exit and is returned
     pub fn verify_store(
         store: &Store,
         asset_data: &mut ClaimAssetData<'_>,
@@ -2185,10 +2192,10 @@ impl Store {
     /// BMFF hash binding.  If a BMFF data hash or box hash is detected that is
     /// an error.  The DataHash placeholder assertion will be  adjusted to the contain
     /// the correct values.  If the asset_reader value is supplied it will also perform
-    /// the hash calculations, otherwise the function uses the caller supplied values.  
+    /// the hash calculations, otherwise the function uses the caller supplied values.
     /// It is an error if `get_data_hashed_manifest_placeholder` was not called first
     /// as this call inserts the DataHash placeholder assertion to reserve space for the
-    /// actual hash values not required when using BoxHashes.  
+    /// actual hash values not required when using BoxHashes.
     pub fn get_data_hashed_embeddable_manifest(
         &mut self,
         dh: &DataHash,
@@ -2215,10 +2222,10 @@ impl Store {
     /// BMFF hash binding.  If a BMFF data hash or box hash is detected that is
     /// an error.  The DataHash placeholder assertion will be  adjusted to the contain
     /// the correct values.  If the asset_reader value is supplied it will also perform
-    /// the hash calculations, otherwise the function uses the caller supplied values.  
+    /// the hash calculations, otherwise the function uses the caller supplied values.
     /// It is an error if `get_data_hashed_manifest_placeholder` was not called first
     /// as this call inserts the DataHash placeholder assertion to reserve space for the
-    /// actual hash values not required when using BoxHashes.  
+    /// actual hash values not required when using BoxHashes.
     pub async fn get_data_hashed_embeddable_manifest_async(
         &mut self,
         dh: &DataHash,
@@ -2247,10 +2254,10 @@ impl Store {
     /// BMFF hash binding.  If a BMFF data hash or box hash is detected that is
     /// an error.  The DataHash placeholder assertion will be  adjusted to the contain
     /// the correct values.  If the asset_reader value is supplied it will also perform
-    /// the hash calculations, otherwise the function uses the caller supplied values.  
+    /// the hash calculations, otherwise the function uses the caller supplied values.
     /// It is an error if `get_data_hashed_manifest_placeholder` was not called first
     /// as this call inserts the DataHash placeholder assertion to reserve space for the
-    /// actual hash values not required when using BoxHashes.  
+    /// actual hash values not required when using BoxHashes.
     #[cfg(feature = "v1_api")]
     pub async fn get_data_hashed_embeddable_manifest_remote(
         &mut self,
@@ -2345,7 +2352,7 @@ impl Store {
 
     /// Returns the supplied manifest composed to be directly compatible with the desired format.
     /// For example, if format is JPEG function will return the set of APP11 segments that contains
-    /// the manifest.  Similarly for PNG it would be the PNG chunk complete with header and  CRC.   
+    /// the manifest.  Similarly for PNG it would be the PNG chunk complete with header and  CRC.
     pub fn get_composed_manifest(manifest_bytes: &[u8], format: &str) -> Result<Vec<u8>> {
         if let Some(h) = get_assetio_handler(format) {
             if let Some(composed_data_handler) = h.composed_data_ref() {
@@ -2733,7 +2740,7 @@ impl Store {
     /// in the 'get_placed_manifest_call'.  Changes to the following assertions are disallowed
     /// when using 'ManifestPatchCallback':  ["c2pa.hash.data",  "c2pa.hash.boxes",  "c2pa.hash.bmff",
     ///  "c2pa.actions",  "c2pa.ingredient"].  Also the set of assertions cannot be changed, only the
-    /// content of allowed assertions can be modified.  
+    /// content of allowed assertions can be modified.
     /// 'format' shoould match the type of the input stream..
     /// Upon return, the output stream will contain the new manifest signed with signer
     /// This directly modifies the asset in stream, backup stream first if you need to preserve it.
@@ -3562,7 +3569,7 @@ impl Store {
 
     /// Verify Store from an existing asset
     /// asset_path: path to input asset
-    /// validation_log: If present all found errors are logged and returned, otherwise first error causes exit and is returned  
+    /// validation_log: If present all found errors are logged and returned, otherwise first error causes exit and is returned
     #[cfg(feature = "file_io")]
     pub fn verify_from_path(
         &mut self,
@@ -3741,25 +3748,30 @@ impl Store {
     ) -> Result<Store> {
         let mut input_stream = Cursor::new(data);
         Store::load_jumbf_from_stream(asset_type, &mut input_stream)
-            .map(|manifest_bytes| Store::from_jumbf(&manifest_bytes, validation_log))?
+            .map(|manifest_bytes| Store::from_jumbf(&manifest_bytes.into_bytes(), validation_log))?
     }
 
-    /// load jumbf given a stream
+    /// load jumbf with manifest location given a stream
     ///
     /// This handles, embedded and remote manifests
     ///
     /// asset_type -  mime type of the stream
     /// stream - a readable stream of an asset
-    pub fn load_jumbf_from_stream(asset_type: &str, stream: &mut dyn CAIRead) -> Result<Vec<u8>> {
+    pub fn load_jumbf_from_stream(
+        asset_type: &str,
+        stream: &mut dyn CAIRead,
+    ) -> Result<ManifestDataSource> {
         match load_jumbf_from_stream(asset_type, stream) {
-            Ok(manifest_bytes) => Ok(manifest_bytes),
+            Ok(manifest_bytes) => Ok(ManifestDataSource::Embedded(manifest_bytes)),
             Err(Error::JumbfNotFound) => {
                 stream.rewind()?;
                 if let Some(ext_ref) =
                     crate::utils::xmp_inmemory_utils::XmpInfo::from_source(stream, asset_type)
                         .provenance
                 {
-                    Store::handle_remote_manifest(&ext_ref)
+                    Ok(ManifestDataSource::Remote(Store::handle_remote_manifest(
+                        &ext_ref,
+                    )?))
                 } else {
                     Err(Error::JumbfNotFound)
                 }
@@ -3829,7 +3841,7 @@ impl Store {
     /// Load Store from claims in an existing asset
     /// asset_path: path to input asset
     /// verify: determines whether to verify the contents of the provenance claim.  Must be set true to use validation_log
-    /// validation_log: If present all found errors are logged and returned, otherwise first error causes exit and is returned  
+    /// validation_log: If present all found errors are logged and returned, otherwise first error causes exit and is returned
     #[cfg(all(feature = "v1_api", feature = "file_io"))]
     pub fn load_from_asset(
         asset_path: &Path,
@@ -3900,11 +3912,11 @@ impl Store {
         verify: bool,
         validation_log: &mut StatusTracker,
     ) -> Result<Self> {
-        let manifest_bytes = Store::load_jumbf_from_stream(format, &mut stream)?;
+        let location_data = Store::load_jumbf_from_stream(format, &mut stream)?;
 
-        if _sync {
+        let store = if _sync {
             Self::from_manifest_data_and_stream(
-                &manifest_bytes,
+                location_data.as_bytes(),
                 format,
                 &mut stream,
                 verify,
@@ -3912,14 +3924,19 @@ impl Store {
             )
         } else {
             Self::from_manifest_data_and_stream_async(
-                &manifest_bytes,
+                location_data.as_bytes(),
                 format,
                 &mut stream,
                 verify,
                 validation_log,
             )
             .await
-        }
+        };
+
+        let mut store = store?;
+        store.source = location_data.manifest_source();
+
+        Ok(store)
     }
 
     /// Load store from a manifest data and stream
@@ -4048,7 +4065,7 @@ impl Store {
         mut fragment: impl Read + Seek + Send,
         validation_log: &mut StatusTracker,
     ) -> Result<Store> {
-        let manifest_bytes = Store::load_jumbf_from_stream(format, &mut stream)?;
+        let manifest_bytes = Store::load_jumbf_from_stream(format, &mut stream)?.into_bytes();
         let store = Store::from_jumbf(&manifest_bytes, validation_log)?;
 
         let verify = get_settings_value::<bool>("verify.verify_after_reading")?; // defaults to true
@@ -4501,6 +4518,49 @@ impl std::fmt::Display for Store {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let report = &ManifestStoreReport::from_store(self).unwrap_or_default();
         f.write_str(&format!("{}", &report))
+    }
+}
+
+/// The source of the loaded manifest.
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub enum ManifestSource {
+    /// The manifest is embedded in the asset.
+    Embedded,
+    /// The manifest is stored remotely.
+    Remote,
+    /// The manifest is stored separately from the asset.
+    ///
+    /// This variant occurs when the manifest bytes are passed explicitly such
+    /// as in the case of [Reader::from_manifest_data_and_stream].
+    Sidecar,
+}
+
+#[derive(Debug, Clone)]
+pub enum ManifestDataSource {
+    Embedded(Vec<u8>),
+    Remote(Vec<u8>),
+}
+
+impl ManifestDataSource {
+    pub fn manifest_source(&self) -> ManifestSource {
+        match self {
+            ManifestDataSource::Embedded(_) => ManifestSource::Embedded,
+            ManifestDataSource::Remote(_) => ManifestSource::Remote,
+        }
+    }
+
+    pub fn as_bytes(&self) -> &[u8] {
+        match self {
+            ManifestDataSource::Embedded(bytes) => bytes,
+            ManifestDataSource::Remote(bytes) => bytes,
+        }
+    }
+
+    pub fn into_bytes(self) -> Vec<u8> {
+        match self {
+            ManifestDataSource::Embedded(bytes) => bytes,
+            ManifestDataSource::Remote(bytes) => bytes,
+        }
     }
 }
 
@@ -6751,7 +6811,9 @@ pub mod tests {
 
         output_stream.set_position(0);
 
-        let manifest_bytes = Store::load_jumbf_from_stream("video/mp4", &mut input_stream).unwrap();
+        let manifest_bytes = Store::load_jumbf_from_stream("video/mp4", &mut input_stream)
+            .unwrap()
+            .into_bytes();
 
         let _new_store = {
             Store::from_manifest_data_and_stream(
