@@ -588,7 +588,8 @@ impl Builder {
                     if id.starts_with(&base_id) {
                         ingredient
                             .resources_mut()
-                            .add_with(&base_id, &format, data.clone())?;
+                            .add_with(&base_id, &format, data)?;
+                        break;
                     }
                 }
             }

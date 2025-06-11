@@ -1322,11 +1322,11 @@ mod tests {
     fn test_to_archive_and_from_archive_with_ingredient_thumbnail() {
         let manifest_def = CString::new("{}").unwrap();
 
-        let test_image3 = include_bytes!(fixture_path!("A_thumbnail.jpg"));
-        let mut test_image3_stream = TestC2paStream::from_bytes(test_image3.to_vec());
+        let thumbnail = include_bytes!(fixture_path!("A_thumbnail.jpg"));
+        let mut thumbnail_stream = TestC2paStream::from_bytes(thumbnail.to_vec());
 
-        let test_image2 = include_bytes!(fixture_path!("A.jpg"));
-        let mut test_image2_stream = TestC2paStream::from_bytes(test_image2.to_vec());
+        let source_image = include_bytes!(fixture_path!("A.jpg"));
+        let mut source_stream = TestC2paStream::from_bytes(source_image.to_vec());
 
         let certs = include_str!(fixture_path!("certs/ed25519.pub"));
         let private_key = include_bytes!(fixture_path!("certs/ed25519.pem"));
@@ -1348,15 +1348,13 @@ mod tests {
 
         let ingredient_json = CString::new(r#"{"title": "Test Ingredient"}"#).unwrap();
         let format = CString::new("image/jpeg").unwrap();
-        let ingredient_json = ingredient_json.as_ptr();
-        let format = format.as_ptr();
 
         unsafe {
             c2pa_builder_add_ingredient_from_stream(
                 builder,
-                ingredient_json,
-                format,
-                &mut test_image3_stream,
+                ingredient_json.as_ptr(),
+                format.as_ptr(),
+                &mut thumbnail_stream,
             )
         };
 
@@ -1376,8 +1374,8 @@ mod tests {
         let res = unsafe {
             c2pa_builder_sign(
                 builder,
-                format,
-                &mut test_image2_stream,
+                format.as_ptr(),
+                &mut source_stream,
                 &mut dest_stream,
                 signer,
                 &mut manifest_bytes_ptr,
@@ -1386,10 +1384,11 @@ mod tests {
 
         assert_ne!(res, -1);
 
-        let reader = Reader::from_stream("image/jpeg", &mut dest_stream).unwrap();
-        let reader_json = reader.json();
+        let reader_json = Reader::from_stream("image/jpeg", &mut dest_stream)
+            .unwrap()
+            .json();
         assert!(reader_json.contains("Test Ingredient"));
-        assert!(reader_json.contains("thumbnail"));
+        assert!(reader_json.contains("thumbnail.ingredient"));
     }
 
     #[test]
