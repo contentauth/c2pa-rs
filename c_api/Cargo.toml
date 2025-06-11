@@ -7,7 +7,7 @@ license = "MIT OR Apache-2.0"
 
 [lib]
 name = "c2pa_c"
-crate-type = ["cdylib"]
+crate-type = ["cdylib", "staticlib"]
 
 [features]
 rust_native_crypto = ["c2pa/rust_native_crypto"]
