@@ -51,8 +51,25 @@ pub(crate) fn manifest_json() -> String {
                 }
             },
             {
-                "label": "org.test.assertion",
-                "data": "assertion"
+                "label": "cawg.metadata",
+                // DO NOT CHECK IN: Q&D hack for Eric's demo.
+                "data": {
+                    "@context": {
+                        "dc": "http://purl.org/dc/elements/1.1/",
+                        "exif": "http://ns.adobe.com/exif/1.0/",
+                        "photoshop" : "http://ns.adobe.com/photoshop/1.0/",
+                    },
+                    "dc:description": "Champaign County, Illinois, 1995",
+                    "dc:rights": "Copyright © 1995, Eric Scouten",
+                    "dc:title": "Country Road at Sunset",
+                    "exif:DateTimeOriginal": "1995-08-21T18:07:01-05:00",
+                    "exif:DateTimeDigitized": "2007-04-26T08:25:32Z",
+                    "exif:GPSLatitude": "40,1.9408N",
+                    "exif:GPSLongitude": "88,7.0331W",
+                    "photoshop:City": "Champaign County",
+                    "photoshop:Country": "United States",
+                    "photoshop:State": "Illinois",
+                }
             }
         ]
     })

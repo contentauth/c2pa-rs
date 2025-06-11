@@ -21,7 +21,7 @@ use crate::{
     crypto::raw_signature,
     identity::{
         builder::{AsyncIdentityAssertionBuilder, AsyncIdentityAssertionSigner},
-        tests::fixtures::{cert_chain_and_private_key_for_alg, manifest_json, parent_json},
+        tests::fixtures::{manifest_json, parent_json},
         x509::{AsyncX509CredentialHolder, X509SignatureVerifier},
         IdentityAssertion,
     },
@@ -29,12 +29,13 @@ use crate::{
     Builder, Reader, SigningAlg,
 };
 
-const TEST_IMAGE: &[u8] = include_bytes!("../../../../tests/fixtures/CA.jpg");
-const TEST_THUMBNAIL: &[u8] = include_bytes!("../../../../tests/fixtures/thumbnail.jpg");
+const TEST_IMAGE: &[u8] = include_bytes!("es-0087-001.jpg");
+const TEST_THUMBNAIL: &[u8] = include_bytes!("es-0087-001-thumbnail.jpg");
 
 #[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
-#[ignore] // We'll only run this occasionally if we need to update this test.
-async fn x509_signing() {
+async fn human_sourced_metadata() {
+    // DO NOT MERGE: Hacked up version of this test to demonstrate how human-sourced metadata should work.
+
     let format = "image/jpeg";
     let mut source = Cursor::new(TEST_IMAGE);
     let mut dest = Cursor::new(Vec::new());
@@ -50,8 +51,12 @@ async fn x509_signing() {
 
     let mut c2pa_signer = AsyncIdentityAssertionSigner::from_test_credentials(SigningAlg::Ps256);
 
-    let (cawg_cert_chain, cawg_private_key) =
-        cert_chain_and_private_key_for_alg(SigningAlg::Ed25519);
+    let cawg_cert_chain =
+        include_bytes!("../../../../tests/fixtures/crypto/raw_signature/so_called_eric.pub")
+            .to_vec();
+    let cawg_private_key =
+        include_bytes!("../../../../tests/fixtures/crypto/raw_signature/so_called_eric.priv")
+            .to_vec();
 
     let cawg_raw_signer = raw_signature::async_signer_from_cert_chain_and_private_key(
         &cawg_cert_chain,
@@ -62,7 +67,8 @@ async fn x509_signing() {
     .unwrap();
 
     let x509_holder = AsyncX509CredentialHolder::from_async_raw_signer(cawg_raw_signer);
-    let iab = AsyncIdentityAssertionBuilder::for_credential_holder(x509_holder);
+    let mut iab = AsyncIdentityAssertionBuilder::for_credential_holder(x509_holder);
+    iab.add_referenced_assertions(&["cawg.metadata"]);
     c2pa_signer.add_identity_assertion(iab);
 
     builder
@@ -71,7 +77,11 @@ async fn x509_signing() {
         .unwrap();
 
     // Write the sample file.
-    std::fs::write("src/tests/examples/x509_signing.jpg", dest.get_ref()).unwrap();
+    std::fs::write(
+        "/Users/scouten/Desktop/human_sourced_metadata.jpg",
+        dest.get_ref(),
+    )
+    .unwrap();
 
     // --- THE REST OF THIS EXAMPLE IS TEST CODE ONLY. ---
     //
@@ -104,6 +114,6 @@ async fn x509_signing() {
     assert_eq!(cert_info.alg.unwrap(), SigningAlg::Ed25519);
     assert_eq!(
         cert_info.issuer_org.as_ref().unwrap(),
-        "C2PA Test Signing Cert"
+        "Some Random Person Claiming to be Eric Scouten"
     );
 }
