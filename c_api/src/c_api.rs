@@ -43,6 +43,7 @@ mod cbindgen_fix {
 
 /// The location in which the manifest was read.
 #[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum C2paManifestLocation {
     /// The manifest is embedded in the asset.
     Embedded,
@@ -1428,6 +1429,24 @@ mod tests {
         let error = unsafe { c2pa_error() };
         let error_str = unsafe { CString::from_raw(error) };
         assert_eq!(error_str.to_str().unwrap(), "NullParameter: source_path");
+    }
+
+    #[test]
+    fn test_c2pa_reader_manifest_location() {
+        let mut stream =
+            TestC2paStream::new(include_bytes!("../../sdk/tests/fixtures/CA.jpg").to_vec())
+                .into_c_stream();
+
+        let format = CString::new("image/jpeg").unwrap();
+        let result = unsafe { c2pa_reader_from_stream(format.as_ptr(), &mut stream) };
+        assert!(!result.is_null());
+        let manifest_location = unsafe { c2pa_reader_manifest_location(result) };
+        assert!(!manifest_location.is_null());
+        assert_eq!(
+            unsafe { *manifest_location },
+            C2paManifestLocation::Embedded
+        );
+        TestC2paStream::drop_c_stream(stream);
     }
 
     #[test]
