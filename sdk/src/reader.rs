@@ -35,13 +35,11 @@ use crate::{
     dynamic_assertion::PartialClaim,
     error::{Error, Result},
     jumbf::labels::{manifest_label_from_uri, to_absolute_uri, to_relative_uri},
-    jumbf_io,
     manifest::StoreOptions,
     manifest_store_report::ManifestStoreReport,
     settings::get_settings_value,
     status_tracker::StatusTracker,
     store::{ManifestLocation, Store},
-    utils::xmp_inmemory_utils::XmpInfo,
     validation_results::{ValidationResults, ValidationState},
     validation_status::ValidationStatus,
     Manifest, ManifestAssertion,
@@ -851,31 +849,6 @@ impl std::fmt::Debug for Reader {
     }
 }
 
-/// Returns the locations a C2PA manifest was found within the stream.
-///
-/// This function DOES NOT validate or fetch the C2PA manifest and will never
-/// return [`ManifestLocation::Sidecar`], detection of sidecars depends on
-/// implementation.
-pub fn manifest_locations_from_stream(
-    format: &str,
-    mut stream: impl Read + Seek + Send,
-) -> Result<Vec<ManifestLocation>> {
-    let mut locations = Vec::new();
-    if jumbf_io::load_jumbf_from_stream(format, &mut stream).is_ok() {
-        locations.push(ManifestLocation::Embedded)
-    }
-
-    stream.rewind()?;
-
-    if let Some(ext_ref) = XmpInfo::from_source(&mut stream, format).provenance {
-        if Store::is_valid_remote_url(&ext_ref) {
-            locations.push(ManifestLocation::Remote)
-        }
-    }
-
-    Ok(locations)
-}
-
 #[cfg(test)]
 pub mod tests {
     #![allow(clippy::expect_used)]
@@ -888,17 +861,6 @@ pub mod tests {
     const IMAGE_COMPLEX_MANIFEST: &[u8] = include_bytes!("../tests/fixtures/CACAE-uri-CA.jpg");
     const IMAGE_WITH_MANIFEST: &[u8] = include_bytes!("../tests/fixtures/CA.jpg");
     const IMAGE_WITH_REMOTE_MANIFEST: &[u8] = include_bytes!("../tests/fixtures/cloud.jpg");
-
-    #[test]
-    fn test_manifest_locations_from_stream() -> Result<()> {
-        // TODO: use asset w/ embedded and remote
-        let locations =
-            manifest_locations_from_stream("image/jpeg", Cursor::new(IMAGE_WITH_MANIFEST))?;
-        assert_eq!(locations.len(), 1);
-        assert_eq!(locations[0], ManifestLocation::Embedded);
-
-        Ok(())
-    }
 
     #[test]
     fn test_reader_manifest_location_embedded() -> Result<()> {
@@ -914,6 +876,19 @@ pub mod tests {
         let location = Reader::from_stream("image/jpeg", Cursor::new(IMAGE_WITH_REMOTE_MANIFEST))?
             .manifest_location();
         assert_eq!(location, ManifestLocation::Remote);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_reader_manifest_location_sidecar() -> Result<()> {
+        let location = Reader::from_manifest_data_and_stream(
+            include_bytes!("../tests/fixtures/cloud_manifest.c2pa"),
+            "image/jpeg",
+            Cursor::new(IMAGE_WITH_REMOTE_MANIFEST),
+        )?
+        .manifest_location();
+        assert_eq!(location, ManifestLocation::Sidecar);
 
         Ok(())
     }

@@ -142,7 +142,7 @@ pub use manifest_assertion::{ManifestAssertion, ManifestAssertionKind};
 pub use manifest_store::ManifestStore;
 #[cfg(feature = "v1_api")]
 pub use manifest_store_report::ManifestStoreReport;
-pub use reader::{manifest_locations_from_stream, Reader};
+pub use reader::Reader;
 pub use resource_store::{ResourceRef, ResourceStore};
 #[cfg(feature = "v1_api")]
 pub use signer::RemoteSigner;
