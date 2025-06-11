@@ -34,7 +34,7 @@ use crate::{
     },
     claim::Claim,
     error::{Error, Result},
-    format_from_path,
+    format_from_path, jumbf_io,
     resource_store::{ResourceRef, ResourceResolver, ResourceStore},
     salt::DefaultSalt,
     store::Store,
