@@ -1530,8 +1530,7 @@ mod tests {
     #[test]
     fn test_c2pa_reader_manifest_location() {
         let mut stream =
-            TestC2paStream::new(include_bytes!("../../sdk/tests/fixtures/CA.jpg").to_vec())
-                .into_c_stream();
+            TestC2paStream::new(include_bytes!(fixture_path!("CA.jpg")).to_vec()).into_c_stream();
 
         let format = CString::new("image/jpeg").unwrap();
         let result = unsafe { c2pa_reader_from_stream(format.as_ptr(), &mut stream) };
