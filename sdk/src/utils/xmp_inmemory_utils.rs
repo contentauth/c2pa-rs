@@ -93,7 +93,6 @@ fn extract_xmp_key(xmp: &str, key: &str) -> Option<String> {
 /// Add a value to XMP using a key, replaces the value if the key exists, or adds it only once
 fn add_xmp_key(xmp: &str, key: &str, value: &str) -> Result<String> {
     let orig_length = xmp.len();
-    println!("original length: {orig_length}");
 
     // Minimal padding should be 2 KB to 4 KB. This is used if no XMP packet is found.
     let mut target_length = 4096;
@@ -109,7 +108,6 @@ fn add_xmp_key(xmp: &str, key: &str, value: &str) -> Result<String> {
     } else {
         xmp
     };
-    println!("target length: {target_length}");
 
     let mut reader = Reader::from_str(xmp_body);
     // Do not trim text to preserve whitespace
@@ -201,12 +199,7 @@ fn add_xmp_key(xmp: &str, key: &str, value: &str) -> Result<String> {
         }
     }
     let padding_length = target_length.saturating_sub(writer.get_ref().get_ref().len());
-    println!("padding length {padding_length}");
     write_xmp_padding(&mut writer.get_mut(), padding_length)?;
-    println!("final length: {}", writer.get_ref().get_ref().len());
-    if padding_length > 0 {
-        assert_eq!(writer.get_ref().get_ref().len(), orig_length);
-    }
     let result = writer.into_inner().into_inner();
     String::from_utf8(result).map_err(|e| Error::XmpWriteError(e.to_string()))
 }
