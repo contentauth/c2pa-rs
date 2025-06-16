@@ -2497,12 +2497,17 @@ impl Claim {
                                     if let Some(readaction_label) =
                                         assertion_label_from_uri(&redacted_uri)
                                     {
-                                        let (label, instance) =
-                                            Claim::assertion_label_from_link(&readaction_label);
+                                        // The assertion may or may not be in the assertion store.
+                                        // It can exist and be zeroed or be removed entirely
+                                        // but it must be in the claim's assertions HashUri list
                                         parent_tested = Some(
-                                            ingredient.get_assertion(&label, instance).is_some(),
+                                            ingredient
+                                                .assertions()
+                                                .iter()
+                                                .any(|a| a.url().contains(&readaction_label)),
                                         );
                                     } else {
+                                        dbg!("failed here");
                                         parent_tested = Some(false);
                                     }
                                 }

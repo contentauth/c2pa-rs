@@ -32,14 +32,14 @@ use crate::{
         labels, Actions, BmffHash, BoxHash, CreativeWork, DataHash, Exif, Metadata, SoftwareAgent,
         Thumbnail, User, UserCbor,
     },
-    claim::Claim,
+    claim::{Claim, ALLOWED_UPDATE_MANIFEST_ACTIONS},
     error::{Error, Result},
     jumbf_io,
     resource_store::{ResourceRef, ResourceResolver, ResourceStore},
     salt::DefaultSalt,
     store::Store,
     utils::mime::format_to_mime,
-    AsyncSigner, ClaimGeneratorInfo, HashRange, Ingredient, Signer,
+    AsyncSigner, ClaimGeneratorInfo, HashRange, Ingredient, Relationship, Signer,
 };
 
 /// Version of the Builder Archive file
@@ -614,8 +614,52 @@ impl Builder {
         Ok(builder)
     }
 
+    /// Determines if this manifest can be used as an update manifest.
+    fn is_update_manifest(&self) -> bool {
+        // cannot contain hard binding assertions (e.g. with labels DataHash, BoxHash, BmffHash, CollectionHash)
+        if self.definition.assertions.iter().any(|a| {
+            matches!(
+                a.label.as_str(),
+                DataHash::LABEL | BoxHash::LABEL | BmffHash::LABEL
+            )
+        }) {
+            return false;
+        }
+        // must contain only one v3 ingredient with relationship ParentOf and an active manifest
+        if self.definition.ingredients.len() != 1
+            || *self.definition.ingredients[0].relationship() != Relationship::ParentOf
+            || self.definition.ingredients[0].active_manifest().is_none()
+        {
+            return false;
+        }
+        // cannot have a thumbnail
+        if self.definition.thumbnail.is_some() {
+            return false;
+        }
+        // The actions assertion must only have the allowed update manifest actions
+        if let Some(actions_assertion) = self
+            .definition
+            .assertions
+            .iter()
+            .find(|a| a.label == Actions::LABEL)
+        {
+            if let Ok(actions) = actions_assertion.to_assertion::<Actions>() {
+                // Check if any action is not allowed in an update manifest
+                if actions
+                    .actions()
+                    .iter()
+                    .any(|action| !ALLOWED_UPDATE_MANIFEST_ACTIONS.contains(&action.action()))
+                {
+                    return false;
+                }
+            }
+        }
+
+        true
+    }
+
     // Convert a Manifest into a Claim
-    fn to_claim(&self) -> Result<Claim> {
+    fn to_claim(&self, is_update: bool) -> Result<Claim> {
         let definition = &self.definition;
         let mut claim_generator_info = definition.claim_generator_info.clone();
         let metadata = definition.metadata.clone();
@@ -662,7 +706,7 @@ impl Builder {
             claim.add_claim_generator_info(claim_info);
         }
 
-        // Add claim metadata
+        // Add claim metadata - todo: this will be deprecated in the future
         if let Some(metadata_vec) = metadata {
             for m in metadata_vec {
                 claim.add_claim_metadata(m);
@@ -687,42 +731,45 @@ impl Builder {
 
         let salt = DefaultSalt::default();
 
-        if let Some(thumb_ref) = definition.thumbnail.as_ref() {
-            // Setting the format to "none" will ensure that no claim thumbnail is added
-            if thumb_ref.format != "none" {
-                //let data = self.resources.get(&thumb_ref.identifier)?;
-                let mut stream = self.resources.open(thumb_ref)?;
-                let mut data = Vec::new();
-                stream.read_to_end(&mut data)?;
-                claim.add_assertion_with_salt(
-                    &Thumbnail::new(
-                        &labels::add_thumbnail_format(labels::CLAIM_THUMBNAIL, &thumb_ref.format),
-                        data,
-                    ),
-                    &salt,
-                )?;
+        if !is_update {
+            if let Some(thumb_ref) = definition.thumbnail.as_ref() {
+                // Setting the format to "none" will ensure that no claim thumbnail is added
+                if thumb_ref.format != "none" {
+                    //let data = self.resources.get(&thumb_ref.identifier)?;
+                    let mut stream = self.resources.open(thumb_ref)?;
+                    let mut data = Vec::new();
+                    stream.read_to_end(&mut data)?;
+                    claim.add_assertion_with_salt(
+                        &Thumbnail::new(
+                            &labels::add_thumbnail_format(
+                                labels::CLAIM_THUMBNAIL,
+                                &thumb_ref.format,
+                            ),
+                            data,
+                        ),
+                        &salt,
+                    )?;
+                }
             }
         }
-
         // add all ingredients to the claim
         // We use a map to track the ingredient IDs and their hashed URIs
         let mut ingredient_map = HashMap::new();
 
         for ingredient in &definition.ingredients {
-            // use the label if it exists, otherwise use the instance_id
-            let id = match ingredient.label() {
-                Some(label) => label.to_string(),
-                None => ingredient.instance_id().to_string(),
-            };
+            // use the label if it exists and is not empty, otherwise use the instance_id
+            let id = ingredient
+                .label()
+                .filter(|label| !label.is_empty())
+                .map(|label| label.to_string())
+                .unwrap_or_else(|| ingredient.instance_id().to_string());
 
             let uri = ingredient.add_to_claim(
                 &mut claim,
                 definition.redactions.clone(),
                 Some(&self.resources),
             )?;
-            if !id.is_empty() {
-                ingredient_map.insert(id, uri);
-            }
+            ingredient_map.insert(id, uri);
         }
 
         // add any additional assertions
@@ -855,10 +902,16 @@ impl Builder {
     }
 
     // Convert a Manifest into a Store
-    fn to_store(&self) -> Result<Store> {
-        let claim = self.to_claim()?;
-        // commit the claim
+    fn to_store(&self, is_update: bool) -> Result<Store> {
+        let mut claim = self.to_claim(is_update)?;
+
         let mut store = Store::new();
+
+        // if this can be an update manifest, then set the update_manifest flag
+        if is_update {
+            claim.set_update_manifest(true);
+        }
+        // commit the claim to the store
         let _provenance = store.commit_claim(claim)?;
         Ok(store)
     }
@@ -927,7 +980,8 @@ impl Builder {
         }
         self.definition.format = format.to_string();
         self.definition.instance_id = format!("xmp:iid:{}", Uuid::new_v4());
-        let mut store = self.to_store()?;
+        let is_update = self.is_update_manifest();
+        let mut store = self.to_store(is_update)?;
         let placeholder = store.get_data_hashed_manifest_placeholder(reserve_size, format)?;
         Ok(placeholder)
     }
@@ -958,7 +1012,7 @@ impl Builder {
         data_hash: &DataHash,
         format: &str,
     ) -> Result<Vec<u8>> {
-        let mut store = self.to_store()?;
+        let mut store = self.to_store(self.is_update_manifest())?;
         if _sync {
             store.get_data_hashed_embeddable_manifest(data_hash, signer, format, None)
         } else {
@@ -989,7 +1043,7 @@ impl Builder {
     ) -> Result<Vec<u8>> {
         self.definition.instance_id = format!("xmp:iid:{}", Uuid::new_v4());
 
-        let mut store = self.to_store()?;
+        let mut store = self.to_store(self.is_update_manifest())?;
         let bytes = if _sync {
             store.get_box_hashed_embeddable_manifest(signer)
         } else {
@@ -1036,13 +1090,16 @@ impl Builder {
         if let Some(base_path) = &self.base_path {
             self.resources.set_base_path(base_path);
         }
+        let is_update = self.is_update_manifest();
 
         // generate thumbnail if we don't already have one
         #[cfg(feature = "add_thumbnails")]
-        self.maybe_add_thumbnail(&format, source)?;
+        if !is_update {
+            self.maybe_add_thumbnail(&format, source)?;
+        }
 
         // convert the manifest to a store
-        let mut store = self.to_store()?;
+        let mut store = self.to_store(is_update)?;
 
         // sign and write our store to to the output image file
         if _sync {
@@ -1125,7 +1182,7 @@ impl Builder {
         }
 
         // convert the manifest to a store
-        let mut store = self.to_store()?;
+        let mut store = self.to_store(self.is_update_manifest())?;
 
         // sign and write our store to DASH content
         store.save_to_bmff_fragmented(
@@ -2117,6 +2174,8 @@ mod tests {
 
     #[test]
     fn test_redaction() {
+        use crate::utils::test::setup_logger;
+        setup_logger();
         // the label of the assertion we are going to redact
         const ASSERTION_LABEL: &str = "stds.schema-org.CreativeWork";
 

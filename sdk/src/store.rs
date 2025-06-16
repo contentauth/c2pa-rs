@@ -289,18 +289,13 @@ impl Store {
         Ok(claim_label)
     }
 
-    /// Add a new update manifest to this Store. The manifest label
-    /// may be updated to reflect is position in the manifest Store
-    /// if there are conflicting label names.  The function
-    /// will return the label of the claim used
+    /// Test if this can be an update manifest.
     #[cfg(all(feature = "v1_api", feature = "file_io"))]
-    pub fn commit_update_manifest(&mut self, mut claim: Claim) -> Result<String> {
+    pub fn update_manifest_test(&mut self, claim: &mut Claim) -> Result<()> {
         use crate::{
             assertions::{labels::CLAIM_THUMBNAIL, Actions},
             claim::ALLOWED_UPDATE_MANIFEST_ACTIONS,
         };
-
-        claim.set_update_manifest(true);
 
         // check for disallowed assertions
         if claim.has_assertion_type(labels::DATA_HASH)
@@ -332,7 +327,9 @@ impl Store {
                     return Err(Error::IngredientNotFound);
                 }
             } else {
-                return Err(Error::IngredientNotFound);
+                // when called from builder, there will be no provenance claim yet
+                // so we cannot verify the manifest url, but we just created it.
+                // return Err(Error::IngredientNotFound);
             }
         } else {
             return Err(Error::IngredientNotFound);
@@ -361,6 +358,19 @@ impl Store {
                 "only one claim thumbnail assertion allowed".into(),
             ));
         }
+
+        Ok(())
+    }
+
+    /// Add a new update manifest to this Store. The manifest label
+    /// may be updated to reflect is position in the manifest Store
+    /// if there are conflicting label names.  The function
+    /// will return the label of the claim used
+    #[cfg(all(feature = "v1_api", feature = "file_io"))]
+    pub fn commit_update_manifest(&mut self, mut claim: Claim) -> Result<String> {
+        self.update_manifest_test(&mut claim)?;
+
+        claim.set_update_manifest(true);
 
         self.commit_claim(claim)
     }
