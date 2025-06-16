@@ -257,6 +257,9 @@ mod tests {
     #![allow(clippy::unwrap_used)]
 
     //use env_logger;
+    #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
+    use wasm_bindgen_test::wasm_bindgen_test;
+
     use super::*;
     use crate::{
         asset_handlers::jpeg_io::JpegIO,
@@ -359,7 +362,7 @@ mod tests {
 
         output_stream.set_position(0);
 
-        std::fs::write("../target/xmp_write.jpg", output_stream.into_inner()).unwrap();
+        //std::fs::write("../target/xmp_write.jpg", output_stream.into_inner()).unwrap();
 
         assert!(read_xmp.contains(test_msg));
         assert_eq!(read_xmp.len(), original_xmp_length);
