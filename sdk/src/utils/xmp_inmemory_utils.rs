@@ -258,8 +258,10 @@ mod tests {
 
     //use env_logger;
     use super::*;
-    use crate::asset_handlers::jpeg_io::JpegIO;
-    use crate::asset_io::{AssetIO, RemoteRefEmbedType};
+    use crate::{
+        asset_handlers::jpeg_io::JpegIO,
+        asset_io::{AssetIO, RemoteRefEmbedType},
+    };
 
     const XMP_DATA: &str = r#"<?xpacket begin="" id="W5M0MpCehiHzreSzNTczkc9d"?>
     <x:xmpmeta xmlns:x="adobe:ns:meta/" x:xmptk="contentauth">
