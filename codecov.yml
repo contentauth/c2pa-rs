@@ -1,0 +1,8 @@
+coverage:
+  status:
+    project:
+      default:
+        target: auto
+        threshold: .1
+  notify:
+    after_n_builds: 5
