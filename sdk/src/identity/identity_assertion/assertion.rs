@@ -297,34 +297,42 @@ impl IdentityAssertion {
             .check_against_partial_claim(partial_claim, status_tracker)?;
 
         let sig_type = self.signer_payload.sig_type.as_str();
+
         if sig_type == "cawg.x509.cose" {
             let verifier = X509SignatureVerifier {};
+
             let result = verifier
                 .check_signature(&self.signer_payload, &self.signature, status_tracker)
                 .await
                 .map(|v| v.to_summary())
                 .map_err(|e| ValidationError::UnknownSignatureType(e.to_string()))?;
+
             log_current_item!(
-                "cawg x509 identity signature valid",
+                "CAWG X.509 identity signature valid",
                 "validate_partial_claim"
             )
-            .validation_status("cawg.ica.credential_valid")
+            .validation_status("cawg.identity.well-formed")
             .success(status_tracker);
+            // TO DO (CAI-7980): Should instead issue `cawg.identity.trusted` if the
+            // signing cert is found on a configured trust list.
+
             serde_json::to_value(result)
                 .map_err(|e| ValidationError::UnknownSignatureType(e.to_string()))
         } else if sig_type == "cawg.identity_claims_aggregation" {
             let verifier = IcaSignatureVerifier {};
+
             let result = verifier
                 .check_signature(&self.signer_payload, &self.signature, status_tracker)
                 .await
                 .map(|v| v.to_summary())
                 .map_err(|e| ValidationError::UnknownSignatureType(e.to_string()))?;
             log_current_item!(
-                "cawg identity claims_aggregation signature valid",
+                "CAWG identity_claims_aggregation signature valid",
                 "validate_partial_claim"
             )
             .validation_status("cawg.ica.credential_valid")
             .success(status_tracker);
+
             serde_json::to_value(result)
                 .map_err(|e| ValidationError::UnknownSignatureType(e.to_string()))
         } else {
