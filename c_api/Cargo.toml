@@ -1,9 +1,16 @@
 [package]
-name = "c_api"
+name = "c2pa-c-ffi"
 version.workspace = true
 edition = "2021"
-authors = ["Gavin Peacock <gpeacock@adobe.com>"]
+description = "C FFI for the Rust C2PA SDK"
+authors = [
+    "Gavin Peacock <gpeacock@adobe.com>",
+]
 license = "MIT OR Apache-2.0"
+homepage = "https://contentauthenticity.org"
+repository = "https://github.com/contentauth/c2pa-rs"
+keywords = ["C", "ffi", "c2pa"]
+categories = ["api-bindings"]
 
 [lib]
 name = "c2pa_c"
@@ -16,7 +23,6 @@ file_io = ["c2pa/file_io"]
 [dependencies]
 tokio = { version = "1.36", features = ["rt-multi-thread","rt"] }
 c2pa = { workspace = true , features = [
-
     "file_io",
     "add_thumbnails",
     "fetch_remote_manifests",
