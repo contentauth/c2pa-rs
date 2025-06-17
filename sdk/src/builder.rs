@@ -34,7 +34,7 @@ use crate::{
     },
     claim::Claim,
     error::{Error, Result},
-    format_from_path, jumbf_io,
+    jumbf_io,
     resource_store::{ResourceRef, ResourceResolver, ResourceStore},
     salt::DefaultSalt,
     store::Store,
@@ -514,9 +514,8 @@ impl Builder {
                 zip.start_file("manifests/", options)
                     .map_err(|e| Error::OtherError(Box::new(e)))?;
                 for ingredient in self.definition.ingredients.iter() {
-                    // add ingredient resource files to a ingredient folder
                     for (id, data) in ingredient.resources().resources() {
-                        zip.start_file(format!("ingredient-resources/{}", id), options)
+                        zip.start_file(format!("resources/{}", id), options)
                             .map_err(|e| Error::OtherError(Box::new(e)))?;
                         zip.write_all(data)?;
                     }
@@ -572,31 +571,6 @@ impl Builder {
                     .ok_or(Error::BadParam("Invalid resource path".to_string()))?;
                 //println!("adding resource {}", id);
                 builder.resources.add(id, data)?;
-            }
-
-            if file.name().starts_with("ingredient-resources/")
-                && file.name() != "ingredient-resources/"
-            {
-                let mut data = Vec::new();
-                file.read_to_end(&mut data)?;
-
-                let id = file
-                    .name()
-                    .split_once('/')
-                    .map(|(_, second)| second)
-                    .ok_or(Error::BadParam("Invalid resource path".to_string()))?;
-                let format = format_from_path(id)
-                    .ok_or(Error::BadParam("Invalid resource path".to_string()))?;
-                let id = id.replacen(['-'], ":", 1);
-                for ingredient in builder.definition.ingredients.iter_mut() {
-                    let base_id = ingredient.instance_id().to_string();
-                    if id.starts_with(&base_id) {
-                        ingredient
-                            .resources_mut()
-                            .add_with(&base_id, &format, data)?;
-                        break;
-                    }
-                }
             }
 
             // Load the c2pa_manifests.
@@ -2223,5 +2197,38 @@ mod tests {
         assert!(mime_types.contains(&"image/avif".to_string()));
         assert!(mime_types.contains(&"image/heic".to_string()));
         assert!(mime_types.contains(&"image/heif".to_string()));
+    }
+
+    #[cfg(all(feature = "add_thumbnails", feature = "file_io"))]
+    #[test]
+    fn test_to_archive_and_from_archive_with_ingredient_thumbnail() {
+        let mut builder = Builder::new();
+
+        let mut thumbnail = Cursor::new(TEST_THUMBNAIL);
+        let mut source = Cursor::new(TEST_IMAGE_CLEAN);
+
+        let signer = test_signer(SigningAlg::Ps256);
+
+        let ingredient_json = r#"{"title": "Test Ingredient"}"#;
+        builder
+            .add_ingredient_from_stream(ingredient_json, "image/jpeg", &mut thumbnail)
+            .unwrap();
+
+        let mut archive = Cursor::new(Vec::new());
+        assert!(builder.to_archive(&mut archive).is_ok());
+
+        let mut builder = Builder::from_archive(archive).unwrap();
+
+        let mut output = Cursor::new(Vec::new());
+
+        assert!(builder
+            .sign(&signer, "image/jpeg", &mut source, &mut output)
+            .is_ok());
+
+        let reader_json = Reader::from_stream("image/jpeg", &mut output)
+            .unwrap()
+            .json();
+        assert!(reader_json.contains("Test Ingredient"));
+        assert!(reader_json.contains("thumbnail.ingredient"));
     }
 }

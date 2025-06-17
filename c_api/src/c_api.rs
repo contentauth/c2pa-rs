@@ -1282,8 +1282,6 @@ unsafe fn c2pa_mime_types_to_c_array(strs: Vec<String>, count: *mut usize) -> *c
 mod tests {
     use std::{ffi::CString, panic::catch_unwind};
 
-    use c2pa::Reader;
-
     use super::*;
     use crate::TestC2paStream;
 
@@ -1412,79 +1410,6 @@ mod tests {
         assert!(!builder.is_null());
         unsafe { c2pa_builder_set_no_embed(builder) };
         unsafe { c2pa_builder_free(builder) };
-    }
-
-    #[test]
-    fn test_to_archive_and_from_archive_with_ingredient_thumbnail() {
-        let manifest_def = CString::new("{}").unwrap();
-
-        let thumbnail = include_bytes!(fixture_path!("A_thumbnail.jpg"));
-        let mut thumbnail_stream = TestC2paStream::from_bytes(thumbnail.to_vec());
-
-        let source_image = include_bytes!(fixture_path!("A.jpg"));
-        let mut source_stream = TestC2paStream::from_bytes(source_image.to_vec());
-
-        let certs = include_str!(fixture_path!("certs/ed25519.pub"));
-        let private_key = include_bytes!(fixture_path!("certs/ed25519.pem"));
-        let alg = CString::new("Ed25519").unwrap();
-        let sign_cert = CString::new(certs).unwrap();
-        let private_key = CString::new(private_key).unwrap();
-        let signer_info = C2paSignerInfo {
-            alg: alg.as_ptr(),
-            sign_cert: sign_cert.as_ptr(),
-            private_key: private_key.as_ptr(),
-            ta_url: std::ptr::null(),
-        };
-
-        let signer = unsafe { c2pa_signer_from_info(&signer_info) };
-        assert!(!signer.is_null());
-
-        let builder = unsafe { c2pa_builder_from_json(manifest_def.as_ptr()) };
-        assert!(!builder.is_null());
-
-        let ingredient_json = CString::new(r#"{"title": "Test Ingredient"}"#).unwrap();
-        let format = CString::new("image/jpeg").unwrap();
-
-        unsafe {
-            c2pa_builder_add_ingredient_from_stream(
-                builder,
-                ingredient_json.as_ptr(),
-                format.as_ptr(),
-                &mut thumbnail_stream,
-            )
-        };
-
-        let dest_vec = Vec::new();
-        let mut dest_stream = TestC2paStream::new(dest_vec).into_c_stream();
-
-        let archive = Vec::new();
-        let mut archive = TestC2paStream::from_bytes(archive.to_vec());
-        let res = unsafe { c2pa_builder_to_archive(builder, &mut archive) };
-
-        assert_ne!(res, -1);
-
-        let builder = unsafe { c2pa_builder_from_archive(&mut archive) };
-        assert!(!builder.is_null());
-        let mut manifest_bytes_ptr = std::ptr::null();
-
-        let res = unsafe {
-            c2pa_builder_sign(
-                builder,
-                format.as_ptr(),
-                &mut source_stream,
-                &mut dest_stream,
-                signer,
-                &mut manifest_bytes_ptr,
-            )
-        };
-
-        assert_ne!(res, -1);
-
-        let reader_json = Reader::from_stream("image/jpeg", &mut dest_stream)
-            .unwrap()
-            .json();
-        assert!(reader_json.contains("Test Ingredient"));
-        assert!(reader_json.contains("thumbnail.ingredient"));
     }
 
     #[test]
