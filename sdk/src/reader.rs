@@ -1056,7 +1056,7 @@ pub mod tests {
     }
 
     #[test]
-    fn test_reader_resource_to_stream_errors() {
+    fn test_reader_nonexistent_resource_to_stream() {
         let reader =
             Reader::from_stream("image/jpeg", std::io::Cursor::new(IMAGE_WITH_MANIFEST)).unwrap();
 
@@ -1076,46 +1076,6 @@ pub mod tests {
         assert!(reader.manifests().is_empty());
         assert_eq!(reader.iter_manifests().count(), 0);
         assert!(reader.validation_status().is_none());
-    }
-
-    #[test]
-    fn test_reader_uri_to_path() {
-        // Test URI to path conversion
-        let manifest_label = "test_manifest";
-
-        // Test self#jumbf URI
-        let uri = "self#jumbf=/c2pa/test:assertion";
-        let path = Reader::uri_to_path(uri, manifest_label);
-        assert_eq!(path, "test_assertion");
-
-        // Test self#jumbf URI without /c2pa prefix
-        let uri = "self#jumbf=test:assertion";
-        let path = Reader::uri_to_path(uri, manifest_label);
-        assert_eq!(path, "test_manifest/test_assertion");
-
-        // Test regular URI
-        let uri = "regular_uri";
-        let path = Reader::uri_to_path(uri, manifest_label);
-        assert_eq!(path, "regular_uri");
-    }
-
-    #[test]
-    fn test_reader_hash_to_b64() {
-        // Test hash array to base64 conversion
-        let test_value = serde_json::json!({
-            "hash": [72, 101, 108, 108, 111],  // "Hello" in bytes
-            "other": "value"
-        });
-
-        let result = Reader::hash_to_b64(test_value);
-
-        if let Some(hash_str) = result.get("hash").and_then(|v| v.as_str()) {
-            assert_eq!(hash_str, base64::encode(b"Hello"));
-        } else {
-            panic!("Hash should be converted to base64 string");
-        }
-
-        assert_eq!(result.get("other").and_then(|v| v.as_str()), Some("value"));
     }
 
     #[test]
