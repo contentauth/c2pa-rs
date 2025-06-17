@@ -27,14 +27,6 @@ pub struct SoftBinding {
     /// A list of details about the soft binding.
     pub blocks: Vec<SoftBindingBlockMap>,
 
-    /// Zero-filled bytes used for filling up space.
-    #[serde(with = "serde_bytes")]
-    pub pad: Vec<u8>,
-
-    /// Zero-filled bytes used for filling up space.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub pad2: Option<serde_bytes::ByteBuf>,
-
     /// A human-readable description of what this hash covers.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
@@ -50,6 +42,14 @@ pub struct SoftBinding {
     #[deprecated]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub url: Option<UriT>,
+
+    /// Zero-filled bytes used for filling up space.
+    #[serde(with = "serde_bytes")]
+    pub pad: Vec<u8>,
+
+    /// Zero-filled bytes used for filling up space.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pad2: Option<serde_bytes::ByteBuf>,
 }
 
 /// Details about the soft binding, including the referenced value and scope.
