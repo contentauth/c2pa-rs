@@ -137,7 +137,7 @@ try {
     # Add a delay to ensure files are fully written
     Start-Sleep -Seconds 5
 
-    # Verify files exist before zipping
+    # Verify DLL exists before zipping
     if (-not (Test-Path "$libDir\libc2pa_c.dll")) {
         Write-Host "Error: libc2pa_c.dll not found in $libDir" -ForegroundColor Red
         exit 1
@@ -150,7 +150,7 @@ try {
         exit 1
     }
 
-    # Verify c2pa.h exists and has content
+    # Verify c2pa.h exists
     if (-not (Test-Path "$includeDir\c2pa.h")) {
         Write-Host "Error: c2pa.h not found in $includeDir" -ForegroundColor Red
         exit 1
