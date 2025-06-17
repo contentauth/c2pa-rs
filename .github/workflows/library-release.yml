@@ -55,7 +55,7 @@ jobs:
         shell: pwsh
         run: |
           ./make_release.ps1
-          
+
       - name: Build release
         if: matrix.os != 'windows-latest'
         run: make release TARGET=${{ matrix.target }}

@@ -45,11 +45,11 @@ try {
     Write-Host "Downloading OpenSSL source..."
     $openssl_url = "https://www.openssl.org/source/openssl-$OPENSSL_VERSION.tar.gz"
     Invoke-WebRequest -Uri $openssl_url -OutFile "openssl.tar.gz"
-    
+
     # Extract OpenSSL
     Write-Host "Extracting OpenSSL source..."
     tar -xf openssl.tar.gz
-    
+
     # Setup Visual Studio environment
     Write-Host "Setting up Visual Studio environment..."
     cmd.exe /c "call `"$VCVARS_PATH`" && set > %temp%\vcvars.txt"
@@ -70,25 +70,24 @@ try {
     } else {
         Write-Host "Warning: LLVM (clang) not found at $llvmBin"
     }
-    
+
     # Configure and build OpenSSL
     Write-Host "Configuring and building OpenSSL..."
     cd "openssl-$OPENSSL_VERSION"
-    
+
     # Configure OpenSSL for MSVC (not MinGW/GNU)
     perl Configure VC-WIN64A --prefix=$OPENSSL_DIR --openssldir=$OPENSSL_DIR\ssl
 
     # Set locale environment variables to avoid Perl warnings
     [Environment]::SetEnvironmentVariable("LC_ALL", "C", [EnvironmentVariableTarget]::Process)
     [Environment]::SetEnvironmentVariable("LANG", "C", [EnvironmentVariableTarget]::Process)
-    
-    
+
     # Set environment variables for Rust
     Write-Host "Setting environment variables for Rust..."
     [Environment]::SetEnvironmentVariable("OPENSSL_DIR", $OPENSSL_DIR, [EnvironmentVariableTarget]::User)
     [Environment]::SetEnvironmentVariable("OPENSSL_LIB_DIR", "$OPENSSL_DIR\lib", [EnvironmentVariableTarget]::User)
     [Environment]::SetEnvironmentVariable("OPENSSL_INCLUDE_DIR", "$OPENSSL_DIR\include", [EnvironmentVariableTarget]::User)
-    
+
     # Set for current process as well
     $env:OPENSSL_DIR = $OPENSSL_DIR
     $env:OPENSSL_LIB_DIR = "$OPENSSL_DIR\lib"
@@ -99,7 +98,7 @@ try {
     $new_path = "$OPENSSL_DIR\bin;$current_path"
     [Environment]::SetEnvironmentVariable("PATH", $new_path, [EnvironmentVariableTarget]::user)
     $env:PATH = "$OPENSSL_DIR\bin;$env:PATH"
-    
+
     # Output summary
     Write-Host "`n=== Configuration Summary ===`n"
     Write-Host "OpenSSL installed to: $OPENSSL_DIR"
@@ -148,6 +147,19 @@ try {
     $dllSize = (Get-Item "$libDir\libc2pa_c.dll").Length
     if ($dllSize -eq 0) {
         Write-Host "Error: libc2pa_c.dll is empty" -ForegroundColor Red
+        exit 1
+    }
+
+    # Verify c2pa.h exists and has content
+    if (-not (Test-Path "$includeDir\c2pa.h")) {
+        Write-Host "Error: c2pa.h not found in $includeDir" -ForegroundColor Red
+        exit 1
+    }
+
+    # Check if c2pa.h has content
+    $headerSize = (Get-Item "$includeDir\c2pa.h").Length
+    if ($headerSize -eq 0) {
+        Write-Host "Error: c2pa.h is empty" -ForegroundColor Red
         exit 1
     }
 
