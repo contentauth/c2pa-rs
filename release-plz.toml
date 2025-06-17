@@ -45,12 +45,14 @@ changelog_path = "./CHANGELOG.md"
 # This being the most important crate in the workspace,
 # we will leave the changelog in the repo root instead
 # of in the `sdk` folder (which would be the default).
+version_group = "c2pa-rs"
 
 [[package]]
 name = "c2patool"
 
 [[package]]
 name = "c2pa-c-ffi"
+version_group = "c2pa-rs"
 
 [[package]]
 name = "export_schema"
