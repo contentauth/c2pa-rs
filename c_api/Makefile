@@ -17,7 +17,7 @@ endif
 
 TARGET_DIR := ../target
 
-CARGO_BUILD_FLAGS = --release -p c_api --no-default-features --features "rust_native_crypto, file_io"
+CARGO_BUILD_FLAGS = --release -p c2pa-c-ffi --no-default-features --features "rust_native_crypto, file_io"
 
 IPHONEOS_DEPLOYMENT_TARGET ?= 15.0
 
