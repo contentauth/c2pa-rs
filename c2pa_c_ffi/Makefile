@@ -166,7 +166,7 @@ release-android-x86_64:
 
 
 # make release
-# Builds and packages a zip for c_api folder (c2pa-c-ffi) for each platform
+# Builds and packages a zip for c2pa_c_ffi folder (c2pa-c-ffi) for each platform
 
 # If TARGET is explicity set, use that
 ifdef TARGET

@@ -51,6 +51,8 @@ name = "c2patool"
 
 [[package]]
 name = "c2pa-c-ffi"
+publish = false
+release = false
 
 [[package]]
 name = "export_schema"

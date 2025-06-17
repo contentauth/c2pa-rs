@@ -22,7 +22,7 @@ fn main() {
 
     // Get the workspace target directory.
     let out_dir = env::var("OUT_DIR").expect("OUT_DIR environment variable not set");
-    println!("Running c_api folder build script: {:?}", out_dir);
+    println!("Running c2pa_c_ffi folder build script: {:?}", out_dir);
 
     let workspace_target_dir = Path::new(&out_dir)
         .ancestors()
