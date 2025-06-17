@@ -14,6 +14,8 @@
 // #![deny(missing_docs)] (we'll turn this on once fully documented)
 
 use thiserror::Error;
+use std::string::FromUtf8Error;
+use zip::result::ZipError;
 
 use crate::crypto::{cose::CoseError, raw_signature::RawSignerError, time_stamp::TimeStampError};
 
@@ -386,5 +388,17 @@ impl From<Error> for TimeStampError {
     fn from(err: Error) -> Self {
         // See if better mappings exist, but I doubt it.
         Self::InternalError(err.to_string())
+    }
+}
+
+impl From<ZipError> for Error {
+    fn from(err: ZipError) -> Self {
+        Error::OtherError(Box::new(err))
+    }
+}
+
+impl From<FromUtf8Error> for Error {
+    fn from(err: FromUtf8Error) -> Self {
+        Error::OtherError(Box::new(err))
     }
 }
