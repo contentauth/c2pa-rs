@@ -812,6 +812,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "c2pa-c-ffi"
+version = "0.55.0"
+dependencies = [
+ "c2pa",
+ "cbindgen",
+ "scopeguard",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 1.0.69",
+ "tokio",
+ "zip",
+]
+
+[[package]]
 name = "c2pa_macros"
 version = "0.55.0"
 dependencies = [
@@ -846,21 +861,6 @@ dependencies = [
  "url",
  "wasi 0.14.2+wasi-0.2.4",
  "wstd",
-]
-
-[[package]]
-name = "c_api"
-version = "0.55.0"
-dependencies = [
- "c2pa",
- "cbindgen",
- "scopeguard",
- "serde",
- "serde_json",
- "tempfile",
- "thiserror 1.0.69",
- "tokio",
- "zip",
 ]
 
 [[package]]
