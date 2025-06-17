@@ -1,5 +1,5 @@
 [package]
-name = "c_api"
+name = "c2pa-c-ffi"
 version.workspace = true
 edition = "2021"
 authors = ["Gavin Peacock <gpeacock@adobe.com>"]

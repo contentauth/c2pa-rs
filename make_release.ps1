@@ -80,7 +80,7 @@ Write-Host "`nEnvironment setup complete. You can now run 'make release'."
 Write-Host "Building Rust project with msvc and clang toolchain ..."
 rustup update stable-$arch-pc-windows-msvc
 rustup target add $arch-pc-windows-msvc
-cargo build --target="$arch-pc-windows-msvc" -p c_api --release --no-default-features --features "rust_native_crypto, file_io"
+cargo build --target="$arch-pc-windows-msvc" -p c2pa-c-ffi --release --no-default-features --features "rust_native_crypto, file_io"
 
 
 # generate zip file with version and platform and add to artifacts folder
