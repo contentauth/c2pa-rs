@@ -716,6 +716,7 @@ dependencies = [
  "async-trait",
  "atree",
  "base64 0.22.1",
+ "base64ct",
  "bcder",
  "byteorder",
  "byteordered",
