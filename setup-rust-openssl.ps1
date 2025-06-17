@@ -135,7 +135,16 @@ try {
     Copy-Item "$ReleaseDir\c2pa.h" $includeDir -Force
     Copy-Item "$ReleaseDir\libc2pa_c.*" $libDir -Force
 
-    $zipPath = "$artifactsDir\c2pa-v$version-$Platform.zip"
+    # Add a delay to ensure files are fully written
+    Start-Sleep -Seconds 5
+
+    # Verify files exist before zipping
+    if (-not (Test-Path "$libDir\libc2pa_c.dll")) {
+        Write-Host "Error: libc2pa_c.dll not found in $libDir" -ForegroundColor Red
+        exit 1
+    }
+
+    $zipPath = "$artifactsDir\c2pa-v$version-$platform.zip"
     Compress-Archive -Path "$includeDir", "$libDir" -DestinationPath $zipPath -Force
 
     Write-Host "Zip file created: $zipPath"
