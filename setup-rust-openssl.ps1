@@ -144,10 +144,31 @@ try {
         exit 1
     }
 
+    # Check if DLL has content
+    $dllSize = (Get-Item "$libDir\libc2pa_c.dll").Length
+    if ($dllSize -eq 0) {
+        Write-Host "Error: libc2pa_c.dll is empty" -ForegroundColor Red
+        exit 1
+    }
+
     $zipPath = "$artifactsDir\c2pa-v$version-$platform.zip"
     Compress-Archive -Path "$includeDir", "$libDir" -DestinationPath $zipPath -Force
 
     Write-Host "Zip file created: $zipPath"
+
+    # Verify the zip file integrity
+    Write-Host "Verifying zip file integrity..."
+    try {
+        $testResult = Test-Archive -Path $zipPath
+        if (-not $testResult) {
+            Write-Host "Error: ZIP file verification failed" -ForegroundColor Red
+            exit 1
+        }
+        Write-Host "ZIP file verification passed"
+    } catch {
+        Write-Host "Error: Failed to verify ZIP file: $_" -ForegroundColor Red
+        exit 1
+    }
 
 } catch {
     Write-Host "Error: $_" -ForegroundColor Red
