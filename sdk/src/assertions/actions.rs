@@ -89,6 +89,63 @@ pub mod c2pa_action {
     pub const UNKNOWN: &str = "c2pa.unknown";
 }
 
+// IPTC Digital Source Type NewsCodes URLs
+// Based on http://cv.iptc.org/newscodes/digitalsourcetype
+
+// Active Digital Source Types
+pub mod source_type {
+    /// Digital capture sampled from real life (e.g. camera)
+    pub const DIGITAL_CAPTURE: &str =
+        "http://cv.iptc.org/newscodes/digitalsourcetype/digitalCapture";
+    /// Multi-frame computational capture sampled from real life
+    pub const COMPUTATIONAL_CAPTURE: &str =
+        "http://cv.iptc.org/newscodes/digitalsourcetype/computationalCapture";
+    /// Digitized from a transparent negative
+    pub const NEGATIVE_FILM: &str = "http://cv.iptc.org/newscodes/digitalsourcetype/negativeFilm";
+    /// Digitized from a transparent positive
+    pub const POSITIVE_FILM: &str = "http://cv.iptc.org/newscodes/digitalsourcetype/positiveFilm";
+    /// Digitized from a non-transparent medium (e.g. paper or photo)
+    pub const PRINT: &str = "http://cv.iptc.org/newscodes/digitalsourcetype/print";
+    /// Human-edited media
+    pub const HUMAN_EDITS: &str = "http://cv.iptc.org/newscodes/digitalsourcetype/humanEdits";
+    /// Edited using Generative AI
+    pub const COMPOSITE_WITH_TRAINED_ALGORITHMIC_MEDIA: &str =
+        "http://cv.iptc.org/newscodes/digitalsourcetype/compositeWithTrainedAlgorithmicMedia";
+    /// Modification or correction by algorithm without changing the main content of the media, initiated or configured by a human, such as sharpening or applying noise reduction
+    pub const ALGORITHMICALLY_ENHANCED: &str =
+        "http://cv.iptc.org/newscodes/digitalsourcetype/algorithmicallyEnhanced";
+    /// Media created by a human using non-generative tools
+    pub const DIGITAL_CREATION: &str =
+        "http://cv.iptc.org/newscodes/digitalsourcetype/digitalCreation";
+    /// Digital media representation of data via human programming or creativity
+    pub const DATA_DRIVEN_MEDIA: &str =
+        "http://cv.iptc.org/newscodes/digitalsourcetype/dataDrivenMedia";
+    /// Digital media created algorithmically using an Artificial Intelligence model trained on captured content
+    pub const TRAINED_ALGORITHMIC_MEDIA: &str =
+        "http://cv.iptc.org/newscodes/digitalsourcetype/trainedAlgorithmicMedia";
+    /// Media created purely by an algorithm not based on any sampled training data,
+    pub const ALGORITHMIC_MEDIA: &str =
+        "http://cv.iptc.org/newscodes/digitalsourcetype/algorithmicMedia";
+    /// A capture of the contents of the screen of a computer or mobile device
+    pub const SCREEN_CAPTURE: &str = "http://cv.iptc.org/newscodes/digitalsourcetype/screenCapture";
+    /// Live recording of virtual event based on Generative AI and/or captured elements
+    pub const VIRTUAL_RECORDING: &str =
+        "http://cv.iptc.org/newscodes/digitalsourcetype/virtualRecording";
+    /// Mix or composite of several elements, any of which may or may not be generative AI
+    pub const COMPOSITE: &str = "http://cv.iptc.org/newscodes/digitalsourcetype/composite";
+    /// Mix or composite of several elements that are all captures of real life
+    pub const COMPOSITE_CAPTURE: &str =
+        "http://cv.iptc.org/newscodes/digitalsourcetype/compositeCapture";
+    /// Mix or composite of several elements, at least one of which is Generative AI
+    pub const COMPOSITE_SYNTHETIC: &str =
+        "http://cv.iptc.org/newscodes/digitalsourcetype/compositeSynthetic";
+    /// Media whose digital content is effectively empty, such as a blank canvas or zero-length video.
+    pub const EMPTY: &str = "http://c2pa.org/digitalsourcetype/empty";
+    /// Like TRAINED_ALGORITHMIC_MEDIA but the result is a data format (e.g., CSV, pickle)
+    pub const TRAINED_ALGORITHMIC_DATA: &str =
+        "http://c2pa.org/digitalsourcetype/trainedAlgorithmicData";
+}
+
 pub static V2_DEPRECATED_ACTIONS: [&str; 7] = [
     "c2pa.copied",
     "c2pa.formatted",
