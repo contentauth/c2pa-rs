@@ -1,13 +1,18 @@
 use crate::{
-    asset_io::{AssetIO, CAIRead, CAIReadWrite, CAIReader, CAIWriter, HashObjectPositions},
+    asset_io::{AssetIO, CAIReadWrapper, CAIReadWriteWrapper, CAIRead, CAIReadWrite, CAIReader, CAIWriter, HashObjectPositions},
     error::{Error, Result},
 };
 
 use std::{
-    fs::File, io::{Cursor, Read, Write}, path::Path, str::from_utf8
+    fs::File, io::{self, Cursor, Read, Write, Seek}, path::Path, str::from_utf8
 };
 // use zip::ZipArchive;
-use zip::{write::{SimpleFileOptions}, ZipArchive, ZipWriter};
+use zip::{
+    result::{ZipError, ZipResult},
+    write::{SimpleFileOptions}, 
+    ZipArchive, 
+    ZipWriter
+};
 
 static SUPPORTED_TYPES: [&str; 6] = [
     "epub",
@@ -109,11 +114,7 @@ impl AssetIO for EpubIo {
         result
     }
 
-    // Stub implementations
-    // fn save_cai_store(&self, _asset_path: &Path, _store_bytes: &[u8]) -> Result<()> {
-    //     Ok(())
-    // }
-
+  
     fn save_cai_store(&self, _asset_path: &Path, _store_bytes: &[u8]) -> Result<()> {
         let cai_store_str = from_utf8(_store_bytes)?;
         let mut epub_data = Vec::new();
@@ -145,7 +146,9 @@ impl AssetIO for EpubIo {
             }
 
             // Add or replace c2pa.json
-            zip_writer.start_file("META-INF/c2pa.json", zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored))?;
+            zip_writer.start_file(
+                "META-INF/c2pa.json", 
+                zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored))?;
             zip_writer.write_all(cai_store_str.as_bytes())?;
 
             zip_writer.finish()?;
@@ -162,10 +165,6 @@ impl AssetIO for EpubIo {
         Ok(vec![])
     }
 
-    // fn remove_cai_store(&self, _asset_path: &Path) -> Result<()> {
-    //     Ok(())
-    // }
-
     fn remove_cai_store(&self, _asset_path: &Path) -> Result<()> {
         let mut epub_data = Vec::new();
         {
@@ -178,7 +177,11 @@ impl AssetIO for EpubIo {
 
         let mut new_epub_data = Vec::new();
         {
-            let mut zip_writer = ZipWriter::new(Cursor::new(&mut new_epub_data));
+            let mut zip_writer = ZipWriter::new(
+                Cursor::new(
+                    &mut new_epub_data
+                )
+            );
 
             // Copy all files except the c2pa.json
             for i in 0..zip.len() {
@@ -189,7 +192,9 @@ impl AssetIO for EpubIo {
                     continue;
                 }
 
-                let options = SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
+                let options = SimpleFileOptions::default().compression_method(
+                    zip::CompressionMethod::Stored
+                );
                 zip_writer.start_file(&name, options)?;
 
                 std::io::copy(&mut file, &mut zip_writer)?;
@@ -208,7 +213,25 @@ impl AssetIO for EpubIo {
 
 impl CAIReader for EpubIo {
     fn read_cai(&self, _reader: &mut dyn CAIRead) -> Result<Vec<u8>> {
-        Ok(vec![])
+        let mut reader = self
+            .reader(_reader)
+            .map_err(|_| Error::JumbfNotFound)?;
+
+
+        let mut index = None;
+        for path in CAI_STORE_PATHS.iter() {
+            if let Some(i) = reader.index_for_path(Path::new(path)) {
+                index = Some(i);
+                break;
+            }
+        }
+        let index = index.ok_or(Error::JumbfNotFound)?;
+        let mut file = reader.by_index(index).map_err(|_| Error::JumbfNotFound)?;
+
+        let mut bytes = Vec::new();
+        file.read_to_end(&mut bytes)?;
+
+        Ok(bytes)
     }
 
     fn read_xmp(&self, _reader: &mut dyn CAIRead) -> Option<String> {
@@ -217,16 +240,85 @@ impl CAIReader for EpubIo {
 }
 
 impl CAIWriter for EpubIo {
-    fn write_cai(&self, _reader: &mut dyn CAIRead, _writer: &mut dyn CAIReadWrite, _cai_data: &[u8]) -> Result<()> {
+    fn write_cai(
+        &self, 
+        _reader: &mut dyn CAIRead, 
+        _writer: &mut dyn CAIReadWrite, 
+        mut _cai_data: &[u8]
+    ) -> Result<()> {
+        let mut writer = self
+            .writer(_reader, _writer)
+            .map_err(|_| Error::EmbeddingError)?;
+
+        match writer.add_directory("META-INF", SimpleFileOptions::default()) {
+            Err(ZipError::InvalidArchive(msg)) if msg == "Duplicate filename: META-INF/" => {}
+            Err(_) => return Err(Error::EmbeddingError),
+            _ => {}
+        }
+
+        // Helper closure to start the file, retry once if duplicate
+        let start_manifest_file = |writer: &mut ZipWriter<CAIReadWriteWrapper>, path: &Path| -> std::result::Result<(), ZipError> {
+            match writer.start_file_from_path(
+                path,
+                SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored),
+            ) {
+                Err(ZipError::InvalidArchive(msg)) if msg.contains("Duplicate filename: META-INF/") =>  {
+                    println!("Duplicate filename detected, aborting file and retrying: {:?}", path);
+                    writer.abort_file()?;
+                    writer.start_file_from_path(
+                        path,
+                        SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored),
+                    )
+                }
+                res => res,
+            }
+        };
+        start_manifest_file(&mut writer, Path::new("META-INF/manifest.c2pa"))
+            .map_err(|_| Error::EmbeddingError)?;
+        
+        io::copy(&mut _cai_data, &mut writer)?;
+        writer.finish().map_err(|_| Error::EmbeddingError)?;
         Ok(())
     }
 
-    fn remove_cai_store_from_stream(&self, _reader: &mut dyn CAIRead, _writer: &mut dyn CAIReadWrite) -> Result<()> {
+    fn remove_cai_store_from_stream(
+        &self, 
+        _reader: &mut dyn CAIRead, 
+        _writer: &mut dyn CAIReadWrite
+    ) -> Result<()> {
         Ok(())
     }
 
-    fn get_object_locations_from_stream(&self, _input_stream: &mut dyn CAIRead) -> Result<Vec<HashObjectPositions>> {
+    fn get_object_locations_from_stream(
+        &self, 
+        _input_stream: &mut dyn CAIRead
+    ) -> Result<Vec<HashObjectPositions>> {
         Ok(vec![])
+    }
+}
+
+
+impl EpubIo {
+    fn reader<'a>(
+        &self,
+        input_stream: &'a mut dyn CAIRead,
+    ) -> ZipResult<ZipArchive<CAIReadWrapper<'a>>> {
+        ZipArchive::new(CAIReadWrapper {
+            reader: input_stream,
+        })
+    }
+
+    fn writer<'a>(
+        &self,
+        input_stream: &'a mut dyn CAIRead,
+        output_stream: &'a mut dyn CAIReadWrite,
+    ) -> ZipResult<ZipWriter<CAIReadWriteWrapper<'a>>> {
+        input_stream.rewind()?;
+        io::copy(input_stream, output_stream)?;
+
+        ZipWriter::new_append(CAIReadWriteWrapper {
+            reader_writer: output_stream,
+        })
     }
 }
 
@@ -236,6 +328,13 @@ mod tests {
 
     use super::*;
     use std::path::PathBuf;
+
+    const SAMPLES: [&[u8]; 1] = [
+        include_bytes!("../../tests/fixtures/sample.epub"),
+        // include_bytes!("../../tests/fixtures/sample_with_manifest.epub"),
+        // include_bytes!("../../tests/fixtures/sample1.docx"),
+        // include_bytes!("../../tests/fixtures/sample1.odt"),
+    ];
 
     fn get_sample_epub_path(path_str: &str) -> PathBuf {
         let manifest_dir = env!("CARGO_MANIFEST_DIR");
@@ -371,4 +470,100 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn test_read_bytes() -> Result<()> {
+        let epub_io = EpubIo::new("epub");
+        let epub_path = get_sample_epub_path("tests/fixtures/sample_with_manifest.epub");
+        let mut file = File::open(&epub_path)?;
+        let mut epub_data = Vec::new();
+        println!("File opened successfully, reading data");
+        file.read_to_end(&mut epub_data)?;
+        println!("Read {} bytes from EPUB file", epub_data.len());
+
+        let mut reader = Cursor::new(epub_data);
+        let mut cai_reader = CAIReadWrapper {
+            reader: &mut reader,
+        };
+
+        println!("Reading CAI store from real EPUB file");
+        let result = epub_io.read_cai(&mut cai_reader)?;
+        println!("   ✓ Successfully read {} bytes", result.len());
+        assert!(result.len() > 0, "CAI store should not be empty");
+        
+        println!("\n3. Verifying content");
+        let content = String::from_utf8(result)?;
+        println!("   - CAI store content:\n{}", content);
+        let has_signature = content.contains("test-signature");
+        let has_title = content.contains("Test CAI EPUB");
+        
+        println!("   - Test signature found: {}", if has_signature { "✓" } else { "✗" });
+        println!("   - Test title found: {}", if has_title { "✓" } else { "✗" });
+        
+        assert!(has_signature, "Test signature not found in CAI store");
+        assert!(has_title, "Test title not found in CAI store");
+        
+        println!("\n=== Test completed ===\n");
+        Ok(())
+    }
+
+    #[test]
+    fn test_write_bytes() -> Result<()> {
+        for sample in SAMPLES {
+            let mut stream = Cursor::new(sample);
+
+            let epub_io = EpubIo {};
+
+            assert!(matches!(
+                epub_io.read_cai(&mut stream),
+                Err(Error::JumbfNotFound)
+            ));
+
+            let mut output_stream = Cursor::new(Vec::with_capacity(sample.len() + 7));
+            let random_bytes = [1, 2, 3, 4, 3, 2, 1];
+            epub_io.write_cai(&mut stream, &mut output_stream, &random_bytes)?;
+
+            let data_written = epub_io.read_cai(&mut output_stream)?;
+            assert_eq!(data_written, random_bytes);
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_write_bytes_replace() -> Result<()> {
+        for sample in SAMPLES {
+            let mut stream = Cursor::new(sample);
+
+            let epub_io = EpubIo {};
+
+            assert!(matches!(
+                epub_io.read_cai(&mut stream),
+                Err(Error::JumbfNotFound)
+            ));
+
+            let mut output_stream1 = Cursor::new(Vec::with_capacity(sample.len() + 7));
+            let random_bytes = [1, 2, 3, 4, 3, 2, 1];
+            epub_io.write_cai(&mut stream, &mut output_stream1, &random_bytes)?;
+
+            let data_written = epub_io.read_cai(&mut output_stream1)?;
+            assert_eq!(data_written, random_bytes);
+
+            let mut output_stream2 = Cursor::new(Vec::with_capacity(sample.len() + 5));
+            let random_bytes = [3, 2, 1, 2, 3];
+            output_stream1.rewind()?;
+            epub_io.write_cai(&mut output_stream1, &mut output_stream2, &random_bytes)?;
+
+            output_stream2.rewind()?;
+            let data_written = epub_io.read_cai(&mut output_stream2)?;
+            println!("Data written: {:?}", data_written);
+            assert_eq!(data_written, random_bytes);
+
+            let mut bytes = Vec::new();
+            stream.rewind()?;
+            stream.read_to_end(&mut bytes)?;
+            assert_eq!(sample, bytes);
+        }
+
+        Ok(())
+    }
 }
