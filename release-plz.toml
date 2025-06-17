@@ -50,9 +50,7 @@ changelog_path = "./CHANGELOG.md"
 name = "c2patool"
 
 [[package]]
-name = "c_api"
-publish = false
-release = false
+name = "c2pa-c-ffi"
 
 [[package]]
 name = "export_schema"
