@@ -183,12 +183,13 @@ impl AssetIO for EpubIo {
                 )
             );
 
-            // Copy all files except the c2pa.json
+            // Copy all files except any CAI store files
             for i in 0..zip.len() {
                 let mut file = zip.by_index(i)?;
                 let name = file.name().to_string();
 
-                if name == "META-INF/c2pa.json" {
+                // Skip any file that matches one of the CAI store paths
+                if CAI_STORE_PATHS.iter().any(|&path| name == path) {
                     continue;
                 }
 
@@ -328,6 +329,7 @@ mod tests {
 
     use super::*;
     use std::path::PathBuf;
+    use std::fs;
 
     const SAMPLES: [&[u8]; 1] = [
         include_bytes!("../../tests/fixtures/sample.epub"),
@@ -343,6 +345,24 @@ mod tests {
         path
     }
 
+    fn create_temp_epub_copy(original_path: &Path) -> Result<PathBuf> {
+        let temp_dir = std::env::temp_dir();
+        let temp_file = temp_dir.join(format!("test_epub_{}.epub", std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()));
+        
+        // Read the entire file into memory first, then write to temp file
+        let mut original_file = File::open(original_path)?;
+        let mut file_data = Vec::new();
+        original_file.read_to_end(&mut file_data)?;
+        
+        let mut temp_file_handle = File::create(&temp_file)?;
+        temp_file_handle.write_all(&file_data)?;
+        temp_file_handle.flush()?;
+        
+        Ok(temp_file)
+    }
 
     #[test]
     fn test_read_cai_store_without_cai() -> Result<()> {
@@ -372,8 +392,7 @@ mod tests {
         println!("\n=== Test: EPUB with CAI store ===");
         
         println!("1. Creating test EPUB with CAI store");
-        let test_epub_path = get_sample_epub_path("tests/fixtures/sample_with_manifest.epub");
-        // let test_epub_path = get_sample_epub_path("tests/fixtures/sample_with_manifest_diff_ending.epub"); // manifest.c2pa
+        let test_epub_path = get_sample_epub_path("tests/fixtures/sample_with_manifest_diff_ending.epub");
         println!("   Path: {:?}", test_epub_path);
         
         println!("\n2. Reading CAI store");
@@ -402,8 +421,11 @@ mod tests {
         println!("\n=== Test: EPUB with CAI store ===");
         
         println!("1. Creating test EPUB with CAI store");
-        let test_epub_path = get_sample_epub_path("tests/fixtures/sample_with_manifest.epub");
-        println!("   Path: {:?}", test_epub_path);
+        let original_epub_path = get_sample_epub_path("tests/fixtures/sample_with_manifest_diff_ending.epub");
+        let test_epub_path = create_temp_epub_copy(&original_epub_path)?;
+        println!("   Original path: {:?}", original_epub_path);
+        println!("   Temp path: {:?}", test_epub_path);
+        
         println!("\n2. Reading CAI store");
         let epub_io = EpubIo::new("epub");
 
@@ -411,7 +433,6 @@ mod tests {
         println!("   ✓ Successfully read {} bytes", result.len());
         println!("\n3. Verifying content");
         let content = String::from_utf8(result)?;
-        // let content = "{\"claim_generator\":\"python_test/0.1\",\"title\":\"Test CAI EPUB\",\"format\":\"epub\",\"assertions\":[{\"label\":\"c2pa.training-mining\",\"data\":{\"entries\":{\"c2pa.ai_generative_training\":{\"use\":\"notAllowed\"},\"c2pa.ai_inference\":{\"use\":\"notAllowed\"},\"c2pa.ai_training\":{\"use\":\"notAllowed\"},\"c2pa.data_mining\":{\"use\":\"notAllowed\"}}}}],\"claim\":{\"signature\":\"test-signature\"}}";
         println!("   - CAI store content:\n{}", content);
 
         let mut test_content_json: Value = serde_json::from_str(&content).expect("Invalid JSON");
@@ -439,6 +460,9 @@ mod tests {
 
         println!("   - New CAI store content:\n{}", String::from_utf8(epub_io.read_cai_store(&test_epub_path)?)?);
         
+        // Clean up temp file
+        let _ = fs::remove_file(&test_epub_path);
+        
         println!("\n=== Test completed ===\n");
         Ok(())
     }
@@ -447,12 +471,14 @@ mod tests {
     fn test_remove_cai_store() -> Result<()> {
         println!("\n=== Test: Remove CAI store ===");
         
-        let test_epub_path = get_sample_epub_path("tests/fixtures/sample_with_manifest.epub");
-        println!("   Path: {:?}", test_epub_path);
+        let original_epub_path = get_sample_epub_path("tests/fixtures/sample_with_manifest_diff_ending.epub");
+        let test_epub_path = create_temp_epub_copy(&original_epub_path)?;
+        println!("   Original path: {:?}", original_epub_path);
+        println!("   Temp path: {:?}", test_epub_path);
+        
         let epub_io = EpubIo::new("epub");
         let result = epub_io.read_cai_store(&test_epub_path)?;
         let content = String::from_utf8(result)?;
-        // let content = "{\"claim_generator\":\"python_test/0.1\",\"title\":\"Test CAI EPUB\",\"format\":\"epub\",\"assertions\":[{\"label\":\"c2pa.training-mining\",\"data\":{\"entries\":{\"c2pa.ai_generative_training\":{\"use\":\"notAllowed\"},\"c2pa.ai_inference\":{\"use\":\"notAllowed\"},\"c2pa.ai_training\":{\"use\":\"notAllowed\"},\"c2pa.data_mining\":{\"use\":\"notAllowed\"}}}}],\"claim\":{\"signature\":\"test-signature\"}}";
         println!("   - CAI store content:\n{}", content);
 
         let _ = epub_io.remove_cai_store(&test_epub_path);
@@ -466,6 +492,9 @@ mod tests {
         }
         assert!(matches!(result_new, Err(Error::JumbfNotFound)));
 
+        // Clean up temp file
+        let _ = fs::remove_file(&test_epub_path);
+
         println!("\n=== Test completed ===\n");
         Ok(())
     }
@@ -473,7 +502,7 @@ mod tests {
     #[test]
     fn test_read_bytes() -> Result<()> {
         let epub_io = EpubIo::new("epub");
-        let epub_path = get_sample_epub_path("tests/fixtures/sample_with_manifest.epub");
+        let epub_path = get_sample_epub_path("tests/fixtures/sample_with_manifest_diff_ending.epub");
         let mut file = File::open(&epub_path)?;
         let mut epub_data = Vec::new();
         println!("File opened successfully, reading data");
