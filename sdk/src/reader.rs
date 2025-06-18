@@ -40,7 +40,7 @@ use crate::{
     manifest_store_report::ManifestStoreReport,
     settings::get_settings_value,
     status_tracker::StatusTracker,
-    store::{ManifestSource, Store},
+    store::Store,
     validation_results::{ValidationResults, ValidationState},
     validation_status::ValidationStatus,
     Manifest, ManifestAssertion,
@@ -260,7 +260,7 @@ impl Reader {
         mut fragment: impl Read + Seek + Send,
     ) -> Result<Self> {
         let mut validation_log = StatusTracker::default();
-        let manifest_bytes = Store::load_jumbf_from_stream(format, &mut stream)?.into_bytes();
+        let manifest_bytes = Store::load_jumbf_from_stream(format, &mut stream)?.0;
         let store = Store::from_jumbf(&manifest_bytes, &mut validation_log)?;
 
         let verify = get_settings_value::<bool>("verify.verify_after_reading")?; // defaults to true
@@ -417,9 +417,14 @@ impl Reader {
         }
     }
 
-    /// Get the source of the manifest loaded into this [`Reader`].
-    pub fn manifest_source(&self) -> ManifestSource {
-        self.store.source()
+    /// Returns the remote url of the manifest if this [`Reader`] obtained the manifest remotely.
+    pub fn remote_url(&self) -> Option<&str> {
+        self.store.remote_url()
+    }
+
+    /// Returns if the [`Reader`] was created from an embedded manifest.
+    pub fn is_embedded(&self) -> bool {
+        self.store.is_embedded()
     }
 
     /// Get the [`ValidationStatus`] array of the manifest store if it exists.
@@ -869,32 +874,20 @@ pub mod tests {
     const IMAGE_WITH_REMOTE_MANIFEST: &[u8] = include_bytes!("../tests/fixtures/cloud.jpg");
 
     #[test]
-    fn test_reader_manifest_source_embedded() -> Result<()> {
-        let source =
-            Reader::from_stream("image/jpeg", Cursor::new(IMAGE_WITH_MANIFEST))?.manifest_source();
-        assert_eq!(source, ManifestSource::Embedded);
+    fn test_reader_embedded() -> Result<()> {
+        let reader = Reader::from_stream("image/jpeg", Cursor::new(IMAGE_WITH_MANIFEST))?;
+        assert_eq!(reader.remote_url(), None);
+        assert_eq!(reader.is_embedded(), true);
 
         Ok(())
     }
 
     #[test]
-    fn test_reader_manifest_source_remote() -> Result<()> {
-        let source = Reader::from_stream("image/jpeg", Cursor::new(IMAGE_WITH_REMOTE_MANIFEST))?
-            .manifest_source();
-        assert_eq!(source, ManifestSource::Remote);
-
-        Ok(())
-    }
-
-    #[test]
-    fn test_reader_manifest_source_sidecar() -> Result<()> {
-        let source = Reader::from_manifest_data_and_stream(
-            include_bytes!("../tests/fixtures/cloud_manifest.c2pa"),
-            "image/jpeg",
-            Cursor::new(IMAGE_WITH_REMOTE_MANIFEST),
-        )?
-        .manifest_source();
-        assert_eq!(source, ManifestSource::Sidecar);
+    fn test_reader_remote_url() -> Result<()> {
+        let reader = Reader::from_stream("image/jpeg", Cursor::new(IMAGE_WITH_REMOTE_MANIFEST))?;
+        let remote_url = reader.remote_url();
+        assert_eq!(remote_url, Some("https://cai-manifests.adobe.com/manifests/adobe-urn-uuid-5f37e182-3687-462e-a7fb-573462780391"));
+        assert_eq!(reader.is_embedded(), false);
 
         Ok(())
     }

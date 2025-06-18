@@ -146,7 +146,6 @@ pub use resource_store::{ResourceRef, ResourceStore};
 #[cfg(feature = "v1_api")]
 pub use signer::RemoteSigner;
 pub use signer::{AsyncSigner, Signer};
-pub use store::ManifestSource;
 pub use utils::mime::format_from_path;
 pub use validation_results::{ValidationResults, ValidationState};
 

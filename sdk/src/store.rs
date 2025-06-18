@@ -115,7 +115,8 @@ pub struct Store {
     label: String,
     provenance_path: Option<String>,
     ctp: CertificateTrustPolicy,
-    source: ManifestSource,
+    remote_url: Option<String>,
+    embedded: bool,
 }
 
 struct ManifestInfo<'a> {
@@ -146,7 +147,8 @@ impl Store {
             label: label.to_string(),
             ctp: CertificateTrustPolicy::default(),
             provenance_path: None,
-            source: ManifestSource::Sidecar,
+            remote_url: None,
+            embedded: false,
         };
 
         // load the trust handler settings, don't worry about status as these are checked during setting generation
@@ -183,9 +185,14 @@ impl Store {
         &self.label
     }
 
-    /// Return source of the manifest loaded into this [`Store`].
-    pub fn source(&self) -> ManifestSource {
-        self.source
+    /// Returns the remote url of the manifest if this [`Store`] was obtained remotely.
+    pub fn remote_url(&self) -> Option<&str> {
+        self.remote_url.as_deref()
+    }
+
+    /// Returns if the [`Store`] was created from an embedded manifest.
+    pub fn is_embedded(&self) -> bool {
+        self.embedded
     }
 
     /// Load set of trust anchors used for certificate validation. [u8] containing the
@@ -3748,7 +3755,7 @@ impl Store {
     ) -> Result<Store> {
         let mut input_stream = Cursor::new(data);
         Store::load_jumbf_from_stream(asset_type, &mut input_stream)
-            .map(|manifest_bytes| Store::from_jumbf(&manifest_bytes.into_bytes(), validation_log))?
+            .map(|(manifest_bytes, _)| Store::from_jumbf(&manifest_bytes, validation_log))?
     }
 
     /// load jumbf with manifest location given a stream
@@ -3757,21 +3764,22 @@ impl Store {
     ///
     /// asset_type -  mime type of the stream
     /// stream - a readable stream of an asset
+    ///
+    /// Returns a tuple (jumbf_bytes, remote_url), returning a remote_url only
+    /// if it was used to fetch the jumbf_bytes.
     pub fn load_jumbf_from_stream(
         asset_type: &str,
         stream: &mut dyn CAIRead,
-    ) -> Result<ManifestDataSource> {
+    ) -> Result<(Vec<u8>, Option<String>)> {
         match load_jumbf_from_stream(asset_type, stream) {
-            Ok(manifest_bytes) => Ok(ManifestDataSource::Embedded(manifest_bytes)),
+            Ok(manifest_bytes) => Ok((manifest_bytes, None)),
             Err(Error::JumbfNotFound) => {
                 stream.rewind()?;
                 if let Some(ext_ref) =
                     crate::utils::xmp_inmemory_utils::XmpInfo::from_source(stream, asset_type)
                         .provenance
                 {
-                    Ok(ManifestDataSource::Remote(Store::handle_remote_manifest(
-                        &ext_ref,
-                    )?))
+                    Ok((Store::handle_remote_manifest(&ext_ref)?, Some(ext_ref)))
                 } else {
                     Err(Error::JumbfNotFound)
                 }
@@ -3912,11 +3920,11 @@ impl Store {
         verify: bool,
         validation_log: &mut StatusTracker,
     ) -> Result<Self> {
-        let location_data = Store::load_jumbf_from_stream(format, &mut stream)?;
+        let (manifest_bytes, remote_url) = Store::load_jumbf_from_stream(format, &mut stream)?;
 
         let store = if _sync {
             Self::from_manifest_data_and_stream(
-                location_data.as_bytes(),
+                &manifest_bytes,
                 format,
                 &mut stream,
                 verify,
@@ -3924,7 +3932,7 @@ impl Store {
             )
         } else {
             Self::from_manifest_data_and_stream_async(
-                location_data.as_bytes(),
+                &manifest_bytes,
                 format,
                 &mut stream,
                 verify,
@@ -3934,7 +3942,8 @@ impl Store {
         };
 
         let mut store = store?;
-        store.source = location_data.manifest_source();
+        if remote_url.is_none() {}
+        store.remote_url = remote_url;
 
         Ok(store)
     }
@@ -4065,7 +4074,7 @@ impl Store {
         mut fragment: impl Read + Seek + Send,
         validation_log: &mut StatusTracker,
     ) -> Result<Store> {
-        let manifest_bytes = Store::load_jumbf_from_stream(format, &mut stream)?.into_bytes();
+        let manifest_bytes = Store::load_jumbf_from_stream(format, &mut stream)?.0;
         let store = Store::from_jumbf(&manifest_bytes, validation_log)?;
 
         let verify = get_settings_value::<bool>("verify.verify_after_reading")?; // defaults to true
@@ -4518,49 +4527,6 @@ impl std::fmt::Display for Store {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let report = &ManifestStoreReport::from_store(self).unwrap_or_default();
         f.write_str(&format!("{}", &report))
-    }
-}
-
-/// The source of the loaded manifest.
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
-pub enum ManifestSource {
-    /// The manifest is embedded in the asset.
-    Embedded,
-    /// The manifest is stored remotely.
-    Remote,
-    /// The manifest is stored separately from the asset.
-    ///
-    /// This variant occurs when the manifest bytes are passed explicitly such
-    /// as in the case of [Reader::from_manifest_data_and_stream].
-    Sidecar,
-}
-
-#[derive(Debug, Clone)]
-pub enum ManifestDataSource {
-    Embedded(Vec<u8>),
-    Remote(Vec<u8>),
-}
-
-impl ManifestDataSource {
-    pub fn manifest_source(&self) -> ManifestSource {
-        match self {
-            ManifestDataSource::Embedded(_) => ManifestSource::Embedded,
-            ManifestDataSource::Remote(_) => ManifestSource::Remote,
-        }
-    }
-
-    pub fn as_bytes(&self) -> &[u8] {
-        match self {
-            ManifestDataSource::Embedded(bytes) => bytes,
-            ManifestDataSource::Remote(bytes) => bytes,
-        }
-    }
-
-    pub fn into_bytes(self) -> Vec<u8> {
-        match self {
-            ManifestDataSource::Embedded(bytes) => bytes,
-            ManifestDataSource::Remote(bytes) => bytes,
-        }
     }
 }
 
