@@ -113,7 +113,6 @@ mod integration_v2 {
                 "data": {
                     "alg": "phash",
                     "pad": [0],
-                    "url": "http://example.c2pa.org/media.mp4",
                     "blocks": [
                         {
                             "scope": {

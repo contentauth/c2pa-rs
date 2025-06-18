@@ -155,9 +155,12 @@ pub mod tests {
             ]
         });
 
-        let original: SoftBinding = serde_json::from_value(json).unwrap();
+        let mut original: SoftBinding = serde_json::from_value(json).unwrap();
         let assertion = original.to_assertion().unwrap();
         let result = SoftBinding::from_assertion(&assertion).unwrap();
+
+        // Deprecated fields shouldn't be serialized.
+        original.url = None;
 
         assert_eq!(result, original);
     }
