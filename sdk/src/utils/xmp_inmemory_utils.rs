@@ -96,7 +96,9 @@ fn add_xmp_key(xmp: &str, key: &str, value: &str) -> Result<String> {
     let orig_length = xmp.len();
 
     // Minimal padding should be 2 KB to 4 KB. This is used if no XMP packet end is found.
-    let mut target_length = orig_length.min(4096);
+    // If no packet end is found and the original length is less than 4096, the packet will be
+    // extended.
+    let mut target_length = orig_length.max(4096);
     // Remove the ending xpacket if present for easier manipulation
     let xpacket_end = "<?xpacket end";
     let xpacket_end_length = XMP_END.len();
