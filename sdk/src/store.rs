@@ -6780,9 +6780,8 @@ pub mod tests {
 
         output_stream.set_position(0);
 
-        let manifest_bytes = Store::load_jumbf_from_stream("video/mp4", &mut input_stream)
-            .unwrap()
-            .into_bytes();
+        let (manifest_bytes, _) =
+            Store::load_jumbf_from_stream("video/mp4", &mut input_stream).unwrap();
 
         let _new_store = {
             Store::from_manifest_data_and_stream(
