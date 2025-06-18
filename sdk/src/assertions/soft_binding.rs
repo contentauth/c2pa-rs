@@ -35,14 +35,6 @@ pub struct SoftBinding {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub alg_params: Option<String>,
 
-    /// A file or http(s) URL to where the bytes that are being hashed lived.
-    ///
-    /// This is useful for cases where the data lives in a different file chunk or side-car
-    /// than the claim.
-    #[deprecated]
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub url: Option<UriT>,
-
     /// Zero-filled bytes used for filling up space.
     #[serde(with = "serde_bytes")]
     pub pad: Vec<u8>,
@@ -50,6 +42,20 @@ pub struct SoftBinding {
     /// Zero-filled bytes used for filling up space.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pad2: Option<serde_bytes::ByteBuf>,
+
+    #[serde(skip_serializing)]
+    url: Option<UriT>,
+}
+
+impl SoftBinding {
+    /// A file or http(s) URL to where the bytes that are being hashed lived.
+    ///
+    /// This is useful for cases where the data lives in a different file chunk or side-car
+    /// than the claim.
+    #[deprecated]
+    pub fn url(&self) -> Option<&UriT> {
+        self.url.as_ref()
+    }
 }
 
 /// Details about the soft binding, including the referenced value and scope.
@@ -65,11 +71,6 @@ pub struct SoftBindingBlockMap {
 /// Soft binding scope, specifying specifically where in an asset the soft binding is applicable.
 #[derive(Serialize, Deserialize, Debug, PartialEq)]
 pub struct SoftBindingScopeMap {
-    /// In algorithm specific format, the part of the digital content over which the soft binding value has been computed.
-    #[deprecated]
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub extent: Option<String>,
-
     /// For temporal assets, the timespan in which the soft binding is applicable.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub timespan: Option<SoftBindingTimespanMap>,
@@ -77,6 +78,17 @@ pub struct SoftBindingScopeMap {
     /// Region of interest in regard to the soft binding.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub region: Option<RegionOfInterest>,
+
+    #[serde(skip_serializing)]
+    extent: Option<String>,
+}
+
+impl SoftBindingScopeMap {
+    /// In algorithm specific format, the part of the digital content over which the soft binding value has been computed.
+    #[deprecated]
+    pub fn extent(&self) -> Option<&str> {
+        self.extent.as_deref()
+    }
 }
 
 /// Soft binding timespan for temporal assets.
