@@ -61,6 +61,11 @@ publish = false
 release = false
 
 [[package]]
+name = "macros"
+publish = false
+release = false
+
+[[package]]
 name = "make_test_images"
 publish = false
 release = false
