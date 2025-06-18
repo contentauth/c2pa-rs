@@ -23,6 +23,7 @@ use quick_xml::{
 use crate::{asset_io::CAIRead, jumbf_io::get_cailoader_handler, Error, Result};
 
 const RDF_DESCRIPTION: &[u8] = b"rdf:Description";
+const XMP_END: &[u8] = b"<?xpacket end=\"w\"?>";
 
 pub const MIN_XMP: &str = r#"<?xpacket begin="" id="W5M0MpCehiHzreSzNTczkc9d"?><x:xmpmeta xmlns:x="adobe:ns:meta/" x:xmptk="XMP Core 6.0.0"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"><rdf:Description rdf:about=""  xmlns:xmp="http://ns.adobe.com/xap/1.0/" xmlns:xmpMM="http://ns.adobe.com/xap/1.0/mm/" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:dcterms="http://purl.org/dc/terms/" xmpMM:DocumentID="xmp.did:cb9f5498-bb58-4572-8043-8c369e6bfb9b" xmpMM:InstanceID="xmp.iid:cb9f5498-bb58-4572-8043-8c369e6bfb9b"> </rdf:Description></rdf:RDF></x:xmpmeta><?xpacket end="w"?>"#;
 
@@ -94,16 +95,14 @@ fn extract_xmp_key(xmp: &str, key: &str) -> Option<String> {
 fn add_xmp_key(xmp: &str, key: &str, value: &str) -> Result<String> {
     let orig_length = xmp.len();
 
-    // Minimal padding should be 2 KB to 4 KB. This is used if no XMP packet is found.
-    let mut target_length = 4096;
-    // Remove trailing xpacket if present for easier manipulation
-    let xpacket_end_single = "<?xpacket end='w'?>";
-    let xpacket_end_double = "<?xpacket end=\"w\"?>";
-    let xmp_body = if let Some(pos) = xmp.rfind(xpacket_end_single) {
-        target_length = orig_length - xpacket_end_single.len();
-        xmp[..pos].trim_end()
-    } else if let Some(pos) = xmp.rfind(xpacket_end_double) {
-        target_length = orig_length - xpacket_end_double.len();
+    // Minimal padding should be 2 KB to 4 KB. This is used if no XMP packet end is found.
+    let mut target_length = orig_length.min(4096);
+    // Remove the ending xpacket if present for easier manipulation
+    let xpacket_end = "<?xpacket end";
+    let xpacket_end_length = XMP_END.len();
+    let xmp_body = if let Some(pos) = xmp.rfind(xpacket_end) {
+        println!("position {pos}");
+        target_length = orig_length - xpacket_end_length;
         xmp[..pos].trim_end()
     } else {
         xmp
@@ -198,6 +197,7 @@ fn add_xmp_key(xmp: &str, key: &str, value: &str) -> Result<String> {
             }
         }
     }
+    // Maintain XMP packet length with padding if possible.
     let padding_length = target_length.saturating_sub(writer.get_ref().get_ref().len());
     write_xmp_padding(&mut writer.get_mut(), padding_length)?;
     let result = writer.into_inner().into_inner();
@@ -247,7 +247,7 @@ fn write_xmp_padding<W: std::io::Write>(writer: &mut W, len: usize) -> std::io::
         }
         writer.write_all(b"\n")?;
     }
-    writer.write_all(b"<?xpacket end=\"w\"?>")?;
+    writer.write_all(XMP_END)?;
     Ok(())
 }
 
@@ -325,7 +325,7 @@ mod tests {
     )]
     #[cfg_attr(target_os = "wasi", wstd::test)]
     async fn test_broken_xmp_read_write_stream() {
-        let source_bytes = include_bytes!("../../tests/fixtures/broken.jpg");
+        let source_bytes = include_bytes!("../../tests/fixtures/IMG_0003.jpg");
         let test_msg = "https://cai-manifests-stage.adobe.com/manifests/urn-c2pa-0ab6e8b8-5c28-4ef1-8f58-86c21f0349bf-adobe";
 
         let handler = JpegIO::new("");
