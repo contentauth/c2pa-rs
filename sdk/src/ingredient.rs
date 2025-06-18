@@ -931,7 +931,6 @@ impl Ingredient {
         // retrieve the manifest bytes from embedded, sidecar or remote and convert to store if found
         let (result, manifest_bytes) = match Store::load_jumbf_from_stream(format, stream) {
             Ok((manifest_bytes, _)) => {
-                let manifest_bytes = manifest_bytes;
                 (
                     // generate a store from the buffer and then validate from the asset path
                     match Store::from_jumbf(&manifest_bytes, &mut validation_log) {
