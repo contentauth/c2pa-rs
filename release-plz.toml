@@ -53,9 +53,15 @@ name = "c2patool"
 [[package]]
 name = "c2pa-c-ffi"
 version_group = "c2pa-rs"
+publish_features = ["rust_native_crypto"]
 
 [[package]]
 name = "export_schema"
+publish = false
+release = false
+
+[[package]]
+name = "macros"
 publish = false
 release = false
 

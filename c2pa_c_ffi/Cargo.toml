@@ -18,7 +18,6 @@ name = "c2pa_c"
 crate-type = ["cdylib", "staticlib"]
 
 [features]
-default = ["rust_native_crypto"]
 file_io = ["c2pa/file_io"]
 rust_native_crypto = ["c2pa/rust_native_crypto"]
 
