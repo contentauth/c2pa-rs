@@ -75,7 +75,8 @@ pub struct SoftBindingScopeMap {
     pub timespan: Option<SoftBindingTimespanMap>,
 
     /// Region of interest in regard to the soft binding.
-    pub region: RegionOfInterest,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub region: Option<RegionOfInterest>,
 }
 
 /// Soft binding timespan for temporal assets.
@@ -106,3 +107,43 @@ impl AssertionBase for SoftBinding {
 }
 
 impl AssertionCbor for SoftBinding {}
+
+#[cfg(test)]
+pub mod tests {
+    use super::*;
+
+    #[test]
+    fn test_json_round_trip() {
+        let json = serde_json::json!({
+            "alg": "phash",
+            "pad": [0],
+            "url": "http://example.c2pa.org/media.mp4",
+            "blocks": [
+                {
+                    "scope": {
+                        "timespan": {
+                            "end": 133016,
+                            "start": 0,
+                        }
+                    },
+                    "value": "dmFsdWUxCg=="
+                },
+                {
+                    "scope": {
+                        "timespan": {
+                            "end": 245009,
+                            "start": 133017,
+                        }
+                    },
+                    "value": "ZG1Gc2RXVXlDZz09=="
+                }
+            ]
+        });
+
+        let original: SoftBinding = serde_json::from_value(json).unwrap();
+        let assertion = original.to_assertion().unwrap();
+        let result = SoftBinding::from_assertion(&assertion).unwrap();
+
+        assert_eq!(result, original);
+    }
+}
