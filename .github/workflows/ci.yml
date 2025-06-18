@@ -631,4 +631,4 @@ jobs:
 
       - name: Build C library for mobile target
         run: make release TARGET=${{ matrix.target }}
-        working-directory: ./c_api
+        working-directory: ./c2pa_c_ffi
