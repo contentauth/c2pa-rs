@@ -3942,8 +3942,11 @@ impl Store {
         };
 
         let mut store = store?;
-        if remote_url.is_none() {}
-        store.remote_url = remote_url;
+        if remote_url.is_none() {
+            store.embedded = true;
+        } else {
+            store.remote_url = remote_url;
+        }
 
         Ok(store)
     }

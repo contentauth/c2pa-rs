@@ -622,7 +622,7 @@ pub unsafe extern "C" fn c2pa_reader_remote_url(reader_ptr: *mut C2paReader) -> 
 /// # Safety
 /// reader_ptr must be a valid pointer to a C2paReader.
 #[no_mangle]
-pub unsafe extern "C" fn c2pa_reader_embedded(reader_ptr: *mut C2paReader) -> bool {
+pub unsafe extern "C" fn c2pa_reader_is_embedded(reader_ptr: *mut C2paReader) -> bool {
     null_check!((reader_ptr), |ptr| ptr, false);
     let c2pa_reader = guard_boxed!(reader_ptr);
 

@@ -877,7 +877,7 @@ pub mod tests {
     fn test_reader_embedded() -> Result<()> {
         let reader = Reader::from_stream("image/jpeg", Cursor::new(IMAGE_WITH_MANIFEST))?;
         assert_eq!(reader.remote_url(), None);
-        assert_eq!(reader.is_embedded(), true);
+        assert!(reader.is_embedded());
 
         Ok(())
     }
@@ -887,7 +887,7 @@ pub mod tests {
         let reader = Reader::from_stream("image/jpeg", Cursor::new(IMAGE_WITH_REMOTE_MANIFEST))?;
         let remote_url = reader.remote_url();
         assert_eq!(remote_url, Some("https://cai-manifests.adobe.com/manifests/adobe-urn-uuid-5f37e182-3687-462e-a7fb-573462780391"));
-        assert_eq!(reader.is_embedded(), false);
+        assert!(!reader.is_embedded());
 
         Ok(())
     }
