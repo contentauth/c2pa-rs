@@ -128,6 +128,7 @@ pub use claim_generator_info::ClaimGeneratorInfo;
 // pub use dynamic_assertion::{
 //     AsyncDynamicAssertion, DynamicAssertion, DynamicAssertionContent, PartialClaim,
 // };
+pub use crypto::raw_signature::SigningAlg;
 pub use error::{Error, Result};
 pub use external_manifest::ManifestPatchCallback;
 pub use hash_utils::{hash_stream_by_alg, HashRange};
@@ -148,8 +149,6 @@ pub use signer::RemoteSigner;
 pub use signer::{AsyncSigner, Signer};
 pub use utils::mime::format_from_path;
 pub use validation_results::{ValidationResults, ValidationState};
-
-pub use crate::crypto::raw_signature::SigningAlg;
 
 // Internal modules
 pub(crate) mod assertion;
