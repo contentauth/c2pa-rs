@@ -991,4 +991,102 @@ pub mod tests {
         //Err(Error::NotImplemented("foo".to_string()))
         Ok(())
     }
+
+    #[test]
+    fn test_reader_from_json() {
+        let reader =
+            Reader::from_stream("image/jpeg", std::io::Cursor::new(IMAGE_WITH_MANIFEST)).unwrap();
+        let json_str = reader.json();
+
+        let reader_from_json = Reader::from_json(&json_str).unwrap();
+        assert_eq!(reader_from_json.manifests().len(), reader.manifests().len());
+        assert_eq!(reader_from_json.active_label(), reader.active_label());
+    }
+
+    #[test]
+    fn test_reader_from_json_invalid() {
+        let result = Reader::from_json("invalid json");
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), Error::JsonError(_)));
+    }
+
+    #[test]
+    fn test_reader_manifest_helper() {
+        let reader =
+            Reader::from_stream("image/jpeg", std::io::Cursor::new(IMAGE_COMPLEX_MANIFEST))
+                .unwrap();
+
+        let manifest_count = reader.iter_manifests().count();
+        assert_eq!(manifest_count, 3);
+
+        let manifests_map = reader.manifests();
+        assert_eq!(manifests_map.len(), 3);
+
+        // Test get_manifest with valid label
+        if let Some(active_label) = reader.active_label() {
+            assert_eq!(
+                active_label,
+                "contentauth:urn:uuid:a335af65-30be-42be-95a7-ac576ff692cc"
+            );
+            let manifest = reader.get_manifest(active_label);
+            assert!(manifest.is_some());
+        }
+
+        // Test get_manifest with invalid label
+        let invalid_manifest = reader.get_manifest("non_existent_label");
+        assert!(invalid_manifest.is_none());
+    }
+
+    #[test]
+    fn test_reader_active_manifest() {
+        let reader =
+            Reader::from_stream("image/jpeg", std::io::Cursor::new(IMAGE_WITH_MANIFEST)).unwrap();
+
+        // Test active_manifest
+        let active_manifest = reader.active_manifest();
+        assert!(active_manifest.is_some());
+
+        let active_label = reader.active_label();
+        assert!(active_label.is_some());
+
+        // Verify consistency between active_manifest and active_label
+        if let (Some(manifest), Some(label)) = (active_manifest, active_label) {
+            assert_eq!(manifest.label().unwrap(), label);
+        }
+    }
+
+    #[test]
+    fn test_reader_nonexistent_resource_to_stream() {
+        let reader =
+            Reader::from_stream("image/jpeg", std::io::Cursor::new(IMAGE_WITH_MANIFEST)).unwrap();
+
+        // Test with non-existent resource URI
+        let stream = std::io::Cursor::new(Vec::new());
+        let result = reader.resource_to_stream("non_existent_resource", stream);
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), Error::ResourceNotFound(_)));
+    }
+
+    #[test]
+    fn test_reader_empty() {
+        let reader = Reader::default();
+
+        assert!(reader.active_manifest().is_none());
+        assert!(reader.active_label().is_none());
+        assert!(reader.manifests().is_empty());
+        assert_eq!(reader.iter_manifests().count(), 0);
+        assert!(reader.validation_status().is_none());
+    }
+
+    #[test]
+    #[cfg(feature = "file_io")]
+    fn test_reader_from_file_with_sidecar() {
+        // Test that image with no manifest, but has sidecar, does not return an Error
+        let result = Reader::from_file("tests/fixtures/cloud_manifest.jpg");
+        assert!(result.is_ok());
+        let manifest_store = result.unwrap();
+        assert!(manifest_store.active_manifest().is_some());
+        let manifest = manifest_store.active_manifest().unwrap();
+        assert_eq!(manifest.title().unwrap(), "My Title");
+    }
 }

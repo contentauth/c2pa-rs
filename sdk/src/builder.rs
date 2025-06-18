@@ -1296,6 +1296,7 @@ mod tests {
 
     fn simple_manifest() -> String {
         json!({
+            "title": "simple_manifest",
             "claim_generator_info": [
                 {
                     "name": "c2pa_test",
@@ -2192,5 +2193,338 @@ mod tests {
         assert!(mime_types.contains(&"image/avif".to_string()));
         assert!(mime_types.contains(&"image/heic".to_string()));
         assert!(mime_types.contains(&"image/heif".to_string()));
+    }
+
+    #[test]
+    fn test_set_claim_generator_info() {
+        let mut builder = Builder::new();
+        let mut claim_generator_info = ClaimGeneratorInfo::new("Test");
+        claim_generator_info.insert("Foo", "Bar");
+        builder.set_claim_generator_info(claim_generator_info);
+
+        let claim_generator_info = &builder.definition.claim_generator_info.first().unwrap();
+        assert_eq!(claim_generator_info.name, "Test");
+        assert_eq!(claim_generator_info.get("Foo").unwrap(), "Bar");
+    }
+
+    #[test]
+    fn test_add_duplicate_resource() {
+        let mut builder = Builder::new();
+        let _ = builder.add_resource("unknown", Cursor::new(b"12345"));
+        let result = builder.add_resource("unknown", Cursor::new(b"12345"));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_sign_multiple() {
+        let mut builder = Builder::from_json(&simple_manifest()).unwrap();
+        let format = "image/jpeg";
+
+        let mut source = Cursor::new(TEST_IMAGE);
+        let mut source2 = Cursor::new(TEST_IMAGE_CLEAN);
+        let mut dest = Cursor::new(Vec::new());
+        let mut dest2 = Cursor::new(Vec::new());
+
+        let signer = test_signer(SigningAlg::Ps256);
+
+        builder
+            .sign(&signer, format, &mut source, &mut dest)
+            .unwrap();
+        builder
+            .sign(&signer, format, &mut source2, &mut dest2)
+            .unwrap();
+
+        let manifest_store = Reader::from_stream(format, &mut dest).expect("from_bytes");
+        println!("{}", manifest_store);
+        assert_ne!(manifest_store.validation_state(), ValidationState::Invalid);
+        assert!(manifest_store.active_manifest().is_some());
+        let manifest = manifest_store.active_manifest().unwrap();
+        let claim_generator_info = manifest.claim_generator().unwrap();
+        assert_eq!(claim_generator_info, "c2pa_test/1.0.0");
+
+        let manifest_store = Reader::from_stream(format, &mut dest2).expect("from_bytes");
+        assert_ne!(manifest_store.validation_state(), ValidationState::Invalid);
+        let manifest = manifest_store.active_manifest().unwrap();
+        let claim_generator_info = manifest.claim_generator().unwrap();
+        assert_eq!(claim_generator_info, "c2pa_test/1.0.0");
+    }
+
+    #[test]
+    fn test_builder_error_handling() {
+        // Test invalid JSON
+        let invalid_json = r#"{"invalid": json"#;
+        let result = Builder::from_json(invalid_json);
+        assert!(result.is_err());
+
+        // Test empty JSON
+        let empty_json = "{}";
+        let builder = Builder::from_json(empty_json).unwrap();
+        assert!(!builder.definition.claim_generator_info.is_empty()); // Should have default
+    }
+
+    #[test]
+    fn test_empty_builders() {
+        let mut builder = Builder::new();
+
+        builder.definition.ingredients = Vec::new();
+        builder.definition.assertions = Vec::new();
+
+        assert_eq!(builder.definition.ingredients.len(), 0);
+        assert_eq!(builder.definition.assertions.len(), 0);
+    }
+
+    #[test]
+    fn test_multiple_assertion_types() {
+        use crate::assertions::CreativeWork;
+
+        let mut builder = Builder::from_json(&simple_manifest()).unwrap();
+
+        let creative_work = CreativeWork::new();
+        builder
+            .add_assertion(CreativeWork::LABEL, &creative_work)
+            .unwrap();
+
+        // Add custom CBOR assertion
+        let custom_cbor = serde_cbor::Value::Map(
+            vec![(
+                serde_cbor::Value::Text("test_key".to_string()),
+                serde_cbor::Value::Text("test_value".to_string()),
+            )]
+            .into_iter()
+            .collect(),
+        );
+
+        assert!(builder
+            .add_assertion("org.test.cbor".to_string(), &custom_cbor)
+            .is_ok());
+
+        // Add custom JSON assertion
+        let custom_json = json!({"custom_field": "custom_value", "number": 42});
+        assert!(builder
+            .add_assertion("org.test.json".to_string(), &custom_json)
+            .is_ok());
+
+        let format = "image/jpeg";
+        let mut source = Cursor::new(TEST_IMAGE);
+        let mut dest = Cursor::new(Vec::new());
+        let signer = test_signer(SigningAlg::Ps256);
+        assert!(builder
+            .sign(&signer, format, &mut source, &mut dest)
+            .is_ok());
+
+        let manifest_store = Reader::from_stream(format, &mut dest).expect("from_bytes");
+        let manifest = manifest_store.active_manifest().unwrap();
+        let mut assertions = manifest.assertions().iter();
+
+        assert!(assertions.any(|a| a.label() == CreativeWork::LABEL));
+        assert!(assertions.any(|a| a.label() == "org.test.cbor"));
+        assert!(assertions.any(|a| a.label() == "org.test.json"));
+    }
+
+    #[test]
+    fn test_sign_embed_and_remote() {
+        let format = "image/jpeg";
+        let mut source = Cursor::new(TEST_IMAGE);
+        let mut dest = Cursor::new(Vec::new());
+        let signer = test_signer(SigningAlg::Ps256);
+
+        let mut builder = Builder::from_json(&simple_manifest()).unwrap();
+        builder.set_remote_url("https://example.com");
+
+        assert!(builder
+            .sign(&signer, format, &mut source, &mut dest)
+            .is_ok());
+
+        let mut vec = Vec::new();
+        dest.rewind().unwrap();
+        dest.read_to_end(&mut vec).unwrap();
+        let stream_string = String::from_utf8_lossy(&vec);
+
+        assert!(stream_string.contains("provenance=\"https://example.com/\""));
+
+        dest.rewind().unwrap();
+        let manifest_store = Reader::from_stream(format, &mut dest).expect("from_bytes");
+        assert!(manifest_store.json().contains("simple_manifest"));
+    }
+
+    #[test]
+    fn test_ingredient_relationships() {
+        use crate::assertions::Relationship;
+
+        let mut builder = Builder::new();
+        let mut source = Cursor::new(TEST_IMAGE);
+
+        let relationships = [
+            Relationship::ParentOf,
+            Relationship::ComponentOf,
+            Relationship::InputTo,
+        ];
+
+        for (i, relationship) in relationships.iter().enumerate() {
+            let ingredient_json = json!({
+                "title": format!("Test Ingredient {}", i),
+                "format": "image/jpeg",
+                "relationship": relationship,
+                "label": format!("INGREDIENT_{}", i),
+            })
+            .to_string();
+
+            builder
+                .add_ingredient_from_stream(ingredient_json, "image/jpeg", &mut source)
+                .unwrap();
+            source.rewind().unwrap();
+        }
+
+        assert_eq!(builder.definition.ingredients.len(), 3);
+        for (i, ingredient) in builder.definition.ingredients.iter().enumerate() {
+            assert_eq!(ingredient.relationship(), &relationships[i]);
+        }
+    }
+
+    #[test]
+    fn test_multiple_claim_generator_info() {
+        let mut builder = Builder::new();
+
+        // Test with multiple claim generator infos
+        let cgi1 = ClaimGeneratorInfo::new("App1").set_version("1.0.0").clone();
+        let cgi2 = ClaimGeneratorInfo::new("App2").set_version("2.0.0").clone();
+
+        builder.definition.claim_generator_info = vec![cgi1, cgi2];
+
+        let claim = builder.to_claim().unwrap();
+        let generator = claim.claim_generator().unwrap();
+        assert!(generator.contains("app1/1.0.0"));
+        assert!(generator.contains("app2/2.0.0"));
+    }
+
+    #[test]
+    fn test_thumbnail_variations() {
+        // Test different thumbnail formats
+        let formats = ["image/jpeg", "image/png", "image/webp", "none"];
+
+        for format in &formats {
+            let mut builder = Builder::new();
+            assert!(builder
+                .set_thumbnail(*format, &mut Cursor::new(TEST_THUMBNAIL))
+                .is_ok());
+            assert!(builder.definition.thumbnail.is_some());
+            assert_eq!(
+                builder.definition.thumbnail.as_ref().unwrap().format,
+                *format
+            );
+        }
+    }
+
+    #[test]
+    fn test_format_variations() {
+        let mut builder = Builder::new();
+
+        // Test various format strings
+        let formats = [
+            "image/jpeg",
+            "image/png",
+            "image/gif",
+            "image/webp",
+            "image/tiff",
+            "image/avif",
+            "image/heic",
+            "image/heif",
+            "audio/wav",
+            "audio/mp3",
+            "video/mp4",
+            "application/pdf",
+            "text/plain",
+        ];
+
+        for format in &formats {
+            builder.set_format(*format);
+            assert_eq!(&builder.definition.format, format);
+        }
+    }
+
+    #[test]
+    fn test_archive_and_from_archive() {
+        let mut builder = Builder::from_json(&manifest_json()).unwrap();
+        builder
+            .resources
+            .add("test_resource", b"test data")
+            .unwrap();
+
+        // Create archive
+        let mut archive_stream = Cursor::new(Vec::new());
+        builder.to_archive(&mut archive_stream).unwrap();
+
+        // Test reading back
+        archive_stream.rewind().unwrap();
+        let restored_builder = Builder::from_archive(&mut archive_stream).unwrap();
+
+        // Verify data
+        assert_eq!(builder.definition.title, restored_builder.definition.title);
+        assert_eq!(
+            builder.definition.format,
+            restored_builder.definition.format
+        );
+        assert_eq!(
+            builder.definition.ingredients.len(),
+            restored_builder.definition.ingredients.len()
+        );
+
+        // Verify resources were preserved
+        let resource_data = restored_builder.resources.get("test_resource").unwrap();
+        assert_eq!(resource_data.into_owned(), b"test data");
+    }
+
+    #[test]
+    fn test_claim_version_handling() {
+        // Test default version
+        let builder1 = Builder::new();
+        assert_eq!(builder1.claim_version(), 1);
+
+        // Test explicit version
+        let mut builder2 = Builder::new();
+        builder2.definition.claim_version = Some(2);
+        assert_eq!(builder2.claim_version(), 2);
+    }
+
+    #[test]
+    fn test_metadata_handling() {
+        let metadata_json = json!([
+            {
+                "dateTime": "2024-01-01T12:00:00Z",
+                "description": "Test image with metadata",
+                "custom_field": "custom_value"
+            }
+        ]);
+
+        let manifest_json = json!({
+            "claim_generator_info": [{"name": "test", "version": "1.0"}],
+            "metadata": metadata_json
+        });
+
+        let builder = Builder::from_json(&manifest_json.to_string()).unwrap();
+        assert!(builder.definition.metadata.is_some());
+        assert_eq!(builder.definition.metadata.as_ref().unwrap().len(), 1);
+
+        let metadata = &builder.definition.metadata.as_ref().unwrap()[0];
+        assert!(metadata.other().contains_key("custom_field"));
+    }
+
+    #[test]
+    fn test_empty_and_minimal_manifests() {
+        let minimal_json = json!({}).to_string();
+        let builder = Builder::from_json(&minimal_json).unwrap();
+
+        // Should have defaults
+        assert!(!builder.definition.claim_generator_info.is_empty());
+        assert_eq!(builder.definition.format, "application/octet-stream");
+        assert!(builder.definition.instance_id.starts_with("xmp:iid:"));
+
+        let mut source = Cursor::new(TEST_IMAGE);
+        let mut dest = Cursor::new(Vec::new());
+        let signer = test_signer(SigningAlg::Ps256);
+
+        let mut builder = builder;
+        let result = builder.sign(&signer, "image/jpeg", &mut source, &mut dest);
+        assert!(result.is_ok());
     }
 }
