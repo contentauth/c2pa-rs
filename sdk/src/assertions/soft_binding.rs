@@ -83,10 +83,10 @@ pub struct SoftBindingScopeMap {
 #[derive(Serialize, Deserialize, Debug, PartialEq)]
 pub struct SoftBindingTimespanMap {
     /// Start of the time range (as milliseconds from media start) over which the soft binding value has been computed.
-    pub start: usize,
+    pub start: u64,
 
     /// End of the time range (as milliseconds from media start) over which the soft binding value has been computed.
-    pub end: usize,
+    pub end: u64,
 }
 
 impl SoftBinding {
