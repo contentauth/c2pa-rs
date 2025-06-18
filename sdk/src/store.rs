@@ -3758,7 +3758,7 @@ impl Store {
             .map(|(manifest_bytes, _)| Store::from_jumbf(&manifest_bytes, validation_log))?
     }
 
-    /// load jumbf with manifest location given a stream
+    /// load jumbf given a stream
     ///
     /// This handles, embedded and remote manifests
     ///
