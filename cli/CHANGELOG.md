@@ -6,6 +6,17 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 Since version 0.10.0, the format of this changelog is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.19.0](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.18.0...c2patool-v0.19.0)
+_17 June 2025_
+
+### Added
+
+* Update Validation for 2.2 spec compliance ([#1144](https://github.com/contentauth/c2pa-rs/pull/1144))
+
+### Documented
+
+* Doc cleanup ([#1143](https://github.com/contentauth/c2pa-rs/pull/1143))
+
 ## [0.18.0](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.17.0...c2patool-v0.18.0)
 _27 May 2025_
 
