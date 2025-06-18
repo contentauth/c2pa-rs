@@ -889,6 +889,7 @@ pub unsafe extern "C" fn c2pa_builder_sign(
 
     let mut builder = guard_boxed!(builder_ptr);
     let c2pa_signer = guard_boxed!(signer_ptr);
+    
     let result = builder.sign(
         c2pa_signer.signer.as_ref(),
         &format,
