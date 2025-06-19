@@ -46,8 +46,7 @@
 //! ```
 //!
 //! # Example: Adding a Manifest to a file
-//!
-//!
+//! ```
 //! # use c2pa::Result;
 //! use std::path::PathBuf;
 //!
@@ -81,6 +80,7 @@
 //! )?;
 //! # Ok(())
 //! # }
+//! ```
 
 /// The internal name of the C2PA SDK
 pub const NAME: &str = "c2pa-rs";
