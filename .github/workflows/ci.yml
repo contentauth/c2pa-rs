@@ -316,6 +316,12 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Set up Chrome
+        uses: browser-actions/setup-chrome@v1
+        with:
+          chrome-version: stable
+          install-chromedriver: true
+
       - name: Install wasm-pack
         run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
 
@@ -631,4 +637,4 @@ jobs:
 
       - name: Build C library for mobile target
         run: make release TARGET=${{ matrix.target }}
-        working-directory: ./c_api
+        working-directory: ./c2pa_c_ffi

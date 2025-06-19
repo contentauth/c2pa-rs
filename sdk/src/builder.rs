@@ -514,6 +514,12 @@ impl Builder {
                 zip.start_file("manifests/", options)
                     .map_err(|e| Error::OtherError(Box::new(e)))?;
                 for ingredient in self.definition.ingredients.iter() {
+                    for (id, data) in ingredient.resources().resources() {
+                        zip.start_file(format!("resources/{}", id), options)
+                            .map_err(|e| Error::OtherError(Box::new(e)))?;
+                        zip.write_all(data)?;
+                    }
+
                     if let Some(manifest_label) = ingredient.active_manifest() {
                         if let Some(manifest_data) = ingredient.manifest_data() {
                             // Convert to valid archive / file path name
@@ -1040,7 +1046,6 @@ impl Builder {
         // generate thumbnail if we don't already have one
         #[cfg(feature = "add_thumbnails")]
         self.maybe_add_thumbnail(&format, source)?;
-
         // convert the manifest to a store
         let mut store = self.to_store()?;
 
@@ -2192,5 +2197,38 @@ mod tests {
         assert!(mime_types.contains(&"image/avif".to_string()));
         assert!(mime_types.contains(&"image/heic".to_string()));
         assert!(mime_types.contains(&"image/heif".to_string()));
+    }
+
+    #[cfg(all(feature = "add_thumbnails", feature = "file_io"))]
+    #[test]
+    fn test_to_archive_and_from_archive_with_ingredient_thumbnail() {
+        let mut builder = Builder::new();
+
+        let mut thumbnail = Cursor::new(TEST_THUMBNAIL);
+        let mut source = Cursor::new(TEST_IMAGE_CLEAN);
+
+        let signer = test_signer(SigningAlg::Ps256);
+
+        let ingredient_json = r#"{"title": "Test Ingredient"}"#;
+        builder
+            .add_ingredient_from_stream(ingredient_json, "image/jpeg", &mut thumbnail)
+            .unwrap();
+
+        let mut archive = Cursor::new(Vec::new());
+        assert!(builder.to_archive(&mut archive).is_ok());
+
+        let mut builder = Builder::from_archive(archive).unwrap();
+
+        let mut output = Cursor::new(Vec::new());
+
+        assert!(builder
+            .sign(&signer, "image/jpeg", &mut source, &mut output)
+            .is_ok());
+
+        let reader_json = Reader::from_stream("image/jpeg", &mut output)
+            .unwrap()
+            .json();
+        assert!(reader_json.contains("Test Ingredient"));
+        assert!(reader_json.contains("thumbnail.ingredient"));
     }
 }
