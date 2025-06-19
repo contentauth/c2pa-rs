@@ -67,3 +67,8 @@ mod uuid_assertion;
 pub(crate) use uuid_assertion::Uuid;
 
 pub mod region_of_interest;
+
+mod soft_binding;
+pub use soft_binding::{
+    SoftBinding, SoftBindingBlockMap, SoftBindingScopeMap, SoftBindingTimespanMap,
+};
