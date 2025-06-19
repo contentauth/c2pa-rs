@@ -14,7 +14,7 @@ keywords = ["metadata"]
 categories = ["api-bindings"]
 
 [lib]
-name = "c2pa_c"
+name = "c2pa_c_ffi"
 crate-type = ["cdylib", "staticlib"]
 
 [features]
