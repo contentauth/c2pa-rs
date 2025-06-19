@@ -6,6 +6,13 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 Since version 0.36.2, the format of this changelog is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.57.1](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.57.0...c2pa-v0.57.1)
+_19 June 2025_
+
+### Documented
+
+* Fix formatting of top level example. ([#1161](https://github.com/contentauth/c2pa-rs/pull/1161))
+
 ## [0.57.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.56.2...c2pa-v0.57.0)
 _19 June 2025_
 
