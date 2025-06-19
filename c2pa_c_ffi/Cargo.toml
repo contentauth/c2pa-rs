@@ -3,19 +3,19 @@ name = "c2pa-c-ffi"
 
 version.workspace = true
 
-description = "C language FFI bindings for c2pa crate"
+description = "C language FFI bindings and Rust library for c2pa crate"
 edition = "2021"
 authors = ["Gavin Peacock <gpeacock@adobe.com>"]
 license = "MIT OR Apache-2.0"
 documentation = "https://docs.rs/c2pa-c-ffi"
 homepage = "https://contentauthenticity.org"
 repository = "https://github.com/contentauth/c2pa-rs"
-keywords = ["metadata"]
+keywords = ["metadata", "rust", "ffi"]
 categories = ["api-bindings"]
 
 [lib]
 name = "c2pa_c_ffi"
-crate-type = ["cdylib", "staticlib"]
+crate-type = ["cdylib", "staticlib", "rlib"]
 
 [features]
 file_io = ["c2pa/file_io"]
