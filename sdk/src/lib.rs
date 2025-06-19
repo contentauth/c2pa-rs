@@ -175,7 +175,6 @@ pub(crate) mod manifest_store_report;
 
 #[allow(dead_code)]
 // TODO: Remove this when the feature is released (used in tests only for some builds now)
-
 pub(crate) mod reader;
 pub(crate) mod resource_store;
 pub(crate) mod salt;
