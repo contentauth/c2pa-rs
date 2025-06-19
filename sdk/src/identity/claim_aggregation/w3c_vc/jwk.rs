@@ -23,6 +23,7 @@ use std::{
 };
 
 use base64::{DecodeError as Base64Error, Engine};
+use p256::elliptic_curve;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use zeroize::Zeroize;
@@ -65,119 +66,6 @@ pub(crate) struct Jwk {
     pub params: Params,
 }
 
-impl FromStr for Jwk {
-    type Err = serde_json::Error;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        serde_json::from_str(s)
-    }
-}
-
-impl TryFrom<&[u8]> for Jwk {
-    type Error = serde_json::Error;
-
-    fn try_from(bytes: &[u8]) -> Result<Self, Self::Error> {
-        serde_json::from_slice(bytes)
-    }
-}
-
-impl TryFrom<serde_json::Value> for Jwk {
-    type Error = serde_json::Error;
-
-    fn try_from(value: serde_json::Value) -> Result<Self, Self::Error> {
-        serde_json::from_value(value)
-    }
-}
-
-impl fmt::Display for Jwk {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let json =
-            serde_json::to_string_pretty(self).unwrap_or_else(|_| "unable to serialize".to_owned());
-        f.write_str(&json)
-    }
-}
-
-impl From<Params> for Jwk {
-    fn from(params: Params) -> Self {
-        Self {
-            params,
-            public_key_use: None,
-            key_operations: None,
-            algorithm: None,
-            key_id: None,
-            x509_url: None,
-            x509_certificate_chain: None,
-            x509_thumbprint_sha1: None,
-            x509_thumbprint_sha256: None,
-        }
-    }
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Hash, Eq, Zeroize)]
-#[serde(tag = "kty")]
-pub enum Params {
-    // TEMPORARY: Only supporting Ed25519 for now
-    // EC(ECParams),
-    // RSA(RSAParams),
-    // #[serde(rename = "oct")]
-    // Symmetric(SymmetricParams),
-    #[serde(rename = "OKP")]
-    Okp(OctetParams),
-}
-
-impl Params {
-    /// Strip private key material
-    #[cfg(test)] // So far, only used in test code
-    pub fn to_public(&self) -> Self {
-        match self {
-            // Self::EC(params) => Self::EC(params.to_public()),
-            // Self::RSA(params) => Self::RSA(params.to_public()),
-            // Self::Symmetric(params) => Self::Symmetric(params.to_public()),
-            Self::Okp(params) => Self::Okp(params.to_public()),
-        }
-    }
-}
-
-impl Drop for OctetParams {
-    fn drop(&mut self) {
-        // Zeroize private key
-        if let Some(ref mut d) = self.private_key {
-            d.zeroize();
-        }
-    }
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Hash, Eq, Zeroize)]
-pub struct OctetParams {
-    // Parameters for Octet Key Pair Public Keys
-    #[serde(rename = "crv")]
-    pub curve: String,
-
-    #[serde(rename = "x")]
-    pub public_key: Base64urlUInt,
-
-    // Parameters for Octet Key Pair Private Keys
-    #[serde(rename = "d")]
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub private_key: Option<Base64urlUInt>,
-}
-
-impl OctetParams {
-    pub fn to_public(&self) -> Self {
-        Self {
-            curve: self.curve.clone(),
-            public_key: self.public_key.clone(),
-            private_key: None,
-        }
-    }
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Hash, Eq, Zeroize)]
-#[serde(try_from = "String")]
-#[serde(into = "Base64urlUIntString")]
-pub struct Base64urlUInt(pub Vec<u8>);
-type Base64urlUIntString = String;
-
 impl Jwk {
     #[cfg(test)]
     pub fn generate_ed25519() -> Result<Jwk, JwkError> {
@@ -212,82 +100,6 @@ impl Jwk {
         key.params = key.params.to_public();
         key
     }
-}
-
-impl TryFrom<&OctetParams> for ed25519_dalek::VerifyingKey {
-    type Error = JwkError;
-
-    fn try_from(params: &OctetParams) -> Result<Self, Self::Error> {
-        if params.curve != *"Ed25519" {
-            return Err(JwkError::CurveNotImplemented(params.curve.to_string()));
-        }
-        Ok(params.public_key.0.as_slice().try_into()?)
-    }
-}
-
-impl TryFrom<&OctetParams> for ed25519_dalek::SigningKey {
-    type Error = JwkError;
-
-    fn try_from(params: &OctetParams) -> Result<Self, Self::Error> {
-        if params.curve != *"Ed25519" {
-            return Err(JwkError::CurveNotImplemented(params.curve.to_string()));
-        }
-
-        let private_key = params
-            .private_key
-            .as_ref()
-            .ok_or(JwkError::MissingPrivateKey)?;
-
-        Ok(private_key.0.as_slice().try_into()?)
-    }
-}
-
-impl From<ed25519_dalek::VerifyingKey> for Jwk {
-    fn from(value: ed25519_dalek::VerifyingKey) -> Self {
-        Jwk::from(Params::Okp(OctetParams {
-            curve: "Ed25519".to_string(),
-            public_key: Base64urlUInt(value.to_bytes().to_vec()),
-            private_key: None,
-        }))
-    }
-}
-
-const BASE64_URL_SAFE_INDIFFERENT_PAD: base64::engine::GeneralPurpose =
-    base64::engine::GeneralPurpose::new(
-        &base64::alphabet::URL_SAFE,
-        base64::engine::GeneralPurposeConfig::new()
-            .with_decode_padding_mode(base64::engine::DecodePaddingMode::Indifferent),
-    );
-
-impl TryFrom<String> for Base64urlUInt {
-    type Error = base64::DecodeError;
-
-    fn try_from(data: String) -> Result<Self, Self::Error> {
-        Ok(Base64urlUInt(BASE64_URL_SAFE_INDIFFERENT_PAD.decode(data)?))
-    }
-}
-
-impl From<&Base64urlUInt> for String {
-    fn from(data: &Base64urlUInt) -> String {
-        base64::prelude::BASE64_URL_SAFE_NO_PAD.encode(&data.0)
-    }
-}
-
-impl From<Base64urlUInt> for Base64urlUIntString {
-    fn from(data: Base64urlUInt) -> Base64urlUIntString {
-        String::from(&data)
-    }
-}
-
-/// Signature algorithm.
-#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Hash, Eq)]
-pub enum Algorithm {
-    // TEMPORARY: Only supporting Ed25519 for now.
-    #[serde(rename = "EdDSA")]
-    EdDsa,
-
-    #[serde(alias = "None")]
-    None,
 }
 
 #[derive(Debug, Error)]
@@ -350,6 +162,9 @@ pub enum JwkError {
     ECDecompress,
 
     #[error(transparent)]
+    EcCryptoError(#[from] elliptic_curve::Error),
+
+    #[error(transparent)]
     CryptoErr(#[from] ed25519_dalek::ed25519::Error),
 
     /// Unexpected length for publicKeyMultibase
@@ -358,6 +173,333 @@ pub enum JwkError {
 
     #[error("Invalid coordinates")]
     InvalidCoordinates,
+}
+
+const BASE64_URL_SAFE_INDIFFERENT_PAD: base64::engine::GeneralPurpose =
+    base64::engine::GeneralPurpose::new(
+        &base64::alphabet::URL_SAFE,
+        base64::engine::GeneralPurposeConfig::new()
+            .with_decode_padding_mode(base64::engine::DecodePaddingMode::Indifferent),
+    );
+
+impl TryFrom<String> for Base64urlUInt {
+    type Error = base64::DecodeError;
+
+    fn try_from(data: String) -> Result<Self, Self::Error> {
+        Ok(Base64urlUInt(BASE64_URL_SAFE_INDIFFERENT_PAD.decode(data)?))
+    }
+}
+
+impl FromStr for Jwk {
+    type Err = serde_json::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        serde_json::from_str(s)
+    }
+}
+
+impl TryFrom<&[u8]> for Jwk {
+    type Error = serde_json::Error;
+
+    fn try_from(bytes: &[u8]) -> Result<Self, Self::Error> {
+        serde_json::from_slice(bytes)
+    }
+}
+
+impl TryFrom<serde_json::Value> for Jwk {
+    type Error = serde_json::Error;
+
+    fn try_from(value: serde_json::Value) -> Result<Self, Self::Error> {
+        serde_json::from_value(value)
+    }
+}
+
+impl From<&Base64urlUInt> for String {
+    fn from(data: &Base64urlUInt) -> String {
+        base64::prelude::BASE64_URL_SAFE_NO_PAD.encode(&data.0)
+    }
+}
+
+impl From<Base64urlUInt> for Base64urlUIntString {
+    fn from(data: Base64urlUInt) -> Base64urlUIntString {
+        String::from(&data)
+    }
+}
+
+impl fmt::Display for Jwk {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let json =
+            serde_json::to_string_pretty(self).unwrap_or_else(|_| "unable to serialize".to_owned());
+        f.write_str(&json)
+    }
+}
+
+impl From<Params> for Jwk {
+    fn from(params: Params) -> Self {
+        Self {
+            params,
+            public_key_use: None,
+            key_operations: None,
+            algorithm: None,
+            key_id: None,
+            x509_url: None,
+            x509_certificate_chain: None,
+            x509_thumbprint_sha1: None,
+            x509_thumbprint_sha256: None,
+        }
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Hash, Eq, Zeroize)]
+#[serde(tag = "kty")]
+pub enum Params {
+    // TEMPORARY: Only supporting Ed25519 and ECDSA for now
+    #[serde(rename = "EC")]
+    Ec(EcParams),
+    // RSA(RSAParams),
+    // #[serde(rename = "oct")]
+    // Symmetric(SymmetricParams),
+    #[serde(rename = "OKP")]
+    Okp(OctetParams),
+}
+
+impl Params {
+    /// Strip private key material
+    #[cfg(test)] // So far, only used in test code
+    pub fn to_public(&self) -> Self {
+        match self {
+            Self::Ec(params) => Self::Ec(params.to_public()),
+            // Self::RSA(params) => Self::RSA(params.to_public()),
+            // Self::Symmetric(params) => Self::Symmetric(params.to_public()),
+            Self::Okp(params) => Self::Okp(params.to_public()),
+        }
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Hash, Eq, Zeroize)]
+pub struct EcParams {
+    // Parameters for Elliptic Curve Public Keys
+    #[serde(rename = "crv")]
+    pub curve: Option<String>,
+    #[serde(rename = "x")]
+    pub x_coordinate: Option<Base64urlUInt>,
+    #[serde(rename = "y")]
+    pub y_coordinate: Option<Base64urlUInt>,
+
+    // Parameters for Elliptic Curve Private Keys
+    #[serde(rename = "d")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ecc_private_key: Option<Base64urlUInt>,
+}
+
+impl EcParams {
+    pub fn is_public(&self) -> bool {
+        self.ecc_private_key.is_none()
+    }
+
+    /// Strip private key material
+    pub fn to_public(&self) -> Self {
+        Self {
+            curve: self.curve.clone(),
+            x_coordinate: self.x_coordinate.clone(),
+            y_coordinate: self.y_coordinate.clone(),
+            ecc_private_key: None,
+        }
+    }
+}
+
+impl TryFrom<&EcParams> for p256::SecretKey {
+    type Error = JwkError;
+
+    fn try_from(params: &EcParams) -> Result<Self, Self::Error> {
+        let curve = params.curve.as_ref().ok_or(JwkError::MissingCurve)?;
+        if curve != "P-256" {
+            return Err(JwkError::CurveNotImplemented(curve.to_string()));
+        }
+
+        let private_key = params
+            .ecc_private_key
+            .as_ref()
+            .ok_or(JwkError::MissingPrivateKey)?;
+
+        let secret_key = p256::SecretKey::from_bytes(private_key.0.as_slice().into())?;
+        Ok(secret_key)
+    }
+}
+
+impl TryFrom<&EcParams> for p384::SecretKey {
+    type Error = JwkError;
+
+    fn try_from(params: &EcParams) -> Result<Self, Self::Error> {
+        let curve = params.curve.as_ref().ok_or(JwkError::MissingCurve)?;
+        if curve != "P-384" {
+            return Err(JwkError::CurveNotImplemented(curve.to_string()));
+        }
+        let private_key = params
+            .ecc_private_key
+            .as_ref()
+            .ok_or(JwkError::MissingPrivateKey)?;
+
+        let secret_key = p384::SecretKey::from_bytes(private_key.0.as_slice().into())?;
+        Ok(secret_key)
+    }
+}
+
+impl Drop for EcParams {
+    fn drop(&mut self) {
+        // Zeroize private key
+        if let Some(ref mut d) = self.ecc_private_key {
+            d.zeroize();
+        }
+    }
+}
+
+impl TryFrom<&EcParams> for p256::PublicKey {
+    type Error = JwkError;
+
+    fn try_from(params: &EcParams) -> Result<Self, Self::Error> {
+        let curve = params.curve.as_ref().ok_or(JwkError::MissingCurve)?;
+        if curve != "P-256" {
+            return Err(JwkError::CurveNotImplemented(curve.to_string()));
+        }
+
+        const EC_UNCOMPRESSED_POINT_TAG: &[u8] = &[0x04];
+        let x = &params
+            .x_coordinate
+            .as_ref()
+            .ok_or(JwkError::MissingPoint)?
+            .0;
+        let y = &params
+            .y_coordinate
+            .as_ref()
+            .ok_or(JwkError::MissingPoint)?
+            .0;
+        let pk_data = [EC_UNCOMPRESSED_POINT_TAG, x.as_slice(), y.as_slice()].concat();
+
+        let public_key = p256::PublicKey::from_sec1_bytes(&pk_data)?;
+        Ok(public_key)
+    }
+}
+
+impl TryFrom<&EcParams> for p384::PublicKey {
+    type Error = JwkError;
+
+    fn try_from(params: &EcParams) -> Result<Self, Self::Error> {
+        let curve = params.curve.as_ref().ok_or(JwkError::MissingCurve)?;
+        if curve != "P-384" {
+            return Err(JwkError::CurveNotImplemented(curve.to_string()));
+        }
+
+        const EC_UNCOMPRESSED_POINT_TAG: &[u8] = &[0x04];
+        let x = &params
+            .x_coordinate
+            .as_ref()
+            .ok_or(JwkError::MissingPoint)?
+            .0;
+        let y = &params
+            .y_coordinate
+            .as_ref()
+            .ok_or(JwkError::MissingPoint)?
+            .0;
+        let pk_data = [EC_UNCOMPRESSED_POINT_TAG, x.as_slice(), y.as_slice()].concat();
+
+        let public_key = p384::PublicKey::from_sec1_bytes(&pk_data)?;
+        Ok(public_key)
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Hash, Eq, Zeroize)]
+pub struct OctetParams {
+    // Parameters for Octet Key Pair Public Keys
+    #[serde(rename = "crv")]
+    pub curve: String,
+
+    #[serde(rename = "x")]
+    pub public_key: Base64urlUInt,
+
+    // Parameters for Octet Key Pair Private Keys
+    #[serde(rename = "d")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub private_key: Option<Base64urlUInt>,
+}
+
+impl OctetParams {
+    pub fn to_public(&self) -> Self {
+        Self {
+            curve: self.curve.clone(),
+            public_key: self.public_key.clone(),
+            private_key: None,
+        }
+    }
+}
+
+impl Drop for OctetParams {
+    fn drop(&mut self) {
+        // Zeroize private key
+        if let Some(ref mut d) = self.private_key {
+            d.zeroize();
+        }
+    }
+}
+
+impl TryFrom<&OctetParams> for ed25519_dalek::VerifyingKey {
+    type Error = JwkError;
+
+    fn try_from(params: &OctetParams) -> Result<Self, Self::Error> {
+        if params.curve != *"Ed25519" {
+            return Err(JwkError::CurveNotImplemented(params.curve.to_string()));
+        }
+        Ok(params.public_key.0.as_slice().try_into()?)
+    }
+}
+
+impl TryFrom<&OctetParams> for ed25519_dalek::SigningKey {
+    type Error = JwkError;
+
+    fn try_from(params: &OctetParams) -> Result<Self, Self::Error> {
+        if params.curve != *"Ed25519" {
+            return Err(JwkError::CurveNotImplemented(params.curve.to_string()));
+        }
+
+        let private_key = params
+            .private_key
+            .as_ref()
+            .ok_or(JwkError::MissingPrivateKey)?;
+
+        Ok(private_key.0.as_slice().try_into()?)
+    }
+}
+
+impl From<ed25519_dalek::VerifyingKey> for Jwk {
+    fn from(value: ed25519_dalek::VerifyingKey) -> Self {
+        Jwk::from(Params::Okp(OctetParams {
+            curve: "Ed25519".to_string(),
+            public_key: Base64urlUInt(value.to_bytes().to_vec()),
+            private_key: None,
+        }))
+    }
+}
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Hash, Eq, Zeroize)]
+#[serde(try_from = "String")]
+#[serde(into = "Base64urlUIntString")]
+pub struct Base64urlUInt(pub Vec<u8>);
+type Base64urlUIntString = String;
+
+/// Signature algorithm.
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Hash, Eq)]
+pub enum Algorithm {
+    // TEMPORARY: Only supporting Ed25519 and ECDSA for now.
+    #[serde(rename = "EC256")]
+    Ec256,
+
+    #[serde(rename = "EC384")]
+    Ec384,
+
+    #[serde(rename = "EdDSA")]
+    EdDsa,
+
+    #[serde(alias = "¢None")]
+    None,
 }
 
 #[cfg(test)]
