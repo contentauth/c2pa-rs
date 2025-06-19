@@ -169,13 +169,12 @@ async fn ica_signing() {
 
     let mut c2pa_signer = AsyncIdentityAssertionSigner::from_test_credentials(SigningAlg::Ps256);
 
-    let (cawg_cert_chain, cawg_private_key) =
-        cert_chain_and_private_key_for_alg(SigningAlg::Ed25519);
+    let (cawg_cert_chain, cawg_private_key) = cert_chain_and_private_key_for_alg(SigningAlg::Es256);
 
     let cawg_raw_signer = raw_signature::async_signer_from_cert_chain_and_private_key(
         &cawg_cert_chain,
         &cawg_private_key,
-        SigningAlg::Ed25519,
+        SigningAlg::Es256,
         None,
     )
     .unwrap();
@@ -200,7 +199,7 @@ async fn ica_signing() {
         x509_thumbprint_sha1: None,
         x509_thumbprint_sha256: None,
         params: Params::Okp(OctetParams {
-            curve: "Ed25519".to_owned(),
+            curve: "Es256".to_owned(),
             public_key: Base64urlUInt(public_key.to_vec()),
             private_key: None,
         }),
