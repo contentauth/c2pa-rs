@@ -896,6 +896,9 @@ pub unsafe extern "C" fn c2pa_builder_sign(
         &mut *source,
         &mut *dest,
     );
+
+    println!("c2pa_builder_sign result: {:?}", result);
+
     ok_or_return_int!(result, |manifest_bytes: Vec<u8>| {
         let len = manifest_bytes.len() as i64;
         if !manifest_bytes_ptr.is_null() {
@@ -1264,7 +1267,7 @@ static CALLBACK_REGISTRY: Lazy<Mutex<HashMap<u64, Arc<dyn Fn(&[u8]) -> Result<Ve
 
 static CALLBACK_COUNTER: Lazy<Mutex<u64>> = Lazy::new(|| Mutex::new(0));
 
-/// Register a Python callback and return a callback ID
+/// WIP - Register a Python callback and return a callback ID
 ///
 /// # Safety
 /// The callback function must remain valid for the lifetime of any signers using it
@@ -1301,14 +1304,14 @@ pub unsafe extern "C" fn c2pa_register_callback(
     callback_id
 }
 
-/// Unregister a callback by ID
+/// WIP - Unregister a callback by ID
 #[no_mangle]
 pub unsafe extern "C" fn c2pa_unregister_callback(callback_id: u64) {
     let mut registry = CALLBACK_REGISTRY.lock().unwrap();
     registry.remove(&callback_id);
 }
 
-/// Create a signer using a registered callback ID
+/// WIP - Create a signer using a registered callback ID
 #[no_mangle]
 pub unsafe extern "C" fn c2pa_signer_from_callback_id(
     callback_id: u64,
