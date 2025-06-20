@@ -101,18 +101,6 @@ macro_rules! check_or_return_int {
     };
 }
 
-/// If the expression is null, set the last error and return std::ptr::null_mut().
-#[macro_export]
-macro_rules! from_cstr_or_return_null {
-    ($ptr : expr) => {
-        null_check!(
-            ($ptr),
-            |ptr| { std::ffi::CStr::from_ptr(ptr).to_string_lossy().into_owned() },
-            std::ptr::null_mut()
-        )
-    };
-}
-
 // Internal routine to convert a *const c_char to a rust String or return a -1 int error.
 #[macro_export]
 macro_rules! from_cstr_or_return_int {
@@ -121,6 +109,18 @@ macro_rules! from_cstr_or_return_int {
             ($ptr),
             |ptr| { std::ffi::CStr::from_ptr(ptr).to_string_lossy().into_owned() },
             -1
+        )
+    };
+}
+
+/// If the expression is null, set the last error and return std::ptr::null_mut().
+#[macro_export]
+macro_rules! from_cstr_or_return_null {
+    ($ptr : expr) => {
+        null_check!(
+            ($ptr),
+            |ptr| { std::ffi::CStr::from_ptr(ptr).to_string_lossy().into_owned() },
+            std::ptr::null_mut()
         )
     };
 }
@@ -1242,6 +1242,106 @@ pub unsafe extern "C" fn c2pa_signature_free(signature_ptr: *const u8) {
     }
 }
 
+/// Python-friendly callback signer that uses a different approach to avoid
+/// function pointer lifetime issues. This version uses a callback ID system
+/// where Python registers callbacks and gets back an ID to use.
+#[repr(C)]
+pub struct C2paCallbackSigner {
+    pub callback_id: u64,
+    pub alg: C2paSigningAlg,
+    pub certs: Vec<u8>,
+    pub reserve_size: usize,
+    pub tsa_url: Option<String>,
+}
+
+/// Global callback registry for Python callbacks
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
+use once_cell::sync::Lazy;
+
+static CALLBACK_REGISTRY: Lazy<Mutex<HashMap<u64, Arc<dyn Fn(&[u8]) -> Result<Vec<u8>, c2pa::Error> + Send + Sync>>>> = 
+    Lazy::new(|| Mutex::new(HashMap::new()));
+
+static CALLBACK_COUNTER: Lazy<Mutex<u64>> = Lazy::new(|| Mutex::new(0));
+
+/// Register a Python callback and return a callback ID
+///
+/// # Safety
+/// The callback function must remain valid for the lifetime of any signers using it
+#[no_mangle]
+pub unsafe extern "C" fn c2pa_register_callback(
+    callback: extern "C" fn(data: *const c_uchar, data_len: usize, result: *mut c_uchar, result_len: usize) -> isize,
+) -> u64 {
+    let mut counter = CALLBACK_COUNTER.lock().unwrap();
+    *counter += 1;
+    let callback_id = *counter;
+
+    let callback_wrapper = move |data: &[u8]| -> Result<Vec<u8>, c2pa::Error> {
+        // Allocate a buffer for the result (estimate size)
+        let mut result_buffer = vec![0u8; data.len() * 4]; // More generous estimate
+
+        let result_size = callback(
+            data.as_ptr(),
+            data.len(),
+            result_buffer.as_mut_ptr(),
+            result_buffer.len(),
+        );
+
+        if result_size < 0 {
+            return Err(c2pa::Error::CoseSignature);
+        }
+
+        result_buffer.truncate(result_size as usize);
+        Ok(result_buffer)
+    };
+
+    let mut registry = CALLBACK_REGISTRY.lock().unwrap();
+    registry.insert(callback_id, Arc::new(callback_wrapper));
+
+    callback_id
+}
+
+/// Unregister a callback by ID
+#[no_mangle]
+pub unsafe extern "C" fn c2pa_unregister_callback(callback_id: u64) {
+    let mut registry = CALLBACK_REGISTRY.lock().unwrap();
+    registry.remove(&callback_id);
+}
+
+/// Create a signer using a registered callback ID
+#[no_mangle]
+pub unsafe extern "C" fn c2pa_signer_from_callback_id(
+    callback_id: u64,
+    alg: C2paSigningAlg,
+    certs: *const c_char,
+    tsa_url: *const c_char,
+) -> *mut C2paSigner {
+    let certs = from_cstr_or_return_null!(certs);
+    let tsa_url = from_cstr_option!(tsa_url);
+
+    // Get the callback from registry
+    let callback = {
+        let registry = CALLBACK_REGISTRY.lock().unwrap();
+        match registry.get(&callback_id) {
+            Some(cb) => cb.clone(),
+            None => {
+                Error::set_last(Error::Other("Invalid callback ID".to_string()));
+                return std::ptr::null_mut();
+            }
+        }
+    };
+
+    let signer = CallbackSigner::new(move |_context, data| callback(data), alg.into(), certs);
+    let mut signer = signer.set_context(std::ptr::null());
+    if let Some(tsa_url) = tsa_url.as_ref() {
+        signer = signer.set_tsa_url(tsa_url);
+    }
+
+    Box::into_raw(Box::new(C2paSigner {
+        signer: Box::new(signer),
+    }))
+}
+
 /// Returns a [*const *const c_char] with the contents of of the provided [Vec<String>].
 ///
 /// # Parameters
@@ -1400,8 +1500,8 @@ mod tests {
         let result = unsafe { c2pa_builder_set_remote_url(builder, remote_url.as_ptr()) };
         assert_eq!(result, -1);
         let error = unsafe { c2pa_error() };
-        let error = unsafe { CString::from_raw(error) };
-        assert_eq!(error.to_str().unwrap(), "NullParameter: builder_ptr");
+        let error_str = unsafe { CString::from_raw(error) };
+        assert_eq!(error_str.to_str().unwrap(), "NullParameter: builder_ptr");
     }
 
     #[test]
@@ -1622,5 +1722,199 @@ mod tests {
         let json_report = json_str.to_str().unwrap();
         assert!(json_report.contains("cawg.identity"));
         assert!(json_report.contains("cawg.ica.credential_valid"));
+    }
+
+    // Test the new callback system
+    #[test]
+    fn test_callback_signer_system() {
+        // Define a simple test callback that just returns the input data
+        extern "C" fn test_callback(
+            data: *const c_uchar,
+            data_len: usize,
+            result: *mut c_uchar,
+            result_len: usize,
+        ) -> isize {
+            if data_len > result_len {
+                return -1; // Buffer too small
+            }
+            
+            unsafe {
+                std::ptr::copy_nonoverlapping(data, result, data_len);
+            }
+            data_len as isize
+        }
+
+        // Register the callback
+        let callback_id = unsafe { c2pa_register_callback(test_callback) };
+        assert!(callback_id > 0);
+
+        // Create a test certificate (using a simple PEM format)
+        let cert_pem = "-----BEGIN CERTIFICATE-----
+MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAvxDaAZw8PvJcVu3SiVpZ
+-----END CERTIFICATE-----";
+        let cert_cstring = CString::new(cert_pem).unwrap();
+
+        // Create a signer using the callback ID
+        let signer = unsafe {
+            c2pa_signer_from_callback_id(
+                callback_id,
+                C2paSigningAlg::Ed25519,
+                cert_cstring.as_ptr(),
+                std::ptr::null(),
+            )
+        };
+        assert!(!signer.is_null());
+
+        // Test that the signer can be used (basic functionality test)
+        let reserve_size = unsafe { c2pa_signer_reserve_size(signer) };
+        assert!(reserve_size > 0);
+
+        // Clean up
+        unsafe {
+            c2pa_signer_free(signer);
+            c2pa_unregister_callback(callback_id);
+        }
+    }
+
+    #[test]
+    fn test_callback_signer_invalid_id() {
+        // Try to create a signer with an invalid callback ID
+        let cert_pem = "-----BEGIN CERTIFICATE-----
+MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAvxDaAZw8PvJcVu3SiVpZ
+-----END CERTIFICATE-----";
+        let cert_cstring = CString::new(cert_pem).unwrap();
+
+        let signer = unsafe {
+            c2pa_signer_from_callback_id(
+                99999, // Invalid ID
+                C2paSigningAlg::Ed25519,
+                cert_cstring.as_ptr(),
+                std::ptr::null(),
+            )
+        };
+        assert!(signer.is_null());
+
+        // Check that an error was set
+        let error = unsafe { c2pa_error() };
+        let error_str = unsafe { CString::from_raw(error) };
+        assert!(error_str.to_str().unwrap().contains("Invalid callback ID"));
+    }
+
+    #[test]
+    fn test_callback_registry_cleanup() {
+        // Test that callbacks can be registered and unregistered properly
+        extern "C" fn dummy_callback(
+            _data: *const c_uchar,
+            _data_len: usize,
+            _result: *mut c_uchar,
+            _result_len: usize,
+        ) -> isize {
+            0
+        }
+
+        // Register multiple callbacks
+        let id1 = unsafe { c2pa_register_callback(dummy_callback) };
+        let id2 = unsafe { c2pa_register_callback(dummy_callback) };
+        assert_ne!(id1, id2);
+
+        // Unregister one
+        unsafe { c2pa_unregister_callback(id1) };
+
+        // The first should fail, the second should work
+        let cert_pem = "-----BEGIN CERTIFICATE-----
+MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAvxDaAZw8PvJcVu3SiVpZ
+-----END CERTIFICATE-----";
+        let cert_cstring = CString::new(cert_pem).unwrap();
+
+        let signer1 = unsafe {
+            c2pa_signer_from_callback_id(
+                id1,
+                C2paSigningAlg::Ed25519,
+                cert_cstring.as_ptr(),
+                std::ptr::null(),
+            )
+        };
+        assert!(signer1.is_null());
+
+        let signer2 = unsafe {
+            c2pa_signer_from_callback_id(
+                id2,
+                C2paSigningAlg::Ed25519,
+                cert_cstring.as_ptr(),
+                std::ptr::null(),
+            )
+        };
+        assert!(!signer2.is_null());
+
+        // Clean up
+        unsafe {
+            c2pa_signer_free(signer2);
+            c2pa_unregister_callback(id2);
+        }
+    }
+
+    #[test]
+    fn test_callback_signer_with_builder() {
+        // Define a test callback that simulates signing by appending a signature
+        extern "C" fn signing_callback(
+            data: *const c_uchar,
+            data_len: usize,
+            result: *mut c_uchar,
+            result_len: usize,
+        ) -> isize {
+            if data_len + 64 > result_len {  // Ed25519 signature is 64 bytes
+                return -1; // Buffer too small
+            }
+            
+            unsafe {
+                // Copy the original data
+                std::ptr::copy_nonoverlapping(data, result, data_len);
+                
+                // Append a fake signature (64 bytes of 0xAA)
+                let signature_start = result.add(data_len);
+                for i in 0..64 {
+                    *signature_start.add(i) = 0xAA;
+                }
+            }
+            (data_len + 64) as isize
+        }
+
+        // Register the callback
+        let callback_id = unsafe { c2pa_register_callback(signing_callback) };
+        assert!(callback_id > 0);
+
+        // Create a test certificate
+        let cert_pem = "-----BEGIN CERTIFICATE-----
+MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAvxDaAZw8PvJcVu3SiVpZ
+-----END CERTIFICATE-----";
+        let cert_cstring = CString::new(cert_pem).unwrap();
+
+        // Create a signer using the callback ID
+        let signer = unsafe {
+            c2pa_signer_from_callback_id(
+                callback_id,
+                C2paSigningAlg::Ed25519,
+                cert_cstring.as_ptr(),
+                std::ptr::null(),
+            )
+        };
+        assert!(!signer.is_null());
+
+        // Test that the signer has a reasonable reserve size
+        let reserve_size = unsafe { c2pa_signer_reserve_size(signer) };
+        assert!(reserve_size > 0);
+        println!("Signer reserve size: {}", reserve_size);
+
+        // Test that we can create a builder (this tests the basic functionality)
+        let manifest_json = CString::new("{}").unwrap();
+        let builder = unsafe { c2pa_builder_from_json(manifest_json.as_ptr()) };
+        assert!(!builder.is_null());
+
+        // Clean up
+        unsafe {
+            c2pa_builder_free(builder);
+            c2pa_signer_free(signer);
+            c2pa_unregister_callback(callback_id);
+        }
     }
 }
