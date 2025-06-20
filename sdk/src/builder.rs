@@ -1204,6 +1204,54 @@ impl Builder {
     pub fn composed_manifest(manifest_bytes: &[u8], format: &str) -> Result<Vec<u8>> {
         Store::get_composed_manifest(manifest_bytes, format)
     }
+
+    fn add_resource_ref(&mut self, path: &Path, resource_ref: &ResourceRef) -> Result<()> {
+        let mut id = resource_ref.identifier.clone();
+
+        if id.starts_with("self#jumbf=") {
+            // Remove the prefix
+            id = id.replacen("self#jumbf=", "", 1);
+
+            // Remove /c2pa/ if it exists
+            if id.starts_with("/c2pa/") {
+                id = id.replacen("/c2pa/", "", 1);
+            }
+
+            // Replace ':' with '_'
+            id = id.replace(':', "_");
+        }
+
+        let mut path_buf = PathBuf::from(path);
+        path_buf.push(id);
+
+        let file = std::fs::File::open(path_buf.as_path())?;
+        self.add_resource(&resource_ref.identifier, file)?;
+
+        Ok(())
+    }
+
+    pub fn load_ingredient_from_folder(&mut self, path: &Path) -> Result<()> {
+        let ingredient_path = PathBuf::from(path).join("ingredient.json");
+        let json = std::fs::read_to_string(ingredient_path.as_path())?;
+        let mut ingredient = Ingredient::from_json(&json)?;
+
+        // Specify ingredient is parent
+        ingredient.set_is_parent();
+
+        // Make sure we will have access to thumbnail
+        if let Some(thumbnail_ref) = ingredient.thumbnail_ref() {
+            self.add_resource_ref(path, thumbnail_ref)?;
+        }
+
+        // Make sure we will have access to manifest
+        if let Some(manifest_data_ref) = ingredient.manifest_data_ref() {
+            self.add_resource_ref(path, manifest_data_ref)?;
+        }
+
+        self.add_ingredient(ingredient);
+
+        Ok(())
+    }
 }
 
 #[cfg(test)]
