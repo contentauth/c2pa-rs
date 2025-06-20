@@ -50,7 +50,7 @@ pub struct Metadata {
 impl Metadata {
     /// Label prefix for an assertion metadata assertion.
     ///
-    /// See <https://c2pa.org/specifications/specifications/1.0/specs/C2PA_Specification.html#_metadata_about_assertions>.
+    /// See <https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_metadata_about_assertions>.
     pub const LABEL: &'static str = labels::ASSERTION_METADATA;
 
     pub fn new() -> Self {
