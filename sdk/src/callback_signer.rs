@@ -139,7 +139,10 @@ impl Default for CallbackSigner {
 
 impl Signer for CallbackSigner {
     fn sign(&self, data: &[u8]) -> Result<Vec<u8>> {
-        (self.callback)(self.context, data)
+        println!("[Rust][CallbackSigner] sign called with data len: {}", data.len());
+        let result = (self.callback)(self.context, data);
+        println!("[Rust][CallbackSigner] sign result: {:?}", result.as_ref().map(|v| v.len()));
+        result
     }
 
     fn alg(&self) -> SigningAlg {
