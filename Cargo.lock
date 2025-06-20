@@ -818,6 +818,7 @@ version = "0.56.2"
 dependencies = [
  "c2pa",
  "cbindgen",
+ "once_cell",
  "scopeguard",
  "serde",
  "serde_json",

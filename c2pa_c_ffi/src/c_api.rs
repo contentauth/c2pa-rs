@@ -1737,7 +1737,7 @@ mod tests {
             if data_len > result_len {
                 return -1; // Buffer too small
             }
-            
+
             unsafe {
                 std::ptr::copy_nonoverlapping(data, result, data_len);
             }
@@ -1865,11 +1865,11 @@ MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAvxDaAZw8PvJcVu3SiVpZ
             if data_len + 64 > result_len {  // Ed25519 signature is 64 bytes
                 return -1; // Buffer too small
             }
-            
+
             unsafe {
                 // Copy the original data
                 std::ptr::copy_nonoverlapping(data, result, data_len);
-                
+
                 // Append a fake signature (64 bytes of 0xAA)
                 let signature_start = result.add(data_len);
                 for i in 0..64 {
@@ -1916,5 +1916,140 @@ MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAvxDaAZw8PvJcVu3SiVpZ
             c2pa_signer_free(signer);
             c2pa_unregister_callback(callback_id);
         }
+    }
+
+    #[test]
+    fn test_callback_signer_actual_signing() {
+        // Use the real Ed25519 test certificate and private key from the SDK fixtures
+        const CERTS: &[u8] = include_bytes!("../../sdk/tests/fixtures/certs/ed25519.pub");
+        const PRIVATE_KEY: &[u8] = include_bytes!("../../sdk/tests/fixtures/certs/ed25519.pem");
+
+        // Define a callback that uses the existing c2pa_ed25519_sign function
+        extern "C" fn example_signing_callback(
+            data: *const c_uchar,
+            data_len: usize,
+            result: *mut c_uchar,
+            result_len: usize,
+        ) -> isize {
+            let private_key = PRIVATE_KEY;
+            let private_key_cstr = match std::ffi::CString::new(private_key) {
+                Ok(s) => s,
+                Err(_) => return -1,
+            };
+
+            let signature = unsafe {
+                c2pa_ed25519_sign(data, data_len, private_key_cstr.as_ptr())
+            };
+
+            if signature.is_null() {
+                return -1;
+            }
+
+            // Ed25519 signatures are supposed to be 64 bytes
+            let sig_len = 64;
+            if sig_len > result_len {
+                unsafe { c2pa_signature_free(signature) };
+                return -1; // Buffer too small
+            }
+
+            unsafe {
+                // Copy only the signature (C2PA expects just the signature)
+                std::ptr::copy_nonoverlapping(signature, result, sig_len);
+                // Free the signature
+                c2pa_signature_free(signature);
+            }
+
+            sig_len as isize
+        }
+
+        // Register the callback
+        let callback_id = unsafe { c2pa_register_callback(example_signing_callback) };
+        assert!(callback_id > 0);
+
+        let cert_cstring = CString::new(CERTS).unwrap();
+
+        // Create a signer using the callback ID
+        let signer = unsafe {
+            c2pa_signer_from_callback_id(
+                callback_id,
+                C2paSigningAlg::Ed25519,
+                cert_cstring.as_ptr(),
+                std::ptr::null(),
+            )
+        };
+        assert!(!signer.is_null());
+
+        // Demo manifest used below for signing
+        let manifest_json = CString::new(r#"{
+            "claim_generator": "test_callback_signer",
+            "format": "image/jpeg",
+            "title": "Test Image",
+            "claim": {
+                "hash": "sha256:1234567890abcdef"
+            }
+        }"#).unwrap();
+        let builder = unsafe { c2pa_builder_from_json(manifest_json.as_ptr()) };
+        assert!(!builder.is_null());
+
+        // Test data loading and preparing...
+        let source_data = include_bytes!(fixture_path!("C.jpg"));
+        let mut source_stream = TestC2paStream::from_bytes(source_data.to_vec());
+        let dest_vec = Vec::new();
+        let mut dest_stream = TestC2paStream::new(dest_vec).into_c_stream();
+
+        // Sign the manifest using callback signer and builder
+        let format = CString::new("image/jpeg").unwrap();
+        let mut manifest_bytes_ptr = std::ptr::null();
+        let result = unsafe {
+            c2pa_builder_sign(
+                builder,
+                format.as_ptr(),
+                &mut source_stream,
+                &mut dest_stream,
+                signer,
+                &mut manifest_bytes_ptr,
+            )
+        };
+
+        if result <= 0 {
+            let error = unsafe { c2pa_error() };
+            let error_str = unsafe { CString::from_raw(error) };
+            println!("Signing failed with error: {}", error_str.to_str().unwrap());
+            panic!("Signing failed with result: {}", result);
+        }
+        assert!(!manifest_bytes_ptr.is_null(), "No manifest bytes returned");
+
+        // Check that the destination stream contains data
+        let dest_data = TestC2paStream::from_c_stream(dest_stream);
+        assert!(!dest_data.is_empty(), "Destination stream is empty");
+        println!("Signed data size: {} bytes", dest_data.len());
+
+        // Read the written data  (make sure it is readable)
+        let mut read_stream = TestC2paStream::from_bytes(dest_data.get_data().to_vec());
+        let format = CString::new("image/jpeg").unwrap();
+        let reader = unsafe { c2pa_reader_from_stream(format.as_ptr(), &mut read_stream) };
+        assert!(!reader.is_null(), "Failed to create reader from signed data");
+
+        // To visually check the manifest, uncomment the block below
+        /*
+        let json = unsafe { c2pa_reader_json(reader) };
+        assert!(!json.is_null(), "Failed to get JSON from reader");
+        let json_str = unsafe { CString::from_raw(json) };
+        println!("Manifest JSON:");
+        println!("{}", json_str.to_str().unwrap());
+        */
+
+        // Verify manifest bytes contain data
+        let manifest_size = result as usize;
+        assert!(manifest_size > 0, "Manifest size should be positive");
+
+        unsafe {
+            c2pa_reader_free(reader);
+            c2pa_manifest_bytes_free(manifest_bytes_ptr);
+            c2pa_builder_free(builder);
+            c2pa_signer_free(signer);
+            c2pa_unregister_callback(callback_id);
+        }
+        TestC2paStream::drop_c_stream(source_stream);
     }
 }

@@ -318,6 +318,21 @@ impl TestC2paStream {
     pub fn drop_c_stream(c_stream: C2paStream) {
         drop(Self::from_c_stream(c_stream));
     }
+
+    /// Get a reference to the underlying data for testing purposes
+    pub fn get_data(&self) -> &[u8] {
+        self.cursor.get_ref()
+    }
+
+    /// Get the length of the underlying data
+    pub fn len(&self) -> usize {
+        self.cursor.get_ref().len()
+    }
+
+    /// Check if the underlying data is empty
+    pub fn is_empty(&self) -> bool {
+        self.cursor.get_ref().is_empty()
+    }
 }
 
 #[cfg(test)]
