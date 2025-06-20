@@ -525,7 +525,8 @@ impl Ingredient {
         let title = path
             .file_name()
             .map(|name| name.to_string_lossy().into_owned())
-            .unwrap_or_else(|| "".into());
+            .unwrap_or_else(|| "".into())
+            .replace(':', "/");
 
         let extension = path
             .extension()
@@ -1829,6 +1830,20 @@ mod tests_file_io {
         println!("ingredient = {ingredient}");
         assert_eq!(ingredient.title(), Some("libpng-test.png"));
         test_thumbnail(&ingredient, "image/png");
+        assert_eq!(ingredient.provenance(), None);
+        assert_eq!(ingredient.manifest_data, None);
+    }
+
+    #[test]
+    #[cfg(feature = "file_io")]
+    fn test_slash_in_title() {
+        let ap = fixture_path("test w: slash.jpg");
+        let ingredient = Ingredient::from_file(ap).expect("from_file");
+        stats(&ingredient);
+
+        println!("ingredient = {ingredient}");
+        assert_eq!(ingredient.title(), Some("test w/ slash.jpg"));
+        test_thumbnail(&ingredient, "image/jpeg");
         assert_eq!(ingredient.provenance(), None);
         assert_eq!(ingredient.manifest_data, None);
     }
