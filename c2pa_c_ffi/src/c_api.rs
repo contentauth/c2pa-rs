@@ -890,6 +890,8 @@ pub unsafe extern "C" fn c2pa_builder_sign(
     let mut builder = guard_boxed!(builder_ptr);
     let c2pa_signer = guard_boxed!(signer_ptr);
 
+    println!("c2pa_builder_sign getting ready to sign with c2pa_signer");
+
     let result = builder.sign(
         c2pa_signer.signer.as_ref(),
         &format,
@@ -1280,8 +1282,9 @@ pub unsafe extern "C" fn c2pa_register_callback(
     let callback_id = *counter;
 
     let callback_wrapper = move |data: &[u8]| -> Result<Vec<u8>, c2pa::Error> {
+        println!("[Rust] Callback wrapper called with data len: {}", data.len());
         // Allocate a buffer for the result (estimate size)
-        let mut result_buffer = vec![0u8; data.len() * 4]; // More generous estimate
+        let mut result_buffer = vec![0u8; data.len() * 2];
 
         let result_size = callback(
             data.as_ptr(),
@@ -1289,12 +1292,15 @@ pub unsafe extern "C" fn c2pa_register_callback(
             result_buffer.as_mut_ptr(),
             result_buffer.len(),
         );
+        println!("[Rust] Callback returned size: {}", result_size);
 
         if result_size < 0 {
+            println!("[Rust] Callback returned error");
             return Err(c2pa::Error::CoseSignature);
         }
 
         result_buffer.truncate(result_size as usize);
+        println!("[Rust] Callback wrapper returning result of len: {}", result_buffer.len());
         Ok(result_buffer)
     };
 
@@ -2027,7 +2033,7 @@ MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAvxDaAZw8PvJcVu3SiVpZ
         assert!(!dest_data.is_empty(), "Destination stream is empty");
         println!("Signed data size: {} bytes", dest_data.len());
 
-        // Read the written data  (make sure it is readable)
+        // Read the written data (make sure it is readable)
         let mut read_stream = TestC2paStream::from_bytes(dest_data.get_data().to_vec());
         let format = CString::new("image/jpeg").unwrap();
         let reader = unsafe { c2pa_reader_from_stream(format.as_ptr(), &mut read_stream) };
