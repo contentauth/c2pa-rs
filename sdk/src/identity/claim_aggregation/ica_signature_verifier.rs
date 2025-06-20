@@ -185,7 +185,13 @@ impl IcaSignatureVerifier {
     ) -> Result<Algorithm, ValidationError<IcaValidationError>> {
         if let Some(ref alg) = sign1.protected.header.alg {
             match alg {
-                // TO DO (CAI-7965): Support algorithms other than EdDSA.
+                // TO DO (CAI-7965): Support algorithms other than EdDSA and ECDSA.
+                RegisteredLabelWithPrivate::Assigned(coset::iana::Algorithm::ES256) => {
+                    Ok(Algorithm::Ec256)
+                }
+                RegisteredLabelWithPrivate::Assigned(coset::iana::Algorithm::ES384) => {
+                    Ok(Algorithm::Ec384)
+                }
                 RegisteredLabelWithPrivate::Assigned(coset::iana::Algorithm::EdDSA) => {
                     Ok(Algorithm::EdDsa)
                 }
@@ -422,16 +428,23 @@ impl IcaSignatureVerifier {
             }
         };
 
-        // TEMPORARY: only support ED25519.
-        let Params::Okp(ref okp) = jwk.params;
-        if okp.curve != "Ed25519" {
-            return Err(ValidationError::SignatureError(
-                IcaValidationError::InvalidDidDocument(format!(
-                    "unsupported OKP curve {}",
-                    okp.curve
-                )),
-            ));
-        }
+        let okp = match jwk.params {
+            Params::Okp(ref okp) => {
+                // TEMPORARY: only support ED25519.
+                if okp.curve != "Ed25519" {
+                    return Err(ValidationError::SignatureError(
+                        IcaValidationError::InvalidDidDocument(format!(
+                            "unsupported OKP curve {}",
+                            okp.curve
+                        )),
+                    ));
+                }
+                okp
+            }
+            _ => {
+                todo!("Implement support for curves other than Ed25519");
+            }
+        };
 
         // Check the signature, which needs to have the same `aad` provided, by
         // providing a closure that can do the verify operation.
