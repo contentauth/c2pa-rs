@@ -1124,7 +1124,7 @@ pub unsafe extern "C" fn c2pa_signer_create(
             )
         };
 
-        if signed_size <= 0 {
+        if signed_size < 0 {
             return Err(c2pa::Error::CoseSignature); // todo:: return errors from callback
         }
         signed_bytes.set_len(signed_size as usize);
