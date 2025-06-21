@@ -1111,7 +1111,7 @@ pub unsafe extern "C" fn c2pa_signer_create(
         // we need to guess at a max signed size, the callback must verify this is big enough or fail.
         let signed_len_max = data.len() * 2;
         let mut signed_bytes: Vec<u8> = vec![0; signed_len_max];
-        println!("## Preparing to call callback");
+
         let signed_size = unsafe {
             (callback)(
                 callback_context, // Use the context passed to the callback (from CallbackSigner)
