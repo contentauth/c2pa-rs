@@ -1114,7 +1114,7 @@ pub unsafe extern "C" fn c2pa_signer_create(
         println!("## Preparing to call callback");
         let signed_size = unsafe {
             (callback)(
-                callback_context,  // Use the context passed to the callback (from CallbackSigner)
+                callback_context, // Use the context passed to the callback (from CallbackSigner)
                 data.as_ptr(),
                 data.len(),
                 signed_bytes.as_mut_ptr(),
