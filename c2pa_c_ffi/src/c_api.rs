@@ -113,6 +113,18 @@ macro_rules! from_cstr_or_return_null {
     };
 }
 
+// Internal routine to convert a *const c_char to a rust String or return a -1 int error.
+#[macro_export]
+macro_rules! from_cstr_or_return_int {
+    ($ptr : expr) => {
+        null_check!(
+            ($ptr),
+            |ptr| { std::ffi::CStr::from_ptr(ptr).to_string_lossy().into_owned() },
+            -1
+        )
+    };
+}
+
 // Internal routine to convert a *const c_char to Option<String>.
 #[macro_export]
 macro_rules! from_cstr_option {
@@ -126,18 +138,6 @@ macro_rules! from_cstr_option {
                     .into_owned(),
             )
         }
-    };
-}
-
-// Internal routine to convert a *const c_char to a rust String or return a -1 int error.
-#[macro_export]
-macro_rules! from_cstr_or_return_int {
-    ($ptr : expr) => {
-        null_check!(
-            ($ptr),
-            |ptr| { std::ffi::CStr::from_ptr(ptr).to_string_lossy().into_owned() },
-            -1
-        )
     };
 }
 
