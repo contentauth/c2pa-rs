@@ -1104,21 +1104,26 @@ pub unsafe extern "C" fn c2pa_signer_create(
     let certs = from_cstr_or_return_null!(certs);
     let tsa_url = from_cstr_option!(tsa_url);
     let context = context as *const ();
-    println!("c2pa_signer_create");
-    let c_callback = move |context: *const (), data: &[u8]| {
+
+    // Create a callback that uses the provided C callback function
+    // The callback ignores its context parameter and will use the context set on the CallbackSigner
+    let c_callback = move |callback_context: *const (), data: &[u8]| {
         // we need to guess at a max signed size, the callback must verify this is big enough or fail.
         let signed_len_max = data.len() * 2;
         let mut signed_bytes: Vec<u8> = vec![0; signed_len_max];
+
         let signed_size = unsafe {
             (callback)(
-                context,
+                // Use the context passed to the callback (from CallbackSigner),
+                // instead of capturing it in the callback closure.
+                callback_context,
                 data.as_ptr(),
                 data.len(),
                 signed_bytes.as_mut_ptr(),
                 signed_len_max,
             )
         };
-        println!("c_callback: signed_size: {}", signed_size);
+
         if signed_size < 0 {
             return Err(c2pa::Error::CoseSignature); // todo:: return errors from callback
         }
