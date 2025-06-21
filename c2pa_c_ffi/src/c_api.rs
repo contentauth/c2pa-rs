@@ -1104,7 +1104,6 @@ pub unsafe extern "C" fn c2pa_signer_create(
     let certs = from_cstr_or_return_null!(certs);
     let tsa_url = from_cstr_option!(tsa_url);
     let context = context as *const ();
-    println!("## c2pa_signer_create");
 
     // Create a callback that uses the provided C callback function
     // The callback ignores its context parameter and will use the context set on the CallbackSigner
@@ -1122,7 +1121,7 @@ pub unsafe extern "C" fn c2pa_signer_create(
                 signed_len_max,
             )
         };
-        println!("## c_callback: signed_size: {}", signed_size);
+
         if signed_size <= 0 {
             return Err(c2pa::Error::CoseSignature); // todo:: return errors from callback
         }
