@@ -1286,7 +1286,7 @@ mod tests {
         json!({
             "title": "Parent Test",
             "relationship": "parentOf",
-            "label": "INGREDIENT_1",
+            "label": "INGREDIENT",
         })
         .to_string()
     }
@@ -1300,14 +1300,7 @@ mod tests {
                     "version": "1.0.0"
                 }
             ],
-            "metadata": [
-                {
-                    "dateTime": "1985-04-12T23:20:50.52Z",
-                    "my_custom_metadata": "my custom metatdata value"
-                }
-            ],
             "title": "Test_Manifest",
-            "format": "image/tiff",
             "instance_id": "1234",
             "thumbnail": {
                 "format": "image/jpeg",
@@ -2229,6 +2222,132 @@ mod tests {
         let mut output = Cursor::new(Vec::new());
         builder
             .sign(signer.as_ref(), "jpeg", &mut input, &mut output)
+            .expect("builder sign");
+
+        output.set_position(0);
+
+        let reader = Reader::from_stream("jpeg", &mut output).expect("from_bytes");
+        println!("{reader}");
+        let m = reader.active_manifest().unwrap();
+        assert_eq!(m.ingredients().len(), 1);
+        let parent = reader.get_manifest(&parent_manifest_label).unwrap();
+        assert_eq!(parent.assertions().len(), 1);
+    }
+
+    #[test]
+    fn test_redaction2() {
+        use crate::{assertions::Action, utils::test::setup_logger};
+
+        setup_logger();
+        // the label of the assertion we are going to redact
+        const ASSERTION_LABEL: &str = "stds.schema-org.CreativeWork";
+
+        let mut source = Cursor::new(TEST_IMAGE_CLEAN);
+        let mut dest1 = Cursor::new(Vec::new());
+
+        let definition = ManifestDefinition {
+            claim_version: Some(2),
+            title: Some("Redacted claim".to_string()),
+            ..Default::default()
+        };
+        let mut builder = Builder {
+            definition,
+            ..Default::default()
+        };
+
+        // Create a parent with a c2pa_action type assertion.
+        let created_action = crate::assertions::Action::new(c2pa_action::CREATED)
+            .set_source_type("http://c2pa.org/digitalsourcetype/empty");
+
+        let actions = crate::assertions::Actions::new().add_action(created_action);
+        builder.add_assertion(Actions::LABEL, &actions).unwrap();
+
+        builder
+            .add_assertion(
+                ASSERTION_LABEL,
+                &json!({
+                    "@context": "https://schema.org",
+                    "@type": "CreativeWork",
+                    "author": [
+                        {
+                            "@type": "Person",
+                            "name": "Joe Bloggs"
+                        }
+                    ]
+                }),
+            )
+            .unwrap();
+
+        // sign the Builder and write it to the output stream
+        let signer = test_signer(SigningAlg::Ps256);
+        let _manifest_data = builder
+            .sign(signer.as_ref(), "image/jpeg", &mut source, &mut dest1)
+            .unwrap();
+
+        dest1.set_position(0);
+        let reader = Reader::from_stream("jpeg", &mut dest1).expect("from_bytes");
+        println!("{reader}");
+
+        let definition = ManifestDefinition {
+            claim_version: Some(2),
+            title: Some("Redacting claim".to_string()),
+            ..Default::default()
+        };
+
+        let mut builder2 = Builder {
+            definition,
+            ..Default::default()
+        };
+
+        // rewind our new asset stream so we can add it as an ingredient
+        dest1.set_position(0);
+
+        let parent_json = json!({
+            "title": "Parent Test",
+            "label": "INGREDIENT_1",
+            "relationship": "parentOf",
+        });
+
+        // add the parent ingredient
+        let parent = builder2
+            .add_ingredient_from_stream(parent_json.to_string(), "image/jpeg", &mut dest1)
+            .unwrap();
+
+        let parent_manifest_label = parent.active_manifest().unwrap().to_owned();
+
+        let redacted_uri =
+            crate::jumbf::labels::to_assertion_uri(&parent_manifest_label, ASSERTION_LABEL);
+
+        // Create a parent with a c2pa_action type assertion.
+        let opened_action = Action::new(c2pa_action::OPENED)
+            .set_parameter(
+                "org.cai.ingredientIds",
+                [dbg!(parent.label().unwrap().to_string())],
+            )
+            .unwrap();
+
+        let redacted_action = Action::new("c2pa.redacted")
+            .set_reason("testing".to_owned())
+            .set_parameter("redacted".to_owned(), redacted_uri.clone())
+            .unwrap();
+
+        let actions = Actions::new()
+            .add_action(opened_action)
+            .add_action(redacted_action);
+
+        builder2.definition.redactions = Some(vec![redacted_uri]);
+
+        builder2.add_assertion(Actions::LABEL, &actions).unwrap();
+
+        let signer = test_signer(SigningAlg::Ps256);
+
+        // rewind our first asset stream again
+        dest1.set_position(0);
+
+        // Embed a manifest using the signer.
+        let mut output = Cursor::new(Vec::new());
+        builder2
+            .sign(signer.as_ref(), "jpeg", &mut dest1, &mut output)
             .expect("builder sign");
 
         output.set_position(0);
