@@ -318,6 +318,10 @@ impl TestC2paStream {
     pub fn drop_c_stream(c_stream: C2paStream) {
         drop(Self::from_c_stream(c_stream));
     }
+
+    pub fn into_inner(self) -> Vec<u8> {
+        self.cursor.into_inner()
+    }
 }
 
 #[cfg(test)]
