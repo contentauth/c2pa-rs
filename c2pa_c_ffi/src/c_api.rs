@@ -1735,7 +1735,6 @@ mod tests {
 
         assert!(json_content.contains("manifest"));
 
-        // Example clean up
         TestC2paStream::drop_c_stream(source_stream);
         TestC2paStream::drop_c_stream(read_stream);
         unsafe {
