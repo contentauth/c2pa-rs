@@ -1640,8 +1640,8 @@ mod tests {
 
     #[test]
     fn test_sign_with_callback_signer() {
-        // Create a callback that uses the Ed25519 signing function,
-        // since we have it around. It is important the callback returns -1 on error.
+        // Create an example callback that uses the Ed25519 signing function,
+        // since we have it around. It is important a "real" callback returns -1 on error.
         extern "C" fn test_callback(
             _context: *const (),
             data: *const c_uchar,
@@ -1724,15 +1724,15 @@ mod tests {
         let dest_test_stream = TestC2paStream::from_c_stream(dest_stream);
         let mut read_stream = dest_test_stream.into_c_stream();
         let format = CString::new("image/jpeg").unwrap();
-        
+
         let reader = unsafe { c2pa_reader_from_stream(format.as_ptr(), &mut read_stream) };
         assert!(!reader.is_null());
-        
+
         let json = unsafe { c2pa_reader_json(reader) };
         assert!(!json.is_null());
         let json_str = unsafe { CString::from_raw(json) };
         let json_content = json_str.to_str().unwrap();
-        
+
         assert!(json_content.contains("manifest"));
 
         // Example clean up
