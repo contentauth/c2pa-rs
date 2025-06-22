@@ -1655,9 +1655,7 @@ mod tests {
                 Err(_) => return -1,
             };
 
-            let signature = unsafe {
-                c2pa_ed25519_sign(data, len, private_key_cstr.as_ptr())
-            };
+            let signature = unsafe { c2pa_ed25519_sign(data, len, private_key_cstr.as_ptr()) };
 
             // This should not happen, but in a real callback implementation we should check
             if signature.is_null() {
