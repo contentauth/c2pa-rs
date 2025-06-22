@@ -61,7 +61,7 @@ type WriteCallback =
 type FlushCallback = unsafe extern "C" fn(context: *mut StreamContext) -> isize;
 
 #[repr(C)]
-/// A C2paStream is a Rust Read/Write/Seek stream that can be created in C.
+/// A C2paStream is a Rust Read/Write/Seek stream that can be created and used in C.
 #[derive(Debug)]
 pub struct C2paStream {
     context: *mut StreamContext,

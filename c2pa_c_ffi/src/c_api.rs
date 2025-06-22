@@ -1080,9 +1080,12 @@ pub unsafe extern "C" fn c2pa_format_embeddable(
 /// The error string can be retrieved by calling c2pa_error.
 ///
 /// # Safety
-/// Reads from NULL-terminated C strings
+/// Reads from NULL-terminated C strings.
 /// The returned value MUST be released by calling c2pa_signer_free
 /// and it is no longer valid after that call.
+/// When binding through the C API to other languages, the callback must live long
+/// enough, possibly being re-used and called multiple times. The callback is logically
+/// owned by the host/caller.
 ///
 /// # Example
 /// ```c
