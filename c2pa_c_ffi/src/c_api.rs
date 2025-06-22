@@ -1616,7 +1616,7 @@ mod tests {
             _signed_len: usize,
         ) -> isize {
             // Placeholder signer
-            0 as isize
+            1
         }
 
         let certs = include_str!(fixture_path!("certs/ed25519.pub"));
