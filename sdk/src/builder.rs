@@ -1223,7 +1223,7 @@ impl Builder {
 
         // Make sure we will have access to thumbnail
         if let Some(thumbnail_ref) = ingredient.thumbnail_ref() {
-            self.add_resource_ref_to_resources(base_path,thumbnail_ref)?;
+            self.add_resource_ref_to_resources(base_path, thumbnail_ref)?;
         }
 
         // Make sure we will have access to manifest
@@ -1237,7 +1237,11 @@ impl Builder {
     }
 
     // From a resource ref, opens file and adds to resources
-    fn add_resource_ref_to_resources(&mut self, base_path: &Path, resource_ref: &ResourceRef) -> Result<()> {
+    fn add_resource_ref_to_resources(
+        &mut self,
+        base_path: &Path,
+        resource_ref: &ResourceRef,
+    ) -> Result<()> {
         let uri = &resource_ref.identifier;
         let path = uri_to_path(
             uri,
@@ -2275,5 +2279,36 @@ mod tests {
             .json();
         assert!(reader_json.contains("Test Ingredient"));
         assert!(reader_json.contains("thumbnail.ingredient"));
+    }
+
+    #[test]
+    #[cfg(feature = "file_io")]
+    fn test_load_ingredient_from_folder() {
+        let mut source = Cursor::new(TEST_IMAGE_CLEAN);
+        let format: &'static str = "image/jpeg";
+
+        let mut builder = Builder::new();
+
+        builder
+            .load_ingredient_from_folder(Path::new("tests/fixtures/ingredients/ingredient_c"))
+            .unwrap();
+
+        let signer = test_signer(SigningAlg::Ps256);
+
+        let mut dest = Cursor::new(Vec::new());
+        builder
+            .sign(&signer, format, &mut source, &mut dest)
+            .unwrap();
+
+        let reader = Reader::from_stream(format, &mut dest).unwrap();
+        println!("{}", reader.json());
+
+        assert_eq!(reader.manifests().len(), 2);
+
+        let manifest_store = reader.active_manifest().unwrap();
+        assert!(manifest_store
+            .ingredients()
+            .iter()
+            .any(|i| i.title() == Some("C.jpg")));
     }
 }
