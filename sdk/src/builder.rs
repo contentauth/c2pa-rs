@@ -34,11 +34,12 @@ use crate::{
     },
     claim::Claim,
     error::{Error, Result},
+    jumbf::labels::manifest_label_from_uri,
     jumbf_io,
     resource_store::{ResourceRef, ResourceResolver, ResourceStore},
     salt::DefaultSalt,
     store::Store,
-    utils::mime::format_to_mime,
+    utils::{io_utils::uri_to_path, mime::format_to_mime},
     AsyncSigner, ClaimGeneratorInfo, HashRange, Ingredient, Signer,
 };
 
@@ -1205,33 +1206,13 @@ impl Builder {
         Store::get_composed_manifest(manifest_bytes, format)
     }
 
-    fn add_resource_ref(&mut self, path: &Path, resource_ref: &ResourceRef) -> Result<()> {
-        let mut id = resource_ref.identifier.clone();
-
-        if id.starts_with("self#jumbf=") {
-            // Remove the prefix
-            id = id.replacen("self#jumbf=", "", 1);
-
-            // Remove /c2pa/ if it exists
-            if id.starts_with("/c2pa/") {
-                id = id.replacen("/c2pa/", "", 1);
-            }
-
-            // Replace ':' with '_'
-            id = id.replace(':', "_");
-        }
-
-        let mut path_buf = PathBuf::from(path);
-        path_buf.push(id);
-
-        let file = std::fs::File::open(path_buf.as_path())?;
-        self.add_resource(&resource_ref.identifier, file)?;
-
-        Ok(())
-    }
-
-    pub fn load_ingredient_from_folder(&mut self, path: &Path) -> Result<()> {
-        let ingredient_path = PathBuf::from(path).join("ingredient.json");
+    /// Loads an ingredient folder into the builder.
+    /// # Arguments
+    /// * `base_path` - The base path of ingredient folder to read.
+    /// # Errors
+    /// * Returns an [`Error`] if the ingredient folder could not be loaded.
+    pub fn load_ingredient_from_folder(&mut self, base_path: &Path) -> Result<()> {
+        let ingredient_path = PathBuf::from(base_path).join("ingredient.json");
         let json = std::fs::read_to_string(ingredient_path.as_path())?;
         let mut ingredient = Ingredient::from_json(&json)?;
 
@@ -1240,15 +1221,28 @@ impl Builder {
 
         // Make sure we will have access to thumbnail
         if let Some(thumbnail_ref) = ingredient.thumbnail_ref() {
-            self.add_resource_ref(path, thumbnail_ref)?;
+            self.add_resource_ref_to_resources(thumbnail_ref)?;
         }
 
         // Make sure we will have access to manifest
         if let Some(manifest_data_ref) = ingredient.manifest_data_ref() {
-            self.add_resource_ref(path, manifest_data_ref)?;
+            self.add_resource_ref_to_resources(manifest_data_ref)?;
         }
 
         self.add_ingredient(ingredient);
+
+        Ok(())
+    }
+
+    // From a resource ref, opens file and adds to resources
+    fn add_resource_ref_to_resources(&mut self, resource_ref: &ResourceRef) -> Result<()> {
+        let uri = &resource_ref.identifier;
+        let path = uri_to_path(
+            uri,
+            &manifest_label_from_uri(uri).unwrap_or("unknown".to_string()),
+        );
+        let file = std::fs::File::open(path)?;
+        self.add_resource(uri, file)?;
 
         Ok(())
     }
