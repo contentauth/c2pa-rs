@@ -142,6 +142,7 @@ impl ResourceRef {
 /// Resource store to contain binary objects referenced from JSON serializable structures
 #[derive(Debug, Serialize)]
 #[cfg_attr(feature = "json_schema", derive(JsonSchema))]
+#[doc(hidden)]
 pub struct ResourceStore {
     resources: HashMap<String, Vec<u8>>,
     #[cfg(feature = "file_io")]

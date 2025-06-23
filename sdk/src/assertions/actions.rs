@@ -29,7 +29,7 @@ use crate::{
 const ASSERTION_CREATION_VERSION: usize = 2;
 pub const CAI_INGREDIENT_IDS: &str = "org.cai.ingredientIds";
 
-/// Specification defined C2PA actions
+/// C2PA actions defined in the C2PA specification.
 pub mod c2pa_action {
     /// Changes to tone, saturation, etc.
     pub const COLOR_ADJUSTMENTS: &str = "c2pa.color_adjustments";
@@ -273,6 +273,7 @@ impl Action {
     }
 
     /// Returns a digitalSourceType as defined at <https://cv.iptc.org/newscodes/digitalsourcetype/>.
+    // QUESTION: Keep in docs?
     pub fn source_type(&self) -> Option<&str> {
         self.source_type.as_deref()
     }
