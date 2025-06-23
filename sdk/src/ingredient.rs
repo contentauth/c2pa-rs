@@ -26,7 +26,7 @@ use uuid::Uuid;
 #[cfg(doc)]
 use crate::Manifest;
 use crate::{
-    assertion::{get_thumbnail_image_type, Assertion, AssertionBase},
+    assertion::{Assertion, AssertionBase},
     assertions::{self, labels, AssetType, Metadata, Relationship, Thumbnail},
     asset_io::CAIRead,
     claim::{Claim, ClaimAssetData},
@@ -41,7 +41,10 @@ use crate::{
     resource_store::{skip_serializing_resources, ResourceRef, ResourceStore},
     status_tracker::StatusTracker,
     store::Store,
-    utils::{mime::extension_to_mime, xmp_inmemory_utils::XmpInfo},
+    utils::{
+        mime::{extension_to_mime, format_to_mime},
+        xmp_inmemory_utils::XmpInfo,
+    },
     validation_results::ValidationResults,
     validation_status::{self, ValidationStatus},
 };
@@ -705,13 +708,7 @@ impl Ingredient {
     }
 
     fn thumbnail_from_assertion(assertion: &Assertion) -> (String, Vec<u8>) {
-        let thumbnail_format = extension_to_mime(
-            &get_thumbnail_image_type(&assertion.label_root()).unwrap_or("".into()),
-        );
-        (
-            thumbnail_format.unwrap_or("image/none").to_string(),
-            assertion.data().to_vec(),
-        )
+        (assertion.content_type(), assertion.data().to_vec())
     }
 
     /// Creates an `Ingredient` from a file path and options.
@@ -1207,13 +1204,22 @@ impl Ingredient {
                             thumb_ref.data_types.clone(),
                         )?
                     } else {
-                        claim.add_assertion(&Thumbnail::new(
-                            &labels::add_thumbnail_format(
+                        let thumbnail = if claim.version() >= 2 {
+                            Thumbnail::new_with_format(
                                 labels::INGREDIENT_THUMBNAIL,
-                                &thumb_ref.format,
-                            ),
-                            data.into_owned(),
-                        ))?
+                                data.into_owned(),
+                                &format_to_mime(&thumb_ref.format),
+                            )
+                        } else {
+                            Thumbnail::new(
+                                &labels::add_thumbnail_format(
+                                    labels::INGREDIENT_THUMBNAIL,
+                                    &thumb_ref.format,
+                                ),
+                                data.into_owned(),
+                            )
+                        };
+                        claim.add_assertion(&thumbnail)?
                     }
                 }
             };
@@ -1613,7 +1619,7 @@ mod tests {
         let ingredient = Ingredient::from_memory_async(format, image_bytes)
             .await
             .expect("from_memory_async");
-        // println!("ingredient = {ingredient}");
+        println!("ingredient = {ingredient}");
         assert_eq!(ingredient.title(), Some("untitled"));
         assert_eq!(ingredient.format(), Some(format));
         assert!(ingredient.provenance().is_some());
@@ -2007,10 +2013,11 @@ mod tests_file_io {
     #[test]
     fn test_thumbnail_from_assertion_for_svg() {
         let assertion = Assertion::new(
-            "c2pa.thumbnail.ingredient.svg",
+            "c2pa.thumbnail.ingredient",
             None,
             AssertionData::Binary(include_bytes!("../tests/fixtures/sample1.svg").to_vec()),
-        );
+        )
+        .set_content_type("image/svg+xml");
         let (format, image) = Ingredient::thumbnail_from_assertion(&assertion);
         assert_eq!(format, "image/svg+xml");
         assert_eq!(
