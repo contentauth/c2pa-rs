@@ -872,7 +872,7 @@ pub mod tests {
     #[cfg(feature = "file_io")]
     fn test_reader_from_file_with_cawg_data() -> Result<()> {
         let result = Reader::from_file("tests/fixtures/C_with_CAWG_data.jpg");
-        assert!(matches!(result, Err(Error::JumbfNotFound)));
+        result.unwrap();
         Ok(())
     }
 
@@ -880,7 +880,7 @@ pub mod tests {
     #[cfg(feature = "file_io")]
     fn test_reader_from_file_with_cawg_data_png() -> Result<()> {
         let result = Reader::from_file("tests/fixtures/flower.png");
-        assert!(matches!(result, Err(Error::JumbfNotFound)));
+        result.unwrap();
         Ok(())
     }
 
