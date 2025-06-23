@@ -46,8 +46,7 @@
 //! ```
 //!
 //! # Example: Adding a Manifest to a file
-//!
-//!
+//! ```
 //! # use c2pa::Result;
 //! use std::path::PathBuf;
 //!
@@ -81,6 +80,7 @@
 //! )?;
 //! # Ok(())
 //! # }
+//! ```
 
 /// The internal name of the C2PA SDK
 pub const NAME: &str = "c2pa-rs";
@@ -128,6 +128,7 @@ pub use claim_generator_info::ClaimGeneratorInfo;
 // pub use dynamic_assertion::{
 //     AsyncDynamicAssertion, DynamicAssertion, DynamicAssertionContent, PartialClaim,
 // };
+pub use crypto::raw_signature::SigningAlg;
 pub use error::{Error, Result};
 pub use external_manifest::ManifestPatchCallback;
 pub use hash_utils::{hash_stream_by_alg, HashRange};
@@ -148,8 +149,6 @@ pub use signer::RemoteSigner;
 pub use signer::{AsyncSigner, Signer};
 pub use utils::mime::format_from_path;
 pub use validation_results::{ValidationResults, ValidationState};
-
-pub use crate::crypto::raw_signature::SigningAlg;
 
 // Internal modules
 pub(crate) mod assertion;
@@ -173,6 +172,7 @@ pub(crate) mod manifest_assertion;
 #[cfg(feature = "v1_api")]
 pub(crate) mod manifest_store;
 pub(crate) mod manifest_store_report;
+
 #[allow(dead_code)]
 // TODO: Remove this when the feature is released (used in tests only for some builds now)
 pub(crate) mod reader;

@@ -6,6 +6,27 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 Since version 0.36.2, the format of this changelog is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.57.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.56.2...c2pa-v0.57.0)
+_19 June 2025_
+
+### Fixed
+
+* No-op change to trigger c2pa core crate publish
+
+## [0.56.2](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.56.1...c2pa-v0.56.2)
+_18 June 2025_
+
+### Fixed
+
+* No-op change to trigger rebuild
+
+## [0.56.1](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.56.0...c2pa-v0.56.1)
+_18 June 2025_
+
+### Fixed
+
+* To_archive does not store resources associated with ingredients ([#1151](https://github.com/contentauth/c2pa-rs/pull/1151))
+
 ## [0.56.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.55.0...c2pa-v0.56.0)
 _17 June 2025_
 

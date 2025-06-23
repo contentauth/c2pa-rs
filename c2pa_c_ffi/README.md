@@ -1,6 +1,6 @@
 # C2PA C API
 
-This is the C API wrapper for the [C2PA Rust SDK](../sdk). It provides a C-compatible interface for working with content credentials, with same formats supported as the Rust SDK.
+This is the C API wrapper for the [C2PA Rust SDK](../sdk). It provides a C-compatible interface for working with content credentials, with same formats supported as the Rust SDK. This crate can also be used in Rust code to write C-compatible bindings with the exposed types.
 
 ## Overview
 
