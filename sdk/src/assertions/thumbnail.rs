@@ -53,6 +53,16 @@ impl Thumbnail {
             content_type,
         }
     }
+
+    /// Create a new Thumbnail with a specific content type
+    /// The label should not contain the image type postfix
+    pub fn new_with_format(label: &str, data: Vec<u8>, content_type: &str) -> Self {
+        Thumbnail {
+            data,
+            label: label.to_owned(),
+            content_type: content_type.to_owned(),
+        }
+    }
 }
 
 impl AssertionBase for Thumbnail {
@@ -128,5 +138,17 @@ pub mod tests {
         let assertion = Assertion::new(labels::JPEG_CLAIM_THUMBNAIL, None, data);
         let result = Thumbnail::from_assertion(&assertion);
         assert!(result.is_err())
+    }
+
+    #[test]
+    fn assertion_thumbnail_with_format() {
+        let original = Thumbnail::new_with_format("foo", some_binary_data(), "image/png");
+        let assertion = original.to_assertion().expect("build_assertion");
+        assert_eq!(assertion.content_type(), "image/png");
+        assert_eq!(assertion.label(), "foo");
+        let result = Thumbnail::from_assertion(&assertion).expect("from_assertion");
+        assert_eq!(original.label, result.label);
+        assert_eq!(original.content_type, result.content_type);
+        assert_eq!(original.data, result.data);
     }
 }
