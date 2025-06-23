@@ -234,6 +234,22 @@ pub fn wasm_remove_dir_all<P: AsRef<std::path::Path>>(path: P) -> Result<()> {
     ))?
 }
 
+/// Convert a URI to a file path.
+pub fn uri_to_path(uri: &str, manifest_label: &str) -> String {
+    let mut path = uri.to_string();
+    if path.starts_with("self#jumbf=") {
+        // convert to a file path always including the manifest label
+        path = path.replace("self#jumbf=", "");
+        if path.starts_with("/c2pa/") {
+            path = path.replacen("/c2pa/", "", 1);
+        } else {
+            path = format!("{}/{path}", manifest_label);
+        }
+        path = path.replace([':'], "_");
+    }
+    path
+}
+
 #[cfg(test)]
 mod tests {
     #![allow(clippy::expect_used)]
