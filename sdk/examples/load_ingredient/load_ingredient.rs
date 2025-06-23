@@ -22,6 +22,7 @@ const CERTS: &[u8] = include_bytes!("../../tests/fixtures/certs/ed25519.pub");
 const PRIVATE_KEY: &[u8] = include_bytes!("../../tests/fixtures/certs/ed25519.pem");
 const TEST_IMAGE: &[u8] = include_bytes!("../../tests/fixtures/C.jpg");
 
+#[cfg(feature = "file_io")]
 #[allow(clippy::incompatible_msrv)]
 pub fn main() -> Result<()> {
     let mut source = Cursor::new(TEST_IMAGE);
@@ -29,31 +30,7 @@ pub fn main() -> Result<()> {
 
     let mut builder = Builder::new();
 
-    builder.load_ingredient_from_folder(Path::new("ingredient"))?;
-
-    // // Retrieve ingredient json from folder
-    // let ingredient_json = str::from_utf8(include_bytes!("ingredient/ingredient.json")).unwrap();
-
-    // // Construct ingredient from json
-    // let mut ingredient = Ingredient::from_json(ingredient_json).unwrap();
-
-    // // Specify ingredient is parent
-    // ingredient.set_is_parent();
-
-    // // Make sure we will have access to thumbnail
-    // if let Some(thumbnail_ref) = ingredient.thumbnail_ref() {
-    //     let thumbnail = Cursor::new(include_bytes!("ingredient/contentauth_urn_uuid_b2b1f7fa-b119-4de1-9c0d-c97fbea3f2c3/c2pa.assertions/c2pa.thumbnail.claim.jpeg"));
-    //     let _ = builder.add_resource(&thumbnail_ref.identifier, thumbnail);
-    // }
-
-    // // Make sure we will have access to manifest
-    // if let Some(manifest_data_ref) = ingredient.manifest_data_ref() {
-    //     let manifest_data = Cursor::new(include_bytes!("ingredient/manifest_data.c2pa"));
-    //     let _ = builder.add_resource(&manifest_data_ref.identifier, manifest_data);
-    // }
-
-    // // Add ingredient to builder's manifest definition
-    // builder.add_ingredient(ingredient);
+    builder.load_ingredient_from_folder(Path::new("sdk/examples/load_ingredient/ingredient"))?;
 
     // Write the manifest builder to a zipped stream
     let mut zipped = Cursor::new(Vec::new());

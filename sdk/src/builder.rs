@@ -1211,9 +1211,11 @@ impl Builder {
     /// * `base_path` - The base path of ingredient folder to read.
     /// # Errors
     /// * Returns an [`Error`] if the ingredient folder could not be loaded.
+    #[cfg(feature = "file_io")]
     pub fn load_ingredient_from_folder(&mut self, base_path: &Path) -> Result<()> {
         let ingredient_path = PathBuf::from(base_path).join("ingredient.json");
-        let json = std::fs::read_to_string(ingredient_path.as_path())?;
+        let ingredient_path = ingredient_path.as_path();
+        let json = std::fs::read_to_string(ingredient_path)?;
         let mut ingredient = Ingredient::from_json(&json)?;
 
         // Specify ingredient is parent
@@ -1221,12 +1223,12 @@ impl Builder {
 
         // Make sure we will have access to thumbnail
         if let Some(thumbnail_ref) = ingredient.thumbnail_ref() {
-            self.add_resource_ref_to_resources(thumbnail_ref)?;
+            self.add_resource_ref_to_resources(base_path,thumbnail_ref)?;
         }
 
         // Make sure we will have access to manifest
         if let Some(manifest_data_ref) = ingredient.manifest_data_ref() {
-            self.add_resource_ref_to_resources(manifest_data_ref)?;
+            self.add_resource_ref_to_resources(base_path, manifest_data_ref)?;
         }
 
         self.add_ingredient(ingredient);
@@ -1235,12 +1237,13 @@ impl Builder {
     }
 
     // From a resource ref, opens file and adds to resources
-    fn add_resource_ref_to_resources(&mut self, resource_ref: &ResourceRef) -> Result<()> {
+    fn add_resource_ref_to_resources(&mut self, base_path: &Path, resource_ref: &ResourceRef) -> Result<()> {
         let uri = &resource_ref.identifier;
         let path = uri_to_path(
             uri,
             &manifest_label_from_uri(uri).unwrap_or("unknown".to_string()),
         );
+        let path = PathBuf::from(base_path).join(path);
         let file = std::fs::File::open(path)?;
         self.add_resource(uri, file)?;
 

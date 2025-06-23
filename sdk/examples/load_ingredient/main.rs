@@ -13,6 +13,7 @@
 use anyhow::Result;
 mod load_ingredient;
 
+#[cfg(feature = "file_io")]
 fn main() -> Result<()> {
     load_ingredient::main()?;
     Ok(())
