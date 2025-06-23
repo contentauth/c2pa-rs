@@ -870,6 +870,14 @@ pub mod tests {
 
     #[test]
     #[cfg(feature = "file_io")]
+    fn test_reader_from_file_with_cawg_data() -> Result<()> {
+        let result = Reader::from_file("tests/fixtures/C_with_CAWG_data.jpg");
+        assert!(matches!(result, Err(Error::JumbfNotFound)));
+        Ok(())
+    }
+
+    #[test]
+    #[cfg(feature = "file_io")]
     fn test_reader_from_file_validation_err() -> Result<()> {
         let reader = Reader::from_file("tests/fixtures/XCA.jpg")?;
         assert!(reader.validation_status().is_some());
