@@ -21,7 +21,8 @@ use c2pa::Ingredient;
 // C has no namespace so we prefix things with C2PA to make them unique
 use c2pa::{
     assertions::DataHash, identity::validator::CawgValidator, settings::load_settings_from_str,
-    Builder as C2paBuilder, CallbackSigner, Reader as C2paReader, SigningAlg,
+    validation_status::ValidationStatus, Builder as C2paBuilder, CallbackSigner,
+    Reader as C2paReader, SigningAlg,
 };
 use scopeguard::guard;
 use tokio::runtime::Runtime; // cawg validator requires async
@@ -239,6 +240,38 @@ pub unsafe extern "C" fn c2pa_version() -> *mut c_char {
     to_c_string(version)
 }
 
+// Add this helper function somewhere in your file:
+fn statuses_to_string(statuses: &[ValidationStatus]) -> String {
+    use std::fmt::Write;
+    let mut s = String::new();
+    for (i, status) in statuses.iter().enumerate() {
+        if i > 0 {
+            s.push(',');
+        }
+        write!(s, "{:?}", status).unwrap();
+    }
+    s
+}
+
+/// Returns the validation status as a string.
+///
+/// # Safety
+/// The caller must ensure `reader_ptr` is a valid pointer to a C2paReader.
+/// The returned value must be freed with `c2pa_string_free`.
+#[no_mangle]
+pub unsafe extern "C" fn c2pa_reader_validation_status_str(
+    reader_ptr: *mut C2paReader,
+) -> *mut c_char {
+    if reader_ptr.is_null() {
+        return std::ptr::null_mut();
+    }
+    let reader = &mut *reader_ptr;
+    let statuses_str = match reader.validation_status() {
+        Some(statuses) => statuses_to_string(statuses),
+        None => String::from("None"),
+    };
+    to_c_string(statuses_str)
+}
 /// Returns the last error message.
 ///
 /// # Safety
@@ -479,6 +512,28 @@ pub unsafe extern "C" fn c2pa_reader_from_stream(
 
     let result = C2paReader::from_stream(&format, &mut (*stream));
     return_boxed!(post_validate(result))
+}
+
+/// Returns the validation status as a string.
+///
+/// # Safety
+/// The caller must ensure `reader_ptr` is a valid pointer to a C2paReader.
+/// The returned value must be freed with `c2pa_string_free`.
+#[no_mangle]
+pub unsafe extern "C" fn c2pa_reader_validation_results_json(
+    reader_ptr: *mut C2paReader,
+) -> *mut c_char {
+    if reader_ptr.is_null() {
+        return std::ptr::null_mut();
+    }
+    let reader = &mut *reader_ptr;
+    let results_json = match reader.validation_results() {
+        Some(results) => {
+            serde_json::to_string(results).unwrap_or_else(|_| "SerializationError".to_string())
+        }
+        None => String::from("None"),
+    };
+    to_c_string(results_json)
 }
 
 /// Creates and verifies a C2paReader from a file path.
