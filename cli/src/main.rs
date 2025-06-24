@@ -19,8 +19,9 @@
 /// in that file. If a manifest definition JSON file is specified,
 /// the claim will be added to any existing claims.
 use std::{
-    fs::{create_dir_all, remove_dir_all, remove_file, File},
-    io::Write,
+    env,
+    fs::{self, create_dir_all, remove_dir_all, remove_file, File},
+    io::{Cursor, Write},
     path::{Path, PathBuf},
     str::FromStr,
 };
@@ -34,6 +35,7 @@ use clap::{Parser, Subcommand};
 use log::debug;
 use serde::Deserialize;
 use signer::SignConfig;
+use tempfile::NamedTempFile;
 #[cfg(not(target_os = "wasi"))]
 use tokio::runtime::Runtime;
 use url::Url;
@@ -537,6 +539,54 @@ fn validate_cawg(reader: &mut Reader) -> Result<()> {
     }
 }
 
+pub fn extension_to_mime(extension: &str) -> Option<&'static str> {
+    Some(match extension {
+        "jpg" | "jpeg" => "image/jpeg",
+        "png" => "image/png",
+        "gif" => "image/gif",
+        "psd" => "image/vnd.adobe.photoshop",
+        "tiff" | "tif" => "image/tiff",
+        "svg" => "image/svg+xml",
+        "ico" => "image/x-icon",
+        "bmp" => "image/bmp",
+        "webp" => "image/webp",
+        "dng" => "image/x-adobe-dng",
+        "heic" => "image/heic",
+        "heif" => "image/heif",
+        "mp2" | "mpa" | "mpe" | "mpeg" | "mpg" | "mpv2" => "video/mpeg",
+        "mp4" => "video/mp4",
+        "avi" => "video/avi",
+        "avif" => "image/avif",
+        "mov" | "qt" => "video/quicktime",
+        "m4a" => "audio/mp4",
+        "mid" | "rmi" => "audio/mid",
+        "mp3" => "audio/mpeg",
+        "wav" => "audio/wav",
+        "aif" | "aifc" | "aiff" => "audio/aiff",
+        "ogg" => "audio/ogg",
+        "pdf" => "application/pdf",
+        "ai" => "application/postscript",
+        "arw" => "image/x-sony-arw",
+        "nef" => "image/x-nikon-nef",
+        "c2pa" | "application/x-c2pa-manifest-store" | "application/c2pa" => "application/c2pa",
+        _ => return None,
+    })
+}
+
+pub fn format_to_mime(format: &str) -> String {
+    match extension_to_mime(format) {
+        Some(mime) => mime,
+        None => format,
+    }
+    .to_string()
+}
+
+pub fn format_from_path<P: AsRef<std::path::Path>>(path: P) -> Option<String> {
+    path.as_ref()
+        .extension()
+        .map(|ext| format_to_mime(ext.to_string_lossy().to_lowercase().as_ref()))
+}
+
 fn main() -> Result<()> {
     let args = CliArgs::parse();
 
@@ -711,9 +761,9 @@ fn main() -> Result<()> {
                     bail!("Output type must match source type");
                 }
                 if output.exists() {
-                    if args.force {
+                    if args.force && output != args.path {
                         remove_file(&output)?;
-                    } else {
+                    } else if !args.force {
                         bail!("Output already exists; use -f/force to force write");
                     }
                 }
@@ -725,9 +775,20 @@ fn main() -> Result<()> {
                     bail!("Missing extension output");
                 }
 
-                let manifest_data = builder
-                    .sign_file(signer.as_ref(), &args.path, &output)
-                    .context("embedding manifest")?;
+                let manifest_data = if output != args.path {
+                    builder
+                        .sign_file(signer.as_ref(), &args.path, &output)
+                        .context("embedding manifest")?
+                } else {
+                    let format = format_from_path(&args.path).unwrap();
+                    let mut source = std::fs::File::open(args.path)?;
+                    let mut dest = Cursor::new(Vec::new());
+                    let manifest_data =
+                        builder.sign(signer.as_ref(), &format, &mut source, &mut dest)?;
+                    fs::write(&output, dest.into_inner())?;
+
+                    manifest_data
+                };
 
                 if args.sidecar {
                     let sidecar = output.with_extension("c2pa");
