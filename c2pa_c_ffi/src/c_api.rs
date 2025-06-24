@@ -614,7 +614,7 @@ pub unsafe extern "C" fn c2pa_reader_remote_url(reader_ptr: *mut C2paReader) -> 
     }
 }
 
-/// Returns the if the reader was created from an embedded manifest.
+/// Returns if the reader was created from an embedded manifest.
 ///
 /// # Parameters
 /// * reader_ptr: pointer to a C2paReader.
