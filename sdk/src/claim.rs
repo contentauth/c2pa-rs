@@ -804,7 +804,9 @@ impl Claim {
         if let Some(ra) = self.redactions() {
             claim_map.serialize_field(REDACTED_ASSERTIONS_F, ra)?;
         }
-        claim_map.serialize_field(ALG_F, self.alg())?;
+        if let Some(alg) = self.alg_raw() {
+            claim_map.serialize_field(ALG_F, alg)?;
+        }
         if let Some(soft) = self.alg_soft() {
             claim_map.serialize_field(ALG_SOFT_F, soft)?;
         }
@@ -885,7 +887,9 @@ impl Claim {
         if let Some(ra) = self.redactions() {
             claim_map.serialize_field(REDACTED_ASSERTIONS_F, ra)?;
         }
-        claim_map.serialize_field(ALG_F, self.alg())?;
+        if let Some(alg) = self.alg_raw() {
+            claim_map.serialize_field(ALG_F, alg)?;
+        }
         if let Some(soft) = self.alg_soft() {
             claim_map.serialize_field(ALG_SOFT_F, soft)?;
         }
@@ -1058,6 +1062,11 @@ impl Claim {
             Some(alg) => alg,
             None => BUILD_HASH_ALG,
         }
+    }
+
+    /// true algorithm
+    pub fn alg_raw(&self) -> Option<&str> {
+        self.alg.as_deref()
     }
 
     /// get soft algorithm
@@ -1818,7 +1827,7 @@ impl Claim {
             &additional_bytes,
             cert_check,
             ctp,
-            svi.timestamps.get(claim.label()).cloned(),
+            svi.timestamps.get(claim.label()),
             validation_log,
         )
         .await;
@@ -1878,7 +1887,7 @@ impl Claim {
             &additional_bytes,
             cert_check,
             ctp,
-            svi.timestamps.get(claim.label()).cloned(),
+            svi.timestamps.get(claim.label()),
             validation_log,
         );
 
@@ -1941,6 +1950,9 @@ impl Claim {
                     validation_log,
                     Error::ValidationRule("No Action array in Actions".into()),
                 )?;
+
+            // failure full stop
+            return Err(Error::ValidationRule("No Action array in Actions".into()));
         }
 
         // check Claim.v2 first action rules

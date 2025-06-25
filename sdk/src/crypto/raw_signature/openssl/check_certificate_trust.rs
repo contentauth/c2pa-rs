@@ -17,7 +17,7 @@ use openssl::{
 };
 
 use crate::crypto::{
-    cose::{CertificateTrustError, CertificateTrustPolicy},
+    cose::{CertificateTrustError, CertificateTrustPolicy, TrustAnchorType},
     raw_signature::openssl::OpenSslMutex,
 };
 
@@ -26,8 +26,12 @@ pub(crate) fn check_certificate_trust(
     chain_der: &[Vec<u8>],
     cert_der: &[u8],
     signing_time_epoch: Option<i64>,
-) -> Result<(), CertificateTrustError> {
+) -> Result<TrustAnchorType, CertificateTrustError> {
     let _openssl = OpenSslMutex::acquire()?;
+
+    if ctp.trust_anchor_ders().count() == 0 && ctp.user_trust_anchor_ders().count() == 0 {
+        return Err(CertificateTrustError::CertificateNotTrusted);
+    }
 
     let mut cert_chain = Stack::new()?;
     for cert_der in chain_der {
@@ -42,6 +46,7 @@ pub(crate) fn check_certificate_trust(
 
     let mut verify_param = openssl::x509::verify::X509VerifyParam::new()?;
     verify_param.set_flags(X509VerifyFlags::X509_STRICT)?;
+    verify_param.set_flags(X509VerifyFlags::PARTIAL_CHAIN)?; // allow intermediates to be on anchor list
 
     if let Some(st) = signing_time_epoch {
         verify_param.set_time(st);
@@ -51,24 +56,38 @@ pub(crate) fn check_certificate_trust(
 
     builder.set_param(&verify_param)?;
 
-    // Add trust anchors.
-    let mut has_anchors = false;
+    // add trust anchors.
     for der in ctp.trust_anchor_ders() {
         let root_cert = X509::from_der(der)?;
         builder.add_cert(root_cert)?;
-        has_anchors = true;
     }
 
     let store = builder.build();
 
-    if !has_anchors {
-        return Err(CertificateTrustError::CertificateNotTrusted);
-    }
-
+    // try system trust anchors
     let mut store_ctx = X509StoreContext::new()?;
     if store_ctx.init(&store, cert.as_ref(), &cert_chain, |f| f.verify_cert())? {
-        Ok(())
+        Ok(TrustAnchorType::System)
     } else {
-        Err(CertificateTrustError::CertificateNotTrusted)
+        // try the user trust anchors
+        let mut builder = openssl::x509::store::X509StoreBuilder::new()?;
+        builder.set_flags(X509VerifyFlags::X509_STRICT)?;
+
+        builder.set_param(&verify_param)?;
+
+        // add user trust anchors.
+        for der in ctp.user_trust_anchor_ders() {
+            let root_cert = X509::from_der(der)?;
+            builder.add_cert(root_cert)?;
+        }
+
+        let store = builder.build();
+
+        let mut store_ctx = X509StoreContext::new()?;
+        if store_ctx.init(&store, cert.as_ref(), &cert_chain, |f| f.verify_cert())? {
+            Ok(TrustAnchorType::User)
+        } else {
+            Err(CertificateTrustError::CertificateNotTrusted)
+        }
     }
 }

@@ -81,9 +81,9 @@ fn check_stapled_ocsp_response(
     validation_log: &mut StatusTracker,
 ) -> Result<OcspResponse, CoseError> {
     let time_stamp_info = if _sync {
-        validate_cose_tst_info(sign1, data)
+        validate_cose_tst_info(sign1, data, ctp, validation_log)
     } else {
-        validate_cose_tst_info_async(sign1, data).await
+        validate_cose_tst_info_async(sign1, data, ctp, validation_log).await
     };
 
     // If the stapled OCSP response has a time stamp, we can validate it.
@@ -134,9 +134,10 @@ fn fetch_and_check_ocsp_response(
 
         let ocsp_response_der = ocsp_der;
 
-        let signing_time: Option<DateTime<Utc>> = validate_cose_tst_info(sign1, data)
-            .ok()
-            .map(|tst_info| tst_info.gen_time.clone().into());
+        let signing_time: Option<DateTime<Utc>> =
+            validate_cose_tst_info(sign1, data, ctp, validation_log)
+                .ok()
+                .map(|tst_info| tst_info.gen_time.clone().into());
 
         // Check the OCSP response, but only if it is well-formed.
         // Revocation errors are reported in the validation log.
