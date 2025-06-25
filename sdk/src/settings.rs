@@ -15,15 +15,15 @@
 use std::path::Path;
 use std::{
     cell::RefCell,
+    fmt,
     io::{BufRead, BufReader, Cursor},
 };
 
 use config::{Config, FileFormat};
-#[cfg(feature = "json_schema")]
-use schemars::JsonSchema;
+use image::ImageFormat;
 use serde_derive::{Deserialize, Serialize};
 
-use crate::{crypto::base64, Error, Result};
+use crate::{create_signer, crypto::base64, ClaimGeneratorInfo, Error, Result, Signer, SigningAlg};
 
 thread_local!(
     static SETTINGS: RefCell<Config> = RefCell::new(Config::try_from(&Settings::default()).unwrap_or_default())
@@ -37,15 +37,25 @@ pub(crate) trait SettingsValidate {
     }
 }
 
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct SignerInfo {
+    alg: SigningAlg,
+    sign_cert: Vec<u8>,
+    private_key: Vec<u8>,
+    ta_url: Option<String>,
+}
+
 // Settings for trust list feature
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 #[allow(unused)]
-pub(crate) struct Trust {
+pub struct Trust {
     private_anchors: Option<String>,
     trust_anchors: Option<String>,
     trust_config: Option<String>,
     allowed_list: Option<String>,
+
+    /// Information about the signer used for signing.
+    signer_info: Option<SignerInfo>,
 }
 
 impl Trust {
@@ -108,6 +118,7 @@ impl Default for Trust {
                 trust_anchors: None,
                 trust_config: None,
                 allowed_list: None,
+                signer_info: None,
             };
 
             trust.trust_config = Some(
@@ -130,6 +141,7 @@ impl Default for Trust {
                 trust_anchors: None,
                 trust_config: None,
                 allowed_list: None,
+                signer_info: None,
             }
         }
     }
@@ -155,7 +167,6 @@ impl SettingsValidate for Trust {
 
 // Settings for core C2PA-RS functionality
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 #[allow(unused)]
 pub(crate) struct Core {
     debug: bool,
@@ -165,6 +176,9 @@ pub(crate) struct Core {
     prefer_bmff_merkle_tree: bool,
     compress_manifests: bool,
     max_memory_usage: Option<u64>,
+
+    prefer_update_manifests: bool,
+    exclude_box_hash_metadata: bool,
 }
 
 impl Default for Core {
@@ -177,6 +191,8 @@ impl Default for Core {
             prefer_bmff_merkle_tree: false,
             compress_manifests: true,
             max_memory_usage: None,
+            prefer_update_manifests: true,
+            exclude_box_hash_metadata: false,
         }
     }
 }
@@ -192,7 +208,6 @@ impl SettingsValidate for Core {
 
 // Settings for verification options
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 #[allow(unused)]
 pub(crate) struct Verify {
     verify_after_reading: bool,
@@ -218,40 +233,327 @@ impl Default for Verify {
 
 impl SettingsValidate for Verify {}
 
+// TODO: thumbnails/previews for audio?
+/// Possible output types for automatic thumbnail generation.
+///
+/// These formats are a combination of types supported in [image-rs](https://docs.rs/image/latest/image/enum.ImageFormat.html)
+/// and types defined by the [IANA registry media type](https://www.iana.org/assignments/media-types/media-types.xhtml) (as defined in the spec).
+#[derive(Copy, Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ThumbnailFormat {
+    /// An image in PNG format.
+    Png,
+    /// An image in JPEG format.
+    Jpeg,
+    /// An image in GIF format.
+    Gif,
+    /// An image in WEBP format.
+    WebP,
+    /// An image in TIFF format.
+    Tiff,
+    /// An image in BMP format.
+    Bmp,
+    /// An image in ICO format.
+    Ico,
+    /// An image in AVIF format.
+    Avif,
+}
+
+impl ThumbnailFormat {
+    /// Create a new [ThumbnailFormat] from the given format extension or mime type.
+    ///
+    /// If the format is unsupported, this function will return `None`.
+    pub fn new(format: &str) -> Option<ThumbnailFormat> {
+        ImageFormat::from_extension(format)
+            .or_else(|| ImageFormat::from_mime_type(format))
+            .and_then(|format| ThumbnailFormat::try_from(format).ok())
+    }
+
+    pub fn new_or_ignore(format: &str) -> Option<ThumbnailFormat> {
+        ImageFormat::from_extension(format)
+            .or_else(|| ImageFormat::from_mime_type(format))
+            .and_then(|format| ThumbnailFormat::try_from(format).ok())
+    }
+}
+
+impl TryFrom<ImageFormat> for ThumbnailFormat {
+    type Error = Error;
+
+    fn try_from(format: ImageFormat) -> Result<Self> {
+        match format {
+            ImageFormat::Png => Ok(ThumbnailFormat::Png),
+            ImageFormat::Jpeg => Ok(ThumbnailFormat::Jpeg),
+            ImageFormat::Gif => Ok(ThumbnailFormat::Gif),
+            ImageFormat::WebP => Ok(ThumbnailFormat::WebP),
+            ImageFormat::Tiff => Ok(ThumbnailFormat::Tiff),
+            ImageFormat::Bmp => Ok(ThumbnailFormat::Bmp),
+            ImageFormat::Ico => Ok(ThumbnailFormat::Ico),
+            ImageFormat::Avif => Ok(ThumbnailFormat::Avif),
+            _ => Err(Error::UnsupportedThumbnailFormat(
+                format.to_mime_type().to_owned(),
+            )),
+        }
+    }
+}
+
+impl From<ThumbnailFormat> for ImageFormat {
+    fn from(format: ThumbnailFormat) -> Self {
+        match format {
+            ThumbnailFormat::Png => ImageFormat::Png,
+            ThumbnailFormat::Jpeg => ImageFormat::Jpeg,
+            ThumbnailFormat::Gif => ImageFormat::Gif,
+            ThumbnailFormat::WebP => ImageFormat::WebP,
+            ThumbnailFormat::Tiff => ImageFormat::Tiff,
+            ThumbnailFormat::Bmp => ImageFormat::Bmp,
+            ThumbnailFormat::Ico => ImageFormat::Ico,
+            ThumbnailFormat::Avif => ImageFormat::Avif,
+        }
+    }
+}
+
+impl fmt::Display for ThumbnailFormat {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", ImageFormat::from(*self).to_mime_type())
+    }
+}
+
+/// Quality of the thumbnail.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ThumbnailQuality {
+    /// Low quality.
+    Low,
+    /// Medium quality.
+    Medium,
+    /// High quality.
+    High,
+}
+
+/// Settings for controlling automatic thumbnail generation.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct ThumbnailSettings {
+    /// Whether or not to automatically generate thumbnails.
+    enabled: bool,
+    /// Whether to ignore thumbnail generation errors.
+    ///
+    /// This may occur, for instance, if the thumbnail media type or color layout isn't
+    /// supported.
+    ignore_errors: bool,
+    /// The size of the thumbnail.
+    ///
+    /// Note this function will preserve aspect ratio based on the longest edge.
+    size: (u32, u32),
+    /// Format of the thumbnail.
+    ///
+    /// If this field isn't specified, the thumbnail format will correspond to the
+    /// input format.
+    format: Option<ThumbnailFormat>,
+    /// Default format of the thumbnail if the output thumbnail media type is unsupported.
+    ///
+    /// Note that [ThumbnailSettings::format] takes precedence over this field.
+    ///
+    /// If this field is `None`, it will error for unsupported media types.
+    default_format: Option<ThumbnailFormat>,
+    /// The output quality of the thumbnail.
+    ///
+    /// This setting contains sensible defaults for things like quality, compression, and
+    /// algorithms for various formats.
+    quality: ThumbnailQuality,
+}
+
+impl Default for ThumbnailSettings {
+    fn default() -> Self {
+        ThumbnailSettings {
+            enabled: true,
+            ignore_errors: true,
+            size: (1024, 1024),
+            format: None,
+            default_format: Some(ThumbnailFormat::Jpeg),
+            quality: ThumbnailQuality::Medium,
+        }
+    }
+}
+
+impl SettingsValidate for ThumbnailSettings {
+    fn validate(&self) -> Result<()> {
+        #[cfg(not(feature = "add_thumbnails"))]
+        if self.enabled {
+            log::warn!("c2pa-rs feature `add_thumbnails` must be enabled to generate thumbnails!");
+        }
+
+        Ok(())
+    }
+}
+
 // Settings for Builder API options
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 #[allow(unused)]
 pub(crate) struct Builder {
-    auto_thumbnail: bool,
+    /// Claim generator info that is automatically added to the builder.
+    ///
+    /// Note that this information will prepend any claim generator info
+    /// provided explicitly to the builder.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    claim_generator_info: Option<Vec<ClaimGeneratorInfo>>,
+
+    /// Various settings for configuring automatic thumbnail generation.
+    thumbnail: ThumbnailSettings,
+    //
+    // Whether to automatically generate a c2pa.created assertion when
+    // TODO: describe when
+    // auto_created_action: bool,
+
+    // Whether to automatically generate a c2pa.opened assertion when
+    // the parent ingredient isn't supplied.
+    // auto_opened_action: bool,
+
+    // Whether to automatically generate a c2pa.placed assertion when
+    // ingredients with the componentOf relationship are added.
+    // auto_placed_action: bool,
+    // TODO:
+    // /// Indicates if the actions assertion
+    // ///
+    // /// https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_all_actions_included
+    // all_actions_included: bool,
+    // // actions
+    // // action_templates
+    // // vs.
+    // // inherit_assertions
+    // // add_assertions
 }
 
 impl Default for Builder {
     fn default() -> Self {
         Self {
-            auto_thumbnail: true,
+            // TODO: add c2pa-rs?
+            claim_generator_info: None,
+            thumbnail: Default::default(),
         }
     }
 }
 
-impl SettingsValidate for Builder {}
+impl SettingsValidate for Builder {
+    fn validate(&self) -> Result<()> {
+        self.thumbnail.validate()
+    }
+}
 
-// Settings configuration for C2PA-RS.  Default configuration values
-// are lazy loaded on first use.  Values can also be loaded from a configuration
-// file or by setting specific value via code.  There is a single configuration
-// setting for the entire C2PA-RS instance.
-#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
-#[cfg_attr(feature = "json_schema", derive(JsonSchema))]
+// TODO: provide example config
+/// Settings for configuring all aspects of c2pa-rs.
+///
+/// [Settings::default] will be set thread-locally by default. To override these default fields,
+/// call [Settings::set_thread_local] with a new [Settings]. To obtain the thread local [Settings]
+/// call [Settings::thread_local].
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[allow(unused)]
 pub struct Settings {
     trust: Trust,
     core: Core,
     verify: Verify,
     builder: Builder,
+
+    #[serde(skip)]
+    config: Config,
 }
 
 impl Settings {
-    #[allow(unused)]
+    /// Returns the current [Settings] for the local thread.
+    pub fn thread_local() -> Option<Settings> {
+        // TODO: return error instead of option
+        SETTINGS
+            .with_borrow(|config| config.clone().try_deserialize::<Settings>())
+            .ok()
+    }
+
+    /// Construct a new [Settings] with default values.
+    ///
+    /// This can be used with [Setting::set_thread_local] to reset the thread local [Settings]
+    /// to their default values.
+    pub fn new() -> Settings {
+        Self::default()
+    }
+
+    /// Construct a [Settings] from a given toml string.
+    pub fn from_toml(settings_toml: &str) -> Result<Settings> {
+        let config = Config::builder()
+            .add_source(config::File::from_str(settings_toml, FileFormat::Toml))
+            .build()
+            .map_err(|_e| Error::BadParam("could not parse configuration file".into()))?;
+
+        let mut settings = config.clone().try_deserialize::<Settings>().map_err(|_e| {
+            Error::BadParam("configuration file contains unrecognized param".into())
+        })?;
+        settings.validate()?;
+
+        settings.config = config;
+
+        Ok(settings)
+    }
+
+    /// Construct [Settings] from a given toml file.
+    #[cfg(feature = "file_io")]
+    pub fn from_toml_file<P: AsRef<Path>>(setting_path: P) -> Result<Settings> {
+        let setting_buf = std::fs::read(&setting_path).map_err(Error::IoError)?;
+        Settings::from_toml(
+            &String::from_utf8(setting_buf)
+                .map_err(|_| Error::BadParam("invalid utf-8".to_owned()))?,
+        )
+    }
+
+    /// Merges the current [Settings] with thread local [Settings].
+    ///
+    /// Only fields that are present in the current [Settings] will override the fields
+    /// in the thread local [Settings].
+    pub fn set_thread_local(self) -> Result<()> {
+        let update_config = SETTINGS.with_borrow(|current_settings| {
+            Config::builder()
+                .add_source(current_settings.clone())
+                .add_source(self.config)
+                .build() // merge overrides, allows for partial changes
+        });
+
+        match update_config {
+            Ok(update_config) => {
+                SETTINGS.set(update_config);
+
+                Ok(())
+            }
+            Err(_) => Err(Error::OtherError("could not update configuration".into())),
+        }
+    }
+
+    /// Constructs a signer from the specified `trust.signer_info` in the settings.
+    ///
+    /// The returned signer can be passed to [Builder::sign][crate::Builder::sign]
+    /// and other related functions.
+    ///
+    /// This function will error with [Error::UnspecifiedSignerSettings][crate::Error::UnspecifiedSignerSettings]
+    /// if the `trust.signer_info` is unspecified.
+    pub fn signer(&self) -> Result<Box<dyn Signer>> {
+        let signer_info = self
+            .trust
+            .signer_info
+            .as_ref()
+            .ok_or(Error::UnspecifiedSignerSettings)?;
+        create_signer::from_keys(
+            &signer_info.sign_cert,
+            &signer_info.private_key,
+            signer_info.alg,
+            signer_info.ta_url.to_owned(),
+        )
+    }
+
+    /// Serializes the [Settings] into a toml string.
+    pub fn to_toml(&self) -> Result<String> {
+        Ok(toml::to_string(&self)?)
+    }
+
+    /// Serializes the [Settings] into a pretty (formatted) toml string.
+    pub fn to_pretty_toml(&self) -> Result<String> {
+        Ok(toml::to_string_pretty(&self)?)
+    }
+
+    #[deprecated]
     #[cfg(feature = "file_io")]
     pub fn from_file<P: AsRef<Path>>(setting_path: P) -> Result<Self> {
         let ext = setting_path
@@ -264,7 +566,8 @@ impl Settings {
         Settings::from_string(&String::from_utf8_lossy(&setting_buf), &ext)
     }
 
-    #[allow(unused)]
+    // TODO: when this is removed, remove the additional features from the Cargo.toml
+    #[deprecated]
     pub fn from_string(settings_str: &str, format: &str) -> Result<Self> {
         let f = match format.to_lowercase().as_str() {
             "json" => FileFormat::Json,
@@ -281,7 +584,7 @@ impl Settings {
             .build()
             .map_err(|_e| Error::BadParam("could not parse configuration file".into()))?;
 
-        let mut update_config = SETTINGS.with_borrow(|current_settings| {
+        let update_config = SETTINGS.with_borrow(|current_settings| {
             Config::builder()
                 .add_source(current_settings.clone())
                 .add_source(new_config)
@@ -306,6 +609,15 @@ impl Settings {
             }
             Err(_) => Err(Error::OtherError("could not update configuration".into())),
         }
+    }
+}
+
+impl PartialEq for Settings {
+    fn eq(&self, other: &Self) -> bool {
+        self.trust.eq(&other.trust)
+            && self.core.eq(&other.core)
+            && self.verify.eq(&other.verify)
+            && self.builder.eq(&other.builder)
     }
 }
 
@@ -445,8 +757,8 @@ pub mod tests {
             Core::default().hash_alg
         );
         assert_eq!(
-            get_settings_value::<bool>("builder.auto_thumbnail").unwrap(),
-            Builder::default().auto_thumbnail
+            get_settings_value::<bool>("builder.thumbnail.enabled").unwrap(),
+            Builder::default().thumbnail.enabled
         );
         assert_eq!(
             get_settings_value::<Option<String>>("trust.private_anchors").unwrap(),
@@ -472,7 +784,7 @@ pub mod tests {
         let hash_alg: String = get_settings_value("core.hash_alg").unwrap();
         let remote_manifest_fetch: bool =
             get_settings_value("verify.remote_manifest_fetch").unwrap();
-        let auto_thumbnail: bool = get_settings_value("builder.auto_thumbnail").unwrap();
+        let auto_thumbnail: bool = get_settings_value("builder.thumbnail.enabled").unwrap();
         let private_anchors: Option<String> = get_settings_value("trust.private_anchors").unwrap();
 
         assert_eq!(hash_alg, Core::default().hash_alg);
@@ -480,7 +792,7 @@ pub mod tests {
             remote_manifest_fetch,
             Verify::default().remote_manifest_fetch
         );
-        assert_eq!(auto_thumbnail, Builder::default().auto_thumbnail);
+        assert_eq!(auto_thumbnail, Builder::default().thumbnail.enabled);
         assert_eq!(private_anchors, Trust::default().private_anchors);
 
         // test implicit deserialization on objects
@@ -504,7 +816,7 @@ pub mod tests {
         // test updating values
         set_settings_value("core.hash_alg", "sha512").unwrap();
         set_settings_value("verify.remote_manifest_fetch", false).unwrap();
-        set_settings_value("builder.auto_thumbnail", false).unwrap();
+        set_settings_value("builder.thumbnail.enabled", false).unwrap();
         set_settings_value(
             "trust.private_anchors",
             Some(String::from_utf8(ts.to_vec()).unwrap()),
@@ -516,7 +828,7 @@ pub mod tests {
             "sha512"
         );
         assert!(!get_settings_value::<bool>("verify.remote_manifest_fetch").unwrap());
-        assert!(!get_settings_value::<bool>("builder.auto_thumbnail").unwrap());
+        assert!(!get_settings_value::<bool>("builder.thumbnail.enabled").unwrap());
         assert_eq!(
             get_settings_value::<Option<String>>("trust.private_anchors").unwrap(),
             Some(String::from_utf8(ts.to_vec()).unwrap())
@@ -603,8 +915,8 @@ pub mod tests {
 
         // check a few defaults to make sure they are still there
         assert_eq!(
-            get_settings_value::<bool>("builder.auto_thumbnail").unwrap(),
-            Builder::default().auto_thumbnail
+            get_settings_value::<bool>("builder.thumbnail.enabled").unwrap(),
+            Builder::default().thumbnail.enabled
         );
 
         assert_eq!(

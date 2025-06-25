@@ -144,6 +144,7 @@ pub use manifest_store::ManifestStore;
 pub use manifest_store_report::ManifestStoreReport;
 pub use reader::Reader;
 pub use resource_store::{ResourceRef, ResourceStore};
+pub use settings::Settings;
 #[cfg(feature = "v1_api")]
 pub use signer::RemoteSigner;
 pub use signer::{AsyncSigner, Signer};

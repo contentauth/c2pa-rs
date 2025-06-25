@@ -829,13 +829,18 @@ impl Builder {
         R: Read + Seek + ?Sized,
     {
         // check settings to see if we should auto generate a thumbnail
-        let auto_thumbnail = crate::settings::get_settings_value::<bool>("builder.auto_thumbnail")?;
+
+        let auto_thumbnail =
+            crate::settings::get_settings_value::<bool>("builder.thumbnail.enabled")?;
         if self.definition.thumbnail.is_none() && auto_thumbnail {
             stream.rewind()?;
-            if let Ok((format, image)) =
-                crate::utils::thumbnail::make_thumbnail_from_stream(format, stream)
+
+            let mut stream = std::io::BufReader::new(stream);
+            if let Some((output_format, image)) =
+                crate::utils::thumbnail::make_thumbnail_bytes_from_stream(&mut stream, format)?
             {
                 stream.rewind()?;
+
                 // Do not write this as a file when reading from files
                 let base_path = self.resources.take_base_path();
                 self.resources
@@ -844,7 +849,7 @@ impl Builder {
                     self.resources.set_base_path(path)
                 }
                 self.definition.thumbnail = Some(ResourceRef::new(
-                    format,
+                    output_format.to_string(),
                     self.definition.instance_id.clone(),
                 ));
             }
@@ -1796,7 +1801,7 @@ mod tests {
                                 },
                                 "something": "else"
                             }
-                        },   
+                        },
                         {
                             "action": "c2pa.dubbed",
                             "softwareAgent": {

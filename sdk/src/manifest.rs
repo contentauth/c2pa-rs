@@ -792,10 +792,12 @@ impl Manifest {
         // if a thumbnail is not already defined, create one here
         if self.thumbnail_ref().is_none() {
             #[cfg(feature = "add_thumbnails")]
-            if let Ok((format, image)) = crate::utils::thumbnail::make_thumbnail(path.as_ref()) {
+            if let Some((output_format, image)) =
+                crate::utils::thumbnail::make_thumbnail_bytes_from_path(path.as_ref())?
+            {
                 // Do not write this as a file when reading from files
                 let base_path = self.resources_mut().take_base_path();
-                self.set_thumbnail(format, image)?;
+                self.set_thumbnail(output_format.to_string(), image)?;
                 if let Some(path) = base_path {
                     self.resources_mut().set_base_path(path)
                 }
@@ -1180,10 +1182,11 @@ impl Manifest {
         #[cfg(feature = "add_thumbnails")]
         {
             if self.thumbnail_ref().is_none() {
-                if let Ok((format, image)) =
-                    crate::utils::thumbnail::make_thumbnail_from_stream(format, source)
+                let source = std::io::BufReader::new(&mut *source);
+                if let Some((output_format, image)) =
+                    crate::utils::thumbnail::make_thumbnail_bytes_from_stream(source, format)?
                 {
-                    self.set_thumbnail(format, image)?;
+                    self.set_thumbnail(output_format.to_string(), image)?;
                 }
             }
         }
@@ -1224,12 +1227,10 @@ impl Manifest {
         let mut stream = std::io::Cursor::new(asset);
         #[cfg(feature = "add_thumbnails")]
         {
-            if self.thumbnail_ref().is_none() {
-                if let Ok((format, image)) =
-                    crate::utils::thumbnail::make_thumbnail_from_stream(format, &mut stream)
-                {
-                    self.set_thumbnail(format, image)?;
-                }
+            if let Some((output_format, image)) =
+                crate::utils::thumbnail::make_thumbnail_bytes_from_stream(&mut stream, format)?
+            {
+                self.set_thumbnail(output_format.to_string(), image)?;
             }
         }
         let asset = stream.into_inner();
@@ -1481,7 +1482,7 @@ impl Manifest {
     /// specifies the format of the asset. The input_stream should point to the same asset
     /// used in get_placed_manifest.  The caller can supply list of ManifestPathCallback
     /// traits to make any modifications to assertions.  The callbacks are processed before
-    /// the manifest is signed.  
+    /// the manifest is signed.
     #[deprecated(since = "0.38.0", note = "use Builder.sign with dynamic assertions.")]
     #[cfg(feature = "v1_api")]
     pub fn embed_placed_manifest(
