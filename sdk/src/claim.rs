@@ -804,9 +804,7 @@ impl Claim {
         if let Some(ra) = self.redactions() {
             claim_map.serialize_field(REDACTED_ASSERTIONS_F, ra)?;
         }
-        if let Some(alg) = self.alg_raw() {
-            claim_map.serialize_field(ALG_F, alg)?;
-        }
+        claim_map.serialize_field(ALG_F, self.alg())?;
         if let Some(soft) = self.alg_soft() {
             claim_map.serialize_field(ALG_SOFT_F, soft)?;
         }
@@ -887,9 +885,7 @@ impl Claim {
         if let Some(ra) = self.redactions() {
             claim_map.serialize_field(REDACTED_ASSERTIONS_F, ra)?;
         }
-        if let Some(alg) = self.alg_raw() {
-            claim_map.serialize_field(ALG_F, alg)?;
-        }
+        claim_map.serialize_field(ALG_F, self.alg())?;
         if let Some(soft) = self.alg_soft() {
             claim_map.serialize_field(ALG_SOFT_F, soft)?;
         }
