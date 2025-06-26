@@ -34,11 +34,12 @@ use crate::{
     },
     claim::Claim,
     error::{Error, Result},
+    jumbf::labels::manifest_label_from_uri,
     jumbf_io,
     resource_store::{ResourceRef, ResourceResolver, ResourceStore},
     salt::DefaultSalt,
     store::Store,
-    utils::mime::format_to_mime,
+    utils::{io_utils::uri_to_path, mime::format_to_mime},
     AsyncSigner, ClaimGeneratorInfo, HashRange, Ingredient, Signer,
 };
 
@@ -1204,6 +1205,53 @@ impl Builder {
     pub fn composed_manifest(manifest_bytes: &[u8], format: &str) -> Result<Vec<u8>> {
         Store::get_composed_manifest(manifest_bytes, format)
     }
+
+    /// Adds an ingredient folder into the builder.
+    /// # Arguments
+    /// * `base_path` - The base path of ingredient folder to read.
+    /// # Errors
+    /// * Returns an [`Error`] if the ingredient folder could not be loaded.
+    #[cfg(feature = "file_io")]
+    pub fn add_ingredient_from_folder(&mut self, base_path: &Path) -> Result<&mut Ingredient> {
+        let ingredient_path = PathBuf::from(base_path).join("ingredient.json");
+        let ingredient_path = ingredient_path.as_path();
+        let json = std::fs::read_to_string(ingredient_path)?;
+        let ingredient = Ingredient::from_json(&json)?;
+
+        // Make sure we will have access to thumbnail
+        if let Some(thumbnail_ref) = ingredient.thumbnail_ref() {
+            self.add_resource_ref_to_resources(base_path, thumbnail_ref)?;
+        }
+
+        // Make sure we will have access to manifest
+        if let Some(manifest_data_ref) = ingredient.manifest_data_ref() {
+            self.add_resource_ref_to_resources(base_path, manifest_data_ref)?;
+        }
+
+        self.add_ingredient(ingredient);
+
+        #[allow(clippy::unwrap_used)]
+        Ok(self.definition.ingredients.last_mut().unwrap())
+    }
+
+    // From a resource ref, opens file and adds to resources
+    #[cfg(feature = "file_io")]
+    fn add_resource_ref_to_resources(
+        &mut self,
+        base_path: &Path,
+        resource_ref: &ResourceRef,
+    ) -> Result<()> {
+        let uri = &resource_ref.identifier;
+        let path = uri_to_path(
+            uri,
+            &manifest_label_from_uri(uri).unwrap_or("unknown".to_string()),
+        );
+        let path = PathBuf::from(base_path).join(path);
+        let file = std::fs::File::open(path)?;
+        self.add_resource(uri, file)?;
+
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -2230,5 +2278,36 @@ mod tests {
             .json();
         assert!(reader_json.contains("Test Ingredient"));
         assert!(reader_json.contains("thumbnail.ingredient"));
+    }
+
+    #[test]
+    #[cfg(feature = "file_io")]
+    fn test_load_ingredient_from_folder() {
+        let mut source = Cursor::new(TEST_IMAGE_CLEAN);
+        let format = "image/jpeg";
+
+        let mut builder = Builder::new();
+
+        let _ = builder
+            .add_ingredient_from_folder(Path::new("tests/fixtures/ingredients/ingredient_c"))
+            .unwrap();
+
+        let signer = test_signer(SigningAlg::Ps256);
+
+        let mut dest = Cursor::new(Vec::new());
+        builder
+            .sign(&signer, format, &mut source, &mut dest)
+            .unwrap();
+
+        let reader = Reader::from_stream(format, &mut dest).unwrap();
+        println!("{}", reader.json());
+
+        assert_eq!(reader.manifests().len(), 2);
+
+        let manifest_store = reader.active_manifest().unwrap();
+        assert!(manifest_store
+            .ingredients()
+            .iter()
+            .any(|i| i.title() == Some("C.jpg")));
     }
 }
