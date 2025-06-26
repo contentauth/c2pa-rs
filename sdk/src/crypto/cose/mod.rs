@@ -20,7 +20,7 @@ pub use certificate_info::CertificateInfo;
 
 mod certificate_trust_policy;
 pub use certificate_trust_policy::{
-    CertificateTrustError, CertificateTrustPolicy, InvalidCertificateError,
+    CertificateTrustError, CertificateTrustPolicy, InvalidCertificateError, TrustAnchorType,
 };
 
 mod certificate_profile;

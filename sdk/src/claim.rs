@@ -1060,6 +1060,11 @@ impl Claim {
         }
     }
 
+    /// true algorithm
+    pub fn alg_raw(&self) -> Option<&str> {
+        self.alg.as_deref()
+    }
+
     /// get soft algorithm
     pub fn alg_soft(&self) -> Option<&String> {
         self.alg_soft.as_ref()
@@ -1818,7 +1823,7 @@ impl Claim {
             &additional_bytes,
             cert_check,
             ctp,
-            svi.timestamps.get(claim.label()).cloned(),
+            svi.timestamps.get(claim.label()),
             validation_log,
         )
         .await;
@@ -1878,7 +1883,7 @@ impl Claim {
             &additional_bytes,
             cert_check,
             ctp,
-            svi.timestamps.get(claim.label()).cloned(),
+            svi.timestamps.get(claim.label()),
             validation_log,
         );
 
@@ -1941,6 +1946,9 @@ impl Claim {
                     validation_log,
                     Error::ValidationRule("No Action array in Actions".into()),
                 )?;
+
+            // failure full stop
+            return Err(Error::ValidationRule("No Action array in Actions".into()));
         }
 
         // check Claim.v2 first action rules
