@@ -566,9 +566,7 @@ impl Store {
                             .await
                         };
                         if let Err(err) = result {
-                            error!(
-                                "Signature that was just generated does not validate: {err:#?}"
-                            );
+                            error!("Signature that was just generated does not validate: {err:#?}");
                             return Err(err);
                         }
                     }
