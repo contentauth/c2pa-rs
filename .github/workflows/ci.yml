@@ -325,6 +325,28 @@ jobs:
       - name: Install wasm-pack
         run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
 
+      - name: Create webdriver configuration
+        run: |
+          cat > webdriver.json << 'EOF'
+          {
+            "capabilities": {
+              "browserName": "chrome",
+              "goog:chromeOptions": {
+                "args": [
+                  "--headless",
+                  "--no-sandbox",
+                  "--disable-dev-shm-usage",
+                  "--disable-gpu",
+                  "--disable-web-security",
+                  "--disable-features=VizDisplayCompositor",
+                  "--remote-debugging-port=9222"
+                ]
+              }
+            }
+          }
+          EOF
+        working-directory: ./sdk
+
       - name: Run Wasm tests
         run: wasm-pack test --chrome --headless --no-default-features --features rust_native_crypto
         working-directory: ./sdk
