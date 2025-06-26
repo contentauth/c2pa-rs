@@ -13,6 +13,7 @@
 
 use std::ops::Deref;
 
+use asn1_rs::FromDer;
 use async_generic::async_generic;
 use bcder::{decode::SliceSource, encode::Values, ConstOid, OctetString};
 use chrono::{offset::LocalResult, DateTime, TimeZone, Utc};
@@ -96,6 +97,16 @@ pub fn verify_time_stamp(
         })
         .collect();
 
+    if cert_ders.len() != certs.len() {
+        log_item!("", "count not parse timestamp data", "verify_time_stamp")
+            .validation_status(TIMESTAMP_UNTRUSTED)
+            .informational(validation_log);
+
+        return Err(TimeStampError::DecodeError(
+            "time stamp certificate could not be processed".to_string(),
+        ));
+    }
+
     let mut last_err = TimeStampError::InvalidData;
     let mut current_validation_log = StatusTracker::default();
 
@@ -104,44 +115,38 @@ pub fn verify_time_stamp(
         current_validation_log = StatusTracker::default(); // reset for latest results
 
         // Find signer's cert.
-        let cert = match certs.iter().find_map(|cc| {
+        let cert_pos = match certs.iter().position(|cc| {
             let c = match cc {
                 Certificate(c) => c,
-                _ => return None,
+                _ => return false,
             };
 
             match &signer_info.sid {
                 SignerIdentifier::IssuerAndSerialNumber(sn) => {
-                    if sn.issuer == c.tbs_certificate.issuer
+                    sn.issuer == c.tbs_certificate.issuer
                         && sn.serial_number == c.tbs_certificate.serial_number
-                    {
-                        Some(c.clone())
-                    } else {
-                        None
-                    }
                 }
 
                 SignerIdentifier::SubjectKeyIdentifier(ski) => {
                     const SKI_OID: ConstOid = bcder::Oid(&[2, 5, 29, 14]);
                     if let Some(extensions) = &c.tbs_certificate.extensions {
-                        if extensions.iter().any(|e| {
+                        extensions.iter().any(|e| {
                             if e.id == SKI_OID {
                                 return *ski == e.value;
                             }
                             false
-                        }) {
-                            Some(c.clone())
-                        } else {
-                            None
-                        }
+                        })
                     } else {
-                        None
+                        false
                     }
                 }
             }
         }) {
             Some(c) => c,
             None => continue,
+        };
+        let Certificate(cert) = &certs[cert_pos] else {
+            continue;
         };
 
         // Load TstInfo. We will verify its contents below against signed
@@ -403,8 +408,10 @@ pub fn verify_time_stamp(
         }
 
         // Make sure the time stamp's cert was valid for the stated signing time.
-        let not_before = time_to_datetime(cert.tbs_certificate.validity.not_before).timestamp();
-        let not_after = time_to_datetime(cert.tbs_certificate.validity.not_after).timestamp();
+        let not_before =
+            time_to_datetime(cert.tbs_certificate.validity.not_before.clone()).timestamp();
+        let not_after =
+            time_to_datetime(cert.tbs_certificate.validity.not_after.clone()).timestamp();
 
         if !(signing_time >= not_before && signing_time <= not_after) {
             log_item!(
@@ -439,15 +446,32 @@ pub fn verify_time_stamp(
         let mut h = digest_algorithm.digester();
         h.update(data);
 
+        // get the cert common name, use different crate since x509-certificate does
+        // not parse the common name correctly
+        let mut common_name = String::new();
+        if let Ok((_, new_c)) =
+            x509_parser::certificate::X509Certificate::from_der(&cert_ders[cert_pos])
+        {
+            for rdn in new_c.subject().iter_common_name() {
+                if let Ok(cn) = rdn.as_str() {
+                    common_name.push_str(cn);
+                }
+            }
+        }
+
         let digest = h.finish();
         if digest.as_ref() == mi.hashed_message.to_bytes() {
-            log_item!("", "timestamp message digest matched", "verify_time_stamp")
-                .validation_status(TIMESTAMP_VALIDATED)
-                .success(&mut current_validation_log);
+            log_item!(
+                "",
+                format!("timestamp message digest matched: {}", &common_name),
+                "verify_time_stamp"
+            )
+            .validation_status(TIMESTAMP_VALIDATED)
+            .success(&mut current_validation_log);
         } else {
             log_item!(
                 "",
-                "timestamp message digest did not match",
+                format!("timestamp message digest did not match: {}", &common_name),
                 "verify_time_stamp"
             )
             .validation_status(TIMESTAMP_MISMATCH)
@@ -465,13 +489,21 @@ pub fn verify_time_stamp(
                 .check_certificate_trust(&cert_ders[0..], &cert_ders[0], Some(signing_time))
                 .is_ok()
         {
-            log_item!("", "timestamp cert trusted", "verify_time_stamp")
-                .validation_status(TIMESTAMP_TRUSTED)
-                .success(&mut current_validation_log);
+            log_item!(
+                "",
+                format!("timestamp cert trusted: {}", &common_name),
+                "verify_time_stamp"
+            )
+            .validation_status(TIMESTAMP_TRUSTED)
+            .success(&mut current_validation_log);
         } else {
-            log_item!("", "timestamp cert untrusted", "verify_time_stamp")
-                .validation_status(TIMESTAMP_UNTRUSTED)
-                .informational(&mut current_validation_log);
+            log_item!(
+                "",
+                format!("timestamp cert untrusted: {}", &common_name),
+                "verify_time_stamp"
+            )
+            .validation_status(TIMESTAMP_UNTRUSTED)
+            .informational(&mut current_validation_log);
 
             last_err = TimeStampError::Untrusted;
             continue;
