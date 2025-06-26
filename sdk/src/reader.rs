@@ -595,7 +595,7 @@ impl Reader {
             if path.starts_with("/c2pa/") {
                 path = path.replacen("/c2pa/", "", 1);
             } else {
-                path = format!("{}/{path}", manifest_label);
+                path = format!("{manifest_label}/{path}");
             }
             path = path.replace([':'], "_");
         }
@@ -679,11 +679,11 @@ impl Reader {
         // Add any remaining redacted assertions to the validation results
         // todo: figure out what to do here!
         if !redacted.is_empty() {
-            eprintln!("Not Redacted: {:?}", redacted);
+            eprintln!("Not Redacted: {redacted:?}");
             return Err(Error::AssertionRedactionNotFound);
         }
         if !missing.is_empty() {
-            eprintln!("Assertion Missing: {:?}", missing);
+            eprintln!("Assertion Missing: {missing:?}");
             return Err(Error::AssertionMissing {
                 url: redacted[0].to_owned(),
             });
@@ -722,7 +722,7 @@ impl Reader {
                 if let Some(status) = ValidationStatus::from_log_item(log) {
                     validation_results.add_status(status);
                 } else {
-                    eprintln!("Failed to create status from log item: {:?}", log);
+                    eprintln!("Failed to create status from log item: {log:?}");
                 }
             }
         }
@@ -987,7 +987,7 @@ pub mod tests {
 
         reader.post_validate(&TestValidator {})?;
 
-        println!("{}", reader);
+        println!("{reader}");
         //Err(Error::NotImplemented("foo".to_string()))
         Ok(())
     }

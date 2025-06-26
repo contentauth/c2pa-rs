@@ -195,31 +195,31 @@ impl Display for ManifestParts {
         if self.is_v1 {
             if let Some(vendor) = &self.cgi {
                 let mp = format!("{}:urn:uuid:{}", vendor, &self.guid);
-                write!(f, "{}", mp)
+                write!(f, "{mp}")
             } else {
                 let mp = format!("urn:uuid:{}", &self.guid);
-                write!(f, "{}", mp)
+                write!(f, "{mp}")
             }
         } else {
             let mut mp = format!("urn:c2pa:{}", self.guid);
 
             if let Some(vendor) = &self.cgi {
-                mp = format!("{mp}:{}", vendor);
+                mp = format!("{mp}:{vendor}");
             }
 
             if let Some(version) = self.version {
                 if self.cgi.is_some() {
-                    mp = format!("{mp}:{}", version);
+                    mp = format!("{mp}:{version}");
                 } else {
-                    mp = format!("{mp}::{}", version);
+                    mp = format!("{mp}::{version}");
                 }
 
                 // add reason if need be
                 if let Some(reason) = self.reason {
-                    mp = format!("{mp}_{}", reason);
+                    mp = format!("{mp}_{reason}");
                 }
             }
-            write!(f, "{}", mp)
+            write!(f, "{mp}")
         }
     }
 }

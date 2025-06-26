@@ -1118,7 +1118,7 @@ pub unsafe extern "C" fn c2pa_signer_create(
                 signed_len_max,
             )
         };
-        println!("c_callback: signed_size: {}", signed_size);
+        println!("c_callback: signed_size: {signed_size}");
         if signed_size < 0 {
             return Err(c2pa::Error::CoseSignature); // todo:: return errors from callback
         }
@@ -1605,8 +1605,7 @@ mod tests {
     fn test_reader_from_file_cawg_identity() {
         let base = env!("CARGO_MANIFEST_DIR");
         let path = CString::new(format!(
-            "{}/../sdk/tests/fixtures/C_with_CAWG_data.jpg",
-            base
+            "{base}/../sdk/tests/fixtures/C_with_CAWG_data.jpg"
         ))
         .unwrap();
         let reader = unsafe { c2pa_reader_from_file(path.as_ptr()) };
