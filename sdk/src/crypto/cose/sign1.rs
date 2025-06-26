@@ -181,7 +181,8 @@ pub fn signing_time_from_sign1(
     // get timestamp info if available
 
     let mut local_log = StatusTracker::default();
-    let local_ctp = CertificateTrustPolicy::default();
+    // allow timestamp reading by using passthrough certificate check
+    let local_ctp = CertificateTrustPolicy::passthrough();
 
     let time_stamp_info = if _sync {
         validate_cose_tst_info(sign1, data, &local_ctp, &mut local_log)
