@@ -23,14 +23,13 @@ const PRIVATE_KEY: &[u8] = include_bytes!("../../tests/fixtures/certs/ed25519.pe
 const TEST_IMAGE: &[u8] = include_bytes!("../../tests/fixtures/C.jpg");
 
 #[cfg(feature = "file_io")]
-#[allow(clippy::incompatible_msrv)]
 pub fn main() -> Result<()> {
     let mut source = Cursor::new(TEST_IMAGE);
     let format: &'static str = "image/jpeg";
 
     let mut builder = Builder::new();
 
-    builder.load_ingredient_from_folder(Path::new("sdk/examples/load_ingredient/ingredient"))?;
+    builder.add_ingredient_from_folder(Path::new("sdk/examples/add_ingredient/ingredient"))?;
 
     // Write the manifest builder to a zipped stream
     let mut zipped = Cursor::new(Vec::new());

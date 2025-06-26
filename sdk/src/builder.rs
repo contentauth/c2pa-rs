@@ -1206,20 +1206,17 @@ impl Builder {
         Store::get_composed_manifest(manifest_bytes, format)
     }
 
-    /// Loads an ingredient folder into the builder.
+    /// Adds an ingredient folder into the builder.
     /// # Arguments
     /// * `base_path` - The base path of ingredient folder to read.
     /// # Errors
     /// * Returns an [`Error`] if the ingredient folder could not be loaded.
     #[cfg(feature = "file_io")]
-    pub fn load_ingredient_from_folder(&mut self, base_path: &Path) -> Result<()> {
+    pub fn add_ingredient_from_folder(&mut self, base_path: &Path) -> Result<&mut Ingredient> {
         let ingredient_path = PathBuf::from(base_path).join("ingredient.json");
         let ingredient_path = ingredient_path.as_path();
         let json = std::fs::read_to_string(ingredient_path)?;
-        let mut ingredient = Ingredient::from_json(&json)?;
-
-        // Specify ingredient is parent
-        ingredient.set_is_parent();
+        let ingredient = Ingredient::from_json(&json)?;
 
         // Make sure we will have access to thumbnail
         if let Some(thumbnail_ref) = ingredient.thumbnail_ref() {
@@ -1233,10 +1230,12 @@ impl Builder {
 
         self.add_ingredient(ingredient);
 
-        Ok(())
+        #[allow(clippy::unwrap_used)]
+        Ok(self.definition.ingredients.last_mut().unwrap())
     }
 
     // From a resource ref, opens file and adds to resources
+    #[cfg(feature = "file_io")]
     fn add_resource_ref_to_resources(
         &mut self,
         base_path: &Path,
@@ -2285,12 +2284,12 @@ mod tests {
     #[cfg(feature = "file_io")]
     fn test_load_ingredient_from_folder() {
         let mut source = Cursor::new(TEST_IMAGE_CLEAN);
-        let format: &'static str = "image/jpeg";
+        let format = "image/jpeg";
 
         let mut builder = Builder::new();
 
-        builder
-            .load_ingredient_from_folder(Path::new("tests/fixtures/ingredients/ingredient_c"))
+        let _ = builder
+            .add_ingredient_from_folder(Path::new("tests/fixtures/ingredients/ingredient_c"))
             .unwrap();
 
         let signer = test_signer(SigningAlg::Ps256);

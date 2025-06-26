@@ -11,10 +11,9 @@
 // specific language governing permissions and limitations under
 // each license.
 use anyhow::Result;
-mod load_ingredient;
+mod add_ingredient;
 
 #[cfg(feature = "file_io")]
 fn main() -> Result<()> {
-    load_ingredient::main()?;
-    Ok(())
+    add_ingredient::main()
 }
