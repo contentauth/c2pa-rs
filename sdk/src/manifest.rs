@@ -417,6 +417,7 @@ impl Manifest {
     /// The data for standard assertions must be in correct format. 
     ///
     /// Example: Creating a from an Actions object.
+    ///
     /// ```
     /// # use c2pa::Result;
     /// use c2pa::{
