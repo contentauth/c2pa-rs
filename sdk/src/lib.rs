@@ -107,13 +107,13 @@ pub mod crypto;
 pub mod dynamic_assertion;
 
 /// The `identity` module provides support for the [CAWG identity assertion](https://cawg.io/identity).
+#[doc(hidden)]
 pub mod identity;
 
 /// The jumbf_io module contains the definitions for the JUMBF data in assets.
 pub mod jumbf_io;
 
 /// The settings module provides a way to configure the C2PA SDK.
-#[doc(hidden)]
 pub mod settings;
 
 /// Supports status tracking as defined in the C2PA Technical Specification.
@@ -128,6 +128,7 @@ pub mod validation_results;
 pub mod validation_status;
 
 // Public exports
+#[doc(inline)]
 pub use assertions::Relationship;
 #[cfg(feature = "v1_api")]
 pub use asset_io::{CAIRead, CAIReadWrite};
@@ -157,6 +158,7 @@ pub use resource_store::{ResourceRef, ResourceStore};
 pub use signer::RemoteSigner;
 pub use signer::{AsyncSigner, Signer};
 pub use utils::mime::format_from_path;
+#[doc(inline)]
 pub use validation_results::{ValidationResults, ValidationState};
 
 // Internal modules
