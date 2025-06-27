@@ -10,7 +10,7 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use std::{io::Cursor, path::Path};
+use std::path::Path;
 
 use anyhow::Result;
 use c2pa::{IngredientOptions, Reader};
@@ -60,7 +60,7 @@ pub fn info(path: &Path) -> Result<()> {
         } else {
             println!("Validated");
         }
-        let reader = Reader::from_stream("c2pa", Cursor::new(manifest_data.into_owned()))?;
+        let reader = Reader::from_file(path)?;
 
         let manifests: Vec<_> = reader.iter_manifests().collect();
         match manifests.len() {

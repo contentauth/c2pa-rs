@@ -40,7 +40,7 @@ define make_zip
 	if [[ "$(2)" == *"ios"* ]]; then \
 		cp $(1)/libc2pa_c.a $(1)/lib/; \
 	else \
-		find $(1) -name "libc2pa_c.*" ! -name "*.a" -exec cp {} $(1)/lib/ \;; \
+		find $(1) -name "libc2pa_c.*" ! -name "*.a" ! -path "*/deps/*" -exec cp {} $(1)/lib/ \;; \
 	fi; \
 	(cd $(1) && zip -9 -r ../../artifacts/c2pa-v$${VERSION}-$(2).zip include lib); \
 	echo "Zip file created: $(TARGET_DIR)/artifacts/c2pa-v$${VERSION}-$(2).zip"
