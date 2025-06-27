@@ -611,8 +611,9 @@ impl Manifest {
             manifest.credentials = Some(credentials);
         }
 
-        manifest.redactions = claim.redactions().map(|rs| {
-            rs.iter()
+        manifest.redactions = claim.redactions().and_then(|rs| {
+            let v: Vec<_> = rs
+                .iter()
                 .map(|r| {
                     if !options.redacted_assertions.contains(r) {
                         options
@@ -621,7 +622,12 @@ impl Manifest {
                     }
                     r.to_owned()
                 })
-                .collect()
+                .collect();
+            if v.is_empty() {
+                None
+            } else {
+                Some(v)
+            }
         });
 
         manifest.assertion_references = claim

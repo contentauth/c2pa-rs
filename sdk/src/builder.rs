@@ -700,13 +700,20 @@ impl Builder {
                 let mut stream = self.resources.open(thumb_ref)?;
                 let mut data = Vec::new();
                 stream.read_to_end(&mut data)?;
-                claim.add_assertion_with_salt(
-                    &Thumbnail::new(
+                let thumbnail = if claim.version() >= 2 {
+                    Thumbnail::new_with_format(
+                        labels::CLAIM_THUMBNAIL,
+                        data,
+                        &format_to_mime(&thumb_ref.format),
+                    )
+                } else {
+                    Thumbnail::new(
                         &labels::add_thumbnail_format(labels::CLAIM_THUMBNAIL, &thumb_ref.format),
                         data,
-                    ),
-                    &salt,
-                )?;
+                    )
+                };
+
+                claim.add_assertion_with_salt(&thumbnail, &salt)?;
             }
         }
 
