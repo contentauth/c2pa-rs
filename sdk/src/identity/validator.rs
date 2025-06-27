@@ -112,7 +112,7 @@ mod tests {
         let mut stream = Cursor::new(MULTIPLE_IDENTITIES_VALID);
         let mut reader = Reader::from_stream("image/jpeg", &mut stream).unwrap();
         reader.post_validate_async(&CawgValidator {}).await.unwrap();
-        println!("validation results: {}", reader);
+        println!("validation results: {reader}");
         assert_eq!(
             reader
                 .validation_results()
