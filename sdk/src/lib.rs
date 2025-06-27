@@ -140,6 +140,7 @@ pub use claim_generator_info::ClaimGeneratorInfo;
 // };
 pub use crypto::raw_signature::SigningAlg;
 pub use error::{Error, Result};
+#[doc(inline)]
 pub use external_manifest::ManifestPatchCallback;
 pub use hash_utils::{hash_stream_by_alg, HashRange};
 pub use hashed_uri::HashedUri;
@@ -153,6 +154,7 @@ pub use manifest_store::ManifestStore;
 #[cfg(feature = "v1_api")]
 pub use manifest_store_report::ManifestStoreReport;
 pub use reader::Reader;
+#[doc(inline)]
 pub use resource_store::{ResourceRef, ResourceStore};
 #[cfg(feature = "v1_api")]
 pub use signer::RemoteSigner;
