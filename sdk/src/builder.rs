@@ -164,7 +164,7 @@ impl AssertionDefinition {
 /// # Example: Building and signing a manifest
 ///
 /// ```
-/// # use c2pa::Result;
+/// use c2pa::Result;
 /// use std::path::PathBuf;
 ///
 /// use c2pa::{create_signer, Builder, SigningAlg};
