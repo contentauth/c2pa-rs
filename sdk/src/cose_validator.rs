@@ -99,15 +99,15 @@ fn dump_cert_chain(certs: &[Vec<u8>]) -> Result<Vec<u8>> {
 
         // write lines
         writer
-            .write_fmt(format_args!("{}\n", cert_begin))
+            .write_fmt(format_args!("{cert_begin}\n"))
             .map_err(|_e| Error::UnsupportedType)?;
         for l in cert_lines {
             writer
-                .write_fmt(format_args!("{}\n", l))
+                .write_fmt(format_args!("{l}\n"))
                 .map_err(|_e| Error::UnsupportedType)?;
         }
         writer
-            .write_fmt(format_args!("{}\n", cert_end))
+            .write_fmt(format_args!("{cert_end}\n"))
             .map_err(|_e| Error::UnsupportedType)?;
     }
 
