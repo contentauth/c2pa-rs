@@ -412,7 +412,7 @@ impl Manifest {
     /// Adds ManifestAssertions from existing assertions.
     /// The data for standard assertions must be in correct format. 
     ///
-    /// Example: Creating a from an Actions object.
+    /// Example: Creating from an Actions object.
     ///
     /// ```
     /// use c2pa::{
