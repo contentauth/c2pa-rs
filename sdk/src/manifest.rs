@@ -380,15 +380,11 @@ impl Manifest {
     ///
     /// # Example: Creating a custom assertion from a serde_json object.
     /// ```
-    /// # use c2pa::Result;
     /// use c2pa::Manifest;
     /// use serde_json::json;
-    /// # fn main() -> Result<()> {
     /// let mut manifest = Manifest::new("my_app");
     /// let value = json!({"my_tag": "Anything I want"});
     /// manifest.add_labeled_assertion("org.contentauth.foo", &value)?;
-    /// # Ok(())
-    /// # }
     /// ```
     pub fn add_labeled_assertion<S: Into<String>, T: Serialize>(
         &mut self,
@@ -419,17 +415,13 @@ impl Manifest {
     /// Example: Creating a from an Actions object.
     ///
     /// ```
-    /// # use c2pa::Result;
     /// use c2pa::{
     ///     assertions::{c2pa_action, Action, Actions},
     ///     Manifest,
     /// };
-    /// # fn main() -> Result<()> {
     /// let mut manifest = Manifest::new("my_app");
     /// let actions = Actions::new().add_action(Action::new(c2pa_action::EDITED));
     /// manifest.add_assertion(&actions)?;
-    /// # Ok(())
-    /// # }
     /// ```
     pub fn add_assertion<T: Serialize + AssertionBase>(&mut self, data: &T) -> Result<&mut Self> {
         self.assertions
@@ -441,17 +433,13 @@ impl Manifest {
     ///
     /// Example: Find an Actions Assertion
     /// ```
-    /// # use c2pa::Result;
     /// use c2pa::{assertions::Actions, Manifest, Reader};
-    /// # fn main() -> Result<()> {
     /// let reader = Reader::from_file("tests/fixtures/CA.jpg")?;
     /// let manifest = reader.active_manifest().unwrap();
     /// let actions: Actions = manifest.find_assertion(Actions::LABEL)?;
     /// for action in actions.actions {
     ///     println!("{}", action.action());
     /// }
-    /// # Ok(())
-    /// # }
     /// ```
     pub fn find_assertion<T: DeserializeOwned>(&self, label: &str) -> Result<T> {
         if let Some(manifest_assertion) = self.assertions.iter().find(|a| a.label() == label) {
