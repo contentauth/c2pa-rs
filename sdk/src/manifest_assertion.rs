@@ -121,7 +121,7 @@ impl ManifestAssertion {
     ///
     /// # Example: Creating a custom assertion from a serde_json object.
     ///
-    ///```
+    /// ```
     /// # use c2pa::Result;
     /// use c2pa::ManifestAssertion;
     /// use serde_json::json;
@@ -158,7 +158,7 @@ impl ManifestAssertion {
     ///
     /// # Example: Creating a custom assertion an Action assertion
     ///
-    ///```
+    /// ```
     /// # use c2pa::Result;
     /// use c2pa::{
     ///     assertions::{c2pa_action, Action, Actions},

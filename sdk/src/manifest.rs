@@ -379,7 +379,7 @@ impl Manifest {
     /// The data for predefined assertions must be in correct format.
     ///
     /// # Example: Creating a custom assertion from a serde_json object.
-    ///```
+    /// ```
     /// # use c2pa::Result;
     /// use c2pa::Manifest;
     /// use serde_json::json;
@@ -417,7 +417,7 @@ impl Manifest {
     /// The data for standard assertions must be in correct format. 
     ///
     /// # Example: Creating a from an Actions object.
-    ///```
+    /// ```
     /// # use c2pa::Result;
     /// use c2pa::{
     ///     assertions::{c2pa_action, Action, Actions},
