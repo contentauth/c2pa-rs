@@ -14,6 +14,7 @@
 use std::{
     ffi::OsStr,
     io::{Read, Seek, SeekFrom, Write},
+    path::PathBuf,
 };
 
 #[allow(unused)] // different code path for WASI
@@ -234,20 +235,25 @@ pub fn wasm_remove_dir_all<P: AsRef<std::path::Path>>(path: P) -> Result<()> {
     ))?
 }
 
-/// Convert a URI to a file path.
+/// Convert a URI to a file path using PathBuf for better path handling.
 pub fn uri_to_path(uri: &str, manifest_label: &str) -> String {
-    let mut path = uri.to_string();
-    if path.starts_with("self#jumbf=") {
-        // convert to a file path always including the manifest label
-        path = path.replace("self#jumbf=", "");
-        if path.starts_with("/c2pa/") {
-            path = path.replacen("/c2pa/", "", 1);
-        } else {
-            path = format!("{}/{path}", manifest_label);
-        }
-        path = path.replace([':'], "_");
+    let Some(path_str) = uri.strip_prefix("self#jumbf=") else {
+        return uri.to_string();
+    };
+
+    let mut path = PathBuf::from(path_str);
+
+    if let Ok(stripped) = path.strip_prefix("/c2pa/") {
+        path = stripped.to_path_buf();
+    } else {
+        let mut new_path = PathBuf::from(manifest_label);
+        new_path.push(path);
+        path = new_path;
     }
-    path
+
+    let path_str = path.to_string_lossy();
+
+    path_str.replace(':', "_")
 }
 
 #[cfg(test)]
@@ -257,9 +263,24 @@ mod tests {
 
     use std::io::Cursor;
 
+    #[test]
+    fn test_uri_to_path() {
+        let uri = "self#jumbf=/c2pa/contentauth:urn:uuid:b3386820-9994-4b58-926f-1c47b82504c4/c2pa.assertions/c2pa.thumbnail.claim.jpeg";
+        let expected_path = "contentauth_urn_uuid_b3386820-9994-4b58-926f-1c47b82504c4/c2pa.assertions/c2pa.thumbnail.claim.jpeg";
+
+        assert_eq!(uri_to_path(uri, "unknown"), expected_path);
+        assert_eq!(uri_to_path(expected_path, "unknown"), expected_path);
+
+        let uri = "self#jumbf=c2pa.assertions/c2pa.thumbnail.claim";
+        let manifest_label = "test";
+        let expected_path = format!("{manifest_label}/c2pa.assertions/c2pa.thumbnail.claim");
+
+        assert_eq!(uri_to_path(uri, manifest_label), expected_path);
+        assert_eq!(uri_to_path(&expected_path, manifest_label), expected_path);
+    }
+
     //use env_logger;
     use super::*;
-
     #[test]
     fn test_patch_stream() {
         let source = "this is a very very good test";
