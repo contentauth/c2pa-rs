@@ -122,14 +122,10 @@ impl ManifestAssertion {
     /// # Example: Creating a custom assertion from a serde_json object.
     ///
     /// ```
-    /// # use c2pa::Result;
     /// use c2pa::ManifestAssertion;
     /// use serde_json::json;
-    /// # fn main() -> Result<()> {
     /// let value = json!({"my_tag": "Anything I want"});
     /// let _ma = ManifestAssertion::from_labeled_assertion("org.contentauth.foo", &value)?;
-    /// # Ok(())
-    /// # }
     /// ```
     pub fn from_labeled_assertion<S: Into<String>, T: Serialize>(
         label: S,
@@ -159,16 +155,12 @@ impl ManifestAssertion {
     /// # Example: Creating a custom assertion an Action assertion
     ///
     /// ```
-    /// # use c2pa::Result;
     /// use c2pa::{
     ///     assertions::{c2pa_action, Action, Actions},
     ///     ManifestAssertion,
     /// };
-    /// # fn main() -> Result<()> {
     /// let actions = Actions::new().add_action(Action::new(c2pa_action::EDITED));
     /// let _ma = ManifestAssertion::from_labeled_assertion(Actions::LABEL, &actions)?;
-    /// # Ok(())
-    /// # }
     /// ```
     pub fn from_assertion<T: Serialize + AssertionBase>(data: &T) -> Result<Self> {
         Ok(Self::new(
@@ -181,12 +173,10 @@ impl ManifestAssertion {
     ///
     /// # Example: extracting an Actions Assertion
     /// ```
-    /// # use c2pa::Result;
     /// use c2pa::{
     ///     assertions::{c2pa_action, Action, Actions},
     ///     ManifestAssertion,
     /// };
-    /// # fn main() -> Result<()> {
     /// let actions = Actions::new().add_action(Action::new(c2pa_action::EDITED));
     /// let manifest_assertion = ManifestAssertion::from_labeled_assertion(Actions::LABEL, &actions)?;
     ///
@@ -194,8 +184,6 @@ impl ManifestAssertion {
     /// for action in actions.actions {
     ///     println!("{}", action.action());
     /// }
-    /// # Ok(())
-    /// # }
     /// ```
     pub fn to_assertion<T: DeserializeOwned>(&self) -> Result<T> {
         serde_json::from_value(self.value()?.to_owned()).map_err(|e| {
