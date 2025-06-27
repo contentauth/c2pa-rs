@@ -25,7 +25,7 @@
 //! The library has a Builder/Reader API that focuses on simplicity 
 //! and stream support.
 //!
-//! Example: Reading a ManifestStore
+//! ## Example: Reading a ManifestStore
 //! ```
 //! # use c2pa::Result;
 //! use c2pa::{assertions::Actions, Reader};
@@ -45,7 +45,7 @@
 //! # }
 //! ```
 //!
-//! # Example: Adding a Manifest to a file
+//! ## Example: Adding a Manifest to a file
 //! ```
 //! # use c2pa::Result;
 //! use std::path::PathBuf;
