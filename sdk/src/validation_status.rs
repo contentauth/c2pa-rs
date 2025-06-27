@@ -83,7 +83,7 @@ impl ValidationStatus {
     /// Returns the validation status code.
     ///
     /// Validation status codes are the labels from the "Value"
-    /// column in <https://c2pa.org/specifications/specifications/1.0/specs/C2PA_Specification.html#_existing_manifests>.
+    /// column in <https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_existing_manifests>.
     ///
     /// These are also defined as constants in the
     /// [`validation_status`](crate::validation_status) mod.

@@ -214,7 +214,7 @@ pub mod tests {
     const USER_ID: &str = "1234567890";
     const IDENTITY_URI: &str = "https://some_identity/service/";
 
-    // example review rating from
+    // Example review rating from
     // https://c2pa.org/specifications/specifications/1.0/specs/C2PA_Specification.html#_claim_review
     const RATING: &str = r#"{
         "@context": "http://schema.org",

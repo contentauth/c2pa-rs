@@ -161,9 +161,9 @@ impl AssertionDefinition {
 
 /// Use a Builder to add a signed manifest to an asset.
 ///
-/// # Example: Building and signing a manifest:
+/// # Example: Building and signing a manifest
 ///
-///
+/// ```
 /// # use c2pa::Result;
 /// use std::path::PathBuf;
 ///
@@ -209,6 +209,7 @@ impl AssertionDefinition {
 /// )?;
 /// # Ok(())
 /// # }
+/// ```
 #[skip_serializing_none]
 #[derive(Debug, Default, Deserialize, Serialize)]
 #[cfg_attr(feature = "json_schema", derive(JsonSchema))]

@@ -34,7 +34,7 @@ const ASSERTION_CREATION_VERSION: usize = 3;
 #[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq, Eq)]
 #[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 pub enum Relationship {                     
-    // The current asset is derived from this ingredient.
+    /// The current asset is derived from this ingredient.
     #[serde(rename = "parentOf")]
     ParentOf,
     /// The current asset is a part of this ingredient.

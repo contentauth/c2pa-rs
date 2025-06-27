@@ -30,7 +30,7 @@ pub struct TimeStamp(HashMap<String, ByteBuf>);
 impl TimeStamp {
     /// Label prefix for an [`Actions`] assertion.
     ///
-    /// See <https://c2pa.org/specifications/specifications/1.0/specs/C2PA_Specification.html#_actions>.
+    /// See <https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_actions>.
     pub const LABEL: &'static str = labels::TIMESTAMP;
 
     pub fn new(label: &str, timestamp: &[u8]) -> Self {

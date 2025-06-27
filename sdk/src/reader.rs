@@ -71,7 +71,7 @@ pub trait AsyncPostValidator {
     ) -> Result<Option<Value>>;
 }
 
-/// A reader for the manifest store.
+/// Use a Reader to read and validate a manifest store.
 #[skip_serializing_none]
 #[derive(Serialize, Deserialize)]
 #[cfg_attr(feature = "json_schema", derive(JsonSchema))]
@@ -111,7 +111,7 @@ impl Reader {
     /// * `format` - The format of the stream.  MIME type or extension that maps to a MIME type.
     /// * `stream` - The stream to read from.  Must implement the Read and Seek traits. (NOTE: Explain Send trait, required for both sync & async?).
     /// # Returns
-    /// A Reader for the manifest store.
+    /// A [`Reader`] for the manifest store.
     /// # Errors
     /// Returns an [`Error`] when the manifest data cannot be read.  If there's no error upon reading, you must still check validation status to ensure that the manifest data is validated.  That is, even if there are no errors, the data still might not be valid.
     /// # Example
@@ -145,7 +145,7 @@ impl Reader {
     /// # Arguments
     /// * `path` - The path to the file.
     /// # Returns
-    /// A reader for the manifest store.
+    /// A [`Reader`] for the manifest store.
     /// # Errors
     /// Returns an [`Error`] when the manifest data cannot be read from the specified file.  If there's no error upon reading, you must still check validation status to ensure that the manifest data is validated.  That is, even if there are no errors, the data still might not be valid.
     /// # Example
