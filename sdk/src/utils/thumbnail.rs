@@ -11,7 +11,10 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use std::io::{BufRead, Cursor, Seek, Write};
+use std::{
+    fmt,
+    io::{BufRead, Cursor, Seek, Write},
+};
 
 use image::{
     codecs::{
@@ -19,13 +22,92 @@ use image::{
         jpeg::JpegEncoder,
         png::{CompressionType, FilterType, PngEncoder},
     },
-    ImageReader,
+    ImageFormat, ImageReader,
 };
+use serde_derive::{Deserialize, Serialize};
 
 use crate::{
-    settings::{self, ThumbnailFormat, ThumbnailQuality},
+    settings::{self, ThumbnailQuality},
     Error, Result,
 };
+
+// TODO: thumbnails/previews for audio?
+/// Possible output types for automatic thumbnail generation.
+///
+/// These formats are a combination of types supported in [image-rs](https://docs.rs/image/latest/image/enum.ImageFormat.html)
+/// and types defined by the [IANA registry media type](https://www.iana.org/assignments/media-types/media-types.xhtml) (as defined in the spec).
+#[derive(Copy, Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ThumbnailFormat {
+    /// An image in PNG format.
+    Png,
+    /// An image in JPEG format.
+    Jpeg,
+    /// An image in GIF format.
+    Gif,
+    /// An image in WEBP format.
+    WebP,
+    /// An image in TIFF format.
+    Tiff,
+    /// An image in BMP format.
+    Bmp,
+    /// An image in ICO format.
+    Ico,
+    /// An image in AVIF format.
+    Avif,
+}
+
+impl ThumbnailFormat {
+    /// Create a new [ThumbnailFormat] from the given format extension or mime type.
+    ///
+    /// If the format is unsupported, this function will return `None`.
+    pub fn new(format: &str) -> Option<ThumbnailFormat> {
+        ImageFormat::from_extension(format)
+            .or_else(|| ImageFormat::from_mime_type(format))
+            .and_then(|format| ThumbnailFormat::try_from(format).ok())
+    }
+}
+
+impl TryFrom<ImageFormat> for ThumbnailFormat {
+    type Error = Error;
+
+    fn try_from(format: ImageFormat) -> Result<Self> {
+        match format {
+            ImageFormat::Png => Ok(ThumbnailFormat::Png),
+            ImageFormat::Jpeg => Ok(ThumbnailFormat::Jpeg),
+            ImageFormat::Gif => Ok(ThumbnailFormat::Gif),
+            ImageFormat::WebP => Ok(ThumbnailFormat::WebP),
+            ImageFormat::Tiff => Ok(ThumbnailFormat::Tiff),
+            ImageFormat::Bmp => Ok(ThumbnailFormat::Bmp),
+            ImageFormat::Ico => Ok(ThumbnailFormat::Ico),
+            ImageFormat::Avif => Ok(ThumbnailFormat::Avif),
+            _ => Err(Error::UnsupportedThumbnailFormat(
+                format.to_mime_type().to_owned(),
+            )),
+        }
+    }
+}
+
+impl From<ThumbnailFormat> for ImageFormat {
+    fn from(format: ThumbnailFormat) -> Self {
+        match format {
+            ThumbnailFormat::Png => ImageFormat::Png,
+            ThumbnailFormat::Jpeg => ImageFormat::Jpeg,
+            ThumbnailFormat::Gif => ImageFormat::Gif,
+            ThumbnailFormat::WebP => ImageFormat::WebP,
+            ThumbnailFormat::Tiff => ImageFormat::Tiff,
+            ThumbnailFormat::Bmp => ImageFormat::Bmp,
+            ThumbnailFormat::Ico => ImageFormat::Ico,
+            ThumbnailFormat::Avif => ImageFormat::Avif,
+        }
+    }
+}
+
+impl fmt::Display for ThumbnailFormat {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", ImageFormat::from(*self).to_mime_type())
+    }
+}
 
 /// Returns the output thumbnail format given the thumbnail input format taking the global
 /// thumbnail preferences into account.
@@ -133,7 +215,7 @@ where
 /// Make a thumbnail from the input stream and write to the output stream.
 ///
 /// This function takes into account two [Settings][crate::Settings]:
-/// * `builder.thumbnail.size`
+/// * `builder.thumbnail.long_edge`
 /// * `builder.thumbnail.quality`
 pub fn make_thumbnail_from_stream<R, W>(
     input: R,
@@ -148,8 +230,8 @@ where
     // image-rs 0.25.6: doesn't support fixtures TUSCANY.TIF and sample1.avif
     let mut image = ImageReader::with_format(input, input_format.into()).decode()?;
 
-    let size = settings::get_settings_value::<(u32, u32)>("builder.thumbnail.size")?;
-    image = image.thumbnail(size.0, size.1);
+    let long_edge = settings::get_settings_value::<u32>("builder.thumbnail.long_edge")?;
+    image = image.thumbnail(long_edge, long_edge);
 
     let quality = settings::get_settings_value::<ThumbnailQuality>("builder.thumbnail.quality")?;
     match output_format {

@@ -15,15 +15,16 @@
 use std::path::Path;
 use std::{
     cell::RefCell,
-    fmt,
     io::{BufRead, BufReader, Cursor},
 };
 
 use config::{Config, FileFormat};
-use image::ImageFormat;
 use serde_derive::{Deserialize, Serialize};
 
-use crate::{create_signer, crypto::base64, ClaimGeneratorInfo, Error, Result, Signer, SigningAlg};
+use crate::{
+    create_signer, crypto::base64, utils::thumbnail::ThumbnailFormat, ClaimGeneratorInfo, Error,
+    Result, Signer, SigningAlg,
+};
 
 thread_local!(
     static SETTINGS: RefCell<Config> = RefCell::new(Config::try_from(&Settings::default()).unwrap_or_default())
@@ -42,13 +43,13 @@ pub struct SignerInfo {
     alg: SigningAlg,
     sign_cert: Vec<u8>,
     private_key: Vec<u8>,
-    ta_url: Option<String>,
+    tsa_url: Option<String>,
 }
 
 // Settings for trust list feature
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[allow(unused)]
-pub struct Trust {
+pub(crate) struct Trust {
     private_anchors: Option<String>,
     trust_anchors: Option<String>,
     trust_config: Option<String>,
@@ -178,7 +179,7 @@ pub(crate) struct Core {
     max_memory_usage: Option<u64>,
 
     prefer_update_manifests: bool,
-    exclude_box_hash_metadata: bool,
+    // exclude_box_hash_metadata: bool,
 }
 
 impl Default for Core {
@@ -192,7 +193,7 @@ impl Default for Core {
             compress_manifests: true,
             max_memory_usage: None,
             prefer_update_manifests: true,
-            exclude_box_hash_metadata: false,
+            // exclude_box_hash_metadata: false,
         }
     }
 }
@@ -216,6 +217,8 @@ pub(crate) struct Verify {
     ocsp_fetch: bool,
     remote_manifest_fetch: bool,
     check_ingredient_trust: bool,
+
+    strict_v1_validation: bool,
 }
 
 impl Default for Verify {
@@ -227,95 +230,13 @@ impl Default for Verify {
             ocsp_fetch: false,
             remote_manifest_fetch: true,
             check_ingredient_trust: true,
+
+            strict_v1_validation: false,
         }
     }
 }
 
 impl SettingsValidate for Verify {}
-
-// TODO: thumbnails/previews for audio?
-/// Possible output types for automatic thumbnail generation.
-///
-/// These formats are a combination of types supported in [image-rs](https://docs.rs/image/latest/image/enum.ImageFormat.html)
-/// and types defined by the [IANA registry media type](https://www.iana.org/assignments/media-types/media-types.xhtml) (as defined in the spec).
-#[derive(Copy, Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(rename_all = "lowercase")]
-pub enum ThumbnailFormat {
-    /// An image in PNG format.
-    Png,
-    /// An image in JPEG format.
-    Jpeg,
-    /// An image in GIF format.
-    Gif,
-    /// An image in WEBP format.
-    WebP,
-    /// An image in TIFF format.
-    Tiff,
-    /// An image in BMP format.
-    Bmp,
-    /// An image in ICO format.
-    Ico,
-    /// An image in AVIF format.
-    Avif,
-}
-
-impl ThumbnailFormat {
-    /// Create a new [ThumbnailFormat] from the given format extension or mime type.
-    ///
-    /// If the format is unsupported, this function will return `None`.
-    pub fn new(format: &str) -> Option<ThumbnailFormat> {
-        ImageFormat::from_extension(format)
-            .or_else(|| ImageFormat::from_mime_type(format))
-            .and_then(|format| ThumbnailFormat::try_from(format).ok())
-    }
-
-    pub fn new_or_ignore(format: &str) -> Option<ThumbnailFormat> {
-        ImageFormat::from_extension(format)
-            .or_else(|| ImageFormat::from_mime_type(format))
-            .and_then(|format| ThumbnailFormat::try_from(format).ok())
-    }
-}
-
-impl TryFrom<ImageFormat> for ThumbnailFormat {
-    type Error = Error;
-
-    fn try_from(format: ImageFormat) -> Result<Self> {
-        match format {
-            ImageFormat::Png => Ok(ThumbnailFormat::Png),
-            ImageFormat::Jpeg => Ok(ThumbnailFormat::Jpeg),
-            ImageFormat::Gif => Ok(ThumbnailFormat::Gif),
-            ImageFormat::WebP => Ok(ThumbnailFormat::WebP),
-            ImageFormat::Tiff => Ok(ThumbnailFormat::Tiff),
-            ImageFormat::Bmp => Ok(ThumbnailFormat::Bmp),
-            ImageFormat::Ico => Ok(ThumbnailFormat::Ico),
-            ImageFormat::Avif => Ok(ThumbnailFormat::Avif),
-            _ => Err(Error::UnsupportedThumbnailFormat(
-                format.to_mime_type().to_owned(),
-            )),
-        }
-    }
-}
-
-impl From<ThumbnailFormat> for ImageFormat {
-    fn from(format: ThumbnailFormat) -> Self {
-        match format {
-            ThumbnailFormat::Png => ImageFormat::Png,
-            ThumbnailFormat::Jpeg => ImageFormat::Jpeg,
-            ThumbnailFormat::Gif => ImageFormat::Gif,
-            ThumbnailFormat::WebP => ImageFormat::WebP,
-            ThumbnailFormat::Tiff => ImageFormat::Tiff,
-            ThumbnailFormat::Bmp => ImageFormat::Bmp,
-            ThumbnailFormat::Ico => ImageFormat::Ico,
-            ThumbnailFormat::Avif => ImageFormat::Avif,
-        }
-    }
-}
-
-impl fmt::Display for ThumbnailFormat {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", ImageFormat::from(*self).to_mime_type())
-    }
-}
 
 /// Quality of the thumbnail.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -339,10 +260,10 @@ pub struct ThumbnailSettings {
     /// This may occur, for instance, if the thumbnail media type or color layout isn't
     /// supported.
     ignore_errors: bool,
-    /// The size of the thumbnail.
+    /// The size of the longest edge of the thumbnail.
     ///
-    /// Note this function will preserve aspect ratio based on the longest edge.
-    size: (u32, u32),
+    /// This function will resize the input to preserve aspect ratio.
+    long_edge: u32,
     /// Format of the thumbnail.
     ///
     /// If this field isn't specified, the thumbnail format will correspond to the
@@ -366,7 +287,7 @@ impl Default for ThumbnailSettings {
         ThumbnailSettings {
             enabled: true,
             ignore_errors: true,
-            size: (1024, 1024),
+            long_edge: 1024,
             format: None,
             default_format: Some(ThumbnailFormat::Jpeg),
             quality: ThumbnailQuality::Medium,
@@ -395,7 +316,6 @@ pub(crate) struct Builder {
     /// provided explicitly to the builder.
     #[serde(skip_serializing_if = "Option::is_none")]
     claim_generator_info: Option<Vec<ClaimGeneratorInfo>>,
-
     /// Various settings for configuring automatic thumbnail generation.
     thumbnail: ThumbnailSettings,
     //
@@ -438,121 +358,20 @@ impl SettingsValidate for Builder {
     }
 }
 
-// TODO: provide example config
-/// Settings for configuring all aspects of c2pa-rs.
-///
-/// [Settings::default] will be set thread-locally by default. To override these default fields,
-/// call [Settings::set_thread_local] with a new [Settings]. To obtain the thread local [Settings]
-/// call [Settings::thread_local].
-#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+// Settings configuration for C2PA-RS.  Default configuration values
+// are lazy loaded on first use.  Values can also be loaded from a configuration
+// file or by setting specific value via code.  There is a single configuration
+// setting for the entire C2PA-RS instance.
+#[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 #[allow(unused)]
 pub struct Settings {
     trust: Trust,
     core: Core,
     verify: Verify,
     builder: Builder,
-
-    #[serde(skip)]
-    config: Config,
 }
 
 impl Settings {
-    /// Returns the current [Settings] for the local thread.
-    pub fn thread_local() -> Option<Settings> {
-        // TODO: return error instead of option
-        SETTINGS
-            .with_borrow(|config| config.clone().try_deserialize::<Settings>())
-            .ok()
-    }
-
-    /// Construct a new [Settings] with default values.
-    ///
-    /// This can be used with [Setting::set_thread_local] to reset the thread local [Settings]
-    /// to their default values.
-    pub fn new() -> Settings {
-        Self::default()
-    }
-
-    /// Construct a [Settings] from a given toml string.
-    pub fn from_toml(settings_toml: &str) -> Result<Settings> {
-        let config = Config::builder()
-            .add_source(config::File::from_str(settings_toml, FileFormat::Toml))
-            .build()
-            .map_err(|_e| Error::BadParam("could not parse configuration file".into()))?;
-
-        let mut settings = config.clone().try_deserialize::<Settings>().map_err(|_e| {
-            Error::BadParam("configuration file contains unrecognized param".into())
-        })?;
-        settings.validate()?;
-
-        settings.config = config;
-
-        Ok(settings)
-    }
-
-    /// Construct [Settings] from a given toml file.
-    #[cfg(feature = "file_io")]
-    pub fn from_toml_file<P: AsRef<Path>>(setting_path: P) -> Result<Settings> {
-        let setting_buf = std::fs::read(&setting_path).map_err(Error::IoError)?;
-        Settings::from_toml(
-            &String::from_utf8(setting_buf)
-                .map_err(|_| Error::BadParam("invalid utf-8".to_owned()))?,
-        )
-    }
-
-    /// Merges the current [Settings] with thread local [Settings].
-    ///
-    /// Only fields that are present in the current [Settings] will override the fields
-    /// in the thread local [Settings].
-    pub fn set_thread_local(self) -> Result<()> {
-        let update_config = SETTINGS.with_borrow(|current_settings| {
-            Config::builder()
-                .add_source(current_settings.clone())
-                .add_source(self.config)
-                .build() // merge overrides, allows for partial changes
-        });
-
-        match update_config {
-            Ok(update_config) => {
-                SETTINGS.set(update_config);
-
-                Ok(())
-            }
-            Err(_) => Err(Error::OtherError("could not update configuration".into())),
-        }
-    }
-
-    /// Constructs a signer from the specified `trust.signer_info` in the settings.
-    ///
-    /// The returned signer can be passed to [Builder::sign][crate::Builder::sign]
-    /// and other related functions.
-    ///
-    /// This function will error with [Error::UnspecifiedSignerSettings][crate::Error::UnspecifiedSignerSettings]
-    /// if the `trust.signer_info` is unspecified.
-    pub fn signer(&self) -> Result<Box<dyn Signer>> {
-        let signer_info = self
-            .trust
-            .signer_info
-            .as_ref()
-            .ok_or(Error::UnspecifiedSignerSettings)?;
-        create_signer::from_keys(
-            &signer_info.sign_cert,
-            &signer_info.private_key,
-            signer_info.alg,
-            signer_info.ta_url.to_owned(),
-        )
-    }
-
-    /// Serializes the [Settings] into a toml string.
-    pub fn to_toml(&self) -> Result<String> {
-        Ok(toml::to_string(&self)?)
-    }
-
-    /// Serializes the [Settings] into a pretty (formatted) toml string.
-    pub fn to_pretty_toml(&self) -> Result<String> {
-        Ok(toml::to_string_pretty(&self)?)
-    }
-
     #[deprecated]
     #[cfg(feature = "file_io")]
     pub fn from_file<P: AsRef<Path>>(setting_path: P) -> Result<Self> {
@@ -603,7 +422,7 @@ impl Settings {
 
                 settings.validate()?;
 
-                SETTINGS.set(update_config);
+                SETTINGS.set(update_config.clone());
 
                 Ok(settings)
             }
@@ -612,21 +431,147 @@ impl Settings {
     }
 }
 
-impl PartialEq for Settings {
-    fn eq(&self, other: &Self) -> bool {
-        self.trust.eq(&other.trust)
-            && self.core.eq(&other.core)
-            && self.verify.eq(&other.verify)
-            && self.builder.eq(&other.builder)
+impl SettingsValidate for Settings {
+    fn validate(&self) -> Result<()> {
+        Ok(())
+            .and(self.trust.validate())
+            .and(self.core.validate())
+            .and(self.verify.validate())
+            .and(self.builder.validate())
     }
 }
 
-impl SettingsValidate for Settings {
-    fn validate(&self) -> Result<()> {
-        self.trust.validate()?;
-        self.core.validate()?;
-        self.trust.validate()?;
-        self.builder.validate()
+// TODO: rename struct and provide example config
+/// Settings for configuring all aspects of c2pa-rs.
+///
+/// [Settings::default] will be set thread-locally by default. To override these default fields,
+/// call [Settings::set_thread_local] with a new [Settings]. To obtain the thread local [Settings]
+/// call [Settings::thread_local].
+#[derive(Debug, Clone)]
+pub struct Settings2(Option<Config>);
+
+impl Settings2 {
+    /// Returns the current [Settings] for the local thread.
+    pub fn thread_local() -> Settings2 {
+        Settings2(None)
+    }
+
+    /// Construct a new [Settings] with default values.
+    ///
+    /// This can be used with [Setting::set_thread_local] to reset the thread local [Settings]
+    /// to their default values.
+    pub fn new() -> Settings2 {
+        Self::default()
+    }
+
+    /// Construct a [Settings] from a given toml string.
+    pub fn from_toml(settings_toml: &str) -> Result<Settings2> {
+        let config = Config::builder()
+            .add_source(config::File::from_str(settings_toml, FileFormat::Toml))
+            .build()
+            .map_err(|_e| Error::BadParam("could not parse configuration file".into()))?;
+
+        Ok(Settings2(Some(config)))
+    }
+
+    /// Construct [Settings] from a given toml file.
+    #[cfg(feature = "file_io")]
+    pub fn from_toml_file<P: AsRef<Path>>(setting_path: P) -> Result<Settings2> {
+        let setting_buf = std::fs::read(&setting_path).map_err(Error::IoError)?;
+        Settings2::from_toml(
+            &String::from_utf8(setting_buf)
+                .map_err(|_| Error::BadParam("invalid utf-8".to_owned()))?,
+        )
+    }
+
+    pub fn set_value<T>(&mut self, value: T) -> Result<()> {
+        todo!()
+    }
+
+    pub fn get_value<T>(&self) -> Result<T> {
+        todo!()
+    }
+
+    /// Merges the current [Settings] with thread local [Settings].
+    ///
+    /// Only fields that are present in the current [Settings] will override the fields
+    /// in the thread local [Settings].
+    pub fn set_thread_local(self) -> Result<()> {
+        if self.0.is_none() {
+            // It already is thread local.
+            return Ok(());
+        }
+
+        self.to_settings()?.validate()?;
+
+        let update_config = SETTINGS.with_borrow(|current_settings| {
+            let config_builder = Config::builder().add_source(current_settings.clone());
+            let config_builder = if let Some(config) = &self.0 {
+                config_builder.add_source(config.clone())
+            } else {
+                config_builder
+            };
+
+            config_builder.build() // merge overrides, allows for partial changes
+        });
+
+        match update_config {
+            Ok(update_config) => {
+                SETTINGS.set(update_config);
+
+                Ok(())
+            }
+            Err(_) => Err(Error::OtherError("could not update configuration".into())),
+        }
+    }
+
+    /// Constructs a signer from the specified `trust.signer_info` in the settings.
+    ///
+    /// The returned signer can be passed to [Builder::sign][crate::Builder::sign]
+    /// and other related functions.
+    ///
+    /// This function will error with [Error::UnspecifiedSignerSettings][crate::Error::UnspecifiedSignerSettings]
+    /// if the `trust.signer_info` is unspecified.
+    pub fn signer(&self) -> Result<Box<dyn Signer>> {
+        let settings = self
+            // TODO: call get_value directly
+            .to_settings()?;
+        let signer_info = settings
+            .trust
+            .signer_info
+            .as_ref()
+            .ok_or(Error::UnspecifiedSignerSettings)?;
+        create_signer::from_keys(
+            &signer_info.sign_cert,
+            &signer_info.private_key,
+            signer_info.alg,
+            signer_info.tsa_url.to_owned(),
+        )
+    }
+
+    /// Serializes the [Settings] into a toml string.
+    pub fn to_toml(&self) -> Result<String> {
+        Ok(toml::to_string(&self.to_settings()?)?)
+    }
+
+    /// Serializes the [Settings] into a pretty (formatted) toml string.
+    pub fn to_pretty_toml(&self) -> Result<String> {
+        Ok(toml::to_string_pretty(&self.to_settings()?)?)
+    }
+
+    fn to_settings(&self) -> Result<Settings> {
+        self.0
+            .clone()
+            .unwrap_or_else(|| SETTINGS.with_borrow(|config| config.clone()))
+            .try_deserialize::<Settings>()
+            .map_err(|_e| Error::BadParam("configuration file contains unrecognized param".into()))
+    }
+}
+
+impl Default for Settings2 {
+    fn default() -> Self {
+        // Unit tests confirm this is safe to unwrap.
+        Settings2(Some(Config::try_from(&Settings::default()).unwrap()))
     }
 }
 
