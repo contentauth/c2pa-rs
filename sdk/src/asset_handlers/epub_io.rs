@@ -1,11 +1,11 @@
 use crate::{
     asset_io::{AssetIO, CAIReadWrapper, CAIReadWriteWrapper, CAIRead, CAIReadWrite, CAIReader, CAIWriter, HashObjectPositions},
     error::{Error, Result},
-    Builder, Signer, SigningAlg,
+    Builder, Signer
 };
 
 use std::{
-    fs::File, io::{self, Cursor, Read, Write, Seek}, path::Path, str::from_utf8
+    fs::File, io::{self, Cursor, Read, Write}, path::Path, str::from_utf8
 };
 // use zip::ZipArchive;
 use zip::{
@@ -328,6 +328,7 @@ impl EpubIo {
     }
 }
 
+#[allow(dead_code)]
 pub fn sign_epub_with_manifest(
     epub_path: &Path,
     manifest_json: &str,
@@ -365,7 +366,7 @@ pub fn sign_epub_with_manifest(
 #[cfg(test)]
 #[cfg(feature = "file_io")]
 pub fn create_test_signer() -> Result<Box<dyn Signer>> {
-    use crate::create_signer;
+    use crate::{create_signer, SigningAlg};
     
     // use test cert and key
     let cert_path = "tests/fixtures/certs/ps256.pub";
@@ -385,7 +386,7 @@ pub fn create_test_signer() -> Result<Box<dyn Signer>> {
 #[cfg(test)]
 #[cfg(not(feature = "file_io"))]
 pub fn create_test_signer() -> Result<Box<dyn Signer>> {
-    use crate::create_signer;
+    use crate::{create_signer, SigningAlg};
     
     // use built-in test signer
     let signer = create_signer::from_keys(
