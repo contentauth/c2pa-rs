@@ -1036,13 +1036,15 @@ impl BmffHash {
             let c2pa_boxes = read_bmff_c2pa_boxes(&mut seg_reader)?;
             let box_infos = &c2pa_boxes.box_infos;
 
-            if box_infos.iter().filter(|b| b.path == "moof").count() != 1 {
-                return Err(Error::BadParam("expected 1 moof in fragment".to_string()));
-            }
+            // TODO: add support for multiple moofs in a fragment
+            // if box_infos.iter().filter(|b| b.path == "moof").count() != 1 {
+            //     return Err(Error::BadParam("expected 1 moof in fragment".to_string()));
+            // }
 
-            if box_infos.iter().filter(|b| b.path == "mdat").count() != 1 {
-                return Err(Error::BadParam("expected 1 mdat in fragment".to_string()));
-            }
+            // TODO: add support for multiple mdats in a fragment
+            // if box_infos.iter().filter(|b| b.path == "mdat").count() != 1 {
+            //     return Err(Error::BadParam("expected 1 mdat in fragment".to_string()));
+            // }
 
             // we don't currently support adding to fragments with existing manifests
             if !c2pa_boxes.bmff_merkle.is_empty() {

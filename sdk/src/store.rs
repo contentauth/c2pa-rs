@@ -906,6 +906,16 @@ impl Store {
 
         for manifest_box in claim.get_box_order() {
             match *manifest_box {
+                CLAIM => {
+                    let mut cb = CAIClaimBox::new(claim.version());
+
+                    // Add the Claim json
+                    let claim_cbor_bytes = claim.data()?;
+                    let c_cbor = JUMBFCBORContentBox::new(claim_cbor_bytes);
+                    cb.add_claim(Box::new(c_cbor));
+
+                    cai_store.add_box(Box::new(cb)); // add claim to manifest
+                }
                 ASSERTIONS => {
                     let mut a_store = CAIAssertionStore::new();
 
@@ -916,16 +926,6 @@ impl Store {
                     }
 
                     cai_store.add_box(Box::new(a_store)); // add the assertion store to the manifest
-                }
-                CLAIM => {
-                    let mut cb = CAIClaimBox::new(claim.version());
-
-                    // Add the Claim json
-                    let claim_cbor_bytes = claim.data()?;
-                    let c_cbor = JUMBFCBORContentBox::new(claim_cbor_bytes);
-                    cb.add_claim(Box::new(c_cbor));
-
-                    cai_store.add_box(Box::new(cb)); // add claim to manifest
                 }
                 SIGNATURE => {
                     // create a signature and add placeholder data to the CAI store.
@@ -1122,8 +1122,8 @@ impl Store {
                 let (box_label, _instance) =
                     Claim::box_name_label_instance(desc_box.label().as_ref());
                 match box_label.as_ref() {
-                    ASSERTIONS => box_order.push(ASSERTIONS),
                     CLAIM => box_order.push(CLAIM),
+                    ASSERTIONS => box_order.push(ASSERTIONS),
                     SIGNATURE => box_order.push(SIGNATURE),
                     CREDENTIALS => box_order.push(CREDENTIALS),
                     DATABOXES => box_order.push(DATABOXES),
