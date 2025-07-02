@@ -14,6 +14,7 @@ use zip::{
     ZipArchive, 
     ZipWriter
 };
+use std::io::Seek;
 
 static SUPPORTED_TYPES: [&str; 6] = [
     "epub",
@@ -399,6 +400,13 @@ pub fn create_test_signer() -> Result<Box<dyn Signer>> {
     Ok(signer)
 }
 
+fn get_sample_epub_path(path_str: &str) -> std::path::PathBuf {
+    let manifest_dir = env!("CARGO_MANIFEST_DIR");
+    let mut path = std::path::PathBuf::from(manifest_dir);
+    path.push(path_str);
+    path
+}
+
 #[cfg(test)]
 mod tests {
     use serde_json::{json, Value};
@@ -413,13 +421,6 @@ mod tests {
         // include_bytes!("../../tests/fixtures/sample1.docx"),
         // include_bytes!("../../tests/fixtures/sample1.odt"),
     ];
-
-    fn get_sample_epub_path(path_str: &str) -> PathBuf {
-        let manifest_dir = env!("CARGO_MANIFEST_DIR");
-        let mut path = PathBuf::from(manifest_dir);
-        path.push(path_str);
-        path
-    }
 
     fn create_temp_epub_copy(original_path: &Path) -> Result<PathBuf> {
         let temp_dir = std::env::temp_dir();
@@ -792,3 +793,95 @@ mod tests {
         Ok(())
     }
 }
+
+
+#[test]
+fn test_get_epub_metadata() {
+    let epub_path = get_sample_epub_path("tests/fixtures/sample.epub");
+    let meta = get_epub_metadata(&epub_path).expect("Failed to get epub metadata");
+    println!("EPUB Metadata: {meta:?}");
+    assert!(meta.title.is_some() || meta.author.is_some() || meta.language.is_some() || meta.publisher.is_some() || meta.description.is_some(), "All metadata fields are None");
+}
+
+// ========== EPUB Metadata Extraction ==========
+#[derive(Debug, Clone, Default)]
+pub struct EpubMetadata {
+    pub title: Option<String>,
+    pub author: Option<String>,
+    pub language: Option<String>,
+    pub publisher: Option<String>,
+    pub description: Option<String>,
+    pub date: Option<String>,
+}
+
+/// Read epub metadata from epub file
+pub fn get_epub_metadata<P: AsRef<std::path::Path>>(epub_path: P) -> Result<EpubMetadata> {
+use zip::ZipArchive;
+use std::fs::File;
+use quick_xml::Reader;
+use quick_xml::events::Event;
+use std::io::Read;
+
+
+let file = File::open(epub_path).map_err(Error::from)?;
+let mut archive = ZipArchive::new(file).map_err(Error::from)?;
+
+// 1. Read META-INF/container.xml, find content.opf path
+let mut container_xml = String::new();
+archive.by_name("META-INF/container.xml").map_err(Error::from)?.read_to_string(&mut container_xml).map_err(Error::from)?;
+let mut opf_path = None;
+let mut reader = Reader::from_str(&container_xml);
+reader.config_mut().trim_text(true);
+let mut buf = Vec::new();
+while let Ok(event) = reader.read_event_into(&mut buf) {
+    match event {
+        Event::Empty(ref e) | Event::Start(ref e) => {
+            if e.name().as_ref() == b"rootfile" {
+                if let Some(attr) = e.attributes().find_map(|a| a.ok().filter(|a| a.key.as_ref() == b"full-path")) {
+                    opf_path = Some(String::from_utf8_lossy(&attr.value).to_string());
+                    break;
+                }
+            }
+        }
+        Event::Eof => break,
+        _ => {}
+    }
+    buf.clear();
+}
+let opf_path = opf_path.ok_or_else(|| Error::BadParam("content.opf path not found in container.xml".to_string()))?;
+
+// 2. Read content.opf
+let mut opf_xml = String::new();
+archive.by_name(&opf_path).map_err(Error::from)?.read_to_string(&mut opf_xml).map_err(Error::from)?;
+
+// 3. Parse content.opf, extract metadata
+let mut reader = Reader::from_str(&opf_xml);
+reader.config_mut().trim_text(true);
+let mut buf = Vec::new();
+let mut meta = EpubMetadata::default();
+let mut current_tag = String::new();
+while let Ok(event) = reader.read_event_into(&mut buf) {
+    match &event {
+        Event::Start(e) | Event::Empty(e) => {
+            current_tag = String::from_utf8_lossy(e.name().as_ref()).to_string();
+        }
+        Event::Text(e) => {
+            let text = e.unescape().unwrap_or_default().to_string();
+            match current_tag.as_str() {
+                "dc:title" => meta.title = Some(text.clone()),
+                "dc:creator" => meta.author = Some(text.clone()),
+                "dc:language" => meta.language = Some(text.clone()),
+                "dc:publisher" => meta.publisher = Some(text.clone()),
+                "dc:description" => meta.description = Some(text.clone()),
+                "dc:date" => meta.date = Some(text.clone()),
+                _ => {}
+            }
+        }
+        Event::Eof => break,
+        _ => {}
+    }
+    buf.clear();
+}
+Ok(meta)
+}
+
