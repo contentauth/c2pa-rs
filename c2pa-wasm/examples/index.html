@@ -98,7 +98,7 @@
     <div id="output"></div>
 
     <script type="module">
-        import init, { C2paReader, read_from_file, version, name } from '../pkg/c2pa_wasm.js';
+        import init, { C2paReader, read_from_file, read_from_blob, read_from_buffer, version, name } from '../pkg/c2pa_wasm.js';
 
         async function run() {
             try {
@@ -153,13 +153,44 @@
             });
         }
 
+        function getFormatFromFile(file) {
+            // Extract format from file name or type
+            const extension = file.name.split('.').pop().toLowerCase();
+            const mimeType = file.type;
+            
+            // Use MIME type if available, otherwise use extension
+            return mimeType || extension;
+        }
+
         async function processFile(file) {
             const output = document.getElementById('output');
             output.innerHTML = '<div class="result">Processing file...</div>';
 
             try {
-                // Read C2PA data from the file
-                const reader = await read_from_file(file);
+                // Demonstrate different ways to read the file
+                console.log('Processing file using different methods...');
+                
+                // Method 1: Using read_from_file (convenience function)
+                console.log('Method 1: read_from_file');
+                const reader1 = await read_from_file(file);
+                
+                // Method 2: Using read_from_blob (since File extends Blob)
+                console.log('Method 2: read_from_blob');
+                const fileFormat = getFormatFromFile(file);
+                const reader2 = await read_from_blob(file, fileFormat);
+                
+                // Method 3: Using read_from_buffer (from ArrayBuffer)
+                console.log('Method 3: read_from_buffer');
+                const arrayBuffer = await file.arrayBuffer();
+                const reader3 = await read_from_buffer(arrayBuffer, fileFormat);
+                
+                // Method 4: Using C2paReader.from_stream with manual data conversion
+                console.log('Method 4: C2paReader.from_stream');
+                const uint8Array = new Uint8Array(arrayBuffer);
+                const reader4 = await C2paReader.from_stream(uint8Array, fileFormat);
+                
+                // Use the first reader for display (they should all be equivalent)
+                const reader = reader1;
                 
                 // Get the manifest as JSON
                 const manifestJson = reader.json();
@@ -191,6 +222,7 @@
                     <div class="result ${resultClass}">
                         <h3>File: ${file.name}</h3>
                         <p>C2PA manifest found and processed successfully!</p>
+                        <p><em>Successfully processed using 4 different streaming methods ✓</em></p>
                         
                         <div class="metadata">
                             <div class="metadata-item">

@@ -41,6 +41,60 @@ impl C2paReader {
         Ok(C2paReader { reader })
     }
 
+    /// Create a new C2PA reader from streaming data asynchronously
+    ///
+    /// # Arguments
+    /// * `data` - The asset data as a Uint8Array (can be from a stream)
+    /// * `format` - The MIME type or file extension (e.g., "image/jpeg", "jpg")
+    ///
+    /// # Returns
+    /// A Promise that resolves to a C2paReader instance
+    ///
+    /// # Errors
+    /// Returns a JsError if the data cannot be parsed or no C2PA data is found
+    #[wasm_bindgen]
+    pub async fn from_stream(data: &Uint8Array, format: &str) -> Result<C2paReader, JsError> {
+        let bytes = data.to_vec();
+        let cursor = Cursor::new(bytes);
+
+        let reader = c2pa::Reader::from_stream_async(format, cursor)
+            .await
+            .map_err(|e| JsError::new(&format!("Failed to create reader from stream: {}", e)))?;
+
+        Ok(C2paReader { reader })
+    }
+
+    /// Create a new C2PA reader from a JavaScript ReadableStream
+    ///
+    /// # Arguments
+    /// * `stream` - A JavaScript ReadableStream containing the asset data
+    /// * `format` - The MIME type or file extension (e.g., "image/jpeg", "jpg")
+    ///
+    /// # Returns
+    /// A Promise that resolves to a C2paReader instance
+    ///
+    /// # Errors
+    /// Returns a JsError if the stream cannot be read or no C2PA data is found
+    #[wasm_bindgen]
+    pub async fn from_readable_stream(
+        stream: &web_sys::ReadableStream,
+        format: &str,
+    ) -> Result<C2paReader, JsError> {
+        // Convert ReadableStream to Response to get ArrayBuffer
+        let response = web_sys::Response::new_with_opt_readable_stream(Some(stream))
+            .map_err(|e| JsError::new(&format!("Failed to create response from stream: {:?}", e)))?;
+
+        let array_buffer_promise = response.array_buffer()
+            .map_err(|e| JsError::new(&format!("Failed to get array buffer promise: {:?}", e)))?;
+        
+        let array_buffer = wasm_bindgen_futures::JsFuture::from(array_buffer_promise)
+            .await
+            .map_err(|e| JsError::new(&format!("Failed to read stream data: {:?}", e)))?;
+
+        let uint8_array = Uint8Array::new(&array_buffer);
+        Self::from_stream(&uint8_array, format).await
+    }
+
     /// Get the manifest store as a JSON string
     ///
     /// # Returns
@@ -218,7 +272,39 @@ pub async fn read_from_file(file: &web_sys::File) -> Result<C2paReader, JsError>
         .map_err(|e| JsError::new(&format!("Failed to read file: {:?}", e)))?;
 
     let uint8_array = Uint8Array::new(&array_buffer);
-    C2paReader::new(&uint8_array, &format)
+    C2paReader::from_stream(&uint8_array, &format).await
+}
+
+/// Utility function to create a C2PA reader from a Blob object
+///
+/// # Arguments
+/// * `blob` - A JavaScript Blob object
+/// * `format` - The MIME type or file extension
+///
+/// # Returns
+/// A Promise that resolves to a C2paReader instance
+#[wasm_bindgen]
+pub async fn read_from_blob(blob: &web_sys::Blob, format: &str) -> Result<C2paReader, JsError> {
+    let array_buffer = wasm_bindgen_futures::JsFuture::from(blob.array_buffer())
+        .await
+        .map_err(|e| JsError::new(&format!("Failed to read blob: {:?}", e)))?;
+
+    let uint8_array = Uint8Array::new(&array_buffer);
+    C2paReader::from_stream(&uint8_array, format).await
+}
+
+/// Utility function to create a C2PA reader from an ArrayBuffer
+///
+/// # Arguments
+/// * `buffer` - A JavaScript ArrayBuffer
+/// * `format` - The MIME type or file extension
+///
+/// # Returns
+/// A Promise that resolves to a C2paReader instance
+#[wasm_bindgen]
+pub async fn read_from_buffer(buffer: &js_sys::ArrayBuffer, format: &str) -> Result<C2paReader, JsError> {
+    let uint8_array = Uint8Array::new(buffer);
+    C2paReader::from_stream(&uint8_array, format).await
 }
 
 /// Check if a file format is supported

@@ -393,7 +393,6 @@ dependencies = [
  "ureq",
  "url",
  "uuid",
- "wasi 0.14.2+wasi-0.2.4",
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",
