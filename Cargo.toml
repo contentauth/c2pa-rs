@@ -10,6 +10,14 @@ members = [
     "sdk",
 ]
 
+# Note: c2pa-wasm is excluded from the main workspace to avoid 
+# feature conflicts between openssl (used by other crates) and 
+# rust_native_crypto (required for WASM). Build c2pa-wasm separately
+# using: cd c2pa-wasm && cargo build
+exclude = [
+    "c2pa-wasm",
+]
+
 # members in this workspace can share this version setting
 [workspace.package]
 version = "0.57.0"

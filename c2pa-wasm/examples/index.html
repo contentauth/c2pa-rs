@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>C2PA WASM Reader Example</title>
+    <style>
+        body { 
+            font-family: Arial, sans-serif; 
+            max-width: 800px; 
+            margin: 0 auto; 
+            padding: 20px; 
+        }
+        .drop-zone {
+            border: 2px dashed #ccc;
+            border-radius: 10px;
+            padding: 20px;
+            text-align: center;
+            margin: 20px 0;
+            transition: border-color 0.3s;
+        }
+        .drop-zone:hover {
+            border-color: #007bff;
+        }
+        .drop-zone.dragover {
+            border-color: #007bff;
+            background-color: #f8f9fa;
+        }
+        .result {
+            margin-top: 20px;
+            padding: 20px;
+            background-color: #f8f9fa;
+            border-radius: 5px;
+        }
+        .error {
+            background-color: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+        .success {
+            background-color: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+        .warning {
+            background-color: #fff3cd;
+            color: #856404;
+            border: 1px solid #ffeaa7;
+        }
+        pre {
+            background-color: #f4f4f4;
+            padding: 10px;
+            border-radius: 3px;
+            overflow-x: auto;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+        }
+        .metadata {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+            margin: 10px 0;
+        }
+        .metadata-item {
+            background-color: white;
+            padding: 10px;
+            border-radius: 3px;
+            border: 1px solid #ddd;
+        }
+        .metadata-item strong {
+            display: block;
+            margin-bottom: 5px;
+            color: #666;
+        }
+        .validation-state {
+            display: inline-block;
+            padding: 4px 8px;
+            border-radius: 3px;
+            font-weight: bold;
+            text-transform: uppercase;
+            font-size: 12px;
+        }
+        .validation-state.valid { background-color: #d4edda; color: #155724; }
+        .validation-state.invalid { background-color: #f8d7da; color: #721c24; }
+        .validation-state.trusted { background-color: #cce5ff; color: #004085; }
+        .validation-state.unknown { background-color: #fff3cd; color: #856404; }
+    </style>
+</head>
+<body>
+    <h1>C2PA WASM Reader Example</h1>
+    <p>Drop a C2PA-enabled image file or select one using the button below to read and validate its manifest.</p>
+    
+    <div class="drop-zone" id="drop-zone">
+        <p>Drop files here or click to select</p>
+        <input type="file" id="file-input" accept="image/*" style="display: none;">
+        <button onclick="document.getElementById('file-input').click()">Select File</button>
+    </div>
+    
+    <div id="output"></div>
+
+    <script type="module">
+        import init, { C2paReader, read_from_file, version, name } from '../pkg/c2pa_wasm.js';
+
+        async function run() {
+            try {
+                // Initialize the WASM module
+                await init();
+                
+                console.log(`Initialized ${name()} v${version()}`);
+                console.log('Supported MIME types:', C2paReader.supported_mime_types());
+                
+                setupFileHandlers();
+            } catch (error) {
+                document.getElementById('output').innerHTML = 
+                    `<div class="result error"><p>Failed to initialize WASM module: ${error.message}</p></div>`;
+            }
+        }
+
+        function setupFileHandlers() {
+            const dropZone = document.getElementById('drop-zone');
+            const fileInput = document.getElementById('file-input');
+            const output = document.getElementById('output');
+
+            // File input change handler
+            fileInput.addEventListener('change', (event) => {
+                const file = event.target.files[0];
+                if (file) {
+                    processFile(file);
+                }
+            });
+
+            // Drag and drop handlers
+            dropZone.addEventListener('dragover', (event) => {
+                event.preventDefault();
+                dropZone.classList.add('dragover');
+            });
+
+            dropZone.addEventListener('dragleave', () => {
+                dropZone.classList.remove('dragover');
+            });
+
+            dropZone.addEventListener('drop', (event) => {
+                event.preventDefault();
+                dropZone.classList.remove('dragover');
+                
+                const files = event.dataTransfer.files;
+                if (files.length > 0) {
+                    processFile(files[0]);
+                }
+            });
+
+            dropZone.addEventListener('click', () => {
+                fileInput.click();
+            });
+        }
+
+        async function processFile(file) {
+            const output = document.getElementById('output');
+            output.innerHTML = '<div class="result">Processing file...</div>';
+
+            try {
+                // Read C2PA data from the file
+                const reader = await read_from_file(file);
+                
+                // Get the manifest as JSON
+                const manifestJson = reader.json();
+                const manifest = JSON.parse(manifestJson);
+                
+                // Get validation information
+                const validationState = reader.validation_state();
+                const validationStatus = reader.validation_status();
+                
+                // Get metadata
+                const title = reader.get_title();
+                const format = reader.get_format();
+                const instanceId = reader.get_instance_id();
+                const claimGenerator = reader.get_claim_generator();
+                const ingredients = reader.get_ingredients();
+                const assertions = reader.get_assertions();
+                const thumbnailRef = reader.get_thumbnail_ref();
+                const signatureInfo = reader.get_signature_info();
+                
+                // Display results
+                let resultClass = 'success';
+                if (validationState === 'invalid') {
+                    resultClass = 'error';
+                } else if (validationState === 'unknown') {
+                    resultClass = 'warning';
+                }
+                
+                output.innerHTML = `
+                    <div class="result ${resultClass}">
+                        <h3>File: ${file.name}</h3>
+                        <p>C2PA manifest found and processed successfully!</p>
+                        
+                        <div class="metadata">
+                            <div class="metadata-item">
+                                <strong>Validation State:</strong>
+                                <span class="validation-state ${validationState}">${validationState}</span>
+                            </div>
+                            <div class="metadata-item">
+                                <strong>Format:</strong>
+                                ${format || 'Unknown'}
+                            </div>
+                            <div class="metadata-item">
+                                <strong>Title:</strong>
+                                ${title || 'No title'}
+                            </div>
+                            <div class="metadata-item">
+                                <strong>Instance ID:</strong>
+                                ${instanceId || 'No instance ID'}
+                            </div>
+                        </div>
+                        
+                        ${claimGenerator ? `
+                            <h4>Claim Generator:</h4>
+                            <pre>${JSON.stringify(JSON.parse(claimGenerator), null, 2)}</pre>
+                        ` : ''}
+                        
+                        ${ingredients ? `
+                            <h4>Ingredients:</h4>
+                            <pre>${JSON.stringify(JSON.parse(ingredients), null, 2)}</pre>
+                        ` : ''}
+                        
+                        ${assertions ? `
+                            <h4>Assertions:</h4>
+                            <pre>${JSON.stringify(JSON.parse(assertions), null, 2)}</pre>
+                        ` : ''}
+                        
+                        ${thumbnailRef ? `
+                            <h4>Thumbnail Reference:</h4>
+                            <pre>${JSON.stringify(JSON.parse(thumbnailRef), null, 2)}</pre>
+                        ` : ''}
+                        
+                        ${signatureInfo ? `
+                            <h4>Signature Info:</h4>
+                            <pre>${JSON.stringify(JSON.parse(signatureInfo), null, 2)}</pre>
+                        ` : ''}
+                        
+                        ${validationStatus ? `
+                            <h4>Validation Status:</h4>
+                            <pre>${JSON.stringify(JSON.parse(validationStatus), null, 2)}</pre>
+                        ` : ''}
+                        
+                        <h4>Full Manifest:</h4>
+                        <pre>${JSON.stringify(manifest, null, 2)}</pre>
+                    </div>
+                `;
+                
+            } catch (error) {
+                output.innerHTML = `
+                    <div class="result error">
+                        <h3>Error Processing File</h3>
+                        <p>${error.message}</p>
+                        <p>This file may not contain C2PA data or may be in an unsupported format.</p>
+                    </div>
+                `;
+            }
+        }
+
+        // Initialize the application
+        run();
+    </script>
+</body>
+</html>

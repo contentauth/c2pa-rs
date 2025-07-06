@@ -883,9 +883,11 @@ impl Builder {
             {
                 stream.rewind()?;
                 // Do not write this as a file when reading from files
+                #[cfg(feature = "file_io")]
                 let base_path = self.resources.take_base_path();
                 self.resources
                     .add(self.definition.instance_id.clone(), image)?;
+                #[cfg(feature = "file_io")]
                 if let Some(path) = base_path {
                     self.resources.set_base_path(path)
                 }

@@ -14,3 +14,6 @@
 
 # Unit test output lands here. TO DO: Fix
 cli/target
+
+# c2pa-wasm builds separately from the main workspace
+c2pa-wasm/target

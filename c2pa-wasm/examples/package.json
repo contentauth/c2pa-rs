@@ -1,0 +1,14 @@
+{
+  "name": "c2pa-wasm-example",
+  "version": "1.0.0",
+  "description": "Example Node.js application using C2PA WASM bindings",
+  "main": "index.js",
+  "scripts": {
+    "build": "wasm-pack build --target nodejs --out-dir pkg-node",
+    "start": "node index.js"
+  },
+  "keywords": ["c2pa", "wasm", "node"],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {}
+}
