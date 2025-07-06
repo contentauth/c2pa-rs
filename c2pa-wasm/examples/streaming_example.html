@@ -1,0 +1,341 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>C2PA WASM Streaming API Example</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .example {
+            margin: 20px 0;
+            padding: 15px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+        }
+        .result {
+            background: #f5f5f5;
+            padding: 10px;
+            border-radius: 3px;
+            font-family: monospace;
+            white-space: pre-wrap;
+            max-height: 300px;
+            overflow-y: auto;
+        }
+        button {
+            padding: 10px 15px;
+            margin: 5px;
+            background: #007cba;
+            color: white;
+            border: none;
+            border-radius: 3px;
+            cursor: pointer;
+        }
+        button:hover {
+            background: #005a85;
+        }
+        button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+        .error {
+            color: red;
+            background: #ffebee;
+            padding: 10px;
+            border-radius: 3px;
+        }
+        .warning {
+            color: orange;
+            background: #fff3e0;
+            padding: 10px;
+            border-radius: 3px;
+        }
+    </style>
+</head>
+<body>
+    <h1>C2PA WASM Streaming API Example</h1>
+    
+    <div class="warning">
+        <strong>Note:</strong> This example demonstrates the new streaming API for c2pa-wasm. 
+        The current implementation bridges async JavaScript to the sync C2PA SDK and works best 
+        with chunked reading approaches. True async streaming will be available when the C2PA SDK 
+        supports async traits natively.
+    </div>
+
+    <div class="example">
+        <h2>Example 1: File Upload with Async Streaming</h2>
+        <p>Upload a C2PA-enabled image to read its manifest using the new async streaming API.</p>
+        <input type="file" id="fileInput" accept="image/*" />
+        <button onclick="processFileAsync()">Process with C2paAsyncReader</button>
+        <div class="result" id="asyncResult">Select a file and click "Process with C2paAsyncReader" to see the results...</div>
+    </div>
+
+    <div class="example">
+        <h2>Example 2: Comparison with Traditional API</h2>
+        <p>Compare the new streaming API with the traditional approach.</p>
+        <button onclick="processFileTraditional()" id="traditionalBtn" disabled>Process with Traditional API</button>
+        <div class="result" id="traditionalResult">Upload a file first...</div>
+    </div>
+
+    <div class="example">
+        <h2>Example 3: Memory Usage Comparison</h2>
+        <p>Monitor memory usage differences between streaming and traditional approaches.</p>
+        <button onclick="compareMemoryUsage()" id="memoryBtn" disabled>Compare Memory Usage</button>
+        <div class="result" id="memoryResult">Upload a file first...</div>
+    </div>
+
+    <script type="module">
+        import init, { 
+            C2paReader, 
+            C2paAsyncReader, 
+            JsStreamCallbacks 
+        } from './pkg/c2pa_wasm.js';
+
+        let currentFile = null;
+        let wasmModule = null;
+
+        async function initWasm() {
+            try {
+                wasmModule = await init();
+                console.log('WASM module initialized');
+            } catch (error) {
+                console.error('Failed to initialize WASM module:', error);
+                document.getElementById('asyncResult').textContent = 'Error: Failed to load WASM module. Make sure the pkg/ directory is available.';
+            }
+        }
+
+        // Initialize WASM module
+        initWasm();
+
+        // File input handler
+        document.getElementById('fileInput').addEventListener('change', (event) => {
+            currentFile = event.target.files[0];
+            const buttons = ['traditionalBtn', 'memoryBtn'];
+            buttons.forEach(id => {
+                document.getElementById(id).disabled = !currentFile;
+            });
+            
+            if (currentFile) {
+                document.getElementById('asyncResult').textContent = `File selected: ${currentFile.name} (${currentFile.size} bytes)`;
+                document.getElementById('traditionalResult').textContent = 'Ready to process...';
+                document.getElementById('memoryResult').textContent = 'Ready to compare...';
+            }
+        });
+
+        // Global functions for onclick handlers
+        window.processFileAsync = async function() {
+            if (!currentFile || !wasmModule) {
+                document.getElementById('asyncResult').textContent = 'Error: No file selected or WASM not loaded.';
+                return;
+            }
+
+            const resultDiv = document.getElementById('asyncResult');
+            resultDiv.textContent = 'Processing with async streaming API...';
+
+            try {
+                const startTime = performance.now();
+                const startMemory = performance.memory ? performance.memory.usedJSHeapSize : 0;
+
+                // Create streaming callbacks for file reading
+                let position = 0;
+                const callbacks = new JsStreamCallbacks(
+                    // Read callback - reads chunks from file
+                    async (bufferSize) => {
+                        console.log(`Reading ${bufferSize} bytes from position ${position}`);
+                        const end = Math.min(position + bufferSize, currentFile.size);
+                        const chunk = currentFile.slice(position, end);
+                        const arrayBuffer = await chunk.arrayBuffer();
+                        const uint8Array = new Uint8Array(arrayBuffer);
+                        position = end;
+                        return uint8Array;
+                    },
+                    // Seek callback - changes position in file
+                    async (offset, mode) => {
+                        console.log(`Seeking to offset ${offset}, mode ${mode}`);
+                        switch (mode) {
+                            case 0: // Start
+                                position = offset;
+                                break;
+                            case 1: // Current
+                                position += offset;
+                                break;
+                            case 2: // End
+                                position = currentFile.size + offset;
+                                break;
+                        }
+                        position = Math.max(0, Math.min(position, currentFile.size));
+                        return position;
+                    }
+                );
+
+                // Create async reader and process
+                const reader = new C2paAsyncReader(callbacks);
+                const c2paReader = await reader.read_c2pa_chunked('image/jpeg');
+
+                const endTime = performance.now();
+                const endMemory = performance.memory ? performance.memory.usedJSHeapSize : 0;
+
+                // Get results
+                const manifestJson = c2paReader.json();
+                const manifest = JSON.parse(manifestJson);
+                
+                const result = {
+                    success: true,
+                    processingTime: `${(endTime - startTime).toFixed(2)}ms`,
+                    memoryUsed: performance.memory ? `${((endMemory - startMemory) / 1024 / 1024).toFixed(2)}MB` : 'N/A',
+                    validationState: c2paReader.validation_state(),
+                    manifestCount: Object.keys(manifest.manifests || {}).length,
+                    activeManifest: c2paReader.active_label() || 'None',
+                    hasTitle: !!c2paReader.get_title(),
+                    title: c2paReader.get_title() || 'No title',
+                    ingredients: c2paReader.get_ingredients() ? JSON.parse(c2paReader.get_ingredients()).length : 0,
+                    assertions: c2paReader.get_assertions() ? JSON.parse(c2paReader.get_assertions()).length : 0
+                };
+
+                resultDiv.textContent = JSON.stringify(result, null, 2);
+
+            } catch (error) {
+                console.error('Async processing error:', error);
+                resultDiv.textContent = `Error processing file with async API: ${error.message}`;
+                resultDiv.className = 'result error';
+            }
+        };
+
+        window.processFileTraditional = async function() {
+            if (!currentFile || !wasmModule) {
+                document.getElementById('traditionalResult').textContent = 'Error: No file selected or WASM not loaded.';
+                return;
+            }
+
+            const resultDiv = document.getElementById('traditionalResult');
+            resultDiv.textContent = 'Processing with traditional API...';
+
+            try {
+                const startTime = performance.now();
+                const startMemory = performance.memory ? performance.memory.usedJSHeapSize : 0;
+
+                // Read entire file into memory (traditional approach)
+                const arrayBuffer = await currentFile.arrayBuffer();
+                const uint8Array = new Uint8Array(arrayBuffer);
+
+                // Create reader with traditional API
+                const c2paReader = new C2paReader(uint8Array, 'image/jpeg');
+
+                const endTime = performance.now();
+                const endMemory = performance.memory ? performance.memory.usedJSHeapSize : 0;
+
+                // Get results
+                const manifestJson = c2paReader.json();
+                const manifest = JSON.parse(manifestJson);
+                
+                const result = {
+                    success: true,
+                    processingTime: `${(endTime - startTime).toFixed(2)}ms`,
+                    memoryUsed: performance.memory ? `${((endMemory - startMemory) / 1024 / 1024).toFixed(2)}MB` : 'N/A',
+                    validationState: c2paReader.validation_state(),
+                    manifestCount: Object.keys(manifest.manifests || {}).length,
+                    activeManifest: c2paReader.active_label() || 'None',
+                    hasTitle: !!c2paReader.get_title(),
+                    title: c2paReader.get_title() || 'No title',
+                    ingredients: c2paReader.get_ingredients() ? JSON.parse(c2paReader.get_ingredients()).length : 0,
+                    assertions: c2paReader.get_assertions() ? JSON.parse(c2paReader.get_assertions()).length : 0
+                };
+
+                resultDiv.textContent = JSON.stringify(result, null, 2);
+
+            } catch (error) {
+                console.error('Traditional processing error:', error);
+                resultDiv.textContent = `Error processing file with traditional API: ${error.message}`;
+                resultDiv.className = 'result error';
+            }
+        };
+
+        window.compareMemoryUsage = async function() {
+            if (!currentFile || !wasmModule) {
+                document.getElementById('memoryResult').textContent = 'Error: No file selected or WASM not loaded.';
+                return;
+            }
+
+            const resultDiv = document.getElementById('memoryResult');
+            resultDiv.textContent = 'Comparing memory usage...';
+
+            try {
+                const results = {};
+
+                // Test traditional approach
+                if (performance.memory) {
+                    const beforeTraditional = performance.memory.usedJSHeapSize;
+                    
+                    const arrayBuffer = await currentFile.arrayBuffer();
+                    const uint8Array = new Uint8Array(arrayBuffer);
+                    const traditionalReader = new C2paReader(uint8Array, 'image/jpeg');
+                    traditionalReader.json(); // Force processing
+                    
+                    const afterTraditional = performance.memory.usedJSHeapSize;
+                    results.traditional = {
+                        peakMemory: `${((afterTraditional - beforeTraditional) / 1024 / 1024).toFixed(2)}MB`,
+                        approach: 'Load entire file into memory'
+                    };
+                }
+
+                // Test async approach
+                if (performance.memory) {
+                    // Force garbage collection
+                    if (window.gc) window.gc();
+                    
+                    const beforeAsync = performance.memory.usedJSHeapSize;
+                    
+                    let position = 0;
+                    const callbacks = new JsStreamCallbacks(
+                        async (bufferSize) => {
+                            const end = Math.min(position + bufferSize, currentFile.size);
+                            const chunk = currentFile.slice(position, end);
+                            const arrayBuffer = await chunk.arrayBuffer();
+                            const uint8Array = new Uint8Array(arrayBuffer);
+                            position = end;
+                            return uint8Array;
+                        },
+                        async (offset, mode) => {
+                            switch (mode) {
+                                case 0: position = offset; break;
+                                case 1: position += offset; break;
+                                case 2: position = currentFile.size + offset; break;
+                            }
+                            position = Math.max(0, Math.min(position, currentFile.size));
+                            return position;
+                        }
+                    );
+
+                    const asyncReader = new C2paAsyncReader(callbacks);
+                    const c2paReader = await asyncReader.read_c2pa_chunked('image/jpeg');
+                    c2paReader.json(); // Force processing
+                    
+                    const afterAsync = performance.memory.usedJSHeapSize;
+                    results.async = {
+                        peakMemory: `${((afterAsync - beforeAsync) / 1024 / 1024).toFixed(2)}MB`,
+                        approach: 'Chunked reading with 8KB buffers'
+                    };
+                }
+
+                results.fileSize = `${(currentFile.size / 1024 / 1024).toFixed(2)}MB`;
+                results.note = 'Memory measurements may vary. The async approach shows promise for larger files.';
+                
+                if (!performance.memory) {
+                    results.warning = 'Memory measurements not available in this browser.';
+                }
+
+                resultDiv.textContent = JSON.stringify(results, null, 2);
+
+            } catch (error) {
+                console.error('Memory comparison error:', error);
+                resultDiv.textContent = `Error comparing memory usage: ${error.message}`;
+                resultDiv.className = 'result error';
+            }
+        };
+    </script>
+</body>
+</html>
