@@ -258,7 +258,7 @@ impl ManifestStoreReport {
                         let data = if name_only {
                             format!("{}_{}", title, Hexlify(hash))
                         } else {
-                            format!("Asset:{}, Manifest:{}", title, label)
+                            format!("Asset:{title}, Manifest:{label}")
                         };
 
                         let new_token = current_token.append(tree, data);

@@ -253,7 +253,7 @@ fn load_trust_resource(resource: &TrustResource) -> Result<String> {
     match resource {
         TrustResource::File(path) => {
             let data = std::fs::read_to_string(path)
-                .with_context(|| format!("Failed to read trust resource from path: {:?}", path))?;
+                .with_context(|| format!("Failed to read trust resource from path: {path:?}"))?;
 
             Ok(data)
         }
@@ -261,7 +261,7 @@ fn load_trust_resource(resource: &TrustResource) -> Result<String> {
             #[cfg(not(target_os = "wasi"))]
             let data = reqwest::blocking::get(url.to_string())?
                 .text()
-                .with_context(|| format!("Failed to read trust resource from URL: {}", url))?;
+                .with_context(|| format!("Failed to read trust resource from URL: {url}"))?;
 
             #[cfg(target_os = "wasi")]
             let data = blocking_get(&url.to_string())?;
@@ -376,7 +376,7 @@ fn configure_sdk(args: &CliArgs) -> Result<()> {
     {
         if let Some(trust_list) = &trust_anchors {
             let data = load_trust_resource(trust_list)?;
-            debug!("Using trust anchors from {:?}", trust_list);
+            debug!("Using trust anchors from {trust_list:?}");
             let replacement_val = serde_json::Value::String(data).to_string(); // escape string
             let setting = TA.replace("replacement_val", &replacement_val);
 
@@ -387,7 +387,7 @@ fn configure_sdk(args: &CliArgs) -> Result<()> {
 
         if let Some(allowed_list) = &allowed_list {
             let data = load_trust_resource(allowed_list)?;
-            debug!("Using allowed list from {:?}", allowed_list);
+            debug!("Using allowed list from {allowed_list:?}");
             let replacement_val = serde_json::Value::String(data).to_string(); // escape string
             let setting = AL.replace("replacement_val", &replacement_val);
 
@@ -398,7 +398,7 @@ fn configure_sdk(args: &CliArgs) -> Result<()> {
 
         if let Some(trust_config) = &trust_config {
             let data = load_trust_resource(trust_config)?;
-            debug!("Using trust config from {:?}", trust_config);
+            debug!("Using trust config from {trust_config:?}");
             let replacement_val = serde_json::Value::String(data).to_string(); // escape string
             let setting = TC.replace("replacement_val", &replacement_val);
 
@@ -456,7 +456,7 @@ fn sign_fragmented(
                     }
                 }
 
-                println!("Adding manifest to: {:?}", p);
+                println!("Adding manifest to: {p:?}");
                 let new_output_path =
                     output_path.join(init_dir.file_name().context("invalid file name")?);
                 builder.sign_fragmented_files(signer, &p, &fragments, &new_output_path)?;
@@ -467,7 +467,7 @@ fn sign_fragmented(
         }
     }
     if count == 0 {
-        println!("No files matching pattern: {}", ip);
+        println!("No files matching pattern: {ip}");
     }
     Ok(())
 }
@@ -499,11 +499,11 @@ fn verify_fragmented(init_pattern: &Path, frag_pattern: &Path) -> Result<Vec<Rea
                     }
                 }
 
-                println!("Verifying manifest: {:?}", p);
+                println!("Verifying manifest: {p:?}");
                 let reader = Reader::from_fragmented_files(p, &fragments)?;
                 if let Some(vs) = reader.validation_status() {
                     if let Some(e) = vs.iter().find(|v| !v.passed()) {
-                        eprintln!("Error validating segments: {:?}", e);
+                        eprintln!("Error validating segments: {e:?}");
                         return Ok(readers);
                     }
                 }
@@ -517,7 +517,7 @@ fn verify_fragmented(init_pattern: &Path, frag_pattern: &Path) -> Result<Vec<Rea
     }
 
     if count == 0 {
-        println!("No files matching pattern: {}", ip);
+        println!("No files matching pattern: {ip}");
     }
 
     Ok(readers)
@@ -739,9 +739,9 @@ fn main() -> Result<()> {
                 let mut reader = Reader::from_file(&output).map_err(special_errs)?;
                 validate_cawg(&mut reader)?;
                 if args.detailed {
-                    println!("{:#?}", reader);
+                    println!("{reader:#?}");
                 } else {
-                    println!("{}", reader)
+                    println!("{reader}")
                 }
             }
         } else {
@@ -775,7 +775,7 @@ fn main() -> Result<()> {
             if args.detailed {
                 // for a detailed report first call the above to generate the thumbnails
                 // then call this to add the detailed report
-                let detailed = format!("{:#?}", reader);
+                let detailed = format!("{reader:#?}");
                 File::create(output.join("detailed.json"))?.write_all(&detailed.into_bytes())?;
             }
             File::create(output.join("manifest_store.json"))?.write_all(&report.into_bytes())?;
@@ -789,7 +789,7 @@ fn main() -> Result<()> {
     } else if args.detailed {
         let mut reader = Reader::from_file(&args.path).map_err(special_errs)?;
         validate_cawg(&mut reader)?;
-        println!("{:#?}", reader);
+        println!("{reader:#?}");
     } else if let Some(Commands::Fragment {
         fragments_glob: Some(fg),
     }) = &args.command
@@ -807,7 +807,7 @@ fn main() -> Result<()> {
     } else {
         let mut reader = Reader::from_file(&args.path).map_err(special_errs)?;
         validate_cawg(&mut reader)?;
-        println!("{}", reader);
+        println!("{reader}");
     }
 
     Ok(())
@@ -862,7 +862,7 @@ pub mod tests {
         let ms = Reader::from_file(output_path)
             .expect("from_file")
             .to_string();
-        println!("{}", ms);
+        println!("{ms}");
         //let ms = report_from_path(&OUTPUT_PATH, false).expect("report_from_path");
         assert!(ms.contains("my_key"));
     }

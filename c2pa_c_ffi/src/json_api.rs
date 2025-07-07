@@ -83,7 +83,7 @@ mod tests {
     /// returns a path to a file in the fixtures folder
     pub fn test_path(path: &str) -> String {
         let base = env!("CARGO_MANIFEST_DIR");
-        format!("{}/../sdk/{}", base, path)
+        format!("{base}/../sdk/{path}")
     }
 
     #[test]
@@ -92,7 +92,7 @@ mod tests {
         let result = read_file(&path, None);
         assert!(result.is_ok());
         let json_report = result.unwrap();
-        println!("{}", json_report);
+        println!("{json_report}");
         assert!(json_report.contains("C.jpg"));
         assert!(!json_report.contains("validation_status"));
     }
@@ -107,7 +107,7 @@ mod tests {
         let result = read_file(&path, Some(data_dir.to_owned()));
         //assert!(result.is_ok());
         let json_report = result.unwrap();
-        println!("{}", json_report);
+        println!("{json_report}");
         assert!(json_report.contains("C.jpg"));
         assert!(PathBuf::from(data_dir).exists());
         assert!(json_report.contains("thumbnail"));
@@ -119,7 +119,7 @@ mod tests {
         let result = read_file(&path, None);
         assert!(result.is_ok());
         let json_report = result.unwrap();
-        println!("{}", json_report);
+        println!("{json_report}");
         assert!(json_report.contains("cawg.identity"));
         assert!(json_report.contains("cawg.ica.credential_valid"));
     }

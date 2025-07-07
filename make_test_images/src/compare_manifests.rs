@@ -27,12 +27,12 @@ pub fn compare_folders<P: AsRef<Path>, Q: AsRef<Path>>(folder1: P, folder2: Q) -
     if folder1.is_file() && folder2.is_file() {
         let issues = compare_image_manifests(folder1, folder2)?;
         if !issues.is_empty() {
-            eprintln!("Failed {:?}", folder1);
+            eprintln!("Failed {folder1:?}");
             for issue in issues {
-                eprintln!("  {}", issue);
+                eprintln!("  {issue}");
             }
         } else {
-            println!("Passed {:?}", folder1);
+            println!("Passed {folder1:?}");
         }
         return Ok(());
     } else if !(folder1.is_dir() && folder2.is_dir()) {
@@ -61,12 +61,12 @@ pub fn compare_folders<P: AsRef<Path>, Q: AsRef<Path>>(folder1: P, folder2: Q) -
                 ));
             }
             if !issues.is_empty() {
-                eprintln!("Failed {:?}", relative_path);
+                eprintln!("Failed {relative_path:?}");
                 for issue in issues {
-                    eprintln!("  {}", issue);
+                    eprintln!("  {issue}");
                 }
             } else {
-                println!("Passed {:?}", relative_path);
+                println!("Passed {relative_path:?}");
             }
         }
     }
@@ -126,7 +126,7 @@ pub fn compare_manifests(
         let value1 = serde_json::to_value(manifest_store1.get_manifest(label1))?;
         let value2 = serde_json::to_value(manifest_store2.get_manifest(label2))?;
         compare_json_values(
-            &format!("manifests.{}", label1),
+            &format!("manifests.{label1}"),
             &value1,
             &value2,
             &mut issues,
@@ -181,18 +181,18 @@ fn compare_json_values(
         (serde_json::Value::Object(map1), serde_json::Value::Object(map2)) => {
             for (key, val1) in map1 {
                 let val2 = map2.get(key).unwrap_or(&serde_json::Value::Null);
-                compare_json_values(&format!("{}.{}", path, key), val1, val2, issues);
+                compare_json_values(&format!("{path}.{key}"), val1, val2, issues);
             }
 
             for (key, value) in map2 {
                 if map1.get(key).is_none() {
-                    issues.push(format!("Added {}.{}: {}", path, key, value));
+                    issues.push(format!("Added {path}.{key}: {value}"));
                 }
             }
         }
         (serde_json::Value::Array(arr1), serde_json::Value::Array(arr2)) => {
             for (i, (val1, val2)) in arr1.iter().zip(arr2.iter()).enumerate() {
-                compare_json_values(&format!("{}[{}]", path, i), val1, val2, issues);
+                compare_json_values(&format!("{path}[{i}]"), val1, val2, issues);
             }
         }
         (val1, val2) if val1 != val2 => {
@@ -265,11 +265,11 @@ fn compare_json_values(
             }
 
             if val2.is_null() {
-                issues.push(format!("Missing {}: {}", path, val1));
+                issues.push(format!("Missing {path}: {val1}"));
             } else if val2.is_null() {
-                issues.push(format!("Added {}: {}", path, val2));
+                issues.push(format!("Added {path}: {val2}"));
             } else {
-                issues.push(format!("Changed {}: {} vs {}", path, val1, val2));
+                issues.push(format!("Changed {path}: {val1} vs {val2}"));
             }
         }
         _ => (),

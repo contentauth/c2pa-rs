@@ -34,9 +34,9 @@ fn populate_node(
             if let Some(label) = ingredient.active_manifest() {
                 // create new node
                 let data = if name_only {
-                    format!("{}_{}", title, label)
+                    format!("{title}_{label}")
                 } else {
-                    format!("Asset:{}, Manifest:{}", title, label)
+                    format!("Asset:{title}, Manifest:{label}")
                 };
 
                 let new_token = current_token.append(tree, data);
@@ -83,7 +83,7 @@ pub fn tree<P: AsRef<Path>>(path: P) -> Result<String> {
 
     // walk through the manifests and show the contents
     Ok(if let Some(manifest_label) = reader.active_label() {
-        let data = format!("Asset:{}, Manifest:{}", asset_name, manifest_label);
+        let data = format!("Asset:{asset_name}, Manifest:{manifest_label}");
         let (mut tree, root_token) = Arena::with_data(data);
         populate_node(&mut tree, &reader, manifest_label, &root_token, false)?;
         // print tree

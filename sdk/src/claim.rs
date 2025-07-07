@@ -160,7 +160,7 @@ impl ClaimAssertion {
                 let label = format!("{}__{}", get_thumbnail_type(&al_ref), self.instance);
 
                 match get_thumbnail_image_type(&al_ref) {
-                    Some(image_type) => format!("{}.{}", label, image_type),
+                    Some(image_type) => format!("{label}.{image_type}"),
                     None => label,
                 }
             } else {
@@ -939,7 +939,7 @@ impl Claim {
 
     /// return max version this Claim supports
     pub fn build_version_support() -> String {
-        format!("{}.v{}", CLAIM, BUILD_VER_SUPPORT)
+        format!("{CLAIM}.v{BUILD_VER_SUPPORT}")
     }
 
     /// Return the JUMBF label for this claim.
@@ -3663,7 +3663,7 @@ impl Claim {
             let output_label = format!("{}__{}", get_thumbnail_type(label), instance);
 
             match get_thumbnail_image_type(label) {
-                Some(image_type) => format!("{}.{}", output_label, image_type),
+                Some(image_type) => format!("{output_label}.{image_type}"),
                 None => output_label,
             }
         } else {

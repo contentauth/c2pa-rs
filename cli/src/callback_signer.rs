@@ -149,7 +149,7 @@ impl<'a> CallbackSigner<'a> {
 impl Signer for CallbackSigner<'_> {
     fn sign(&self, data: &[u8]) -> c2pa::Result<Vec<u8>> {
         self.callback.sign(data).map_err(|e| {
-            eprintln!("Unable to embed signature into asset. {}", e);
+            eprintln!("Unable to embed signature into asset. {e}");
             Error::EmbeddingError
         })
     }
