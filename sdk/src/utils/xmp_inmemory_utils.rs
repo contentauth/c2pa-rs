@@ -103,7 +103,6 @@ fn add_xmp_key(xmp: &str, key: &str, value: &str) -> Result<String> {
     let xpacket_end = "<?xpacket end";
     let xpacket_end_length = XMP_END.len();
     let xmp_body = if let Some(pos) = xmp.rfind(xpacket_end) {
-        println!("position {pos}");
         target_length = orig_length - xpacket_end_length;
         xmp[..pos].trim_end()
     } else {
