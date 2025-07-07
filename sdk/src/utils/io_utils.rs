@@ -11,10 +11,11 @@
 // specific language governing permissions and limitations under
 // each license.
 
+#[cfg(feature = "file_io")]
+use std::path::PathBuf;
 use std::{
     ffi::OsStr,
     io::{Read, Seek, SeekFrom, Write},
-    path::PathBuf,
 };
 
 #[allow(unused)] // different code path for WASI
@@ -236,10 +237,14 @@ pub fn wasm_remove_dir_all<P: AsRef<std::path::Path>>(path: P) -> Result<()> {
 }
 
 /// Convert a URI to a file path using PathBuf for better path handling.
-pub fn uri_to_path(uri: &str, manifest_label: &str) -> String {
-    let Some(path_str) = uri.strip_prefix("self#jumbf=") else {
-        return uri.to_string();
-    };
+#[cfg(feature = "file_io")]
+pub fn uri_to_path(uri: &str, manifest_label: &str) -> PathBuf {
+    let mut path_str = uri.replace(':', "_");
+    if let Some(stripped) = path_str.strip_prefix("self#jumbf=") {
+        path_str = stripped.to_owned();
+    } else {
+        return PathBuf::from(path_str);
+    }
 
     let mut path = PathBuf::from(path_str);
 
@@ -251,9 +256,7 @@ pub fn uri_to_path(uri: &str, manifest_label: &str) -> String {
         path = new_path;
     }
 
-    let path_str = path.to_string_lossy();
-
-    path_str.replace(':', "_")
+    path
 }
 
 #[cfg(test)]
@@ -263,20 +266,30 @@ mod tests {
 
     use std::io::Cursor;
 
+    #[cfg(feature = "file_io")]
     #[test]
     fn test_uri_to_path() {
         let uri = "self#jumbf=/c2pa/contentauth:urn:uuid:b3386820-9994-4b58-926f-1c47b82504c4/c2pa.assertions/c2pa.thumbnail.claim.jpeg";
         let expected_path = "contentauth_urn_uuid_b3386820-9994-4b58-926f-1c47b82504c4/c2pa.assertions/c2pa.thumbnail.claim.jpeg";
 
-        assert_eq!(uri_to_path(uri, "unknown"), expected_path);
-        assert_eq!(uri_to_path(expected_path, "unknown"), expected_path);
+        assert_eq!(uri_to_path(uri, "unknown"), PathBuf::from(expected_path));
+        assert_eq!(
+            uri_to_path(expected_path, "unknown"),
+            PathBuf::from(expected_path)
+        );
 
         let uri = "self#jumbf=c2pa.assertions/c2pa.thumbnail.claim";
         let manifest_label = "test";
         let expected_path = format!("{manifest_label}/c2pa.assertions/c2pa.thumbnail.claim");
 
-        assert_eq!(uri_to_path(uri, manifest_label), expected_path);
-        assert_eq!(uri_to_path(&expected_path, manifest_label), expected_path);
+        assert_eq!(
+            uri_to_path(uri, manifest_label),
+            PathBuf::from(&expected_path)
+        );
+        assert_eq!(
+            uri_to_path(&expected_path, manifest_label),
+            PathBuf::from(expected_path)
+        );
     }
 
     //use env_logger;
