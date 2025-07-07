@@ -20,13 +20,11 @@
 /// the claim will be added to any existing claims.
 use std::{
     env,
-    fs::{self, create_dir_all, remove_dir_all, remove_file, File},
-    io::{Cursor, Write},
+    fs::{create_dir_all, remove_dir_all, File},
+    io::Write,
     path::{Path, PathBuf},
     str::FromStr,
 };
-
-use tempfile::NamedTempFile;
 
 use anyhow::{anyhow, bail, Context, Result};
 use c2pa::{
@@ -37,6 +35,7 @@ use clap::{Parser, Subcommand};
 use log::debug;
 use serde::Deserialize;
 use signer::SignConfig;
+use tempfile::NamedTempFile;
 #[cfg(not(target_os = "wasi"))]
 use tokio::runtime::Runtime;
 use url::Url;
@@ -726,7 +725,8 @@ fn main() -> Result<()> {
                 let mut file = NamedTempFile::new()?;
                 let format = format_from_path(&args.path).unwrap();
                 let mut source = std::fs::File::open(args.path)?;
-                let manifest_data = builder.sign(signer.as_ref(), &format,&mut source, &mut file)?;
+                let manifest_data =
+                    builder.sign(signer.as_ref(), &format, &mut source, &mut file)?;
                 file.persist(&output)?;
 
                 if args.sidecar {
