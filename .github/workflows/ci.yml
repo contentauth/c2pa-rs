@@ -317,7 +317,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Set up Chrome
-        uses: browser-actions/setup-chrome@v1
+        uses: browser-actions/setup-chrome@v2
         with:
           chrome-version: stable
           install-chromedriver: true
