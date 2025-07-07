@@ -26,6 +26,8 @@ use std::{
     str::FromStr,
 };
 
+use tempfile::NamedTempFile;
+
 use anyhow::{anyhow, bail, Context, Result};
 use c2pa::{
     format_from_path, identity::validator::CawgValidator, Builder, ClaimGeneratorInfo, Error,
@@ -35,7 +37,6 @@ use clap::{Parser, Subcommand};
 use log::debug;
 use serde::Deserialize;
 use signer::SignConfig;
-use tempfile::NamedTempFile;
 #[cfg(not(target_os = "wasi"))]
 use tokio::runtime::Runtime;
 use url::Url;
@@ -712,14 +713,9 @@ fn main() -> Result<()> {
                 if ext_normal(&output) != ext_normal(&args.path) {
                     bail!("Output type must match source type");
                 }
-                if output.exists() {
-                    if args.force && output != args.path {
-                        remove_file(&output)?;
-                    } else if !args.force {
-                        bail!("Output already exists; use -f/force to force write");
-                    }
+                if output.exists() && !args.force {
+                    bail!("Output already exists; use -f/force to force write");
                 }
-
                 if output.file_name().is_none() {
                     bail!("Missing filename on output");
                 }
@@ -727,20 +723,11 @@ fn main() -> Result<()> {
                     bail!("Missing extension output");
                 }
 
-                let manifest_data = if output != args.path {
-                    builder
-                        .sign_file(signer.as_ref(), &args.path, &output)
-                        .context("embedding manifest")?
-                } else {
-                    let format = format_from_path(&args.path).unwrap();
-                    let mut source = std::fs::File::open(args.path)?;
-                    let mut dest = Cursor::new(Vec::new());
-                    let manifest_data =
-                        builder.sign(signer.as_ref(), &format, &mut source, &mut dest)?;
-                    fs::write(&output, dest.into_inner())?;
-
-                    manifest_data
-                };
+                let mut file = NamedTempFile::new()?;
+                let format = format_from_path(&args.path).unwrap();
+                let mut source = std::fs::File::open(args.path)?;
+                let manifest_data = builder.sign(signer.as_ref(), &format,&mut source, &mut file)?;
+                file.persist(&output)?;
 
                 if args.sidecar {
                     let sidecar = output.with_extension("c2pa");
