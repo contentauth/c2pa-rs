@@ -165,6 +165,11 @@ pub(crate) const ASSERTION_STORE: &str = "c2pa.assertions";
 // Databoxes label
 pub(crate) const DATABOX_STORE: &str = "c2pa.databoxes";
 
+/// Label for asset reference assertion.
+///
+/// See <https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_asset_reference>
+pub const ASSET_REFERENCE: &str = "c2pa.asset-ref";
+
 /// Return the version suffix from an assertion label if it exists.
 ///
 /// When an assertion's schema is changed in a backwards-compatible manner,
