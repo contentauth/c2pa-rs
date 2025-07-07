@@ -903,8 +903,7 @@ impl ApplicationExtension {
         // App block size is a fixed value.
         if app_block_size != 0x0b {
             return Err(Error::InvalidAsset(format!(
-                "Invalid block size for app block extension {}!=11",
-                app_block_size
+                "Invalid block size for app block extension {app_block_size}!=11"
             )));
         }
 

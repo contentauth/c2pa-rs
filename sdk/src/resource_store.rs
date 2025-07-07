@@ -248,13 +248,13 @@ impl ResourceStore {
                 if id.starts_with("/c2pa/") {
                     id = id.replacen("/c2pa/", "", 1);
                 } else if let Some(label) = self.label.as_ref() {
-                    id = format!("{}/{id}", label);
+                    id = format!("{label}/{id}");
                 }
                 id = id.replace([':'], "_");
                 // add a file extension if it doesn't have one
                 if !(id.ends_with(".jpeg") || id.ends_with(".png")) {
                     if let Some(ext) = crate::utils::mime::format_to_extension(format) {
-                        id = format!("{}.{}", id, ext);
+                        id = format!("{id}.{ext}");
                     }
                 }
             }
