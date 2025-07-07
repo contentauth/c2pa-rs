@@ -7727,7 +7727,7 @@ pub mod tests {
         let mut report = StatusTracker::default();
         let new_store = Store::load_from_memory("jpeg", &result, false, &mut report).unwrap();
 
-        println!("new_store: {}", new_store);
+        println!("new_store: {new_store}");
 
         Store::verify_store(
             &new_store,
@@ -7864,7 +7864,7 @@ pub mod tests {
         let mut report = StatusTracker::default();
         let new_store = Store::from_stream("jpeg", &mut result_stream, true, &mut report).unwrap();
 
-        println!("new_store: {}", new_store);
+        println!("new_store: {new_store}");
 
         let result = result_stream.into_inner();
 
