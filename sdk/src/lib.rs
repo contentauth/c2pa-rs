@@ -46,8 +46,7 @@
 //! ```
 //!
 //! # Example: Adding a Manifest to a file
-//!
-//!
+//! ```
 //! # use c2pa::Result;
 //! use std::path::PathBuf;
 //!
@@ -81,6 +80,7 @@
 //! )?;
 //! # Ok(())
 //! # }
+//! ```
 
 /// The internal name of the C2PA SDK
 pub const NAME: &str = "c2pa-rs";
@@ -172,6 +172,7 @@ pub(crate) mod manifest_assertion;
 #[cfg(feature = "v1_api")]
 pub(crate) mod manifest_store;
 pub(crate) mod manifest_store_report;
+
 #[allow(dead_code)]
 // TODO: Remove this when the feature is released (used in tests only for some builds now)
 pub(crate) mod reader;
