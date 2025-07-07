@@ -620,7 +620,7 @@ impl RemoteRefEmbed for JpegIO {
                     .unwrap_or((None, MIN_XMP));
 
                 // add provenance and JPEG XMP prefix
-                let xmp = format!("{XMP_SIGNATURE}\0 {}", add_provenance(xmp, &manifest_uri)?);
+                let xmp = format!("{XMP_SIGNATURE}\0{}", add_provenance(xmp, &manifest_uri)?);
                 let segment = JpegSegment::new_with_contents(markers::APP1, Bytes::from(xmp));
                 // insert or add the segment
                 match xmp_index {
