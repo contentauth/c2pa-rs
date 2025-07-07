@@ -187,8 +187,17 @@ url = "2.5.3"
 
 [target.'cfg(any(target_os = "wasi", not(target_arch = "wasm32")))'.dependencies]
 image = { version = "0.25.6", default-features = false, features = [
-    "jpeg",
+    # TODO: eventually define feature flags for the asset handlers and match them
+    #       up here.
     "png",
+    "jpeg",
+    "gif",
+    "webp",
+    "tiff",
+    "bmp",
+    "ico",
+    # "avif",
+    # "avif-native"
 ], optional = true }
 
 [target.'cfg(target_os = "wasi")'.dependencies]

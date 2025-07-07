@@ -18,7 +18,7 @@ use std::{
 
 use image::{
     codecs::{
-        avif::AvifEncoder,
+        // avif::AvifEncoder,
         jpeg::JpegEncoder,
         png::{CompressionType, FilterType, PngEncoder},
     },
@@ -53,8 +53,8 @@ pub enum ThumbnailFormat {
     Bmp,
     /// An image in ICO format.
     Ico,
-    /// An image in AVIF format.
-    Avif,
+    // /// An image in AVIF format.
+    // Avif,
 }
 
 impl ThumbnailFormat {
@@ -80,7 +80,7 @@ impl TryFrom<ImageFormat> for ThumbnailFormat {
             ImageFormat::Tiff => Ok(ThumbnailFormat::Tiff),
             ImageFormat::Bmp => Ok(ThumbnailFormat::Bmp),
             ImageFormat::Ico => Ok(ThumbnailFormat::Ico),
-            ImageFormat::Avif => Ok(ThumbnailFormat::Avif),
+            // ImageFormat::Avif => Ok(ThumbnailFormat::Avif),
             _ => Err(Error::UnsupportedThumbnailFormat(
                 format.to_mime_type().to_owned(),
             )),
@@ -98,7 +98,7 @@ impl From<ThumbnailFormat> for ImageFormat {
             ThumbnailFormat::Tiff => ImageFormat::Tiff,
             ThumbnailFormat::Bmp => ImageFormat::Bmp,
             ThumbnailFormat::Ico => ImageFormat::Ico,
-            ThumbnailFormat::Avif => ImageFormat::Avif,
+            // ThumbnailFormat::Avif => ImageFormat::Avif,
         }
     }
 }
@@ -109,33 +109,12 @@ impl fmt::Display for ThumbnailFormat {
     }
 }
 
-/// Returns the output thumbnail format given the thumbnail input format taking the global
-/// thumbnail preferences into account.
-///
-/// If the output format is unsupported, this function will return [Error::UnsupportedThumbnailVersion][crate::Error::UnsupportedThumbnailVersion].
-///
-/// This function takes into account the [Settings][crate::Settings]:
-/// * `builder.thumbnail.format`
-pub fn thumbnail_output_format(input_format: &str) -> Result<ThumbnailFormat> {
-    let global_format =
-        settings::get_settings_value::<Option<ThumbnailFormat>>("builder.thumbnail.format")?;
-    match global_format {
-        Some(global_format) => Ok(global_format),
-        None => match ThumbnailFormat::new(input_format) {
-            Some(format) => Ok(format),
-            None => Err(Error::UnsupportedThumbnailFormat(input_format.to_owned())),
-        },
-    }
-}
-
 /// Make a thumbnail from an input path and return the format and new thumbnail bytes.
 ///
-/// If the output format is unsupported, this function will return [Error::UnsupportedThumbnailVersion][crate::Error::UnsupportedThumbnailVersion].
+/// If the output format is unsupported, this function will return [Error::UnsupportedThumbnailFormat][crate::Error::UnsupportedThumbnailFormat].
 ///
 /// This function takes into account the [Settings][crate::Settings]:
 /// * `builder.thumbnail.ignore_errors`
-/// * `builder.thumbnail.format`
-/// * `builder.thumbnail.default_format`
 ///
 /// Read [make_thumbnail_from_stream] for more information.
 #[cfg(feature = "file_io")]
@@ -156,7 +135,8 @@ pub fn make_thumbnail_bytes_from_path(
         }
     };
 
-    let ignore_errors = settings::get_settings_value::<bool>("builder.thumbnail.ignore_errors")?;
+    let ignore_errors =
+        settings::get_profile_settings_value::<bool>("builder.thumbnail.ignore_errors")?;
     match result {
         Ok(result) => Ok(result),
         Err(_) if ignore_errors => Ok(None),
@@ -168,8 +148,6 @@ pub fn make_thumbnail_bytes_from_path(
 ///
 /// This function takes into account the [Settings][crate::Settings]:
 /// * `builder.thumbnail.ignore_errors`
-/// * `builder.thumbnail.format`
-/// * `builder.thumbnail.default_format`
 ///
 /// Read [make_thumbnail_from_stream] for more information.
 pub fn make_thumbnail_bytes_from_stream<R>(
@@ -180,31 +158,18 @@ where
     R: BufRead + Seek,
 {
     let result = {
-        let default_output_format = settings::get_settings_value::<Option<ThumbnailFormat>>(
-            "builder.thumbnail.default_format",
-        )?;
-        let output_format = match thumbnail_output_format(format) {
-            Ok(output_format) => Ok(output_format),
-            Err(err) => match default_output_format {
-                Some(output_format) => Ok(output_format),
-                None => Err(err),
-            },
-        };
-
-        match output_format {
-            Ok(output_format) => match ThumbnailFormat::new(format) {
-                Some(input_format) => {
-                    let mut output = Cursor::new(Vec::new());
-                    make_thumbnail_from_stream(input, &mut output, input_format, output_format)
-                        .map(|_| (output_format, output.into_inner()))
-                }
-                None => Err(Error::UnsupportedThumbnailFormat(format.to_owned())),
-            },
-            Err(err) => Err(err),
+        match ThumbnailFormat::new(format) {
+            Some(input_format) => {
+                let mut output = Cursor::new(Vec::new());
+                make_thumbnail_from_stream(input, &mut output, input_format, None)
+                    .map(|output_format| (output_format, output.into_inner()))
+            }
+            None => Err(Error::UnsupportedThumbnailFormat(format.to_owned())),
         }
     };
 
-    let ignore_errors = settings::get_settings_value::<bool>("builder.thumbnail.ignore_errors")?;
+    let ignore_errors =
+        settings::get_profile_settings_value::<bool>("builder.thumbnail.ignore_errors")?;
     match result {
         Ok(result) => Ok(Some(result)),
         Err(_) if ignore_errors => Ok(None),
@@ -217,23 +182,51 @@ where
 /// This function takes into account two [Settings][crate::Settings]:
 /// * `builder.thumbnail.long_edge`
 /// * `builder.thumbnail.quality`
+/// * `builder.thumbnail.format`
+/// * `builder.thumbnail.prefer_smallest_format`
 pub fn make_thumbnail_from_stream<R, W>(
     input: R,
     output: &mut W,
     input_format: ThumbnailFormat,
-    output_format: ThumbnailFormat,
-) -> Result<()>
+    output_format: Option<ThumbnailFormat>,
+) -> Result<ThumbnailFormat>
 where
     R: BufRead + Seek,
     W: Write + Seek,
 {
-    // image-rs 0.25.6: doesn't support fixtures TUSCANY.TIF and sample1.avif
     let mut image = ImageReader::with_format(input, input_format.into()).decode()?;
 
-    let long_edge = settings::get_settings_value::<u32>("builder.thumbnail.long_edge")?;
+    let output_format = match output_format {
+        Some(output_format) => output_format,
+        None => {
+            let global_format = settings::get_profile_settings_value::<Option<ThumbnailFormat>>(
+                "builder.thumbnail.format",
+            )?;
+            match global_format {
+                Some(global_format) => global_format,
+                None => {
+                    let prefer_smallest_format = settings::get_profile_settings_value::<bool>(
+                        "builder.thumbnail.prefer_smallest_format",
+                    )?;
+                    match prefer_smallest_format {
+                        true => match input_format {
+                            ThumbnailFormat::Png if !image.color().has_alpha() => {
+                                ThumbnailFormat::Jpeg
+                            }
+                            _ => input_format,
+                        },
+                        false => input_format,
+                    }
+                }
+            }
+        }
+    };
+
+    let long_edge = settings::get_profile_settings_value::<u32>("builder.thumbnail.long_edge")?;
     image = image.thumbnail(long_edge, long_edge);
 
-    let quality = settings::get_settings_value::<ThumbnailQuality>("builder.thumbnail.quality")?;
+    let quality =
+        settings::get_profile_settings_value::<ThumbnailQuality>("builder.thumbnail.quality")?;
     match output_format {
         ThumbnailFormat::Jpeg => match quality {
             ThumbnailQuality::Low => {
@@ -263,19 +256,19 @@ where
                 FilterType::default(),
             ))?,
         },
-        ThumbnailFormat::Avif => match quality {
-            ThumbnailQuality::Low => {
-                image.write_with_encoder(AvifEncoder::new_with_speed_quality(output, 10, 40))?
-            }
-            ThumbnailQuality::Medium => {
-                image.write_with_encoder(AvifEncoder::new_with_speed_quality(output, 4, 80))?
-            }
-            ThumbnailQuality::High => {
-                image.write_with_encoder(AvifEncoder::new_with_speed_quality(output, 1, 100))?
-            }
-        },
+        // ThumbnailFormat::Avif => match quality {
+        //     ThumbnailQuality::Low => {
+        //         image.write_with_encoder(AvifEncoder::new_with_speed_quality(output, 10, 40))?
+        //     }
+        //     ThumbnailQuality::Medium => {
+        //         image.write_with_encoder(AvifEncoder::new_with_speed_quality(output, 4, 80))?
+        //     }
+        //     ThumbnailQuality::High => {
+        //         image.write_with_encoder(AvifEncoder::new_with_speed_quality(output, 1, 100))?
+        //     }
+        // },
         _ => image.write_to(output, output_format.into())?,
     }
 
-    Ok(())
+    Ok(output_format)
 }
