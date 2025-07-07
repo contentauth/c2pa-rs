@@ -8,6 +8,13 @@ use crate::{
 
 const ASSERTION_CREATION_VERSION: usize = 2;
 
+/// An `AssetReference` assertion provides information on one or more locations of 
+/// where a copy of the asset may be obtained.
+/// 
+/// This assertion contains a list of [`Reference`], each one declaring a location expressed as a URI and
+/// optionally a description. The URI may be either a single asset or it may reference a directory.
+/// 
+/// https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_asset_reference
 #[derive(Deserialize, Serialize, Debug, PartialEq)]
 pub struct AssetReference {
     pub references: Vec<Reference>,
@@ -16,18 +23,21 @@ pub struct AssetReference {
 impl AssetReference {
     pub const LABEL: &'static str = labels::ASSET_REFERENCE;
 
-    pub fn new() -> Self {
+    /// Creates an AssetReference to a location.
+    pub fn new(reference: Reference) -> Self {
         Self {
-            references: Vec::new(),
+            references: vec![reference],
         }
     }
 
+    /// Adds an [`AssetReference`] to this assertion's list of references.
     pub fn add_reference(mut self, reference: Reference) -> Self {
         self.references.push(reference);
         self
     }
 }
 
+/// Defines a single location of where a copy of the asset may be obtained.
 #[derive(Deserialize, Serialize, Debug, Default, PartialEq, Eq)]
 pub struct Reference {
     pub reference: InnerReference,
@@ -37,6 +47,7 @@ pub struct Reference {
 }
 
 impl Reference {
+    /// Creates a new reference to a location, and optionally a description.
     pub fn new(uri: &str, description: Option<&str>) -> Self {
         Reference {
             reference: InnerReference {
@@ -90,8 +101,7 @@ pub mod tests {
 
     #[test]
     fn assertion_references() {
-        let original = AssetReference::new()
-            .add_reference(make_reference1())
+        let original = AssetReference::new(make_reference1())
             .add_reference(make_reference2());
 
         assert_eq!(original.references.len(), 2);
@@ -104,5 +114,33 @@ pub mod tests {
         assert_eq!(result.references.len(), 2);
 
         assert_eq!(result.references, original.references);
+    }
+
+    #[test]
+    fn test_json_round_trip() {
+        let json = serde_json::json!({
+            "references": [
+                {
+                "description": "A copy of the asset on the web",
+                "reference": {
+                    "uri": "https://some.storage.us/foo"
+                    }
+                },
+                {
+                "description": "A copy of the asset on IPFS",
+                "reference": {
+                    "uri": "ipfs://cid"
+                    }
+                }
+            ]
+        });
+
+        let original: AssetReference = serde_json::from_value(json).unwrap();
+        let assertion = original.to_assertion().unwrap();
+        let result = AssetReference::from_assertion(&assertion).unwrap();
+
+        assert_eq!(result.references.len(), 2);
+        assert_eq!(result.references[0], make_reference1());
+        assert_eq!(result.references[1], make_reference2());
     }
 }
