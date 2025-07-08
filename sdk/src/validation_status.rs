@@ -170,7 +170,7 @@ impl ValidationStatus {
     pub(crate) fn from_error(error: &Error) -> Self {
         // We need to create error codes here for client processing.
         let code = Self::code_from_error(error);
-        debug!("ValidationStatus {} from error {:#?}", code, error);
+        debug!("ValidationStatus {code} from error {error:#?}");
         Self::new_failure(code.to_string()).set_explanation(error.to_string())
     }
 

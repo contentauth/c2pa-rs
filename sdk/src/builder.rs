@@ -504,7 +504,7 @@ impl Builder {
                 zip.start_file("resources/", options)
                     .map_err(|e| Error::OtherError(Box::new(e)))?;
                 for (id, data) in self.resources.resources() {
-                    zip.start_file(format!("resources/{}", id), options)
+                    zip.start_file(format!("resources/{id}"), options)
                         .map_err(|e| Error::OtherError(Box::new(e)))?;
                     zip.write_all(data)?;
                 }
@@ -515,7 +515,7 @@ impl Builder {
                     .map_err(|e| Error::OtherError(Box::new(e)))?;
                 for ingredient in self.definition.ingredients.iter() {
                     for (id, data) in ingredient.resources().resources() {
-                        zip.start_file(format!("resources/{}", id), options)
+                        zip.start_file(format!("resources/{id}"), options)
                             .map_err(|e| Error::OtherError(Box::new(e)))?;
                         zip.write_all(data)?;
                     }
@@ -608,8 +608,7 @@ impl Builder {
                 let id = file.name().split('/').nth(2).unwrap_or_default();
                 if index >= builder.definition.ingredients.len() {
                     return Err(Error::OtherError(Box::new(std::io::Error::other(format!(
-                        "Invalid ingredient index {}",
-                        index
+                        "Invalid ingredient index {index}"
                     )))))?; // todo add specific error
                 }
                 builder.definition.ingredients[index]
@@ -1474,7 +1473,7 @@ mod tests {
         dest.rewind().unwrap();
         let manifest_store = Reader::from_stream(format, &mut dest).expect("from_bytes");
 
-        println!("{}", manifest_store);
+        println!("{manifest_store}");
         assert_ne!(manifest_store.validation_state(), ValidationState::Invalid);
         assert!(manifest_store.active_manifest().is_some());
         let manifest = manifest_store.active_manifest().unwrap();
@@ -1505,7 +1504,7 @@ mod tests {
         // read and validate the signed manifest store
         let manifest_store = Reader::from_file(&dest).expect("from_bytes");
 
-        println!("{}", manifest_store);
+        println!("{manifest_store}");
         assert_ne!(manifest_store.validation_state(), ValidationState::Invalid);
         assert_eq!(manifest_store.validation_status(), None);
         assert_eq!(
@@ -1537,8 +1536,8 @@ mod tests {
             let extension = file_name.split('.').next_back().unwrap();
             let format = extension;
 
-            let path = format!("tests/fixtures/{}", file_name);
-            println!("path: {}", path);
+            let path = format!("tests/fixtures/{file_name}");
+            println!("path: {path}");
             let mut source = std::fs::File::open(path).unwrap();
             let mut dest = Cursor::new(Vec::new());
 
