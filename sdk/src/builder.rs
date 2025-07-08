@@ -598,8 +598,8 @@ impl Builder {
 
         claim_generator_info[0].insert("org.cai.c2pa_rs", env!("CARGO_PKG_VERSION"));
 
-        let profile_claim_generator_infos = settings::get_profile_settings_value::<
-            Option<Vec<ClaimGeneratorInfo>>,
+        let profile_claim_generator_infos = settings::get_optional_profile_settings_value::<
+            Vec<ClaimGeneratorInfo>,
         >("claim_generator_info")?;
         if let Some(claim_generator_infos) = profile_claim_generator_infos {
             claim_generator_info.extend(claim_generator_infos);
@@ -732,9 +732,13 @@ impl Builder {
                     }
 
                     // https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_relationship
-                    for ingredient in &self.definition.ingredients {
-                        if *ingredient.relationship() == Relationship::ComponentOf {
-                            actions.actions.push(Action::new(c2pa_action::PLACED));
+                    let auto_placed =
+                        settings::get_profile_settings_value::<bool>("auto_placed_action")?;
+                    if auto_placed {
+                        for ingredient in &self.definition.ingredients {
+                            if *ingredient.relationship() == Relationship::ComponentOf {
+                                actions.actions.push(Action::new(c2pa_action::PLACED));
+                            }
                         }
                     }
 
@@ -876,7 +880,7 @@ impl Builder {
         // check settings to see if we should auto generate a thumbnail
 
         let auto_thumbnail =
-            crate::settings::get_settings_value::<bool>("builder.thumbnail.enabled")?;
+            crate::settings::get_profile_settings_value::<bool>("thumbnail.enabled")?;
         if self.definition.thumbnail.is_none() && auto_thumbnail {
             stream.rewind()?;
 

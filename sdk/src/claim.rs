@@ -27,8 +27,7 @@ use crate::{
         AssertionBase, AssertionData,
     },
     assertions::{
-        self,
-        c2pa_action::{self, CREATED, OPENED},
+        self, c2pa_action,
         labels::{ACTIONS, BMFF_HASH},
         Actions, AssetType, BmffHash, BoxHash, DataBox, DataHash, Metadata, V2_DEPRECATED_ACTIONS,
     },

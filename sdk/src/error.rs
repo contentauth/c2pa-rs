@@ -283,6 +283,9 @@ pub enum Error {
     Utf8Error(#[from] std::str::Utf8Error),
 
     #[error(transparent)]
+    ConfigError(#[from] config::ConfigError),
+
+    #[error(transparent)]
     TryFromIntError(#[from] std::num::TryFromIntError),
 
     #[error(transparent)]

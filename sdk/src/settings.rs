@@ -258,6 +258,7 @@ pub struct ThumbnailSettings {
     ///
     /// If this field isn't specified, the thumbnail format will correspond to the
     /// input format.
+    #[serde(skip_serializing_if = "Option::is_none")]
     format: Option<ThumbnailFormat>,
     /// Whether or not to prefer a smaller sized media format for the thumbnail.
     ///
@@ -302,7 +303,7 @@ impl SettingsValidate for ThumbnailSettings {
 // Settings for Builder API options
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 #[allow(unused)]
-pub(crate) struct Builder {}
+pub(crate) struct Builder;
 
 impl SettingsValidate for Builder {}
 
@@ -710,18 +711,34 @@ pub(crate) fn get_profile_settings_value<'de, T: serde::de::Deserialize<'de>>(
     SETTINGS.with_borrow(|current_settings| {
         PROFILE.with_borrow(|profile| {
             if let Some(profile) = profile {
-                if let Ok(value) =
-                    current_settings.get::<T>(&format!("profile.{}.{}", profile, value_path))
-                {
-                    return Ok(value);
+                let value =
+                    current_settings.get::<T>(&format!("profile.{}.{}", profile, value_path));
+                match value {
+                    Ok(value) => return Ok(value),
+                    Err(err) => return Err(err.into()),
+                    // Ignore if the value isn't found and next check the default profile.
+                    Err(config::ConfigError::NotFound(_)) => {}
                 }
             }
 
-            current_settings
-                .get::<T>(&format!("profile.default.{}", value_path))
-                .map_err(|_| Error::NotFound)
+            match current_settings.get::<T>(&format!("profile.default.{}", value_path)) {
+                Ok(value) => Ok(value),
+                Err(config::ConfigError::NotFound(_)) => Err(Error::NotFound),
+                Err(err) => Err(err.into()),
+            }
         })
     })
+}
+
+#[allow(unused)]
+pub(crate) fn get_optional_profile_settings_value<'de, T: serde::de::Deserialize<'de>>(
+    value_path: &str,
+) -> Result<Option<T>> {
+    match get_profile_settings_value(value_path) {
+        Ok(value) => Ok(Some(value)),
+        Err(Error::NotFound) => Ok(None),
+        Err(err) => Err(err),
+    }
 }
 
 // TODO: document
@@ -758,6 +775,10 @@ pub mod tests {
 
     #[test]
     fn test_get_defaults() {
+        SETTINGS
+            .with_borrow(|config| config.clone().try_deserialize::<Settings>())
+            .unwrap();
+
         let settings = get_settings().unwrap();
 
         assert_eq!(settings.core, Core::default());
@@ -803,7 +824,7 @@ pub mod tests {
         let hash_alg: String = get_settings_value("core.hash_alg").unwrap();
         let remote_manifest_fetch: bool =
             get_settings_value("verify.remote_manifest_fetch").unwrap();
-        let auto_thumbnail: bool = get_settings_value("builder.thumbnail.enabled").unwrap();
+        let auto_thumbnail: bool = get_settings_value("profile.default.thumbnail.enabled").unwrap();
         let private_anchors: Option<String> = get_settings_value("trust.private_anchors").unwrap();
 
         assert_eq!(hash_alg, Core::default().hash_alg);
@@ -835,7 +856,7 @@ pub mod tests {
         // test updating values
         set_settings_value("core.hash_alg", "sha512").unwrap();
         set_settings_value("verify.remote_manifest_fetch", false).unwrap();
-        set_settings_value("builder.thumbnail.enabled", false).unwrap();
+        set_settings_value("profile.default.thumbnail.enabled", false).unwrap();
         set_settings_value(
             "trust.private_anchors",
             Some(String::from_utf8(ts.to_vec()).unwrap()),
@@ -847,7 +868,7 @@ pub mod tests {
             "sha512"
         );
         assert!(!get_settings_value::<bool>("verify.remote_manifest_fetch").unwrap());
-        assert!(!get_settings_value::<bool>("builder.thumbnail.enabled").unwrap());
+        assert!(!get_settings_value::<bool>("profile.default.thumbnail.enabled").unwrap());
         assert_eq!(
             get_settings_value::<Option<String>>("trust.private_anchors").unwrap(),
             Some(String::from_utf8(ts.to_vec()).unwrap())
@@ -859,10 +880,10 @@ pub mod tests {
             get_settings_value::<Verify>("verify").unwrap(),
             Verify::default()
         );
-        assert_ne!(
-            get_settings_value::<Builder>("builder").unwrap(),
-            Builder::default()
-        );
+        // assert_ne!(
+        //     get_settings_value::<Builder>("builder").unwrap(),
+        //     Builder::default()
+        // );
         assert_ne!(
             get_settings_value::<Trust>("trust").unwrap(),
             Trust::default()

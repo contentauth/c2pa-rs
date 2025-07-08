@@ -197,7 +197,7 @@ where
     let output_format = match output_format {
         Some(output_format) => output_format,
         None => {
-            let global_format = settings::get_profile_settings_value::<Option<ThumbnailFormat>>(
+            let global_format = settings::get_optional_profile_settings_value::<ThumbnailFormat>(
                 "thumbnail.format",
             )?;
             match global_format {
