@@ -269,3 +269,116 @@ where
 
     Ok(output_format)
 }
+
+#[cfg(test)]
+pub mod tests {
+    #![allow(clippy::unwrap_used)]
+
+    use super::*;
+
+    const TEST_JPEG: &[u8] = include_bytes!("../../tests/fixtures/CA.jpg");
+    const TEST_PNG: &[u8] = include_bytes!("../../tests/fixtures/sample1.png");
+
+    #[test]
+    fn test_make_thumbnail_from_stream() {
+        let mut output = Cursor::new(Vec::new());
+        let format = make_thumbnail_from_stream(
+            Cursor::new(TEST_JPEG),
+            &mut output,
+            ThumbnailFormat::Jpeg,
+            None,
+        )
+        .unwrap();
+
+        assert!(matches!(format, ThumbnailFormat::Jpeg));
+
+        output.rewind().unwrap();
+        ImageReader::with_format(output, format.into())
+            .decode()
+            .unwrap();
+    }
+
+    #[test]
+    fn test_make_thumbnail_from_stream_with_output() {
+        let mut output = Cursor::new(Vec::new());
+        let format = make_thumbnail_from_stream(
+            Cursor::new(TEST_JPEG),
+            &mut output,
+            ThumbnailFormat::Jpeg,
+            Some(ThumbnailFormat::Png),
+        )
+        .unwrap();
+
+        assert!(matches!(format, ThumbnailFormat::Png));
+
+        output.rewind().unwrap();
+        ImageReader::with_format(output, format.into())
+            .decode()
+            .unwrap();
+    }
+
+    #[test]
+    fn test_make_thumbnail_bytes_from_stream() {
+        let (format, bytes) =
+            make_thumbnail_bytes_from_stream(Cursor::new(TEST_JPEG), "image/jpeg")
+                .unwrap()
+                .unwrap();
+
+        assert!(matches!(format, ThumbnailFormat::Jpeg));
+
+        ImageReader::with_format(Cursor::new(bytes), format.into())
+            .decode()
+            .unwrap();
+    }
+
+    #[test]
+    #[cfg(feature = "file_io")]
+    fn test_make_thumbnail_bytes_from_path() {
+        use std::path::Path;
+
+        let (format, bytes) = make_thumbnail_bytes_from_path(Path::new("tests/fixtures/CA.jpg"))
+            .unwrap()
+            .unwrap();
+
+        assert!(matches!(format, ThumbnailFormat::Jpeg));
+
+        ImageReader::with_format(Cursor::new(bytes), format.into())
+            .decode()
+            .unwrap();
+    }
+
+    #[test]
+    fn test_make_thumbnail_with_prefer_smaller_format() {
+        // TODO: set settings temporarily
+
+        let (format, bytes) = make_thumbnail_bytes_from_stream(Cursor::new(TEST_PNG), "image/png")
+            .unwrap()
+            .unwrap();
+
+        assert!(matches!(format, ThumbnailFormat::Jpeg));
+
+        ImageReader::with_format(Cursor::new(bytes), format.into())
+            .decode()
+            .unwrap();
+    }
+
+    #[test]
+    fn test_make_thumbnail_with_forced_format() {
+        // TODO: set settings temporarily
+    }
+
+    #[test]
+    fn test_make_thumbnail_with_quality() {
+        // TODO: set settings temporarily
+    }
+
+    #[test]
+    fn test_make_thumbnail_with_long_edge() {
+        // TODO: set settings temporarily
+    }
+
+    #[test]
+    fn test_make_thumbnail_and_ignore_errors() {
+        // TODO: set settings temporarily
+    }
+}
