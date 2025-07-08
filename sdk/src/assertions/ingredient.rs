@@ -29,15 +29,18 @@ use crate::{
 
 const ASSERTION_CREATION_VERSION: usize = 3;
 
-// Used to differentiate a parent from a component
+/// The relationship of the ingredient to the current asset.
 #[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq, Eq)]
 #[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 pub enum Relationship {
+    /// The current asset is derived from this ingredient.
     #[serde(rename = "parentOf")]
     ParentOf,
+    /// The current asset is a part of this ingredient.
     #[serde(rename = "componentOf")]
     #[default]
     ComponentOf,
+    /// The ingredient was used as an input to a computational process to create or modify the asset.
     #[serde(rename = "inputTo")]
     InputTo,
 }
@@ -85,7 +88,7 @@ impl Serialize for Ingredient {
 impl Ingredient {
     /// Label prefix for an ingredient assertion.
     ///
-    /// See <https://c2pa.org/specifications/specifications/1.0/specs/C2PA_Specification.html#_ingredient>.
+    /// See <https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#ingredient_assertion>.
     pub const LABEL: &'static str = labels::INGREDIENT;
 
     pub fn new(title: &str, format: &str, instance_id: &str, document_id: Option<&str>) -> Self {
