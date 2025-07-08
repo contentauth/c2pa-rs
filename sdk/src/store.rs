@@ -196,11 +196,6 @@ impl Store {
         Ok(self.ctp.add_end_entity_credentials(allowed_vec)?)
     }
 
-    // Replace default trust policy
-    //pub fn set_trust_policy(&mut self, new_ctp: CertificateTrustPolicy) {
-    //    self.ctp = new_ctp;
-    //}
-
     /// Clear all existing trust anchors
     #[cfg(feature = "v1_api")]
     pub fn clear_trust_anchors(&mut self) {
