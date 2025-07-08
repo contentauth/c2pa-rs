@@ -205,7 +205,7 @@ pub(crate) struct Verify {
     ocsp_fetch: bool,
     remote_manifest_fetch: bool,
     check_ingredient_trust: bool,
-
+    skip_ingredient_conflict_resolution: bool,
     strict_v1_validation: bool,
 }
 
@@ -218,7 +218,7 @@ impl Default for Verify {
             ocsp_fetch: false,
             remote_manifest_fetch: true,
             check_ingredient_trust: true,
-
+            skip_ingredient_conflict_resolution: false,
             strict_v1_validation: false,
         }
     }
@@ -366,6 +366,9 @@ impl SettingsValidate for Profile {
     }
 }
 
+const MAJOR_VERSION: usize = 1;
+const MINOR_VERSION: usize = 0;
+
 // Settings configuration for C2PA-RS.  Default configuration values
 // are lazy loaded on first use.  Values can also be loaded from a configuration
 // file or by setting specific value via code.  There is a single configuration
@@ -373,11 +376,12 @@ impl SettingsValidate for Profile {
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[allow(unused)]
 pub struct Settings {
+    version_major: usize,
+    version_minor: usize,
     trust: Trust,
     core: Core,
     verify: Verify,
     builder: Builder,
-
     profile: HashMap<String, Profile>,
 }
 
@@ -445,22 +449,28 @@ impl Default for Settings {
         profile.insert("default".to_owned(), Profile::default());
 
         Settings {
-            profile,
+            version_major: MAJOR_VERSION,
+            version_minor: MINOR_VERSION,
             trust: Default::default(),
             core: Default::default(),
             verify: Default::default(),
             builder: Default::default(),
+            profile,
         }
     }
 }
 
 impl SettingsValidate for Settings {
     fn validate(&self) -> Result<()> {
-        Ok(())
-            .and(self.trust.validate())
-            .and(self.core.validate())
-            .and(self.verify.validate())
-            .and(self.builder.validate())
+        if self.version_major > MAJOR_VERSION {
+            return Err(Error::VersionCompatibility(
+                "settings version too new".into(),
+            ));
+        }
+        self.trust.validate()?;
+        self.core.validate()?;
+        self.trust.validate()?;
+        self.builder.validate()
     }
 }
 
@@ -561,7 +571,12 @@ pub(crate) fn get_settings_value<'de, T: serde::de::Deserialize<'de>>(
     value_path: &str,
 ) -> Result<T> {
     SETTINGS.with_borrow(|current_settings| {
-        current_settings
+        let update_config = Config::builder()
+            .add_source(current_settings.clone())
+            .build()
+            .map_err(|_e| Error::OtherError("could not update configuration".into()))?;
+
+        update_config
             .get::<T>(value_path)
             .map_err(|_| Error::NotFound)
     })

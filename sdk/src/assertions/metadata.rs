@@ -50,7 +50,7 @@ pub struct Metadata {
 impl Metadata {
     /// Label prefix for an assertion metadata assertion.
     ///
-    /// See <https://c2pa.org/specifications/specifications/1.0/specs/C2PA_Specification.html#_metadata_about_assertions>.
+    /// See <https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_metadata_about_assertions>.
     pub const LABEL: &'static str = labels::ASSERTION_METADATA;
 
     pub fn new() -> Self {
@@ -148,6 +148,12 @@ impl Metadata {
 impl Default for Metadata {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl std::fmt::Display for Metadata {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&serde_json::to_string_pretty(self).unwrap_or_default())
     }
 }
 
@@ -269,7 +275,7 @@ pub enum ReviewCode {
 
 /// A rating on an Assertion.
 ///
-/// See <https://c2pa.org/specifications/specifications/1.0/specs/C2PA_Specification.html#_claim_review>.
+/// See <https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_review_ratings>.
 #[derive(Serialize, Deserialize, Debug, PartialEq, Eq, Clone)]
 #[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 pub struct ReviewRating {
@@ -345,7 +351,7 @@ pub mod tests {
                     ..Default::default()
                 });
         original.insert("foo", test_value);
-        println!("{:?}", &original);
+        println!("{:}", &original);
         let assertion = original.to_assertion().expect("build_assertion");
         assert_eq!(assertion.mime_type(), "application/cbor");
         assert_eq!(assertion.label(), Metadata::LABEL);

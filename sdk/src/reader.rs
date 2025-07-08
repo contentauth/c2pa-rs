@@ -35,6 +35,7 @@ use crate::{
     dynamic_assertion::PartialClaim,
     error::{Error, Result},
     jumbf::labels::{manifest_label_from_uri, to_absolute_uri, to_relative_uri},
+    jumbf_io,
     manifest::StoreOptions,
     manifest_store_report::ManifestStoreReport,
     settings::get_settings_value,
@@ -70,7 +71,7 @@ pub trait AsyncPostValidator {
     ) -> Result<Option<Value>>;
 }
 
-/// A reader for the manifest store.
+/// Use a Reader to read and validate a manifest store.
 #[skip_serializing_none]
 #[derive(Serialize, Deserialize)]
 #[cfg_attr(feature = "json_schema", derive(JsonSchema))]
@@ -110,7 +111,7 @@ impl Reader {
     /// * `format` - The format of the stream.  MIME type or extension that maps to a MIME type.
     /// * `stream` - The stream to read from.  Must implement the Read and Seek traits. (NOTE: Explain Send trait, required for both sync & async?).
     /// # Returns
-    /// A Reader for the manifest store.
+    /// A [`Reader`] for the manifest store.
     /// # Errors
     /// Returns an [`Error`] when the manifest data cannot be read.  If there's no error upon reading, you must still check validation status to ensure that the manifest data is validated.  That is, even if there are no errors, the data still might not be valid.
     /// # Example
@@ -144,7 +145,7 @@ impl Reader {
     /// # Arguments
     /// * `path` - The path to the file.
     /// # Returns
-    /// A reader for the manifest store.
+    /// A [`Reader`] for the manifest store.
     /// # Errors
     /// Returns an [`Error`] when the manifest data cannot be read from the specified file.  If there's no error upon reading, you must still check validation status to ensure that the manifest data is validated.  That is, even if there are no errors, the data still might not be valid.
     /// # Example
@@ -288,7 +289,7 @@ impl Reader {
 
         let mut validation_log = StatusTracker::default();
 
-        let asset_type = crate::jumbf_io::get_supported_file_extension(path.as_ref())
+        let asset_type = jumbf_io::get_supported_file_extension(path.as_ref())
             .ok_or(crate::Error::UnsupportedType)?;
 
         let mut init_segment = std::fs::File::open(path.as_ref())?;
@@ -341,6 +342,11 @@ impl Reader {
             }
         }
         value
+    }
+
+    /// Returns a [Vec] of mime types that [c2pa-rs] is able to read.
+    pub fn supported_mime_types() -> Vec<String> {
+        jumbf_io::supported_reader_mime_types()
     }
 
     /// replace assertion values in the reader json with the values from the assertion_values map
@@ -589,7 +595,7 @@ impl Reader {
             if path.starts_with("/c2pa/") {
                 path = path.replacen("/c2pa/", "", 1);
             } else {
-                path = format!("{}/{path}", manifest_label);
+                path = format!("{manifest_label}/{path}");
             }
             path = path.replace([':'], "_");
         }
@@ -673,11 +679,11 @@ impl Reader {
         // Add any remaining redacted assertions to the validation results
         // todo: figure out what to do here!
         if !redacted.is_empty() {
-            eprintln!("Not Redacted: {:?}", redacted);
+            eprintln!("Not Redacted: {redacted:?}");
             return Err(Error::AssertionRedactionNotFound);
         }
         if !missing.is_empty() {
-            eprintln!("Assertion Missing: {:?}", missing);
+            eprintln!("Assertion Missing: {missing:?}");
             return Err(Error::AssertionMissing {
                 url: redacted[0].to_owned(),
             });
@@ -716,7 +722,7 @@ impl Reader {
                 if let Some(status) = ValidationStatus::from_log_item(log) {
                     validation_results.add_status(status);
                 } else {
-                    eprintln!("Failed to create status from log item: {:?}", log);
+                    eprintln!("Failed to create status from log item: {log:?}");
                 }
             }
         }
@@ -920,7 +926,6 @@ pub mod tests {
     /// Test that the reader can validate a file with nested assertion errors
     fn test_reader_to_folder() -> Result<()> {
         use crate::utils::{io_utils::tempdirectory, test::temp_dir_path};
-
         let reader = Reader::from_file("tests/fixtures/CACAE-uri-CA.jpg")?;
         assert_eq!(reader.validation_status(), None);
         let temp_dir = tempdirectory().unwrap();
@@ -982,7 +987,7 @@ pub mod tests {
 
         reader.post_validate(&TestValidator {})?;
 
-        println!("{}", reader);
+        println!("{reader}");
         //Err(Error::NotImplemented("foo".to_string()))
         Ok(())
     }

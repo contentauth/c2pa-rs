@@ -237,7 +237,7 @@ impl Ingredient {
     ///
     /// For v2 ingredients this can return an empty string
     pub fn instance_id(&self) -> &str {
-        self.instance_id.as_deref().unwrap_or("")
+        self.instance_id.as_deref().unwrap_or("None") // todo: deprecate and change to Option<&str>
     }
 
     /// Returns the provenance URI if available.
@@ -510,11 +510,13 @@ impl Ingredient {
     }
 
     /// Return an immutable reference to the ingredient resources.
+    #[doc(hidden)]
     pub fn resources(&self) -> &ResourceStore {
         &self.resources
     }
 
     /// Return an mutable reference to the ingredient resources.
+    #[doc(hidden)]
     pub fn resources_mut(&mut self) -> &mut ResourceStore {
         &mut self.resources
     }
@@ -667,7 +669,7 @@ impl Ingredient {
             }
             Err(e) => {
                 // we can ignore the error here because it should have a log entry corresponding to it
-                debug!("ingredient {:?}", e);
+                debug!("ingredient {e:?}");
 
                 let mut results = ValidationResults::default();
                 // convert any other error to a validation status
@@ -705,8 +707,9 @@ impl Ingredient {
     }
 
     fn thumbnail_from_assertion(assertion: &Assertion) -> (String, Vec<u8>) {
-        let thumbnail_format =
-            extension_to_mime(get_thumbnail_image_type(&assertion.label_root()).as_str());
+        let thumbnail_format = extension_to_mime(
+            &get_thumbnail_image_type(&assertion.label_root()).unwrap_or("".into()),
+        );
         (
             thumbnail_format.unwrap_or("image/none").to_string(),
             assertion.data().to_vec(),
@@ -729,7 +732,7 @@ impl Ingredient {
         let _t = crate::utils::time_it::TimeIt::new("Ingredient:from_file_with_options");
 
         // from the source file we need to get the XMP, JUMBF and generate a thumbnail
-        debug!("ingredient {:?}", path);
+        debug!("ingredient {path:?}");
 
         // get required information from the file path
         let mut ingredient = Self::from_file_info(path);
@@ -1001,16 +1004,10 @@ impl Ingredient {
             None => Vec::new(),
         };
 
-        let mut active_manifest = ingredient_assertion
-            .c2pa_manifest
-            .and_then(|hash_url| manifest_label_from_uri(&hash_url.url()));
-
         // use either the active_manifest or c2pa_manifest field
-        if active_manifest.is_none() {
-            active_manifest = ingredient_assertion
-                .active_manifest
-                .and_then(|hash_url| manifest_label_from_uri(&hash_url.url()));
-        }
+        let active_manifest = ingredient_assertion
+            .c2pa_manifest()
+            .and_then(|hash_url| manifest_label_from_uri(&hash_url.url()));
 
         debug!(
             "Adding Ingredient {:?} {:?}",
@@ -1856,15 +1853,16 @@ mod tests_file_io {
         assert_eq!(ingredient.format(), Some("image/jpeg"));
         test_thumbnail(&ingredient, "image/jpeg");
         assert!(ingredient.manifest_data().is_some());
-        assert_eq!(
+        assert!(
             ingredient
                 .validation_results()
                 .unwrap()
                 .active_manifest()
                 .unwrap()
-                .informational[0]
-                .code(),
-            validation_status::TIMESTAMP_MISMATCH
+                .informational
+                .iter()
+                .any(|info| info.code() == validation_status::TIMESTAMP_MISMATCH),
+            "No informational item with TIMESTAMP_MISMATCH found"
         );
     }
 
@@ -1890,7 +1888,7 @@ mod tests_file_io {
 
     #[test]
     #[cfg(feature = "file_io")]
-    fn test_jpg_nested() {
+    fn test_jpg_nested_err() {
         let ap = fixture_path("CIE-sig-CA.jpg");
         let ingredient = Ingredient::from_file(ap).expect("from_file");
         // println!("ingredient = {ingredient}");
@@ -1993,7 +1991,7 @@ mod tests_file_io {
 
         assert_eq!(ingredient.title(), Some("prompt"));
         assert_eq!(ingredient.format(), Some("text/plain"));
-        assert_eq!(ingredient.instance_id(), "");
+        assert_eq!(ingredient.instance_id(), "None");
         assert_eq!(ingredient.data_ref().unwrap().identifier, "prompt_id");
         assert_eq!(ingredient.data_ref().unwrap().format, "text/plain");
         assert_eq!(ingredient.relationship(), &Relationship::InputTo);

@@ -46,4 +46,7 @@ pub struct CertificateInfo {
     ///
     /// TO REVIEW: What does this `bool` mean?
     pub revocation_status: Option<bool>,
+
+    /// User attested time (iat) if present
+    pub iat: Option<String>,
 }

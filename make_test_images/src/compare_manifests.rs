@@ -16,6 +16,7 @@ use std::collections::HashMap;
 use std::{fs, path::Path};
 
 use c2pa::{Error, Reader, Result};
+use regex::Regex;
 
 /// Compares all the files in two directories and returns a list of issues
 pub fn compare_folders<P: AsRef<Path>, Q: AsRef<Path>>(folder1: P, folder2: Q) -> Result<()> {
@@ -26,12 +27,12 @@ pub fn compare_folders<P: AsRef<Path>, Q: AsRef<Path>>(folder1: P, folder2: Q) -
     if folder1.is_file() && folder2.is_file() {
         let issues = compare_image_manifests(folder1, folder2)?;
         if !issues.is_empty() {
-            eprintln!("Failed {:?}", folder1);
+            eprintln!("Failed {folder1:?}");
             for issue in issues {
-                eprintln!("  {}", issue);
+                eprintln!("  {issue}");
             }
         } else {
-            println!("Passed {:?}", folder1);
+            println!("Passed {folder1:?}");
         }
         return Ok(());
     } else if !(folder1.is_dir() && folder2.is_dir()) {
@@ -60,12 +61,12 @@ pub fn compare_folders<P: AsRef<Path>, Q: AsRef<Path>>(folder1: P, folder2: Q) -
                 ));
             }
             if !issues.is_empty() {
-                eprintln!("Failed {:?}", relative_path);
+                eprintln!("Failed {relative_path:?}");
                 for issue in issues {
-                    eprintln!("  {}", issue);
+                    eprintln!("  {issue}");
                 }
             } else {
-                println!("Passed {:?}", relative_path);
+                println!("Passed {relative_path:?}");
             }
         }
     }
@@ -125,7 +126,7 @@ pub fn compare_manifests(
         let value1 = serde_json::to_value(manifest_store1.get_manifest(label1))?;
         let value2 = serde_json::to_value(manifest_store2.get_manifest(label2))?;
         compare_json_values(
-            &format!("manifests.{}", label1),
+            &format!("manifests.{label1}"),
             &value1,
             &value2,
             &mut issues,
@@ -155,41 +156,120 @@ fn compare_json_values(
     val2: &serde_json::Value,
     issues: &mut Vec<String>,
 ) {
+    // Add this regex for the jumbf pattern
+    lazy_static::lazy_static! {
+        // Captures: prefix, guid, suffix
+        static ref JUMBF_GUID_CAPTURE: Regex = Regex::new(
+            r"^(self#jumbf=/c2pa/[^:]+:urn:uuid:)([0-9a-fA-F\-]{36})(/.*)$"
+        ).unwrap();
+        static ref URN_GUID_CAPTURE: Regex = Regex::new(
+            r"^([a-zA-Z0-9_]+:)?(urn:(?:c2pa|uuid):)([0-9a-fA-F\-]{36})(:?.*)?$"
+        ).unwrap();
+        static ref PREFIXED_URN_UUID_CAPTURE: Regex = Regex::new(
+            r"^([a-zA-Z0-9_]+:urn:uuid:)([0-9a-fA-F\-]{36})$"
+        ).unwrap();
+        static ref XMP_IID_GUID_CAPTURE: Regex = Regex::new(
+        r"^(xmp:iid:)([0-9a-fA-F\-]{36})$"
+        ).unwrap();
+        static ref UTC_TIMESTAMP_RE: Regex = Regex::new(
+            r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?([+-]\d{2}:\d{2}|Z)$"
+        ).unwrap();
+        static ref BASE64_RE: Regex = Regex::new(r"^[A-Za-z0-9+/=]{16,}$").unwrap();
+    }
+
     match (val1, val2) {
         (serde_json::Value::Object(map1), serde_json::Value::Object(map2)) => {
             for (key, val1) in map1 {
                 let val2 = map2.get(key).unwrap_or(&serde_json::Value::Null);
-                compare_json_values(&format!("{}.{}", path, key), val1, val2, issues);
+                compare_json_values(&format!("{path}.{key}"), val1, val2, issues);
             }
 
             for (key, value) in map2 {
                 if map1.get(key).is_none() {
-                    issues.push(format!("Added {}.{}: {}", path, key, value));
+                    issues.push(format!("Added {path}.{key}: {value}"));
                 }
             }
         }
         (serde_json::Value::Array(arr1), serde_json::Value::Array(arr2)) => {
             for (i, (val1, val2)) in arr1.iter().zip(arr2.iter()).enumerate() {
-                compare_json_values(&format!("{}[{}]", path, i), val1, val2, issues);
+                compare_json_values(&format!("{path}[{i}]"), val1, val2, issues);
             }
         }
         (val1, val2) if val1 != val2 => {
-            if !(path.ends_with(".instance_id")
-                || path.ends_with(".time")
-                || path.contains(".parameters.org.cai.ingredientIds")
-                || path.contains(".hash")
-                || val1.is_string()
-                    && val2.is_string()
-                    && (val1.to_string().contains(":urn:uuid:")
-                        || val2.to_string().contains(":urn:uuid:")))
-            {
-                if val2.is_null() {
-                    issues.push(format!("Missing {}: {}", path, val1));
-                } else if val2.is_null() {
-                    issues.push(format!("Added {}: {}", path, val2));
-                } else {
-                    issues.push(format!("Changed {}: {} vs {}", path, val1, val2));
+            // if they are both strings, check for specific patterns
+            if let (Some(s1), Some(s2)) = (val1.as_str(), val2.as_str()) {
+                // For self#jumbf pattern
+                if let (Some(cap1), Some(cap2)) = (
+                    JUMBF_GUID_CAPTURE.captures(s1),
+                    JUMBF_GUID_CAPTURE.captures(s2),
+                ) {
+                    if cap1.get(1).map_or("", |m| m.as_str())
+                        == cap2.get(1).map_or("", |m| m.as_str())
+                        && cap1.get(3).map_or("", |m| m.as_str())
+                            == cap2.get(3).map_or("", |m| m.as_str())
+                    {
+                        return;
+                    }
                 }
+                // For contentauth:urn:uuid:... or similar patterns
+                if let (Some(cap1), Some(cap2)) = (
+                    PREFIXED_URN_UUID_CAPTURE.captures(s1),
+                    PREFIXED_URN_UUID_CAPTURE.captures(s2),
+                ) {
+                    if cap1.get(1).map_or("", |m| m.as_str())
+                        == cap2.get(1).map_or("", |m| m.as_str())
+                    {
+                        return;
+                    }
+                }
+                // For urn:c2pa:... pattern
+                if let (Some(cap1), Some(cap2)) =
+                    (URN_GUID_CAPTURE.captures(s1), URN_GUID_CAPTURE.captures(s2))
+                {
+                    if cap1.get(1).map_or("", |m| m.as_str())
+                        == cap2.get(1).map_or("", |m| m.as_str())
+                        && cap1.get(3).map_or("", |m| m.as_str())
+                            == cap2.get(3).map_or("", |m| m.as_str())
+                    {
+                        return;
+                    }
+                }
+                // For xmp:iid: pattern
+                if let (Some(cap1), Some(cap2)) = (
+                    XMP_IID_GUID_CAPTURE.captures(s1),
+                    XMP_IID_GUID_CAPTURE.captures(s2),
+                ) {
+                    if cap1.get(1).map_or("", |m| m.as_str())
+                        == cap2.get(1).map_or("", |m| m.as_str())
+                    {
+                        return;
+                    }
+                }
+                // Ignore differences if both are UTC timestamps
+                if UTC_TIMESTAMP_RE.is_match(s1) && UTC_TIMESTAMP_RE.is_match(s2) {
+                    return;
+                }
+                // Ignore differences in base64 hash values
+                if path.contains(".hash") && BASE64_RE.is_match(s1) && BASE64_RE.is_match(s2) {
+                    return;
+                }
+                // Ignore version bumps (any string that typically has a version in it)
+                if path.ends_with(".version")
+                    || path.ends_with(".claim_generator")
+                    || path.ends_with(".org.cai.c2pa_rs")
+                    || path.ends_with(".softwareAgent")
+                {
+                    // only if it is a string and could contain a version
+                    return;
+                }
+            }
+
+            if val2.is_null() {
+                issues.push(format!("Missing {path}: {val1}"));
+            } else if val2.is_null() {
+                issues.push(format!("Added {path}: {val2}"));
+            } else {
+                issues.push(format!("Changed {path}: {val1} vs {val2}"));
             }
         }
         _ => (),

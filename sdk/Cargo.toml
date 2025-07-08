@@ -20,11 +20,23 @@ readme = "../README.md"
 keywords = ["xmp", "metadata"]
 categories = ["api-bindings"]
 edition = "2021"
-rust-version = "1.82.0"
+rust-version = "1.85.0"
 exclude = ["tests/fixtures"]
 
 [package.metadata.docs.rs]
-all-features = true
+# Build with all features, but not with openssl and rust_native_crypto simulatenously.
+features = [
+    "openssl",
+    "add_thumbnails",
+    "file_io",
+    "serialize_thumbnails",
+    "no_interleaved_io",
+    "fetch_remote_manifests",
+    "json_schema",
+    "pdf",
+    "v1_api",
+    "diagnostics",
+]
 rustdoc-args = ["--cfg", "docsrs"]
 
 [features]
@@ -90,6 +102,7 @@ async-recursion = "1.1.1"
 async-trait = "0.1.78"
 atree = "0.5.2"
 base64 = "0.22.1"
+base64ct = "=1.7.3"
 bcder = "0.7.3"
 bytes = "1.7.2"
 byteorder = { version = "1.4.3", default-features = false }
@@ -112,7 +125,7 @@ extfmt = "0.1.1"
 der = { version = "0.7.9", optional = true }
 ecdsa = { version = "0.16.9", features = ["digest", "sha2"], optional = true }
 ed25519-dalek = { version = "2.1.1", features = ["alloc", "digest", "pem", "pkcs8", "rand_core"] }
-getrandom = { version = "0.2.7", features = ["js"] }
+env_logger = "0.10.0"
 hex = "0.4.3"
 hex-literal = "0.4.1"  # Might be only a dev dependency
 id3 = "=1.16.1"
@@ -124,7 +137,6 @@ lopdf = { version = "0.31.0", optional = true }
 lazy_static = "1.4.0"
 memchr = "2.7.4"
 mp4 = "0.14.0"
-multibase = "0.9.1"
 nom = "7.1.3"
 non-empty-string = { version = "=0.2.4", features = ["serde"] }
 nonempty-collections = { version = "0.2.9", features = ["serde"] }
@@ -244,6 +256,7 @@ anyhow = "1.0.97"
 glob = "0.3.1"
 hex-literal = "0.4.1"
 jumbf = "0.4.0"
+c2pa_macros = { path = "../macros"}
 mockall = "0.13.1"
 
 [target.'cfg(all(target_arch = "wasm32", not(target_os = "wasi")))'.dev-dependencies]
@@ -255,5 +268,8 @@ httpmock = "0.7.0"
 tokio = { version = "1.44.2", features = ["full"] }
 
 [package.metadata.cargo-udeps.ignore]
-normal = ["windows-core"]
+normal = ["windows-core", "base64ct"]
     # REMOVE once chrono and other crates update to avoid yanked version of windows-core
+
+    # CAI-8799: Remove the base64ct override once we bump c2pa-rs MSRV
+    # to 1.85 or higher.

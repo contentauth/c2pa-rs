@@ -69,6 +69,7 @@ impl Verifier<'_> {
         cose_sign1: &[u8],
         data: &[u8],
         additional_data: &[u8],
+        tst_info: Option<TstInfo>,
         validation_log: &mut StatusTracker,
     ) -> Result<CertificateInfo, CoseError> {
         let mut sign1 = parse_cose_sign1(cose_sign1, data, validation_log)?;
@@ -85,10 +86,16 @@ impl Verifier<'_> {
             return Err(CoseError::UnsupportedSigningAlgorithm);
         };
 
-        let tst_info_res = if _sync {
-            validate_cose_tst_info(&sign1, data)
+        // If a timestamp is provided, use it. Otherwise, validate the timestamp from
+        // the signature.
+        let tst_info_res = if let Some(ti) = tst_info {
+            Ok(ti)
         } else {
-            validate_cose_tst_info_async(&sign1, data).await
+            if _sync {
+                validate_cose_tst_info(&sign1, data)
+            } else {
+                validate_cose_tst_info_async(&sign1, data).await
+            }
         };
 
         match alg {
@@ -178,6 +185,7 @@ impl Verifier<'_> {
             validated: true,
             cert_chain: dump_cert_chain(&certs)?,
             revocation_status: Some(true),
+            ..Default::default()
         })
     }
 
@@ -340,17 +348,17 @@ fn dump_cert_chain(certs: &[Vec<u8>]) -> Result<Vec<u8>, CoseError> {
             .collect::<Vec<_>>();
 
         writer
-            .write_fmt(format_args!("{}\n", cert_begin))
+            .write_fmt(format_args!("{cert_begin}\n"))
             .map_err(|_e| CoseError::InternalError("could not write PEM".to_string()))?;
 
         for l in cert_lines {
             writer
-                .write_fmt(format_args!("{}\n", l))
+                .write_fmt(format_args!("{l}\n"))
                 .map_err(|_e| CoseError::InternalError("could not write PEM".to_string()))?;
         }
 
         writer
-            .write_fmt(format_args!("{}\n", cert_end))
+            .write_fmt(format_args!("{cert_end}\n"))
             .map_err(|_e| CoseError::InternalError("could not write PEM".to_string()))?;
     }
 

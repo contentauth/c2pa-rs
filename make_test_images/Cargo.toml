@@ -4,7 +4,7 @@ version.workspace = true
 authors = ["Gavin Peacock <gpeacock@adobe.com>"]
 license = "MIT OR Apache-2.0"
 edition = "2021"
-rust-version = "1.82.0"
+rust-version = "1.85.0"
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(test)'] }
@@ -15,6 +15,7 @@ anyhow = "1.0.40"
 c2pa = { workspace = true }
 env_logger = "0.11"
 log = "0.4.8"
+lazy_static = "1.4.0"
 image = { version = "0.25.2", default-features = false, features = [
 	"jpeg",
 	"png",

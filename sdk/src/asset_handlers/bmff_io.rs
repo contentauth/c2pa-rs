@@ -941,7 +941,7 @@ pub(crate) fn build_bmff_tree<R: Read + Seek + ?Sized>(
     while current < end {
         // Get box header.
         let header = BoxHeaderLite::read(reader)
-            .map_err(|err| Error::InvalidAsset(format!("Bad BMFF {}", err)))?;
+            .map_err(|err| Error::InvalidAsset(format!("Bad BMFF {err}")))?;
 
         // Break if size zero BoxHeader
         let s = header.size;
@@ -1848,23 +1848,17 @@ pub mod tests {
         test::{fixture_path, temp_dir_path},
     };
 
-    #[cfg(all(feature = "v1_api", feature = "file_io"))]
     #[test]
     fn test_read_mp4() {
-        use crate::{status_tracker::StatusTracker, store::Store};
-
         crate::settings::set_settings_value("verify.verify_trust", false).unwrap();
 
         let ap = fixture_path("video1.mp4");
+        let mut input_stream = std::fs::File::open(&ap).unwrap();
 
-        let mut log = StatusTracker::default();
-        let store = Store::load_from_asset(&ap, true, &mut log);
+        let bmff = BmffIO::new("mp4");
+        let cai = bmff.read_cai(&mut input_stream).unwrap();
 
-        assert!(!log.has_any_error());
-
-        if let Ok(s) = store {
-            print!("Store: \n{s}");
-        }
+        assert!(!cai.is_empty());
     }
 
     #[test]

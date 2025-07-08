@@ -51,6 +51,7 @@ use crate::status_tracker::StatusTracker;
 /// # assert!(log.line > 2);
 /// ```
 #[macro_export]
+#[doc(hidden)]
 macro_rules! log_item {
     ($label:expr, $description:expr, $function:expr) => {{
         $crate::status_tracker::LogItem {
@@ -82,6 +83,7 @@ macro_rules! log_item {
 /// # use c2pa::{log_current_item, status_tracker::{LogKind, LogItem}};
 /// let log = log_current_item!("test item 1", "test func");
 /// ```
+#[doc(hidden)]
 #[macro_export]
 macro_rules! log_current_item {
     ($description:expr, $function:expr) => {{
@@ -228,8 +230,9 @@ impl LogItem {
     /// so, this function will return `Err(err)`.
     ///
     /// If the implementation is configured to aggregate all log messages, this
-    /// function will return `Ok(())`.
-    pub fn failure<E: Debug>(mut self, tracker: &mut StatusTracker, err: E) -> Result<(), E> {
+    /// function will return `Ok(E)`.  The error value
+    /// is available regardless of ErrorBehavior.
+    pub fn failure<E: Debug>(mut self, tracker: &mut StatusTracker, err: E) -> Result<E, E> {
         self.kind = LogKind::Failure;
         self.err_val = Some(format!("{err:?}").into());
         tracker.add_error(self, err)
@@ -245,6 +248,20 @@ impl LogItem {
         self.err_val = Some(format!("{err:?}").into());
 
         tracker.add_non_error(self);
+    }
+
+    /// Set the log item kind to [`LogKind::Failure`] and add it to the
+    /// [`StatusTracker`].
+    ///
+    /// Always return the passed error value.  This allows the error status to
+    /// propagate correctly from closures.
+    pub fn failure_as_err<E: Debug>(mut self, tracker: &mut StatusTracker, err: E) -> E {
+        self.kind = LogKind::Failure;
+        self.err_val = Some(format!("{err:?}").into());
+        match tracker.add_error(self, err) {
+            Ok(e) => e,
+            Err(e) => e,
+        }
     }
 }
 

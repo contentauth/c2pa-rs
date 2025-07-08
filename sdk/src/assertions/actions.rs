@@ -13,6 +13,7 @@
 
 use std::collections::HashMap;
 
+use log::error;
 use serde::{Deserialize, Serialize};
 use serde_cbor::Value;
 
@@ -35,7 +36,7 @@ pub mod digital_source_type {
         "http://c2pa.org/digitalsourcetype/trainedAlgorithmicData";
 }
 
-/// Specification defined C2PA actions
+/// C2PA actions defined in the C2PA specification.
 pub mod c2pa_action {
     /// Changes to tone, saturation, etc.
     pub const COLOR_ADJUSTMENTS: &str = "c2pa.color_adjustments";
@@ -66,6 +67,12 @@ pub mod c2pa_action {
 
     /// Added/Placed a `componentOf` ingredient into the asset.
     pub const PLACED: &str = "c2pa.placed";
+
+    /// A componentOf ingredient was removed.
+    pub const REMOVED: &str = "c2pa.removed";
+
+    /// A componentOf ingredient was removed.
+    pub const REDACTED: &str = "c2pa.redacted";
 
     /// Asset is released to a wider audience.
     pub const PUBLISHED: &str = "c2pa.published";
@@ -126,9 +133,8 @@ impl From<ClaimGeneratorInfo> for SoftwareAgent {
 /// along with possible other information such as what software performed
 /// the action.
 ///
-/// See <https://c2pa.org/specifications/specifications/1.0/specs/C2PA_Specification.html#_actions>.
+/// See <https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_actions>.
 #[derive(Deserialize, Serialize, Clone, Debug, Default, PartialEq)]
-#[serde(deny_unknown_fields)]
 pub struct Action {
     /// The label associated with this action. See ([`c2pa_action`]).
     action: String,
@@ -274,6 +280,7 @@ impl Action {
     }
 
     /// Returns a digitalSourceType as defined at <https://cv.iptc.org/newscodes/digitalsourcetype/>.
+    // QUESTION: Keep in docs?
     pub fn source_type(&self) -> Option<&str> {
         self.source_type.as_deref()
     }
@@ -281,7 +288,7 @@ impl Action {
     /// Returns the list of related actions.
     ///
     /// This is only present in C2PA v2.
-    /// See <https://c2pa.org/specifications/specifications/1.0/specs/C2PA_Specification.html#_related>.
+    /// See <https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_related_actions>.
     pub fn related(&self) -> Option<&[Action]> {
         self.related.as_deref()
     }
@@ -289,7 +296,7 @@ impl Action {
     /// Returns the reason why this action was performed.
     ///
     /// This is only present in C2PA v2.
-    /// See <https://c2pa.org/specifications/specifications/1.0/specs/C2PA_Specification.html#_reason>.
+    /// See <https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_reason>.
     pub fn reason(&self) -> Option<&str> {
         self.reason.as_deref()
     }
@@ -337,7 +344,10 @@ impl Action {
                 }
                 Some(result)
             }
-            Some(_) => None, // Invalid format, so ignore it.
+            Some(_) => {
+                error!("Invalid format for org.cai.ingredientIds parameter, expected an array of strings.");
+                None // Invalid format, so ignore it.
+            }
             // If there is no org.cai.ingredientIds parameter, check for the deprecated instance_id
             #[allow(deprecated)]
             None => self.instance_id.as_ref().map(|id| vec![id.to_string()]),
@@ -405,7 +415,7 @@ impl Action {
     /// Sets the list of related actions.
     ///
     /// This is only present in C2PA v2.
-    /// See <https://c2pa.org/specifications/specifications/1.0/specs/C2PA_Specification.html#_related>.
+    /// See <https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_related_actions>.
     pub fn set_related(mut self, related: Option<&Vec<Action>>) -> Self {
         self.related = related.cloned();
         self
@@ -414,7 +424,7 @@ impl Action {
     /// Sets the reason why this action was performed.
     ///
     /// This is only present in C2PA v2.
-    /// See <https://c2pa.org/specifications/specifications/1.0/specs/C2PA_Specification.html#_reason>.
+    /// See <https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_reason>.
     pub fn set_reason<S: Into<String>>(mut self, reason: S) -> Self {
         self.reason = Some(reason.into());
         self
@@ -490,7 +500,7 @@ impl ActionTemplate {
 /// what took place on the asset, when it took place, along with possible
 /// other information such as what software performed the action.
 ///
-/// See <https://c2pa.org/specifications/specifications/1.0/specs/C2PA_Specification.html#_actions>.
+/// See <https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_actions>.
 #[derive(Deserialize, Serialize, Debug, PartialEq)]
 #[non_exhaustive]
 pub struct Actions {
@@ -517,7 +527,7 @@ pub struct Actions {
 impl Actions {
     /// Label prefix for an [`Actions`] assertion.
     ///
-    /// See <https://c2pa.org/specifications/specifications/1.0/specs/C2PA_Specification.html#_actions>.
+    /// See <https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_actions>.
     pub const LABEL: &'static str = labels::ACTIONS;
 
     /// Creates a new [`Actions`] assertion struct.
@@ -531,12 +541,40 @@ impl Actions {
         }
     }
 
-    /// determines if actions is V2
+    /// Determines if actions is V2
     fn is_v2(&self) -> bool {
         if self.templates.is_some() {
             return true;
         };
         self.actions.iter().any(|a| a.is_v2())
+    }
+
+    /// Returns desired ClaimGeneratorInfo if present. index is 0 based
+    pub fn software_agent(&self, index: usize) -> Option<&ClaimGeneratorInfo> {
+        if let Some(sa_vec) = &self.software_agents {
+            return sa_vec.get(index);
+        }
+        None
+    }
+
+    // Return softwareAgent list if available
+    pub fn software_agents(&self) -> &Option<Vec<ClaimGeneratorInfo>> {
+        &self.software_agents
+    }
+
+    // Return softwareAgent list if available
+    pub fn templates(&self) -> &Option<Vec<ActionTemplate>> {
+        &self.templates
+    }
+
+    /// Add a top level ClaimGeneratorInfo to the softwareAgent list.  These are
+    /// referenced by indexes in the specific Action
+    pub fn add_software_agent(&mut self, cgi: ClaimGeneratorInfo) {
+        if let Some(sa_vec) = &mut self.software_agents {
+            sa_vec.push(cgi);
+        } else {
+            self.software_agents = Some(vec![cgi]);
+        }
     }
 
     /// Returns the list of [`Action`]s.
@@ -916,7 +954,7 @@ pub mod tests {
                         "version": "2.0",
                         "schema.org.SoftwareApplication.operatingSystem": "Windows 10"
                     },
-                    "softwareAgentIndex": 1,
+                    "softwareAgentIndex": 0,
                     "templateParameters": {
                         "description": "Magic Filter",
                         "digitalSourceType": "http://cv.iptc.org/newscodes/digitalsourcetype/compositeSynthetic",

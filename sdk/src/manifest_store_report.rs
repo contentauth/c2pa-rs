@@ -239,11 +239,11 @@ impl ManifestStoreReport {
         for i in claim.ingredient_assertions() {
             let ingredient_assertion =
                 <crate::assertions::Ingredient as crate::assertion::AssertionBase>::from_assertion(
-                    i,
+                    i.assertion(),
                 )?;
 
             // is this an ingredient
-            if let Some(ref c2pa_manifest) = &ingredient_assertion.c2pa_manifest {
+            if let Some(c2pa_manifest) = &ingredient_assertion.c2pa_manifest() {
                 let label = Store::manifest_label_from_path(&c2pa_manifest.url());
 
                 if let Some(hash) = c2pa_manifest.hash().get(0..5) {
@@ -258,7 +258,7 @@ impl ManifestStoreReport {
                         let data = if name_only {
                             format!("{}_{}", title, Hexlify(hash))
                         } else {
-                            format!("Asset:{}, Manifest:{}", title, label)
+                            format!("Asset:{title}, Manifest:{label}")
                         };
 
                         let new_token = current_token.append(tree, data);

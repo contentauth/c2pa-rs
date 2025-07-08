@@ -29,15 +29,18 @@ use crate::{
 
 const ASSERTION_CREATION_VERSION: usize = 3;
 
-// Used to differentiate a parent from a component
+/// The relationship of the ingredient to the current asset.
 #[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq, Eq)]
 #[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 pub enum Relationship {
+    /// The current asset is derived from this ingredient.
     #[serde(rename = "parentOf")]
     ParentOf,
+    /// The current asset is a part of this ingredient.
     #[serde(rename = "componentOf")]
     #[default]
     ComponentOf,
+    /// The ingredient was used as an input to a computational process to create or modify the asset.
     #[serde(rename = "inputTo")]
     InputTo,
 }
@@ -85,7 +88,7 @@ impl Serialize for Ingredient {
 impl Ingredient {
     /// Label prefix for an ingredient assertion.
     ///
-    /// See <https://c2pa.org/specifications/specifications/1.0/specs/C2PA_Specification.html#_ingredient>.
+    /// See <https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#ingredient_assertion>.
     pub const LABEL: &'static str = labels::INGREDIENT;
 
     pub fn new(title: &str, format: &str, instance_id: &str, document_id: Option<&str>) -> Self {
@@ -120,6 +123,18 @@ impl Ingredient {
         }
     }
 
+    pub fn c2pa_manifest(&self) -> Option<HashedUri> {
+        // get correct hashed URI
+        match &self.active_manifest {
+            Some(m) => Some(m.clone()), // > v2 ingredient assertion
+            None => self.c2pa_manifest.clone(),
+        }
+    }
+
+    pub fn signature(&self) -> Option<HashedUri> {
+        self.claim_signature.clone()
+    }
+
     fn is_v1_compatible(&self) -> bool {
         self.title.is_some()
             && self.format.is_some()
@@ -146,6 +161,19 @@ impl Ingredient {
         self.document_id.is_none()    // V3 restricted fields
             && self.validation_status.is_none()
             && self.c2pa_manifest.is_none()
+            && self.validation_results.is_some()
+            && self.active_manifest.is_some()
+            && self.claim_signature.is_some()
+    }
+
+    pub fn set_title<S: Into<String>>(mut self, title: S) -> Self {
+        self.title = Some(title.into());
+        self
+    }
+
+    pub fn set_format<S: Into<String>>(mut self, format: S) -> Self {
+        self.format = Some(format.into());
+        self
     }
 
     pub fn set_parent(mut self) -> Self {
@@ -155,6 +183,21 @@ impl Ingredient {
 
     pub fn set_c2pa_manifest_from_hashed_uri(mut self, provenance: Option<HashedUri>) -> Self {
         self.c2pa_manifest = provenance;
+        self
+    }
+
+    pub fn set_active_manifests_and_signature_from_hashed_uri(
+        mut self,
+        provenance: Option<HashedUri>,
+        signature: Option<HashedUri>,
+    ) -> Self {
+        self.active_manifest = provenance;
+        self.claim_signature = signature;
+        self
+    }
+
+    pub fn set_validation_results(mut self, validation_results: Option<ValidationResults>) -> Self {
+        self.validation_results = validation_results;
         self
     }
 
