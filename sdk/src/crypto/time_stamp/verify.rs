@@ -194,12 +194,10 @@ pub fn verify_time_stamp(
                         return None;
                     }
 
-                    attr.values.to_vec().first().and_then(|v| {
-                        match rasn::der::decode::<rasn_pkix::Time>(v.as_bytes()) {
-                            Ok(t) => Some(t),
-                            Err(_) => None,
-                        }
-                    })
+                    attr.values
+                        .to_vec()
+                        .first()
+                        .and_then(|v| rasn::der::decode::<rasn_pkix::Time>(v.as_bytes()).ok())
                 })
             {
                 let signed_signing_time = match attrib_signing_time {
