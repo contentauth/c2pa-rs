@@ -20,7 +20,7 @@
 /// the claim will be added to any existing claims.
 use std::{
     env,
-    fs::{create_dir_all, remove_dir_all, File},
+    fs::{copy, create_dir_all, remove_dir_all, File},
     io::Write,
     path::{Path, PathBuf},
     str::FromStr,
@@ -724,7 +724,7 @@ fn main() -> Result<()> {
 
                 let mut file = NamedTempFile::new()?;
                 let format = format_from_path(&args.path).unwrap();
-                let mut source = std::fs::File::open(args.path)?;
+                let mut source = File::open(&args.path)?;
                 if builder.definition.title.is_none() {
                     if let Some(title) = output.file_name() {
                         builder.definition.title = Some(title.to_string_lossy().to_string());
@@ -733,7 +733,14 @@ fn main() -> Result<()> {
                 let manifest_data =
                     builder.sign(signer.as_ref(), &format, &mut source, &mut file)?;
 
-                file.persist(&output)?;
+                if !output.exists() {
+                    // ensure the path to the file exists
+                    if let Some(output_dir) = &output.parent() {
+                        create_dir_all(output_dir)?;
+                    }
+                }
+
+                copy(file, &output)?;
 
                 if args.sidecar {
                     let sidecar = output.with_extension("c2pa");
