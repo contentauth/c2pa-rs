@@ -56,7 +56,7 @@ NOTE: The current release includes a new API that replaces old methods of readin
 
 To use the CAI Rust library, you must install [Rust and Cargo](https://doc.rust-lang.org/cargo/index.html).
 
-Minimal supported Rust version (MSRV): The `c2pa` crate requires Rust version 1.82.0 or newer. When a newer version of Rust becomes required, a new minor (0.x.0) version of this crate will be released.
+Minimal supported Rust version (MSRV): The `c2pa` crate requires Rust version 1.85.0 or newer. When a newer version of Rust becomes required, a new minor (0.x.0) version of this crate will be released.
 
 **Install C build tools**
 
