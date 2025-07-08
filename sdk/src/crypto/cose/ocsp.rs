@@ -19,8 +19,8 @@ use coset::{CoseSign1, Label};
 use crate::{
     crypto::{
         cose::{
-            check_certificate_profile, validate_cose_tst_info, validate_cose_tst_info_async,
-            CertificateTrustPolicy, CoseError,
+            check_end_entity_certificate_profile, validate_cose_tst_info,
+            validate_cose_tst_info_async, CertificateTrustPolicy, CoseError,
         },
         ocsp::OcspResponse,
     },
@@ -89,7 +89,7 @@ fn check_stapled_ocsp_response(
     };
 
     // If there is a timestamp use it for OCSP cert validation,
-    // otherwise follow default rules for OCSP checking.
+    // otherwise follow default rules for OCSP checking
     let (tst_info, signing_time) = match time_stamp_info {
         Ok(tstinfo) => {
             let signing_time = tstinfo.gen_time.clone().into();
@@ -162,7 +162,7 @@ fn fetch_and_check_ocsp_response(
         // If we get a valid response validate the certs.
         if ocsp_data.revoked_at.is_none() {
             if let Some(ocsp_certs) = &ocsp_data.ocsp_certs {
-                check_certificate_profile(&ocsp_certs[0], ctp, validation_log, None)?;
+                check_end_entity_certificate_profile(&ocsp_certs[0], ctp, validation_log, None)?;
             }
         }
 
