@@ -490,8 +490,7 @@ impl Store {
         if let Ok(info) = check_ocsp_status(&sign1, &data, &self.ctp, &mut validation_log) {
             if let Some(revoked_at) = &info.revoked_at {
                 Some(format!(
-                    "Certificate Status: Revoked, revoked at: {}",
-                    revoked_at
+                    "Certificate Status: Revoked, revoked at: {revoked_at}"
                 ))
             } else {
                 Some(format!(
@@ -574,10 +573,7 @@ impl Store {
                             .await
                         };
                         if let Err(err) = result {
-                            error!(
-                                "Signature that was just generated does not validate: {:#?}",
-                                err
-                            );
+                            error!("Signature that was just generated does not validate: {err:#?}");
                             return Err(err);
                         }
                     }
@@ -7731,7 +7727,7 @@ pub mod tests {
         let mut report = StatusTracker::default();
         let new_store = Store::load_from_memory("jpeg", &result, false, &mut report).unwrap();
 
-        println!("new_store: {}", new_store);
+        println!("new_store: {new_store}");
 
         Store::verify_store(
             &new_store,
@@ -7868,7 +7864,7 @@ pub mod tests {
         let mut report = StatusTracker::default();
         let new_store = Store::from_stream("jpeg", &mut result_stream, true, &mut report).unwrap();
 
-        println!("new_store: {}", new_store);
+        println!("new_store: {new_store}");
 
         let result = result_stream.into_inner();
 

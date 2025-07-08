@@ -146,10 +146,7 @@ fn test_builder_remote_url_no_embed() -> Result<()> {
     if let Err(c2pa::Error::RemoteManifestUrl(url)) = reader {
         assert_eq!(url, "http://this_does_not_exist/foo.jpg".to_string());
     } else {
-        panic!(
-            "Expected Err(c2pa::Error::RemoteManifestUrl), got {:?}",
-            reader
-        );
+        panic!("Expected Err(c2pa::Error::RemoteManifestUrl), got {reader:?}");
     }
     Ok(())
 }
@@ -298,7 +295,7 @@ fn test_dynamic_assertions_builder() -> Result<()> {
 
     let reader = Reader::from_stream(format, &mut dest).unwrap();
 
-    println!("reader: {}", reader);
+    println!("reader: {reader}");
 
     assert_ne!(reader.validation_state(), ValidationState::Invalid);
 
