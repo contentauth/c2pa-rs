@@ -305,7 +305,7 @@ fn read_xmp(input_stream: &mut dyn CAIRead) -> Result<(Option<String>, DetectedT
 
                 if pi.contains(XPACKET) && pi.contains(XMP_ID) {
                     // reconstruct opening XMP PI tag
-                    let tag = format!("<?{}?>", pi);
+                    let tag = format!("<?{pi}?>");
                     // start of xmp xpacket
                     detected_level = DetectedTagsDepth::Xmp;
                     // adjust to include the opening XMP PI
