@@ -41,7 +41,7 @@ use crate::{
     settings,
     store::Store,
     utils::mime::format_to_mime,
-    AsyncSigner, ClaimGeneratorInfo, HashRange, Ingredient, Signer,
+    AsyncSigner, ClaimGeneratorInfo, HashRange, Ingredient, Relationship, Signer,
 };
 
 /// Version of the Builder Archive file
@@ -703,6 +703,7 @@ impl Builder {
 
                     let mut actions: Actions = manifest_assertion.to_assertion()?;
 
+                    // https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_mandatory_presence_of_at_least_one_actions_assertion
                     let auto_created =
                         settings::get_profile_settings_value::<bool>("auto_created_action")?;
                     let auto_opened =
@@ -727,6 +728,13 @@ impl Builder {
                                     actions.actions.insert(0, action);
                                 }
                             }
+                        }
+                    }
+
+                    // https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_relationship
+                    for ingredient in &self.definition.ingredients {
+                        if *ingredient.relationship() == Relationship::ComponentOf {
+                            actions.actions.push(Action::new(c2pa_action::PLACED));
                         }
                     }
 
