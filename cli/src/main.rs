@@ -725,8 +725,14 @@ fn main() -> Result<()> {
                 let mut file = NamedTempFile::new()?;
                 let format = format_from_path(&args.path).unwrap();
                 let mut source = std::fs::File::open(args.path)?;
+                if builder.definition.title.is_none() {
+                    if let Some(title) = output.file_name() {
+                        builder.definition.title = Some(title.to_string_lossy().to_string());
+                    }
+                }
                 let manifest_data =
                     builder.sign(signer.as_ref(), &format, &mut source, &mut file)?;
+
                 file.persist(&output)?;
 
                 if args.sidecar {

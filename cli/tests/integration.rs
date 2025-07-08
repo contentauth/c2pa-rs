@@ -232,8 +232,8 @@ fn tool_test_manifest_ingredient_json() -> Result<(), Box<dyn std::error::Error>
     Ok(())
 }
 #[test]
-// c2patool tests/fixtures/earth_apollo17.jpg -m tests/fixtures/ingredient_test.json -fo target/tmp/ingredients.jpg
-fn tool_embed_jpeg_with_ingredients_report() -> Result<(), Box<dyn Error>> {
+// c2patool tests/fixtures/earth_apollo17.jpg -m tests/fixtures/ingredient_test.json -o target/tmp/ingredients.jpg -f
+fn tool_embed_jpeg_with_xredients_report() -> Result<(), Box<dyn Error>> {
     Command::cargo_bin("c2patool")?
         .arg(fixture_path(TEST_IMAGE))
         .arg("-m")
