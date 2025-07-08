@@ -13,9 +13,9 @@
 
 #![deny(missing_docs)]
 
-//! Labels for JUMBF boxes as defined in C2PA 1.0 Specification.
+//! Labels for JUMBF boxes as defined in C2PA Specification.
 //!
-//! See <https://c2pa.org/specifications/specifications/1.0/specs/C2PA_Specification.html#_c2pa_box_details>.
+//! See <https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_c2pa_box_details>.
 
 use std::fmt::Display;
 
@@ -24,27 +24,27 @@ use std::fmt::Display;
 /// This value should be used when possible, since it may contain a version suffix
 /// when needed to support a future version of the spec.
 ///
-/// See <https://c2pa.org/specifications/specifications/1.0/specs/C2PA_Specification.html#_c2pa_box_details>.
+/// See <https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_c2pa_box_details>.
 pub const MANIFEST_STORE: &str = "c2pa";
 
 /// Label for the C2PA assertion store box.
 ///
-/// See <https://c2pa.org/specifications/specifications/1.0/specs/C2PA_Specification.html#_c2pa_box_details>.
+/// See <https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_c2pa_box_details>.
 pub const ASSERTIONS: &str = "c2pa.assertions";
 
 /// Label for the C2PA claim box.
 ///
-/// See <https://c2pa.org/specifications/specifications/1.0/specs/C2PA_Specification.html#_c2pa_box_details>.
+/// See <https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_c2pa_box_details>.
 pub const CLAIM: &str = "c2pa.claim";
 
 /// Label for the C2PA claim signature box.
 ///
-/// See <https://c2pa.org/specifications/specifications/1.0/specs/C2PA_Specification.html#_c2pa_box_details>.
+/// See <https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_c2pa_box_details>.
 pub const SIGNATURE: &str = "c2pa.signature";
 
 /// Label for the credentials store box.
 ///
-/// See <https://c2pa.org/specifications/specifications/1.0/specs/C2PA_Specification.html#_credential_storage>.
+/// See <https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_credential_storage>.
 pub const CREDENTIALS: &str = "c2pa.credentials";
 
 /// Label for the DataBox box.

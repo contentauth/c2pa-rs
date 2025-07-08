@@ -23,10 +23,11 @@ use crate::{
     Error, Result,
 };
 
-/// The EXIF assertion as defined in the C2PA spec section 17.13
-///  See <https://c2pa.org/specifications/specifications/1.0/specs/C2PA_Specification.html#_exif_information>
+/// The EXIF assertion (part of CAWG metadata specification).
 ///
-/// This does not yet define or validate individual fields, but will ensure the correct assertion structure
+/// This does not yet define or validate individual fields, but will ensure the correct assertion structure.
+// NOTE: Hidden because it's now part of standard metadata assertions.
+#[doc(hidden)]
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Exif {
     #[serde(rename = "@context", skip_serializing_if = "Option::is_none")]

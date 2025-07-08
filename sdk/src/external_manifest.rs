@@ -22,6 +22,7 @@ use crate::Result;
 // assertions in the active manifest.  You cannot add or remove assertions. Special
 // assertions like hash assertions (c2pa.hash.{data | boxes | bmff | bmff.v2}), ingredients,
 // or action assertions cannot be changed.
+#[doc(hidden)]
 pub trait ManifestPatchCallback {
     fn patch_manifest(&self, manifest_store: &[u8]) -> Result<Vec<u8>>;
 }

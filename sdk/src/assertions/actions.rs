@@ -29,7 +29,7 @@ use crate::{
 const ASSERTION_CREATION_VERSION: usize = 2;
 pub const CAI_INGREDIENT_IDS: &str = "org.cai.ingredientIds";
 
-/// Specification defined C2PA actions
+/// C2PA actions defined in the C2PA specification.
 pub mod c2pa_action {
     /// Changes to tone, saturation, etc.
     pub const COLOR_ADJUSTMENTS: &str = "c2pa.color_adjustments";
@@ -126,7 +126,7 @@ impl From<ClaimGeneratorInfo> for SoftwareAgent {
 /// along with possible other information such as what software performed
 /// the action.
 ///
-/// See <https://c2pa.org/specifications/specifications/1.0/specs/C2PA_Specification.html#_actions>.
+/// See <https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_actions>.
 #[derive(Deserialize, Serialize, Clone, Debug, Default, PartialEq)]
 pub struct Action {
     /// The label associated with this action. See ([`c2pa_action`]).
@@ -273,6 +273,7 @@ impl Action {
     }
 
     /// Returns a digitalSourceType as defined at <https://cv.iptc.org/newscodes/digitalsourcetype/>.
+    // QUESTION: Keep in docs?
     pub fn source_type(&self) -> Option<&str> {
         self.source_type.as_deref()
     }
@@ -280,7 +281,7 @@ impl Action {
     /// Returns the list of related actions.
     ///
     /// This is only present in C2PA v2.
-    /// See <https://c2pa.org/specifications/specifications/1.0/specs/C2PA_Specification.html#_related>.
+    /// See <https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_related_actions>.
     pub fn related(&self) -> Option<&[Action]> {
         self.related.as_deref()
     }
@@ -288,7 +289,7 @@ impl Action {
     /// Returns the reason why this action was performed.
     ///
     /// This is only present in C2PA v2.
-    /// See <https://c2pa.org/specifications/specifications/1.0/specs/C2PA_Specification.html#_reason>.
+    /// See <https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_reason>.
     pub fn reason(&self) -> Option<&str> {
         self.reason.as_deref()
     }
@@ -407,7 +408,7 @@ impl Action {
     /// Sets the list of related actions.
     ///
     /// This is only present in C2PA v2.
-    /// See <https://c2pa.org/specifications/specifications/1.0/specs/C2PA_Specification.html#_related>.
+    /// See <https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_related_actions>.
     pub fn set_related(mut self, related: Option<&Vec<Action>>) -> Self {
         self.related = related.cloned();
         self
@@ -416,7 +417,7 @@ impl Action {
     /// Sets the reason why this action was performed.
     ///
     /// This is only present in C2PA v2.
-    /// See <https://c2pa.org/specifications/specifications/1.0/specs/C2PA_Specification.html#_reason>.
+    /// See <https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_reason>.
     pub fn set_reason<S: Into<String>>(mut self, reason: S) -> Self {
         self.reason = Some(reason.into());
         self
@@ -492,7 +493,7 @@ impl ActionTemplate {
 /// what took place on the asset, when it took place, along with possible
 /// other information such as what software performed the action.
 ///
-/// See <https://c2pa.org/specifications/specifications/1.0/specs/C2PA_Specification.html#_actions>.
+/// See <https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_actions>.
 #[derive(Deserialize, Serialize, Debug, PartialEq)]
 #[non_exhaustive]
 pub struct Actions {
@@ -519,7 +520,7 @@ pub struct Actions {
 impl Actions {
     /// Label prefix for an [`Actions`] assertion.
     ///
-    /// See <https://c2pa.org/specifications/specifications/1.0/specs/C2PA_Specification.html#_actions>.
+    /// See <https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_actions>.
     pub const LABEL: &'static str = labels::ACTIONS;
 
     /// Creates a new [`Actions`] assertion struct.

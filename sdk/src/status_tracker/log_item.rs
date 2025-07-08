@@ -51,6 +51,7 @@ use crate::status_tracker::StatusTracker;
 /// # assert!(log.line > 2);
 /// ```
 #[macro_export]
+#[doc(hidden)]
 macro_rules! log_item {
     ($label:expr, $description:expr, $function:expr) => {{
         $crate::status_tracker::LogItem {
@@ -82,6 +83,7 @@ macro_rules! log_item {
 /// # use c2pa::{log_current_item, status_tracker::{LogKind, LogItem}};
 /// let log = log_current_item!("test item 1", "test func");
 /// ```
+#[doc(hidden)]
 #[macro_export]
 macro_rules! log_current_item {
     ($description:expr, $function:expr) => {{
