@@ -355,9 +355,13 @@ pub fn verify_time_stamp(
                 },
             },
             Err(_) => {
-                log_item!("", "timestamp signer info malformed", "verify_time_stamp")
-                    .validation_status(TIMESTAMP_MALFORMED)
-                    .informational(&mut current_validation_log);
+                log_item!(
+                    "",
+                    "timestamp signer attributes malformed",
+                    "verify_time_stamp"
+                )
+                .validation_status(TIMESTAMP_MALFORMED)
+                .informational(&mut current_validation_log);
 
                 last_err =
                     TimeStampError::DecodeError("timestamp signer info malformed".to_string());
@@ -369,7 +373,7 @@ pub fn verify_time_stamp(
         let Ok(hash_alg) =
             bcder::Oid::from_str(&signer_info.digest_algorithm.algorithm.to_string())
         else {
-            log_item!("", "timestamp bad tbs certificate", "verify_time_stamp")
+            log_item!("", "timestamp bad hash alg", "verify_time_stamp")
                 .validation_status(TIMESTAMP_MALFORMED)
                 .informational(&mut current_validation_log);
 
@@ -386,7 +390,7 @@ pub fn verify_time_stamp(
             rasn::der::encode(&cert.tbs_certificate.subject_public_key_info);
 
         let Ok(signing_key_der) = signing_key_der_results else {
-            log_item!("", "timestamp bad tbs certificate", "verify_time_stamp")
+            log_item!("", "timestamp bad signing key", "verify_time_stamp")
                 .validation_status(TIMESTAMP_MALFORMED)
                 .informational(&mut current_validation_log);
 
@@ -403,7 +407,7 @@ pub fn verify_time_stamp(
                 .algorithm
                 .to_string(),
         ) else {
-            log_item!("", "timestamp bad tbs certificate", "verify_time_stamp")
+            log_item!("", "timestamp bad tbs certificate alg", "verify_time_stamp")
                 .validation_status(TIMESTAMP_MALFORMED)
                 .informational(&mut current_validation_log);
 
