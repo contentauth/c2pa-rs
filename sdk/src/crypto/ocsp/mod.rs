@@ -196,7 +196,7 @@ impl OcspResponse {
                                 let utc_with_offset: DateTime<Utc> =
                                     DateTime::from_naive_utc_and_offset(revoked_at_native, Utc);
 
-                                let msg = format!("certificate revoked at: {}", utc_with_offset);
+                                let msg = format!("certificate revoked at: {utc_with_offset}");
 
                                 log_item!("OCSP_RESPONSE", msg, "check_ocsp_response")
                                     .validation_status(validation_codes::SIGNING_CREDENTIAL_REVOKED)
