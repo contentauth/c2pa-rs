@@ -167,9 +167,8 @@ pub(crate) struct Core {
     prefer_bmff_merkle_tree: bool,
     compress_manifests: bool,
     max_memory_usage: Option<u64>,
-
-    prefer_update_manifests: bool,
-    // exclude_box_hash_metadata: bool,
+    // TODO: pending https://github.com/contentauth/c2pa-rs/pull/1180
+    // prefer_update_manifests: bool,
 }
 
 impl Default for Core {
@@ -182,8 +181,7 @@ impl Default for Core {
             prefer_bmff_merkle_tree: false,
             compress_manifests: true,
             max_memory_usage: None,
-            prefer_update_manifests: true,
-            // exclude_box_hash_metadata: false,
+            // prefer_update_manifests: true,
         }
     }
 }
@@ -315,7 +313,7 @@ pub struct SignerInfo {
     tsa_url: Option<String>,
 }
 
-// TODO: doc
+/// A configuration profile.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct Profile {
     /// Information about the signer used for signing.
@@ -466,141 +464,6 @@ impl SettingsValidate for Settings {
     }
 }
 
-// // TODO: rename struct and provide example config
-// /// Settings for configuring all aspects of c2pa-rs.
-// ///
-// /// [Settings::default] will be set thread-locally by default. To override these default fields,
-// /// call [Settings::set_thread_local] with a new [Settings]. To obtain the thread local [Settings]
-// /// call [Settings::thread_local].
-// #[derive(Debug, Clone)]
-// pub struct Settings2(Option<Config>);
-
-// impl Settings2 {
-//     /// Returns the current [Settings] for the local thread.
-//     pub fn thread_local() -> Settings2 {
-//         Settings2(None)
-//     }
-
-//     /// Construct a new [Settings] with default values.
-//     ///
-//     /// This can be used with [Setting::set_thread_local] to reset the thread local [Settings]
-//     /// to their default values.
-//     pub fn new() -> Settings2 {
-//         Self::default()
-//     }
-
-//     /// Construct a [Settings] from a given toml string.
-//     pub fn from_toml(settings_toml: &str) -> Result<Settings2> {
-//         let config = Config::builder()
-//             .add_source(config::File::from_str(settings_toml, FileFormat::Toml))
-//             .build()
-//             .map_err(|_e| Error::BadParam("could not parse configuration file".into()))?;
-
-//         Ok(Settings2(Some(config)))
-//     }
-
-//     /// Construct [Settings] from a given toml file.
-//     #[cfg(feature = "file_io")]
-//     pub fn from_toml_file<P: AsRef<Path>>(setting_path: P) -> Result<Settings2> {
-//         let setting_buf = std::fs::read(&setting_path).map_err(Error::IoError)?;
-//         Settings2::from_toml(
-//             &String::from_utf8(setting_buf)
-//                 .map_err(|_| Error::BadParam("invalid utf-8".to_owned()))?,
-//         )
-//     }
-
-//     pub fn set_value<T>(&mut self, value: T) -> Result<()> {
-//         todo!()
-//     }
-
-//     pub fn get_value<T>(&self) -> Result<T> {
-//         todo!()
-//     }
-
-//     /// Merges the current [Settings] with thread local [Settings].
-//     ///
-//     /// Only fields that are present in the current [Settings] will override the fields
-//     /// in the thread local [Settings].
-//     pub fn set_thread_local(self) -> Result<()> {
-//         if self.0.is_none() {
-//             // It already is thread local.
-//             return Ok(());
-//         }
-
-//         self.to_settings()?.validate()?;
-
-//         let update_config = SETTINGS.with_borrow(|current_settings| {
-//             let config_builder = Config::builder().add_source(current_settings.clone());
-//             let config_builder = if let Some(config) = &self.0 {
-//                 config_builder.add_source(config.clone())
-//             } else {
-//                 config_builder
-//             };
-
-//             config_builder.build() // merge overrides, allows for partial changes
-//         });
-
-//         match update_config {
-//             Ok(update_config) => {
-//                 SETTINGS.set(update_config);
-
-//                 Ok(())
-//             }
-//             Err(_) => Err(Error::OtherError("could not update configuration".into())),
-//         }
-//     }
-
-//     /// Constructs a signer from the specified `trust.signer_info` in the settings.
-//     ///
-//     /// The returned signer can be passed to [Builder::sign][crate::Builder::sign]
-//     /// and other related functions.
-//     ///
-//     /// This function will error with [Error::UnspecifiedSignerSettings][crate::Error::UnspecifiedSignerSettings]
-//     /// if the `trust.signer_info` is unspecified.
-//     pub fn signer(&self) -> Result<Box<dyn Signer>> {
-//         let settings = self
-//             // TODO: call get_value directly
-//             .to_settings()?;
-//         let signer_info = settings
-//             .trust
-//             .signer_info
-//             .as_ref()
-//             .ok_or(Error::UnspecifiedSignerSettings)?;
-//         create_signer::from_keys(
-//             &signer_info.sign_cert,
-//             &signer_info.private_key,
-//             signer_info.alg,
-//             signer_info.tsa_url.to_owned(),
-//         )
-//     }
-
-//     /// Serializes the [Settings] into a toml string.
-//     pub fn to_toml(&self) -> Result<String> {
-//         Ok(toml::to_string(&self.to_settings()?)?)
-//     }
-
-//     /// Serializes the [Settings] into a pretty (formatted) toml string.
-//     pub fn to_pretty_toml(&self) -> Result<String> {
-//         Ok(toml::to_string_pretty(&self.to_settings()?)?)
-//     }
-
-//     fn to_settings(&self) -> Result<Settings> {
-//         self.0
-//             .clone()
-//             .unwrap_or_else(|| SETTINGS.with_borrow(|config| config.clone()))
-//             .try_deserialize::<Settings>()
-//             .map_err(|_e| Error::BadParam("configuration file contains unrecognized param".into()))
-//     }
-// }
-
-// impl Default for Settings2 {
-//     fn default() -> Self {
-//         // Unit tests confirm this is safe to unwrap.
-//         #[allow(clippy::unwrap_used)]
-//         Settings2(Some(Config::try_from(&Settings::default()).unwrap()))
-//     }
-// }
-
 // Get snapshot of the Settings objects, returns None if there is an error
 #[allow(unused)]
 pub(crate) fn get_settings() -> Option<Settings> {
@@ -741,8 +604,8 @@ pub(crate) fn get_optional_profile_settings_value<'de, T: serde::de::Deserialize
     }
 }
 
-// TODO: document
-pub fn get_settings_signer() -> Result<Box<dyn Signer>> {
+/// Returns the signer specified in the "signer" field of the currently active settings profile.
+pub fn get_profile_settings_signer() -> Result<Box<dyn Signer>> {
     let signer_info = get_profile_settings_value::<Option<SignerInfo>>("signer")
         .and_then(|signer| signer.ok_or(Error::UnspecifiedSignerSettings))?;
     create_signer::from_keys(
