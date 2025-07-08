@@ -53,8 +53,8 @@ use crate::{
         },
         labels::{
             assertion_label_from_uri, box_name_from_uri, manifest_label_from_uri,
-            manifest_label_to_parts, to_absolute_uri, to_assertion_uri, to_databox_uri, ASSERTIONS,
-            CLAIM, CREDENTIALS, DATABOX, DATABOXES, SIGNATURE,
+            manifest_label_to_parts, to_absolute_uri, to_assertion_uri, to_databox_uri,
+            to_signature_uri, ASSERTIONS, CLAIM, CREDENTIALS, DATABOX, DATABOXES, SIGNATURE,
         },
     },
     jumbf_io::get_assetio_handler,
@@ -1791,7 +1791,7 @@ impl Claim {
         let data = claim.data()?;
 
         // use the signature uri as the current uri while validating the signature info
-        validation_log.push_current_uri(claim.signature.clone());
+        validation_log.push_current_uri(to_signature_uri(claim.label()));
 
         // make sure signature manifest if present points to this manifest
         let sig_box_err = match jumbf::labels::manifest_label_from_uri(&claim.signature) {
@@ -1804,7 +1804,7 @@ impl Claim {
 
         if sig_box_err {
             log_item!(
-                claim.signature_uri(),
+                to_signature_uri(claim.label()),
                 "signature missing",
                 "verify_claim_async"
             )
@@ -1849,7 +1849,7 @@ impl Claim {
         let additional_bytes: Vec<u8> = Vec::new();
 
         // use the signature uri as the current uri while validating the signature info
-        validation_log.push_current_uri(claim.signature.clone());
+        validation_log.push_current_uri(to_signature_uri(claim.label()));
 
         // make sure signature manifest if present points to this manifest
         let sig_box_err = match jumbf::labels::manifest_label_from_uri(&claim.signature) {
@@ -1861,9 +1861,13 @@ impl Claim {
         };
 
         if sig_box_err {
-            log_item!(claim.signature_uri(), "signature missing", "verify_claim")
-                .validation_status(validation_status::CLAIM_SIGNATURE_MISSING)
-                .failure(validation_log, Error::ClaimMissingSignatureBox)?;
+            log_item!(
+                to_signature_uri(claim.label()),
+                "signature missing",
+                "verify_claim"
+            )
+            .validation_status(validation_status::CLAIM_SIGNATURE_MISSING)
+            .failure(validation_log, Error::ClaimMissingSignatureBox)?;
         }
 
         let data = if let Some(ref original_bytes) = claim.original_bytes {
@@ -2604,7 +2608,7 @@ impl Claim {
             Ok(vi) => {
                 if !vi.validated {
                     log_item!(
-                        claim.signature_uri(),
+                        to_signature_uri(claim.label()),
                         "claim signature is not valid",
                         "verify_internal"
                     )
@@ -2613,7 +2617,7 @@ impl Claim {
                 } else {
                     // signing cert has not expired
                     log_item!(
-                        claim.signature_uri(),
+                        to_signature_uri(claim.label()),
                         "claim signature valid",
                         "verify_internal"
                     )
@@ -2622,7 +2626,7 @@ impl Claim {
 
                     // add signature validated status
                     log_item!(
-                        claim.signature_uri(),
+                        to_signature_uri(claim.label()),
                         "claim signature valid",
                         "verify_internal"
                     )
@@ -2633,7 +2637,7 @@ impl Claim {
             Err(parse_err) => {
                 // handle case where lower level failed to log
                 log_item!(
-                    claim.signature_uri(),
+                    to_signature_uri(claim.label()),
                     "claim signature is not valid",
                     "verify_internal"
                 )
