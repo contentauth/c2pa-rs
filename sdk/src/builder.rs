@@ -29,8 +29,8 @@ use zip::{write::SimpleFileOptions, ZipArchive, ZipWriter};
 use crate::{
     assertion::AssertionDecodeError,
     assertions::{
-        labels, Actions, BmffHash, BoxHash, CreativeWork, DataHash, Exif, Metadata, SoftwareAgent,
-        Thumbnail, User, UserCbor,
+        labels, Actions, BmffHash, BoxHash, CreativeWork, DataHash, EmbeddedData, Exif, Metadata,
+        SoftwareAgent, Thumbnail, User, UserCbor,
     },
     claim::Claim,
     error::{Error, Result},
@@ -700,18 +700,18 @@ impl Builder {
                 let mut data = Vec::new();
                 stream.read_to_end(&mut data)?;
                 let thumbnail = if claim.version() >= 2 {
-                    Thumbnail::new_with_format(
+                    EmbeddedData::new(
                         labels::CLAIM_THUMBNAIL,
+                        format_to_mime(&thumb_ref.format),
                         data,
-                        &format_to_mime(&thumb_ref.format),
                     )
                 } else {
                     Thumbnail::new(
                         &labels::add_thumbnail_format(labels::CLAIM_THUMBNAIL, &thumb_ref.format),
                         data,
                     )
+                    .into()
                 };
-
                 claim.add_assertion_with_salt(&thumbnail, &salt)?;
             }
         }

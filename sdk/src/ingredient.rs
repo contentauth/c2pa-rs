@@ -27,7 +27,7 @@ use uuid::Uuid;
 use crate::Manifest;
 use crate::{
     assertion::{Assertion, AssertionBase},
-    assertions::{self, labels, AssetType, Metadata, Relationship, Thumbnail},
+    assertions::{self, labels, AssetType, EmbeddedData, Metadata, Relationship, Thumbnail},
     asset_io::CAIRead,
     claim::{Claim, ClaimAssetData},
     crypto::base64,
@@ -633,7 +633,8 @@ impl Ingredient {
                             // this way a client can view the thumbnail without needing to load the manifest
                             // but the the embedded thumbnail is still the primary reference
                             let claim_assertion = store.get_claim_assertion_from_uri(&uri)?;
-                            let thumbnail = Thumbnail::from_assertion(claim_assertion.assertion())?;
+                            let thumbnail =
+                                EmbeddedData::from_assertion(claim_assertion.assertion())?;
                             self.resources.add_uri(
                                 &uri,
                                 &thumbnail.content_type,
@@ -707,8 +708,9 @@ impl Ingredient {
         )
     }
 
-    fn thumbnail_from_assertion(assertion: &Assertion) -> (String, Vec<u8>) {
-        (assertion.content_type(), assertion.data().to_vec())
+    // Internal utility function to get thumbnail from an assertion.
+    fn thumbnail_from_assertion(assertion: &Assertion) -> (&str, &[u8]) {
+        (assertion.content_type(), assertion.data())
     }
 
     /// Creates an `Ingredient` from a file path and options.
@@ -1047,7 +1049,7 @@ impl Ingredient {
                             let (format, image) = Self::thumbnail_from_assertion(assertion);
                             ingredient
                                 .resources
-                                .add_uri(&hashed_uri.url(), &format, image)
+                                .add_uri(&hashed_uri.url(), format, image)
                         })
                 }
                 uri if uri.contains(jumbf::labels::DATABOXES) => store
@@ -1205,10 +1207,10 @@ impl Ingredient {
                         )?
                     } else {
                         let thumbnail = if claim.version() >= 2 {
-                            Thumbnail::new_with_format(
+                            EmbeddedData::new(
                                 labels::INGREDIENT_THUMBNAIL,
+                                format_to_mime(&thumb_ref.format),
                                 data.into_owned(),
-                                &format_to_mime(&thumb_ref.format),
                             )
                         } else {
                             Thumbnail::new(
@@ -1218,6 +1220,7 @@ impl Ingredient {
                                 ),
                                 data.into_owned(),
                             )
+                            .into()
                         };
                         claim.add_assertion(&thumbnail)?
                     }
@@ -1619,7 +1622,7 @@ mod tests {
         let ingredient = Ingredient::from_memory_async(format, image_bytes)
             .await
             .expect("from_memory_async");
-        println!("ingredient = {ingredient}");
+        // println!("ingredient = {ingredient}");
         assert_eq!(ingredient.title(), Some("untitled"));
         assert_eq!(ingredient.format(), Some(format));
         assert!(ingredient.provenance().is_some());
