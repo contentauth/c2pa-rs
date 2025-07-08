@@ -8,13 +8,13 @@ use crate::{
 
 const ASSERTION_CREATION_VERSION: usize = 2;
 
-/// An `AssetReference` assertion provides information on one or more locations of 
+/// An `AssetReference` assertion provides information on one or more locations of
 /// where a copy of the asset may be obtained.
-/// 
+///
 /// This assertion contains a list of [`Reference`], each one declaring a location expressed as a URI and
 /// optionally a description. The URI may be either a single asset or it may reference a directory.
-/// 
-/// https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_asset_reference
+///
+/// <https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_asset_reference>
 #[derive(Deserialize, Serialize, Debug, PartialEq)]
 pub struct AssetReference {
     pub references: Vec<Reference>,
@@ -101,8 +101,7 @@ pub mod tests {
 
     #[test]
     fn assertion_references() {
-        let original = AssetReference::new(make_reference1())
-            .add_reference(make_reference2());
+        let original = AssetReference::new(make_reference1()).add_reference(make_reference2());
 
         assert_eq!(original.references.len(), 2);
 

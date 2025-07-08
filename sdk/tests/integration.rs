@@ -324,9 +324,14 @@ mod integration_1 {
         builder.set_claim_generator_info(generator);
 
         // allocate references
-        let references = AssetReference::new(
-            Reference::new("https://some.storage.us/foo", Some("A copy of the asset on the web")))
-            .add_reference(Reference::new("ipfs://cid", Some("A copy of the asset on IPFS")));
+        let references = AssetReference::new(Reference::new(
+            "https://some.storage.us/foo",
+            Some("A copy of the asset on the web"),
+        ))
+        .add_reference(Reference::new(
+            "ipfs://cid",
+            Some("A copy of the asset on IPFS"),
+        ));
 
         // add references assertion
         builder.add_assertion(AssetReference::LABEL, &references)?;
