@@ -584,10 +584,7 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: nightly-2025-06-05
-          # Pinning to specific nightly build for now. More recent versions
-          # introduce a lifetime check that creates a whole slew of build
-          # errors.
+          toolchain: nightly-2025-07-07
 
       - name: Run cargo-udeps
         env:
