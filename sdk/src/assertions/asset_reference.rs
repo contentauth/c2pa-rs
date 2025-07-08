@@ -40,7 +40,7 @@ impl AssetReference {
 /// Defines a single location of where a copy of the asset may be obtained.
 #[derive(Deserialize, Serialize, Debug, Default, PartialEq, Eq)]
 pub struct Reference {
-    pub reference: InnerReference,
+    pub reference: ReferenceUri,
 
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
@@ -50,7 +50,7 @@ impl Reference {
     /// Creates a new reference to a location, and optionally a description.
     pub fn new(uri: &str, description: Option<&str>) -> Self {
         Reference {
-            reference: InnerReference {
+            reference: ReferenceUri {
                 uri: uri.to_owned(),
             },
             description: description.map(String::from),
@@ -59,7 +59,7 @@ impl Reference {
 }
 
 #[derive(Deserialize, Serialize, Debug, Default, PartialEq, Eq)]
-pub struct InnerReference {
+pub struct ReferenceUri {
     pub uri: String,
 }
 
