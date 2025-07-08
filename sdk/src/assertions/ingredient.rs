@@ -29,11 +29,10 @@ use crate::{
 
 const ASSERTION_CREATION_VERSION: usize = 3;
 
-// Used to differentiate a parent from a component
 /// The relationship of the ingredient to the current asset.
 #[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq, Eq)]
 #[cfg_attr(feature = "json_schema", derive(JsonSchema))]
-pub enum Relationship {                     
+pub enum Relationship {
     /// The current asset is derived from this ingredient.
     #[serde(rename = "parentOf")]
     ParentOf,

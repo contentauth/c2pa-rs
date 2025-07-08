@@ -22,7 +22,7 @@
 //! Some functionality requires you to enable specific crate features,
 //! as noted in the documentation.
 //!
-//! The library has a Builder/Reader API that focuses on simplicity 
+//! The library has a Builder/Reader API that focuses on simplicity
 //! and stream support.
 //!
 //! ## Example: Reading a ManifestStore
