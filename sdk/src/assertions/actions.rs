@@ -524,7 +524,7 @@ impl Actions {
     pub fn new() -> Self {
         Self {
             actions: Vec::new(),
-            all_actions_included: None,
+            all_actions_included: Some(true),
             templates: None,
             metadata: None,
             software_agents: None,
