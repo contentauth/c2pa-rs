@@ -196,6 +196,11 @@ impl Store {
         Ok(self.ctp.add_end_entity_credentials(allowed_vec)?)
     }
 
+    // Replace default trust policy
+    //pub fn set_trust_policy(&mut self, new_ctp: CertificateTrustPolicy) {
+    //    self.ctp = new_ctp;
+    //}
+
     /// Clear all existing trust anchors
     #[cfg(feature = "v1_api")]
     pub fn clear_trust_anchors(&mut self) {
@@ -1806,39 +1811,7 @@ impl Store {
     /// xmp_str: String containing entire XMP block of the asset
     /// asset_bytes: bytes of the asset to be verified
     /// validation_log: If present all found errors are logged and returned, other wise first error causes exit and is returned  
-    pub async fn verify_store_async(
-        store: &Store,
-        asset_data: &mut ClaimAssetData<'_>,
-        validation_log: &mut StatusTracker,
-    ) -> Result<()> {
-        let claim = match store.provenance_claim() {
-            Some(c) => c,
-            None => {
-                log_item!("Unknown", "could not find active manifest", "verify_store")
-                    .validation_status(validation_status::CLAIM_MISSING)
-                    .failure_no_throw(validation_log, Error::ProvenanceMissing);
-
-                return Err(Error::ProvenanceMissing);
-            }
-        };
-
-        // get info needed to complete validation
-        let svi = store.get_store_validation_info(claim, asset_data, validation_log)?;
-
-        // verify the provenance claim
-        Claim::verify_claim_async(claim, asset_data, &svi, true, &store.ctp, validation_log)
-            .await?;
-
-        Store::ingredient_checks_async(store, claim, &svi, asset_data, validation_log).await?;
-
-        Ok(())
-    }
-
-    /// Verify Store
-    /// store: Store to validate
-    /// xmp_str: String containing entire XMP block of the asset
-    /// asset_bytes: bytes of the asset to be verified
-    /// validation_log: If present all found errors are logged and returned, other wise first error causes exit and is returned  
+    #[async_generic]
     pub fn verify_store(
         store: &Store,
         asset_data: &mut ClaimAssetData<'_>,
@@ -1858,10 +1831,17 @@ impl Store {
         // get info needed to complete validation
         let svi = store.get_store_validation_info(claim, asset_data, validation_log)?;
 
-        // verify the provenance claim
-        Claim::verify_claim(claim, asset_data, &svi, true, &store.ctp, validation_log)?;
+        if _sync {
+            // verify the provenance claim
+            Claim::verify_claim(claim, asset_data, &svi, true, &store.ctp, validation_log)?;
 
-        Store::ingredient_checks(store, claim, &svi, asset_data, validation_log)?;
+            Store::ingredient_checks(store, claim, &svi, asset_data, validation_log)?;
+        } else {
+            Claim::verify_claim_async(claim, asset_data, &svi, true, &store.ctp, validation_log)
+                .await?;
+
+            Store::ingredient_checks_async(store, claim, &svi, asset_data, validation_log).await?;
+        }
 
         Ok(())
     }

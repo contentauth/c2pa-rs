@@ -88,15 +88,18 @@ fn check_stapled_ocsp_response(
         validate_cose_tst_info_async(sign1, data, ctp, &mut local_log_sync).await
     };
 
-    // If the stapled OCSP response has a time stamp, we can validate it.
-    let Ok(tst_info) = &time_stamp_info else {
-        return Ok(OcspResponse::default());
+    // If there is a timestamp use it for OCSP cert validation,
+    // otherwise follow default rules for OCSP checking.
+    let (tst_info, signing_time) = match time_stamp_info {
+        Ok(tstinfo) => {
+            let signing_time = tstinfo.gen_time.clone().into();
+            (Some(tstinfo), Some(signing_time))
+        }
+        Err(_) => (None, None),
     };
 
-    let signing_time: DateTime<Utc> = tst_info.gen_time.clone().into();
-
     let Ok(ocsp_data) =
-        OcspResponse::from_der_checked(ocsp_response_der, Some(signing_time), validation_log)
+        OcspResponse::from_der_checked(ocsp_response_der, signing_time, validation_log)
     else {
         return Ok(OcspResponse::default());
     };
@@ -104,7 +107,12 @@ fn check_stapled_ocsp_response(
     // If we get a valid response, validate the certs.
     if ocsp_data.revoked_at.is_none() {
         if let Some(ocsp_certs) = &ocsp_data.ocsp_certs {
-            check_certificate_profile(&ocsp_certs[0], ctp, validation_log, Some(tst_info))?;
+            check_end_entity_certificate_profile(
+                &ocsp_certs[0],
+                ctp,
+                validation_log,
+                tst_info.as_ref(),
+            )?;
         }
     }
 
