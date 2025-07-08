@@ -28,6 +28,7 @@ use crate::{
     },
     assertions::{
         self,
+        c2pa_action::{self, CREATED, OPENED},
         labels::{ACTIONS, BMFF_HASH},
         Actions, AssetType, BmffHash, BoxHash, DataBox, DataHash, Metadata, V2_DEPRECATED_ACTIONS,
     },
@@ -1280,6 +1281,9 @@ impl Claim {
             ClaimAssertionType::V1,
         );
 
+        // TODO:
+        // 1. spec states the first action in either the created OR gathered array must be c2pa.created/opened, not just the created
+        // 2. there may only be 1 actions assertion in total
         if add_as_created_assertion {
             // enforce actions assertion generation rules during creation
             if assertion_label == ACTIONS {
@@ -1292,12 +1296,22 @@ impl Claim {
                     .any(|a| a.url().contains(ACTIONS))
                 {
                     if let Some(first_action) = ac.actions().first() {
-                        if first_action.action() != "c2pa.created"
-                            && first_action.action() != "c2pa.opened"
+                        if first_action.action() != c2pa_action::CREATED
+                            && first_action.action() != c2pa_action::OPENED
                         {
                             return Err(Error::AssertionEncoding(
                                 "first action must be c2pa.created or c2pa.opened".to_string(),
                             )); // todo: placeholder until we have 2.x error codes
+                        }
+
+                        // "The full set of actions assertions in a C2PA Manifest shall contain no more than one action whose type is either c2pa.created or c2pa.opened."
+                        // https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_mandatory_presence_of_at_least_one_actions_assertion
+                        for action in ac.actions().iter().skip(1) {
+                            if action.action() == c2pa_action::CREATED
+                                || action.action() == c2pa_action::OPENED
+                            {
+                                return Err(Error::AssertionEncoding(format!("there must not be more than one action whose type is either {} or {}", c2pa_action::CREATED, c2pa_action::OPENED)));
+                            }
                         }
                     } else {
                         // must have an action
@@ -1308,11 +1322,9 @@ impl Claim {
                 } else {
                     // any other added actions cannot be created or opened
                     let current_action = Actions::from_assertion(&assertion)?;
-                    if current_action
-                        .actions()
-                        .iter()
-                        .any(|a| a.action() == "c2pa.created" || a.action() == "c2pa.opened")
-                    {
+                    if current_action.actions().iter().any(|a| {
+                        a.action() == c2pa_action::CREATED || a.action() == c2pa_action::OPENED
+                    }) {
                         return Err(Error::AssertionEncoding(
                             "only the first actions assertion can have c2pa.created or c2pa.opened"
                                 .to_string(),

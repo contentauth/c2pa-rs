@@ -114,7 +114,7 @@ impl fmt::Display for ThumbnailFormat {
 /// If the output format is unsupported, this function will return [Error::UnsupportedThumbnailFormat][crate::Error::UnsupportedThumbnailFormat].
 ///
 /// This function takes into account the [Settings][crate::Settings]:
-/// * `builder.thumbnail.ignore_errors`
+/// * `profile.*.thumbnail.ignore_errors`
 ///
 /// Read [make_thumbnail_from_stream] for more information.
 #[cfg(feature = "file_io")]
@@ -135,8 +135,7 @@ pub fn make_thumbnail_bytes_from_path(
         }
     };
 
-    let ignore_errors =
-        settings::get_profile_settings_value::<bool>("builder.thumbnail.ignore_errors")?;
+    let ignore_errors = settings::get_profile_settings_value::<bool>("thumbnail.ignore_errors")?;
     match result {
         Ok(result) => Ok(result),
         Err(_) if ignore_errors => Ok(None),
@@ -147,7 +146,7 @@ pub fn make_thumbnail_bytes_from_path(
 /// Make a thumbnail from an input stream and format and return the output format and new thumbnail bytes.
 ///
 /// This function takes into account the [Settings][crate::Settings]:
-/// * `builder.thumbnail.ignore_errors`
+/// * `profile.*.thumbnail.ignore_errors`
 ///
 /// Read [make_thumbnail_from_stream] for more information.
 pub fn make_thumbnail_bytes_from_stream<R>(
@@ -168,8 +167,7 @@ where
         }
     };
 
-    let ignore_errors =
-        settings::get_profile_settings_value::<bool>("builder.thumbnail.ignore_errors")?;
+    let ignore_errors = settings::get_profile_settings_value::<bool>("thumbnail.ignore_errors")?;
     match result {
         Ok(result) => Ok(Some(result)),
         Err(_) if ignore_errors => Ok(None),
@@ -180,10 +178,10 @@ where
 /// Make a thumbnail from the input stream and write to the output stream.
 ///
 /// This function takes into account two [Settings][crate::Settings]:
-/// * `builder.thumbnail.long_edge`
-/// * `builder.thumbnail.quality`
-/// * `builder.thumbnail.format`
-/// * `builder.thumbnail.prefer_smallest_format`
+/// * `profile.*.thumbnail.long_edge`
+/// * `profile.*.thumbnail.quality`
+/// * `profile.*.thumbnail.format`
+/// * `profile.*.thumbnail.prefer_smallest_format`
 pub fn make_thumbnail_from_stream<R, W>(
     input: R,
     output: &mut W,
@@ -200,13 +198,13 @@ where
         Some(output_format) => output_format,
         None => {
             let global_format = settings::get_profile_settings_value::<Option<ThumbnailFormat>>(
-                "builder.thumbnail.format",
+                "thumbnail.format",
             )?;
             match global_format {
                 Some(global_format) => global_format,
                 None => {
                     let prefer_smallest_format = settings::get_profile_settings_value::<bool>(
-                        "builder.thumbnail.prefer_smallest_format",
+                        "thumbnail.prefer_smallest_format",
                     )?;
                     match prefer_smallest_format {
                         true => match input_format {
@@ -222,11 +220,10 @@ where
         }
     };
 
-    let long_edge = settings::get_profile_settings_value::<u32>("builder.thumbnail.long_edge")?;
+    let long_edge = settings::get_profile_settings_value::<u32>("thumbnail.long_edge")?;
     image = image.thumbnail(long_edge, long_edge);
 
-    let quality =
-        settings::get_profile_settings_value::<ThumbnailQuality>("builder.thumbnail.quality")?;
+    let quality = settings::get_profile_settings_value::<ThumbnailQuality>("thumbnail.quality")?;
     match output_format {
         ThumbnailFormat::Jpeg => match quality {
             ThumbnailQuality::Low => {

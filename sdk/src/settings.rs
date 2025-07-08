@@ -41,14 +41,6 @@ pub(crate) trait SettingsValidate {
     }
 }
 
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-pub struct SignerInfo {
-    alg: SigningAlg,
-    sign_cert: Vec<u8>,
-    private_key: Vec<u8>,
-    tsa_url: Option<String>,
-}
-
 // Settings for trust list feature
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[allow(unused)]
@@ -314,6 +306,14 @@ pub(crate) struct Builder {}
 
 impl SettingsValidate for Builder {}
 
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct SignerInfo {
+    alg: SigningAlg,
+    sign_cert: Vec<u8>,
+    private_key: Vec<u8>,
+    tsa_url: Option<String>,
+}
+
 // TODO: doc
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct Profile {
@@ -352,7 +352,6 @@ impl Default for Profile {
     fn default() -> Self {
         Self {
             signer: None,
-            // TODO: add c2pa-rs?
             claim_generator_info: None,
             thumbnail: Default::default(),
             auto_created_action: true,

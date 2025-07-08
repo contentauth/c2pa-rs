@@ -19,6 +19,7 @@ use std::{
 };
 
 use async_generic::async_generic;
+use conv::ConvUtil;
 #[cfg(feature = "json_schema")]
 use schemars::JsonSchema;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
@@ -29,13 +30,15 @@ use zip::{write::SimpleFileOptions, ZipArchive, ZipWriter};
 use crate::{
     assertion::AssertionDecodeError,
     assertions::{
-        labels, Actions, BmffHash, BoxHash, CreativeWork, DataHash, Exif, Metadata, SoftwareAgent,
-        Thumbnail, User, UserCbor,
+        c2pa_action::{self, CREATED, OPENED},
+        digital_source_type, labels, Action, Actions, BmffHash, BoxHash, CreativeWork, DataHash,
+        Exif, Metadata, SoftwareAgent, Thumbnail, User, UserCbor,
     },
     claim::Claim,
     error::{Error, Result},
     resource_store::{ResourceRef, ResourceResolver, ResourceStore},
     salt::DefaultSalt,
+    settings,
     store::Store,
     utils::mime::format_to_mime,
     AsyncSigner, ClaimGeneratorInfo, HashRange, Ingredient, Signer,
@@ -595,6 +598,13 @@ impl Builder {
 
         claim_generator_info[0].insert("org.cai.c2pa_rs", env!("CARGO_PKG_VERSION"));
 
+        let profile_claim_generator_infos = settings::get_profile_settings_value::<
+            Option<Vec<ClaimGeneratorInfo>>,
+        >("claim_generator_info")?;
+        if let Some(claim_generator_infos) = profile_claim_generator_infos {
+            claim_generator_info.extend(claim_generator_infos);
+        }
+
         // Build the claim_generator string since this is required
         let claim_generator: String = claim_generator_info
             .iter()
@@ -692,6 +702,33 @@ impl Builder {
                     let version = labels::version(l);
 
                     let mut actions: Actions = manifest_assertion.to_assertion()?;
+
+                    let auto_created =
+                        settings::get_profile_settings_value::<bool>("auto_created_action")?;
+                    let auto_opened =
+                        settings::get_profile_settings_value::<bool>("auto_opened_action")?;
+                    if auto_created || auto_opened {
+                        if let Some(first_action) = actions.actions.first() {
+                            if first_action.action() != CREATED && first_action.action() != OPENED {
+                                let has_parent = self
+                                    .definition
+                                    .ingredients
+                                    .iter()
+                                    .any(|ingredient| ingredient.is_parent());
+                                let action = match (has_parent, auto_created, auto_opened) {
+                                    (true, false, true) => Some(Action::new(c2pa_action::OPENED)),
+                                    (false, true, _) => Some(
+                                        Action::new(c2pa_action::CREATED)
+                                            .set_source_type(digital_source_type::EMPTY),
+                                    ),
+                                    _ => None,
+                                };
+                                if let Some(action) = action {
+                                    actions.actions.insert(0, action);
+                                }
+                            }
+                        }
+                    }
 
                     let mut updates = Vec::new();
                     let mut index = 0;

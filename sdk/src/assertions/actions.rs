@@ -28,6 +28,13 @@ use crate::{
 const ASSERTION_CREATION_VERSION: usize = 2;
 pub const CAI_INGREDIENT_IDS: &str = "org.cai.ingredientIds";
 
+// TODO: document, maybe make enum?
+pub mod digital_source_type {
+    pub const EMPTY: &str = "http://c2pa.org/digitalsourcetype/empty";
+    pub const TRAINED_ALGORITHMIC_DATA: &str =
+        "http://c2pa.org/digitalsourcetype/trainedAlgorithmicData";
+}
+
 /// Specification defined C2PA actions
 pub mod c2pa_action {
     /// Changes to tone, saturation, etc.
