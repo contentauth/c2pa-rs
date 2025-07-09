@@ -881,6 +881,13 @@ impl Builder {
         Ok(claim)
     }
 
+    /// Adds c2pa.created, c2pa.opened, and c2pa.placed actions for the specified [Actions][crate::assertions::Actions]
+    /// assertion if the condiitons are applicable as defined in the spec.
+    ///
+    /// This function takes into account the [Settings][crate::Settings]:
+    /// * `profile.*.auto_created_action`
+    /// * `profile.*.auto_opened_action`
+    /// * `profile.*.auto_placed_action`
     fn add_auto_actions_assertions(&self, actions: &mut Actions) -> Result<()> {
         // https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_mandatory_presence_of_at_least_one_actions_assertion
         let auto_created = settings::get_profile_settings_value::<bool>("auto_created_action")?;
