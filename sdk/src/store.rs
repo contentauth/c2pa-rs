@@ -50,7 +50,10 @@ use crate::{
     cose_validator::{verify_cose, verify_cose_async},
     crypto::{
         asn1::rfc3161::TstInfo,
-        cose::{parse_cose_sign1, CertificateTrustPolicy, TimeStampStorage},
+        cose::{
+            fetch_and_check_ocsp_response, parse_cose_sign1, CertificateTrustPolicy,
+            TimeStampStorage,
+        },
         hash::sha256,
         time_stamp::verify_time_stamp,
     },
@@ -4495,6 +4498,27 @@ impl Store {
         )?;
         Ok(i_store)
     }
+
+    pub fn get_certificate_assertion(&self, manifest_labels: &Vec<String>, validation_log: &mut StatusTracker) -> Result<Vec<Vec<u8>>> {
+        let mut oscp_responses: Vec<Vec<u8>> = Vec::new();
+
+        for manifest_label in manifest_labels {
+            let claim = self.claims_map.get(manifest_label);
+            if let Some(claim) = claim {
+                let sig = claim.signature_val().clone();
+                let data = claim.data()?;
+
+                let sign1 = parse_cose_sign1(&sig, &data, validation_log)?;
+                let ocsp_response =
+                    fetch_and_check_ocsp_response(&sign1, &data, &self.ctp, validation_log)?
+                        .ocsp_der;
+                if !ocsp_response.is_empty() {
+                    oscp_responses.push(ocsp_response);
+                }
+            }
+        }
+        Ok(oscp_responses)
+    }
 }
 
 impl std::fmt::Display for Store {
@@ -4639,6 +4663,23 @@ pub mod tests {
         claim.add_assertion(&actions)?;
 
         Ok(claim)
+    }
+
+    #[test]
+    #[cfg(feature = "v1_api")]
+    #[cfg(feature = "file_io")]
+    fn test_certificate_status() {
+        use crate::assertions::CertificateStatus;
+
+        let ap = fixture_path("ocsp.jpg");
+        let mut report = StatusTracker::default();
+        let store = Store::load_from_asset(&ap, true, &mut report).unwrap();
+        let mut validation_log =
+                    StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
+        let test = Store::get_certificate_assertion(&store, &store.claims, &mut validation_log).unwrap();
+
+        let certificate_status = CertificateStatus::new(test);
+        dbg!(certificate_status.to_assertion().unwrap());
     }
 
     #[test]

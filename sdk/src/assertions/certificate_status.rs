@@ -13,9 +13,11 @@ pub struct CertificateStatus(Vec<ByteBuf>);
 impl CertificateStatus {
     pub const LABEL: &'static str = labels::CERTIFICATE_STATUS;
 
-    pub fn new(ocsp_val: &[u8]) -> Self {
+    pub fn new(ocsp_vals: Vec<Vec<u8>>) -> Self {
         let mut cs = CertificateStatus(Vec::new());
-        cs.0.push(ByteBuf::from(ocsp_val.to_vec()));
+        for oscp_val in ocsp_vals {
+            cs.0.push(ByteBuf::from(oscp_val));
+        }
         cs
     }
 

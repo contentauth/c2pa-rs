@@ -110,7 +110,8 @@ fn check_stapled_ocsp_response(
 }
 
 // TO DO: Add async version of this?
-fn fetch_and_check_ocsp_response(
+/// TO DO: Add documentation
+pub fn fetch_and_check_ocsp_response(
     sign1: &CoseSign1,
     data: &[u8],
     ctp: &CertificateTrustPolicy,

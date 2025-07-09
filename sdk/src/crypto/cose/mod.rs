@@ -32,7 +32,9 @@ mod error;
 pub use error::CoseError;
 
 mod ocsp;
-pub use ocsp::{check_ocsp_status, check_ocsp_status_async, OcspFetchPolicy};
+pub use ocsp::{
+    check_ocsp_status, check_ocsp_status_async, fetch_and_check_ocsp_response, OcspFetchPolicy,
+};
 
 mod sign;
 pub use sign::{sign, sign_async, sign_v2_embedded, sign_v2_embedded_async, CosePayload};
