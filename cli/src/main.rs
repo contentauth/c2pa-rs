@@ -19,7 +19,7 @@
 /// in that file. If a manifest definition JSON file is specified,
 /// the claim will be added to any existing claims.
 use std::{
-    fs::{create_dir_all, remove_dir_all, remove_file, File},
+    fs::{self, create_dir_all, remove_dir_all, remove_file, File},
     io::Write,
     path::{Path, PathBuf},
     str::FromStr,
@@ -370,10 +370,14 @@ fn blocking_get(url: &str) -> Result<String> {
 }
 
 fn configure_sdk(args: &CliArgs) -> Result<()> {
-    // Safe to unwrap because "settings" is required if "profile" is specified.
-    match args.profile {
-        Some(profile) => c2pa::settings::load_settings_from_toml(&args.settings.unwrap()),
-        None => c2pa::settings::load_settings_from_toml(&args.settings.unwrap()),
+    if let Some(settings) = &args.settings {
+        let settings = fs::read_to_string(settings)?;
+        match &args.profile {
+            Some(profile) => {
+                c2pa::settings::load_settings_from_toml_with_profile(&settings, profile.to_owned())?
+            }
+            None => c2pa::settings::load_settings_from_toml(&settings)?,
+        }
     }
 
     const TA: &str = r#"{"trust": { "trust_anchors": replacement_val } }"#;
