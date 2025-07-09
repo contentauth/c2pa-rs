@@ -3,7 +3,7 @@ name: Publish c2pa-library binaries
 on:
   push:
     tags:
-      - 'c2pa-v*' # Trigger on version tags (e.g., v1.0.0)
+      - 'c2pa-c-ffi-v*' # Trigger on version tags (e.g., v1.0.0)
   workflow_dispatch:
 
 jobs:
