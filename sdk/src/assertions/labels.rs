@@ -124,6 +124,17 @@ pub const DEPTHMAP: &str = "c2pa.depthmap";
 /// See <https://c2pa.org/specifications/specifications/2.1/specs/C2PA_Specification.html#_asset_type>.
 pub const ASSET_TYPE: &str = "c2pa.asset-type";
 
+/// Label prefix for a embedded data assertion.
+///
+/// See <https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_embedded_data>.
+pub const EMBEDDED_DATA: &str = "c2pa.embedded-data";
+
+/// Label prefix for a Icon assertion.
+///
+/// See <https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_generator_info_map>.
+pub const ICON: &str = "c2pa.icon";
+
+/// Label prefix for a GDepth assertion.
 /// Label prefix for a GDepth depthmap assertion.
 ///
 /// See <https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_gdepth_depthmap>.

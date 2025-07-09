@@ -682,4 +682,44 @@ pub mod tests {
 
         reset_default_settings().unwrap();
     }
+
+    #[test]
+    fn test_all_setting() {
+        let all_settings = r#"{   
+            "version_major": 1,
+            "version_minor": 0,
+            "trust": {
+                "private_anchors": null,
+                "trust_anchors": null,
+                "trust_config": null,
+                "allowed_list": null
+            },
+            "Core": {
+                "debug": false,
+                "hash_alg": "sha256",
+                "salt_jumbf_boxes": true,
+                "prefer_box_hash": false,
+                "prefer_bmff_merkle_tree": false,
+                "compress_manifests": true,
+                "max_memory_usage": null
+            },
+            "Verify": {
+                "verify_after_reading": true,
+                "verify_after_sign": true,
+                "verify_trust": true,
+                "ocsp_fetch": false,
+                "remote_manifest_fetch": true,
+                "check_ingredient_trust": true,
+                "skip_ingredient_conflict_resolution": false,
+                "strict_v1_validation": false
+            },
+            "Builder": {
+                "auto_thumbnail": true
+            }
+        }"#;
+
+        load_settings_from_str(all_settings, "json").unwrap();
+
+        reset_default_settings().unwrap();
+    }
 }
