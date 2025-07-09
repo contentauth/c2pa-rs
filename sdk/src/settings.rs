@@ -671,15 +671,20 @@ pub(crate) fn get_profile_settings_value<'de, T: serde::de::Deserialize<'de>>(
 }
 
 /// Returns the signer specified in the "signer" field of the currently active settings profile.
+///
+/// If the signer settings aren't specified, this function will return [Error::UnspecifiedSignerSettings][crate::Error::UnspecifiedSignerSettings].
 pub fn get_profile_settings_signer() -> Result<Box<dyn Signer>> {
-    let signer_info = get_profile_settings_value::<Option<SignerInfo>>("signer")
-        .and_then(|signer| signer.ok_or(Error::UnspecifiedSignerSettings))?;
-    create_signer::from_keys(
-        &signer_info.sign_cert,
-        &signer_info.private_key,
-        signer_info.alg,
-        signer_info.tsa_url.to_owned(),
-    )
+    let signer_info = get_profile_settings_value::<Option<SignerInfo>>("signer");
+    if let Ok(Some(signer_info)) = signer_info {
+        create_signer::from_keys(
+            &signer_info.sign_cert,
+            &signer_info.private_key,
+            signer_info.alg,
+            signer_info.tsa_url.to_owned(),
+        )
+    } else {
+        Err(Error::UnspecifiedSignerSettings)
+    }
 }
 
 // Set settings back to the default values.  Current use case is for testing.
