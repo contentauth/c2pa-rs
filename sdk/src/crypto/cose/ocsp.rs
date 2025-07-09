@@ -18,6 +18,7 @@ use coset::{CoseSign1, Label};
 
 use crate::{
     crypto::{
+        asn1::rfc3161::TstInfo,
         cose::{
             check_end_entity_certificate_profile, validate_cose_tst_info,
             validate_cose_tst_info_async, CertificateTrustPolicy, CoseError,
@@ -35,18 +36,27 @@ pub fn check_ocsp_status(
     data: &[u8],
     fetch_policy: OcspFetchPolicy,
     ctp: &CertificateTrustPolicy,
+    tst_info: Option<&TstInfo>,
     validation_log: &mut StatusTracker,
 ) -> Result<OcspResponse, CoseError> {
     match get_ocsp_der(sign1) {
         Some(ocsp_response_der) => {
             if _sync {
-                check_stapled_ocsp_response(sign1, &ocsp_response_der, data, ctp, validation_log)
+                check_stapled_ocsp_response(
+                    sign1,
+                    &ocsp_response_der,
+                    data,
+                    ctp,
+                    tst_info,
+                    validation_log,
+                )
             } else {
                 check_stapled_ocsp_response_async(
                     sign1,
                     &ocsp_response_der,
                     data,
                     ctp,
+                    tst_info,
                     validation_log,
                 )
                 .await
@@ -55,7 +65,7 @@ pub fn check_ocsp_status(
 
         None => match fetch_policy {
             OcspFetchPolicy::FetchAllowed => {
-                fetch_and_check_ocsp_response(sign1, data, ctp, validation_log)
+                fetch_and_check_ocsp_response(sign1, data, ctp, tst_info, validation_log)
             }
             OcspFetchPolicy::DoNotFetch => Ok(OcspResponse::default()),
         },
@@ -78,14 +88,22 @@ fn check_stapled_ocsp_response(
     ocsp_response_der: &[u8],
     data: &[u8],
     ctp: &CertificateTrustPolicy,
+    tst_info: Option<&TstInfo>,
     validation_log: &mut StatusTracker,
 ) -> Result<OcspResponse, CoseError> {
     // this timestamp is checked as part of Cose Signature so don't need to log its results here
     let mut local_log_sync = StatusTracker::default();
-    let time_stamp_info = if _sync {
-        validate_cose_tst_info(sign1, data, ctp, &mut local_log_sync)
-    } else {
-        validate_cose_tst_info_async(sign1, data, ctp, &mut local_log_sync).await
+
+    // get TstInfo or use supplied value
+    let time_stamp_info = match tst_info {
+        Some(tst_info) => Ok(tst_info.clone()),
+        None => {
+            if _sync {
+                validate_cose_tst_info(sign1, data, ctp, &mut local_log_sync)
+            } else {
+                validate_cose_tst_info_async(sign1, data, ctp, &mut local_log_sync).await
+            }
+        }
     };
 
     // If there is a timestamp use it for OCSP cert validation,
@@ -124,6 +142,7 @@ fn fetch_and_check_ocsp_response(
     sign1: &CoseSign1,
     data: &[u8],
     ctp: &CertificateTrustPolicy,
+    _tst_info: Option<&TstInfo>,
     validation_log: &mut StatusTracker,
 ) -> Result<OcspResponse, CoseError> {
     #[cfg(target_arch = "wasm32")]

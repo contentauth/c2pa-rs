@@ -39,6 +39,7 @@ use crate::{
     cbor_types::{map_cbor_to_type, value_cbor_to_type},
     cose_validator::{get_signing_info, get_signing_info_async, verify_cose, verify_cose_async},
     crypto::{
+        asn1::rfc3161::TstInfo,
         base64,
         cose::{parse_cose_sign1, CertificateInfo, CertificateTrustPolicy, OcspFetchPolicy},
         ocsp::OcspResponse,
@@ -1815,7 +1816,13 @@ impl Claim {
         let sign1 = parse_cose_sign1(&sig, &data, validation_log)?;
 
         // check certificate revocation
-        check_ocsp_status(&sign1, &data, ctp, validation_log)?;
+        check_ocsp_status(
+            &sign1,
+            &data,
+            ctp,
+            svi.timestamps.get(claim.label()),
+            validation_log,
+        )?;
 
         let verified = verify_cose_async(
             &sig,
@@ -1879,7 +1886,13 @@ impl Claim {
         let sign1 = parse_cose_sign1(sig, data, validation_log)?;
 
         // check certificate revocation
-        check_ocsp_status(&sign1, data, ctp, validation_log)?;
+        check_ocsp_status(
+            &sign1,
+            data,
+            ctp,
+            svi.timestamps.get(claim.label()),
+            validation_log,
+        )?;
 
         let verified = verify_cose(
             sig,
@@ -3804,6 +3817,7 @@ pub(crate) fn check_ocsp_status(
     sign1: &coset::CoseSign1,
     data: &[u8],
     ctp: &CertificateTrustPolicy,
+    tst_info: Option<&TstInfo>,
     validation_log: &mut StatusTracker,
 ) -> Result<OcspResponse> {
     // Moved here instead of c2pa-crypto because of the dependency on settings.
@@ -3819,6 +3833,7 @@ pub(crate) fn check_ocsp_status(
             data,
             fetch_policy,
             ctp,
+            tst_info,
             validation_log,
         )?)
     } else {
@@ -3827,6 +3842,7 @@ pub(crate) fn check_ocsp_status(
             data,
             fetch_policy,
             ctp,
+            tst_info,
             validation_log,
         )
         .await?)
