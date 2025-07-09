@@ -8,8 +8,6 @@ use crate::{
     Result,
 };
 
-const ASSERTION_CREATION_VERSION: usize = 1;
-
 /// The data structure used to store one or more soft bindings across some or all of the asset's content.
 ///
 /// https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#soft_binding_assertion
@@ -52,7 +50,7 @@ impl SoftBinding {
     ///
     /// This is useful for cases where the data lives in a different file chunk or side-car
     /// than the claim.
-    #[deprecated]
+    #[deprecated = "deprecated in c2pa v1.3, use the asset reference assertion instead"]
     pub fn url(&self) -> Option<&UriT> {
         self.url.as_ref()
     }
@@ -85,7 +83,7 @@ pub struct SoftBindingScopeMap {
 
 impl SoftBindingScopeMap {
     /// In algorithm specific format, the part of the digital content over which the soft binding value has been computed.
-    #[deprecated]
+    #[deprecated = "deprecated in c2pa v2.1, use the `region` field instead"]
     pub fn extent(&self) -> Option<&str> {
         self.extent.as_deref()
     }
@@ -107,7 +105,6 @@ impl SoftBinding {
 
 impl AssertionBase for SoftBinding {
     const LABEL: &'static str = Self::LABEL;
-    const VERSION: Option<usize> = Some(ASSERTION_CREATION_VERSION);
 
     fn to_assertion(&self) -> Result<Assertion> {
         Self::to_cbor_assertion(self)
