@@ -11,13 +11,14 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use bcder::decode::Constructed;
-use rasn::{AsnType, Decode, Decoder, Encode, Encoder};
+use ::rasn::prelude::*;
+use bcder::{decode::Constructed, encode::Values};
+use rasn_cms::SignedData;
 
 use crate::crypto::{
     asn1::{
-        rfc3161::{PkiStatus, TimeStampResp, TimeStampToken, TstInfo, OID_CONTENT_TYPE_TST_INFO},
-        rfc5652::{SignedData, OID_ID_SIGNED_DATA},
+        rfc3161::{PkiStatus, TimeStampResp, TimeStampToken, TstInfo},
+        rfc5652::OID_ID_SIGNED_DATA,
     },
     time_stamp::TimeStampError,
 };
@@ -48,13 +49,21 @@ impl TimeStampResponse {
     pub(crate) fn signed_data(&self) -> Result<Option<SignedData>, TimeStampError> {
         if let Some(token) = &self.0.time_stamp_token {
             if token.content_type == OID_ID_SIGNED_DATA {
-                Ok(Some(
-                    token
-                        .content
-                        .clone()
-                        .decode(SignedData::take_from)
-                        .map_err(|e| TimeStampError::DecodeError(e.to_string()))?,
-                ))
+                let mut sd_bytes = Vec::new();
+                token
+                    .content
+                    .write_encoded(bcder::Mode::Der, &mut sd_bytes)
+                    .map_err(|_err| {
+                        TimeStampError::DecodeError("time stamp invalid".to_string())
+                    })?;
+
+                // decode ContentInfo as SignedData
+                match rasn::der::decode(&sd_bytes) {
+                    Ok(signed_data) => Ok(Some(signed_data)),
+                    Err(_) => Err(TimeStampError::DecodeError(
+                        "time stamp invalid".to_string(),
+                    )),
+                }
             } else {
                 Err(TimeStampError::DecodeError(
                     "Invalid OID for signed data".to_string(),
@@ -68,10 +77,12 @@ impl TimeStampResponse {
     #[cfg(not(target_arch = "wasm32"))]
     pub(crate) fn tst_info(&self) -> Result<Option<TstInfo>, TimeStampError> {
         if let Some(signed_data) = self.signed_data()? {
-            if signed_data.content_info.content_type == OID_CONTENT_TYPE_TST_INFO {
-                if let Some(content) = signed_data.content_info.content {
+            if signed_data.encap_content_info.content_type
+                == Oid::ISO_MEMBER_BODY_US_RSADSI_PKCS9_SMIME_CT_TSTINFO
+            {
+                if let Some(content) = signed_data.encap_content_info.content {
                     Ok(Some(
-                        Constructed::decode(content.to_bytes(), bcder::Mode::Der, |cons| {
+                        Constructed::decode(content.as_ref(), bcder::Mode::Der, |cons| {
                             TstInfo::take_from(cons)
                         })
                         .map_err(|e| TimeStampError::DecodeError(e.to_string()))?,
@@ -132,28 +143,36 @@ pub(crate) fn signed_data_from_time_stamp_response(
         ));
     }
 
-    Ok(Some(
-        token
-            .content
-            .clone()
-            .decode(SignedData::take_from)
-            .map_err(|_err| TimeStampError::DecodeError("time stamp invalid".to_string()))?,
-    ))
+    let mut sd_bytes = Vec::new();
+    token
+        .content
+        .write_encoded(bcder::Mode::Der, &mut sd_bytes)
+        .map_err(|_err| TimeStampError::DecodeError("time stamp invalid".to_string()))?;
+
+    // decode ContentInfo DER as SignedData
+    match rasn::der::decode(&sd_bytes) {
+        Ok(signed_data) => Ok(Some(signed_data)),
+        Err(_) => Err(TimeStampError::DecodeError(
+            "time stamp invalid".to_string(),
+        )),
+    }
 }
 
 pub(crate) fn tst_info_from_signed_data(
     signed_data: &SignedData,
 ) -> Result<Option<TstInfo>, TimeStampError> {
-    if signed_data.content_info.content_type != OID_CONTENT_TYPE_TST_INFO {
+    if signed_data.encap_content_info.content_type
+        != Oid::ISO_MEMBER_BODY_US_RSADSI_PKCS9_SMIME_CT_TSTINFO
+    {
         return Ok(None);
     }
 
-    let Some(content) = &signed_data.content_info.content else {
+    let Some(content) = &signed_data.encap_content_info.content else {
         return Ok(None);
     };
 
     Ok(Some(
-        Constructed::decode(content.to_bytes(), bcder::Mode::Der, |cons| {
+        Constructed::decode(content.as_ref(), bcder::Mode::Der, |cons| {
             TstInfo::take_from(cons)
         })
         .map_err(|err| TimeStampError::DecodeError(err.to_string()))?,

@@ -14,7 +14,11 @@
 // crate contain dependencies on blocking calls in reqwest. Those calls are not
 // available in WASM environment.
 
+#[allow(dead_code)]
 pub mod rfc3161;
+#[allow(dead_code)]
 pub mod rfc3281;
+#[allow(dead_code)]
 pub mod rfc4210;
+#[allow(dead_code)]
 pub mod rfc5652;
