@@ -710,10 +710,6 @@ pub mod tests {
 
     #[test]
     fn test_get_defaults() {
-        SETTINGS
-            .with_borrow(|config| config.clone().try_deserialize::<Settings>())
-            .unwrap();
-
         let settings = get_settings().unwrap();
 
         assert_eq!(settings.core, Core::default());
