@@ -35,8 +35,8 @@ use crate::crypto::{
 use crate::signer::RemoteSigner;
 use crate::{
     assertions::{
-        labels, Action, Actions, Ingredient, Relationship, ReviewRating, SchemaDotOrg, Thumbnail,
-        User,
+        labels, Action, Actions, EmbeddedData, Ingredient, Relationship, ReviewRating,
+        SchemaDotOrg, Thumbnail, User,
     },
     asset_io::CAIReadWrite,
     claim::Claim,
@@ -102,7 +102,7 @@ pub(crate) fn static_test_v1_uuid() -> &'static str {
 /// Creates a claim for testing (v2)
 pub fn create_test_claim() -> Result<Claim> {
     // First create and add a claim thumbnail (we don't need to reference this anywhere)
-    let mut claim = Claim::new("adobe unit test", Some("adobe"), 2);
+    let mut claim = Claim::new("contentauth unit test", Some("contentauth"), 2);
 
     let mut cg_info = ClaimGeneratorInfo::new("test app");
     cg_info.version = Some("2.3.4".to_string());
@@ -116,14 +116,18 @@ pub fn create_test_claim() -> Result<Claim> {
     claim.add_claim_generator_info(cg_info);
 
     // Create a thumbnail for the claim
-    let claim_thumbnail =
-        Thumbnail::new(labels::JPEG_CLAIM_THUMBNAIL, vec![0xde, 0xad, 0xbe, 0xef]);
+    let claim_thumbnail = EmbeddedData::new(
+        labels::CLAIM_THUMBNAIL,
+        "image/jpeg",
+        vec![0xde, 0xad, 0xbe, 0xef],
+    );
     let _claim_thumbnail_ref =
         claim.add_assertion_with_salt(&claim_thumbnail, &DefaultSalt::default())?;
 
     // Create and add a thumbnail for an ingredient
-    let ingredient_thumbnail = Thumbnail::new(
-        labels::JPEG_INGREDIENT_THUMBNAIL,
+    let ingredient_thumbnail = EmbeddedData::new(
+        labels::INGREDIENT_THUMBNAIL,
+        "image/jpeg",
         vec![0xde, 0xad, 0xbe, 0xef],
     );
     let ingredient_thumbnail_ref =
