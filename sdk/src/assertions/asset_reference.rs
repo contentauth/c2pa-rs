@@ -9,7 +9,7 @@ use crate::{
 /// An `AssetReference` assertion provides information on one or more locations of
 /// where a copy of the asset may be obtained.
 ///
-/// This assertion contains a list of [`Reference`], each one declaring a location expressed as a URI and
+/// This assertion contains a list of references, each one declaring a location expressed as a URI and
 /// optionally a description. The URI may be either a single asset or it may reference a directory.
 ///
 /// <https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_asset_reference>
@@ -80,21 +80,7 @@ pub mod tests {
     #![allow(clippy::expect_used)]
     #![allow(clippy::unwrap_used)]
 
-    use crate::{
-        assertion::AssertionBase,
-        assertions::{asset_reference::Reference, AssetReference},
-    };
-
-    fn make_reference1() -> Reference {
-        Reference::new(
-            "https://some.storage.us/foo",
-            Some("A copy of the asset on the web"),
-        )
-    }
-
-    fn make_reference2() -> Reference {
-        Reference::new("ipfs://cid", Some("A copy of the asset on IPFS"))
-    }
+    use crate::{assertion::AssertionBase, assertions::AssetReference};
 
     #[test]
     fn assertion_references() {
@@ -111,9 +97,7 @@ pub mod tests {
         assert_eq!(assertion.label(), AssetReference::LABEL);
 
         let result = AssetReference::from_assertion(&assertion).unwrap();
-        assert_eq!(result.references.len(), 2);
-
-        assert_eq!(result.references, original.references);
+        assert_eq!(result, original)
     }
 
     #[test]
@@ -139,8 +123,6 @@ pub mod tests {
         let assertion = original.to_assertion().unwrap();
         let result = AssetReference::from_assertion(&assertion).unwrap();
 
-        assert_eq!(result.references.len(), 2);
-        assert_eq!(result.references[0], make_reference1());
-        assert_eq!(result.references[1], make_reference2());
+        assert_eq!(result, original);
     }
 }
