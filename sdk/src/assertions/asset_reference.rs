@@ -6,8 +6,6 @@ use crate::{
     error::Result,
 };
 
-const ASSERTION_CREATION_VERSION: usize = 2;
-
 /// An `AssetReference` assertion provides information on one or more locations of
 /// where a copy of the asset may be obtained.
 ///
@@ -24,15 +22,15 @@ impl AssetReference {
     pub const LABEL: &'static str = labels::ASSET_REFERENCE;
 
     /// Creates an AssetReference to a location.
-    pub fn new(reference: Reference) -> Self {
+    pub fn new(uri: &str, description: Option<&str>) -> Self {
         Self {
-            references: vec![reference],
+            references: vec![Reference::new(uri, description)],
         }
     }
 
     /// Adds an [`AssetReference`] to this assertion's list of references.
-    pub fn add_reference(mut self, reference: Reference) -> Self {
-        self.references.push(reference);
+    pub fn add_reference(mut self, uri: &str, description: Option<&str>) -> Self {
+        self.references.push(Reference::new(uri, description));
         self
     }
 }
@@ -67,7 +65,6 @@ impl AssertionCbor for AssetReference {}
 
 impl AssertionBase for AssetReference {
     const LABEL: &'static str = Self::LABEL;
-    const VERSION: Option<usize> = Some(ASSERTION_CREATION_VERSION);
 
     fn to_assertion(&self) -> Result<Assertion> {
         Self::to_cbor_assertion(self)
@@ -101,13 +98,17 @@ pub mod tests {
 
     #[test]
     fn assertion_references() {
-        let original = AssetReference::new(make_reference1()).add_reference(make_reference2());
+        let original = AssetReference::new(
+            "https://some.storage.us/foo",
+            Some("A copy of the asset on the web"),
+        )
+        .add_reference("ipfs://cid", Some("A copy of the asset on IPFS"));
 
         assert_eq!(original.references.len(), 2);
 
         let assertion = original.to_assertion().unwrap();
         assert_eq!(assertion.mime_type(), "application/cbor");
-        assert_eq!(assertion.label(), format!("{}.v2", AssetReference::LABEL));
+        assert_eq!(assertion.label(), AssetReference::LABEL);
 
         let result = AssetReference::from_assertion(&assertion).unwrap();
         assert_eq!(result.references.len(), 2);

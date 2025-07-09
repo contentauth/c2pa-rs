@@ -293,7 +293,6 @@ mod integration_1 {
     #[cfg(feature = "file_io")]
     fn test_asset_reference_assertion() -> Result<()> {
         // set up parent and destination paths
-        use c2pa::assertions::Reference;
         let dir = tempdirectory()?;
         let output_path = dir.path().join("test_file.jpg");
         #[cfg(target_os = "wasi")]
@@ -324,14 +323,11 @@ mod integration_1 {
         builder.set_claim_generator_info(generator);
 
         // allocate references
-        let references = AssetReference::new(Reference::new(
+        let references = AssetReference::new(
             "https://some.storage.us/foo",
             Some("A copy of the asset on the web"),
-        ))
-        .add_reference(Reference::new(
-            "ipfs://cid",
-            Some("A copy of the asset on IPFS"),
-        ));
+        )
+        .add_reference("ipfs://cid", Some("A copy of the asset on IPFS"));
 
         // add references assertion
         builder.add_assertion(AssetReference::LABEL, &references)?;
