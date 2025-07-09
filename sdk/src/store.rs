@@ -81,7 +81,8 @@ use crate::{
     validation_results::validation_codes::{
         ASSERTION_CBOR_INVALID, ASSERTION_JSON_INVALID, ASSERTION_MISSING, CLAIM_MALFORMED,
     },
-    validation_status, AsyncSigner, Signer,
+    validation_status::{self, ALGORITHM_UNSUPPORTED},
+    AsyncSigner, Signer,
 };
 #[cfg(feature = "v1_api")]
 use crate::{external_manifest::ManifestPatchCallback, RemoteSigner};
@@ -148,29 +149,21 @@ impl Store {
         };
 
         // load the trust handler settings, don't worry about status as these are checked during setting generation
-        let _ = get_settings_value::<Option<String>>("trust.trust_anchors").map(|ta_opt| {
-            if let Some(ta) = ta_opt {
-                let _v = store.add_trust(ta.as_bytes());
-            }
-        });
+        if let Ok(Some(ta)) = get_settings_value::<Option<String>>("trust.trust_anchors") {
+            let _v = store.add_trust(ta.as_bytes());
+        }
 
-        let _ = get_settings_value::<Option<String>>("trust.private_anchors").map(|pa_opt| {
-            if let Some(pa) = pa_opt {
-                let _v = store.add_private_trust_anchors(pa.as_bytes());
-            }
-        });
+        if let Ok(Some(pa)) = get_settings_value::<Option<String>>("trust.user_anchors") {
+            let _v = store.add_user_trust_anchors(pa.as_bytes());
+        }
 
-        let _ = get_settings_value::<Option<String>>("trust.trust_config").map(|tc_opt| {
-            if let Some(tc) = tc_opt {
-                let _v = store.add_trust_config(tc.as_bytes());
-            }
-        });
+        if let Ok(Some(tc)) = get_settings_value::<Option<String>>("trust.trust_config") {
+            let _v = store.add_trust_config(tc.as_bytes());
+        }
 
-        let _ = get_settings_value::<Option<String>>("trust.allowed_list").map(|al_opt| {
-            if let Some(al) = al_opt {
-                let _v = store.add_trust_allowed_list(al.as_bytes());
-            }
-        });
+        if let Ok(Some(al)) = get_settings_value::<Option<String>>("trust.allowed_list") {
+            let _v = store.add_trust_allowed_list(al.as_bytes());
+        }
 
         store
     }
@@ -187,11 +180,11 @@ impl Store {
         Ok(self.ctp.add_trust_anchors(trust_vec)?)
     }
 
-    // Load set of private trust anchors used for certificate validation. [u8] to the
-    /// private trust anchors is passed in the trust_vec variable.  This can be called multiple times
+    // Load set of user trust anchors used for certificate validation. [u8] to the
+    /// user trust anchors is passed in the trust_vec variable.  This can be called multiple times
     /// if there are additional trust stores.
-    pub fn add_private_trust_anchors(&mut self, trust_vec: &[u8]) -> Result<()> {
-        Ok(self.ctp.add_trust_anchors(trust_vec)?)
+    pub fn add_user_trust_anchors(&mut self, trust_vec: &[u8]) -> Result<()> {
+        Ok(self.ctp.add_user_trust_anchors(trust_vec)?)
     }
 
     pub fn add_trust_config(&mut self, trust_vec: &[u8]) -> Result<()> {
@@ -487,11 +480,10 @@ impl Store {
             StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
 
         let sign1 = parse_cose_sign1(sig, &data, &mut validation_log).ok()?;
-        if let Ok(info) = check_ocsp_status(&sign1, &data, &self.ctp, &mut validation_log) {
+        if let Ok(info) = check_ocsp_status(&sign1, &data, &self.ctp, None, &mut validation_log) {
             if let Some(revoked_at) = &info.revoked_at {
                 Some(format!(
-                    "Certificate Status: Revoked, revoked at: {}",
-                    revoked_at
+                    "Certificate Status: Revoked, revoked at: {revoked_at}"
                 ))
             } else {
                 Some(format!(
@@ -574,10 +566,7 @@ impl Store {
                             .await
                         };
                         if let Err(err) = result {
-                            error!(
-                                "Signature that was just generated does not validate: {:#?}",
-                                err
-                            );
+                            error!("Signature that was just generated does not validate: {err:#?}");
                             return Err(err);
                         }
                     }
@@ -1246,6 +1235,17 @@ impl Store {
                         .failure_as_err(validation_log, e)
                 })?;
 
+            // the claim must have an algorithm to be able to process internal hashes
+            if claim.alg_raw().is_none() {
+                return Err(log_item!(
+                    claim.label().to_owned(),
+                    "no hashing algorithm found for claim",
+                    "from_jumbf"
+                )
+                .validation_status(ALGORITHM_UNSUPPORTED)
+                .failure_as_err(validation_log, Error::UnknownAlgorithm));
+            }
+
             // make sure box version label match the read Claim
             if claim.version() > 1 {
                 match labels::version(&claim_box_ver) {
@@ -1752,12 +1752,15 @@ impl Store {
                         )
                     })?;
 
-                // save the timestamps stored in the StoreValidationInfo
+                // save the valid timestamps stored in the StoreValidationInfo
                 for (referenced_claim, time_stamp_token) in timestamp_assertion.as_ref() {
                     if let Some(rc) = svi.manifest_map.get(referenced_claim) {
-                        if let Ok(tst_info) =
-                            verify_time_stamp(time_stamp_token, rc.signature_val())
-                        {
+                        if let Ok(tst_info) = verify_time_stamp(
+                            time_stamp_token,
+                            rc.signature_val(),
+                            &self.ctp,
+                            validation_log,
+                        ) {
                             svi.timestamps.insert(rc.label().to_owned(), tst_info);
                             continue;
                         }
@@ -1799,39 +1802,7 @@ impl Store {
     /// xmp_str: String containing entire XMP block of the asset
     /// asset_bytes: bytes of the asset to be verified
     /// validation_log: If present all found errors are logged and returned, other wise first error causes exit and is returned  
-    pub async fn verify_store_async(
-        store: &Store,
-        asset_data: &mut ClaimAssetData<'_>,
-        validation_log: &mut StatusTracker,
-    ) -> Result<()> {
-        let claim = match store.provenance_claim() {
-            Some(c) => c,
-            None => {
-                log_item!("Unknown", "could not find active manifest", "verify_store")
-                    .validation_status(validation_status::CLAIM_MISSING)
-                    .failure_no_throw(validation_log, Error::ProvenanceMissing);
-
-                return Err(Error::ProvenanceMissing);
-            }
-        };
-
-        // get info needed to complete validation
-        let svi = store.get_store_validation_info(claim, asset_data, validation_log)?;
-
-        // verify the provenance claim
-        Claim::verify_claim_async(claim, asset_data, &svi, true, &store.ctp, validation_log)
-            .await?;
-
-        Store::ingredient_checks_async(store, claim, &svi, asset_data, validation_log).await?;
-
-        Ok(())
-    }
-
-    /// Verify Store
-    /// store: Store to validate
-    /// xmp_str: String containing entire XMP block of the asset
-    /// asset_bytes: bytes of the asset to be verified
-    /// validation_log: If present all found errors are logged and returned, other wise first error causes exit and is returned  
+    #[async_generic]
     pub fn verify_store(
         store: &Store,
         asset_data: &mut ClaimAssetData<'_>,
@@ -1851,10 +1822,17 @@ impl Store {
         // get info needed to complete validation
         let svi = store.get_store_validation_info(claim, asset_data, validation_log)?;
 
-        // verify the provenance claim
-        Claim::verify_claim(claim, asset_data, &svi, true, &store.ctp, validation_log)?;
+        if _sync {
+            // verify the provenance claim
+            Claim::verify_claim(claim, asset_data, &svi, true, &store.ctp, validation_log)?;
 
-        Store::ingredient_checks(store, claim, &svi, asset_data, validation_log)?;
+            Store::ingredient_checks(store, claim, &svi, asset_data, validation_log)?;
+        } else {
+            Claim::verify_claim_async(claim, asset_data, &svi, true, &store.ctp, validation_log)
+                .await?;
+
+            Store::ingredient_checks_async(store, claim, &svi, asset_data, validation_log).await?;
+        }
 
         Ok(())
     }
@@ -6624,6 +6602,15 @@ pub mod tests {
         println!("store = {store}");
     }
 
+    #[test]
+    fn test_no_alg() {
+        let ap = fixture_path("no_alg.jpg");
+        let mut report = StatusTracker::default();
+        let _store = Store::load_from_asset(&ap, true, &mut report);
+
+        assert!(report.has_status(ALGORITHM_UNSUPPORTED));
+    }
+
     /* sample of adding timestamp assertion
     fn send_timestamp_request(message: &[u8]) -> Result<Vec<u8>> {
         let url = "http://timestamp.digicert.com";
@@ -7731,7 +7718,7 @@ pub mod tests {
         let mut report = StatusTracker::default();
         let new_store = Store::load_from_memory("jpeg", &result, false, &mut report).unwrap();
 
-        println!("new_store: {}", new_store);
+        println!("new_store: {new_store}");
 
         Store::verify_store(
             &new_store,
@@ -7868,7 +7855,7 @@ pub mod tests {
         let mut report = StatusTracker::default();
         let new_store = Store::from_stream("jpeg", &mut result_stream, true, &mut report).unwrap();
 
-        println!("new_store: {}", new_store);
+        println!("new_store: {new_store}");
 
         let result = result_stream.into_inner();
 

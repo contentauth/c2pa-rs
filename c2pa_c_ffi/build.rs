@@ -22,7 +22,7 @@ fn main() {
 
     // Get the workspace target directory.
     let out_dir = env::var("OUT_DIR").expect("OUT_DIR environment variable not set");
-    println!("Running c2pa_c_ffi folder build script: {:?}", out_dir);
+    println!("Running c2pa_c_ffi folder build script: {out_dir:?}");
 
     let workspace_target_dir = Path::new(&out_dir)
         .ancestors()
@@ -38,10 +38,10 @@ fn main() {
     // Add a version string to the header.
     config.header = match config.header {
         Some(ref mut header) => {
-            header.push_str(&format!("\n// Version: {}\n", version));
+            header.push_str(&format!("\n// Version: {version}\n"));
             Some(header.clone())
         }
-        None => Some(format!("\n// Version: {}\n", version)),
+        None => Some(format!("\n// Version: {version}\n")),
     };
 
     // Generate the header file.
@@ -50,7 +50,7 @@ fn main() {
             cbindgen::Error::ParseSyntaxError { .. } => {
                 eprintln!("Warning: ParseSyntaxError encountered while generating bindings");
             }
-            e => panic!("{:?}", e),
+            e => panic!("{e:?}"),
         },
         |bindings| {
             println!(

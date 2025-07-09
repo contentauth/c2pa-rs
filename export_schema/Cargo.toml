@@ -4,7 +4,7 @@ version.workspace = true
 authors = ["Dave Kozma <dkozma@adobe.com>"]
 license = "MIT OR Apache-2.0"
 edition = "2018"
-rust-version = "1.82.0"
+rust-version = "1.85.0"
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(test)'] }
