@@ -29,7 +29,7 @@ use uuid::Uuid;
 
 use crate::{
     assertion::{AssertionBase, AssertionData},
-    assertions::{labels, Actions, Metadata, SoftwareAgent, Thumbnail},
+    assertions::{labels, Actions, EmbeddedData, Metadata, SoftwareAgent},
     claim::RemoteManifest,
     crypto::raw_signature::SigningAlg,
     error::{Error, Result},
@@ -613,8 +613,9 @@ impl Manifest {
             manifest.credentials = Some(credentials);
         }
 
-        manifest.redactions = claim.redactions().map(|rs| {
-            rs.iter()
+        manifest.redactions = claim.redactions().and_then(|rs| {
+            let v: Vec<_> = rs
+                .iter()
                 .map(|r| {
                     if !options.redacted_assertions.contains(r) {
                         options
@@ -623,7 +624,12 @@ impl Manifest {
                     }
                     r.to_owned()
                 })
-                .collect()
+                .collect();
+            if v.is_empty() {
+                None
+            } else {
+                Some(v)
+            }
         });
 
         manifest.assertion_references = claim
@@ -714,7 +720,7 @@ impl Manifest {
                     // do not include data hash when reading manifests
                 }
                 label if label.starts_with(labels::CLAIM_THUMBNAIL) => {
-                    let thumbnail = Thumbnail::from_assertion(assertion)?;
+                    let thumbnail = EmbeddedData::from_assertion(assertion)?;
                     let id = to_assertion_uri(claim.label(), label);
                     //let id = jumbf::labels::to_relative_uri(&id);
                     manifest.thumbnail = Some(manifest.resources.add_uri(
@@ -861,7 +867,7 @@ impl Manifest {
             // Setting the format to "none" will ensure that no claim thumbnail is added
             if thumb_ref.format != "none" {
                 let data = self.resources.get(&thumb_ref.identifier)?;
-                claim.add_assertion(&Thumbnail::new(
+                claim.add_assertion(&crate::assertions::Thumbnail::new(
                     &labels::add_thumbnail_format(labels::CLAIM_THUMBNAIL, &thumb_ref.format),
                     data.into_owned(),
                 ))?;

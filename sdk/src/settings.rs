@@ -16,11 +16,10 @@ use std::path::Path;
 use std::{
     cell::RefCell,
     collections::HashMap,
-    fmt,
     io::{BufRead, BufReader, Cursor},
 };
 
-use config::{Config, FileFormat, ValueKind};
+use config::{Config, FileFormat};
 use serde_derive::{Deserialize, Serialize};
 
 use crate::{
@@ -46,7 +45,7 @@ pub(crate) trait SettingsValidate {
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[allow(unused)]
 pub(crate) struct Trust {
-    private_anchors: Option<String>,
+    user_anchors: Option<String>,
     trust_anchors: Option<String>,
     trust_config: Option<String>,
     allowed_list: Option<String>,
@@ -108,7 +107,7 @@ impl Default for Trust {
         #[cfg(test)]
         {
             let mut trust = Self {
-                private_anchors: None,
+                user_anchors: None,
                 trust_anchors: None,
                 trust_config: None,
                 allowed_list: None,
@@ -118,7 +117,7 @@ impl Default for Trust {
                 String::from_utf8_lossy(include_bytes!("../tests/fixtures/certs/trust/store.cfg"))
                     .into_owned(),
             );
-            trust.trust_anchors = Some(
+            trust.user_anchors = Some(
                 String::from_utf8_lossy(include_bytes!(
                     "../tests/fixtures/certs/trust/test_cert_root_bundle.pem"
                 ))
@@ -130,7 +129,7 @@ impl Default for Trust {
         #[cfg(not(test))]
         {
             Self {
-                private_anchors: None,
+                user_anchors: None,
                 trust_anchors: None,
                 trust_config: None,
                 allowed_list: None,
@@ -145,7 +144,7 @@ impl SettingsValidate for Trust {
             self.test_load_trust(ta.as_bytes())?;
         }
 
-        if let Some(pa) = &self.private_anchors {
+        if let Some(pa) = &self.user_anchors {
             self.test_load_trust(pa.as_bytes())?;
         }
 
@@ -203,6 +202,7 @@ pub(crate) struct Verify {
     verify_after_reading: bool,
     verify_after_sign: bool,
     verify_trust: bool,
+    verify_timestamp_trust: bool,
     ocsp_fetch: bool,
     remote_manifest_fetch: bool,
     check_ingredient_trust: bool,
@@ -216,6 +216,7 @@ impl Default for Verify {
             verify_after_reading: true,
             verify_after_sign: true,
             verify_trust: cfg!(test),
+            verify_timestamp_trust: !cfg!(test), // verify timestamp trust unless in test mode
             ocsp_fetch: false,
             remote_manifest_fetch: true,
             check_ingredient_trust: true,
@@ -718,7 +719,7 @@ pub mod tests {
         assert_eq!(settings.core, Core::default());
         assert_eq!(settings.trust, Trust::default());
         assert_eq!(settings.verify, Verify::default());
-        assert_eq!(settings.builder, Builder::default());
+        assert_eq!(settings.builder, Builder);
 
         reset_default_settings().unwrap();
     }
@@ -735,8 +736,8 @@ pub mod tests {
             Profile::default().thumbnail.enabled
         );
         assert_eq!(
-            get_settings_value::<Option<String>>("trust.private_anchors").unwrap(),
-            Trust::default().private_anchors
+            get_settings_value::<Option<String>>("trust.user_anchors").unwrap(),
+            Trust::default().user_anchors
         );
 
         // test getting full objects
@@ -745,10 +746,7 @@ pub mod tests {
             get_settings_value::<Verify>("verify").unwrap(),
             Verify::default()
         );
-        assert_eq!(
-            get_settings_value::<Builder>("builder").unwrap(),
-            Builder::default()
-        );
+        assert_eq!(get_settings_value::<Builder>("builder").unwrap(), Builder);
         assert_eq!(
             get_settings_value::<Trust>("trust").unwrap(),
             Trust::default()
@@ -759,7 +757,7 @@ pub mod tests {
         let remote_manifest_fetch: bool =
             get_settings_value("verify.remote_manifest_fetch").unwrap();
         let auto_thumbnail: bool = get_settings_value("profile.default.thumbnail.enabled").unwrap();
-        let private_anchors: Option<String> = get_settings_value("trust.private_anchors").unwrap();
+        let user_anchors: Option<String> = get_settings_value("trust.user_anchors").unwrap();
 
         assert_eq!(hash_alg, Core::default().hash_alg);
         assert_eq!(
@@ -767,7 +765,7 @@ pub mod tests {
             Verify::default().remote_manifest_fetch
         );
         assert_eq!(auto_thumbnail, Profile::default().thumbnail.enabled);
-        assert_eq!(private_anchors, Trust::default().private_anchors);
+        assert_eq!(user_anchors, Trust::default().user_anchors);
 
         // test implicit deserialization on objects
         let core: Core = get_settings_value("core").unwrap();
@@ -777,7 +775,7 @@ pub mod tests {
 
         assert_eq!(core, Core::default());
         assert_eq!(verify, Verify::default());
-        assert_eq!(builder, Builder::default());
+        assert_eq!(builder, Builder);
         assert_eq!(trust, Trust::default());
 
         reset_default_settings().unwrap();
@@ -792,7 +790,7 @@ pub mod tests {
         set_settings_value("verify.remote_manifest_fetch", false).unwrap();
         set_settings_value("profile.default.thumbnail.enabled", false).unwrap();
         set_settings_value(
-            "trust.private_anchors",
+            "trust.user_anchors",
             Some(String::from_utf8(ts.to_vec()).unwrap()),
         )
         .unwrap();
@@ -804,7 +802,7 @@ pub mod tests {
         assert!(!get_settings_value::<bool>("verify.remote_manifest_fetch").unwrap());
         assert!(!get_settings_value::<bool>("profile.default.thumbnail.enabled").unwrap());
         assert_eq!(
-            get_settings_value::<Option<String>>("trust.private_anchors").unwrap(),
+            get_settings_value::<Option<String>>("trust.user_anchors").unwrap(),
             Some(String::from_utf8(ts.to_vec()).unwrap())
         );
 
@@ -818,10 +816,7 @@ pub mod tests {
         //     get_settings_value::<Builder>("builder").unwrap(),
         //     Builder::default()
         // );
-        assert_ne!(
-            get_settings_value::<Trust>("trust").unwrap(),
-            Trust::default()
-        );
+        assert!(get_settings_value::<Trust>("trust").unwrap() == Trust::default());
 
         reset_default_settings().unwrap();
     }
@@ -852,7 +847,11 @@ pub mod tests {
 
         let setting_buf = std::fs::read(&op).unwrap();
 
-        load_settings_from_str(&String::from_utf8_lossy(&setting_buf), "json").unwrap();
+        {
+            let settings_str: &str = &String::from_utf8_lossy(&setting_buf);
+            Settings::from_string(settings_str, "json", None).map(|_| ())
+        }
+        .unwrap();
         let settings = get_settings().unwrap();
 
         assert_eq!(settings, Settings::default());
@@ -936,6 +935,43 @@ pub mod tests {
             get_settings_value::<u32>("hidden.test3").unwrap(),
             123456u32
         );
+
+        reset_default_settings().unwrap();
+    }
+
+    #[test]
+    fn test_all_setting() {
+        let all_settings = r#"{
+            "version_major": 1,
+            "version_minor": 0,
+            "trust": {
+                "private_anchors": null,
+                "trust_anchors": null,
+                "trust_config": null,
+                "allowed_list": null
+            },
+            "Core": {
+                "debug": false,
+                "hash_alg": "sha256",
+                "salt_jumbf_boxes": true,
+                "prefer_box_hash": false,
+                "prefer_bmff_merkle_tree": false,
+                "compress_manifests": true,
+                "max_memory_usage": null
+            },
+            "Verify": {
+                "verify_after_reading": true,
+                "verify_after_sign": true,
+                "verify_trust": true,
+                "ocsp_fetch": false,
+                "remote_manifest_fetch": true,
+                "check_ingredient_trust": true,
+                "skip_ingredient_conflict_resolution": false,
+                "strict_v1_validation": false
+            }
+        }"#;
+
+        load_settings_from_str(all_settings, "json").unwrap();
 
         reset_default_settings().unwrap();
     }

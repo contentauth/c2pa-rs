@@ -19,7 +19,6 @@ use std::{
 };
 
 use async_generic::async_generic;
-use conv::ConvUtil;
 #[cfg(feature = "json_schema")]
 use schemars::JsonSchema;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
@@ -28,11 +27,10 @@ use uuid::Uuid;
 use zip::{write::SimpleFileOptions, ZipArchive, ZipWriter};
 
 use crate::{
-    assertion::{AssertionBase, AssertionDecodeError},
+    assertion::AssertionDecodeError,
     assertions::{
-        c2pa_action::{self, CREATED, OPENED},
-        digital_source_type, labels, Action, Actions, BmffHash, BoxHash, CreativeWork, DataHash,
-        Exif, Metadata, SoftwareAgent, Thumbnail, User, UserCbor,
+        c2pa_action, digital_source_type, labels, Action, Actions, BmffHash, BoxHash, CreativeWork,
+        DataHash, EmbeddedData, Exif, Metadata, SoftwareAgent, Thumbnail, User, UserCbor,
     },
     claim::Claim,
     error::{Error, Result},
@@ -710,13 +708,20 @@ impl Builder {
                 let mut stream = self.resources.open(thumb_ref)?;
                 let mut data = Vec::new();
                 stream.read_to_end(&mut data)?;
-                claim.add_assertion_with_salt(
-                    &Thumbnail::new(
+                let thumbnail = if claim.version() >= 2 {
+                    EmbeddedData::new(
+                        labels::CLAIM_THUMBNAIL,
+                        format_to_mime(&thumb_ref.format),
+                        data,
+                    )
+                } else {
+                    Thumbnail::new(
                         &labels::add_thumbnail_format(labels::CLAIM_THUMBNAIL, &thumb_ref.format),
                         data,
-                    ),
-                    &salt,
-                )?;
+                    )
+                    .into()
+                };
+                claim.add_assertion_with_salt(&thumbnail, &salt)?;
             }
         }
 
@@ -908,7 +913,9 @@ impl Builder {
 
             if let Some(action) = action {
                 if let Some(first_action) = actions.actions.first() {
-                    if first_action.action() != CREATED && first_action.action() != OPENED {
+                    if first_action.action() != c2pa_action::CREATED
+                        && first_action.action() != c2pa_action::OPENED
+                    {
                         actions.actions.insert(0, action);
                     }
                 } else {
@@ -1297,7 +1304,6 @@ mod tests {
         asset_handlers::jpeg_io::JpegIO,
         crypto::raw_signature::SigningAlg,
         hash_stream_by_alg,
-        settings::get_profile_settings_value,
         utils::{test::write_jpeg_placeholder_stream, test_signer::test_signer},
         validation_results::ValidationState,
         Reader,
@@ -1554,7 +1560,8 @@ mod tests {
 
     #[test]
     fn test_builder_auto_created() {
-        let _guard = settings::set_profile_settings_value("auto_created_action", true).unwrap();
+        let _guard =
+            settings::set_scoped_profile_settings_value("auto_created_action", true).unwrap();
 
         let mut output = Cursor::new(Vec::new());
         Builder::new()
@@ -1581,7 +1588,8 @@ mod tests {
 
     #[test]
     fn test_builder_auto_opened() {
-        let _guard = settings::set_profile_settings_value("auto_opened_action", true).unwrap();
+        let _guard =
+            settings::set_scoped_profile_settings_value("auto_opened_action", true).unwrap();
 
         let mut builder = Builder::new();
         builder
@@ -1613,7 +1621,8 @@ mod tests {
 
     #[test]
     fn test_builder_auto_placed() {
-        let _guard = settings::set_profile_settings_value("auto_placed_action", true).unwrap();
+        let _guard =
+            settings::set_scoped_profile_settings_value("auto_placed_action", true).unwrap();
 
         let mut builder = Builder::new();
         builder
@@ -1714,7 +1723,7 @@ mod tests {
             "sample1.heic",
             "sample1.heif",
             "sample1.m4a",
-            "video1.mp4",
+            "video1_no_manifest.mp4",
             "cloud_manifest.c2pa", // we need a new test for this since it will always fail
         ];
         for file_name in TESTFILES {
