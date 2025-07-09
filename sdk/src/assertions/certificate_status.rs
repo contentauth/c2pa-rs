@@ -8,27 +8,29 @@ use crate::{
 };
 
 #[derive(Serialize, Deserialize, Default, Debug, PartialEq, Eq)]
-pub struct CertificateStatus(Vec<ByteBuf>);
+pub struct CertificateStatus {
+    pub ocsp_vals : Vec<ByteBuf<>>
+}
 
 impl CertificateStatus {
     pub const LABEL: &'static str = labels::CERTIFICATE_STATUS;
 
     pub fn new(ocsp_vals: Vec<Vec<u8>>) -> Self {
-        let mut cs = CertificateStatus(Vec::new());
+        let mut cs = CertificateStatus {ocsp_vals : Vec::new()};
         for oscp_val in ocsp_vals {
-            cs.0.push(ByteBuf::from(oscp_val));
+            cs.ocsp_vals.push(ByteBuf::from(oscp_val));
         }
         cs
     }
 
     pub fn add_ocsp_val(&mut self, ocsp_val: &[u8]) {
-        self.0.push(ByteBuf::from(ocsp_val.to_vec()));
+        self.ocsp_vals.push(ByteBuf::from(ocsp_val.to_vec()));
     }
 }
 
 impl AsRef<Vec<ByteBuf>> for CertificateStatus {
     fn as_ref(&self) -> &Vec<ByteBuf> {
-        &self.0
+        &self.ocsp_vals
     }
 }
 

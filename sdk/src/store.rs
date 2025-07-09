@@ -4499,12 +4499,16 @@ impl Store {
         Ok(i_store)
     }
 
-    pub fn get_certificate_assertion(&self, manifest_labels: &Vec<String>, validation_log: &mut StatusTracker) -> Result<Vec<Vec<u8>>> {
+    #[allow(dead_code)]
+    pub fn get_certificate_assertion(
+        &self,
+        manifest_labels: &Vec<String>,
+        validation_log: &mut StatusTracker,
+    ) -> Result<Vec<Vec<u8>>> {
         let mut oscp_responses: Vec<Vec<u8>> = Vec::new();
 
         for manifest_label in manifest_labels {
-            let claim = self.claims_map.get(manifest_label);
-            if let Some(claim) = claim {
+            if let Some(claim) = self.claims_map.get(manifest_label) {
                 let sig = claim.signature_val().clone();
                 let data = claim.data()?;
 
@@ -4669,17 +4673,24 @@ pub mod tests {
     #[cfg(feature = "v1_api")]
     #[cfg(feature = "file_io")]
     fn test_certificate_status() {
-        use crate::assertions::CertificateStatus;
+        use crate::{assertions::CertificateStatus, crypto::ocsp::OcspResponse};
 
-        let ap = fixture_path("ocsp.jpg");
+        let ap = fixture_path("ocsp.png");
         let mut report = StatusTracker::default();
         let store = Store::load_from_asset(&ap, true, &mut report).unwrap();
         let mut validation_log =
-                    StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
-        let test = Store::get_certificate_assertion(&store, &store.claims, &mut validation_log).unwrap();
-
+            StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
+        let test =
+            Store::get_certificate_assertion(&store, &store.claims, &mut validation_log).unwrap();
         let certificate_status = CertificateStatus::new(test);
-        dbg!(certificate_status.to_assertion().unwrap());
+        let assertion = certificate_status.to_assertion().unwrap();
+        let restored = CertificateStatus::from_assertion(&assertion).unwrap();
+        assert_eq!(certificate_status, restored);
+        for ocsp_val in restored.ocsp_vals {
+            let response =
+                OcspResponse::from_der_checked(&ocsp_val, None, &mut validation_log).unwrap();
+            assert!(!response.ocsp_der.is_empty())
+        }
     }
 
     #[test]

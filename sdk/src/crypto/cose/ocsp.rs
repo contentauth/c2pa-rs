@@ -111,7 +111,7 @@ fn check_stapled_ocsp_response(
 
 // TO DO: Add async version of this?
 /// TO DO: Add documentation
-pub fn fetch_and_check_ocsp_response(
+pub(crate) fn fetch_and_check_ocsp_response(
     sign1: &CoseSign1,
     data: &[u8],
     ctp: &CertificateTrustPolicy,
@@ -160,7 +160,7 @@ pub fn fetch_and_check_ocsp_response(
     }
 }
 
-fn get_ocsp_der(sign1: &coset::CoseSign1) -> Option<Vec<u8>> {
+pub(crate) fn get_ocsp_der(sign1: &coset::CoseSign1) -> Option<Vec<u8>> {
     let der = sign1
         .unprotected
         .rest
