@@ -18,9 +18,10 @@ use coset::{CoseSign1, Label};
 
 use crate::{
     crypto::{
+        asn1::rfc3161::TstInfo,
         cose::{
-            check_certificate_profile, validate_cose_tst_info, validate_cose_tst_info_async,
-            CertificateTrustPolicy, CoseError,
+            check_end_entity_certificate_profile, validate_cose_tst_info,
+            validate_cose_tst_info_async, CertificateTrustPolicy, CoseError,
         },
         ocsp::OcspResponse,
     },
@@ -35,18 +36,27 @@ pub fn check_ocsp_status(
     data: &[u8],
     fetch_policy: OcspFetchPolicy,
     ctp: &CertificateTrustPolicy,
+    tst_info: Option<&TstInfo>,
     validation_log: &mut StatusTracker,
 ) -> Result<OcspResponse, CoseError> {
     match get_ocsp_der(sign1) {
         Some(ocsp_response_der) => {
             if _sync {
-                check_stapled_ocsp_response(sign1, &ocsp_response_der, data, ctp, validation_log)
+                check_stapled_ocsp_response(
+                    sign1,
+                    &ocsp_response_der,
+                    data,
+                    ctp,
+                    tst_info,
+                    validation_log,
+                )
             } else {
                 check_stapled_ocsp_response_async(
                     sign1,
                     &ocsp_response_der,
                     data,
                     ctp,
+                    tst_info,
                     validation_log,
                 )
                 .await
@@ -55,7 +65,7 @@ pub fn check_ocsp_status(
 
         None => match fetch_policy {
             OcspFetchPolicy::FetchAllowed => {
-                fetch_and_check_ocsp_response(sign1, data, ctp, validation_log)
+                fetch_and_check_ocsp_response(sign1, data, ctp, tst_info, validation_log)
             }
             OcspFetchPolicy::DoNotFetch => Ok(OcspResponse::default()),
         },
@@ -78,23 +88,36 @@ fn check_stapled_ocsp_response(
     ocsp_response_der: &[u8],
     data: &[u8],
     ctp: &CertificateTrustPolicy,
+    tst_info: Option<&TstInfo>,
     validation_log: &mut StatusTracker,
 ) -> Result<OcspResponse, CoseError> {
-    let time_stamp_info = if _sync {
-        validate_cose_tst_info(sign1, data)
-    } else {
-        validate_cose_tst_info_async(sign1, data).await
+    // this timestamp is checked as part of Cose Signature so don't need to log its results here
+    let mut local_log_sync = StatusTracker::default();
+
+    // get TstInfo or use supplied value
+    let time_stamp_info = match tst_info {
+        Some(tst_info) => Ok(tst_info.clone()),
+        None => {
+            if _sync {
+                validate_cose_tst_info(sign1, data, ctp, &mut local_log_sync)
+            } else {
+                validate_cose_tst_info_async(sign1, data, ctp, &mut local_log_sync).await
+            }
+        }
     };
 
-    // If the stapled OCSP response has a time stamp, we can validate it.
-    let Ok(tst_info) = &time_stamp_info else {
-        return Ok(OcspResponse::default());
+    // If there is a timestamp use it for OCSP cert validation,
+    // otherwise follow default rules for OCSP checking
+    let (tst_info, signing_time) = match time_stamp_info {
+        Ok(tstinfo) => {
+            let signing_time = tstinfo.gen_time.clone().into();
+            (Some(tstinfo), Some(signing_time))
+        }
+        Err(_) => (None, None),
     };
-
-    let signing_time: DateTime<Utc> = tst_info.gen_time.clone().into();
 
     let Ok(ocsp_data) =
-        OcspResponse::from_der_checked(ocsp_response_der, Some(signing_time), validation_log)
+        OcspResponse::from_der_checked(ocsp_response_der, signing_time, validation_log)
     else {
         return Ok(OcspResponse::default());
     };
@@ -102,7 +125,12 @@ fn check_stapled_ocsp_response(
     // If we get a valid response, validate the certs.
     if ocsp_data.revoked_at.is_none() {
         if let Some(ocsp_certs) = &ocsp_data.ocsp_certs {
-            check_certificate_profile(&ocsp_certs[0], ctp, validation_log, Some(tst_info))?;
+            check_end_entity_certificate_profile(
+                &ocsp_certs[0],
+                ctp,
+                validation_log,
+                tst_info.as_ref(),
+            )?;
         }
     }
 
@@ -114,6 +142,7 @@ fn fetch_and_check_ocsp_response(
     sign1: &CoseSign1,
     data: &[u8],
     ctp: &CertificateTrustPolicy,
+    _tst_info: Option<&TstInfo>,
     validation_log: &mut StatusTracker,
 ) -> Result<OcspResponse, CoseError> {
     #[cfg(target_arch = "wasm32")]
@@ -134,9 +163,10 @@ fn fetch_and_check_ocsp_response(
 
         let ocsp_response_der = ocsp_der;
 
-        let signing_time: Option<DateTime<Utc>> = validate_cose_tst_info(sign1, data)
-            .ok()
-            .map(|tst_info| tst_info.gen_time.clone().into());
+        let signing_time: Option<DateTime<Utc>> =
+            validate_cose_tst_info(sign1, data, ctp, validation_log)
+                .ok()
+                .map(|tst_info| tst_info.gen_time.clone().into());
 
         // Check the OCSP response, but only if it is well-formed.
         // Revocation errors are reported in the validation log.
@@ -151,7 +181,7 @@ fn fetch_and_check_ocsp_response(
         // If we get a valid response validate the certs.
         if ocsp_data.revoked_at.is_none() {
             if let Some(ocsp_certs) = &ocsp_data.ocsp_certs {
-                check_certificate_profile(&ocsp_certs[0], ctp, validation_log, None)?;
+                check_end_entity_certificate_profile(&ocsp_certs[0], ctp, validation_log, None)?;
             }
         }
 

@@ -11,81 +11,136 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use std::ops::Deref;
+use std::str::FromStr;
 
+use asn1_rs::FromDer;
 use async_generic::async_generic;
-use bcder::{decode::SliceSource, encode::Values, ConstOid, OctetString};
+use bcder::{decode::SliceSource, OctetString};
 use chrono::{offset::LocalResult, DateTime, TimeZone, Utc};
+use rasn::{prelude::*, types};
+use rasn_cms::{CertificateChoices, SignerIdentifier};
 use x509_certificate::{
-    asn1time::{GeneralizedTime, GeneralizedTimeAllowedTimezone, Time},
+    asn1time::{GeneralizedTime, GeneralizedTimeAllowedTimezone},
     DigestAlgorithm,
 };
 
-use crate::crypto::{
-    asn1::{
-        rfc3161::TstInfo,
-        rfc5652::{
-            CertificateChoices::Certificate, SignerIdentifier, OID_MESSAGE_DIGEST, OID_SIGNING_TIME,
+use crate::{
+    crypto::{
+        asn1::rfc3161::TstInfo,
+        cose::CertificateTrustPolicy,
+        raw_signature::validator_for_sig_and_hash_algs,
+        time_stamp::{
+            response::{signed_data_from_time_stamp_response, tst_info_from_signed_data},
+            TimeStampError,
         },
     },
-    raw_signature::validator_for_sig_and_hash_algs,
-    time_stamp::{
-        response::{signed_data_from_time_stamp_response, tst_info_from_signed_data},
-        TimeStampError,
+    log_item,
+    settings::get_settings_value,
+    status_tracker::StatusTracker,
+    validation_status::{
+        TIMESTAMP_MALFORMED, TIMESTAMP_MISMATCH, TIMESTAMP_OUTSIDE_VALIDITY, TIMESTAMP_TRUSTED,
+        TIMESTAMP_UNTRUSTED, TIMESTAMP_VALIDATED,
     },
 };
 
-/// Decode the TimeStampToken info and verify it against the supplied data.
+// when signed attributes are present the digest is the DER
+// encoding of the SignerInfo SignedAttributes
+fn signed_attributes_digested_content(
+    signer_info: &rasn_cms::SignerInfo,
+) -> Result<Option<Vec<u8>>, rasn::error::EncodeError> {
+    if let Some(signed_attributes) = &signer_info.signed_attrs {
+        match rasn::der::encode(signed_attributes) {
+            Ok(encoded) => Ok(Some(encoded)),
+            Err(e) => Err(e),
+        }
+    } else {
+        Ok(None)
+    }
+}
+
+/// Decode the TimeStampToken info and verify it against the supplied data and trust policy
 #[async_generic]
-pub fn verify_time_stamp(ts: &[u8], data: &[u8]) -> Result<TstInfo, TimeStampError> {
-    // Did the time stamp expire between issuance and verification?
-    let Some(sd) = signed_data_from_time_stamp_response(ts)? else {
+pub fn verify_time_stamp(
+    ts: &[u8],
+    data: &[u8],
+    ctp: &CertificateTrustPolicy,
+    validation_log: &mut StatusTracker,
+) -> Result<TstInfo, TimeStampError> {
+    // Get the signed data frorm the timestamp data
+    let Ok(Some(sd)) = signed_data_from_time_stamp_response(ts) else {
+        log_item!("", "count not parse timestamp data", "verify_time_stamp")
+            .validation_status(TIMESTAMP_MALFORMED)
+            .informational(validation_log);
+
         return Err(TimeStampError::DecodeError(
             "unable to find signed data".to_string(),
         ));
     };
 
-    let certs = sd.certificates.clone().ok_or(TimeStampError::DecodeError(
-        "time stamp contains no certificates".to_string(),
-    ))?;
+    // Grab the list of certs used in signing this timestamp
+    let Some(certs) = &sd.certificates else {
+        log_item!("", "count not parse timestamp data", "verify_time_stamp")
+            .validation_status(TIMESTAMP_UNTRUSTED)
+            .informational(validation_log);
+
+        return Err(TimeStampError::DecodeError(
+            "time stamp contains no certificates".to_string(),
+        ));
+    };
+    let certs_vec = certs.to_vec();
+
+    // Convert certs to DER format
+    let cert_ders: Vec<Vec<u8>> = certs_vec
+        .iter()
+        .filter_map(|cc| {
+            if let CertificateChoices::Certificate(c) = cc {
+                rasn::der::encode(c).ok()
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    if cert_ders.len() != certs.len() {
+        log_item!("", "count not parse timestamp data", "verify_time_stamp")
+            .validation_status(TIMESTAMP_UNTRUSTED)
+            .informational(validation_log);
+
+        return Err(TimeStampError::DecodeError(
+            "time stamp certificate could not be processed".to_string(),
+        ));
+    }
 
     let mut last_err = TimeStampError::InvalidData;
+    let mut current_validation_log = StatusTracker::default();
 
     // Look for any valid signer.
-    for signer_info in sd.signer_infos.iter() {
+    for signer_info in sd.signer_infos.to_vec().iter() {
+        current_validation_log = StatusTracker::default(); // reset for latest results
+
         // Find signer's cert.
-        let cert = match certs.iter().find_map(|cc| {
+        let cert_pos = match certs_vec.iter().position(|cc| {
             let c = match cc {
-                Certificate(c) => c,
-                _ => return None,
+                CertificateChoices::Certificate(c) => c,
+                _ => return false,
             };
 
             match &signer_info.sid {
                 SignerIdentifier::IssuerAndSerialNumber(sn) => {
-                    if sn.issuer == c.tbs_certificate.issuer
+                    sn.issuer == c.tbs_certificate.issuer
                         && sn.serial_number == c.tbs_certificate.serial_number
-                    {
-                        Some(c.clone())
-                    } else {
-                        None
-                    }
                 }
 
                 SignerIdentifier::SubjectKeyIdentifier(ski) => {
-                    const SKI_OID: ConstOid = bcder::Oid(&[2, 5, 29, 14]);
                     if let Some(extensions) = &c.tbs_certificate.extensions {
-                        if extensions.iter().any(|e| {
-                            if e.id == SKI_OID {
-                                return *ski == e.value;
+                        extensions.iter().any(|e| {
+                            if e.extn_id == Oid::JOINT_ISO_ITU_T_DS_CERTIFICATE_EXTENSION_SUBJECT_KEY_IDENTIFIER {
+                                return *ski == e.extn_value;
                             }
                             false
-                        }) {
-                            Some(c.clone())
-                        } else {
-                            None
-                        }
+                        })
                     } else {
-                        None
+                        false
                     }
                 }
             }
@@ -93,24 +148,46 @@ pub fn verify_time_stamp(ts: &[u8], data: &[u8]) -> Result<TstInfo, TimeStampErr
             Some(c) => c,
             None => continue,
         };
+        let CertificateChoices::Certificate(cert) = certs_vec[cert_pos] else {
+            continue;
+        };
+
+        // get the cert common name, use different crate since x509-certificate does
+        // not parse the common name correctly
+        let mut common_name = String::new();
+        if let Ok((_, new_c)) =
+            x509_parser::certificate::X509Certificate::from_der(&cert_ders[cert_pos])
+        {
+            for rdn in new_c.subject().iter_common_name() {
+                if let Ok(cn) = rdn.as_str() {
+                    common_name.push_str(cn);
+                }
+            }
+        }
 
         // Load TstInfo. We will verify its contents below against signed
         // values.
-        let tst_opt = tst_info_from_signed_data(&sd)?;
-        let mut tst = tst_opt.ok_or(TimeStampError::DecodeError(
-            "unable to read unprotected TstInfo".to_string(),
-        ))?;
+        let Ok(Some(mut tst)) = tst_info_from_signed_data(&sd) else {
+            log_item!("", "timestamp response had no TstInfo", "verify_time_stamp")
+                .validation_status(TIMESTAMP_MALFORMED)
+                .informational(&mut current_validation_log);
+
+            last_err = TimeStampError::InvalidData;
+            continue;
+        };
+
         let mi = &tst.message_imprint;
 
         // Check for time stamp expiration.
         let mut signing_time = generalized_time_to_datetime(tst.gen_time.clone()).timestamp();
 
         // Check the signer info's signed attributes.
-        if let Some(attributes) = &signer_info.signed_attributes {
-            // If there is a signed signing time make sure it has not changed.
+        if let Some(attributes) = &signer_info.signed_attrs {
+            // If there is a signed signing time attribute use it
             if let Some(Some(attrib_signing_time)) = attributes
+                .to_vec()
                 .iter()
-                .find(|attr| attr.typ == OID_SIGNING_TIME)
+                .find(|attr| attr.r#type == Oid::ISO_MEMBER_BODY_US_RSADSI_PKCS9_SIGNING_TIME)
                 .map(|attr| {
                     if attr.values.len() != 1 {
                         // per CMS spec can only contain 1 signing time value
@@ -118,19 +195,17 @@ pub fn verify_time_stamp(ts: &[u8], data: &[u8]) -> Result<TstInfo, TimeStampErr
                     }
 
                     attr.values
+                        .to_vec()
                         .first()
-                        .and_then(|v| v.deref().clone().decode(Time::take_from).ok())
+                        .and_then(|v| rasn::der::decode::<rasn_pkix::Time>(v.as_bytes()).ok())
                 })
             {
                 let signed_signing_time = match attrib_signing_time {
-                    Time::UtcTime(u) => u.timestamp(),
-                    Time::GeneralTime(g) => generalized_time_to_datetime(g).timestamp(),
+                    rasn_pkix::Time::Utc(date_time) => date_time.timestamp(),
+                    rasn_pkix::Time::General(date_time) => {
+                        generalized_time_to_datetime(date_time).timestamp()
+                    }
                 };
-
-                // Use signed date to avoid spoofing. Check to see if time string has been
-                // modified. TO DO: When is this an error case?
-                // TO REVIEW: `_time_diff` was unused in previous code. What was planned here?
-                let _time_diff = (signing_time - signed_signing_time).abs();
 
                 if let Some(gt) = timestamp_to_generalized_time(signed_signing_time) {
                     // Use actual signed time.
@@ -141,123 +216,258 @@ pub fn verify_time_stamp(ts: &[u8], data: &[u8]) -> Result<TstInfo, TimeStampErr
 
             // Check that the mandatory signed message digest is self-consistent.
             match attributes
+                .to_vec()
                 .iter()
-                .find(|attr| attr.typ == OID_MESSAGE_DIGEST)
+                .find(|attr| attr.r#type == Oid::ISO_MEMBER_BODY_US_RSADSI_PKCS9_MESSAGE_DIGEST)
             {
                 Some(message_digest) => {
                     // message digest attribute MUST have exactly 1 value.
                     if message_digest.values.len() != 1 {
+                        log_item!(
+                            "",
+                            "timestamp response contained multiple message digests",
+                            "verify_time_stamp"
+                        )
+                        .validation_status(TIMESTAMP_MALFORMED)
+                        .informational(&mut current_validation_log);
+
                         last_err = TimeStampError::DecodeError(format!(
                             "message digest attribute has {n} values, should have one",
                             n = message_digest.values.len()
                         ));
+
                         continue;
                     }
 
                     // Get signed message digest.
-                    let signed_message_digest = message_digest
-                        .values
-                        .first()
-                        .ok_or(TimeStampError::DecodeError(
-                            "first() failed after checking length".to_string(),
-                        ))?
-                        .deref()
-                        .clone()
-                        .decode(OctetString::take_from)
-                        .map_err(|_| {
-                            TimeStampError::DecodeError(
-                                "unable to decode message digest".to_string(),
-                            )
-                        })?
-                        .to_bytes();
-
-                    // Get message digest hash algorithm.
-                    let digest_algorithm =
-                        match DigestAlgorithm::try_from(&signer_info.digest_algorithm) {
-                            Ok(d) => d,
+                    let signed_message_digest = match message_digest.values.to_vec().first() {
+                        Some(a) => match rasn::der::decode::<types::OctetString>(a.as_bytes()) {
+                            Ok(os) => os.to_vec(),
                             Err(_) => {
+                                log_item!(
+                                    "",
+                                    "timestamp could not decode signed message data",
+                                    "verify_time_stamp"
+                                )
+                                .validation_status(TIMESTAMP_MALFORMED)
+                                .informational(&mut current_validation_log);
+
                                 last_err = TimeStampError::DecodeError(
-                                    "unsupported digest algorithm".to_string(),
+                                    "unable to decode igned message data".to_string(),
                                 );
                                 continue;
                             }
-                        };
+                        },
+                        None => {
+                            log_item!("", "timestamp bad message digest", "verify_time_stamp")
+                                .validation_status(TIMESTAMP_MALFORMED)
+                                .informational(&mut current_validation_log);
+
+                            last_err = TimeStampError::DecodeError(
+                                "unable to decode message digest".to_string(),
+                            );
+                            continue;
+                        }
+                    };
+
+                    // Get message digest hash algorithm.
+                    let Ok(di_oid) =
+                        bcder::Oid::from_str(&signer_info.digest_algorithm.algorithm.to_string())
+                    else {
+                        log_item!(
+                            "",
+                            "timestamp bad message digest algorithm",
+                            "verify_time_stamp"
+                        )
+                        .validation_status(TIMESTAMP_MALFORMED)
+                        .informational(&mut current_validation_log);
+
+                        last_err =
+                            TimeStampError::DecodeError("unsupported digest algorithm".to_string());
+                        continue;
+                    };
+
+                    let digest_algorithm = match DigestAlgorithm::try_from(&di_oid) {
+                        Ok(d) => d,
+                        Err(_) => {
+                            log_item!(
+                                "",
+                                "timestamp bad message digest algorithm",
+                                "verify_time_stamp"
+                            )
+                            .validation_status(TIMESTAMP_MALFORMED)
+                            .informational(&mut current_validation_log);
+
+                            last_err = TimeStampError::DecodeError(
+                                "unsupported digest algorithm".to_string(),
+                            );
+                            continue;
+                        }
+                    };
 
                     let mut h = digest_algorithm.digester();
-                    if let Some(content) = &sd.content_info.content {
-                        h.update(&content.to_bytes());
+                    if let Some(content) = &sd.encap_content_info.content {
+                        h.update(content);
                     }
 
                     let digest = h.finish();
 
                     if signed_message_digest != digest.as_ref() {
+                        log_item!("", "timestamp bad message digest", "verify_time_stamp")
+                            .validation_status(TIMESTAMP_MISMATCH)
+                            .informational(&mut current_validation_log);
+
                         last_err = TimeStampError::InvalidData;
                         continue;
                     }
                 }
 
                 None => {
+                    log_item!("", "timestamp no message digest", "verify_time_stamp")
+                        .validation_status(TIMESTAMP_MALFORMED)
+                        .informational(&mut current_validation_log);
+
                     last_err = TimeStampError::DecodeError("no message imprint".to_string());
                     continue;
                 }
             }
         }
 
-        // Build CMS structure to verify.
-        let tbs = match signer_info.signed_attributes_digested_content() {
+        // Build CMS TBS structure to verify.  If SignedAttributes are available then
+        // use those as the TBS else the TBS is the value of the ContentInfo
+        let tbs = match signed_attributes_digested_content(signer_info) {
             Ok(sdc) => match sdc {
                 Some(tbs) => tbs,
-                None => match &sd.content_info.content {
-                    Some(d) => d.to_bytes().to_vec(),
+                None => match &sd.encap_content_info.content {
+                    Some(d) => d.to_vec(),
                     None => {
-                        return Err(TimeStampError::DecodeError(
+                        log_item!("", "timestamp no message digest", "verify_time_stamp")
+                            .validation_status(TIMESTAMP_MALFORMED)
+                            .informational(&mut current_validation_log);
+
+                        last_err = TimeStampError::DecodeError(
                             "time stamp does not contain digested content".to_string(),
-                        ))
+                        );
+                        continue;
                     }
                 },
             },
             Err(_) => {
-                last_err = TimeStampError::DecodeError(
-                    "time stamp does not contain digested content".to_string(),
-                );
+                log_item!(
+                    "",
+                    "timestamp signer attributes malformed",
+                    "verify_time_stamp"
+                )
+                .validation_status(TIMESTAMP_MALFORMED)
+                .informational(&mut current_validation_log);
+
+                last_err =
+                    TimeStampError::DecodeError("timestamp signer info malformed".to_string());
                 continue;
             }
         };
 
         // hash used for signature
-        let hash_alg = &signer_info.digest_algorithm.algorithm;
+        let Ok(hash_alg) =
+            bcder::Oid::from_str(&signer_info.digest_algorithm.algorithm.to_string())
+        else {
+            log_item!("", "timestamp bad hash alg", "verify_time_stamp")
+                .validation_status(TIMESTAMP_MALFORMED)
+                .informational(&mut current_validation_log);
 
-        // Grab signing certificate.
-        let sig_val = &signer_info.signature;
-        let mut signing_key_der = Vec::<u8>::new();
-        cert.tbs_certificate
-            .subject_public_key_info
-            .encode_ref()
-            .write_encoded(bcder::Mode::Der, &mut signing_key_der)?;
+            last_err = TimeStampError::DecodeError("timestamp bad tbs certificate".to_string());
+            continue;
+        };
+
+        // grab signature value.
+        let sig_val =
+            bcder::OctetString::new(bytes::Bytes::copy_from_slice(&signer_info.signature));
+
+        // grab the signing key
+        let signing_key_der_results =
+            rasn::der::encode(&cert.tbs_certificate.subject_public_key_info);
+
+        let Ok(signing_key_der) = signing_key_der_results else {
+            log_item!("", "timestamp bad signing key", "verify_time_stamp")
+                .validation_status(TIMESTAMP_MALFORMED)
+                .informational(&mut current_validation_log);
+
+            last_err = TimeStampError::DecodeError("timestamp bad tbs certificate".to_string());
+            continue;
+        };
 
         // algorithm used to sign the certificate
-        let sig_alg = &cert
-            .tbs_certificate
-            .subject_public_key_info
-            .algorithm
-            .algorithm;
+        let Ok(sig_alg) = bcder::Oid::from_str(
+            &cert
+                .tbs_certificate
+                .subject_public_key_info
+                .algorithm
+                .algorithm
+                .to_string(),
+        ) else {
+            log_item!("", "timestamp bad tbs certificate alg", "verify_time_stamp")
+                .validation_status(TIMESTAMP_MALFORMED)
+                .informational(&mut current_validation_log);
+
+            last_err = TimeStampError::DecodeError("timestamp bad tbs certificate".to_string());
+            continue;
+        };
 
         // Verify signature of time stamp signature.
         if _sync {
             // IMPORTANT: The synchronous implementation of validate_timestamp_sync
             // on WASM is unable to support _some_ signature algorithms. The async path
             // should be used whenever possible (for WASM, at least).
-            validate_timestamp_sig(sig_alg, hash_alg, sig_val, &tbs, &signing_key_der)?;
+            if validate_timestamp_sig(&sig_alg, &hash_alg, &sig_val, &tbs, &signing_key_der)
+                .is_err()
+            {
+                log_item!(
+                    "",
+                    "timestamp signed data did not match signature",
+                    "verify_time_stamp"
+                )
+                .validation_status(TIMESTAMP_UNTRUSTED)
+                .informational(&mut current_validation_log);
+
+                last_err = TimeStampError::Untrusted;
+                continue;
+            }
         } else {
             #[cfg(not(target_arch = "wasm32"))]
-            validate_timestamp_sig(sig_alg, hash_alg, sig_val, &tbs, &signing_key_der)?;
+            if validate_timestamp_sig(&sig_alg, &hash_alg, &sig_val, &tbs, &signing_key_der)
+                .is_err()
+            {
+                log_item!(
+                    "",
+                    "timestamp signed data did not match signature",
+                    "verify_time_stamp"
+                )
+                .validation_status(TIMESTAMP_UNTRUSTED)
+                .informational(&mut current_validation_log);
+
+                last_err = TimeStampError::Untrusted;
+                continue;
+            }
 
             // NOTE: We're keeping the WASM-specific async path alive for now because it
             // supports more signature algorithms. Look for future WASM platform to provide
             // the opportunity to unify.
             #[cfg(target_arch = "wasm32")]
-            validate_timestamp_sig_async(sig_alg, hash_alg, sig_val, &tbs, &signing_key_der)
-                .await?;
+            if validate_timestamp_sig_async(&sig_alg, &hash_alg, &sig_val, &tbs, &signing_key_der)
+                .await
+                .is_err()
+            {
+                log_item!(
+                    "",
+                    "timestamp signed data did not match signature",
+                    "verify_time_stamp"
+                )
+                .validation_status(TIMESTAMP_UNTRUSTED)
+                .informational(&mut current_validation_log);
+
+                last_err = TimeStampError::Untrusted;
+                continue;
+            }
         }
 
         // Make sure the time stamp's cert was valid for the stated signing time.
@@ -265,6 +475,14 @@ pub fn verify_time_stamp(ts: &[u8], data: &[u8]) -> Result<TstInfo, TimeStampErr
         let not_after = time_to_datetime(cert.tbs_certificate.validity.not_after).timestamp();
 
         if !(signing_time >= not_before && signing_time <= not_after) {
+            log_item!(
+                "",
+                "timestamp signer outside of certificate validity",
+                "verify_time_stamp"
+            )
+            .validation_status(TIMESTAMP_OUTSIDE_VALIDITY)
+            .informational(&mut current_validation_log);
+
             last_err = TimeStampError::ExpiredCertificate;
             continue;
         }
@@ -273,6 +491,14 @@ pub fn verify_time_stamp(ts: &[u8], data: &[u8]) -> Result<TstInfo, TimeStampErr
         let digest_algorithm = match DigestAlgorithm::try_from(&mi.hash_algorithm.algorithm) {
             Ok(d) => d,
             Err(_) => {
+                log_item!(
+                    "",
+                    "timestamp unknown message digest algorithm",
+                    "verify_time_stamp"
+                )
+                .validation_status(TIMESTAMP_UNTRUSTED)
+                .informational(&mut current_validation_log);
+
                 last_err = TimeStampError::UnsupportedAlgorithm;
                 continue;
             }
@@ -282,19 +508,65 @@ pub fn verify_time_stamp(ts: &[u8], data: &[u8]) -> Result<TstInfo, TimeStampErr
         h.update(data);
 
         let digest = h.finish();
-        if digest.as_ref() != mi.hashed_message.to_bytes() {
+        if digest.as_ref() == mi.hashed_message.to_bytes() {
+            log_item!(
+                "",
+                format!("timestamp message digest matched: {}", &common_name),
+                "verify_time_stamp"
+            )
+            .validation_status(TIMESTAMP_VALIDATED)
+            .success(&mut current_validation_log);
+        } else {
+            log_item!(
+                "",
+                format!("timestamp message digest did not match: {}", &common_name),
+                "verify_time_stamp"
+            )
+            .validation_status(TIMESTAMP_MISMATCH)
+            .informational(&mut current_validation_log);
+
             last_err = TimeStampError::InvalidData;
             continue;
         }
 
+        // the certificate must be on the trust list to be considered valid
+        let verify_trust = get_settings_value("verify.verify_timestamp_trust").unwrap_or(true);
+
+        if verify_trust
+            && ctp
+                .check_certificate_trust(&cert_ders[0..], &cert_ders[0], Some(signing_time))
+                .is_err()
+        {
+            log_item!(
+                "",
+                format!("timestamp cert untrusted: {}", &common_name),
+                "verify_time_stamp"
+            )
+            .validation_status(TIMESTAMP_UNTRUSTED)
+            .informational(&mut current_validation_log);
+
+            last_err = TimeStampError::Untrusted;
+            continue;
+        }
+
+        log_item!(
+            "",
+            format!("timestamp cert trusted: {}", &common_name),
+            "verify_time_stamp"
+        )
+        .validation_status(TIMESTAMP_TRUSTED)
+        .success(&mut current_validation_log);
+
         // If we find a valid value, we're done.
+        validation_log.append(&current_validation_log);
         return Ok(tst);
     }
 
+    validation_log.append(&current_validation_log);
     Err(last_err)
 }
 
-fn generalized_time_to_datetime(gt: GeneralizedTime) -> DateTime<Utc> {
+fn generalized_time_to_datetime<T: Into<DateTime<Utc>>>(gt: T) -> DateTime<Utc> {
     gt.into()
 }
 
@@ -314,10 +586,10 @@ fn timestamp_to_generalized_time(dt: i64) -> Option<GeneralizedTime> {
     }
 }
 
-fn time_to_datetime(t: Time) -> DateTime<Utc> {
+fn time_to_datetime(t: rasn_pkix::Time) -> DateTime<Utc> {
     match t {
-        Time::UtcTime(u) => *u,
-        Time::GeneralTime(gt) => generalized_time_to_datetime(gt),
+        rasn_pkix::Time::Utc(u) => u,
+        rasn_pkix::Time::General(gt) => generalized_time_to_datetime(gt),
     }
 }
 

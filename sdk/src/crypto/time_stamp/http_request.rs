@@ -14,13 +14,17 @@
 use async_generic::async_generic;
 use bcder::{decode::Constructed, encode::Values};
 
-use crate::crypto::{
-    asn1::rfc3161::{TimeStampReq, TimeStampResp},
-    time_stamp::{
-        response::TimeStampResponse,
-        verify::{verify_time_stamp, verify_time_stamp_async},
-        TimeStampError,
+use crate::{
+    crypto::{
+        asn1::rfc3161::{TimeStampReq, TimeStampResp},
+        cose::CertificateTrustPolicy,
+        time_stamp::{
+            response::TimeStampResponse,
+            verify::{verify_time_stamp, verify_time_stamp_async},
+            TimeStampError,
+        },
     },
+    status_tracker::StatusTracker,
 };
 
 /// Request an [RFC 3161] time stamp for a given piece of data from a timestamp
@@ -47,11 +51,14 @@ pub fn default_rfc3161_request(
 
     let ts = time_stamp_request_http(url, headers, &request)?;
 
+    let mut local_log = StatusTracker::default();
+    let ctp = CertificateTrustPolicy::passthrough();
+
     // Make sure the time stamp is valid before we return it.
     if _sync {
-        verify_time_stamp(&ts, message)?;
+        verify_time_stamp(&ts, message, &ctp, &mut local_log)?;
     } else {
-        verify_time_stamp_async(&ts, message).await?;
+        verify_time_stamp_async(&ts, message, &ctp, &mut local_log).await?;
     }
 
     Ok(ts)
