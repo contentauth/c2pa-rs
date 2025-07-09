@@ -16,10 +16,11 @@ use std::path::Path;
 use std::{
     cell::RefCell,
     collections::HashMap,
+    fmt,
     io::{BufRead, BufReader, Cursor},
 };
 
-use config::{Config, FileFormat};
+use config::{Config, FileFormat, ValueKind};
 use serde_derive::{Deserialize, Serialize};
 
 use crate::{
@@ -559,6 +560,67 @@ pub(crate) fn set_settings_value<T: Into<config::Value>>(value_path: &str, value
 }
 
 #[allow(unused)]
+pub(crate) fn set_profile_settings_value<T: Into<config::Value>>(
+    value_path: &str,
+    value: T,
+) -> Result<()> {
+    let c = SETTINGS.take();
+    PROFILE.with_borrow(|profile| {
+        let profile = profile.as_deref().unwrap_or("default");
+        let update_config = Config::builder()
+            .add_source(c.clone())
+            .set_override(format!("profile.{}.{}", profile, value_path), value);
+
+        match update_config {
+            Ok(updated) => {
+                let update_config = updated.build()?;
+
+                let settings = update_config.clone().try_deserialize::<Settings>()?;
+                settings.validate()?;
+
+                SETTINGS.set(update_config);
+
+                Ok(())
+            }
+            Err(err) => {
+                SETTINGS.set(c);
+                Err(err.into())
+            }
+        }
+    })
+}
+
+#[derive(Debug)]
+pub(crate) struct ScopedSetting<'a> {
+    original_value: config::Value,
+    value_path: &'a str,
+}
+
+impl<'a> Drop for ScopedSetting<'a> {
+    fn drop(&mut self) {
+        #[allow(clippy::unwrap_used)]
+        set_profile_settings_value(self.value_path, self.original_value.clone()).unwrap()
+    }
+}
+
+#[allow(unused)]
+pub(crate) fn set_scoped_profile_settings_value<T: Into<config::Value>>(
+    value_path: &str,
+    value: T,
+) -> Result<ScopedSetting> {
+    let original_value = match get_profile_settings_value::<config::Value>(value_path) {
+        Ok(value) => value,
+        Err(Error::NotFound) => config::Value::new(None, config::ValueKind::Nil),
+        Err(err) => return Err(err),
+    };
+    set_profile_settings_value(value_path, value)?;
+    Ok(ScopedSetting {
+        original_value,
+        value_path,
+    })
+}
+
+#[allow(unused)]
 pub(crate) fn set_settings_profile(profile: String) {
     PROFILE.set(Some(profile));
 }
@@ -606,17 +668,6 @@ pub(crate) fn get_profile_settings_value<'de, T: serde::de::Deserialize<'de>>(
             }
         })
     })
-}
-
-#[allow(unused)]
-pub(crate) fn get_optional_profile_settings_value<'de, T: serde::de::Deserialize<'de>>(
-    value_path: &str,
-) -> Result<Option<T>> {
-    match get_profile_settings_value(value_path) {
-        Ok(value) => Ok(Some(value)),
-        Err(Error::NotFound) => Ok(None),
-        Err(err) => Err(err),
-    }
 }
 
 /// Returns the signer specified in the "signer" field of the currently active settings profile.

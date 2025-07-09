@@ -209,6 +209,7 @@ image = { version = "0.25.6", default-features = false, features = [
     "bmp",
     "ico",
     # "avif",
+    # TODO: AVIF requires the dav1d crate which causes some complications compiling
     # "avif-native"
 ], optional = true }
 

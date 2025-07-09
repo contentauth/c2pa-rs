@@ -28,7 +28,7 @@ use uuid::Uuid;
 use zip::{write::SimpleFileOptions, ZipArchive, ZipWriter};
 
 use crate::{
-    assertion::AssertionDecodeError,
+    assertion::{AssertionBase, AssertionDecodeError},
     assertions::{
         c2pa_action::{self, CREATED, OPENED},
         digital_source_type, labels, Action, Actions, BmffHash, BoxHash, CreativeWork, DataHash,
@@ -635,10 +635,10 @@ impl Builder {
 
         claim_generator_info[0].insert("org.cai.c2pa_rs", env!("CARGO_PKG_VERSION"));
 
-        let profile_claim_generator_infos = settings::get_optional_profile_settings_value::<
-            Vec<ClaimGeneratorInfo>,
-        >("claim_generator_info")?;
-        if let Some(claim_generator_infos) = profile_claim_generator_infos {
+        let profile_claim_generator_infos = settings::get_profile_settings_value::<
+            Option<Vec<ClaimGeneratorInfo>>,
+        >("claim_generator_info");
+        if let Ok(Some(claim_generator_infos)) = profile_claim_generator_infos {
             claim_generator_info.extend(claim_generator_infos);
         }
 
@@ -741,53 +741,19 @@ impl Builder {
             }
         }
 
+        let mut found_actions = false;
         // add any additional assertions
         for manifest_assertion in &definition.assertions {
             match manifest_assertion.label.as_str() {
                 l if l.starts_with(Actions::LABEL) => {
+                    found_actions = true;
+
                     let version = labels::version(l);
 
                     let mut actions: Actions = manifest_assertion.to_assertion()?;
                     //dbg!(format!("Actions: {:?} version: {:?}", actions, version));
 
-                    // https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_mandatory_presence_of_at_least_one_actions_assertion
-                    let auto_created =
-                        settings::get_profile_settings_value::<bool>("auto_created_action")?;
-                    let auto_opened =
-                        settings::get_profile_settings_value::<bool>("auto_opened_action")?;
-                    if auto_created || auto_opened {
-                        if let Some(first_action) = actions.actions.first() {
-                            if first_action.action() != CREATED && first_action.action() != OPENED {
-                                let has_parent = self
-                                    .definition
-                                    .ingredients
-                                    .iter()
-                                    .any(|ingredient| ingredient.is_parent());
-                                let action = match (has_parent, auto_created, auto_opened) {
-                                    (true, false, true) => Some(Action::new(c2pa_action::OPENED)),
-                                    (false, true, _) => Some(
-                                        Action::new(c2pa_action::CREATED)
-                                            .set_source_type(digital_source_type::EMPTY),
-                                    ),
-                                    _ => None,
-                                };
-                                if let Some(action) = action {
-                                    actions.actions.insert(0, action);
-                                }
-                            }
-                        }
-                    }
-
-                    // https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_relationship
-                    let auto_placed =
-                        settings::get_profile_settings_value::<bool>("auto_placed_action")?;
-                    if auto_placed {
-                        for ingredient in &self.definition.ingredients {
-                            if *ingredient.relationship() == Relationship::ComponentOf {
-                                actions.actions.push(Action::new(c2pa_action::PLACED));
-                            }
-                        }
-                    }
+                    self.add_auto_actions_assertions(&mut actions)?;
 
                     let mut updates = Vec::new();
                     let mut index = 0;
@@ -906,7 +872,55 @@ impl Builder {
             }?;
         }
 
+        if !found_actions {
+            let mut actions = Actions::new();
+            self.add_auto_actions_assertions(&mut actions)?;
+            claim.add_assertion(&actions)?;
+        }
+
         Ok(claim)
+    }
+
+    fn add_auto_actions_assertions(&self, actions: &mut Actions) -> Result<()> {
+        // https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_mandatory_presence_of_at_least_one_actions_assertion
+        let auto_created = settings::get_profile_settings_value::<bool>("auto_created_action")?;
+        let auto_opened = settings::get_profile_settings_value::<bool>("auto_opened_action")?;
+        if auto_created || auto_opened {
+            let has_parent = self
+                .definition
+                .ingredients
+                .iter()
+                .any(|ingredient| ingredient.is_parent());
+            let action = match (has_parent, auto_created, auto_opened) {
+                (true, _, true) => Some(Action::new(c2pa_action::OPENED)),
+                (false, true, _) => Some(
+                    Action::new(c2pa_action::CREATED).set_source_type(digital_source_type::EMPTY),
+                ),
+                _ => None,
+            };
+
+            if let Some(action) = action {
+                if let Some(first_action) = actions.actions.first() {
+                    if first_action.action() != CREATED && first_action.action() != OPENED {
+                        actions.actions.insert(0, action);
+                    }
+                } else {
+                    actions.actions.push(action);
+                }
+            }
+        }
+
+        // https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_relationship
+        let auto_placed = settings::get_profile_settings_value::<bool>("auto_placed_action")?;
+        if auto_placed {
+            for ingredient in &self.definition.ingredients {
+                if *ingredient.relationship() == Relationship::ComponentOf {
+                    actions.actions.push(Action::new(c2pa_action::PLACED));
+                }
+            }
+        }
+
+        Ok(())
     }
 
     // Convert a Manifest into a Store
@@ -1276,6 +1290,7 @@ mod tests {
         asset_handlers::jpeg_io::JpegIO,
         crypto::raw_signature::SigningAlg,
         hash_stream_by_alg,
+        settings::get_profile_settings_value,
         utils::{test::write_jpeg_placeholder_stream, test_signer::test_signer},
         validation_results::ValidationState,
         Reader,
@@ -1528,6 +1543,121 @@ mod tests {
         assert_eq!(manifest.title().unwrap(), "Test_Manifest");
         let test_assertion: TestAssertion = manifest.find_assertion("org.life.meaning").unwrap();
         assert_eq!(test_assertion.answer, 42);
+    }
+
+    #[test]
+    fn test_builder_auto_created() {
+        let _guard = settings::set_profile_settings_value("auto_created_action", true).unwrap();
+
+        let mut output = Cursor::new(Vec::new());
+        Builder::new()
+            .sign(
+                &test_signer(SigningAlg::Ps256),
+                "image/jpeg",
+                &mut Cursor::new(TEST_IMAGE),
+                &mut output,
+            )
+            .unwrap();
+
+        output.rewind().unwrap();
+        let reader = Reader::from_stream("image/jpeg", output).unwrap();
+
+        let actions: Actions = reader
+            .active_manifest()
+            .unwrap()
+            .find_assertion(Actions::LABEL)
+            .unwrap();
+
+        let action = actions.actions().first().unwrap();
+        assert_eq!(action.action(), c2pa_action::CREATED);
+    }
+
+    #[test]
+    fn test_builder_auto_opened() {
+        let _guard = settings::set_profile_settings_value("auto_opened_action", true).unwrap();
+
+        let mut builder = Builder::new();
+        builder
+            .add_ingredient_from_stream(parent_json(), "image/jpeg", &mut Cursor::new(TEST_IMAGE))
+            .unwrap();
+
+        let mut output = Cursor::new(Vec::new());
+        builder
+            .sign(
+                &test_signer(SigningAlg::Ps256),
+                "image/jpeg",
+                &mut Cursor::new(TEST_IMAGE),
+                &mut output,
+            )
+            .unwrap();
+
+        output.rewind().unwrap();
+        let reader = Reader::from_stream("image/jpeg", output).unwrap();
+
+        let actions: Actions = reader
+            .active_manifest()
+            .unwrap()
+            .find_assertion(Actions::LABEL)
+            .unwrap();
+
+        let action = actions.actions().first().unwrap();
+        assert_eq!(action.action(), c2pa_action::OPENED);
+    }
+
+    #[test]
+    fn test_builder_auto_placed() {
+        let _guard = settings::set_profile_settings_value("auto_placed_action", true).unwrap();
+
+        let mut builder = Builder::new();
+        builder
+            .add_ingredient_from_stream(
+                json!({
+                    "title": "ComponentOf Test 1",
+                    "relationship": "componentOf",
+                    "label": "INGREDIENT_1",
+                })
+                .to_string(),
+                "image/jpeg",
+                &mut Cursor::new(TEST_IMAGE),
+            )
+            .unwrap();
+        builder
+            .add_ingredient_from_stream(
+                json!({
+                    "title": "ComponentOf Test 2",
+                    "relationship": "componentOf",
+                    "label": "INGREDIENT_2",
+                })
+                .to_string(),
+                "image/jpeg",
+                &mut Cursor::new(TEST_IMAGE),
+            )
+            .unwrap();
+
+        let mut output = Cursor::new(Vec::new());
+        builder
+            .sign(
+                &test_signer(SigningAlg::Ps256),
+                "image/jpeg",
+                &mut Cursor::new(TEST_IMAGE),
+                &mut output,
+            )
+            .unwrap();
+
+        output.rewind().unwrap();
+        let reader = Reader::from_stream("image/jpeg", output).unwrap();
+
+        let actions: Actions = reader
+            .active_manifest()
+            .unwrap()
+            .find_assertion(Actions::LABEL)
+            .unwrap();
+
+        let action1 = actions.actions().get(1).unwrap();
+        assert_eq!(action1.action(), c2pa_action::PLACED);
+
+        let action2 = actions.actions().get(2).unwrap();
+        assert_eq!(action2.action(), c2pa_action::PLACED);
     }
 
     #[test]
