@@ -102,7 +102,6 @@ async-recursion = "1.1.1"
 async-trait = "0.1.78"
 atree = "0.5.2"
 base64 = "0.22.1"
-base64ct = "=1.7.3"
 bcder = "0.7.3"
 bytes = "1.7.2"
 byteorder = { version = "1.4.3", default-features = false }
@@ -259,8 +258,4 @@ httpmock = "0.7.0"
 tokio = { version = "1.44.2", features = ["full"] }
 
 [package.metadata.cargo-udeps.ignore]
-normal = ["windows-core", "base64ct"]
-    # REMOVE once chrono and other crates update to avoid yanked version of windows-core
-
-    # CAI-8799: Remove the base64ct override once we bump c2pa-rs MSRV
-    # to 1.85 or higher.
+normal = ["windows-core"]
