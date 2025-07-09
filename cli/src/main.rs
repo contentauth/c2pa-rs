@@ -20,7 +20,7 @@
 /// the claim will be added to any existing claims.
 use std::{
     env,
-    fs::{copy, create_dir_all, remove_dir_all, File},
+    fs::{copy, create_dir_all, remove_dir_all, remove_file, File},
     io::Write,
     path::{Path, PathBuf},
     str::FromStr,
@@ -712,8 +712,12 @@ fn main() -> Result<()> {
                 if ext_normal(&output) != ext_normal(&args.path) {
                     bail!("Output type must match source type");
                 }
-                if output.exists() && !args.force {
-                    bail!("Output already exists; use -f/force to force write");
+                if output.exists() {
+                    if args.force && output != args.path {
+                        remove_file(&output)?;
+                    } else if !args.force {
+                        bail!("Output already exists; use -f/force to force write");
+                    }
                 }
                 if output.file_name().is_none() {
                     bail!("Missing filename on output");
@@ -722,25 +726,39 @@ fn main() -> Result<()> {
                     bail!("Missing extension output");
                 }
 
-                let mut file = NamedTempFile::new()?;
-                let format = format_from_path(&args.path).unwrap();
-                let mut source = File::open(&args.path)?;
-                if builder.definition.title.is_none() {
-                    if let Some(title) = output.file_name() {
-                        builder.definition.title = Some(title.to_string_lossy().to_string());
+                let manifest_data = if args.path != output {
+                    builder
+                        .sign_file(signer.as_ref(), &args.path, &output)
+                        .context("embedding manifest")?
+                } else {
+                    let mut file = NamedTempFile::new()?;
+                    let format = format_from_path(&args.path).unwrap();
+                    let mut source = File::open(&args.path)?;
+                    if builder.definition.title.is_none() {
+                        if let Some(title) = output.file_name() {
+                            builder.definition.title = Some(title.to_string_lossy().to_string());
+                        }
                     }
-                }
-                let manifest_data =
-                    builder.sign(signer.as_ref(), &format, &mut source, &mut file)?;
+                    let manifest_data =
+                        builder.sign(signer.as_ref(), &format, &mut source, &mut file)?;
 
-                if !output.exists() {
-                    // ensure the path to the file exists
-                    if let Some(output_dir) = &output.parent() {
-                        create_dir_all(output_dir)?;
+                    if !output.exists() {
+                        // ensure the path to the file exists
+                        if let Some(output_dir) = &output.parent() {
+                            create_dir_all(output_dir)?;
+                        }
                     }
-                }
 
-                copy(file, &output)?;
+                    match file.persist(&output) {
+                        Ok(_) => {}
+                        Err(e) => {
+                            let file = e.file;
+                            copy(file, &output)?;
+                        }
+                    }
+
+                    manifest_data
+                };
 
                 if args.sidecar {
                     let sidecar = output.with_extension("c2pa");
