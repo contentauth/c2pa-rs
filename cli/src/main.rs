@@ -138,6 +138,15 @@ struct CliArgs {
     /// will probably leave extra `0`s of unused space. Please specify a reserve-size if possible.
     #[clap(long, default_value("20000"))]
     reserve_size: usize,
+
+    // TODO: ideally this would be called config, not to be confused with the other config arg
+    /// Path to the config file.
+    #[clap(long)]
+    settings: Option<PathBuf>,
+
+    /// Which profile of the settings to use.
+    #[arg(long, requires = "settings")]
+    profile: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -361,6 +370,12 @@ fn blocking_get(url: &str) -> Result<String> {
 }
 
 fn configure_sdk(args: &CliArgs) -> Result<()> {
+    // Safe to unwrap because "settings" is required if "profile" is specified.
+    match args.profile {
+        Some(profile) => c2pa::settings::load_settings_from_toml(&args.settings.unwrap()),
+        None => c2pa::settings::load_settings_from_toml(&args.settings.unwrap()),
+    }
+
     const TA: &str = r#"{"trust": { "trust_anchors": replacement_val } }"#;
     const AL: &str = r#"{"trust": { "allowed_list": replacement_val } }"#;
     const TC: &str = r#"{"trust": { "trust_config": replacement_val } }"#;
