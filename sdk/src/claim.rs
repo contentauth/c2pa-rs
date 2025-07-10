@@ -3217,6 +3217,14 @@ impl Claim {
         self.assertions_by_type(&dummy_timestamp, None)
     }
 
+    /// Returns list of certificate status assertions.
+    pub fn certificate_status_assertions(&self) -> Vec<&ClaimAssertion> {
+        let dummy_data = AssertionData::Cbor(Vec::new());
+        let dummy_certificate_status =
+            Assertion::new(assertions::labels::CERTIFICATE_STATUS, None, dummy_data);
+        self.assertions_by_type(&dummy_certificate_status, None)
+    }
+
     /// Return list of action assertions.
     /// Created assertions have higher priority than gathered assertions
     pub fn action_assertions(&self) -> Vec<&ClaimAssertion> {

@@ -37,6 +37,9 @@ pub struct OcspResponse {
 
     /// OCSP certificate chain.
     pub ocsp_certs: Option<Vec<Vec<u8>>>,
+
+    /// Associated certificate name to OCSP DER
+    pub certificate_name: String,
 }
 
 impl Default for OcspResponse {
@@ -46,6 +49,7 @@ impl Default for OcspResponse {
             next_update: time::utc_now(),
             revoked_at: None,
             ocsp_certs: None,
+            certificate_name: String::new(),
         }
     }
 }

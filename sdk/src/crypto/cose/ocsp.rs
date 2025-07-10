@@ -125,6 +125,9 @@ pub(crate) fn fetch_and_check_ocsp_response(
 
     #[cfg(not(target_arch = "wasm32"))]
     {
+        use asn1_rs::FromDer;
+        use x509_parser::prelude::X509Certificate;
+
         use crate::crypto::cose::cert_chain_from_sign1;
 
         let certs = cert_chain_from_sign1(sign1)?;
@@ -141,7 +144,7 @@ pub(crate) fn fetch_and_check_ocsp_response(
 
         // Check the OCSP response, but only if it is well-formed.
         // Revocation errors are reported in the validation log.
-        let Ok(ocsp_data) =
+        let Ok(mut ocsp_data) =
             OcspResponse::from_der_checked(&ocsp_response_der, signing_time, validation_log)
         else {
             // TO REVIEW: This is how the old code worked, but is it correct to ignore a
@@ -155,6 +158,11 @@ pub(crate) fn fetch_and_check_ocsp_response(
                 check_certificate_profile(&ocsp_certs[0], ctp, validation_log, None)?;
             }
         }
+
+        let (_rem, cert) = X509Certificate::from_der(&certs[0])
+            .map_err(|e| CoseError::InternalError(e.to_string()))?;
+        ocsp_data.certificate_name = cert.serial.to_string();
+        println!("HERE {}", &ocsp_data.certificate_name);
 
         Ok(ocsp_data)
     }

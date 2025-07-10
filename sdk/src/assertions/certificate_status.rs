@@ -9,14 +9,16 @@ use crate::{
 
 #[derive(Serialize, Deserialize, Default, Debug, PartialEq, Eq)]
 pub struct CertificateStatus {
-    pub ocsp_vals : Vec<ByteBuf<>>
+    pub ocsp_vals: Vec<ByteBuf>,
 }
 
 impl CertificateStatus {
     pub const LABEL: &'static str = labels::CERTIFICATE_STATUS;
 
     pub fn new(ocsp_vals: Vec<Vec<u8>>) -> Self {
-        let mut cs = CertificateStatus {ocsp_vals : Vec::new()};
+        let mut cs = CertificateStatus {
+            ocsp_vals: Vec::new(),
+        };
         for oscp_val in ocsp_vals {
             cs.ocsp_vals.push(ByteBuf::from(oscp_val));
         }

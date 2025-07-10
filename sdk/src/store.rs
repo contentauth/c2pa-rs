@@ -39,8 +39,8 @@ use crate::{
     assertion::{Assertion, AssertionBase, AssertionData, AssertionDecodeError},
     assertions::{
         labels::{self, CLAIM},
-        BmffHash, DataBox, DataHash, DataMap, ExclusionsMap, Ingredient, Relationship, SubsetMap,
-        TimeStamp, User, UserCbor,
+        BmffHash, CertificateStatus, DataBox, DataHash, DataMap, ExclusionsMap, Ingredient,
+        Relationship, SubsetMap, TimeStamp, User, UserCbor,
     },
     asset_io::{
         CAIRead, CAIReadWrite, HashBlockObjectType, HashObjectPositions, RemoteRefEmbedType,
@@ -49,13 +49,10 @@ use crate::{
     cose_sign::{cose_sign, cose_sign_async},
     cose_validator::{verify_cose, verify_cose_async},
     crypto::{
-        asn1::rfc3161::TstInfo,
-        cose::{
+        asn1::rfc3161::TstInfo, cose::{
             fetch_and_check_ocsp_response, parse_cose_sign1, CertificateTrustPolicy,
             TimeStampStorage,
-        },
-        hash::sha256,
-        time_stamp::verify_time_stamp,
+        }, hash::sha256, ocsp::OcspResponse, time_stamp::verify_time_stamp
     },
     dynamic_assertion::{
         AsyncDynamicAssertion, DynamicAssertion, DynamicAssertionContent, PartialClaim,
@@ -105,6 +102,7 @@ pub(crate) struct StoreValidationInfo<'a> {
     pub binding_claim: String,                    // name of the claim that has the hash binding
     pub timestamps: HashMap<String, TstInfo>,     // list of timestamp assertions for each claim
     pub update_manifest_size: usize,              // offset needed to correct for update manifests
+    pub certificate_statuses: HashMap<String, Vec<u8>>, // list of certificate status assertions for each serial
 }
 
 /// A `Store` maintains a list of `Claim` structs.
@@ -1775,6 +1773,32 @@ impl Store {
                         validation_log,
                         Error::OtherError("timestamp assertion malformed".into()),
                     )?;
+                }
+            }
+
+            let certificate_status_assertions = found_claim.certificate_status_assertions();
+            for csa in certificate_status_assertions {
+                let certificate_status_assertion = CertificateStatus::from_assertion(csa.assertion())
+                    .map_err(|_e| {
+                        log_item!(
+                            csa.label(),
+                            "could not parse certificate status assertion",
+                            "get_claim_referenced_manifests"
+                        )
+                        .validation_status(
+                            validation_status::ASSERTION_CERTIFICATE_STATUS_MALFORMED,
+                        )
+                        .failure_as_err(
+                            validation_log,
+                            Error::OtherError("certificate status assertion malformed".into()),
+                        )
+                    })?;
+
+                // save the timestamps stored in the StoreValidationInfo
+
+                let responses = self.get_certificate_assertion(&vec![claim.label().to_string()], validation_log).unwrap();
+                for ocsp_val in certificate_status_assertion.as_ref() {
+                    // svi.certificate_statuses.insert(responses, ocsp_val)
                 }
             }
         }
@@ -4504,8 +4528,8 @@ impl Store {
         &self,
         manifest_labels: &Vec<String>,
         validation_log: &mut StatusTracker,
-    ) -> Result<Vec<Vec<u8>>> {
-        let mut oscp_responses: Vec<Vec<u8>> = Vec::new();
+    ) -> Result<Vec<OcspResponse>> {
+        let mut oscp_responses: Vec<OcspResponse> = Vec::new();
 
         for manifest_label in manifest_labels {
             if let Some(claim) = self.claims_map.get(manifest_label) {
@@ -4514,9 +4538,8 @@ impl Store {
 
                 let sign1 = parse_cose_sign1(&sig, &data, validation_log)?;
                 let ocsp_response =
-                    fetch_and_check_ocsp_response(&sign1, &data, &self.ctp, validation_log)?
-                        .ocsp_der;
-                if !ocsp_response.is_empty() {
+                    fetch_and_check_ocsp_response(&sign1, &data, &self.ctp, validation_log)?;
+                if !ocsp_response.ocsp_der.is_empty() {
                     oscp_responses.push(ocsp_response);
                 }
             }
@@ -4682,7 +4705,7 @@ pub mod tests {
             StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
         let test =
             Store::get_certificate_assertion(&store, &store.claims, &mut validation_log).unwrap();
-        let certificate_status = CertificateStatus::new(test);
+        let certificate_status = CertificateStatus::new(test.iter().map(|a| a.ocsp_der.clone()).collect());
         let assertion = certificate_status.to_assertion().unwrap();
         let restored = CertificateStatus::from_assertion(&assertion).unwrap();
         assert_eq!(certificate_status, restored);
@@ -4691,6 +4714,48 @@ pub mod tests {
                 OcspResponse::from_der_checked(&ocsp_val, None, &mut validation_log).unwrap();
             assert!(!response.ocsp_der.is_empty())
         }
+    }
+
+    #[test]
+    #[cfg(feature = "v1_api")]
+    #[cfg(feature = "file_io")]
+    fn test_certificate_map() -> Result<()>{
+        use crate::{assertions::CertificateStatus, crypto::ocsp::OcspResponse};
+
+        let ap = fixture_path("ocsp.png");
+        let temp_dir = tempdirectory().expect("temp dir");
+        let op = temp_dir_path(&temp_dir, "test-image.png");
+
+        let mut report = StatusTracker::default();
+        let mut store = Store::load_from_asset(&ap, true, &mut report).unwrap();
+        let mut validation_log =
+            StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
+        let test =
+            Store::get_certificate_assertion(&store, &store.claims, &mut validation_log).unwrap();
+        let certificate_status = CertificateStatus::new(test.iter().map(|a| a.ocsp_der.clone()).collect());
+
+        // ClaimGeneratorInfo is mandatory in Claim V2
+        let cgi = ClaimGeneratorInfo::new("claim_v2_unit_test");
+
+        // Create a 3rd party claim
+        let mut claim = Claim::new("test_method", Some("vendor"), 2);
+        claim.add_assertion(&certificate_status)?;
+        claim.add_claim_generator_info(cgi.clone());
+
+        let signer = test_signer(SigningAlg::Ps256);
+
+        store.commit_claim(claim).unwrap();
+        store.save_to_asset(&ap, signer.as_ref(), &op).unwrap();
+
+        let mut report = StatusTracker::default();
+
+        // read from new file
+        let new_store = Store::load_from_asset(&op, true, &mut report).unwrap();
+
+        let svi = new_store.get_store_validation_info(new_store.claims()[2], &mut ClaimAssetData::Path(&op), &mut validation_log).unwrap();
+
+        dbg!(&svi.certificate_statuses);
+        Ok(())
     }
 
     #[test]

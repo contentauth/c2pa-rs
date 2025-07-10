@@ -853,6 +853,12 @@ pub mod validation_codes {
     /// Any corresponding URL should point to a C2PA assertion box.
     pub const ASSERTION_TIMESTAMP_MALFORMED: &str = "assertion.timestamp.malformed";
 
+    /// The certificate status assertion is malformed.
+    ///
+    /// Any corresponding URL should point to a C2PA assertion box.
+    pub const ASSERTION_CERTIFICATE_STATUS_MALFORMED: &str =
+        "assertion.certificateStatus.malformed";
+
     /// Returns `true` if the status code is a known C2PA success status code.
     ///
     /// Returns `false` if the status code is a known C2PA failure status
