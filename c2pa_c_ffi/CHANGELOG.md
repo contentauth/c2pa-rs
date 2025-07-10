@@ -6,6 +6,14 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.58.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.57.0...c2pa-c-ffi-v0.58.0)
+_10 July 2025_
+
+### Fixed
+
+* Clean up logs ([#1181](https://github.com/contentauth/c2pa-rs/pull/1181))
+* Clippy warnings for Rust 1.88 ([#1204](https://github.com/contentauth/c2pa-rs/pull/1204))
+
 ## [0.57.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.56.2...c2pa-c-ffi-v0.57.0)
 _19 June 2025_
 
