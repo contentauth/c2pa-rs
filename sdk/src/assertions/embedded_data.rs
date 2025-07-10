@@ -20,6 +20,11 @@ use crate::{
 };
 
 /// A EmbeddedData assertion
+/// From C2PA v2.0, this is used to embed binary data such as thumbnails or icons.
+/// It replaces the old Thumbnail assertion type.
+/// The label is used to identify the type of data, and the content type specifies the format.
+/// The data is stored as a binary vector.
+/// <https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_embedded_data>
 #[derive(Serialize)]
 pub struct EmbeddedData {
     pub label: String,
