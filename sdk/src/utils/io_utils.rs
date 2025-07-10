@@ -238,7 +238,7 @@ pub fn wasm_remove_dir_all<P: AsRef<std::path::Path>>(path: P) -> Result<()> {
 
 /// Convert a URI to a file path using PathBuf for better path handling.
 #[cfg(feature = "file_io")]
-pub fn uri_to_path(uri: &str, manifest_label: &str) -> PathBuf {
+pub fn uri_to_path(uri: &str, manifest_label: Option<&str>) -> PathBuf {
     let mut path_str = uri.replace(':', "_");
     if let Some(stripped) = path_str.strip_prefix("self#jumbf=") {
         path_str = stripped.to_owned();
@@ -250,7 +250,7 @@ pub fn uri_to_path(uri: &str, manifest_label: &str) -> PathBuf {
 
     if let Ok(stripped) = path.strip_prefix("/c2pa/") {
         path = stripped.to_path_buf();
-    } else {
+    } else if let Some(manifest_label) = manifest_label {
         let mut new_path = PathBuf::from(manifest_label);
         new_path.push(path);
         path = new_path;
@@ -269,12 +269,12 @@ mod tests {
     #[cfg(feature = "file_io")]
     #[test]
     fn test_uri_to_path() {
-        let uri = "self#jumbf=/c2pa/contentauth:urn:uuid:b3386820-9994-4b58-926f-1c47b82504c4/c2pa.assertions/c2pa.thumbnail.claim.jpeg";
-        let expected_path = "contentauth_urn_uuid_b3386820-9994-4b58-926f-1c47b82504c4/c2pa.assertions/c2pa.thumbnail.claim.jpeg";
+        let uri = "self#jumbf=/c2pa/urn:uuid:b3386820-9994-4b58-926f-1c47b82504c4:contentauth/c2pa.assertions/c2pa.thumbnail.claim.jpeg";
+        let expected_path = "urn_uuid_b3386820-9994-4b58-926f-1c47b82504c4_contentauth/c2pa.assertions/c2pa.thumbnail.claim.jpeg";
 
-        assert_eq!(uri_to_path(uri, "unknown"), PathBuf::from(expected_path));
+        assert_eq!(uri_to_path(uri, None), PathBuf::from(expected_path));
         assert_eq!(
-            uri_to_path(expected_path, "unknown"),
+            uri_to_path(expected_path, None),
             PathBuf::from(expected_path)
         );
 
@@ -283,11 +283,11 @@ mod tests {
         let expected_path = format!("{manifest_label}/c2pa.assertions/c2pa.thumbnail.claim");
 
         assert_eq!(
-            uri_to_path(uri, manifest_label),
+            uri_to_path(uri, Some(manifest_label)),
             PathBuf::from(&expected_path)
         );
         assert_eq!(
-            uri_to_path(&expected_path, manifest_label),
+            uri_to_path(&expected_path, Some(manifest_label)),
             PathBuf::from(expected_path)
         );
     }
