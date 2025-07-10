@@ -244,20 +244,15 @@ impl ResourceStore {
         if id.starts_with("self#jumbf=") {
             #[cfg(feature = "file_io")]
             if self.base_path.is_some() {
-                // convert to a file path always including the manifest label
-                id = id.replace("self#jumbf=", "");
-                if id.starts_with("/c2pa/") {
-                    id = id.replacen("/c2pa/", "", 1);
-                } else if let Some(label) = self.label.as_ref() {
-                    id = format!("{label}/{id}");
-                }
-                id = id.replace([':'], "_");
+                use crate::utils::io_utils::uri_to_path;
+                let mut path = uri_to_path(&id, self.label.as_deref());
                 // add a file extension if it doesn't have one
                 if !(id.ends_with(".jpeg") || id.ends_with(".png")) {
                     if let Some(ext) = crate::utils::mime::format_to_extension(format) {
-                        id = format!("{id}.{ext}");
+                        path.set_extension(ext);
                     }
                 }
+                id = path.display().to_string()
             }
             if !self.exists(&id) {
                 self.add(&id, value)?;
