@@ -49,10 +49,6 @@ pub enum ThumbnailFormat {
     WebP,
     /// An image in TIFF format.
     Tiff,
-    /// An image in BMP format.
-    Bmp,
-    /// An image in ICO format.
-    Ico,
     // /// An image in AVIF format.
     // Avif,
 }
@@ -78,8 +74,6 @@ impl TryFrom<ImageFormat> for ThumbnailFormat {
             ImageFormat::Gif => Ok(ThumbnailFormat::Gif),
             ImageFormat::WebP => Ok(ThumbnailFormat::WebP),
             ImageFormat::Tiff => Ok(ThumbnailFormat::Tiff),
-            ImageFormat::Bmp => Ok(ThumbnailFormat::Bmp),
-            ImageFormat::Ico => Ok(ThumbnailFormat::Ico),
             // ImageFormat::Avif => Ok(ThumbnailFormat::Avif),
             _ => Err(Error::UnsupportedThumbnailFormat(
                 format.to_mime_type().to_owned(),
@@ -96,8 +90,6 @@ impl From<ThumbnailFormat> for ImageFormat {
             ThumbnailFormat::Gif => ImageFormat::Gif,
             ThumbnailFormat::WebP => ImageFormat::WebP,
             ThumbnailFormat::Tiff => ImageFormat::Tiff,
-            ThumbnailFormat::Bmp => ImageFormat::Bmp,
-            ThumbnailFormat::Ico => ImageFormat::Ico,
             // ThumbnailFormat::Avif => ImageFormat::Avif,
         }
     }
@@ -111,8 +103,6 @@ impl From<ThumbnailFormat> for config::ValueKind {
             ThumbnailFormat::Gif => "gif",
             ThumbnailFormat::WebP => "webp",
             ThumbnailFormat::Tiff => "tiff",
-            ThumbnailFormat::Bmp => "bmp",
-            ThumbnailFormat::Ico => "ico",
         };
         config::ValueKind::String(variant.to_owned())
     }
