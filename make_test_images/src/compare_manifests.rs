@@ -149,6 +149,180 @@ fn gather_manifests(manifest_store: &Reader, manifest_label: &str, labels: &mut 
     }
 }
 
+/// Compare assertion arrays, detecting reordering vs content changes
+fn compare_assertions_arrays(
+    path: &str,
+    arr1: &[serde_json::Value],
+    arr2: &[serde_json::Value],
+    issues: &mut Vec<String>,
+) {
+    // Try to match assertions by their label or identifier
+    let mut matched_pairs = Vec::new();
+    let mut unmatched_from_arr1 = Vec::new();
+    let mut unmatched_from_arr2 = Vec::new();
+
+    for (i, item1) in arr1.iter().enumerate() {
+        let mut found_match = false;
+        
+        for (j, item2) in arr2.iter().enumerate() {
+            // Skip if already matched
+            if matched_pairs.iter().any(|(_, matched_j)| *matched_j == j) {
+                continue;
+            }
+            
+            // Try to match by assertion label/identifier
+            if let Some(match_key) = get_assertion_identifier(item1) {
+                if let Some(match_key2) = get_assertion_identifier(item2) {
+                    if match_key == match_key2 {
+                        matched_pairs.push((i, j));
+                        found_match = true;
+                        break;
+                    }
+                }
+            }
+        }
+        
+        if !found_match {
+            unmatched_from_arr1.push(i);
+        }
+    }
+
+    // Find unmatched items from arr2
+    for (j, _) in arr2.iter().enumerate() {
+        if !matched_pairs.iter().any(|(_, matched_j)| *matched_j == j) {
+            unmatched_from_arr2.push(j);
+        }
+    }
+
+    // Report removed assertions
+    for i in unmatched_from_arr1 {
+        issues.push(format!("Assertion removed at {path}[{i}]: {}", arr1[i]));
+    }
+    
+    // Report added assertions
+    for j in unmatched_from_arr2 {
+        issues.push(format!("Assertion added at {path}[{j}]: {}", arr2[j]));
+    }
+
+    // Check for reordering among matched assertions
+    if matched_pairs.len() > 1 {
+        let mut reordered = false;
+        for (orig_i, matched_j) in &matched_pairs {
+            if *orig_i != *matched_j {
+                reordered = true;
+                break;
+            }
+        }
+
+        if reordered {
+            issues.push(format!("Assertion order changed at {path}"));
+        }
+    }
+
+    // Compare content of matched assertions
+    for (i, j) in matched_pairs {
+        compare_json_values(&format!("{path}[{i}]"), &arr1[i], &arr2[j], issues);
+    }
+}
+
+/// Compare actions arrays, detecting reordering vs content changes
+fn compare_actions_arrays(
+    path: &str,
+    arr1: &[serde_json::Value],
+    arr2: &[serde_json::Value],
+    issues: &mut Vec<String>,
+) {
+    // Try to match actions by their action identifier
+    let mut matched_pairs = Vec::new();
+    let mut unmatched_from_arr1 = Vec::new();
+    let mut unmatched_from_arr2 = Vec::new();
+
+    for (i, item1) in arr1.iter().enumerate() {
+        let mut found_match = false;
+        
+        for (j, item2) in arr2.iter().enumerate() {
+            // Skip if already matched
+            if matched_pairs.iter().any(|(_, matched_j)| *matched_j == j) {
+                continue;
+            }
+            
+            // Try to match by action identifier
+            if let Some(match_key) = get_action_identifier(item1) {
+                if let Some(match_key2) = get_action_identifier(item2) {
+                    if match_key == match_key2 {
+                        matched_pairs.push((i, j));
+                        found_match = true;
+                        break;
+                    }
+                }
+            }
+        }
+        
+        if !found_match {
+            unmatched_from_arr1.push(i);
+        }
+    }
+
+    // Find unmatched items from arr2
+    for (j, _) in arr2.iter().enumerate() {
+        if !matched_pairs.iter().any(|(_, matched_j)| *matched_j == j) {
+            unmatched_from_arr2.push(j);
+        }
+    }
+
+    // Report removed actions
+    for i in unmatched_from_arr1 {
+        issues.push(format!("Action removed at {path}[{i}]: {}", arr1[i]));
+    }
+    
+    // Report added actions
+    for j in unmatched_from_arr2 {
+        issues.push(format!("Action added at {path}[{j}]: {}", arr2[j]));
+    }
+
+    // Check for reordering among matched actions
+    if matched_pairs.len() > 1 {
+        let mut reordered = false;
+        for (orig_i, matched_j) in &matched_pairs {
+            if *orig_i != *matched_j {
+                reordered = true;
+                break;
+            }
+        }
+
+        if reordered {
+            issues.push(format!("Action order changed at {path}"));
+        }
+    }
+
+    // Compare content of matched actions
+    for (i, j) in matched_pairs {
+        compare_json_values(&format!("{path}[{i}]"), &arr1[i], &arr2[j], issues);
+    }
+}
+
+/// Extract an identifier from an action object to match it across arrays
+fn get_action_identifier(action: &serde_json::Value) -> Option<String> {
+    if let serde_json::Value::Object(obj) = action {
+        // Just use the action field as the identifier
+        if let Some(action_name) = obj.get("action").and_then(|v| v.as_str()) {
+            return Some(action_name.to_string());
+        }
+    }
+    None
+}
+
+/// Extract an identifier from an assertion object to match it across arrays
+fn get_assertion_identifier(assertion: &serde_json::Value) -> Option<String> {
+    if let serde_json::Value::Object(obj) = assertion {
+        // Just use the label field as the identifier
+        if let Some(label) = obj.get("label").and_then(|v| v.as_str()) {
+            return Some(label.to_string());
+        }
+    }
+    None
+}
+
 /// Recursively compare two ManifestStore JSON values
 fn compare_json_values(
     path: &str,
@@ -191,8 +365,21 @@ fn compare_json_values(
             }
         }
         (serde_json::Value::Array(arr1), serde_json::Value::Array(arr2)) => {
-            for (i, (val1, val2)) in arr1.iter().zip(arr2.iter()).enumerate() {
-                compare_json_values(&format!("{path}[{i}]"), val1, val2, issues);
+            // Special handling for actions arrays within c2pa.actions assertions - check this first
+            if path.ends_with(".data.actions") || path.contains(".data.actions[") {
+                compare_actions_arrays(path, arr1, arr2, issues);
+            // Special handling for assertions arrays to detect reordering
+            } else if path.ends_with(".assertions") || path.contains(".assertions[") {
+                compare_assertions_arrays(path, arr1, arr2, issues);
+            } else {
+                // Standard array comparison by position
+                for (i, (val1, val2)) in arr1.iter().zip(arr2.iter()).enumerate() {
+                    compare_json_values(&format!("{path}[{i}]"), val1, val2, issues);
+                }
+                // Check for different array lengths
+                if arr1.len() != arr2.len() {
+                    issues.push(format!("Array length mismatch at {path}: {} vs {}", arr1.len(), arr2.len()));
+                }
             }
         }
         (val1, val2) if val1 != val2 => {
