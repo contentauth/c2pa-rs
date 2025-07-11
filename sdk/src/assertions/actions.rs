@@ -23,7 +23,7 @@ use crate::{
     error::Result,
     resource_store::UriOrResource,
     utils::cbor_types::DateT,
-    ClaimGeneratorInfo,
+    ClaimGeneratorInfo, HashedUri,
 };
 
 const ASSERTION_CREATION_VERSION: usize = 2;
@@ -135,6 +135,38 @@ impl From<ClaimGeneratorInfo> for SoftwareAgent {
     }
 }
 
+#[derive(Deserialize, Serialize, Clone, Debug, Default, PartialEq)]
+pub struct ParametersMap {
+    // v1 fields
+    /// A hashed-uri to the ingredient assertion that this action acts on.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ingredient: Option<HashedUri>,
+    /// Additional description of the action.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+
+    // v2 fields
+    /// A JUMBF URI to the redacted assertion, required when the action is `c2pa.redacted`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub redacted: Option<String>,
+    /// A list of hashed JUMBF URI(s) to the ingredient (v2 or v3) assertion(s) that this action acts on.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ingredients: Option<Vec<HashedUri>>,
+    /// BCP-47 code of the source language of a `c2pa.translated` action.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_language: Option<String>,
+    /// BCP-47 code of the target language of a `c2pa.translated` action.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub target_language: Option<String>,
+    /// Was this action performed multiple times.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub multiple_instances: Option<bool>,
+
+    /// Anything from the common parameters.
+    #[serde(flatten)]
+    pub common: HashMap<String, Value>,
+}
+
 /// Defines a single action taken on an asset.
 ///
 /// An [`Action`] describes what took place on the asset, when it took place,
@@ -180,7 +212,7 @@ pub struct Action {
 
     /// Additional parameters of the action. These vary by the type of action.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) parameters: Option<HashMap<String, Value>>,
+    parameters: Option<ParametersMap>,
 
     /// An array of the creators that undertook this action.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -255,21 +287,21 @@ impl Action {
     /// Returns the additional parameters for this action.
     ///
     /// These vary by the type of action.
-    pub fn parameters(&self) -> Option<&HashMap<String, Value>> {
+    pub fn parameters(&self) -> Option<&ParametersMap> {
         self.parameters.as_ref()
     }
 
     /// Returns an individual action parameter if it exists.
     pub fn get_parameter(&self, key: &str) -> Option<&Value> {
         match self.parameters.as_ref() {
-            Some(parameters) => parameters.get(key),
+            Some(parameters) => parameters.common.get(key),
             None => None,
         }
     }
 
     pub fn get_parameter_mut(&mut self, key: &str) -> Option<&mut Value> {
         match &mut self.parameters {
-            Some(parameters) => parameters.get_mut(key),
+            Some(parameters) => parameters.common.get_mut(key),
             None => None,
         }
     }
@@ -365,17 +397,17 @@ impl Action {
         let value_bytes = serde_cbor::ser::to_vec(&value)?;
         let value = serde_cbor::from_slice(&value_bytes)?;
 
-        self.parameters = Some(match self.parameters {
-            Some(mut parameters) => {
-                parameters.insert(key.into(), value);
-                parameters
-            }
+        let parameters = match &mut self.parameters {
+            Some(parameters) => parameters,
             None => {
-                let mut p = HashMap::new();
-                p.insert(key.into(), value);
-                p
+                self.parameters = Some(ParametersMap::default());
+                #[allow(clippy::unwrap_used)]
+                self.parameters.as_mut().unwrap()
             }
-        });
+        };
+
+        parameters.common.insert(key.into(), value);
+
         Ok(self)
     }
 
@@ -386,17 +418,18 @@ impl Action {
     ) -> Result<&mut Self> {
         let value_bytes = serde_cbor::ser::to_vec(&value)?;
         let value = serde_cbor::from_slice(&value_bytes)?;
-        self.parameters = Some(match self.parameters.take() {
-            Some(mut parameters) => {
-                parameters.insert(key.into(), value);
-                parameters
-            }
+
+        let parameters = match &mut self.parameters {
+            Some(parameters) => parameters,
             None => {
-                let mut p = HashMap::new();
-                p.insert(key.into(), value);
-                p
+                self.parameters = Some(ParametersMap::default());
+                #[allow(clippy::unwrap_used)]
+                self.parameters.as_mut().unwrap()
             }
-        });
+        };
+
+        parameters.common.insert(key.into(), value);
+
         Ok(self)
     }
 
@@ -738,13 +771,13 @@ pub mod tests {
         assert_eq!(result.actions.len(), 2);
         assert_eq!(result.actions[0].action(), original.actions[0].action());
         assert_eq!(
-            result.actions[0].parameters().unwrap().get("name"),
-            original.actions[0].parameters().unwrap().get("name")
+            result.actions[0].parameters().unwrap().common.get("name"),
+            original.actions[0].parameters().unwrap().common.get("name")
         );
         assert_eq!(result.actions[1].action(), original.actions[1].action());
         assert_eq!(
-            result.actions[1].parameters().unwrap().get("name"),
-            original.actions[1].parameters().unwrap().get("name")
+            result.actions[1].parameters().unwrap().common.get("name"),
+            original.actions[1].parameters().unwrap().common.get("name")
         );
         assert_eq!(result.actions[1].when(), original.actions[1].when());
         assert_eq!(
