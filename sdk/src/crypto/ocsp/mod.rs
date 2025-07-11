@@ -38,8 +38,8 @@ pub struct OcspResponse {
     /// OCSP certificate chain.
     pub ocsp_certs: Option<Vec<Vec<u8>>>,
 
-    /// Associated certificate name to OCSP DER
-    pub certificate_name: String,
+    /// Associated certificate serial number
+    pub certificate_serial_num: String,
 }
 
 impl Default for OcspResponse {
@@ -49,7 +49,7 @@ impl Default for OcspResponse {
             next_update: time::utc_now(),
             revoked_at: None,
             ocsp_certs: None,
-            certificate_name: String::new(),
+            certificate_serial_num: String::new(),
         }
     }
 }
@@ -106,6 +106,11 @@ impl OcspResponse {
 
         for single_response in &response_data.responses {
             let cert_status = &single_response.cert_status;
+            
+            // Extract certificate serial number from cert_id
+            if output.certificate_serial_num.is_empty() {
+                output.certificate_serial_num = single_response.cert_id.serial_number.to_string();
+            }
 
             match cert_status {
                 CertStatus::Good => {

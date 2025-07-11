@@ -49,10 +49,14 @@ use crate::{
     cose_sign::{cose_sign, cose_sign_async},
     cose_validator::{verify_cose, verify_cose_async},
     crypto::{
-        asn1::rfc3161::TstInfo, cose::{
+        asn1::rfc3161::TstInfo,
+        cose::{
             fetch_and_check_ocsp_response, parse_cose_sign1, CertificateTrustPolicy,
             TimeStampStorage,
-        }, hash::sha256, ocsp::OcspResponse, time_stamp::verify_time_stamp
+        },
+        hash::sha256,
+        ocsp::OcspResponse,
+        time_stamp::verify_time_stamp,
     },
     dynamic_assertion::{
         AsyncDynamicAssertion, DynamicAssertion, DynamicAssertionContent, PartialClaim,
@@ -1778,8 +1782,8 @@ impl Store {
 
             let certificate_status_assertions = found_claim.certificate_status_assertions();
             for csa in certificate_status_assertions {
-                let certificate_status_assertion = CertificateStatus::from_assertion(csa.assertion())
-                    .map_err(|_e| {
+                let certificate_status_assertion =
+                    CertificateStatus::from_assertion(csa.assertion()).map_err(|_e| {
                         log_item!(
                             csa.label(),
                             "could not parse certificate status assertion",
@@ -1796,9 +1800,13 @@ impl Store {
 
                 // save the timestamps stored in the StoreValidationInfo
 
-                let responses = self.get_certificate_assertion(&vec![claim.label().to_string()], validation_log).unwrap();
-                for ocsp_val in certificate_status_assertion.as_ref() {
-                    // svi.certificate_statuses.insert(responses, ocsp_val)
+                for ocsp_der in certificate_status_assertion.as_ref() {
+                    if let Ok(response) =
+                        OcspResponse::from_der_checked(ocsp_der, None, validation_log)
+                    {
+                        svi.certificate_statuses
+                            .insert(response.certificate_serial_num, response.ocsp_der);
+                    }
                 }
             }
         }
@@ -4705,7 +4713,8 @@ pub mod tests {
             StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
         let test =
             Store::get_certificate_assertion(&store, &store.claims, &mut validation_log).unwrap();
-        let certificate_status = CertificateStatus::new(test.iter().map(|a| a.ocsp_der.clone()).collect());
+        let certificate_status =
+            CertificateStatus::new(test.iter().map(|a| a.ocsp_der.clone()).collect());
         let assertion = certificate_status.to_assertion().unwrap();
         let restored = CertificateStatus::from_assertion(&assertion).unwrap();
         assert_eq!(certificate_status, restored);
@@ -4719,8 +4728,8 @@ pub mod tests {
     #[test]
     #[cfg(feature = "v1_api")]
     #[cfg(feature = "file_io")]
-    fn test_certificate_map() -> Result<()>{
-        use crate::{assertions::CertificateStatus, crypto::ocsp::OcspResponse};
+    fn test_certificate_map() -> Result<()> {
+        use crate::{assertions::CertificateStatus};
 
         let ap = fixture_path("ocsp.png");
         let temp_dir = tempdirectory().expect("temp dir");
@@ -4732,7 +4741,8 @@ pub mod tests {
             StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
         let test =
             Store::get_certificate_assertion(&store, &store.claims, &mut validation_log).unwrap();
-        let certificate_status = CertificateStatus::new(test.iter().map(|a| a.ocsp_der.clone()).collect());
+        let certificate_status =
+            CertificateStatus::new(test.iter().map(|a| a.ocsp_der.clone()).collect());
 
         // ClaimGeneratorInfo is mandatory in Claim V2
         let cgi = ClaimGeneratorInfo::new("claim_v2_unit_test");
@@ -4752,7 +4762,13 @@ pub mod tests {
         // read from new file
         let new_store = Store::load_from_asset(&op, true, &mut report).unwrap();
 
-        let svi = new_store.get_store_validation_info(new_store.claims()[2], &mut ClaimAssetData::Path(&op), &mut validation_log).unwrap();
+        let svi = new_store
+            .get_store_validation_info(
+                new_store.claims()[2],
+                &mut ClaimAssetData::Path(&op),
+                &mut validation_log,
+            )
+            .unwrap();
 
         dbg!(&svi.certificate_statuses);
         Ok(())

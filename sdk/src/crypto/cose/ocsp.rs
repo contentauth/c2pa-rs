@@ -152,6 +152,11 @@ pub(crate) fn fetch_and_check_ocsp_response(
             return Ok(OcspResponse::default());
         };
 
+        // Extract certificate serial number from the certificate chain
+        let (_rem, cert) = X509Certificate::from_der(&certs[0])
+            .map_err(|e| CoseError::InternalError(e.to_string()))?;
+        ocsp_data.certificate_serial_num = cert.serial.to_string();
+
         // If we get a valid response validate the certs.
         if ocsp_data.revoked_at.is_none() {
             if let Some(ocsp_certs) = &ocsp_data.ocsp_certs {
@@ -159,10 +164,7 @@ pub(crate) fn fetch_and_check_ocsp_response(
             }
         }
 
-        let (_rem, cert) = X509Certificate::from_der(&certs[0])
-            .map_err(|e| CoseError::InternalError(e.to_string()))?;
-        ocsp_data.certificate_name = cert.serial.to_string();
-        println!("HERE {}", &ocsp_data.certificate_name);
+
 
         Ok(ocsp_data)
     }
