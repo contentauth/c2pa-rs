@@ -1560,8 +1560,7 @@ mod tests {
 
     #[test]
     fn test_builder_auto_created() {
-        let _guard =
-            settings::set_scoped_profile_settings_value("auto_created_action", true).unwrap();
+        settings::set_profile_settings_value("auto_created_action", true).unwrap();
 
         let mut output = Cursor::new(Vec::new());
         Builder::new()
@@ -1588,8 +1587,7 @@ mod tests {
 
     #[test]
     fn test_builder_auto_opened() {
-        let _guard =
-            settings::set_scoped_profile_settings_value("auto_opened_action", true).unwrap();
+        settings::set_profile_settings_value("auto_opened_action", true).unwrap();
 
         let mut builder = Builder::new();
         builder
@@ -1621,8 +1619,7 @@ mod tests {
 
     #[test]
     fn test_builder_auto_placed() {
-        let _guard =
-            settings::set_scoped_profile_settings_value("auto_placed_action", true).unwrap();
+        settings::set_profile_settings_value("auto_placed_action", true).unwrap();
 
         let mut builder = Builder::new();
         builder

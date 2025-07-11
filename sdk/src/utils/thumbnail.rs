@@ -286,14 +286,11 @@ pub mod tests {
 
     #[test]
     fn test_make_thumbnail_from_stream() {
-        let _guard =
-            settings::set_scoped_profile_settings_value("thumbnail.prefer_smallest_format", false)
-                .unwrap();
-        let _guard =
-            settings::set_scoped_profile_settings_value("thumbnail.ignore_errors", false).unwrap();
-        let _guard =
-            settings::set_scoped_profile_settings_value::<Option<ThumbnailFormat>>("format", None)
-                .unwrap();
+        settings::set_profile_settings_value("thumbnail.prefer_smallest_format", false).unwrap();
+
+        settings::set_profile_settings_value("thumbnail.ignore_errors", false).unwrap();
+
+        settings::set_profile_settings_value::<Option<ThumbnailFormat>>("format", None).unwrap();
 
         let mut output = Cursor::new(Vec::new());
         let format = make_thumbnail_from_stream(
@@ -314,8 +311,7 @@ pub mod tests {
 
     #[test]
     fn test_make_thumbnail_from_stream_with_output() {
-        let _guard =
-            settings::set_scoped_profile_settings_value("thumbnail.ignore_errors", false).unwrap();
+        settings::set_profile_settings_value("thumbnail.ignore_errors", false).unwrap();
 
         let mut output = Cursor::new(Vec::new());
         let format = make_thumbnail_from_stream(
@@ -336,14 +332,11 @@ pub mod tests {
 
     #[test]
     fn test_make_thumbnail_bytes_from_stream() {
-        let _guard =
-            settings::set_scoped_profile_settings_value("thumbnail.prefer_smallest_format", false)
-                .unwrap();
-        let _guard =
-            settings::set_scoped_profile_settings_value("thumbnail.ignore_errors", false).unwrap();
-        let _guard =
-            settings::set_scoped_profile_settings_value::<Option<ThumbnailFormat>>("format", None)
-                .unwrap();
+        settings::set_profile_settings_value("thumbnail.prefer_smallest_format", false).unwrap();
+
+        settings::set_profile_settings_value("thumbnail.ignore_errors", false).unwrap();
+
+        settings::set_profile_settings_value::<Option<ThumbnailFormat>>("format", None).unwrap();
 
         let (format, bytes) =
             make_thumbnail_bytes_from_stream(Cursor::new(TEST_JPEG), "image/jpeg")
@@ -362,14 +355,11 @@ pub mod tests {
     fn test_make_thumbnail_bytes_from_path() {
         use std::path::Path;
 
-        let _guard =
-            settings::set_scoped_profile_settings_value("thumbnail.prefer_smallest_format", false)
-                .unwrap();
-        let _guard =
-            settings::set_scoped_profile_settings_value("thumbnail.ignore_errors", false).unwrap();
-        let _guard =
-            settings::set_scoped_profile_settings_value::<Option<ThumbnailFormat>>("format", None)
-                .unwrap();
+        settings::set_profile_settings_value("thumbnail.prefer_smallest_format", false).unwrap();
+
+        settings::set_profile_settings_value("thumbnail.ignore_errors", false).unwrap();
+
+        settings::set_profile_settings_value::<Option<ThumbnailFormat>>("format", None).unwrap();
 
         let (format, bytes) = make_thumbnail_bytes_from_path(Path::new("tests/fixtures/CA.jpg"))
             .unwrap()
@@ -384,16 +374,11 @@ pub mod tests {
 
     #[test]
     fn test_make_thumbnail_with_prefer_smallest_format() {
-        let _guard =
-            settings::set_scoped_profile_settings_value("thumbnail.prefer_smallest_format", true)
-                .unwrap();
-        let _guard =
-            settings::set_scoped_profile_settings_value("thumbnail.ignore_errors", false).unwrap();
-        let _guard = settings::set_scoped_profile_settings_value::<Option<ThumbnailFormat>>(
-            "thumbnail.format",
-            None,
-        )
-        .unwrap();
+        settings::set_profile_settings_value("thumbnail.prefer_smallest_format", true).unwrap();
+
+        settings::set_profile_settings_value("thumbnail.ignore_errors", false).unwrap();
+        settings::set_profile_settings_value::<Option<ThumbnailFormat>>("thumbnail.format", None)
+            .unwrap();
 
         let (format, bytes) = make_thumbnail_bytes_from_stream(Cursor::new(TEST_PNG), "image/png")
             .unwrap()
@@ -408,9 +393,8 @@ pub mod tests {
 
     #[test]
     fn test_make_thumbnail_with_forced_format() {
-        let _guard =
-            settings::set_scoped_profile_settings_value("thumbnail.ignore_errors", false).unwrap();
-        let _guard = settings::set_scoped_profile_settings_value::<Option<ThumbnailFormat>>(
+        settings::set_profile_settings_value("thumbnail.ignore_errors", false).unwrap();
+        settings::set_profile_settings_value::<Option<ThumbnailFormat>>(
             "thumbnail.format",
             Some(ThumbnailFormat::Png),
         )
@@ -430,15 +414,10 @@ pub mod tests {
 
     #[test]
     fn test_make_thumbnail_with_long_edge() {
-        let _guard =
-            settings::set_scoped_profile_settings_value("thumbnail.ignore_errors", false).unwrap();
-        let _guard = settings::set_scoped_profile_settings_value::<Option<ThumbnailFormat>>(
-            "thumbnail.format",
-            None,
-        )
-        .unwrap();
-        let _guard =
-            settings::set_scoped_profile_settings_value("thumbnail.long_edge", 100).unwrap();
+        settings::set_profile_settings_value("thumbnail.ignore_errors", false).unwrap();
+        settings::set_profile_settings_value::<Option<ThumbnailFormat>>("thumbnail.format", None)
+            .unwrap();
+        settings::set_profile_settings_value("thumbnail.long_edge", 100).unwrap();
 
         let (format, bytes) =
             make_thumbnail_bytes_from_stream(Cursor::new(TEST_JPEG), "image/jpeg")
@@ -455,8 +434,7 @@ pub mod tests {
 
     #[test]
     fn test_make_thumbnail_and_ignore_errors() {
-        let _guard =
-            settings::set_scoped_profile_settings_value("thumbnail.ignore_errors", true).unwrap();
+        settings::set_profile_settings_value("thumbnail.ignore_errors", true).unwrap();
 
         let thumbnail =
             make_thumbnail_bytes_from_stream(Cursor::new(Vec::new()), "image/png").unwrap();

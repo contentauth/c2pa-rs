@@ -572,7 +572,7 @@ pub(crate) fn set_profile_settings_value<T: Into<config::Value>>(
         let profile = profile.as_deref().unwrap_or("default");
         let update_config = Config::builder()
             .add_source(c.clone())
-            .set_override(format!("profile.{}.{}", profile, value_path), value);
+            .set_override(format!("profile.{profile}.{value_path}"), value);
 
         match update_config {
             Ok(updated) => {
@@ -590,36 +590,6 @@ pub(crate) fn set_profile_settings_value<T: Into<config::Value>>(
                 Err(err.into())
             }
         }
-    })
-}
-
-#[derive(Debug)]
-pub(crate) struct ScopedSetting<'a> {
-    original_value: config::Value,
-    value_path: &'a str,
-}
-
-impl<'a> Drop for ScopedSetting<'a> {
-    fn drop(&mut self) {
-        #[allow(clippy::unwrap_used)]
-        set_profile_settings_value(self.value_path, self.original_value.clone()).unwrap()
-    }
-}
-
-#[allow(unused)]
-pub(crate) fn set_scoped_profile_settings_value<T: Into<config::Value>>(
-    value_path: &str,
-    value: T,
-) -> Result<ScopedSetting> {
-    let original_value = match get_profile_settings_value::<config::Value>(value_path) {
-        Ok(value) => value,
-        Err(Error::NotFound) => config::Value::new(None, config::ValueKind::Nil),
-        Err(err) => return Err(err),
-    };
-    set_profile_settings_value(value_path, value)?;
-    Ok(ScopedSetting {
-        original_value,
-        value_path,
     })
 }
 
@@ -654,8 +624,7 @@ pub(crate) fn get_profile_settings_value<'de, T: serde::de::Deserialize<'de>>(
     SETTINGS.with_borrow(|current_settings| {
         PROFILE.with_borrow(|profile| {
             if let Some(profile) = profile {
-                let value =
-                    current_settings.get::<T>(&format!("profile.{}.{}", profile, value_path));
+                let value = current_settings.get::<T>(&format!("profile.{profile}.{value_path}"));
                 match value {
                     Ok(value) => return Ok(value),
                     Err(err) => return Err(err.into()),
@@ -664,7 +633,7 @@ pub(crate) fn get_profile_settings_value<'de, T: serde::de::Deserialize<'de>>(
                 }
             }
 
-            match current_settings.get::<T>(&format!("profile.default.{}", value_path)) {
+            match current_settings.get::<T>(&format!("profile.default.{value_path}")) {
                 Ok(value) => Ok(value),
                 Err(config::ConfigError::NotFound(_)) => Err(Error::NotFound),
                 Err(err) => Err(err.into()),
