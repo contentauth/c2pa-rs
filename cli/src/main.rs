@@ -31,6 +31,7 @@ use c2pa::{
     ManifestDefinition, Reader, Signer,
 };
 use clap::{Parser, Subcommand};
+use etcetera::BaseStrategy;
 use log::debug;
 use serde::Deserialize;
 use signer::SignConfig;
@@ -141,12 +142,24 @@ struct CliArgs {
 
     // TODO: ideally this would be called config, not to be confused with the other config arg
     /// Path to the config file.
-    #[clap(long)]
-    settings: Option<PathBuf>,
+    #[clap(
+        long,
+        env = "C2PATOOL_SETTINGS",
+        default_value = default_settings_path().into_os_string()
+    )]
+    settings: PathBuf,
 
     /// Which profile of the settings to use.
-    #[arg(long, requires = "settings")]
+    #[arg(long, requires = "settings", env = "C2PATOOL_PROFILE")]
     profile: Option<String>,
+}
+
+fn default_settings_path() -> PathBuf {
+    let strategy = etcetera::choose_base_strategy().unwrap();
+    let mut path = strategy.config_dir();
+    path.push("c2pa");
+    path.push("c2pa.toml");
+    path
 }
 
 #[derive(Clone, Debug)]
@@ -370,13 +383,13 @@ fn blocking_get(url: &str) -> Result<String> {
 }
 
 fn configure_sdk(args: &CliArgs) -> Result<()> {
-    if let Some(settings) = &args.settings {
-        let settings = fs::read_to_string(settings)?;
+    if args.settings.exists() {
+        let settings = fs::read_to_string(&args.settings)?;
         match &args.profile {
             Some(profile) => {
-                c2pa::settings::load_settings_from_toml_with_profile(&settings, profile.to_owned())?
+                c2pa::settings::load_settings_with_profile(&settings, profile.to_owned())?
             }
-            None => c2pa::settings::load_settings_from_toml(&settings)?,
+            None => c2pa::settings::load_settings(&settings)?,
         }
     }
 
