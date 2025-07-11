@@ -1798,8 +1798,6 @@ impl Store {
                         )
                     })?;
 
-                // save the timestamps stored in the StoreValidationInfo
-
                 for ocsp_der in certificate_status_assertion.as_ref() {
                     if let Ok(response) =
                         OcspResponse::from_der_checked(ocsp_der, None, validation_log)
