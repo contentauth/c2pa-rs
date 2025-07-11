@@ -1975,25 +1975,11 @@ impl Claim {
             }
         }
 
-        // check created actions first
         let mut first_actions_assertion = None;
 
-        if let Some(assertion) = created_actions.first() {
-            let first_actions = Actions::from_assertion(assertion.assertion())?;
-            let first_actions_first_action = &first_actions.actions().first();
-
-            if let Some(first_actions_first_action) = first_actions_first_action {
-                if first_actions_first_action.action() == c2pa_action::OPENED
-                    || first_actions_first_action.action() == c2pa_action::CREATED
-                {
-                    first_actions_assertion = Some(assertion);
-                }
-            }
-        }
-
-        // check gathered actions if not found in created actions
-        if first_actions_assertion.is_none() {
-            if let Some(assertion) = gathered_actions.first() {
+        // check created actions then gathered actions if not found in created actions
+        for actions in [&created_actions, &gathered_actions] {
+            if let Some(assertion) = actions.first() {
                 let first_actions = Actions::from_assertion(assertion.assertion())?;
                 let first_actions_first_action = &first_actions.actions().first();
 
