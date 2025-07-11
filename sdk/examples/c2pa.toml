@@ -51,9 +51,9 @@ strict_v1_validation = false
 [profile]
 
 # Claim generator info list.
-[[profile.default.claim_generator_info]]
+[profile.default.claim_generator_info]
 # A human readable name.
-name = "my_service"
+name = "My Service"
 # A human readable string of the product's version.
 version = "1.0"
 # URL to the icon.
@@ -61,11 +61,10 @@ icon = ""
 # The operating system the claim generator is running on.
 operating_system = ""
 # Arbitrary fields can also be defined.
+#
+# By default, the SDK adds a field "org.cai.c2pa_rs" with the value
+# being the current version of the SDK.
 some_other_field = ""
-
-# Any amount of claim generator infos can be defined.
-[[profile.default.claim_generator_info]]
-name = "my_other_service"
 
 # A signer can be loaded in the API with the function `c2pa::get_settings_signer`.
 [profile.default.signer]

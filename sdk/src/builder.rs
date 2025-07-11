@@ -634,10 +634,10 @@ impl Builder {
         claim_generator_info[0].insert("org.cai.c2pa_rs", env!("CARGO_PKG_VERSION"));
 
         let profile_claim_generator_infos = settings::get_profile_settings_value::<
-            Option<Vec<ClaimGeneratorInfo>>,
+            Option<ClaimGeneratorInfo>,
         >("claim_generator_info");
         if let Ok(Some(claim_generator_infos)) = profile_claim_generator_infos {
-            claim_generator_info.extend(claim_generator_infos);
+            claim_generator_info.push(claim_generator_infos);
         }
 
         // Build the claim_generator string since this is required

@@ -326,7 +326,7 @@ pub struct Profile {
     /// Note that this information will prepend any claim generator info
     /// provided explicitly to the builder.
     #[serde(skip_serializing_if = "Option::is_none")]
-    claim_generator_info: Option<Vec<ClaimGeneratorInfo>>,
+    claim_generator_info: Option<ClaimGeneratorInfo>,
     /// Various settings for configuring automatic thumbnail generation.
     thumbnail: ThumbnailSettings,
     /// Whether to automatically generate a c2pa.created [Action][crate::assertions::Action]
@@ -485,7 +485,7 @@ pub(crate) fn get_settings() -> Option<Settings> {
 // Load settings from configuration file
 #[allow(unused)]
 #[cfg(feature = "file_io")]
-pub(crate) fn load_settings<P: AsRef<Path>>(settings_path: P) -> Result<()> {
+pub(crate) fn load_settings_from_file<P: AsRef<Path>>(settings_path: P) -> Result<()> {
     let ext = settings_path
         .as_ref()
         .extension()
@@ -497,21 +497,23 @@ pub(crate) fn load_settings<P: AsRef<Path>>(settings_path: P) -> Result<()> {
     load_settings_from_str(&String::from_utf8_lossy(&setting_buf), &ext)
 }
 
-/// Load settings form string representation of the configuration.  Format of configuration must be supplied.
+/// Load settings from string representation of the configuration. Format of configuration must be supplied.
 #[allow(unused)]
 // TODO: when this is removed, remove the additional features (for all supported formats) from the Cargo.toml
-#[deprecated]
+#[deprecated = "use load_settings instead (note it is TOML only)"]
 pub fn load_settings_from_str(settings_str: &str, format: &str) -> Result<()> {
     Settings::from_string(settings_str, format, None).map(|_| ())
 }
 
+// TODO: doc
 #[allow(unused)]
-pub fn load_settings_from_toml(toml: &str) -> Result<()> {
+pub fn load_settings(toml: &str) -> Result<()> {
     Settings::from_string(toml, "toml", None).map(|_| ())
 }
 
+// TODO: doc
 #[allow(unused)]
-pub fn load_settings_from_toml_with_profile(toml: &str, profile: String) -> Result<()> {
+pub fn load_settings_with_profile(toml: &str, profile: String) -> Result<()> {
     Settings::from_string(toml, "toml", Some(profile)).map(|_| ())
 }
 
@@ -825,7 +827,7 @@ pub mod tests {
 
         save_settings_as_json(&op).unwrap();
 
-        load_settings(&op).unwrap();
+        load_settings_from_file(&op).unwrap();
         let settings = get_settings().unwrap();
 
         assert_eq!(settings, Settings::default());
