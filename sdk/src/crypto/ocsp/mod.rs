@@ -106,7 +106,7 @@ impl OcspResponse {
 
         for single_response in &response_data.responses {
             let cert_status = &single_response.cert_status;
-            
+
             // Extract certificate serial number from cert_id
             if output.certificate_serial_num.is_empty() {
                 output.certificate_serial_num = single_response.cert_id.serial_number.to_string();

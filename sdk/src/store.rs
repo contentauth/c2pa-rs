@@ -4729,14 +4729,18 @@ pub mod tests {
     #[cfg(feature = "v1_api")]
     #[cfg(feature = "file_io")]
     fn test_certificate_map() -> Result<()> {
-        use crate::{assertions::CertificateStatus};
+        use serde_json::json;
 
+        use crate::{assertions::CertificateStatus, Builder};
+
+        // Setup paths and temporary files
         let ap = fixture_path("ocsp.png");
         let temp_dir = tempdirectory().expect("temp dir");
         let op = temp_dir_path(&temp_dir, "test-image.png");
 
+        // Retrieve ocsp information from asset
         let mut report = StatusTracker::default();
-        let mut store = Store::load_from_asset(&ap, true, &mut report).unwrap();
+        let store = Store::load_from_asset(&ap, true, &mut report).unwrap();
         let mut validation_log =
             StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
         let test =
@@ -4744,33 +4748,41 @@ pub mod tests {
         let certificate_status =
             CertificateStatus::new(test.iter().map(|a| a.ocsp_der.clone()).collect());
 
-        // ClaimGeneratorInfo is mandatory in Claim V2
-        let cgi = ClaimGeneratorInfo::new("claim_v2_unit_test");
-
-        // Create a 3rd party claim
-        let mut claim = Claim::new("test_method", Some("vendor"), 2);
-        claim.add_assertion(&certificate_status)?;
-        claim.add_claim_generator_info(cgi.clone());
-
+        // Create builder with certificate status assertion gathered above
+        let manifest_json = json!({
+            "claim_generator_info": [
+                {
+                    "name": "c2pa_test",
+                    "version": "1.0.0"
+                }
+            ],
+            "title": "Certificate Map Test"
+        })
+        .to_string();
+        let mut builder = Builder::from_json(&manifest_json)?;
+        builder.add_assertion(labels::CERTIFICATE_STATUS, &certificate_status)?;
         let signer = test_signer(SigningAlg::Ps256);
 
-        store.commit_claim(claim).unwrap();
-        store.save_to_asset(&ap, signer.as_ref(), &op).unwrap();
-
-        let mut report = StatusTracker::default();
-
-        // read from new file
+        // Sign file and validate that OCSP values were stored in the map correctly
+        builder.sign_file(&signer, &ap, &op)?;
         let new_store = Store::load_from_asset(&op, true, &mut report).unwrap();
-
         let svi = new_store
             .get_store_validation_info(
-                new_store.claims()[2],
+                new_store.claims()[0],
                 &mut ClaimAssetData::Path(&op),
                 &mut validation_log,
             )
             .unwrap();
-
-        dbg!(&svi.certificate_statuses);
+        let original_ocsp_vals: Vec<Vec<u8>> = certificate_status
+            .ocsp_vals
+            .iter()
+            .map(|b| b.to_vec())
+            .collect();
+        let stored_ocsp_vals: Vec<Vec<u8>> = svi.certificate_statuses.into_values().collect();
+        assert_eq!(original_ocsp_vals.len(), stored_ocsp_vals.len());
+        for original_val in &original_ocsp_vals {
+            assert!(stored_ocsp_vals.contains(original_val));
+        }
         Ok(())
     }
 

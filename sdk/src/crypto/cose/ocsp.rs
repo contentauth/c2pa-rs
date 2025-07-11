@@ -164,8 +164,6 @@ pub(crate) fn fetch_and_check_ocsp_response(
             }
         }
 
-
-
         Ok(ocsp_data)
     }
 }
