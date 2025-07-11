@@ -15,18 +15,22 @@
 use std::path::Path;
 use std::{
     cell::RefCell,
+    collections::HashMap,
     io::{BufRead, BufReader, Cursor},
 };
 
 use config::{Config, FileFormat};
-#[cfg(feature = "json_schema")]
-use schemars::JsonSchema;
 use serde_derive::{Deserialize, Serialize};
 
-use crate::{crypto::base64, Error, Result};
+use crate::{
+    create_signer, crypto::base64, utils::thumbnail::ThumbnailFormat, ClaimGeneratorInfo, Error,
+    Result, Signer, SigningAlg,
+};
 
 thread_local!(
-    static SETTINGS: RefCell<Config> = RefCell::new(Config::try_from(&Settings::default()).unwrap_or_default())
+    static SETTINGS: RefCell<Config> =
+        RefCell::new(Config::try_from(&Settings::default()).unwrap_or_default());
+    static PROFILE: RefCell<Option<String>> = const { RefCell::new(None) };
 );
 
 // trait used to validate user input to make sure user supplied configurations are valid
@@ -39,7 +43,6 @@ pub(crate) trait SettingsValidate {
 
 // Settings for trust list feature
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 #[allow(unused)]
 pub(crate) struct Trust {
     user_anchors: Option<String>,
@@ -155,7 +158,6 @@ impl SettingsValidate for Trust {
 
 // Settings for core C2PA-RS functionality
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 #[allow(unused)]
 pub(crate) struct Core {
     debug: bool,
@@ -165,6 +167,8 @@ pub(crate) struct Core {
     prefer_bmff_merkle_tree: bool,
     compress_manifests: bool,
     max_memory_usage: Option<u64>,
+    // TODO: pending https://github.com/contentauth/c2pa-rs/pull/1180
+    // prefer_update_manifests: bool,
 }
 
 impl Default for Core {
@@ -177,6 +181,7 @@ impl Default for Core {
             prefer_bmff_merkle_tree: false,
             compress_manifests: true,
             max_memory_usage: None,
+            // prefer_update_manifests: true,
         }
     }
 }
@@ -192,7 +197,6 @@ impl SettingsValidate for Core {
 
 // Settings for verification options
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 #[allow(unused)]
 pub(crate) struct Verify {
     verify_after_reading: bool,
@@ -224,32 +228,154 @@ impl Default for Verify {
 
 impl SettingsValidate for Verify {}
 
-// Settings for Builder API options
+/// Quality of the thumbnail.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[cfg_attr(feature = "json_schema", derive(JsonSchema))]
-#[allow(unused)]
-pub(crate) struct Builder {
-    auto_thumbnail: bool,
+#[serde(rename_all = "lowercase")]
+pub enum ThumbnailQuality {
+    /// Low quality.
+    Low,
+    /// Medium quality.
+    Medium,
+    /// High quality.
+    High,
 }
 
-impl Default for Builder {
+/// Settings for controlling automatic thumbnail generation.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct ThumbnailSettings {
+    /// Whether or not to automatically generate thumbnails.
+    enabled: bool,
+    /// Whether to ignore thumbnail generation errors.
+    ///
+    /// This may occur, for instance, if the thumbnail media type or color layout isn't
+    /// supported.
+    ignore_errors: bool,
+    /// The size of the longest edge of the thumbnail.
+    ///
+    /// This function will resize the input to preserve aspect ratio.
+    long_edge: u32,
+    /// Format of the thumbnail.
+    ///
+    /// If this field isn't specified, the thumbnail format will correspond to the
+    /// input format.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    format: Option<ThumbnailFormat>,
+    /// Whether or not to prefer a smaller sized media format for the thumbnail.
+    ///
+    /// Note that [ThumbnailSettings::format] takes precedence over this field. In addition,
+    /// if the output format is unsupported, it will default to the smallest format regardless
+    /// of the value of this field.
+    ///
+    /// For instance, if the source input type is a PNG, but it doesn't have an alpha channel,
+    /// the image will be converted to a JPEG of smaller size.
+    prefer_smallest_format: bool,
+    /// The output quality of the thumbnail.
+    ///
+    /// This setting contains sensible defaults for things like quality, compression, and
+    /// algorithms for various formats.
+    quality: ThumbnailQuality,
+}
+
+impl Default for ThumbnailSettings {
     fn default() -> Self {
-        Self {
-            auto_thumbnail: true,
+        ThumbnailSettings {
+            enabled: true,
+            ignore_errors: true,
+            long_edge: 1024,
+            format: None,
+            prefer_smallest_format: true,
+            quality: ThumbnailQuality::Medium,
         }
     }
 }
 
+impl SettingsValidate for ThumbnailSettings {
+    fn validate(&self) -> Result<()> {
+        #[cfg(not(feature = "add_thumbnails"))]
+        if self.enabled {
+            log::warn!("c2pa-rs feature `add_thumbnails` must be enabled to generate thumbnails!");
+        }
+
+        Ok(())
+    }
+}
+
+// Settings for Builder API options
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[allow(unused)]
+pub(crate) struct Builder;
+
 impl SettingsValidate for Builder {}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct SignerInfo {
+    alg: SigningAlg,
+    sign_cert: Vec<u8>,
+    private_key: Vec<u8>,
+    tsa_url: Option<String>,
+}
+
+/// A configuration profile.
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+pub struct Profile {
+    /// Information about the signer used for signing.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    signer: Option<SignerInfo>,
+    /// Claim generator info that is automatically added to the builder.
+    ///
+    /// Note that this information will prepend any claim generator info
+    /// provided explicitly to the builder.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    claim_generator_info: Option<ClaimGeneratorInfo>,
+    /// Various settings for configuring automatic thumbnail generation.
+    thumbnail: ThumbnailSettings,
+    /// Whether to automatically generate a c2pa.created [Action][crate::assertions::Action]
+    /// assertion or error that it doesn't already exist.
+    ///
+    /// For more information about the mandatory conditions for a c2pa.created action assertion, see here:
+    /// https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_mandatory_presence_of_at_least_one_actions_assertion
+    auto_created_action: bool,
+    /// Whether to automatically generate a c2pa.opened [Action][crate::assertions::Action]
+    /// assertion or error that it doesn't already exist.
+    ///
+    /// For more information about the mandatory conditions for a c2pa.opened action assertion, see here:
+    /// https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_mandatory_presence_of_at_least_one_actions_assertion
+    auto_opened_action: bool,
+    /// Whether to automatically generate a c2pa.placed [Action][crate::assertions::Action]
+    /// assertion or error that it doesn't already exist.
+    ///
+    /// For more information about the mandatory conditions for a c2pa.placed action assertion, see here:
+    /// https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_relationship
+    auto_placed_action: bool,
+}
+
+impl Default for Profile {
+    fn default() -> Self {
+        Self {
+            signer: None,
+            claim_generator_info: None,
+            thumbnail: Default::default(),
+            auto_created_action: true,
+            auto_opened_action: true,
+            auto_placed_action: true,
+        }
+    }
+}
+
+impl SettingsValidate for Profile {
+    fn validate(&self) -> Result<()> {
+        self.thumbnail.validate()
+    }
+}
 
 const MAJOR_VERSION: usize = 1;
 const MINOR_VERSION: usize = 0;
+
 // Settings configuration for C2PA-RS.  Default configuration values
 // are lazy loaded on first use.  Values can also be loaded from a configuration
 // file or by setting specific value via code.  There is a single configuration
 // setting for the entire C2PA-RS instance.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[cfg_attr(feature = "json_schema", derive(JsonSchema))]
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[allow(unused)]
 pub struct Settings {
     version_major: usize,
@@ -258,23 +384,10 @@ pub struct Settings {
     core: Core,
     verify: Verify,
     builder: Builder,
-}
-
-impl Default for Settings {
-    fn default() -> Self {
-        Self {
-            version_major: MAJOR_VERSION,
-            version_minor: MINOR_VERSION,
-            trust: Default::default(),
-            core: Default::default(),
-            verify: Default::default(),
-            builder: Default::default(),
-        }
-    }
+    profile: HashMap<String, Profile>,
 }
 
 impl Settings {
-    #[allow(unused)]
     #[cfg(feature = "file_io")]
     pub fn from_file<P: AsRef<Path>>(setting_path: P) -> Result<Self> {
         let ext = setting_path
@@ -284,11 +397,10 @@ impl Settings {
             .to_string_lossy();
 
         let setting_buf = std::fs::read(&setting_path).map_err(Error::IoError)?;
-        Settings::from_string(&String::from_utf8_lossy(&setting_buf), &ext)
+        Settings::from_string(&String::from_utf8_lossy(&setting_buf), &ext, None)
     }
 
-    #[allow(unused)]
-    pub fn from_string(settings_str: &str, format: &str) -> Result<Self> {
+    pub fn from_string(settings_str: &str, format: &str, profile: Option<String>) -> Result<Self> {
         let f = match format.to_lowercase().as_str() {
             "json" => FileFormat::Json,
             "json5" => FileFormat::Json5,
@@ -304,7 +416,7 @@ impl Settings {
             .build()
             .map_err(|_e| Error::BadParam("could not parse configuration file".into()))?;
 
-        let mut update_config = SETTINGS.with_borrow(|current_settings| {
+        let update_config = SETTINGS.with_borrow(|current_settings| {
             Config::builder()
                 .add_source(current_settings.clone())
                 .add_source(new_config)
@@ -323,11 +435,29 @@ impl Settings {
 
                 settings.validate()?;
 
-                SETTINGS.set(update_config);
+                SETTINGS.set(update_config.clone());
+                PROFILE.set(profile);
 
                 Ok(settings)
             }
             Err(_) => Err(Error::OtherError("could not update configuration".into())),
+        }
+    }
+}
+
+impl Default for Settings {
+    fn default() -> Self {
+        let mut profile = HashMap::new();
+        profile.insert("default".to_owned(), Profile::default());
+
+        Settings {
+            version_major: MAJOR_VERSION,
+            version_minor: MINOR_VERSION,
+            trust: Default::default(),
+            core: Default::default(),
+            verify: Default::default(),
+            builder: Default::default(),
+            profile,
         }
     }
 }
@@ -355,7 +485,7 @@ pub(crate) fn get_settings() -> Option<Settings> {
 // Load settings from configuration file
 #[allow(unused)]
 #[cfg(feature = "file_io")]
-pub(crate) fn load_settings<P: AsRef<Path>>(settings_path: P) -> Result<()> {
+pub(crate) fn load_settings_from_file<P: AsRef<Path>>(settings_path: P) -> Result<()> {
     let ext = settings_path
         .as_ref()
         .extension()
@@ -367,10 +497,24 @@ pub(crate) fn load_settings<P: AsRef<Path>>(settings_path: P) -> Result<()> {
     load_settings_from_str(&String::from_utf8_lossy(&setting_buf), &ext)
 }
 
-/// Load settings form string representation of the configuration.  Format of configuration must be supplied.
+/// Load settings from string representation of the configuration. Format of configuration must be supplied.
 #[allow(unused)]
+// TODO: when this is removed, remove the additional features (for all supported formats) from the Cargo.toml
+#[deprecated = "use load_settings instead (note it is TOML only)"]
 pub fn load_settings_from_str(settings_str: &str, format: &str) -> Result<()> {
-    Settings::from_string(settings_str, format).map(|_| ())
+    Settings::from_string(settings_str, format, None).map(|_| ())
+}
+
+// TODO: doc
+#[allow(unused)]
+pub fn load_settings(toml: &str) -> Result<()> {
+    Settings::from_string(toml, "toml", None).map(|_| ())
+}
+
+// TODO: doc
+#[allow(unused)]
+pub fn load_settings_with_profile(toml: &str, profile: String) -> Result<()> {
+    Settings::from_string(toml, "toml", Some(profile)).map(|_| ())
 }
 
 // Save the current configuration to a json file.
@@ -418,6 +562,72 @@ pub(crate) fn set_settings_value<T: Into<config::Value>>(value_path: &str, value
     }
 }
 
+#[allow(unused)]
+pub(crate) fn set_profile_settings_value<T: Into<config::Value>>(
+    value_path: &str,
+    value: T,
+) -> Result<()> {
+    let c = SETTINGS.take();
+    PROFILE.with_borrow(|profile| {
+        let profile = profile.as_deref().unwrap_or("default");
+        let update_config = Config::builder()
+            .add_source(c.clone())
+            .set_override(format!("profile.{}.{}", profile, value_path), value);
+
+        match update_config {
+            Ok(updated) => {
+                let update_config = updated.build()?;
+
+                let settings = update_config.clone().try_deserialize::<Settings>()?;
+                settings.validate()?;
+
+                SETTINGS.set(update_config);
+
+                Ok(())
+            }
+            Err(err) => {
+                SETTINGS.set(c);
+                Err(err.into())
+            }
+        }
+    })
+}
+
+#[derive(Debug)]
+pub(crate) struct ScopedSetting<'a> {
+    original_value: config::Value,
+    value_path: &'a str,
+}
+
+impl<'a> Drop for ScopedSetting<'a> {
+    fn drop(&mut self) {
+        #[allow(clippy::unwrap_used)]
+        set_profile_settings_value(self.value_path, self.original_value.clone()).unwrap()
+    }
+}
+
+#[allow(unused)]
+pub(crate) fn set_scoped_profile_settings_value<T: Into<config::Value>>(
+    value_path: &str,
+    value: T,
+) -> Result<ScopedSetting> {
+    let original_value = match get_profile_settings_value::<config::Value>(value_path) {
+        Ok(value) => value,
+        Err(Error::NotFound) => config::Value::new(None, config::ValueKind::Nil),
+        Err(err) => return Err(err),
+    };
+    set_profile_settings_value(value_path, value)?;
+    Ok(ScopedSetting {
+        original_value,
+        value_path,
+    })
+}
+
+#[allow(unused)]
+pub(crate) fn set_settings_profile(profile: String) {
+    PROFILE.set(Some(profile));
+}
+
 // Get a Settings value by path reference.  The path is nested names of of the Settings objects
 // separated by "." notation.  For example "core.hash_alg" would get the settings.core.hash_alg value.
 // The nesting can be arbitrarily deep based on the Settings definition.
@@ -435,6 +645,49 @@ pub(crate) fn get_settings_value<'de, T: serde::de::Deserialize<'de>>(
             .get::<T>(value_path)
             .map_err(|_| Error::NotFound)
     })
+}
+
+#[allow(unused)]
+pub(crate) fn get_profile_settings_value<'de, T: serde::de::Deserialize<'de>>(
+    value_path: &str,
+) -> Result<T> {
+    SETTINGS.with_borrow(|current_settings| {
+        PROFILE.with_borrow(|profile| {
+            if let Some(profile) = profile {
+                let value =
+                    current_settings.get::<T>(&format!("profile.{}.{}", profile, value_path));
+                match value {
+                    Ok(value) => return Ok(value),
+                    Err(err) => return Err(err.into()),
+                    // Ignore if the value isn't found and next check the default profile.
+                    Err(config::ConfigError::NotFound(_)) => {}
+                }
+            }
+
+            match current_settings.get::<T>(&format!("profile.default.{}", value_path)) {
+                Ok(value) => Ok(value),
+                Err(config::ConfigError::NotFound(_)) => Err(Error::NotFound),
+                Err(err) => Err(err.into()),
+            }
+        })
+    })
+}
+
+/// Returns the signer specified in the "signer" field of the currently active settings profile.
+///
+/// If the signer settings aren't specified, this function will return [Error::UnspecifiedSignerSettings][crate::Error::UnspecifiedSignerSettings].
+pub fn get_profile_settings_signer() -> Result<Box<dyn Signer>> {
+    let signer_info = get_profile_settings_value::<Option<SignerInfo>>("signer");
+    if let Ok(Some(signer_info)) = signer_info {
+        create_signer::from_keys(
+            &signer_info.sign_cert,
+            &signer_info.private_key,
+            signer_info.alg,
+            signer_info.tsa_url.to_owned(),
+        )
+    } else {
+        Err(Error::UnspecifiedSignerSettings)
+    }
 }
 
 // Set settings back to the default values.  Current use case is for testing.
@@ -464,7 +717,7 @@ pub mod tests {
         assert_eq!(settings.core, Core::default());
         assert_eq!(settings.trust, Trust::default());
         assert_eq!(settings.verify, Verify::default());
-        assert_eq!(settings.builder, Builder::default());
+        assert_eq!(settings.builder, Builder);
 
         reset_default_settings().unwrap();
     }
@@ -477,8 +730,8 @@ pub mod tests {
             Core::default().hash_alg
         );
         assert_eq!(
-            get_settings_value::<bool>("builder.auto_thumbnail").unwrap(),
-            Builder::default().auto_thumbnail
+            get_profile_settings_value::<bool>("thumbnail.enabled").unwrap(),
+            Profile::default().thumbnail.enabled
         );
         assert_eq!(
             get_settings_value::<Option<String>>("trust.user_anchors").unwrap(),
@@ -491,10 +744,7 @@ pub mod tests {
             get_settings_value::<Verify>("verify").unwrap(),
             Verify::default()
         );
-        assert_eq!(
-            get_settings_value::<Builder>("builder").unwrap(),
-            Builder::default()
-        );
+        assert_eq!(get_settings_value::<Builder>("builder").unwrap(), Builder);
         assert_eq!(
             get_settings_value::<Trust>("trust").unwrap(),
             Trust::default()
@@ -504,7 +754,7 @@ pub mod tests {
         let hash_alg: String = get_settings_value("core.hash_alg").unwrap();
         let remote_manifest_fetch: bool =
             get_settings_value("verify.remote_manifest_fetch").unwrap();
-        let auto_thumbnail: bool = get_settings_value("builder.auto_thumbnail").unwrap();
+        let auto_thumbnail: bool = get_settings_value("profile.default.thumbnail.enabled").unwrap();
         let user_anchors: Option<String> = get_settings_value("trust.user_anchors").unwrap();
 
         assert_eq!(hash_alg, Core::default().hash_alg);
@@ -512,7 +762,7 @@ pub mod tests {
             remote_manifest_fetch,
             Verify::default().remote_manifest_fetch
         );
-        assert_eq!(auto_thumbnail, Builder::default().auto_thumbnail);
+        assert_eq!(auto_thumbnail, Profile::default().thumbnail.enabled);
         assert_eq!(user_anchors, Trust::default().user_anchors);
 
         // test implicit deserialization on objects
@@ -523,7 +773,7 @@ pub mod tests {
 
         assert_eq!(core, Core::default());
         assert_eq!(verify, Verify::default());
-        assert_eq!(builder, Builder::default());
+        assert_eq!(builder, Builder);
         assert_eq!(trust, Trust::default());
 
         reset_default_settings().unwrap();
@@ -536,7 +786,7 @@ pub mod tests {
         // test updating values
         set_settings_value("core.hash_alg", "sha512").unwrap();
         set_settings_value("verify.remote_manifest_fetch", false).unwrap();
-        set_settings_value("builder.auto_thumbnail", false).unwrap();
+        set_settings_value("profile.default.thumbnail.enabled", false).unwrap();
         set_settings_value(
             "trust.user_anchors",
             Some(String::from_utf8(ts.to_vec()).unwrap()),
@@ -548,7 +798,7 @@ pub mod tests {
             "sha512"
         );
         assert!(!get_settings_value::<bool>("verify.remote_manifest_fetch").unwrap());
-        assert!(!get_settings_value::<bool>("builder.auto_thumbnail").unwrap());
+        assert!(!get_settings_value::<bool>("profile.default.thumbnail.enabled").unwrap());
         assert_eq!(
             get_settings_value::<Option<String>>("trust.user_anchors").unwrap(),
             Some(String::from_utf8(ts.to_vec()).unwrap())
@@ -560,10 +810,10 @@ pub mod tests {
             get_settings_value::<Verify>("verify").unwrap(),
             Verify::default()
         );
-        assert_ne!(
-            get_settings_value::<Builder>("builder").unwrap(),
-            Builder::default()
-        );
+        // assert_ne!(
+        //     get_settings_value::<Builder>("builder").unwrap(),
+        //     Builder::default()
+        // );
         assert!(get_settings_value::<Trust>("trust").unwrap() == Trust::default());
 
         reset_default_settings().unwrap();
@@ -577,7 +827,7 @@ pub mod tests {
 
         save_settings_as_json(&op).unwrap();
 
-        load_settings(&op).unwrap();
+        load_settings_from_file(&op).unwrap();
         let settings = get_settings().unwrap();
 
         assert_eq!(settings, Settings::default());
@@ -595,7 +845,11 @@ pub mod tests {
 
         let setting_buf = std::fs::read(&op).unwrap();
 
-        load_settings_from_str(&String::from_utf8_lossy(&setting_buf), "json").unwrap();
+        {
+            let settings_str: &str = &String::from_utf8_lossy(&setting_buf);
+            Settings::from_string(settings_str, "json", None).map(|_| ())
+        }
+        .unwrap();
         let settings = get_settings().unwrap();
 
         assert_eq!(settings, Settings::default());
@@ -632,8 +886,8 @@ pub mod tests {
 
         // check a few defaults to make sure they are still there
         assert_eq!(
-            get_settings_value::<bool>("builder.auto_thumbnail").unwrap(),
-            Builder::default().auto_thumbnail
+            get_profile_settings_value::<bool>("thumbnail.enabled").unwrap(),
+            Profile::default().thumbnail.enabled
         );
 
         assert_eq!(
@@ -685,7 +939,7 @@ pub mod tests {
 
     #[test]
     fn test_all_setting() {
-        let all_settings = r#"{   
+        let all_settings = r#"{
             "version_major": 1,
             "version_minor": 0,
             "trust": {
@@ -712,9 +966,6 @@ pub mod tests {
                 "check_ingredient_trust": true,
                 "skip_ingredient_conflict_resolution": false,
                 "strict_v1_validation": false
-            },
-            "Builder": {
-                "auto_thumbnail": true
             }
         }"#;
 

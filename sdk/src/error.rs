@@ -216,6 +216,12 @@ pub enum Error {
     #[error("type is unsupported")]
     UnsupportedType,
 
+    #[error("thumbnail format {0} is unsupported")]
+    UnsupportedThumbnailFormat(String),
+
+    #[error("`trust.signer_info` is missing from settings")]
+    UnspecifiedSignerSettings,
+
     #[error("embedding error")]
     EmbeddingError,
 
@@ -283,6 +289,9 @@ pub enum Error {
     Utf8Error(#[from] std::str::Utf8Error),
 
     #[error(transparent)]
+    ConfigError(#[from] config::ConfigError),
+
+    #[error(transparent)]
     TryFromIntError(#[from] std::num::TryFromIntError),
 
     #[error(transparent)]
@@ -290,6 +299,9 @@ pub enum Error {
 
     #[error(transparent)]
     JsonError(#[from] serde_json::Error),
+
+    #[error(transparent)]
+    TomlSerializeError(#[from] toml::ser::Error),
 
     #[error(transparent)]
     #[cfg(feature = "add_thumbnails")]

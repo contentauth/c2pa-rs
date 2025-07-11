@@ -19,7 +19,7 @@
 /// in that file. If a manifest definition JSON file is specified,
 /// the claim will be added to any existing claims.
 use std::{
-    fs::{create_dir_all, remove_dir_all, remove_file, File},
+    fs::{self, create_dir_all, remove_dir_all, remove_file, File},
     io::Write,
     path::{Path, PathBuf},
     str::FromStr,
@@ -31,6 +31,7 @@ use c2pa::{
     ManifestDefinition, Reader, Signer,
 };
 use clap::{Parser, Subcommand};
+use etcetera::BaseStrategy;
 use log::debug;
 use serde::Deserialize;
 use signer::SignConfig;
@@ -138,6 +139,27 @@ struct CliArgs {
     /// will probably leave extra `0`s of unused space. Please specify a reserve-size if possible.
     #[clap(long, default_value("20000"))]
     reserve_size: usize,
+
+    // TODO: ideally this would be called config, not to be confused with the other config arg
+    /// Path to the config file.
+    #[clap(
+        long,
+        env = "C2PATOOL_SETTINGS",
+        default_value = default_settings_path().into_os_string()
+    )]
+    settings: PathBuf,
+
+    /// Which profile of the settings to use.
+    #[arg(long, requires = "settings", env = "C2PATOOL_PROFILE")]
+    profile: Option<String>,
+}
+
+fn default_settings_path() -> PathBuf {
+    let strategy = etcetera::choose_base_strategy().unwrap();
+    let mut path = strategy.config_dir();
+    path.push("c2pa");
+    path.push("c2pa.toml");
+    path
 }
 
 #[derive(Clone, Debug)]
@@ -361,6 +383,16 @@ fn blocking_get(url: &str) -> Result<String> {
 }
 
 fn configure_sdk(args: &CliArgs) -> Result<()> {
+    if args.settings.exists() {
+        let settings = fs::read_to_string(&args.settings)?;
+        match &args.profile {
+            Some(profile) => {
+                c2pa::settings::load_settings_with_profile(&settings, profile.to_owned())?
+            }
+            None => c2pa::settings::load_settings(&settings)?,
+        }
+    }
+
     const TA: &str = r#"{"trust": { "trust_anchors": replacement_val } }"#;
     const AL: &str = r#"{"trust": { "allowed_list": replacement_val } }"#;
     const TC: &str = r#"{"trust": { "trust_config": replacement_val } }"#;

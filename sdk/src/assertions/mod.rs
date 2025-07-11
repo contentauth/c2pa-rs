@@ -15,7 +15,9 @@
 
 mod actions;
 pub(crate) use actions::V2_DEPRECATED_ACTIONS;
-pub use actions::{c2pa_action, Action, ActionTemplate, Actions, SoftwareAgent};
+pub use actions::{
+    c2pa_action, digital_source_type, Action, ActionTemplate, Actions, SoftwareAgent,
+};
 
 mod asset_types;
 pub use asset_types::{AssetTypeEnum, AssetTypes};

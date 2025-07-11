@@ -896,13 +896,14 @@ impl Ingredient {
         #[cfg(feature = "add_thumbnails")]
         if self.thumbnail.is_none() {
             stream.rewind()?;
-            match crate::utils::thumbnail::make_thumbnail_from_stream(format, stream) {
-                Ok((format, image)) => {
-                    self.set_thumbnail(format, image)?;
-                }
-                Err(err) => {
-                    log::warn!("Could not create thumbnail. {err}");
-                }
+
+            if let Some((output_format, image)) =
+                crate::utils::thumbnail::make_thumbnail_bytes_from_stream(
+                    std::io::BufReader::new(stream),
+                    format,
+                )?
+            {
+                self.set_thumbnail(output_format.to_string(), image)?;
             }
         }
 
@@ -968,13 +969,14 @@ impl Ingredient {
         #[cfg(feature = "add_thumbnails")]
         if ingredient.thumbnail.is_none() {
             stream.rewind()?;
-            match crate::utils::thumbnail::make_thumbnail_from_stream(format, stream) {
-                Ok((format, image)) => {
-                    ingredient.set_thumbnail(format, image)?;
-                }
-                Err(err) => {
-                    log::warn!("Could not create thumbnail. {err}");
-                }
+
+            if let Some((output_format, image)) =
+                crate::utils::thumbnail::make_thumbnail_bytes_from_stream(
+                    std::io::BufReader::new(stream),
+                    format,
+                )?
+            {
+                ingredient.set_thumbnail(output_format.to_string(), image)?;
             }
         }
 
@@ -1384,13 +1386,14 @@ impl Ingredient {
         #[cfg(feature = "add_thumbnails")]
         if ingredient.thumbnail.is_none() {
             stream.rewind()?;
-            match crate::utils::thumbnail::make_thumbnail_from_stream(format, stream) {
-                Ok((format, image)) => {
-                    ingredient.set_thumbnail(format, image)?;
-                }
-                Err(err) => {
-                    log::warn!("Could not create thumbnail. {err}");
-                }
+
+            if let Some((output_format, image)) =
+                crate::utils::thumbnail::make_thumbnail_bytes_from_stream(
+                    std::io::BufReader::new(stream),
+                    format,
+                )?
+            {
+                ingredient.set_thumbnail(output_format.to_string(), image)?;
             }
         }
         Ok(ingredient)
@@ -1429,7 +1432,10 @@ pub trait IngredientOptions {
     /// The default is no thumbnail, so you must provide an override to have a thumbnail image.
     fn thumbnail(&self, _path: &Path) -> Option<(String, Vec<u8>)> {
         #[cfg(feature = "add_thumbnails")]
-        return crate::utils::thumbnail::make_thumbnail(_path).ok();
+        return crate::utils::thumbnail::make_thumbnail_bytes_from_path(_path)
+            .ok()
+            .flatten()
+            .map(|(format, image)| (format.to_string(), image));
         #[cfg(not(feature = "add_thumbnails"))]
         None
     }

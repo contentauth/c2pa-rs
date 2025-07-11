@@ -29,6 +29,13 @@ use crate::{
 const ASSERTION_CREATION_VERSION: usize = 2;
 pub const CAI_INGREDIENT_IDS: &str = "org.cai.ingredientIds";
 
+// TODO: document, maybe make enum?
+pub mod digital_source_type {
+    pub const EMPTY: &str = "http://c2pa.org/digitalsourcetype/empty";
+    pub const TRAINED_ALGORITHMIC_DATA: &str =
+        "http://c2pa.org/digitalsourcetype/trainedAlgorithmicData";
+}
+
 /// C2PA actions defined in the C2PA specification.
 pub mod c2pa_action {
     /// Changes to tone, saturation, etc.
@@ -448,7 +455,7 @@ impl Action {
     }
 }
 
-#[derive(Deserialize, Serialize, Debug, Default, PartialEq, Eq)]
+#[derive(Deserialize, Serialize, Debug, Clone, Default, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct ActionTemplate {
     /// The label associated with this action. See ([`c2pa_action`]).
@@ -527,7 +534,7 @@ impl Actions {
     pub fn new() -> Self {
         Self {
             actions: Vec::new(),
-            all_actions_included: None,
+            all_actions_included: Some(true),
             templates: None,
             metadata: None,
             software_agents: None,
