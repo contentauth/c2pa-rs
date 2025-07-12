@@ -221,7 +221,10 @@ fn compare_assertions_arrays(
 
     // Compare content of matched assertions
     for (i, j) in matched_pairs {
-        compare_json_values(&format!("{path}[{i}]"), &arr1[i], &arr2[j], issues);
+        // Only compare if the assertions are actually different
+        if arr1[i] != arr2[j] {
+            compare_json_values(&format!("{path}[{i}]"), &arr1[i], &arr2[j], issues);
+        }
     }
 }
 
@@ -297,7 +300,10 @@ fn compare_actions_arrays(
 
     // Compare content of matched actions
     for (i, j) in matched_pairs {
-        compare_json_values(&format!("{path}[{i}]"), &arr1[i], &arr2[j], issues);
+        // Only compare if the actions are actually different
+        if arr1[i] != arr2[j] {
+            compare_json_values(&format!("{path}[{i}]"), &arr1[i], &arr2[j], issues);
+        }
     }
 }
 
@@ -453,7 +459,7 @@ fn compare_json_values(
 
             if val2.is_null() {
                 issues.push(format!("Missing {path}: {val1}"));
-            } else if val2.is_null() {
+            } else if val1.is_null() {
                 issues.push(format!("Added {path}: {val2}"));
             } else {
                 issues.push(format!("Changed {path}: {val1} vs {val2}"));
