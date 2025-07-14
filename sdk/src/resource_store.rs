@@ -288,6 +288,11 @@ impl ResourceStore {
         &self.resources
     }
 
+    /// Returns a mutable [`HashMap`] of internal resources.
+    pub(crate) fn resources_mut(&mut self) -> &mut HashMap<String, Vec<u8>> {
+        &mut self.resources
+    }
+
     /// Returns a copy on write reference to the resource if found.
     ///
     /// Returns [`Error::ResourceNotFound`] if it cannot find a resource matching that ID.

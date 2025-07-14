@@ -293,6 +293,18 @@ impl Builder {
         self
     }
 
+    /// Sets the resource directory for this [`Builder`]
+    ///
+    /// # Arguments
+    /// * `resource_dir` - The directory to search in to find the resources.
+    /// # Returns
+    /// * A mutable reference to the [`Builder`].
+    #[cfg(feature = "file_io")]
+    pub fn set_resource_dir<P: Into<PathBuf>>(&mut self, resource_dir: P) -> &mut Self {
+        self.base_path = Some(resource_dir.into());
+        self
+    }
+
     /// Sets the remote_url for this [`Builder`].
     /// The URL must return the manifest data and is injected into the destination asset when signing.
     /// For remote-only manifests, set the `no_embed` flag to `true`.
@@ -475,7 +487,7 @@ impl Builder {
         }
         let mut buf = Vec::new();
         let _size = stream.read_to_end(&mut buf)?;
-        self.resources.add(id, buf)?;
+        self.resources.resources_mut().insert(id.to_owned(), buf);
         Ok(self)
     }
 
