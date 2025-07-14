@@ -197,8 +197,7 @@ mod tests {
             let result = make_thumbnail_from_stream("jpg", &mut cursor);
             assert!(
                 result.is_ok(),
-                "Thumbnail should be generated for orientation {}",
-                orientation
+                "Thumbnail should be generated for orientation {orientation}"
             );
 
             let (format, thumbnail_data) = result.unwrap();
