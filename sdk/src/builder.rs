@@ -29,8 +29,8 @@ use zip::{write::SimpleFileOptions, ZipArchive, ZipWriter};
 use crate::{
     assertion::AssertionDecodeError,
     assertions::{
-        c2pa_action, digital_source_type, labels, Action, Actions, BmffHash, BoxHash, CreativeWork,
-        DataHash, EmbeddedData, Exif, Metadata, SoftwareAgent, Thumbnail, User, UserCbor,
+        c2pa_action, labels, Action, Actions, BmffHash, BoxHash, CreativeWork, DataHash,
+        EmbeddedData, Exif, Metadata, SoftwareAgent, Thumbnail, User, UserCbor,
     },
     claim::Claim,
     error::{Error, Result},
@@ -880,7 +880,9 @@ impl Builder {
         if !found_actions {
             let mut actions = Actions::new();
             self.add_auto_actions_assertions(&mut actions)?;
-            claim.add_assertion(&actions)?;
+            if !actions.actions().is_empty() {
+                claim.add_assertion(&actions)?;
+            }
         }
 
         Ok(claim)
@@ -890,13 +892,15 @@ impl Builder {
     /// assertion if the condiitons are applicable as defined in the spec.
     ///
     /// This function takes into account the [Settings][crate::Settings]:
-    /// * `profile.*.auto_created_action`
-    /// * `profile.*.auto_opened_action`
-    /// * `profile.*.auto_placed_action`
+    /// * `builder.auto_created_action`
+    /// * `builder.auto_opened_action`
+    /// * `builder.auto_placed_action`
     fn add_auto_actions_assertions(&self, actions: &mut Actions) -> Result<()> {
         // https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_mandatory_presence_of_at_least_one_actions_assertion
-        let auto_created = settings::get_settings_value::<bool>("builder.auto_created_action")?;
-        let auto_opened = settings::get_settings_value::<bool>("builder.auto_opened_action")?;
+        let auto_created =
+            settings::get_settings_value::<bool>("builder.auto_created_action.enabled")?;
+        let auto_opened =
+            settings::get_settings_value::<bool>("builder.auto_opened_action.enabled")?;
         if auto_created || auto_opened {
             let has_parent = self
                 .definition
@@ -904,10 +908,33 @@ impl Builder {
                 .iter()
                 .any(|ingredient| ingredient.is_parent());
             let action = match (has_parent, auto_created, auto_opened) {
-                (true, _, true) => Some(Action::new(c2pa_action::OPENED)),
-                (false, true, _) => Some(
-                    Action::new(c2pa_action::CREATED).set_source_type(digital_source_type::EMPTY),
-                ),
+                (true, _, true) => {
+                    let source_type = settings::get_settings_value::<Option<String>>(
+                        "builder.auto_opened_action.source_type",
+                    )?;
+                    let action = {
+                        let action = Action::new(c2pa_action::OPENED);
+                        match source_type {
+                            Some(source_type) => action.set_source_type(source_type),
+                            None => action,
+                        }
+                    };
+
+                    Some(action)
+                }
+                (false, true, _) => {
+                    let source_type = settings::get_settings_value::<Option<String>>(
+                        "builder.auto_created_action.source_type",
+                    )?;
+                    let action = {
+                        let action = Action::new(c2pa_action::CREATED);
+                        match source_type {
+                            Some(source_type) => action.set_source_type(source_type),
+                            None => action,
+                        }
+                    };
+                    Some(action)
+                }
                 _ => None,
             };
 
@@ -925,11 +952,22 @@ impl Builder {
         }
 
         // https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_relationship
-        let auto_placed = settings::get_settings_value::<bool>("builder.auto_placed_action")?;
+        let auto_placed =
+            settings::get_settings_value::<bool>("builder.auto_placed_action.enabled")?;
         if auto_placed {
             for ingredient in &self.definition.ingredients {
                 if *ingredient.relationship() == Relationship::ComponentOf {
-                    actions.actions.push(Action::new(c2pa_action::PLACED));
+                    let source_type = settings::get_settings_value::<Option<String>>(
+                        "builder.auto_placed_action.source_type",
+                    )?;
+                    let action = {
+                        let action = Action::new(c2pa_action::PLACED);
+                        match source_type {
+                            Some(source_type) => action.set_source_type(source_type),
+                            None => action,
+                        }
+                    };
+                    actions.actions.push(action)
                 }
             }
         }
@@ -1300,7 +1338,7 @@ mod tests {
 
     use super::*;
     use crate::{
-        assertions::{c2pa_action, BoxHash},
+        assertions::{c2pa_action, source_type, BoxHash},
         asset_handlers::jpeg_io::JpegIO,
         crypto::raw_signature::SigningAlg,
         hash_stream_by_alg,
@@ -1560,7 +1598,12 @@ mod tests {
 
     #[test]
     fn test_builder_auto_created() {
-        settings::set_settings_value("builder.auto_created_action", true).unwrap();
+        settings::set_settings_value(
+            "builder.auto_created_action.source_type",
+            source_type::EMPTY,
+        )
+        .unwrap();
+        settings::set_settings_value("builder.auto_created_action.enabled", true).unwrap();
 
         let mut output = Cursor::new(Vec::new());
         Builder::new()
@@ -1587,7 +1630,7 @@ mod tests {
 
     #[test]
     fn test_builder_auto_opened() {
-        settings::set_settings_value("builder.auto_opened_action", true).unwrap();
+        settings::set_settings_value("builder.auto_opened_action.enabled", true).unwrap();
 
         let mut builder = Builder::new();
         builder
@@ -1619,7 +1662,13 @@ mod tests {
 
     #[test]
     fn test_builder_auto_placed() {
-        settings::set_settings_value("builder.auto_placed_action", true).unwrap();
+        settings::set_settings_value(
+            "builder.auto_created_action.source_type",
+            source_type::EMPTY,
+        )
+        .unwrap();
+        settings::set_settings_value("builder.auto_created_action.enabled", true).unwrap();
+        settings::set_settings_value("builder.auto_placed_action.enabled", true).unwrap();
 
         let mut builder = Builder::new();
         builder

@@ -23,8 +23,8 @@ use config::{Config, FileFormat};
 use serde_derive::{Deserialize, Serialize};
 
 use crate::{
-    create_signer, crypto::base64, utils::thumbnail::ThumbnailFormat, ClaimGeneratorInfo, Error,
-    Result, Signer, SigningAlg,
+    assertions::source_type, create_signer, crypto::base64, utils::thumbnail::ThumbnailFormat,
+    ClaimGeneratorInfo, Error, Result, Signer, SigningAlg,
 };
 
 thread_local!(
@@ -301,11 +301,21 @@ impl SettingsValidate for ThumbnailSettings {
 
 #[allow(unused)]
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-pub struct SignerInfo {
+pub struct SignerSettings {
     alg: SigningAlg,
     sign_cert: Vec<u8>,
     private_key: Vec<u8>,
     tsa_url: Option<String>,
+}
+
+#[allow(unused)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct AutoActionSettings {
+    /// Whether to enable this auto action or not.
+    enabled: bool,
+    // TODO: enum
+    /// The default source type for the auto action.
+    source_type: Option<String>,
 }
 
 // Settings for Builder API options
@@ -314,7 +324,7 @@ pub struct SignerInfo {
 pub(crate) struct Builder {
     /// Information about the signer used for signing.
     #[serde(skip_serializing_if = "Option::is_none")]
-    signer: Option<SignerInfo>,
+    signer: Option<SignerSettings>,
     /// Claim generator info that is automatically added to the builder.
     ///
     /// Note that this information will prepend any claim generator info
@@ -328,19 +338,19 @@ pub(crate) struct Builder {
     ///
     /// For more information about the mandatory conditions for a c2pa.created action assertion, see here:
     /// https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_mandatory_presence_of_at_least_one_actions_assertion
-    auto_created_action: bool,
+    auto_created_action: AutoActionSettings,
     /// Whether to automatically generate a c2pa.opened [Action][crate::assertions::Action]
     /// assertion or error that it doesn't already exist.
     ///
     /// For more information about the mandatory conditions for a c2pa.opened action assertion, see here:
     /// https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_mandatory_presence_of_at_least_one_actions_assertion
-    auto_opened_action: bool,
+    auto_opened_action: AutoActionSettings,
     /// Whether to automatically generate a c2pa.placed [Action][crate::assertions::Action]
     /// assertion or error that it doesn't already exist.
     ///
     /// For more information about the mandatory conditions for a c2pa.placed action assertion, see here:
     /// https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_relationship
-    auto_placed_action: bool,
+    auto_placed_action: AutoActionSettings,
 }
 
 impl Default for Builder {
@@ -349,15 +359,28 @@ impl Default for Builder {
             signer: None,
             claim_generator_info: None,
             thumbnail: Default::default(),
-            auto_created_action: true,
-            auto_opened_action: true,
-            auto_placed_action: true,
+            auto_created_action: AutoActionSettings {
+                enabled: false,
+                source_type: None,
+            },
+            auto_opened_action: AutoActionSettings {
+                enabled: true,
+                source_type: None,
+            },
+            auto_placed_action: AutoActionSettings {
+                enabled: true,
+                source_type: None,
+            },
         }
     }
 }
 
 impl SettingsValidate for Builder {
     fn validate(&self) -> Result<()> {
+        if self.auto_created_action.enabled && self.auto_created_action.source_type.is_none() {
+            return Err(Error::MissingAutoCreatedActionSourceType);
+        }
+
         self.thumbnail.validate()
     }
 }
@@ -567,7 +590,7 @@ pub(crate) fn get_settings_value<'de, T: serde::de::Deserialize<'de>>(
 ///
 /// If the signer settings aren't specified, this function will return [Error::UnspecifiedSignerSettings][crate::Error::UnspecifiedSignerSettings].
 pub fn get_settings_signer() -> Result<Box<dyn Signer>> {
-    let signer_info = get_settings_value::<Option<SignerInfo>>("builder.signer");
+    let signer_info = get_settings_value::<Option<SignerSettings>>("builder.signer");
     if let Ok(Some(signer_info)) = signer_info {
         create_signer::from_keys(
             &signer_info.sign_cert,
@@ -576,7 +599,7 @@ pub fn get_settings_signer() -> Result<Box<dyn Signer>> {
             signer_info.tsa_url.to_owned(),
         )
     } else {
-        Err(Error::UnspecifiedSignerSettings)
+        Err(Error::MissingSignerSettings)
     }
 }
 

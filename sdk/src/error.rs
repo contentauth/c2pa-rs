@@ -220,7 +220,10 @@ pub enum Error {
     UnsupportedThumbnailFormat(String),
 
     #[error("`trust.signer_info` is missing from settings")]
-    UnspecifiedSignerSettings,
+    MissingSignerSettings,
+
+    #[error("`builder.auto_created_action.source_type` must be set if this feature is enabled")]
+    MissingAutoCreatedActionSourceType,
 
     #[error("embedding error")]
     EmbeddingError,
