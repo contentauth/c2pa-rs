@@ -220,13 +220,11 @@ mod tests {
                     // BB
                     assert!(
                         top_left_pixel.0[0] >= 250,
-                        "Top-left should be red for orientation {}",
-                        orientation
+                        "Top-left should be red for orientation {orientation}"
                     );
                     assert!(
                         bottom_right_pixel.0[2] >= 250,
-                        "Bottom-right should be blue for orientation {}",
-                        orientation
+                        "Bottom-right should be blue for orientation {orientation}"
                     );
                 }
                 2 | 3 | 7 | 8 => {
@@ -238,16 +236,14 @@ mod tests {
                     // RR
                     assert!(
                         top_left_pixel.0[2] >= 250,
-                        "Top-left should be blue for orientation {}",
-                        orientation
+                        "Top-left should be blue for orientation {orientation}"
                     );
                     assert!(
                         bottom_right_pixel.0[0] >= 250,
-                        "Bottom-right should be red for orientation {}",
-                        orientation
+                        "Bottom-right should be red for orientation {orientation}"
                     );
                 }
-                _ => unreachable!("Unexpected orientation value: {}", orientation),
+                _ => unreachable!("Unexpected orientation value: {orientation}"),
             }
         }
     }
