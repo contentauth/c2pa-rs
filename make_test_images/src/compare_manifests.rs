@@ -12,9 +12,11 @@
 // each license.
 
 //! Compares two manifest stores and prints out the differences.
-use std::collections::BTreeMap;
-use std::collections::HashMap;
-use std::{fs, path::Path};
+use std::{
+    collections::{BTreeMap, HashMap},
+    fs,
+    path::Path,
+};
 
 use c2pa::{Error, Reader, Result};
 use regex::Regex;
@@ -158,9 +160,9 @@ fn get_object_identifier(obj: &Value) -> Option<String> {
                 if let Some(ingredients) = params.get("ingredients") {
                     if let Some(arr) = ingredients.as_array() {
                         // Use first ingredient url if present
-                        if let Some(first) = arr.get(0) {
+                        if let Some(first) = arr.first() {
                             if let Some(url) = first.get("url").and_then(|v| v.as_str()) {
-                                return Some(format!("{}:{}", action, url));
+                                return Some(format!("{action}:{url}"));
                             }
                         }
                     }
@@ -202,12 +204,13 @@ fn normalize_json(value: Value) -> Value {
         }
         Value::Array(arr) => {
             let mut new_arr: Vec<Value> = arr.into_iter().map(normalize_json).collect();
-            
+
             // If this is an array of objects with identifiers, sort it.
-            if !new_arr.is_empty() && new_arr.iter().all(|v| v.is_object()) {
-                if new_arr.iter().all(|v| get_object_identifier(v).is_some()) {
-                    new_arr.sort_by_key(|v| get_object_identifier(v));
-                }
+            if !new_arr.is_empty()
+                && new_arr.iter().all(|v| v.is_object())
+                && new_arr.iter().all(|v| get_object_identifier(v).is_some())
+            {
+                new_arr.sort_by_key(get_object_identifier);
             }
             Value::Array(new_arr)
         }
@@ -235,12 +238,7 @@ fn normalize_json(value: Value) -> Value {
 }
 
 /// Recursively compare two JSON values
-fn compare_json_values(
-    path: &str,
-    val1: &Value,
-    val2: &Value,
-    issues: &mut Vec<String>,
-) {
+fn compare_json_values(path: &str, val1: &Value, val2: &Value, issues: &mut Vec<String>) {
     if val1 == val2 {
         return;
     }
@@ -271,11 +269,17 @@ fn compare_json_values(
         }
         (Value::Array(arr1), Value::Array(arr2)) => {
             // Use custom identifier logic for validation_results arrays
-            let use_custom_id = !arr1.is_empty() && arr1.iter().all(|v| v.is_object()) && arr1.iter().all(|v| get_array_identifier(path, v).is_some());
+            let use_custom_id = !arr1.is_empty()
+                && arr1.iter().all(|v| v.is_object())
+                && arr1.iter().all(|v| get_array_identifier(path, v).is_some());
             // For ingredients and actions arrays, use simplified matching
             if path.contains("ingredients") || path.contains("actions") {
                 if arr1.len() != arr2.len() {
-                    issues.push(format!("Array length changed at {path}: {} vs {}", arr1.len(), arr2.len()));
+                    issues.push(format!(
+                        "Array length changed at {path}: {} vs {}",
+                        arr1.len(),
+                        arr2.len()
+                    ));
                 } else {
                     // Match by title for ingredients
                     if path.contains("ingredients") {
@@ -293,7 +297,7 @@ fn compare_json_values(
                         }
                         for title in map1.keys() {
                             if let (Some(v1), Some(v2)) = (map1.get(title), map2.get(title)) {
-                                compare_json_values(&format!("{path}[{}]", title), v1, v2, issues);
+                                compare_json_values(&format!("{path}[{title}]"), v1, v2, issues);
                             }
                         }
                     } else if path.contains("actions") {
@@ -311,7 +315,7 @@ fn compare_json_values(
                         }
                         for action in map1.keys() {
                             if let (Some(v1), Some(v2)) = (map1.get(action), map2.get(action)) {
-                                compare_json_values(&format!("{path}[{}]", action), v1, v2, issues);
+                                compare_json_values(&format!("{path}[{action}]"), v1, v2, issues);
                             }
                         }
                     }
@@ -331,20 +335,20 @@ fn compare_json_values(
                 // Report removed items
                 for (id, (idx, v)) in &map1 {
                     if !map2.contains_key(id) {
-                        issues.push(format!("Removed {path}[{id}] at {idx}: {v}", id=id, idx=idx, v=v));
+                        issues.push(format!("Removed {path}[{id}] at {idx}: {v}",));
                     }
                 }
                 // Report inserted items
                 for (id, (idx, v)) in &map2 {
                     if !map1.contains_key(id) {
-                        issues.push(format!("Inserted {path}[{id}] at {idx}: {v}", id=id, idx=idx, v=v));
+                        issues.push(format!("Inserted {path}[{id}] at {idx}: {v}",));
                     }
                 }
                 // Report moved items only if value is unchanged
                 for (id, (idx1, v1)) in &map1 {
                     if let Some((idx2, v2)) = map2.get(id) {
                         if idx1 != idx2 && v1 == v2 {
-                            issues.push(format!("Moved {path}[{id}]: from {from} to {to}", id=id, from=idx1, to=idx2));
+                            issues.push(format!("Moved {path}[{id}]: from {idx1} to {idx2}"));
                         }
                         // Only report value changes for items in the same position
                         if idx1 == idx2 && v1 != v2 {
@@ -356,7 +360,11 @@ fn compare_json_values(
             } else {
                 // Fallback: compare by index
                 if arr1.len() != arr2.len() {
-                    issues.push(format!("Array length mismatch at {path}: {} vs {}", arr1.len(), arr2.len()));
+                    issues.push(format!(
+                        "Array length mismatch at {path}: {} vs {}",
+                        arr1.len(),
+                        arr2.len()
+                    ));
                 }
                 for (i, (v1, v2)) in arr1.iter().zip(arr2.iter()).enumerate() {
                     let new_path = format!("{path}[{i}]");
@@ -378,7 +386,9 @@ fn normalize_url(url: &str) -> String {
 
 fn get_array_identifier(path: &str, obj: &Value) -> Option<String> {
     // Use url for validation_results.*.(success|informational|failure) arrays
-    if path.contains("validation_results") && (path.contains("success") || path.contains("informational") || path.contains("failure")) {
+    if path.contains("validation_results")
+        && (path.contains("success") || path.contains("informational") || path.contains("failure"))
+    {
         if let Some(map) = obj.as_object() {
             if let Some(url) = map.get("url").and_then(|v| v.as_str()) {
                 // Use normalized url only
@@ -386,7 +396,7 @@ fn get_array_identifier(path: &str, obj: &Value) -> Option<String> {
             }
         }
         // Fallback: use the full JSON string as identifier
-        return Some(serde_json::to_string(obj).unwrap_or_default());
+        Some(serde_json::to_string(obj).unwrap_or_default())
     } else {
         get_object_identifier(obj)
     }
