@@ -36,6 +36,10 @@ pub enum TimeStampError {
     #[error("time stamp contains an unsupported algorithm")]
     UnsupportedAlgorithm,
 
+    /// The time stamp authority is not on trust list
+    #[error("time stamp authority is untrusted")]
+    Untrusted,
+
     /// An error was encountered when decoding the time stamp response.
     #[error("decode error ({0})")]
     DecodeError(String),

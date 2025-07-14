@@ -29,8 +29,8 @@ use zip::{write::SimpleFileOptions, ZipArchive, ZipWriter};
 use crate::{
     assertion::AssertionDecodeError,
     assertions::{
-        labels, Actions, BmffHash, BoxHash, CreativeWork, DataHash, Exif, Metadata, SoftwareAgent,
-        Thumbnail, User, UserCbor,
+        labels, Actions, BmffHash, BoxHash, CreativeWork, DataHash, EmbeddedData, Exif, Metadata,
+        SoftwareAgent, Thumbnail, User, UserCbor,
     },
     claim::Claim,
     error::{Error, Result},
@@ -700,13 +700,20 @@ impl Builder {
                 let mut stream = self.resources.open(thumb_ref)?;
                 let mut data = Vec::new();
                 stream.read_to_end(&mut data)?;
-                claim.add_assertion_with_salt(
-                    &Thumbnail::new(
+                let thumbnail = if claim.version() >= 2 {
+                    EmbeddedData::new(
+                        labels::CLAIM_THUMBNAIL,
+                        format_to_mime(&thumb_ref.format),
+                        data,
+                    )
+                } else {
+                    Thumbnail::new(
                         &labels::add_thumbnail_format(labels::CLAIM_THUMBNAIL, &thumb_ref.format),
                         data,
-                    ),
-                    &salt,
-                )?;
+                    )
+                    .into()
+                };
+                claim.add_assertion_with_salt(&thumbnail, &salt)?;
             }
         }
 
@@ -1523,7 +1530,7 @@ mod tests {
             "sample1.heic",
             "sample1.heif",
             "sample1.m4a",
-            "video1.mp4",
+            "video1_no_manifest.mp4",
             "cloud_manifest.c2pa", // we need a new test for this since it will always fail
         ];
         for file_name in TESTFILES {

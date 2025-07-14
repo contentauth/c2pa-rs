@@ -66,4 +66,7 @@ mod uuid_assertion;
 #[allow(unused_imports)]
 pub(crate) use uuid_assertion::Uuid;
 
+mod embedded_data;
+pub use embedded_data::EmbeddedData;
+
 pub mod region_of_interest;

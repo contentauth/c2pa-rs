@@ -463,7 +463,7 @@ impl Reader {
             return validation_results.validation_state();
         }
 
-        let verify_trust = get_settings_value("verify.trusted").unwrap_or(false);
+        let verify_trust = get_settings_value("verify.verify_trust").unwrap_or(false);
         match self.validation_status() {
             Some(status) => {
                 // if there are any errors, the state is invalid unless the only error is an untrusted credential
