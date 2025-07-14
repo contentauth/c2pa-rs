@@ -292,9 +292,6 @@ pub enum Error {
     Utf8Error(#[from] std::str::Utf8Error),
 
     #[error(transparent)]
-    ConfigError(#[from] config::ConfigError),
-
-    #[error(transparent)]
     TryFromIntError(#[from] std::num::TryFromIntError),
 
     #[error(transparent)]
@@ -309,6 +306,9 @@ pub enum Error {
 
     #[error(transparent)]
     CborError(#[from] serde_cbor::Error),
+
+    #[error(transparent)]
+    TomlSerializationError(#[from] toml::ser::Error),
 
     #[error(transparent)]
     OtherError(#[from] Box<dyn std::error::Error + Send + Sync + 'static>),

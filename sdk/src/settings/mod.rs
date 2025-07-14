@@ -11,6 +11,8 @@
 // specific language governing permissions and limitations under
 // each license.
 
+mod builder;
+
 #[cfg(feature = "file_io")]
 use std::path::Path;
 use std::{
@@ -21,10 +23,7 @@ use std::{
 use config::{Config, FileFormat};
 use serde_derive::{Deserialize, Serialize};
 
-use crate::{
-    create_signer, crypto::base64, utils::thumbnail::ThumbnailFormat, ClaimGeneratorInfo, Error,
-    Result, Signer, SigningAlg,
-};
+use crate::{crypto::base64, settings::builder::BuilderSettings, Error, Result};
 
 thread_local!(
     static SETTINGS: RefCell<Config> =
@@ -112,12 +111,14 @@ impl Default for Trust {
             };
 
             trust.trust_config = Some(
-                String::from_utf8_lossy(include_bytes!("../tests/fixtures/certs/trust/store.cfg"))
-                    .into_owned(),
+                String::from_utf8_lossy(include_bytes!(
+                    "../../tests/fixtures/certs/trust/store.cfg"
+                ))
+                .into_owned(),
             );
             trust.user_anchors = Some(
                 String::from_utf8_lossy(include_bytes!(
-                    "../tests/fixtures/certs/trust/test_cert_root_bundle.pem"
+                    "../../tests/fixtures/certs/trust/test_cert_root_bundle.pem"
                 ))
                 .into_owned(),
             );
@@ -154,12 +155,14 @@ impl SettingsValidate for Trust {
     }
 }
 
+// TODO: all of these settings aren't implemented
 // Settings for core C2PA-RS functionality
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[allow(unused)]
 pub(crate) struct Core {
     debug: bool,
     hash_alg: String,
+    soft_hash_alg: Option<String>,
     salt_jumbf_boxes: bool,
     prefer_box_hash: bool,
     prefer_bmff_merkle_tree: bool,
@@ -174,6 +177,7 @@ impl Default for Core {
         Self {
             debug: false,
             hash_alg: "sha256".into(),
+            soft_hash_alg: None,
             salt_jumbf_boxes: true,
             prefer_box_hash: false,
             prefer_bmff_merkle_tree: false,
@@ -226,164 +230,6 @@ impl Default for Verify {
 
 impl SettingsValidate for Verify {}
 
-/// Quality of the thumbnail.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(rename_all = "lowercase")]
-pub enum ThumbnailQuality {
-    /// Low quality.
-    Low,
-    /// Medium quality.
-    Medium,
-    /// High quality.
-    High,
-}
-
-/// Settings for controlling automatic thumbnail generation.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-pub struct ThumbnailSettings {
-    /// Whether or not to automatically generate thumbnails.
-    enabled: bool,
-    /// Whether to ignore thumbnail generation errors.
-    ///
-    /// This may occur, for instance, if the thumbnail media type or color layout isn't
-    /// supported.
-    ignore_errors: bool,
-    /// The size of the longest edge of the thumbnail.
-    ///
-    /// This function will resize the input to preserve aspect ratio.
-    long_edge: u32,
-    /// Format of the thumbnail.
-    ///
-    /// If this field isn't specified, the thumbnail format will correspond to the
-    /// input format.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    format: Option<ThumbnailFormat>,
-    /// Whether or not to prefer a smaller sized media format for the thumbnail.
-    ///
-    /// Note that [ThumbnailSettings::format] takes precedence over this field. In addition,
-    /// if the output format is unsupported, it will default to the smallest format regardless
-    /// of the value of this field.
-    ///
-    /// For instance, if the source input type is a PNG, but it doesn't have an alpha channel,
-    /// the image will be converted to a JPEG of smaller size.
-    prefer_smallest_format: bool,
-    /// The output quality of the thumbnail.
-    ///
-    /// This setting contains sensible defaults for things like quality, compression, and
-    /// algorithms for various formats.
-    quality: ThumbnailQuality,
-}
-
-impl Default for ThumbnailSettings {
-    fn default() -> Self {
-        ThumbnailSettings {
-            enabled: true,
-            ignore_errors: true,
-            long_edge: 1024,
-            format: None,
-            prefer_smallest_format: true,
-            quality: ThumbnailQuality::Medium,
-        }
-    }
-}
-
-impl SettingsValidate for ThumbnailSettings {
-    fn validate(&self) -> Result<()> {
-        #[cfg(not(feature = "add_thumbnails"))]
-        if self.enabled {
-            log::warn!("c2pa-rs feature `add_thumbnails` must be enabled to generate thumbnails!");
-        }
-
-        Ok(())
-    }
-}
-
-#[allow(unused)]
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-pub struct SignerSettings {
-    alg: SigningAlg,
-    sign_cert: Vec<u8>,
-    private_key: Vec<u8>,
-    tsa_url: Option<String>,
-}
-
-#[allow(unused)]
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-pub struct AutoActionSettings {
-    /// Whether to enable this auto action or not.
-    enabled: bool,
-    // TODO: enum
-    /// The default source type for the auto action.
-    source_type: Option<String>,
-}
-
-// Settings for Builder API options
-#[allow(unused)]
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-pub(crate) struct Builder {
-    /// Information about the signer used for signing.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    signer: Option<SignerSettings>,
-    /// Claim generator info that is automatically added to the builder.
-    ///
-    /// Note that this information will prepend any claim generator info
-    /// provided explicitly to the builder.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    claim_generator_info: Option<ClaimGeneratorInfo>,
-    /// Various settings for configuring automatic thumbnail generation.
-    thumbnail: ThumbnailSettings,
-    /// Whether to automatically generate a c2pa.created [Action][crate::assertions::Action]
-    /// assertion or error that it doesn't already exist.
-    ///
-    /// For more information about the mandatory conditions for a c2pa.created action assertion, see here:
-    /// https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_mandatory_presence_of_at_least_one_actions_assertion
-    auto_created_action: AutoActionSettings,
-    /// Whether to automatically generate a c2pa.opened [Action][crate::assertions::Action]
-    /// assertion or error that it doesn't already exist.
-    ///
-    /// For more information about the mandatory conditions for a c2pa.opened action assertion, see here:
-    /// https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_mandatory_presence_of_at_least_one_actions_assertion
-    auto_opened_action: AutoActionSettings,
-    /// Whether to automatically generate a c2pa.placed [Action][crate::assertions::Action]
-    /// assertion or error that it doesn't already exist.
-    ///
-    /// For more information about the mandatory conditions for a c2pa.placed action assertion, see here:
-    /// https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_relationship
-    auto_placed_action: AutoActionSettings,
-}
-
-impl Default for Builder {
-    fn default() -> Self {
-        Self {
-            signer: None,
-            claim_generator_info: None,
-            thumbnail: Default::default(),
-            auto_created_action: AutoActionSettings {
-                enabled: false,
-                source_type: None,
-            },
-            auto_opened_action: AutoActionSettings {
-                enabled: true,
-                source_type: None,
-            },
-            auto_placed_action: AutoActionSettings {
-                enabled: true,
-                source_type: None,
-            },
-        }
-    }
-}
-
-impl SettingsValidate for Builder {
-    fn validate(&self) -> Result<()> {
-        if self.auto_created_action.enabled && self.auto_created_action.source_type.is_none() {
-            return Err(Error::MissingAutoCreatedActionSourceType);
-        }
-
-        self.thumbnail.validate()
-    }
-}
-
 const MAJOR_VERSION: usize = 1;
 const MINOR_VERSION: usize = 0;
 
@@ -399,19 +245,19 @@ pub struct Settings {
     trust: Trust,
     core: Core,
     verify: Verify,
-    builder: Builder,
+    builder: BuilderSettings,
 }
 
 impl Settings {
     #[cfg(feature = "file_io")]
-    pub fn from_file<P: AsRef<Path>>(setting_path: P) -> Result<Self> {
-        let ext = setting_path
+    pub fn from_file<P: AsRef<Path>>(settings_path: P) -> Result<Self> {
+        let ext = settings_path
             .as_ref()
             .extension()
             .ok_or(Error::UnsupportedType)?
             .to_string_lossy();
 
-        let setting_buf = std::fs::read(&setting_path).map_err(Error::IoError)?;
+        let setting_buf = std::fs::read(&settings_path).map_err(Error::IoError)?;
         #[allow(deprecated)]
         Settings::from_string(&String::from_utf8_lossy(&setting_buf), &ext)
     }
@@ -520,23 +366,6 @@ impl Settings {
         })
     }
 
-    /// Returns the constructed signer from the signer field in [Settings].
-    ///
-    /// If the signer settings aren't specified, this function will return [Error::UnspecifiedSignerSettings][crate::Error::UnspecifiedSignerSettings].
-    pub fn get_signer() -> Result<Box<dyn Signer>> {
-        let signer_info = get_settings_value::<Option<SignerSettings>>("builder.signer");
-        if let Ok(Some(signer_info)) = signer_info {
-            create_signer::from_keys(
-                &signer_info.sign_cert,
-                &signer_info.private_key,
-                signer_info.alg,
-                signer_info.tsa_url.to_owned(),
-            )
-        } else {
-            Err(Error::MissingSignerSettings)
-        }
-    }
-
     /// Set [Settings] back to the default values.
     #[allow(unused)]
     pub fn reset() -> Result<()> {
@@ -546,6 +375,20 @@ impl Settings {
         } else {
             Err(Error::OtherError("could not save settings".into()))
         }
+    }
+
+    /// Serializes the [Settings] into a toml string.
+    pub fn to_toml() -> Result<String> {
+        let settings =
+            get_settings().ok_or(Error::OtherError("could not get current settings".into()))?;
+        Ok(toml::to_string(&settings)?)
+    }
+
+    /// Serializes the [Settings] into a pretty (formatted) toml string.
+    pub fn to_pretty_toml() -> Result<String> {
+        let settings =
+            get_settings().ok_or(Error::OtherError("could not get current settings".into()))?;
+        Ok(toml::to_string_pretty(&settings)?)
     }
 }
 
@@ -584,19 +427,11 @@ pub(crate) fn get_settings() -> Option<Settings> {
 
 // Load settings from configuration file
 #[allow(unused)]
-#[deprecated = "use `Settings::from__file`"]
+#[deprecated = "use `Settings::from_file`"]
 #[cfg(feature = "file_io")]
 pub(crate) fn load_settings_from_file<P: AsRef<Path>>(settings_path: P) -> Result<()> {
-    let ext = settings_path
-        .as_ref()
-        .extension()
-        .ok_or(Error::UnsupportedType)?
-        .to_string_lossy();
-
-    let setting_buf = std::fs::read(&settings_path).map_err(Error::IoError)?;
-
-    #[allow(deprecated)]
-    load_settings_from_str(&String::from_utf8_lossy(&setting_buf), &ext)
+    Settings::from_file(settings_path)?;
+    Ok(())
 }
 
 /// Load settings from string representation of the configuration. Format of configuration must be supplied.
@@ -657,7 +492,7 @@ pub mod tests {
         assert_eq!(settings.core, Core::default());
         assert_eq!(settings.trust, Trust::default());
         assert_eq!(settings.verify, Verify::default());
-        assert_eq!(settings.builder, Builder::default());
+        assert_eq!(settings.builder, BuilderSettings::default());
 
         reset_default_settings().unwrap();
     }
@@ -671,7 +506,7 @@ pub mod tests {
         );
         assert_eq!(
             get_settings_value::<bool>("builder.thumbnail.enabled").unwrap(),
-            Builder::default().thumbnail.enabled
+            BuilderSettings::default().thumbnail.enabled
         );
         assert_eq!(
             get_settings_value::<Option<String>>("trust.user_anchors").unwrap(),
@@ -685,8 +520,8 @@ pub mod tests {
             Verify::default()
         );
         assert_eq!(
-            get_settings_value::<Builder>("builder").unwrap(),
-            Builder::default()
+            get_settings_value::<BuilderSettings>("builder").unwrap(),
+            BuilderSettings::default()
         );
         assert_eq!(
             get_settings_value::<Trust>("trust").unwrap(),
@@ -705,18 +540,18 @@ pub mod tests {
             remote_manifest_fetch,
             Verify::default().remote_manifest_fetch
         );
-        assert_eq!(auto_thumbnail, Builder::default().thumbnail.enabled);
+        assert_eq!(auto_thumbnail, BuilderSettings::default().thumbnail.enabled);
         assert_eq!(user_anchors, Trust::default().user_anchors);
 
         // test implicit deserialization on objects
         let core: Core = get_settings_value("core").unwrap();
         let verify: Verify = get_settings_value("verify").unwrap();
-        let builder: Builder = get_settings_value("builder").unwrap();
+        let builder: BuilderSettings = get_settings_value("builder").unwrap();
         let trust: Trust = get_settings_value("trust").unwrap();
 
         assert_eq!(core, Core::default());
         assert_eq!(verify, Verify::default());
-        assert_eq!(builder, Builder::default());
+        assert_eq!(builder, BuilderSettings::default());
         assert_eq!(trust, Trust::default());
 
         reset_default_settings().unwrap();
@@ -724,7 +559,7 @@ pub mod tests {
 
     #[test]
     fn test_set_val_by_direct_path() {
-        let ts = include_bytes!("../tests/fixtures/certs/trust/test_cert_root_bundle.pem");
+        let ts = include_bytes!("../../tests/fixtures/certs/trust/test_cert_root_bundle.pem");
 
         // test updating values
         Settings::set_value("core.hash_alg", "sha512").unwrap();
@@ -754,8 +589,8 @@ pub mod tests {
             Verify::default()
         );
         assert_ne!(
-            get_settings_value::<Builder>("builder").unwrap(),
-            Builder::default()
+            get_settings_value::<BuilderSettings>("builder").unwrap(),
+            BuilderSettings::default()
         );
         assert!(get_settings_value::<Trust>("trust").unwrap() == Trust::default());
 
@@ -831,7 +666,7 @@ pub mod tests {
         // check a few defaults to make sure they are still there
         assert_eq!(
             get_settings_value::<bool>("builder.thumbnail.enabled").unwrap(),
-            Builder::default().thumbnail.enabled
+            BuilderSettings::default().thumbnail.enabled
         );
 
         assert_eq!(
