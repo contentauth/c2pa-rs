@@ -42,16 +42,11 @@ remote_manifest_fetch = true
 # Use strict c2pa v1 validation.
 strict_v1_validation = false
 
-# List of configuration profiles for the `Builder`.
-#
-# The "default" profile is the base profile and is overridable by other profiles. Profiles are
-# set programatically via the API. Any fields not specified in the activated profile will redirect
-# to the "default" profile. Any fields not specified in the "default" profile will redirect to
-# internal defaults.
-[profile]
+# Configuration for the Builder.
+[builder]
 
 # Claim generator info list.
-[profile.default.claim_generator_info]
+[builder.claim_generator_info]
 # A human readable name.
 name = "My Service"
 # A human readable string of the product's version.
@@ -67,7 +62,7 @@ operating_system = ""
 some_other_field = ""
 
 # A signer can be loaded in the API with the function `c2pa::get_settings_signer`.
-[profile.default.signer]
+[builder.signer]
 # Algorithm to use for signing.
 alg = "sha256"
 # Certificate used for signing (PEM format).
@@ -78,7 +73,7 @@ private_key = ""
 tsa_url = ""
 
 # Settings for automatic thumbnail generation.
-[profile.default.thumbnail]
+[builder.thumbnail]
 # Whether to enable automatic thumbnail generation.
 enabled = true
 # Whether to ignore errors when generating a thumbnail and continue signing.
@@ -99,9 +94,3 @@ format = "png"
 prefer_smallest_format = true
 # The output quality of the thumbnail (low, medium, high).
 quality = "medium"
-
-# Another profile by the name "high_quality_thumbnail."
-[profile.high_quality_thumbnail]
-
-[profile.high_quality_thumbnail.thumbnail]
-quality = "high"

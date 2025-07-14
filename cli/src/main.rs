@@ -148,10 +148,6 @@ struct CliArgs {
         default_value = default_settings_path().into_os_string()
     )]
     settings: PathBuf,
-
-    /// Which profile of the settings to use.
-    #[arg(long, requires = "settings", env = "C2PATOOL_PROFILE")]
-    profile: Option<String>,
 }
 
 fn default_settings_path() -> PathBuf {
@@ -385,12 +381,7 @@ fn blocking_get(url: &str) -> Result<String> {
 fn configure_sdk(args: &CliArgs) -> Result<()> {
     if args.settings.exists() {
         let settings = fs::read_to_string(&args.settings)?;
-        match &args.profile {
-            Some(profile) => {
-                c2pa::settings::load_settings_with_profile(&settings, profile.to_owned())?
-            }
-            None => c2pa::settings::load_settings(&settings)?,
-        }
+        c2pa::settings::load_settings(&settings)?
     }
 
     const TA: &str = r#"{"trust": { "trust_anchors": replacement_val } }"#;

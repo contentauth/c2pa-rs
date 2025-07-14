@@ -29,9 +29,16 @@ use crate::{
 const ASSERTION_CREATION_VERSION: usize = 2;
 pub const CAI_INGREDIENT_IDS: &str = "org.cai.ingredientIds";
 
-// TODO: document, maybe make enum?
-pub mod digital_source_type {
+// TODO: make enum
+/// Constants indicating from which source a digital image was created.
+///
+/// These constants are used in conjunction with [`Actions::source_type`].
+pub mod source_type {
+    /// Media whose digital content is effectively empty, such as a blank canvas or zero-length video.
     pub const EMPTY: &str = "http://c2pa.org/digitalsourcetype/empty";
+    /// Data that is the result of algorithmically using a model derived from sampled content and data.
+    /// Differs from <http://cv.iptc.org/newscodes/digitalsourcetype/>trainedAlgorithmicMedia in that
+    /// the result isn’t a media type (e.g., image or video) but is a data format (e.g., CSV, pickle).
     pub const TRAINED_ALGORITHMIC_DATA: &str =
         "http://c2pa.org/digitalsourcetype/trainedAlgorithmicData";
 }

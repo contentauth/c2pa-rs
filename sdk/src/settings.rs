@@ -30,7 +30,6 @@ use crate::{
 thread_local!(
     static SETTINGS: RefCell<Config> =
         RefCell::new(Config::try_from(&Settings::default()).unwrap_or_default());
-    static PROFILE: RefCell<Option<String>> = const { RefCell::new(None) };
 );
 
 // trait used to validate user input to make sure user supplied configurations are valid
@@ -300,13 +299,7 @@ impl SettingsValidate for ThumbnailSettings {
     }
 }
 
-// Settings for Builder API options
-#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 #[allow(unused)]
-pub(crate) struct Builder;
-
-impl SettingsValidate for Builder {}
-
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct SignerInfo {
     alg: SigningAlg,
@@ -315,9 +308,10 @@ pub struct SignerInfo {
     tsa_url: Option<String>,
 }
 
-/// A configuration profile.
-#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
-pub struct Profile {
+// Settings for Builder API options
+#[allow(unused)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub(crate) struct Builder {
     /// Information about the signer used for signing.
     #[serde(skip_serializing_if = "Option::is_none")]
     signer: Option<SignerInfo>,
@@ -349,7 +343,7 @@ pub struct Profile {
     auto_placed_action: bool,
 }
 
-impl Default for Profile {
+impl Default for Builder {
     fn default() -> Self {
         Self {
             signer: None,
@@ -362,7 +356,7 @@ impl Default for Profile {
     }
 }
 
-impl SettingsValidate for Profile {
+impl SettingsValidate for Builder {
     fn validate(&self) -> Result<()> {
         self.thumbnail.validate()
     }
@@ -384,7 +378,6 @@ pub struct Settings {
     core: Core,
     verify: Verify,
     builder: Builder,
-    profile: HashMap<String, Profile>,
 }
 
 impl Settings {
@@ -397,10 +390,10 @@ impl Settings {
             .to_string_lossy();
 
         let setting_buf = std::fs::read(&setting_path).map_err(Error::IoError)?;
-        Settings::from_string(&String::from_utf8_lossy(&setting_buf), &ext, None)
+        Settings::from_string(&String::from_utf8_lossy(&setting_buf), &ext)
     }
 
-    pub fn from_string(settings_str: &str, format: &str, profile: Option<String>) -> Result<Self> {
+    pub fn from_string(settings_str: &str, format: &str) -> Result<Self> {
         let f = match format.to_lowercase().as_str() {
             "json" => FileFormat::Json,
             "json5" => FileFormat::Json5,
@@ -436,7 +429,6 @@ impl Settings {
                 settings.validate()?;
 
                 SETTINGS.set(update_config.clone());
-                PROFILE.set(profile);
 
                 Ok(settings)
             }
@@ -447,9 +439,6 @@ impl Settings {
 
 impl Default for Settings {
     fn default() -> Self {
-        let mut profile = HashMap::new();
-        profile.insert("default".to_owned(), Profile::default());
-
         Settings {
             version_major: MAJOR_VERSION,
             version_minor: MINOR_VERSION,
@@ -457,7 +446,6 @@ impl Default for Settings {
             core: Default::default(),
             verify: Default::default(),
             builder: Default::default(),
-            profile,
         }
     }
 }
@@ -502,19 +490,13 @@ pub(crate) fn load_settings_from_file<P: AsRef<Path>>(settings_path: P) -> Resul
 // TODO: when this is removed, remove the additional features (for all supported formats) from the Cargo.toml
 #[deprecated = "use load_settings instead (note it is TOML only)"]
 pub fn load_settings_from_str(settings_str: &str, format: &str) -> Result<()> {
-    Settings::from_string(settings_str, format, None).map(|_| ())
+    Settings::from_string(settings_str, format).map(|_| ())
 }
 
 // TODO: doc
 #[allow(unused)]
 pub fn load_settings(toml: &str) -> Result<()> {
-    Settings::from_string(toml, "toml", None).map(|_| ())
-}
-
-// TODO: doc
-#[allow(unused)]
-pub fn load_settings_with_profile(toml: &str, profile: String) -> Result<()> {
-    Settings::from_string(toml, "toml", Some(profile)).map(|_| ())
+    Settings::from_string(toml, "toml").map(|_| ())
 }
 
 // Save the current configuration to a json file.
@@ -562,42 +544,6 @@ pub(crate) fn set_settings_value<T: Into<config::Value>>(value_path: &str, value
     }
 }
 
-#[allow(unused)]
-pub(crate) fn set_profile_settings_value<T: Into<config::Value>>(
-    value_path: &str,
-    value: T,
-) -> Result<()> {
-    let c = SETTINGS.take();
-    PROFILE.with_borrow(|profile| {
-        let profile = profile.as_deref().unwrap_or("default");
-        let update_config = Config::builder()
-            .add_source(c.clone())
-            .set_override(format!("profile.{profile}.{value_path}"), value);
-
-        match update_config {
-            Ok(updated) => {
-                let update_config = updated.build()?;
-
-                let settings = update_config.clone().try_deserialize::<Settings>()?;
-                settings.validate()?;
-
-                SETTINGS.set(update_config);
-
-                Ok(())
-            }
-            Err(err) => {
-                SETTINGS.set(c);
-                Err(err.into())
-            }
-        }
-    })
-}
-
-#[allow(unused)]
-pub(crate) fn set_settings_profile(profile: String) {
-    PROFILE.set(Some(profile));
-}
-
 // Get a Settings value by path reference.  The path is nested names of of the Settings objects
 // separated by "." notation.  For example "core.hash_alg" would get the settings.core.hash_alg value.
 // The nesting can be arbitrarily deep based on the Settings definition.
@@ -617,36 +563,11 @@ pub(crate) fn get_settings_value<'de, T: serde::de::Deserialize<'de>>(
     })
 }
 
-#[allow(unused)]
-pub(crate) fn get_profile_settings_value<'de, T: serde::de::Deserialize<'de>>(
-    value_path: &str,
-) -> Result<T> {
-    SETTINGS.with_borrow(|current_settings| {
-        PROFILE.with_borrow(|profile| {
-            if let Some(profile) = profile {
-                let value = current_settings.get::<T>(&format!("profile.{profile}.{value_path}"));
-                match value {
-                    Ok(value) => return Ok(value),
-                    Err(err) => return Err(err.into()),
-                    // Ignore if the value isn't found and next check the default profile.
-                    Err(config::ConfigError::NotFound(_)) => {}
-                }
-            }
-
-            match current_settings.get::<T>(&format!("profile.default.{value_path}")) {
-                Ok(value) => Ok(value),
-                Err(config::ConfigError::NotFound(_)) => Err(Error::NotFound),
-                Err(err) => Err(err.into()),
-            }
-        })
-    })
-}
-
-/// Returns the signer specified in the "signer" field of the currently active settings profile.
+/// Returns the constructed signer from the signer field in settings.
 ///
 /// If the signer settings aren't specified, this function will return [Error::UnspecifiedSignerSettings][crate::Error::UnspecifiedSignerSettings].
-pub fn get_profile_settings_signer() -> Result<Box<dyn Signer>> {
-    let signer_info = get_profile_settings_value::<Option<SignerInfo>>("signer");
+pub fn get_settings_signer() -> Result<Box<dyn Signer>> {
+    let signer_info = get_settings_value::<Option<SignerInfo>>("builder.signer");
     if let Ok(Some(signer_info)) = signer_info {
         create_signer::from_keys(
             &signer_info.sign_cert,
@@ -686,7 +607,7 @@ pub mod tests {
         assert_eq!(settings.core, Core::default());
         assert_eq!(settings.trust, Trust::default());
         assert_eq!(settings.verify, Verify::default());
-        assert_eq!(settings.builder, Builder);
+        assert_eq!(settings.builder, Builder::default());
 
         reset_default_settings().unwrap();
     }
@@ -699,8 +620,8 @@ pub mod tests {
             Core::default().hash_alg
         );
         assert_eq!(
-            get_profile_settings_value::<bool>("thumbnail.enabled").unwrap(),
-            Profile::default().thumbnail.enabled
+            get_settings_value::<bool>("builder.thumbnail.enabled").unwrap(),
+            Builder::default().thumbnail.enabled
         );
         assert_eq!(
             get_settings_value::<Option<String>>("trust.user_anchors").unwrap(),
@@ -713,7 +634,10 @@ pub mod tests {
             get_settings_value::<Verify>("verify").unwrap(),
             Verify::default()
         );
-        assert_eq!(get_settings_value::<Builder>("builder").unwrap(), Builder);
+        assert_eq!(
+            get_settings_value::<Builder>("builder").unwrap(),
+            Builder::default()
+        );
         assert_eq!(
             get_settings_value::<Trust>("trust").unwrap(),
             Trust::default()
@@ -723,7 +647,7 @@ pub mod tests {
         let hash_alg: String = get_settings_value("core.hash_alg").unwrap();
         let remote_manifest_fetch: bool =
             get_settings_value("verify.remote_manifest_fetch").unwrap();
-        let auto_thumbnail: bool = get_settings_value("profile.default.thumbnail.enabled").unwrap();
+        let auto_thumbnail: bool = get_settings_value("builder.thumbnail.enabled").unwrap();
         let user_anchors: Option<String> = get_settings_value("trust.user_anchors").unwrap();
 
         assert_eq!(hash_alg, Core::default().hash_alg);
@@ -731,7 +655,7 @@ pub mod tests {
             remote_manifest_fetch,
             Verify::default().remote_manifest_fetch
         );
-        assert_eq!(auto_thumbnail, Profile::default().thumbnail.enabled);
+        assert_eq!(auto_thumbnail, Builder::default().thumbnail.enabled);
         assert_eq!(user_anchors, Trust::default().user_anchors);
 
         // test implicit deserialization on objects
@@ -742,7 +666,7 @@ pub mod tests {
 
         assert_eq!(core, Core::default());
         assert_eq!(verify, Verify::default());
-        assert_eq!(builder, Builder);
+        assert_eq!(builder, Builder::default());
         assert_eq!(trust, Trust::default());
 
         reset_default_settings().unwrap();
@@ -755,7 +679,7 @@ pub mod tests {
         // test updating values
         set_settings_value("core.hash_alg", "sha512").unwrap();
         set_settings_value("verify.remote_manifest_fetch", false).unwrap();
-        set_settings_value("profile.default.thumbnail.enabled", false).unwrap();
+        set_settings_value("builder.thumbnail.enabled", false).unwrap();
         set_settings_value(
             "trust.user_anchors",
             Some(String::from_utf8(ts.to_vec()).unwrap()),
@@ -767,7 +691,7 @@ pub mod tests {
             "sha512"
         );
         assert!(!get_settings_value::<bool>("verify.remote_manifest_fetch").unwrap());
-        assert!(!get_settings_value::<bool>("profile.default.thumbnail.enabled").unwrap());
+        assert!(!get_settings_value::<bool>("builder.thumbnail.enabled").unwrap());
         assert_eq!(
             get_settings_value::<Option<String>>("trust.user_anchors").unwrap(),
             Some(String::from_utf8(ts.to_vec()).unwrap())
@@ -816,7 +740,7 @@ pub mod tests {
 
         {
             let settings_str: &str = &String::from_utf8_lossy(&setting_buf);
-            Settings::from_string(settings_str, "json", None).map(|_| ())
+            Settings::from_string(settings_str, "json").map(|_| ())
         }
         .unwrap();
         let settings = get_settings().unwrap();
@@ -855,8 +779,8 @@ pub mod tests {
 
         // check a few defaults to make sure they are still there
         assert_eq!(
-            get_profile_settings_value::<bool>("thumbnail.enabled").unwrap(),
-            Profile::default().thumbnail.enabled
+            get_settings_value::<bool>("builder.thumbnail.enabled").unwrap(),
+            Builder::default().thumbnail.enabled
         );
 
         assert_eq!(

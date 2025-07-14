@@ -633,9 +633,9 @@ impl Builder {
 
         claim_generator_info[0].insert("org.cai.c2pa_rs", env!("CARGO_PKG_VERSION"));
 
-        let profile_claim_generator_infos = settings::get_profile_settings_value::<
+        let profile_claim_generator_infos = settings::get_settings_value::<
             Option<ClaimGeneratorInfo>,
-        >("claim_generator_info");
+        >("builder.claim_generator_info");
         if let Ok(Some(claim_generator_infos)) = profile_claim_generator_infos {
             claim_generator_info.push(claim_generator_infos);
         }
@@ -895,8 +895,8 @@ impl Builder {
     /// * `profile.*.auto_placed_action`
     fn add_auto_actions_assertions(&self, actions: &mut Actions) -> Result<()> {
         // https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_mandatory_presence_of_at_least_one_actions_assertion
-        let auto_created = settings::get_profile_settings_value::<bool>("auto_created_action")?;
-        let auto_opened = settings::get_profile_settings_value::<bool>("auto_opened_action")?;
+        let auto_created = settings::get_settings_value::<bool>("builder.auto_created_action")?;
+        let auto_opened = settings::get_settings_value::<bool>("builder.auto_opened_action")?;
         if auto_created || auto_opened {
             let has_parent = self
                 .definition
@@ -925,7 +925,7 @@ impl Builder {
         }
 
         // https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_relationship
-        let auto_placed = settings::get_profile_settings_value::<bool>("auto_placed_action")?;
+        let auto_placed = settings::get_settings_value::<bool>("builder.auto_placed_action")?;
         if auto_placed {
             for ingredient in &self.definition.ingredients {
                 if *ingredient.relationship() == Relationship::ComponentOf {
@@ -954,7 +954,7 @@ impl Builder {
         // check settings to see if we should auto generate a thumbnail
 
         let auto_thumbnail =
-            crate::settings::get_profile_settings_value::<bool>("thumbnail.enabled")?;
+            crate::settings::get_settings_value::<bool>("builder.thumbnail.enabled")?;
         if self.definition.thumbnail.is_none() && auto_thumbnail {
             stream.rewind()?;
 
@@ -1560,7 +1560,7 @@ mod tests {
 
     #[test]
     fn test_builder_auto_created() {
-        settings::set_profile_settings_value("auto_created_action", true).unwrap();
+        settings::set_settings_value("builder.auto_created_action", true).unwrap();
 
         let mut output = Cursor::new(Vec::new());
         Builder::new()
@@ -1587,7 +1587,7 @@ mod tests {
 
     #[test]
     fn test_builder_auto_opened() {
-        settings::set_profile_settings_value("auto_opened_action", true).unwrap();
+        settings::set_settings_value("builder.auto_opened_action", true).unwrap();
 
         let mut builder = Builder::new();
         builder
@@ -1619,7 +1619,7 @@ mod tests {
 
     #[test]
     fn test_builder_auto_placed() {
-        settings::set_profile_settings_value("auto_placed_action", true).unwrap();
+        settings::set_settings_value("builder.auto_placed_action", true).unwrap();
 
         let mut builder = Builder::new();
         builder

@@ -119,7 +119,7 @@ impl fmt::Display for ThumbnailFormat {
 /// If the output format is unsupported, this function will return [Error::UnsupportedThumbnailFormat][crate::Error::UnsupportedThumbnailFormat].
 ///
 /// This function takes into account the [Settings][crate::Settings]:
-/// * `profile.*.thumbnail.ignore_errors`
+/// * `builder.thumbnail.ignore_errors`
 ///
 /// Read [make_thumbnail_from_stream] for more information.
 #[cfg(feature = "file_io")]
@@ -140,7 +140,7 @@ pub fn make_thumbnail_bytes_from_path(
         }
     };
 
-    let ignore_errors = settings::get_profile_settings_value::<bool>("thumbnail.ignore_errors")?;
+    let ignore_errors = settings::get_settings_value::<bool>("builder.thumbnail.ignore_errors")?;
     match result {
         Ok(result) => Ok(result),
         Err(_) if ignore_errors => Ok(None),
@@ -151,7 +151,7 @@ pub fn make_thumbnail_bytes_from_path(
 /// Make a thumbnail from an input stream and format and return the output format and new thumbnail bytes.
 ///
 /// This function takes into account the [Settings][crate::Settings]:
-/// * `profile.*.thumbnail.ignore_errors`
+/// * `builder.thumbnail.ignore_errors`
 ///
 /// Read [make_thumbnail_from_stream] for more information.
 pub fn make_thumbnail_bytes_from_stream<R>(
@@ -172,7 +172,7 @@ where
         }
     };
 
-    let ignore_errors = settings::get_profile_settings_value::<bool>("thumbnail.ignore_errors")?;
+    let ignore_errors = settings::get_settings_value::<bool>("builder.thumbnail.ignore_errors")?;
     match result {
         Ok(result) => Ok(Some(result)),
         Err(_) if ignore_errors => Ok(None),
@@ -183,10 +183,10 @@ where
 /// Make a thumbnail from the input stream and write to the output stream.
 ///
 /// This function takes into account two [Settings][crate::Settings]:
-/// * `profile.*.thumbnail.long_edge`
-/// * `profile.*.thumbnail.quality`
-/// * `profile.*.thumbnail.format`
-/// * `profile.*.thumbnail.prefer_smallest_format`
+/// * `builder.thumbnail.long_edge`
+/// * `builder.thumbnail.quality`
+/// * `builder.thumbnail.format`
+/// * `builder.thumbnail.prefer_smallest_format`
 pub fn make_thumbnail_from_stream<R, W>(
     input: R,
     output: &mut W,
@@ -203,13 +203,13 @@ where
         Some(output_format) => output_format,
         None => {
             let global_format =
-                settings::get_profile_settings_value::<Option<ThumbnailFormat>>("thumbnail.format");
+                settings::get_settings_value::<Option<ThumbnailFormat>>("builder.thumbnail.format");
             match global_format {
                 Ok(Some(global_format)) => global_format,
                 // The config crate doesn't play well with optional settings that are None.
                 Err(_) | Ok(None) => {
-                    let prefer_smallest_format = settings::get_profile_settings_value::<bool>(
-                        "thumbnail.prefer_smallest_format",
+                    let prefer_smallest_format = settings::get_settings_value::<bool>(
+                        "builder.thumbnail.prefer_smallest_format",
                     )?;
                     match prefer_smallest_format {
                         true => match input_format {
@@ -225,10 +225,10 @@ where
         }
     };
 
-    let long_edge = settings::get_profile_settings_value::<u32>("thumbnail.long_edge")?;
+    let long_edge = settings::get_settings_value::<u32>("builder.thumbnail.long_edge")?;
     image = image.thumbnail(long_edge, long_edge);
 
-    let quality = settings::get_profile_settings_value::<ThumbnailQuality>("thumbnail.quality")?;
+    let quality = settings::get_settings_value::<ThumbnailQuality>("builder.thumbnail.quality")?;
     match output_format {
         ThumbnailFormat::Jpeg => match quality {
             ThumbnailQuality::Low => {
@@ -286,11 +286,9 @@ pub mod tests {
 
     #[test]
     fn test_make_thumbnail_from_stream() {
-        settings::set_profile_settings_value("thumbnail.prefer_smallest_format", false).unwrap();
-
-        settings::set_profile_settings_value("thumbnail.ignore_errors", false).unwrap();
-
-        settings::set_profile_settings_value::<Option<ThumbnailFormat>>("format", None).unwrap();
+        settings::set_settings_value("builder.thumbnail.prefer_smallest_format", false).unwrap();
+        settings::set_settings_value("builder.thumbnail.ignore_errors", false).unwrap();
+        settings::set_settings_value::<Option<ThumbnailFormat>>("format", None).unwrap();
 
         let mut output = Cursor::new(Vec::new());
         let format = make_thumbnail_from_stream(
@@ -311,7 +309,7 @@ pub mod tests {
 
     #[test]
     fn test_make_thumbnail_from_stream_with_output() {
-        settings::set_profile_settings_value("thumbnail.ignore_errors", false).unwrap();
+        settings::set_settings_value("builder.thumbnail.ignore_errors", false).unwrap();
 
         let mut output = Cursor::new(Vec::new());
         let format = make_thumbnail_from_stream(
@@ -332,11 +330,9 @@ pub mod tests {
 
     #[test]
     fn test_make_thumbnail_bytes_from_stream() {
-        settings::set_profile_settings_value("thumbnail.prefer_smallest_format", false).unwrap();
-
-        settings::set_profile_settings_value("thumbnail.ignore_errors", false).unwrap();
-
-        settings::set_profile_settings_value::<Option<ThumbnailFormat>>("format", None).unwrap();
+        settings::set_settings_value("builder.thumbnail.prefer_smallest_format", false).unwrap();
+        settings::set_settings_value("builder.thumbnail.ignore_errors", false).unwrap();
+        settings::set_settings_value::<Option<ThumbnailFormat>>("format", None).unwrap();
 
         let (format, bytes) =
             make_thumbnail_bytes_from_stream(Cursor::new(TEST_JPEG), "image/jpeg")
@@ -355,11 +351,9 @@ pub mod tests {
     fn test_make_thumbnail_bytes_from_path() {
         use std::path::Path;
 
-        settings::set_profile_settings_value("thumbnail.prefer_smallest_format", false).unwrap();
-
-        settings::set_profile_settings_value("thumbnail.ignore_errors", false).unwrap();
-
-        settings::set_profile_settings_value::<Option<ThumbnailFormat>>("format", None).unwrap();
+        settings::set_settings_value("builder.thumbnail.prefer_smallest_format", false).unwrap();
+        settings::set_settings_value("builder.thumbnail.ignore_errors", false).unwrap();
+        settings::set_settings_value::<Option<ThumbnailFormat>>("format", None).unwrap();
 
         let (format, bytes) = make_thumbnail_bytes_from_path(Path::new("tests/fixtures/CA.jpg"))
             .unwrap()
@@ -374,10 +368,10 @@ pub mod tests {
 
     #[test]
     fn test_make_thumbnail_with_prefer_smallest_format() {
-        settings::set_profile_settings_value("thumbnail.prefer_smallest_format", true).unwrap();
+        settings::set_settings_value("builder.thumbnail.prefer_smallest_format", true).unwrap();
 
-        settings::set_profile_settings_value("thumbnail.ignore_errors", false).unwrap();
-        settings::set_profile_settings_value::<Option<ThumbnailFormat>>("thumbnail.format", None)
+        settings::set_settings_value("builder.thumbnail.ignore_errors", false).unwrap();
+        settings::set_settings_value::<Option<ThumbnailFormat>>("builder.thumbnail.format", None)
             .unwrap();
 
         let (format, bytes) = make_thumbnail_bytes_from_stream(Cursor::new(TEST_PNG), "image/png")
@@ -393,9 +387,9 @@ pub mod tests {
 
     #[test]
     fn test_make_thumbnail_with_forced_format() {
-        settings::set_profile_settings_value("thumbnail.ignore_errors", false).unwrap();
-        settings::set_profile_settings_value::<Option<ThumbnailFormat>>(
-            "thumbnail.format",
+        settings::set_settings_value("builder.thumbnail.ignore_errors", false).unwrap();
+        settings::set_settings_value::<Option<ThumbnailFormat>>(
+            "builder.thumbnail.format",
             Some(ThumbnailFormat::Png),
         )
         .unwrap();
@@ -414,10 +408,10 @@ pub mod tests {
 
     #[test]
     fn test_make_thumbnail_with_long_edge() {
-        settings::set_profile_settings_value("thumbnail.ignore_errors", false).unwrap();
-        settings::set_profile_settings_value::<Option<ThumbnailFormat>>("thumbnail.format", None)
+        settings::set_settings_value("builder.thumbnail.ignore_errors", false).unwrap();
+        settings::set_settings_value::<Option<ThumbnailFormat>>("builder.thumbnail.format", None)
             .unwrap();
-        settings::set_profile_settings_value("thumbnail.long_edge", 100).unwrap();
+        settings::set_settings_value("builder.thumbnail.long_edge", 100).unwrap();
 
         let (format, bytes) =
             make_thumbnail_bytes_from_stream(Cursor::new(TEST_JPEG), "image/jpeg")
@@ -434,7 +428,7 @@ pub mod tests {
 
     #[test]
     fn test_make_thumbnail_and_ignore_errors() {
-        settings::set_profile_settings_value("thumbnail.ignore_errors", true).unwrap();
+        settings::set_settings_value("builder.thumbnail.ignore_errors", true).unwrap();
 
         let thumbnail =
             make_thumbnail_bytes_from_stream(Cursor::new(Vec::new()), "image/png").unwrap();
