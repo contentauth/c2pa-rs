@@ -16,8 +16,8 @@ use std::io::{Cursor, Seek};
 
 use anyhow::Result;
 use c2pa::{
-    crypto::raw_signature::SigningAlg, settings::load_settings,
-    validation_results::ValidationState, Builder, CallbackSigner, Reader,
+    crypto::raw_signature::SigningAlg, validation_results::ValidationState, Builder,
+    CallbackSigner, Reader, Settings,
 };
 use serde_json::json;
 
@@ -84,7 +84,7 @@ fn main() -> Result<()> {
     }
     .to_string();
 
-    load_settings(&modified_core)?;
+    Settings::from_toml(&modified_core)?;
 
     let json = manifest_def(title, format);
 

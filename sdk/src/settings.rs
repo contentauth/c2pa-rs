@@ -387,10 +387,10 @@ impl SettingsValidate for Builder {
 const MAJOR_VERSION: usize = 1;
 const MINOR_VERSION: usize = 0;
 
-// Settings configuration for C2PA-RS.  Default configuration values
-// are lazy loaded on first use.  Values can also be loaded from a configuration
-// file or by setting specific value via code.  There is a single configuration
-// setting for the entire C2PA-RS instance.
+/// Settings for configuring all aspects of c2pa-rs.
+///
+/// [Settings::default] will be set thread-locally by default. Any settings set via
+/// [Settings::from_toml] or [Settings::from_file] will also be thread-local.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[allow(unused)]
 pub struct Settings {
@@ -412,9 +412,11 @@ impl Settings {
             .to_string_lossy();
 
         let setting_buf = std::fs::read(&setting_path).map_err(Error::IoError)?;
+        #[allow(deprecated)]
         Settings::from_string(&String::from_utf8_lossy(&setting_buf), &ext)
     }
 
+    #[deprecated = "use `Settings::from_toml` instead"]
     pub fn from_string(settings_str: &str, format: &str) -> Result<Self> {
         let f = match format.to_lowercase().as_str() {
             "json" => FileFormat::Json,
@@ -457,6 +459,94 @@ impl Settings {
             Err(_) => Err(Error::OtherError("could not update configuration".into())),
         }
     }
+
+    /// Set the [Settings] from a toml file.
+    pub fn from_toml(toml: &str) -> Result<()> {
+        #[allow(deprecated)]
+        Settings::from_string(toml, "toml").map(|_| ())
+    }
+
+    /// Set a [Settings] value by path reference. The path is nested names of of the Settings objects
+    /// separated by "." notation.
+    ///
+    /// For example "core.hash_alg" would set settings.core.hash_alg value. The nesting can be arbitrarily
+    /// deep based on the [Settings] definition.
+    #[allow(unused)]
+    pub fn set_value<T: Into<config::Value>>(value_path: &str, value: T) -> Result<()> {
+        let c = SETTINGS.take();
+
+        let update_config = Config::builder()
+            .add_source(c.clone())
+            .set_override(value_path, value);
+
+        if let Ok(updated) = update_config {
+            let update_config = updated
+                .build()
+                .map_err(|_e| Error::OtherError("could not update configuration".into()))?;
+
+            let settings = update_config
+                .clone()
+                .try_deserialize::<Settings>()
+                .map_err(|_e| {
+                    Error::BadParam("configuration file contains unrecognized param".into())
+                })?;
+            settings.validate()?;
+
+            SETTINGS.set(update_config);
+
+            Ok(())
+        } else {
+            SETTINGS.set(c);
+            Err(Error::OtherError("could not save settings".into()))
+        }
+    }
+
+    /// Get a [Settings] value by path reference. The path is nested names of of the [Settings] objects
+    /// separated by "." notation.
+    ///
+    /// For example "core.hash_alg" would get the settings.core.hash_alg value. The nesting can be arbitrarily
+    /// deep based on the [Settings] definition.
+    #[allow(unused)]
+    pub fn get_value<'de, T: serde::de::Deserialize<'de>>(value_path: &str) -> Result<T> {
+        SETTINGS.with_borrow(|current_settings| {
+            let update_config = Config::builder()
+                .add_source(current_settings.clone())
+                .build()
+                .map_err(|_e| Error::OtherError("could not update configuration".into()))?;
+
+            update_config
+                .get::<T>(value_path)
+                .map_err(|_| Error::NotFound)
+        })
+    }
+
+    /// Returns the constructed signer from the signer field in [Settings].
+    ///
+    /// If the signer settings aren't specified, this function will return [Error::UnspecifiedSignerSettings][crate::Error::UnspecifiedSignerSettings].
+    pub fn get_signer() -> Result<Box<dyn Signer>> {
+        let signer_info = get_settings_value::<Option<SignerSettings>>("builder.signer");
+        if let Ok(Some(signer_info)) = signer_info {
+            create_signer::from_keys(
+                &signer_info.sign_cert,
+                &signer_info.private_key,
+                signer_info.alg,
+                signer_info.tsa_url.to_owned(),
+            )
+        } else {
+            Err(Error::MissingSignerSettings)
+        }
+    }
+
+    /// Set [Settings] back to the default values.
+    #[allow(unused)]
+    pub fn reset() -> Result<()> {
+        if let Ok(default_settings) = Config::try_from(&Settings::default()) {
+            SETTINGS.set(default_settings);
+            Ok(())
+        } else {
+            Err(Error::OtherError("could not save settings".into()))
+        }
+    }
 }
 
 impl Default for Settings {
@@ -494,6 +584,7 @@ pub(crate) fn get_settings() -> Option<Settings> {
 
 // Load settings from configuration file
 #[allow(unused)]
+#[deprecated = "use `Settings::from__file`"]
 #[cfg(feature = "file_io")]
 pub(crate) fn load_settings_from_file<P: AsRef<Path>>(settings_path: P) -> Result<()> {
     let ext = settings_path
@@ -511,15 +602,10 @@ pub(crate) fn load_settings_from_file<P: AsRef<Path>>(settings_path: P) -> Resul
 /// Load settings from string representation of the configuration. Format of configuration must be supplied.
 #[allow(unused)]
 // TODO: when this is removed, remove the additional features (for all supported formats) from the Cargo.toml
-#[deprecated = "use load_settings instead (note it is TOML only)"]
+#[deprecated = "use `Settings::from_toml`"]
 pub fn load_settings_from_str(settings_str: &str, format: &str) -> Result<()> {
+    #[allow(deprecated)]
     Settings::from_string(settings_str, format).map(|_| ())
-}
-
-// TODO: doc
-#[allow(unused)]
-pub fn load_settings(toml: &str) -> Result<()> {
-    Settings::from_string(toml, "toml").map(|_| ())
 }
 
 // Save the current configuration to a json file.
@@ -534,84 +620,25 @@ pub(crate) fn save_settings_as_json<P: AsRef<Path>>(settings_path: P) -> Result<
     std::fs::write(settings_path, settings_json.as_bytes()).map_err(Error::IoError)
 }
 
-// Set a Settings value by path reference.  The path is nested names of of the Settings objects
-// separated by "." notation.  For example "core.hash_alg" would set settings.core.hash_alg value.
-// The nesting can be arbitrarily deep based on the Settings definition.
+/// See [Settings::set_value] for more information.
 #[allow(unused)]
 pub(crate) fn set_settings_value<T: Into<config::Value>>(value_path: &str, value: T) -> Result<()> {
-    let c = SETTINGS.take();
-
-    let update_config = Config::builder()
-        .add_source(c.clone())
-        .set_override(value_path, value);
-
-    if let Ok(updated) = update_config {
-        let update_config = updated
-            .build()
-            .map_err(|_e| Error::OtherError("could not update configuration".into()))?;
-
-        let settings = update_config
-            .clone()
-            .try_deserialize::<Settings>()
-            .map_err(|_e| {
-                Error::BadParam("configuration file contains unrecognized param".into())
-            })?;
-        settings.validate()?;
-
-        SETTINGS.set(update_config);
-
-        Ok(())
-    } else {
-        SETTINGS.set(c);
-        Err(Error::OtherError("could not save settings".into()))
-    }
+    Settings::set_value(value_path, value)
 }
 
-// Get a Settings value by path reference.  The path is nested names of of the Settings objects
-// separated by "." notation.  For example "core.hash_alg" would get the settings.core.hash_alg value.
-// The nesting can be arbitrarily deep based on the Settings definition.
+/// See [Settings::get_value] for more information.
 #[allow(unused)]
 pub(crate) fn get_settings_value<'de, T: serde::de::Deserialize<'de>>(
     value_path: &str,
 ) -> Result<T> {
-    SETTINGS.with_borrow(|current_settings| {
-        let update_config = Config::builder()
-            .add_source(current_settings.clone())
-            .build()
-            .map_err(|_e| Error::OtherError("could not update configuration".into()))?;
-
-        update_config
-            .get::<T>(value_path)
-            .map_err(|_| Error::NotFound)
-    })
+    Settings::get_value(value_path)
 }
 
-/// Returns the constructed signer from the signer field in settings.
-///
-/// If the signer settings aren't specified, this function will return [Error::UnspecifiedSignerSettings][crate::Error::UnspecifiedSignerSettings].
-pub fn get_settings_signer() -> Result<Box<dyn Signer>> {
-    let signer_info = get_settings_value::<Option<SignerSettings>>("builder.signer");
-    if let Ok(Some(signer_info)) = signer_info {
-        create_signer::from_keys(
-            &signer_info.sign_cert,
-            &signer_info.private_key,
-            signer_info.alg,
-            signer_info.tsa_url.to_owned(),
-        )
-    } else {
-        Err(Error::MissingSignerSettings)
-    }
-}
-
-// Set settings back to the default values.  Current use case is for testing.
+/// See [Settings::reset] for more information.
 #[allow(unused)]
+// #[deprecated = "use `Settings::reset` instead"]
 pub fn reset_default_settings() -> Result<()> {
-    if let Ok(default_settings) = Config::try_from(&Settings::default()) {
-        SETTINGS.set(default_settings);
-        Ok(())
-    } else {
-        Err(Error::OtherError("could not save settings".into()))
-    }
+    Settings::reset()
 }
 
 #[cfg(test)]
@@ -700,10 +727,10 @@ pub mod tests {
         let ts = include_bytes!("../tests/fixtures/certs/trust/test_cert_root_bundle.pem");
 
         // test updating values
-        set_settings_value("core.hash_alg", "sha512").unwrap();
-        set_settings_value("verify.remote_manifest_fetch", false).unwrap();
-        set_settings_value("builder.thumbnail.enabled", false).unwrap();
-        set_settings_value(
+        Settings::set_value("core.hash_alg", "sha512").unwrap();
+        Settings::set_value("verify.remote_manifest_fetch", false).unwrap();
+        Settings::set_value("builder.thumbnail.enabled", false).unwrap();
+        Settings::set_value(
             "trust.user_anchors",
             Some(String::from_utf8(ts.to_vec()).unwrap()),
         )
@@ -726,10 +753,10 @@ pub mod tests {
             get_settings_value::<Verify>("verify").unwrap(),
             Verify::default()
         );
-        // assert_ne!(
-        //     get_settings_value::<Builder>("builder").unwrap(),
-        //     Builder::default()
-        // );
+        assert_ne!(
+            get_settings_value::<Builder>("builder").unwrap(),
+            Builder::default()
+        );
         assert!(get_settings_value::<Trust>("trust").unwrap() == Trust::default());
 
         reset_default_settings().unwrap();
@@ -743,7 +770,7 @@ pub mod tests {
 
         save_settings_as_json(&op).unwrap();
 
-        load_settings_from_file(&op).unwrap();
+        Settings::from_file(&op).unwrap();
         let settings = get_settings().unwrap();
 
         assert_eq!(settings, Settings::default());
@@ -763,6 +790,7 @@ pub mod tests {
 
         {
             let settings_str: &str = &String::from_utf8_lossy(&setting_buf);
+            #[allow(deprecated)]
             Settings::from_string(settings_str, "json").map(|_| ())
         }
         .unwrap();
@@ -787,7 +815,7 @@ pub mod tests {
         }
         .to_string();
 
-        load_settings(&modified_core).unwrap();
+        Settings::from_toml(&modified_core).unwrap();
 
         // see if updated values match
         assert!(get_settings_value::<bool>("core.debug").unwrap());
@@ -824,7 +852,7 @@ pub mod tests {
         }
         .to_string();
 
-        assert!(load_settings(&modified_core).is_err());
+        assert!(Settings::from_toml(&modified_core).is_err());
 
         reset_default_settings().unwrap();
     }
@@ -838,7 +866,7 @@ pub mod tests {
         }
         .to_string();
 
-        load_settings(&secret).unwrap();
+        Settings::from_toml(&secret).unwrap();
 
         assert!(get_settings_value::<bool>("hidden.test1").unwrap());
         assert_eq!(
@@ -881,7 +909,7 @@ pub mod tests {
         }
         .to_string();
 
-        load_settings(&all_settings).unwrap();
+        Settings::from_toml(&all_settings).unwrap();
 
         reset_default_settings().unwrap();
     }

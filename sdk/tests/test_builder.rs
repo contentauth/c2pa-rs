@@ -13,7 +13,7 @@
 
 use std::io::{self, Cursor};
 
-use c2pa::{settings::load_settings, validation_status, Builder, Reader, Result, ValidationState};
+use c2pa::{validation_status, Builder, Reader, Result, Settings, ValidationState};
 
 mod common;
 #[cfg(all(feature = "add_thumbnails", feature = "file_io"))]
@@ -126,7 +126,7 @@ fn test_builder_remote_url_no_embed() -> Result<()> {
     let manifest_def = std::fs::read_to_string(fixtures_path("simple_manifest.json"))?;
     let mut builder = Builder::from_json(&manifest_def)?;
     // disable remote fetching for this test
-    load_settings(
+    Settings::from_toml(
         &toml::toml! {
             [verify]
             remote_manifest_fetch = false

@@ -21,8 +21,7 @@ mod integration_1 {
         assertions::{c2pa_action, Action, Actions},
         create_signer,
         crypto::raw_signature::SigningAlg,
-        settings::load_settings,
-        Builder, ClaimGeneratorInfo, Ingredient, Reader, Result, Signer,
+        Builder, ClaimGeneratorInfo, Ingredient, Reader, Result, Settings, Signer,
     };
     #[allow(unused)] // different code path for WASI
     use tempfile::{tempdir, TempDir};
@@ -81,7 +80,7 @@ mod integration_1 {
             let replacement_val = toml::Value::String(trust_list).to_string(); // escape string
             let setting = ta.replace("replacement_val", &replacement_val);
 
-            load_settings(&setting)?;
+            Settings::from_toml(&setting)?;
 
             enable_trust_checks = true;
         }
@@ -90,7 +89,7 @@ mod integration_1 {
             let replacement_val = toml::Value::String(allowed_list).to_string(); // escape string
             let setting = al.replace("replacement_val", &replacement_val);
 
-            load_settings(&setting)?;
+            Settings::from_toml(&setting)?;
 
             enable_trust_checks = true;
         }
@@ -99,14 +98,14 @@ mod integration_1 {
             let replacement_val = toml::Value::String(trust_config).to_string(); // escape string
             let setting = tc.replace("replacement_val", &replacement_val);
 
-            load_settings(&setting)?;
+            Settings::from_toml(&setting)?;
 
             enable_trust_checks = true;
         }
 
         // enable trust checks
         if enable_trust_checks {
-            load_settings(
+            Settings::from_toml(
                 &toml::toml! {
                     [verify]
                     verify_trust = true
