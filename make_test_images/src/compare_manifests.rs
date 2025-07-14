@@ -212,8 +212,16 @@ fn normalize_json(value: Value) -> Value {
             Value::Array(new_arr)
         }
         Value::String(s) => {
-            if GUID_RE.is_match(&s) || JUMBF_GUID_RE.is_match(&s) {
-                Value::String("<GUID>".to_string())
+            if GUID_RE.is_match(&s) {
+                Value::String(GUID_RE.replace_all(&s, "<GUID>").to_string())
+            } else if JUMBF_GUID_RE.is_match(&s) {
+                // Only replace the GUID portion, keep the rest of the string
+                let replaced = JUMBF_GUID_RE.replace(&s, |caps: &regex::Captures| {
+                    let prefix = caps.get(0).map_or("", |m| m.as_str());
+                    let guid_re = Regex::new(r"urn:uuid:[0-9a-fA-F\-]{36}").unwrap();
+                    guid_re.replace_all(prefix, "<GUID>").to_string()
+                });
+                Value::String(replaced.to_string())
             } else if UTC_TIMESTAMP_RE.is_match(&s) {
                 Value::String("<TIMESTAMP>".to_string())
             } else if VERSION_RE.is_match(&s) {
