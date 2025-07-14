@@ -109,6 +109,7 @@ byteorder = { version = "1.4.3", default-features = false }
 byteordered = "0.6.0"
 chrono = { version = "0.4.39", default-features = false, features = ["serde"] }
 ciborium = "0.2.2"
+toml = "0.8.23"
 config = { version = "0.14.0", default-features = false, features = [
     "json",
     "json5",
@@ -116,7 +117,6 @@ config = { version = "0.14.0", default-features = false, features = [
     "ron",
     "ini",
 ] }
-toml = "0.8.23"
 const-hex = "1.14"
 const-oid = { version = "0.9.6", optional = true }
 conv = "0.3.3"

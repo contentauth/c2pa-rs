@@ -15,7 +15,6 @@
 use std::path::Path;
 use std::{
     cell::RefCell,
-    collections::HashMap,
     io::{BufRead, BufReader, Cursor},
 };
 
@@ -23,8 +22,8 @@ use config::{Config, FileFormat};
 use serde_derive::{Deserialize, Serialize};
 
 use crate::{
-    assertions::source_type, create_signer, crypto::base64, utils::thumbnail::ThumbnailFormat,
-    ClaimGeneratorInfo, Error, Result, Signer, SigningAlg,
+    create_signer, crypto::base64, utils::thumbnail::ThumbnailFormat, ClaimGeneratorInfo, Error,
+    Result, Signer, SigningAlg,
 };
 
 thread_local!(
@@ -505,6 +504,7 @@ pub(crate) fn load_settings_from_file<P: AsRef<Path>>(settings_path: P) -> Resul
 
     let setting_buf = std::fs::read(&settings_path).map_err(Error::IoError)?;
 
+    #[allow(deprecated)]
     load_settings_from_str(&String::from_utf8_lossy(&setting_buf), &ext)
 }
 
@@ -779,15 +779,15 @@ pub mod tests {
         // here is an example of incomplete structures only overriding specific
         // fields
 
-        let modified_core = r#"{
-            "core": {
-                "debug": true,
-                "hash_alg": "sha512",
-                "max_memory_usage": 123456
-            }
-        }"#;
+        let modified_core = toml::toml! {
+            [core]
+            debug = true
+            hash_alg = "sha512"
+            max_memory_usage = 123456
+        }
+        .to_string();
 
-        load_settings_from_str(modified_core, "json").unwrap();
+        load_settings(&modified_core).unwrap();
 
         // see if updated values match
         assert!(get_settings_value::<bool>("core.debug").unwrap());
@@ -816,29 +816,29 @@ pub mod tests {
 
     #[test]
     fn test_bad_setting() {
-        let modified_core = r#"{
-            "core": {
-                "debug": true,
-                "hash_alg": "sha1000000",
-                "max_memory_usage": 123456
-            }
-        }"#;
+        let modified_core = toml::toml! {
+            [core]
+            debug = true
+            hash_alg = "sha1000000"
+            max_memory_usage = 123456
+        }
+        .to_string();
 
-        assert!(load_settings_from_str(modified_core, "json").is_err());
+        assert!(load_settings(&modified_core).is_err());
 
         reset_default_settings().unwrap();
     }
     #[test]
     fn test_hidden_setting() {
-        let secret = r#"{
-            "hidden": {
-                "test1": true,
-                "test2": "hello world",
-                "test3": 123456
-            }
-        }"#;
+        let secret = toml::toml! {
+            [hidden]
+            test1 = true
+            test2 = "hello world"
+            test3 = 123456
+        }
+        .to_string();
 
-        load_settings_from_str(secret, "json").unwrap();
+        load_settings(&secret).unwrap();
 
         assert!(get_settings_value::<bool>("hidden.test1").unwrap());
         assert_eq!(
@@ -855,37 +855,33 @@ pub mod tests {
 
     #[test]
     fn test_all_setting() {
-        let all_settings = r#"{
-            "version_major": 1,
-            "version_minor": 0,
-            "trust": {
-                "private_anchors": null,
-                "trust_anchors": null,
-                "trust_config": null,
-                "allowed_list": null
-            },
-            "Core": {
-                "debug": false,
-                "hash_alg": "sha256",
-                "salt_jumbf_boxes": true,
-                "prefer_box_hash": false,
-                "prefer_bmff_merkle_tree": false,
-                "compress_manifests": true,
-                "max_memory_usage": null
-            },
-            "Verify": {
-                "verify_after_reading": true,
-                "verify_after_sign": true,
-                "verify_trust": true,
-                "ocsp_fetch": false,
-                "remote_manifest_fetch": true,
-                "check_ingredient_trust": true,
-                "skip_ingredient_conflict_resolution": false,
-                "strict_v1_validation": false
-            }
-        }"#;
+        let all_settings = toml::toml! {
+            version_major = 1
+            version_minor = 0
 
-        load_settings_from_str(all_settings, "json").unwrap();
+            [trust]
+
+            [Core]
+            debug = false
+            hash_alg = "sha256"
+            salt_jumbf_boxes = true
+            prefer_box_hash = false
+            prefer_bmff_merkle_tree = false
+            compress_manifests = true
+
+            [Verify]
+            verify_after_reading = true
+            verify_after_sign = true
+            verify_trust = true
+            ocsp_fetch = false
+            remote_manifest_fetch = true
+            check_ingredient_trust = true
+            skip_ingredient_conflict_resolution = false
+            strict_v1_validation = false
+        }
+        .to_string();
+
+        load_settings(&all_settings).unwrap();
 
         reset_default_settings().unwrap();
     }

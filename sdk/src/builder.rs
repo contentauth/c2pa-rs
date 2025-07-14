@@ -880,6 +880,7 @@ impl Builder {
         if !found_actions {
             let mut actions = Actions::new();
             self.add_auto_actions_assertions(&mut actions)?;
+
             if !actions.actions().is_empty() {
                 claim.add_assertion(&actions)?;
             }
