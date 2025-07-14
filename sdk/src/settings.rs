@@ -19,14 +19,16 @@ use std::{
 };
 
 use config::{Config, FileFormat};
-#[cfg(feature = "json_schema")]
-use schemars::JsonSchema;
 use serde_derive::{Deserialize, Serialize};
 
-use crate::{crypto::base64, Error, Result};
+use crate::{
+    create_signer, crypto::base64, utils::thumbnail::ThumbnailFormat, ClaimGeneratorInfo, Error,
+    Result, Signer, SigningAlg,
+};
 
 thread_local!(
-    static SETTINGS: RefCell<Config> = RefCell::new(Config::try_from(&Settings::default()).unwrap_or_default())
+    static SETTINGS: RefCell<Config> =
+        RefCell::new(Config::try_from(&Settings::default()).unwrap_or_default());
 );
 
 // trait used to validate user input to make sure user supplied configurations are valid
@@ -39,7 +41,6 @@ pub(crate) trait SettingsValidate {
 
 // Settings for trust list feature
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 #[allow(unused)]
 pub(crate) struct Trust {
     user_anchors: Option<String>,
@@ -155,7 +156,6 @@ impl SettingsValidate for Trust {
 
 // Settings for core C2PA-RS functionality
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 #[allow(unused)]
 pub(crate) struct Core {
     debug: bool,
@@ -165,6 +165,8 @@ pub(crate) struct Core {
     prefer_bmff_merkle_tree: bool,
     compress_manifests: bool,
     max_memory_usage: Option<u64>,
+    // TODO: pending https://github.com/contentauth/c2pa-rs/pull/1180
+    // prefer_update_manifests: bool,
 }
 
 impl Default for Core {
@@ -177,6 +179,7 @@ impl Default for Core {
             prefer_bmff_merkle_tree: false,
             compress_manifests: true,
             max_memory_usage: None,
+            // prefer_update_manifests: true,
         }
     }
 }
@@ -192,7 +195,6 @@ impl SettingsValidate for Core {
 
 // Settings for verification options
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 #[allow(unused)]
 pub(crate) struct Verify {
     verify_after_reading: bool,
@@ -224,32 +226,172 @@ impl Default for Verify {
 
 impl SettingsValidate for Verify {}
 
-// Settings for Builder API options
+/// Quality of the thumbnail.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[cfg_attr(feature = "json_schema", derive(JsonSchema))]
+#[serde(rename_all = "lowercase")]
+pub enum ThumbnailQuality {
+    /// Low quality.
+    Low,
+    /// Medium quality.
+    Medium,
+    /// High quality.
+    High,
+}
+
+/// Settings for controlling automatic thumbnail generation.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct ThumbnailSettings {
+    /// Whether or not to automatically generate thumbnails.
+    enabled: bool,
+    /// Whether to ignore thumbnail generation errors.
+    ///
+    /// This may occur, for instance, if the thumbnail media type or color layout isn't
+    /// supported.
+    ignore_errors: bool,
+    /// The size of the longest edge of the thumbnail.
+    ///
+    /// This function will resize the input to preserve aspect ratio.
+    long_edge: u32,
+    /// Format of the thumbnail.
+    ///
+    /// If this field isn't specified, the thumbnail format will correspond to the
+    /// input format.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    format: Option<ThumbnailFormat>,
+    /// Whether or not to prefer a smaller sized media format for the thumbnail.
+    ///
+    /// Note that [ThumbnailSettings::format] takes precedence over this field. In addition,
+    /// if the output format is unsupported, it will default to the smallest format regardless
+    /// of the value of this field.
+    ///
+    /// For instance, if the source input type is a PNG, but it doesn't have an alpha channel,
+    /// the image will be converted to a JPEG of smaller size.
+    prefer_smallest_format: bool,
+    /// The output quality of the thumbnail.
+    ///
+    /// This setting contains sensible defaults for things like quality, compression, and
+    /// algorithms for various formats.
+    quality: ThumbnailQuality,
+}
+
+impl Default for ThumbnailSettings {
+    fn default() -> Self {
+        ThumbnailSettings {
+            enabled: true,
+            ignore_errors: true,
+            long_edge: 1024,
+            format: None,
+            prefer_smallest_format: true,
+            quality: ThumbnailQuality::Medium,
+        }
+    }
+}
+
+impl SettingsValidate for ThumbnailSettings {
+    fn validate(&self) -> Result<()> {
+        #[cfg(not(feature = "add_thumbnails"))]
+        if self.enabled {
+            log::warn!("c2pa-rs feature `add_thumbnails` must be enabled to generate thumbnails!");
+        }
+
+        Ok(())
+    }
+}
+
 #[allow(unused)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct SignerSettings {
+    alg: SigningAlg,
+    sign_cert: Vec<u8>,
+    private_key: Vec<u8>,
+    tsa_url: Option<String>,
+}
+
+#[allow(unused)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct AutoActionSettings {
+    /// Whether to enable this auto action or not.
+    enabled: bool,
+    // TODO: enum
+    /// The default source type for the auto action.
+    source_type: Option<String>,
+}
+
+// Settings for Builder API options
+#[allow(unused)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub(crate) struct Builder {
-    auto_thumbnail: bool,
+    /// Information about the signer used for signing.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    signer: Option<SignerSettings>,
+    /// Claim generator info that is automatically added to the builder.
+    ///
+    /// Note that this information will prepend any claim generator info
+    /// provided explicitly to the builder.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    claim_generator_info: Option<ClaimGeneratorInfo>,
+    /// Various settings for configuring automatic thumbnail generation.
+    thumbnail: ThumbnailSettings,
+    /// Whether to automatically generate a c2pa.created [Action][crate::assertions::Action]
+    /// assertion or error that it doesn't already exist.
+    ///
+    /// For more information about the mandatory conditions for a c2pa.created action assertion, see here:
+    /// https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_mandatory_presence_of_at_least_one_actions_assertion
+    auto_created_action: AutoActionSettings,
+    /// Whether to automatically generate a c2pa.opened [Action][crate::assertions::Action]
+    /// assertion or error that it doesn't already exist.
+    ///
+    /// For more information about the mandatory conditions for a c2pa.opened action assertion, see here:
+    /// https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_mandatory_presence_of_at_least_one_actions_assertion
+    auto_opened_action: AutoActionSettings,
+    /// Whether to automatically generate a c2pa.placed [Action][crate::assertions::Action]
+    /// assertion or error that it doesn't already exist.
+    ///
+    /// For more information about the mandatory conditions for a c2pa.placed action assertion, see here:
+    /// https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_relationship
+    auto_placed_action: AutoActionSettings,
 }
 
 impl Default for Builder {
     fn default() -> Self {
         Self {
-            auto_thumbnail: true,
+            signer: None,
+            claim_generator_info: None,
+            thumbnail: Default::default(),
+            auto_created_action: AutoActionSettings {
+                enabled: false,
+                source_type: None,
+            },
+            auto_opened_action: AutoActionSettings {
+                enabled: true,
+                source_type: None,
+            },
+            auto_placed_action: AutoActionSettings {
+                enabled: true,
+                source_type: None,
+            },
         }
     }
 }
 
-impl SettingsValidate for Builder {}
+impl SettingsValidate for Builder {
+    fn validate(&self) -> Result<()> {
+        if self.auto_created_action.enabled && self.auto_created_action.source_type.is_none() {
+            return Err(Error::MissingAutoCreatedActionSourceType);
+        }
+
+        self.thumbnail.validate()
+    }
+}
 
 const MAJOR_VERSION: usize = 1;
 const MINOR_VERSION: usize = 0;
-// Settings configuration for C2PA-RS.  Default configuration values
-// are lazy loaded on first use.  Values can also be loaded from a configuration
-// file or by setting specific value via code.  There is a single configuration
-// setting for the entire C2PA-RS instance.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[cfg_attr(feature = "json_schema", derive(JsonSchema))]
+
+/// Settings for configuring all aspects of c2pa-rs.
+///
+/// [Settings::default] will be set thread-locally by default. Any settings set via
+/// [Settings::from_toml] or [Settings::from_file] will also be thread-local.
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[allow(unused)]
 pub struct Settings {
     version_major: usize,
@@ -260,21 +402,7 @@ pub struct Settings {
     builder: Builder,
 }
 
-impl Default for Settings {
-    fn default() -> Self {
-        Self {
-            version_major: MAJOR_VERSION,
-            version_minor: MINOR_VERSION,
-            trust: Default::default(),
-            core: Default::default(),
-            verify: Default::default(),
-            builder: Default::default(),
-        }
-    }
-}
-
 impl Settings {
-    #[allow(unused)]
     #[cfg(feature = "file_io")]
     pub fn from_file<P: AsRef<Path>>(setting_path: P) -> Result<Self> {
         let ext = setting_path
@@ -284,10 +412,11 @@ impl Settings {
             .to_string_lossy();
 
         let setting_buf = std::fs::read(&setting_path).map_err(Error::IoError)?;
+        #[allow(deprecated)]
         Settings::from_string(&String::from_utf8_lossy(&setting_buf), &ext)
     }
 
-    #[allow(unused)]
+    #[deprecated = "use `Settings::from_toml` instead"]
     pub fn from_string(settings_str: &str, format: &str) -> Result<Self> {
         let f = match format.to_lowercase().as_str() {
             "json" => FileFormat::Json,
@@ -304,7 +433,7 @@ impl Settings {
             .build()
             .map_err(|_e| Error::BadParam("could not parse configuration file".into()))?;
 
-        let mut update_config = SETTINGS.with_borrow(|current_settings| {
+        let update_config = SETTINGS.with_borrow(|current_settings| {
             Config::builder()
                 .add_source(current_settings.clone())
                 .add_source(new_config)
@@ -323,11 +452,112 @@ impl Settings {
 
                 settings.validate()?;
 
-                SETTINGS.set(update_config);
+                SETTINGS.set(update_config.clone());
 
                 Ok(settings)
             }
             Err(_) => Err(Error::OtherError("could not update configuration".into())),
+        }
+    }
+
+    /// Set the [Settings] from a toml file.
+    pub fn from_toml(toml: &str) -> Result<()> {
+        #[allow(deprecated)]
+        Settings::from_string(toml, "toml").map(|_| ())
+    }
+
+    /// Set a [Settings] value by path reference. The path is nested names of of the Settings objects
+    /// separated by "." notation.
+    ///
+    /// For example "core.hash_alg" would set settings.core.hash_alg value. The nesting can be arbitrarily
+    /// deep based on the [Settings] definition.
+    #[allow(unused)]
+    pub fn set_value<T: Into<config::Value>>(value_path: &str, value: T) -> Result<()> {
+        let c = SETTINGS.take();
+
+        let update_config = Config::builder()
+            .add_source(c.clone())
+            .set_override(value_path, value);
+
+        if let Ok(updated) = update_config {
+            let update_config = updated
+                .build()
+                .map_err(|_e| Error::OtherError("could not update configuration".into()))?;
+
+            let settings = update_config
+                .clone()
+                .try_deserialize::<Settings>()
+                .map_err(|_e| {
+                    Error::BadParam("configuration file contains unrecognized param".into())
+                })?;
+            settings.validate()?;
+
+            SETTINGS.set(update_config);
+
+            Ok(())
+        } else {
+            SETTINGS.set(c);
+            Err(Error::OtherError("could not save settings".into()))
+        }
+    }
+
+    /// Get a [Settings] value by path reference. The path is nested names of of the [Settings] objects
+    /// separated by "." notation.
+    ///
+    /// For example "core.hash_alg" would get the settings.core.hash_alg value. The nesting can be arbitrarily
+    /// deep based on the [Settings] definition.
+    #[allow(unused)]
+    pub fn get_value<'de, T: serde::de::Deserialize<'de>>(value_path: &str) -> Result<T> {
+        SETTINGS.with_borrow(|current_settings| {
+            let update_config = Config::builder()
+                .add_source(current_settings.clone())
+                .build()
+                .map_err(|_e| Error::OtherError("could not update configuration".into()))?;
+
+            update_config
+                .get::<T>(value_path)
+                .map_err(|_| Error::NotFound)
+        })
+    }
+
+    /// Returns the constructed signer from the signer field in [Settings].
+    ///
+    /// If the signer settings aren't specified, this function will return [Error::UnspecifiedSignerSettings][crate::Error::UnspecifiedSignerSettings].
+    pub fn get_signer() -> Result<Box<dyn Signer>> {
+        let signer_info = get_settings_value::<Option<SignerSettings>>("builder.signer");
+        if let Ok(Some(signer_info)) = signer_info {
+            create_signer::from_keys(
+                &signer_info.sign_cert,
+                &signer_info.private_key,
+                signer_info.alg,
+                signer_info.tsa_url.to_owned(),
+            )
+        } else {
+            Err(Error::MissingSignerSettings)
+        }
+    }
+
+    /// Set [Settings] back to the default values.
+    #[allow(unused)]
+    pub fn reset() -> Result<()> {
+        if let Ok(default_settings) = Config::try_from(&Settings::default()) {
+            SETTINGS.set(default_settings);
+            Ok(())
+        } else {
+            Err(Error::OtherError("could not save settings".into()))
+        }
+    }
+}
+
+impl Default for Settings {
+    fn default() -> Self {
+        Settings {
+            version_major: MAJOR_VERSION,
+            version_minor: MINOR_VERSION,
+            trust: Default::default(),
+            core: Default::default(),
+            verify: Default::default(),
+            builder: Default::default(),
         }
     }
 }
@@ -354,8 +584,9 @@ pub(crate) fn get_settings() -> Option<Settings> {
 
 // Load settings from configuration file
 #[allow(unused)]
+#[deprecated = "use `Settings::from__file`"]
 #[cfg(feature = "file_io")]
-pub(crate) fn load_settings<P: AsRef<Path>>(settings_path: P) -> Result<()> {
+pub(crate) fn load_settings_from_file<P: AsRef<Path>>(settings_path: P) -> Result<()> {
     let ext = settings_path
         .as_ref()
         .extension()
@@ -364,12 +595,16 @@ pub(crate) fn load_settings<P: AsRef<Path>>(settings_path: P) -> Result<()> {
 
     let setting_buf = std::fs::read(&settings_path).map_err(Error::IoError)?;
 
+    #[allow(deprecated)]
     load_settings_from_str(&String::from_utf8_lossy(&setting_buf), &ext)
 }
 
-/// Load settings form string representation of the configuration.  Format of configuration must be supplied.
+/// Load settings from string representation of the configuration. Format of configuration must be supplied.
 #[allow(unused)]
+// TODO: when this is removed, remove the additional features (for all supported formats) from the Cargo.toml
+#[deprecated = "use `Settings::from_toml`"]
 pub fn load_settings_from_str(settings_str: &str, format: &str) -> Result<()> {
+    #[allow(deprecated)]
     Settings::from_string(settings_str, format).map(|_| ())
 }
 
@@ -385,67 +620,25 @@ pub(crate) fn save_settings_as_json<P: AsRef<Path>>(settings_path: P) -> Result<
     std::fs::write(settings_path, settings_json.as_bytes()).map_err(Error::IoError)
 }
 
-// Set a Settings value by path reference.  The path is nested names of of the Settings objects
-// separated by "." notation.  For example "core.hash_alg" would set settings.core.hash_alg value.
-// The nesting can be arbitrarily deep based on the Settings definition.
+/// See [Settings::set_value] for more information.
 #[allow(unused)]
 pub(crate) fn set_settings_value<T: Into<config::Value>>(value_path: &str, value: T) -> Result<()> {
-    let c = SETTINGS.take();
-
-    let update_config = Config::builder()
-        .add_source(c.clone())
-        .set_override(value_path, value);
-
-    if let Ok(updated) = update_config {
-        let update_config = updated
-            .build()
-            .map_err(|_e| Error::OtherError("could not update configuration".into()))?;
-
-        let settings = update_config
-            .clone()
-            .try_deserialize::<Settings>()
-            .map_err(|_e| {
-                Error::BadParam("configuration file contains unrecognized param".into())
-            })?;
-        settings.validate()?;
-
-        SETTINGS.set(update_config);
-
-        Ok(())
-    } else {
-        SETTINGS.set(c);
-        Err(Error::OtherError("could not save settings".into()))
-    }
+    Settings::set_value(value_path, value)
 }
 
-// Get a Settings value by path reference.  The path is nested names of of the Settings objects
-// separated by "." notation.  For example "core.hash_alg" would get the settings.core.hash_alg value.
-// The nesting can be arbitrarily deep based on the Settings definition.
+/// See [Settings::get_value] for more information.
 #[allow(unused)]
 pub(crate) fn get_settings_value<'de, T: serde::de::Deserialize<'de>>(
     value_path: &str,
 ) -> Result<T> {
-    SETTINGS.with_borrow(|current_settings| {
-        let update_config = Config::builder()
-            .add_source(current_settings.clone())
-            .build()
-            .map_err(|_e| Error::OtherError("could not update configuration".into()))?;
-
-        update_config
-            .get::<T>(value_path)
-            .map_err(|_| Error::NotFound)
-    })
+    Settings::get_value(value_path)
 }
 
-// Set settings back to the default values.  Current use case is for testing.
+/// See [Settings::reset] for more information.
 #[allow(unused)]
+// #[deprecated = "use `Settings::reset` instead"]
 pub fn reset_default_settings() -> Result<()> {
-    if let Ok(default_settings) = Config::try_from(&Settings::default()) {
-        SETTINGS.set(default_settings);
-        Ok(())
-    } else {
-        Err(Error::OtherError("could not save settings".into()))
-    }
+    Settings::reset()
 }
 
 #[cfg(test)]
@@ -477,8 +670,8 @@ pub mod tests {
             Core::default().hash_alg
         );
         assert_eq!(
-            get_settings_value::<bool>("builder.auto_thumbnail").unwrap(),
-            Builder::default().auto_thumbnail
+            get_settings_value::<bool>("builder.thumbnail.enabled").unwrap(),
+            Builder::default().thumbnail.enabled
         );
         assert_eq!(
             get_settings_value::<Option<String>>("trust.user_anchors").unwrap(),
@@ -504,7 +697,7 @@ pub mod tests {
         let hash_alg: String = get_settings_value("core.hash_alg").unwrap();
         let remote_manifest_fetch: bool =
             get_settings_value("verify.remote_manifest_fetch").unwrap();
-        let auto_thumbnail: bool = get_settings_value("builder.auto_thumbnail").unwrap();
+        let auto_thumbnail: bool = get_settings_value("builder.thumbnail.enabled").unwrap();
         let user_anchors: Option<String> = get_settings_value("trust.user_anchors").unwrap();
 
         assert_eq!(hash_alg, Core::default().hash_alg);
@@ -512,7 +705,7 @@ pub mod tests {
             remote_manifest_fetch,
             Verify::default().remote_manifest_fetch
         );
-        assert_eq!(auto_thumbnail, Builder::default().auto_thumbnail);
+        assert_eq!(auto_thumbnail, Builder::default().thumbnail.enabled);
         assert_eq!(user_anchors, Trust::default().user_anchors);
 
         // test implicit deserialization on objects
@@ -534,10 +727,10 @@ pub mod tests {
         let ts = include_bytes!("../tests/fixtures/certs/trust/test_cert_root_bundle.pem");
 
         // test updating values
-        set_settings_value("core.hash_alg", "sha512").unwrap();
-        set_settings_value("verify.remote_manifest_fetch", false).unwrap();
-        set_settings_value("builder.auto_thumbnail", false).unwrap();
-        set_settings_value(
+        Settings::set_value("core.hash_alg", "sha512").unwrap();
+        Settings::set_value("verify.remote_manifest_fetch", false).unwrap();
+        Settings::set_value("builder.thumbnail.enabled", false).unwrap();
+        Settings::set_value(
             "trust.user_anchors",
             Some(String::from_utf8(ts.to_vec()).unwrap()),
         )
@@ -548,7 +741,7 @@ pub mod tests {
             "sha512"
         );
         assert!(!get_settings_value::<bool>("verify.remote_manifest_fetch").unwrap());
-        assert!(!get_settings_value::<bool>("builder.auto_thumbnail").unwrap());
+        assert!(!get_settings_value::<bool>("builder.thumbnail.enabled").unwrap());
         assert_eq!(
             get_settings_value::<Option<String>>("trust.user_anchors").unwrap(),
             Some(String::from_utf8(ts.to_vec()).unwrap())
@@ -577,7 +770,7 @@ pub mod tests {
 
         save_settings_as_json(&op).unwrap();
 
-        load_settings(&op).unwrap();
+        Settings::from_file(&op).unwrap();
         let settings = get_settings().unwrap();
 
         assert_eq!(settings, Settings::default());
@@ -595,7 +788,12 @@ pub mod tests {
 
         let setting_buf = std::fs::read(&op).unwrap();
 
-        load_settings_from_str(&String::from_utf8_lossy(&setting_buf), "json").unwrap();
+        {
+            let settings_str: &str = &String::from_utf8_lossy(&setting_buf);
+            #[allow(deprecated)]
+            Settings::from_string(settings_str, "json").map(|_| ())
+        }
+        .unwrap();
         let settings = get_settings().unwrap();
 
         assert_eq!(settings, Settings::default());
@@ -609,15 +807,15 @@ pub mod tests {
         // here is an example of incomplete structures only overriding specific
         // fields
 
-        let modified_core = r#"{
-            "core": {
-                "debug": true,
-                "hash_alg": "sha512",
-                "max_memory_usage": 123456
-            }
-        }"#;
+        let modified_core = toml::toml! {
+            [core]
+            debug = true
+            hash_alg = "sha512"
+            max_memory_usage = 123456
+        }
+        .to_string();
 
-        load_settings_from_str(modified_core, "json").unwrap();
+        Settings::from_toml(&modified_core).unwrap();
 
         // see if updated values match
         assert!(get_settings_value::<bool>("core.debug").unwrap());
@@ -632,8 +830,8 @@ pub mod tests {
 
         // check a few defaults to make sure they are still there
         assert_eq!(
-            get_settings_value::<bool>("builder.auto_thumbnail").unwrap(),
-            Builder::default().auto_thumbnail
+            get_settings_value::<bool>("builder.thumbnail.enabled").unwrap(),
+            Builder::default().thumbnail.enabled
         );
 
         assert_eq!(
@@ -646,29 +844,29 @@ pub mod tests {
 
     #[test]
     fn test_bad_setting() {
-        let modified_core = r#"{
-            "core": {
-                "debug": true,
-                "hash_alg": "sha1000000",
-                "max_memory_usage": 123456
-            }
-        }"#;
+        let modified_core = toml::toml! {
+            [core]
+            debug = true
+            hash_alg = "sha1000000"
+            max_memory_usage = 123456
+        }
+        .to_string();
 
-        assert!(load_settings_from_str(modified_core, "json").is_err());
+        assert!(Settings::from_toml(&modified_core).is_err());
 
         reset_default_settings().unwrap();
     }
     #[test]
     fn test_hidden_setting() {
-        let secret = r#"{
-            "hidden": {
-                "test1": true,
-                "test2": "hello world",
-                "test3": 123456
-            }
-        }"#;
+        let secret = toml::toml! {
+            [hidden]
+            test1 = true
+            test2 = "hello world"
+            test3 = 123456
+        }
+        .to_string();
 
-        load_settings_from_str(secret, "json").unwrap();
+        Settings::from_toml(&secret).unwrap();
 
         assert!(get_settings_value::<bool>("hidden.test1").unwrap());
         assert_eq!(
@@ -685,40 +883,33 @@ pub mod tests {
 
     #[test]
     fn test_all_setting() {
-        let all_settings = r#"{   
-            "version_major": 1,
-            "version_minor": 0,
-            "trust": {
-                "private_anchors": null,
-                "trust_anchors": null,
-                "trust_config": null,
-                "allowed_list": null
-            },
-            "Core": {
-                "debug": false,
-                "hash_alg": "sha256",
-                "salt_jumbf_boxes": true,
-                "prefer_box_hash": false,
-                "prefer_bmff_merkle_tree": false,
-                "compress_manifests": true,
-                "max_memory_usage": null
-            },
-            "Verify": {
-                "verify_after_reading": true,
-                "verify_after_sign": true,
-                "verify_trust": true,
-                "ocsp_fetch": false,
-                "remote_manifest_fetch": true,
-                "check_ingredient_trust": true,
-                "skip_ingredient_conflict_resolution": false,
-                "strict_v1_validation": false
-            },
-            "Builder": {
-                "auto_thumbnail": true
-            }
-        }"#;
+        let all_settings = toml::toml! {
+            version_major = 1
+            version_minor = 0
 
-        load_settings_from_str(all_settings, "json").unwrap();
+            [trust]
+
+            [Core]
+            debug = false
+            hash_alg = "sha256"
+            salt_jumbf_boxes = true
+            prefer_box_hash = false
+            prefer_bmff_merkle_tree = false
+            compress_manifests = true
+
+            [Verify]
+            verify_after_reading = true
+            verify_after_sign = true
+            verify_trust = true
+            ocsp_fetch = false
+            remote_manifest_fetch = true
+            check_ingredient_trust = true
+            skip_ingredient_conflict_resolution = false
+            strict_v1_validation = false
+        }
+        .to_string();
+
+        Settings::from_toml(&all_settings).unwrap();
 
         reset_default_settings().unwrap();
     }

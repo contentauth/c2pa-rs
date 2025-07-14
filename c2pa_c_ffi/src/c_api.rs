@@ -19,9 +19,11 @@ use std::{
 #[cfg(feature = "file_io")]
 use c2pa::Ingredient;
 // C has no namespace so we prefix things with C2PA to make them unique
+#[allow(deprecated)]
+use c2pa::settings::load_settings_from_str;
 use c2pa::{
-    assertions::DataHash, identity::validator::CawgValidator, settings::load_settings_from_str,
-    Builder as C2paBuilder, CallbackSigner, Reader as C2paReader, SigningAlg,
+    assertions::DataHash, identity::validator::CawgValidator, Builder as C2paBuilder,
+    CallbackSigner, Reader as C2paReader, SigningAlg,
 };
 use scopeguard::guard;
 use tokio::runtime::Runtime; // cawg validator requires async
@@ -280,6 +282,7 @@ pub unsafe extern "C" fn c2pa_load_settings(
 ) -> c_int {
     let settings = from_cstr_or_return_int!(settings);
     let format = from_cstr_or_return_int!(format);
+    #[allow(deprecated)]
     let result = load_settings_from_str(&settings, &format);
     ok_or_return_int!(result, |_| 0) // returns 0 on success
 }

@@ -216,6 +216,15 @@ pub enum Error {
     #[error("type is unsupported")]
     UnsupportedType,
 
+    #[error("thumbnail format {0} is unsupported")]
+    UnsupportedThumbnailFormat(String),
+
+    #[error("`trust.signer_info` is missing from settings")]
+    MissingSignerSettings,
+
+    #[error("`builder.auto_created_action.source_type` must be set if this feature is enabled")]
+    MissingAutoCreatedActionSourceType,
+
     #[error("embedding error")]
     EmbeddingError,
 
@@ -281,6 +290,9 @@ pub enum Error {
     // --- third-party errors ---
     #[error(transparent)]
     Utf8Error(#[from] std::str::Utf8Error),
+
+    #[error(transparent)]
+    ConfigError(#[from] config::ConfigError),
 
     #[error(transparent)]
     TryFromIntError(#[from] std::num::TryFromIntError),
