@@ -39,6 +39,7 @@ use crate::{
     },
     log_item,
     resource_store::{skip_serializing_resources, ResourceRef, ResourceStore},
+    salt::DefaultSalt,
     status_tracker::StatusTracker,
     store::Store,
     utils::{
@@ -1188,6 +1189,7 @@ impl Ingredient {
         if let Some(thumb_ref) = self.thumbnail_ref() {
             let hash_url = match manifest_label_from_uri(&thumb_ref.identifier) {
                 Some(_) => {
+                    // we have a JUMBF uri so build a hashed uri to the existing assertion
                     let hash = match thumb_ref.hash.as_ref() {
                         Some(h) => base64::decode(h)
                             .map_err(|_e| Error::BadParam("Invalid hash".to_string()))?,
@@ -1196,9 +1198,11 @@ impl Ingredient {
                     HashedUri::new(thumb_ref.identifier.clone(), thumb_ref.alg.clone(), &hash)
                 }
                 None => {
+                    // This is a resource reference so we need so we need to get the data from the resource
+                    // create thumbnail assertion and then return the hashed uri to that
                     let data = match self.thumbnail.as_ref() {
                         Some(thumbnail) => get_resource(&thumbnail.identifier),
-                        None => Err(Error::NotFound),
+                        None => Err(Error::ResourceNotFound(thumb_ref.identifier.to_string())),
                     }?;
                     if self.is_v2() {
                         // v2 ingredients use databoxes for thumbnails
@@ -1209,12 +1213,15 @@ impl Ingredient {
                         )?
                     } else {
                         let thumbnail = if claim.version() >= 2 {
+                            // add EmbeddedData thumbnail for v3 assertions in v2 claims
                             EmbeddedData::new(
                                 labels::INGREDIENT_THUMBNAIL,
                                 format_to_mime(&thumb_ref.format),
                                 data.into_owned(),
                             )
                         } else {
+                            // add Thumbnail for v1 assertions in v1 claims
+                            // this is v1 early way of doing thumbnails
                             Thumbnail::new(
                                 &labels::add_thumbnail_format(
                                     labels::INGREDIENT_THUMBNAIL,
@@ -1224,7 +1231,7 @@ impl Ingredient {
                             )
                             .into()
                         };
-                        claim.add_assertion(&thumbnail)?
+                        claim.add_assertion_with_salt(&thumbnail, &DefaultSalt::default())?
                     }
                 }
             };
@@ -1234,13 +1241,23 @@ impl Ingredient {
         let mut data = None;
         if let Some(data_ref) = self.data_ref() {
             let box_data = get_resource(&data_ref.identifier)?;
-            let hash_url = claim.add_databox(
-                &data_ref.format,
-                box_data.into_owned(),
-                data_ref.data_types.clone(),
-            )?;
+            let hash_uri = match claim.version() {
+                1 => claim.add_databox(
+                    &data_ref.format,
+                    box_data.into_owned(),
+                    data_ref.data_types.clone(),
+                )?,
+                _ => {
+                    let embedded_data = EmbeddedData::new(
+                        labels::EMBEDDED_DATA,
+                        format_to_mime(&data_ref.format),
+                        box_data.into_owned(),
+                    );
+                    claim.add_assertion_with_salt(&embedded_data, &DefaultSalt::default())?
+                }
+            };
 
-            data = Some(hash_url);
+            data = Some(hash_uri);
         };
 
         // instance_id is required in V1 so we generate one if it's not provided

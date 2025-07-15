@@ -75,6 +75,8 @@ pub struct Config {
     pub recipes: Vec<Recipe>,
     /// A folder to compare the output to
     pub compare_folders: Option<[String; 2]>,
+    /// Claim version to use for the generated images
+    pub claim_version: u32,
 }
 
 impl Config {
@@ -101,6 +103,7 @@ impl Default for Config {
             author: None,
             recipes: Vec::new(),
             compare_folders: None,
+            claim_version: 2, // Default to version 2
         }
     }
 }
@@ -258,7 +261,7 @@ impl MakeTestImages {
         let format = extension_to_mime(extension).unwrap_or("image/jpeg");
 
         let manifest_def = json!({
-            "claim_version": 1,
+            "claim_version": self.config.claim_version,
             "vendor": "contentauth",
             "title": name,
             "format": &format,

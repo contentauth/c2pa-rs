@@ -11,12 +11,16 @@
 // specific language governing permissions and limitations under
 // each license.
 
-/// Compares two manifest stores and prints out the differences.
-use std::collections::HashMap;
-use std::{fs, path::Path};
+//! Compares two manifest stores and prints out the differences.
+use std::{
+    collections::{BTreeMap, HashMap},
+    fs,
+    path::Path,
+};
 
 use c2pa::{Error, Reader, Result};
 use regex::Regex;
+use serde_json::Value;
 
 /// Compares all the files in two directories and returns a list of issues
 pub fn compare_folders<P: AsRef<Path>, Q: AsRef<Path>>(folder1: P, folder2: Q) -> Result<()> {
@@ -48,7 +52,6 @@ pub fn compare_folders<P: AsRef<Path>, Q: AsRef<Path>>(folder1: P, folder2: Q) -
         if path.is_file() {
             let relative_path = path.strip_prefix(folder1).unwrap();
             let other_path = folder2.join(relative_path);
-            //println!("Comparing {:?} to {:?}", path, other_path);
             let mut issues = Vec::new();
             if other_path.exists() {
                 let result = compare_image_manifests(&path, &other_path)?;
@@ -79,10 +82,7 @@ pub fn compare_image_manifests<P: AsRef<Path>, Q: AsRef<Path>>(
     m2: Q,
 ) -> Result<Vec<String>> {
     let manifest_store1 = match m1.as_ref().extension() {
-        Some(ext) if ext == "json" => {
-            Reader::from_json(&fs::read_to_string(m1)?)
-            //serde_json::from_str(&fs::read_to_string(m1)?).map_err(Error::JsonError)
-        }
+        Some(ext) if ext == "json" => Reader::from_json(&fs::read_to_string(m1)?),
         _ => Reader::from_file(m1.as_ref()),
     };
     let manifest_store2 = match m2.as_ref().extension() {
@@ -120,15 +120,12 @@ pub fn compare_manifests(
     // now we can compare the manifests
     let mut issues = Vec::new();
     for (label1, label2) in manifest_map.iter() {
-        // let foo = serde_json::to_string(&manifest_store1.get(label1))?;
-        // let foo = serde_json::from_str(&foo)?;
-        // convert manifests into json values and compare them
         let value1 = serde_json::to_value(manifest_store1.get_manifest(label1))?;
         let value2 = serde_json::to_value(manifest_store2.get_manifest(label2))?;
         compare_json_values(
             &format!("manifests.{label1}"),
-            &value1,
-            &value2,
+            &normalize_json(value1),
+            &normalize_json(value2),
             &mut issues,
         );
     }
@@ -149,129 +146,258 @@ fn gather_manifests(manifest_store: &Reader, manifest_label: &str, labels: &mut 
     }
 }
 
-/// Recursively compare two ManifestStore JSON values
-fn compare_json_values(
-    path: &str,
-    val1: &serde_json::Value,
-    val2: &serde_json::Value,
-    issues: &mut Vec<String>,
-) {
-    // Add this regex for the jumbf pattern
+fn get_object_identifier(obj: &Value) -> Option<String> {
+    if let Some(map) = obj.as_object() {
+        // Use label for assertions and ingredients
+        if let Some(label) = map.get("label").and_then(|v| v.as_str()) {
+            return Some(label.to_string());
+        }
+        // if let Some(instance_id) = map.get("instance_id").and_then(|v| v.as_str()) {
+        //     return Some(instance_id.to_string()); // ingredient
+        // }
+        if let Some(action) = map.get("action").and_then(|v| v.as_str()) {
+            if let Some(params) = map.get("parameters") {
+                if let Some(ingredients) = params.get("ingredients") {
+                    if let Some(arr) = ingredients.as_array() {
+                        // Use first ingredient url if present
+                        if let Some(first) = arr.first() {
+                            if let Some(url) = first.get("url").and_then(|v| v.as_str()) {
+                                return Some(format!("{action}:{url}"));
+                            }
+                        }
+                    }
+                }
+            }
+            // Fallback to just action
+            return Some(action.to_string());
+        }
+        // Use url for ingredient reference in action
+        if let Some(url) = map.get("url").and_then(|v| v.as_str()) {
+            return Some(url.to_string());
+        }
+    }
+    None
+}
+
+fn normalize_json(value: Value) -> Value {
     lazy_static::lazy_static! {
-        // Captures: prefix, guid, suffix
-        static ref JUMBF_GUID_CAPTURE: Regex = Regex::new(
-            r"^(self#jumbf=/c2pa/[^:]+:urn:uuid:)([0-9a-fA-F\-]{36})(/.*)$"
-        ).unwrap();
-        static ref URN_GUID_CAPTURE: Regex = Regex::new(
-            r"^([a-zA-Z0-9_]+:)?(urn:(?:c2pa|uuid):)([0-9a-fA-F\-]{36})(:?.*)?$"
-        ).unwrap();
-        static ref PREFIXED_URN_UUID_CAPTURE: Regex = Regex::new(
-            r"^([a-zA-Z0-9_]+:urn:uuid:)([0-9a-fA-F\-]{36})$"
-        ).unwrap();
-        static ref XMP_IID_GUID_CAPTURE: Regex = Regex::new(
-        r"^(xmp:iid:)([0-9a-fA-F\-]{36})$"
-        ).unwrap();
-        static ref UTC_TIMESTAMP_RE: Regex = Regex::new(
-            r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?([+-]\d{2}:\d{2}|Z)$"
-        ).unwrap();
-        static ref BASE64_RE: Regex = Regex::new(r"^[A-Za-z0-9+/=]{16,}$").unwrap();
+        static ref GUID_RE: Regex = Regex::new(r"([a-zA-Z0-9\._-]+:)?(urn:(c2pa|uuid):|xmp.iid:)[0-9a-fA-F\-]{36}").unwrap();
+        static ref JUMBF_GUID_RE: Regex = Regex::new(r"self#jumbf=/c2pa/[^:]+:urn:uuid:[0-9a-fA-F\-]{36}(/.*)?").unwrap();
+        static ref UTC_TIMESTAMP_RE: Regex = Regex::new(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?([+-]\d{2}:\d{2}|Z)$").unwrap();
+        static ref VERSION_RE: Regex = Regex::new(r"0\.\d+\.\d+").unwrap();
+    }
+
+    match value {
+        Value::Object(map) => {
+            let new_map: BTreeMap<String, Value> = map
+                .into_iter()
+                .map(|(k, v)| {
+                    let new_v = if k == "pad" {
+                        Value::String("<PAD>".to_string())
+                    } else {
+                        normalize_json(v)
+                    };
+                    (k, new_v)
+                })
+                .collect();
+            Value::Object(new_map.into_iter().collect())
+        }
+        Value::Array(arr) => {
+            let mut new_arr: Vec<Value> = arr.into_iter().map(normalize_json).collect();
+
+            // If this is an array of objects with identifiers, sort it.
+            if !new_arr.is_empty()
+                && new_arr.iter().all(|v| v.is_object())
+                && new_arr.iter().all(|v| get_object_identifier(v).is_some())
+            {
+                new_arr.sort_by_key(get_object_identifier);
+            }
+            Value::Array(new_arr)
+        }
+        Value::String(s) => {
+            if GUID_RE.is_match(&s) {
+                Value::String(GUID_RE.replace_all(&s, "<GUID>").to_string())
+            } else if JUMBF_GUID_RE.is_match(&s) {
+                // Only replace the GUID portion, keep the rest of the string
+                let replaced = JUMBF_GUID_RE.replace(&s, |caps: &regex::Captures| {
+                    let prefix = caps.get(0).map_or("", |m| m.as_str());
+                    let guid_re = Regex::new(r"urn:uuid:[0-9a-fA-F\-]{36}").unwrap();
+                    guid_re.replace_all(prefix, "<GUID>").to_string()
+                });
+                Value::String(replaced.to_string())
+            } else if UTC_TIMESTAMP_RE.is_match(&s) {
+                Value::String("<TIMESTAMP>".to_string())
+            } else if VERSION_RE.is_match(&s) {
+                Value::String("<VERSION>".to_string())
+            } else {
+                Value::String(s)
+            }
+        }
+        _ => value,
+    }
+}
+
+/// Recursively compare two JSON values
+fn compare_json_values(path: &str, val1: &Value, val2: &Value, issues: &mut Vec<String>) {
+    if val1 == val2 {
+        return;
+    }
+
+    // Suppress reporting changes in hash fields
+    if path.ends_with(".hash") || path.contains("].hash") {
+        return;
     }
 
     match (val1, val2) {
-        (serde_json::Value::Object(map1), serde_json::Value::Object(map2)) => {
-            for (key, val1) in map1 {
-                let val2 = map2.get(key).unwrap_or(&serde_json::Value::Null);
-                compare_json_values(&format!("{path}.{key}"), val1, val2, issues);
-            }
+        (Value::Object(map1), Value::Object(map2)) => {
+            let keys1: Vec<_> = map1.keys().collect();
+            let keys2: Vec<_> = map2.keys().collect();
 
-            for (key, value) in map2 {
-                if map1.get(key).is_none() {
-                    issues.push(format!("Added {path}.{key}: {value}"));
-                }
-            }
-        }
-        (serde_json::Value::Array(arr1), serde_json::Value::Array(arr2)) => {
-            for (i, (val1, val2)) in arr1.iter().zip(arr2.iter()).enumerate() {
-                compare_json_values(&format!("{path}[{i}]"), val1, val2, issues);
-            }
-        }
-        (val1, val2) if val1 != val2 => {
-            // if they are both strings, check for specific patterns
-            if let (Some(s1), Some(s2)) = (val1.as_str(), val2.as_str()) {
-                // For self#jumbf pattern
-                if let (Some(cap1), Some(cap2)) = (
-                    JUMBF_GUID_CAPTURE.captures(s1),
-                    JUMBF_GUID_CAPTURE.captures(s2),
-                ) {
-                    if cap1.get(1).map_or("", |m| m.as_str())
-                        == cap2.get(1).map_or("", |m| m.as_str())
-                        && cap1.get(3).map_or("", |m| m.as_str())
-                            == cap2.get(3).map_or("", |m| m.as_str())
-                    {
-                        return;
-                    }
-                }
-                // For contentauth:urn:uuid:... or similar patterns
-                if let (Some(cap1), Some(cap2)) = (
-                    PREFIXED_URN_UUID_CAPTURE.captures(s1),
-                    PREFIXED_URN_UUID_CAPTURE.captures(s2),
-                ) {
-                    if cap1.get(1).map_or("", |m| m.as_str())
-                        == cap2.get(1).map_or("", |m| m.as_str())
-                    {
-                        return;
-                    }
-                }
-                // For urn:c2pa:... pattern
-                if let (Some(cap1), Some(cap2)) =
-                    (URN_GUID_CAPTURE.captures(s1), URN_GUID_CAPTURE.captures(s2))
-                {
-                    if cap1.get(1).map_or("", |m| m.as_str())
-                        == cap2.get(1).map_or("", |m| m.as_str())
-                        && cap1.get(3).map_or("", |m| m.as_str())
-                            == cap2.get(3).map_or("", |m| m.as_str())
-                    {
-                        return;
-                    }
-                }
-                // For xmp:iid: pattern
-                if let (Some(cap1), Some(cap2)) = (
-                    XMP_IID_GUID_CAPTURE.captures(s1),
-                    XMP_IID_GUID_CAPTURE.captures(s2),
-                ) {
-                    if cap1.get(1).map_or("", |m| m.as_str())
-                        == cap2.get(1).map_or("", |m| m.as_str())
-                    {
-                        return;
-                    }
-                }
-                // Ignore differences if both are UTC timestamps
-                if UTC_TIMESTAMP_RE.is_match(s1) && UTC_TIMESTAMP_RE.is_match(s2) {
-                    return;
-                }
-                // Ignore differences in base64 hash values
-                if path.contains(".hash") && BASE64_RE.is_match(s1) && BASE64_RE.is_match(s2) {
-                    return;
-                }
-                // Ignore version bumps (any string that typically has a version in it)
-                if path.ends_with(".version")
-                    || path.ends_with(".claim_generator")
-                    || path.ends_with(".org.cai.c2pa_rs")
-                    || path.ends_with(".softwareAgent")
-                {
-                    // only if it is a string and could contain a version
-                    return;
+            for key in keys1 {
+                let new_path = format!("{path}.{key}");
+                match map2.get(key) {
+                    Some(v2) => compare_json_values(&new_path, map1.get(key).unwrap(), v2, issues),
+                    None => issues.push(format!("Removed {new_path}: {}", map1.get(key).unwrap())),
                 }
             }
 
-            if val2.is_null() {
-                issues.push(format!("Missing {path}: {val1}"));
-            } else if val2.is_null() {
-                issues.push(format!("Added {path}: {val2}"));
+            for key in keys2 {
+                if !map1.contains_key(key) {
+                    issues.push(format!("Added {path}.{key}: {}", map2.get(key).unwrap()));
+                }
+            }
+        }
+        (Value::Array(arr1), Value::Array(arr2)) => {
+            // Use custom identifier logic for validation_results arrays
+            let use_custom_id = !arr1.is_empty()
+                && arr1.iter().all(|v| v.is_object())
+                && arr1.iter().all(|v| get_array_identifier(path, v).is_some());
+            // For ingredients and actions arrays, use simplified matching
+            if path.contains("ingredients") || path.contains("actions") {
+                if arr1.len() != arr2.len() {
+                    issues.push(format!(
+                        "Array length changed at {path}: {} vs {}",
+                        arr1.len(),
+                        arr2.len()
+                    ));
+                } else {
+                    // Match by title for ingredients
+                    if path.contains("ingredients") {
+                        let mut map1 = std::collections::HashMap::new();
+                        let mut map2 = std::collections::HashMap::new();
+                        for v in arr1 {
+                            if let Some(title) = v.get("title").and_then(|t| t.as_str()) {
+                                map1.insert(title, v);
+                            }
+                        }
+                        for v in arr2 {
+                            if let Some(title) = v.get("title").and_then(|t| t.as_str()) {
+                                map2.insert(title, v);
+                            }
+                        }
+                        for title in map1.keys() {
+                            if let (Some(v1), Some(v2)) = (map1.get(title), map2.get(title)) {
+                                compare_json_values(&format!("{path}[{title}]"), v1, v2, issues);
+                            }
+                        }
+                    } else if path.contains("actions") {
+                        let mut map1 = std::collections::HashMap::new();
+                        let mut map2 = std::collections::HashMap::new();
+                        for v in arr1 {
+                            if let Some(action) = v.get("action").and_then(|a| a.as_str()) {
+                                map1.insert(action, v);
+                            }
+                        }
+                        for v in arr2 {
+                            if let Some(action) = v.get("action").and_then(|a| a.as_str()) {
+                                map2.insert(action, v);
+                            }
+                        }
+                        for action in map1.keys() {
+                            if let (Some(v1), Some(v2)) = (map1.get(action), map2.get(action)) {
+                                compare_json_values(&format!("{path}[{action}]"), v1, v2, issues);
+                            }
+                        }
+                    }
+                }
+            } else if use_custom_id {
+                use std::collections::HashMap;
+                let mut map1: HashMap<String, (usize, &Value)> = HashMap::new();
+                let mut map2: HashMap<String, (usize, &Value)> = HashMap::new();
+                for (i, v) in arr1.iter().enumerate() {
+                    let id = get_array_identifier(path, v).unwrap();
+                    map1.insert(id, (i, v));
+                }
+                for (i, v) in arr2.iter().enumerate() {
+                    let id = get_array_identifier(path, v).unwrap();
+                    map2.insert(id, (i, v));
+                }
+                // Report removed items
+                for (id, (idx, v)) in &map1 {
+                    if !map2.contains_key(id) {
+                        issues.push(format!("Removed {path}[{id}] at {idx}: {v}",));
+                    }
+                }
+                // Report inserted items
+                for (id, (idx, v)) in &map2 {
+                    if !map1.contains_key(id) {
+                        issues.push(format!("Inserted {path}[{id}] at {idx}: {v}",));
+                    }
+                }
+                // Report moved items only if value is unchanged
+                for (id, (idx1, v1)) in &map1 {
+                    if let Some((idx2, v2)) = map2.get(id) {
+                        if idx1 != idx2 && v1 == v2 {
+                            issues.push(format!("Moved {path}[{id}]: from {idx1} to {idx2}"));
+                        }
+                        // Only report value changes for items in the same position
+                        if idx1 == idx2 && v1 != v2 {
+                            let new_path = format!("{path}[{id}]");
+                            compare_json_values(&new_path, v1, v2, issues);
+                        }
+                    }
+                }
             } else {
-                issues.push(format!("Changed {path}: {val1} vs {val2}"));
+                // Fallback: compare by index
+                if arr1.len() != arr2.len() {
+                    issues.push(format!(
+                        "Array length mismatch at {path}: {} vs {}",
+                        arr1.len(),
+                        arr2.len()
+                    ));
+                }
+                for (i, (v1, v2)) in arr1.iter().zip(arr2.iter()).enumerate() {
+                    let new_path = format!("{path}[{i}]");
+                    compare_json_values(&new_path, v1, v2, issues);
+                }
             }
         }
-        _ => (),
+        (v1, v2) => {
+            issues.push(format!("Changed {path}: {v1} vs {v2}"));
+        }
+    }
+}
+
+fn normalize_url(url: &str) -> String {
+    // Replace GUIDs in the url with a placeholder
+    let guid_re = Regex::new(r"urn:uuid:[0-9a-fA-F\-]{36}").unwrap();
+    guid_re.replace_all(url, "<GUID>").to_string()
+}
+
+fn get_array_identifier(path: &str, obj: &Value) -> Option<String> {
+    // Use url for validation_results.*.(success|informational|failure) arrays
+    if path.contains("validation_results")
+        && (path.contains("success") || path.contains("informational") || path.contains("failure"))
+    {
+        if let Some(map) = obj.as_object() {
+            if let Some(url) = map.get("url").and_then(|v| v.as_str()) {
+                // Use normalized url only
+                return Some(normalize_url(url));
+            }
+        }
+        // Fallback: use the full JSON string as identifier
+        Some(serde_json::to_string(obj).unwrap_or_default())
+    } else {
+        get_object_identifier(obj)
     }
 }

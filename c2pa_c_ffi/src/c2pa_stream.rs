@@ -123,7 +123,6 @@ impl Read for C2paStream {
     /// # Errors
     /// * Returns an error if the buffer size exceeds `isize::MAX`
     /// * Returns an error if the underlying C callback returns an error too (negative value)
-    /// ```
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
         if buf.len() > isize::MAX as usize {
             return Err(std::io::Error::new(
@@ -159,7 +158,6 @@ impl Seek for C2paStream {
     ///
     /// # Errors
     /// * Returns an error if the underlying C callback returns an error too (negative value)
-    /// ```
     fn seek(&mut self, from: std::io::SeekFrom) -> std::io::Result<u64> {
         let (pos, mode) = match from {
             std::io::SeekFrom::Current(pos) => (pos, C2paSeekMode::Current),
@@ -188,7 +186,6 @@ impl Write for C2paStream {
     /// # Errors
     /// * Returns an error if the buffer size exceeds `isize::MAX`
     /// * Returns an error if the underlying C callback returns an error too (negative value)
-    /// ```
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
         if buf.len() > isize::MAX as usize {
             return Err(std::io::Error::new(
@@ -212,7 +209,6 @@ impl Write for C2paStream {
     ///
     /// # Errors
     /// * Returns an error if the underlying C callback returns an error too (negative value)
-    /// ```
     fn flush(&mut self) -> std::io::Result<()> {
         let err = unsafe { (self.flusher)(&mut (*self.context)) };
         if err < 0 {

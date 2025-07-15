@@ -12,6 +12,7 @@
 // each license.
 
 use async_generic::async_generic;
+#[cfg(not(target_arch = "wasm32"))]
 use chrono::{DateTime, Utc};
 use ciborium::value::Value;
 use coset::{CoseSign1, Label};

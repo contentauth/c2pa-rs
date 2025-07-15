@@ -96,8 +96,6 @@ pub struct Manifest {
     #[serde(default = "default_instance_id")]
     instance_id: String,
 
-    //#[serde(skip_serializing_if = "Option::is_none")]
-    // claim_generator_hints: Option<HashMap<String, Value>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     thumbnail: Option<ResourceRef>,
 

@@ -30,6 +30,7 @@ fn main() -> Result<()> {
             author: None,
             recipes: Vec::new(),
             compare_folders: Some([args[1].clone(), args[2].clone()]),
+            claim_version: 2, //ToDO: make this configurable
         }
     } else {
         let path = if args.len() > 1 {
