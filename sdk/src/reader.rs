@@ -30,7 +30,6 @@ use serde_json::Value;
 use serde_with::skip_serializing_none;
 
 use crate::{
-    claim::ClaimAssetData,
     crypto::base64,
     dynamic_assertion::PartialClaim,
     error::{Error, Result},
@@ -260,19 +259,23 @@ impl Reader {
         mut fragment: impl Read + Seek + Send,
     ) -> Result<Self> {
         let mut validation_log = StatusTracker::default();
-        let manifest_bytes = Store::load_jumbf_from_stream(format, &mut stream)?.0;
-        let store = Store::from_jumbf(&manifest_bytes, &mut validation_log)?;
 
-        let verify = get_settings_value::<bool>("verify.verify_after_reading")?; // defaults to true
-                                                                                 // verify the store
-        if verify {
-            let mut fragment = ClaimAssetData::StreamFragment(&mut stream, &mut fragment, format);
-            if _sync {
-                Store::verify_store(&store, &mut fragment, &mut validation_log)
-            } else {
-                Store::verify_store_async(&store, &mut fragment, &mut validation_log).await
-            }?;
-        };
+        let store = if _sync {
+            Store::load_fragment_from_stream(
+                format,
+                &mut stream,
+                &mut fragment,
+                &mut validation_log,
+            )
+        } else {
+            Store::load_fragment_from_stream_async(
+                format,
+                &mut stream,
+                &mut fragment,
+                &mut validation_log,
+            )
+            .await
+        }?;
 
         Self::from_store(store, &validation_log)
     }
