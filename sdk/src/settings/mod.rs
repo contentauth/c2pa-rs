@@ -315,6 +315,16 @@ impl Settings {
         Settings::from_string(toml, "toml").map(|_| ())
     }
 
+    /// Set the [Settings] from a url to a toml file.
+    #[cfg(not(target_os = "wasi"))]
+    pub fn from_url(url: &str) -> Result<()> {
+        let toml = ureq::get(url)
+            .call()
+            .map_err(|_| Error::FailedToFetchSettings)?
+            .into_string()?;
+        Settings::from_toml(&toml)
+    }
+
     /// Set a [Settings] value by path reference. The path is nested names of of the Settings objects
     /// separated by "." notation.
     ///
