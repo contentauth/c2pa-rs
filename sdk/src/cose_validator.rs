@@ -14,6 +14,7 @@
 use std::io::Write;
 
 use async_generic::async_generic;
+use coset::CoseSign1;
 use x509_parser::{num_bigint::BigUint, prelude::*};
 
 use crate::{
@@ -127,6 +128,14 @@ fn extract_subject_from_cert(cert: &X509Certificate) -> Result<String> {
 /// Returns the unique serial number from the provided cert.
 fn extract_serial_from_cert(cert: &X509Certificate) -> BigUint {
     cert.serial.clone()
+}
+
+/// Returns the unique serial number from the provided CoseSign1
+pub(crate) fn get_serial_num(sign1: &CoseSign1) -> Result<BigUint> {
+    let der_bytes = get_sign_cert(sign1)?;
+    let (_rem, signcert) =
+        X509Certificate::from_der(&der_bytes).map_err(|_| Error::CoseInvalidCert)?;
+    Ok(extract_serial_from_cert(&signcert))
 }
 
 #[allow(unused_variables)]

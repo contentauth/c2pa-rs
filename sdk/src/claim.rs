@@ -1810,7 +1810,13 @@ impl Claim {
         let sign1 = parse_cose_sign1(&sig, &data, validation_log)?;
 
         // check certificate revocation
-        check_ocsp_status(&sign1, &data, ctp, validation_log)?;
+        check_ocsp_status(
+            &sign1,
+            &data,
+            ctp,
+            &svi.certificate_statuses,
+            validation_log,
+        )?;
 
         let verified = verify_cose_async(
             &sig,
@@ -1870,7 +1876,7 @@ impl Claim {
         let sign1 = parse_cose_sign1(sig, data, validation_log)?;
 
         // check certificate revocation
-        check_ocsp_status(&sign1, data, ctp, validation_log)?;
+        check_ocsp_status(&sign1, data, ctp, &svi.certificate_statuses, validation_log)?;
 
         let verified = verify_cose(
             sig,
@@ -3800,6 +3806,7 @@ pub(crate) fn check_ocsp_status(
     sign1: &coset::CoseSign1,
     data: &[u8],
     ctp: &CertificateTrustPolicy,
+    certificate_statuses: &HashMap<String, Vec<Vec<u8>>>,
     validation_log: &mut StatusTracker,
 ) -> Result<OcspResponse> {
     // Moved here instead of c2pa-crypto because of the dependency on settings.
@@ -3815,6 +3822,7 @@ pub(crate) fn check_ocsp_status(
             data,
             fetch_policy,
             ctp,
+            certificate_statuses,
             validation_log,
         )?)
     } else {
@@ -3823,6 +3831,7 @@ pub(crate) fn check_ocsp_status(
             data,
             fetch_policy,
             ctp,
+            certificate_statuses,
             validation_log,
         )
         .await?)

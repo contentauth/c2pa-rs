@@ -490,9 +490,22 @@ impl Store {
         let data = claim.data().ok()?;
         let mut validation_log =
             StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
+        let svi = self
+            .get_store_validation_info(
+                claim,
+                &mut ClaimAssetData::Bytes(&data, &claim.format.clone()?),
+                &mut validation_log,
+            )
+            .ok()?;
 
         let sign1 = parse_cose_sign1(sig, &data, &mut validation_log).ok()?;
-        if let Ok(info) = check_ocsp_status(&sign1, &data, &self.ctp, &mut validation_log) {
+        if let Ok(info) = check_ocsp_status(
+            &sign1,
+            &data,
+            &self.ctp,
+            &svi.certificate_statuses,
+            &mut validation_log,
+        ) {
             if let Some(revoked_at) = &info.revoked_at {
                 Some(format!(
                     "Certificate Status: Revoked, revoked at: {}",
@@ -4716,8 +4729,12 @@ pub mod tests {
                 &mut report,
             )
             .unwrap();
-        assert!(svi.certificate_statuses.contains_key("310665949469838386185380984752231266212090716844"));
-        assert!(svi.certificate_statuses.contains_key("28651076926158642445677524766118780318"));
+        assert!(svi
+            .certificate_statuses
+            .contains_key("310665949469838386185380984752231266212090716844"));
+        assert!(svi
+            .certificate_statuses
+            .contains_key("28651076926158642445677524766118780318"));
 
         let stored_ocsp_vals: Vec<Vec<u8>> =
             svi.certificate_statuses.into_values().flatten().collect();

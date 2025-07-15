@@ -11,12 +11,15 @@
 // specific language governing permissions and limitations under
 // each license.
 
+use std::collections::HashMap;
+
 use async_generic::async_generic;
 use chrono::{DateTime, Utc};
 use ciborium::value::Value;
 use coset::{CoseSign1, Label};
 
 use crate::{
+    cose_validator::get_serial_num,
     crypto::{
         cose::{
             check_certificate_profile, validate_cose_tst_info, validate_cose_tst_info_async,
@@ -35,6 +38,7 @@ pub fn check_ocsp_status(
     data: &[u8],
     fetch_policy: OcspFetchPolicy,
     ctp: &CertificateTrustPolicy,
+    certificate_statuses: &HashMap<String, Vec<Vec<u8>>>,
     validation_log: &mut StatusTracker,
 ) -> Result<OcspResponse, CoseError> {
     match get_ocsp_der(sign1) {
@@ -57,7 +61,26 @@ pub fn check_ocsp_status(
             OcspFetchPolicy::FetchAllowed => {
                 fetch_and_check_ocsp_response(sign1, data, ctp, validation_log)
             }
-            OcspFetchPolicy::DoNotFetch => Ok(OcspResponse::default()),
+            OcspFetchPolicy::DoNotFetch => {
+                let certificate_serial_num = get_serial_num(sign1)?.to_string();
+                if let Some(ocsp_response_ders) = certificate_statuses.get(&certificate_serial_num)
+                {
+                    for ocsp_response_der in ocsp_response_ders {
+                        if let Ok(ocsp_response) = check_stapled_ocsp_response(
+                            sign1,
+                            ocsp_response_der,
+                            data,
+                            ctp,
+                            validation_log,
+                        ) {
+                            if ocsp_response.revoked_at.is_none() {
+                                return Ok(ocsp_response);
+                            }
+                        }
+                    }
+                }
+                Ok(OcspResponse::default())
+            }
         },
     }
 }
