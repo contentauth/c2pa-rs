@@ -197,7 +197,7 @@ ureq = "2.4.0"
 url = "2.5.3"
 
 [target.'cfg(any(target_os = "wasi", not(target_arch = "wasm32")))'.dependencies]
-image = { version = "0.24.7", default-features = false, features = [
+image = { version = "0.25.6", default-features = false, features = [
     "jpeg",
     "png",
 ], optional = true }
