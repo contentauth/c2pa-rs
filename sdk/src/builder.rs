@@ -1241,7 +1241,7 @@ mod tests {
         asset_handlers::jpeg_io::JpegIO,
         crypto::raw_signature::SigningAlg,
         hash_stream_by_alg,
-        utils::{test::write_jpeg_placeholder_stream, test_signer::test_signer},
+        utils::{test::write_jpeg_placeholder_stream, test_signer::test_signer, test::fixture_path},
         validation_results::ValidationState,
         Reader,
     };
@@ -2249,5 +2249,33 @@ mod tests {
             .json();
         assert!(reader_json.contains("Test Ingredient"));
         assert!(reader_json.contains("thumbnail.ingredient"));
+    }
+
+    #[cfg(feature = "file_io")]
+    #[test]
+    fn test_resource_dir() -> Result<()>{
+        let mut builder = Builder::new();
+        let ingredient_folder = fixture_path("ingredient");
+        builder.set_resource_dir(&ingredient_folder);
+        assert_eq!(builder.base_path, Some(&ingredient_folder).cloned());
+        let ingredient_json = std::fs::read_to_string(ingredient_folder.join("ingredient.json"))?;
+
+        let ingredient = Ingredient::from_json(&ingredient_json)?;
+        builder.add_ingredient(ingredient);
+
+        let signer = test_signer(SigningAlg::Ps256);
+
+        let mut source = Cursor::new(TEST_IMAGE_CLEAN);
+        let mut dest = Cursor::new(Vec::new());
+
+        builder.sign(&signer, "image/jpeg",  &mut source, &mut dest)?;
+
+        let reader = Reader::from_stream("jpeg", &mut dest)?;
+        let reader_json = reader.json();
+        println!("{}", &reader);
+        assert!(reader_json.contains("C.jpg"));
+        // manifest label of ingredient
+        assert!(reader_json.contains("contentauth:urn:uuid:b2b1f7fa-b119-4de1-9c0d-c97fbea3f2c3"));
+        Ok(())
     }
 }
