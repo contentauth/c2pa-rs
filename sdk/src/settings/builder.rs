@@ -132,19 +132,19 @@ pub(crate) struct BuilderSettings {
     /// assertion or error that it doesn't already exist.
     ///
     /// For more information about the mandatory conditions for a c2pa.created action assertion, see here:
-    /// https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_mandatory_presence_of_at_least_one_actions_assertion
+    /// <https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_mandatory_presence_of_at_least_one_actions_assertion>
     pub auto_created_action: AutoActionSettings,
     /// Whether to automatically generate a c2pa.opened [Action][crate::assertions::Action]
     /// assertion or error that it doesn't already exist.
     ///
     /// For more information about the mandatory conditions for a c2pa.opened action assertion, see here:
-    /// https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_mandatory_presence_of_at_least_one_actions_assertion
+    /// <https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_mandatory_presence_of_at_least_one_actions_assertion>
     pub auto_opened_action: AutoActionSettings,
     /// Whether to automatically generate a c2pa.placed [Action][crate::assertions::Action]
     /// assertion or error that it doesn't already exist.
     ///
-    /// For more information about the mandatory conditions for a c2pa.placed action assertion, see here:
-    /// https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_relationship
+    /// For more information about the mandatory conditions for a c2pa.placed action assertion, see:
+    /// <https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_relationship>
     pub auto_placed_action: AutoActionSettings,
 }
 
@@ -180,7 +180,7 @@ impl SettingsValidate for BuilderSettings {
     }
 }
 
-impl Settings {
+impl BuilderSettings {
     /// Returns the constructed signer from the signer field in [Settings].
     ///
     /// If the signer settings aren't specified, this function will return [Error::UnspecifiedSignerSettings][crate::Error::UnspecifiedSignerSettings].
@@ -196,5 +196,20 @@ impl Settings {
         } else {
             Err(Error::MissingSignerSettings)
         }
+    }
+}
+
+#[cfg(test)]
+pub mod tests {
+    #![allow(clippy::unwrap_used)]
+
+    #[test]
+    fn test_make_signer() {
+        // TODO
+    }
+
+    #[test]
+    fn test_auto_created_action_without_source_type() {
+        // TODO
     }
 }

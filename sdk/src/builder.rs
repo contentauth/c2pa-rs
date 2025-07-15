@@ -14,7 +14,7 @@
 #[cfg(feature = "file_io")]
 use std::path::{Path, PathBuf};
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     io::{Read, Seek, Write},
 };
 
@@ -32,6 +32,7 @@ use crate::{
         c2pa_action, labels, Action, Actions, BmffHash, BoxHash, CreativeWork, DataHash,
         EmbeddedData, Exif, Metadata, SoftwareAgent, Thumbnail, User, UserCbor,
     },
+    cbor_types::value_cbor_to_type,
     claim::Claim,
     error::{Error, Result},
     jumbf_io,
@@ -40,7 +41,7 @@ use crate::{
     settings,
     store::Store,
     utils::mime::format_to_mime,
-    AsyncSigner, ClaimGeneratorInfo, HashRange, Ingredient, Relationship, Signer,
+    AsyncSigner, ClaimGeneratorInfo, HashRange, HashedUri, Ingredient, Relationship, Signer,
 };
 
 /// Version of the Builder Archive file
@@ -633,11 +634,13 @@ impl Builder {
 
         claim_generator_info[0].insert("org.cai.c2pa_rs", env!("CARGO_PKG_VERSION"));
 
-        let profile_claim_generator_infos = settings::get_settings_value::<
-            Option<ClaimGeneratorInfo>,
-        >("builder.claim_generator_info");
-        if let Ok(Some(claim_generator_infos)) = profile_claim_generator_infos {
-            claim_generator_info.push(claim_generator_infos);
+        if claim_generator_info.is_empty() {
+            let profile_claim_generator_info = settings::get_settings_value::<
+                Option<ClaimGeneratorInfo>,
+            >("builder.claim_generator_info");
+            if let Ok(Some(claim_generator_infos)) = profile_claim_generator_info {
+                claim_generator_info.push(claim_generator_infos);
+            }
         }
 
         // Build the claim_generator string since this is required
@@ -758,7 +761,7 @@ impl Builder {
                     let mut actions: Actions = manifest_assertion.to_assertion()?;
                     //dbg!(format!("Actions: {:?} version: {:?}", actions, version));
 
-                    self.add_auto_actions_assertions(&mut actions)?;
+                    self.add_auto_actions_assertions(&ingredient_map, &mut actions)?;
 
                     let mut updates = Vec::new();
                     let mut index = 0;
@@ -879,7 +882,7 @@ impl Builder {
 
         if !found_actions {
             let mut actions = Actions::new();
-            self.add_auto_actions_assertions(&mut actions)?;
+            self.add_auto_actions_assertions(&ingredient_map, &mut actions)?;
 
             if !actions.actions().is_empty() {
                 claim.add_assertion(&actions)?;
@@ -896,25 +899,37 @@ impl Builder {
     /// * `builder.auto_created_action`
     /// * `builder.auto_opened_action`
     /// * `builder.auto_placed_action`
-    fn add_auto_actions_assertions(&self, actions: &mut Actions) -> Result<()> {
+    fn add_auto_actions_assertions(
+        &self,
+        ingredient_map: &HashMap<String, HashedUri>,
+        actions: &mut Actions,
+    ) -> Result<()> {
         // https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_mandatory_presence_of_at_least_one_actions_assertion
         let auto_created =
             settings::get_settings_value::<bool>("builder.auto_created_action.enabled")?;
         let auto_opened =
             settings::get_settings_value::<bool>("builder.auto_opened_action.enabled")?;
         if auto_created || auto_opened {
-            let has_parent = self
+            let parent_ingredient = self
                 .definition
                 .ingredients
                 .iter()
-                .any(|ingredient| ingredient.is_parent());
-            let action = match (has_parent, auto_created, auto_opened) {
-                (true, _, true) => {
+                .find(|ingredient| ingredient.is_parent());
+            let action = match (parent_ingredient, auto_created, auto_opened) {
+                (Some(parent_ingredient), _, true) => {
                     let source_type = settings::get_settings_value::<Option<String>>(
                         "builder.auto_opened_action.source_type",
                     )?;
                     let action = {
                         let action = Action::new(c2pa_action::OPENED);
+
+                        let id = parent_ingredient
+                            .label()
+                            // We define the `ingredient_map` to use the instance id if the label doesn't exist.
+                            .unwrap_or(parent_ingredient.instance_id());
+                        let ingredient_uri = ingredient_map.get(id);
+                        let action = action.set_parameter("ingredients", vec![ingredient_uri])?;
+
                         match source_type {
                             Some(source_type) => action.set_source_type(source_type),
                             None => action,
@@ -923,7 +938,7 @@ impl Builder {
 
                     Some(action)
                 }
-                (false, true, _) => {
+                (None, true, _) => {
                     let source_type = settings::get_settings_value::<Option<String>>(
                         "builder.auto_created_action.source_type",
                     )?;
@@ -939,6 +954,8 @@ impl Builder {
                 _ => None,
             };
 
+            // If the first action isn't "c2pa.created" or "c2pa.opened" then add ours,
+            // or if there are no actions then add our action.
             if let Some(action) = action {
                 if let Some(first_action) = actions.actions.first() {
                     if first_action.action() != c2pa_action::CREATED
@@ -946,7 +963,7 @@ impl Builder {
                     {
                         actions.actions.insert(0, action);
                     }
-                } else {
+                } else if actions.actions.is_empty() {
                     actions.actions.push(action);
                 }
             }
@@ -956,19 +973,49 @@ impl Builder {
         let auto_placed =
             settings::get_settings_value::<bool>("builder.auto_placed_action.enabled")?;
         if auto_placed {
-            for ingredient in &self.definition.ingredients {
-                if *ingredient.relationship() == Relationship::ComponentOf {
-                    let source_type = settings::get_settings_value::<Option<String>>(
-                        "builder.auto_placed_action.source_type",
-                    )?;
-                    let action = {
-                        let action = Action::new(c2pa_action::PLACED);
-                        match source_type {
-                            Some(source_type) => action.set_source_type(source_type),
-                            None => action,
+            // Get a list of ingredient URIs referenced by "c2pa.placed" actions.
+            let mut referenced_uris = HashSet::new();
+            for action in &actions.actions {
+                if action.action() == c2pa_action::PLACED {
+                    if let Some(ingredient_uris) = action.get_parameter("ingredients") {
+                        if let Some(ingredient_uris) =
+                            value_cbor_to_type::<Vec<HashedUri>>(ingredient_uris)
+                        {
+                            for uri in ingredient_uris {
+                                referenced_uris.insert(uri.url());
+                            }
                         }
-                    };
-                    actions.actions.push(action)
+                    }
+                }
+            }
+
+            // If a "ComponentOf" ingredient doesn't have an associated "c2pa.placed" action, create it here.
+            for ingredient in &self.definition.ingredients {
+                if let Some(uri) = ingredient.label() {
+                    if *ingredient.relationship() == Relationship::ComponentOf
+                        && !referenced_uris.contains(uri)
+                    {
+                        let source_type = settings::get_settings_value::<Option<String>>(
+                            "builder.auto_placed_action.source_type",
+                        )?;
+                        let action = {
+                            let action = Action::new(c2pa_action::PLACED);
+
+                            let id = ingredient
+                                .label()
+                                // We define the `ingredient_map` to use the instance id if the label doesn't exist.
+                                .unwrap_or(ingredient.instance_id());
+                            let ingredient_uri = ingredient_map.get(id);
+                            let action =
+                                action.set_parameter("ingredients", vec![ingredient_uri])?;
+
+                            match source_type {
+                                Some(source_type) => action.set_source_type(source_type),
+                                None => action,
+                            }
+                        };
+                        actions.actions.push(action)
+                    }
                 }
             }
         }
@@ -1341,11 +1388,12 @@ mod tests {
     use crate::{
         assertions::{c2pa_action, source_type, BoxHash},
         asset_handlers::jpeg_io::JpegIO,
+        cbor_types::value_cbor_to_type,
         crypto::raw_signature::SigningAlg,
         hash_stream_by_alg,
         utils::{test::write_jpeg_placeholder_stream, test_signer::test_signer},
         validation_results::ValidationState,
-        Reader,
+        HashedUri, Reader,
     };
 
     #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
@@ -1659,6 +1707,21 @@ mod tests {
 
         let action = actions.actions().first().unwrap();
         assert_eq!(action.action(), c2pa_action::OPENED);
+
+        let ingredient_uris = action.get_parameter("ingredients").unwrap();
+        let ingredient_uris = value_cbor_to_type::<Vec<HashedUri>>(ingredient_uris).unwrap();
+
+        // TODO: need to get correct target_uri
+        // let target_uri = reader
+        //     .active_manifest()
+        //     .unwrap()
+        //     .ingredients()
+        //     .first()
+        //     .unwrap()
+        //     .label()
+        //     .unwrap();
+        // let stored_uri = ingredient_uris.first().unwrap().url();
+        // assert_eq!(target_uri, &stored_uri);
     }
 
     #[test]
@@ -1721,6 +1784,23 @@ mod tests {
 
         let action2 = actions.actions().get(2).unwrap();
         assert_eq!(action2.action(), c2pa_action::PLACED);
+
+        for (i, action) in [action1, action2].iter().enumerate() {
+            let ingredient_uris = action.get_parameter("ingredients").unwrap();
+            let ingredient_uris = value_cbor_to_type::<Vec<HashedUri>>(ingredient_uris).unwrap();
+
+            // TODO: need to get correct target_uri
+            // let target_uri = reader
+            //     .active_manifest()
+            //     .unwrap()
+            //     .ingredients()
+            //     .get(i)
+            //     .unwrap()
+            //     .label()
+            //     .unwrap();
+            // let stored_uri = ingredient_uris.first().unwrap().url();
+            // assert_eq!(target_uri, &stored_uri);
+        }
     }
 
     #[test]

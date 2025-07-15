@@ -23,7 +23,10 @@ use std::{
 use config::{Config, FileFormat};
 use serde_derive::{Deserialize, Serialize};
 
-use crate::{crypto::base64, settings::builder::BuilderSettings, Error, Result};
+use crate::{crypto::base64, settings::builder::BuilderSettings, Error, Result, Signer};
+
+#[allow(unused_imports)]
+pub use builder::*;
 
 thread_local!(
     static SETTINGS: RefCell<Config> =
@@ -389,6 +392,11 @@ impl Settings {
         let settings =
             get_settings().ok_or(Error::OtherError("could not get current settings".into()))?;
         Ok(toml::to_string_pretty(&settings)?)
+    }
+
+    #[inline]
+    pub fn signer() -> Result<Box<dyn Signer>> {
+        BuilderSettings::signer()
     }
 }
 
