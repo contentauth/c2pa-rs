@@ -29,8 +29,8 @@ use zip::{write::SimpleFileOptions, ZipArchive, ZipWriter};
 use crate::{
     assertion::AssertionDecodeError,
     assertions::{
-        labels, Actions, BmffHash, BoxHash, CreativeWork, DataHash, Exif, Metadata, SoftwareAgent,
-        Thumbnail, User, UserCbor,
+        labels, Actions, BmffHash, BoxHash, CreativeWork, DataHash, EmbeddedData, Exif, Metadata,
+        SoftwareAgent, Thumbnail, User, UserCbor,
     },
     claim::Claim,
     error::{Error, Result},
@@ -161,10 +161,10 @@ impl AssertionDefinition {
 
 /// Use a Builder to add a signed manifest to an asset.
 ///
-/// # Example: Building and signing a manifest:
+/// # Example: Building and signing a manifest
 ///
-///
-/// # use c2pa::Result;
+/// ```
+/// use c2pa::Result;
 /// use std::path::PathBuf;
 ///
 /// use c2pa::{create_signer, Builder, SigningAlg};
@@ -209,6 +209,7 @@ impl AssertionDefinition {
 /// )?;
 /// # Ok(())
 /// # }
+/// ```
 #[skip_serializing_none]
 #[derive(Debug, Default, Deserialize, Serialize)]
 #[cfg_attr(feature = "json_schema", derive(JsonSchema))]
@@ -504,7 +505,7 @@ impl Builder {
                 zip.start_file("resources/", options)
                     .map_err(|e| Error::OtherError(Box::new(e)))?;
                 for (id, data) in self.resources.resources() {
-                    zip.start_file(format!("resources/{}", id), options)
+                    zip.start_file(format!("resources/{id}"), options)
                         .map_err(|e| Error::OtherError(Box::new(e)))?;
                     zip.write_all(data)?;
                 }
@@ -515,7 +516,7 @@ impl Builder {
                     .map_err(|e| Error::OtherError(Box::new(e)))?;
                 for ingredient in self.definition.ingredients.iter() {
                     for (id, data) in ingredient.resources().resources() {
-                        zip.start_file(format!("resources/{}", id), options)
+                        zip.start_file(format!("resources/{id}"), options)
                             .map_err(|e| Error::OtherError(Box::new(e)))?;
                         zip.write_all(data)?;
                     }
@@ -608,8 +609,7 @@ impl Builder {
                 let id = file.name().split('/').nth(2).unwrap_or_default();
                 if index >= builder.definition.ingredients.len() {
                     return Err(Error::OtherError(Box::new(std::io::Error::other(format!(
-                        "Invalid ingredient index {}",
-                        index
+                        "Invalid ingredient index {index}"
                     )))))?; // todo add specific error
                 }
                 builder.definition.ingredients[index]
@@ -700,13 +700,20 @@ impl Builder {
                 let mut stream = self.resources.open(thumb_ref)?;
                 let mut data = Vec::new();
                 stream.read_to_end(&mut data)?;
-                claim.add_assertion_with_salt(
-                    &Thumbnail::new(
+                let thumbnail = if claim.version() >= 2 {
+                    EmbeddedData::new(
+                        labels::CLAIM_THUMBNAIL,
+                        format_to_mime(&thumb_ref.format),
+                        data,
+                    )
+                } else {
+                    Thumbnail::new(
                         &labels::add_thumbnail_format(labels::CLAIM_THUMBNAIL, &thumb_ref.format),
                         data,
-                    ),
-                    &salt,
-                )?;
+                    )
+                    .into()
+                };
+                claim.add_assertion_with_salt(&thumbnail, &salt)?;
             }
         }
 
@@ -1467,7 +1474,7 @@ mod tests {
         dest.rewind().unwrap();
         let manifest_store = Reader::from_stream(format, &mut dest).expect("from_bytes");
 
-        println!("{}", manifest_store);
+        println!("{manifest_store}");
         assert_ne!(manifest_store.validation_state(), ValidationState::Invalid);
         assert!(manifest_store.active_manifest().is_some());
         let manifest = manifest_store.active_manifest().unwrap();
@@ -1498,7 +1505,7 @@ mod tests {
         // read and validate the signed manifest store
         let manifest_store = Reader::from_file(&dest).expect("from_bytes");
 
-        println!("{}", manifest_store);
+        println!("{manifest_store}");
         assert_ne!(manifest_store.validation_state(), ValidationState::Invalid);
         assert_eq!(manifest_store.validation_status(), None);
         assert_eq!(
@@ -1523,15 +1530,15 @@ mod tests {
             "sample1.heic",
             "sample1.heif",
             "sample1.m4a",
-            "video1.mp4",
+            "video1_no_manifest.mp4",
             "cloud_manifest.c2pa", // we need a new test for this since it will always fail
         ];
         for file_name in TESTFILES {
             let extension = file_name.split('.').next_back().unwrap();
             let format = extension;
 
-            let path = format!("tests/fixtures/{}", file_name);
-            println!("path: {}", path);
+            let path = format!("tests/fixtures/{file_name}");
+            println!("path: {path}");
             let mut source = std::fs::File::open(path).unwrap();
             let mut dest = Cursor::new(Vec::new());
 

@@ -185,6 +185,16 @@ pub enum AssertionData {
     Uuid(String, Vec<u8>), // user defined content (uuid, data)
 }
 
+impl From<AssertionData> for Vec<u8> {
+    fn from(ad: AssertionData) -> Self {
+        match ad {
+            AssertionData::Json(s) => s.into_bytes(), // json encoded data
+            AssertionData::Binary(x) | AssertionData::Uuid(_, x) => x, // binary data
+            AssertionData::Cbor(x) => x,
+        }
+    }
+}
+
 impl fmt::Debug for AssertionData {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
@@ -239,8 +249,8 @@ impl Assertion {
     }
 
     /// return content_type for the the data enclosed in the Assertion
-    pub(crate) fn content_type(&self) -> String {
-        self.content_type.clone()
+    pub(crate) fn content_type(&self) -> &str {
+        self.content_type.as_str()
     }
 
     // pub(crate) fn set_data(mut self, data: &AssertionData) -> Self {
@@ -386,6 +396,26 @@ impl Assertion {
             mime_type,
             AssertionData::Binary(binary_data.to_vec()),
         )
+    }
+
+    /// Deconstruct a binary assertion, moving the Vec<u8> out without copying
+    pub(crate) fn binary_deconstruct(
+        assertion: Assertion,
+    ) -> Result<(String, Option<usize>, String, Vec<u8>)> {
+        match assertion.data {
+            AssertionData::Binary(data) => Ok((
+                assertion.label,
+                assertion.version,
+                assertion.content_type,
+                data,
+            )),
+            _ => Err(AssertionDecodeError::from_assertion_unexpected_data_type(
+                &assertion,
+                assertion.decode_data(),
+                "binary",
+            )
+            .into()),
+        }
     }
 
     /// create an assertion from user binary data

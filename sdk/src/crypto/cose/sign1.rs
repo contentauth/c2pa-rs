@@ -20,7 +20,9 @@ use coset::{
 
 use crate::{
     crypto::{
-        cose::{validate_cose_tst_info, validate_cose_tst_info_async, CoseError},
+        cose::{
+            validate_cose_tst_info, validate_cose_tst_info_async, CertificateTrustPolicy, CoseError,
+        },
         raw_signature::SigningAlg,
     },
     log_item,
@@ -178,10 +180,14 @@ pub fn signing_time_from_sign1(
 ) -> Option<chrono::DateTime<chrono::Utc>> {
     // get timestamp info if available
 
+    let mut local_log = StatusTracker::default();
+    // allow timestamp reading by using passthrough certificate check
+    let local_ctp = CertificateTrustPolicy::passthrough();
+
     let time_stamp_info = if _sync {
-        validate_cose_tst_info(sign1, data)
+        validate_cose_tst_info(sign1, data, &local_ctp, &mut local_log)
     } else {
-        validate_cose_tst_info_async(sign1, data).await
+        validate_cose_tst_info_async(sign1, data, &local_ctp, &mut local_log).await
     };
 
     if let Ok(tst_info) = time_stamp_info {

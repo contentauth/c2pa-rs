@@ -61,7 +61,7 @@ type WriteCallback =
 type FlushCallback = unsafe extern "C" fn(context: *mut StreamContext) -> isize;
 
 #[repr(C)]
-/// A C2paStream is a Rust Read/Write/Seek stream that can be created in C.
+/// A C2paStream is a Rust Read/Write/Seek stream that can be created and used in C.
 #[derive(Debug)]
 pub struct C2paStream {
     context: *mut StreamContext,
@@ -111,6 +111,19 @@ impl C2paStream {
 }
 
 impl Read for C2paStream {
+    /// Reads bytes from the stream into the provided buffer.
+    ///
+    /// # Arguments
+    /// * `buf` - a mutable slice where the read bytes will be stored
+    ///
+    /// # Returns
+    /// * `Ok(usize)` - the number of bytes read
+    /// * `Err(std::io::Error)` - an error occurred during reading
+    ///
+    /// # Errors
+    /// * Returns an error if the buffer size exceeds `isize::MAX`
+    /// * Returns an error if the underlying C callback returns an error too (negative value)
+    /// ```
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
         if buf.len() > isize::MAX as usize {
             return Err(std::io::Error::new(
@@ -132,6 +145,21 @@ impl Read for C2paStream {
 }
 
 impl Seek for C2paStream {
+    /// Seeks to a position in the stream.
+    ///
+    /// # Arguments
+    /// * `from` - a seek mode and offset:
+    ///   - `SeekFrom::Start(offset)` - Seeks from the beginning of the stream
+    ///   - `SeekFrom::Current(offset)` - Seeks from the current position
+    ///   - `SeekFrom::End(offset)` - Seeks from the end of the stream
+    ///
+    /// # Returns
+    /// * `Ok(u64)` - the new position in the stream
+    /// * `Err(std::io::Error)` - an error occurred during the seek operation
+    ///
+    /// # Errors
+    /// * Returns an error if the underlying C callback returns an error too (negative value)
+    /// ```
     fn seek(&mut self, from: std::io::SeekFrom) -> std::io::Result<u64> {
         let (pos, mode) = match from {
             std::io::SeekFrom::Current(pos) => (pos, C2paSeekMode::Current),
@@ -148,6 +176,19 @@ impl Seek for C2paStream {
 }
 
 impl Write for C2paStream {
+    /// Writes bytes from the provided buffer to the stream.
+    ///
+    /// # Arguments
+    /// * `buf` - a slice containing the bytes to write to the stream
+    ///
+    /// # Returns
+    /// * `Ok(usize)` - the number of bytes written, which may be less than the buffer size
+    /// * `Err(std::io::Error)` - an error occurred during the write operation
+    ///
+    /// # Errors
+    /// * Returns an error if the buffer size exceeds `isize::MAX`
+    /// * Returns an error if the underlying C callback returns an error too (negative value)
+    /// ```
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
         if buf.len() > isize::MAX as usize {
             return Err(std::io::Error::new(
@@ -163,6 +204,15 @@ impl Write for C2paStream {
         Ok(bytes_written as usize)
     }
 
+    /// Flushes the stream, ensuring buffered data is written.
+    ///
+    /// # Returns
+    /// * `Ok(())` - the flush operation completed successfully
+    /// * `Err(std::io::Error)` - an error occurred during the flush operation
+    ///
+    /// # Errors
+    /// * Returns an error if the underlying C callback returns an error too (negative value)
+    /// ```
     fn flush(&mut self) -> std::io::Result<()> {
         let err = unsafe { (self.flusher)(&mut (*self.context)) };
         if err < 0 {

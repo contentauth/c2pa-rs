@@ -55,7 +55,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [windows-latest, macos-latest, ubuntu-latest]
-        rust_version: [stable, 1.82.0]
+        rust_version: [stable, 1.85.0]
 
     steps:
       - name: Checkout repository
@@ -269,7 +269,7 @@ jobs:
       fail-fast: false
       matrix:
         target: [aarch64-unknown-linux-gnu]
-        rust_version: [stable, 1.82.0]
+        rust_version: [stable, 1.85.0]
 
     steps:
       - name: Checkout repository
@@ -317,17 +317,20 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Set up Chrome
-        uses: browser-actions/setup-chrome@v1
+        id: setup-chrome
+        uses: browser-actions/setup-chrome@v2
         with:
-          chrome-version: stable
+          chrome-version: 137
           install-chromedriver: true
 
       - name: Install wasm-pack
         run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
 
       - name: Run Wasm tests
-        run: wasm-pack test --chrome --headless --no-default-features --features rust_native_crypto
+        run: wasm-pack test --chrome --chromedriver ${{ steps.setup-chrome.outputs.chromedriver-path }} --headless --no-default-features --features rust_native_crypto
         working-directory: ./sdk
+        env:
+          WASM_BINDGEN_TEST_TIMEOUT: 60
 
   tests-wasi:
     name: Unit tests (WASI)
@@ -484,14 +487,11 @@ jobs:
       - name: Install nightly toolchain
         uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: nightly-2025-06-05
+          toolchain: nightly-2025-06-28
           components: rustfmt
-          # Pinning to specific nightly build for now. More recent versions
-          # introduce a lifetime check that creates a whole slew of build
-          # errors.
 
       - name: Check format
-        run: cargo +nightly-2025-06-05 fmt --all -- --check
+        run: cargo +nightly-2025-06-28 fmt --all -- --check
 
   docs_rs:
     name: Preflight docs.rs build
