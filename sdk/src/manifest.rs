@@ -451,7 +451,11 @@ impl Manifest {
     /// # }
     /// ```
     pub fn find_assertion<T: DeserializeOwned>(&self, label: &str) -> Result<T> {
-        if let Some(manifest_assertion) = self.assertions.iter().find(|a| a.label() == label) {
+        if let Some(manifest_assertion) = self
+            .assertions
+            .iter()
+            .find(|a| a.label().starts_with(label))
+        {
             manifest_assertion.to_assertion()
         } else {
             Err(Error::NotFound)
