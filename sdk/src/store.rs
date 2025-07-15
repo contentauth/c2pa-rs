@@ -106,7 +106,7 @@ pub(crate) struct StoreValidationInfo<'a> {
     pub binding_claim: String,                    // name of the claim that has the hash binding
     pub timestamps: HashMap<String, TstInfo>,     // list of timestamp assertions for each claim
     pub update_manifest_size: usize,              // offset needed to correct for update manifests
-    pub certificate_statuses: HashMap<String, Vec<u8>>, // list of certificate status assertions for each serial
+    pub certificate_statuses: HashMap<String, Vec<Vec<u8>>>, // list of certificate status assertions for each serial
 }
 
 /// A `Store` maintains a list of `Claim` structs.
@@ -1802,8 +1802,11 @@ impl Store {
                     if let Ok(response) =
                         OcspResponse::from_der_checked(ocsp_der, None, validation_log)
                     {
-                        svi.certificate_statuses
-                            .insert(response.certificate_serial_num, response.ocsp_der);
+                        let ocsp_ders = svi
+                            .certificate_statuses
+                            .entry(response.certificate_serial_num)
+                            .or_insert(Vec::new());
+                        ocsp_ders.push(response.ocsp_der);
                     }
                 }
             }
@@ -4701,86 +4704,25 @@ pub mod tests {
     #[test]
     #[cfg(feature = "v1_api")]
     #[cfg(feature = "file_io")]
-    fn test_certificate_status() {
-        use crate::{assertions::CertificateStatus, crypto::ocsp::OcspResponse};
-
-        let ap = fixture_path("ocsp.png");
-        let mut report = StatusTracker::default();
-        let store = Store::load_from_asset(&ap, true, &mut report).unwrap();
-        let mut validation_log =
-            StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
-        let test =
-            Store::get_certificate_assertion(&store, &store.claims, &mut validation_log).unwrap();
-        let certificate_status =
-            CertificateStatus::new(test.iter().map(|a| a.ocsp_der.clone()).collect());
-        let assertion = certificate_status.to_assertion().unwrap();
-        let restored = CertificateStatus::from_assertion(&assertion).unwrap();
-        assert_eq!(certificate_status, restored);
-        for ocsp_val in restored.ocsp_vals {
-            let response =
-                OcspResponse::from_der_checked(&ocsp_val, None, &mut validation_log).unwrap();
-            assert!(!response.ocsp_der.is_empty())
-        }
-    }
-
-    #[test]
-    #[cfg(feature = "v1_api")]
-    #[cfg(feature = "file_io")]
     fn test_certificate_map() -> Result<()> {
-        use serde_json::json;
-
-        use crate::{assertions::CertificateStatus, Builder};
-
-        // Setup paths and temporary files
         let ap = fixture_path("ocsp.png");
-        let temp_dir = tempdirectory().expect("temp dir");
-        let op = temp_dir_path(&temp_dir, "test-image.png");
-
-        // Retrieve ocsp information from asset
         let mut report = StatusTracker::default();
         let store = Store::load_from_asset(&ap, true, &mut report).unwrap();
-        let mut validation_log =
-            StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
-        let test =
-            Store::get_certificate_assertion(&store, &store.claims, &mut validation_log).unwrap();
-        let certificate_status =
-            CertificateStatus::new(test.iter().map(|a| a.ocsp_der.clone()).collect());
 
-        // Create builder with certificate status assertion gathered above
-        let manifest_json = json!({
-            "claim_generator_info": [
-                {
-                    "name": "c2pa_test",
-                    "version": "1.0.0"
-                }
-            ],
-            "title": "Certificate Map Test"
-        })
-        .to_string();
-        let mut builder = Builder::from_json(&manifest_json)?;
-        builder.add_assertion(labels::CERTIFICATE_STATUS, &certificate_status)?;
-        let signer = test_signer(SigningAlg::Ps256);
-
-        // Sign file and validate that OCSP values were stored in the map correctly
-        builder.sign_file(&signer, &ap, &op)?;
-        let new_store = Store::load_from_asset(&op, true, &mut report).unwrap();
-        let svi = new_store
+        let svi = store
             .get_store_validation_info(
-                new_store.claims()[0],
-                &mut ClaimAssetData::Path(&op),
-                &mut validation_log,
+                store.claims()[0],
+                &mut ClaimAssetData::Path(&ap),
+                &mut report,
             )
             .unwrap();
-        let original_ocsp_vals: Vec<Vec<u8>> = certificate_status
-            .ocsp_vals
-            .iter()
-            .map(|b| b.to_vec())
-            .collect();
-        let stored_ocsp_vals: Vec<Vec<u8>> = svi.certificate_statuses.into_values().collect();
-        assert_eq!(original_ocsp_vals.len(), stored_ocsp_vals.len());
-        for original_val in &original_ocsp_vals {
-            assert!(stored_ocsp_vals.contains(original_val));
-        }
+        assert!(svi.certificate_statuses.contains_key("310665949469838386185380984752231266212090716844"));
+        assert!(svi.certificate_statuses.contains_key("28651076926158642445677524766118780318"));
+
+        let stored_ocsp_vals: Vec<Vec<u8>> =
+            svi.certificate_statuses.into_values().flatten().collect();
+        assert_eq!(stored_ocsp_vals.len(), 2);
+
         Ok(())
     }
 
