@@ -300,8 +300,8 @@ impl Builder {
     /// # Returns
     /// * A mutable reference to the [`Builder`].
     #[cfg(feature = "file_io")]
-    pub fn set_resource_dir<P: Into<PathBuf>>(&mut self, resource_dir: P) -> &mut Self {
-        self.base_path = Some(resource_dir.into());
+    pub fn set_base_path<P: Into<PathBuf>>(&mut self, base_path: P) -> &mut Self {
+        self.base_path = Some(base_path.into());
         self
     }
 
@@ -487,7 +487,7 @@ impl Builder {
         }
         let mut buf = Vec::new();
         let _size = stream.read_to_end(&mut buf)?;
-        self.resources.resources_mut().insert(id.to_owned(), buf);
+        self.resources.add(id, buf)?;
         Ok(self)
     }
 
@@ -1241,7 +1241,10 @@ mod tests {
         asset_handlers::jpeg_io::JpegIO,
         crypto::raw_signature::SigningAlg,
         hash_stream_by_alg,
-        utils::{test::write_jpeg_placeholder_stream, test_signer::test_signer, test::fixture_path},
+        utils::{
+            test::{fixture_path, write_jpeg_placeholder_stream},
+            test_signer::test_signer,
+        },
         validation_results::ValidationState,
         Reader,
     };
@@ -2253,10 +2256,10 @@ mod tests {
 
     #[cfg(feature = "file_io")]
     #[test]
-    fn test_resource_dir() -> Result<()>{
+    fn test_resource_dir() -> Result<()> {
         let mut builder = Builder::new();
         let ingredient_folder = fixture_path("ingredient");
-        builder.set_resource_dir(&ingredient_folder);
+        builder.set_base_path(&ingredient_folder);
         assert_eq!(builder.base_path, Some(&ingredient_folder).cloned());
         let ingredient_json = std::fs::read_to_string(ingredient_folder.join("ingredient.json"))?;
 
@@ -2268,7 +2271,7 @@ mod tests {
         let mut source = Cursor::new(TEST_IMAGE_CLEAN);
         let mut dest = Cursor::new(Vec::new());
 
-        builder.sign(&signer, "image/jpeg",  &mut source, &mut dest)?;
+        builder.sign(&signer, "image/jpeg", &mut source, &mut dest)?;
 
         let reader = Reader::from_stream("jpeg", &mut dest)?;
         let reader_json = reader.json();

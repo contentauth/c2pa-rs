@@ -774,13 +774,13 @@ pub unsafe extern "C" fn c2pa_builder_set_remote_url(
 /// # Safety
 /// Reads from NULL-terminated C strings.
 #[no_mangle]
-pub unsafe extern "C" fn c2pa_builder_set_resource_dir(
+pub unsafe extern "C" fn c2pa_builder_set_base_path(
     builder_ptr: *mut C2paBuilder,
-    resource_dir: *const c_char,
+    base_path: *const c_char,
 ) -> c_int {
     let mut builder = guard_boxed_int!(builder_ptr);
-    let resource_dir = from_cstr_or_return_int!(resource_dir);
-    builder.set_resource_dir(&resource_dir);
+    let base_path = from_cstr_or_return_int!(base_path);
+    builder.set_base_path(&base_path);
     0 as c_int
 }
 
