@@ -31,7 +31,7 @@ use crate::{
     asset_io::CAIRead,
     claim::Claim,
     hashed_uri::HashedUri,
-    jumbf::labels::{assertion_label_from_uri, to_absolute_uri},
+    jumbf::labels::{assertion_label_from_uri, to_absolute_uri, DATABOXES},
     Error, Result,
 };
 
@@ -76,10 +76,21 @@ impl UriOrResource {
         match self {
             UriOrResource::ResourceRef(r) => Ok(UriOrResource::ResourceRef(r.clone())),
             UriOrResource::HashedUri(h) => {
-                let data_box = claim.get_databox(h).ok_or(Error::MissingDataBox)?;
+                let (format, data) = if h.url().contains(DATABOXES) {
+                    let data_box = claim.get_databox(h).ok_or(Error::MissingDataBox)?;
+                    (data_box.format.to_owned(), data_box.data.clone())
+                } else {
+                    let (label, instance) = Claim::assertion_label_from_link(&h.url());
+                    let assertion =
+                        claim
+                            .get_assertion(&label, instance)
+                            .ok_or(Error::AssertionMissing {
+                                url: h.url().to_string(),
+                            })?;
+                    (assertion.label(), assertion.data().to_vec())
+                };
                 let url = to_absolute_uri(claim.label(), &h.url());
-                let resource_ref =
-                    resources.add_with(&url, &data_box.format, data_box.data.clone())?;
+                let resource_ref = resources.add_with(&url, &format, data)?;
                 Ok(UriOrResource::ResourceRef(resource_ref))
             }
         }

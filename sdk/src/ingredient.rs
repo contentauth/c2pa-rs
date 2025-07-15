@@ -27,7 +27,7 @@ use uuid::Uuid;
 use crate::Manifest;
 use crate::{
     assertion::{Assertion, AssertionBase},
-    assertions::{self, labels, AssetType, EmbeddedData, Metadata, Relationship, Thumbnail},
+    assertions::{self, labels, AssetType, EmbeddedData, Metadata, Relationship},
     asset_io::CAIRead,
     claim::{Claim, ClaimAssetData},
     crypto::base64,
@@ -207,14 +207,14 @@ impl Ingredient {
     }
 
     // try to determine if this is a V2 ingredient
-    pub(crate) fn is_v2(&self) -> bool {
-        self.instance_id.is_none()
-            || self.data.is_some()
-            || self.description.is_some()
-            || self.informational_uri.is_some()
-            || self.relationship == Relationship::InputTo
-            || self.data_types.is_some()
-    }
+    // pub(crate) fn is_v2(&self) -> bool {
+    //     self.instance_id.is_none()
+    //         || self.data.is_some()
+    //         || self.description.is_some()
+    //         || self.informational_uri.is_some()
+    //         || self.relationship == Relationship::InputTo
+    //         || self.data_types.is_some()
+    // }
 
     /// Returns a user-displayable title for this ingredient.
     pub fn title(&self) -> Option<&str> {
@@ -1186,6 +1186,7 @@ impl Ingredient {
         // if the ingredient defines a thumbnail, add it to the claim
         // otherwise use the parent claim thumbnail if available
         if let Some(thumb_ref) = self.thumbnail_ref() {
+            // assume this is a JUMBF uri if it has a manifest label
             let hash_url = match manifest_label_from_uri(&thumb_ref.identifier) {
                 Some(_) => {
                     let hash = match thumb_ref.hash.as_ref() {
@@ -1196,66 +1197,44 @@ impl Ingredient {
                     HashedUri::new(thumb_ref.identifier.clone(), thumb_ref.alg.clone(), &hash)
                 }
                 None => {
-                    let data = match self.thumbnail.as_ref() {
-                        Some(thumbnail) => get_resource(&thumbnail.identifier),
-                        None => Err(Error::NotFound),
-                    }?;
-                    if self.is_v2() {
-                        // v2 ingredients use databoxes for thumbnails
+                    let data = get_resource(&thumb_ref.identifier)?;
+                    if claim.version() >= 2 {
+                        claim.add_assertion(&EmbeddedData::new(
+                            labels::INGREDIENT_THUMBNAIL,
+                            format_to_mime(&thumb_ref.format),
+                            data.into_owned(),
+                        ))?
+                    } else {
+                        // v2 thumbnails used databoxes
                         claim.add_databox(
                             &thumb_ref.format,
                             data.into_owned(),
                             thumb_ref.data_types.clone(),
                         )?
-                    } else {
-                        let thumbnail = if claim.version() >= 2 {
-                            EmbeddedData::new(
-                                labels::INGREDIENT_THUMBNAIL,
-                                format_to_mime(&thumb_ref.format),
-                                data.into_owned(),
-                            )
-                        } else {
-                            Thumbnail::new(
-                                &labels::add_thumbnail_format(
-                                    labels::INGREDIENT_THUMBNAIL,
-                                    &thumb_ref.format,
-                                ),
-                                data.into_owned(),
-                            )
-                            .into()
-                        };
-                        claim.add_assertion(&thumbnail)?
                     }
                 }
             };
             thumbnail = Some(hash_url);
         }
 
+        // if the ingredient has a data field, resolve and add it to the claim
         let mut data = None;
         if let Some(data_ref) = self.data_ref() {
-            let box_data = get_resource(&data_ref.identifier)?;
-            let hash_url = claim.add_databox(
-                &data_ref.format,
-                box_data.into_owned(),
-                data_ref.data_types.clone(),
-            )?;
-
+            let resource = get_resource(&data_ref.identifier)?;
+            let hash_url = if claim.version() >= 2 {
+                claim.add_assertion(&EmbeddedData::new(
+                    labels::EMBEDDED_DATA,
+                    format_to_mime(&data_ref.format),
+                    resource.into_owned(),
+                ))
+            } else {
+                claim.add_databox(
+                    &data_ref.format,
+                    resource.into_owned(),
+                    data_ref.data_types.clone(),
+                )
+            }?;
             data = Some(hash_url);
-        };
-
-        // instance_id is required in V1 so we generate one if it's not provided
-        let instance_id = match self.instance_id.as_ref() {
-            Some(id) => Some(id.to_owned()),
-            None => {
-                if self.data.is_some()
-                    || self.description.is_some()
-                    || self.informational_uri.is_some()
-                {
-                    None // not required in V2
-                } else {
-                    Some(default_instance_id())
-                }
-            }
         };
 
         let mut ingredient_assertion = match claim.version() {
@@ -1274,7 +1253,7 @@ impl Ingredient {
             }
             _ => return Err(Error::UnsupportedType), // todo: better error
         };
-        ingredient_assertion.instance_id = instance_id;
+        ingredient_assertion.instance_id = self.instance_id.clone();
         match claim.version() {
             1 => {
                 ingredient_assertion.document_id = self.document_id.clone();

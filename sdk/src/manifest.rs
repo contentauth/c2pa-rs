@@ -469,7 +469,7 @@ impl Manifest {
         if let Some(manifest_assertion) = self
             .assertions
             .iter()
-            .find(|a| a.label() == label && a.instance() == instance)
+            .find(|a| a.label().starts_with(label) && a.instance() == instance)
         {
             manifest_assertion.to_assertion()
         } else {
@@ -688,13 +688,13 @@ impl Manifest {
 
                             // replace software agent with resource ref
                             template.software_agent = match template.software_agent.take() {
-                                Some(SoftwareAgent::ClaimGeneratorInfo(mut info)) => {
+                                Some(mut info) => {
                                     if let Some(icon) = info.icon.as_mut() {
                                         let icon =
                                             icon.to_resource_ref(manifest.resources_mut(), claim)?;
                                         info.set_icon(icon);
                                     }
-                                    Some(SoftwareAgent::ClaimGeneratorInfo(info))
+                                    Some(info)
                                 }
                                 agent => agent,
                             };
@@ -952,13 +952,13 @@ impl Manifest {
 
                             // replace software agent with hashed_uri
                             template.software_agent = match template.software_agent.take() {
-                                Some(SoftwareAgent::ClaimGeneratorInfo(mut info)) => {
+                                Some(mut info) => {
                                     if let Some(icon) = info.icon.as_mut() {
                                         let icon =
                                             icon.to_hashed_uri(self.resources(), &mut claim)?;
                                         info.set_icon(icon);
                                     }
-                                    Some(SoftwareAgent::ClaimGeneratorInfo(info))
+                                    Some(info)
                                 }
                                 agent => agent,
                             };
