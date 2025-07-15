@@ -27,11 +27,13 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    assertions::{labels, AssetType},
+    assertions::{labels, AssetType, EmbeddedData},
     asset_io::CAIRead,
     claim::Claim,
     hashed_uri::HashedUri,
     jumbf::labels::{assertion_label_from_uri, to_absolute_uri, DATABOXES},
+    salt::DefaultSalt,
+    utils::mime::format_to_mime,
     Error, Result,
 };
 
@@ -61,7 +63,17 @@ impl UriOrResource {
         match self {
             UriOrResource::ResourceRef(r) => {
                 let data = resources.get(&r.identifier)?;
-                let hash_uri = claim.add_databox(&r.format, data.to_vec(), None)?;
+                let hash_uri = match claim.version() {
+                    1 => claim.add_databox(&r.format, data.to_vec(), None)?,
+                    _ => {
+                        let icon_assertion = EmbeddedData::new(
+                            labels::ICON,
+                            format_to_mime(&r.format),
+                            data.to_vec(),
+                        );
+                        claim.add_assertion_with_salt(&icon_assertion, &DefaultSalt::default())?
+                    }
+                };
                 Ok(UriOrResource::HashedUri(hash_uri))
             }
             UriOrResource::HashedUri(h) => Ok(UriOrResource::HashedUri(h.clone())),

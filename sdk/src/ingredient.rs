@@ -39,6 +39,7 @@ use crate::{
     },
     log_item,
     resource_store::{skip_serializing_resources, ResourceRef, ResourceStore},
+    salt::DefaultSalt,
     status_tracker::StatusTracker,
     store::Store,
     utils::{
@@ -1189,6 +1190,7 @@ impl Ingredient {
             // assume this is a JUMBF uri if it has a manifest label
             let hash_url = match manifest_label_from_uri(&thumb_ref.identifier) {
                 Some(_) => {
+                    // we have a JUMBF uri so build a hashed uri to the existing assertion
                     let hash = match thumb_ref.hash.as_ref() {
                         Some(h) => base64::decode(h)
                             .map_err(|_e| Error::BadParam("Invalid hash".to_string()))?,
@@ -1198,19 +1200,20 @@ impl Ingredient {
                 }
                 None => {
                     let data = get_resource(&thumb_ref.identifier)?;
-                    if claim.version() >= 2 {
-                        claim.add_assertion(&EmbeddedData::new(
-                            labels::INGREDIENT_THUMBNAIL,
-                            format_to_mime(&thumb_ref.format),
-                            data.into_owned(),
-                        ))?
-                    } else {
-                        // v2 thumbnails used databoxes
+                    if claim.version() < 2 {
                         claim.add_databox(
                             &thumb_ref.format,
                             data.into_owned(),
                             thumb_ref.data_types.clone(),
                         )?
+                    } else {
+                        // add EmbeddedData thumbnail for v3 assertions in v2 claims
+                        let thumbnail = EmbeddedData::new(
+                            labels::INGREDIENT_THUMBNAIL,
+                            format_to_mime(&thumb_ref.format),
+                            data.into_owned(),
+                        );
+                        claim.add_assertion_with_salt(&thumbnail, &DefaultSalt::default())?
                     }
                 }
             };
@@ -1220,21 +1223,24 @@ impl Ingredient {
         // if the ingredient has a data field, resolve and add it to the claim
         let mut data = None;
         if let Some(data_ref) = self.data_ref() {
-            let resource = get_resource(&data_ref.identifier)?;
-            let hash_url = if claim.version() >= 2 {
-                claim.add_assertion(&EmbeddedData::new(
-                    labels::EMBEDDED_DATA,
-                    format_to_mime(&data_ref.format),
-                    resource.into_owned(),
-                ))
-            } else {
-                claim.add_databox(
+            let box_data = get_resource(&data_ref.identifier)?;
+            let hash_uri = match claim.version() {
+                1 => claim.add_databox(
                     &data_ref.format,
-                    resource.into_owned(),
+                    box_data.into_owned(),
                     data_ref.data_types.clone(),
-                )
-            }?;
-            data = Some(hash_url);
+                )?,
+                _ => {
+                    let embedded_data = EmbeddedData::new(
+                        labels::EMBEDDED_DATA,
+                        format_to_mime(&data_ref.format),
+                        box_data.into_owned(),
+                    );
+                    claim.add_assertion_with_salt(&embedded_data, &DefaultSalt::default())?
+                }
+            };
+
+            data = Some(hash_uri);
         };
 
         let mut ingredient_assertion = match claim.version() {
