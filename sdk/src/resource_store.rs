@@ -16,18 +16,19 @@ use std::{
     collections::HashMap,
     io::{Read, Seek, Write},
 };
-#[cfg(feature = "file_io")]
-use std::{
-    fs::{create_dir_all, read, write},
-    path::{Path, PathBuf},
-};
 
 #[cfg(feature = "json_schema")]
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-
 #[cfg(feature = "file_io")]
-use crate::utils::io_utils::uri_to_path;
+use {
+    crate::utils::io_utils::uri_to_path,
+    std::{
+        fs::{create_dir_all, read, write},
+        path::{Path, PathBuf},
+    },
+};
+
 use crate::{
     assertions::{labels, AssetType},
     asset_io::CAIRead,
