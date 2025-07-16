@@ -21,10 +21,8 @@ use crate::{
     crypto::{
         asn1::rfc3161::TstInfo,
         cose::{
-            check_end_entity_certificate_profile, check_certificate_profile, validate_cose_tst_info, validate_cose_tst_info_async,
-            CertificateTrustError, CertificateTrustPolicy, CoseError,
             check_end_entity_certificate_profile, validate_cose_tst_info,
-            validate_cose_tst_info_async, CertificateTrustPolicy, CoseError,
+            validate_cose_tst_info_async, CertificateTrustError, CertificateTrustPolicy, CoseError,
         },
         ocsp::OcspResponse,
     },
@@ -80,6 +78,7 @@ pub fn check_ocsp_status(
                             ocsp_response_der,
                             data,
                             ctp,
+                            tst_info,
                             validation_log,
                         ) {
                             // If certificate is revoked, return error immediately

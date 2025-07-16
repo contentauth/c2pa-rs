@@ -485,7 +485,9 @@ impl Store {
             StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
 
         let sign1 = parse_cose_sign1(sig, &data, &mut validation_log).ok()?;
-        if let Ok(info) = check_ocsp_status(&sign1, &data, &self.ctp, None, &mut validation_log) {
+        if let Ok(info) =
+            check_ocsp_status(&sign1, &data, &self.ctp, None, None, &mut validation_log)
+        {
             if let Some(revoked_at) = &info.revoked_at {
                 Some(format!(
                     "Certificate Status: Revoked, revoked at: {revoked_at}"
@@ -4535,7 +4537,7 @@ impl Store {
 
                 let sign1 = parse_cose_sign1(&sig, &data, validation_log)?;
                 let ocsp_response =
-                    fetch_and_check_ocsp_response(&sign1, &data, &self.ctp, validation_log)?;
+                    fetch_and_check_ocsp_response(&sign1, &data, &self.ctp, None, validation_log)?;
                 if !ocsp_response.ocsp_der.is_empty() {
                     oscp_responses.push(ocsp_response);
                 }
