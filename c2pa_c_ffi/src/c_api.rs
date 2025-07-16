@@ -1080,9 +1080,12 @@ pub unsafe extern "C" fn c2pa_format_embeddable(
 /// The error string can be retrieved by calling c2pa_error.
 ///
 /// # Safety
-/// Reads from NULL-terminated C strings
+/// Reads from NULL-terminated C strings.
 /// The returned value MUST be released by calling c2pa_signer_free
 /// and it is no longer valid after that call.
+/// When binding through the C API to other languages, the callback must live long
+/// enough, possibly being re-used and called multiple times. The callback is logically
+/// owned by the host/caller.
 ///
 /// # Example
 /// ```c
@@ -1104,7 +1107,10 @@ pub unsafe extern "C" fn c2pa_signer_create(
     let certs = from_cstr_or_return_null!(certs);
     let tsa_url = from_cstr_option!(tsa_url);
     let context = context as *const ();
-    println!("c2pa_signer_create");
+
+    // Create a callback that uses the provided C callback function
+    // The callback ignores its context parameter and will use
+    // the context set on the CallbackSigner closure
     let c_callback = move |context: *const (), data: &[u8]| {
         // we need to guess at a max signed size, the callback must verify this is big enough or fail.
         let signed_len_max = data.len() * 2;
@@ -1118,7 +1124,6 @@ pub unsafe extern "C" fn c2pa_signer_create(
                 signed_len_max,
             )
         };
-        println!("c_callback: signed_size: {}", signed_size);
         if signed_size < 0 {
             return Err(c2pa::Error::CoseSignature); // todo:: return errors from callback
         }
@@ -1374,7 +1379,7 @@ mod tests {
                 &mut manifest_bytes_ptr,
             )
         };
-        //let error = unsafe { c2pa_error() };
+        // let error = unsafe { c2pa_error() };
         // let error = unsafe { CString::from_raw(error) };
         // assert_eq!(error.to_str().unwrap(), "Other Invalid signing algorithm");
         // assert_eq!(result, 65485);
@@ -1601,14 +1606,148 @@ mod tests {
     }
 
     #[test]
+    fn test_create_callback_signer() {
+        extern "C" fn test_callback(
+            _context: *const (),
+            _data: *const c_uchar,
+            _len: usize,
+            _signed_bytes: *mut c_uchar,
+            _signed_len: usize,
+        ) -> isize {
+            // Placeholder signer
+            1
+        }
+
+        let certs = include_str!(fixture_path!("certs/ed25519.pub"));
+        let certs_cstr = CString::new(certs).unwrap();
+
+        let signer = unsafe {
+            c2pa_signer_create(
+                std::ptr::null(),
+                test_callback,
+                C2paSigningAlg::Ed25519,
+                certs_cstr.as_ptr(),
+                std::ptr::null(),
+            )
+        };
+
+        // verify signer is not null (aka could be created)
+        assert!(!signer.is_null());
+
+        unsafe { c2pa_signer_free(signer) };
+    }
+
+    #[test]
+    fn test_sign_with_callback_signer() {
+        // Create an example callback that uses the Ed25519 signing function,
+        // since we have it around. It is important a "real" callback returns -1 on error.
+        extern "C" fn test_callback(
+            _context: *const (),
+            data: *const c_uchar,
+            len: usize,
+            signed_bytes: *mut c_uchar,
+            signed_len: usize,
+        ) -> isize {
+            let private_key = include_bytes!(fixture_path!("certs/ed25519.pem"));
+            let private_key_cstr = match CString::new(private_key) {
+                Ok(s) => s,
+                Err(_) => return -1,
+            };
+
+            let signature = unsafe { c2pa_ed25519_sign(data, len, private_key_cstr.as_ptr()) };
+
+            // This should not happen, but in a real callback implementation we should check
+            if signature.is_null() {
+                return -1;
+            }
+
+            let signature_len = 64;
+            if signed_len < signature_len {
+                // This should not happen either, but in a real callback implementation we should check
+                unsafe { c2pa_signature_free(signature) };
+                return -1;
+            }
+
+            let signature_slice = unsafe { std::slice::from_raw_parts(signature, signature_len) };
+            let signed_slice = unsafe { std::slice::from_raw_parts_mut(signed_bytes, signed_len) };
+            signed_slice[..signature_len].copy_from_slice(signature_slice);
+
+            unsafe { c2pa_signature_free(signature) };
+            signature_len as isize
+        }
+
+        let source_image = include_bytes!(fixture_path!("IMG_0003.jpg"));
+        let mut source_stream = TestC2paStream::from_bytes(source_image.to_vec());
+        let dest_vec = Vec::new();
+        let mut dest_stream = TestC2paStream::new(dest_vec).into_c_stream();
+
+        let certs = include_str!(fixture_path!("certs/ed25519.pub"));
+        let certs_cstr = CString::new(certs).unwrap();
+
+        // Callback signer with a "real" callback that signs data
+        let signer = unsafe {
+            c2pa_signer_create(
+                std::ptr::null(), // context
+                test_callback,
+                C2paSigningAlg::Ed25519,
+                certs_cstr.as_ptr(),
+                std::ptr::null(), // tsa_url
+            )
+        };
+
+        assert!(!signer.is_null());
+
+        let manifest_def = CString::new("{}").unwrap();
+        let builder = unsafe { c2pa_builder_from_json(manifest_def.as_ptr()) };
+        assert!(!builder.is_null());
+
+        let format = CString::new("image/jpeg").unwrap();
+        let mut manifest_bytes_ptr = std::ptr::null();
+
+        // Data gets signed here using the callback
+        let result = unsafe {
+            c2pa_builder_sign(
+                builder,
+                format.as_ptr(),
+                &mut source_stream,
+                &mut dest_stream,
+                signer,
+                &mut manifest_bytes_ptr,
+            )
+        };
+        assert!(result > 0);
+
+        // Verify we can read the signed data back
+        let dest_test_stream = TestC2paStream::from_c_stream(dest_stream);
+        let mut read_stream = dest_test_stream.into_c_stream();
+        let format = CString::new("image/jpeg").unwrap();
+
+        let reader = unsafe { c2pa_reader_from_stream(format.as_ptr(), &mut read_stream) };
+        assert!(!reader.is_null());
+
+        let json = unsafe { c2pa_reader_json(reader) };
+        assert!(!json.is_null());
+        let json_str = unsafe { CString::from_raw(json) };
+        let json_content = json_str.to_str().unwrap();
+
+        assert!(json_content.contains("manifest"));
+
+        TestC2paStream::drop_c_stream(source_stream);
+        TestC2paStream::drop_c_stream(read_stream);
+        unsafe {
+            c2pa_manifest_bytes_free(manifest_bytes_ptr);
+            c2pa_reader_free(reader);
+        }
+        unsafe { c2pa_builder_free(builder) };
+        unsafe { c2pa_signer_free(signer) };
+    }
+
+    #[test]
     #[cfg(feature = "file_io")]
     fn test_reader_from_file_cawg_identity() {
         let base = env!("CARGO_MANIFEST_DIR");
-        let path = CString::new(format!(
-            "{}/../sdk/tests/fixtures/C_with_CAWG_data.jpg",
-            base
-        ))
-        .unwrap();
+        let path =
+            CString::new(format!("{base}/../sdk/tests/fixtures/C_with_CAWG_data.jpg")).unwrap();
         let reader = unsafe { c2pa_reader_from_file(path.as_ptr()) };
         if reader.is_null() {
             let error = unsafe { c2pa_error() };

@@ -19,8 +19,7 @@ use coset::{CoseSign1, RegisteredLabelWithPrivate, TaggedCborSerializable};
 use crate::{
     crypto::{
         asn1::rfc3161::TstInfo,
-        cose::{validate_cose_tst_info_async, CoseError},
-        time_stamp::TimeStampError,
+        cose::{validate_cose_tst_info_async, CertificateTrustPolicy},
     },
     identity::{
         claim_aggregation::{
@@ -35,6 +34,9 @@ use crate::{
     },
     log_current_item,
     status_tracker::StatusTracker,
+    validation_status::{
+        TIMESTAMP_MALFORMED, TIMESTAMP_MISMATCH, TIMESTAMP_TRUSTED, TIMESTAMP_VALIDATED,
+    },
     HashedUri,
 };
 
@@ -88,13 +90,26 @@ impl SignatureVerifier for IcaSignatureVerifier {
                 self.handle_signature_error(err, status_tracker)
             })?;
 
-        let maybe_tst_info = match validate_cose_tst_info_async(&sign1, payload_bytes)
-            .await
-            .inspect(|tst_info| self.save_time_stamp(tst_info, &mut ica_credential, status_tracker))
+        // todo: no trust list support yet for CAWG so passthrough for now
+        let local_ctp = CertificateTrustPolicy::passthrough();
+        // tracker to capture the C2PA timestamp informational statuses
+        let mut timestamp_tracker = StatusTracker::default();
+
+        // todo: since this is calling the C2PA Cose timestamp validator should it follow the C2PA rules?
+        // todo: (CAI-8847) since C2PA requires trust lists for TSAs what does that mean for CAWG since it is using
+        // the C2PA header's timestamp
+        let maybe_tst_info = match validate_cose_tst_info_async(
+            &sign1,
+            payload_bytes,
+            &local_ctp,
+            &mut timestamp_tracker,
+        )
+        .await
+        .inspect(|tst_info| self.save_time_stamp(tst_info, &mut ica_credential, status_tracker))
         {
             Ok(tst_info) => Some(tst_info),
-            Err(err) => {
-                self.handle_time_stamp_error(&err, status_tracker, &mut ok)?;
+            Err(_err) => {
+                self.handle_time_stamp_error(&mut timestamp_tracker, status_tracker, &mut ok)?;
                 None
             }
         };
@@ -532,42 +547,44 @@ impl IcaSignatureVerifier {
         .success(status_tracker);
     }
 
+    // all errors from timestamp verify are now informational, so map the informational
+    // codes to CAWG timestamp errors.
     fn handle_time_stamp_error(
         &self,
-        err: &CoseError,
-        status_tracker: &mut StatusTracker,
+        timestamp_tracker: &mut StatusTracker,
+        cawg_tracker: &mut StatusTracker,
         ok: &mut bool,
     ) -> Result<(), ValidationError<IcaValidationError>> {
-        match err {
-            CoseError::NoTimeStampToken => {
-                // Ignore. This is OK in CAWG.
-            }
+        if timestamp_tracker.has_status(TIMESTAMP_MALFORMED)
+            | timestamp_tracker.has_status(TIMESTAMP_MISMATCH)
+        {
+            *ok = false;
 
-            CoseError::TimeStampError(TimeStampError::InvalidData) => {
-                *ok = false;
-
-                log_current_item!(
-                    "Time stamp does not match credential",
-                    "IcaSignatureVerifier::check_signature"
-                )
-                .validation_status("cawg.ica.time_stamp.invalid")
-                .failure(
-                    status_tracker,
-                    ValidationError::SignatureError(IcaValidationError::InvalidTimeStamp),
-                )?;
-            }
-
-            _ => {
-                log_current_item!(
-                    "Unable to process time stamp",
-                    "IcaSignatureVerifier::check_signature"
-                )
-                .validation_status("cawg.ica.time_stamp.invalid")
-                .failure(
-                    status_tracker,
-                    ValidationError::SignatureError(IcaValidationError::InvalidTimeStamp),
-                )?;
-            }
+            log_current_item!(
+                "Time stamp does not match credential",
+                "IcaSignatureVerifier::check_signature"
+            )
+            .validation_status("cawg.ica.time_stamp.invalid")
+            .failure(
+                cawg_tracker,
+                ValidationError::SignatureError(IcaValidationError::InvalidTimeStamp),
+            )?;
+        } else if timestamp_tracker.has_status(TIMESTAMP_VALIDATED)
+            && timestamp_tracker.has_status(TIMESTAMP_TRUSTED)
+        {
+            *ok = true;
+        } else if !timestamp_tracker.logged_items().is_empty() {
+            // any other logged issue
+            *ok = false;
+            log_current_item!(
+                "Unable to process time stamp",
+                "IcaSignatureVerifier::check_signature"
+            )
+            .validation_status("cawg.ica.time_stamp.invalid")
+            .failure(
+                cawg_tracker,
+                ValidationError::SignatureError(IcaValidationError::InvalidTimeStamp),
+            )?;
         }
 
         Ok(())

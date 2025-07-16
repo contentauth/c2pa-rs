@@ -29,8 +29,8 @@ use zip::{write::SimpleFileOptions, ZipArchive, ZipWriter};
 use crate::{
     assertion::AssertionDecodeError,
     assertions::{
-        labels, Actions, BmffHash, BoxHash, CreativeWork, DataHash, Exif, Metadata, SoftwareAgent,
-        Thumbnail, User, UserCbor,
+        labels, Actions, BmffHash, BoxHash, CreativeWork, DataHash, EmbeddedData, Exif, Metadata,
+        SoftwareAgent, Thumbnail, User, UserCbor,
     },
     claim::Claim,
     error::{Error, Result},
@@ -161,10 +161,10 @@ impl AssertionDefinition {
 
 /// Use a Builder to add a signed manifest to an asset.
 ///
-/// # Example: Building and signing a manifest:
+/// # Example: Building and signing a manifest
 ///
-///
-/// # use c2pa::Result;
+/// ```
+/// use c2pa::Result;
 /// use std::path::PathBuf;
 ///
 /// use c2pa::{create_signer, Builder, SigningAlg};
@@ -209,6 +209,7 @@ impl AssertionDefinition {
 /// )?;
 /// # Ok(())
 /// # }
+/// ```
 #[skip_serializing_none]
 #[derive(Debug, Default, Deserialize, Serialize)]
 #[cfg_attr(feature = "json_schema", derive(JsonSchema))]
@@ -504,7 +505,7 @@ impl Builder {
                 zip.start_file("resources/", options)
                     .map_err(|e| Error::OtherError(Box::new(e)))?;
                 for (id, data) in self.resources.resources() {
-                    zip.start_file(format!("resources/{}", id), options)
+                    zip.start_file(format!("resources/{id}"), options)
                         .map_err(|e| Error::OtherError(Box::new(e)))?;
                     zip.write_all(data)?;
                 }
@@ -515,7 +516,7 @@ impl Builder {
                     .map_err(|e| Error::OtherError(Box::new(e)))?;
                 for ingredient in self.definition.ingredients.iter() {
                     for (id, data) in ingredient.resources().resources() {
-                        zip.start_file(format!("resources/{}", id), options)
+                        zip.start_file(format!("resources/{id}"), options)
                             .map_err(|e| Error::OtherError(Box::new(e)))?;
                         zip.write_all(data)?;
                     }
@@ -608,8 +609,7 @@ impl Builder {
                 let id = file.name().split('/').nth(2).unwrap_or_default();
                 if index >= builder.definition.ingredients.len() {
                     return Err(Error::OtherError(Box::new(std::io::Error::other(format!(
-                        "Invalid ingredient index {}",
-                        index
+                        "Invalid ingredient index {index}"
                     )))))?; // todo add specific error
                 }
                 builder.definition.ingredients[index]
@@ -700,13 +700,20 @@ impl Builder {
                 let mut stream = self.resources.open(thumb_ref)?;
                 let mut data = Vec::new();
                 stream.read_to_end(&mut data)?;
-                claim.add_assertion_with_salt(
-                    &Thumbnail::new(
+                let thumbnail = if claim.version() >= 2 {
+                    EmbeddedData::new(
+                        labels::CLAIM_THUMBNAIL,
+                        format_to_mime(&thumb_ref.format),
+                        data,
+                    )
+                } else {
+                    Thumbnail::new(
                         &labels::add_thumbnail_format(labels::CLAIM_THUMBNAIL, &thumb_ref.format),
                         data,
-                    ),
-                    &salt,
-                )?;
+                    )
+                    .into()
+                };
+                claim.add_assertion_with_salt(&thumbnail, &salt)?;
             }
         }
 
@@ -735,11 +742,7 @@ impl Builder {
         for manifest_assertion in &definition.assertions {
             match manifest_assertion.label.as_str() {
                 l if l.starts_with(Actions::LABEL) => {
-                    let version = labels::version(l);
-
                     let mut actions: Actions = manifest_assertion.to_assertion()?;
-                    //dbg!(format!("Actions: {:?} version: {:?}", actions, version));
-
                     let mut updates = Vec::new();
                     let mut index = 0;
                     #[allow(clippy::explicit_counter_loop)]
@@ -753,21 +756,15 @@ impl Builder {
                                     uris.push(hash_url.clone());
                                 } else {
                                     log::error!("Action ingredientId not found: {id}");
-                                    // return Err(Error::BadParam(format!(
-                                    //     "Action ingredientId not found: {id}"
-                                    // )));
+                                    if claim.version() >= 2 {
+                                        return Err(Error::AssertionSpecificError(format!(
+                                            "Action ingredientId not found: {id}"
+                                        )));
+                                    }
                                 }
                             }
-                            match version {
-                                Some(1) => {
-                                    // only for explicit version 1 (do we need to support this?)
-                                    update = update.set_parameter("ingredient", uris[0].clone())?
-                                }
-                                None | Some(2) => {
-                                    update = update.set_parameter("ingredients", uris)?
-                                }
-                                _ => return Err(Error::AssertionUnsupportedVersion),
-                            };
+                            update = update.set_parameter("ingredients", uris)?;
+
                             updates.push((index, update));
                         }
                         index += 1;
@@ -788,13 +785,13 @@ impl Builder {
 
                             // replace software agent with hashed_uri
                             template.software_agent = match template.software_agent.take() {
-                                Some(SoftwareAgent::ClaimGeneratorInfo(mut info)) => {
+                                Some(mut info) => {
                                     if let Some(icon) = info.icon.as_mut() {
                                         let icon =
                                             icon.to_hashed_uri(&self.resources, &mut claim)?;
                                         info.set_icon(icon);
                                     }
-                                    Some(SoftwareAgent::ClaimGeneratorInfo(info))
+                                    Some(info)
                                 }
                                 agent => agent,
                             };
@@ -1467,7 +1464,7 @@ mod tests {
         dest.rewind().unwrap();
         let manifest_store = Reader::from_stream(format, &mut dest).expect("from_bytes");
 
-        println!("{}", manifest_store);
+        println!("{manifest_store}");
         assert_ne!(manifest_store.validation_state(), ValidationState::Invalid);
         assert!(manifest_store.active_manifest().is_some());
         let manifest = manifest_store.active_manifest().unwrap();
@@ -1498,7 +1495,7 @@ mod tests {
         // read and validate the signed manifest store
         let manifest_store = Reader::from_file(&dest).expect("from_bytes");
 
-        println!("{}", manifest_store);
+        println!("{manifest_store}");
         assert_ne!(manifest_store.validation_state(), ValidationState::Invalid);
         assert_eq!(manifest_store.validation_status(), None);
         assert_eq!(
@@ -1523,15 +1520,15 @@ mod tests {
             "sample1.heic",
             "sample1.heif",
             "sample1.m4a",
-            "video1.mp4",
+            "video1_no_manifest.mp4",
             "cloud_manifest.c2pa", // we need a new test for this since it will always fail
         ];
         for file_name in TESTFILES {
             let extension = file_name.split('.').next_back().unwrap();
             let format = extension;
 
-            let path = format!("tests/fixtures/{}", file_name);
-            println!("path: {}", path);
+            let path = format!("tests/fixtures/{file_name}");
+            println!("path: {path}");
             let mut source = std::fs::File::open(path).unwrap();
             let mut dest = Cursor::new(Vec::new());
 
@@ -2203,6 +2200,7 @@ mod tests {
     #[test]
     fn test_to_archive_and_from_archive_with_ingredient_thumbnail() {
         let mut builder = Builder::new();
+        builder.definition.claim_version = Some(2);
 
         let mut thumbnail = Cursor::new(TEST_THUMBNAIL);
         let mut source = Cursor::new(TEST_IMAGE_CLEAN);
@@ -2228,6 +2226,7 @@ mod tests {
         let reader_json = Reader::from_stream("image/jpeg", &mut output)
             .unwrap()
             .json();
+        println!("{reader_json}");
         assert!(reader_json.contains("Test Ingredient"));
         assert!(reader_json.contains("thumbnail.ingredient"));
     }

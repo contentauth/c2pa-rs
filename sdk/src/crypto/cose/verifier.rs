@@ -24,19 +24,17 @@ use crate::{
         base64::encode,
         cose::{
             cert_chain_from_sign1, check_end_entity_certificate_profile, parse_cose_sign1,
-            signing_alg_from_sign1, validate_cose_tst_info, validate_cose_tst_info_async,
-            CertificateInfo, CertificateTrustError, CertificateTrustPolicy, CoseError,
+            signing_alg_from_sign1, CertificateInfo, CertificateTrustPolicy, CoseError,
+            TrustAnchorType,
         },
         ec_utils::parse_ec_der_sig,
         raw_signature::{validator_for_signing_alg, SigningAlg},
-        time_stamp::TimeStampError,
     },
     log_item,
     status_tracker::StatusTracker,
     validation_results::validation_codes::{
         ALGORITHM_UNSUPPORTED, SIGNING_CREDENTIAL_INVALID, SIGNING_CREDENTIAL_TRUSTED,
-        SIGNING_CREDENTIAL_UNTRUSTED, TIMESTAMP_MALFORMED, TIMESTAMP_MISMATCH,
-        TIMESTAMP_OUTSIDE_VALIDITY,
+        SIGNING_CREDENTIAL_UNTRUSTED,
     },
 };
 
@@ -69,7 +67,7 @@ impl Verifier<'_> {
         cose_sign1: &[u8],
         data: &[u8],
         additional_data: &[u8],
-        tst_info: Option<TstInfo>,
+        tst_info: Option<&TstInfo>,
         validation_log: &mut StatusTracker,
     ) -> Result<CertificateInfo, CoseError> {
         let mut sign1 = parse_cose_sign1(cose_sign1, data, validation_log)?;
@@ -84,18 +82,6 @@ impl Verifier<'_> {
             .failure_no_throw(validation_log, CoseError::UnsupportedSigningAlgorithm);
 
             return Err(CoseError::UnsupportedSigningAlgorithm);
-        };
-
-        // If a timestamp is provided, use it. Otherwise, validate the timestamp from
-        // the signature.
-        let tst_info_res = if let Some(ti) = tst_info {
-            Ok(ti)
-        } else {
-            if _sync {
-                validate_cose_tst_info(&sign1, data)
-            } else {
-                validate_cose_tst_info_async(&sign1, data).await
-            }
         };
 
         match alg {
@@ -118,12 +104,12 @@ impl Verifier<'_> {
         }
 
         if _sync {
-            self.verify_profile(&sign1, &tst_info_res, validation_log)?;
-            self.verify_trust(&sign1, &tst_info_res, validation_log)?;
+            self.verify_profile(&sign1, tst_info, validation_log)?;
+            self.verify_trust(&sign1, tst_info, validation_log)?;
         } else {
-            self.verify_profile_async(&sign1, &tst_info_res, validation_log)
+            self.verify_profile_async(&sign1, tst_info, validation_log)
                 .await?;
-            self.verify_trust_async(&sign1, &tst_info_res, validation_log)
+            self.verify_trust_async(&sign1, tst_info, validation_log)
                 .await?;
         }
 
@@ -179,7 +165,7 @@ impl Verifier<'_> {
 
         Ok(CertificateInfo {
             alg: Some(alg),
-            date: tst_info_res.map(|t| t.gen_time.into()).ok(),
+            date: tst_info.map(|t| t.gen_time.clone().into()),
             cert_serial_number: Some(sign_cert.serial.clone()),
             issuer_org: Some(subject),
             validated: true,
@@ -194,7 +180,7 @@ impl Verifier<'_> {
     pub(crate) fn verify_profile(
         &self,
         sign1: &CoseSign1,
-        tst_info_res: &Result<TstInfo, CoseError>,
+        tst_info: Option<&TstInfo>,
         validation_log: &mut StatusTracker,
     ) -> Result<(), CoseError> {
         let ctp = match self {
@@ -208,56 +194,12 @@ impl Verifier<'_> {
         let certs = cert_chain_from_sign1(sign1)?;
         let end_entity_cert_der = &certs[0];
 
-        match tst_info_res {
-            Ok(tst_info) => Ok(check_end_entity_certificate_profile(
-                end_entity_cert_der,
-                ctp,
-                validation_log,
-                Some(tst_info),
-            )?),
-
-            Err(CoseError::NoTimeStampToken) => Ok(check_end_entity_certificate_profile(
-                end_entity_cert_der,
-                ctp,
-                validation_log,
-                None,
-            )?),
-
-            Err(CoseError::TimeStampError(TimeStampError::InvalidData)) => {
-                log_item!(
-                    "Cose_Sign1",
-                    "timestamp did not match signed data",
-                    "verify_cose"
-                )
-                .validation_status(TIMESTAMP_MISMATCH)
-                .informational(validation_log);
-
-                Err(TimeStampError::InvalidData.into())
-            }
-
-            Err(CoseError::TimeStampError(TimeStampError::ExpiredCertificate)) => {
-                log_item!(
-                    "Cose_Sign1",
-                    "timestamp certificate outside of validity",
-                    "verify_cose"
-                )
-                .validation_status(TIMESTAMP_OUTSIDE_VALIDITY)
-                .informational(validation_log);
-
-                Err(TimeStampError::ExpiredCertificate.into())
-            }
-
-            Err(e) => {
-                log_item!("Cose_Sign1", "error parsing timestamp", "verify_cose")
-                    .validation_status(TIMESTAMP_MALFORMED)
-                    .informational(validation_log);
-
-                // Frustratingly, we can't clone CoseError. The likely cases are already handled
-                // above, so we'll call this an internal error.
-
-                Err(CoseError::InternalError(e.to_string()))
-            }
-        }
+        Ok(check_end_entity_certificate_profile(
+            end_entity_cert_der,
+            ctp,
+            validation_log,
+            tst_info,
+        )?)
     }
 
     /// Verify certificate profile if so configured.
@@ -265,20 +207,20 @@ impl Verifier<'_> {
     pub(crate) fn verify_trust(
         &self,
         sign1: &CoseSign1,
-        tst_info_res: &Result<TstInfo, CoseError>,
+        tst_info_res: Option<&TstInfo>,
         validation_log: &mut StatusTracker,
-    ) -> Result<(), CoseError> {
+    ) -> Result<TrustAnchorType, CoseError> {
         // IMPORTANT: This function assumes that verify_profile has already been called.
 
         let ctp = match self {
             Self::VerifyTrustPolicy(ctp) => *ctp,
 
             Self::VerifyCertificateProfileOnly(_ctp) => {
-                return Ok(());
+                return Ok(TrustAnchorType::NoCheck);
             }
 
             Self::IgnoreProfileAndTrustPolicy => {
-                return Ok(());
+                return Ok(TrustAnchorType::NoCheck);
             }
         };
 
@@ -286,7 +228,7 @@ impl Verifier<'_> {
         let end_entity_cert_der = &certs[0];
         let chain_der = &certs[1..];
 
-        let signing_time_epoch = tst_info_res.as_ref().ok().map(|tst_info| {
+        let signing_time_epoch = tst_info_res.map(|tst_info| {
             let dt: chrono::DateTime<chrono::Utc> = tst_info.gen_time.clone().into();
             dt.timestamp()
         });
@@ -299,32 +241,25 @@ impl Verifier<'_> {
         };
 
         match verify_result {
-            Ok(()) => {
-                log_item!("Cose_Sign1", "signing certificate trusted", "verify_cose")
-                    .validation_status(SIGNING_CREDENTIAL_TRUSTED)
-                    .success(validation_log);
+            Ok(tat) => {
+                log_item!(
+                    "",
+                    format!(
+                        "signing certificate trusted, found in {:?} trust anchors",
+                        tat
+                    ),
+                    "verify_cose"
+                )
+                .validation_status(SIGNING_CREDENTIAL_TRUSTED)
+                .success(validation_log);
 
-                Ok(())
+                Ok(tat)
             }
-
-            Err(CertificateTrustError::CertificateNotTrusted) => {
-                log_item!("Cose_Sign1", "signing certificate untrusted", "verify_cose")
+            Err(e) => Err(
+                log_item!("", "signing certificate untrusted", "verify_cose")
                     .validation_status(SIGNING_CREDENTIAL_UNTRUSTED)
-                    .failure_no_throw(validation_log, CertificateTrustError::CertificateNotTrusted);
-
-                Err(CertificateTrustError::CertificateNotTrusted.into())
-            }
-
-            Err(e) => {
-                log_item!("Cose_Sign1", "signing certificate untrusted", "verify_cose")
-                    .validation_status(SIGNING_CREDENTIAL_UNTRUSTED)
-                    .failure_no_throw(validation_log, &e);
-
-                // TO REVIEW: Mixed message: Are we using CoseCertUntrusted in log or &e from
-                // above? validation_log.log(log_item,
-                // Error::CoseCertUntrusted)?;
-                Err(e.into())
-            }
+                    .failure_as_err(validation_log, e.into()),
+            ),
         }
     }
 }
@@ -348,17 +283,17 @@ fn dump_cert_chain(certs: &[Vec<u8>]) -> Result<Vec<u8>, CoseError> {
             .collect::<Vec<_>>();
 
         writer
-            .write_fmt(format_args!("{}\n", cert_begin))
+            .write_fmt(format_args!("{cert_begin}\n"))
             .map_err(|_e| CoseError::InternalError("could not write PEM".to_string()))?;
 
         for l in cert_lines {
             writer
-                .write_fmt(format_args!("{}\n", l))
+                .write_fmt(format_args!("{l}\n"))
                 .map_err(|_e| CoseError::InternalError("could not write PEM".to_string()))?;
         }
 
         writer
-            .write_fmt(format_args!("{}\n", cert_end))
+            .write_fmt(format_args!("{cert_end}\n"))
             .map_err(|_e| CoseError::InternalError("could not write PEM".to_string()))?;
     }
 

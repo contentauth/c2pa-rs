@@ -21,7 +21,7 @@ use x509_parser::{
 
 use super::validators::validator_for_sig_and_hash_algs;
 use crate::crypto::{
-    cose::{CertificateTrustError, CertificateTrustPolicy},
+    cose::{CertificateTrustError, CertificateTrustPolicy, TrustAnchorType},
     raw_signature::{oids::*, RawSignatureValidationError, SigningAlg},
 };
 
@@ -30,7 +30,11 @@ pub(crate) fn check_certificate_trust(
     chain_der: &[Vec<u8>],
     cert_der: &[u8],
     signing_time_epoch: Option<i64>,
-) -> Result<(), CertificateTrustError> {
+) -> Result<TrustAnchorType, CertificateTrustError> {
+    if ctp.trust_anchor_ders().count() == 0 && ctp.user_trust_anchor_ders().count() == 0 {
+        return Err(CertificateTrustError::CertificateNotTrusted);
+    }
+
     let Ok((_rem, cert)) = X509Certificate::from_der(cert_der) else {
         return Err(CertificateTrustError::InvalidCertificate);
     };
@@ -58,18 +62,26 @@ pub(crate) fn check_certificate_trust(
     check_chain_order(&full_chain)?;
 
     // Build anchors and check against trust anchors.
-    let anchors = ctp
+    let anchors: Vec<(X509Certificate, &Vec<u8>)> = ctp
         .trust_anchor_ders()
-        .map(|anchor_der| {
-            X509Certificate::from_der(anchor_der)
+        .filter_map(|anchor_der| {
+            let (_, cert) = X509Certificate::from_der(anchor_der)
                 .map_err(|_e| CertificateTrustError::CertificateNotTrusted)
-                .map(|r| r.1)
+                .ok()?;
+            Some((cert, anchor_der))
         })
-        .collect::<Result<Vec<X509Certificate>, CertificateTrustError>>()?;
+        .collect();
 
-    if anchors.is_empty() {
-        return Err(CertificateTrustError::CertificateNotTrusted);
-    }
+    // Build anchors and check against user provided trust anchors.
+    let user_anchors: Vec<(X509Certificate, &Vec<u8>)> = ctp
+        .user_trust_anchor_ders()
+        .filter_map(|anchor_der| {
+            let (_, cert) = X509Certificate::from_der(anchor_der)
+                .map_err(|_e| CertificateTrustError::CertificateNotTrusted)
+                .ok()?;
+            Some((cert, anchor_der))
+        })
+        .collect();
 
     // Work back from last cert in chain against the trust anchors.
     for cert in full_chain.iter().rev() {
@@ -86,22 +98,41 @@ pub(crate) fn check_certificate_trust(
             }
         }
 
-        for anchor in ctp.trust_anchor_ders() {
-            let data = chain_cert.tbs_certificate.as_ref();
-            let sig = chain_cert.signature_value.as_ref();
-
-            let sig_alg = cert_signing_alg(&chain_cert);
-
-            let (_, anchor_cert) = X509Certificate::from_der(anchor)
-                .map_err(|_e| CertificateTrustError::CertificateNotTrusted)?;
-
+        // Check against C2PA trust anchors.
+        for (anchor_cert, anchor_der) in &anchors {
             if chain_cert.issuer() == anchor_cert.subject() {
-                let result = verify_data(anchor.clone(), sig_alg, sig.to_vec(), data.to_vec());
+                let data = chain_cert.tbs_certificate.as_ref();
+                let sig = chain_cert.signature_value.as_ref();
+
+                let sig_alg = cert_signing_alg(anchor_cert);
+
+                let result = verify_data(anchor_der, sig_alg, sig, data);
 
                 match result {
                     Ok(b) => {
                         if b {
-                            return Ok(());
+                            return Ok(TrustAnchorType::System);
+                        }
+                    }
+                    Err(_) => continue,
+                }
+            }
+        }
+
+        // Check against user provided trust anchors.
+        for (anchor_cert, anchor_der) in &user_anchors {
+            if chain_cert.issuer() == anchor_cert.subject() {
+                let data = chain_cert.tbs_certificate.as_ref();
+                let sig = chain_cert.signature_value.as_ref();
+
+                let sig_alg = cert_signing_alg(anchor_cert);
+
+                let result = verify_data(anchor_der, sig_alg, sig, data);
+
+                match result {
+                    Ok(b) => {
+                        if b {
+                            return Ok(TrustAnchorType::User);
                         }
                     }
                     Err(_) => continue,
@@ -123,12 +154,12 @@ fn check_chain_order(certs: &[Vec<u8>]) -> Result<(), CertificateTrustError> {
         let (_, current_cert) = X509Certificate::from_der(&certs[i - 1])
             .map_err(|_e| CertificateTrustError::CertificateNotTrusted)?;
 
-        let issuer_der = certs[i].to_vec();
+        let issuer_der = &certs[i];
         let data = current_cert.tbs_certificate.as_ref();
         let sig = current_cert.signature_value.as_ref();
         let sig_alg = cert_signing_alg(&current_cert);
 
-        if !verify_data(issuer_der, sig_alg, sig.to_vec(), data.to_vec())? {
+        if !verify_data(issuer_der, sig_alg, sig, data)? {
             return Err(CertificateTrustError::CertificateNotTrusted);
         }
     }
@@ -283,12 +314,12 @@ fn signing_alg_from_rsapss_alg(alg: &AlgorithmIdentifier) -> Option<String> {
 }
 
 fn verify_data(
-    cert_der: Vec<u8>,
+    cert_der: &[u8],
     sig_alg: Option<String>,
-    sig: Vec<u8>,
-    data: Vec<u8>,
+    sig: &[u8],
+    data: &[u8],
 ) -> Result<bool, CertificateTrustError> {
-    let (_, cert) = X509Certificate::from_der(cert_der.as_bytes())
+    let (_, cert) = X509Certificate::from_der(cert_der)
         .map_err(|_e| CertificateTrustError::InvalidCertificate)?;
 
     let certificate_public_key = cert.public_key();
@@ -301,7 +332,7 @@ fn verify_data(
         .ok_or(CertificateTrustError::InvalidCertificate)?;
 
     let result = if let Some(validator) = validator_for_sig_and_hash_algs(&sig_alg, &hash_alg) {
-        validator.validate(&sig, &data, certificate_public_key.raw.as_ref())
+        validator.validate(sig, data, certificate_public_key.raw.as_ref())
     } else {
         return Err(CertificateTrustError::InvalidCertificate);
     };

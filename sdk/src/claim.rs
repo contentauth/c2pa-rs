@@ -41,6 +41,7 @@ use crate::{
         get_serial_num, get_signing_info, get_signing_info_async, verify_cose, verify_cose_async,
     },
     crypto::{
+        asn1::rfc3161::TstInfo,
         base64,
         cose::{parse_cose_sign1, CertificateInfo, CertificateTrustPolicy, OcspFetchPolicy},
         ocsp::OcspResponse,
@@ -55,8 +56,8 @@ use crate::{
         },
         labels::{
             assertion_label_from_uri, box_name_from_uri, manifest_label_from_uri,
-            manifest_label_to_parts, to_absolute_uri, to_assertion_uri, to_databox_uri, ASSERTIONS,
-            CLAIM, CREDENTIALS, DATABOX, DATABOXES, SIGNATURE,
+            manifest_label_to_parts, to_absolute_uri, to_assertion_uri, to_databox_uri,
+            to_signature_uri, ASSERTIONS, CLAIM, CREDENTIALS, DATABOX, DATABOXES, SIGNATURE,
         },
     },
     jumbf_io::get_assetio_handler,
@@ -162,7 +163,7 @@ impl ClaimAssertion {
                 let label = format!("{}__{}", get_thumbnail_type(&al_ref), self.instance);
 
                 match get_thumbnail_image_type(&al_ref) {
-                    Some(image_type) => format!("{}.{}", label, image_type),
+                    Some(image_type) => format!("{label}.{image_type}"),
                     None => label,
                 }
             } else {
@@ -415,7 +416,11 @@ impl Claim {
             conflict_label: None,
             signature: "".to_string(),
 
-            claim_generator: Some(claim_generator.into()),
+            claim_generator: if claim_version == 1 {
+                Some(claim_generator.into())
+            } else {
+                None
+            },
             claim_generator_info: None,
             assertion_store: Vec::new(),
             vc_store: Vec::new(),
@@ -508,7 +513,11 @@ impl Claim {
             conflict_label: None,
             signature: "".to_string(),
 
-            claim_generator: Some(claim_generator.into()),
+            claim_generator: if claim_version == 1 {
+                Some(claim_generator.into())
+            } else {
+                None
+            },
             claim_generator_info: None,
             assertion_store: Vec::new(),
             vc_store: Vec::new(),
@@ -941,7 +950,7 @@ impl Claim {
 
     /// return max version this Claim supports
     pub fn build_version_support() -> String {
-        format!("{}.v{}", CLAIM, BUILD_VER_SUPPORT)
+        format!("{CLAIM}.v{BUILD_VER_SUPPORT}")
     }
 
     /// Return the JUMBF label for this claim.
@@ -1060,6 +1069,11 @@ impl Claim {
             Some(alg) => alg,
             None => BUILD_HASH_ALG,
         }
+    }
+
+    /// true algorithm
+    pub fn alg_raw(&self) -> Option<&str> {
+        self.alg.as_deref()
     }
 
     /// get soft algorithm
@@ -1788,7 +1802,7 @@ impl Claim {
         let data = claim.data()?;
 
         // use the signature uri as the current uri while validating the signature info
-        validation_log.push_current_uri(claim.signature.clone());
+        validation_log.push_current_uri(to_signature_uri(claim.label()));
 
         // make sure signature manifest if present points to this manifest
         let sig_box_err = match jumbf::labels::manifest_label_from_uri(&claim.signature) {
@@ -1801,7 +1815,7 @@ impl Claim {
 
         if sig_box_err {
             log_item!(
-                claim.signature_uri(),
+                to_signature_uri(claim.label()),
                 "signature missing",
                 "verify_claim_async"
             )
@@ -1818,6 +1832,7 @@ impl Claim {
             &data,
             ctp,
             svi.certificate_statuses.get(&certificate_serial_num),
+            svi.timestamps.get(claim.label()),
             validation_log,
         )?;
 
@@ -1827,7 +1842,7 @@ impl Claim {
             &additional_bytes,
             cert_check,
             ctp,
-            svi.timestamps.get(claim.label()).cloned(),
+            svi.timestamps.get(claim.label()),
             validation_log,
         )
         .await;
@@ -1853,7 +1868,7 @@ impl Claim {
         let additional_bytes: Vec<u8> = Vec::new();
 
         // use the signature uri as the current uri while validating the signature info
-        validation_log.push_current_uri(claim.signature.clone());
+        validation_log.push_current_uri(to_signature_uri(claim.label()));
 
         // make sure signature manifest if present points to this manifest
         let sig_box_err = match jumbf::labels::manifest_label_from_uri(&claim.signature) {
@@ -1865,9 +1880,13 @@ impl Claim {
         };
 
         if sig_box_err {
-            log_item!(claim.signature_uri(), "signature missing", "verify_claim")
-                .validation_status(validation_status::CLAIM_SIGNATURE_MISSING)
-                .failure(validation_log, Error::ClaimMissingSignatureBox)?;
+            log_item!(
+                to_signature_uri(claim.label()),
+                "signature missing",
+                "verify_claim"
+            )
+            .validation_status(validation_status::CLAIM_SIGNATURE_MISSING)
+            .failure(validation_log, Error::ClaimMissingSignatureBox)?;
         }
 
         let data = if let Some(ref original_bytes) = claim.original_bytes {
@@ -1885,6 +1904,7 @@ impl Claim {
             data,
             ctp,
             svi.certificate_statuses.get(&certificate_serial_num),
+            svi.timestamps.get(claim.label()),
             validation_log,
         )?;
 
@@ -1894,7 +1914,7 @@ impl Claim {
             &additional_bytes,
             cert_check,
             ctp,
-            svi.timestamps.get(claim.label()).cloned(),
+            svi.timestamps.get(claim.label()),
             validation_log,
         );
 
@@ -1957,6 +1977,9 @@ impl Claim {
                     validation_log,
                     Error::ValidationRule("No Action array in Actions".into()),
                 )?;
+
+            // failure full stop
+            return Err(Error::ValidationRule("No Action array in Actions".into()));
         }
 
         // check Claim.v2 first action rules
@@ -2612,7 +2635,7 @@ impl Claim {
             Ok(vi) => {
                 if !vi.validated {
                     log_item!(
-                        claim.signature_uri(),
+                        to_signature_uri(claim.label()),
                         "claim signature is not valid",
                         "verify_internal"
                     )
@@ -2621,7 +2644,7 @@ impl Claim {
                 } else {
                     // signing cert has not expired
                     log_item!(
-                        claim.signature_uri(),
+                        to_signature_uri(claim.label()),
                         "claim signature valid",
                         "verify_internal"
                     )
@@ -2630,7 +2653,7 @@ impl Claim {
 
                     // add signature validated status
                     log_item!(
-                        claim.signature_uri(),
+                        to_signature_uri(claim.label()),
                         "claim signature valid",
                         "verify_internal"
                     )
@@ -2641,7 +2664,7 @@ impl Claim {
             Err(parse_err) => {
                 // handle case where lower level failed to log
                 log_item!(
-                    claim.signature_uri(),
+                    to_signature_uri(claim.label()),
                     "claim signature is not valid",
                     "verify_internal"
                 )
@@ -3687,7 +3710,7 @@ impl Claim {
             let output_label = format!("{}__{}", get_thumbnail_type(label), instance);
 
             match get_thumbnail_image_type(label) {
-                Some(image_type) => format!("{}.{}", output_label, image_type),
+                Some(image_type) => format!("{output_label}.{image_type}"),
                 None => output_label,
             }
         } else {
@@ -3817,6 +3840,7 @@ pub(crate) fn check_ocsp_status(
     data: &[u8],
     ctp: &CertificateTrustPolicy,
     ocsp_responses: Option<&Vec<Vec<u8>>>,
+    tst_info: Option<&TstInfo>,
     validation_log: &mut StatusTracker,
 ) -> Result<OcspResponse> {
     // Moved here instead of c2pa-crypto because of the dependency on settings.
@@ -3833,6 +3857,7 @@ pub(crate) fn check_ocsp_status(
             fetch_policy,
             ctp,
             ocsp_responses,
+            tst_info,
             validation_log,
         )?)
     } else {
@@ -3842,6 +3867,7 @@ pub(crate) fn check_ocsp_status(
             fetch_policy,
             ctp,
             ocsp_responses,
+            tst_info,
             validation_log,
         )
         .await?)

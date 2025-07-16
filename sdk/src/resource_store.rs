@@ -27,11 +27,13 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    assertions::{labels, AssetType},
+    assertions::{labels, AssetType, EmbeddedData},
     asset_io::CAIRead,
     claim::Claim,
     hashed_uri::HashedUri,
-    jumbf::labels::{assertion_label_from_uri, to_absolute_uri},
+    jumbf::labels::{assertion_label_from_uri, to_absolute_uri, DATABOXES},
+    salt::DefaultSalt,
+    utils::mime::format_to_mime,
     Error, Result,
 };
 
@@ -61,7 +63,17 @@ impl UriOrResource {
         match self {
             UriOrResource::ResourceRef(r) => {
                 let data = resources.get(&r.identifier)?;
-                let hash_uri = claim.add_databox(&r.format, data.to_vec(), None)?;
+                let hash_uri = match claim.version() {
+                    1 => claim.add_databox(&r.format, data.to_vec(), None)?,
+                    _ => {
+                        let icon_assertion = EmbeddedData::new(
+                            labels::ICON,
+                            format_to_mime(&r.format),
+                            data.to_vec(),
+                        );
+                        claim.add_assertion_with_salt(&icon_assertion, &DefaultSalt::default())?
+                    }
+                };
                 Ok(UriOrResource::HashedUri(hash_uri))
             }
             UriOrResource::HashedUri(h) => Ok(UriOrResource::HashedUri(h.clone())),
@@ -76,10 +88,21 @@ impl UriOrResource {
         match self {
             UriOrResource::ResourceRef(r) => Ok(UriOrResource::ResourceRef(r.clone())),
             UriOrResource::HashedUri(h) => {
-                let data_box = claim.get_databox(h).ok_or(Error::MissingDataBox)?;
+                let (format, data) = if h.url().contains(DATABOXES) {
+                    let data_box = claim.get_databox(h).ok_or(Error::MissingDataBox)?;
+                    (data_box.format.to_owned(), data_box.data.clone())
+                } else {
+                    let (label, instance) = Claim::assertion_label_from_link(&h.url());
+                    let assertion =
+                        claim
+                            .get_assertion(&label, instance)
+                            .ok_or(Error::AssertionMissing {
+                                url: h.url().to_string(),
+                            })?;
+                    (assertion.label(), assertion.data().to_vec())
+                };
                 let url = to_absolute_uri(claim.label(), &h.url());
-                let resource_ref =
-                    resources.add_with(&url, &data_box.format, data_box.data.clone())?;
+                let resource_ref = resources.add_with(&url, &format, data)?;
                 Ok(UriOrResource::ResourceRef(resource_ref))
             }
         }
@@ -142,6 +165,7 @@ impl ResourceRef {
 /// Resource store to contain binary objects referenced from JSON serializable structures
 #[derive(Debug, Serialize)]
 #[cfg_attr(feature = "json_schema", derive(JsonSchema))]
+#[doc(hidden)]
 pub struct ResourceStore {
     resources: HashMap<String, Vec<u8>>,
     #[cfg(feature = "file_io")]
@@ -248,13 +272,13 @@ impl ResourceStore {
                 if id.starts_with("/c2pa/") {
                     id = id.replacen("/c2pa/", "", 1);
                 } else if let Some(label) = self.label.as_ref() {
-                    id = format!("{}/{id}", label);
+                    id = format!("{label}/{id}");
                 }
                 id = id.replace([':'], "_");
                 // add a file extension if it doesn't have one
                 if !(id.ends_with(".jpeg") || id.ends_with(".png")) {
                     if let Some(ext) = crate::utils::mime::format_to_extension(format) {
-                        id = format!("{}.{}", id, ext);
+                        id = format!("{id}.{ext}");
                     }
                 }
             }

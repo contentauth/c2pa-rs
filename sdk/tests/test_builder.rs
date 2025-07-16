@@ -36,11 +36,6 @@ fn test_builder_ca_jpg() -> Result<()> {
 
     builder.sign(&test_signer(), format, &mut source, &mut dest)?;
 
-    // dest.set_position(0);
-    // let path = common::known_good_path("CA_test.json");
-    // let reader = c2pa::Reader::from_stream(format, &mut dest)?;
-    // std::fs::write(path, reader.json())?;
-
     dest.set_position(0);
     compare_stream_to_known_good(&mut dest, format, "CA_test.json")
 }
@@ -146,10 +141,7 @@ fn test_builder_remote_url_no_embed() -> Result<()> {
     if let Err(c2pa::Error::RemoteManifestUrl(url)) = reader {
         assert_eq!(url, "http://this_does_not_exist/foo.jpg".to_string());
     } else {
-        panic!(
-            "Expected Err(c2pa::Error::RemoteManifestUrl), got {:?}",
-            reader
-        );
+        panic!("Expected Err(c2pa::Error::RemoteManifestUrl), got {reader:?}");
     }
     Ok(())
 }
@@ -298,7 +290,7 @@ fn test_dynamic_assertions_builder() -> Result<()> {
 
     let reader = Reader::from_stream(format, &mut dest).unwrap();
 
-    println!("reader: {}", reader);
+    println!("reader: {reader}");
 
     assert_ne!(reader.validation_state(), ValidationState::Invalid);
 

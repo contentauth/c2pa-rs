@@ -29,7 +29,7 @@ use crate::{
 const ASSERTION_CREATION_VERSION: usize = 2;
 pub const CAI_INGREDIENT_IDS: &str = "org.cai.ingredientIds";
 
-/// Specification defined C2PA actions
+/// C2PA actions defined in the C2PA specification.
 pub mod c2pa_action {
     /// Changes to tone, saturation, etc.
     pub const COLOR_ADJUSTMENTS: &str = "c2pa.color_adjustments";
@@ -126,7 +126,7 @@ impl From<ClaimGeneratorInfo> for SoftwareAgent {
 /// along with possible other information such as what software performed
 /// the action.
 ///
-/// See <https://c2pa.org/specifications/specifications/1.0/specs/C2PA_Specification.html#_actions>.
+/// See <https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_actions>.
 #[derive(Deserialize, Serialize, Clone, Debug, Default, PartialEq)]
 pub struct Action {
     /// The label associated with this action. See ([`c2pa_action`]).
@@ -199,14 +199,6 @@ impl Action {
         }
     }
 
-    fn is_v2(&self) -> bool {
-        matches!(
-            self.software_agent,
-            Some(SoftwareAgent::ClaimGeneratorInfo(_))
-        ) || self.changes.is_some()
-            || self.description.is_some() // only defined for v2
-    }
-
     /// Returns the label for this action.
     ///
     /// This label is often one of the labels defined in [`c2pa_action`],
@@ -273,6 +265,7 @@ impl Action {
     }
 
     /// Returns a digitalSourceType as defined at <https://cv.iptc.org/newscodes/digitalsourcetype/>.
+    // QUESTION: Keep in docs?
     pub fn source_type(&self) -> Option<&str> {
         self.source_type.as_deref()
     }
@@ -280,7 +273,7 @@ impl Action {
     /// Returns the list of related actions.
     ///
     /// This is only present in C2PA v2.
-    /// See <https://c2pa.org/specifications/specifications/1.0/specs/C2PA_Specification.html#_related>.
+    /// See <https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_related_actions>.
     pub fn related(&self) -> Option<&[Action]> {
         self.related.as_deref()
     }
@@ -288,7 +281,7 @@ impl Action {
     /// Returns the reason why this action was performed.
     ///
     /// This is only present in C2PA v2.
-    /// See <https://c2pa.org/specifications/specifications/1.0/specs/C2PA_Specification.html#_reason>.
+    /// See <https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_reason>.
     pub fn reason(&self) -> Option<&str> {
         self.reason.as_deref()
     }
@@ -407,7 +400,7 @@ impl Action {
     /// Sets the list of related actions.
     ///
     /// This is only present in C2PA v2.
-    /// See <https://c2pa.org/specifications/specifications/1.0/specs/C2PA_Specification.html#_related>.
+    /// See <https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_related_actions>.
     pub fn set_related(mut self, related: Option<&Vec<Action>>) -> Self {
         self.related = related.cloned();
         self
@@ -416,7 +409,7 @@ impl Action {
     /// Sets the reason why this action was performed.
     ///
     /// This is only present in C2PA v2.
-    /// See <https://c2pa.org/specifications/specifications/1.0/specs/C2PA_Specification.html#_reason>.
+    /// See <https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_reason>.
     pub fn set_reason<S: Into<String>>(mut self, reason: S) -> Self {
         self.reason = Some(reason.into());
         self
@@ -455,7 +448,7 @@ pub struct ActionTemplate {
 
     /// The software agent that performed the action.
     #[serde(rename = "softwareAgent", skip_serializing_if = "Option::is_none")]
-    pub software_agent: Option<SoftwareAgent>,
+    pub software_agent: Option<ClaimGeneratorInfo>, // This is a ClaimGeneratorInfo, not a string
 
     /// 0-based index into the softwareAgents array
     #[serde(rename = "softwareAgentIndex", skip_serializing_if = "Option::is_none")]
@@ -492,7 +485,7 @@ impl ActionTemplate {
 /// what took place on the asset, when it took place, along with possible
 /// other information such as what software performed the action.
 ///
-/// See <https://c2pa.org/specifications/specifications/1.0/specs/C2PA_Specification.html#_actions>.
+/// See <https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_actions>.
 #[derive(Deserialize, Serialize, Debug, PartialEq)]
 #[non_exhaustive]
 pub struct Actions {
@@ -519,8 +512,9 @@ pub struct Actions {
 impl Actions {
     /// Label prefix for an [`Actions`] assertion.
     ///
-    /// See <https://c2pa.org/specifications/specifications/1.0/specs/C2PA_Specification.html#_actions>.
+    /// See <https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_actions>.
     pub const LABEL: &'static str = labels::ACTIONS;
+    pub const VERSION: Option<usize> = Some(ASSERTION_CREATION_VERSION);
 
     /// Creates a new [`Actions`] assertion struct.
     pub fn new() -> Self {
@@ -531,14 +525,6 @@ impl Actions {
             metadata: None,
             software_agents: None,
         }
-    }
-
-    /// Determines if actions is V2
-    fn is_v2(&self) -> bool {
-        if self.templates.is_some() {
-            return true;
-        };
-        self.actions.iter().any(|a| a.is_v2())
     }
 
     /// Returns desired ClaimGeneratorInfo if present. index is 0 based
@@ -623,22 +609,12 @@ impl AssertionBase for Actions {
     const LABEL: &'static str = labels::ACTIONS;
     const VERSION: Option<usize> = Some(ASSERTION_CREATION_VERSION);
 
-    /// if we require v2 fields then use V2
     fn version(&self) -> Option<usize> {
-        if self.is_v2() {
-            Some(2)
-        } else {
-            Some(1)
-        }
+        Self::VERSION
     }
 
-    /// if we require v2 fields then use V2
     fn label(&self) -> &str {
-        if self.is_v2() {
-            "c2pa.actions.v2"
-        } else {
-            labels::ACTIONS
-        }
+        "c2pa.actions.v2"
     }
 
     fn to_assertion(&self) -> Result<Assertion> {
@@ -884,7 +860,6 @@ pub mod tests {
         let original = Actions::from_json_value(&json).expect("from json");
         let assertion = original.to_assertion().expect("build_assertion");
         let result = Actions::from_assertion(&assertion).expect("extract_assertion");
-        assert_eq!(result.label(), labels::ACTIONS);
         println!("{}", serde_json::to_string_pretty(&result).unwrap());
         assert_eq!(original.actions, result.actions);
         assert_eq!(
@@ -916,7 +891,6 @@ pub mod tests {
                         "description": "gradient",
                         "name": "any value"
                     },
-                    "softwareAgent": "TestApp"
                 },
                 {
                     "action": "com.joesphoto.filter",
@@ -966,10 +940,6 @@ pub mod tests {
         assert_eq!(original.actions, result.actions);
         assert_eq!(original.templates, result.templates);
         assert_eq!(original.all_actions_included, result.all_actions_included);
-        assert_eq!(
-            result.actions[1].software_agent().unwrap(),
-            &SoftwareAgent::String("TestApp".to_string())
-        );
         assert_eq!(
             result.actions[3].changes().unwrap(),
             &[RegionOfInterest {
