@@ -23,11 +23,12 @@ use crate::{
     crypto::{
         cose::{
             check_certificate_profile, validate_cose_tst_info, validate_cose_tst_info_async,
-            CertificateTrustPolicy, CoseError,
+            CertificateTrustError, CertificateTrustPolicy, CoseError,
         },
         ocsp::OcspResponse,
     },
     status_tracker::StatusTracker,
+    validation_status,
 };
 
 /// Given a COSE signature, extract the OCSP data and validate the status of
@@ -73,7 +74,16 @@ pub fn check_ocsp_status(
                             ctp,
                             validation_log,
                         ) {
-                            if ocsp_response.revoked_at.is_none() {
+                            if validation_log
+                                .has_status(validation_status::SIGNING_CREDENTIAL_REVOKED)
+                            {
+                                return Err(CoseError::CertificateTrustError(
+                                    CertificateTrustError::CertificateNotTrusted,
+                                ));
+                            }
+                            if validation_log
+                                .has_status(validation_status::SIGNING_CREDENTIAL_NOT_REVOKED)
+                            {
                                 return Ok(ocsp_response);
                             }
                         }
