@@ -763,11 +763,15 @@ pub unsafe extern "C" fn c2pa_builder_set_remote_url(
     0 as c_int
 }
 
+/// ⚠️ **Deprecated Soon**
+/// This method is planned to be deprecated in a future release.
+/// Usage should be limited and temporary.
+///
 /// Sets the resource directory on the Builder.
 /// When set, resources that are not found in memory will be searched for in the given directory.
 /// # Parameters
 /// * builder_ptr: pointer to a Builder.
-/// * resource_dir: pointer to a C string with the resource directory.
+/// * base_path: pointer to a C string with the resource directory.
 /// # Errors
 /// Returns -1 if there were errors, otherwise returns 0.
 /// The error string can be retrieved by calling c2pa_error.

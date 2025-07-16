@@ -293,10 +293,14 @@ impl Builder {
         self
     }
 
+    /// ⚠️ **Deprecated Soon**
+    /// This method is planned to be deprecated in a future release.
+    /// Usage should be limited and temporary.
+    ///
     /// Sets the resource directory for this [`Builder`]
     ///
     /// # Arguments
-    /// * `resource_dir` - The directory to search in to find the resources.
+    /// * `base_path` - The directory to search in to find the resources.
     /// # Returns
     /// * A mutable reference to the [`Builder`].
     #[cfg(feature = "file_io")]
