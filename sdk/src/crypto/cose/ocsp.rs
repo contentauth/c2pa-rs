@@ -12,10 +12,15 @@
 // each license.
 
 use async_generic::async_generic;
-#[cfg(not(target_arch = "wasm32"))]
-use chrono::{DateTime, Utc};
 use ciborium::value::Value;
 use coset::{CoseSign1, Label};
+#[cfg(not(target_arch = "wasm32"))]
+use {
+    crate::crypto::cose::cert_chain_from_sign1,
+    asn1_rs::FromDer,
+    chrono::{DateTime, Utc},
+    x509_parser::prelude::X509Certificate,
+};
 
 use crate::{
     crypto::{
@@ -186,11 +191,6 @@ pub(crate) fn fetch_and_check_ocsp_response(
 
     #[cfg(not(target_arch = "wasm32"))]
     {
-        use asn1_rs::FromDer;
-        use x509_parser::prelude::X509Certificate;
-
-        use crate::crypto::cose::cert_chain_from_sign1;
-
         let certs = cert_chain_from_sign1(sign1)?;
 
         let Some(ocsp_der) = crate::crypto::ocsp::fetch_ocsp_response(&certs) else {
