@@ -37,7 +37,9 @@ use crate::{
     },
     asset_io::CAIRead,
     cbor_types::{map_cbor_to_type, value_cbor_to_type},
-    cose_validator::{get_signing_info, get_signing_info_async, verify_cose, verify_cose_async},
+    cose_validator::{
+        get_serial_num, get_signing_info, get_signing_info_async, verify_cose, verify_cose_async,
+    },
     crypto::{
         base64,
         cose::{parse_cose_sign1, CertificateInfo, CertificateTrustPolicy, OcspFetchPolicy},
@@ -1808,13 +1810,14 @@ impl Claim {
         }
 
         let sign1 = parse_cose_sign1(&sig, &data, validation_log)?;
+        let certificate_serial_num = get_serial_num(&sign1)?.to_string();
 
         // check certificate revocation
         check_ocsp_status(
             &sign1,
             &data,
             ctp,
-            &svi.certificate_statuses,
+            svi.certificate_statuses.get(&certificate_serial_num),
             validation_log,
         )?;
 
@@ -1875,8 +1878,15 @@ impl Claim {
 
         let sign1 = parse_cose_sign1(sig, data, validation_log)?;
 
+        let certificate_serial_num = get_serial_num(&sign1)?.to_string();
         // check certificate revocation
-        check_ocsp_status(&sign1, data, ctp, &svi.certificate_statuses, validation_log)?;
+        check_ocsp_status(
+            &sign1,
+            data,
+            ctp,
+            svi.certificate_statuses.get(&certificate_serial_num),
+            validation_log,
+        )?;
 
         let verified = verify_cose(
             sig,
@@ -3806,7 +3816,7 @@ pub(crate) fn check_ocsp_status(
     sign1: &coset::CoseSign1,
     data: &[u8],
     ctp: &CertificateTrustPolicy,
-    certificate_statuses: &HashMap<String, Vec<Vec<u8>>>,
+    ocsp_responses: Option<&Vec<Vec<u8>>>,
     validation_log: &mut StatusTracker,
 ) -> Result<OcspResponse> {
     // Moved here instead of c2pa-crypto because of the dependency on settings.
@@ -3822,7 +3832,7 @@ pub(crate) fn check_ocsp_status(
             data,
             fetch_policy,
             ctp,
-            certificate_statuses,
+            ocsp_responses,
             validation_log,
         )?)
     } else {
@@ -3831,7 +3841,7 @@ pub(crate) fn check_ocsp_status(
             data,
             fetch_policy,
             ctp,
-            certificate_statuses,
+            ocsp_responses,
             validation_log,
         )
         .await?)
