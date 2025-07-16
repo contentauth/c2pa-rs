@@ -2252,7 +2252,7 @@ mod tests {
 
     #[cfg(feature = "file_io")]
     #[test]
-    fn test_resource_dir() -> Result<()> {
+    fn test_base_path() -> Result<()> {
         let mut builder = Builder::new();
         let ingredient_folder = fixture_path("ingredient");
         builder.set_base_path(&ingredient_folder);
