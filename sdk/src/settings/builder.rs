@@ -11,6 +11,8 @@
 // specific language governing permissions and limitations under
 // each license.
 
+use std::io::Read;
+
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -110,6 +112,9 @@ pub(crate) enum SignerSettings {
     Remote {
         // TODO: document the remote API
         url: String,
+        alg: SigningAlg,
+        sign_cert: Vec<u8>,
+        tsa_url: Option<String>,
     },
 }
 
@@ -197,50 +202,89 @@ impl SettingsValidate for BuilderSettings {
 }
 
 impl BuilderSettings {
+    // TODO: add async signer?
     /// Returns the constructed signer from the [BuilderSettings::signer] field.
     ///
-    /// If the signer settings aren't specified, this function will return [Error::UnspecifiedSignerSettings][crate::Error::UnspecifiedSignerSettings].
+    /// If the signer settings aren't specified, this function will return [Error::MissingSignerSettings][crate::Error::MissingSignerSettings].
     pub fn signer() -> Result<Box<dyn Signer>> {
-        let signer_info = Settings::get_value::<Option<SignerSettings>>("builder.signer");
-        if let Ok(Some(signer_info)) = signer_info {
-            match signer_info {
-                SignerSettings::Local {
-                    alg,
-                    sign_cert,
-                    private_key,
-                    tsa_url,
-                } => create_signer::from_keys(&sign_cert, &private_key, alg, tsa_url.to_owned()),
-                SignerSettings::Remote { url } => {
-                    todo!()
-                }
-            }
-        } else {
-            Err(Error::MissingSignerSettings)
-        }
+        BuilderSettings::signer_from_settings("builder.signer")
     }
 
+    // TODO: add async signer?
     /// Returns the constructed CAWG signer from the [BuilderSettings::cawg_signer] field.
     ///
     /// This function is used in conjunction with [IdentityAssertionSigner::new][crate::identity::builder::IdentityAssertionSigner::new].
     ///
-    /// If the signer settings aren't specified, this function will return [Error::UnspecifiedSignerSettings][crate::Error::UnspecifiedSignerSettings].
+    /// If the signer settings aren't specified, this function will return [Error::MissingSignerSettings][crate::Error::MissingSignerSettings].
     pub fn cawg_signer() -> Result<Box<dyn Signer>> {
-        let signer_info = Settings::get_value::<Option<SignerSettings>>("builder.cawg_signer");
-        if let Ok(Some(signer_info)) = signer_info {
-            match signer_info {
+        BuilderSettings::signer_from_settings("builder.cawg_signer")
+    }
+
+    fn signer_from_settings(settings_path: &'static str) -> Result<Box<dyn Signer>> {
+        let signer_info = Settings::get_value::<Option<SignerSettings>>(settings_path);
+        match signer_info {
+            Ok(Some(signer_info)) => match signer_info {
                 SignerSettings::Local {
                     alg,
                     sign_cert,
                     private_key,
                     tsa_url,
                 } => create_signer::from_keys(&sign_cert, &private_key, alg, tsa_url.to_owned()),
-                SignerSettings::Remote { url } => {
-                    todo!()
-                }
-            }
-        } else {
-            Err(Error::MissingSignerSettings)
+                SignerSettings::Remote {
+                    url,
+                    alg,
+                    sign_cert,
+                    tsa_url,
+                } => Ok(Box::new(RemoteSigner {
+                    url,
+                    alg,
+                    reserve_size: 10000 + sign_cert.len(),
+                    certs: vec![sign_cert],
+                    tsa_url,
+                })),
+            },
+            _ => Err(Error::MissingSignerSettings),
         }
+    }
+}
+
+// TODO: move this to a separate file?
+#[derive(Debug)]
+pub(crate) struct RemoteSigner {
+    url: String,
+    alg: SigningAlg,
+    certs: Vec<Vec<u8>>,
+    reserve_size: usize,
+    tsa_url: Option<String>,
+}
+
+impl Signer for RemoteSigner {
+    fn sign(&self, data: &[u8]) -> Result<Vec<u8>> {
+        let response = ureq::post(&self.url)
+            .send_bytes(data)
+            .map_err(|_| Error::FailedToRemoteSign)?;
+        let mut bytes: Vec<u8> = Vec::with_capacity(self.reserve_size);
+        response
+            .into_reader()
+            .take(self.reserve_size as u64)
+            .read_to_end(&mut bytes)?;
+        Ok(bytes)
+    }
+
+    fn alg(&self) -> SigningAlg {
+        self.alg
+    }
+
+    fn certs(&self) -> Result<Vec<Vec<u8>>> {
+        Ok(self.certs.clone())
+    }
+
+    fn reserve_size(&self) -> usize {
+        self.reserve_size
+    }
+
+    fn time_authority_url(&self) -> Option<String> {
+        self.tsa_url.clone()
     }
 }
 

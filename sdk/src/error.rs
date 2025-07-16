@@ -207,8 +207,11 @@ pub enum Error {
     #[error("must fetch remote manifests from url {0}")]
     RemoteManifestUrl(String),
 
-    #[error("could not fetch the remote settings")]
+    #[error("failed to fetch the remote settings")]
     FailedToFetchSettings,
+
+    #[error("failed to remotely sign data")]
+    FailedToRemoteSign,
 
     #[error("stopped because of logged error")]
     LogStop,
