@@ -92,14 +92,25 @@ impl SettingsValidate for ThumbnailSettings {
     }
 }
 
-// TODO: doc
+/// Settings for configuring a local or remote [Signer][crate::Signer].
+///
+/// A [Signer][crate::Signer] can be obtained by calling [BuilderSettings::signer].
 #[allow(unused)]
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-pub(crate) struct SignerSettings {
-    pub alg: SigningAlg,
-    pub sign_cert: Vec<u8>,
-    pub private_key: Vec<u8>,
-    pub tsa_url: Option<String>,
+pub(crate) enum SignerSettings {
+    /// A signer configured locally.
+    Local {
+        // TODO: doc fields
+        alg: SigningAlg,
+        sign_cert: Vec<u8>,
+        private_key: Vec<u8>,
+        tsa_url: Option<String>,
+    },
+    /// A signer configured remotely.
+    Remote {
+        // TODO: document the remote API
+        url: String,
+    },
 }
 
 /// Settings for the auto actions (e.g. created, opened, placed).
@@ -110,6 +121,7 @@ pub(crate) struct AutoActionSettings {
     pub enabled: bool,
     // TODO: enum
     /// The default source type for the auto action.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub source_type: Option<String>,
 }
 
@@ -120,6 +132,9 @@ pub(crate) struct BuilderSettings {
     /// Information about the signer used for signing.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub signer: Option<SignerSettings>,
+    /// Information about the CAWG signer used for CAWG signing.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cawg_signer: Option<SignerSettings>,
     /// Claim generator info that is automatically added to the builder.
     ///
     /// Note that this information will prepend any claim generator info
@@ -152,6 +167,7 @@ impl Default for BuilderSettings {
     fn default() -> Self {
         Self {
             signer: None,
+            cawg_signer: None,
             claim_generator_info: None,
             thumbnail: Default::default(),
             auto_created_action: AutoActionSettings {
@@ -181,18 +197,47 @@ impl SettingsValidate for BuilderSettings {
 }
 
 impl BuilderSettings {
-    /// Returns the constructed signer from the signer field in [Settings].
+    /// Returns the constructed signer from the [BuilderSettings::signer] field.
     ///
     /// If the signer settings aren't specified, this function will return [Error::UnspecifiedSignerSettings][crate::Error::UnspecifiedSignerSettings].
     pub fn signer() -> Result<Box<dyn Signer>> {
         let signer_info = Settings::get_value::<Option<SignerSettings>>("builder.signer");
         if let Ok(Some(signer_info)) = signer_info {
-            create_signer::from_keys(
-                &signer_info.sign_cert,
-                &signer_info.private_key,
-                signer_info.alg,
-                signer_info.tsa_url.to_owned(),
-            )
+            match signer_info {
+                SignerSettings::Local {
+                    alg,
+                    sign_cert,
+                    private_key,
+                    tsa_url,
+                } => create_signer::from_keys(&sign_cert, &private_key, alg, tsa_url.to_owned()),
+                SignerSettings::Remote { url } => {
+                    todo!()
+                }
+            }
+        } else {
+            Err(Error::MissingSignerSettings)
+        }
+    }
+
+    /// Returns the constructed CAWG signer from the [BuilderSettings::cawg_signer] field.
+    ///
+    /// This function is used in conjunction with [IdentityAssertionSigner::new][crate::identity::builder::IdentityAssertionSigner::new].
+    ///
+    /// If the signer settings aren't specified, this function will return [Error::UnspecifiedSignerSettings][crate::Error::UnspecifiedSignerSettings].
+    pub fn cawg_signer() -> Result<Box<dyn Signer>> {
+        let signer_info = Settings::get_value::<Option<SignerSettings>>("builder.cawg_signer");
+        if let Ok(Some(signer_info)) = signer_info {
+            match signer_info {
+                SignerSettings::Local {
+                    alg,
+                    sign_cert,
+                    private_key,
+                    tsa_url,
+                } => create_signer::from_keys(&sign_cert, &private_key, alg, tsa_url.to_owned()),
+                SignerSettings::Remote { url } => {
+                    todo!()
+                }
+            }
         } else {
             Err(Error::MissingSignerSettings)
         }
@@ -204,7 +249,12 @@ pub mod tests {
     #![allow(clippy::unwrap_used)]
 
     #[test]
-    fn test_make_signer() {
+    fn test_make_local_signer() {
+        // TODO
+    }
+
+    #[test]
+    fn test_make_remote_signer() {
         // TODO
     }
 

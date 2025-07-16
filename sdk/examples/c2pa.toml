@@ -42,7 +42,7 @@ remote_manifest_fetch = true
 # Use strict c2pa v1 validation.
 strict_v1_validation = false
 
-# Configuration for the Builder.
+# Configuration for the `Builder`.
 [builder]
 
 # Claim generator info list.
@@ -61,8 +61,45 @@ operating_system = ""
 # being the current version of the SDK.
 some_other_field = ""
 
-# A signer can be loaded in the API with the function `c2pa::get_settings_signer`.
-[builder.signer]
+# Settings for configuring how c2pa.created actions are auto created.
+#
+# This is a convenience setting and it can be disabled if the information
+# is provided manually.
+[builder.auto_created_action]
+# Whether to auto create the c2pa.created action.
+enabled = true
+# The source type field is required for the c2pa.created action.
+#
+# For more information, see `c2pa::assertions::actions::source_type`.
+source_type = "http://c2pa.org/digitalsourcetype/empty"
+
+# Settings for configuring how c2pa.opened actions are auto created.
+#
+# This is a convenience setting and it can be disabled if the information
+# is provided manually.
+[builder.auto_opened_action]
+# Whether to auto create the c2pa.opened action.
+enabled = true
+# For more information, see `c2pa::assertions::actions::source_type`.
+#
+# Note this field is optional for the c2pa.opened action.
+source_type = "http://c2pa.org/digitalsourcetype/empty"
+
+# Settings for configuring how c2pa.placed actions are auto created.
+#
+# This is a convenience setting and it can be disabled if the information
+# is provided manually.
+[builder.auto_placed_action]
+# Whether to auto create the c2pa.placed action.
+enabled = true
+# TODO: doc these fields better
+# For more information, see `c2pa::assertions::actions::source_type`.
+#
+# Note this field is optional for the c2pa.placed action.
+source_type = "http://c2pa.org/digitalsourcetype/empty"
+
+# A signer can be loaded in the API with the function `Settings::signer`.
+[builder.signer.local]
 # Algorithm to use for signing.
 alg = "sha256"
 # Certificate used for signing (PEM format).
@@ -71,6 +108,31 @@ sign_cert = ""
 private_key = ""
 # Time Stamp Authority URL for signing.
 tsa_url = ""
+
+# TODO: doc how it works
+# Alternatively, you can specify a remote signer, which is also loaded
+# via `Settings::signer`.
+#
+# Note that you may not specify both a local and remote signer at the same time.
+[builder.signer.remote]
+url = "https://www.google.com"
+
+# Similar to a normal signers, you can specify CAWG signers, loadable with the
+# function `Settings::cawg_signer`.
+[builder.cawg_signer.local]
+# Algorithm to use for signing.
+alg = "sha256"
+# Certificate used for signing (PEM format).
+sign_cert = ""
+# Private key used for signing (PEM format).
+private_key = ""
+# Time Stamp Authority URL for signing.
+tsa_url = ""
+
+# The same rules that apply for normal signers also apply for CAWG signers. You may
+# only specify either a local or remote, not both.
+[builder.cawg_signer.remote]
+url = "https://www.google.com"
 
 # Settings for automatic thumbnail generation.
 [builder.thumbnail]

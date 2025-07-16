@@ -316,7 +316,7 @@ impl Settings {
     }
 
     /// Set the [Settings] from a url to a toml file.
-    #[cfg(not(target_os = "wasi"))]
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn from_url(url: &str) -> Result<()> {
         let toml = ureq::get(url)
             .call()
