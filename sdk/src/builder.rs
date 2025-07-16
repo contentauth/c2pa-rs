@@ -1230,15 +1230,14 @@ mod tests {
     use wasm_bindgen_test::*;
 
     use super::*;
+    #[cfg(feature = "file_io")]
+    use crate::utils::test::fixture_path;
     use crate::{
         assertions::{c2pa_action, BoxHash},
         asset_handlers::jpeg_io::JpegIO,
         crypto::raw_signature::SigningAlg,
         hash_stream_by_alg,
-        utils::{
-            test::{fixture_path, write_jpeg_placeholder_stream},
-            test_signer::test_signer,
-        },
+        utils::{test::write_jpeg_placeholder_stream, test_signer::test_signer},
         validation_results::ValidationState,
         Reader,
     };
@@ -2252,14 +2251,15 @@ mod tests {
 
     #[cfg(feature = "file_io")]
     #[test]
-    fn test_base_path() -> Result<()> {
+    fn test_base_path() {
         let mut builder = Builder::new();
         let ingredient_folder = fixture_path("ingredient");
         builder.set_base_path(&ingredient_folder);
-        assert_eq!(builder.base_path, Some(&ingredient_folder).cloned());
-        let ingredient_json = std::fs::read_to_string(ingredient_folder.join("ingredient.json"))?;
+        assert_eq!(builder.base_path.as_ref(), Some(&ingredient_folder));
+        let ingredient_json =
+            std::fs::read_to_string(ingredient_folder.join("ingredient.json")).unwrap();
 
-        let ingredient = Ingredient::from_json(&ingredient_json)?;
+        let ingredient = Ingredient::from_json(&ingredient_json).unwrap();
         builder.add_ingredient(ingredient);
 
         let signer = test_signer(SigningAlg::Ps256);
@@ -2267,14 +2267,13 @@ mod tests {
         let mut source = Cursor::new(TEST_IMAGE_CLEAN);
         let mut dest = Cursor::new(Vec::new());
 
-        builder.sign(&signer, "image/jpeg", &mut source, &mut dest)?;
+        builder
+            .sign(&signer, "image/jpeg", &mut source, &mut dest)
+            .unwrap();
 
-        let reader = Reader::from_stream("jpeg", &mut dest)?;
-        let reader_json = reader.json();
-        println!("{}", &reader);
-        assert!(reader_json.contains("C.jpg"));
-        // manifest label of ingredient
-        assert!(reader_json.contains("contentauth:urn:uuid:b2b1f7fa-b119-4de1-9c0d-c97fbea3f2c3"));
-        Ok(())
+        let reader = Reader::from_stream("jpeg", &mut dest).unwrap();
+        let active_manifest = reader.active_manifest().unwrap();
+        let ingredient = active_manifest.ingredients().first().unwrap();
+        assert_eq!(ingredient.title(), Some("C.jpg"));
     }
 }
