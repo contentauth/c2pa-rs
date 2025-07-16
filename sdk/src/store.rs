@@ -1780,6 +1780,7 @@ impl Store {
                 }
             }
 
+            // get the certificate status assertions
             let certificate_status_assertions = found_claim.certificate_status_assertions();
             for csa in certificate_status_assertions {
                 let certificate_status_assertion =
@@ -1798,6 +1799,7 @@ impl Store {
                         )
                     })?;
 
+                // save the ocsp_ders stored in the StoreValidationInfo
                 for ocsp_der in certificate_status_assertion.as_ref() {
                     if let Ok(response) =
                         OcspResponse::from_der_checked(ocsp_der, None, validation_log)
@@ -4533,6 +4535,14 @@ impl Store {
     }
 
     #[allow(dead_code)]
+    /// Retrieves OCSP responses for certificate validation from the specified manifests.
+    ///
+    /// # Arguments
+    /// * `manifest_labels` - Vector of manifest labels to check for certificate assertions
+    /// * `validation_log` - Status tracker for logging validation events
+    ///
+    /// # Returns
+    /// A `Result` containing a vector of [`OcspResponse`] objects
     pub fn get_certificate_assertion(
         &self,
         manifest_labels: &Vec<String>,
