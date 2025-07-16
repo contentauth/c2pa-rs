@@ -63,6 +63,7 @@ pub fn check_ocsp_status(
                 fetch_and_check_ocsp_response(sign1, data, ctp, validation_log)
             }
             OcspFetchPolicy::DoNotFetch => {
+                // Get certificate serial number to look up OCSP responses
                 let certificate_serial_num = get_serial_num(sign1)?.to_string();
                 if let Some(ocsp_response_ders) = certificate_statuses.get(&certificate_serial_num)
                 {
@@ -74,6 +75,7 @@ pub fn check_ocsp_status(
                             ctp,
                             validation_log,
                         ) {
+                            // If certificate is revoked, return error immediately
                             if validation_log
                                 .has_status(validation_status::SIGNING_CREDENTIAL_REVOKED)
                             {
@@ -81,6 +83,7 @@ pub fn check_ocsp_status(
                                     CertificateTrustError::CertificateNotTrusted,
                                 ));
                             }
+                            // If certificate is confirmed not revoked, return success
                             if validation_log
                                 .has_status(validation_status::SIGNING_CREDENTIAL_NOT_REVOKED)
                             {
@@ -142,8 +145,8 @@ fn check_stapled_ocsp_response(
     Ok(ocsp_data)
 }
 
+/// Fetches and validates an OCSP response for the given COSE signature.
 // TO DO: Add async version of this?
-/// TO DO: Add documentation
 pub(crate) fn fetch_and_check_ocsp_response(
     sign1: &CoseSign1,
     data: &[u8],
