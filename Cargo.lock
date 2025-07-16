@@ -2773,9 +2773,9 @@ dependencies = [
 
 [[package]]
 name = "nonempty-collections"
-version = "1.0.0"
+version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3761f83543b22e36b7ea1145309acf9c251ef67dd8b186047f85d8cc985272d4"
+checksum = "e216d0e8cf9d54fa66e5780f6e1d5dc96d1c1b3c25aeba3b6758548bcbbd8b9d"
 dependencies = [
  "serde",
 ]

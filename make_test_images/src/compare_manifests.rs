@@ -250,20 +250,17 @@ fn compare_json_values(path: &str, val1: &Value, val2: &Value, issues: &mut Vec<
 
     match (val1, val2) {
         (Value::Object(map1), Value::Object(map2)) => {
-            let keys1: Vec<_> = map1.keys().collect();
-            let keys2: Vec<_> = map2.keys().collect();
-
-            for key in keys1 {
+            for (key, value) in map1 {
                 let new_path = format!("{path}.{key}");
                 match map2.get(key) {
-                    Some(v2) => compare_json_values(&new_path, map1.get(key).unwrap(), v2, issues),
-                    None => issues.push(format!("Removed {new_path}: {}", map1.get(key).unwrap())),
+                    Some(v2) => compare_json_values(&new_path, value, v2, issues),
+                    None => issues.push(format!("Removed {new_path}: {value}")),
                 }
             }
-
-            for key in keys2 {
+            for (key, value) in map2 {
+                let new_path = format!("{path}.{key}");
                 if !map1.contains_key(key) {
-                    issues.push(format!("Added {path}.{key}: {}", map2.get(key).unwrap()));
+                    issues.push(format!("Added {new_path}: {value}"));
                 }
             }
         }
@@ -280,48 +277,12 @@ fn compare_json_values(path: &str, val1: &Value, val2: &Value, issues: &mut Vec<
                         arr1.len(),
                         arr2.len()
                     ));
-                } else {
-                    // Match by title for ingredients
-                    if path.contains("ingredients") {
-                        let mut map1 = std::collections::HashMap::new();
-                        let mut map2 = std::collections::HashMap::new();
-                        for v in arr1 {
-                            if let Some(title) = v.get("title").and_then(|t| t.as_str()) {
-                                map1.insert(title, v);
-                            }
-                        }
-                        for v in arr2 {
-                            if let Some(title) = v.get("title").and_then(|t| t.as_str()) {
-                                map2.insert(title, v);
-                            }
-                        }
-                        for title in map1.keys() {
-                            if let (Some(v1), Some(v2)) = (map1.get(title), map2.get(title)) {
-                                compare_json_values(&format!("{path}[{title}]"), v1, v2, issues);
-                            }
-                        }
-                    } else if path.contains("actions") {
-                        let mut map1 = std::collections::HashMap::new();
-                        let mut map2 = std::collections::HashMap::new();
-                        for v in arr1 {
-                            if let Some(action) = v.get("action").and_then(|a| a.as_str()) {
-                                map1.insert(action, v);
-                            }
-                        }
-                        for v in arr2 {
-                            if let Some(action) = v.get("action").and_then(|a| a.as_str()) {
-                                map2.insert(action, v);
-                            }
-                        }
-                        for action in map1.keys() {
-                            if let (Some(v1), Some(v2)) = (map1.get(action), map2.get(action)) {
-                                compare_json_values(&format!("{path}[{action}]"), v1, v2, issues);
-                            }
-                        }
-                    }
-                }
+                } else if path.contains("ingredients") {
+                    compare_array_by_key(path, arr1, arr2, "title", issues);
+                } else if path.contains("actions") {
+                    compare_array_by_key(path, arr1, arr2, "action", issues);
+                };
             } else if use_custom_id {
-                use std::collections::HashMap;
                 let mut map1: HashMap<String, (usize, &Value)> = HashMap::new();
                 let mut map2: HashMap<String, (usize, &Value)> = HashMap::new();
                 for (i, v) in arr1.iter().enumerate() {
@@ -399,5 +360,32 @@ fn get_array_identifier(path: &str, obj: &Value) -> Option<String> {
         Some(serde_json::to_string(obj).unwrap_or_default())
     } else {
         get_object_identifier(obj)
+    }
+}
+
+fn compare_array_by_key(
+    path: &str,
+    arr1: &[serde_json::Value],
+    arr2: &[serde_json::Value],
+    key_name: &str,
+    issues: &mut Vec<String>,
+) {
+    use std::collections::HashMap;
+    let mut map1 = HashMap::new();
+    let mut map2 = HashMap::new();
+    for v in arr1 {
+        if let Some(key) = v.get(key_name).and_then(|t| t.as_str()) {
+            map1.insert(key, v);
+        }
+    }
+    for v in arr2 {
+        if let Some(key) = v.get(key_name).and_then(|t| t.as_str()) {
+            map2.insert(key, v);
+        }
+    }
+    for key in map1.keys() {
+        if let (Some(v1), Some(v2)) = (map1.get(key), map2.get(key)) {
+            compare_json_values(&format!("{path}[{key}]"), v1, v2, issues);
+        }
     }
 }
