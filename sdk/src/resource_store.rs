@@ -26,6 +26,8 @@ use std::{
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+#[cfg(feature = "file_io")]
+use crate::utils::io_utils::uri_to_path;
 use crate::{
     assertions::{labels, AssetType},
     asset_io::CAIRead,
@@ -244,7 +246,6 @@ impl ResourceStore {
         if id.starts_with("self#jumbf=") {
             #[cfg(feature = "file_io")]
             if self.base_path.is_some() {
-                use crate::utils::io_utils::uri_to_path;
                 let mut path = uri_to_path(&id, self.label.as_deref());
                 // add a file extension if it doesn't have one
                 if !(id.ends_with(".jpeg") || id.ends_with(".png")) {

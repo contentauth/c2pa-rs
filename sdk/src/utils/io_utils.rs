@@ -251,7 +251,7 @@ pub fn uri_to_path(uri: &str, manifest_label: Option<&str>) -> PathBuf {
     if let Ok(stripped) = path.strip_prefix("/c2pa/") {
         path = stripped.to_path_buf();
     } else if let Some(manifest_label) = manifest_label {
-        let mut new_path = PathBuf::from(manifest_label);
+        let mut new_path = PathBuf::from(manifest_label.replace(':', "_"));
         new_path.push(path);
         path = new_path;
     }
@@ -289,6 +289,16 @@ mod tests {
         assert_eq!(
             uri_to_path(&expected_path, Some(manifest_label)),
             PathBuf::from(expected_path)
+        );
+
+        // Test manifest label with colon replacement
+        let uri = "self#jumbf=c2pa.assertions/c2pa.thumbnail.claim";
+        let manifest_label_with_colon = "urn:uuid:test:label";
+        let expected_path_with_colon = "urn_uuid_test_label/c2pa.assertions/c2pa.thumbnail.claim";
+
+        assert_eq!(
+            uri_to_path(uri, Some(manifest_label_with_colon)),
+            PathBuf::from(expected_path_with_colon)
         );
     }
 
