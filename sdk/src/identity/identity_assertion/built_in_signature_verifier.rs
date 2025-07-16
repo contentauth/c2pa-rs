@@ -30,18 +30,18 @@ use crate::{
 
 /// A `BuiltInSignatureVerifier` is an implementation of [`SignatureVerifier`]
 /// that can read all of the signature types that are supported by this SDK.
-pub struct BuiltInSignatureVerifier {
+pub struct BuiltInSignatureVerifier<'a> {
     /// Configuration to use when an identity claims aggregation credential is
     /// presented.
     pub ica_verifier: IcaSignatureVerifier,
 
     /// Configuration to use when an X.509 credential is presented.
-    pub x509_verifier: X509SignatureVerifier,
+    pub x509_verifier: X509SignatureVerifier<'a>,
 }
 
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
-impl SignatureVerifier for BuiltInSignatureVerifier {
+impl SignatureVerifier for BuiltInSignatureVerifier<'_> {
     type Error = BuiltInSignatureError;
     type Output = BuiltInCredential;
 

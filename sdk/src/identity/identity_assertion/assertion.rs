@@ -299,7 +299,8 @@ impl IdentityAssertion {
         let sig_type = self.signer_payload.sig_type.as_str();
 
         if sig_type == "cawg.x509.cose" {
-            let verifier = X509SignatureVerifier {};
+            // TO DO BEFORE MERGING: Should be able to configure this.
+            let verifier = X509SignatureVerifier::default();
 
             let result = verifier
                 .check_signature(&self.signer_payload, &self.signature, status_tracker)

@@ -34,13 +34,15 @@ use crate::{
 ///
 /// [`SignatureVerifier`]: crate::identity::SignatureVerifier
 /// [§8.2, X.509 certificates and COSE signatures]: https://cawg.io/identity/1.1-draft/#_x_509_certificates_and_cose_signatures
-pub struct X509SignatureVerifier {
-    // TO DO (CAI-7980): Add option to configure trust roots and trusted signers.
+#[derive(Debug, Default)]
+pub struct X509SignatureVerifier<'a> {
+    /// Describes the verification policy to use for COSE signatures.
+    pub cose_verifier: Verifier<'a>,
 }
 
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
-impl SignatureVerifier for X509SignatureVerifier {
+impl SignatureVerifier for X509SignatureVerifier<'_> {
     type Error = CoseError;
     type Output = X509SignatureInfo;
 
@@ -70,15 +72,13 @@ impl SignatureVerifier for X509SignatureVerifier {
         ciborium::into_writer(signer_payload, &mut signer_payload_cbor)
             .map_err(|_| ValidationError::InternalError("CBOR serialization error".to_string()))?;
 
-        // TO DO: Add options for trust list and certificate policy config.
-        let verifier = Verifier::IgnoreProfileAndTrustPolicy;
-
         // TO DO: Figure out how to provide a validation log.
         let mut validation_log = StatusTracker::default();
 
         let cose_sign1 = parse_cose_sign1(signature, &signer_payload_cbor, &mut validation_log)?;
 
-        let cert_info = verifier
+        let cert_info = self
+            .cose_verifier
             .verify_signature_async(
                 signature,
                 &signer_payload_cbor,
