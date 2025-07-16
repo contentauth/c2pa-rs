@@ -758,11 +758,7 @@ impl Builder {
         for manifest_assertion in &definition.assertions {
             match manifest_assertion.label.as_str() {
                 l if l.starts_with(Actions::LABEL) => {
-                    let version = labels::version(l);
-
                     let mut actions: Actions = manifest_assertion.to_assertion()?;
-                    //dbg!(format!("Actions: {:?} version: {:?}", actions, version));
-
                     let mut updates = Vec::new();
                     let mut index = 0;
                     #[allow(clippy::explicit_counter_loop)]
@@ -776,21 +772,15 @@ impl Builder {
                                     uris.push(hash_url.clone());
                                 } else {
                                     log::error!("Action ingredientId not found: {id}");
-                                    // return Err(Error::BadParam(format!(
-                                    //     "Action ingredientId not found: {id}"
-                                    // )));
+                                    if claim.version() >= 2 {
+                                        return Err(Error::AssertionSpecificError(format!(
+                                            "Action ingredientId not found: {id}"
+                                        )));
+                                    }
                                 }
                             }
-                            match version {
-                                Some(1) => {
-                                    // only for explicit version 1 (do we need to support this?)
-                                    update = update.set_parameter("ingredient", uris[0].clone())?
-                                }
-                                None | Some(2) => {
-                                    update = update.set_parameter("ingredients", uris)?
-                                }
-                                _ => return Err(Error::AssertionUnsupportedVersion),
-                            };
+                            update = update.set_parameter("ingredients", uris)?;
+
                             updates.push((index, update));
                         }
                         index += 1;
@@ -811,13 +801,13 @@ impl Builder {
 
                             // replace software agent with hashed_uri
                             template.software_agent = match template.software_agent.take() {
-                                Some(SoftwareAgent::ClaimGeneratorInfo(mut info)) => {
+                                Some(mut info) => {
                                     if let Some(icon) = info.icon.as_mut() {
                                         let icon =
                                             icon.to_hashed_uri(&self.resources, &mut claim)?;
                                         info.set_icon(icon);
                                     }
-                                    Some(SoftwareAgent::ClaimGeneratorInfo(info))
+                                    Some(info)
                                 }
                                 agent => agent,
                             };
@@ -2229,6 +2219,7 @@ mod tests {
     #[test]
     fn test_to_archive_and_from_archive_with_ingredient_thumbnail() {
         let mut builder = Builder::new();
+        builder.definition.claim_version = Some(2);
 
         let mut thumbnail = Cursor::new(TEST_THUMBNAIL);
         let mut source = Cursor::new(TEST_IMAGE_CLEAN);
@@ -2254,6 +2245,7 @@ mod tests {
         let reader_json = Reader::from_stream("image/jpeg", &mut output)
             .unwrap()
             .json();
+        println!("{reader_json}");
         assert!(reader_json.contains("Test Ingredient"));
         assert!(reader_json.contains("thumbnail.ingredient"));
     }
