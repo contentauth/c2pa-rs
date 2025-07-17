@@ -918,31 +918,25 @@ impl Builder {
                 .find(|ingredient| ingredient.is_parent());
             let action = match (parent_ingredient, auto_created, auto_opened) {
                 (Some(parent_ingredient), _, true) => {
+                    let action = Action::new(c2pa_action::OPENED);
+
+                    let id = parent_ingredient
+                        .label()
+                        // We define the `ingredient_map` to use the instance id if the label doesn't exist.
+                        .unwrap_or(parent_ingredient.instance_id());
+                    let ingredient_uri = ingredient_map.get(id);
+                    let action = action.set_parameter("ingredients", vec![ingredient_uri])?;
+
                     let source_type = settings::get_settings_value::<Option<String>>(
                         "builder.auto_opened_action.source_type",
                     );
                     match source_type {
-                        Ok(Some(source_type)) => {
-                            let action = {
-                                let action = Action::new(c2pa_action::OPENED);
-
-                                let id = parent_ingredient
-                                    .label()
-                                    // We define the `ingredient_map` to use the instance id if the label doesn't exist.
-                                    .unwrap_or(parent_ingredient.instance_id());
-                                let ingredient_uri = ingredient_map.get(id);
-                                let action =
-                                    action.set_parameter("ingredients", vec![ingredient_uri])?;
-
-                                action.set_source_type(source_type)
-                            };
-
-                            Some(action)
-                        }
-                        _ => None,
+                        Ok(Some(source_type)) => Some(action.set_source_type(source_type)),
+                        _ => Some(action),
                     }
                 }
                 (None, true, _) => {
+                    // The settings ensures this field always exists for the "c2pa.created" action.
                     let source_type = settings::get_settings_value::<Option<String>>(
                         "builder.auto_created_action.source_type",
                     );
@@ -1001,25 +995,23 @@ impl Builder {
                     if *ingredient.relationship() == Relationship::ComponentOf
                         && !referenced_uris.contains(uri)
                     {
+                        let action = Action::new(c2pa_action::PLACED);
+
+                        let id = ingredient
+                            .label()
+                            // We define the `ingredient_map` to use the instance id if the label doesn't exist.
+                            .unwrap_or(ingredient.instance_id());
+                        let ingredient_uri = ingredient_map.get(id);
+                        let action = action.set_parameter("ingredients", vec![ingredient_uri])?;
+
                         let source_type = settings::get_settings_value::<Option<String>>(
                             "builder.auto_placed_action.source_type",
                         );
-                        if let Ok(Some(source_type)) = source_type {
-                            let action = {
-                                let action = Action::new(c2pa_action::PLACED);
-
-                                let id = ingredient
-                                    .label()
-                                    // We define the `ingredient_map` to use the instance id if the label doesn't exist.
-                                    .unwrap_or(ingredient.instance_id());
-                                let ingredient_uri = ingredient_map.get(id);
-                                let action =
-                                    action.set_parameter("ingredients", vec![ingredient_uri])?;
-
-                                action.set_source_type(source_type)
-                            };
-                            actions.actions.push(action);
-                        }
+                        let action = match source_type {
+                            Ok(Some(source_type)) => action.set_source_type(source_type),
+                            _ => action,
+                        };
+                        actions.actions.push(action);
                     }
                 }
             }

@@ -230,20 +230,7 @@ pub(crate) struct BuilderSettings {
 impl Default for BuilderSettings {
     fn default() -> Self {
         Self {
-            #[cfg(not(test))]
             signer: None,
-            #[cfg(test)]
-            signer: {
-                let alg = SigningAlg::Ps256;
-                let (sign_cert, private_key) =
-                    crate::utils::test_signer::cert_chain_and_private_key_for_alg(alg);
-                Some(SignerSettings::Local {
-                    alg,
-                    sign_cert,
-                    private_key,
-                    tsa_url: None,
-                })
-            },
             cawg_signer: None,
             claim_generator_info: None,
             thumbnail: Default::default(),
@@ -315,6 +302,9 @@ impl BuilderSettings {
                     tsa_url,
                 })),
             },
+            #[cfg(test)]
+            _ => Ok(crate::utils::test_signer::test_signer(SigningAlg::Ps256)),
+            #[cfg(not(test))]
             _ => Err(Error::MissingSignerSettings),
         }
     }
