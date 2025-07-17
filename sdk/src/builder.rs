@@ -38,7 +38,7 @@ use crate::{
     jumbf_io,
     resource_store::{ResourceRef, ResourceResolver, ResourceStore},
     salt::DefaultSalt,
-    settings,
+    settings::{self, ClaimGeneratorInfoSettings},
     store::Store,
     utils::mime::format_to_mime,
     AsyncSigner, ClaimGeneratorInfo, HashRange, HashedUri, Ingredient, Relationship, Signer,
@@ -629,19 +629,20 @@ impl Builder {
         let metadata = definition.metadata.clone();
         // add the default claim generator info for this library
         if claim_generator_info.is_empty() {
-            claim_generator_info.push(ClaimGeneratorInfo::default());
+            let claim_generator_info_settings = settings::get_settings_value::<
+                Option<ClaimGeneratorInfoSettings>,
+            >("builder.claim_generator_info");
+            match claim_generator_info_settings {
+                Ok(Some(claim_generator_info_settings)) => {
+                    claim_generator_info.push(claim_generator_info_settings.into());
+                }
+                _ => {
+                    claim_generator_info.push(ClaimGeneratorInfo::default());
+                }
+            }
         }
 
         claim_generator_info[0].insert("org.cai.c2pa_rs", env!("CARGO_PKG_VERSION"));
-
-        if claim_generator_info.is_empty() {
-            let profile_claim_generator_info = settings::get_settings_value::<
-                Option<ClaimGeneratorInfo>,
-            >("builder.claim_generator_info");
-            if let Ok(Some(claim_generator_infos)) = profile_claim_generator_info {
-                claim_generator_info.push(claim_generator_infos);
-            }
-        }
 
         // Build the claim_generator string since this is required
         let claim_generator: String = claim_generator_info

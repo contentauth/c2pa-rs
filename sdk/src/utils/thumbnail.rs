@@ -206,8 +206,7 @@ where
                 settings::get_settings_value::<Option<ThumbnailFormat>>("builder.thumbnail.format");
             match global_format {
                 Ok(Some(global_format)) => global_format,
-                // The config crate doesn't play well with optional settings that are None.
-                Err(_) | Ok(None) => {
+                _ => {
                     let prefer_smallest_format = settings::get_settings_value::<bool>(
                         "builder.thumbnail.prefer_smallest_format",
                     )?;

@@ -11,12 +11,13 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use std::io::Read;
+use std::{collections::HashMap, env::consts, io::Read};
 
 use serde::{Deserialize, Serialize};
 
 use crate::{
     create_signer,
+    resource_store::UriOrResource,
     settings::{Settings, SettingsValidate},
     utils::thumbnail::ThumbnailFormat,
     ClaimGeneratorInfo, Error, Result, Signer, SigningAlg,
@@ -130,7 +131,65 @@ pub(crate) struct AutoActionSettings {
     pub source_type: Option<String>,
 }
 
-/// Settings for the [Builder].
+/// Settings for how to specify the claim generator info's operating system.
+#[allow(unused)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub(crate) struct ClaimGeneratorInfoOSSettings {
+    /// Whether or not to infer the operating system.
+    pub infer: bool,
+    /// The name of the operating system.
+    ///
+    /// Note this field overrides [ClaimGeneratorInfoOSSettings::infer].
+    pub name: Option<String>,
+}
+
+impl Default for ClaimGeneratorInfoOSSettings {
+    fn default() -> Self {
+        Self {
+            infer: true,
+            name: None,
+        }
+    }
+}
+
+// TODO: maybe we should store these "Settings"-type of structs in the Builder instead of the actual
+//       struct that's embedded into the claim. Structs like this can be converted to the internal ones
+//       when signing?
+/// Settings for the claim generator info.
+#[allow(unused)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub(crate) struct ClaimGeneratorInfoSettings {
+    /// A human readable string naming the claim_generator.
+    pub name: String,
+    /// A human readable string of the product's version.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub version: Option<String>,
+    /// Hashed URI to the icon (either embedded or remote).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub icon: Option<UriOrResource>,
+    /// Settings for the claim generator info's operating system field.
+    pub operating_system: ClaimGeneratorInfoOSSettings,
+    /// Any other values that are not part of the standard.
+    #[serde(flatten)]
+    pub other: HashMap<String, serde_json::Value>,
+}
+
+impl From<ClaimGeneratorInfoSettings> for ClaimGeneratorInfo {
+    fn from(value: ClaimGeneratorInfoSettings) -> Self {
+        ClaimGeneratorInfo {
+            name: value.name,
+            version: value.version,
+            icon: value.icon,
+            operating_system: match value.operating_system.infer {
+                true => Some(consts::OS.to_owned()),
+                false => value.operating_system.name,
+            },
+            other: value.other,
+        }
+    }
+}
+
+/// Settings for the [Builder][crate::Builder].
 #[allow(unused)]
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub(crate) struct BuilderSettings {
