@@ -23,6 +23,7 @@ use crate::{
 /// Helper class to create Certificate Status assertions
 #[derive(Serialize, Deserialize, Default, Debug, PartialEq, Eq)]
 pub struct CertificateStatus {
+    #[serde(rename = "ocspVals")]
     pub ocsp_vals: Vec<ByteBuf>,
 }
 
@@ -64,5 +65,43 @@ impl AssertionBase for CertificateStatus {
 
     fn from_assertion(assertion: &Assertion) -> Result<Self> {
         Self::from_cbor_assertion(assertion)
+    }
+}
+
+#[cfg(test)]
+pub mod tests {
+    #![allow(clippy::expect_used)]
+    #![allow(clippy::unwrap_used)]
+
+    use crate::{assertion::AssertionBase, assertions::CertificateStatus};
+
+    #[test]
+    fn assertions_certificate_status() {
+        let original = CertificateStatus::new(vec!["ocsp_val".into()]);
+
+        assert_eq!(original.ocsp_vals.len(), 1);
+
+        let assertion = original.to_assertion().unwrap();
+        assert_eq!(assertion.mime_type(), "application/cbor");
+        assert_eq!(assertion.label(), CertificateStatus::LABEL);
+
+        let result = CertificateStatus::from_assertion(&assertion).unwrap();
+        assert_eq!(result, original)
+    }
+
+    #[test]
+    fn test_json_round_trip() {
+        let json = serde_json::json!({
+          "ocspVals" : [
+            "...",
+            "..."
+          ]
+        });
+
+        let original: CertificateStatus = serde_json::from_value(json).unwrap();
+        let assertion = original.to_assertion().unwrap();
+        let result = CertificateStatus::from_assertion(&assertion).unwrap();
+
+        assert_eq!(result, original);
     }
 }
