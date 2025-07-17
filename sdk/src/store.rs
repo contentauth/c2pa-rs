@@ -4694,8 +4694,8 @@ pub mod tests {
     #[test]
     #[cfg(feature = "v1_api")]
     #[cfg(feature = "file_io")]
-    fn test_certificate_map() -> Result<()> {
-        let ap = fixture_path("ocsp.png");
+    fn test_certificate_map() {
+        let ap = fixture_path("ocsp.jpg");
         let mut report = StatusTracker::default();
         let store = Store::load_from_asset(&ap, true, &mut report).unwrap();
 
@@ -4716,8 +4716,6 @@ pub mod tests {
         let stored_ocsp_vals: Vec<Vec<u8>> =
             svi.certificate_statuses.into_values().flatten().collect();
         assert_eq!(stored_ocsp_vals.len(), 2);
-
-        Ok(())
     }
 
     #[test]
