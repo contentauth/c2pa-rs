@@ -164,7 +164,7 @@ impl IcaSignatureVerifier {
 
             log_current_item!(
                 "unsupported signature type",
-                "X509SignatureVerifier::check_signature"
+                "IcaSignatureVerifier::check_signature"
             )
             .validation_status("cawg.identity.sig_type.unknown")
             .failure_no_throw(status_tracker, err.clone());
