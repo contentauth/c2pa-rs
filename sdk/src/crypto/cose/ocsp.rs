@@ -17,9 +17,7 @@ use coset::{CoseSign1, Label};
 #[cfg(not(target_arch = "wasm32"))]
 use {
     crate::crypto::cose::cert_chain_from_sign1,
-    asn1_rs::FromDer,
     chrono::{DateTime, Utc},
-    x509_parser::prelude::X509Certificate,
 };
 
 use crate::{
@@ -206,18 +204,13 @@ pub(crate) fn fetch_and_check_ocsp_response(
 
         // Check the OCSP response, but only if it is well-formed.
         // Revocation errors are reported in the validation log.
-        let Ok(mut ocsp_data) =
+        let Ok(ocsp_data) =
             OcspResponse::from_der_checked(&ocsp_response_der, signing_time, validation_log)
         else {
             // TO REVIEW: This is how the old code worked, but is it correct to ignore a
             // malformed OCSP response?
             return Ok(OcspResponse::default());
         };
-
-        // Extract certificate serial number from the certificate chain
-        let (_rem, cert) = X509Certificate::from_der(&certs[0])
-            .map_err(|e| CoseError::InternalError(e.to_string()))?;
-        ocsp_data.certificate_serial_num = cert.serial.to_string();
 
         // If we get a valid response validate the certs.
         if ocsp_data.revoked_at.is_none() {
