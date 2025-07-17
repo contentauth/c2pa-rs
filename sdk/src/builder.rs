@@ -1398,7 +1398,7 @@ mod tests {
         hash_stream_by_alg,
         utils::{test::write_jpeg_placeholder_stream, test_signer::test_signer},
         validation_results::ValidationState,
-        HashedUri, Reader,
+        HashedUri, Reader, Settings,
     };
 
     #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
@@ -1662,7 +1662,7 @@ mod tests {
         let mut output = Cursor::new(Vec::new());
         Builder::new()
             .sign(
-                &test_signer(SigningAlg::Ps256),
+                &Settings::signer().unwrap(),
                 "image/jpeg",
                 &mut Cursor::new(TEST_IMAGE),
                 &mut output,
@@ -1694,7 +1694,7 @@ mod tests {
         let mut output = Cursor::new(Vec::new());
         builder
             .sign(
-                &test_signer(SigningAlg::Ps256),
+                &Settings::signer().unwrap(),
                 "image/jpeg",
                 &mut Cursor::new(TEST_IMAGE),
                 &mut output,
@@ -1768,7 +1768,7 @@ mod tests {
         let mut output = Cursor::new(Vec::new());
         builder
             .sign(
-                &test_signer(SigningAlg::Ps256),
+                &Settings::signer().unwrap(),
                 "image/jpeg",
                 &mut Cursor::new(TEST_IMAGE),
                 &mut output,
