@@ -72,20 +72,11 @@ impl SignatureVerifier for X509SignatureVerifier<'_> {
         ciborium::into_writer(signer_payload, &mut signer_payload_cbor)
             .map_err(|_| ValidationError::InternalError("CBOR serialization error".to_string()))?;
 
-        // TO DO: Figure out how to provide a validation log.
-        let mut validation_log = StatusTracker::default();
-
-        let cose_sign1 = parse_cose_sign1(signature, &signer_payload_cbor, &mut validation_log)?;
+        let cose_sign1 = parse_cose_sign1(signature, &signer_payload_cbor, status_tracker)?;
 
         let cert_info = self
             .cose_verifier
-            .verify_signature_async(
-                signature,
-                &signer_payload_cbor,
-                &[],
-                None,
-                &mut validation_log,
-            )
+            .verify_signature_async(signature, &signer_payload_cbor, &[], None, status_tracker)
             .await
             .map_err(|e| match e {
                 CoseError::RawSignatureValidationError(
@@ -150,6 +141,140 @@ impl X509SignatureReport {
                     .unwrap_or_default(),
                 revocation_status: info.cert_info.revocation_status,
             },
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::panic)]
+    #![allow(clippy::unwrap_used)]
+
+    use std::{
+        borrow::Cow,
+        io::{Cursor, Seek},
+    };
+
+    #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
+    use wasm_bindgen_test::wasm_bindgen_test;
+
+    use crate::{
+        crypto::{
+            cose::{CertificateTrustPolicy, Verifier},
+            raw_signature,
+        },
+        identity::{
+            builder::{IdentityAssertionBuilder, IdentityAssertionSigner},
+            tests::fixtures::{cert_chain_and_private_key_for_alg, manifest_json, parent_json},
+            x509::{X509CredentialHolder, X509SignatureVerifier},
+            IdentityAssertion,
+        },
+        status_tracker::StatusTracker,
+        Builder, Reader, SigningAlg,
+    };
+
+    const TEST_IMAGE: &[u8] = include_bytes!("../../../tests/fixtures/CA.jpg");
+    const TEST_THUMBNAIL: &[u8] = include_bytes!("../../../tests/fixtures/thumbnail.jpg");
+
+    // NOTE: Success case is covered in tests for x509_credential_holder.rs.
+
+    #[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
+    #[cfg_attr(
+        all(target_arch = "wasm32", not(target_os = "wasi")),
+        wasm_bindgen_test
+    )]
+    #[cfg_attr(target_os = "wasi", wstd::test)]
+    async fn untrusted_cert() {
+        let format = "image/jpeg";
+        let mut source = Cursor::new(TEST_IMAGE);
+        let mut dest = Cursor::new(Vec::new());
+
+        let mut builder = Builder::from_json(&manifest_json()).unwrap();
+        builder
+            .add_ingredient_from_stream(parent_json(), format, &mut source)
+            .unwrap();
+
+        builder
+            .add_resource("thumbnail.jpg", Cursor::new(TEST_THUMBNAIL))
+            .unwrap();
+
+        let mut c2pa_signer = IdentityAssertionSigner::from_test_credentials(SigningAlg::Ps256);
+
+        let (cawg_cert_chain, cawg_private_key) =
+            cert_chain_and_private_key_for_alg(SigningAlg::Ed25519);
+
+        let cawg_raw_signer = raw_signature::signer_from_cert_chain_and_private_key(
+            &cawg_cert_chain,
+            &cawg_private_key,
+            SigningAlg::Ed25519,
+            None,
+        )
+        .unwrap();
+
+        let x509_holder = X509CredentialHolder::from_raw_signer(cawg_raw_signer);
+        let iab = IdentityAssertionBuilder::for_credential_holder(x509_holder);
+        c2pa_signer.add_identity_assertion(iab);
+
+        builder
+            .sign(&c2pa_signer, format, &mut source, &mut dest)
+            .unwrap();
+
+        // Read back the Manifest that was generated.
+        dest.rewind().unwrap();
+
+        let manifest_store = Reader::from_stream(format, &mut dest).unwrap();
+        assert_eq!(manifest_store.validation_status(), None);
+
+        let manifest = manifest_store.active_manifest().unwrap();
+        let mut st = StatusTracker::default();
+        let mut ia_iter = IdentityAssertion::from_manifest(manifest, &mut st);
+
+        // Should find exactly one identity assertion.
+        let ia = ia_iter.next().unwrap().unwrap();
+        assert!(ia_iter.next().is_none());
+        drop(ia_iter);
+
+        // While the identity assertion should be valid for this manifest,
+        // the self-signed cert that we use in test configs is not on our
+        // default trust list. Note that CertificateTrustPolicy::default
+        // *includes* the test credential suite by default, which would sort
+        // of defeat the purpose of this test. That's why we have to build
+        // a non-default signature verifier.
+        let mut ctp = CertificateTrustPolicy::new();
+        ctp.add_default_valid_ekus();
+
+        let cose_verifier = Verifier::VerifyTrustPolicy(Cow::Owned(ctp));
+
+        let x509_verifier = X509SignatureVerifier { cose_verifier };
+
+        if true {
+            // TO DO: Check with Maurice. Is it intended behavior that
+            // an untrusted cert fully errors out even when status tracker
+            // is set to "continue when possible"?
+
+            let err = ia
+                .validate(manifest, &mut st, &x509_verifier)
+                .await
+                .unwrap_err();
+
+            dbg!(&err);
+            dbg!(&st);
+        } else {
+            // I think this version should succeed, but it doesn't.
+
+            let sig_info = ia
+                .validate(manifest, &mut st, &x509_verifier)
+                .await
+                .unwrap();
+
+            dbg!(&st);
+
+            let cert_info = &sig_info.cert_info;
+            assert_eq!(cert_info.alg.unwrap(), SigningAlg::Ed25519);
+            assert_eq!(
+                cert_info.issuer_org.as_ref().unwrap(),
+                "C2PA Test Signing Cert"
+            );
         }
     }
 }
