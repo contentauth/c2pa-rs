@@ -198,7 +198,7 @@ async fn assertion_not_in_claim_v1() {
         .await
         .unwrap();
 
-    assert_eq!(status_tracker.logged_items().len(), 1);
+    assert_eq!(status_tracker.logged_items().len(), 2);
 
     let log = &status_tracker.logged_items()[0];
     assert_eq!(log.kind, LogKind::Failure);
@@ -207,6 +207,18 @@ async fn assertion_not_in_claim_v1() {
     assert_eq!(
         log.validation_status.as_ref().unwrap().as_ref(),
         "cawg.identity.assertion.mismatch"
+    );
+
+    let log = &status_tracker.logged_items()[1];
+    assert_eq!(log.kind, LogKind::Success);
+    assert_eq!(log.label, IDENTITY_URI);
+    assert_eq!(
+        log.description,
+        "signing certificate trusted, found in User trust anchors"
+    );
+    assert_eq!(
+        log.validation_status.as_ref().unwrap().as_ref(),
+        "signingCredential.trusted" // TODO: Should this be a CAWG-specific status?
     );
 
     let cert_info = &sig_info.cert_info;
@@ -299,7 +311,7 @@ async fn duplicate_assertion_reference() {
         .await
         .unwrap();
 
-    assert_eq!(status_tracker.logged_items().len(), 1);
+    assert_eq!(status_tracker.logged_items().len(), 2);
 
     let log = &status_tracker.logged_items()[0];
     assert_eq!(log.kind, LogKind::Failure);
@@ -308,6 +320,18 @@ async fn duplicate_assertion_reference() {
     assert_eq!(
         log.validation_status.as_ref().unwrap().as_ref(),
         "cawg.identity.assertion.duplicate"
+    );
+
+    let log = &status_tracker.logged_items()[1];
+    assert_eq!(log.kind, LogKind::Success);
+    assert_eq!(log.label, IDENTITY_URI);
+    assert_eq!(
+        log.description,
+        "signing certificate trusted, found in User trust anchors"
+    );
+    assert_eq!(
+        log.validation_status.as_ref().unwrap().as_ref(),
+        "signingCredential.trusted" // TODO: Should this be a CAWG-specific status?
     );
 
     let cert_info = &sig_info.cert_info;
@@ -374,7 +398,7 @@ async fn no_hard_binding() {
         .await
         .unwrap();
 
-    assert_eq!(status_tracker.logged_items().len(), 1);
+    assert_eq!(status_tracker.logged_items().len(), 2);
 
     let log = &status_tracker.logged_items()[0];
     assert_eq!(log.kind, LogKind::Failure);
@@ -383,6 +407,18 @@ async fn no_hard_binding() {
     assert_eq!(
         log.validation_status.as_ref().unwrap().as_ref(),
         "cawg.identity.hard_binding_missing"
+    );
+
+    let log = &status_tracker.logged_items()[1];
+    assert_eq!(log.kind, LogKind::Success);
+    assert_eq!(log.label, IDENTITY_URI);
+    assert_eq!(
+        log.description,
+        "signing certificate trusted, found in User trust anchors"
+    );
+    assert_eq!(
+        log.validation_status.as_ref().unwrap().as_ref(),
+        "signingCredential.trusted" // TODO: Should this be a CAWG-specific status?
     );
 
     let cert_info = &sig_info.cert_info;
@@ -625,7 +661,7 @@ async fn pad1_invalid() {
         .await
         .unwrap();
 
-    assert_eq!(status_tracker.logged_items().len(), 1);
+    assert_eq!(status_tracker.logged_items().len(), 2);
 
     let log = &status_tracker.logged_items()[0];
     assert_eq!(log.kind, LogKind::Failure);
@@ -634,6 +670,18 @@ async fn pad1_invalid() {
     assert_eq!(
         log.validation_status.as_ref().unwrap().as_ref(),
         "cawg.identity.pad.invalid"
+    );
+
+    let log = &status_tracker.logged_items()[1];
+    assert_eq!(log.kind, LogKind::Success);
+    assert_eq!(log.label, IDENTITY_URI);
+    assert_eq!(
+        log.description,
+        "signing certificate trusted, found in User trust anchors"
+    );
+    assert_eq!(
+        log.validation_status.as_ref().unwrap().as_ref(),
+        "signingCredential.trusted" // TODO: Should this be a CAWG-specific status?
     );
 
     let cert_info = &sig_info.cert_info;
@@ -699,7 +747,7 @@ async fn pad2_invalid() {
         .await
         .unwrap();
 
-    assert_eq!(status_tracker.logged_items().len(), 1);
+    assert_eq!(status_tracker.logged_items().len(), 2);
 
     let log = &status_tracker.logged_items()[0];
     assert_eq!(log.kind, LogKind::Failure);
@@ -708,6 +756,18 @@ async fn pad2_invalid() {
     assert_eq!(
         log.validation_status.as_ref().unwrap().as_ref(),
         "cawg.identity.pad.invalid"
+    );
+
+    let log = &status_tracker.logged_items()[1];
+    assert_eq!(log.kind, LogKind::Success);
+    assert_eq!(log.label, IDENTITY_URI);
+    assert_eq!(
+        log.description,
+        "signing certificate trusted, found in User trust anchors"
+    );
+    assert_eq!(
+        log.validation_status.as_ref().unwrap().as_ref(),
+        "signingCredential.trusted" // TODO: Should this be a CAWG-specific status?
     );
 
     let cert_info = &sig_info.cert_info;
