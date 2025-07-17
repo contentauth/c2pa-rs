@@ -213,7 +213,10 @@ where
                     )?;
                     match prefer_smallest_format {
                         true => match input_format {
-                            ThumbnailFormat::Png if !image.color().has_alpha() => {
+                            // TODO: investigate more formats
+                            ThumbnailFormat::Png | ThumbnailFormat::Tiff
+                                if !image.color().has_alpha() =>
+                            {
                                 ThumbnailFormat::Jpeg
                             }
                             _ => input_format,
@@ -229,6 +232,7 @@ where
     image = image.thumbnail(long_edge, long_edge);
 
     let quality = settings::get_settings_value::<ThumbnailQuality>("builder.thumbnail.quality")?;
+    // TODO: investigate more formats
     match output_format {
         ThumbnailFormat::Jpeg => match quality {
             ThumbnailQuality::Low => {
