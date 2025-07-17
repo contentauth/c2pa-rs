@@ -43,29 +43,64 @@ remote_manifest_fetch = true
 strict_v1_validation = false
 
 # Configuration for the `Builder`.
-[builder]
+[settings.builder]
 
 # Claim generator info list.
-[builder.claim_generator_info]
+[settings.builder.claim_generator_info]
 # A human readable name.
 name = "My Service"
 # A human readable string of the product's version.
-version = "1.0"
+version = "1.0.0"
 # URL to the icon.
 icon = ""
 # The operating system the claim generator is running on.
-operating_system = ""
+operating_system.name = "macOS"
+# Or if the name isn't specified, it can be inferred automatically.
+operating_system.infer = true
 # Arbitrary fields can also be defined.
 #
 # By default, the SDK adds a field "org.cai.c2pa_rs" with the value
 # being the current version of the SDK.
 some_other_field = ""
 
+# Actions assertion configuration.
+[settings.builder.actions]
+# Signifies if all the actions that ever happened on a particular asset are specified
+# or if some are missing.
+all_actions_included = true
+
+# A template to use as the base values for a particular action.
+[[settings.builder.actions.action_templates]]
+# The label of the action.
+action = "c2pa.edited"
+# TODO: do we want to document these fields here or just include links to the docs
+#       rust docs or c2pa docs?
+software_agent = ""
+software_agent_index = ""
+source_type = ""
+icon = ""
+description = ""
+template_parameters = ""
+
+# Multiple templates can be specified.
+[[settings.builder.actions.action_templates]]
+action = "c2pa.cropped"
+
+# Actions to be added to every "Actions" assertion.
+[[settings.builder.actions.actions]]
+# The label of the action.
+action = "c2pa.drawing"
+# TODO: probably don't want to relist all of the fields, see previous todo comment
+
+# Similarly, multiple actions can be defined.
+[[settings.builder.actions.actions]]
+action = "c2pa.color_adjustments"
+
 # Settings for configuring how c2pa.created actions are auto created.
 #
 # This is a convenience setting and it can be disabled if the information
 # is provided manually.
-[builder.auto_created_action]
+[settings.builder.actions.auto_created_action]
 # Whether to auto create the c2pa.created action.
 enabled = true
 # The source type field is required for the c2pa.created action.
@@ -77,7 +112,7 @@ source_type = "http://c2pa.org/digitalsourcetype/empty"
 #
 # This is a convenience setting and it can be disabled if the information
 # is provided manually.
-[builder.auto_opened_action]
+[settings.builder.actions.auto_opened_action]
 # Whether to auto create the c2pa.opened action.
 enabled = true
 # For more information, see `c2pa::assertions::actions::source_type`.
@@ -89,7 +124,7 @@ source_type = "http://c2pa.org/digitalsourcetype/empty"
 #
 # This is a convenience setting and it can be disabled if the information
 # is provided manually.
-[builder.auto_placed_action]
+[settings.builder.actions.auto_placed_action]
 # Whether to auto create the c2pa.placed action.
 enabled = true
 # TODO: doc these fields better
@@ -99,7 +134,7 @@ enabled = true
 source_type = "http://c2pa.org/digitalsourcetype/empty"
 
 # A signer can be loaded in the API with the function `Settings::signer`.
-[builder.signer.local]
+[settings.builder.signer.local]
 # Algorithm to use for signing.
 alg = "sha256"
 # Certificate used for signing (PEM format).
@@ -109,17 +144,25 @@ private_key = ""
 # Time Stamp Authority URL for signing.
 tsa_url = ""
 
-# TODO: doc how it works
 # Alternatively, you can specify a remote signer, which is also loaded
 # via `Settings::signer`.
 #
 # Note that you may not specify both a local and remote signer at the same time.
-[builder.signer.remote]
+[settings.builder.signer.remote]
+# URL to the signer used for signing.
+#
+# A POST request with a byte stream will be sent to this URL.
 url = "https://www.google.com"
+# Algorithm to use for signing.
+alg = "sha256"
+# Certificate used for signing (PEM format).
+sign_cert = ""
+# Time Stamp Authority URL for signing.
+tsa_url = ""
 
 # Similar to a normal signers, you can specify CAWG signers, loadable with the
 # function `Settings::cawg_signer`.
-[builder.cawg_signer.local]
+[settings.builder.cawg_signer.local]
 # Algorithm to use for signing.
 alg = "sha256"
 # Certificate used for signing (PEM format).
@@ -131,11 +174,20 @@ tsa_url = ""
 
 # The same rules that apply for normal signers also apply for CAWG signers. You may
 # only specify either a local or remote, not both.
-[builder.cawg_signer.remote]
+[settings.builder.cawg_signer.remote]
+# URL to the signer used for signing.
+#
+# A POST request with a byte stream will be sent to this URL.
 url = "https://www.google.com"
+# Algorithm to use for signing.
+alg = "sha256"
+# Certificate used for signing (PEM format).
+sign_cert = ""
+# Time Stamp Authority URL for signing.
+tsa_url = ""
 
 # Settings for automatic thumbnail generation.
-[builder.thumbnail]
+[settings.builder.thumbnail]
 # Whether to enable automatic thumbnail generation.
 enabled = true
 # Whether to ignore errors when generating a thumbnail and continue signing.
