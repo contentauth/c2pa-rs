@@ -29,8 +29,8 @@ use zip::{write::SimpleFileOptions, ZipArchive, ZipWriter};
 use crate::{
     assertion::AssertionDecodeError,
     assertions::{
-        c2pa_action, labels, Action, Actions, BmffHash, BoxHash, CreativeWork, DataHash,
-        EmbeddedData, Exif, Metadata, SoftwareAgent, Thumbnail, User, UserCbor,
+        c2pa_action, labels, Action, ActionTemplate, Actions, BmffHash, BoxHash, CreativeWork,
+        DataHash, EmbeddedData, Exif, Metadata, SoftwareAgent, Thumbnail, User, UserCbor,
     },
     cbor_types::value_cbor_to_type,
     claim::Claim,
@@ -762,7 +762,7 @@ impl Builder {
                     let mut actions: Actions = manifest_assertion.to_assertion()?;
                     //dbg!(format!("Actions: {:?} version: {:?}", actions, version));
 
-                    self.add_auto_actions_assertions(&ingredient_map, &mut actions)?;
+                    self.add_actions_assertion_settings(&ingredient_map, &mut actions)?;
 
                     let mut updates = Vec::new();
                     let mut index = 0;
@@ -883,7 +883,7 @@ impl Builder {
 
         if !found_actions {
             let mut actions = Actions::new();
-            self.add_auto_actions_assertions(&ingredient_map, &mut actions)?;
+            self.add_actions_assertion_settings(&ingredient_map, &mut actions)?;
 
             if !actions.actions().is_empty() {
                 claim.add_assertion(&actions)?;
@@ -893,13 +893,59 @@ impl Builder {
         Ok(claim)
     }
 
+    /// Adds [ActionsSettings][crate::settings::ActionsSettings] to an
+    /// [Actions][crate::assertions::Actions] assertion.
+    ///
+    /// This function takes into account the [Settings][crate::Settings]:
+    /// * `builder.actions.auto_opened_action`
+    /// * `builder.actions.actions`
+    /// * For more, see [Builder::add_auto_actions_assertions]
+    fn add_actions_assertion_settings(
+        &self,
+        ingredient_map: &HashMap<String, HashedUri>,
+        actions: &mut Actions,
+    ) -> Result<()> {
+        if actions.all_actions_included.is_none() {
+            let all_actions_included =
+                settings::get_settings_value::<bool>("builder.actions.all_actions_included");
+            if let Ok(all_actions_included) = all_actions_included {
+                actions.all_actions_included = Some(all_actions_included);
+            }
+        }
+
+        let action_templates = settings::get_settings_value::<Option<Vec<ActionTemplate>>>(
+            "builder.actions.action_templates",
+        );
+        if let Ok(Some(action_templates)) = action_templates {
+            match actions.templates {
+                Some(ref mut templates) => {
+                    templates.extend(action_templates);
+                }
+                None => actions.templates = Some(action_templates),
+            }
+        }
+
+        let additional_actions =
+            settings::get_settings_value::<Option<Vec<Action>>>("builder.actions.actions");
+        if let Ok(Some(additional_actions)) = additional_actions {
+            match actions.actions.is_empty() {
+                false => {
+                    actions.actions.extend(additional_actions);
+                }
+                true => actions.actions = additional_actions,
+            }
+        }
+
+        self.add_auto_actions_assertions(ingredient_map, actions)
+    }
+
     /// Adds c2pa.created, c2pa.opened, and c2pa.placed actions for the specified [Actions][crate::assertions::Actions]
     /// assertion if the condiitons are applicable as defined in the spec.
     ///
     /// This function takes into account the [Settings][crate::Settings]:
-    /// * `builder.auto_created_action`
-    /// * `builder.auto_opened_action`
-    /// * `builder.auto_placed_action`
+    /// * `builder.actions.auto_created_action`
+    /// * `builder.actions.auto_opened_action`
+    /// * `builder.actions.auto_placed_action`
     fn add_auto_actions_assertions(
         &self,
         ingredient_map: &HashMap<String, HashedUri>,
@@ -907,9 +953,9 @@ impl Builder {
     ) -> Result<()> {
         // https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_mandatory_presence_of_at_least_one_actions_assertion
         let auto_created =
-            settings::get_settings_value::<bool>("builder.auto_created_action.enabled")?;
+            settings::get_settings_value::<bool>("builder.actions.auto_created_action.enabled")?;
         let auto_opened =
-            settings::get_settings_value::<bool>("builder.auto_opened_action.enabled")?;
+            settings::get_settings_value::<bool>("builder.actions.auto_opened_action.enabled")?;
         if auto_created || auto_opened {
             let parent_ingredient = self
                 .definition
@@ -938,7 +984,7 @@ impl Builder {
                 (None, true, _) => {
                     // The settings ensures this field always exists for the "c2pa.created" action.
                     let source_type = settings::get_settings_value::<Option<String>>(
-                        "builder.auto_created_action.source_type",
+                        "builder.actions.auto_created_action.source_type",
                     );
                     match source_type {
                         Ok(Some(source_type)) => {
@@ -971,7 +1017,7 @@ impl Builder {
 
         // https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_relationship
         let auto_placed =
-            settings::get_settings_value::<bool>("builder.auto_placed_action.enabled")?;
+            settings::get_settings_value::<bool>("builder.actions.auto_placed_action.enabled")?;
         if auto_placed {
             // Get a list of ingredient URIs referenced by "c2pa.placed" actions.
             let mut referenced_uris = HashSet::new();
@@ -1645,11 +1691,11 @@ mod tests {
     #[test]
     fn test_builder_auto_created() {
         settings::set_settings_value(
-            "builder.auto_created_action.source_type",
+            "builder.actions.auto_created_action.source_type",
             source_type::EMPTY,
         )
         .unwrap();
-        settings::set_settings_value("builder.auto_created_action.enabled", true).unwrap();
+        settings::set_settings_value("builder.actions.auto_created_action.enabled", true).unwrap();
 
         let mut output = Cursor::new(Vec::new());
         Builder::new()
@@ -1676,7 +1722,7 @@ mod tests {
 
     #[test]
     fn test_builder_auto_opened() {
-        settings::set_settings_value("builder.auto_opened_action.enabled", true).unwrap();
+        settings::set_settings_value("builder.actions.auto_opened_action.enabled", true).unwrap();
 
         let mut builder = Builder::new();
         builder
@@ -1724,12 +1770,12 @@ mod tests {
     #[test]
     fn test_builder_auto_placed() {
         settings::set_settings_value(
-            "builder.auto_created_action.source_type",
+            "builder.actions.auto_created_action.source_type",
             source_type::EMPTY,
         )
         .unwrap();
-        settings::set_settings_value("builder.auto_created_action.enabled", true).unwrap();
-        settings::set_settings_value("builder.auto_placed_action.enabled", true).unwrap();
+        settings::set_settings_value("builder.actions.auto_created_action.enabled", true).unwrap();
+        settings::set_settings_value("builder.actions.auto_placed_action.enabled", true).unwrap();
 
         let mut builder = Builder::new();
         builder

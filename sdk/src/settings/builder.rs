@@ -16,6 +16,7 @@ use std::{collections::HashMap, env::consts, io::Read};
 use serde::{Deserialize, Serialize};
 
 use crate::{
+    assertions::{Action, ActionTemplate},
     create_signer,
     resource_store::UriOrResource,
     settings::{Settings, SettingsValidate},
@@ -189,24 +190,20 @@ impl From<ClaimGeneratorInfoSettings> for ClaimGeneratorInfo {
     }
 }
 
-/// Settings for the [Builder][crate::Builder].
+/// Settings for configuring the "base" [Actions][crate::assertions::Actions] assertion.
+///
+/// The reason this setting exists only for an [Actions][crate::assertions::Actions] assertion
+/// is because of its mandations and reusable fields.
 #[allow(unused)]
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-pub(crate) struct BuilderSettings {
-    /// Information about the signer used for signing.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub signer: Option<SignerSettings>,
-    /// Information about the CAWG signer used for CAWG signing.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub cawg_signer: Option<SignerSettings>,
-    /// Claim generator info that is automatically added to the builder.
-    ///
-    /// Note that this information will prepend any claim generator info
-    /// provided explicitly to the builder.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub claim_generator_info: Option<ClaimGeneratorInfo>,
-    /// Various settings for configuring automatic thumbnail generation.
-    pub thumbnail: ThumbnailSettings,
+pub(crate) struct ActionsSettings {
+    /// Whether or not to set the [Actions::all_actions_included][crate::assertions::Actions::all_actions_included]
+    /// field.
+    pub all_actions_included: bool,
+    /// Templates to be added to the [Actions::templates][crate::assertions::Actions::templates] field.
+    pub action_templates: Option<Vec<ActionTemplate>>,
+    /// Actions to be added to the [Actions::actions][crate::assertions::Actions::actions] field.
+    pub actions: Option<Vec<Action>>,
     /// Whether to automatically generate a c2pa.created [Action][crate::assertions::Action]
     /// assertion or error that it doesn't already exist.
     ///
@@ -227,13 +224,12 @@ pub(crate) struct BuilderSettings {
     pub auto_placed_action: AutoActionSettings,
 }
 
-impl Default for BuilderSettings {
+impl Default for ActionsSettings {
     fn default() -> Self {
-        Self {
-            signer: None,
-            cawg_signer: None,
-            claim_generator_info: None,
-            thumbnail: Default::default(),
+        ActionsSettings {
+            all_actions_included: true,
+            action_templates: None,
+            actions: None,
             auto_created_action: AutoActionSettings {
                 enabled: false,
                 source_type: None,
@@ -250,12 +246,42 @@ impl Default for BuilderSettings {
     }
 }
 
+impl SettingsValidate for ActionsSettings {
+    fn validate(&self) -> Result<()> {
+        match self.auto_created_action.enabled && self.auto_created_action.source_type.is_none() {
+            true => Err(Error::MissingAutoCreatedActionSourceType),
+            false => Ok(()),
+        }
+    }
+}
+
+/// Settings for the [Builder][crate::Builder].
+#[allow(unused)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, Default)]
+pub(crate) struct BuilderSettings {
+    /// Information about the signer used for signing.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub signer: Option<SignerSettings>,
+    /// Information about the CAWG signer used for CAWG signing.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cawg_signer: Option<SignerSettings>,
+    /// Claim generator info that is automatically added to the builder.
+    ///
+    /// Note that this information will prepend any claim generator info
+    /// provided explicitly to the builder.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub claim_generator_info: Option<ClaimGeneratorInfo>,
+    /// Various settings for configuring automatic thumbnail generation.
+    pub thumbnail: ThumbnailSettings,
+    /// Settings for configuring fields in an [Actions][crate::assertions::Actions] assertion.
+    ///
+    /// For more information on the reasoning behind this field see [ActionsSettings].
+    pub actions: ActionsSettings,
+}
+
 impl SettingsValidate for BuilderSettings {
     fn validate(&self) -> Result<()> {
-        if self.auto_created_action.enabled && self.auto_created_action.source_type.is_none() {
-            return Err(Error::MissingAutoCreatedActionSourceType);
-        }
-
+        self.actions.validate()?;
         self.thumbnail.validate()
     }
 }
