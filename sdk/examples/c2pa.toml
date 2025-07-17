@@ -70,7 +70,7 @@ some_other_field = ""
 all_actions_included = true
 
 # A template to use as the base values for a particular action.
-[[settings.builder.actions.action_templates]]
+[[settings.builder.actions.templates]]
 # The label of the action.
 action = "c2pa.edited"
 # TODO: do we want to document these fields here or just include links to the docs
@@ -83,7 +83,7 @@ description = ""
 template_parameters = ""
 
 # Multiple templates can be specified.
-[[settings.builder.actions.action_templates]]
+[[settings.builder.actions.templates]]
 action = "c2pa.cropped"
 
 # Actions to be added to every "Actions" assertion.

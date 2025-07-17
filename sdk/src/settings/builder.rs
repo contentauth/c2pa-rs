@@ -16,7 +16,7 @@ use std::{collections::HashMap, env::consts, io::Read};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    assertions::{Action, ActionTemplate},
+    assertions::{Action, ActionTemplate, SoftwareAgent},
     create_signer,
     resource_store::UriOrResource,
     settings::{Settings, SettingsValidate},
@@ -156,6 +156,7 @@ impl Default for ClaimGeneratorInfoOSSettings {
 // TODO: maybe we should store these "Settings"-type of structs in the Builder instead of the actual
 //       struct that's embedded into the claim. Structs like this can be converted to the internal ones
 //       when signing?
+// TODO: this redefinition of the struct isn't ideal either, see ActionTemplateSettings for more info
 /// Settings for the claim generator info.
 #[allow(unused)]
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -172,12 +173,14 @@ pub(crate) struct ClaimGeneratorInfoSettings {
     pub operating_system: ClaimGeneratorInfoOSSettings,
     /// Any other values that are not part of the standard.
     #[serde(flatten)]
-    pub other: HashMap<String, serde_json::Value>,
+    pub other: HashMap<String, toml::Value>,
 }
 
-impl From<ClaimGeneratorInfoSettings> for ClaimGeneratorInfo {
-    fn from(value: ClaimGeneratorInfoSettings) -> Self {
-        ClaimGeneratorInfo {
+impl TryFrom<ClaimGeneratorInfoSettings> for ClaimGeneratorInfo {
+    type Error = Error;
+
+    fn try_from(value: ClaimGeneratorInfoSettings) -> Result<Self> {
+        Ok(ClaimGeneratorInfo {
             name: value.name,
             version: value.version,
             icon: value.icon,
@@ -185,8 +188,72 @@ impl From<ClaimGeneratorInfoSettings> for ClaimGeneratorInfo {
                 true => Some(consts::OS.to_owned()),
                 false => value.operating_system.name,
             },
-            other: value.other,
-        }
+            other: value
+                .other
+                .into_iter()
+                .map(|(key, value)| {
+                    serde_json::to_value(value)
+                        .map(|value| (key, value))
+                        .map_err(|err| err.into())
+                })
+                .collect::<Result<HashMap<String, serde_json::Value>>>()?,
+        })
+    }
+}
+
+// TODO: it's not ideal redefining this entire struct, but we need to change serde_json::Value to toml::Value
+//       for template_parameters
+//
+//       regardless if we ignore that field, there are still issues converting a list of structs to config::Value
+//       see the test in Builder called test_builder_action_templates for more information (line 1880)
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct ActionTemplateSettings {
+    pub action: String,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub software_agent: Option<SoftwareAgent>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub software_agent_index: Option<usize>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_type: Option<String>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub icon: Option<UriOrResource>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub template_parameters: Option<HashMap<String, toml::Value>>,
+}
+
+impl TryFrom<ActionTemplateSettings> for ActionTemplate {
+    type Error = Error;
+
+    fn try_from(value: ActionTemplateSettings) -> Result<Self> {
+        Ok(ActionTemplate {
+            action: value.action,
+            software_agent: value.software_agent,
+            software_agent_index: value.software_agent_index,
+            source_type: value.source_type,
+            icon: value.icon,
+            description: value.description,
+            template_parameters: value
+                .template_parameters
+                .map(|template_parameters| {
+                    template_parameters
+                        .into_iter()
+                        .map(|(key, value)| {
+                            serde_cbor::value::to_value(value)
+                                .map(|value| (key, value))
+                                .map_err(|err| err.into())
+                        })
+                        .collect::<Result<HashMap<String, serde_cbor::Value>>>()
+                })
+                .transpose()?,
+        })
     }
 }
 
@@ -201,7 +268,7 @@ pub(crate) struct ActionsSettings {
     /// field.
     pub all_actions_included: bool,
     /// Templates to be added to the [Actions::templates][crate::assertions::Actions::templates] field.
-    pub action_templates: Option<Vec<ActionTemplate>>,
+    pub templates: Option<Vec<ActionTemplate>>,
     /// Actions to be added to the [Actions::actions][crate::assertions::Actions::actions] field.
     pub actions: Option<Vec<Action>>,
     /// Whether to automatically generate a c2pa.created [Action][crate::assertions::Action]
@@ -228,7 +295,7 @@ impl Default for ActionsSettings {
     fn default() -> Self {
         ActionsSettings {
             all_actions_included: true,
-            action_templates: None,
+            templates: None,
             actions: None,
             auto_created_action: AutoActionSettings {
                 enabled: false,

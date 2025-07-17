@@ -634,7 +634,7 @@ impl Builder {
             >("builder.claim_generator_info");
             match claim_generator_info_settings {
                 Ok(Some(claim_generator_info_settings)) => {
-                    claim_generator_info.push(claim_generator_info_settings.into());
+                    claim_generator_info.push(claim_generator_info_settings.try_into()?);
                 }
                 _ => {
                     claim_generator_info.push(ClaimGeneratorInfo::default());
@@ -898,6 +898,7 @@ impl Builder {
     ///
     /// This function takes into account the [Settings][crate::Settings]:
     /// * `builder.actions.auto_opened_action`
+    /// * `builder.actions.templates`
     /// * `builder.actions.actions`
     /// * For more, see [Builder::add_auto_actions_assertions]
     fn add_actions_assertion_settings(
@@ -914,7 +915,7 @@ impl Builder {
         }
 
         let action_templates = settings::get_settings_value::<Option<Vec<ActionTemplate>>>(
-            "builder.actions.action_templates",
+            "builder.actions.templates",
         );
         if let Ok(Some(action_templates)) = action_templates {
             match actions.templates {
@@ -1434,6 +1435,7 @@ mod tests {
         cbor_types::value_cbor_to_type,
         crypto::raw_signature::SigningAlg,
         hash_stream_by_alg,
+        settings::ActionTemplateSettings,
         utils::{test::write_jpeg_placeholder_stream, test_signer::test_signer},
         validation_results::ValidationState,
         HashedUri, Reader, Settings,
@@ -1689,7 +1691,7 @@ mod tests {
     }
 
     #[test]
-    fn test_builder_auto_created() {
+    fn test_builder_settings_auto_created() {
         settings::set_settings_value(
             "builder.actions.auto_created_action.source_type",
             source_type::EMPTY,
@@ -1721,7 +1723,7 @@ mod tests {
     }
 
     #[test]
-    fn test_builder_auto_opened() {
+    fn test_builder_settings_auto_opened() {
         settings::set_settings_value("builder.actions.auto_opened_action.enabled", true).unwrap();
 
         let mut builder = Builder::new();
@@ -1768,7 +1770,7 @@ mod tests {
     }
 
     #[test]
-    fn test_builder_auto_placed() {
+    fn test_builder_settings_auto_placed() {
         settings::set_settings_value(
             "builder.actions.auto_created_action.source_type",
             source_type::EMPTY,
@@ -1844,6 +1846,51 @@ mod tests {
             // let stored_uri = ingredient_uris.first().unwrap().url();
             // assert_eq!(target_uri, &stored_uri);
         }
+    }
+
+    #[test]
+    fn test_builder_settings_all_actions_included() {
+        settings::set_settings_value("builder.actions.all_actions_included", true).unwrap();
+        // TODO
+    }
+
+    #[test]
+    fn test_builder_settings_action_templates() {
+        let templates = vec![
+            ActionTemplateSettings {
+                action: c2pa_action::EDITED.to_owned(),
+                source_type: Some(source_type::EMPTY.to_owned()),
+                software_agent: None,
+                software_agent_index: None,
+                icon: None,
+                description: None,
+                template_parameters: None,
+            },
+            ActionTemplateSettings {
+                action: c2pa_action::COLOR_ADJUSTMENTS.to_owned(),
+                source_type: Some(source_type::TRAINED_ALGORITHMIC_DATA.to_owned()),
+                software_agent: None,
+                software_agent_index: None,
+                icon: None,
+                description: None,
+                template_parameters: None,
+            },
+        ];
+
+        // TODO: cannot do this because the ActionTemplateSettings doesn't implement Into<config::Value>
+        //       another issue is how can we set a single element of an array of a value that doesn't
+        //       implement Into<config::Value>
+        //
+        //       we can implement Into<config::Value> but then we need to manually specify every key/value
+        //       in that conversion and put it into a config::Value::Table, and convert toml::Value to it as well
+        //       not sure if there's a better way
+        // settings::set_settings_value("builder.actions.templates", Some(templates)).unwrap();
+    }
+
+    #[test]
+    fn test_builder_settings_actions() {
+        // settings::set_settings_value("builder.actions.actions", true).unwrap();
+        // TODO
     }
 
     #[test]
