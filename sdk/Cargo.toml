@@ -248,6 +248,11 @@ hex-literal = "0.4.1"
 jumbf = "0.4.0"
 c2pa_macros = { path = "../macros"}
 mockall = "0.13.1"
+criterion = "0.6.0"
+
+[[bench]]
+name= "sign_benchmark"
+harness = false
 
 [target.'cfg(all(target_arch = "wasm32", not(target_os = "wasi")))'.dev-dependencies]
 wasm-bindgen-test = "0.3.45"
