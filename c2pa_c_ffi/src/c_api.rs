@@ -797,6 +797,31 @@ pub unsafe extern "C" fn c2pa_builder_set_remote_url(
     0 as c_int
 }
 
+/// ⚠️ **Deprecated Soon**
+/// This method is planned to be deprecated in a future release.
+/// Usage should be limited and temporary.
+///
+/// Sets the resource directory on the Builder.
+/// When set, resources that are not found in memory will be searched for in the given directory.
+/// # Parameters
+/// * builder_ptr: pointer to a Builder.
+/// * base_path: pointer to a C string with the resource directory.
+/// # Errors
+/// Returns -1 if there were errors, otherwise returns 0.
+/// The error string can be retrieved by calling c2pa_error.
+/// # Safety
+/// Reads from NULL-terminated C strings.
+#[no_mangle]
+pub unsafe extern "C" fn c2pa_builder_set_base_path(
+    builder_ptr: *mut C2paBuilder,
+    base_path: *const c_char,
+) -> c_int {
+    let mut builder = guard_boxed_int!(builder_ptr);
+    let base_path = from_cstr_or_return_int!(base_path);
+    builder.set_base_path(&base_path);
+    0 as c_int
+}
+
 /// Adds a resource to the C2paBuilder.
 ///
 /// The resource uri should match an identifier in the manifest definition.

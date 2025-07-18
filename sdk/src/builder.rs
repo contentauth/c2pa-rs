@@ -293,6 +293,22 @@ impl Builder {
         self
     }
 
+    /// ⚠️ **Deprecated Soon**
+    /// This method is planned to be deprecated in a future release.
+    /// Usage should be limited and temporary.
+    ///
+    /// Sets the resource directory for this [`Builder`]
+    ///
+    /// # Arguments
+    /// * `base_path` - The directory to search in to find the resources.
+    /// # Returns
+    /// * A mutable reference to the [`Builder`].
+    #[cfg(feature = "file_io")]
+    pub fn set_base_path<P: Into<PathBuf>>(&mut self, base_path: P) -> &mut Self {
+        self.base_path = Some(base_path.into());
+        self
+    }
+
     /// Sets the remote_url for this [`Builder`].
     /// The URL must return the manifest data and is injected into the destination asset when signing.
     /// For remote-only manifests, set the `no_embed` flag to `true`.
@@ -1214,6 +1230,8 @@ mod tests {
     use wasm_bindgen_test::*;
 
     use super::*;
+    #[cfg(feature = "file_io")]
+    use crate::utils::test::fixture_path;
     use crate::{
         assertions::{c2pa_action, BoxHash},
         asset_handlers::jpeg_io::JpegIO,
@@ -2229,5 +2247,33 @@ mod tests {
         println!("{reader_json}");
         assert!(reader_json.contains("Test Ingredient"));
         assert!(reader_json.contains("thumbnail.ingredient"));
+    }
+
+    #[cfg(feature = "file_io")]
+    #[test]
+    fn test_base_path() {
+        let mut builder = Builder::new();
+        let ingredient_folder = fixture_path("ingredient");
+        builder.set_base_path(&ingredient_folder);
+        assert_eq!(builder.base_path.as_ref(), Some(&ingredient_folder));
+        let ingredient_json =
+            std::fs::read_to_string(ingredient_folder.join("ingredient.json")).unwrap();
+
+        let ingredient = Ingredient::from_json(&ingredient_json).unwrap();
+        builder.add_ingredient(ingredient);
+
+        let signer = test_signer(SigningAlg::Ps256);
+
+        let mut source = Cursor::new(TEST_IMAGE_CLEAN);
+        let mut dest = Cursor::new(Vec::new());
+
+        builder
+            .sign(&signer, "image/jpeg", &mut source, &mut dest)
+            .unwrap();
+
+        let reader = Reader::from_stream("jpeg", &mut dest).unwrap();
+        let active_manifest = reader.active_manifest().unwrap();
+        let ingredient = active_manifest.ingredients().first().unwrap();
+        assert_eq!(ingredient.title(), Some("C.jpg"));
     }
 }
