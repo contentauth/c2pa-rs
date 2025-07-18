@@ -16,15 +16,18 @@ use std::{
     collections::HashMap,
     io::{Read, Seek, Write},
 };
-#[cfg(feature = "file_io")]
-use std::{
-    fs::{create_dir_all, read, write},
-    path::{Path, PathBuf},
-};
 
 #[cfg(feature = "json_schema")]
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+#[cfg(feature = "file_io")]
+use {
+    crate::utils::io_utils::uri_to_path,
+    std::{
+        fs::{create_dir_all, read, write},
+        path::{Path, PathBuf},
+    },
+};
 
 use crate::{
     assertions::{labels, AssetType, EmbeddedData},
@@ -267,20 +270,14 @@ impl ResourceStore {
         if id.starts_with("self#jumbf=") {
             #[cfg(feature = "file_io")]
             if self.base_path.is_some() {
-                // convert to a file path always including the manifest label
-                id = id.replace("self#jumbf=", "");
-                if id.starts_with("/c2pa/") {
-                    id = id.replacen("/c2pa/", "", 1);
-                } else if let Some(label) = self.label.as_ref() {
-                    id = format!("{label}/{id}");
-                }
-                id = id.replace([':'], "_");
+                let mut path = uri_to_path(&id, self.label.as_deref());
                 // add a file extension if it doesn't have one
                 if !(id.ends_with(".jpeg") || id.ends_with(".png")) {
                     if let Some(ext) = crate::utils::mime::format_to_extension(format) {
-                        id = format!("{id}.{ext}");
+                        path.set_extension(ext);
                     }
                 }
+                id = path.display().to_string()
             }
             if !self.exists(&id) {
                 self.add(&id, value)?;

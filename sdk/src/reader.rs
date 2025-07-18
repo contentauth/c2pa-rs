@@ -29,6 +29,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use serde_with::skip_serializing_none;
 
+#[cfg(feature = "file_io")]
+use crate::utils::io_utils::uri_to_path;
 use crate::{
     crypto::base64,
     dynamic_assertion::PartialClaim,
@@ -599,22 +601,6 @@ impl Reader {
         .map(|size| size as usize)
     }
 
-    /// Convert a URI to a file path. (todo: move this to utils)
-    fn uri_to_path(uri: &str, manifest_label: &str) -> String {
-        let mut path = uri.to_string();
-        if path.starts_with("self#jumbf=") {
-            // convert to a file path always including the manifest label
-            path = path.replace("self#jumbf=", "");
-            if path.starts_with("/c2pa/") {
-                path = path.replacen("/c2pa/", "", 1);
-            } else {
-                path = format!("{manifest_label}/{path}");
-            }
-            path = path.replace([':'], "_");
-        }
-        path
-    }
-
     /// Write all resources to a folder.
     ///
     ///
@@ -639,7 +625,7 @@ impl Reader {
         for manifest in self.manifests.values() {
             let resources = manifest.resources();
             for (uri, data) in resources.resources() {
-                let id_path = Self::uri_to_path(uri, manifest.label().unwrap_or("unknown"));
+                let id_path = uri_to_path(uri, manifest.label());
                 let path = path.as_ref().join(id_path);
                 if let Some(parent) = path.parent() {
                     std::fs::create_dir_all(parent)?;
