@@ -220,6 +220,19 @@ pub fn version(label: &str) -> Option<usize> {
     None
 }
 
+/// Set the version of a label.
+/// If the version is 1, the original label is returned.
+/// Otherwise, the label is suffixed with the version number.
+/// This expects the label to not already have a version suffix.
+pub fn set_version(base_label: &str, version: usize) -> String {
+    if version == 1 {
+        // c2pa does not include v1 labels
+        base_label.to_string()
+    } else {
+        format!("{base_label}.v{version}")
+    }
+}
+
 /// Given a thumbnail label prefix such as `CLAIM_THUMBNAIL` and a file
 /// format (such as `png`), create a suitable label for an assertion.
 ///

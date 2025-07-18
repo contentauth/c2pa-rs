@@ -43,6 +43,7 @@ use crate::{
     crypto::{cose::CertificateTrustPolicy, raw_signature::SigningAlg},
     hash_utils::Hasher,
     jumbf_io::get_assetio_handler,
+    resource_store::UriOrResource,
     salt::DefaultSalt,
     store::Store,
     AsyncSigner, ClaimGeneratorInfo, Result,
@@ -104,13 +105,13 @@ pub fn create_test_claim() -> Result<Claim> {
     // First create and add a claim thumbnail (we don't need to reference this anywhere)
     let mut claim = Claim::new("contentauth unit test", Some("contentauth"), 2);
 
+    // Add an icon for the claim_generator
+    let icon = EmbeddedData::new(labels::ICON, "image/jpeg", vec![0xde, 0xad, 0xbe, 0xef]);
+    let icon_ref = claim.add_assertion_with_salt(&icon, &DefaultSalt::default())?;
+
     let mut cg_info = ClaimGeneratorInfo::new("test app");
     cg_info.version = Some("2.3.4".to_string());
-    // cg_info.icon = Some(UriOrResource::HashedUri(HashedUri::new(
-    //     "self#jumbf=c2pa.databoxes.data_box".to_string(),
-    //     None,
-    //     b"hashed",
-    // )));
+    cg_info.icon = Some(UriOrResource::HashedUri(icon_ref));
     cg_info.insert("something", "else");
 
     claim.add_claim_generator_info(cg_info);

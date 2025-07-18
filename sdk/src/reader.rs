@@ -839,6 +839,13 @@ impl TryFrom<Reader> for serde_json::Value {
         reader.to_json_formatted()
     }
 }
+impl TryFrom<&Reader> for serde_json::Value {
+    type Error = Error;
+
+    fn try_from(reader: &Reader) -> Result<Self> {
+        reader.to_json_formatted()
+    }
+}
 
 /// Prints the JSON of the manifest data.
 impl std::fmt::Display for Reader {
