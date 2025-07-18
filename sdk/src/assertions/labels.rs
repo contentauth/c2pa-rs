@@ -182,6 +182,11 @@ pub(crate) const ASSERTION_STORE: &str = "c2pa.assertions";
 // Databoxes label
 pub(crate) const DATABOX_STORE: &str = "c2pa.databoxes";
 
+/// Label prefix for asset reference assertion.
+///
+/// See <https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_asset_reference>
+pub const ASSET_REFERENCE: &str = "c2pa.asset-ref";
+
 /// Return the version suffix from an assertion label if it exists.
 ///
 /// When an assertion's schema is changed in a backwards-compatible manner,
@@ -218,6 +223,19 @@ pub fn version(label: &str) -> Option<usize> {
     }
 
     None
+}
+
+/// Set the version of a label.
+/// If the version is 1, the original label is returned.
+/// Otherwise, the label is suffixed with the version number.
+/// This expects the label to not already have a version suffix.
+pub fn set_version(base_label: &str, version: usize) -> String {
+    if version == 1 {
+        // c2pa does not include v1 labels
+        base_label.to_string()
+    } else {
+        format!("{base_label}.v{version}")
+    }
 }
 
 /// Given a thumbnail label prefix such as `CLAIM_THUMBNAIL` and a file
