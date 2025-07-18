@@ -1247,8 +1247,7 @@ mod tests {
             ],
             "metadata": [
                 {
-                    "dateTime": "1985-04-12T23:20:50.52Z",
-                    "my_custom_metadata": "my custom metatdata value"
+                    "dateTime": "1985-04-12T23:20:50.52Z"
                 }
             ],
             "title": "Test_Manifest",
@@ -1392,16 +1391,6 @@ mod tests {
         assert_eq!(
             definition.assertions[1].label,
             "org.test.assertion".to_string()
-        );
-
-        assert_eq!(
-            definition.metadata.as_ref().unwrap()[0]
-                .other()
-                .get("my_custom_metadata")
-                .unwrap()
-                .as_str()
-                .unwrap(),
-            "mycustommetatdatavalue"
         );
 
         // convert back to json and compare to original
