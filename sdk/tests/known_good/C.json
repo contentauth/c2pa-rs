@@ -37,7 +37,7 @@
           "kind": "Json"
         },
         {
-          "label": "c2pa.actions",
+          "label": "c2pa.actions.v2",
           "data": {
             "actions": [
               {
@@ -64,6 +64,11 @@
   "validation_results": {
     "activeManifest": {
       "success": [
+        {
+          "code": "timeStamp.validated",
+          "url": "self#jumbf=/c2pa/contentauth:urn:uuid:b2b1f7fa-b119-4de1-9c0d-c97fbea3f2c3/c2pa.signature",
+          "explanation": "timestamp message digest matched: DigiCert Timestamp 2023"
+        },
         {
           "code": "claimSignature.insideValidity",
           "url": "self#jumbf=/c2pa/contentauth:urn:uuid:b2b1f7fa-b119-4de1-9c0d-c97fbea3f2c3/c2pa.signature",
@@ -100,7 +105,13 @@
           "explanation": "data hash valid"
         }
       ],
-      "informational": [],
+      "informational": [
+        {
+          "code": "timeStamp.untrusted",
+          "url": "self#jumbf=/c2pa/contentauth:urn:uuid:b2b1f7fa-b119-4de1-9c0d-c97fbea3f2c3/c2pa.signature",
+          "explanation": "timestamp cert untrusted: DigiCert Timestamp 2023"
+        }
+      ],
       "failure": []
     }
   },
