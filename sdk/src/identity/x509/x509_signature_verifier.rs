@@ -160,21 +160,22 @@ mod tests {
 
     use crate::{
         crypto::{
-            cose::{CertificateTrustPolicy, Verifier},
+            cose::{CertificateTrustPolicy, CoseError, Verifier},
             raw_signature,
         },
         identity::{
             builder::{IdentityAssertionBuilder, IdentityAssertionSigner},
             tests::fixtures::{cert_chain_and_private_key_for_alg, manifest_json, parent_json},
             x509::{X509CredentialHolder, X509SignatureVerifier},
-            IdentityAssertion,
+            IdentityAssertion, ValidationError,
         },
-        status_tracker::StatusTracker,
+        status_tracker::{LogKind, StatusTracker},
         Builder, Reader, SigningAlg,
     };
 
     const TEST_IMAGE: &[u8] = include_bytes!("../../../tests/fixtures/CA.jpg");
     const TEST_THUMBNAIL: &[u8] = include_bytes!("../../../tests/fixtures/thumbnail.jpg");
+    const IDENTITY_URI: &str = "self#jumbf=c2pa.assertions/cawg.identity";
 
     // NOTE: Success case is covered in tests for x509_credential_holder.rs.
 
@@ -247,34 +248,31 @@ mod tests {
 
         let x509_verifier = X509SignatureVerifier { cose_verifier };
 
-        if true {
-            // TO DO: Check with Maurice. Is it intended behavior that
-            // an untrusted cert fully errors out even when status tracker
-            // is set to "continue when possible"?
+        let err = ia
+            .validate(manifest, &mut st, &x509_verifier)
+            .await
+            .unwrap_err();
 
-            let err = ia
-                .validate(manifest, &mut st, &x509_verifier)
-                .await
-                .unwrap_err();
-
-            dbg!(&err);
-            dbg!(&st);
-        } else {
-            // I think this version should succeed, but it doesn't.
-
-            let sig_info = ia
-                .validate(manifest, &mut st, &x509_verifier)
-                .await
-                .unwrap();
-
-            dbg!(&st);
-
-            let cert_info = &sig_info.cert_info;
-            assert_eq!(cert_info.alg.unwrap(), SigningAlg::Ed25519);
-            assert_eq!(
-                cert_info.issuer_org.as_ref().unwrap(),
-                "C2PA Test Signing Cert"
-            );
+        match err {
+            ValidationError::SignatureError(CoseError::CertificateTrustError(_)) => {}
+            _ => {
+                panic!("Unexpected error: {err:#?}");
+            }
         }
+
+        dbg!(&st);
+
+        assert_eq!(st.logged_items().len(), 1);
+
+        let log = &st.logged_items()[0];
+        assert_eq!(log.kind, LogKind::Failure);
+        assert_eq!(log.label, IDENTITY_URI);
+        assert_eq!(log.description, "signing certificate untrusted");
+        assert_eq!(
+            log.validation_status.as_ref().unwrap().as_ref(),
+            "signingCredential.untrusted"
+        );
+
+        panic!("Now what?");
     }
 }
