@@ -38,7 +38,7 @@ use crate::{
     jumbf_io,
     resource_store::{ResourceRef, ResourceResolver, ResourceStore},
     salt::DefaultSalt,
-    settings::{self, ClaimGeneratorInfoSettings},
+    settings::{self, ActionTemplateSettings, ClaimGeneratorInfoSettings},
     store::Store,
     utils::mime::format_to_mime,
     AsyncSigner, ClaimGeneratorInfo, HashRange, HashedUri, Ingredient, Relationship, Signer,
@@ -914,13 +914,17 @@ impl Builder {
             }
         }
 
-        let action_templates = settings::get_settings_value::<Option<Vec<ActionTemplate>>>(
+        let action_templates = settings::get_settings_value::<Option<Vec<ActionTemplateSettings>>>(
             "builder.actions.templates",
         );
         if let Ok(Some(action_templates)) = action_templates {
+            let action_templates = action_templates
+                .into_iter()
+                .map(|template| template.try_into())
+                .collect::<Result<Vec<ActionTemplate>>>()?;
             match actions.templates {
                 Some(ref mut templates) => {
-                    templates.extend(action_templates);
+                    templates.extend_from_slice(&action_templates);
                 }
                 None => actions.templates = Some(action_templates),
             }
@@ -1435,7 +1439,6 @@ mod tests {
         cbor_types::value_cbor_to_type,
         crypto::raw_signature::SigningAlg,
         hash_stream_by_alg,
-        settings::ActionTemplateSettings,
         utils::{test::write_jpeg_placeholder_stream, test_signer::test_signer},
         validation_results::ValidationState,
         HashedUri, Reader, Settings,
@@ -1692,12 +1695,15 @@ mod tests {
 
     #[test]
     fn test_builder_settings_auto_created() {
-        settings::set_settings_value(
-            "builder.actions.auto_created_action.source_type",
-            source_type::EMPTY,
+        Settings::from_toml(
+            &toml::toml! {
+                [builder.actions.auto_created_action]
+                enabled = true
+                source_type = (source_type::EMPTY)
+            }
+            .to_string(),
         )
         .unwrap();
-        settings::set_settings_value("builder.actions.auto_created_action.enabled", true).unwrap();
 
         let mut output = Cursor::new(Vec::new());
         Builder::new()
@@ -1724,6 +1730,14 @@ mod tests {
 
     #[test]
     fn test_builder_settings_auto_opened() {
+        Settings::from_toml(
+            &toml::toml! {
+                [builder.actions.auto_opened_action]
+                enabled = true
+            }
+            .to_string(),
+        )
+        .unwrap();
         settings::set_settings_value("builder.actions.auto_opened_action.enabled", true).unwrap();
 
         let mut builder = Builder::new();
@@ -1771,13 +1785,18 @@ mod tests {
 
     #[test]
     fn test_builder_settings_auto_placed() {
-        settings::set_settings_value(
-            "builder.actions.auto_created_action.source_type",
-            source_type::EMPTY,
+        Settings::from_toml(
+            &toml::toml! {
+                [builder.actions.auto_created_action]
+                enabled = true
+                source_type = (source_type::EMPTY)
+
+                [builder.actions.auto_placed_action]
+                enabled = true
+            }
+            .to_string(),
         )
         .unwrap();
-        settings::set_settings_value("builder.actions.auto_created_action.enabled", true).unwrap();
-        settings::set_settings_value("builder.actions.auto_placed_action.enabled", true).unwrap();
 
         let mut builder = Builder::new();
         builder
@@ -1850,47 +1869,162 @@ mod tests {
 
     #[test]
     fn test_builder_settings_all_actions_included() {
-        settings::set_settings_value("builder.actions.all_actions_included", true).unwrap();
-        // TODO
+        Settings::from_toml(
+            &toml::toml! {
+                [builder.actions]
+                all_actions_included = true
+
+                [builder.actions.auto_created_action]
+                enabled = true
+                source_type = (source_type::EMPTY)
+            }
+            .to_string(),
+        )
+        .unwrap();
+
+        let mut output = Cursor::new(Vec::new());
+        Builder::new()
+            .sign(
+                &Settings::signer().unwrap(),
+                "image/jpeg",
+                &mut Cursor::new(TEST_IMAGE),
+                &mut output,
+            )
+            .unwrap();
+
+        output.rewind().unwrap();
+        let reader = Reader::from_stream("image/jpeg", output).unwrap();
+
+        let actions: Actions = reader
+            .active_manifest()
+            .unwrap()
+            .find_assertion(Actions::LABEL)
+            .unwrap();
+
+        assert_eq!(actions.all_actions_included, Some(true));
     }
 
     #[test]
     fn test_builder_settings_action_templates() {
-        let templates = vec![
-            ActionTemplateSettings {
-                action: c2pa_action::EDITED.to_owned(),
-                source_type: Some(source_type::EMPTY.to_owned()),
-                software_agent: None,
-                software_agent_index: None,
-                icon: None,
-                description: None,
-                template_parameters: None,
-            },
-            ActionTemplateSettings {
-                action: c2pa_action::COLOR_ADJUSTMENTS.to_owned(),
-                source_type: Some(source_type::TRAINED_ALGORITHMIC_DATA.to_owned()),
-                software_agent: None,
-                software_agent_index: None,
-                icon: None,
-                description: None,
-                template_parameters: None,
-            },
-        ];
+        Settings::from_toml(
+            &toml::toml! {
+                [builder.actions.auto_created_action]
+                enabled = true
+                source_type = (source_type::EMPTY)
 
-        // TODO: cannot do this because the ActionTemplateSettings doesn't implement Into<config::Value>
-        //       another issue is how can we set a single element of an array of a value that doesn't
-        //       implement Into<config::Value>
-        //
-        //       we can implement Into<config::Value> but then we need to manually specify every key/value
-        //       in that conversion and put it into a config::Value::Table, and convert toml::Value to it as well
-        //       not sure if there's a better way
-        // settings::set_settings_value("builder.actions.templates", Some(templates)).unwrap();
+                [[builder.actions.templates]]
+                action = (c2pa_action::EDITED)
+                source_type = (source_type::EMPTY)
+
+                [[builder.actions.templates]]
+                action = (c2pa_action::COLOR_ADJUSTMENTS)
+                source_type = (source_type::TRAINED_ALGORITHMIC_DATA)
+            }
+            .to_string(),
+        )
+        .unwrap();
+
+        let actions = Actions::new()
+            .add_action(Action::new(c2pa_action::EDITED))
+            .add_action(Action::new(c2pa_action::COLOR_ADJUSTMENTS));
+
+        let mut builder = Builder::new();
+        builder.add_assertion(Actions::LABEL, &actions).unwrap();
+
+        let mut output = Cursor::new(Vec::new());
+        builder
+            .sign(
+                &Settings::signer().unwrap(),
+                "image/jpeg",
+                &mut Cursor::new(TEST_IMAGE),
+                &mut output,
+            )
+            .unwrap();
+
+        output.rewind().unwrap();
+        let reader = Reader::from_stream("image/jpeg", output).unwrap();
+
+        // TODO: for some reason adding templates (with or without settings) is causing the actions
+        //       assertion to not be found here. Interestingly, the Reader doesn't error during validation?
+        let actions: Actions = reader
+            .active_manifest()
+            .unwrap()
+            .find_assertion(Actions::LABEL)
+            .unwrap();
+
+        assert!(actions.actions.len() > 2);
+
+        for action in actions.actions {
+            match action.action() {
+                c2pa_action::EDITED => {
+                    assert_eq!(action.source_type(), Some(source_type::EMPTY));
+                }
+                c2pa_action::COLOR_ADJUSTMENTS => {
+                    assert_eq!(
+                        action.source_type(),
+                        Some(source_type::TRAINED_ALGORITHMIC_DATA)
+                    );
+                }
+                _ => {}
+            }
+        }
     }
 
     #[test]
     fn test_builder_settings_actions() {
-        // settings::set_settings_value("builder.actions.actions", true).unwrap();
-        // TODO
+        Settings::from_toml(
+            &toml::toml! {
+                [builder.actions.auto_created_action]
+                enabled = true
+                source_type = (source_type::EMPTY)
+
+                [[builder.actions.actions]]
+                action = (c2pa_action::EDITED)
+                digitalSourceType = (source_type::EMPTY)
+
+                [[builder.actions.actions]]
+                action = (c2pa_action::COLOR_ADJUSTMENTS)
+                digitalSourceType = (source_type::TRAINED_ALGORITHMIC_DATA)
+            }
+            .to_string(),
+        )
+        .unwrap();
+
+        let mut output = Cursor::new(Vec::new());
+        Builder::new()
+            .sign(
+                &Settings::signer().unwrap(),
+                "image/jpeg",
+                &mut Cursor::new(TEST_IMAGE),
+                &mut output,
+            )
+            .unwrap();
+
+        output.rewind().unwrap();
+        let reader = Reader::from_stream("image/jpeg", output).unwrap();
+
+        let actions: Actions = reader
+            .active_manifest()
+            .unwrap()
+            .find_assertion(Actions::LABEL)
+            .unwrap();
+
+        assert!(actions.actions.len() > 2);
+
+        for action in actions.actions {
+            match action.action() {
+                c2pa_action::EDITED => {
+                    assert_eq!(action.source_type(), Some(source_type::EMPTY));
+                }
+                c2pa_action::COLOR_ADJUSTMENTS => {
+                    assert_eq!(
+                        action.source_type(),
+                        Some(source_type::TRAINED_ALGORITHMIC_DATA)
+                    );
+                }
+                _ => {}
+            }
+        }
     }
 
     #[test]

@@ -202,10 +202,7 @@ impl TryFrom<ClaimGeneratorInfoSettings> for ClaimGeneratorInfo {
 }
 
 // TODO: it's not ideal redefining this entire struct, but we need to change serde_json::Value to toml::Value
-//       for template_parameters
-//
-//       regardless if we ignore that field, there are still issues converting a list of structs to config::Value
-//       see the test in Builder called test_builder_action_templates for more information (line 1880)
+//       for template_parameters. Another issue is that some fields are defined in camelCase in the original struct.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct ActionTemplateSettings {
     pub action: String,
@@ -268,8 +265,11 @@ pub(crate) struct ActionsSettings {
     /// field.
     pub all_actions_included: bool,
     /// Templates to be added to the [Actions::templates][crate::assertions::Actions::templates] field.
-    pub templates: Option<Vec<ActionTemplate>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub templates: Option<Vec<ActionTemplateSettings>>,
+    // TODO: should we define a new struct for "Action" too, like ActionTemplateSettings?
     /// Actions to be added to the [Actions::actions][crate::assertions::Actions::actions] field.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub actions: Option<Vec<Action>>,
     /// Whether to automatically generate a c2pa.created [Action][crate::assertions::Action]
     /// assertion or error that it doesn't already exist.

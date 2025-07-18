@@ -384,23 +384,6 @@ fn configure_sdk(args: &CliArgs) -> Result<()> {
         Settings::from_toml(&settings)?
     }
 
-    const TA: &str = r#"
-        [trust]
-        trust_anchors = replacement_val
-    "#;
-    const AL: &str = r#"
-        [trust]
-        allowed_list = replacement_val
-    "#;
-    const TC: &str = r#"
-        [trust]
-        trust_config = replacement_val
-    "#;
-    const VS: &str = r#"
-        [trust]
-        verify_after_sign = replacement_val
-    "#;
-
     let mut enable_trust_checks = false;
 
     if let Some(Commands::Trust {
@@ -410,34 +393,46 @@ fn configure_sdk(args: &CliArgs) -> Result<()> {
     }) = &args.command
     {
         if let Some(trust_list) = &trust_anchors {
-            let data = load_trust_resource(trust_list)?;
             debug!("Using trust anchors from {trust_list:?}");
-            let replacement_val = serde_json::Value::String(data).to_string(); // escape string
-            let setting = TA.replace("replacement_val", &replacement_val);
 
-            Settings::from_toml(&setting)?;
+            let data = load_trust_resource(trust_list)?;
+            Settings::from_toml(
+                &toml::toml! {
+                    [trust]
+                    trust_anchors = data
+                }
+                .to_string(),
+            )?;
 
             enable_trust_checks = true;
         }
 
         if let Some(allowed_list) = &allowed_list {
-            let data = load_trust_resource(allowed_list)?;
             debug!("Using allowed list from {allowed_list:?}");
-            let replacement_val = serde_json::Value::String(data).to_string(); // escape string
-            let setting = AL.replace("replacement_val", &replacement_val);
 
-            Settings::from_toml(&setting)?;
+            let data = load_trust_resource(allowed_list)?;
+            Settings::from_toml(
+                &toml::toml! {
+                    [trust]
+                    allowed_list = data
+                }
+                .to_string(),
+            )?;
 
             enable_trust_checks = true;
         }
 
         if let Some(trust_config) = &trust_config {
-            let data = load_trust_resource(trust_config)?;
             debug!("Using trust config from {trust_config:?}");
-            let replacement_val = serde_json::Value::String(data).to_string(); // escape string
-            let setting = TC.replace("replacement_val", &replacement_val);
 
-            Settings::from_toml(&setting)?;
+            let data = load_trust_resource(trust_config)?;
+            Settings::from_toml(
+                &toml::toml! {
+                    [trust]
+                    trust_config = data
+                }
+                .to_string(),
+            )?;
 
             enable_trust_checks = true;
         }
@@ -464,10 +459,13 @@ fn configure_sdk(args: &CliArgs) -> Result<()> {
 
     // enable or disable verification after signing
     {
-        let replacement_val = serde_json::Value::Bool(!args.no_signing_verify).to_string();
-        let setting = VS.replace("replacement_val", &replacement_val);
-
-        Settings::from_toml(&setting)?;
+        Settings::from_toml(
+            &toml::toml! {
+                [trust]
+                verify_after_sign = (!args.no_signing_verify)
+            }
+            .to_string(),
+        )?;
     }
 
     Ok(())

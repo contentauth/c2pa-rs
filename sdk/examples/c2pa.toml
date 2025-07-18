@@ -1,14 +1,11 @@
 # c2pa-rs Configuration File
-# Version: 1.0
 
-# System-wide settings.
-[settings]
 # Version information.
 version_major = 1
 version_minor = 0
 
 # Trust settings for certificate validation.
-[settings.trust]
+[trust]
 # String to user-provided trust anchors (PEM format).
 user_anchors = ""
 # String to system trust anchors (PEM format).
@@ -19,7 +16,7 @@ trust_config = ""
 allowed_list = ""
 
 # Core functionality.
-[settings.core]
+[core]
 # Hash algorithm to use (sha256, sha384, sha512).
 hash_alg = "sha256"
 # Prefer box hash over other hashing methods such as data hash.
@@ -30,7 +27,7 @@ prefer_bmff_merkle_tree = false
 compress_manifests = true
 
 # Verification settings.
-[settings.verify]
+[verify]
 # Verify manifests after reading.
 verify_after_reading = true
 # Verify manifests after signing.
@@ -43,10 +40,10 @@ remote_manifest_fetch = true
 strict_v1_validation = false
 
 # Configuration for the `Builder`.
-[settings.builder]
+[builder]
 
 # Claim generator info list.
-[settings.builder.claim_generator_info]
+[builder.claim_generator_info]
 # A human readable name.
 name = "My Service"
 # A human readable string of the product's version.
@@ -64,13 +61,13 @@ operating_system.infer = true
 some_other_field = ""
 
 # Actions assertion configuration.
-[settings.builder.actions]
+[builder.actions]
 # Signifies if all the actions that ever happened on a particular asset are specified
 # or if some are missing.
 all_actions_included = true
 
 # A template to use as the base values for a particular action.
-[[settings.builder.actions.templates]]
+[[builder.actions.templates]]
 # The label of the action.
 action = "c2pa.edited"
 # TODO: do we want to document these fields here or just include links to the docs
@@ -83,24 +80,24 @@ description = ""
 template_parameters = ""
 
 # Multiple templates can be specified.
-[[settings.builder.actions.templates]]
+[[builder.actions.templates]]
 action = "c2pa.cropped"
 
 # Actions to be added to every "Actions" assertion.
-[[settings.builder.actions.actions]]
+[[builder.actions.actions]]
 # The label of the action.
 action = "c2pa.drawing"
 # TODO: probably don't want to relist all of the fields, see previous todo comment
 
 # Similarly, multiple actions can be defined.
-[[settings.builder.actions.actions]]
+[[builder.actions.actions]]
 action = "c2pa.color_adjustments"
 
 # Settings for configuring how c2pa.created actions are auto created.
 #
 # This is a convenience setting and it can be disabled if the information
 # is provided manually.
-[settings.builder.actions.auto_created_action]
+[builder.actions.auto_created_action]
 # Whether to auto create the c2pa.created action.
 enabled = true
 # The source type field is required for the c2pa.created action.
@@ -112,7 +109,7 @@ source_type = "http://c2pa.org/digitalsourcetype/empty"
 #
 # This is a convenience setting and it can be disabled if the information
 # is provided manually.
-[settings.builder.actions.auto_opened_action]
+[builder.actions.auto_opened_action]
 # Whether to auto create the c2pa.opened action.
 enabled = true
 # For more information, see `c2pa::assertions::actions::source_type`.
@@ -124,7 +121,7 @@ source_type = "http://c2pa.org/digitalsourcetype/empty"
 #
 # This is a convenience setting and it can be disabled if the information
 # is provided manually.
-[settings.builder.actions.auto_placed_action]
+[builder.actions.auto_placed_action]
 # Whether to auto create the c2pa.placed action.
 enabled = true
 # TODO: doc these fields better
@@ -134,7 +131,7 @@ enabled = true
 source_type = "http://c2pa.org/digitalsourcetype/empty"
 
 # A signer can be loaded in the API with the function `Settings::signer`.
-[settings.builder.signer.local]
+[builder.signer.local]
 # Algorithm to use for signing.
 alg = "sha256"
 # Certificate used for signing (PEM format).
@@ -148,7 +145,7 @@ tsa_url = ""
 # via `Settings::signer`.
 #
 # Note that you may not specify both a local and remote signer at the same time.
-[settings.builder.signer.remote]
+[builder.signer.remote]
 # URL to the signer used for signing.
 #
 # A POST request with a byte stream will be sent to this URL.
@@ -162,7 +159,7 @@ tsa_url = ""
 
 # Similar to a normal signers, you can specify CAWG signers, loadable with the
 # function `Settings::cawg_signer`.
-[settings.builder.cawg_signer.local]
+[builder.cawg_signer.local]
 # Algorithm to use for signing.
 alg = "sha256"
 # Certificate used for signing (PEM format).
@@ -174,7 +171,7 @@ tsa_url = ""
 
 # The same rules that apply for normal signers also apply for CAWG signers. You may
 # only specify either a local or remote, not both.
-[settings.builder.cawg_signer.remote]
+[builder.cawg_signer.remote]
 # URL to the signer used for signing.
 #
 # A POST request with a byte stream will be sent to this URL.
@@ -187,7 +184,7 @@ sign_cert = ""
 tsa_url = ""
 
 # Settings for automatic thumbnail generation.
-[settings.builder.thumbnail]
+[builder.thumbnail]
 # Whether to enable automatic thumbnail generation.
 enabled = true
 # Whether to ignore errors when generating a thumbnail and continue signing.

@@ -282,6 +282,8 @@ where
 pub mod tests {
     #![allow(clippy::unwrap_used)]
 
+    use crate::Settings;
+
     use super::*;
 
     const TEST_JPEG: &[u8] = include_bytes!("../../tests/fixtures/CA.jpg");
@@ -289,8 +291,17 @@ pub mod tests {
 
     #[test]
     fn test_make_thumbnail_from_stream() {
-        settings::set_settings_value("builder.thumbnail.prefer_smallest_format", false).unwrap();
-        settings::set_settings_value("builder.thumbnail.ignore_errors", false).unwrap();
+        Settings::from_toml(
+            &toml::toml! {
+                [builder.thumbnail]
+                prefer_smallest_format = false
+                ignore_errors = false
+                // TODO: problem, how would I remove a field?
+                // format = null
+            }
+            .to_string(),
+        )
+        .unwrap();
         settings::set_settings_value::<Option<ThumbnailFormat>>("format", None).unwrap();
 
         let mut output = Cursor::new(Vec::new());
@@ -312,7 +323,14 @@ pub mod tests {
 
     #[test]
     fn test_make_thumbnail_from_stream_with_output() {
-        settings::set_settings_value("builder.thumbnail.ignore_errors", false).unwrap();
+        Settings::from_toml(
+            &toml::toml! {
+                [builder.thumbnail]
+                ignore_errors = false
+            }
+            .to_string(),
+        )
+        .unwrap();
 
         let mut output = Cursor::new(Vec::new());
         let format = make_thumbnail_from_stream(
@@ -333,9 +351,15 @@ pub mod tests {
 
     #[test]
     fn test_make_thumbnail_bytes_from_stream() {
-        settings::set_settings_value("builder.thumbnail.prefer_smallest_format", false).unwrap();
-        settings::set_settings_value("builder.thumbnail.ignore_errors", false).unwrap();
-        settings::set_settings_value::<Option<ThumbnailFormat>>("format", None).unwrap();
+        Settings::from_toml(
+            &toml::toml! {
+                [builder.thumbnail]
+                prefer_smallest_format = false
+                ignore_errors = false
+            }
+            .to_string(),
+        )
+        .unwrap();
 
         let (format, bytes) =
             make_thumbnail_bytes_from_stream(Cursor::new(TEST_JPEG), "image/jpeg")
@@ -354,9 +378,15 @@ pub mod tests {
     fn test_make_thumbnail_bytes_from_path() {
         use std::path::Path;
 
-        settings::set_settings_value("builder.thumbnail.prefer_smallest_format", false).unwrap();
-        settings::set_settings_value("builder.thumbnail.ignore_errors", false).unwrap();
-        settings::set_settings_value::<Option<ThumbnailFormat>>("format", None).unwrap();
+        Settings::from_toml(
+            &toml::toml! {
+                [builder.thumbnail]
+                prefer_smallest_format = false
+                ignore_errors = false
+            }
+            .to_string(),
+        )
+        .unwrap();
 
         let (format, bytes) = make_thumbnail_bytes_from_path(Path::new("tests/fixtures/CA.jpg"))
             .unwrap()
@@ -371,11 +401,15 @@ pub mod tests {
 
     #[test]
     fn test_make_thumbnail_with_prefer_smallest_format() {
-        settings::set_settings_value("builder.thumbnail.prefer_smallest_format", true).unwrap();
-
-        settings::set_settings_value("builder.thumbnail.ignore_errors", false).unwrap();
-        settings::set_settings_value::<Option<ThumbnailFormat>>("builder.thumbnail.format", None)
-            .unwrap();
+        Settings::from_toml(
+            &toml::toml! {
+                [builder.thumbnail]
+                prefer_smallest_format = true
+                ignore_errors = false
+            }
+            .to_string(),
+        )
+        .unwrap();
 
         let (format, bytes) = make_thumbnail_bytes_from_stream(Cursor::new(TEST_PNG), "image/png")
             .unwrap()
@@ -390,10 +424,13 @@ pub mod tests {
 
     #[test]
     fn test_make_thumbnail_with_forced_format() {
-        settings::set_settings_value("builder.thumbnail.ignore_errors", false).unwrap();
-        settings::set_settings_value::<Option<ThumbnailFormat>>(
-            "builder.thumbnail.format",
-            Some(ThumbnailFormat::Png),
+        Settings::from_toml(
+            &toml::toml! {
+                [builder.thumbnail]
+                format = "png"
+                ignore_errors = false
+            }
+            .to_string(),
         )
         .unwrap();
 
@@ -411,10 +448,15 @@ pub mod tests {
 
     #[test]
     fn test_make_thumbnail_with_long_edge() {
-        settings::set_settings_value("builder.thumbnail.ignore_errors", false).unwrap();
-        settings::set_settings_value::<Option<ThumbnailFormat>>("builder.thumbnail.format", None)
-            .unwrap();
-        settings::set_settings_value("builder.thumbnail.long_edge", 100).unwrap();
+        Settings::from_toml(
+            &toml::toml! {
+                [builder.thumbnail]
+                ignore_errors = false
+                long_edge = 100
+            }
+            .to_string(),
+        )
+        .unwrap();
 
         let (format, bytes) =
             make_thumbnail_bytes_from_stream(Cursor::new(TEST_JPEG), "image/jpeg")
@@ -431,7 +473,14 @@ pub mod tests {
 
     #[test]
     fn test_make_thumbnail_and_ignore_errors() {
-        settings::set_settings_value("builder.thumbnail.ignore_errors", true).unwrap();
+        Settings::from_toml(
+            &toml::toml! {
+                [builder.thumbnail]
+                ignore_errors = true
+            }
+            .to_string(),
+        )
+        .unwrap();
 
         let thumbnail =
             make_thumbnail_bytes_from_stream(Cursor::new(Vec::new()), "image/png").unwrap();
