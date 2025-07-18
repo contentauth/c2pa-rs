@@ -37,7 +37,9 @@ use crate::{
     },
     asset_io::CAIRead,
     cbor_types::{map_cbor_to_type, value_cbor_to_type},
-    cose_validator::{get_signing_info, get_signing_info_async, verify_cose, verify_cose_async},
+    cose_validator::{
+        get_serial_num, get_signing_info, get_signing_info_async, verify_cose, verify_cose_async,
+    },
     crypto::{
         asn1::rfc3161::TstInfo,
         base64,
@@ -1822,12 +1824,14 @@ impl Claim {
         }
 
         let sign1 = parse_cose_sign1(&sig, &data, validation_log)?;
+        let certificate_serial_num = get_serial_num(&sign1)?.to_string();
 
         // check certificate revocation
         check_ocsp_status(
             &sign1,
             &data,
             ctp,
+            svi.certificate_statuses.get(&certificate_serial_num),
             svi.timestamps.get(claim.label()),
             validation_log,
         )?;
@@ -1893,11 +1897,13 @@ impl Claim {
 
         let sign1 = parse_cose_sign1(sig, data, validation_log)?;
 
+        let certificate_serial_num = get_serial_num(&sign1)?.to_string();
         // check certificate revocation
         check_ocsp_status(
             &sign1,
             data,
             ctp,
+            svi.certificate_statuses.get(&certificate_serial_num),
             svi.timestamps.get(claim.label()),
             validation_log,
         )?;
@@ -3222,6 +3228,14 @@ impl Claim {
         self.assertions_by_type(&dummy_timestamp, None)
     }
 
+    /// Returns list of certificate status assertions.
+    pub fn certificate_status_assertions(&self) -> Vec<&ClaimAssertion> {
+        let dummy_data = AssertionData::Cbor(Vec::new());
+        let dummy_certificate_status =
+            Assertion::new(assertions::labels::CERTIFICATE_STATUS, None, dummy_data);
+        self.assertions_by_type(&dummy_certificate_status, None)
+    }
+
     /// Return list of action assertions.
     /// Created assertions have higher priority than gathered assertions
     pub fn action_assertions(&self) -> Vec<&ClaimAssertion> {
@@ -3797,6 +3811,7 @@ pub(crate) fn check_ocsp_status(
     sign1: &coset::CoseSign1,
     data: &[u8],
     ctp: &CertificateTrustPolicy,
+    ocsp_responses: Option<&Vec<Vec<u8>>>,
     tst_info: Option<&TstInfo>,
     validation_log: &mut StatusTracker,
 ) -> Result<OcspResponse> {
@@ -3813,6 +3828,7 @@ pub(crate) fn check_ocsp_status(
             data,
             fetch_policy,
             ctp,
+            ocsp_responses,
             tst_info,
             validation_log,
         )?)
@@ -3822,6 +3838,7 @@ pub(crate) fn check_ocsp_status(
             data,
             fetch_policy,
             ctp,
+            ocsp_responses,
             tst_info,
             validation_log,
         )
