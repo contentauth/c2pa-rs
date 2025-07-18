@@ -41,7 +41,7 @@ pub enum TrustAnchorType {
 /// A `CertificateTrustPolicy` is configured with information about trust
 /// anchors, privately-accepted end-entity certificates, and allowed EKUs. It
 /// can be used to evaluate a signing certificate against those policies.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct CertificateTrustPolicy {
     /// Trust anchors (root X.509 certificates) in DER format.
     trust_anchor_ders: Vec<Vec<u8>>,
@@ -292,6 +292,11 @@ impl CertificateTrustPolicy {
         }
 
         Ok(())
+    }
+
+    /// Add default extended key usage (EKU) values.
+    pub fn add_default_valid_ekus(&mut self) {
+        self.add_valid_ekus(include_bytes!("./valid_eku_oids.cfg"));
     }
 
     /// Add extended key usage (EKU) values that shall be accepted when
