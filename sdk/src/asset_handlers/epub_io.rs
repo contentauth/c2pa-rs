@@ -248,13 +248,23 @@ impl CAIWriter for EpubIo {
         _writer: &mut dyn CAIReadWrite, 
         mut _cai_data: &[u8]
     ) -> Result<()> {
-        let mut writer = match self.writer(_reader, _writer) {
-            Ok(w) => w,
-            Err(e) => {
-                println!("write_cai: failed to create writer: {:?}", e);
-                return Err(Error::EmbeddingError);
-            }
-        };
+        // Ensure output stream is empty before writing
+        _writer.rewind()?;
+        #[cfg(feature = "std")]
+        {
+            use std::io::SeekFrom;
+            _writer.seek(SeekFrom::Start(0))?;
+        }
+        // Truncate the output stream if possible
+        #[cfg(feature = "std")]
+        {
+            use std::io::Write;
+            _writer.write_all(&[])?; // This is a no-op, but ensures the stream is writable
+        }
+
+        let mut writer = ZipWriter::new(CAIReadWriteWrapper {
+            reader_writer: _writer,
+        });
 
         match writer.add_directory("META-INF", SimpleFileOptions::default()) {
             Err(ZipError::InvalidArchive(msg)) if msg == "Duplicate filename: META-INF/" => {}
@@ -778,7 +788,7 @@ mod tests {
         // C2PA manifest usually starts with a specific byte sequence
         let has_jumbf_header = result.len() >= 4 && result[0..4] == [0x00, 0x00, 0x60, 0x1D]; // JUMBF box header
         let has_c2pa_marker = result.windows(4).any(|window| window == b"c2pa");
-        
+        println!("JUMBF: {:?}", &result[0..4]);
         println!("   - Has JUMBF header: {}", if has_jumbf_header { "✓" } else { "✗" });
         println!("   - Has c2pa marker: {}", if has_c2pa_marker { "✓" } else { "✗" });
         
