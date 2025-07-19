@@ -447,11 +447,23 @@ mod tests {
             "claim_generator": "test",
             "format" : "image/jpeg",
             "instance_id": "12345",
-            "assertions": [],
             "thumbnail": {
                 "format": "image/jpeg",
                 "identifier": "abc123"
             },
+            "assertions": [
+                {
+                    "label": "c2pa.actions",
+                    "data": {
+                        "actions": [
+                            {
+                                "action": "c2pa.created",
+                                "digitalSourceType": "http://c2pa.org/digitalsourcetype/empty"
+                            }
+                        ]
+                    }
+                }
+            ],
             "ingredients": [{
                 "title": "A.jpg",
                 "format": "image/jpeg",

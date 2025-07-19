@@ -118,7 +118,8 @@ impl ValidationResults {
                 uri.is_some_and(|uri| manifest_label_from_uri(uri) == active_manifest)
             };
 
-            let make_absolute = |i: Ingredient| {
+            // Returns a flat list of validation statuses from the ingredient with absolute URIs.
+            let get_statuses = |i: Ingredient| {
                 // Get a flat list of validation statuses from the ingredient.
                 // If validation_results are present, use them, otherwise use the ingredient's validation_status.
                 let validation_status = match i.validation_results {
@@ -162,7 +163,7 @@ impl ValidationResults {
                     .iter()
                     .flat_map(|c| c.ingredient_assertions())
                     .filter_map(|a| Ingredient::from_assertion(a.assertion()).ok())
-                    .filter_map(make_absolute)
+                    .filter_map(get_statuses)
                     .flatten()
                     .collect();
 

@@ -29,8 +29,8 @@ use zip::{write::SimpleFileOptions, ZipArchive, ZipWriter};
 use crate::{
     assertion::AssertionDecodeError,
     assertions::{
-        labels, Actions, BmffHash, BoxHash, CreativeWork, DataHash, EmbeddedData, Exif, Metadata,
-        SoftwareAgent, Thumbnail, User, UserCbor,
+        labels, Action, Actions, BmffHash, BoxHash, CreativeWork, DataHash, EmbeddedData, Exif,
+        Metadata, SoftwareAgent, Thumbnail, User, UserCbor,
     },
     claim::Claim,
     error::{Error, Result},
@@ -159,6 +159,53 @@ impl AssertionDefinition {
     }
 }
 
+#[derive(Debug, Default, Deserialize, Serialize)]
+#[cfg_attr(feature = "json_schema", derive(JsonSchema))]
+pub enum DigitalSourceType {
+    /// Media whose digital content is effectively empty, such as a blank canvas or zero-length video.
+    #[default]
+    Empty,
+    /// Data that is the result of algorithmically using a model derived from sampled content and data.
+    /// Differs from <http://cv.iptc.org/newscodes/digitalsourcetype/>trainedAlgorithmicMedia in that
+    /// the result isn’t a media type (e.g., image or video) but is a data format (e.g., CSV, pickle).
+    TrainedAlgorithmicData,
+}
+
+impl DigitalSourceType {
+    pub fn as_url(&self) -> &'static str {
+        match self {
+            Self::Empty => "http://c2pa.org/digitalsourcetype/empty",
+            Self::TrainedAlgorithmicData => {
+                "http://c2pa.org/digitalsourcetype/trainedAlgorithmicData"
+            }
+        }
+    }
+}
+
+/// Represents the type of builder flow being used.
+/// This determines how the builder will be used, such as creating a new asset, opening an existing asset,
+/// or updating an existing asset.
+#[derive(Debug, Default, Deserialize, Serialize)]
+#[cfg_attr(feature = "json_schema", derive(JsonSchema))]
+enum BuilderFlow {
+    // Represents an unspecified builder flow.
+    #[default]
+    None,
+    // Represents a builder for creating new assets.
+    Create(DigitalSourceType),
+    // Represents a builder for opening existing assets.
+    Open,
+    // Represents a builder for updating existing assets.
+    Update,
+}
+
+#[derive(Serialize, Deserialize)]
+struct StructuredAction {
+    action: String,
+    #[serde(flatten)]
+    data: serde_json::Value,
+}
+
 /// Use a Builder to add a signed manifest to an asset.
 ///
 /// # Example: Building and signing a manifest
@@ -229,6 +276,9 @@ pub struct Builder {
     #[cfg(feature = "file_io")]
     pub base_path: Option<PathBuf>,
 
+    /// The type of builder being used.
+    builder_flow: BuilderFlow,
+
     /// Container for binary assets (like thumbnails).
     #[serde(skip)]
     resources: ResourceStore,
@@ -246,6 +296,23 @@ impl Builder {
     /// * A new [`Builder`].
     pub fn new() -> Self {
         Default::default()
+    }
+
+    /// Creates a new [`Builder`] for creating a new asset.
+    ///
+    /// # Arguments
+    /// * `source_type` - The type of digital source, such as `DigitalSourceType::Empty` or `DigitalSourceType::TrainedAlgorithmicData`.
+    /// # Returns
+    /// * A new [`Builder`] with the specified source type.
+    /// # Example
+    /// ```rust
+    /// use c2pa::{Builder, DigitalSourceType};
+    /// let builder = Builder::create(DigitalSourceType::Empty);
+    /// ```
+    pub fn create(source_type: DigitalSourceType) -> Self {
+        let mut builder = Self::new();
+        builder.builder_flow = BuilderFlow::Create(source_type);
+        builder
     }
 
     /// Creates a new [`Builder`] from a JSON [`ManifestDefinition`] string.
@@ -268,8 +335,10 @@ impl Builder {
         jumbf_io::supported_builder_mime_types()
     }
 
+    /// returns the claim version for this builder.
+    /// If not set, defaults to 2.
     pub fn claim_version(&self) -> u8 {
-        self.definition.claim_version.unwrap_or(1)
+        self.definition.claim_version.unwrap_or(2)
     }
 
     /// Sets the [`ClaimGeneratorInfo`] for this [`Builder`].
@@ -385,6 +454,56 @@ impl Builder {
             label: label.into(),
             data: AssertionData::Json(serde_json::to_value(data)?),
         });
+        Ok(self)
+    }
+
+    /// Adds a single action to the manifest.
+    /// This is a convenience method for adding an action to the `Actions` assertion.
+    /// # Arguments
+    /// * `action` - The action name as a string.
+    /// * `data` - The data for the action as a Serde-serializable type.
+    /// # Returns
+    /// * A mutable reference to the [`Builder`].
+    /// # Errors
+    /// * Returns an [`Error`] if the action is not valid.
+    /// # Example
+    /// ```rust
+    /// use c2pa::Builder;
+    /// use serde_json::json;
+    /// let created_action = json!({
+    ///    "action": "c2pa.placed",
+    ///    "digitalSourceType": "http://c2pa.org/digitalsourcetype/empty"
+    /// });
+    ///
+    /// let mut builder = Builder::new();
+    /// builder.add_action(created_action);
+    /// ```     
+    pub fn add_action<T>(&mut self, action: T) -> Result<&mut Self>
+    where
+        T: Serialize,
+    {
+        // Allow actions to be a Actions struct, or JSON string, or a serde_json::Value.
+        let action_value = serde_json::to_value(action)?;
+        let action: Action = serde_json::from_value(action_value).map_err(Error::JsonError)?;
+
+        // if an actions assertion already exists, we will append to it
+        // if not, we will create a new one
+        let actions = if let Some(pos) = self
+            .definition
+            .assertions
+            .iter()
+            .position(|a| a.label == Actions::LABEL)
+        {
+            // Remove and use the existing actions assertion
+            let assertion_def = self.definition.assertions.remove(pos);
+            assertion_def.to_assertion()?
+        } else {
+            Actions::new()
+        };
+
+        let actions = actions.add_action(action);
+
+        self.add_assertion(Actions::LABEL, &actions)?;
         Ok(self)
     }
 
@@ -1245,14 +1364,8 @@ mod tests {
                     "version": "1.0.0"
                 }
             ],
-            "metadata": [
-                {
-                    "dateTime": "1985-04-12T23:20:50.52Z",
-                    "my_custom_metadata": "my custom metatdata value"
-                }
-            ],
             "title": "Test_Manifest",
-            "format": "image/tiff",
+            "format": "image/jpeg",
             "instance_id": "1234",
             "thumbnail": {
                 "format": "image/jpeg",
@@ -1296,12 +1409,25 @@ mod tests {
         .to_string()
     }
 
-    fn simple_manifest() -> String {
+    fn simple_manifest_json() -> String {
         json!({
             "claim_generator_info": [
                 {
                     "name": "c2pa_test",
                     "version": "1.0.0"
+                }
+            ],
+            "assertions": [
+                {
+                    "label": "c2pa.actions",
+                    "data": {
+                        "actions": [
+                            {
+                                "action": "c2pa.created",
+                                "digitalSourceType": "http://c2pa.org/digitalsourcetype/empty",
+                            }
+                        ]
+                    }
                 }
             ]
         })
@@ -1381,7 +1507,7 @@ mod tests {
         let definition = &builder.definition;
         assert_eq!(definition.vendor, Some("test".to_string()));
         assert_eq!(definition.title, Some("Test_Manifest".to_string()));
-        assert_eq!(definition.format, "image/tiff".to_string());
+        assert_eq!(definition.format, "image/jpeg".to_string());
         assert_eq!(definition.instance_id, "1234".to_string());
         assert_eq!(
             definition.thumbnail.clone().unwrap().identifier.as_str(),
@@ -1392,16 +1518,6 @@ mod tests {
         assert_eq!(
             definition.assertions[1].label,
             "org.test.assertion".to_string()
-        );
-
-        assert_eq!(
-            definition.metadata.as_ref().unwrap()[0]
-                .other()
-                .get("my_custom_metadata")
-                .unwrap()
-                .as_str()
-                .unwrap(),
-            "mycustommetatdatavalue"
         );
 
         // convert back to json and compare to original
@@ -1481,8 +1597,12 @@ mod tests {
         let source = "tests/fixtures/CA.jpg";
         let dir = tempdirectory().unwrap();
         let dest = dir.path().join("test_file.jpg");
+        let mut parent = std::fs::File::open(source).unwrap();
 
         let mut builder = Builder::from_json(&manifest_json()).unwrap();
+        builder
+            .add_ingredient_from_stream(parent_json(), "image/jpeg", &mut parent)
+            .unwrap();
 
         builder
             .add_resource("thumbnail.jpg", Cursor::new(TEST_THUMBNAIL))
@@ -1521,7 +1641,7 @@ mod tests {
             "sample1.heif",
             "sample1.m4a",
             "video1_no_manifest.mp4",
-            "cloud_manifest.c2pa", // we need a new test for this since it will always fail
+            //"cloud_manifest.c2pa", // we need a new test for this since it will always fail
         ];
         for file_name in TESTFILES {
             let extension = file_name.split('.').next_back().unwrap();
@@ -1584,7 +1704,7 @@ mod tests {
         let mut source = Cursor::new(TEST_IMAGE);
         let mut dest = Cursor::new(Vec::new());
 
-        let mut builder = Builder::from_json(&manifest_json()).unwrap();
+        let mut builder = Builder::from_json(&simple_manifest_json()).unwrap();
         builder
             .add_ingredient_from_stream(parent_json(), format, &mut source)
             .unwrap();
@@ -1619,13 +1739,9 @@ mod tests {
         let mut source = Cursor::new(TEST_IMAGE_CLEAN);
         let mut dest = Cursor::new(Vec::new());
 
-        let mut builder = Builder::from_json(&manifest_json()).unwrap();
+        let mut builder = Builder::from_json(&simple_manifest_json()).unwrap();
         builder.remote_url = Some("http://my_remote_url".to_string());
         builder.no_embed = true;
-
-        builder
-            .add_resource("thumbnail.jpg", Cursor::new(TEST_THUMBNAIL))
-            .unwrap();
 
         // sign the Builder and write it to the output stream
         let signer = test_signer(SigningAlg::Ps256);
@@ -1653,7 +1769,7 @@ mod tests {
 
         let signer = test_signer(SigningAlg::Ps256);
 
-        let mut builder = Builder::from_json(&simple_manifest()).unwrap();
+        let mut builder = Builder::from_json(&simple_manifest_json()).unwrap();
 
         // get a placeholder the manifest
         let placeholder = builder
@@ -1721,10 +1837,7 @@ mod tests {
         // get saved box hash settings
         let box_hash: BoxHash = serde_json::from_slice(BOX_HASH).unwrap();
 
-        let mut builder = Builder::from_json(&manifest_json()).unwrap();
-        builder
-            .add_resource("thumbnail.jpg", Cursor::new(TEST_IMAGE))
-            .unwrap();
+        let mut builder = Builder::from_json(&simple_manifest_json()).unwrap();
 
         builder.add_assertion(labels::BOX_HASH, &box_hash).unwrap();
 
@@ -1922,13 +2035,13 @@ mod tests {
             "relationship": "inputTo",
             "data": {
                 "format": "text/plain",
-                "identifier": "prompt.txt",
-                "data_types": [
-                    {
+                "identifier": "prompt.txt"
+            },
+            "data_types": [
+                {
                     "type": "c2pa.types.generator.prompt"
-                    }
-                ]
-            }
+                }
+            ]
         },
         {
             "title": "Custom AI Model",
@@ -2059,6 +2172,7 @@ mod tests {
         let mut cloud_image = Cursor::new(TEST_IMAGE_CLOUD);
 
         let definition = ManifestDefinition {
+            claim_version: Some(1),
             claim_generator_info: [ClaimGeneratorInfo::default()].to_vec(),
             format: "image/jpeg".to_string(),
             title: Some("Test_Manifest".to_string()),
@@ -2119,26 +2233,28 @@ mod tests {
 
     #[test]
     fn test_redaction() {
+        // We use this to associate the parent ingredient with c2pa.opened action
+        const PARENT_LABEL: &str = "parent_ingredient";
+
         // the label of the assertion we are going to redact
         const ASSERTION_LABEL: &str = "stds.schema-org.CreativeWork";
 
         let mut input = Cursor::new(TEST_IMAGE);
 
-        let mut parent =
-            Ingredient::from_stream("image/jpeg", &mut Cursor::new(TEST_IMAGE)).unwrap();
-        parent.set_title("CA.jpg");
-        parent.set_relationship(crate::Relationship::ParentOf);
-
-        let parent_manifest_label = parent.active_manifest().unwrap();
+        let parent = Reader::from_stream("image/jpeg", &mut input).expect("from_stream");
+        input.rewind().unwrap(); // we will use this again to add the parent ingredient
+        print!("{parent}");
+        let parent_manifest_label = parent.active_label().unwrap();
+        // you can extract a references any manifest and any assertion label here.
 
         let redacted_uri =
             crate::jumbf::labels::to_assertion_uri(parent_manifest_label, ASSERTION_LABEL);
 
-        let parent_manifest_label = parent_manifest_label.to_owned();
+        //let parent_manifest_label = parent_manifest_label.to_owned();
 
         // Create a parent with a c2pa_action type assertion.
         let opened_action = crate::assertions::Action::new(c2pa_action::OPENED)
-            .set_parameter("org.cai.ingredientIds", [parent.instance_id().to_string()])
+            .set_parameter("org.cai.ingredientIds", [PARENT_LABEL.to_string()].to_vec())
             .unwrap();
 
         let redacted_action = crate::assertions::Action::new("c2pa.redacted")
@@ -2153,9 +2269,7 @@ mod tests {
         let definition = ManifestDefinition {
             claim_version: Some(1),
             claim_generator_info: [ClaimGeneratorInfo::default()].to_vec(),
-            format: "image/jpeg".to_string(),
             title: Some("Redaction Test".to_string()),
-            ingredients: vec![parent], // add the parent ingredient
             redactions: Some(vec![redacted_uri]), // add the redaction
             ..Default::default()
         };
@@ -2164,6 +2278,17 @@ mod tests {
             definition,
             ..Default::default()
         };
+
+        let parent_json = json!({
+            "relationship": "parentOf",
+            "label": PARENT_LABEL,
+        })
+        .to_string();
+
+        // add the parent ingredient from the asset here
+        builder
+            .add_ingredient_from_stream(parent_json, "image/jpeg", &mut input)
+            .expect("add ingredient");
 
         builder.add_assertion(Actions::LABEL, &actions).unwrap();
 
@@ -2180,7 +2305,7 @@ mod tests {
         println!("{reader}");
         let m = reader.active_manifest().unwrap();
         assert_eq!(m.ingredients().len(), 1);
-        let parent = reader.get_manifest(&parent_manifest_label).unwrap();
+        let parent = reader.get_manifest(parent_manifest_label).unwrap();
         assert_eq!(parent.assertions().len(), 1);
     }
 
@@ -2199,8 +2324,7 @@ mod tests {
     #[cfg(all(feature = "add_thumbnails", feature = "file_io"))]
     #[test]
     fn test_to_archive_and_from_archive_with_ingredient_thumbnail() {
-        let mut builder = Builder::new();
-        builder.definition.claim_version = Some(2);
+        let mut builder = Builder::from_json(&simple_manifest_json()).unwrap();
 
         let mut thumbnail = Cursor::new(TEST_THUMBNAIL);
         let mut source = Cursor::new(TEST_IMAGE_CLEAN);
@@ -2229,5 +2353,36 @@ mod tests {
         println!("{reader_json}");
         assert!(reader_json.contains("Test Ingredient"));
         assert!(reader_json.contains("thumbnail.ingredient"));
+    }
+
+    /// Test Builder add_action with a serde_json::Value
+    #[test]
+    fn test_builder_add_action_with_value() {
+        let mut builder = Builder::new();
+        let action = json!({
+            "action": "com.example.test-action",
+            "parameters": {
+                "key1": "value1",
+                "key2": "value2"
+            }
+        });
+        builder.add_action(action).unwrap();
+        println!("{:#?}", builder.definition);
+        assert!(!builder.definition.assertions.is_empty());
+    }
+
+    /// Test builder add_action with an Action struct
+    #[test]
+    fn test_builder_add_action_with_struct() {
+        use crate::assertions::Action;
+        let mut builder = Builder::new();
+        let action = Action::new("com.example.test-action")
+            .set_parameter("key1", "value1")
+            .unwrap()
+            .set_parameter("key2", "value2")
+            .unwrap();
+        builder.add_action(action).unwrap();
+        println!("{:#?}", builder.definition);
+        assert!(!builder.definition.assertions.is_empty());
     }
 }

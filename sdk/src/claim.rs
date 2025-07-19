@@ -555,7 +555,9 @@ impl Claim {
         {
             2
         } else {
-            return Err(Error::ClaimDecoding);
+            return Err(Error::ClaimDecoding(
+                "unsupported claim version".to_string(),
+            ));
         };
 
         if claim_version == 1 {
@@ -591,26 +593,31 @@ impl Claim {
 
             // make sure only V1 fields are present
             if let serde_cbor::Value::Map(m) = &claim_value {
-                if !m.keys().all(|v| match v {
-                    serde_cbor::Value::Text(t) => V1_FIELDS.contains(&t.as_str()),
-                    _ => false,
-                }) {
-                    return Err(Error::ClaimDecoding);
+                for v in m.keys() {
+                    if let serde_cbor::Value::Text(t) = v {
+                        if !V1_FIELDS.contains(&t.as_str()) {
+                            return Err(Error::ClaimDecoding(format!(
+                                "unknown V1 claim field: {t}"
+                            )));
+                        }
+                    } else {
+                        return Err(Error::ClaimDecoding("non-text key in V1 claim".to_string()));
+                    }
                 }
             } else {
-                return Err(Error::ClaimDecoding);
+                return Err(Error::ClaimDecoding("claim is not an object".to_string()));
             }
 
-            let claim_generator: String =
-                map_cbor_to_type(CLAIM_GENERATOR_F, &claim_value).ok_or(Error::ClaimDecoding)?;
-            let signature: String =
-                map_cbor_to_type(SIGNATURE_F, &claim_value).ok_or(Error::ClaimDecoding)?;
-            let assertions: Vec<HashedUri> =
-                map_cbor_to_type(ASSERTIONS_F, &claim_value).ok_or(Error::ClaimDecoding)?;
-            let format: String =
-                map_cbor_to_type(DC_FORMAT_F, &claim_value).ok_or(Error::ClaimDecoding)?;
-            let instance_id =
-                map_cbor_to_type(INSTANCE_ID_F, &claim_value).ok_or(Error::ClaimDecoding)?;
+            let claim_generator: String = map_cbor_to_type(CLAIM_GENERATOR_F, &claim_value)
+                .ok_or(Error::ClaimDecoding(CLAIM_GENERATOR_F.to_string()))?;
+            let signature: String = map_cbor_to_type(SIGNATURE_F, &claim_value)
+                .ok_or(Error::ClaimDecoding(SIGNATURE_F.to_string()))?;
+            let assertions: Vec<HashedUri> = map_cbor_to_type(ASSERTIONS_F, &claim_value)
+                .ok_or(Error::ClaimDecoding(ASSERTIONS_F.to_string()))?;
+            let format: String = map_cbor_to_type(DC_FORMAT_F, &claim_value)
+                .ok_or(Error::ClaimDecoding(DC_FORMAT_F.to_string()))?;
+            let instance_id = map_cbor_to_type(INSTANCE_ID_F, &claim_value)
+                .ok_or(Error::ClaimDecoding(INSTANCE_ID_F.to_string()))?;
 
             // optional V1 fields
             let claim_generator_info: Option<Vec<ClaimGeneratorInfo>> =
@@ -682,25 +689,35 @@ impl Claim {
 
             // make sure only V2 fields are present
             if let serde_cbor::Value::Map(m) = &claim_value {
-                if !m.keys().all(|v| match v {
-                    serde_cbor::Value::Text(t) => V2_FIELDS.contains(&t.as_str()),
-                    _ => false,
-                }) {
-                    return Err(Error::ClaimDecoding);
+                for v in m.keys() {
+                    if let serde_cbor::Value::Text(t) = v {
+                        if !V2_FIELDS.contains(&t.as_str()) {
+                            return Err(Error::ClaimDecoding(format!(
+                                "unknown V2 claim field: {t}",
+                            )));
+                        }
+                    } else {
+                        return Err(Error::ClaimDecoding("non-text key in V2 claim".to_string()));
+                    }
                 }
             } else {
-                return Err(Error::ClaimDecoding);
+                return Err(Error::ClaimDecoding("claim is not an object".to_string()));
             }
 
-            let instance_id =
-                map_cbor_to_type(INSTANCE_ID_F, &claim_value).ok_or(Error::ClaimDecoding)?;
+            let instance_id = map_cbor_to_type(INSTANCE_ID_F, &claim_value).ok_or(
+                Error::ClaimDecoding("instanceID is missing or invalid".to_string()),
+            )?;
             let claim_generator_info: ClaimGeneratorInfo =
-                map_cbor_to_type(CLAIM_GENERATOR_INFO_F, &claim_value)
-                    .ok_or(Error::ClaimDecoding)?;
-            let signature: String =
-                map_cbor_to_type(SIGNATURE_F, &claim_value).ok_or(Error::ClaimDecoding)?;
+                map_cbor_to_type(CLAIM_GENERATOR_INFO_F, &claim_value).ok_or(
+                    Error::ClaimDecoding("claim_generator_info is missing or invalid".to_string()),
+                )?;
+            let signature: String = map_cbor_to_type(SIGNATURE_F, &claim_value).ok_or(
+                Error::ClaimDecoding("signature is missing or invalid".to_string()),
+            )?;
             let created_assertions: Vec<HashedUri> =
-                map_cbor_to_type(CREATED_ASSERTIONS_F, &claim_value).ok_or(Error::ClaimDecoding)?;
+                map_cbor_to_type(CREATED_ASSERTIONS_F, &claim_value).ok_or(
+                    Error::ClaimDecoding("created_assertions is missing or invalid".to_string()),
+                )?;
 
             // optional V2 fields
             let gathered_assertions: Option<Vec<HashedUri>> =
@@ -1885,10 +1902,16 @@ impl Claim {
             .failure(validation_log, Error::ClaimMissingSignatureBox)?;
         }
 
-        let data = if let Some(ref original_bytes) = claim.original_bytes {
-            original_bytes
-        } else {
-            return Err(Error::ClaimDecoding);
+        // If we are validating a claim that has been loaded from a file
+        // we need the original data but if we are signing, we generate the data
+        // This avoids cloning the data when we are only referencing it.
+        let mut _generated_data = vec![];
+        let data = match claim.original_bytes {
+            Some(ref original_bytes) => original_bytes,
+            None => {
+                _generated_data = claim.data()?;
+                &_generated_data
+            }
         };
 
         let sign1 = parse_cose_sign1(sig, data, validation_log)?;
@@ -3424,8 +3447,8 @@ impl Claim {
 
     /// Create claim from binary data (not including assertions).
     pub fn from_data(label: &str, data: &[u8]) -> Result<Claim> {
-        let claim_value: serde_cbor::Value =
-            serde_cbor::from_slice(data).map_err(|_err| Error::ClaimDecoding)?;
+        let claim_value: serde_cbor::Value = serde_cbor::from_slice(data)
+            .map_err(|err| Error::ClaimDecoding(format!("claim_cbor: {err}")))?;
 
         Claim::from_value(claim_value, label, data)
     }

@@ -2679,6 +2679,18 @@ impl Store {
                 let pc_mut = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
                 pc_mut.set_signature_val(s);
 
+                if let Ok(verify_after_sign) =
+                    get_settings_value::<bool>("verify.verify_after_sign")
+                {
+                    let mut validation_log =
+                        StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
+                    output_stream.rewind()?;
+                    Store::verify_store(
+                        self,
+                        &mut crate::claim::ClaimAssetData::Stream(output_stream, format),
+                        &mut validation_log,
+                    )?;
+                }
                 Ok(m)
             }
             Err(e) => Err(e),
