@@ -258,6 +258,20 @@ pub(crate) struct BoxInfoLite {
     pub size: u64,
 }
 
+impl BoxInfoLite {
+    pub fn start(&self) -> u64 {
+        self.offset
+    }
+
+    pub fn end(&self) -> u64 {
+        self.offset + self.size
+    }
+
+    pub fn size(&self) -> u64 {
+        self.size
+    }
+}
+
 fn read_box_header_ext<R: Read + Seek + ?Sized>(reader: &mut R) -> Result<(u8, u32)> {
     let version = reader.read_u8()?;
     let flags = reader.read_u24::<BigEndian>()?;
@@ -485,7 +499,7 @@ where
 
                 // check the length
                 if let Some(desired_length) = bmff_exclusion.length {
-                    if desired_length as u64 != box_length {
+                    if desired_length != box_length {
                         continue;
                     }
                 }
@@ -531,7 +545,7 @@ where
 
                     for data_map in data_map_vec {
                         // move to the start of exclusion
-                        skip_bytes_to(reader, box_start + data_map.offset as u64)?;
+                        skip_bytes_to(reader, box_start + data_map.offset)?;
 
                         // match the data
                         let buf = reader.read_to_vec(data_map.value.len() as u64)?;
@@ -551,20 +565,22 @@ where
                 if let Some(subset_vec) = &bmff_exclusion.subset {
                     for subset in subset_vec {
                         let exclusion = HashRange::new(
-                            (exclusion_start + subset.offset as u64) as usize,
-                            (if subset.length == 0 {
-                                exclusion_length - subset.offset as u64
+                            exclusion_start + subset.offset,
+                            if subset.length == 0 {
+                                exclusion_length - subset.offset
                             } else {
-                                min(subset.length as u64, exclusion_length)
-                            }) as usize,
+                                min(
+                                    subset.length,
+                                    exclusion_length.saturating_sub(subset.offset),
+                                )
+                            },
                         );
 
                         exclusions.push(exclusion);
                     }
                 } else {
                     // exclude box in its entirty
-                    let exclusion =
-                        HashRange::new(exclusion_start as usize, exclusion_length as usize);
+                    let exclusion = HashRange::new(exclusion_start, exclusion_length);
 
                     exclusions.push(exclusion);
 
@@ -582,7 +598,7 @@ where
     // note: this is technically not an exclusion but a replacement with a new range of bytes to be hashed
     if bmff_v2 {
         for tl_start in tl_offsets {
-            let mut exclusion = HashRange::new(tl_start as usize, 1);
+            let mut exclusion = HashRange::new(tl_start, 1u64);
             exclusion.set_bmff_offset(tl_start);
 
             exclusions.push(exclusion);

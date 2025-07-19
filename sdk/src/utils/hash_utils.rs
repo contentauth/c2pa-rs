@@ -18,7 +18,6 @@ use std::{
     path::Path,
 };
 
-//use conv::ValueFrom;
 use range_set::RangeSet;
 use serde::{Deserialize, Serialize};
 // direct sha functions
@@ -31,15 +30,15 @@ const MAX_HASH_BUF: usize = 256 * 1024 * 1024; // cap memory usage to 256MB
 #[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Eq)]
 /// Defines a hash range to be used with `hash_stream_by_alg`
 pub struct HashRange {
-    start: usize,
-    length: usize,
+    start: u64,
+    length: u64,
 
     #[serde(skip)]
     bmff_offset: Option<u64>, /* optional tracking of offset positions to include in BMFF_V2 hashes in BE format */
 }
 
 impl HashRange {
-    pub fn new(start: usize, length: usize) -> Self {
+    pub fn new(start: u64, length: u64) -> Self {
         HashRange {
             start,
             length,
@@ -49,21 +48,21 @@ impl HashRange {
 
     /// update the start value
     #[allow(dead_code)]
-    pub fn set_start(&mut self, start: usize) {
+    pub fn set_start(&mut self, start: u64) {
         self.start = start;
     }
 
     /// return start as usize
-    pub fn start(&self) -> usize {
+    pub fn start(&self) -> u64 {
         self.start
     }
 
     /// return length as usize
-    pub fn length(&self) -> usize {
+    pub fn length(&self) -> u64 {
         self.length
     }
 
-    pub fn set_length(&mut self, length: usize) {
+    pub fn set_length(&mut self, length: u64) {
         self.length = length;
     }
 
@@ -229,7 +228,7 @@ where
             let data_end = data_len - 1;
 
             // range extends past end of file so fail
-            if data_len < range_end as u64 {
+            if data_len < range_end {
                 return Err(Error::BadParam(
                     "The exclusion range exceed the data length".to_string(),
                 ));
@@ -240,8 +239,8 @@ where
                 let mut ranges_vec: Vec<RangeInclusive<u64>> = Vec::new();
                 let mut ranges = RangeSet::<[RangeInclusive<u64>; 1]>::from(0..=data_end);
                 for exclusion in hr {
-                    let end = (exclusion.start() + exclusion.length() - 1) as u64;
-                    let exclusion_start = exclusion.start() as u64;
+                    let end = exclusion.start() + exclusion.length() - 1;
+                    let exclusion_start = exclusion.start();
                     ranges.remove_range(exclusion_start..=end);
 
                     // add new BMFF V2 offset as a new range to be included so that we can
@@ -285,8 +284,8 @@ where
                 //build final ranges
                 let mut ranges_vec: Vec<RangeInclusive<u64>> = Vec::new();
                 for inclusion in hr {
-                    let end = (inclusion.start() + inclusion.length() - 1) as u64;
-                    let inclusion_start = inclusion.start() as u64;
+                    let end = inclusion.start() + inclusion.length() - 1;
+                    let inclusion_start = inclusion.start();
 
                     // add new BMFF V2 offset as a new range to be included so that we can
                     // pause to add the offset hash

@@ -21,7 +21,9 @@ mod asset_types;
 pub use asset_types::{AssetTypeEnum, AssetTypes};
 
 mod bmff_hash;
-pub use bmff_hash::{BmffHash, BmffMerkleMap, DataMap, ExclusionsMap, SubsetMap};
+pub use bmff_hash::{
+    BmffHash, BmffMerkleMap, DataMap, ExclusionsMap, MerkleMap, SubsetMap, VecByteBuf,
+};
 
 mod box_hash;
 pub use box_hash::{BoxHash, BoxMap, C2PA_BOXHASH};
