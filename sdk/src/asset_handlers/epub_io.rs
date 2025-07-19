@@ -250,18 +250,7 @@ impl CAIWriter for EpubIo {
     ) -> Result<()> {
         // Ensure output stream is empty before writing
         _writer.rewind()?;
-        #[cfg(feature = "std")]
-        {
-            use std::io::SeekFrom;
-            _writer.seek(SeekFrom::Start(0))?;
-        }
-        // Truncate the output stream if possible
-        #[cfg(feature = "std")]
-        {
-            use std::io::Write;
-            _writer.write_all(&[])?; // This is a no-op, but ensures the stream is writable
-        }
-
+       
         let mut writer = ZipWriter::new(CAIReadWriteWrapper {
             reader_writer: _writer,
         });
