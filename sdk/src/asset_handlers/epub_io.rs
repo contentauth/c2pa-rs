@@ -5,7 +5,7 @@ use crate::{
 };
 
 use std::{
-    fs::File, io::{self, Cursor, Read, Write}, path::Path, str::from_utf8
+    fs::File, io::{self, Cursor, Read, Write, Seek}, path::Path, str::from_utf8
 };
 // use zip::ZipArchive;
 use zip::{
@@ -248,12 +248,13 @@ impl CAIWriter for EpubIo {
         _writer: &mut dyn CAIReadWrite, 
         mut _cai_data: &[u8]
     ) -> Result<()> {
-        // Ensure output stream is empty before writing
-        _writer.rewind()?;
-       
-        let mut writer = ZipWriter::new(CAIReadWriteWrapper {
-            reader_writer: _writer,
-        });
+        let mut writer = match self.writer(_reader, _writer) {
+            Ok(w) => w,
+            Err(e) => {
+                println!("write_cai: failed to create writer: {:?}", e);
+                return Err(Error::EmbeddingError);
+            }
+        };
 
         match writer.add_directory("META-INF", SimpleFileOptions::default()) {
             Err(ZipError::InvalidArchive(msg)) if msg == "Duplicate filename: META-INF/" => {}
@@ -318,8 +319,16 @@ impl EpubIo {
         input_stream: &'a mut dyn CAIRead,
         output_stream: &'a mut dyn CAIReadWrite,
     ) -> ZipResult<ZipWriter<CAIReadWriteWrapper<'a>>> {
-        input_stream.rewind()?;
-        io::copy(input_stream, output_stream)?;
+        // Copy input_stream to output_stream only if output_stream is empty
+        output_stream.rewind()?;
+        let mut buf = Vec::new();
+        output_stream.read_to_end(&mut buf)?;
+        if buf.is_empty() {
+            input_stream.rewind()?;
+            io::copy(input_stream, output_stream)?;
+        } else {
+            output_stream.rewind()?;
+        }
 
         ZipWriter::new_append(CAIReadWriteWrapper {
             reader_writer: output_stream,
