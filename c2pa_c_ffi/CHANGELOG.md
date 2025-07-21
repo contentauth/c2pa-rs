@@ -6,6 +6,20 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.58.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.57.0...c2pa-c-ffi-v0.58.0)
+_18 July 2025_
+
+### Added
+
+* Add C binding for setting the base path ([#1237](https://github.com/contentauth/c2pa-rs/pull/1237))
+* Add `Reader::remote_url` and `Reader::is_embedded` ([#1150](https://github.com/contentauth/c2pa-rs/pull/1150))
+* Store icon references into c2pa.icon assertions for v2 instead of using data_boxes. ([#1235](https://github.com/contentauth/c2pa-rs/pull/1235))
+
+### Fixed
+
+* Clean up logs ([#1181](https://github.com/contentauth/c2pa-rs/pull/1181))
+* Clippy warnings for Rust 1.88 ([#1204](https://github.com/contentauth/c2pa-rs/pull/1204))
+
 ## [0.57.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.56.2...c2pa-c-ffi-v0.57.0)
 _19 June 2025_
 
