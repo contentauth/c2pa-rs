@@ -331,7 +331,7 @@ impl Settings {
     /// For example "core.hash_alg" would set settings.core.hash_alg value. The nesting can be arbitrarily
     /// deep based on the [Settings] definition.
     #[allow(unused)]
-    pub fn set_value<T: Into<config::Value>>(value_path: &str, value: T) -> Result<()> {
+    pub(crate) fn set_value<T: Into<config::Value>>(value_path: &str, value: T) -> Result<()> {
         let c = SETTINGS.take();
 
         let update_config = Config::builder()
@@ -366,7 +366,7 @@ impl Settings {
     /// For example "core.hash_alg" would get the settings.core.hash_alg value. The nesting can be arbitrarily
     /// deep based on the [Settings] definition.
     #[allow(unused)]
-    pub fn get_value<'de, T: serde::de::Deserialize<'de>>(value_path: &str) -> Result<T> {
+    pub(crate) fn get_value<'de, T: serde::de::Deserialize<'de>>(value_path: &str) -> Result<T> {
         SETTINGS.with_borrow(|current_settings| {
             let update_config = Config::builder()
                 .add_source(current_settings.clone())
