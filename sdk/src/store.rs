@@ -1803,17 +1803,7 @@ impl Store {
             let certificate_status_assertions = found_claim.certificate_status_assertions();
             for csa in certificate_status_assertions {
                 let certificate_status_assertion =
-                    CertificateStatus::from_assertion(csa.assertion()).map_err(|_e| {
-                        log_item!(
-                            csa.label(),
-                            "could not parse certificate status assertion",
-                            "get_claim_referenced_manifests"
-                        )
-                        .failure_as_err(
-                            validation_log,
-                            Error::OtherError("certificate status assertion malformed".into()),
-                        )
-                    })?;
+                    CertificateStatus::from_assertion(csa.assertion())?;
 
                 // save the ocsp_ders stored in the StoreValidationInfo
                 for ocsp_der in certificate_status_assertion.as_ref() {
