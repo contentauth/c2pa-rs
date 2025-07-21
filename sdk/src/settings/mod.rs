@@ -11,7 +11,7 @@
 // specific language governing permissions and limitations under
 // each license.
 
-mod builder;
+pub(crate) mod builder;
 
 #[cfg(feature = "file_io")]
 use std::path::Path;
@@ -20,8 +20,6 @@ use std::{
     io::{BufRead, BufReader, Cursor},
 };
 
-#[allow(unused_imports)]
-pub use builder::*;
 use config::{Config, FileFormat};
 use serde_derive::{Deserialize, Serialize};
 

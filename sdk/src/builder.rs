@@ -38,7 +38,10 @@ use crate::{
     jumbf_io,
     resource_store::{ResourceRef, ResourceResolver, ResourceStore},
     salt::DefaultSalt,
-    settings::{self, ActionTemplateSettings, ClaimGeneratorInfoSettings},
+    settings::{
+        self,
+        builder::{ActionTemplateSettings, ClaimGeneratorInfoSettings},
+    },
     store::Store,
     utils::mime::format_to_mime,
     AsyncSigner, ClaimGeneratorInfo, HashRange, HashedUri, Ingredient, Relationship, Signer,

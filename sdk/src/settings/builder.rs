@@ -20,10 +20,28 @@ use crate::{
     create_signer,
     resource_store::UriOrResource,
     settings::{Settings, SettingsValidate},
-    utils::thumbnail::ThumbnailFormat,
     ClaimGeneratorInfo, Error, Result, Signer, SigningAlg,
 };
 
+// TODO: thumbnails/previews for audio?
+/// Possible output types for automatic thumbnail generation.
+///
+/// These formats are a combination of types supported in [image-rs](https://docs.rs/image/latest/image/enum.ImageFormat.html)
+/// and types defined by the [IANA registry media type](https://www.iana.org/assignments/media-types/media-types.xhtml) (as defined in the spec).
+#[derive(Copy, Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub(crate) enum ThumbnailFormat {
+    /// An image in PNG format.
+    Png,
+    /// An image in JPEG format.
+    Jpeg,
+    /// An image in GIF format.
+    Gif,
+    /// An image in WEBP format.
+    WebP,
+    /// An image in TIFF format.
+    Tiff,
+}
 /// Quality of the thumbnail.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -127,6 +145,17 @@ pub(crate) enum SignerSettings {
         // Time stamp authority URL for signing.
         tsa_url: Option<String>,
     },
+}
+
+impl SettingsValidate for SignerSettings {
+    fn validate(&self) -> Result<()> {
+        #[cfg(target_arch = "wasm32")]
+        if matches!(self, SignerSettings::Remote { .. }) {
+            return Err(Error::WasmNoRemoteSigner);
+        }
+
+        Ok(())
+    }
 }
 
 /// Settings for the auto actions (e.g. created, opened, placed).
@@ -359,6 +388,12 @@ pub(crate) struct BuilderSettings {
 
 impl SettingsValidate for BuilderSettings {
     fn validate(&self) -> Result<()> {
+        if let Some(signer) = &self.signer {
+            signer.validate()?;
+        }
+        if let Some(cawg_signer) = &self.cawg_signer {
+            cawg_signer.validate()?;
+        }
         self.actions.validate()?;
         self.thumbnail.validate()
     }
@@ -398,6 +433,7 @@ impl BuilderSettings {
                     alg,
                     tsa_url.to_owned(),
                 ),
+                #[cfg(not(target_arch = "wasm32"))]
                 SignerSettings::Remote {
                     url,
                     alg,
@@ -410,6 +446,8 @@ impl BuilderSettings {
                     certs: vec![sign_cert.into_bytes()],
                     tsa_url,
                 })),
+                #[cfg(target_arch = "wasm32")]
+                SignerSettings::Remote { .. } => Err(Error::WasmNoRemoteSigner),
             },
             #[cfg(test)]
             _ => Ok(crate::utils::test_signer::test_signer(SigningAlg::Ps256)),
@@ -420,6 +458,7 @@ impl BuilderSettings {
 }
 
 // TODO: move this to a separate file?
+#[cfg(not(target_arch = "wasm32"))]
 #[derive(Debug)]
 pub(crate) struct RemoteSigner {
     url: String,
@@ -429,6 +468,7 @@ pub(crate) struct RemoteSigner {
     tsa_url: Option<String>,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl Signer for RemoteSigner {
     fn sign(&self, data: &[u8]) -> Result<Vec<u8>> {
         let response = ureq::post(&self.url)

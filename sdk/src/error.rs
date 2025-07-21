@@ -188,6 +188,9 @@ pub enum Error {
     #[error("WASM could not load crypto library")]
     WasmNoCrypto,
 
+    #[error("remote signers are not supported for WASM")]
+    WasmNoRemoteSigner,
+
     /// Unable to generate valid JUMBF for a claim.
     #[error("could not create valid JUMBF for claim")]
     JumbfCreationError,

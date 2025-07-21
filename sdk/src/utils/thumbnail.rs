@@ -18,40 +18,19 @@ use std::{
 
 use image::{
     codecs::{
-        // avif::AvifEncoder,
         jpeg::JpegEncoder,
         png::{CompressionType, FilterType, PngEncoder},
     },
     DynamicImage, ImageDecoder, ImageFormat, ImageReader,
 };
-use serde_derive::{Deserialize, Serialize};
 
 use crate::{
-    settings::{self, ThumbnailQuality},
+    settings::{
+        self,
+        builder::{ThumbnailFormat, ThumbnailQuality},
+    },
     Error, Result,
 };
-
-// TODO: thumbnails/previews for audio?
-/// Possible output types for automatic thumbnail generation.
-///
-/// These formats are a combination of types supported in [image-rs](https://docs.rs/image/latest/image/enum.ImageFormat.html)
-/// and types defined by the [IANA registry media type](https://www.iana.org/assignments/media-types/media-types.xhtml) (as defined in the spec).
-#[derive(Copy, Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(rename_all = "lowercase")]
-pub enum ThumbnailFormat {
-    /// An image in PNG format.
-    Png,
-    /// An image in JPEG format.
-    Jpeg,
-    /// An image in GIF format.
-    Gif,
-    /// An image in WEBP format.
-    WebP,
-    /// An image in TIFF format.
-    Tiff,
-    // /// An image in AVIF format.
-    // Avif,
-}
 
 impl ThumbnailFormat {
     /// Create a new [ThumbnailFormat] from the given format extension or mime type.
@@ -74,7 +53,6 @@ impl TryFrom<ImageFormat> for ThumbnailFormat {
             ImageFormat::Gif => Ok(ThumbnailFormat::Gif),
             ImageFormat::WebP => Ok(ThumbnailFormat::WebP),
             ImageFormat::Tiff => Ok(ThumbnailFormat::Tiff),
-            // ImageFormat::Avif => Ok(ThumbnailFormat::Avif),
             _ => Err(Error::UnsupportedThumbnailFormat(
                 format.to_mime_type().to_owned(),
             )),
@@ -90,7 +68,6 @@ impl From<ThumbnailFormat> for ImageFormat {
             ThumbnailFormat::Gif => ImageFormat::Gif,
             ThumbnailFormat::WebP => ImageFormat::WebP,
             ThumbnailFormat::Tiff => ImageFormat::Tiff,
-            // ThumbnailFormat::Avif => ImageFormat::Avif,
         }
     }
 }
@@ -265,17 +242,6 @@ where
                 FilterType::default(),
             ))?,
         },
-        // ThumbnailFormat::Avif => match quality {
-        //     ThumbnailQuality::Low => {
-        //         image.write_with_encoder(AvifEncoder::new_with_speed_quality(output, 10, 40))?
-        //     }
-        //     ThumbnailQuality::Medium => {
-        //         image.write_with_encoder(AvifEncoder::new_with_speed_quality(output, 4, 80))?
-        //     }
-        //     ThumbnailQuality::High => {
-        //         image.write_with_encoder(AvifEncoder::new_with_speed_quality(output, 1, 100))?
-        //     }
-        // },
         _ => image.write_to(output, output_format.into())?,
     }
 
