@@ -288,9 +288,8 @@ pub mod tests {
 
     use image::GenericImageView;
 
-    use crate::Settings;
-
     use super::*;
+    use crate::Settings;
 
     const TEST_JPEG: &[u8] = include_bytes!("../../tests/fixtures/CA.jpg");
     const TEST_PNG: &[u8] = include_bytes!("../../tests/fixtures/sample1.png");

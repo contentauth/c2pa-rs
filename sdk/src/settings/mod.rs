@@ -20,13 +20,12 @@ use std::{
     io::{BufRead, BufReader, Cursor},
 };
 
+#[allow(unused_imports)]
+pub use builder::*;
 use config::{Config, FileFormat};
 use serde_derive::{Deserialize, Serialize};
 
 use crate::{crypto::base64, settings::builder::BuilderSettings, Error, Result, Signer};
-
-#[allow(unused_imports)]
-pub use builder::*;
 
 thread_local!(
     static SETTINGS: RefCell<Config> =

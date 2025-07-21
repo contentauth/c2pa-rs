@@ -17,11 +17,11 @@ use std::{
     ptr,
 };
 
-#[cfg(feature = "file_io")]
-use c2pa::Ingredient;
 // C has no namespace so we prefix things with C2PA to make them unique
 #[allow(deprecated)]
 use c2pa::settings::load_settings_from_str;
+#[cfg(feature = "file_io")]
+use c2pa::Ingredient;
 use c2pa::{
     assertions::DataHash, identity::validator::CawgValidator, Builder as C2paBuilder,
     CallbackSigner, Reader as C2paReader, SigningAlg,
