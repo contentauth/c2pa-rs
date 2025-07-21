@@ -80,7 +80,7 @@ pub fn check_ocsp_status(
                 if let Some(ocsp_response_ders) = ocsp_responses {
                     let mut current_validation_log = StatusTracker::default();
                     for ocsp_response_der in ocsp_response_ders {
-                        let mut current_validation_log = StatusTracker::default();
+                        current_validation_log = StatusTracker::default();
                         if let Ok(ocsp_response) = check_stapled_ocsp_response(
                             sign1,
                             ocsp_response_der,
