@@ -96,8 +96,6 @@ pub struct Manifest {
     #[serde(default = "default_instance_id")]
     instance_id: String,
 
-    //#[serde(skip_serializing_if = "Option::is_none")]
-    // claim_generator_hints: Option<HashMap<String, Value>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     thumbnail: Option<ResourceRef>,
 
@@ -453,7 +451,11 @@ impl Manifest {
     /// # }
     /// ```
     pub fn find_assertion<T: DeserializeOwned>(&self, label: &str) -> Result<T> {
-        if let Some(manifest_assertion) = self.assertions.iter().find(|a| a.label() == label) {
+        if let Some(manifest_assertion) = self
+            .assertions
+            .iter()
+            .find(|a| a.label().starts_with(label))
+        {
             manifest_assertion.to_assertion()
         } else {
             Err(Error::NotFound)
@@ -469,7 +471,7 @@ impl Manifest {
         if let Some(manifest_assertion) = self
             .assertions
             .iter()
-            .find(|a| a.label() == label && a.instance() == instance)
+            .find(|a| a.label().starts_with(label) && a.instance() == instance)
         {
             manifest_assertion.to_assertion()
         } else {
@@ -688,13 +690,13 @@ impl Manifest {
 
                             // replace software agent with resource ref
                             template.software_agent = match template.software_agent.take() {
-                                Some(SoftwareAgent::ClaimGeneratorInfo(mut info)) => {
+                                Some(mut info) => {
                                     if let Some(icon) = info.icon.as_mut() {
                                         let icon =
                                             icon.to_resource_ref(manifest.resources_mut(), claim)?;
                                         info.set_icon(icon);
                                     }
-                                    Some(SoftwareAgent::ClaimGeneratorInfo(info))
+                                    Some(info)
                                 }
                                 agent => agent,
                             };
@@ -954,13 +956,13 @@ impl Manifest {
 
                             // replace software agent with hashed_uri
                             template.software_agent = match template.software_agent.take() {
-                                Some(SoftwareAgent::ClaimGeneratorInfo(mut info)) => {
+                                Some(mut info) => {
                                     if let Some(icon) = info.icon.as_mut() {
                                         let icon =
                                             icon.to_hashed_uri(self.resources(), &mut claim)?;
                                         info.set_icon(icon);
                                     }
-                                    Some(SoftwareAgent::ClaimGeneratorInfo(info))
+                                    Some(info)
                                 }
                                 agent => agent,
                             };
@@ -1192,7 +1194,7 @@ impl Manifest {
             if self.thumbnail_ref().is_none() {
                 let source = std::io::BufReader::new(&mut *source);
                 if let Some((output_format, image)) =
-                    crate::utils::thumbnail::make_thumbnail_bytes_from_stream(source, format)?
+                    crate::utils::thumbnail::make_thumbnail_bytes_from_stream(format, source)?
                 {
                     self.set_thumbnail(output_format.to_string(), image)?;
                 }
@@ -1236,7 +1238,7 @@ impl Manifest {
         #[cfg(feature = "add_thumbnails")]
         {
             if let Some((output_format, image)) =
-                crate::utils::thumbnail::make_thumbnail_bytes_from_stream(&mut stream, format)?
+                crate::utils::thumbnail::make_thumbnail_bytes_from_stream(format, &mut stream)?
             {
                 self.set_thumbnail(output_format.to_string(), image)?;
             }

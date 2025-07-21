@@ -16,7 +16,7 @@ use std::{collections::HashMap, env::consts, io::Read};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    assertions::{Action, ActionTemplate, SoftwareAgent},
+    assertions::{Action, ActionTemplate},
     create_signer,
     resource_store::UriOrResource,
     settings::{Settings, SettingsValidate},
@@ -209,7 +209,7 @@ pub struct ActionTemplateSettings {
     pub action: String,
 
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub software_agent: Option<SoftwareAgent>,
+    pub software_agent: Option<ClaimGeneratorInfo>,
 
     #[serde(skip_serializing_if = "Option::is_none")]
     pub software_agent_index: Option<usize>,

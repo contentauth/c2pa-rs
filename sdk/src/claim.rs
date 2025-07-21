@@ -414,7 +414,11 @@ impl Claim {
             conflict_label: None,
             signature: "".to_string(),
 
-            claim_generator: Some(claim_generator.into()),
+            claim_generator: if claim_version == 1 {
+                Some(claim_generator.into())
+            } else {
+                None
+            },
             claim_generator_info: None,
             assertion_store: Vec::new(),
             vc_store: Vec::new(),
@@ -507,7 +511,11 @@ impl Claim {
             conflict_label: None,
             signature: "".to_string(),
 
-            claim_generator: Some(claim_generator.into()),
+            claim_generator: if claim_version == 1 {
+                Some(claim_generator.into())
+            } else {
+                None
+            },
             claim_generator_info: None,
             assertion_store: Vec::new(),
             vc_store: Vec::new(),
@@ -1968,61 +1976,28 @@ impl Claim {
             return Err(Error::ValidationRule("No Action array in Actions".into()));
         }
 
-        // check Claim.v2 first action rules
-        let first_actions_assertion = if claim.version() > 1 {
-            // check created actions first
-            let mut found_first_action = None;
-
-            if let Some(assertion) = created_actions.first() {
-                let first_actions = Actions::from_assertion(assertion.assertion())?;
-                let first_actions_first_action = &first_actions.actions().first();
-
-                if let Some(first_actions_first_action) = first_actions_first_action {
-                    if first_actions_first_action.action() == c2pa_action::OPENED
-                        || first_actions_first_action.action() == c2pa_action::CREATED
-                    {
-                        found_first_action = Some(assertion);
-                    }
-                }
-            }
-
-            // check gathered actions if not found in created actions
-            if found_first_action.is_none() {
-                if let Some(assertion) = gathered_actions.first() {
-                    let first_actions = Actions::from_assertion(assertion.assertion())?;
-                    let first_actions_first_action = &first_actions.actions().first();
-
-                    if let Some(first_actions_first_action) = first_actions_first_action {
-                        if first_actions_first_action.action() == c2pa_action::OPENED
-                            || first_actions_first_action.action() == c2pa_action::CREATED
-                        {
-                            found_first_action = Some(assertion);
-                        }
-                    }
-                }
-            }
-            found_first_action
-        } else {
-            let mut found_first_action = None;
-            // for v1 claims check the single assertion store
-            if let Some(assertion) = all_actions.first() {
-                let first_actions = Actions::from_assertion(assertion.assertion())?;
-                let first_actions_first_action = &first_actions.actions().first();
-                if let Some(first_actions_first_action) = first_actions_first_action {
-                    if first_actions_first_action.action() == c2pa_action::OPENED
-                        || first_actions_first_action.action() == c2pa_action::CREATED
-                    {
-                        found_first_action = Some(assertion);
-                    }
-                }
-            }
-            found_first_action
-        };
-
         // Skip further checks for v1 claims if not in strict validation mode
         if claim.version() == 1 {
             if let Ok(false) = get_settings_value::<bool>("verify.strict_v1_validation") {
                 return Ok(()); // no further checks for v1 claims
+            }
+        }
+
+        let mut first_actions_assertion = None;
+
+        // check created actions then gathered actions if not found in created actions
+        for actions in [&created_actions, &gathered_actions] {
+            if let Some(assertion) = actions.first() {
+                let first_actions = Actions::from_assertion(assertion.assertion())?;
+                let first_actions_first_action = &first_actions.actions().first();
+
+                if let Some(first_actions_first_action) = first_actions_first_action {
+                    if first_actions_first_action.action() == c2pa_action::OPENED
+                        || first_actions_first_action.action() == c2pa_action::CREATED
+                    {
+                        first_actions_assertion = Some(assertion);
+                    }
+                }
             }
         }
 

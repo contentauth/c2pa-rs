@@ -213,14 +213,6 @@ impl Action {
         }
     }
 
-    fn is_v2(&self) -> bool {
-        matches!(
-            self.software_agent,
-            Some(SoftwareAgent::ClaimGeneratorInfo(_))
-        ) || self.changes.is_some()
-            || self.description.is_some() // only defined for v2
-    }
-
     /// Returns the label for this action.
     ///
     /// This label is often one of the labels defined in [`c2pa_action`],
@@ -470,7 +462,7 @@ pub struct ActionTemplate {
 
     /// The software agent that performed the action.
     #[serde(rename = "softwareAgent", skip_serializing_if = "Option::is_none")]
-    pub software_agent: Option<SoftwareAgent>,
+    pub software_agent: Option<ClaimGeneratorInfo>, // This is a ClaimGeneratorInfo, not a string
 
     /// 0-based index into the softwareAgents array
     #[serde(rename = "softwareAgentIndex", skip_serializing_if = "Option::is_none")]
@@ -536,6 +528,7 @@ impl Actions {
     ///
     /// See <https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_actions>.
     pub const LABEL: &'static str = labels::ACTIONS;
+    pub const VERSION: Option<usize> = Some(ASSERTION_CREATION_VERSION);
 
     /// Creates a new [`Actions`] assertion struct.
     pub fn new() -> Self {
@@ -546,14 +539,6 @@ impl Actions {
             metadata: None,
             software_agents: None,
         }
-    }
-
-    /// Determines if actions is V2
-    fn is_v2(&self) -> bool {
-        if self.templates.is_some() {
-            return true;
-        };
-        self.actions.iter().any(|a| a.is_v2())
     }
 
     /// Returns desired ClaimGeneratorInfo if present. index is 0 based
@@ -638,22 +623,12 @@ impl AssertionBase for Actions {
     const LABEL: &'static str = labels::ACTIONS;
     const VERSION: Option<usize> = Some(ASSERTION_CREATION_VERSION);
 
-    /// if we require v2 fields then use V2
     fn version(&self) -> Option<usize> {
-        if self.is_v2() {
-            Some(2)
-        } else {
-            Some(1)
-        }
+        Self::VERSION
     }
 
-    /// if we require v2 fields then use V2
     fn label(&self) -> &str {
-        if self.is_v2() {
-            "c2pa.actions.v2"
-        } else {
-            labels::ACTIONS
-        }
+        "c2pa.actions.v2"
     }
 
     fn to_assertion(&self) -> Result<Assertion> {
@@ -899,7 +874,6 @@ pub mod tests {
         let original = Actions::from_json_value(&json).expect("from json");
         let assertion = original.to_assertion().expect("build_assertion");
         let result = Actions::from_assertion(&assertion).expect("extract_assertion");
-        assert_eq!(result.label(), labels::ACTIONS);
         println!("{}", serde_json::to_string_pretty(&result).unwrap());
         assert_eq!(original.actions, result.actions);
         assert_eq!(
@@ -931,7 +905,6 @@ pub mod tests {
                         "description": "gradient",
                         "name": "any value"
                     },
-                    "softwareAgent": "TestApp"
                 },
                 {
                     "action": "com.joesphoto.filter",
@@ -981,10 +954,6 @@ pub mod tests {
         assert_eq!(original.actions, result.actions);
         assert_eq!(original.templates, result.templates);
         assert_eq!(original.all_actions_included, result.all_actions_included);
-        assert_eq!(
-            result.actions[1].software_agent().unwrap(),
-            &SoftwareAgent::String("TestApp".to_string())
-        );
         assert_eq!(
             result.actions[3].changes().unwrap(),
             &[RegionOfInterest {

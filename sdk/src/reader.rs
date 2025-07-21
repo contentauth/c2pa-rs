@@ -29,8 +29,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use serde_with::skip_serializing_none;
 
+#[cfg(feature = "file_io")]
+use crate::utils::io_utils::uri_to_path;
 use crate::{
-    claim::ClaimAssetData,
     crypto::base64,
     dynamic_assertion::PartialClaim,
     error::{Error, Result},
@@ -260,19 +261,23 @@ impl Reader {
         mut fragment: impl Read + Seek + Send,
     ) -> Result<Self> {
         let mut validation_log = StatusTracker::default();
-        let manifest_bytes = Store::load_jumbf_from_stream(format, &mut stream)?;
-        let store = Store::from_jumbf(&manifest_bytes, &mut validation_log)?;
 
-        let verify = get_settings_value::<bool>("verify.verify_after_reading")?; // defaults to true
-                                                                                 // verify the store
-        if verify {
-            let mut fragment = ClaimAssetData::StreamFragment(&mut stream, &mut fragment, format);
-            if _sync {
-                Store::verify_store(&store, &mut fragment, &mut validation_log)
-            } else {
-                Store::verify_store_async(&store, &mut fragment, &mut validation_log).await
-            }?;
-        };
+        let store = if _sync {
+            Store::load_fragment_from_stream(
+                format,
+                &mut stream,
+                &mut fragment,
+                &mut validation_log,
+            )
+        } else {
+            Store::load_fragment_from_stream_async(
+                format,
+                &mut stream,
+                &mut fragment,
+                &mut validation_log,
+            )
+            .await
+        }?;
 
         Self::from_store(store, &validation_log)
     }
@@ -415,6 +420,16 @@ impl Reader {
             Ok(value) => serde_json::to_string_pretty(&value).unwrap_or_default(),
             Err(_) => "{}".to_string(),
         }
+    }
+
+    /// Returns the remote url of the manifest if this [`Reader`] obtained the manifest remotely.
+    pub fn remote_url(&self) -> Option<&str> {
+        self.store.remote_url()
+    }
+
+    /// Returns if the [`Reader`] was created from an embedded manifest.
+    pub fn is_embedded(&self) -> bool {
+        self.store.is_embedded()
     }
 
     /// Get the [`ValidationStatus`] array of the manifest store if it exists.
@@ -586,22 +601,6 @@ impl Reader {
         .map(|size| size as usize)
     }
 
-    /// Convert a URI to a file path. (todo: move this to utils)
-    fn uri_to_path(uri: &str, manifest_label: &str) -> String {
-        let mut path = uri.to_string();
-        if path.starts_with("self#jumbf=") {
-            // convert to a file path always including the manifest label
-            path = path.replace("self#jumbf=", "");
-            if path.starts_with("/c2pa/") {
-                path = path.replacen("/c2pa/", "", 1);
-            } else {
-                path = format!("{manifest_label}/{path}");
-            }
-            path = path.replace([':'], "_");
-        }
-        path
-    }
-
     /// Write all resources to a folder.
     ///
     ///
@@ -626,7 +625,7 @@ impl Reader {
         for manifest in self.manifests.values() {
             let resources = manifest.resources();
             for (uri, data) in resources.resources() {
-                let id_path = Self::uri_to_path(uri, manifest.label().unwrap_or("unknown"));
+                let id_path = uri_to_path(uri, manifest.label());
                 let path = path.as_ref().join(id_path);
                 if let Some(parent) = path.parent() {
                     std::fs::create_dir_all(parent)?;
@@ -826,6 +825,13 @@ impl TryFrom<Reader> for serde_json::Value {
         reader.to_json_formatted()
     }
 }
+impl TryFrom<&Reader> for serde_json::Value {
+    type Error = Error;
+
+    fn try_from(reader: &Reader) -> Result<Self> {
+        reader.to_json_formatted()
+    }
+}
 
 /// Prints the JSON of the manifest data.
 impl std::fmt::Display for Reader {
@@ -855,10 +861,32 @@ pub mod tests {
     #![allow(clippy::expect_used)]
     #![allow(clippy::panic)]
     #![allow(clippy::unwrap_used)]
+    use std::io::Cursor;
+
     use super::*;
 
     const IMAGE_COMPLEX_MANIFEST: &[u8] = include_bytes!("../tests/fixtures/CACAE-uri-CA.jpg");
     const IMAGE_WITH_MANIFEST: &[u8] = include_bytes!("../tests/fixtures/CA.jpg");
+    const IMAGE_WITH_REMOTE_MANIFEST: &[u8] = include_bytes!("../tests/fixtures/cloud.jpg");
+
+    #[test]
+    fn test_reader_embedded() -> Result<()> {
+        let reader = Reader::from_stream("image/jpeg", Cursor::new(IMAGE_WITH_MANIFEST))?;
+        assert_eq!(reader.remote_url(), None);
+        assert!(reader.is_embedded());
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_reader_remote_url() -> Result<()> {
+        let reader = Reader::from_stream("image/jpeg", Cursor::new(IMAGE_WITH_REMOTE_MANIFEST))?;
+        let remote_url = reader.remote_url();
+        assert_eq!(remote_url, Some("https://cai-manifests.adobe.com/manifests/adobe-urn-uuid-5f37e182-3687-462e-a7fb-573462780391"));
+        assert!(!reader.is_embedded());
+
+        Ok(())
+    }
 
     #[test]
     #[cfg(feature = "file_io")]

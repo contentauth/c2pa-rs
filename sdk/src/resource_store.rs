@@ -16,22 +16,27 @@ use std::{
     collections::HashMap,
     io::{Read, Seek, Write},
 };
-#[cfg(feature = "file_io")]
-use std::{
-    fs::{create_dir_all, read, write},
-    path::{Path, PathBuf},
-};
 
 #[cfg(feature = "json_schema")]
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+#[cfg(feature = "file_io")]
+use {
+    crate::utils::io_utils::uri_to_path,
+    std::{
+        fs::{create_dir_all, read, write},
+        path::{Path, PathBuf},
+    },
+};
 
 use crate::{
-    assertions::{labels, AssetType},
+    assertions::{labels, AssetType, EmbeddedData},
     asset_io::CAIRead,
     claim::Claim,
     hashed_uri::HashedUri,
-    jumbf::labels::{assertion_label_from_uri, to_absolute_uri},
+    jumbf::labels::{assertion_label_from_uri, to_absolute_uri, DATABOXES},
+    salt::DefaultSalt,
+    utils::mime::format_to_mime,
     Error, Result,
 };
 
@@ -61,7 +66,17 @@ impl UriOrResource {
         match self {
             UriOrResource::ResourceRef(r) => {
                 let data = resources.get(&r.identifier)?;
-                let hash_uri = claim.add_databox(&r.format, data.to_vec(), None)?;
+                let hash_uri = match claim.version() {
+                    1 => claim.add_databox(&r.format, data.to_vec(), None)?,
+                    _ => {
+                        let icon_assertion = EmbeddedData::new(
+                            labels::ICON,
+                            format_to_mime(&r.format),
+                            data.to_vec(),
+                        );
+                        claim.add_assertion_with_salt(&icon_assertion, &DefaultSalt::default())?
+                    }
+                };
                 Ok(UriOrResource::HashedUri(hash_uri))
             }
             UriOrResource::HashedUri(h) => Ok(UriOrResource::HashedUri(h.clone())),
@@ -76,10 +91,21 @@ impl UriOrResource {
         match self {
             UriOrResource::ResourceRef(r) => Ok(UriOrResource::ResourceRef(r.clone())),
             UriOrResource::HashedUri(h) => {
-                let data_box = claim.get_databox(h).ok_or(Error::MissingDataBox)?;
+                let (format, data) = if h.url().contains(DATABOXES) {
+                    let data_box = claim.get_databox(h).ok_or(Error::MissingDataBox)?;
+                    (data_box.format.to_owned(), data_box.data.clone())
+                } else {
+                    let (label, instance) = Claim::assertion_label_from_link(&h.url());
+                    let assertion =
+                        claim
+                            .get_assertion(&label, instance)
+                            .ok_or(Error::AssertionMissing {
+                                url: h.url().to_string(),
+                            })?;
+                    (assertion.label(), assertion.data().to_vec())
+                };
                 let url = to_absolute_uri(claim.label(), &h.url());
-                let resource_ref =
-                    resources.add_with(&url, &data_box.format, data_box.data.clone())?;
+                let resource_ref = resources.add_with(&url, &format, data)?;
                 Ok(UriOrResource::ResourceRef(resource_ref))
             }
         }
@@ -244,20 +270,14 @@ impl ResourceStore {
         if id.starts_with("self#jumbf=") {
             #[cfg(feature = "file_io")]
             if self.base_path.is_some() {
-                // convert to a file path always including the manifest label
-                id = id.replace("self#jumbf=", "");
-                if id.starts_with("/c2pa/") {
-                    id = id.replacen("/c2pa/", "", 1);
-                } else if let Some(label) = self.label.as_ref() {
-                    id = format!("{label}/{id}");
-                }
-                id = id.replace([':'], "_");
+                let mut path = uri_to_path(&id, self.label.as_deref());
                 // add a file extension if it doesn't have one
                 if !(id.ends_with(".jpeg") || id.ends_with(".png")) {
                     if let Some(ext) = crate::utils::mime::format_to_extension(format) {
-                        id = format!("{id}.{ext}");
+                        path.set_extension(ext);
                     }
                 }
+                id = path.display().to_string()
             }
             if !self.exists(&id) {
                 self.add(&id, value)?;
