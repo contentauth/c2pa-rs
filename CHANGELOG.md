@@ -6,6 +6,38 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 Since version 0.36.2, the format of this changelog is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.58.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.57.0...c2pa-v0.58.0)
+_18 July 2025_
+
+### Added
+
+* Add C binding for setting the base path ([#1237](https://github.com/contentauth/c2pa-rs/pull/1237))
+* Asset reference assertion ([#1203](https://github.com/contentauth/c2pa-rs/pull/1203))
+* Add `Reader::remote_url` and `Reader::is_embedded` ([#1150](https://github.com/contentauth/c2pa-rs/pull/1150))
+* Store icon references into c2pa.icon assertions for v2 instead of using data_boxes. ([#1235](https://github.com/contentauth/c2pa-rs/pull/1235))
+* Remove file type from thumbnail names ([#1187](https://github.com/contentauth/c2pa-rs/pull/1187))
+* Update MSRV to 1.85 ([#1208](https://github.com/contentauth/c2pa-rs/pull/1208))
+
+### Documented
+
+* Fix spec link for EmbeddedData ([#1226](https://github.com/contentauth/c2pa-rs/pull/1226))
+* API doc clean up and improvement ([#1178](https://github.com/contentauth/c2pa-rs/pull/1178))
+* Fix formatting of top level example. ([#1161](https://github.com/contentauth/c2pa-rs/pull/1161))
+
+### Fixed
+
+* Panic when adding empty actions assertion ([#1227](https://github.com/contentauth/c2pa-rs/pull/1227))
+* Generated JPEG thumbnail incorrectly rotated ([#1233](https://github.com/contentauth/c2pa-rs/pull/1233))
+* Unfreeze dependency on base64ct crate now that we're up to MSRV 1.85 ([#1228](https://github.com/contentauth/c2pa-rs/pull/1228))
+* Clean up logs ([#1181](https://github.com/contentauth/c2pa-rs/pull/1181))
+* Change timestamp validation to return new required info fields ([#1191](https://github.com/contentauth/c2pa-rs/pull/1191))
+* Xmp jpeg write ([#1156](https://github.com/contentauth/c2pa-rs/pull/1156))
+* Clippy warnings for Rust 1.88 ([#1204](https://github.com/contentauth/c2pa-rs/pull/1204))
+
+### Other
+
+* Move uri_to_path into utils ([#1186](https://github.com/contentauth/c2pa-rs/pull/1186))
+
 ## [0.57.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.56.2...c2pa-v0.57.0)
 _19 June 2025_
 
