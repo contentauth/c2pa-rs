@@ -941,7 +941,7 @@ impl Builder {
             }
         }
 
-        self.add_auto_actions_assertions(ingredient_map, actions)
+        self.add_auto_actions_assertions_settings(ingredient_map, actions)
     }
 
     /// Adds c2pa.created, c2pa.opened, and c2pa.placed actions for the specified [Actions][crate::assertions::Actions]
@@ -951,7 +951,7 @@ impl Builder {
     /// * `builder.actions.auto_created_action`
     /// * `builder.actions.auto_opened_action`
     /// * `builder.actions.auto_placed_action`
-    fn add_auto_actions_assertions(
+    fn add_auto_actions_assertions_settings(
         &self,
         ingredient_map: &HashMap<String, HashedUri>,
         actions: &mut Actions,
@@ -1770,17 +1770,20 @@ mod tests {
         let ingredient_uris = action.get_parameter("ingredients").unwrap();
         let ingredient_uris = value_cbor_to_type::<Vec<HashedUri>>(ingredient_uris).unwrap();
 
-        // TODO: need to get correct target_uri
+        // TODO: need API to get uri from ingredient
         // let target_uri = reader
         //     .active_manifest()
         //     .unwrap()
         //     .ingredients()
         //     .first()
         //     .unwrap()
-        //     .label()
+        //     .uri()
         //     .unwrap();
         // let stored_uri = ingredient_uris.first().unwrap().url();
         // assert_eq!(target_uri, &stored_uri);
+
+        let reader_json = reader.json();
+        assert!(reader_json.contains(&ingredient_uris.first().unwrap().url()));
     }
 
     #[test]
@@ -1849,21 +1852,25 @@ mod tests {
         let action2 = actions.actions().get(2).unwrap();
         assert_eq!(action2.action(), c2pa_action::PLACED);
 
-        for (i, action) in [action1, action2].iter().enumerate() {
+        let reader_json = reader.json();
+
+        for action in [action1, action2] {
             let ingredient_uris = action.get_parameter("ingredients").unwrap();
             let ingredient_uris = value_cbor_to_type::<Vec<HashedUri>>(ingredient_uris).unwrap();
 
-            // TODO: need to get correct target_uri
+            // TODO: need API to get uri from ingredient
             // let target_uri = reader
             //     .active_manifest()
             //     .unwrap()
             //     .ingredients()
             //     .get(i)
             //     .unwrap()
-            //     .label()
+            //     .uri()
             //     .unwrap();
             // let stored_uri = ingredient_uris.first().unwrap().url();
             // assert_eq!(target_uri, &stored_uri);
+
+            assert!(reader_json.contains(&ingredient_uris.first().unwrap().url()));
         }
     }
 
@@ -1924,15 +1931,8 @@ mod tests {
         )
         .unwrap();
 
-        let actions = Actions::new()
-            .add_action(Action::new(c2pa_action::EDITED))
-            .add_action(Action::new(c2pa_action::COLOR_ADJUSTMENTS));
-
-        let mut builder = Builder::new();
-        builder.add_assertion(Actions::LABEL, &actions).unwrap();
-
         let mut output = Cursor::new(Vec::new());
-        builder
+        Builder::new()
             .sign(
                 &Settings::signer().unwrap(),
                 "image/jpeg",
@@ -1944,24 +1944,23 @@ mod tests {
         output.rewind().unwrap();
         let reader = Reader::from_stream("image/jpeg", output).unwrap();
 
-        // TODO: for some reason adding templates (with or without settings) is causing the actions
-        //       assertion to not be found here. Interestingly, the Reader doesn't error during validation?
         let actions: Actions = reader
             .active_manifest()
             .unwrap()
-            .find_assertion(Actions::LABEL)
+            .find_assertion("c2pa.actions.v2")
             .unwrap();
 
-        assert!(actions.actions.len() > 2);
+        let templates = actions.templates.unwrap();
+        assert!(templates.len() == 2);
 
-        for action in actions.actions {
-            match action.action() {
+        for template in templates {
+            match template.action.as_str() {
                 c2pa_action::EDITED => {
-                    assert_eq!(action.source_type(), Some(source_type::EMPTY));
+                    assert_eq!(template.source_type.as_deref(), Some(source_type::EMPTY));
                 }
                 c2pa_action::COLOR_ADJUSTMENTS => {
                     assert_eq!(
-                        action.source_type(),
+                        template.source_type.as_deref(),
                         Some(source_type::TRAINED_ALGORITHMIC_DATA)
                     );
                 }

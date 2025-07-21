@@ -101,13 +101,14 @@ impl SettingsValidate for ThumbnailSettings {
 /// A [Signer][crate::Signer] can be obtained by calling [BuilderSettings::signer].
 #[allow(unused)]
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "lowercase")]
 pub(crate) enum SignerSettings {
     /// A signer configured locally.
     Local {
         // TODO: doc fields
         alg: SigningAlg,
-        sign_cert: Vec<u8>,
-        private_key: Vec<u8>,
+        sign_cert: String,
+        private_key: String,
         tsa_url: Option<String>,
     },
     /// A signer configured remotely.
@@ -115,7 +116,7 @@ pub(crate) enum SignerSettings {
         // TODO: document the remote API
         url: String,
         alg: SigningAlg,
-        sign_cert: Vec<u8>,
+        sign_cert: String,
         tsa_url: Option<String>,
     },
 }
@@ -381,7 +382,12 @@ impl BuilderSettings {
                     sign_cert,
                     private_key,
                     tsa_url,
-                } => create_signer::from_keys(&sign_cert, &private_key, alg, tsa_url.to_owned()),
+                } => create_signer::from_keys(
+                    sign_cert.as_bytes(),
+                    private_key.as_bytes(),
+                    alg,
+                    tsa_url.to_owned(),
+                ),
                 SignerSettings::Remote {
                     url,
                     alg,
@@ -391,7 +397,7 @@ impl BuilderSettings {
                     url,
                     alg,
                     reserve_size: 10000 + sign_cert.len(),
-                    certs: vec![sign_cert],
+                    certs: vec![sign_cert.into_bytes()],
                     tsa_url,
                 })),
             },
@@ -447,18 +453,77 @@ impl Signer for RemoteSigner {
 pub mod tests {
     #![allow(clippy::unwrap_used)]
 
+    use crate::{assertions::source_type, utils::test_signer};
+
+    use super::*;
+
+    #[test]
+    fn test_make_test_signer() {
+        // Makes a default test signer.
+        assert!(Settings::signer().is_ok());
+        assert!(Settings::cawg_signer().is_ok());
+    }
+
     #[test]
     fn test_make_local_signer() {
-        // TODO
+        // Testing with a different alg than the default test signer.
+        let alg = SigningAlg::Ps384;
+        let (sign_cert, private_key) = test_signer::cert_chain_and_private_key_for_alg(alg);
+        Settings::from_toml(
+            &toml::toml! {
+                [builder.signer.local]
+                alg = (alg.to_string())
+                sign_cert = (String::from_utf8(sign_cert.to_vec()).unwrap())
+                private_key = (String::from_utf8(private_key.to_vec()).unwrap())
+
+                [builder.cawg_signer.local]
+                alg = (alg.to_string())
+                sign_cert = (String::from_utf8(sign_cert.to_vec()).unwrap())
+                private_key = (String::from_utf8(private_key.to_vec()).unwrap())
+            }
+            .to_string(),
+        )
+        .unwrap();
+
+        let signers = [
+            Settings::signer().unwrap(),
+            Settings::cawg_signer().unwrap(),
+        ];
+        for signer in signers {
+            assert_eq!(signer.alg(), alg);
+            assert_eq!(signer.time_authority_url(), None);
+            assert!(signer.sign(&[1, 2, 3]).is_ok());
+        }
     }
 
     #[test]
     fn test_make_remote_signer() {
-        // TODO
+        // TODO: how do we normally test remote things?
     }
 
     #[test]
     fn test_auto_created_action_without_source_type() {
-        // TODO
+        let actions_settings = ActionsSettings {
+            auto_created_action: AutoActionSettings {
+                enabled: true,
+                source_type: None,
+            },
+            ..Default::default()
+        };
+
+        assert!(actions_settings.validate().is_err());
+    }
+
+    #[test]
+    fn test_auto_created_action_with_source_type() {
+        let actions_settings = ActionsSettings {
+            auto_created_action: AutoActionSettings {
+                enabled: true,
+                source_type: Some(source_type::EMPTY.to_owned()),
+            },
+            ..Default::default()
+        };
+
+        assert!(actions_settings.validate().is_ok());
     }
 }

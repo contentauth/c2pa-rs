@@ -78,7 +78,9 @@ pub(crate) fn async_test_signer(alg: SigningAlg) -> Box<dyn AsyncSigner> {
     ))
 }
 
-fn cert_chain_and_private_key_for_alg(alg: SigningAlg) -> (&'static [u8], &'static [u8]) {
+pub(crate) fn cert_chain_and_private_key_for_alg(
+    alg: SigningAlg,
+) -> (&'static [u8], &'static [u8]) {
     match alg {
         SigningAlg::Ps256 => (
             include_bytes!("../../tests/fixtures/certs/ps256.pub"),
