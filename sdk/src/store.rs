@@ -4733,6 +4733,8 @@ pub mod tests {
         let stored_ocsp_vals: Vec<Vec<u8>> =
             svi.certificate_statuses.into_values().flatten().collect();
         assert_eq!(stored_ocsp_vals.len(), 2);
+
+        assert!(stored_ocsp_vals.iter().all(|v| !v.is_empty()))
     }
 
     #[test]
