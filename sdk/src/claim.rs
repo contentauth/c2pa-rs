@@ -38,7 +38,8 @@ use crate::{
     asset_io::CAIRead,
     cbor_types::{map_cbor_to_type, value_cbor_to_type},
     cose_validator::{
-        get_serial_num, get_signing_info, get_signing_info_async, verify_cose, verify_cose_async,
+        get_signing_cert_serial_num, get_signing_info, get_signing_info_async, verify_cose,
+        verify_cose_async,
     },
     crypto::{
         asn1::rfc3161::TstInfo,
@@ -1824,7 +1825,7 @@ impl Claim {
         }
 
         let sign1 = parse_cose_sign1(&sig, &data, validation_log)?;
-        let certificate_serial_num = get_serial_num(&sign1)?.to_string();
+        let certificate_serial_num = get_signing_cert_serial_num(&sign1)?.to_string();
 
         // check certificate revocation
         check_ocsp_status(
@@ -1897,7 +1898,7 @@ impl Claim {
 
         let sign1 = parse_cose_sign1(sig, data, validation_log)?;
 
-        let certificate_serial_num = get_serial_num(&sign1)?.to_string();
+        let certificate_serial_num = get_signing_cert_serial_num(&sign1)?.to_string();
         // check certificate revocation
         check_ocsp_status(
             &sign1,

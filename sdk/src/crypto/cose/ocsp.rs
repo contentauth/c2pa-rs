@@ -29,8 +29,9 @@ use crate::{
         },
         ocsp::OcspResponse,
     },
+    log_item,
     status_tracker::StatusTracker,
-    validation_status,
+    validation_status::{self, SIGNING_CREDENTIAL_NOT_REVOKED, SIGNING_CREDENTIAL_REVOKED},
 };
 
 /// Given a COSE signature, extract the OCSP data and validate the status of
@@ -73,9 +74,13 @@ pub fn check_ocsp_status(
             OcspFetchPolicy::FetchAllowed => {
                 fetch_and_check_ocsp_response(sign1, data, ctp, tst_info, validation_log)
             }
+            // If we are not fetching use the supplied OCSP responses.
+            // If any are not revoked, then that is a good status; all other status is informational.
             OcspFetchPolicy::DoNotFetch => {
                 if let Some(ocsp_response_ders) = ocsp_responses {
+                    let mut current_validation_log = StatusTracker::default();
                     for ocsp_response_der in ocsp_response_ders {
+                        let mut current_validation_log = StatusTracker::default();
                         if let Ok(ocsp_response) = check_stapled_ocsp_response(
                             sign1,
                             ocsp_response_der,
@@ -88,6 +93,17 @@ pub fn check_ocsp_status(
                             if validation_log
                                 .has_status(validation_status::SIGNING_CREDENTIAL_REVOKED)
                             {
+                                log_item!(
+                                    "",
+                                    format!(
+                                        "signing cert revoked: {}",
+                                        ocsp_response.certificate_serial_num
+                                    ),
+                                    "check_ocsp_status"
+                                )
+                                .validation_status(SIGNING_CREDENTIAL_REVOKED)
+                                .informational(&mut current_validation_log);
+
                                 return Err(CoseError::CertificateTrustError(
                                     CertificateTrustError::CertificateNotTrusted,
                                 ));
@@ -96,10 +112,23 @@ pub fn check_ocsp_status(
                             if validation_log
                                 .has_status(validation_status::SIGNING_CREDENTIAL_NOT_REVOKED)
                             {
+                                log_item!(
+                                    "",
+                                    format!(
+                                        "signing cert not revoked: {}",
+                                        ocsp_response.certificate_serial_num
+                                    ),
+                                    "check_ocsp_status"
+                                )
+                                .validation_status(SIGNING_CREDENTIAL_NOT_REVOKED)
+                                .informational(&mut current_validation_log);
+
+                                validation_log.append(&current_validation_log);
                                 return Ok(ocsp_response);
                             }
                         }
                     }
+                    validation_log.append(&current_validation_log);
                 }
                 Ok(OcspResponse::default())
             }

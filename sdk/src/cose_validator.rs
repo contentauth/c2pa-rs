@@ -155,7 +155,7 @@ fn extract_serial_from_cert(cert: &X509Certificate) -> BigUint {
 }
 
 /// Returns the unique serial number from the provided CoseSign1
-pub(crate) fn get_serial_num(sign1: &CoseSign1) -> Result<BigUint> {
+pub(crate) fn get_signing_cert_serial_num(sign1: &CoseSign1) -> Result<BigUint> {
     let der_bytes = get_sign_cert(sign1)?;
     let (_rem, signcert) =
         X509Certificate::from_der(&der_bytes).map_err(|_| Error::CoseInvalidCert)?;

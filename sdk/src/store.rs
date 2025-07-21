@@ -1809,9 +1809,6 @@ impl Store {
                             "could not parse certificate status assertion",
                             "get_claim_referenced_manifests"
                         )
-                        .validation_status(
-                            validation_status::ASSERTION_CERTIFICATE_STATUS_MALFORMED,
-                        )
                         .failure_as_err(
                             validation_log,
                             Error::OtherError("certificate status assertion malformed".into()),
@@ -4544,20 +4541,20 @@ impl Store {
     }
 
     #[allow(dead_code)]
-    /// Retrieves OCSP responses for certificate validation from the specified manifests.
+    /// Creates certificate status assertion from the specified manifests.
     ///
     /// # Arguments
-    /// * `manifest_labels` - Vector of manifest labels to check for certificate assertions
+    /// * `manifest_labels` - Vector of manifest labels to check for ocsp responses
     /// * `validation_log` - Status tracker for logging validation events
     ///
     /// # Returns
-    /// A `Result` containing a vector of [`OcspResponse`] objects
-    pub fn get_certificate_assertion(
+    /// A `Result` containing a [`CertificateStatus`] assertion
+    pub fn get_certificate_status_assertion(
         &self,
         manifest_labels: &Vec<String>,
         validation_log: &mut StatusTracker,
-    ) -> Result<Vec<OcspResponse>> {
-        let mut oscp_responses: Vec<OcspResponse> = Vec::new();
+    ) -> Result<CertificateStatus> {
+        let mut oscp_response_ders: Vec<Vec<u8>> = Vec::new();
 
         for manifest_label in manifest_labels {
             if let Some(claim) = self.claims_map.get(manifest_label) {
@@ -4565,14 +4562,15 @@ impl Store {
                 let data = claim.data()?;
 
                 let sign1 = parse_cose_sign1(&sig, &data, validation_log)?;
-                let ocsp_response =
-                    fetch_and_check_ocsp_response(&sign1, &data, &self.ctp, None, validation_log)?;
-                if !ocsp_response.ocsp_der.is_empty() {
-                    oscp_responses.push(ocsp_response);
+                let ocsp_response_der =
+                    fetch_and_check_ocsp_response(&sign1, &data, &self.ctp, None, validation_log)?
+                        .ocsp_der;
+                if !ocsp_response_der.is_empty() {
+                    oscp_response_ders.push(ocsp_response_der);
                 }
             }
         }
-        Ok(oscp_responses)
+        Ok(CertificateStatus::new(oscp_response_ders))
     }
 }
 
