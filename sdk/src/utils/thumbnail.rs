@@ -165,7 +165,7 @@ where
         match ThumbnailFormat::new(format) {
             Some(input_format) => {
                 let mut output = Cursor::new(Vec::new());
-                make_thumbnail_from_stream(input, &mut output, input_format, None)
+                make_thumbnail_from_stream(input_format, None, input, &mut output)
                     .map(|output_format| (output_format, output.into_inner()))
             }
             None => Err(Error::UnsupportedThumbnailFormat(format.to_owned())),
@@ -188,10 +188,10 @@ where
 /// * `builder.thumbnail.format`
 /// * `builder.thumbnail.prefer_smallest_format`
 pub fn make_thumbnail_from_stream<R, W>(
-    input: R,
-    output: &mut W,
     input_format: ThumbnailFormat,
     output_format: Option<ThumbnailFormat>,
+    input: R,
+    output: &mut W,
 ) -> Result<ThumbnailFormat>
 where
     R: BufRead + Seek,
@@ -445,10 +445,10 @@ pub mod tests {
 
         let mut output = Cursor::new(Vec::new());
         let format = make_thumbnail_from_stream(
-            Cursor::new(TEST_JPEG),
-            &mut output,
             ThumbnailFormat::Jpeg,
             None,
+            Cursor::new(TEST_JPEG),
+            &mut output,
         )
         .unwrap();
 
@@ -473,10 +473,10 @@ pub mod tests {
 
         let mut output = Cursor::new(Vec::new());
         let format = make_thumbnail_from_stream(
-            Cursor::new(TEST_JPEG),
-            &mut output,
             ThumbnailFormat::Jpeg,
             Some(ThumbnailFormat::Png),
+            Cursor::new(TEST_JPEG),
+            &mut output,
         )
         .unwrap();
 
