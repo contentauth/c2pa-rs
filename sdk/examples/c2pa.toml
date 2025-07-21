@@ -138,7 +138,7 @@ alg = "sha256"
 sign_cert = ""
 # Private key used for signing (PEM format).
 private_key = ""
-# Time Stamp Authority URL for signing.
+# Time stamp authority URL for signing.
 tsa_url = ""
 
 # Alternatively, you can specify a remote signer, which is also loaded
@@ -154,7 +154,7 @@ url = "https://www.google.com"
 alg = "sha256"
 # Certificate used for signing (PEM format).
 sign_cert = ""
-# Time Stamp Authority URL for signing.
+# Time stamp authority URL for signing.
 tsa_url = ""
 
 # Similar to a normal signers, you can specify CAWG signers, loadable with the
@@ -166,7 +166,7 @@ alg = "sha256"
 sign_cert = ""
 # Private key used for signing (PEM format).
 private_key = ""
-# Time Stamp Authority URL for signing.
+# Time stamp authority URL for signing.
 tsa_url = ""
 
 # The same rules that apply for normal signers also apply for CAWG signers. You may
@@ -180,7 +180,7 @@ url = "https://www.google.com"
 alg = "sha256"
 # Certificate used for signing (PEM format).
 sign_cert = ""
-# Time Stamp Authority URL for signing.
+# Time stamp authority URL for signing.
 tsa_url = ""
 
 # Settings for automatic thumbnail generation.

@@ -105,18 +105,26 @@ impl SettingsValidate for ThumbnailSettings {
 pub(crate) enum SignerSettings {
     /// A signer configured locally.
     Local {
-        // TODO: doc fields
+        // Algorithm to use for signing.
         alg: SigningAlg,
+        // Certificate used for signing (PEM format).
         sign_cert: String,
+        // Private key used for signing (PEM format).
         private_key: String,
+        // Time stamp authority URL for signing.
         tsa_url: Option<String>,
     },
     /// A signer configured remotely.
     Remote {
-        // TODO: document the remote API
+        // URL to the signer used for signing.
+        //
+        // A POST request with a byte stream will be sent to this URL.
         url: String,
+        // Algorithm to use for signing.
         alg: SigningAlg,
+        // Certificate used for signing (PEM format).
         sign_cert: String,
+        // Time stamp authority URL for signing.
         tsa_url: Option<String>,
     },
 }
@@ -204,25 +212,27 @@ impl TryFrom<ClaimGeneratorInfoSettings> for ClaimGeneratorInfo {
 
 // TODO: it's not ideal redefining this entire struct, but we need to change serde_json::Value to toml::Value
 //       for template_parameters. Another issue is that some fields are defined in camelCase in the original struct.
+/// Settings for an action template.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct ActionTemplateSettings {
+    /// The label associated with this action. See ([c2pa_action][crate::assertions::actions::c2pa_action]).
     pub action: String,
-
+    /// The software agent that performed the action.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub software_agent: Option<ClaimGeneratorInfo>,
-
+    /// 0-based index into the softwareAgents array
     #[serde(skip_serializing_if = "Option::is_none")]
     pub software_agent_index: Option<usize>,
-
+    /// One of the defined URI values at `<https://cv.iptc.org/newscodes/digitalsourcetype/>`
     #[serde(skip_serializing_if = "Option::is_none")]
     pub source_type: Option<String>,
-
+    /// Reference to an icon.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub icon: Option<UriOrResource>,
-
+    /// Description of the template.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
-
+    /// Additional parameters for the template
     #[serde(skip_serializing_if = "Option::is_none")]
     pub template_parameters: Option<HashMap<String, toml::Value>>,
 }
