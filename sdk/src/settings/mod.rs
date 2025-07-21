@@ -162,11 +162,13 @@ impl SettingsValidate for Trust {
 pub(crate) struct Core {
     debug: bool,
     hash_alg: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     soft_hash_alg: Option<String>,
     salt_jumbf_boxes: bool,
     prefer_box_hash: bool,
     prefer_bmff_merkle_tree: bool,
     compress_manifests: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
     max_memory_usage: Option<u64>,
     // TODO: pending https://github.com/contentauth/c2pa-rs/pull/1180
     // prefer_update_manifests: bool,

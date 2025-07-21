@@ -79,7 +79,7 @@ fn main() -> Result<()> {
     let modified_core = toml::toml! {
         [core]
         debug = true
-        hash_alg = "sha_512"
+        hash_alg = "sha512"
         max_memory_usage = 123456
     }
     .to_string();
