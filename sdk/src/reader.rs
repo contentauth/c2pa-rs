@@ -878,6 +878,7 @@ pub mod tests {
         Ok(())
     }
 
+    #[cfg(feature = "fetch_remote_manifests")]
     #[test]
     fn test_reader_remote_url() -> Result<()> {
         let reader = Reader::from_stream("image/jpeg", Cursor::new(IMAGE_WITH_REMOTE_MANIFEST))?;
