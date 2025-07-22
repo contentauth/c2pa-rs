@@ -298,9 +298,7 @@ impl Settings {
                 let settings = update_config
                     .clone()
                     .try_deserialize::<Settings>()
-                    .map_err(|_e| {
-                        Error::BadParam("configuration file contains unrecognized param".into())
-                    })?;
+                    .map_err(|e| Error::BadParam(e.to_string()))?;
 
                 settings.validate()?;
 
@@ -349,9 +347,7 @@ impl Settings {
             let settings = update_config
                 .clone()
                 .try_deserialize::<Settings>()
-                .map_err(|_e| {
-                    Error::BadParam("configuration file contains unrecognized param".into())
-                })?;
+                .map_err(|e| Error::BadParam(e.to_string()))?;
             settings.validate()?;
 
             SETTINGS.set(update_config);
@@ -775,5 +771,11 @@ pub mod tests {
         Settings::from_toml(&all_settings).unwrap();
 
         reset_default_settings().unwrap();
+    }
+
+    #[test]
+    fn test_load_settings_from_sample_toml() {
+        let toml = include_bytes!("../../examples/c2pa.toml");
+        Settings::from_toml(std::str::from_utf8(toml).unwrap()).unwrap();
     }
 }

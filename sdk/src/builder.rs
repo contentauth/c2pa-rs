@@ -778,8 +778,6 @@ impl Builder {
 
                     let mut actions: Actions = manifest_assertion.to_assertion()?;
 
-                    //dbg!(format!("Actions: {:?} version: {:?}", actions, version));
-
                     self.add_actions_assertion_settings(&ingredient_map, &mut actions)?;
 
                     let mut updates = Vec::new();

@@ -53,7 +53,7 @@ pub(crate) enum SignerSettings {
 }
 
 impl SignerSettings {
-    // TODO: add async signer?
+    // TODO: add async signer
     /// Returns the constructed signer from the [BuilderSettings::signer] field.
     ///
     /// If the signer settings aren't specified, this function will return [Error::MissingSignerSettings][crate::Error::MissingSignerSettings].

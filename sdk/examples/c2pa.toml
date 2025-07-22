@@ -4,27 +4,16 @@
 version_major = 1
 version_minor = 0
 
-# Trust settings for certificate validation.
-[trust]
-# String to user-provided trust anchors (PEM format).
-user_anchors = ""
-# String to system trust anchors (PEM format).
-trust_anchors = ""
-# String to trust configuration.
-trust_config = ""
-# Path to allowed certificate list (PEM format).
-allowed_list = ""
-
-# Core functionality.
-[core]
-# Hash algorithm to use (sha256, sha384, sha512).
-hash_alg = "sha256"
-# Prefer box hash over other hashing methods such as data hash.
-prefer_box_hash = false
-# Prefer BMFF merkle tree.
-prefer_bmff_merkle_tree = false
-# Compress manifests to reduce size.
-compress_manifests = true
+# # Trust settings for certificate validation.
+# [trust]
+# # String to user-provided trust anchors (PEM format).
+# user_anchors = ""
+# # String to system trust anchors (PEM format).
+# trust_anchors = ""
+# # String to trust configuration.
+# trust_config = ""
+# # Path to allowed certificate list (PEM format).
+# allowed_list = ""
 
 # Verification settings.
 [verify]
@@ -32,28 +21,24 @@ compress_manifests = true
 verify_after_reading = true
 # Verify manifests after signing.
 verify_after_sign = true
-# Fetch OCSP responses for certificate validation.
-ocsp_fetch = false
 # Fetch remote manifests.
 remote_manifest_fetch = true
-# Use strict c2pa v1 validation.
-strict_v1_validation = false
 
 # Configuration for a signer.
 #
 # The signer can be retrieved via the `Settings::signer` function.
 [signer]
 
-# A signer can be loaded in the API with the function `Settings::signer`.
-[signer.local]
-# Algorithm to use for signing.
-alg = "sha256"
-# Certificate used for signing (PEM format).
-sign_cert = ""
-# Private key used for signing (PEM format).
-private_key = ""
-# Time stamp authority URL for signing.
-tsa_url = ""
+# # A signer can be loaded in the API with the function `Settings::signer`.
+# [signer.local]
+# # Algorithm to use for signing.
+# alg = "ps256"
+# # Certificate used for signing (PEM format).
+# sign_cert = ""
+# # Private key used for signing (PEM format).
+# private_key = ""
+# # Time stamp authority URL for signing.
+# tsa_url = ""
 
 # Alternatively, you can specify a remote signer, which is also loaded
 # via `Settings::signer`.
@@ -65,7 +50,7 @@ tsa_url = ""
 # A POST request with a byte stream will be sent to this URL.
 url = "https://www.google.com"
 # Algorithm to use for signing.
-alg = "sha256"
+alg = "ps256"
 # Certificate used for signing (PEM format).
 sign_cert = ""
 # Time stamp authority URL for signing.
@@ -80,8 +65,6 @@ tsa_url = ""
 name = "My Service"
 # A human readable string of the product's version.
 version = "1.0.0"
-# TODO: document
-icon = ""
 # The operating system the claim generator is running on.
 operating_system.name = "macOS"
 # Or if the name isn't specified, it can be inferred automatically.
@@ -104,25 +87,26 @@ all_actions_included = true
 action = "c2pa.edited"
 # TODO: do we want to document these fields here or just include links to the docs
 #       rust docs or c2pa docs?
-source_type = ""
-icon = ""
-description = ""
-template_parameters = ""
-software_agent_index = 0
-
+# The source type field is required for the c2pa.created action.
+#
+# For more information, see `c2pa::assertions::actions::source_type`.
+source_type = "http://c2pa.org/digitalsourcetype/empty"
+# Description for the action
+description = "Some edit action."
+# Arbitrary key/value pairs to store in the action.
+template_parameters = { "arbitrary_key" = true }
 # A software agent has the same fields as a claim generator info.
-[builder.actions.templates.software_agent]
-name = "My Service"
+software_agent = { name = "My Service" }
 
 # Multiple templates can be specified.
 [[builder.actions.templates]]
 action = "c2pa.cropped"
 
+# TODO: document rest of fields for actions
 # Actions to be added to every "Actions" assertion.
 [[builder.actions.actions]]
 # The label of the action.
 action = "c2pa.drawing"
-# TODO: probably don't want to relist all of the fields, see previous todo comment
 
 # Similarly, multiple actions can be defined.
 [[builder.actions.actions]]
@@ -159,7 +143,6 @@ source_type = "http://c2pa.org/digitalsourcetype/empty"
 [builder.actions.auto_placed_action]
 # Whether to auto create the c2pa.placed action.
 enabled = true
-# TODO: doc these fields better
 # For more information, see `c2pa::assertions::actions::source_type`.
 #
 # Note this field is optional for the c2pa.placed action.

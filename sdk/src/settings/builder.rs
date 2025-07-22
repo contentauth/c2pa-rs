@@ -162,7 +162,8 @@ pub(crate) struct ClaimGeneratorInfoSettings {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub icon: Option<ResourceRef>,
     /// Settings for the claim generator info's operating system field.
-    pub operating_system: ClaimGeneratorInfoOSSettings,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub operating_system: Option<ClaimGeneratorInfoOSSettings>,
     /// Any other values that are not part of the standard.
     #[serde(flatten)]
     pub other: HashMap<String, toml::Value>,
@@ -176,9 +177,12 @@ impl TryFrom<ClaimGeneratorInfoSettings> for ClaimGeneratorInfo {
             name: value.name,
             version: value.version,
             icon: value.icon.map(UriOrResource::ResourceRef),
-            operating_system: match value.operating_system.infer {
-                true => Some(consts::OS.to_owned()),
-                false => value.operating_system.name,
+            operating_system: {
+                let os = value.operating_system.unwrap_or_default();
+                match os.infer {
+                    true => Some(consts::OS.to_owned()),
+                    false => os.name,
+                }
             },
             other: value
                 .other
@@ -201,7 +205,7 @@ pub(crate) struct ActionTemplateSettings {
     /// The software agent that performed the action.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub software_agent: Option<ClaimGeneratorInfoSettings>,
-    // TODO: change this to use string names
+    // TODO: change this to use string names and document in c2pa.toml
     /// 0-based index into the softwareAgents array
     #[serde(skip_serializing_if = "Option::is_none")]
     pub software_agent_index: Option<usize>,
@@ -276,9 +280,9 @@ pub(crate) struct ActionSettings {
     /// it should be assumed that anything might have changed.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub changes: Option<Vec<RegionOfInterest>>,
+    // TODO: is deprecated, do we still read it? validate it?
     /// This is NOT the instanceID in the spec.
     /// It is now deprecated but was previously used to map the action to an ingredient.
-    #[deprecated(since = "0.37.0", note = "Use `org.cai.ingredientIds` instead")]
     #[serde(skip_serializing)]
     pub instance_id: Option<String>,
     /// Additional parameters of the action. These vary by the type of action.
@@ -408,6 +412,7 @@ impl SettingsValidate for ActionsSettings {
     }
 }
 
+// TODO: do more validation on URL fields, cert fields, etc.
 /// Settings for the [Builder][crate::Builder].
 #[allow(unused)]
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize, Default)]
@@ -417,7 +422,7 @@ pub(crate) struct BuilderSettings {
     /// Note that this information will prepend any claim generator info
     /// provided explicitly to the builder.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub claim_generator_info: Option<ClaimGeneratorInfo>,
+    pub claim_generator_info: Option<ClaimGeneratorInfoSettings>,
     /// Various settings for configuring automatic thumbnail generation.
     pub thumbnail: ThumbnailSettings,
     /// Settings for configuring fields in an [Actions][crate::assertions::Actions] assertion.
