@@ -55,7 +55,7 @@ impl EcdsaCurve {
 /// Parse an ASN.1 DER object that contains a P1363 format into its components.
 ///
 /// This format is used by C2PA to describe ECDSA signature keys.
-pub(crate) fn parse_ec_der_sig(data: &[u8]) -> BerResult<EcSigComps> {
+pub(crate) fn parse_ec_der_sig(data: &[u8]) -> BerResult<'_, EcSigComps<'_>> {
     parse_der_sequence_defined_g(|content: &[u8], _| {
         let (rem1, r) = parse_der_integer(content)?;
         let (_rem2, s) = parse_der_integer(rem1)?;

@@ -183,7 +183,7 @@ pub struct PartialClaim {
 
 impl PartialClaim {
     /// Return an iterator over the assertions in this Claim.
-    pub fn assertions(&self) -> Iter<HashedUri> {
+    pub fn assertions(&self) -> Iter<'_, HashedUri> {
         self.assertion_uris.iter()
     }
 

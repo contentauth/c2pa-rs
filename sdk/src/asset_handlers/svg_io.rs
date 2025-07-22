@@ -163,7 +163,7 @@ impl AssetIO for SvgIO {
 }
 
 // create manifest entry
-fn create_manifest_tag(data: &[u8], with_meta: bool) -> Result<Event> {
+fn create_manifest_tag(data: &[u8], with_meta: bool) -> Result<Event<'_>> {
     let output: Vec<u8> = Vec::with_capacity(data.len() + 256);
     let mut writer = Writer::new(Cursor::new(output));
 
