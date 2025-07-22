@@ -40,7 +40,7 @@ use crate::{
     salt::DefaultSalt,
     settings::{
         self,
-        builder::{ActionTemplateSettings, ClaimGeneratorInfoSettings},
+        builder::{ActionSettings, ActionTemplateSettings, ClaimGeneratorInfoSettings},
     },
     store::Store,
     utils::mime::format_to_mime,
@@ -943,8 +943,13 @@ impl Builder {
         }
 
         let additional_actions =
-            settings::get_settings_value::<Option<Vec<Action>>>("builder.actions.actions");
+            settings::get_settings_value::<Option<Vec<ActionSettings>>>("builder.actions.actions");
         if let Ok(Some(additional_actions)) = additional_actions {
+            let additional_actions = additional_actions
+                .into_iter()
+                .map(|action| action.try_into())
+                .collect::<Result<Vec<Action>>>()?;
+
             match actions.actions.is_empty() {
                 false => {
                     actions.actions.extend(additional_actions);
@@ -2010,11 +2015,11 @@ mod tests {
 
                 [[builder.actions.actions]]
                 action = (c2pa_action::EDITED)
-                digitalSourceType = (source_type::EMPTY)
+                source_type = (source_type::EMPTY)
 
                 [[builder.actions.actions]]
                 action = (c2pa_action::COLOR_ADJUSTMENTS)
-                digitalSourceType = (source_type::TRAINED_ALGORITHMIC_DATA)
+                source_type = (source_type::TRAINED_ALGORITHMIC_DATA)
             }
             .to_string(),
         )

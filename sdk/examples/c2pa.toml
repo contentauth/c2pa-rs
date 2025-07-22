@@ -104,12 +104,15 @@ all_actions_included = true
 action = "c2pa.edited"
 # TODO: do we want to document these fields here or just include links to the docs
 #       rust docs or c2pa docs?
-software_agent = ""
-software_agent_index = ""
 source_type = ""
 icon = ""
 description = ""
 template_parameters = ""
+software_agent_index = 0
+
+# A software agent has the same fields as a claim generator info.
+[builder.actions.templates.software_agent]
+name = "My Service"
 
 # Multiple templates can be specified.
 [[builder.actions.templates]]
