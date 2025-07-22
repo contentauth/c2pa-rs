@@ -58,7 +58,7 @@ impl SignerSettings {
     ///
     /// If the signer settings aren't specified, this function will return [Error::MissingSignerSettings][crate::Error::MissingSignerSettings].
     pub fn signer() -> Result<Box<dyn Signer>> {
-        let signer_info = Settings::get_value::<Option<SignerSettings>>("builder.signer");
+        let signer_info = Settings::get_value::<Option<SignerSettings>>("signer");
         match signer_info {
             Ok(Some(signer_info)) => match signer_info {
                 SignerSettings::Local {
@@ -181,7 +181,7 @@ pub mod tests {
         let (sign_cert, private_key) = test_signer::cert_chain_and_private_key_for_alg(alg);
         Settings::from_toml(
             &toml::toml! {
-                [builder.signer.local]
+                [signer.local]
                 alg = (alg.to_string())
                 sign_cert = (String::from_utf8(sign_cert.to_vec()).unwrap())
                 private_key = (String::from_utf8(private_key.to_vec()).unwrap())
@@ -213,7 +213,7 @@ pub mod tests {
 
         Settings::from_toml(
             &toml::toml! {
-                [builder.signer.remote]
+                [signer.remote]
                 url = (server.base_url())
                 alg = (alg.to_string())
                 sign_cert = (String::from_utf8(sign_cert.to_vec()).unwrap())

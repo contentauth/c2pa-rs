@@ -407,7 +407,7 @@ impl Settings {
         Ok(toml::to_string_pretty(&settings)?)
     }
 
-    /// Returns the construct signer from the `builder.signer` field.
+    /// Returns the construct signer from the `signer` field.
     ///
     /// If the signer settings aren't specified, this function will return [Error::MissingSignerSettings][crate::Error::MissingSignerSettings].
     #[inline]
