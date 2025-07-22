@@ -158,9 +158,9 @@ pub(crate) struct ClaimGeneratorInfoSettings {
     /// A human readable string of the product's version.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub version: Option<String>,
-    /// Hashed URI to the icon (either embedded or remote).
+    /// Reference to an icon.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub icon: Option<UriOrResource>,
+    pub icon: Option<ResourceRef>,
     /// Settings for the claim generator info's operating system field.
     pub operating_system: ClaimGeneratorInfoOSSettings,
     /// Any other values that are not part of the standard.
@@ -175,7 +175,7 @@ impl TryFrom<ClaimGeneratorInfoSettings> for ClaimGeneratorInfo {
         Ok(ClaimGeneratorInfo {
             name: value.name,
             version: value.version,
-            icon: value.icon,
+            icon: value.icon.map(UriOrResource::ResourceRef),
             operating_system: match value.operating_system.infer {
                 true => Some(consts::OS.to_owned()),
                 false => value.operating_system.name,
@@ -201,14 +201,14 @@ pub(crate) struct ActionTemplateSettings {
     /// The software agent that performed the action.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub software_agent: Option<ClaimGeneratorInfoSettings>,
-    // TODO: change this to use names
+    // TODO: change this to use string names
     /// 0-based index into the softwareAgents array
     #[serde(skip_serializing_if = "Option::is_none")]
     pub software_agent_index: Option<usize>,
     /// One of the defined URI values at `<https://cv.iptc.org/newscodes/digitalsourcetype/>`
     #[serde(skip_serializing_if = "Option::is_none")]
     pub source_type: Option<String>,
-    // TODO: handle paths/urls
+    // TODO: handle paths/urls and document in the sample c2pa.toml
     /// Reference to an icon.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub icon: Option<ResourceRef>,

@@ -154,7 +154,16 @@ impl Signer for RemoteSigner {
 pub mod tests {
     #![allow(clippy::unwrap_used)]
 
-    use crate::{settings::Settings, utils::test_signer, SigningAlg};
+    use httpmock::{Method::POST, Mock, MockServer};
+
+    use crate::{create_signer, settings::Settings, utils::test_signer, SigningAlg};
+
+    fn remote_signer_mock_server<'a>(server: &'a MockServer, signed_bytes: &[u8]) -> Mock<'a> {
+        server.mock(|when, then| {
+            when.method(POST);
+            then.status(200).body(signed_bytes);
+        })
+    }
 
     #[test]
     fn test_make_test_signer() {
@@ -181,16 +190,43 @@ pub mod tests {
         )
         .unwrap();
 
-        let signers = [Settings::signer().unwrap()];
-        for signer in signers {
-            assert_eq!(signer.alg(), alg);
-            assert_eq!(signer.time_authority_url(), None);
-            assert!(signer.sign(&[1, 2, 3]).is_ok());
-        }
+        let signer = Settings::signer().unwrap();
+        assert_eq!(signer.alg(), alg);
+        assert_eq!(signer.time_authority_url(), None);
+        assert!(signer.sign(&[1, 2, 3]).is_ok());
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn test_make_remote_signer() {
-        // TODO: setup mini http server to handle this -------------------------------------------------------------------------
+        #[cfg(target_os = "wasi")]
+        Settings::reset().unwrap();
+
+        let alg = SigningAlg::Ps384;
+        let (sign_cert, private_key) = test_signer::cert_chain_and_private_key_for_alg(alg);
+
+        let signer = create_signer::from_keys(sign_cert, private_key, alg, None).unwrap();
+        let signed_bytes = signer.sign(&[1, 2, 3]).unwrap();
+
+        let server = MockServer::start();
+        let mock = remote_signer_mock_server(&server, &signed_bytes);
+
+        Settings::from_toml(
+            &toml::toml! {
+                [builder.signer.remote]
+                url = (server.base_url())
+                alg = (alg.to_string())
+                sign_cert = (String::from_utf8(sign_cert.to_vec()).unwrap())
+            }
+            .to_string(),
+        )
+        .unwrap();
+
+        let signer = Settings::signer().unwrap();
+        assert_eq!(signer.alg(), alg);
+        assert_eq!(signer.time_authority_url(), None);
+        assert_eq!(signer.sign(&[1, 2, 3]).unwrap(), signed_bytes);
+
+        mock.assert();
     }
 }
