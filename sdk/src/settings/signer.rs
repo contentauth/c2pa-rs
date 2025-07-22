@@ -154,7 +154,7 @@ impl Signer for RemoteSigner {
 pub mod tests {
     #![allow(clippy::unwrap_used)]
 
-    use crate::{create_signer, settings::Settings, utils::test_signer, SigningAlg};
+    use crate::{settings::Settings, utils::test_signer, SigningAlg};
 
     #[cfg(not(target_arch = "wasm32"))]
     fn remote_signer_mock_server<'a>(
@@ -202,6 +202,8 @@ pub mod tests {
     #[test]
     fn test_make_remote_signer() {
         use httpmock::MockServer;
+
+        use crate::create_signer;
 
         #[cfg(target_os = "wasi")]
         Settings::reset().unwrap();

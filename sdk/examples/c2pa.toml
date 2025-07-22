@@ -29,32 +29,32 @@ remote_manifest_fetch = true
 # The signer can be retrieved via the `Settings::signer` function.
 [signer]
 
-# # A signer can be loaded in the API with the function `Settings::signer`.
-# [signer.local]
-# # Algorithm to use for signing.
-# alg = "ps256"
-# # Certificate used for signing (PEM format).
-# sign_cert = ""
-# # Private key used for signing (PEM format).
-# private_key = ""
-# # Time stamp authority URL for signing.
-# tsa_url = ""
-
-# Alternatively, you can specify a remote signer, which is also loaded
-# via `Settings::signer`.
-#
-# Note that you may not specify both a local and remote signer at the same time.
-[signer.remote]
-# URL to the signer used for signing.
-#
-# A POST request with a byte stream will be sent to this URL.
-url = "https://www.google.com"
+# A signer can be loaded in the API with the function `Settings::signer`.
+[signer.local]
 # Algorithm to use for signing.
 alg = "ps256"
 # Certificate used for signing (PEM format).
 sign_cert = ""
+# Private key used for signing (PEM format).
+private_key = ""
 # Time stamp authority URL for signing.
 tsa_url = ""
+
+# # Alternatively, you can specify a remote signer, which is also loaded
+# # via `Settings::signer`.
+# #
+# # Note that you may not specify both a local and remote signer at the same time.
+# [signer.remote]
+# # URL to the signer used for signing.
+# #
+# # A POST request with a byte stream will be sent to this URL.
+# url = "https://www.google.com"
+# # Algorithm to use for signing.
+# alg = "ps256"
+# # Certificate used for signing (PEM format).
+# sign_cert = ""
+# # Time stamp authority URL for signing.
+# tsa_url = ""
 
 # Configuration for the `Builder`.
 [builder]

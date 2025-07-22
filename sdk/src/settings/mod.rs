@@ -775,6 +775,9 @@ pub mod tests {
 
     #[test]
     fn test_load_settings_from_sample_toml() {
+        #[cfg(target_os = "wasi")]
+        Settings::reset().unwrap();
+
         let toml = include_bytes!("../../examples/c2pa.toml");
         Settings::from_toml(std::str::from_utf8(toml).unwrap()).unwrap();
     }
