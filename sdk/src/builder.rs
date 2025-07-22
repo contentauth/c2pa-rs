@@ -1458,9 +1458,10 @@ mod tests {
         cbor_types::value_cbor_to_type,
         crypto::raw_signature::SigningAlg,
         hash_stream_by_alg,
+        settings::Settings,
         utils::{test::write_jpeg_placeholder_stream, test_signer::test_signer},
         validation_results::ValidationState,
-        HashedUri, Reader, Settings,
+        HashedUri, Reader,
     };
 
     #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]

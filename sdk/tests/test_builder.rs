@@ -13,7 +13,7 @@
 
 use std::io::{self, Cursor};
 
-use c2pa::{validation_status, Builder, Reader, Result, Settings, ValidationState};
+use c2pa::{settings::Settings, validation_status, Builder, Reader, Result, ValidationState};
 
 mod common;
 #[cfg(all(feature = "add_thumbnails", feature = "file_io"))]

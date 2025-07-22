@@ -16,8 +16,8 @@ use std::io::{Cursor, Seek};
 
 use anyhow::Result;
 use c2pa::{
-    crypto::raw_signature::SigningAlg, validation_results::ValidationState, Builder,
-    CallbackSigner, Reader, Settings,
+    crypto::raw_signature::SigningAlg, settings::Settings, validation_results::ValidationState,
+    Builder, CallbackSigner, Reader,
 };
 use serde_json::json;
 

@@ -80,7 +80,7 @@ tsa_url = ""
 name = "My Service"
 # A human readable string of the product's version.
 version = "1.0.0"
-# URL to the icon.
+# TODO: document
 icon = ""
 # The operating system the claim generator is running on.
 operating_system.name = "macOS"

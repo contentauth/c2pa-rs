@@ -21,7 +21,8 @@ mod integration_1 {
         assertions::{c2pa_action, Action, Actions, AssetReference},
         create_signer,
         crypto::raw_signature::SigningAlg,
-        Builder, ClaimGeneratorInfo, Ingredient, Reader, Result, Settings, Signer,
+        settings::Settings,
+        Builder, ClaimGeneratorInfo, Ingredient, Reader, Result, Signer,
     };
     #[allow(unused)] // different code path for WASI
     use tempfile::{tempdir, TempDir};

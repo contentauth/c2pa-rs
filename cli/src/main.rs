@@ -27,8 +27,8 @@ use std::{
 
 use anyhow::{anyhow, bail, Context, Result};
 use c2pa::{
-    identity::validator::CawgValidator, Builder, ClaimGeneratorInfo, Error, Ingredient,
-    ManifestDefinition, Reader, Settings, Signer,
+    identity::validator::CawgValidator, settings::Settings, Builder, ClaimGeneratorInfo, Error,
+    Ingredient, ManifestDefinition, Reader, Signer,
 };
 use clap::{Parser, Subcommand};
 use etcetera::BaseStrategy;

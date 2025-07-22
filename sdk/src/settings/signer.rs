@@ -154,7 +154,7 @@ impl Signer for RemoteSigner {
 pub mod tests {
     #![allow(clippy::unwrap_used)]
 
-    use crate::{utils::test_signer, Settings, SigningAlg};
+    use crate::{settings::Settings, utils::test_signer, SigningAlg};
 
     #[test]
     fn test_make_test_signer() {
