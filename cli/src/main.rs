@@ -142,6 +142,8 @@ struct CliArgs {
 
     // TODO: ideally this would be called config, not to be confused with the other config arg
     /// Path to the config file.
+    ///
+    /// By default config files are read from `$XDG_CONFIG_HOME/c2pa/c2pa.toml`.
     #[clap(
         long,
         env = "C2PATOOL_SETTINGS",

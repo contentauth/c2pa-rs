@@ -395,6 +395,9 @@ pub mod tests {
 
     #[test]
     fn test_make_thumbnail_from_stream() {
+        #[cfg(target_os = "wasi")]
+        Settings::reset().unwrap();
+
         Settings::from_toml(
             &toml::toml! {
                 [builder.thumbnail]
@@ -427,6 +430,9 @@ pub mod tests {
 
     #[test]
     fn test_make_thumbnail_from_stream_with_output() {
+        #[cfg(target_os = "wasi")]
+        Settings::reset().unwrap();
+
         Settings::from_toml(
             &toml::toml! {
                 [builder.thumbnail]
@@ -455,6 +461,9 @@ pub mod tests {
 
     #[test]
     fn test_make_thumbnail_bytes_from_stream() {
+        #[cfg(target_os = "wasi")]
+        Settings::reset().unwrap();
+
         Settings::from_toml(
             &toml::toml! {
                 [builder.thumbnail]
@@ -482,6 +491,9 @@ pub mod tests {
     fn test_make_thumbnail_bytes_from_path() {
         use std::path::Path;
 
+        #[cfg(target_os = "wasi")]
+        Settings::reset().unwrap();
+
         Settings::from_toml(
             &toml::toml! {
                 [builder.thumbnail]
@@ -505,6 +517,9 @@ pub mod tests {
 
     #[test]
     fn test_make_thumbnail_with_prefer_smallest_format() {
+        #[cfg(target_os = "wasi")]
+        Settings::reset().unwrap();
+
         Settings::from_toml(
             &toml::toml! {
                 [builder.thumbnail]
@@ -528,6 +543,9 @@ pub mod tests {
 
     #[test]
     fn test_make_thumbnail_with_forced_format() {
+        #[cfg(target_os = "wasi")]
+        Settings::reset().unwrap();
+
         Settings::from_toml(
             &toml::toml! {
                 [builder.thumbnail]
@@ -552,6 +570,9 @@ pub mod tests {
 
     #[test]
     fn test_make_thumbnail_with_long_edge() {
+        #[cfg(target_os = "wasi")]
+        Settings::reset().unwrap();
+
         Settings::from_toml(
             &toml::toml! {
                 [builder.thumbnail]
@@ -577,6 +598,9 @@ pub mod tests {
 
     #[test]
     fn test_make_thumbnail_and_ignore_errors() {
+        #[cfg(target_os = "wasi")]
+        Settings::reset().unwrap();
+
         Settings::from_toml(
             &toml::toml! {
                 [builder.thumbnail]

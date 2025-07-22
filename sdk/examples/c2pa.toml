@@ -39,6 +39,38 @@ remote_manifest_fetch = true
 # Use strict c2pa v1 validation.
 strict_v1_validation = false
 
+# Configuration for a signer.
+#
+# The signer can be retrieved via the `Settings::signer` function.
+[signer]
+
+# A signer can be loaded in the API with the function `Settings::signer`.
+[signer.local]
+# Algorithm to use for signing.
+alg = "sha256"
+# Certificate used for signing (PEM format).
+sign_cert = ""
+# Private key used for signing (PEM format).
+private_key = ""
+# Time stamp authority URL for signing.
+tsa_url = ""
+
+# Alternatively, you can specify a remote signer, which is also loaded
+# via `Settings::signer`.
+#
+# Note that you may not specify both a local and remote signer at the same time.
+[signer.remote]
+# URL to the signer used for signing.
+#
+# A POST request with a byte stream will be sent to this URL.
+url = "https://www.google.com"
+# Algorithm to use for signing.
+alg = "sha256"
+# Certificate used for signing (PEM format).
+sign_cert = ""
+# Time stamp authority URL for signing.
+tsa_url = ""
+
 # Configuration for the `Builder`.
 [builder]
 
@@ -129,59 +161,6 @@ enabled = true
 #
 # Note this field is optional for the c2pa.placed action.
 source_type = "http://c2pa.org/digitalsourcetype/empty"
-
-# A signer can be loaded in the API with the function `Settings::signer`.
-[builder.signer.local]
-# Algorithm to use for signing.
-alg = "sha256"
-# Certificate used for signing (PEM format).
-sign_cert = ""
-# Private key used for signing (PEM format).
-private_key = ""
-# Time stamp authority URL for signing.
-tsa_url = ""
-
-# Alternatively, you can specify a remote signer, which is also loaded
-# via `Settings::signer`.
-#
-# Note that you may not specify both a local and remote signer at the same time.
-[builder.signer.remote]
-# URL to the signer used for signing.
-#
-# A POST request with a byte stream will be sent to this URL.
-url = "https://www.google.com"
-# Algorithm to use for signing.
-alg = "sha256"
-# Certificate used for signing (PEM format).
-sign_cert = ""
-# Time stamp authority URL for signing.
-tsa_url = ""
-
-# Similar to a normal signers, you can specify CAWG signers, loadable with the
-# function `Settings::cawg_signer`.
-[builder.cawg_signer.local]
-# Algorithm to use for signing.
-alg = "sha256"
-# Certificate used for signing (PEM format).
-sign_cert = ""
-# Private key used for signing (PEM format).
-private_key = ""
-# Time stamp authority URL for signing.
-tsa_url = ""
-
-# The same rules that apply for normal signers also apply for CAWG signers. You may
-# only specify either a local or remote, not both.
-[builder.cawg_signer.remote]
-# URL to the signer used for signing.
-#
-# A POST request with a byte stream will be sent to this URL.
-url = "https://www.google.com"
-# Algorithm to use for signing.
-alg = "sha256"
-# Certificate used for signing (PEM format).
-sign_cert = ""
-# Time stamp authority URL for signing.
-tsa_url = ""
 
 # Settings for automatic thumbnail generation.
 [builder.thumbnail]

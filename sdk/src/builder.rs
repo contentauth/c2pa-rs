@@ -1709,6 +1709,9 @@ mod tests {
 
     #[test]
     fn test_builder_settings_auto_created() {
+        #[cfg(target_os = "wasi")]
+        Settings::reset().unwrap();
+
         Settings::from_toml(
             &toml::toml! {
                 [builder.actions.auto_created_action]
@@ -1744,6 +1747,9 @@ mod tests {
 
     #[test]
     fn test_builder_settings_auto_opened() {
+        #[cfg(target_os = "wasi")]
+        Settings::reset().unwrap();
+
         Settings::from_toml(
             &toml::toml! {
                 [builder.actions.auto_opened_action]
@@ -1752,7 +1758,6 @@ mod tests {
             .to_string(),
         )
         .unwrap();
-        settings::set_settings_value("builder.actions.auto_opened_action.enabled", true).unwrap();
 
         let mut builder = Builder::new();
         builder
@@ -1802,6 +1807,9 @@ mod tests {
 
     #[test]
     fn test_builder_settings_auto_placed() {
+        #[cfg(target_os = "wasi")]
+        Settings::reset().unwrap();
+
         Settings::from_toml(
             &toml::toml! {
                 [builder.actions.auto_created_action]
@@ -1890,6 +1898,9 @@ mod tests {
 
     #[test]
     fn test_builder_settings_all_actions_included() {
+        #[cfg(target_os = "wasi")]
+        Settings::reset().unwrap();
+
         Settings::from_toml(
             &toml::toml! {
                 [builder.actions]
@@ -1927,6 +1938,9 @@ mod tests {
 
     #[test]
     fn test_builder_settings_action_templates() {
+        #[cfg(target_os = "wasi")]
+        Settings::reset().unwrap();
+
         Settings::from_toml(
             &toml::toml! {
                 [builder.actions.auto_created_action]
@@ -1985,6 +1999,9 @@ mod tests {
 
     #[test]
     fn test_builder_settings_actions() {
+        #[cfg(target_os = "wasi")]
+        Settings::reset().unwrap();
+
         Settings::from_toml(
             &toml::toml! {
                 [builder.actions.auto_created_action]

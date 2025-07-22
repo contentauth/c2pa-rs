@@ -33,7 +33,8 @@ pub const CAI_INGREDIENT_IDS: &str = "org.cai.ingredientIds";
 /// Constants indicating from which source a digital image was created.
 ///
 /// These constants are used in conjunction with [`Actions::source_type`].
-pub mod source_type {
+#[allow(unused)]
+pub(crate) mod source_type {
     /// Media whose digital content is effectively empty, such as a blank canvas or zero-length video.
     pub const EMPTY: &str = "http://c2pa.org/digitalsourcetype/empty";
     /// Data that is the result of algorithmically using a model derived from sampled content and data.

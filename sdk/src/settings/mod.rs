@@ -12,6 +12,7 @@
 // each license.
 
 pub(crate) mod builder;
+pub(crate) mod signer;
 
 #[cfg(feature = "file_io")]
 use std::path::Path;
@@ -22,6 +23,7 @@ use std::{
 
 use config::{Config, FileFormat};
 use serde_derive::{Deserialize, Serialize};
+use signer::SignerSettings;
 
 use crate::{crypto::base64, settings::builder::BuilderSettings, Error, Result, Signer};
 
@@ -248,6 +250,8 @@ pub struct Settings {
     core: Core,
     verify: Verify,
     builder: BuilderSettings,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    signer: Option<SignerSettings>,
 }
 
 impl Settings {
@@ -408,15 +412,7 @@ impl Settings {
     /// If the signer settings aren't specified, this function will return [Error::MissingSignerSettings][crate::Error::MissingSignerSettings].
     #[inline]
     pub fn signer() -> Result<Box<dyn Signer>> {
-        BuilderSettings::signer()
-    }
-
-    /// Returns the construct signer from the `builder.cawg_signer` field.
-    ///
-    /// If the signer settings aren't specified, this function will return [Error::MissingSignerSettings][crate::Error::MissingSignerSettings].
-    #[inline]
-    pub fn cawg_signer() -> Result<Box<dyn Signer>> {
-        BuilderSettings::cawg_signer()
+        SignerSettings::signer()
     }
 }
 
@@ -429,6 +425,7 @@ impl Default for Settings {
             core: Default::default(),
             verify: Default::default(),
             builder: Default::default(),
+            signer: None,
         }
     }
 }
@@ -439,6 +436,9 @@ impl SettingsValidate for Settings {
             return Err(Error::VersionCompatibility(
                 "settings version too new".into(),
             ));
+        }
+        if let Some(signer) = &self.signer {
+            signer.validate()?;
         }
         self.trust.validate()?;
         self.core.validate()?;

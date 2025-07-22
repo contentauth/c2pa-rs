@@ -11,16 +11,15 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use std::{collections::HashMap, env::consts, io::Read};
+use std::{collections::HashMap, env::consts};
 
 use serde::{Deserialize, Serialize};
 
 use crate::{
     assertions::{Action, ActionTemplate},
-    create_signer,
     resource_store::UriOrResource,
-    settings::{Settings, SettingsValidate},
-    ClaimGeneratorInfo, Error, Result, Signer, SigningAlg,
+    settings::SettingsValidate,
+    ClaimGeneratorInfo, Error, ResourceRef, Result,
 };
 
 // TODO: thumbnails/previews for audio?
@@ -114,50 +113,6 @@ impl SettingsValidate for ThumbnailSettings {
     }
 }
 
-/// Settings for configuring a local or remote [Signer][crate::Signer].
-///
-/// A [Signer][crate::Signer] can be obtained by calling [BuilderSettings::signer].
-#[allow(unused)]
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(rename_all = "lowercase")]
-pub(crate) enum SignerSettings {
-    /// A signer configured locally.
-    Local {
-        // Algorithm to use for signing.
-        alg: SigningAlg,
-        // Certificate used for signing (PEM format).
-        sign_cert: String,
-        // Private key used for signing (PEM format).
-        private_key: String,
-        // Time stamp authority URL for signing.
-        tsa_url: Option<String>,
-    },
-    /// A signer configured remotely.
-    Remote {
-        // URL to the signer used for signing.
-        //
-        // A POST request with a byte stream will be sent to this URL.
-        url: String,
-        // Algorithm to use for signing.
-        alg: SigningAlg,
-        // Certificate used for signing (PEM format).
-        sign_cert: String,
-        // Time stamp authority URL for signing.
-        tsa_url: Option<String>,
-    },
-}
-
-impl SettingsValidate for SignerSettings {
-    fn validate(&self) -> Result<()> {
-        #[cfg(target_arch = "wasm32")]
-        if matches!(self, SignerSettings::Remote { .. }) {
-            return Err(Error::WasmNoRemoteSigner);
-        }
-
-        Ok(())
-    }
-}
-
 /// Settings for the auto actions (e.g. created, opened, placed).
 #[allow(unused)]
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -243,7 +198,7 @@ impl TryFrom<ClaimGeneratorInfoSettings> for ClaimGeneratorInfo {
 //       for template_parameters. Another issue is that some fields are defined in camelCase in the original struct.
 /// Settings for an action template.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-pub struct ActionTemplateSettings {
+pub(crate) struct ActionTemplateSettings {
     /// The label associated with this action. See ([c2pa_action][crate::assertions::actions::c2pa_action]).
     pub action: String,
     /// The software agent that performed the action.
@@ -255,9 +210,10 @@ pub struct ActionTemplateSettings {
     /// One of the defined URI values at `<https://cv.iptc.org/newscodes/digitalsourcetype/>`
     #[serde(skip_serializing_if = "Option::is_none")]
     pub source_type: Option<String>,
+    // TODO: handle paths/urls
     /// Reference to an icon.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub icon: Option<UriOrResource>,
+    pub icon: Option<ResourceRef>,
     /// Description of the template.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
@@ -275,7 +231,7 @@ impl TryFrom<ActionTemplateSettings> for ActionTemplate {
             software_agent: value.software_agent,
             software_agent_index: value.software_agent_index,
             source_type: value.source_type,
-            icon: value.icon,
+            icon: value.icon.map(UriOrResource::ResourceRef),
             description: value.description,
             template_parameters: value
                 .template_parameters
@@ -366,12 +322,6 @@ impl SettingsValidate for ActionsSettings {
 #[allow(unused)]
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize, Default)]
 pub(crate) struct BuilderSettings {
-    /// Information about the signer used for signing.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub signer: Option<SignerSettings>,
-    /// Information about the CAWG signer used for CAWG signing.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub cawg_signer: Option<SignerSettings>,
     /// Claim generator info that is automatically added to the builder.
     ///
     /// Note that this information will prepend any claim generator info
@@ -388,114 +338,8 @@ pub(crate) struct BuilderSettings {
 
 impl SettingsValidate for BuilderSettings {
     fn validate(&self) -> Result<()> {
-        if let Some(signer) = &self.signer {
-            signer.validate()?;
-        }
-        if let Some(cawg_signer) = &self.cawg_signer {
-            cawg_signer.validate()?;
-        }
         self.actions.validate()?;
         self.thumbnail.validate()
-    }
-}
-
-impl BuilderSettings {
-    // TODO: add async signer?
-    /// Returns the constructed signer from the [BuilderSettings::signer] field.
-    ///
-    /// If the signer settings aren't specified, this function will return [Error::MissingSignerSettings][crate::Error::MissingSignerSettings].
-    pub fn signer() -> Result<Box<dyn Signer>> {
-        BuilderSettings::signer_from_settings("builder.signer")
-    }
-
-    // TODO: add async signer?
-    /// Returns the constructed CAWG signer from the [BuilderSettings::cawg_signer] field.
-    ///
-    /// This function is used in conjunction with [IdentityAssertionSigner::new][crate::identity::builder::IdentityAssertionSigner::new].
-    ///
-    /// If the signer settings aren't specified, this function will return [Error::MissingSignerSettings][crate::Error::MissingSignerSettings].
-    pub fn cawg_signer() -> Result<Box<dyn Signer>> {
-        BuilderSettings::signer_from_settings("builder.cawg_signer")
-    }
-
-    fn signer_from_settings(settings_path: &'static str) -> Result<Box<dyn Signer>> {
-        let signer_info = Settings::get_value::<Option<SignerSettings>>(settings_path);
-        match signer_info {
-            Ok(Some(signer_info)) => match signer_info {
-                SignerSettings::Local {
-                    alg,
-                    sign_cert,
-                    private_key,
-                    tsa_url,
-                } => create_signer::from_keys(
-                    sign_cert.as_bytes(),
-                    private_key.as_bytes(),
-                    alg,
-                    tsa_url.to_owned(),
-                ),
-                #[cfg(not(target_arch = "wasm32"))]
-                SignerSettings::Remote {
-                    url,
-                    alg,
-                    sign_cert,
-                    tsa_url,
-                } => Ok(Box::new(RemoteSigner {
-                    url,
-                    alg,
-                    reserve_size: 10000 + sign_cert.len(),
-                    certs: vec![sign_cert.into_bytes()],
-                    tsa_url,
-                })),
-                #[cfg(target_arch = "wasm32")]
-                SignerSettings::Remote { .. } => Err(Error::WasmNoRemoteSigner),
-            },
-            #[cfg(test)]
-            _ => Ok(crate::utils::test_signer::test_signer(SigningAlg::Ps256)),
-            #[cfg(not(test))]
-            _ => Err(Error::MissingSignerSettings),
-        }
-    }
-}
-
-// TODO: move this to a separate file?
-#[cfg(not(target_arch = "wasm32"))]
-#[derive(Debug)]
-pub(crate) struct RemoteSigner {
-    url: String,
-    alg: SigningAlg,
-    certs: Vec<Vec<u8>>,
-    reserve_size: usize,
-    tsa_url: Option<String>,
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-impl Signer for RemoteSigner {
-    fn sign(&self, data: &[u8]) -> Result<Vec<u8>> {
-        let response = ureq::post(&self.url)
-            .send_bytes(data)
-            .map_err(|_| Error::FailedToRemoteSign)?;
-        let mut bytes: Vec<u8> = Vec::with_capacity(self.reserve_size);
-        response
-            .into_reader()
-            .take(self.reserve_size as u64)
-            .read_to_end(&mut bytes)?;
-        Ok(bytes)
-    }
-
-    fn alg(&self) -> SigningAlg {
-        self.alg
-    }
-
-    fn certs(&self) -> Result<Vec<Vec<u8>>> {
-        Ok(self.certs.clone())
-    }
-
-    fn reserve_size(&self) -> usize {
-        self.reserve_size
-    }
-
-    fn time_authority_url(&self) -> Option<String> {
-        self.tsa_url.clone()
     }
 }
 
@@ -504,51 +348,7 @@ pub mod tests {
     #![allow(clippy::unwrap_used)]
 
     use super::*;
-    use crate::{assertions::source_type, utils::test_signer};
-
-    #[test]
-    fn test_make_test_signer() {
-        // Makes a default test signer.
-        assert!(Settings::signer().is_ok());
-        assert!(Settings::cawg_signer().is_ok());
-    }
-
-    #[test]
-    fn test_make_local_signer() {
-        // Testing with a different alg than the default test signer.
-        let alg = SigningAlg::Ps384;
-        let (sign_cert, private_key) = test_signer::cert_chain_and_private_key_for_alg(alg);
-        Settings::from_toml(
-            &toml::toml! {
-                [builder.signer.local]
-                alg = (alg.to_string())
-                sign_cert = (String::from_utf8(sign_cert.to_vec()).unwrap())
-                private_key = (String::from_utf8(private_key.to_vec()).unwrap())
-
-                [builder.cawg_signer.local]
-                alg = (alg.to_string())
-                sign_cert = (String::from_utf8(sign_cert.to_vec()).unwrap())
-                private_key = (String::from_utf8(private_key.to_vec()).unwrap())
-            }
-            .to_string(),
-        )
-        .unwrap();
-
-        let signers = [
-            Settings::signer().unwrap(),
-            Settings::cawg_signer().unwrap(),
-        ];
-        for signer in signers {
-            assert_eq!(signer.alg(), alg);
-            assert_eq!(signer.time_authority_url(), None);
-            assert!(signer.sign(&[1, 2, 3]).is_ok());
-        }
-    }
-
-    #[test]
-    fn test_make_remote_signer() {
-        // TODO: how do we normally test remote things?
-    }
+    use crate::assertions::source_type;
 
     #[test]
     fn test_auto_created_action_without_source_type() {
