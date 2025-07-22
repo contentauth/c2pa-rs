@@ -125,6 +125,7 @@ pub mod status_tracker;
 /// The validation_results module contains the definitions for the validation results that are part of the C2PA specification.
 pub mod validation_results;
 
+mod metadata_schemas;
 /// The validation_status module contains the definitions for the validation status that are part of the C2PA specification.
 #[doc(hidden)]
 pub mod validation_status;

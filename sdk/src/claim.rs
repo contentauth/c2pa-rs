@@ -32,7 +32,7 @@ use crate::{
     assertions::{
         self, c2pa_action,
         labels::{self, ACTIONS, ASSERTION_STORE, BMFF_HASH, CLAIM_THUMBNAIL, DATABOX_STORE},
-        Actions, AssetType, BmffHash, BoxHash, DataBox, DataHash, Ingredient, Metadata,
+        Actions, AssetType, BmffHash, BoxHash, DataBox, DataHash, Ingredient, Meta, Metadata,
         Relationship, V2_DEPRECATED_ACTIONS,
     },
     asset_io::CAIRead,
@@ -60,6 +60,7 @@ use crate::{
     },
     jumbf_io::get_assetio_handler,
     log_item,
+    metadata_schemas::METADATA_PROPERTIES,
     resource_store::UriOrResource,
     salt::{DefaultSalt, SaltGenerator, NO_SALT},
     settings::get_settings_value,
@@ -3170,7 +3171,32 @@ impl Claim {
         // check action rules
         Claim::verify_actions(claim, svi, validation_log)?;
 
+        for metadata_assertion in claim.metadata_assertions() {
+            let metadata = Meta::from_assertion(metadata_assertion.assertion())?;
+            if !metadata
+                .value
+                .keys()
+                .all(|m| METADATA_PROPERTIES.contains(&m.as_str()))
+            {
+                log_item!(
+                    claim.uri(),
+                    "metadata assertion contains disallowed field",
+                    "verify_internal"
+                )
+                .validation_status(validation_status::ASSERTION_METADATA_DISALLOWED)
+                .failure(
+                    validation_log,
+                    Error::ValidationRule("fields must be in allowed list".into()),
+                )?;
+            }
+        }
         Ok(())
+    }
+
+    pub fn metadata_assertions(&self) -> Vec<&ClaimAssertion> {
+        let dummy_data = AssertionData::Cbor(Vec::new());
+        let dummy_ingredient = Assertion::new(assertions::labels::METADATA, None, dummy_data);
+        self.assertions_by_type(&dummy_ingredient, None)
     }
 
     /// Return list of data hash assertions
