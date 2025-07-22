@@ -154,13 +154,15 @@ impl Signer for RemoteSigner {
 pub mod tests {
     #![allow(clippy::unwrap_used)]
 
-    use httpmock::{Method::POST, Mock, MockServer};
-
     use crate::{create_signer, settings::Settings, utils::test_signer, SigningAlg};
 
-    fn remote_signer_mock_server<'a>(server: &'a MockServer, signed_bytes: &[u8]) -> Mock<'a> {
+    #[cfg(not(target_arch = "wasm32"))]
+    fn remote_signer_mock_server<'a>(
+        server: &'a httpmock::MockServer,
+        signed_bytes: &[u8],
+    ) -> httpmock::Mock<'a> {
         server.mock(|when, then| {
-            when.method(POST);
+            when.method(httpmock::Method::POST);
             then.status(200).body(signed_bytes);
         })
     }
@@ -199,6 +201,8 @@ pub mod tests {
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn test_make_remote_signer() {
+        use httpmock::MockServer;
+
         #[cfg(target_os = "wasi")]
         Settings::reset().unwrap();
 
