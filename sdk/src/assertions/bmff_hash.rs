@@ -1050,7 +1050,7 @@ impl BmffHash {
         local_id: usize,
         unique_id: Option<usize>,
     ) -> crate::Result<()> {
-        let max_proofs = get_settings_value::<usize>("core.merkle_tree_max_proofs").unwrap_or(5);
+        let max_proofs = get_settings_value::<usize>("core.merkle_tree_max_proofs")?;
 
         if !output_dir.exists() {
             std::fs::create_dir_all(output_dir)?;
@@ -1347,7 +1347,7 @@ impl BmffHash {
         box_info: &BoxInfoLite,
         merkle_map: &mut MerkleMap,
     ) -> crate::Result<Vec<Vec<u8>>> {
-        let max_proofs = get_settings_value::<usize>("core.merkle_tree_max_proofs").unwrap_or(5);
+        let max_proofs = get_settings_value::<usize>("core.merkle_tree_max_proofs")?;
 
         // build the Merkle tree
         let m_tree = self.create_merkle_tree_for_merkle_map(reader, box_info, merkle_map)?;
