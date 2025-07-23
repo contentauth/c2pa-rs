@@ -382,7 +382,7 @@ impl BmffHash {
     {
         if self.is_remote_hash() {
             return Err(Error::BadParam(
-                "asset hash is remote, not yet supported".to_owned(),
+                "remote hash has been deprecated".to_owned(),
             ));
         }
 
