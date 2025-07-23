@@ -163,6 +163,7 @@ pub(crate) struct Core {
     salt_jumbf_boxes: bool,
     prefer_box_hash: bool,
     merkle_tree_chunk_size_in_kb: Option<usize>,
+    merkle_tree_max_proofs: usize,
     compress_manifests: bool,
     max_memory_usage: Option<u64>,
 }
@@ -175,6 +176,7 @@ impl Default for Core {
             salt_jumbf_boxes: true,
             prefer_box_hash: false,
             merkle_tree_chunk_size_in_kb: None,
+            merkle_tree_max_proofs: 5,
             compress_manifests: true,
             max_memory_usage: None,
         }

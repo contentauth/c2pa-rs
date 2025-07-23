@@ -6889,6 +6889,39 @@ pub mod tests {
     }
 
     #[test]
+    fn test_jumbf_generation_with_bmffv3_fixed_block_size_no_proof() {
+        // test adding to actual image
+        let ap = fixture_path("video1.mp4");
+        let temp_dir = tempdirectory().expect("temp dir");
+        let op = temp_dir_path(&temp_dir, "video1.mp4");
+
+        // use Merkle tree with 1024 byte chunks an 0 proofs (no UUID boxes)
+        crate::settings::set_settings_value("core.merkle_tree_chunk_size_in_kb", 1).unwrap();
+        crate::settings::set_settings_value("core.merkle_tree_max_proofs", 0).unwrap();
+
+        // Create claims store.
+        let mut store = Store::new();
+
+        // Create a new claim.
+        let claim1 = create_test_claim().unwrap();
+
+        let signer = test_signer(SigningAlg::Ps256);
+
+        // Move the claim to claims list.
+        store.commit_claim(claim1).unwrap();
+        store.save_to_asset(&ap, signer.as_ref(), &op).unwrap();
+
+        let mut report = StatusTracker::default();
+
+        // can we read back in
+        let new_store = Store::load_from_asset(&op, true, &mut report).unwrap();
+
+        assert!(!report.has_any_error());
+
+        println!("store = {new_store}");
+    }
+
+    #[test]
     fn test_jumbf_generation_with_bmffv3_fixed_block_size_stream() {
         // test adding to actual image
         let ap = fixture_path("video1.mp4");
