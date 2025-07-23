@@ -60,7 +60,6 @@ use crate::{
     },
     jumbf_io::get_assetio_handler,
     log_item,
-    metadata_schemas::METADATA_PROPERTIES,
     resource_store::UriOrResource,
     salt::{DefaultSalt, SaltGenerator, NO_SALT},
     settings::get_settings_value,
@@ -3172,12 +3171,8 @@ impl Claim {
         Claim::verify_actions(claim, svi, validation_log)?;
 
         for metadata_assertion in claim.metadata_assertions() {
-            let metadata = Meta::from_assertion(metadata_assertion.assertion())?;
-            if !metadata
-                .value
-                .keys()
-                .all(|m| METADATA_PROPERTIES.contains(&m.as_str()))
-            {
+            let metadata_assertion = Meta::from_assertion(metadata_assertion.assertion())?;
+            if !metadata_assertion.is_valid() {
                 log_item!(
                     claim.uri(),
                     "metadata assertion contains disallowed field",

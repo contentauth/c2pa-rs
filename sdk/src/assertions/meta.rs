@@ -12,7 +12,8 @@
 // each license.
 use std::collections::HashMap;
 
-use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use lazy_static::lazy_static;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::{
@@ -23,8 +24,8 @@ use crate::{
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Meta {
-    #[serde(rename = "@context", skip_serializing_if = "Option::is_none")]
-    context: Option<Value>,
+    #[serde(rename = "@context")]
+    context: HashMap<String, String>,
     #[serde(flatten)]
     pub(crate) value: HashMap<String, Value>,
 }
@@ -34,20 +35,23 @@ impl Meta {
         serde_json::from_slice(json.as_bytes()).map_err(Error::JsonError)
     }
 
-    pub fn set_context(mut self, context: Value) -> Self {
-        self.context = Some(context);
-        self
-    }
+    pub fn is_valid(&self) -> bool {
+        for (namespace, url) in &self.context {
+            if let Some(expected_url) = SCHEMA_URLS.get(namespace.as_str()) {
+                if url != expected_url {return  false}
+            }
+        }
 
-    pub fn insert<S: Into<String>, T: Serialize>(mut self, key: S, value: T) -> Result<Self> {
-        self.value.insert(key.into(), serde_json::to_value(value)?);
-        Ok(self)
-    }
-
-    pub fn get<T: DeserializeOwned>(&self, key: &str) -> Option<T> {
-        self.value
-            .get(key)
-            .and_then(|v| serde_json::from_value(v.clone()).ok())
+         for label in self.value.keys() {
+                if let Some((prefix, property)) = label.split_once(":") {
+                    if let Some(allowed_vals) = ALLOWED_SCHEMAS.get(prefix) {
+                        if !allowed_vals.contains(&property) {
+                            return false
+                        }
+                    }
+                }
+            }
+        true
     }
 }
 
@@ -65,6 +69,379 @@ impl AssertionBase for Meta {
     }
 }
 
+lazy_static! {
+    static ref SCHEMA_URLS: HashMap<&'static str, &'static str> = vec![
+        ("xmp", "http://ns.adobe.com/xap/1.0/"),
+        ("xmpMM", "http://ns.adobe.com/xap/1.0/mm/"),
+        ("xmpTPg", "http://ns.adobe.com/xap/1.0/t/pg/"),
+        ("crs", "http://ns.adobe.com/camera-raw-settings/1.0/"),
+        ("pdf", "http://ns.adobe.com/pdf/1.3/"),
+        ("dc", "http://purl.org/dc/elements/1.1/"),
+        ("Iptc4xmpExt", "http://iptc.org/std/Iptc4xmpExt/2008-02-29/"),
+        ("exif", "http://ns.adobe.com/exif/1.0/"),
+        ("exifEX", "http://cipa.jp/exif/1.0/exifEX"),
+        ("photoshop", "http://ns.adobe.com/photoshop/1.0/"),
+        ("tiff", "http://ns.adobe.com/tiff/1.0/"),
+        ("xmpDM", "http://ns.adobe.com/xmp/1.0/DynamicMedia/"),
+        ("plus", "http://ns.useplus.org/ldf/xmp/1.0/"),
+    ]
+    .into_iter()
+    .collect();
+}
+
+lazy_static! {
+    static ref ALLOWED_SCHEMAS: HashMap<&'static str, Vec<&'static str>> = vec![
+        (
+            "xmp",
+            vec![
+                "CreateDate",
+                "CreatorTool",
+                "Identifier",
+                "Label",
+                "MetadataDate",
+                "ModifyDate",
+                "Rating",
+                "BaseURL",
+                "Nickname",
+                "Thumbnails",
+            ]
+        ),
+        (
+            "xmpMM",
+            vec![
+                "DerivedFrom",
+                "DocumentID",
+                "InstanceID",
+                "OriginalDocumentID",
+                "RenditionClass",
+                "RenditionParams",
+                "History",
+                "Ingredients",
+                "Pantry",
+                "ManagedFrom",
+                "Manager",
+                "ManageTo",
+                "ManageUI",
+                "ManagerVariant",
+                "VersionID",
+                "Versions",
+            ]
+        ),
+        (
+            "xmpTPg",
+            vec!["Colorants", "Fonts", "MaxPageSize", "NPages", "PlateNames",]
+        ),
+        (
+            "crs",
+            vec![
+                "AutoBrightness",
+                "AutoContrast",
+                "AutoExposure",
+                "AutoShadows",
+                "BlueHue",
+                "BlueSaturation",
+                "Brightness",
+                "CameraProfile",
+                "ChromaticAberrationB",
+                "ChromaticAberrationR",
+                "ColorNoiseReduction",
+                "Contrast",
+                "CropTop",
+                "CropLeft",
+                "CropBottom",
+                "CropRight",
+                "CropAngle",
+                "CropWidth",
+                "CropHeight",
+                "CropUnits",
+                "Exposure",
+                "GreenHue",
+                "GreenSaturation",
+                "HasCrop",
+                "HasSettings",
+                "LuminanceSmoothing",
+                "RawFileName",
+                "RedHue",
+                "RedSaturation",
+                "Saturation",
+                "Shadows",
+                "ShadowTint",
+                "Sharpness",
+                "Temperature",
+                "Tint",
+                "ToneCurve",
+                "ToneCurveName",
+                "Version",
+                "VignetteAmount",
+                "VignetteMidpoint",
+                "WhiteBalance",
+            ]
+        ),
+        (
+            "pdf",
+            vec!["Keywords", "PDFVersion", "Producer", "Trapped",]
+        ),
+        (
+            "dc",
+            vec![
+                "coverage",
+                "date",
+                "format",
+                "identifier",
+                "language",
+                "relation",
+                "type",
+            ]
+        ),
+        (
+            "Iptc4xmpExt",
+            vec![
+                "DigImageGUID",
+                "DigitalSourceType",
+                "EventId",
+                "Genre",
+                "ImageRating",
+                "ImageRegion",
+                "RegistryId",
+                "LocationCreated",
+                "LocationShown",
+                "MaxAvailHeight",
+                "MaxAvailWidth",
+            ]
+        ),
+        (
+            "exif",
+            vec![
+                "ApertureValue",
+                "BrightnessValue",
+                "CFAPattern",
+                "ColorSpace",
+                "CompressedBitsPerPixel",
+                "Contrast",
+                "CustomRendered",
+                "DateTimeDigitized",
+                "DateTimeOriginal",
+                "DeviceSettingDescription",
+                "DigitalZoomRatio",
+                "ExifVersion",
+                "ExposureBiasValue",
+                "ExposureIndex",
+                "ExposureMode",
+                "ExposureProgram",
+                "ExposureTime",
+                "FileSource",
+                "Flash",
+                "FlashEnergy",
+                "FlashpixVersion",
+                "FNumber",
+                "FocalLength",
+                "FocalLengthIn35mmFilm",
+                "FocalPlaneResolutionUnit",
+                "FocalPlaneXResolution",
+                "FocalPlaneYResolution",
+                "GainControl",
+                "ImageUniqueID",
+                "ISOSpeedRatings",
+                "LightSource",
+                "MaxApertureValue",
+                "MeteringMode",
+                "OECF",
+                "OffsetTimeOriginal",
+                "PixelXDimension",
+                "PixelYDimension",
+                "RelatedSoundFile",
+                "Saturation",
+                "SceneCaptureType",
+                "SceneType",
+                "SensingMethod",
+                "Sharpness",
+                "ShutterSpeedValue",
+                "SpatialFrequencyResponse",
+                "SpectralSensitivity",
+                "SubjectArea",
+                "SubjectDistance",
+                "SubjectDistanceRange",
+                "SubjectLocation",
+                "WhiteBalance",
+                "GPSAltitude",
+                "GPSAltitudeRef",
+                "GPSDateStamp",
+                "GPSDestBearing",
+                "GPSDestBearingRef",
+                "GPSDestDistance",
+                "GPSDestDistanceRef",
+                "GPSDestLatitude",
+                "GPSDestLongitude",
+                "GPSDifferential",
+                "GPSDOP",
+                "GPSHPositioningError",
+                "GPSImgDirection",
+                "GPSImgDirectionRef",
+                "GPSLatitude",
+                "GPSLongitude",
+                "GPSMapDatum",
+                "GPSMeasureMode",
+                "GPSProcessingMethod",
+                "GPSSatellites",
+                "GPSSpeed",
+                "GPSSpeedRef",
+                "GPSStatus",
+                "GPSTimeStamp",
+                "GPSTrack",
+                "GPSTrackRef",
+                "GPSVersionID",
+            ]
+        ),
+        (
+            "exifEX",
+            vec![
+                "BodySerialNumber",
+                "Gamma",
+                "InteroperabilityIndex",
+                "ISOSpeed",
+                "ISOSpeedLatitudeyyy",
+                "ISOSpeedLatitudezzz",
+                "LensMake",
+                "LensModel",
+                "LensSerialNumber",
+                "LensSpecification",
+                "PhotographicSensitivity",
+                "RecommendedExposureIndex",
+                "SensitivityType",
+                "StandardOutput-Sensitivity",
+            ]
+        ),
+        (
+            "photoshop",
+            vec![
+                "Category",
+                "City",
+                "ColorMode",
+                "Country",
+                "DateCreated",
+                "DocumentAncestors",
+                "History",
+                "ICCProfile",
+                "State",
+                "SupplementalCategories",
+                "TextLayers",
+                "TransmissionReference",
+                "Urgency",
+            ]
+        ),
+        (
+            "tiff",
+            vec![
+                "BitsPerSample",
+                "Compression",
+                "DateTime",
+                "ImageLength",
+                "ImageWidth",
+                "Make",
+                "Model",
+                "Orientation",
+                "PhotometricInterpretation",
+                "PlanarConfiguration",
+                "PrimaryChromaticities",
+                "ReferenceBlackWhite",
+                "ResolutionUnit",
+                "SamplesPerPixel",
+                "Software",
+                "TransferFunction",
+                "WhitePoint",
+                "XResolution",
+                "YResolution",
+                "YCbCrCoefficients",
+                "YCbCrPositioning",
+                "YCbCrSubSampling",
+            ]
+        ),
+        (
+            "xmpDM",
+            vec![
+                "absPeakAudioFilePath",
+                "album",
+                "altTapeName",
+                "altTimecode",
+                "audioChannelType",
+                "audioCompressor",
+                "audioSampleRate",
+                "audioSampleType",
+                "beatSpliceParams",
+                "cameraAngle",
+                "cameraLabel",
+                "cameraModel",
+                "cameraMove",
+                "comment",
+                "contributedMedia",
+                "duration",
+                "fileDataRate",
+                "genre",
+                "good",
+                "instrument",
+                "introTime",
+                "key",
+                "logComment",
+                "loop",
+                "numberOfBeats",
+                "markers",
+                "outCue",
+                "projectName",
+                "projectRef",
+                "pullDown",
+                "relativePeakAudioFilePath",
+                "relativeTimestamp",
+                "releaseDate",
+                "resampleParams",
+                "scaleType",
+                "scene",
+                "shotDate",
+                "shotDay",
+                "shotLocation",
+                "shotName",
+                "shotNumber",
+                "shotSize",
+                "speakerPlacement",
+                "startTimecode",
+                "stretchMode",
+                "takeNumber",
+                "tapeName",
+                "tempo",
+                "timeScaleParams",
+                "timeSignature",
+                "trackNumber",
+                "Tracks",
+                "videoAlphaMode",
+                "videoAlphaPremultipleColor",
+                "videoAlphaUnityIsTransparent",
+                "videoColorSpace",
+                "videoCompressor",
+                "videoFieldOrder",
+                "videoFrameRate",
+                "videoFrameSize",
+                "videoPixelAspectRatio",
+                "videoPixelDepth",
+                "partOfCompilation",
+                "lyrics",
+                "discNumber",
+            ]
+        ),
+        (
+            "plus",
+            vec![
+                "FileNameAsDelivered",
+                "FirstPublicationDate",
+                "ImageFileFormatAsDelivered",
+                "ImageFileSizeAsDelivered",
+                "ImageType",
+                "Version",
+            ]
+        ),
+    ]
+    .into_iter()
+    .collect();
+}
+
 #[cfg(test)]
 pub mod tests {
     #![allow(clippy::expect_used)]
@@ -75,7 +452,7 @@ pub mod tests {
     const SPEC_EXAMPLE: &str = r#"{
         "@context" : {
             "exif": "http://ns.adobe.com/exif/1.0/",
-            "exifEX": "http://cipa.jp/exif/2.32/",
+            "exifEX": "http://cipa.jp/exif/1.0/exifEX",
             "tiff": "http://ns.adobe.com/tiff/1.0/",
             "Iptc4xmpExt": "http://iptc.org/std/Iptc4xmpExt/2008-02-29/",
             "photoshop" : "http://ns.adobe.com/photoshop/1.0/"
@@ -111,7 +488,8 @@ pub mod tests {
     fn metadata_from_json() {
         let mut manifest = Manifest::new("test".to_owned());
         let original = Meta::new(SPEC_EXAMPLE).unwrap();
-        manifest.add_assertion(&original);
+        assert!(original.is_valid());
+        manifest.add_assertion(&original).unwrap();
         println!("{}", manifest);
     }
 }
