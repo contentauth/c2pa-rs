@@ -44,6 +44,7 @@ use crate::{
         io_utils::stream_len,
         merkle::C2PAMerkleTree,
     },
+    validation_status::ASSERTION_BMFFHASH_MALFORMED,
     Error,
 };
 
@@ -247,7 +248,7 @@ pub struct DataMap {
     pub value: Vec<u8>,
 }
 
-#[derive(Serialize, Deserialize, Debug, PartialEq, Eq)]
+#[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Eq)]
 pub struct SubsetMap {
     pub offset: u64,
     pub length: u64,
@@ -380,11 +381,7 @@ impl BmffHash {
     where
         R: Read + Seek + ?Sized,
     {
-        if self.is_remote_hash() {
-            return Err(Error::BadParam(
-                "remote hash has been deprecated".to_owned(),
-            ));
-        }
+        self.verify_self()?;
 
         let alg = match self.alg {
             Some(ref a) => a.clone(),
@@ -509,6 +506,48 @@ impl BmffHash {
         self.verify_stream_hash(&mut data, alg)
     }
 
+    fn verify_self(&self) -> crate::error::Result<()> {
+        if self.is_remote_hash() {
+            return Err(Error::BadParam(
+                "BMFF hash remote has been deprecated".to_owned(),
+            ));
+        }
+
+        // verify the structure of the BmffHash
+        // BMFF must have exclusions
+        if self.exclusions.is_empty() {
+            return Err(Error::C2PAValidation(
+                ASSERTION_BMFFHASH_MALFORMED.to_string(),
+            ));
+        }
+
+        // BMFF exclusion subsets must be ordered by offset and not overlap
+        for exclusion in &self.exclusions {
+            if let Some(subsets) = &exclusion.subset {
+                if subsets.len() > 1 {
+                    // check that the subsets are ordered by offset
+                    let mut sorted_subsets = subsets.clone();
+                    sorted_subsets.sort_by_key(|s| s.offset);
+                    if &sorted_subsets != subsets {
+                        return Err(Error::C2PAValidation(
+                            ASSERTION_BMFFHASH_MALFORMED.to_string(),
+                        ));
+                    }
+                    // check that the subsets do not overlap
+                    for i in 0..subsets.len() - 1 {
+                        if subsets[i].offset + subsets[i].length > subsets[i + 1].offset {
+                            return Err(Error::C2PAValidation(
+                                ASSERTION_BMFFHASH_MALFORMED.to_string(),
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
+
     /* Verifies BMFF hashes from a single file asset.  The following variants are handled
         A single BMFF asset with only a file hash
         A single BMMF asset with Merkle tree hash
@@ -521,12 +560,9 @@ impl BmffHash {
         reader: &mut dyn CAIRead,
         alg: Option<&str>,
     ) -> crate::error::Result<()> {
-        if self.is_remote_hash() {
-            return Err(Error::BadParam(
-                "asset hash is remote, not yet supported".to_owned(),
-            ));
-        }
+        self.verify_self()?;
 
+        // start the verification
         reader.rewind()?;
         let size = stream_len(reader)?;
 
@@ -793,6 +829,8 @@ impl BmffHash {
         fragment_paths: &Vec<std::path::PathBuf>,
         alg: Option<&str>,
     ) -> crate::Result<()> {
+        self.verify_self()?;
+
         let curr_alg = match &self.alg {
             Some(a) => a.clone(),
             None => match alg {
@@ -910,6 +948,8 @@ impl BmffHash {
         fragment_stream: &mut dyn CAIRead,
         alg: Option<&str>,
     ) -> crate::Result<()> {
+        self.verify_self()?;
+
         let curr_alg = match &self.alg {
             Some(a) => a.clone(),
             None => match alg {

@@ -564,17 +564,19 @@ where
                 // reduce range if desired
                 if let Some(subset_vec) = &bmff_exclusion.subset {
                     for subset in subset_vec {
-                        let exclusion = HashRange::new(
-                            exclusion_start + subset.offset,
-                            if subset.length == 0 {
-                                exclusion_length - subset.offset
-                            } else {
-                                min(
-                                    subset.length,
-                                    exclusion_length.saturating_sub(subset.offset),
-                                )
-                            },
-                        );
+                        // if the subset offset is past the end of the box, skip
+                        if subset.offset > exclusion_length {
+                            continue;
+                        }
+
+                        let new_start = exclusion_start + subset.offset;
+                        let new_length = if subset.length == 0 {
+                            exclusion_length - subset.offset
+                        } else {
+                            min(subset.length, exclusion_length - subset.offset)
+                        };
+
+                        let exclusion = HashRange::new(new_start, new_length);
 
                         exclusions.push(exclusion);
                     }

@@ -3085,15 +3085,26 @@ impl Claim {
                             continue;
                         }
                         Err(e) => {
+                            let err_str = match e {
+                                Error::C2PAValidation(es) => {
+                                    if es == validation_status::ASSERTION_BMFFHASH_MALFORMED {
+                                        validation_status::ASSERTION_BMFFHASH_MALFORMED
+                                    } else {
+                                        validation_status::ASSERTION_BMFFHASH_MISMATCH
+                                    }
+                                }
+                                _ => validation_status::ASSERTION_BMFFHASH_MISMATCH,
+                            };
+
                             log_item!(
                                 claim.assertion_uri(&hash_binding_assertion.label()),
-                                format!("asset hash error, name: {name}, error: {e}"),
+                                format!("asset hash error, name: {name}, error: {}", err_str),
                                 "verify_internal"
                             )
-                            .validation_status(validation_status::ASSERTION_BMFFHASH_MISMATCH)
+                            .validation_status(err_str)
                             .failure(
                                 validation_log,
-                                Error::HashMismatch(format!("Asset hash failure: {e}")),
+                                Error::HashMismatch(format!("Asset hash failure: {err_str}")),
                             )?;
                         }
                     }
