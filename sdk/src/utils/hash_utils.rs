@@ -239,23 +239,20 @@ where
                 let mut ranges_vec: Vec<RangeInclusive<u64>> = Vec::new();
                 let mut ranges = RangeSet::<[RangeInclusive<u64>; 1]>::from(0..=data_end);
                 for exclusion in hr {
-                    let end = exclusion.start() + exclusion.length() - 1;
-                    let exclusion_start = exclusion.start();
-                    ranges.remove_range(exclusion_start..=end);
-
                     // add new BMFF V2 offset as a new range to be included so that we can
                     // pause to add the offset hash
                     if let Some(offset) = exclusion.bmff_offset() {
                         bmff_v2_starts.push(offset);
+                        continue;
                     }
+
+                    let end = exclusion.start() + exclusion.length() - 1;
+                    let exclusion_start = exclusion.start();
+                    ranges.remove_range(exclusion_start..=end);
                 }
 
                 // merge standard ranges and BMFF V2 ranges into single list
                 if !bmff_v2_starts.is_empty() {
-                    // remove any offset hashes that would be excluded
-                    let test_ranges = ranges.clone().into_smallvec();
-                    bmff_v2_starts.retain(|o| test_ranges.iter().any(|r| r.contains(&(*o + 1))));
-
                     // add in remaining BMFF V2 offsets
                     for os in bmff_v2_starts.iter() {
                         ranges_vec.push(RangeInclusive::new(*os, *os));
@@ -322,6 +319,7 @@ where
             // check to see if this range is an BMFF V2 offset to include in the hash
             if bmff_v2_starts.contains(start) && (end - start) == 0 {
                 hasher_enum.update(&start.to_be_bytes());
+                continue;
             }
 
             loop {
@@ -350,6 +348,7 @@ where
             // check to see if this range is an BMFF V2 offset to include in the hash
             if bmff_v2_starts.contains(start) && (end - start) == 0 {
                 hasher_enum.update(&start.to_be_bytes());
+                continue;
             }
 
             let mut chunk = vec![0u8; std::cmp::min(chunk_left as usize, MAX_HASH_BUF)];

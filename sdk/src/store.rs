@@ -78,7 +78,12 @@ use crate::{
     salt::DefaultSalt,
     settings::get_settings_value,
     status_tracker::{ErrorBehavior, StatusTracker},
-    utils::{hash_utils::HashRange, io_utils::stream_len, is_zero, patch::patch_bytes},
+    utils::{
+        hash_utils::HashRange,
+        io_utils::{insert_data_at, safe_vec, stream_len},
+        is_zero,
+        patch::patch_bytes,
+    },
     validation_results::validation_codes::{
         ASSERTION_CBOR_INVALID, ASSERTION_JSON_INVALID, ASSERTION_MISSING, CLAIM_MALFORMED,
     },
@@ -89,6 +94,7 @@ use crate::{
 use crate::{external_manifest::ManifestPatchCallback, RemoteSigner};
 
 const MANIFEST_STORE_EXT: &str = "c2pa"; // file extension for external manifests
+const MANIFEST_RESERVE_SIZE: usize = 10 * 1024 * 1024; // 10MB reserve size for manifest
 
 pub(crate) struct ManifestHashes {
     pub manifest_box_hash: Vec<u8>,
@@ -169,6 +175,7 @@ impl Store {
         store
     }
 
+    /* for coming PR
     // Append new Store to the current Store preserving the order from the new Store
     pub(crate) fn append_store(&mut self, store: &Store) {
         for claim in store.claims() {
@@ -189,6 +196,7 @@ impl Store {
 
         new_store
     }
+    */
 
     /// Return label for the store
     #[allow(dead_code)] // doesn't harm to have this
@@ -2680,7 +2688,10 @@ impl Store {
                 .await?
         };
 
-        let intermediate_output: Vec<u8> = Vec::new();
+        let intermediate_output: Vec<u8> = safe_vec(
+            stream_len(input_stream)? + MANIFEST_RESERVE_SIZE as u64,
+            None,
+        )?;
         let mut intermediate_stream = Cursor::new(intermediate_output);
 
         #[allow(unused_mut)] // Not mutable in the non-async case.
@@ -3188,7 +3199,11 @@ impl Store {
         output_stream: &mut dyn CAIReadWrite,
         reserve_size: usize,
     ) -> Result<Vec<u8>> {
-        let intermediate_output: Vec<u8> = Vec::new();
+        // make sure we can hold the intermediate stream before attempting
+        let intermediate_output: Vec<u8> = safe_vec(
+            stream_len(input_stream)? + MANIFEST_RESERVE_SIZE as u64,
+            None,
+        )?;
         let mut intermediate_stream = Cursor::new(intermediate_output);
 
         let pc = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
@@ -3215,7 +3230,10 @@ impl Store {
                     .get_writer(format)
                     .ok_or(Error::UnsupportedType)?;
 
-                let tmp_output: Vec<u8> = Vec::new();
+                let tmp_output: Vec<u8> = safe_vec(
+                    stream_len(input_stream)? + MANIFEST_RESERVE_SIZE as u64,
+                    None,
+                )?;
                 let mut tmp_stream = Cursor::new(tmp_output);
                 manifest_writer.remove_cai_store_from_stream(input_stream, &mut tmp_stream)?;
 
@@ -3257,6 +3275,27 @@ impl Store {
                 intermediate_stream.rewind()?;
                 let bmff_hash =
                     Store::generate_bmff_data_hash_for_stream(&mut intermediate_stream, pc.alg())?;
+
+                // insert UUID boxes at the correct location if required
+                if let Some(merkle_uuid_boxes) = &bmff_hash.merkle_uuid_boxes {
+                    let temp_data: Vec<u8> = safe_vec(
+                        stream_len(&mut intermediate_stream)? + MANIFEST_RESERVE_SIZE as u64,
+                        None,
+                    )?;
+                    let mut temp_stream = Cursor::new(temp_data);
+
+                    insert_data_at(
+                        &mut intermediate_stream,
+                        &mut temp_stream,
+                        bmff_hash.merkle_uuid_boxes_insertion_point,
+                        merkle_uuid_boxes,
+                    )?;
+
+                    // this is the new intermediate stream with the UUID Merkle boxes inserted
+                    temp_stream.rewind()?;
+                    intermediate_stream = temp_stream;
+                }
+
                 pc.add_assertion(&bmff_hash)?;
             }
 
@@ -6677,9 +6716,11 @@ pub mod tests {
     #[test]
     fn test_display() {
         let ap = fixture_path("CA.jpg");
+
         let mut report = StatusTracker::default();
         let store = Store::load_from_asset(&ap, true, &mut report).expect("load_from_asset");
 
+        assert!(!report.has_any_error());
         println!("store = {store}");
     }
 
@@ -6807,6 +6848,54 @@ pub mod tests {
         // Move the claim to claims list.
         store.commit_claim(claim1).unwrap();
         store.save_to_asset(&ap, signer.as_ref(), &op).unwrap();
+
+        let mut report = StatusTracker::default();
+
+        // can we read back in
+        let new_store = Store::load_from_asset(&op, true, &mut report).unwrap();
+
+        assert!(!report.has_any_error());
+
+        println!("store = {new_store}");
+    }
+
+    #[test]
+    fn test_jumbf_generation_with_bmffv3_fixed_block_size_stream() {
+        // test adding to actual image
+        let ap = fixture_path("video1.mp4");
+        let temp_dir = tempdirectory().expect("temp dir");
+        let op = temp_dir_path(&temp_dir, "video1.mp4");
+
+        let mut input_stream = std::fs::File::open(&ap).unwrap();
+        let mut output_stream = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(true)
+            .read(true)
+            .write(true)
+            .open(&op)
+            .unwrap();
+
+        // use Merkle tree with 1024 byte chunks
+        crate::settings::set_settings_value("core.merkle_tree_chunk_size_in_kb", 1).unwrap();
+
+        // Create claims store.
+        let mut store = Store::new();
+
+        // Create a new claim.
+        let claim1 = create_test_claim().unwrap();
+
+        let signer = test_signer(SigningAlg::Ps256);
+
+        // Move the claim to claims list.
+        store.commit_claim(claim1).unwrap();
+        store
+            .save_to_stream(
+                "mp4",
+                &mut input_stream,
+                &mut output_stream,
+                signer.as_ref(),
+            )
+            .unwrap();
 
         let mut report = StatusTracker::default();
 

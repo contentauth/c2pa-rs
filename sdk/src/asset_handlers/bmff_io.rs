@@ -1130,6 +1130,8 @@ pub(crate) struct C2PABmffBoxes {
     pub bmff_merkle_box_infos: Vec<BoxInfoLite>,
     pub box_infos: Vec<BoxInfoLite>,
     pub xmp: Option<String>,
+    pub manifest_offset: Option<u64>,
+    pub first_aux_uuid_offset: u64,
 }
 
 pub(crate) fn read_bmff_c2pa_boxes(mut reader: &mut dyn CAIRead) -> Result<C2PABmffBoxes> {
@@ -1156,7 +1158,8 @@ pub(crate) fn read_bmff_c2pa_boxes(mut reader: &mut dyn CAIRead) -> Result<C2PAB
 
     let mut output: Option<Vec<u8>> = None;
     let mut xmp: Option<String> = None;
-    let mut _first_aux_uuid = 0;
+    let mut manifest_offset: Option<u64> = None;
+    let mut first_aux_uuid_offset = 0u64;
     let mut merkle_boxes: Vec<BmffMerkleMap> = Vec::new();
     let mut merkle_box_infos: Vec<BoxInfoLite> = Vec::new();
 
@@ -1202,21 +1205,18 @@ pub(crate) fn read_bmff_c2pa_boxes(mut reader: &mut dyn CAIRead) -> Result<C2PAB
                             data_len -= 8;
 
                             // offset to first aux uuid
-                            let offset = u64::from_be_bytes(buf);
+                            first_aux_uuid_offset = u64::from_be_bytes(buf);
 
                             // read the manifest
                             if manifest_store_cnt == 0 {
                                 let manifest = reader.read_to_vec(data_len)?;
                                 output = Some(manifest);
 
+                                manifest_offset = Some(box_info.data.offset);
+
                                 manifest_store_cnt += 1;
                             } else {
                                 return Err(Error::TooManyManifestStores);
-                            }
-
-                            // if contains offset this asset contains additional UUID boxes
-                            if offset != 0 {
-                                _first_aux_uuid = offset;
                             }
                         } else if vec_compare(&purpose, MERKLE.as_bytes()) {
                             let merkle = reader.read_to_vec(data_len)?;
@@ -1259,6 +1259,8 @@ pub(crate) fn read_bmff_c2pa_boxes(mut reader: &mut dyn CAIRead) -> Result<C2PAB
         bmff_merkle_box_infos: merkle_box_infos,
         box_infos,
         xmp,
+        manifest_offset,
+        first_aux_uuid_offset,
     })
 }
 
@@ -1445,41 +1447,44 @@ impl CAIWriter for BmffIO {
         std::io::copy(input_stream, output_stream)?;
 
         // Manipulating the UUID box means we may need some patch offsets if they are file absolute offsets.
+        if offset_adjust != 0 {
+            // create root node
+            let root_box = BoxInfo {
+                path: "".to_string(),
+                offset: 0,
+                size,
+                box_type: BoxType::Empty,
+                parent: None,
+                user_type: None,
+                version: None,
+                flags: None,
+            };
 
-        // create root node
-        let root_box = BoxInfo {
-            path: "".to_string(),
-            offset: 0,
-            size,
-            box_type: BoxType::Empty,
-            parent: None,
-            user_type: None,
-            version: None,
-            flags: None,
-        };
+            // map box layout of current output file
+            let (mut output_bmff_tree, root_token) = Arena::with_data(root_box);
+            let mut output_bmff_map: HashMap<String, Vec<Token>> = HashMap::new();
 
-        // map box layout of current output file
-        let (mut output_bmff_tree, root_token) = Arena::with_data(root_box);
-        let mut output_bmff_map: HashMap<String, Vec<Token>> = HashMap::new();
+            let size = stream_len(output_stream)?;
+            output_stream.rewind()?;
+            build_bmff_tree(
+                output_stream,
+                size,
+                &mut output_bmff_tree,
+                &root_token,
+                &mut output_bmff_map,
+            )?;
 
-        let size = stream_len(output_stream)?;
-        output_stream.rewind()?;
-        build_bmff_tree(
-            output_stream,
-            size,
-            &mut output_bmff_tree,
-            &root_token,
-            &mut output_bmff_map,
-        )?;
+            // adjust offsets based on current layout
+            output_stream.rewind()?;
+            adjust_known_offsets(
+                output_stream,
+                &output_bmff_tree,
+                &output_bmff_map,
+                offset_adjust,
+            )?;
+        }
 
-        // adjust offsets based on current layout
-        output_stream.rewind()?;
-        adjust_known_offsets(
-            output_stream,
-            &output_bmff_tree,
-            &output_bmff_map,
-            offset_adjust,
-        )
+        Ok(())
     }
 
     fn get_object_locations_from_stream(
