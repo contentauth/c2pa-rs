@@ -38,19 +38,21 @@ impl Meta {
     pub fn is_valid(&self) -> bool {
         for (namespace, url) in &self.context {
             if let Some(expected_url) = SCHEMA_URLS.get(namespace.as_str()) {
-                if url != expected_url {return  false}
+                if url != expected_url {
+                    return false;
+                }
             }
         }
 
-         for label in self.value.keys() {
-                if let Some((prefix, property)) = label.split_once(":") {
-                    if let Some(allowed_vals) = ALLOWED_SCHEMAS.get(prefix) {
-                        if !allowed_vals.contains(&property) {
-                            return false
-                        }
+        for label in self.value.keys() {
+            if let Some((prefix, property)) = label.split_once(":") {
+                if let Some(allowed_vals) = ALLOWED_SCHEMAS.get(prefix) {
+                    if !allowed_vals.contains(&property) {
+                        return false;
                     }
                 }
             }
+        }
         true
     }
 }
