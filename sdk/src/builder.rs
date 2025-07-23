@@ -29,8 +29,8 @@ use zip::{write::SimpleFileOptions, ZipArchive, ZipWriter};
 use crate::{
     assertion::AssertionDecodeError,
     assertions::{
-        labels, Actions, BmffHash, BoxHash, CreativeWork, DataHash, Exif, Metadata, SoftwareAgent,
-        Thumbnail, User, UserCbor,
+        labels, Actions, BmffHash, BoxHash, CreativeWork, DataHash, EmbeddedData, Exif, Metadata,
+        SoftwareAgent, Thumbnail, User, UserCbor,
     },
     claim::Claim,
     error::{Error, Result},
@@ -290,6 +290,22 @@ impl Builder {
     /// * A mutable reference to the [`Builder`].
     pub fn set_format<S: Into<String>>(&mut self, format: S) -> &mut Self {
         self.definition.format = format.into();
+        self
+    }
+
+    /// ⚠️ **Deprecated Soon**
+    /// This method is planned to be deprecated in a future release.
+    /// Usage should be limited and temporary.
+    ///
+    /// Sets the resource directory for this [`Builder`]
+    ///
+    /// # Arguments
+    /// * `base_path` - The directory to search in to find the resources.
+    /// # Returns
+    /// * A mutable reference to the [`Builder`].
+    #[cfg(feature = "file_io")]
+    pub fn set_base_path<P: Into<PathBuf>>(&mut self, base_path: P) -> &mut Self {
+        self.base_path = Some(base_path.into());
         self
     }
 
@@ -700,13 +716,20 @@ impl Builder {
                 let mut stream = self.resources.open(thumb_ref)?;
                 let mut data = Vec::new();
                 stream.read_to_end(&mut data)?;
-                claim.add_assertion_with_salt(
-                    &Thumbnail::new(
+                let thumbnail = if claim.version() >= 2 {
+                    EmbeddedData::new(
+                        labels::CLAIM_THUMBNAIL,
+                        format_to_mime(&thumb_ref.format),
+                        data,
+                    )
+                } else {
+                    Thumbnail::new(
                         &labels::add_thumbnail_format(labels::CLAIM_THUMBNAIL, &thumb_ref.format),
                         data,
-                    ),
-                    &salt,
-                )?;
+                    )
+                    .into()
+                };
+                claim.add_assertion_with_salt(&thumbnail, &salt)?;
             }
         }
 
@@ -735,11 +758,7 @@ impl Builder {
         for manifest_assertion in &definition.assertions {
             match manifest_assertion.label.as_str() {
                 l if l.starts_with(Actions::LABEL) => {
-                    let version = labels::version(l);
-
                     let mut actions: Actions = manifest_assertion.to_assertion()?;
-                    //dbg!(format!("Actions: {:?} version: {:?}", actions, version));
-
                     let mut updates = Vec::new();
                     let mut index = 0;
                     #[allow(clippy::explicit_counter_loop)]
@@ -753,21 +772,15 @@ impl Builder {
                                     uris.push(hash_url.clone());
                                 } else {
                                     log::error!("Action ingredientId not found: {id}");
-                                    // return Err(Error::BadParam(format!(
-                                    //     "Action ingredientId not found: {id}"
-                                    // )));
+                                    if claim.version() >= 2 {
+                                        return Err(Error::AssertionSpecificError(format!(
+                                            "Action ingredientId not found: {id}"
+                                        )));
+                                    }
                                 }
                             }
-                            match version {
-                                Some(1) => {
-                                    // only for explicit version 1 (do we need to support this?)
-                                    update = update.set_parameter("ingredient", uris[0].clone())?
-                                }
-                                None | Some(2) => {
-                                    update = update.set_parameter("ingredients", uris)?
-                                }
-                                _ => return Err(Error::AssertionUnsupportedVersion),
-                            };
+                            update = update.set_parameter("ingredients", uris)?;
+
                             updates.push((index, update));
                         }
                         index += 1;
@@ -788,13 +801,13 @@ impl Builder {
 
                             // replace software agent with hashed_uri
                             template.software_agent = match template.software_agent.take() {
-                                Some(SoftwareAgent::ClaimGeneratorInfo(mut info)) => {
+                                Some(mut info) => {
                                     if let Some(icon) = info.icon.as_mut() {
                                         let icon =
                                             icon.to_hashed_uri(&self.resources, &mut claim)?;
                                         info.set_icon(icon);
                                     }
-                                    Some(SoftwareAgent::ClaimGeneratorInfo(info))
+                                    Some(info)
                                 }
                                 agent => agent,
                             };
@@ -1217,6 +1230,8 @@ mod tests {
     use wasm_bindgen_test::*;
 
     use super::*;
+    #[cfg(feature = "file_io")]
+    use crate::utils::test::fixture_path;
     use crate::{
         assertions::{c2pa_action, BoxHash},
         asset_handlers::jpeg_io::JpegIO,
@@ -2203,6 +2218,7 @@ mod tests {
     #[test]
     fn test_to_archive_and_from_archive_with_ingredient_thumbnail() {
         let mut builder = Builder::new();
+        builder.definition.claim_version = Some(2);
 
         let mut thumbnail = Cursor::new(TEST_THUMBNAIL);
         let mut source = Cursor::new(TEST_IMAGE_CLEAN);
@@ -2228,7 +2244,36 @@ mod tests {
         let reader_json = Reader::from_stream("image/jpeg", &mut output)
             .unwrap()
             .json();
+        println!("{reader_json}");
         assert!(reader_json.contains("Test Ingredient"));
         assert!(reader_json.contains("thumbnail.ingredient"));
+    }
+
+    #[cfg(feature = "file_io")]
+    #[test]
+    fn test_base_path() {
+        let mut builder = Builder::new();
+        let ingredient_folder = fixture_path("ingredient");
+        builder.set_base_path(&ingredient_folder);
+        assert_eq!(builder.base_path.as_ref(), Some(&ingredient_folder));
+        let ingredient_json =
+            std::fs::read_to_string(ingredient_folder.join("ingredient.json")).unwrap();
+
+        let ingredient = Ingredient::from_json(&ingredient_json).unwrap();
+        builder.add_ingredient(ingredient);
+
+        let signer = test_signer(SigningAlg::Ps256);
+
+        let mut source = Cursor::new(TEST_IMAGE_CLEAN);
+        let mut dest = Cursor::new(Vec::new());
+
+        builder
+            .sign(&signer, "image/jpeg", &mut source, &mut dest)
+            .unwrap();
+
+        let reader = Reader::from_stream("jpeg", &mut dest).unwrap();
+        let active_manifest = reader.active_manifest().unwrap();
+        let ingredient = active_manifest.ingredients().first().unwrap();
+        assert_eq!(ingredient.title(), Some("C.jpg"));
     }
 }

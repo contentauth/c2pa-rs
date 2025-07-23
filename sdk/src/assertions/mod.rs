@@ -17,6 +17,9 @@ mod actions;
 pub(crate) use actions::V2_DEPRECATED_ACTIONS;
 pub use actions::{c2pa_action, Action, ActionTemplate, Actions, SoftwareAgent};
 
+mod asset_reference;
+pub use asset_reference::AssetReference;
+
 mod asset_types;
 pub use asset_types::{AssetTypeEnum, AssetTypes};
 
@@ -67,5 +70,8 @@ pub(crate) use user_cbor::UserCbor;
 mod uuid_assertion;
 #[allow(unused_imports)]
 pub(crate) use uuid_assertion::Uuid;
+
+mod embedded_data;
+pub use embedded_data::EmbeddedData;
 
 pub mod region_of_interest;
