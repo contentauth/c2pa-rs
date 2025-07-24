@@ -1435,6 +1435,7 @@ mod tests {
                     "version": "1.0.0"
                 }
             ],
+            "title": "Test_Manifest",
             "assertions": [
                 {
                     "label": "c2pa.actions",
@@ -2402,9 +2403,11 @@ mod tests {
         builder.add_action(action).unwrap();
         println!("{:#?}", builder.definition);
         assert!(!builder.definition.assertions.is_empty());
+    }
+    /// Test builder set_base_path
     #[cfg(feature = "file_io")]
     #[test]
-    fn test_base_path() {
+    fn test_builder_set_base_path() {
         let mut builder = Builder::new();
         let ingredient_folder = fixture_path("ingredient");
         builder.set_base_path(&ingredient_folder);
