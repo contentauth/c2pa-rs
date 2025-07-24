@@ -442,9 +442,8 @@ impl SettingsValidate for BuilderSettings {
 pub mod tests {
     #![allow(clippy::unwrap_used)]
 
-    use crate::assertions::C2paDigitalSourceType;
-
     use super::*;
+    use crate::assertions::C2paDigitalSourceType;
 
     #[test]
     fn test_auto_created_action_without_source_type() {
