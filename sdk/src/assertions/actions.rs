@@ -11,7 +11,7 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use std::collections::HashMap;
+use std::{collections::HashMap, fmt};
 
 use log::error;
 use serde::{Deserialize, Serialize};
@@ -29,19 +29,186 @@ use crate::{
 const ASSERTION_CREATION_VERSION: usize = 2;
 pub const CAI_INGREDIENT_IDS: &str = "org.cai.ingredientIds";
 
-// TODO: make enum
-/// Constants indicating from which source a digital image was created.
+/// Description of the source of an asset.
 ///
-/// These constants are used in conjunction with [`Actions::source_type`].
-#[allow(unused)]
-pub(crate) mod source_type {
+/// The full list of possible digital source types are found below:
+/// <https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_digital_source_type>
+/// <https://cv.iptc.org/newscodes/digitalsourcetype>
+#[derive(Deserialize, Serialize, Clone, Debug, PartialEq)]
+#[serde(untagged)]
+pub enum DigitalSourceType {
+    C2pa(C2paDigitalSourceType),
+    Iptc(IptcDigitalSourceType),
+    Other(String),
+}
+
+impl From<IptcDigitalSourceType> for DigitalSourceType {
+    fn from(value: IptcDigitalSourceType) -> Self {
+        DigitalSourceType::Iptc(value)
+    }
+}
+
+impl From<C2paDigitalSourceType> for DigitalSourceType {
+    fn from(value: C2paDigitalSourceType) -> Self {
+        DigitalSourceType::C2pa(value)
+    }
+}
+
+impl fmt::Display for DigitalSourceType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.serialize(f)
+    }
+}
+
+/// C2PA description of the source of an asset.
+///
+/// The full list of possible C2PA digital source types are found below:
+/// <https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_digital_source_type>
+#[non_exhaustive]
+#[derive(Deserialize, Serialize, Clone, Debug, PartialEq)]
+pub enum C2paDigitalSourceType {
     /// Media whose digital content is effectively empty, such as a blank canvas or zero-length video.
-    pub const EMPTY: &str = "http://c2pa.org/digitalsourcetype/empty";
+    #[serde(alias = "Empty", rename = "http://c2pa.org/digitalsourcetype/empty")]
+    Empty,
     /// Data that is the result of algorithmically using a model derived from sampled content and data.
     /// Differs from <http://cv.iptc.org/newscodes/digitalsourcetype/>trainedAlgorithmicMedia in that
     /// the result isn’t a media type (e.g., image or video) but is a data format (e.g., CSV, pickle).
-    pub const TRAINED_ALGORITHMIC_DATA: &str =
-        "http://c2pa.org/digitalsourcetype/trainedAlgorithmicData";
+    #[serde(
+        alias = "TrainedAlgorithmicMedia",
+        rename = "http://c2pa.org/digitalsourcetype/trainedAlgorithmicData"
+    )]
+    TrainedAlgorithmicData,
+}
+
+impl fmt::Display for C2paDigitalSourceType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.serialize(f)
+    }
+}
+
+// NOTE: Actions v1 only supports these (not the C2PADigitalSourceType as well)
+/// IPTC description of the source of an asset.
+///
+/// The full list of possible IPTC digital source types are found below:
+/// <https://cv.iptc.org/newscodes/digitalsourcetype>
+#[non_exhaustive]
+#[derive(Deserialize, Serialize, Clone, Debug, PartialEq)]
+pub enum IptcDigitalSourceType {
+    /// The media was captured from a real-life source using a digital camera or digital recording device.
+    #[serde(
+        alias = "DigitalCapture",
+        rename = "http://cv.iptc.org/newscodes/digitalsourcetype/digitalCapture"
+    )]
+    DigitalCapture,
+    /// The media is the result of capturing multiple frames from a real-life source using a digital camera
+    /// or digital recording device, then automatically merging them into a single frame using digital signal
+    /// processing techniques and/or non-generative AI. Includes High Dynamic Range (HDR) processing common in
+    /// smartphone camera apps.
+    #[serde(
+        alias = "ComptuationalCapture",
+        rename = "http://cv.iptc.org/newscodes/digitalsourcetype/computationalCapture"
+    )]
+    ComputationalCapture,
+    /// The media was digitised from a negative on film or other transparent medium.
+    #[serde(
+        alias = "NegativeFilm",
+        rename = "http://cv.iptc.org/newscodes/digitalsourcetype/negativeFilm"
+    )]
+    NegativeFilm,
+    /// The media was digitised from a positive on a transparency or other transparent medium.
+    #[serde(
+        alias = "PositiveFilm",
+        rename = "http://cv.iptc.org/newscodes/digitalsourcetype/positiveFilm"
+    )]
+    PositiveFilm,
+    /// The media was digitised from a non-transparent medium such as a photographic print.
+    #[serde(
+        alias = "Print",
+        rename = "http://cv.iptc.org/newscodes/digitalsourcetype/print"
+    )]
+    Print,
+    /// Augmentation, correction or enhancement by one or more humans using non-generative tools.
+    #[serde(
+        alias = "HumanEdits",
+        rename = "http://cv.iptc.org/newscodes/digitalsourcetype/humanEdits"
+    )]
+    HumanEdits,
+    /// Augmentation, correction or enhancement using a Generative AI model, such as with inpainting or
+    /// outpainting operations.
+    #[serde(
+        alias = "CompositeWithTrainedAlgorithmicMedia",
+        rename = "http://cv.iptc.org/newscodes/digitalsourcetype/compositeWithTrainedAlgorithmicMedia"
+    )]
+    CompositeWithTrainedAlgorithmicMedia,
+    /// Modification or correction by algorithm without changing the main content of the media, initiated
+    /// or configured by a human, such as sharpening or applying noise reduction.
+    #[serde(
+        alias = "AlgorithmicallyEnhanced",
+        rename = "http://cv.iptc.org/newscodes/digitalsourcetype/algorithmicallyEnhanced"
+    )]
+    AlgorithmicallyEnhanced,
+    /// Media created by a human using non-generative tools.
+    #[serde(
+        alias = "DigitalCreation",
+        rename = "http://cv.iptc.org/newscodes/digitalsourcetype/digitalCreation"
+    )]
+    DigitalCreation,
+    /// Digital media representation of data via human programming or creativity.
+    #[serde(
+        alias = "DataDrivenMedia",
+        rename = "http://cv.iptc.org/newscodes/digitalsourcetype/dataDrivenMedia"
+    )]
+    DataDrivenMedia,
+    /// Digital media created algorithmically using an Artificial Intelligence model trained on captured
+    /// content.
+    #[serde(
+        alias = "TrainedAlgorithmicMedia",
+        rename = "http://cv.iptc.org/newscodes/digitalsourcetype/trainedAlgorithmicMedia"
+    )]
+    TrainedAlgorithmicMedia,
+    /// Media created purely by an algorithm not based on any sampled training data, e.g. an image created
+    /// by software using a mathematical formula.
+    #[serde(
+        rename = "http://cv.iptc.org/newscodes/digitalsourcetype/algorithmicMedia",
+        alias = "AlgorithmicMedia"
+    )]
+    AlgorithmicMedia,
+    /// A capture of the contents of the screen of a computer or mobile device.
+    #[serde(
+        alias = "ScreenCapture",
+        rename = "http://cv.iptc.org/newscodes/digitalsourcetype/screenCapture"
+    )]
+    ScreenCapture,
+    /// Live recording of virtual event based on Generative AI and/or captured elements.
+    #[serde(
+        alias = "VirtualRecording",
+        rename = "http://cv.iptc.org/newscodes/digitalsourcetype/virtualRecording"
+    )]
+    VirtualRecording,
+    /// Mix or composite of several elements, any of which may or may not be generative AI.
+    #[serde(
+        alias = "Composite",
+        rename = "http://cv.iptc.org/newscodes/digitalsourcetype/composite"
+    )]
+    Composite,
+    /// Mix or composite of several elements that are all captures of real life.
+    #[serde(
+        alias = "CompositeCapture",
+        rename = "http://cv.iptc.org/newscodes/digitalsourcetype/compositeCapture"
+    )]
+    CompositeCapture,
+    /// Mix or composite of several elements, at least one of which is Generative AI.
+    #[serde(
+        alias = "CompositeSynthetic",
+        rename = "http://cv.iptc.org/newscodes/digitalsourcetype/compositeSynthetic"
+    )]
+    CompositeSynthetic,
+}
+
+impl fmt::Display for IptcDigitalSourceType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.serialize(f)
+    }
 }
 
 /// C2PA actions defined in the C2PA specification.
@@ -188,7 +355,7 @@ pub struct Action {
 
     /// One of the defined URI values at `<https://cv.iptc.org/newscodes/digitalsourcetype/>`
     #[serde(rename = "digitalSourceType", skip_serializing_if = "Option::is_none")]
-    pub(crate) source_type: Option<String>,
+    pub(crate) source_type: Option<DigitalSourceType>,
 
     /// List of related actions.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -281,8 +448,8 @@ impl Action {
 
     /// Returns a digitalSourceType as defined at <https://cv.iptc.org/newscodes/digitalsourcetype/>.
     // QUESTION: Keep in docs?
-    pub fn source_type(&self) -> Option<&str> {
-        self.source_type.as_deref()
+    pub fn source_type(&self) -> Option<&DigitalSourceType> {
+        self.source_type.as_ref()
     }
 
     /// Returns the list of related actions.
@@ -407,8 +574,8 @@ impl Action {
     }
 
     /// Set a digitalSourceType URI as defined at <https://cv.iptc.org/newscodes/digitalsourcetype/>.
-    pub fn set_source_type<S: Into<String>>(mut self, uri: S) -> Self {
-        self.source_type = Some(uri.into());
+    pub fn set_source_type<T: Into<DigitalSourceType>>(mut self, source_type: T) -> Self {
+        self.source_type = Some(source_type.into());
         self
     }
 
@@ -455,7 +622,7 @@ impl Action {
     }
 }
 
-#[derive(Deserialize, Serialize, Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Deserialize, Serialize, Debug, Clone, Default, PartialEq)]
 #[non_exhaustive]
 pub struct ActionTemplate {
     /// The label associated with this action. See ([`c2pa_action`]).
@@ -471,7 +638,7 @@ pub struct ActionTemplate {
 
     /// One of the defined URI values at `<https://cv.iptc.org/newscodes/digitalsourcetype/>`
     #[serde(rename = "digitalSourceType", skip_serializing_if = "Option::is_none")]
-    pub source_type: Option<String>,
+    pub source_type: Option<DigitalSourceType>,
 
     #[serde(skip_serializing_if = "Option::is_none")]
     pub icon: Option<UriOrResource>,
@@ -708,7 +875,7 @@ pub mod tests {
                     .set_parameter("name".to_owned(), "gaussian blur")
                     .unwrap()
                     .set_when("2015-06-26T16:43:23+0200")
-                    .set_source_type("digsrctype:algorithmicMedia")
+                    .set_source_type(IptcDigitalSourceType::AlgorithmicMedia)
                     .add_change(RegionOfInterest {
                         region: vec![Range {
                             range_type: RangeType::Temporal,
@@ -749,7 +916,7 @@ pub mod tests {
         assert_eq!(result.actions[1].when(), original.actions[1].when());
         assert_eq!(
             result.actions[1].source_type().unwrap(),
-            "digsrctype:algorithmicMedia"
+            &DigitalSourceType::Iptc(IptcDigitalSourceType::AlgorithmicMedia)
         );
         assert_eq!(result.actions[1].changes(), original.actions()[1].changes());
         assert_eq!(
