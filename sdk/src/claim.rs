@@ -20,6 +20,7 @@ use std::{
 
 use async_generic::async_generic;
 use chrono::{DateTime, Utc};
+use regex::Regex;
 use serde::{ser::SerializeStruct, Deserialize, Serialize, Serializer};
 use serde_json::{json, Map, Value};
 use uuid::Uuid;
@@ -3171,7 +3172,8 @@ impl Claim {
         Claim::verify_actions(claim, svi, validation_log)?;
 
         for metadata_assertion in claim.metadata_assertions() {
-            let metadata_assertion = Meta::from_assertion(metadata_assertion.assertion())?;
+            let mut metadata_assertion = Meta::from_assertion(metadata_assertion.assertion())?;
+            metadata_assertion.label = claim.label().to_owned();
             if !metadata_assertion.is_valid() {
                 log_item!(
                     claim.uri(),
@@ -3188,10 +3190,15 @@ impl Claim {
         Ok(())
     }
 
+    #[allow(clippy::unwrap_used)]
     pub fn metadata_assertions(&self) -> Vec<&ClaimAssertion> {
-        let dummy_data = AssertionData::Cbor(Vec::new());
-        let dummy_ingredient = Assertion::new(assertions::labels::METADATA, None, dummy_data);
-        self.assertions_by_type(&dummy_ingredient, None)
+        lazy_static::lazy_static! {
+            static ref METADATA_LABEL : Regex = Regex::new(r"^(?:[a-zA-Z0-9][a-zA-Z0-9_-]*)(?:\.(?:[a-zA-Z0-9][a-zA-Z0-9_-]*))*\.metadata$").unwrap();
+        }
+        self.assertion_store
+            .iter()
+            .filter(|x| METADATA_LABEL.is_match(&x.label()))
+            .collect()
     }
 
     /// Return list of data hash assertions
