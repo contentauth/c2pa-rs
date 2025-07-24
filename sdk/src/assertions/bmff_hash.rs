@@ -1440,6 +1440,16 @@ impl BmffHash {
             .merkle()
             .ok_or_else(|| Error::HashMismatch("merkle property is required".to_string()))?;
 
+        // make sure there are not completing MerkleMap block types
+        if mm_vec.iter().any(|mm| {
+            mm.fixed_block_size.is_none() && mm.variable_block_sizes.is_none()
+                || mm.fixed_block_size.is_some() && mm.variable_block_sizes.is_some()
+        }) {
+            return Err(Error::HashMismatch(
+                "MerkleMap block type must be either fixed or variable".to_string(),
+            ));
+        }
+
         // build map of uniqueId and localId to mdat hash ranges
         let mut mdats = c2pa_boxes.box_infos.clone();
         mdats.retain(|bi| bi.path == "mdat");
