@@ -3727,7 +3727,7 @@ impl Store {
     }
 
     // fetch remote manifest if possible
-    #[cfg(all(feature = "fetch_remote_manifests", not(target_os = "wasi")))]
+    #[cfg(all(feature = "fetch_remote_manifests", not(target_arch = "wasm32")))]
     fn fetch_remote_manifest(url: &str) -> Result<Vec<u8>> {
         use conv::ValueFrom;
 
@@ -3846,17 +3846,66 @@ impl Store {
         }
     }
 
+    #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
+    pub async fn fetch_remote_manifest(url: &str) -> Result<Vec<u8>> {
+        use wasm_bindgen::JsCast;
+        use wasm_bindgen_futures::JsFuture;
+        use web_sys::{Request, RequestInit, RequestMode, Response};
+
+        let opts = RequestInit::new();
+        opts.set_method("GET");
+        opts.set_mode(RequestMode::Cors);
+
+        let request = Request::new_with_str_and_init(url, &opts)
+            .map_err(|e| Error::RemoteManifestFetch(format!("{e:?}")))?;
+
+        let window = web_sys::window().ok_or(Error::RemoteManifestFetch(
+            "Failed to create window for fetch request".to_string(),
+        ))?;
+        let resp_value = JsFuture::from(window.fetch_with_request(&request))
+            .await
+            .map_err(|e| Error::RemoteManifestFetch(format!("{e:?}")))?;
+
+        let resp: Response = resp_value
+            .dyn_into()
+            .map_err(|e| Error::RemoteManifestFetch(format!("{e:?}")))?;
+        let buffer = JsFuture::from(
+            resp.array_buffer()
+                .map_err(|e| Error::RemoteManifestFetch(format!("{e:?}")))?,
+        )
+        .await
+        .map_err(|e| Error::RemoteManifestFetch(format!("{e:?}")))?;
+
+        let array = js_sys::Uint8Array::new(&buffer);
+        let mut body = vec![0; array.length() as usize];
+        array.copy_to(&mut body[..]);
+        Ok(body)
+    }
+
     /// Handles remote manifests when file_io/fetch_remote_manifests feature is enabled
     fn handle_remote_manifest(ext_ref: &str) -> Result<Vec<u8>> {
         // verify provenance path is remote url
         if Store::is_valid_remote_url(ext_ref) {
-            #[cfg(feature = "fetch_remote_manifests")]
+            #[cfg(all(
+                feature = "fetch_remote_manifests",
+                any(not(target_arch = "wasm32"), target_os = "wasi")
+            ))]
             {
-                if let Ok(true) = get_settings_value::<bool>("verify.remote_manifest_fetch") {
+                if get_settings_value::<bool>("verify.remote_manifest_fetch").unwrap_or(true) {
                     Store::fetch_remote_manifest(ext_ref)
                 } else {
                     Err(Error::RemoteManifestUrl(ext_ref.to_owned()))
                 }
+            }
+            #[cfg(all(
+                feature = "fetch_remote_manifests",
+                target_arch = "wasm32",
+                not(target_os = "wasi")
+            ))]
+            {
+                // For wasm-bindgen, we can't use the async function in sync context
+                // This will be handled by the async versions of the functions
+                Err(Error::RemoteManifestUrl(ext_ref.to_owned()))
             }
             #[cfg(not(feature = "fetch_remote_manifests"))]
             Err(Error::RemoteManifestUrl(ext_ref.to_owned()))
@@ -3875,6 +3924,34 @@ impl Store {
         let mut input_stream = Cursor::new(data);
         Store::load_jumbf_from_stream(asset_type, &mut input_stream)
             .map(|(manifest_bytes, _)| Store::from_jumbf(&manifest_bytes, validation_log))?
+    }
+
+    /// Return Store from in memory asset asynchronously
+    #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
+    async fn load_cai_from_memory_async(
+        asset_type: &str,
+        data: &[u8],
+        validation_log: &mut StatusTracker,
+    ) -> Result<Store> {
+        let mut input_stream = Cursor::new(data);
+        Store::load_jumbf_from_stream_async(asset_type, &mut input_stream)
+            .await
+            .map(|(manifest_bytes, _)| Store::from_jumbf(&manifest_bytes, validation_log))?
+    }
+
+    /// Handles remote manifests asynchronously when file_io/fetch_remote_manifests feature is enabled
+    #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
+    async fn handle_remote_manifest_async(ext_ref: &str) -> Result<Vec<u8>> {
+        // verify provenance path is remote url
+        if Store::is_valid_remote_url(ext_ref) {
+            if get_settings_value::<bool>("verify.remote_manifest_fetch").unwrap_or(true) {
+                Store::fetch_remote_manifest(ext_ref).await
+            } else {
+                Err(Error::RemoteManifestUrl(ext_ref.to_owned()))
+            }
+        } else {
+            Err(Error::JumbfNotFound)
+        }
     }
 
     /// load jumbf given a stream
@@ -3899,6 +3976,44 @@ impl Store {
                         .provenance
                 {
                     Ok((Store::handle_remote_manifest(&ext_ref)?, Some(ext_ref)))
+                } else {
+                    Err(Error::JumbfNotFound)
+                }
+            }
+            Err(e) => Err(e),
+        }
+    }
+
+    /// load jumbf given a stream asynchronously
+    ///
+    /// This handles, embedded and remote manifests
+    ///
+    /// asset_type -  mime type of the stream
+    /// stream - a readable stream of an asset
+    ///
+    /// Returns a tuple (jumbf_bytes, remote_url), returning a remote_url only
+    /// if it was used to fetch the jumbf_bytes.
+    #[cfg(all(
+        feature = "fetch_remote_manifests",
+        target_arch = "wasm32",
+        not(target_os = "wasi")
+    ))]
+    pub async fn load_jumbf_from_stream_async(
+        asset_type: &str,
+        stream: &mut dyn CAIRead,
+    ) -> Result<(Vec<u8>, Option<String>)> {
+        match load_jumbf_from_stream(asset_type, stream) {
+            Ok(manifest_bytes) => Ok((manifest_bytes, None)),
+            Err(Error::JumbfNotFound) => {
+                stream.rewind()?;
+                if let Some(ext_ref) =
+                    crate::utils::xmp_inmemory_utils::XmpInfo::from_source(stream, asset_type)
+                        .provenance
+                {
+                    Ok((
+                        Store::handle_remote_manifest_async(&ext_ref).await?,
+                        Some(ext_ref),
+                    ))
                 } else {
                     Err(Error::JumbfNotFound)
                 }
@@ -4004,6 +4119,26 @@ impl Store {
         })
     }
 
+    /// Get store from memory asynchronously, supporting remote manifest fetching
+    #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
+    pub async fn get_store_from_memory_async(
+        asset_type: &str,
+        data: &[u8],
+        validation_log: &mut StatusTracker,
+    ) -> Result<Store> {
+        // load jumbf if available
+        Self::load_cai_from_memory_async(asset_type, data, validation_log)
+            .await
+            .inspect_err(|e| {
+                log_item!(
+                    "asset",
+                    "error loading asset",
+                    "get_store_from_memory_async"
+                )
+                .failure_no_throw(validation_log, e);
+            })
+    }
+
     /// Returns embedded remote manifest URL if available
     /// asset_type: extensions or mime type of the data
     /// data: byte array containing the asset
@@ -4040,6 +4175,22 @@ impl Store {
         verify: bool,
         validation_log: &mut StatusTracker,
     ) -> Result<Self> {
+        #[cfg(all(
+            feature = "fetch_remote_manifests",
+            target_arch = "wasm32",
+            not(target_os = "wasi")
+        ))]
+        let (manifest_bytes, remote_url) = if _sync {
+            Store::load_jumbf_from_stream(format, &mut stream)?
+        } else {
+            Store::load_jumbf_from_stream_async(format, &mut stream).await?
+        };
+
+        #[cfg(not(all(
+            feature = "fetch_remote_manifests",
+            target_arch = "wasm32",
+            not(target_os = "wasi")
+        )))]
         let (manifest_bytes, remote_url) = Store::load_jumbf_from_stream(format, &mut stream)?;
 
         let store = if _sync {
@@ -4202,6 +4353,10 @@ impl Store {
         verify: bool,
         validation_log: &mut StatusTracker,
     ) -> Result<Store> {
+        #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
+        let store = Store::get_store_from_memory_async(asset_type, data, validation_log).await?;
+
+        #[cfg(not(all(target_arch = "wasm32", not(target_os = "wasi"))))]
         let store = Store::get_store_from_memory(asset_type, data, validation_log)?;
 
         // verify the store
@@ -4264,7 +4419,26 @@ impl Store {
         mut fragment: impl Read + Seek + Send,
         validation_log: &mut StatusTracker,
     ) -> Result<Store> {
+        #[cfg(all(
+            feature = "fetch_remote_manifests",
+            target_arch = "wasm32",
+            not(target_os = "wasi")
+        ))]
+        let manifest_bytes = if _sync {
+            Store::load_jumbf_from_stream(format, &mut stream)?.0
+        } else {
+            Store::load_jumbf_from_stream_async(format, &mut stream)
+                .await?
+                .0
+        };
+
+        #[cfg(not(all(
+            feature = "fetch_remote_manifests",
+            target_arch = "wasm32",
+            not(target_os = "wasi")
+        )))]
         let manifest_bytes = Store::load_jumbf_from_stream(format, &mut stream)?.0;
+
         let store = Store::from_jumbf(&manifest_bytes, validation_log)?;
 
         let verify = get_settings_value::<bool>("verify.verify_after_reading")?; // defaults to true
@@ -4329,6 +4503,19 @@ impl Store {
         verify: bool,
         validation_log: &mut StatusTracker,
     ) -> Result<Store> {
+        #[cfg(all(
+            feature = "fetch_remote_manifests",
+            target_arch = "wasm32",
+            not(target_os = "wasi")
+        ))]
+        let store =
+            Store::get_store_from_memory_async(asset_type, init_segment, validation_log).await?;
+
+        #[cfg(not(all(
+            feature = "fetch_remote_manifests",
+            target_arch = "wasm32",
+            not(target_os = "wasi")
+        )))]
         let store = Store::get_store_from_memory(asset_type, init_segment, validation_log)?;
 
         // verify the store
