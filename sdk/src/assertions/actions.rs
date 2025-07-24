@@ -916,7 +916,7 @@ pub mod tests {
         assert_eq!(result.actions[1].when(), original.actions[1].when());
         assert_eq!(
             result.actions[1].source_type().unwrap(),
-            &DigitalSourceType::Iptc(IptcDigitalSourceType::AlgorithmicMedia)
+            &IptcDigitalSourceType::AlgorithmicMedia.into()
         );
         assert_eq!(result.actions[1].changes(), original.actions()[1].changes());
         assert_eq!(
