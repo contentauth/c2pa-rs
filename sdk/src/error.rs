@@ -188,6 +188,9 @@ pub enum Error {
     #[error("WASM could not load crypto library")]
     WasmNoCrypto,
 
+    #[error("remote signers are not supported for WASM")]
+    WasmNoRemoteSigner,
+
     /// Unable to generate valid JUMBF for a claim.
     #[error("could not create valid JUMBF for claim")]
     JumbfCreationError,
@@ -207,6 +210,12 @@ pub enum Error {
     #[error("must fetch remote manifests from url {0}")]
     RemoteManifestUrl(String),
 
+    #[error("failed to fetch the remote settings")]
+    FailedToFetchSettings,
+
+    #[error("failed to remotely sign data")]
+    FailedToRemoteSign,
+
     #[error("stopped because of logged error")]
     LogStop,
 
@@ -215,6 +224,15 @@ pub enum Error {
 
     #[error("type is unsupported")]
     UnsupportedType,
+
+    #[error("thumbnail format {0} is unsupported")]
+    UnsupportedThumbnailFormat(String),
+
+    #[error("`trust.signer_info` is missing from settings")]
+    MissingSignerSettings,
+
+    #[error("`builder.auto_created_action.source_type` must be set if this feature is enabled")]
+    MissingAutoCreatedActionSourceType,
 
     #[error("embedding error")]
     EmbeddingError,
@@ -297,6 +315,9 @@ pub enum Error {
 
     #[error(transparent)]
     CborError(#[from] serde_cbor::Error),
+
+    #[error(transparent)]
+    TomlSerializationError(#[from] toml::ser::Error),
 
     #[error(transparent)]
     OtherError(#[from] Box<dyn std::error::Error + Send + Sync + 'static>),
