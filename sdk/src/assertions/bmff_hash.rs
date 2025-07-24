@@ -1316,7 +1316,7 @@ impl BmffHash {
 
             // make sure variable_block_sizes == length of the box
             if box_info.size() - 16 != variable_block_sizes.iter().sum::<u64>() {
-                return Err(Error::InvalidAsset(
+                return Err(Error::C2PAValidation(
                     "variable block sizes do not match box size".to_string(),
                 ));
             }
@@ -1489,7 +1489,7 @@ impl BmffHash {
 
                 // make sure variable_block_sizes == length of the box
                 if box_info.size() - 16 != variable_block_sizes.iter().sum::<u64>() {
-                    return Err(Error::HashMismatch(
+                    return Err(Error::C2PAValidation(
                         "variable block sizes does not match mdat box size".to_string(),
                     ));
                 }
@@ -1527,8 +1527,8 @@ impl BmffHash {
 
                 // the number of MM entries should match the number of ranges
                 if ranges.len() != mm.count {
-                    return Err(Error::HashMismatch(
-                        "number of ranges does not match number of chunks".to_string(),
+                    return Err(Error::C2PAValidation(
+                        "number of leaves does not match the Merkle".to_string(),
                     ));
                 }
 
