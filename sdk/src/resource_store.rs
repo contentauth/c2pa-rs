@@ -311,7 +311,7 @@ impl ResourceStore {
     /// Returns a copy on write reference to the resource if found.
     ///
     /// Returns [`Error::ResourceNotFound`] if it cannot find a resource matching that ID.
-    pub fn get(&self, id: &str) -> Result<Cow<Vec<u8>>> {
+    pub fn get(&self, id: &str) -> Result<Cow<'_, Vec<u8>>> {
         #[cfg(feature = "file_io")]
         if !self.resources.contains_key(id) {
             match self.base_path.as_ref() {

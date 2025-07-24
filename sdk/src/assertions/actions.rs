@@ -29,6 +29,21 @@ use crate::{
 const ASSERTION_CREATION_VERSION: usize = 2;
 pub const CAI_INGREDIENT_IDS: &str = "org.cai.ingredientIds";
 
+// TODO: make enum
+/// Constants indicating from which source a digital image was created.
+///
+/// These constants are used in conjunction with [`Actions::source_type`].
+#[allow(unused)]
+pub(crate) mod source_type {
+    /// Media whose digital content is effectively empty, such as a blank canvas or zero-length video.
+    pub const EMPTY: &str = "http://c2pa.org/digitalsourcetype/empty";
+    /// Data that is the result of algorithmically using a model derived from sampled content and data.
+    /// Differs from <http://cv.iptc.org/newscodes/digitalsourcetype/>trainedAlgorithmicMedia in that
+    /// the result isn’t a media type (e.g., image or video) but is a data format (e.g., CSV, pickle).
+    pub const TRAINED_ALGORITHMIC_DATA: &str =
+        "http://c2pa.org/digitalsourcetype/trainedAlgorithmicData";
+}
+
 /// C2PA actions defined in the C2PA specification.
 pub mod c2pa_action {
     /// Changes to tone, saturation, etc.
@@ -130,15 +145,15 @@ impl From<ClaimGeneratorInfo> for SoftwareAgent {
 #[derive(Deserialize, Serialize, Clone, Debug, Default, PartialEq)]
 pub struct Action {
     /// The label associated with this action. See ([`c2pa_action`]).
-    action: String,
+    pub(crate) action: String,
 
     /// Timestamp of when the action occurred.
     #[serde(skip_serializing_if = "Option::is_none")]
-    when: Option<DateT>,
+    pub(crate) when: Option<DateT>,
 
     /// The software agent that performed the action.
     #[serde(rename = "softwareAgent", skip_serializing_if = "Option::is_none")]
-    software_agent: Option<SoftwareAgent>,
+    pub(crate) software_agent: Option<SoftwareAgent>,
 
     /// 0-based index into the softwareAgents array
     #[serde(rename = "softwareAgentIndex", skip_serializing_if = "Option::is_none")]
@@ -146,7 +161,7 @@ pub struct Action {
 
     /// A semicolon-delimited list of the parts of the resource that were changed since the previous event history.
     #[serde(skip_serializing_if = "Option::is_none")]
-    changed: Option<String>,
+    pub(crate) changed: Option<String>,
 
     /// A list of the regions of interest of the resource that were changed.
     ///
@@ -154,37 +169,37 @@ pub struct Action {
     /// When tracking changes and the scope of the changed components is unknown,
     /// it should be assumed that anything might have changed.
     #[serde(skip_serializing_if = "Option::is_none")]
-    changes: Option<Vec<RegionOfInterest>>,
+    pub(crate) changes: Option<Vec<RegionOfInterest>>,
 
     /// This is NOT the instanceID in the spec
     /// It is now deprecated but was previously used to map the action to an ingredient
     #[deprecated(since = "0.37.0", note = "Use `org.cai.ingredientIds` instead")]
     #[serde(skip_serializing)]
     #[serde(alias = "instanceId", alias = "instanceID")]
-    instance_id: Option<String>,
+    pub(crate) instance_id: Option<String>,
 
     /// Additional parameters of the action. These vary by the type of action.
     #[serde(skip_serializing_if = "Option::is_none")]
-    parameters: Option<HashMap<String, Value>>,
+    pub(crate) parameters: Option<HashMap<String, Value>>,
 
     /// An array of the creators that undertook this action.
     #[serde(skip_serializing_if = "Option::is_none")]
-    actors: Option<Vec<Actor>>,
+    pub(crate) actors: Option<Vec<Actor>>,
 
     /// One of the defined URI values at `<https://cv.iptc.org/newscodes/digitalsourcetype/>`
     #[serde(rename = "digitalSourceType", skip_serializing_if = "Option::is_none")]
-    source_type: Option<String>,
+    pub(crate) source_type: Option<String>,
 
     /// List of related actions.
     #[serde(skip_serializing_if = "Option::is_none")]
-    related: Option<Vec<Action>>,
+    pub(crate) related: Option<Vec<Action>>,
 
     // The reason why this action was performed, required when the action is `c2pa.redacted`
     #[serde(skip_serializing_if = "Option::is_none")]
-    reason: Option<String>,
+    pub(crate) reason: Option<String>,
 
     #[serde(skip_serializing_if = "Option::is_none")]
-    description: Option<String>,
+    pub(crate) description: Option<String>,
 }
 
 impl Action {
@@ -440,6 +455,7 @@ impl Action {
     }
 }
 
+
 // Converts a JSON string to an [`Action`].
 impl TryFrom<&str> for Action {
     type Error = crate::error::Error;
@@ -454,7 +470,7 @@ impl TryFrom<&str> for Action {
     }
 }
 
-#[derive(Deserialize, Serialize, Debug, Default, PartialEq, Eq)]
+#[derive(Deserialize, Serialize, Debug, Clone, Default, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct ActionTemplate {
     /// The label associated with this action. See ([`c2pa_action`]).
@@ -534,7 +550,7 @@ impl Actions {
     pub fn new() -> Self {
         Self {
             actions: Vec::new(),
-            all_actions_included: None,
+            all_actions_included: Some(true),
             templates: None,
             metadata: None,
             software_agents: None,
