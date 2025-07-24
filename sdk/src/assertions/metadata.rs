@@ -11,13 +11,10 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use std::collections::HashMap;
-
 use chrono::{SecondsFormat, Utc};
 #[cfg(feature = "json_schema")]
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 
 use crate::{
     assertion::{Assertion, AssertionBase, AssertionCbor},
@@ -43,8 +40,6 @@ pub struct Metadata {
     data_source: Option<DataSource>,
     #[serde(rename = "regionOfInterest", skip_serializing_if = "Option::is_none")]
     region_of_interest: Option<RegionOfInterest>,
-    #[serde(flatten)]
-    other: HashMap<String, Value>,
 }
 
 impl Metadata {
@@ -62,7 +57,6 @@ impl Metadata {
             reference: None,
             data_source: None,
             region_of_interest: None,
-            other: HashMap::new(),
         }
     }
 
@@ -84,11 +78,6 @@ impl Metadata {
     /// Returns the [`RegionOfInterest`] for this assertion if it exists.
     pub fn region_of_interest(&self) -> Option<&RegionOfInterest> {
         self.region_of_interest.as_ref()
-    }
-
-    /// Returns map containing custom metadata fields.
-    pub fn other(&self) -> &HashMap<String, Value> {
-        &self.other
     }
 
     /// Adds a [`ReviewRating`] associated with the assertion.
@@ -131,17 +120,6 @@ impl Metadata {
     pub fn set_region_of_interest(mut self, region_of_interest: RegionOfInterest) -> Self {
         self.region_of_interest = Some(region_of_interest);
         self
-    }
-
-    /// Adds an additional key / value pair.
-    pub fn insert(&mut self, key: &str, value: Value) -> &mut Self {
-        self.other.insert(key.to_string(), value);
-        self
-    }
-
-    /// Gets additional values by key.
-    pub fn get(&self, key: &str) -> Option<&Value> {
-        self.other.get(key)
     }
 }
 
@@ -334,8 +312,7 @@ pub mod tests {
     #[test]
     fn assertion_metadata() {
         let review = ReviewRating::new("foo", Some("bar".to_owned()), 3);
-        let test_value = Value::from("test");
-        let mut original =
+        let original =
             Metadata::new()
                 .add_review(review)
                 .set_region_of_interest(RegionOfInterest {
@@ -350,7 +327,6 @@ pub mod tests {
                     }],
                     ..Default::default()
                 });
-        original.insert("foo", test_value);
         println!("{:}", &original);
         let assertion = original.to_assertion().expect("build_assertion");
         assert_eq!(assertion.mime_type(), "application/cbor");
@@ -359,7 +335,6 @@ pub mod tests {
         println!("{:?}", serde_json::to_string(&result));
         assert_eq!(original.date_time, result.date_time);
         assert_eq!(original.reviews, result.reviews);
-        assert_eq!(original.get("foo").unwrap(), "test");
         assert_eq!(
             original.region_of_interest.as_ref(),
             result.region_of_interest()
