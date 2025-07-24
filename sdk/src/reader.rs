@@ -880,6 +880,7 @@ pub mod tests {
 
     #[cfg(feature = "fetch_remote_manifests")]
     #[test]
+    #[cfg(not(target_arch = "wasm32"))]
     fn test_reader_remote_url() -> Result<()> {
         let reader = Reader::from_stream("image/jpeg", Cursor::new(IMAGE_WITH_REMOTE_MANIFEST))?;
         let remote_url = reader.remote_url();

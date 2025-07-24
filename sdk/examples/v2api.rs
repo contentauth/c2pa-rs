@@ -16,8 +16,8 @@ use std::io::{Cursor, Seek};
 
 use anyhow::Result;
 use c2pa::{
-    crypto::raw_signature::SigningAlg, settings::load_settings_from_str,
-    validation_results::ValidationState, Builder, CallbackSigner, Reader,
+    crypto::raw_signature::SigningAlg, settings::Settings, validation_results::ValidationState,
+    Builder, CallbackSigner, Reader,
 };
 use serde_json::json;
 
@@ -76,16 +76,15 @@ fn main() -> Result<()> {
     let parent_name = "CA.jpg";
     let mut source = Cursor::new(TEST_IMAGE);
 
-    let modified_core = json!({
-        "core": {
-            "debug": true,
-            "hash_alg": "sha512",
-            "max_memory_usage": 123456
-        }
-    })
+    let modified_core = toml::toml! {
+        [core]
+        debug = true
+        hash_alg = "sha512"
+        max_memory_usage = 123456
+    }
     .to_string();
 
-    load_settings_from_str(&modified_core, "json")?;
+    Settings::from_toml(&modified_core)?;
 
     let json = manifest_def(title, format);
 

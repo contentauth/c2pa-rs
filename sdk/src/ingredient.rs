@@ -255,14 +255,14 @@ impl Ingredient {
     }
 
     /// Returns thumbnail tuple Some((format, bytes)) or None.
-    pub fn thumbnail(&self) -> Option<(&str, Cow<Vec<u8>>)> {
+    pub fn thumbnail(&self) -> Option<(&str, Cow<'_, Vec<u8>>)> {
         self.thumbnail
             .as_ref()
             .and_then(|t| Some(t.format.as_str()).zip(self.resources.get(&t.identifier).ok()))
     }
 
     /// Returns a Cow of thumbnail bytes or Err(Error::NotFound)`.
-    pub fn thumbnail_bytes(&self) -> Result<Cow<Vec<u8>>> {
+    pub fn thumbnail_bytes(&self) -> Result<Cow<'_, Vec<u8>>> {
         match self.thumbnail.as_ref() {
             Some(thumbnail) => self.resources.get(&thumbnail.identifier),
             None => Err(Error::NotFound),
@@ -317,7 +317,7 @@ impl Ingredient {
     /// Returns a copy on write ref to the manifest data bytes or None`.
     ///
     /// manifest_data is the binary form of a manifest store in .c2pa format.
-    pub fn manifest_data(&self) -> Option<Cow<Vec<u8>>> {
+    pub fn manifest_data(&self) -> Option<Cow<'_, Vec<u8>>> {
         self.manifest_data
             .as_ref()
             .and_then(|r| self.resources.get(&r.identifier).ok())
@@ -898,13 +898,14 @@ impl Ingredient {
         #[cfg(feature = "add_thumbnails")]
         if self.thumbnail.is_none() {
             stream.rewind()?;
-            match crate::utils::thumbnail::make_thumbnail_from_stream(format, stream) {
-                Ok((format, image)) => {
-                    self.set_thumbnail(format, image)?;
-                }
-                Err(err) => {
-                    log::warn!("Could not create thumbnail. {err}");
-                }
+
+            if let Some((output_format, image)) =
+                crate::utils::thumbnail::make_thumbnail_bytes_from_stream(
+                    format,
+                    std::io::BufReader::new(stream),
+                )?
+            {
+                self.set_thumbnail(output_format.to_string(), image)?;
             }
         }
 
@@ -970,13 +971,14 @@ impl Ingredient {
         #[cfg(feature = "add_thumbnails")]
         if ingredient.thumbnail.is_none() {
             stream.rewind()?;
-            match crate::utils::thumbnail::make_thumbnail_from_stream(format, stream) {
-                Ok((format, image)) => {
-                    ingredient.set_thumbnail(format, image)?;
-                }
-                Err(err) => {
-                    log::warn!("Could not create thumbnail. {err}");
-                }
+
+            if let Some((output_format, image)) =
+                crate::utils::thumbnail::make_thumbnail_bytes_from_stream(
+                    format,
+                    std::io::BufReader::new(stream),
+                )?
+            {
+                ingredient.set_thumbnail(output_format.to_string(), image)?;
             }
         }
 
@@ -1370,13 +1372,14 @@ impl Ingredient {
         #[cfg(feature = "add_thumbnails")]
         if ingredient.thumbnail.is_none() {
             stream.rewind()?;
-            match crate::utils::thumbnail::make_thumbnail_from_stream(format, stream) {
-                Ok((format, image)) => {
-                    ingredient.set_thumbnail(format, image)?;
-                }
-                Err(err) => {
-                    log::warn!("Could not create thumbnail. {err}");
-                }
+
+            if let Some((output_format, image)) =
+                crate::utils::thumbnail::make_thumbnail_bytes_from_stream(
+                    format,
+                    std::io::BufReader::new(stream),
+                )?
+            {
+                ingredient.set_thumbnail(output_format.to_string(), image)?;
             }
         }
         Ok(ingredient)
@@ -1415,7 +1418,10 @@ pub trait IngredientOptions {
     /// The default is no thumbnail, so you must provide an override to have a thumbnail image.
     fn thumbnail(&self, _path: &Path) -> Option<(String, Vec<u8>)> {
         #[cfg(feature = "add_thumbnails")]
-        return crate::utils::thumbnail::make_thumbnail(_path).ok();
+        return crate::utils::thumbnail::make_thumbnail_bytes_from_path(_path)
+            .ok()
+            .flatten()
+            .map(|(format, image)| (format.to_string(), image));
         #[cfg(not(feature = "add_thumbnails"))]
         None
     }
