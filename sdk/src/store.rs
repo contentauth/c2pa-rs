@@ -2068,7 +2068,9 @@ impl Store {
             get_settings_value::<Option<usize>>("core.merkle_tree_chunk_size_in_kb")
         {
             if merkle_chunk_size == 0 {
-                return Err(Error::BadParam("Merkle tree fixed block size must be greater than 0".to_string()));
+                return Err(Error::BadParam(
+                    "Merkle tree fixed block size must be greater than 0".to_string(),
+                ));
             }
 
             // mdat boxes are excluded when using Merkle hashing
