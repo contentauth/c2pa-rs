@@ -2067,12 +2067,6 @@ impl Store {
         if let Ok(Some(merkle_chunk_size)) =
             get_settings_value::<Option<usize>>("core.merkle_tree_chunk_size_in_kb")
         {
-            if merkle_chunk_size == 0 {
-                return Err(Error::BadParam(
-                    "Merkle tree fixed block size must be greater than 0".to_string(),
-                ));
-            }
-
             // mdat boxes are excluded when using Merkle hashing
             let mut mdat = ExclusionsMap::new("/mdat".to_owned());
             let subset_mdat = SubsetMap {
@@ -2092,6 +2086,12 @@ impl Store {
             let mut uuid_boxes = Vec::new();
 
             for (index, mdat_box) in mdat_boxes.iter().enumerate() {
+                let fixed_block_size = if merkle_chunk_size > 0 {
+                    Some(1024 * merkle_chunk_size as u64)
+                } else {
+                    None
+                };
+
                 let mut merkle_map = MerkleMap {
                     unique_id: 0,
                     local_id: index,
@@ -2099,7 +2099,7 @@ impl Store {
                     alg: Some(alg.to_string()),
                     init_hash: None,
                     hashes: VecByteBuf(Vec::new()),
-                    fixed_block_size: Some(1024 * merkle_chunk_size as u64),
+                    fixed_block_size,
                     variable_block_sizes: None,
                 };
 
@@ -2116,17 +2116,19 @@ impl Store {
             }
 
             dh.merkle = Some(merkle_maps);
-            dh.merkle_uuid_boxes = Some(uuid_boxes.into_iter().flatten().collect::<Vec<u8>>());
+            if !uuid_boxes.is_empty() {
+                dh.merkle_uuid_boxes = Some(uuid_boxes.into_iter().flatten().collect::<Vec<u8>>());
 
-            // calculate the insertion point for the UUID boxes after the last mdat box
-            let last_mdat_box = mdat_boxes
-                .last()
-                .ok_or(Error::BadParam("No mdat boxes found".to_string()))?;
-            dh.merkle_uuid_boxes_insertion_point = last_mdat_box.end();
+                // calculate the insertion point for the UUID boxes after the last mdat box
+                let last_mdat_box = mdat_boxes
+                    .last()
+                    .ok_or(Error::BadParam("No mdat boxes found".to_string()))?;
+                dh.merkle_uuid_boxes_insertion_point = last_mdat_box.end();
 
-            // if there are existing Merkle UUID boxes we want to overwrite those
-            if let Some(last_uuid_box) = boxes.bmff_merkle_box_infos.last() {
-                dh.merkle_replacement_range = last_mdat_box.end() - last_uuid_box.end();
+                // if there are existing Merkle UUID boxes we want to overwrite those
+                if let Some(last_uuid_box) = boxes.bmff_merkle_box_infos.last() {
+                    dh.merkle_replacement_range = last_mdat_box.end() - last_uuid_box.end();
+                }
             }
         }
 

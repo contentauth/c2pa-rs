@@ -687,14 +687,10 @@ impl BmffHash {
                 .all(|mm| mm.fixed_block_size.is_some() || mm.variable_block_sizes.is_some())
             {
                 self.validate_merkle_maps_mdat_boxes(reader, &c2pa_boxes)?;
-            } else if box_infos.iter().any(|b| b.path == "moov") {
+            } else if box_infos.iter().any(|b| b.path == "moov") && !bmff_merkle.is_empty() {
                 // timed media case
 
-                let track_to_bmff_merkle_map = if bmff_merkle.is_empty() {
-                    HashMap::new()
-                } else {
-                    self.split_bmff_merkle_map(bmff_merkle.clone())?
-                };
+                let track_to_bmff_merkle_map = self.split_bmff_merkle_map(bmff_merkle.clone())?;
 
                 reader.rewind()?;
                 let buf_reader = BufReader::new(reader);
@@ -812,10 +808,8 @@ impl BmffHash {
                     }
                 }
             } else {
-                // non-timed media so use iloc (awaiting use case/example since the iloc varies by format)
-                return Err(Error::HashMismatch(
-                    "Merkle validation not supported for this layout".to_owned(),
-                ));
+                // try the no boxes defined fallback
+                self.validate_merkle_maps_mdat_boxes(reader, &c2pa_boxes)?;
             }
         }
 
