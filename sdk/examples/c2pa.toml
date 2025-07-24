@@ -1,0 +1,172 @@
+# c2pa-rs Configuration File
+
+# Version information.
+version_major = 1
+version_minor = 0
+
+# # Trust settings for certificate validation.
+# [trust]
+# # String to user-provided trust anchors (PEM format).
+# user_anchors = ""
+# # String to system trust anchors (PEM format).
+# trust_anchors = ""
+# # String to trust configuration.
+# trust_config = ""
+# # Path to allowed certificate list (PEM format).
+# allowed_list = ""
+
+# Verification settings.
+[verify]
+# Verify manifests after reading.
+verify_after_reading = true
+# Verify manifests after signing.
+verify_after_sign = true
+# Fetch remote manifests.
+remote_manifest_fetch = true
+
+# Configuration for a signer.
+#
+# The signer can be retrieved via the `Settings::signer` function.
+[signer]
+
+# A signer can be loaded in the API with the function `Settings::signer`.
+[signer.local]
+# Algorithm to use for signing.
+alg = "ps256"
+# Certificate used for signing (PEM format).
+sign_cert = ""
+# Private key used for signing (PEM format).
+private_key = ""
+# Time stamp authority URL for signing.
+tsa_url = ""
+
+# # Alternatively, you can specify a remote signer, which is also loaded
+# # via `Settings::signer`.
+# #
+# # Note that you may not specify both a local and remote signer at the same time.
+# [signer.remote]
+# # URL to the signer used for signing.
+# #
+# # A POST request with a byte stream will be sent to this URL.
+# url = "https://www.google.com"
+# # Algorithm to use for signing.
+# alg = "ps256"
+# # Certificate used for signing (PEM format).
+# sign_cert = ""
+# # Time stamp authority URL for signing.
+# tsa_url = ""
+
+# Configuration for the `Builder`.
+[builder]
+
+# Claim generator info list.
+[builder.claim_generator_info]
+# A human readable name.
+name = "My Service"
+# A human readable string of the product's version.
+version = "1.0.0"
+# The operating system the claim generator is running on.
+operating_system.name = "macOS"
+# Or if the name isn't specified, it can be inferred automatically.
+operating_system.infer = true
+# Arbitrary fields can also be defined.
+#
+# By default, the SDK adds a field "org.cai.c2pa_rs" with the value
+# being the current version of the SDK.
+some_other_field = ""
+
+# Actions assertion configuration.
+[builder.actions]
+# Signifies if all the actions that ever happened on a particular asset are specified
+# or if some are missing.
+all_actions_included = true
+
+# A template to use as the base values for a particular action.
+[[builder.actions.templates]]
+# The label of the action.
+action = "c2pa.edited"
+# TODO: do we want to document these fields here or just include links to the docs
+#       rust docs or c2pa docs?
+# The source type field is required for the c2pa.created action.
+#
+# For more information, see `c2pa::assertions::actions::source_type`.
+source_type = "http://c2pa.org/digitalsourcetype/empty"
+# Description for the action
+description = "Some edit action."
+# Arbitrary key/value pairs to store in the action.
+template_parameters = { "arbitrary_key" = true }
+# A software agent has the same fields as a claim generator info.
+software_agent = { name = "My Service" }
+
+# Multiple templates can be specified.
+[[builder.actions.templates]]
+action = "c2pa.cropped"
+
+# TODO: document rest of fields for actions
+# Actions to be added to every "Actions" assertion.
+[[builder.actions.actions]]
+# The label of the action.
+action = "c2pa.drawing"
+
+# Similarly, multiple actions can be defined.
+[[builder.actions.actions]]
+action = "c2pa.color_adjustments"
+
+# Settings for configuring how c2pa.created actions are auto created.
+#
+# This is a convenience setting and it can be disabled if the information
+# is provided manually.
+[builder.actions.auto_created_action]
+# Whether to auto create the c2pa.created action.
+enabled = true
+# The source type field is required for the c2pa.created action.
+#
+# For more information, see `c2pa::assertions::actions::source_type`.
+source_type = "http://c2pa.org/digitalsourcetype/empty"
+
+# Settings for configuring how c2pa.opened actions are auto created.
+#
+# This is a convenience setting and it can be disabled if the information
+# is provided manually.
+[builder.actions.auto_opened_action]
+# Whether to auto create the c2pa.opened action.
+enabled = true
+# For more information, see `c2pa::assertions::actions::source_type`.
+#
+# Note this field is optional for the c2pa.opened action.
+source_type = "http://c2pa.org/digitalsourcetype/empty"
+
+# Settings for configuring how c2pa.placed actions are auto created.
+#
+# This is a convenience setting and it can be disabled if the information
+# is provided manually.
+[builder.actions.auto_placed_action]
+# Whether to auto create the c2pa.placed action.
+enabled = true
+# For more information, see `c2pa::assertions::actions::source_type`.
+#
+# Note this field is optional for the c2pa.placed action.
+source_type = "http://c2pa.org/digitalsourcetype/empty"
+
+# Settings for automatic thumbnail generation.
+[builder.thumbnail]
+# Whether to enable automatic thumbnail generation.
+enabled = true
+# Whether to ignore errors when generating a thumbnail and continue signing.
+ignore_errors = false
+# The size of the longest edge of the thumbnail.
+long_edge = 1024
+# The output format of the thumbnail.
+#
+# If this field isn't specified, the thumbnail format will correspond to the
+# input format.
+format = "png"
+# Whether or not to prefer a smaller sized media format for the thumbnail.
+#
+# The "format" option takes precedence over this field.
+#
+# For instance, if the source input type is a PNG, but it doesn't have an alpha channel,
+# the image will be converted to a JPEG of smaller size.
+prefer_smallest_format = true
+# The output quality of the thumbnail (low, medium, high).
+quality = "medium"

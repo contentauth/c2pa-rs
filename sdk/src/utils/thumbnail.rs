@@ -11,108 +11,254 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use std::io::{Read, Seek};
+use std::{
+    fmt,
+    io::{BufRead, Cursor, Seek, Write},
+};
 
-use image::{codecs::jpeg::JpegEncoder, DynamicImage, ImageDecoder, ImageFormat, ImageReader};
+use image::{
+    codecs::{
+        jpeg::JpegEncoder,
+        png::{CompressionType, FilterType, PngEncoder},
+    },
+    DynamicImage, ImageDecoder, ImageFormat, ImageReader,
+};
 
-use crate::{Error, Result};
+use crate::{
+    settings::{
+        self,
+        builder::{ThumbnailFormat, ThumbnailQuality},
+    },
+    Error, Result,
+};
 
-// max edge size allowed in pixels for thumbnail creation
-const THUMBNAIL_LONGEST_EDGE: u32 = 1024;
-const THUMBNAIL_JPEG_QUALITY: u8 = 80;
-
-///  utility to generate a thumbnail from a file at path
-/// returns Result (format, image_bits) if successful, otherwise Error
-#[cfg(feature = "file_io")]
-pub fn make_thumbnail(path: &std::path::Path) -> Result<(String, Vec<u8>)> {
-    let format = ImageFormat::from_path(path)?;
-
-    // Take the orientation from the EXIF data and manipulate the pixels to match
-    let mut decoder = ImageReader::open(path)?.into_decoder()?;
-    let orientation = decoder.orientation()?;
-    let mut img = DynamicImage::from_decoder(decoder)?;
-    img.apply_orientation(orientation);
-
-    let longest_edge = THUMBNAIL_LONGEST_EDGE;
-
-    // generate a thumbnail image scaled down and in jpeg format
-    if img.width() > longest_edge || img.height() > longest_edge {
-        img = img.thumbnail(longest_edge, longest_edge);
+impl ThumbnailFormat {
+    /// Create a new [ThumbnailFormat] from the given format extension or mime type.
+    ///
+    /// If the format is unsupported, this function will return `None`.
+    pub fn new(format: &str) -> Option<ThumbnailFormat> {
+        ImageFormat::from_extension(format)
+            .or_else(|| ImageFormat::from_mime_type(format))
+            .and_then(|format| ThumbnailFormat::try_from(format).ok())
     }
-
-    let thumbnail_bits = Vec::new();
-    let mut cursor = std::io::Cursor::new(thumbnail_bits);
-    // for png files, use png thumbnails if there is an alpha channel
-    // for other supported types try a jpeg thumbnail
-    let format = match format {
-        ImageFormat::Png if img.color().has_alpha() => {
-            img.write_to(&mut cursor, ImageFormat::Png)?;
-            "image/png"
-        }
-
-        _ => {
-            let mut encoder = JpegEncoder::new_with_quality(&mut cursor, THUMBNAIL_JPEG_QUALITY);
-            encoder.encode_image(&img)?;
-            "image/jpeg"
-        }
-    };
-
-    let format = format.to_owned();
-    Ok((format, cursor.into_inner()))
 }
 
-///  utility to generate a thumbnail from a file at path
-/// returns Result (format, image_bits) if successful, otherwise Error
-pub fn make_thumbnail_from_stream<R: Read + Seek + ?Sized>(
-    format: &str,
-    stream: &mut R,
-) -> Result<(String, Vec<u8>)> {
-    let format = ImageFormat::from_extension(format)
-        .or_else(|| ImageFormat::from_mime_type(format))
-        .ok_or(Error::UnsupportedType)?;
+impl TryFrom<ImageFormat> for ThumbnailFormat {
+    type Error = Error;
 
-    // Take the orientation from the EXIF data and manipulate the pixels to match
-    let mut decoder =
-        ImageReader::with_format(std::io::BufReader::new(stream), format).into_decoder()?;
-    let orientation = decoder.orientation()?;
-    let mut img = DynamicImage::from_decoder(decoder)?;
-    img.apply_orientation(orientation);
-
-    let longest_edge = THUMBNAIL_LONGEST_EDGE;
-
-    // generate a thumbnail image scaled down and in jpeg format
-    if img.width() > longest_edge || img.height() > longest_edge {
-        img = img.thumbnail(longest_edge, longest_edge);
-    }
-
-    let thumbnail_bits = Vec::new();
-    let mut cursor = std::io::Cursor::new(thumbnail_bits);
-    // for png files, use png thumbnails for transparency
-    // for other supported types try a jpeg thumbnail
-    let format = match format {
-        ImageFormat::Png if img.color().has_alpha() => {
-            img.write_to(&mut cursor, ImageFormat::Png)?;
-            "image/png"
+    fn try_from(format: ImageFormat) -> Result<Self> {
+        match format {
+            ImageFormat::Png => Ok(ThumbnailFormat::Png),
+            ImageFormat::Jpeg => Ok(ThumbnailFormat::Jpeg),
+            ImageFormat::Gif => Ok(ThumbnailFormat::Gif),
+            ImageFormat::WebP => Ok(ThumbnailFormat::WebP),
+            ImageFormat::Tiff => Ok(ThumbnailFormat::Tiff),
+            _ => Err(Error::UnsupportedThumbnailFormat(
+                format.to_mime_type().to_owned(),
+            )),
         }
+    }
+}
 
-        _ => {
-            let mut encoder = JpegEncoder::new_with_quality(&mut cursor, THUMBNAIL_JPEG_QUALITY);
-            encoder.encode_image(&img)?;
-            "image/jpeg"
+impl From<ThumbnailFormat> for ImageFormat {
+    fn from(format: ThumbnailFormat) -> Self {
+        match format {
+            ThumbnailFormat::Png => ImageFormat::Png,
+            ThumbnailFormat::Jpeg => ImageFormat::Jpeg,
+            ThumbnailFormat::Gif => ImageFormat::Gif,
+            ThumbnailFormat::WebP => ImageFormat::WebP,
+            ThumbnailFormat::Tiff => ImageFormat::Tiff,
+        }
+    }
+}
+
+impl From<ThumbnailFormat> for config::ValueKind {
+    fn from(value: ThumbnailFormat) -> Self {
+        let variant = match value {
+            ThumbnailFormat::Png => "png",
+            ThumbnailFormat::Jpeg => "jpeg",
+            ThumbnailFormat::Gif => "gif",
+            ThumbnailFormat::WebP => "webp",
+            ThumbnailFormat::Tiff => "tiff",
+        };
+        config::ValueKind::String(variant.to_owned())
+    }
+}
+
+impl fmt::Display for ThumbnailFormat {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", ImageFormat::from(*self).to_mime_type())
+    }
+}
+
+/// Make a thumbnail from an input path and return the format and new thumbnail bytes.
+///
+/// If the output format is unsupported, this function will return [Error::UnsupportedThumbnailFormat][crate::Error::UnsupportedThumbnailFormat].
+///
+/// This function takes into account the [Settings][crate::Settings]:
+/// * `builder.thumbnail.ignore_errors`
+///
+/// Read [make_thumbnail_from_stream] for more information.
+#[cfg(feature = "file_io")]
+pub fn make_thumbnail_bytes_from_path(
+    path: &std::path::Path,
+) -> Result<Option<(ThumbnailFormat, Vec<u8>)>> {
+    use std::{fs::File, io::BufReader};
+
+    let result = {
+        match File::open(path) {
+            Ok(file) => match crate::format_from_path(path) {
+                Some(input_format) => {
+                    make_thumbnail_bytes_from_stream(&input_format, BufReader::new(file))
+                }
+                None => Err(Error::UnsupportedType),
+            },
+            Err(err) => Err(err.into()),
         }
     };
 
-    let format = format.to_owned();
-    Ok((format, cursor.into_inner()))
+    let ignore_errors = settings::get_settings_value::<bool>("builder.thumbnail.ignore_errors")?;
+    match result {
+        Ok(result) => Ok(result),
+        Err(_) if ignore_errors => Ok(None),
+        Err(err) => Err(err),
+    }
+}
+
+/// Make a thumbnail from an input stream and format and return the output format and new thumbnail bytes.
+///
+/// This function takes into account the [Settings][crate::Settings]:
+/// * `builder.thumbnail.ignore_errors`
+///
+/// Read [make_thumbnail_from_stream] for more information.
+pub fn make_thumbnail_bytes_from_stream<R>(
+    format: &str,
+    input: R,
+) -> Result<Option<(ThumbnailFormat, Vec<u8>)>>
+where
+    R: BufRead + Seek,
+{
+    let result = {
+        match ThumbnailFormat::new(format) {
+            Some(input_format) => {
+                let mut output = Cursor::new(Vec::new());
+                make_thumbnail_from_stream(input_format, None, input, &mut output)
+                    .map(|output_format| (output_format, output.into_inner()))
+            }
+            None => Err(Error::UnsupportedThumbnailFormat(format.to_owned())),
+        }
+    };
+
+    let ignore_errors = settings::get_settings_value::<bool>("builder.thumbnail.ignore_errors")?;
+    match result {
+        Ok(result) => Ok(Some(result)),
+        Err(_) if ignore_errors => Ok(None),
+        Err(err) => Err(err),
+    }
+}
+
+/// Make a thumbnail from the input stream and write to the output stream.
+///
+/// This function takes into account two [Settings][crate::Settings]:
+/// * `builder.thumbnail.long_edge`
+/// * `builder.thumbnail.quality`
+/// * `builder.thumbnail.format`
+/// * `builder.thumbnail.prefer_smallest_format`
+pub fn make_thumbnail_from_stream<R, W>(
+    input_format: ThumbnailFormat,
+    output_format: Option<ThumbnailFormat>,
+    input: R,
+    output: &mut W,
+) -> Result<ThumbnailFormat>
+where
+    R: BufRead + Seek,
+    W: Write + Seek,
+{
+    let mut decoder = ImageReader::with_format(input, input_format.into()).into_decoder()?;
+    let orientation = decoder.orientation()?;
+
+    let mut image = DynamicImage::from_decoder(decoder)?;
+    image.apply_orientation(orientation);
+
+    let output_format = match output_format {
+        Some(output_format) => output_format,
+        None => {
+            let global_format =
+                settings::get_settings_value::<Option<ThumbnailFormat>>("builder.thumbnail.format");
+            match global_format {
+                Ok(Some(global_format)) => global_format,
+                _ => {
+                    let prefer_smallest_format = settings::get_settings_value::<bool>(
+                        "builder.thumbnail.prefer_smallest_format",
+                    )?;
+                    match prefer_smallest_format {
+                        true => match input_format {
+                            // TODO: investigate more formats
+                            ThumbnailFormat::Png | ThumbnailFormat::Tiff
+                                if !image.color().has_alpha() =>
+                            {
+                                ThumbnailFormat::Jpeg
+                            }
+                            _ => input_format,
+                        },
+                        false => input_format,
+                    }
+                }
+            }
+        }
+    };
+
+    let long_edge = settings::get_settings_value::<u32>("builder.thumbnail.long_edge")?;
+    image = image.thumbnail(long_edge, long_edge);
+
+    let quality = settings::get_settings_value::<ThumbnailQuality>("builder.thumbnail.quality")?;
+    // TODO: investigate more formats
+    match output_format {
+        ThumbnailFormat::Jpeg => match quality {
+            ThumbnailQuality::Low => {
+                image.write_with_encoder(JpegEncoder::new_with_quality(output, 38))?
+            }
+            ThumbnailQuality::Medium => {
+                image.write_with_encoder(JpegEncoder::new_with_quality(output, 75))?
+            }
+            ThumbnailQuality::High => {
+                image.write_with_encoder(JpegEncoder::new_with_quality(output, 100))?
+            }
+        },
+        ThumbnailFormat::Png => match quality {
+            ThumbnailQuality::Low => image.write_with_encoder(PngEncoder::new_with_quality(
+                output,
+                CompressionType::Fast,
+                FilterType::default(),
+            ))?,
+            ThumbnailQuality::Medium => image.write_with_encoder(PngEncoder::new_with_quality(
+                output,
+                CompressionType::Default,
+                FilterType::default(),
+            ))?,
+            ThumbnailQuality::High => image.write_with_encoder(PngEncoder::new_with_quality(
+                output,
+                CompressionType::Best,
+                FilterType::default(),
+            ))?,
+        },
+        _ => image.write_to(output, output_format.into())?,
+    }
+
+    Ok(output_format)
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     #![allow(clippy::unwrap_used)]
 
     use image::GenericImageView;
 
     use super::*;
+    use crate::settings::Settings;
+
+    const TEST_JPEG: &[u8] = include_bytes!("../../tests/fixtures/CA.jpg");
+    const TEST_PNG: &[u8] = include_bytes!("../../tests/fixtures/sample1.png");
 
     fn create_test_jpeg_with_orientation(orientation: u16) -> Vec<u8> {
         use image::{ImageBuffer, Rgb, RgbImage};
@@ -194,14 +340,14 @@ mod tests {
 
             // Generate thumbnail from stream
             let mut cursor = std::io::Cursor::new(&jpeg_data);
-            let result = make_thumbnail_from_stream("jpg", &mut cursor);
+            let result = make_thumbnail_bytes_from_stream("jpg", &mut cursor);
             assert!(
                 result.is_ok(),
                 "Thumbnail should be generated for orientation {orientation}"
             );
 
-            let (format, thumbnail_data) = result.unwrap();
-            assert_eq!(format, "image/jpeg");
+            let (format, thumbnail_data) = result.unwrap().unwrap();
+            assert_eq!(format, ThumbnailFormat::Jpeg);
 
             let thumb = image::load_from_memory(&thumbnail_data).unwrap();
 
@@ -245,5 +391,227 @@ mod tests {
                 _ => unreachable!("Unexpected orientation value: {orientation}"),
             }
         }
+    }
+
+    #[test]
+    fn test_make_thumbnail_from_stream() {
+        #[cfg(target_os = "wasi")]
+        Settings::reset().unwrap();
+
+        Settings::from_toml(
+            &toml::toml! {
+                [builder.thumbnail]
+                prefer_smallest_format = false
+                ignore_errors = false
+                // TODO: problem, how would I remove a field?
+                // format = null
+            }
+            .to_string(),
+        )
+        .unwrap();
+        settings::set_settings_value::<Option<ThumbnailFormat>>("format", None).unwrap();
+
+        let mut output = Cursor::new(Vec::new());
+        let format = make_thumbnail_from_stream(
+            ThumbnailFormat::Jpeg,
+            None,
+            Cursor::new(TEST_JPEG),
+            &mut output,
+        )
+        .unwrap();
+
+        assert!(matches!(format, ThumbnailFormat::Jpeg));
+
+        output.rewind().unwrap();
+        ImageReader::with_format(output, format.into())
+            .decode()
+            .unwrap();
+    }
+
+    #[test]
+    fn test_make_thumbnail_from_stream_with_output() {
+        #[cfg(target_os = "wasi")]
+        Settings::reset().unwrap();
+
+        Settings::from_toml(
+            &toml::toml! {
+                [builder.thumbnail]
+                ignore_errors = false
+            }
+            .to_string(),
+        )
+        .unwrap();
+
+        let mut output = Cursor::new(Vec::new());
+        let format = make_thumbnail_from_stream(
+            ThumbnailFormat::Jpeg,
+            Some(ThumbnailFormat::Png),
+            Cursor::new(TEST_JPEG),
+            &mut output,
+        )
+        .unwrap();
+
+        assert!(matches!(format, ThumbnailFormat::Png));
+
+        output.rewind().unwrap();
+        ImageReader::with_format(output, format.into())
+            .decode()
+            .unwrap();
+    }
+
+    #[test]
+    fn test_make_thumbnail_bytes_from_stream() {
+        #[cfg(target_os = "wasi")]
+        Settings::reset().unwrap();
+
+        Settings::from_toml(
+            &toml::toml! {
+                [builder.thumbnail]
+                prefer_smallest_format = false
+                ignore_errors = false
+            }
+            .to_string(),
+        )
+        .unwrap();
+
+        let (format, bytes) =
+            make_thumbnail_bytes_from_stream("image/jpeg", Cursor::new(TEST_JPEG))
+                .unwrap()
+                .unwrap();
+
+        assert!(matches!(format, ThumbnailFormat::Jpeg));
+
+        ImageReader::with_format(Cursor::new(bytes), format.into())
+            .decode()
+            .unwrap();
+    }
+
+    #[test]
+    #[cfg(feature = "file_io")]
+    fn test_make_thumbnail_bytes_from_path() {
+        use std::path::Path;
+
+        #[cfg(target_os = "wasi")]
+        Settings::reset().unwrap();
+
+        Settings::from_toml(
+            &toml::toml! {
+                [builder.thumbnail]
+                prefer_smallest_format = false
+                ignore_errors = false
+            }
+            .to_string(),
+        )
+        .unwrap();
+
+        let (format, bytes) = make_thumbnail_bytes_from_path(Path::new("tests/fixtures/CA.jpg"))
+            .unwrap()
+            .unwrap();
+
+        assert!(matches!(format, ThumbnailFormat::Jpeg));
+
+        ImageReader::with_format(Cursor::new(bytes), format.into())
+            .decode()
+            .unwrap();
+    }
+
+    #[test]
+    fn test_make_thumbnail_with_prefer_smallest_format() {
+        #[cfg(target_os = "wasi")]
+        Settings::reset().unwrap();
+
+        Settings::from_toml(
+            &toml::toml! {
+                [builder.thumbnail]
+                prefer_smallest_format = true
+                ignore_errors = false
+            }
+            .to_string(),
+        )
+        .unwrap();
+
+        let (format, bytes) = make_thumbnail_bytes_from_stream("image/png", Cursor::new(TEST_PNG))
+            .unwrap()
+            .unwrap();
+
+        assert!(matches!(format, ThumbnailFormat::Jpeg));
+
+        ImageReader::with_format(Cursor::new(bytes), format.into())
+            .decode()
+            .unwrap();
+    }
+
+    #[test]
+    fn test_make_thumbnail_with_forced_format() {
+        #[cfg(target_os = "wasi")]
+        Settings::reset().unwrap();
+
+        Settings::from_toml(
+            &toml::toml! {
+                [builder.thumbnail]
+                format = "png"
+                ignore_errors = false
+            }
+            .to_string(),
+        )
+        .unwrap();
+
+        let (format, bytes) =
+            make_thumbnail_bytes_from_stream("image/jpeg", Cursor::new(TEST_JPEG))
+                .unwrap()
+                .unwrap();
+
+        assert!(matches!(format, ThumbnailFormat::Png));
+
+        ImageReader::with_format(Cursor::new(bytes), format.into())
+            .decode()
+            .unwrap();
+    }
+
+    #[test]
+    fn test_make_thumbnail_with_long_edge() {
+        #[cfg(target_os = "wasi")]
+        Settings::reset().unwrap();
+
+        Settings::from_toml(
+            &toml::toml! {
+                [builder.thumbnail]
+                ignore_errors = false
+                long_edge = 100
+            }
+            .to_string(),
+        )
+        .unwrap();
+
+        let (format, bytes) =
+            make_thumbnail_bytes_from_stream("image/jpeg", Cursor::new(TEST_JPEG))
+                .unwrap()
+                .unwrap();
+
+        assert!(matches!(format, ThumbnailFormat::Jpeg));
+
+        let image = ImageReader::with_format(Cursor::new(bytes), format.into())
+            .decode()
+            .unwrap();
+        assert!(image.width() == 100 || image.height() == 100);
+    }
+
+    #[test]
+    fn test_make_thumbnail_and_ignore_errors() {
+        #[cfg(target_os = "wasi")]
+        Settings::reset().unwrap();
+
+        Settings::from_toml(
+            &toml::toml! {
+                [builder.thumbnail]
+                ignore_errors = true
+            }
+            .to_string(),
+        )
+        .unwrap();
+
+        let thumbnail =
+            make_thumbnail_bytes_from_stream("image/png", Cursor::new(Vec::new())).unwrap();
+        assert!(thumbnail.is_none());
     }
 }
