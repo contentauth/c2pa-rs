@@ -960,7 +960,7 @@ pub mod tests {
             );
 
         let ingredient_deltas = IngredientDeltaValidationResult::new(
-            "self#jumbf=c2pa/urn:c2pa:5E7B01FC-4932-4BAB-AB32-D4F12A8AA322/c2pa.assertions/c2pa.ingredient.v3", 
+            "self#jumbf=c2pa/urn:c2pa:5E7B01FC-4932-4BAB-AB32-D4F12A8AA322/c2pa.assertions/c2pa.ingredient.v3",
             StatusCodes::default()
                 .add_failure_val(ValidationStatus::new("assertion.hashedURI.mismatch")
                     .set_url("self#jumbf=c2pa/urn:c2pa:F095F30E-6CD5-4BF7-8C44-CE8420CA9FB7/c2pa.assertions/c2pa.metadata"))

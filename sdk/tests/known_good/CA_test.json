@@ -21,6 +21,7 @@
         {
           "label": "c2pa.actions.v2",
           "data": {
+            "allActionsIncluded": true,
             "actions": [
               {
                 "action": "c2pa.opened",
