@@ -39,8 +39,8 @@ use crate::{
     assertion::{Assertion, AssertionBase, AssertionData, AssertionDecodeError},
     assertions::{
         labels::{self, CLAIM},
-        BmffHash, DataBox, DataHash, DataMap, ExclusionsMap, Ingredient, Relationship, SubsetMap,
-        TimeStamp, User, UserCbor,
+        BmffHash, CertificateStatus, DataBox, DataHash, DataMap, ExclusionsMap, Ingredient,
+        Relationship, SubsetMap, TimeStamp, User, UserCbor,
     },
     asset_io::{
         CAIRead, CAIReadWrite, HashBlockObjectType, HashObjectPositions, RemoteRefEmbedType,
@@ -50,8 +50,12 @@ use crate::{
     cose_validator::{verify_cose, verify_cose_async},
     crypto::{
         asn1::rfc3161::TstInfo,
-        cose::{parse_cose_sign1, CertificateTrustPolicy, TimeStampStorage},
+        cose::{
+            fetch_and_check_ocsp_response, parse_cose_sign1, CertificateTrustPolicy,
+            TimeStampStorage,
+        },
         hash::sha256,
+        ocsp::OcspResponse,
         time_stamp::verify_time_stamp,
     },
     dynamic_assertion::{
@@ -103,6 +107,7 @@ pub(crate) struct StoreValidationInfo<'a> {
     pub binding_claim: String,                    // name of the claim that has the hash binding
     pub timestamps: HashMap<String, TstInfo>,     // list of timestamp assertions for each claim
     pub update_manifest_size: usize,              // offset needed to correct for update manifests
+    pub certificate_statuses: HashMap<String, Vec<Vec<u8>>>, // list of certificate status assertions for each serial
 }
 
 /// A `Store` maintains a list of `Claim` structs.
@@ -494,7 +499,9 @@ impl Store {
             StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
 
         let sign1 = parse_cose_sign1(sig, &data, &mut validation_log).ok()?;
-        if let Ok(info) = check_ocsp_status(&sign1, &data, &self.ctp, None, &mut validation_log) {
+        if let Ok(info) =
+            check_ocsp_status(&sign1, &data, &self.ctp, None, None, &mut validation_log)
+        {
             if let Some(revoked_at) = &info.revoked_at {
                 Some(format!(
                     "Certificate Status: Revoked, revoked at: {revoked_at}"
@@ -1789,6 +1796,26 @@ impl Store {
                         validation_log,
                         Error::OtherError("timestamp assertion malformed".into()),
                     )?;
+                }
+            }
+
+            // get the certificate status assertions
+            let certificate_status_assertions = found_claim.certificate_status_assertions();
+            for csa in certificate_status_assertions {
+                let certificate_status_assertion =
+                    CertificateStatus::from_assertion(csa.assertion())?;
+
+                // save the ocsp_ders stored in the StoreValidationInfo
+                for ocsp_der in certificate_status_assertion.as_ref() {
+                    if let Ok(response) =
+                        OcspResponse::from_der_checked(ocsp_der, None, validation_log)
+                    {
+                        let ocsp_ders = svi
+                            .certificate_statuses
+                            .entry(response.certificate_serial_num)
+                            .or_insert(Vec::new());
+                        ocsp_ders.push(response.ocsp_der);
+                    }
                 }
             }
         }
@@ -4502,6 +4529,39 @@ impl Store {
         )?;
         Ok(i_store)
     }
+
+    #[allow(dead_code)]
+    /// Creates certificate status assertion from the specified manifests.
+    ///
+    /// # Arguments
+    /// * `manifest_labels` - Vector of manifest labels to check for ocsp responses
+    /// * `validation_log` - Status tracker for logging validation events
+    ///
+    /// # Returns
+    /// A `Result` containing a [`CertificateStatus`] assertion
+    pub fn get_certificate_status_assertion(
+        &self,
+        manifest_labels: &Vec<String>,
+        validation_log: &mut StatusTracker,
+    ) -> Result<CertificateStatus> {
+        let mut oscp_response_ders: Vec<Vec<u8>> = Vec::new();
+
+        for manifest_label in manifest_labels {
+            if let Some(claim) = self.claims_map.get(manifest_label) {
+                let sig = claim.signature_val().clone();
+                let data = claim.data()?;
+
+                let sign1 = parse_cose_sign1(&sig, &data, validation_log)?;
+                let ocsp_response_der =
+                    fetch_and_check_ocsp_response(&sign1, &data, &self.ctp, None, validation_log)?
+                        .ocsp_der;
+                if !ocsp_response_der.is_empty() {
+                    oscp_response_ders.push(ocsp_response_der);
+                }
+            }
+        }
+        Ok(CertificateStatus::new(oscp_response_ders))
+    }
 }
 
 impl std::fmt::Display for Store {
@@ -4646,6 +4706,35 @@ pub mod tests {
         claim.add_assertion(&actions)?;
 
         Ok(claim)
+    }
+
+    #[test]
+    #[cfg(feature = "v1_api")]
+    #[cfg(feature = "file_io")]
+    fn test_certificate_map() {
+        let ap = fixture_path("ocsp.jpg");
+        let mut report = StatusTracker::default();
+        let store = Store::load_from_asset(&ap, true, &mut report).unwrap();
+
+        let svi = store
+            .get_store_validation_info(
+                store.claims()[0],
+                &mut ClaimAssetData::Path(&ap),
+                &mut report,
+            )
+            .unwrap();
+        assert!(svi
+            .certificate_statuses
+            .contains_key("310665949469838386185380984752231266212090716844"));
+        assert!(svi
+            .certificate_statuses
+            .contains_key("28651076926158642445677524766118780318"));
+
+        let stored_ocsp_vals: Vec<Vec<u8>> =
+            svi.certificate_statuses.into_values().flatten().collect();
+        assert_eq!(stored_ocsp_vals.len(), 2);
+
+        assert!(stored_ocsp_vals.iter().all(|v| !v.is_empty()))
     }
 
     #[test]

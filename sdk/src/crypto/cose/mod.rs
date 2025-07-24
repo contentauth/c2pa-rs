@@ -32,6 +32,7 @@ mod error;
 pub use error::CoseError;
 
 mod ocsp;
+pub(crate) use ocsp::fetch_and_check_ocsp_response;
 pub use ocsp::{check_ocsp_status, check_ocsp_status_async, OcspFetchPolicy};
 
 mod sign;
