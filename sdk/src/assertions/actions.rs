@@ -455,7 +455,6 @@ impl Action {
     }
 }
 
-
 // Converts a JSON string to an [`Action`].
 impl TryFrom<&str> for Action {
     type Error = crate::error::Error;
