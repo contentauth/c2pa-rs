@@ -1441,12 +1441,12 @@ impl BmffHash {
             .ok_or_else(|| Error::HashMismatch("merkle property is required".to_string()))?;
 
         // make sure there are not completing MerkleMap block types
-        if mm_vec.iter().any(|mm| {
-            mm.fixed_block_size.is_none() && mm.variable_block_sizes.is_none()
-                || mm.fixed_block_size.is_some() && mm.variable_block_sizes.is_some()
-        }) {
-            return Err(Error::HashMismatch(
-                "MerkleMap block type must be either fixed or variable".to_string(),
+        if mm_vec
+            .iter()
+            .any(|mm| mm.fixed_block_size.is_some() && mm.variable_block_sizes.is_some())
+        {
+            return Err(Error::C2PAValidation(
+                "MerkleMap block type must be either fixed or variable or both none".to_string(),
             ));
         }
 
