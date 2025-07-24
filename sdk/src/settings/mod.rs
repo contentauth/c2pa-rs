@@ -405,7 +405,7 @@ impl Settings {
 
     /// Returns the construct signer from the `signer` field.
     ///
-    /// If the signer settings aren't specified, this function will return [Error::MissingSignerSettings][crate::Error::MissingSignerSettings].
+    /// If the signer settings aren't specified, this function will return [Error::MissingSignerSettings].
     #[inline]
     pub fn signer() -> Result<Box<dyn Signer>> {
         SignerSettings::signer()

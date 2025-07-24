@@ -29,8 +29,8 @@ use zip::{write::SimpleFileOptions, ZipArchive, ZipWriter};
 use crate::{
     assertion::AssertionDecodeError,
     assertions::{
-        c2pa_action, labels, Action, ActionTemplate, Actions, BmffHash, BoxHash, CreativeWork,
-        DataHash, EmbeddedData, Exif, Metadata, SoftwareAgent, Thumbnail, User, UserCbor,
+        c2pa_action, labels, Action, ActionTemplate, Actions, AssertionMetadata, BmffHash, BoxHash,
+        CreativeWork, DataHash, EmbeddedData, Exif, SoftwareAgent, Thumbnail, User, UserCbor,
     },
     cbor_types::value_cbor_to_type,
     claim::Claim,
@@ -70,7 +70,7 @@ pub struct ManifestDefinition {
     pub claim_generator_info: Vec<ClaimGeneratorInfo>,
 
     /// Optional manifest metadata. This will be deprecated in the future; not recommended to use.
-    pub metadata: Option<Vec<Metadata>>,
+    pub metadata: Option<Vec<AssertionMetadata>>,
 
     /// A human-readable title, generally source filename.
     pub title: Option<String>,
