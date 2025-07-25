@@ -3185,6 +3185,17 @@ impl Claim {
                             )?;
                         }
                     }
+                } else {
+                    log_item!(
+                        claim.assertion_uri(&hash_binding_assertion.label()),
+                        "hash binding unknown or not found",
+                        "verify_internal"
+                    )
+                    .validation_status(validation_status::HARD_BINDINGS_MISSING)
+                    .failure(
+                        validation_log,
+                        Error::HashMismatch("hash binding unknown format".into()),
+                    )?;
                 }
             }
         }
