@@ -18,7 +18,7 @@ use serde::{ser::SerializeStruct, Deserialize, Serialize, Serializer};
 use super::AssetType;
 use crate::{
     assertion::{Assertion, AssertionBase, AssertionDecodeError, AssertionDecodeErrorCause},
-    assertions::{labels, Metadata, ReviewRating},
+    assertions::{labels, AssertionMetadata, ReviewRating},
     cbor_types::map_cbor_to_type,
     error::Result,
     hashed_uri::HashedUri,
@@ -56,7 +56,7 @@ pub struct Ingredient {
     pub validation_status: Option<Vec<ValidationStatus>>,
     pub relationship: Relationship,
     pub thumbnail: Option<HashedUri>,
-    pub metadata: Option<Metadata>,
+    pub metadata: Option<AssertionMetadata>,
     pub data: Option<HashedUri>,
     pub description: Option<String>,
     pub informational_uri: Option<String>,
@@ -220,7 +220,7 @@ impl Ingredient {
 
     pub fn add_reviews(mut self, reviews: Option<Vec<ReviewRating>>) -> Self {
         if let Some(reviews) = reviews {
-            let metadata = Metadata::new().set_reviews(reviews);
+            let metadata = AssertionMetadata::new().set_reviews(reviews);
             self.metadata = Some(metadata);
         };
         self
@@ -641,7 +641,8 @@ impl AssertionBase for Ingredient {
                 let thumbnail: Option<HashedUri> = map_cbor_to_type("thumbnail", &ingredient_value);
                 let validation_status: Option<Vec<ValidationStatus>> =
                     map_cbor_to_type("validationStatus", &ingredient_value);
-                let metadata: Option<Metadata> = map_cbor_to_type("metadata", &ingredient_value);
+                let metadata: Option<AssertionMetadata> =
+                    map_cbor_to_type("metadata", &ingredient_value);
 
                 Ingredient {
                     title: Some(title),
@@ -707,7 +708,8 @@ impl AssertionBase for Ingredient {
                     map_cbor_to_type("description", &ingredient_value);
                 let informational_uri: Option<String> =
                     map_cbor_to_type("informational_URI", &ingredient_value);
-                let metadata: Option<Metadata> = map_cbor_to_type("metadata", &ingredient_value);
+                let metadata: Option<AssertionMetadata> =
+                    map_cbor_to_type("metadata", &ingredient_value);
 
                 Ingredient {
                     title: Some(title),
@@ -774,7 +776,8 @@ impl AssertionBase for Ingredient {
                     map_cbor_to_type("description", &ingredient_value);
                 let informational_uri: Option<String> =
                     map_cbor_to_type("informationalURI", &ingredient_value);
-                let metadata: Option<Metadata> = map_cbor_to_type("metadata", &ingredient_value);
+                let metadata: Option<AssertionMetadata> =
+                    map_cbor_to_type("metadata", &ingredient_value);
 
                 Ingredient {
                     title,
@@ -972,7 +975,7 @@ pub mod tests {
 
         let review_rating = ReviewRating::new("Content bindings validated", None, 5);
 
-        let metadata = Metadata::new()
+        let metadata = AssertionMetadata::new()
             .set_date_time("2021-06-28T16:49:32.874Z".to_owned())
             .add_review(review_rating);
 

@@ -29,7 +29,7 @@ use uuid::Uuid;
 
 use crate::{
     assertion::{AssertionBase, AssertionData},
-    assertions::{labels, Actions, EmbeddedData, Metadata, SoftwareAgent},
+    assertions::{labels, Actions, AssertionMetadata, EmbeddedData, SoftwareAgent},
     claim::RemoteManifest,
     crypto::raw_signature::SigningAlg,
     error::{Error, Result},
@@ -82,7 +82,7 @@ pub struct Manifest {
 
     /// A list of user metadata for this claim.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub metadata: Option<Vec<Metadata>>,
+    pub metadata: Option<Vec<AssertionMetadata>>,
 
     /// A human-readable title, generally source filename.
     #[serde(skip_serializing_if = "Option::is_none")]
