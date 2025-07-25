@@ -46,7 +46,7 @@ pub use ingredient::Relationship;
 pub mod labels;
 
 mod meta;
-pub(crate) use meta::Meta;
+pub use meta::Meta;
 
 mod metadata;
 pub use metadata::{

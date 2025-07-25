@@ -3171,6 +3171,13 @@ impl Claim {
         // check action rules
         Claim::verify_actions(claim, svi, validation_log)?;
 
+        // check metadata rules
+        Claim::verify_metadata(claim, validation_log)?;
+        Ok(())
+    }
+
+    // Perform metadata validation check
+    fn verify_metadata(claim: &Claim, validation_log: &mut StatusTracker) -> Result<()> {
         for metadata_assertion in claim.metadata_assertions() {
             let metadata_assertion = Meta::from_assertion(metadata_assertion.assertion())?;
             if !metadata_assertion.is_valid() {
@@ -3194,10 +3201,13 @@ impl Claim {
         lazy_static::lazy_static! {
             static ref METADATA_LABEL : Regex = Regex::new(r"^(?:[a-zA-Z0-9][a-zA-Z0-9_-]*)(?:\.(?:[a-zA-Z0-9][a-zA-Z0-9_-]*))*\.metadata$").unwrap();
         }
-        self.assertion_store
+        let test = self
+            .assertion_store
             .iter()
-            .filter(|x| METADATA_LABEL.is_match(&x.label()))
-            .collect()
+            .filter(|x| METADATA_LABEL.is_match(&x.label_raw()))
+            .collect();
+        dbg!(&test);
+        test
     }
 
     /// Return list of data hash assertions
@@ -3246,6 +3256,12 @@ impl Claim {
     pub fn timestamp_assertions(&self) -> Vec<&ClaimAssertion> {
         let dummy_data = AssertionData::Cbor(Vec::new());
         let dummy_timestamp = Assertion::new(assertions::labels::TIMESTAMP, None, dummy_data);
+        self.assertions_by_type(&dummy_timestamp, None)
+    }
+
+    pub fn asset_reference_assertions(&self) -> Vec<&ClaimAssertion> {
+        let dummy_data = AssertionData::Cbor(Vec::new());
+        let dummy_timestamp = Assertion::new(assertions::labels::ASSET_REFERENCE, None, dummy_data);
         self.assertions_by_type(&dummy_timestamp, None)
     }
 

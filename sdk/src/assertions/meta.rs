@@ -17,7 +17,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::{
-    assertion::{Assertion, AssertionBase, AssertionData, AssertionDecodeError, AssertionJson},
+    assertion::{Assertion, AssertionBase, AssertionJson},
     assertions::labels,
     Error,
 };
@@ -25,11 +25,11 @@ use crate::{
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Meta {
     #[serde(rename = "@context")]
-    pub(crate) context: HashMap<String, String>,
+    pub context: HashMap<String, String>,
     #[serde(flatten)]
-    pub(crate) value: HashMap<String, Value>,
+    pub value: HashMap<String, Value>,
     #[serde(skip)]
-    pub(crate) label: String,
+    pub label: String,
 }
 
 impl Meta {
@@ -420,7 +420,7 @@ pub mod tests {
     #![allow(clippy::expect_used)]
     #![allow(clippy::unwrap_used)]
 
-    use crate::{assertion::{AssertionBase, AssertionJson}, assertions::meta::Meta, Manifest};
+    use crate::{assertion::AssertionBase, assertions::meta::Meta};
 
     const SPEC_EXAMPLE: &str = r#"{
         "@context" : {
@@ -459,11 +459,8 @@ pub mod tests {
 
     #[test]
     fn metadata_from_json() {
-        let mut manifest = Manifest::new("test".to_owned());
         let original = Meta::new(SPEC_EXAMPLE, "c2pa.metadata").unwrap();
         assert!(original.is_valid());
-        manifest.add_assertion(&original).unwrap();
-        println!("{}", manifest);
     }
 
     #[test]
