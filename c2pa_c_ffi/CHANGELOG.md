@@ -6,6 +6,13 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.59.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.58.0...c2pa-c-ffi-v0.59.0)
+_25 July 2025_
+
+### Added
+
+* Expand settings API ([#1192](https://github.com/contentauth/c2pa-rs/pull/1192))
+
 ## [0.58.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.57.0...c2pa-c-ffi-v0.58.0)
 _18 July 2025_
 

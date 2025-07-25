@@ -6,6 +6,22 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 Since version 0.36.2, the format of this changelog is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.59.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.58.0...c2pa-v0.59.0)
+_25 July 2025_
+
+### Added
+
+* Expand settings API ([#1192](https://github.com/contentauth/c2pa-rs/pull/1192))
+
+### Fixed
+
+* Remove "other" field in `Metadata` assertion ([#1251](https://github.com/contentauth/c2pa-rs/pull/1251))
+* Add support for m4v ([#1254](https://github.com/contentauth/c2pa-rs/pull/1254))
+
+### Other
+
+* Feature flag `test_reader_remote_url` with feature `fetch_remote_manifests` ([#1252](https://github.com/contentauth/c2pa-rs/pull/1252))
+
 ## [0.58.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.57.0...c2pa-v0.58.0)
 _18 July 2025_
 
