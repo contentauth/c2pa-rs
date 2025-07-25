@@ -773,13 +773,13 @@ pub mod tests {
         assert_eq!(result.actions.len(), 2);
         assert_eq!(result.actions[0].action(), original.actions[0].action());
         assert_eq!(
-            result.actions[0].parameters().unwrap().common.get("name"),
-            original.actions[0].parameters().unwrap().common.get("name")
+            result.actions[0].get_parameter("name"),
+            original.actions[0].get_parameter("name")
         );
         assert_eq!(result.actions[1].action(), original.actions[1].action());
         assert_eq!(
-            result.actions[1].parameters().unwrap().common.get("name"),
-            original.actions[1].parameters().unwrap().common.get("name")
+            result.actions[1].get_parameter("name"),
+            original.actions[1].get_parameter("name")
         );
         assert_eq!(result.actions[1].when(), original.actions[1].when());
         assert_eq!(
