@@ -68,13 +68,16 @@ impl fmt::Display for DigitalSourceType {
 #[derive(Deserialize, Serialize, Clone, Debug, PartialEq)]
 pub enum C2paDigitalSourceType {
     /// Media whose digital content is effectively empty, such as a blank canvas or zero-length video.
-    #[serde(alias = "Empty", rename = "http://c2pa.org/digitalsourcetype/empty")]
+    #[serde(
+        alias = "digsrctype:empty",
+        rename = "http://c2pa.org/digitalsourcetype/empty"
+    )]
     Empty,
     /// Data that is the result of algorithmically using a model derived from sampled content and data.
     /// Differs from <http://cv.iptc.org/newscodes/digitalsourcetype/>trainedAlgorithmicMedia in that
     /// the result isn’t a media type (e.g., image or video) but is a data format (e.g., CSV, pickle).
     #[serde(
-        alias = "TrainedAlgorithmicMedia",
+        alias = "digsrctype:trainedAlgorithmicMedia",
         rename = "http://c2pa.org/digitalsourcetype/trainedAlgorithmicData"
     )]
     TrainedAlgorithmicData,
@@ -86,128 +89,157 @@ impl fmt::Display for C2paDigitalSourceType {
     }
 }
 
-// NOTE: Actions v1 only supports these (not the C2PADigitalSourceType as well)
-/// IPTC description of the source of an asset.
-///
-/// The full list of possible IPTC digital source types are found below:
-/// <https://cv.iptc.org/newscodes/digitalsourcetype>
-#[non_exhaustive]
-#[derive(Deserialize, Serialize, Clone, Debug, PartialEq)]
-pub enum IptcDigitalSourceType {
-    /// The media was captured from a real-life source using a digital camera or digital recording device.
-    #[serde(
-        alias = "DigitalCapture",
-        rename = "http://cv.iptc.org/newscodes/digitalsourcetype/digitalCapture"
-    )]
-    DigitalCapture,
-    /// The media is the result of capturing multiple frames from a real-life source using a digital camera
-    /// or digital recording device, then automatically merging them into a single frame using digital signal
-    /// processing techniques and/or non-generative AI. Includes High Dynamic Range (HDR) processing common in
-    /// smartphone camera apps.
-    #[serde(
-        alias = "ComptuationalCapture",
-        rename = "http://cv.iptc.org/newscodes/digitalsourcetype/computationalCapture"
-    )]
-    ComputationalCapture,
-    /// The media was digitised from a negative on film or other transparent medium.
-    #[serde(
-        alias = "NegativeFilm",
-        rename = "http://cv.iptc.org/newscodes/digitalsourcetype/negativeFilm"
-    )]
-    NegativeFilm,
-    /// The media was digitised from a positive on a transparency or other transparent medium.
-    #[serde(
-        alias = "PositiveFilm",
-        rename = "http://cv.iptc.org/newscodes/digitalsourcetype/positiveFilm"
-    )]
-    PositiveFilm,
-    /// The media was digitised from a non-transparent medium such as a photographic print.
-    #[serde(
-        alias = "Print",
-        rename = "http://cv.iptc.org/newscodes/digitalsourcetype/print"
-    )]
-    Print,
-    /// Augmentation, correction or enhancement by one or more humans using non-generative tools.
-    #[serde(
-        alias = "HumanEdits",
-        rename = "http://cv.iptc.org/newscodes/digitalsourcetype/humanEdits"
-    )]
-    HumanEdits,
-    /// Augmentation, correction or enhancement using a Generative AI model, such as with inpainting or
-    /// outpainting operations.
-    #[serde(
-        alias = "CompositeWithTrainedAlgorithmicMedia",
-        rename = "http://cv.iptc.org/newscodes/digitalsourcetype/compositeWithTrainedAlgorithmicMedia"
-    )]
-    CompositeWithTrainedAlgorithmicMedia,
-    /// Modification or correction by algorithm without changing the main content of the media, initiated
-    /// or configured by a human, such as sharpening or applying noise reduction.
-    #[serde(
-        alias = "AlgorithmicallyEnhanced",
-        rename = "http://cv.iptc.org/newscodes/digitalsourcetype/algorithmicallyEnhanced"
-    )]
-    AlgorithmicallyEnhanced,
-    /// Media created by a human using non-generative tools.
-    #[serde(
-        alias = "DigitalCreation",
-        rename = "http://cv.iptc.org/newscodes/digitalsourcetype/digitalCreation"
-    )]
-    DigitalCreation,
-    /// Digital media representation of data via human programming or creativity.
-    #[serde(
-        alias = "DataDrivenMedia",
-        rename = "http://cv.iptc.org/newscodes/digitalsourcetype/dataDrivenMedia"
-    )]
-    DataDrivenMedia,
-    /// Digital media created algorithmically using an Artificial Intelligence model trained on captured
-    /// content.
-    #[serde(
-        alias = "TrainedAlgorithmicMedia",
-        rename = "http://cv.iptc.org/newscodes/digitalsourcetype/trainedAlgorithmicMedia"
-    )]
-    TrainedAlgorithmicMedia,
-    /// Media created purely by an algorithm not based on any sampled training data, e.g. an image created
-    /// by software using a mathematical formula.
-    #[serde(
-        rename = "http://cv.iptc.org/newscodes/digitalsourcetype/algorithmicMedia",
-        alias = "AlgorithmicMedia"
-    )]
-    AlgorithmicMedia,
-    /// A capture of the contents of the screen of a computer or mobile device.
-    #[serde(
-        alias = "ScreenCapture",
-        rename = "http://cv.iptc.org/newscodes/digitalsourcetype/screenCapture"
-    )]
-    ScreenCapture,
-    /// Live recording of virtual event based on Generative AI and/or captured elements.
-    #[serde(
-        alias = "VirtualRecording",
-        rename = "http://cv.iptc.org/newscodes/digitalsourcetype/virtualRecording"
-    )]
-    VirtualRecording,
-    /// Mix or composite of several elements, any of which may or may not be generative AI.
-    #[serde(
-        alias = "Composite",
-        rename = "http://cv.iptc.org/newscodes/digitalsourcetype/composite"
-    )]
-    Composite,
-    /// Mix or composite of several elements that are all captures of real life.
-    #[serde(
-        alias = "CompositeCapture",
-        rename = "http://cv.iptc.org/newscodes/digitalsourcetype/compositeCapture"
-    )]
-    CompositeCapture,
-    /// Mix or composite of several elements, at least one of which is Generative AI.
-    #[serde(
-        alias = "CompositeSynthetic",
-        rename = "http://cv.iptc.org/newscodes/digitalsourcetype/compositeSynthetic"
-    )]
-    CompositeSynthetic,
-}
+// TODO: this is needed to supress clippy deprecated field warning:  https://github.com/serde-rs/serde/pull/2879
+pub use iptc_digital_source_type::IptcDigitalSourceType;
+mod iptc_digital_source_type {
+    #![allow(deprecated)]
 
-impl fmt::Display for IptcDigitalSourceType {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.serialize(f)
+    use super::*;
+
+    // NOTE: Actions v1 only supports these (not the C2PADigitalSourceType as well)
+    /// IPTC description of the source of an asset.
+    ///
+    /// The full list of possible IPTC digital source types are found below:
+    /// <https://cv.iptc.org/newscodes/digitalsourcetype>
+    #[non_exhaustive]
+    #[derive(Deserialize, Serialize, Clone, Debug, PartialEq)]
+    pub enum IptcDigitalSourceType {
+        /// The media was captured from a real-life source using a digital camera or digital recording device.
+        #[serde(
+            alias = "digsrctype:digitalCapture",
+            rename = "http://cv.iptc.org/newscodes/digitalsourcetype/digitalCapture"
+        )]
+        DigitalCapture,
+        /// The media is the result of capturing multiple frames from a real-life source using a digital camera
+        /// or digital recording device, then automatically merging them into a single frame using digital signal
+        /// processing techniques and/or non-generative AI. Includes High Dynamic Range (HDR) processing common in
+        /// smartphone camera apps.
+        #[serde(
+            alias = "digsrctype:computationalCapture",
+            rename = "http://cv.iptc.org/newscodes/digitalsourcetype/computationalCapture"
+        )]
+        ComputationalCapture,
+        /// The media was digitised from a negative on film or other transparent medium.
+        #[serde(
+            alias = "digsrctype:negativeFilm",
+            rename = "http://cv.iptc.org/newscodes/digitalsourcetype/negativeFilm"
+        )]
+        NegativeFilm,
+        /// The media was digitised from a positive on a transparency or other transparent medium.
+        #[serde(
+            alias = "digsrctype:positiveFilm",
+            rename = "http://cv.iptc.org/newscodes/digitalsourcetype/positiveFilm"
+        )]
+        PositiveFilm,
+        /// The media was digitised from a non-transparent medium such as a photographic print.
+        #[serde(
+            alias = "digsrctype:print",
+            rename = "http://cv.iptc.org/newscodes/digitalsourcetype/print"
+        )]
+        Print,
+        /// Minor augmentation or correction by a human, such as a digitally-retouched photo used in a magazine.
+        #[deprecated]
+        #[serde(
+            alias = "digsrctype:minorHumanEdits",
+            rename = "http://cv.iptc.org/newscodes/digitalsourcetype/minorHumanEdits"
+        )]
+        MinorHumanEdits,
+        /// Augmentation, correction or enhancement by one or more humans using non-generative tools.
+        #[serde(
+            alias = "digsrctype:humanEdits",
+            rename = "http://cv.iptc.org/newscodes/digitalsourcetype/humanEdits"
+        )]
+        HumanEdits,
+        /// Augmentation, correction or enhancement using a Generative AI model, such as with inpainting or
+        /// outpainting operations.
+        #[serde(
+            alias = "digsrctype:compositeWithTrainedAlgorithmicMedia",
+            rename = "http://cv.iptc.org/newscodes/digitalsourcetype/compositeWithTrainedAlgorithmicMedia"
+        )]
+        CompositeWithTrainedAlgorithmicMedia,
+        /// Modification or correction by algorithm without changing the main content of the media, initiated
+        /// or configured by a human, such as sharpening or applying noise reduction.
+        #[serde(
+            alias = "digsrctype:algorithmicallyEnhanced",
+            rename = "http://cv.iptc.org/newscodes/digitalsourcetype/algorithmicallyEnhanced"
+        )]
+        AlgorithmicallyEnhanced,
+        /// The digital image was created by computer software.
+        #[deprecated]
+        #[serde(
+            alias = "digsrctype:softwareImage",
+            rename = "http://cv.iptc.org/newscodes/digitalsourcetype/softwareImage"
+        )]
+        SoftwareImage,
+        /// Media created by a human using digital tools.
+        #[deprecated]
+        #[serde(
+            alias = "digsrctype:digitalArt",
+            rename = "http://cv.iptc.org/newscodes/digitalsourcetype/digitalArt"
+        )]
+        DigitalArt,
+        /// Media created by a human using non-generative tools.
+        #[serde(
+            alias = "digsrctype:digitalCreation",
+            rename = "http://cv.iptc.org/newscodes/digitalsourcetype/digitalCreation"
+        )]
+        DigitalCreation,
+        /// Digital media representation of data via human programming or creativity.
+        #[serde(
+            alias = "digsrctype:dataDrivenMedia",
+            rename = "http://cv.iptc.org/newscodes/digitalsourcetype/dataDrivenMedia"
+        )]
+        DataDrivenMedia,
+        /// Digital media created algorithmically using an Artificial Intelligence model trained on captured
+        /// content.
+        #[serde(
+            alias = "digsrctype:trainedAlgorithmicMedia",
+            rename = "http://cv.iptc.org/newscodes/digitalsourcetype/trainedAlgorithmicMedia"
+        )]
+        TrainedAlgorithmicMedia,
+        /// Media created purely by an algorithm not based on any sampled training data, e.g. an image created
+        /// by software using a mathematical formula.
+        #[serde(
+            alias = "digsrctype:algorithmicMedia",
+            rename = "http://cv.iptc.org/newscodes/digitalsourcetype/algorithmicMedia"
+        )]
+        AlgorithmicMedia,
+        /// A capture of the contents of the screen of a computer or mobile device.
+        #[serde(
+            alias = "digsrctype:screenCapture",
+            rename = "http://cv.iptc.org/newscodes/digitalsourcetype/screenCapture"
+        )]
+        ScreenCapture,
+        /// Live recording of virtual event based on Generative AI and/or captured elements.
+        #[serde(
+            alias = "digsrctype:virtualRecording",
+            rename = "http://cv.iptc.org/newscodes/digitalsourcetype/virtualRecording"
+        )]
+        VirtualRecording,
+        /// Mix or composite of several elements, any of which may or may not be generative AI.
+        #[serde(
+            alias = "digsrctype:composite",
+            rename = "http://cv.iptc.org/newscodes/digitalsourcetype/composite"
+        )]
+        Composite,
+        /// Mix or composite of several elements that are all captures of real life.
+        #[serde(
+            alias = "digsrctype:compositeCapture",
+            rename = "http://cv.iptc.org/newscodes/digitalsourcetype/compositeCapture"
+        )]
+        CompositeCapture,
+        /// Mix or composite of several elements, at least one of which is Generative AI.
+        #[serde(
+            alias = "digsrctype:compositeSynthetic",
+            rename = "http://cv.iptc.org/newscodes/digitalsourcetype/compositeSynthetic"
+        )]
+        CompositeSynthetic,
+    }
+
+    impl fmt::Display for IptcDigitalSourceType {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            self.serialize(f)
+        }
     }
 }
 
