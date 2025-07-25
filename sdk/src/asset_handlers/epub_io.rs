@@ -328,8 +328,16 @@ impl EpubIo {
         input_stream: &'a mut dyn CAIRead,
         output_stream: &'a mut dyn CAIReadWrite,
     ) -> ZipResult<ZipWriter<CAIReadWriteWrapper<'a>>> {
-        input_stream.rewind()?;
-        io::copy(input_stream, output_stream)?;
+        // Copy input_stream to output_stream only if output_stream is empty
+        output_stream.rewind()?;
+        let mut buf = Vec::new();
+        output_stream.read_to_end(&mut buf)?;
+        if buf.is_empty() {
+            input_stream.rewind()?;
+            io::copy(input_stream, output_stream)?;
+        } else {
+            output_stream.rewind()?;
+        }
 
         ZipWriter::new_append(CAIReadWriteWrapper {
             reader_writer: output_stream,
@@ -337,6 +345,7 @@ impl EpubIo {
     }
 }
 
+#[allow(dead_code)]
 pub fn sign_epub_with_manifest(
     epub_path: &Path,
     manifest_json: &str,
