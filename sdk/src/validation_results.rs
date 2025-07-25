@@ -771,7 +771,12 @@ pub mod validation_codes {
     /// A BMFF hash assertion is malformed.
     ///
     /// Any corresponding URL should point to a C2PA assertion box.
-    pub const ASSERTION_BOXHASH_MALFORMED: &str = "assertion.bmffHash.malformed";
+    pub const ASSERTION_BMFFHASH_MALFORMED: &str = "assertion.bmffHash.malformed";
+
+    /// A Box hash assertion is malformed.
+    ///
+    /// Any corresponding URL should point to a C2PA assertion box.
+    pub const ASSERTION_BOXESHASH_MALFORMED: &str = "assertion.boxesHash.malformed";
 
     /// The cloud-data assertion was incomplete.
     ///
