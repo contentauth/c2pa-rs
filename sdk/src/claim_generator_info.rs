@@ -39,7 +39,7 @@ pub struct ClaimGeneratorInfo {
     pub operating_system: Option<String>,
     // Any other values that are not part of the standard
     #[serde(flatten)]
-    other: HashMap<String, Value>,
+    pub(crate) other: HashMap<String, Value>,
 }
 
 impl Default for ClaimGeneratorInfo {
