@@ -313,14 +313,14 @@ where
             let end = r.end();
             let mut chunk_left = end - start + 1;
 
-            // move to start of range
-            data.seek(SeekFrom::Start(*start))?;
-
             // check to see if this range is an BMFF V2 offset to include in the hash
-            if bmff_v2_starts.contains(start) && (end - start) == 0 {
+            if bmff_v2_starts.contains(start) && end == start {
                 hasher_enum.update(&start.to_be_bytes());
                 continue;
             }
+
+            // move to start of range
+            data.seek(SeekFrom::Start(*start))?;
 
             loop {
                 let mut chunk = vec![0u8; std::cmp::min(chunk_left as usize, MAX_HASH_BUF)];
@@ -342,14 +342,14 @@ where
             let end = r.end();
             let mut chunk_left = end - start + 1;
 
-            // move to start of range
-            data.seek(SeekFrom::Start(*start))?;
-
             // check to see if this range is an BMFF V2 offset to include in the hash
-            if bmff_v2_starts.contains(start) && (end - start) == 0 {
+            if bmff_v2_starts.contains(start) && end == start {
                 hasher_enum.update(&start.to_be_bytes());
                 continue;
             }
+
+            // move to start of range
+            data.seek(SeekFrom::Start(*start))?;
 
             let mut chunk = vec![0u8; std::cmp::min(chunk_left as usize, MAX_HASH_BUF)];
             data.read_exact(&mut chunk)?;
