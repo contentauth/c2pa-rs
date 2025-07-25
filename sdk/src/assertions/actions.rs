@@ -135,7 +135,9 @@ impl From<ClaimGeneratorInfo> for SoftwareAgent {
     }
 }
 
+/// Additional parameters of the action.
 #[derive(Deserialize, Serialize, Clone, Debug, Default, PartialEq)]
+#[serde(rename_all = "camelCase")]
 pub struct ParametersMap {
     // v1 fields
     /// A hashed-uri to the ingredient assertion that this action acts on.
@@ -212,7 +214,7 @@ pub struct Action {
 
     /// Additional parameters of the action. These vary by the type of action.
     #[serde(skip_serializing_if = "Option::is_none")]
-    parameters: Option<ParametersMap>,
+    pub(crate) parameters: Option<ParametersMap>,
 
     /// An array of the creators that undertook this action.
     #[serde(skip_serializing_if = "Option::is_none")]

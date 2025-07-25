@@ -36,7 +36,7 @@ use crate::{
         Relationship, V2_DEPRECATED_ACTIONS,
     },
     asset_io::CAIRead,
-    cbor_types::{map_cbor_to_type, value_cbor_to_type},
+    cbor_types::map_cbor_to_type,
     cose_validator::{get_signing_info, get_signing_info_async, verify_cose, verify_cose_async},
     crypto::{
         asn1::rfc3161::TstInfo,
