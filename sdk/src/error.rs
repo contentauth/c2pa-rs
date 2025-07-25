@@ -331,6 +331,9 @@ pub enum Error {
     /// response.
     #[error("internal error ({0})")]
     InternalError(String),
+
+    #[error("Unsupported hashing algorithm: {0}")]
+    UnsupportedAlgorithm(String),
 }
 
 /// A specialized `Result` type for C2PA toolkit operations.

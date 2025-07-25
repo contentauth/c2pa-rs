@@ -121,6 +121,7 @@ conv = "0.3.3"
 coset = "0.3.8"
 extfmt = "0.1.1"
 der = { version = "0.7.9", optional = true }
+digest = "0.10"
 ecdsa = { version = "0.16.9", features = ["digest", "sha2"], optional = true }
 ed25519-dalek = { version = "2.1.1", features = ["alloc", "digest", "pem", "pkcs8", "rand_core"] }
 getrandom = { version = "0.2.7", features = ["js"] }

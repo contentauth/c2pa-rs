@@ -729,6 +729,7 @@ dependencies = [
  "conv",
  "coset",
  "der",
+ "digest",
  "ecdsa",
  "ed25519-dalek",
  "extfmt",
