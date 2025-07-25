@@ -69,20 +69,7 @@ impl Meta {
     }
 }
 
-impl AssertionJson for Meta {
-    fn from_json_assertion(assertion: &Assertion) -> crate::Result<Self> {
-        match assertion.decode_data() {
-            AssertionData::Json(data) => {
-                let mut metadata: Meta = serde_json::from_str(data).map_err(|e| AssertionDecodeError::from_assertion_and_json_err(assertion, e))?;
-                metadata.label = assertion.label().to_owned();
-                Ok(metadata)
-            },
-            data => Err(Error::AssertionDecoding(
-                AssertionDecodeError::from_assertion_unexpected_data_type(assertion, data, "json"),
-            )),
-        }
-    }
-}
+impl AssertionJson for Meta {}
 
 impl AssertionBase for Meta {
     fn label(&self) -> &str {
@@ -94,7 +81,9 @@ impl AssertionBase for Meta {
     }
 
     fn from_assertion(assertion: &Assertion) -> Result<Self, Error> {
-        Self::from_json_assertion(assertion)
+        let mut metadata = Self::from_json_assertion(assertion)?;
+        metadata.label = assertion.label().to_owned();
+        Ok(metadata)
     }
 }
 
@@ -482,14 +471,6 @@ pub mod tests {
         let original = Meta::new(SPEC_EXAMPLE, "c2pa.metadata").unwrap();
         let assertion = original.to_assertion().unwrap();
         let result = Meta::from_assertion(&assertion).unwrap();
-        dbg!(result);
-    }
-
-      #[test]
-    fn json_assertion_round_trip() {
-        let original = Meta::new(SPEC_EXAMPLE, "c2pa.metadata").unwrap();
-        let assertion = original.to_json_assertion().unwrap();
-        let result = Meta::from_json_assertion(&assertion).unwrap();
         dbg!(result);
     }
 }
