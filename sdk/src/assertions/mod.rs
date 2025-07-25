@@ -47,6 +47,9 @@ pub use ingredient::Relationship;
 
 pub mod labels;
 
+mod meta;
+pub use meta::Meta;
+
 mod metadata;
 pub use metadata::{
     c2pa_source, Actor, AssetType, DataBox, DataSource, Metadata, ReviewCode, ReviewRating,

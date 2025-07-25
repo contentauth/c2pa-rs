@@ -20,6 +20,7 @@ use std::{
 
 use async_generic::async_generic;
 use chrono::{DateTime, Utc};
+use regex::Regex;
 use serde::{ser::SerializeStruct, Deserialize, Serialize, Serializer};
 use serde_json::{json, Map, Value};
 use uuid::Uuid;
@@ -32,7 +33,7 @@ use crate::{
     assertions::{
         self, c2pa_action,
         labels::{self, ACTIONS, ASSERTION_STORE, BMFF_HASH, CLAIM_THUMBNAIL, DATABOX_STORE},
-        Actions, AssetType, BmffHash, BoxHash, DataBox, DataHash, Ingredient, Metadata,
+        Actions, AssetType, BmffHash, BoxHash, DataBox, DataHash, Ingredient, Meta, Metadata,
         Relationship, V2_DEPRECATED_ACTIONS,
     },
     asset_io::CAIRead,
@@ -3170,7 +3171,43 @@ impl Claim {
         // check action rules
         Claim::verify_actions(claim, svi, validation_log)?;
 
+        // check metadata rules
+        Claim::verify_metadata(claim, validation_log)?;
         Ok(())
+    }
+
+    // Perform metadata validation check
+    fn verify_metadata(claim: &Claim, validation_log: &mut StatusTracker) -> Result<()> {
+        for metadata_assertion in claim.metadata_assertions() {
+            let metadata_assertion = Meta::from_assertion(metadata_assertion.assertion())?;
+            if !metadata_assertion.is_valid() {
+                log_item!(
+                    claim.uri(),
+                    "metadata assertion contains disallowed field",
+                    "verify_internal"
+                )
+                .validation_status(validation_status::ASSERTION_METADATA_DISALLOWED)
+                .failure(
+                    validation_log,
+                    Error::ValidationRule("fields must be in allowed list".into()),
+                )?;
+            }
+        }
+        Ok(())
+    }
+
+    #[allow(clippy::unwrap_used)]
+    pub fn metadata_assertions(&self) -> Vec<&ClaimAssertion> {
+        lazy_static::lazy_static! {
+            static ref METADATA_LABEL : Regex = Regex::new(r"^(?:[a-zA-Z0-9][a-zA-Z0-9_-]*)(?:\.(?:[a-zA-Z0-9][a-zA-Z0-9_-]*))*\.metadata$").unwrap();
+        }
+        let test = self
+            .assertion_store
+            .iter()
+            .filter(|x| METADATA_LABEL.is_match(&x.label_raw()))
+            .collect();
+        dbg!(&test);
+        test
     }
 
     /// Return list of data hash assertions
@@ -3219,6 +3256,12 @@ impl Claim {
     pub fn timestamp_assertions(&self) -> Vec<&ClaimAssertion> {
         let dummy_data = AssertionData::Cbor(Vec::new());
         let dummy_timestamp = Assertion::new(assertions::labels::TIMESTAMP, None, dummy_data);
+        self.assertions_by_type(&dummy_timestamp, None)
+    }
+
+    pub fn asset_reference_assertions(&self) -> Vec<&ClaimAssertion> {
+        let dummy_data = AssertionData::Cbor(Vec::new());
+        let dummy_timestamp = Assertion::new(assertions::labels::ASSET_REFERENCE, None, dummy_data);
         self.assertions_by_type(&dummy_timestamp, None)
     }
 
