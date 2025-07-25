@@ -32,17 +32,9 @@ pub struct Meta {
     pub(crate) label: String,
 }
 
-#[derive(Deserialize)]
-struct MetaDeserialize {
-    #[serde(rename = "@context")]
-    context: HashMap<String, String>,
-    #[serde(flatten)]
-    value: HashMap<String, Value>,
-}
-
 impl Meta {
     pub fn new(json: &str, label: &str) -> Result<Self, Error> {
-        let metadata = serde_json::from_slice::<MetaDeserialize>(json.as_bytes())
+        let metadata = serde_json::from_slice::<Meta>(json.as_bytes())
             .map_err(|e| Error::BadParam(format!("Invalid JSON format: {}", e)))?;
 
         Ok(Self {
@@ -89,7 +81,9 @@ impl AssertionBase for Meta {
     }
 
     fn from_assertion(assertion: &Assertion) -> Result<Self, Error> {
-        Self::from_json_assertion(assertion)
+        let mut metadata = Self::from_json_assertion(assertion)?;
+        metadata.label = assertion.label().to_owned();
+        Ok(metadata)
     }
 }
 
@@ -426,7 +420,7 @@ pub mod tests {
     #![allow(clippy::expect_used)]
     #![allow(clippy::unwrap_used)]
 
-    use crate::{assertions::meta::Meta, Manifest};
+    use crate::{assertion::{AssertionBase, AssertionJson}, assertions::meta::Meta, Manifest};
 
     const SPEC_EXAMPLE: &str = r#"{
         "@context" : {
@@ -470,5 +464,21 @@ pub mod tests {
         assert!(original.is_valid());
         manifest.add_assertion(&original).unwrap();
         println!("{}", manifest);
+    }
+
+    #[test]
+    fn assertion_round_trip() {
+        let original = Meta::new(SPEC_EXAMPLE, "c2pa.metadata").unwrap();
+        let assertion = original.to_assertion().unwrap();
+        let result = Meta::from_assertion(&assertion).unwrap();
+        dbg!(result);
+    }
+
+      #[test]
+    fn json_assertion_round_trip() {
+        let original = Meta::new(SPEC_EXAMPLE, "c2pa.metadata").unwrap();
+        let assertion = original.to_json_assertion().unwrap();
+        let result = Meta::from_json_assertion(&assertion).unwrap();
+        dbg!(result);
     }
 }

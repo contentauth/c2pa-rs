@@ -3172,8 +3172,7 @@ impl Claim {
         Claim::verify_actions(claim, svi, validation_log)?;
 
         for metadata_assertion in claim.metadata_assertions() {
-            let mut metadata_assertion = Meta::from_assertion(metadata_assertion.assertion())?;
-            metadata_assertion.label = claim.label().to_owned();
+            let metadata_assertion = Meta::from_assertion(metadata_assertion.assertion())?;
             if !metadata_assertion.is_valid() {
                 log_item!(
                     claim.uri(),
