@@ -20,7 +20,6 @@ c2pa = { workspace = true , features = [
     "file_io",
     "add_thumbnails",
     "fetch_remote_manifests",
-    "openssl",
 ]}
 scopeguard = "1.2.0"
 serde = { version = "1.0", features = ["derive"] }
