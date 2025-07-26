@@ -1251,7 +1251,7 @@ pub extern "C" fn c2pa_free_epub_metadata(meta: *mut CEpubMetadata) {
         if !(*meta).date.is_null() {
             let _ = CString::from_raw((*meta).date);
         }
-        Box::from_raw(meta);
+        let _ = Box::from_raw(meta);
     }
 }
 

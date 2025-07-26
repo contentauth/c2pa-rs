@@ -14,7 +14,7 @@ use zip::{
     ZipArchive, 
     ZipWriter
 };
-use std::io::Seek;
+// use std::io::Seek;  // 暂时注释掉，因为当前未使用
 
 static SUPPORTED_TYPES: [&str; 6] = [
     "epub",
@@ -400,6 +400,7 @@ pub fn create_test_signer() -> Result<Box<dyn Signer>> {
     Ok(signer)
 }
 
+#[allow(dead_code)]
 fn get_sample_epub_path(path_str: &str) -> std::path::PathBuf {
     let manifest_dir = env!("CARGO_MANIFEST_DIR");
     let mut path = std::path::PathBuf::from(manifest_dir);
@@ -805,6 +806,7 @@ fn test_get_epub_metadata() {
 
 // ========== EPUB Metadata Extraction ==========
 #[derive(Debug, Clone, Default)]
+#[allow(dead_code)]
 pub struct EpubMetadata {
     pub title: Option<String>,
     pub author: Option<String>,
@@ -815,6 +817,7 @@ pub struct EpubMetadata {
 }
 
 /// Read epub metadata from epub file
+#[allow(dead_code)]
 pub fn get_epub_metadata<P: AsRef<std::path::Path>>(epub_path: P) -> Result<EpubMetadata> {
     use zip::ZipArchive;
     use std::fs::File;
