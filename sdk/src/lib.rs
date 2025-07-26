@@ -150,6 +150,9 @@ pub use signer::{AsyncSigner, Signer};
 pub use utils::mime::format_from_path;
 pub use validation_results::{ValidationResults, ValidationState};
 
+// EPUB metadata function export
+pub use asset_handlers::epub_io::get_epub_metadata;
+
 pub use crate::crypto::raw_signature::SigningAlg;
 
 // Internal modules
