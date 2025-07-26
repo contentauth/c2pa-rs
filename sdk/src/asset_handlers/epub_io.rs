@@ -1,16 +1,17 @@
 use crate::{
-    assertion::Assertion, assertions::{Action, Actions, DataHash}, asset_io::{AssetIO, CAIRead, CAIReadWrapper, CAIReadWrite, CAIReadWriteWrapper, CAIReader, CAIWriter, HashObjectPositions}, error::{Error, Result}, Builder, Manifest, Signer, SigningAlg,
+    assertion::Assertion, assertions::{Action, Actions, DataHash, CollectionHash}, asset_io::{AssetIO, CAIRead, CAIReadWrapper, CAIReadWrite, CAIReadWriteWrapper, CAIReader, CAIWriter, HashObjectPositions}, error::{Error, Result}, Builder, Manifest, Signer, SigningAlg, Reader
 };
-
+use crate::assertion::AssertionBase;
 use std::{
     fs::{self, File, OpenOptions},
     io::{self, Cursor, Read, Seek, SeekFrom, Write}, 
     path::{Path, PathBuf}, 
     str::from_utf8, collections::BTreeMap
 };
-
+use ciborium::de::from_reader;
+use asn1_rs::AsTaggedExplicit;
 use digest::{Digest, DynDigest};
-use serde_json::json;
+use serde_json::{from_value, json};
 use sha2::{Sha256, Sha384, Sha512};
 use tempfile::NamedTempFile;
 use serde::{Deserialize, Serialize};
@@ -37,7 +38,7 @@ const CAI_STORE_PATHS: [&str; 3] = [
 ];
 
 const MANIFEST_PATH: &str = "META-INF/c2pa.json";
-const MANIFEST_PLACEHOLDER_SIZE: u64 = 8192;
+const MANIFEST_PLACEHOLDER_SIZE: u64 = 32768;
 
 pub struct EpubIo;
 
@@ -390,6 +391,7 @@ struct ManifestDef {
     assertions: Vec<JsonAssertionDef>,
 }
 
+
 pub async fn sign_epub_from_json(
     source_path: &Path,
     dest_path: &Path,
@@ -397,47 +399,52 @@ pub async fn sign_epub_from_json(
     signer: &dyn Signer,
     alg: &str,
 ) -> Result<Vec<u8>> {
-    let temp_epub =
+    let temp_epub_with_placeholder =
         zip_util::create_epub_with_placeholder(source_path, MANIFEST_PATH, MANIFEST_PLACEHOLDER_SIZE)?;
+    println!("  - ✓ Temporary EPUB with placeholder created.");
 
-    let hashes = zip_hasher::calculate_hashes(temp_epub.path(), alg, MANIFEST_PATH)?;
-
-    let mut builder = Builder::from_json(manifest_json)?;
-
-    for (entry_name, entry_hash) in hashes.entry_hashes {
-        let mut data_hash = DataHash::new(&format!("c2pa.epub.hash.{}", entry_name), alg);
-        data_hash.set_hash(entry_hash);
-        
-        builder.add_assertion(
-            "c2pa.hash.data", 
-            &data_hash
-        )?;
-    }
-
-    let mut cd_hash = DataHash::new(&"c2pa.epub.hash.central_directory".to_string(), alg);
-    cd_hash.set_hash(hashes.central_directory_hash);
-
-    builder.add_assertion(
-        "c2pa.hash.data",
-        &cd_hash
+    let mut collection_hash = CollectionHash::with_alg(
+        source_path.parent().unwrap_or(Path::new("")).to_path_buf(),
+        alg.to_string(),
     )?;
-    
-    std::fs::copy(temp_epub.path(), dest_path)?;
-    let mut source_file = File::open(source_path)?;
+    let mut temp_epub_file = File::open(temp_epub_with_placeholder.path())?;
+    collection_hash.gen_hash_from_zip_stream(&mut temp_epub_file)?;
+    println!("  - ✓ Hashes calculated using CollectionHash on the temporary file.");
 
+    collection_hash.zip_central_directory_hash = None;
+    println!("  - ✓ Central directory hash ignored for this workflow.");
+    let mut builder = Builder::from_json(manifest_json)?;
+    builder.add_assertion(
+        CollectionHash::LABEL,
+        &collection_hash
+    )?;
     let mut dest_file = std::fs::OpenOptions::new()
         .read(true)
         .write(true)
         .open(dest_path)?;
-
+    let mut source_file_for_signing = File::open(source_path)?;
     let manifest_bytes = builder.sign(
         signer,
         "application/epub+zip",
-        &mut source_file,
-        &mut dest_file
+        &mut source_file_for_signing,
+        &mut dest_file,
     )?;
+    println!("  - ✓ Manifest generated in memory ({} bytes).", manifest_bytes.len());
 
-    zip_util::rewrite_epub_with_manifest(temp_epub.path(), dest_path, MANIFEST_PATH, &manifest_bytes)?;
+    if manifest_bytes.len() as u64 > MANIFEST_PLACEHOLDER_SIZE {
+        return Err(Error::EmbeddingError);
+    }
+
+    fs::copy(temp_epub_with_placeholder.path(), dest_path)?;
+    
+    // zip_util::overwrite_placeholder(dest_path, MANIFEST_PATH, &manifest_bytes)?;
+    zip_util::rewrite_epub_with_manifest(
+        temp_epub_with_placeholder.path(),
+        dest_path,
+        MANIFEST_PATH,
+        &manifest_bytes,
+    )?;
+    println!("  - ✓ Placeholder overwritten in destination file without changing structure.");
 
     Ok(manifest_bytes)
 }
@@ -459,83 +466,58 @@ struct ManifestJson {
     alg: Option<String>,
 }
 
+
 pub fn verify_epub_hashes(path: &Path) -> Result<bool> {
-    
     println!("\nVerifying EPUB at: {:?}", path);
-    let epub_io = EpubIo::new("epub");
-    let manifest_bytes = epub_io.read_cai_store(path)?;
-    
-    // error here, still finding a way to read manifest_bytes
-    let manifest_store = crate::from_bytes(&manifest_bytes)?;
-    
-    let active_manifest = manifest_store
-        .active_manifest()
-        .ok_or(Error::JumbfNotFound)?;
 
-    let mut stored_hashes = BTreeMap::new();
-    let mut alg = None;
+    let mut file_stream = File::open(path)?;
+    let reader = Reader::from_stream("application/epub+zip", &mut file_stream)?;
+    
+    let active_manifest = reader.active_manifest().ok_or_else(|| Error::EmbeddingError)?;
 
-    for assertion in active_manifest.assertions() {
-        if let Some(data_hash) = assertion.to_data_hash() {
-            if alg.is_none() {
-                alg = Some(data_hash.alg().to_string());
+    let collection_hash_assertion = active_manifest.assertions().iter().find(|a| a.label() == CollectionHash::LABEL).ok_or_else(|| Error::EmbeddingError)?;
+
+    let json_value = collection_hash_assertion.value()?;
+    let collection_hash: CollectionHash = serde_json::from_value(json_value.clone()).map_err(|e|Box::new(e) as Box<dyn std::error::Error + Send + Sync>)?;
+
+    println!("  - ✓ Found and deserialized 'c2pa.collection.hash' assertion.");
+    
+    let mut verification_stream = File::open(path)?;
+    
+    let alg = collection_hash.alg.as_deref().unwrap_or("sha256");
+    let uris_with_ranges = crate::assertions::collection_hash::zip_uri_ranges(&mut verification_stream)?;
+
+    for (path_buf, uri_map) in &collection_hash.uris {
+        if let Some(uri_with_range) = uris_with_ranges.get(path_buf) {
+            if let Some(hash_to_verify) = &uri_map.hash {
+                if !crate::hash_utils::verify_stream_by_alg(
+                    alg,
+                    hash_to_verify,
+                    &mut verification_stream,
+                    Some(vec![uri_with_range.zip_hash_range.clone().unwrap()]),
+                    false,
+                ) {
+                    println!("  - ✗ Verification FAILED: Hash mismatch for entry '{}'.", path_buf.display());
+                    return Ok(false);
+                }
             }
-            stored_hashes.insert(data_hash.label().to_string(), data_hash.hash().to_vec());
+        } else {
+            println!("  - ✗ Verification FAILED: Entry '{}' not found in ZIP file.", path_buf.display());
+            return Ok(false);
         }
     }
 
-    if alg.is_none() {
-        println!("  - No DataHash assertions found in manifest.");
-        return Ok(false);
-    }
-    let alg = alg.unwrap();
-    println!("  - Found {} hashes in manifest (alg: {})", stored_hashes.len(), alg);
-
-    let calculated_hashes = zip_hasher::calculate_hashes(path, &alg, MANIFEST_PATH)?;
-    
-    let central_directory_hash = calculated_hashes.central_directory_hash;
-    let calculated_entry_hashes = calculated_hashes.entry_hashes;
-
-    if let Some(stored_cd_hash) = stored_hashes.get("c2pa.epub.hash.central_directory") {
-        if *stored_cd_hash != central_directory_hash {
+    if let Some(cd_hash) = &collection_hash.zip_central_directory_hash {
+        let cd_range = crate::assertions::collection_hash::zip_central_directory_range(&mut verification_stream)?;
+        if !crate::hash_utils::verify_stream_by_alg(alg, cd_hash, &mut verification_stream, Some(vec![cd_range]), false) {
             println!("  - ✗ Verification FAILED: Central directory hash mismatch.");
             return Ok(false);
         }
-        println!("  - ✓ Central directory hash matches.");
-    } else {
-        println!("  - ✗ Verification FAILED: Central directory hash not found in manifest.");
-        return Ok(false);
-    }
-
-    if (stored_hashes.len() - 1) != calculated_entry_hashes.len() {
-        println!("  - ✗ Verification FAILED: Mismatch in number of file entry hashes.");
-        return Ok(false);
-    }
-
-    for (label, stored_hash) in stored_hashes {
-        if label == "c2pa.epub.hash.central_directory" {
-            continue;
-        }
-        
-        let entry_name = label.strip_prefix("c2pa.epub.hash.").unwrap_or(&label);
-
-        if let Some(calculated_hash) = calculated_entry_hashes.get(entry_name) {
-            if *calculated_hash != stored_hash {
-                println!("  - ✗ Verification FAILED: Hash mismatch for entry '{}'.", entry_name);
-                return Ok(false);
-            }
-        } else {
-            println!("  - ✗ Verification FAILED: Entry '{}' not found in calculated hashes.", entry_name);
-            return Ok(false);
-        }
     }
     
-    println!("  - ✓ All file entry hashes match.");
-    println!("Verification successful.");
+    println!("  - ✓ Verification successful: All hashes match.");
     Ok(true)
-
 }
-
 
 pub fn add_empty_file_to_epub(path: &Path) -> Result<()> {
     let temp_file = NamedTempFile::new()?;
@@ -731,48 +713,45 @@ mod zip_util {
     }
 
     pub fn rewrite_epub_with_manifest(
-        source_path: &Path,
-        dest_path: &Path,
-        manifest_path: &str,
-        manifest_bytes: &[u8],
-    ) -> Result<()> {
-        let dest_file = File::create(dest_path)?;
-        let mut zip_writer = ZipWriter::new(dest_file);
-        let mut source_file = File::open(source_path)?;
-        let mut archive = ZipArchive::new(&mut source_file)?;
+    source_path: &Path,
+    dest_path: &Path,
+    manifest_path: &str,
+    manifest_bytes: &[u8],
+) -> Result<()> {
+    let dest_file = File::create(dest_path)?;
+    let mut zip_writer = ZipWriter::new(dest_file);
+    let source_file = File::open(source_path)?;
+    let mut archive = ZipArchive::new(source_file)?;
 
-        // Handle mimetype first for EPUB validity.
-        if let Ok(mut mimetype_file) = archive.by_name("mimetype") {
-            let options: FileOptions<()> =
-                FileOptions::default().compression_method(zip::CompressionMethod::Stored);
-            zip_writer.start_file("mimetype", options)?;
-            io::copy(&mut mimetype_file, &mut zip_writer)?;
-        }
-
-        // Copy all other files from the original.
-        for i in 0..archive.len() {
-            let mut file = archive.by_index(i)?;
-            if file.name() == "mimetype"|| file.name() == manifest_path {
-                continue;
-            }
-            let options: FileOptions<()> = FileOptions::default()
-                .compression_method(file.compression())
-                .last_modified_time(file.last_modified().unwrap_or_default())
-                .unix_permissions(file.unix_mode().unwrap_or(0o755));
-            zip_writer.start_file(file.name(), options)?;
-            io::copy(&mut file, &mut zip_writer)?;
-        }
-
-        // Add the new manifest file.
-        let manifest_options: FileOptions<()> =
+    if archive.by_name("mimetype").is_ok() {
+        let mut mimetype_file = archive.by_name("mimetype").unwrap();
+        let options: FileOptions<()> =
             FileOptions::default().compression_method(zip::CompressionMethod::Stored);
-        zip_writer.start_file(manifest_path, manifest_options)?;
-        zip_writer.write_all(manifest_bytes)?;
-
-        zip_writer.finish()?;
-        Ok(())
+        zip_writer.start_file("mimetype", options)?;
+        std::io::copy(&mut mimetype_file, &mut zip_writer)?;
     }
 
+
+    for i in 0..archive.len() {
+        let raw_file = archive.by_index_raw(i)?;
+        let file_name = raw_file.name();
+
+        if file_name == "mimetype" || file_name == manifest_path {
+            continue;
+        }
+
+        zip_writer.raw_copy_file(raw_file)?;
+    }
+
+    let manifest_options: FileOptions<()> =
+        FileOptions::default().compression_method(zip::CompressionMethod::Stored);
+    zip_writer.start_file(manifest_path, manifest_options)?;
+    zip_writer.write_all(manifest_bytes)?;
+
+    zip_writer.finish()?;
+    println!("  - ✓ Rewritten EPUB with raw file copy.");
+    Ok(())
+}
     
 }
 

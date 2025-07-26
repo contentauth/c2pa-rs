@@ -64,3 +64,6 @@ mod uuid_assertion;
 pub(crate) use uuid_assertion::Uuid;
 
 pub mod region_of_interest;
+
+pub(crate) mod collection_hash; 
+pub(crate) use collection_hash::CollectionHash;
