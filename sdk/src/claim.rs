@@ -3197,10 +3197,14 @@ impl Claim {
     }
 
     #[allow(clippy::unwrap_used)]
+    ///Returns list of metadata assertions
     pub fn metadata_assertions(&self) -> Vec<&ClaimAssertion> {
         lazy_static::lazy_static! {
+            /// Must have a label that ends in '.metadata' and is preceded by an entity-specific namespace.
+            /// For example, a 'com.litware.metadata' assertion would be valid.
             static ref METADATA_LABEL : Regex = Regex::new(r"^(?:[a-zA-Z0-9][a-zA-Z0-9_-]*)(?:\.(?:[a-zA-Z0-9][a-zA-Z0-9_-]*))*\.metadata$").unwrap();
         }
+
         self.assertion_store
             .iter()
             .filter(|x| METADATA_LABEL.is_match(&x.label_raw()))

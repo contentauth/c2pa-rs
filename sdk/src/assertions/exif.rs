@@ -31,9 +31,9 @@ use crate::{
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Exif {
     #[serde(rename = "@context", skip_serializing_if = "Option::is_none")]
-    pub object_context: Option<Value>,
+    object_context: Option<Value>,
     #[serde(flatten)]
-    pub value: HashMap<String, Value>,
+    value: HashMap<String, Value>,
 }
 
 impl Exif {

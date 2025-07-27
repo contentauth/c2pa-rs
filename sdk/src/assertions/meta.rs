@@ -44,10 +44,16 @@ impl Meta {
         })
     }
 
+    /// Validates that each field in the assertion has a namespace within the '@context'.
+    /// For 'c2pa.metadata' assertions, ensures only allowed fields are present.
+    ///
+    /// See <https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_c2pa_metadata_validation>.
+    /// # Returns
+    /// * Returns `true` if the metadata assertion passes validation.
     pub fn is_valid(&self) -> bool {
         if self.label == labels::METADATA {
             for (namespace, url) in &self.context {
-                if let Some(expected_url) = SCHEMA_URLS.get(namespace.as_str()) {
+                if let Some(expected_url) = ALLOWED_SCHEMAS.get(namespace.as_str()) {
                     if url != expected_url {
                         return false;
                     }
@@ -88,7 +94,10 @@ impl AssertionBase for Meta {
 }
 
 lazy_static! {
-    static ref SCHEMA_URLS: HashMap<&'static str, &'static str> = vec![
+    /// The c2pa.metadata assertion shall only contain certain schemas.
+    ///
+    /// See <https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#metadata_annex>.
+    static ref ALLOWED_SCHEMAS: HashMap<&'static str, &'static str> = vec![
         ("xmp", "http://ns.adobe.com/xap/1.0/"),
         ("xmpMM", "http://ns.adobe.com/xap/1.0/mm/"),
         ("xmpTPg", "http://ns.adobe.com/xap/1.0/t/pg/"),
@@ -107,6 +116,9 @@ lazy_static! {
     .collect();
 }
 
+/// The c2pa.metadata assertion shall only contain certain fields.
+///
+/// See <https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#metadata_annex>.
 static ALLOWED_FIELDS: [&str; 292] = [
     // xmp:
     "xmp:CreateDate",
@@ -476,7 +488,7 @@ pub mod tests {
         "tiff:Model": "Shooter S1"
         }
         "#;
-    
+
     const MISMATCH_URL: &str = r#" {
         "@context" : {
             "exif": "http://ns.adobe.com/exif/10.0/"
@@ -526,5 +538,4 @@ pub mod tests {
         metadata.label = "custom.metadata".to_owned();
         assert!(metadata.is_valid());
     }
-
 }
