@@ -22,7 +22,7 @@ use crate::{
     Error,
 };
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, PartialEq)]
 pub struct Meta {
     #[serde(rename = "@context")]
     pub context: HashMap<String, String>,
@@ -457,17 +457,74 @@ pub mod tests {
         "exifEX:LensSpecification": { "@list": [ 1.55, 4.2, 1.6, 2.4 ] }
     }"#;
 
+    const CUSTOM_METADATA: &str = r#" {
+        "@context" : {
+            "bar": "http://foo.com/bar/1.0/"
+        },
+        "bar:baz" : "foo"
+        }
+        "#;
+
+    const MISSING_CONTEXT: &str = r#" {
+        "@context" : {
+            "exif": "http://ns.adobe.com/exif/1.0/"
+        },
+        "exif:GPSVersionID": "2.2.0.0",
+        "exif:GPSLatitude": "39,21.102N",
+        "exif:GPSLongitude": "74,26.5737W",
+        "tiff:Make": "CameraCompany",
+        "tiff:Model": "Shooter S1"
+        }
+        "#;
+    
+    const MISMATCH_URL: &str = r#" {
+        "@context" : {
+            "exif": "http://ns.adobe.com/exif/10.0/"
+        },
+        "exif:GPSVersionID": "2.2.0.0",
+        "exif:GPSLatitude": "39,21.102N",
+        "exif:GPSLongitude": "74,26.5737W"
+        }
+        "#;
+
     #[test]
     fn metadata_from_json() {
-        let original = Meta::new(SPEC_EXAMPLE, "c2pa.metadata").unwrap();
-        assert!(original.is_valid());
+        let metadata = Meta::new(SPEC_EXAMPLE, "c2pa.metadata").unwrap();
+        assert!(metadata.is_valid());
     }
 
     #[test]
     fn assertion_round_trip() {
-        let original = Meta::new(SPEC_EXAMPLE, "c2pa.metadata").unwrap();
-        let assertion = original.to_assertion().unwrap();
+        let metadata = Meta::new(SPEC_EXAMPLE, "c2pa.metadata").unwrap();
+        let assertion = metadata.to_assertion().unwrap();
         let result = Meta::from_assertion(&assertion).unwrap();
-        dbg!(result);
+        assert_eq!(metadata, result);
     }
+
+    #[test]
+    fn test_custom_validation() {
+        let mut metadata = Meta::new(CUSTOM_METADATA, "custom.metadata").unwrap();
+        assert!(metadata.is_valid());
+        // c2pa.metadata has restrictions on fields
+        metadata.label = "c2pa.metadata".to_owned();
+        assert!(!metadata.is_valid());
+    }
+
+    #[test]
+    fn test_field_not_in_context() {
+        let mut metadata = Meta::new(MISSING_CONTEXT, "custom.metadata").unwrap();
+        assert!(!metadata.is_valid());
+        metadata.label = "c2pa.metadata".to_owned();
+        assert!(!metadata.is_valid());
+    }
+
+    #[test]
+    fn test_url_is_not_allowed() {
+        let mut metadata = Meta::new(MISMATCH_URL, "c2pa.metadata").unwrap();
+        assert!(!metadata.is_valid());
+        // custom metadata does not have restriction on urls
+        metadata.label = "custom.metadata".to_owned();
+        assert!(metadata.is_valid());
+    }
+
 }

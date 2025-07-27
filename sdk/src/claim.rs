@@ -3201,13 +3201,10 @@ impl Claim {
         lazy_static::lazy_static! {
             static ref METADATA_LABEL : Regex = Regex::new(r"^(?:[a-zA-Z0-9][a-zA-Z0-9_-]*)(?:\.(?:[a-zA-Z0-9][a-zA-Z0-9_-]*))*\.metadata$").unwrap();
         }
-        let test = self
-            .assertion_store
+        self.assertion_store
             .iter()
             .filter(|x| METADATA_LABEL.is_match(&x.label_raw()))
-            .collect();
-        dbg!(&test);
-        test
+            .collect()
     }
 
     /// Return list of data hash assertions
@@ -3256,12 +3253,6 @@ impl Claim {
     pub fn timestamp_assertions(&self) -> Vec<&ClaimAssertion> {
         let dummy_data = AssertionData::Cbor(Vec::new());
         let dummy_timestamp = Assertion::new(assertions::labels::TIMESTAMP, None, dummy_data);
-        self.assertions_by_type(&dummy_timestamp, None)
-    }
-
-    pub fn asset_reference_assertions(&self) -> Vec<&ClaimAssertion> {
-        let dummy_data = AssertionData::Cbor(Vec::new());
-        let dummy_timestamp = Assertion::new(assertions::labels::ASSET_REFERENCE, None, dummy_data);
         self.assertions_by_type(&dummy_timestamp, None)
     }
 

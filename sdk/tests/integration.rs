@@ -410,7 +410,7 @@ mod integration_1 {
 
         // allocate metadata
         let c2pa_metadata_assertion = Meta::new(C2PA_METADATA, "c2pa.metadata")?;
-        let custom_metadata_assertion = Meta::new(CUSTOM_METADATA, "c2pa.metadata")?;
+        let custom_metadata_assertion = Meta::new(CUSTOM_METADATA, "custom.foo.metadata")?;
 
         // add metadata assertions
         builder.add_assertion_json(&c2pa_metadata_assertion.label, &c2pa_metadata_assertion)?;
