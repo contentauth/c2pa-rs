@@ -26,6 +26,9 @@ test-local:
 # Run this before pushing a PR to pre-validate
 test: check-format clippy test-local
 
+bench:
+	./benchmarks/benchmark.sh
+
 fmt:
 	cargo +nightly fmt
 
