@@ -33,8 +33,8 @@ pub struct Meta {
 }
 
 impl Meta {
-    pub fn new(json: &str, label: &str) -> Result<Self, Error> {
-        let metadata = serde_json::from_slice::<Meta>(json.as_bytes())
+    pub fn new(jsonld: &str, label: &str) -> Result<Self, Error> {
+        let metadata = serde_json::from_slice::<Meta>(jsonld.as_bytes())
             .map_err(|e| Error::BadParam(format!("Invalid JSON format: {}", e)))?;
 
         Ok(Self {
@@ -51,6 +51,10 @@ impl Meta {
     /// # Returns
     /// * Returns `true` if the metadata assertion passes validation.
     pub fn is_valid(&self) -> bool {
+        if self.context.is_empty() {
+            return false;
+        }
+
         if self.label == labels::METADATA {
             for (namespace, url) in &self.context {
                 if let Some(expected_url) = ALLOWED_SCHEMAS.get(namespace.as_str()) {
@@ -488,6 +492,11 @@ pub mod tests {
         "tiff:Model": "Shooter S1"
         }
         "#;
+    const EMPTY_CONTEXT: &str = r#" {
+        "@context" : {
+        }
+        }
+        "#;
 
     const MISMATCH_URL: &str = r#" {
         "@context" : {
@@ -537,5 +546,11 @@ pub mod tests {
         // custom metadata does not have restriction on urls
         metadata.label = "custom.metadata".to_owned();
         assert!(metadata.is_valid());
+    }
+
+    #[test]
+    fn test_empty_context() {
+        let metadata = Meta::new(EMPTY_CONTEXT, "c2pa.metadata").unwrap();
+        assert!(!metadata.is_valid());
     }
 }

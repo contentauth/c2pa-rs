@@ -3181,8 +3181,9 @@ impl Claim {
         for metadata_assertion in claim.metadata_assertions() {
             let metadata_assertion = Meta::from_assertion(metadata_assertion.assertion())?;
             if !metadata_assertion.is_valid() {
+                let label = to_assertion_uri(claim.label(), metadata_assertion.label());
                 log_item!(
-                    claim.uri(),
+                    label,
                     "metadata assertion contains disallowed field",
                     "verify_internal"
                 )
