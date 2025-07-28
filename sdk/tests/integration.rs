@@ -21,7 +21,7 @@ mod integration_1 {
         assertions::{c2pa_action, Action, Actions, AssetReference, Meta},
         create_signer,
         crypto::raw_signature::SigningAlg,
-        settings::load_settings_from_str,
+        settings::Settings,
         Builder, ClaimGeneratorInfo, Ingredient, Reader, Result, Signer,
     };
     #[allow(unused)] // different code path for WASI
@@ -63,41 +63,52 @@ mod integration_1 {
         allowed_list: Option<String>,
         trust_config: Option<String>,
     ) -> Result<()> {
-        let ta = r#"{"trust": { "trust_anchors": replacement_val } }"#;
-        let al = r#"{"trust": { "allowed_list": replacement_val } }"#;
-        let tc = r#"{"trust": { "trust_config": replacement_val } }"#;
-
         let mut enable_trust_checks = false;
         if let Some(trust_list) = trust_anchors {
-            let replacement_val = serde_json::Value::String(trust_list).to_string(); // escape string
-            let setting = ta.replace("replacement_val", &replacement_val);
-
-            load_settings_from_str(&setting, "json")?;
+            Settings::from_toml(
+                &toml::toml! {
+                    [trust]
+                    trust_anchors = trust_list
+                }
+                .to_string(),
+            )?;
 
             enable_trust_checks = true;
         }
 
         if let Some(allowed_list) = allowed_list {
-            let replacement_val = serde_json::Value::String(allowed_list).to_string(); // escape string
-            let setting = al.replace("replacement_val", &replacement_val);
-
-            load_settings_from_str(&setting, "json")?;
+            Settings::from_toml(
+                &toml::toml! {
+                    [trust]
+                    allowed_list = allowed_list
+                }
+                .to_string(),
+            )?;
 
             enable_trust_checks = true;
         }
 
         if let Some(trust_config) = trust_config {
-            let replacement_val = serde_json::Value::String(trust_config).to_string(); // escape string
-            let setting = tc.replace("replacement_val", &replacement_val);
-
-            load_settings_from_str(&setting, "json")?;
+            Settings::from_toml(
+                &toml::toml! {
+                    [trust]
+                    trust_config = trust_config
+                }
+                .to_string(),
+            )?;
 
             enable_trust_checks = true;
         }
 
         // enable trust checks
         if enable_trust_checks {
-            load_settings_from_str(r#"{"verify": { "verify_trust": true} }"#, "json")?;
+            Settings::from_toml(
+                &toml::toml! {
+                    [verify]
+                    verify_trust = true
+                }
+                .to_string(),
+            )?;
         }
 
         Ok(())
