@@ -43,10 +43,37 @@ pub fn validator_for_signing_alg(alg: SigningAlg) -> Option<Box<dyn RawSignature
     }
 }
 
+/// Signature algorithm used for signing
+/// or select validator based on key algorithm and hash type or EC curve.
 pub(crate) fn validator_for_sig_and_hash_algs(
     sig_alg: &Oid,
     hash_alg: &Oid,
 ) -> Option<Box<dyn RawSignatureValidator>> {
+    // try signature algs first
+    if sig_alg.as_ref() == ECDSA_WITH_SHA256_OID.as_bytes() {
+        return Some(Box::new(EcdsaValidator::Es256));
+    }
+    if sig_alg.as_ref() == ECDSA_WITH_SHA384_OID.as_bytes() {
+        return Some(Box::new(EcdsaValidator::Es384));
+    }
+    if sig_alg.as_ref() == ECDSA_WITH_SHA512_OID.as_bytes() {
+        return Some(Box::new(EcdsaValidator::Es512));
+    }
+    if sig_alg.as_ref() == SHA256_WITH_RSAENCRYPTION_OID.as_bytes() {
+        return Some(Box::new(RsaValidator::Ps256));
+    }
+    if sig_alg.as_ref() == SHA384_WITH_RSAENCRYPTION_OID.as_bytes() {
+        return Some(Box::new(RsaValidator::Ps384));
+    }
+    if sig_alg.as_ref() == SHA512_WITH_RSAENCRYPTION_OID.as_bytes() {
+        return Some(Box::new(RsaValidator::Ps512));
+    }
+    if sig_alg.as_ref() == ED25519_OID.as_bytes() {
+        return Some(Box::new(Ed25519Validator {}));
+    }
+
+    // Test for public key algs next
+
     if sig_alg.as_ref() == RSA_OID.as_bytes() {
         if hash_alg.as_ref() == SHA1_OID.as_bytes() {
             return Some(Box::new(RsaLegacyValidator::Sha1));

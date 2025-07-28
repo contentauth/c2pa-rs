@@ -13,13 +13,17 @@
 
 //! Tools for working with OCSP responses.
 
+use std::str::FromStr;
+
 use chrono::{DateTime, NaiveDateTime, Utc};
 use rasn_ocsp::{BasicOcspResponse, CertStatus, OcspResponseStatus};
 use rasn_pkix::CrlReason;
 use thiserror::Error;
 
 use crate::{
-    crypto::internal::time, log_item, status_tracker::StatusTracker,
+    crypto::{internal::time, raw_signature::RawSignatureValidationError},
+    log_item,
+    status_tracker::StatusTracker,
     validation_results::validation_codes,
 };
 
@@ -98,7 +102,42 @@ impl OcspResponse {
                 cert_der_vec.push(cert_der);
             }
 
-            if output.ocsp_certs.is_none() {
+            // make sure the certificate was correctly signed
+
+            // alg used for signature
+            let Ok(sig_alg) =
+                bcder::Oid::from_str(&basic_response.signature_algorithm.algorithm.to_string())
+            else {
+                return Ok(output);
+            };
+
+            let Some(hash_alg) =
+                hash_alg_for_sig_alg(&basic_response.signature_algorithm.algorithm)
+            else {
+                return Ok(output);
+            };
+
+            // grab signature value.
+            let sig_val = bcder::OctetString::new(bytes::Bytes::copy_from_slice(
+                basic_response.signature.as_raw_slice(),
+            ));
+
+            // grab the to be signed data
+            let Ok(tbs) = rasn::der::encode(&basic_response.tbs_response_data) else {
+                return Ok(output);
+            };
+
+            // grab the signing key
+            let Ok(signing_key_der) =
+                rasn::der::encode(&ocsp_certs[0].tbs_certificate.subject_public_key_info)
+            else {
+                return Ok(output);
+            };
+
+            // if not valid we will not add the cert to list to be checked for trust later
+            if validate_ocsp_sig(&sig_alg, &hash_alg, &sig_val, &tbs, &signing_key_der).is_ok()
+                && output.ocsp_certs.is_none()
+            {
                 output.ocsp_certs = Some(cert_der_vec);
             }
         }
@@ -281,6 +320,38 @@ impl OcspResponse {
         validation_log.append(&internal_validation_log);
 
         Ok(output)
+    }
+}
+
+fn validate_ocsp_sig(
+    sig_alg: &bcder::Oid,
+    hash_alg: &bcder::Oid,
+    sig_val: &bcder::OctetString,
+    tbs: &[u8],
+    signing_key_der: &[u8],
+) -> Result<(), RawSignatureValidationError> {
+    if let Some(validator) =
+        crate::crypto::raw_signature::validator_for_sig_and_hash_algs(sig_alg, hash_alg)
+    {
+        validator
+            .validate(&sig_val.to_bytes(), tbs, signing_key_der)
+            .map_err(|e| RawSignatureValidationError::CryptoLibraryError(e.to_string()))
+    } else {
+        Err(RawSignatureValidationError::UnsupportedAlgorithm)
+    }
+}
+
+/// Return the hash algorithm oid for the given signature algorithm.
+fn hash_alg_for_sig_alg(sig_alg: &rasn::types::ObjectIdentifier) -> Option<bcder::Oid> {
+    match sig_alg.to_string().as_ref() {
+        "1.2.840.10045.4.3.2" => Some(bcder::Oid::from_str("2.16.840.1.101.3.4.2.1").ok()?),
+        "1.2.840.10045.4.3.3" => Some(bcder::Oid::from_str("2.16.840.1.101.3.4.2.2").ok()?),
+        "1.2.840.10045.4.3.4" => Some(bcder::Oid::from_str("2.16.840.1.101.3.4.2.3").ok()?),
+        "1.2.840.113549.1.1.11" => Some(bcder::Oid::from_str("2.16.840.1.101.3.4.2.1").ok()?),
+        "1.2.840.113549.1.1.12" => Some(bcder::Oid::from_str("2.16.840.1.101.3.4.2.2").ok()?),
+        "1.2.840.113549.1.1.13" => Some(bcder::Oid::from_str("2.16.840.1.101.3.4.2.3").ok()?),
+        "1.3.101.112" => Some(bcder::Oid::from_str("2.16.840.1.101.3.4.2.3").ok()?),
+        _ => None,
     }
 }
 
