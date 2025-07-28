@@ -2600,6 +2600,10 @@ impl Claim {
                         Error::HashMismatch(format!("Assertion hash failure: {}", icon.url(),)),
                     )?;
                 }
+            } else if claim.get_databox(icon).is_some() {
+                // We have a databox with this icon
+                // todo: check the hash on the databox?
+                return Ok(());
             } else {
                 log_item!(icon.url(), "could not resolve icon address", "verify_icons")
                     .validation_status(validation_status::ASSERTION_MISSING)

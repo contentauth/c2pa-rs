@@ -2348,7 +2348,10 @@ pub(crate) mod tests {
         assert_eq!(image.into_owned(), thumb_data);
     }
 
+    // This is only used for testing obsolete v1 manifest creation code
     const MANIFEST_JSON: &str = r#"{
+        
+        "claim_version": 1,
         "claim_generator": "test",
         "claim_generator_info": [
             {

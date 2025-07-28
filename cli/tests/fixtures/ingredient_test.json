@@ -21,7 +21,6 @@
                 "actions": [
                     {
                         "action": "c2pa.created",
-                        "instanceId": "xmp.iid:7b57930e-2f23-47fc-affe-0400d70b738d",
                         "digitalSourceType": "http://cv.iptc.org/newscodes/digitalsourcetype/algorithmicMedia",
                         "softwareAgent": {
                             "name": "TestApp",
@@ -31,7 +30,7 @@
                     },
                     {
                         "action": "c2pa.opened",
-                        "instanceId": "xmp.iid:7b57930e-2f23-47fc-affe-0400d70b738d",
+                        "instanceId": "xmp.iid:9867c3b4-465e-42e4-8064-76c0c0fe3d16",
                         "parameters": {
                             "description": "import"
                         },
@@ -122,7 +121,7 @@
               "format": "image/jpeg",
               "identifier": "verify.jpeg"
             },
-            "relationship": "componentOf"
+            "relationship": "parentOf"
         }
     ],
     "ingredient_paths": [

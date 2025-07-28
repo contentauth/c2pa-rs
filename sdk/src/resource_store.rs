@@ -102,7 +102,10 @@ impl UriOrResource {
                             .ok_or(Error::AssertionMissing {
                                 url: h.url().to_string(),
                             })?;
-                    (assertion.label(), assertion.data().to_vec())
+                    (
+                        assertion.content_type().to_string(),
+                        assertion.data().to_vec(),
+                    )
                 };
                 let url = to_absolute_uri(claim.label(), &h.url());
                 let resource_ref = resources.add_with(&url, &format, data)?;

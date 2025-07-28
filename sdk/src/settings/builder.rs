@@ -388,8 +388,8 @@ impl Default for ActionsSettings {
             templates: None,
             actions: None,
             auto_created_action: AutoActionSettings {
-                enabled: false,
-                source_type: None,
+                enabled: true,
+                source_type: Some(crate::assertions::source_type::EMPTY.to_owned()),
             },
             auto_opened_action: AutoActionSettings {
                 enabled: true,
