@@ -42,10 +42,6 @@ impl CertificateStatus {
         }
         cs
     }
-
-    pub fn add_ocsp_val(&mut self, ocsp_val: &[u8]) {
-        self.ocsp_vals.push(ByteBuf::from(ocsp_val.to_vec()));
-    }
 }
 
 impl AsRef<Vec<ByteBuf>> for CertificateStatus {

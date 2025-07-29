@@ -35,7 +35,7 @@ mod data_hash;
 pub use data_hash::DataHash;
 
 mod certificate_status;
-pub use certificate_status::CertificateStatus;
+pub(crate) use certificate_status::CertificateStatus;
 
 mod creative_work;
 pub use creative_work::CreativeWork;
