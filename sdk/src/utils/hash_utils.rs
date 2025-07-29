@@ -253,14 +253,41 @@ where
 
                 // merge standard ranges and BMFF V2 ranges into single list
                 if !bmff_v2_starts.is_empty() {
-                    // add in remaining BMFF V2 offsets
-                    for os in bmff_v2_starts.iter() {
-                        ranges_vec.push(RangeInclusive::new(*os, *os));
+                    bmff_v2_starts.sort();
+
+                    // split ranges at BMFF V2 offsets and insert offset value
+                    for r in ranges.into_smallvec() {
+                        // if bmff_v2 offset is within the range then split the range at the off set and both side to ranges_vec
+                        let mut current_range = r;
+                        for os in &bmff_v2_starts {
+                            if current_range.contains(os) {
+                                if *current_range.start() == *os {
+                                    ranges_vec.push(RangeInclusive::new(*os, *os));
+                                // offset
+                                } else {
+                                    ranges_vec
+                                        .push(RangeInclusive::new(*current_range.start(), *os - 1)); // left side
+                                    ranges_vec.push(RangeInclusive::new(*os, *os)); // offset
+                                    current_range = RangeInclusive::new(*os, *current_range.end());
+                                    // right side
+                                }
+                            }
+                        }
+                        ranges_vec.push(current_range);
                     }
 
-                    // add regularly included ranges
-                    for r in ranges.into_smallvec() {
-                        ranges_vec.push(r);
+                    // add in remaining BMFF V2 offsets that were not included in the ranges because of subsets
+                    let range_start = RangeInclusive::new(0, 0);
+                    let range_end = RangeInclusive::new(data_end, data_end);
+                    let before_any_range = *ranges_vec.first().unwrap_or(&range_start).start();
+                    let after_any_range = *ranges_vec.last().unwrap_or(&range_end).end();
+
+                    for os in &bmff_v2_starts {
+                        if !ranges_vec.iter().any(|r| r.contains(os)) {
+                            if *os > before_any_range && *os < after_any_range {
+                                ranges_vec.push(RangeInclusive::new(*os, *os));
+                            }
+                        }
                     }
 
                     // sort by start position
