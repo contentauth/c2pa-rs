@@ -253,12 +253,10 @@ struct StructuredAction {
 /// let signer = create_signer::from_files(signcert_path, pkey_path, SigningAlg::Ps256, None)?;
 ///
 /// // embed a manifest using the signer
-/// builder.sign(
+/// builder.sign_file(
 ///     signer.as_ref(),
-///     "image/jpeg",
-///     &mut std::fs::File::open(&source)?,
-///     &mut std::fs::File::create(&dest)?,
-/// )?;
+///     &source,
+///     &dest)?;
 /// # Ok(())
 /// # }
 /// ```
