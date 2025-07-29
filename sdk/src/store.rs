@@ -4709,12 +4709,12 @@ pub mod tests {
     }
 
     #[test]
-    #[cfg(feature = "v1_api")]
     #[cfg(feature = "file_io")]
     fn test_certificate_map() {
         let ap = fixture_path("ocsp.jpg");
         let mut report = StatusTracker::default();
-        let store = Store::load_from_asset(&ap, true, &mut report).unwrap();
+        let source = Cursor::new(include_bytes!("../tests/fixtures/ocsp.jpg"));
+        let store = Store::from_stream("image/jpeg", source, true, &mut report).unwrap();
 
         let svi = store
             .get_store_validation_info(
