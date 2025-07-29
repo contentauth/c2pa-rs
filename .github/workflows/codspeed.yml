@@ -21,7 +21,7 @@ jobs:
         uses: moonrepo/setup-rust@v0
         with:
           channel: stable
-          cache-target: release
+          cache-base: main
           bins: cargo-codspeed
 
       - name: Build the benchmark target(s)
