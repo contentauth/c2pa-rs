@@ -283,10 +283,11 @@ where
                     let after_any_range = *ranges_vec.last().unwrap_or(&range_end).end();
 
                     for os in &bmff_v2_starts {
-                        if !ranges_vec.iter().any(|r| r.contains(os)) {
-                            if *os > before_any_range && *os < after_any_range {
-                                ranges_vec.push(RangeInclusive::new(*os, *os));
-                            }
+                        if !ranges_vec.iter().any(|r| r.contains(os))
+                            && *os > before_any_range
+                            && *os < after_any_range
+                        {
+                            ranges_vec.push(RangeInclusive::new(*os, *os));
                         }
                     }
 
