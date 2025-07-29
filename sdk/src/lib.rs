@@ -137,9 +137,6 @@ pub use asset_io::{CAIRead, CAIReadWrite};
 pub use builder::{Builder, ManifestDefinition};
 pub use callback_signer::{CallbackFunc, CallbackSigner};
 pub use claim_generator_info::ClaimGeneratorInfo;
-// pub use dynamic_assertion::{
-//     AsyncDynamicAssertion, DynamicAssertion, DynamicAssertionContent, PartialClaim,
-// };
 pub use crypto::raw_signature::SigningAlg;
 pub use error::{Error, Result};
 #[doc(inline)]
