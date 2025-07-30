@@ -40,9 +40,15 @@ pub struct HashObjectPositions {
     pub htype: HashBlockObjectType, // type of hash block object
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 pub trait CAIRead: Read + Seek + Send {}
+#[cfg(target_arch = "wasm32")]
+pub trait CAIRead: Read + Seek {}
 
+#[cfg(not(target_arch = "wasm32"))]
 impl<T> CAIRead for T where T: Read + Seek + Send {}
+#[cfg(target_arch = "wasm32")]
+impl<T> CAIRead for T where T: Read + Seek {}
 
 impl From<String> for Box<dyn CAIRead> {
     fn from(val: String) -> Self {

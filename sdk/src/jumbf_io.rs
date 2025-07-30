@@ -324,6 +324,7 @@ where
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn object_locations_from_stream<R>(
     format: &str,
     stream: &mut R,
@@ -332,7 +333,21 @@ where
     R: Read + Seek + Send + ?Sized,
 {
     let mut reader = CAIReadAdapter { reader: stream };
+    match get_caiwriter_handler(format) {
+        Some(handler) => handler.get_object_locations_from_stream(&mut reader),
+        _ => Err(Error::UnsupportedType),
+    }
+}
 
+#[cfg(target_arch = "wasm32")]
+pub(crate) fn object_locations_from_stream<R>(
+    format: &str,
+    stream: &mut R,
+) -> Result<Vec<HashObjectPositions>>
+where
+    R: Read + Seek + ?Sized,
+{
+    let mut reader = CAIReadAdapter { reader: stream };
     match get_caiwriter_handler(format) {
         Some(handler) => handler.get_object_locations_from_stream(&mut reader),
         _ => Err(Error::UnsupportedType),
