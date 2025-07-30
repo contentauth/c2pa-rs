@@ -27,7 +27,7 @@ use uuid::Uuid;
 use crate::Manifest;
 use crate::{
     assertion::{Assertion, AssertionBase},
-    assertions::{self, labels, AssetType, EmbeddedData, Metadata, Relationship},
+    assertions::{self, labels, AssertionMetadata, AssetType, EmbeddedData, Relationship},
     asset_io::CAIRead,
     claim::{Claim, ClaimAssetData},
     crypto::base64,
@@ -126,7 +126,7 @@ pub struct Ingredient {
     ///
     /// [`Metadata`]: crate::Metadata
     #[serde(skip_serializing_if = "Option::is_none")]
-    metadata: Option<Metadata>,
+    metadata: Option<AssertionMetadata>,
 
     /// Additional information about the data's type to the ingredient V2 structure.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -294,8 +294,8 @@ impl Ingredient {
         self.validation_results.as_ref()
     }
 
-    /// Returns a reference to [`Metadata`] if it exists.
-    pub fn metadata(&self) -> Option<&Metadata> {
+    /// Returns a reference to [`AssertionMetadata`] if it exists.
+    pub fn metadata(&self) -> Option<&AssertionMetadata> {
         self.metadata.as_ref()
     }
 
@@ -452,8 +452,8 @@ impl Ingredient {
         self
     }
 
-    /// Adds any desired [`Metadata`] to this ingredient.
-    pub fn set_metadata(&mut self, metadata: Metadata) -> &mut Self {
+    /// Adds any desired [`AssertionMetadata`] to this ingredient.
+    pub fn set_metadata(&mut self, metadata: AssertionMetadata) -> &mut Self {
         self.metadata = Some(metadata);
         self
     }
@@ -1482,7 +1482,7 @@ mod tests {
             .set_provenance("provenance")
             .set_is_parent()
             .set_relationship(Relationship::ParentOf)
-            .set_metadata(Metadata::new())
+            .set_metadata(AssertionMetadata::new())
             .set_thumbnail("format", "thumbnail".as_bytes().to_vec())
             .unwrap()
             .set_active_manifest("active_manifest")

@@ -26,10 +26,10 @@ use crate::{
 
 const ASSERTION_CREATION_VERSION: usize = 1;
 
-/// The Metadata structure can be used as part of other assertions or on its own to reference others
+/// The AssertionMetadata structure can be used as part of other assertions or on its own to reference others
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "json_schema", derive(JsonSchema))]
-pub struct Metadata {
+pub struct AssertionMetadata {
     #[serde(rename = "reviewRatings", skip_serializing_if = "Option::is_none")]
     reviews: Option<Vec<ReviewRating>>,
     #[serde(rename = "dateTime", skip_serializing_if = "Option::is_none")]
@@ -42,7 +42,7 @@ pub struct Metadata {
     region_of_interest: Option<RegionOfInterest>,
 }
 
-impl Metadata {
+impl AssertionMetadata {
     /// Label prefix for an assertion metadata assertion.
     ///
     /// See <https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_metadata_about_assertions>.
@@ -123,21 +123,21 @@ impl Metadata {
     }
 }
 
-impl Default for Metadata {
+impl Default for AssertionMetadata {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl std::fmt::Display for Metadata {
+impl std::fmt::Display for AssertionMetadata {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(&serde_json::to_string_pretty(self).unwrap_or_default())
     }
 }
 
-impl AssertionCbor for Metadata {}
+impl AssertionCbor for AssertionMetadata {}
 
-impl AssertionBase for Metadata {
+impl AssertionBase for AssertionMetadata {
     const LABEL: &'static str = Self::LABEL;
     const VERSION: Option<usize> = Some(ASSERTION_CREATION_VERSION);
 
@@ -312,26 +312,25 @@ pub mod tests {
     #[test]
     fn assertion_metadata() {
         let review = ReviewRating::new("foo", Some("bar".to_owned()), 3);
-        let original =
-            Metadata::new()
-                .add_review(review)
-                .set_region_of_interest(RegionOfInterest {
-                    region: vec![Range {
-                        range_type: RangeType::Temporal,
-                        time: Some(Time {
-                            time_type: TimeType::Npt,
-                            start: None,
-                            end: None,
-                        }),
-                        ..Default::default()
-                    }],
+        let original = AssertionMetadata::new()
+            .add_review(review)
+            .set_region_of_interest(RegionOfInterest {
+                region: vec![Range {
+                    range_type: RangeType::Temporal,
+                    time: Some(Time {
+                        time_type: TimeType::Npt,
+                        start: None,
+                        end: None,
+                    }),
                     ..Default::default()
-                });
+                }],
+                ..Default::default()
+            });
         println!("{:}", &original);
         let assertion = original.to_assertion().expect("build_assertion");
         assert_eq!(assertion.mime_type(), "application/cbor");
-        assert_eq!(assertion.label(), Metadata::LABEL);
-        let result = Metadata::from_assertion(&assertion).expect("extract_assertion");
+        assert_eq!(assertion.label(), AssertionMetadata::LABEL);
+        let result = AssertionMetadata::from_assertion(&assertion).expect("extract_assertion");
         println!("{:?}", serde_json::to_string(&result));
         assert_eq!(original.date_time, result.date_time);
         assert_eq!(original.reviews, result.reviews);
