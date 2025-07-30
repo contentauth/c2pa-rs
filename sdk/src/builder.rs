@@ -190,12 +190,9 @@ impl DigitalSourceType {
 /// Represents the type of builder flow being used.
 /// This determines how the builder will be used, such as creating a new asset, opening an existing asset,
 /// or updating an existing asset.
-#[derive(Debug, Default, Deserialize, Serialize, PartialEq, Clone)]
+#[derive(Debug, Deserialize, Serialize, PartialEq, Clone)]
 #[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 enum BuilderFlow {
-    // Represents an unspecified builder flow.
-    #[default]
-    None,
     // Represents a builder for creating new assets.
     Create(DigitalSourceType),
     // Represents a builder for opening existing assets.
@@ -280,7 +277,7 @@ pub struct Builder {
     pub base_path: Option<PathBuf>,
 
     /// The type of builder being used.
-    builder_flow: BuilderFlow,
+    builder_flow: Option<BuilderFlow>,
 
     /// Container for binary assets (like thumbnails).
     #[serde(skip)]
@@ -314,13 +311,13 @@ impl Builder {
     /// ```
     pub fn create(source_type: DigitalSourceType) -> Self {
         let mut builder = Self::new();
-        builder.builder_flow = BuilderFlow::Create(source_type);
+        builder.builder_flow = Some(BuilderFlow::Create(source_type));
         builder
     }
 
     pub fn update() -> Self {
         let mut builder = Self::new();
-        builder.builder_flow = BuilderFlow::Update;
+        builder.builder_flow = Some(BuilderFlow::Update);
         builder
     }
 
@@ -1244,7 +1241,7 @@ impl Builder {
         R: Read + Seek + Send,
     {
         // check settings to see if we should add a parent ingredient
-        let auto_parent = self.builder_flow == BuilderFlow::Update;
+        let auto_parent = self.builder_flow == Some(BuilderFlow::Update);
         if auto_parent && !self.definition.ingredients.iter().any(|i| i.is_parent()) {
             let parent_def = serde_json::json!({
                 "relationship": "parentOf",

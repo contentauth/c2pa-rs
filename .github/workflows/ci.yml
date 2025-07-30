@@ -432,7 +432,7 @@ jobs:
         env:
           FEATURES: ${{needs.get-features.outputs.openssl-features}}
         run: |
-          cargo +nightly-2025-01-24 test -Z direct-minimal-versions --all-targets --features "$FEATURES"
+          cargo +nightly-2025-07-28 test -Z direct-minimal-versions --all-targets --features "$FEATURES"
 
   clippy_check:
     name: Clippy
@@ -482,11 +482,11 @@ jobs:
       - name: Install nightly toolchain
         uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: nightly-2025-06-28
+          toolchain: nightly-2025-07-28
           components: rustfmt
 
       - name: Check format
-        run: cargo +nightly-2025-06-28 fmt --all -- --check
+        run: cargo +nightly-2025-07-28 fmt --all -- --check
 
   docs_rs:
     name: Preflight docs.rs build

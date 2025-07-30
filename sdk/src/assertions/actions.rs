@@ -538,20 +538,6 @@ impl Action {
     }
 }
 
-// Converts a JSON string to an [`Action`].
-impl TryFrom<&str> for Action {
-    type Error = crate::error::Error;
-
-    fn try_from(action_json: &str) -> Result<Self> {
-        let action: Action = serde_json::from_str(action_json)?;
-
-        if V2_DEPRECATED_ACTIONS.contains(&action.action.as_str()) {
-            error!("Action '{}' is deprecated in C2PA v2", action.action);
-        }
-        Ok(action)
-    }
-}
-
 #[derive(Deserialize, Serialize, Debug, Clone, Default, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct ActionTemplate {
