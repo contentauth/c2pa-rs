@@ -252,7 +252,7 @@ impl Action {
         self.changes.as_deref()
     }
 
-    /// Gets the description of the action, if it exists.
+    /// Returns the description of the action.
     ///
     /// This field is only applicable to the v2 assertion.
     pub fn description(&self) -> Option<&str> {
