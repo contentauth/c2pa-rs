@@ -2986,7 +2986,10 @@ impl Claim {
 
             // while this is a vec the spec only expects one at the moment and is checked above
             for hash_binding_assertion in hash_assertions {
-                if hash_binding_assertion.label_raw() == DataHash::LABEL {
+                if hash_binding_assertion
+                    .label_raw()
+                    .starts_with(DataHash::LABEL)
+                {
                     let mut dh = DataHash::from_assertion(hash_binding_assertion.assertion())?;
                     let name = dh.name.as_ref().map_or(UNNAMED.to_string(), default_str);
 
@@ -2997,8 +3000,10 @@ impl Claim {
                                 exclusions.sort_by_key(|a| a.start());
 
                                 // new range using the size that covers entire manifest (includin update manifests)
-                                let new_range =
-                                    HashRange::new(exclusions[0].start(), svi.update_manifest_size);
+                                let new_range = HashRange::new(
+                                    exclusions[0].start(),
+                                    svi.update_manifest_size as u64,
+                                );
 
                                 exclusions.clear();
                                 exclusions.push(new_range);
@@ -3061,7 +3066,10 @@ impl Claim {
                             ),
                         )?;
                     }
-                } else if hash_binding_assertion.label_raw() == BmffHash::LABEL {
+                } else if hash_binding_assertion
+                    .label_raw()
+                    .starts_with(BmffHash::LABEL)
+                {
                     // handle BMFF data hashes
                     let dh = BmffHash::from_assertion(hash_binding_assertion.assertion())?;
 
@@ -3106,19 +3114,33 @@ impl Claim {
                             continue;
                         }
                         Err(e) => {
+                            let err_str = match e {
+                                Error::C2PAValidation(es) => {
+                                    if es == validation_status::ASSERTION_BMFFHASH_MALFORMED {
+                                        validation_status::ASSERTION_BMFFHASH_MALFORMED
+                                    } else {
+                                        validation_status::ASSERTION_BMFFHASH_MISMATCH
+                                    }
+                                }
+                                _ => validation_status::ASSERTION_BMFFHASH_MISMATCH,
+                            };
+
                             log_item!(
                                 claim.assertion_uri(&hash_binding_assertion.label()),
-                                format!("asset hash error, name: {name}, error: {e}"),
+                                format!("asset hash error, name: {name}, error: {}", err_str),
                                 "verify_internal"
                             )
-                            .validation_status(validation_status::ASSERTION_BMFFHASH_MISMATCH)
+                            .validation_status(err_str)
                             .failure(
                                 validation_log,
-                                Error::HashMismatch(format!("Asset hash failure: {e}")),
+                                Error::HashMismatch(format!("Asset hash failure: {err_str}")),
                             )?;
                         }
                     }
-                } else if hash_binding_assertion.label_raw() == BoxHash::LABEL {
+                } else if hash_binding_assertion
+                    .label_raw()
+                    .starts_with(BoxHash::LABEL)
+                {
                     // box hash case
                     // handle BMFF data hashes
                     let bh = BoxHash::from_assertion(hash_binding_assertion.assertion())?;
@@ -3192,6 +3214,17 @@ impl Claim {
                             )?;
                         }
                     }
+                } else {
+                    log_item!(
+                        claim.assertion_uri(&hash_binding_assertion.label()),
+                        "hash binding unknown or not found",
+                        "verify_internal"
+                    )
+                    .validation_status(validation_status::HARD_BINDINGS_MISSING)
+                    .failure(
+                        validation_log,
+                        Error::HashMismatch("hash binding unknown format".into()),
+                    )?;
                 }
             }
         }

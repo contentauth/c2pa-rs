@@ -39,9 +39,10 @@ use crate::{
     assertion::{Assertion, AssertionBase, AssertionData, AssertionDecodeError},
     assertions::{
         labels::{self, CLAIM},
-        BmffHash, DataBox, DataHash, DataMap, ExclusionsMap, Ingredient, Relationship, SubsetMap,
-        TimeStamp, User, UserCbor,
+        BmffHash, DataBox, DataHash, DataMap, ExclusionsMap, Ingredient, MerkleMap, Relationship,
+        SubsetMap, TimeStamp, User, UserCbor, VecByteBuf,
     },
+    asset_handlers::bmff_io::read_bmff_c2pa_boxes,
     asset_io::{
         CAIRead, CAIReadWrite, HashBlockObjectType, HashObjectPositions, RemoteRefEmbedType,
     },
@@ -77,7 +78,12 @@ use crate::{
     salt::DefaultSalt,
     settings::get_settings_value,
     status_tracker::{ErrorBehavior, StatusTracker},
-    utils::{hash_utils::HashRange, io_utils::stream_len, is_zero, patch::patch_bytes},
+    utils::{
+        hash_utils::HashRange,
+        io_utils::{insert_data_at, safe_vec, stream_len},
+        is_zero,
+        patch::patch_bytes,
+    },
     validation_results::validation_codes::{
         ASSERTION_CBOR_INVALID, ASSERTION_JSON_INVALID, ASSERTION_MISSING, CLAIM_MALFORMED,
     },
@@ -88,6 +94,7 @@ use crate::{
 use crate::{external_manifest::ManifestPatchCallback, RemoteSigner};
 
 const MANIFEST_STORE_EXT: &str = "c2pa"; // file extension for external manifests
+const MANIFEST_RESERVE_SIZE: usize = 10 * 1024 * 1024; // 10MB reserve size for manifest
 
 pub(crate) struct ManifestHashes {
     pub manifest_box_hash: Vec<u8>,
@@ -172,6 +179,29 @@ impl Store {
         store
     }
 
+    /* for coming PR
+    // Append new Store to the current Store preserving the order from the new Store
+    pub(crate) fn append_store(&mut self, store: &Store) {
+        for claim in store.claims() {
+            self.insert_restored_claim(claim.label().to_string(), claim.clone());
+        }
+    }
+
+    // Extract list of claims and return them in a new Store preserving the order from the current Store
+    pub(crate) fn extract_claims_to_new_store(&mut self, labels: &[&str]) -> Store {
+        let mut new_store = Store::new();
+
+        let mut new_claims_list = self.claims();
+        new_claims_list.retain(|c| labels.contains(&c.label()));
+
+        for claim in new_claims_list {
+            new_store.insert_restored_claim(claim.label().to_string(), claim.clone());
+        }
+
+        new_store
+    }
+    */
+
     /// Return label for the store
     #[allow(dead_code)] // doesn't harm to have this
     pub fn label(&self) -> &str {
@@ -229,7 +259,7 @@ impl Store {
         self.provenance_path = Some(path);
     }
 
-    /// get the list of claims for this store
+    /// get the list of claims for this store in the order they were added
     pub fn claims(&self) -> Vec<&Claim> {
         self.claims
             .iter()
@@ -1911,7 +1941,10 @@ impl Store {
 
             if calc_hashes {
                 if block_end > block_start && (block_end as u64) <= stream_len {
-                    dh.add_exclusion(HashRange::new(block_start, block_end - block_start));
+                    dh.add_exclusion(HashRange::new(
+                        block_start as u64,
+                        (block_end - block_start) as u64,
+                    ));
                 }
 
                 // this check is only valid on the final sized asset
@@ -1927,7 +1960,10 @@ impl Store {
                 dh.gen_hash_from_stream(stream)?;
             } else {
                 if block_end > block_start {
-                    dh.add_exclusion(HashRange::new(block_start, block_end - block_start));
+                    dh.add_exclusion(HashRange::new(
+                        block_start as u64,
+                        (block_end - block_start) as u64,
+                    ));
                 }
 
                 match alg {
@@ -1946,8 +1982,6 @@ impl Store {
     fn generate_bmff_data_hash_for_stream(
         asset_stream: &mut dyn CAIRead,
         alg: &str,
-        calc_hashes: bool,
-        flat_fragmented_w_merkle: bool,
     ) -> Result<BmffHash> {
         // The spec has mandatory BMFF exclusion ranges for certain atoms.
         // The function makes sure those are included.
@@ -2027,8 +2061,13 @@ impl Store {
         exclusions.push(trun);
         */
 
-        // enable flat flat files with Merkle trees
-        if flat_fragmented_w_merkle {
+        // enable flat flat files with Merkle trees if desired
+        // we do this here because the UUID boxes must be in place
+        // for the later hash generation
+        if let Ok(Some(merkle_chunk_size)) =
+            get_settings_value::<Option<usize>>("core.merkle_tree_chunk_size_in_kb")
+        {
+            // mdat boxes are excluded when using Merkle hashing
             let mut mdat = ExclusionsMap::new("/mdat".to_owned());
             let subset_mdat = SubsetMap {
                 offset: 16,
@@ -2037,17 +2076,68 @@ impl Store {
             let subset_mdat_vec = vec![subset_mdat];
             mdat.subset = Some(subset_mdat_vec);
             exclusions.push(mdat);
+
+            // get the merkle hashes for the mdat boxes
+            let boxes = read_bmff_c2pa_boxes(asset_stream)?;
+            let mut mdat_boxes = boxes.box_infos.clone();
+            mdat_boxes.retain(|b| b.path == "mdat");
+
+            let mut merkle_maps = Vec::new();
+            let mut uuid_boxes = Vec::new();
+
+            for (index, mdat_box) in mdat_boxes.iter().enumerate() {
+                let fixed_block_size = if merkle_chunk_size > 0 {
+                    Some(1024 * merkle_chunk_size as u64)
+                } else {
+                    None
+                };
+
+                let mut merkle_map = MerkleMap {
+                    unique_id: 0,
+                    local_id: index,
+                    count: 0,
+                    alg: Some(alg.to_string()),
+                    init_hash: None,
+                    hashes: VecByteBuf(Vec::new()),
+                    fixed_block_size,
+                    variable_block_sizes: None,
+                };
+
+                // build list of ordered UUID merkle boxes
+                let mut current_uuid_boxes =
+                    dh.create_merkle_map_for_mdat_box(asset_stream, mdat_box, &mut merkle_map)?;
+                uuid_boxes.append(&mut current_uuid_boxes);
+
+                merkle_maps.push(merkle_map);
+            }
+
+            if merkle_maps.is_empty() {
+                return Err(Error::BadParam("No mdat boxes found".to_string()));
+            }
+
+            dh.merkle = Some(merkle_maps);
+            if !uuid_boxes.is_empty() {
+                dh.merkle_uuid_boxes = Some(uuid_boxes.into_iter().flatten().collect::<Vec<u8>>());
+
+                // calculate the insertion point for the UUID boxes after the last mdat box
+                let last_mdat_box = mdat_boxes
+                    .last()
+                    .ok_or(Error::BadParam("No mdat boxes found".to_string()))?;
+                dh.merkle_uuid_boxes_insertion_point = last_mdat_box.end();
+
+                // if there are existing Merkle UUID boxes we want to overwrite those
+                if let Some(last_uuid_box) = boxes.bmff_merkle_box_infos.last() {
+                    dh.merkle_replacement_range = last_mdat_box.end() - last_uuid_box.end();
+                }
+            }
         }
 
-        if calc_hashes {
-            dh.gen_hash_from_stream(asset_stream)?;
-        } else {
-            match alg {
-                "sha256" => dh.set_hash([0u8; 32].to_vec()),
-                "sha384" => dh.set_hash([0u8; 48].to_vec()),
-                "sha512" => dh.set_hash([0u8; 64].to_vec()),
-                _ => return Err(Error::UnsupportedType),
-            }
+        // fill in temporary hash
+        match alg {
+            "sha256" => dh.set_hash([0u8; 32].to_vec()),
+            "sha384" => dh.set_hash([0u8; 48].to_vec()),
+            "sha512" => dh.set_hash([0u8; 64].to_vec()),
+            _ => return Err(Error::UnsupportedType),
         }
 
         Ok(dh)
@@ -2101,7 +2191,7 @@ impl Store {
             // create placeholder DataHash large enough for 10 Exclusions
             let mut ph = DataHash::new("jumbf manifest", pc.alg());
             for _ in 0..10 {
-                ph.add_exclusion(HashRange::new(0, 2));
+                ph.add_exclusion(HashRange::new(0u64, 2u64));
             }
             let data = vec![1u8, 2, 3, 4, 5, 6, 7, 8, 9, 10];
             let mut stream = Cursor::new(data);
@@ -2452,8 +2542,7 @@ impl Store {
 
         // 2) Get hash ranges if needed
         let mut asset_stream = std::fs::File::open(asset_path)?;
-        let mut bmff_hash =
-            Store::generate_bmff_data_hash_for_stream(&mut asset_stream, pc.alg(), false, false)?;
+        let mut bmff_hash = Store::generate_bmff_data_hash_for_stream(&mut asset_stream, pc.alg())?;
         bmff_hash.clear_hash();
 
         // generate fragments and produce Merkle tree
@@ -2621,7 +2710,10 @@ impl Store {
                 .await?
         };
 
-        let intermediate_output: Vec<u8> = Vec::new();
+        let intermediate_output: Vec<u8> = safe_vec(
+            stream_len(input_stream)? + MANIFEST_RESERVE_SIZE as u64,
+            None,
+        )?;
         let mut intermediate_stream = Cursor::new(intermediate_output);
 
         #[allow(unused_mut)] // Not mutable in the non-async case.
@@ -3144,7 +3236,11 @@ impl Store {
         output_stream: &mut dyn CAIReadWrite,
         reserve_size: usize,
     ) -> Result<Vec<u8>> {
-        let intermediate_output: Vec<u8> = Vec::new();
+        // make sure we can hold the intermediate stream before attempting
+        let intermediate_output: Vec<u8> = safe_vec(
+            stream_len(input_stream)? + MANIFEST_RESERVE_SIZE as u64,
+            None,
+        )?;
         let mut intermediate_stream = Cursor::new(intermediate_output);
 
         let pc = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
@@ -3171,7 +3267,10 @@ impl Store {
                     .get_writer(format)
                     .ok_or(Error::UnsupportedType)?;
 
-                let tmp_output: Vec<u8> = Vec::new();
+                let tmp_output: Vec<u8> = safe_vec(
+                    stream_len(input_stream)? + MANIFEST_RESERVE_SIZE as u64,
+                    None,
+                )?;
                 let mut tmp_stream = Cursor::new(tmp_output);
                 manifest_writer.remove_cai_store_from_stream(input_stream, &mut tmp_stream)?;
 
@@ -3211,12 +3310,29 @@ impl Store {
             // 2) Get hash ranges if needed, do not generate for update manifests
             if !pc.update_manifest() {
                 intermediate_stream.rewind()?;
-                let bmff_hash = Store::generate_bmff_data_hash_for_stream(
-                    &mut intermediate_stream,
-                    pc.alg(),
-                    false,
-                    false,
-                )?;
+                let bmff_hash =
+                    Store::generate_bmff_data_hash_for_stream(&mut intermediate_stream, pc.alg())?;
+
+                // insert UUID boxes at the correct location if required
+                if let Some(merkle_uuid_boxes) = &bmff_hash.merkle_uuid_boxes {
+                    let temp_data: Vec<u8> = safe_vec(
+                        stream_len(&mut intermediate_stream)? + MANIFEST_RESERVE_SIZE as u64,
+                        None,
+                    )?;
+                    let mut temp_stream = Cursor::new(temp_data);
+
+                    insert_data_at(
+                        &mut intermediate_stream,
+                        &mut temp_stream,
+                        bmff_hash.merkle_uuid_boxes_insertion_point,
+                        merkle_uuid_boxes,
+                    )?;
+
+                    // this is the new intermediate stream with the UUID Merkle boxes inserted
+                    temp_stream.rewind()?;
+                    intermediate_stream = temp_stream;
+                }
+
                 pc.add_assertion(&bmff_hash)?;
             }
 
@@ -3243,6 +3359,7 @@ impl Store {
 
                 if !bmff_hashes.is_empty() {
                     let mut bmff_hash = BmffHash::from_assertion(bmff_hashes[0].assertion())?;
+
                     output_stream.rewind()?;
                     bmff_hash.gen_hash_from_stream(output_stream)?;
                     pc.update_bmff_hash(bmff_hash)?;
@@ -3461,9 +3578,19 @@ impl Store {
         if is_bmff {
             // 2) Get hash ranges if needed, do not generate for update manifests
             if !pc.update_manifest() {
-                let mut file = std::fs::File::open(asset_path)?;
-                let bmff_hash =
-                    Store::generate_bmff_data_hash_for_stream(&mut file, pc.alg(), false, false)?;
+                let mut file = std::fs::File::open(&output_path)?;
+                let bmff_hash = Store::generate_bmff_data_hash_for_stream(&mut file, pc.alg())?;
+
+                use crate::utils::io_utils::patch_data_in_file;
+                // insert UUID boxes at the correct location if required
+                if let Some(merkle_uuid_boxes) = &bmff_hash.merkle_uuid_boxes {
+                    patch_data_in_file(
+                        output_path.as_path(),
+                        bmff_hash.merkle_uuid_boxes_insertion_point,
+                        bmff_hash.merkle_replacement_range,
+                        merkle_uuid_boxes,
+                    )?;
+                }
                 pc.add_assertion(&bmff_hash)?;
             }
 
@@ -3483,6 +3610,7 @@ impl Store {
                 if !bmff_hashes.is_empty() {
                     let mut bmff_hash = BmffHash::from_assertion(bmff_hashes[0].assertion())?;
                     bmff_hash.gen_hash(dest_path)?;
+
                     pc.update_bmff_hash(bmff_hash)?;
                 }
             }
@@ -6640,9 +6768,11 @@ pub mod tests {
     #[test]
     fn test_display() {
         let ap = fixture_path("CA.jpg");
+
         let mut report = StatusTracker::default();
         let store = Store::load_from_asset(&ap, true, &mut report).expect("load_from_asset");
 
+        assert!(!report.has_any_error());
         println!("store = {store}");
     }
 
@@ -6738,6 +6868,119 @@ pub mod tests {
         // Move the claim to claims list.
         store.commit_claim(claim1).unwrap();
         store.save_to_asset(&ap, signer.as_ref(), &op).unwrap();
+
+        let mut report = StatusTracker::default();
+
+        // can we read back in
+        let new_store = Store::load_from_asset(&op, true, &mut report).unwrap();
+
+        assert!(!report.has_any_error());
+
+        println!("store = {new_store}");
+    }
+
+    #[test]
+    fn test_jumbf_generation_with_bmffv3_fixed_block_size() {
+        // test adding to actual image
+        let ap = fixture_path("video1.mp4");
+        let temp_dir = tempdirectory().expect("temp dir");
+        let op = temp_dir_path(&temp_dir, "video1.mp4");
+
+        // use Merkle tree with 1024 byte chunks
+        crate::settings::set_settings_value("core.merkle_tree_chunk_size_in_kb", 1).unwrap();
+
+        // Create claims store.
+        let mut store = Store::new();
+
+        // Create a new claim.
+        let claim1 = create_test_claim().unwrap();
+
+        let signer = test_signer(SigningAlg::Ps256);
+
+        // Move the claim to claims list.
+        store.commit_claim(claim1).unwrap();
+        store.save_to_asset(&ap, signer.as_ref(), &op).unwrap();
+
+        let mut report = StatusTracker::default();
+
+        // can we read back in
+        let new_store = Store::load_from_asset(&op, true, &mut report).unwrap();
+
+        assert!(!report.has_any_error());
+
+        println!("store = {new_store}");
+    }
+
+    #[test]
+    fn test_jumbf_generation_with_bmffv3_fixed_block_size_no_proof() {
+        // test adding to actual image
+        let ap = fixture_path("video1.mp4");
+        let temp_dir = tempdirectory().expect("temp dir");
+        let op = temp_dir_path(&temp_dir, "video1.mp4");
+
+        // use Merkle tree with 1024 byte chunks an 0 proofs (no UUID boxes)
+        crate::settings::set_settings_value("core.merkle_tree_chunk_size_in_kb", 1).unwrap();
+        crate::settings::set_settings_value("core.merkle_tree_max_proofs", 0).unwrap();
+
+        // Create claims store.
+        let mut store = Store::new();
+
+        // Create a new claim.
+        let claim1 = create_test_claim().unwrap();
+
+        let signer = test_signer(SigningAlg::Ps256);
+
+        // Move the claim to claims list.
+        store.commit_claim(claim1).unwrap();
+        store.save_to_asset(&ap, signer.as_ref(), &op).unwrap();
+
+        let mut report = StatusTracker::default();
+
+        // can we read back in
+        let new_store = Store::load_from_asset(&op, true, &mut report).unwrap();
+
+        assert!(!report.has_any_error());
+
+        println!("store = {new_store}");
+    }
+
+    #[test]
+    fn test_jumbf_generation_with_bmffv3_fixed_block_size_stream() {
+        // test adding to actual image
+        let ap = fixture_path("video1.mp4");
+        let temp_dir = tempdirectory().expect("temp dir");
+        let op = temp_dir_path(&temp_dir, "video1.mp4");
+
+        let mut input_stream = std::fs::File::open(&ap).unwrap();
+        let mut output_stream = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(true)
+            .read(true)
+            .write(true)
+            .open(&op)
+            .unwrap();
+
+        // use Merkle tree with 1024 byte chunks
+        crate::settings::set_settings_value("core.merkle_tree_chunk_size_in_kb", 1).unwrap();
+
+        // Create claims store.
+        let mut store = Store::new();
+
+        // Create a new claim.
+        let claim1 = create_test_claim().unwrap();
+
+        let signer = test_signer(SigningAlg::Ps256);
+
+        // Move the claim to claims list.
+        store.commit_claim(claim1).unwrap();
+        store
+            .save_to_stream(
+                "mp4",
+                &mut input_stream,
+                &mut output_stream,
+                signer.as_ref(),
+            )
+            .unwrap();
 
         let mut report = StatusTracker::default();
 
@@ -7361,7 +7604,7 @@ pub mod tests {
         // build manifest to insert in the hole
 
         // create an hash exclusion for the manifest
-        let exclusion = HashRange::new(offset, placeholder.len());
+        let exclusion = HashRange::new(offset as u64, placeholder.len() as u64);
         let exclusions = vec![exclusion];
 
         let mut dh = DataHash::new("source_hash", "sha256");
@@ -7430,7 +7673,7 @@ pub mod tests {
         // build manifest to insert in the hole
 
         // create an hash exclusion for the manifest
-        let exclusion = HashRange::new(offset, placeholder.len());
+        let exclusion = HashRange::new(offset as u64, placeholder.len() as u64);
         let exclusions = vec![exclusion];
 
         let mut dh = DataHash::new("source_hash", "sha256");
@@ -7503,7 +7746,7 @@ pub mod tests {
 
         // create target data hash
         // create an hash exclusion for the manifest
-        let exclusion = HashRange::new(offset, placeholder.len());
+        let exclusion = HashRange::new(offset as u64, placeholder.len() as u64);
         let exclusions = vec![exclusion];
 
         //input_file.rewind().unwrap();
