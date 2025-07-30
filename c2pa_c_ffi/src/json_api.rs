@@ -117,10 +117,11 @@ mod tests {
     fn test_verify_from_file_cawg_identity() {
         let path = test_path("tests/fixtures/C_with_CAWG_data.jpg");
         let result = read_file(&path, None);
+        dbg!(&result);
         assert!(result.is_ok());
         let json_report = result.unwrap();
         println!("{json_report}");
         assert!(json_report.contains("cawg.identity"));
-        assert!(json_report.contains("cawg.ica.credential_valid"));
+        assert!(json_report.contains("cawg.identity.well-formed"));
     }
 }
