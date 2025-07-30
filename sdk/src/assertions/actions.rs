@@ -21,7 +21,6 @@ use crate::{
     assertion::{Assertion, AssertionBase, AssertionCbor},
     assertions::{labels, region_of_interest::RegionOfInterest, Actor, Metadata},
     error::Result,
-    hashed_uri,
     resource_store::UriOrResource,
     utils::cbor_types::DateT,
     ClaimGeneratorInfo,
@@ -272,40 +271,6 @@ impl Action {
         match &mut self.parameters {
             Some(parameters) => parameters.get_mut(key),
             None => None,
-        }
-    }
-
-    /// Returns an array of the [`hashed_uri::HashedUri`]s that are ingredients for this action.
-    pub fn ingredients(&self) -> Result<Vec<hashed_uri::HashedUri>> {
-        let mut result = Vec::new();
-        let value = self.get_parameter("ingredients");
-        if let Some(Value::Array(values)) = value {
-            for value in values {
-                let hashed_uri: Result<hashed_uri::HashedUri> = match value {
-                    Value::Map(_) | Value::Tag(_, _) => serde_cbor::to_vec(&value)
-                        .and_then(|v| serde_cbor::from_slice::<hashed_uri::HashedUri>(&v))
-                        .map_err(|e| {
-                            crate::Error::AssertionSpecificError(format!(
-                                "Failed to parse Action ingredient: {e}"
-                            ))
-                        }),
-                    Value::Bytes(bytes) => serde_cbor::from_slice::<hashed_uri::HashedUri>(bytes)
-                        .map_err(|e| {
-                            crate::Error::AssertionSpecificError(format!(
-                                "Failed to parse Action ingredient: {e}"
-                            ))
-                        }),
-                    _ => Err(crate::Error::AssertionSpecificError(
-                        "Unsupported CBOR type for HashedUri".to_string(),
-                    )),
-                };
-                result.push(hashed_uri?);
-            }
-            Ok(result)
-        } else {
-            Err(crate::Error::AssertionSpecificError(
-                "Unsupported CBOR type for HashedUri".to_string(),
-            ))
         }
     }
 
