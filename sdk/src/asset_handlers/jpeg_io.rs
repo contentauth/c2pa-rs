@@ -47,6 +47,10 @@ static SUPPORTED_TYPES: [&str; 3] = ["jpg", "jpeg", "image/jpeg"];
 const XMP_SIGNATURE: &str = "http://ns.adobe.com/xap/1.0/";
 const XMP_SIGNATURE_BUFFER_SIZE: usize = XMP_SIGNATURE.len() + 1; // skip null or space char at end
 
+const XMP_EXTENSION_SIGNATURE: &str = "http://ns.adobe.com/xmp/extension/";
+
+const XMP_EXTENSION_SIGNATURE_BUFFER_SIZE: usize = XMP_EXTENSION_SIGNATURE.len() + 1;
+
 const MAX_JPEG_MARKER_SIZE: usize = 64000; // technically it's 64K but a bit smaller is fine
 
 const C2PA_MARKER: [u8; 4] = [0x63, 0x32, 0x70, 0x61];
@@ -68,11 +72,37 @@ fn extract_xmp(seg: &JpegSegment) -> Option<&str> {
     }
 }
 
-// Extract XMP from bytes.
+fn extract_xmp_extension(seg: &JpegSegment) -> Option<&str> {
+    let (sig, rest) = seg
+        .contents()
+        .split_at_checked(XMP_EXTENSION_SIGNATURE_BUFFER_SIZE + 40)?; // 32 byte GUID, 4 byte length, 4 byte offset
+    if sig.starts_with(XMP_EXTENSION_SIGNATURE.as_bytes()) {
+        std::str::from_utf8(rest).ok()
+    } else {
+        None
+    }
+}
+
 fn xmp_from_bytes(asset_bytes: &[u8]) -> Option<String> {
     let jpeg = Jpeg::from_bytes(Bytes::copy_from_slice(asset_bytes)).ok()?;
     let mut segs = jpeg.segments_by_marker(markers::APP1);
-    segs.find_map(extract_xmp).map(String::from)
+
+    let standard_xmp = segs.find_map(extract_xmp).map(String::from);
+
+    let extensions: Vec<String> = segs
+        .filter_map(extract_xmp_extension)
+        .map(String::from)
+        .collect();
+
+    match (standard_xmp, extensions.is_empty()) {
+        (Some(xmp), true) => Some(xmp.to_string()),
+        (Some(xmp), false) => {
+            let mut combined = xmp.to_string();
+            combined.push_str(&extensions.join(""));
+            Some(combined)
+        }
+        _ => None,
+    }
 }
 
 fn add_required_segs_to_stream(
@@ -1124,6 +1154,24 @@ pub mod tests {
 
     use super::*;
     use crate::utils::io_utils::tempdirectory;
+
+    #[test]
+    fn test_extract_extensions_xmp() {
+        let jpeg = Jpeg::from_bytes(Bytes::copy_from_slice(include_bytes!(
+            "../../tests/fixtures/MP.jpg"
+        )))
+        .ok()
+        .unwrap();
+        let segs = jpeg.segments_by_marker(markers::APP1);
+
+        let extensions: Vec<String> = segs
+            .filter_map(extract_xmp_extension)
+            .map(String::from)
+            .collect();
+
+        assert_eq!(extensions.len(), 8);
+    }
+
     #[test]
     fn test_extract_xmp() {
         let contents = Bytes::from_static(b"http://ns.adobe.com/xap/1.0/\0stuff");
