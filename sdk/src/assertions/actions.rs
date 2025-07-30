@@ -19,7 +19,7 @@ use serde_cbor::Value;
 
 use crate::{
     assertion::{Assertion, AssertionBase, AssertionCbor},
-    assertions::{labels, region_of_interest::RegionOfInterest, Actor, Metadata},
+    assertions::{labels, region_of_interest::RegionOfInterest, Actor, AssertionMetadata},
     error::Result,
     hashed_uri,
     resource_store::UriOrResource,
@@ -604,7 +604,7 @@ pub struct Actions {
 
     /// Additional information about the assertion.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub metadata: Option<Metadata>,
+    pub metadata: Option<AssertionMetadata>,
 }
 
 impl Actions {
@@ -663,8 +663,8 @@ impl Actions {
         &mut self.actions
     }
 
-    /// Returns the assertion's [`Metadata`], if it exists.
-    pub fn metadata(&self) -> Option<&Metadata> {
+    /// Returns the assertion's [`AssertionMetadata`], if it exists.
+    pub fn metadata(&self) -> Option<&AssertionMetadata> {
         self.metadata.as_ref()
     }
 
@@ -680,8 +680,8 @@ impl Actions {
         self
     }
 
-    /// Sets [`Metadata`] for the action.
-    pub fn add_metadata(mut self, metadata: Metadata) -> Self {
+    /// Sets [`AssertionMetadata`] for the action.
+    pub fn add_metadata(mut self, metadata: AssertionMetadata) -> Self {
         self.metadata = Some(metadata);
         self
     }
@@ -740,7 +740,7 @@ pub mod tests {
     use crate::{
         assertion::AssertionData,
         assertions::{
-            metadata::{c2pa_source::GENERATOR_REE, DataSource, ReviewRating},
+            assertion_metadata::{c2pa_source::GENERATOR_REE, DataSource, ReviewRating},
             region_of_interest::{Range, RangeType, Time, TimeType},
         },
         hashed_uri::HashedUri,
@@ -806,7 +806,7 @@ pub mod tests {
                     }),
             )
             .add_metadata(
-                Metadata::new()
+                AssertionMetadata::new()
                     .add_review(ReviewRating::new("foo", Some("bar".to_owned()), 3))
                     .set_reference(make_hashed_uri1())
                     .set_data_source(DataSource::new(GENERATOR_REE)),

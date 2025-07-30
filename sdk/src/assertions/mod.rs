@@ -47,9 +47,9 @@ pub use ingredient::Relationship;
 
 pub mod labels;
 
-mod metadata;
-pub use metadata::{
-    c2pa_source, Actor, AssetType, DataBox, DataSource, Metadata, ReviewCode, ReviewRating,
+mod assertion_metadata;
+pub use assertion_metadata::{
+    c2pa_source, Actor, AssertionMetadata, AssetType, DataBox, DataSource, ReviewCode, ReviewRating,
 };
 
 mod schema_org;

@@ -32,7 +32,7 @@ use crate::{
     assertions::{
         self, c2pa_action,
         labels::{self, ACTIONS, ASSERTION_STORE, BMFF_HASH, CLAIM_THUMBNAIL, DATABOX_STORE},
-        Actions, AssetType, BmffHash, BoxHash, DataBox, DataHash, Ingredient, Metadata,
+        Actions, AssertionMetadata, AssetType, BmffHash, BoxHash, DataBox, DataHash, Ingredient,
         Relationship, V2_DEPRECATED_ACTIONS,
     },
     asset_io::CAIRead,
@@ -308,7 +308,7 @@ pub struct Claim {
 
     claim_generator_hints: Option<HashMap<String, Value>>,
 
-    metadata: Option<Vec<Metadata>>,
+    metadata: Option<Vec<AssertionMetadata>>,
 
     data_boxes: Vec<(HashedUri, DataBox)>, /* list of the data boxes and their hashed URIs found for this manifest */
 
@@ -629,7 +629,8 @@ impl Claim {
                 map_cbor_to_type(REDACTED_ASSERTIONS_F, &claim_value);
             let alg: Option<String> = map_cbor_to_type(ALG_F, &claim_value);
             let alg_soft: Option<String> = map_cbor_to_type(ALG_SOFT_F, &claim_value);
-            let metadata: Option<Vec<Metadata>> = map_cbor_to_type(METADATA_F, &claim_value);
+            let metadata: Option<Vec<AssertionMetadata>> =
+                map_cbor_to_type(METADATA_F, &claim_value);
 
             Ok(Claim {
                 remote_manifest: RemoteManifest::NoRemote,
@@ -727,7 +728,8 @@ impl Claim {
                 map_cbor_to_type(REDACTED_ASSERTIONS_F, &claim_value);
             let alg: Option<String> = map_cbor_to_type(ALG_F, &claim_value);
             let alg_soft: Option<String> = map_cbor_to_type(ALG_SOFT_F, &claim_value);
-            let metadata: Option<Vec<Metadata>> = map_cbor_to_type(METADATA_F, &claim_value);
+            let metadata: Option<Vec<AssertionMetadata>> =
+                map_cbor_to_type(METADATA_F, &claim_value);
 
             // create merged list of created and gathered assertions for processing compatibility
             // created are added first with highest priority than gathered
@@ -1152,7 +1154,7 @@ impl Claim {
         self.claim_generator_info.as_deref()
     }
 
-    pub fn add_claim_metadata(&mut self, md: Metadata) -> &mut Self {
+    pub fn add_claim_metadata(&mut self, md: AssertionMetadata) -> &mut Self {
         match self.metadata.as_mut() {
             Some(md_vec) => md_vec.push(md),
             None => self.metadata = Some([md].to_vec()),
@@ -1160,7 +1162,7 @@ impl Claim {
         self
     }
 
-    pub fn metadata(&self) -> Option<&[Metadata]> {
+    pub fn metadata(&self) -> Option<&[AssertionMetadata]> {
         self.metadata.as_deref()
     }
 
