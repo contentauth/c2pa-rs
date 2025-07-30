@@ -502,7 +502,7 @@ source_type = "http://c2pa.org/digitalsourcetype/empty"
 # Whether to enable automatic thumbnail generation.
 enabled = true
 # Whether to ignore errors when generating a thumbnail and continue signing.
-ignore_errors = false
+ignore_errors = true
 # The size of the longest edge of the thumbnail.
 long_edge = 512
 # The output format of the thumbnail.

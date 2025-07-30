@@ -61,13 +61,14 @@ fn test_builder_ca_jpg() -> Result<()> {
 // Source: https://github.com/contentauth/c2pa-rs/issues/530
 #[test]
 fn test_builder_riff() -> Result<()> {
+    Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml"))?;
     let mut source = Cursor::new(include_bytes!("fixtures/sample1.wav"));
     let format = "audio/wav";
 
     let mut builder = Builder::update();
     builder.definition.claim_version = Some(1); // use v1 for this test
     builder.no_embed = true;
-    builder.sign(&test_signer(), format, &mut source, &mut io::empty())?;
+    builder.sign(&Settings::signer()?, format, &mut source, &mut io::empty())?;
 
     Ok(())
 }
@@ -76,6 +77,7 @@ fn test_builder_riff() -> Result<()> {
 #[cfg(feature = "file_io")]
 fn test_builder_fragmented() -> Result<()> {
     use common::tempdirectory;
+    Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml"))?;
 
     let mut builder = Builder::update();
     let tempdir = tempdirectory().expect("temp dir");
@@ -106,7 +108,7 @@ fn test_builder_fragmented() -> Result<()> {
 
                 builder
                     .sign_fragmented_files(
-                        &test_signer(),
+                        &Settings::signer()?,
                         p.as_path(),
                         &fragments,
                         new_output_path.as_path(),
@@ -137,6 +139,7 @@ fn test_builder_fragmented() -> Result<()> {
 
 #[test]
 fn test_builder_remote_url_no_embed() -> Result<()> {
+    Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml"))?;
     //let manifest_def = std::fs::read_to_string(fixtures_path("simple_manifest.json"))?;
     let mut builder = Builder::update();
     // disable remote fetching for this test
@@ -157,7 +160,7 @@ fn test_builder_remote_url_no_embed() -> Result<()> {
 
     let mut dest = Cursor::new(Vec::new());
 
-    builder.sign(&test_signer(), format, &mut source, &mut dest)?;
+    builder.sign(&Settings::signer()?, format, &mut source, &mut dest)?;
 
     dest.set_position(0);
     let reader = Reader::from_stream(format, &mut dest);
