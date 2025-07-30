@@ -16,12 +16,33 @@ use std::path::PathBuf;
 use std::{
     ffi::OsStr,
     io::{Read, Seek, SeekFrom, Write},
+    path::Path,
 };
 
 #[allow(unused)] // different code path for WASI
 use tempfile::{tempdir, Builder, NamedTempFile, TempDir};
 
-use crate::{Error, Result};
+use crate::{asset_io::rename_or_move, Error, Result};
+// Replace data at arbitrary location and len in a file.
+// start_location is where the replacement data will start
+// replace_len is how many bytes from source to replaced starting a start_location
+// data is the data that will be inserted at start_location
+#[allow(dead_code)]
+pub(crate) fn patch_data_in_file(
+    source_path: &Path,
+    start_location: u64,
+    replace_len: u64,
+    data: &[u8],
+) -> Result<()> {
+    let mut source = std::fs::File::open(source_path)?;
+    let mut dest = tempfile_builder("c2pa_temp")?;
+
+    patch_stream(&mut source, &mut dest, start_location, replace_len, data)?;
+
+    rename_or_move(dest, source_path)?;
+
+    Ok(())
+}
 
 // Insert data at arbitrary location in a stream.
 // location is from the start of the source stream
