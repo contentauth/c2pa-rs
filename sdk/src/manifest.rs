@@ -29,7 +29,7 @@ use uuid::Uuid;
 
 use crate::{
     assertion::{AssertionBase, AssertionData},
-    assertions::{labels, Actions, EmbeddedData, Metadata, SoftwareAgent},
+    assertions::{labels, Actions, AssertionMetadata, EmbeddedData, SoftwareAgent},
     claim::RemoteManifest,
     crypto::raw_signature::SigningAlg,
     error::{Error, Result},
@@ -82,7 +82,7 @@ pub struct Manifest {
 
     /// A list of user metadata for this claim.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub metadata: Option<Vec<Metadata>>,
+    pub metadata: Option<Vec<AssertionMetadata>>,
 
     /// A human-readable title, generally source filename.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1352,7 +1352,7 @@ impl Manifest {
         if dh.is_err() {
             let mut ph = DataHash::new("jumbf manifest", "sha256");
             for _ in 0..10 {
-                ph.add_exclusion(HashRange::new(0, 2));
+                ph.add_exclusion(HashRange::new(0u64, 2u64));
             }
             self.add_assertion(&ph)?;
         }
@@ -2811,7 +2811,7 @@ pub(crate) mod tests {
         // build manifest to insert in the hole
 
         // create an hash exclusion for the manifest
-        let exclusion = HashRange::new(offset, placeholder.len());
+        let exclusion = HashRange::new(offset as u64, placeholder.len() as u64);
         let exclusions = vec![exclusion];
 
         let mut dh = DataHash::new("source_hash", "sha256");
@@ -2870,7 +2870,7 @@ pub(crate) mod tests {
         // build manifest to insert in the hole
 
         // create an hash exclusion for the manifest
-        let exclusion = HashRange::new(offset, placeholder.len());
+        let exclusion = HashRange::new(offset as u64, placeholder.len() as u64);
         let exclusions = vec![exclusion];
 
         let mut dh = DataHash::new("source_hash", "sha256");
