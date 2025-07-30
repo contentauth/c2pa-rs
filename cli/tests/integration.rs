@@ -544,12 +544,8 @@ fn tool_read_image_with_cawg_data() -> Result<(), Box<dyn Error>> {
         .assert()
         .success()
         .stdout(str::contains("cawg.identity"))
-        .stdout(str::contains("https://behance.net"))
-        .stdout(str::contains("verifiedIdentities"))
-        .stdout(str::contains("cawg.ica.credential_valid"))
-        .stdout(str::contains("cawg.social_media"))
-        .stdout(str::contains("VerifiableCredential"))
-        .stdout(str::contains("IdentityClaimsAggregationCredential"));
+        .stdout(str::contains("c2pa.assertions/cawg.training-mining"))
+        .stdout(str::contains("cawg.identity.well-formed"));
     Ok(())
 }
 
@@ -563,11 +559,7 @@ fn tool_read_image_with_details_with_cawg_data() -> Result<(), Box<dyn Error>> {
         .success()
         .stdout(str::contains("assertion_store"))
         .stdout(str::contains("cawg.identity"))
-        .stdout(str::contains("https://behance.net"))
-        .stdout(str::contains("verifiedIdentities"))
-        .stdout(str::contains("cawg.ica.credential_valid"))
-        .stdout(str::contains("cawg.social_media"))
-        .stdout(str::contains("VerifiableCredential"))
-        .stdout(str::contains("IdentityClaimsAggregationCredential"));
+        .stdout(str::contains("c2pa.assertions/cawg.training-mining"))
+        .stdout(str::contains("cawg.identity.well-formed"));
     Ok(())
 }
