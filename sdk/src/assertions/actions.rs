@@ -532,10 +532,8 @@ impl Action {
 
         if !ids.is_empty() {
             Some(ids)
-        } else if let Some(s) = instance_id {
-            Some(vec![s])
         } else {
-            None
+            instance_id.map(|s| vec![s])
         }
     }
 }
