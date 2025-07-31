@@ -55,7 +55,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [windows-latest, macos-latest, ubuntu-latest]
-        rust_version: [stable, 1.85.0]
+        rust_version: [stable, 1.86.0]
 
     steps:
       - name: Checkout repository
@@ -269,7 +269,7 @@ jobs:
       fail-fast: false
       matrix:
         target: [aarch64-unknown-linux-gnu]
-        rust_version: [stable, 1.85.0]
+        rust_version: [stable, 1.86.0]
 
     steps:
       - name: Checkout repository
@@ -423,12 +423,7 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: nightly-2025-01-24
-          # Pinning to specific nightly build for now. More recent versions
-          # (not sure of start date) cause linker problems with OpenSSL native
-          # code on Mac and Windows, but only when built with minimal dependencies.
-          # Problem discovered on 2025-01-27.
-          # TO DO: Investigate and file bugs if necessary against rust-lang.
+          toolchain: nightly-2025-07-28
 
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2

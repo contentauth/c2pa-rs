@@ -377,7 +377,8 @@ where
     input.rewind().unwrap();
 
     // write before
-    let mut before = vec![0u8; sof.range_start];
+    let box_len: usize = sof.range_start.try_into()?;
+    let mut before = vec![0u8; box_len];
     input.read_exact(before.as_mut_slice()).unwrap();
     if let Some(hasher) = hasher.as_deref_mut() {
         hasher.update(&before);
@@ -398,7 +399,7 @@ where
     // save to output file
     output_file.write_all(&out_stream.into_inner()).unwrap();
 
-    Ok(sof.range_start)
+    Ok(box_len)
 }
 
 pub(crate) struct TestGoodSigner {}
