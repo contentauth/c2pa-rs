@@ -34,7 +34,7 @@ use crate::{
         self, c2pa_action,
         labels::{self, ACTIONS, ASSERTION_STORE, BMFF_HASH, CLAIM_THUMBNAIL, DATABOX_STORE},
         Actions, AssertionMetadata, AssetType, BmffHash, BoxHash, DataBox, DataHash, Ingredient,
-        Meta, Relationship, V2_DEPRECATED_ACTIONS,
+        Metadata, Relationship, V2_DEPRECATED_ACTIONS,
     },
     asset_io::CAIRead,
     cbor_types::{map_cbor_to_type, value_cbor_to_type},
@@ -3214,7 +3214,7 @@ impl Claim {
     // Perform metadata validation check
     fn verify_metadata(claim: &Claim, validation_log: &mut StatusTracker) -> Result<()> {
         for metadata_assertion in claim.metadata_assertions() {
-            let metadata_assertion = Meta::from_assertion(metadata_assertion.assertion())?;
+            let metadata_assertion = Metadata::from_assertion(metadata_assertion.assertion())?;
             if !metadata_assertion.is_valid() {
                 let label = to_assertion_uri(claim.label(), metadata_assertion.label());
                 log_item!(

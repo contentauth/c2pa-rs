@@ -18,7 +18,7 @@ mod integration_1 {
     use std::{io, path::PathBuf};
 
     use c2pa::{
-        assertions::{c2pa_action, Action, Actions, AssetReference, Meta},
+        assertions::{c2pa_action, Action, Actions, AssetReference, Metadata},
         create_signer,
         crypto::raw_signature::SigningAlg,
         settings::Settings,
@@ -420,8 +420,8 @@ mod integration_1 {
         "#;
 
         // allocate metadata
-        let c2pa_metadata_assertion = Meta::new(C2PA_METADATA, "c2pa.metadata")?;
-        let custom_metadata_assertion = Meta::new(CUSTOM_METADATA, "custom.foo.metadata")?;
+        let c2pa_metadata_assertion = Metadata::new(C2PA_METADATA, "c2pa.metadata")?;
+        let custom_metadata_assertion = Metadata::new(CUSTOM_METADATA, "custom.foo.metadata")?;
 
         // add metadata assertions
         builder.add_assertion_json(&c2pa_metadata_assertion.label, &c2pa_metadata_assertion)?;

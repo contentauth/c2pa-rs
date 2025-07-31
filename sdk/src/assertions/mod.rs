@@ -49,8 +49,8 @@ pub use ingredient::Relationship;
 
 pub mod labels;
 
-mod meta;
-pub use meta::Meta;
+mod metadata;
+pub use metadata::Metadata;
 
 mod assertion_metadata;
 pub use assertion_metadata::{

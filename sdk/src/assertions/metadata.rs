@@ -23,7 +23,7 @@ use crate::{
 };
 
 #[derive(Serialize, Deserialize, Debug, PartialEq)]
-pub struct Meta {
+pub struct Metadata {
     #[serde(rename = "@context")]
     pub context: HashMap<String, String>,
     #[serde(flatten)]
@@ -32,9 +32,9 @@ pub struct Meta {
     pub label: String,
 }
 
-impl Meta {
+impl Metadata {
     pub fn new(jsonld: &str, label: &str) -> Result<Self, Error> {
-        let metadata = serde_json::from_slice::<Meta>(jsonld.as_bytes())
+        let metadata = serde_json::from_slice::<Metadata>(jsonld.as_bytes())
             .map_err(|e| Error::BadParam(format!("Invalid JSON format: {}", e)))?;
 
         Ok(Self {
@@ -79,9 +79,9 @@ impl Meta {
     }
 }
 
-impl AssertionJson for Meta {}
+impl AssertionJson for Metadata {}
 
-impl AssertionBase for Meta {
+impl AssertionBase for Metadata {
     fn label(&self) -> &str {
         &self.label
     }
@@ -436,7 +436,7 @@ pub mod tests {
     #![allow(clippy::expect_used)]
     #![allow(clippy::unwrap_used)]
 
-    use crate::{assertion::AssertionBase, assertions::meta::Meta};
+    use crate::{assertion::AssertionBase, assertions::metadata::Metadata};
 
     const SPEC_EXAMPLE: &str = r#"{
         "@context" : {
@@ -510,21 +510,21 @@ pub mod tests {
 
     #[test]
     fn metadata_from_json() {
-        let metadata = Meta::new(SPEC_EXAMPLE, "c2pa.metadata").unwrap();
+        let metadata = Metadata::new(SPEC_EXAMPLE, "c2pa.metadata").unwrap();
         assert!(metadata.is_valid());
     }
 
     #[test]
     fn assertion_round_trip() {
-        let metadata = Meta::new(SPEC_EXAMPLE, "c2pa.metadata").unwrap();
+        let metadata = Metadata::new(SPEC_EXAMPLE, "c2pa.metadata").unwrap();
         let assertion = metadata.to_assertion().unwrap();
-        let result = Meta::from_assertion(&assertion).unwrap();
+        let result = Metadata::from_assertion(&assertion).unwrap();
         assert_eq!(metadata, result);
     }
 
     #[test]
     fn test_custom_validation() {
-        let mut metadata = Meta::new(CUSTOM_METADATA, "custom.metadata").unwrap();
+        let mut metadata = Metadata::new(CUSTOM_METADATA, "custom.metadata").unwrap();
         assert!(metadata.is_valid());
         // c2pa.metadata has restrictions on fields
         metadata.label = "c2pa.metadata".to_owned();
@@ -533,7 +533,7 @@ pub mod tests {
 
     #[test]
     fn test_field_not_in_context() {
-        let mut metadata = Meta::new(MISSING_CONTEXT, "custom.metadata").unwrap();
+        let mut metadata = Metadata::new(MISSING_CONTEXT, "custom.metadata").unwrap();
         assert!(!metadata.is_valid());
         metadata.label = "c2pa.metadata".to_owned();
         assert!(!metadata.is_valid());
@@ -541,7 +541,7 @@ pub mod tests {
 
     #[test]
     fn test_url_is_not_allowed() {
-        let mut metadata = Meta::new(MISMATCH_URL, "c2pa.metadata").unwrap();
+        let mut metadata = Metadata::new(MISMATCH_URL, "c2pa.metadata").unwrap();
         assert!(!metadata.is_valid());
         // custom metadata does not have restriction on urls
         metadata.label = "custom.metadata".to_owned();
@@ -550,7 +550,7 @@ pub mod tests {
 
     #[test]
     fn test_empty_context() {
-        let metadata = Meta::new(EMPTY_CONTEXT, "c2pa.metadata").unwrap();
+        let metadata = Metadata::new(EMPTY_CONTEXT, "c2pa.metadata").unwrap();
         assert!(!metadata.is_valid());
     }
 }
