@@ -188,6 +188,7 @@ impl DigitalSourceType {
 }
 
 /// Represents the type of builder flow being used.
+///
 /// This determines how the builder will be used, such as creating a new asset, opening an existing asset,
 /// or updating an existing asset.
 #[derive(Debug, Deserialize, Serialize, PartialEq, Clone)]
@@ -341,7 +342,8 @@ impl Builder {
         jumbf_io::supported_builder_mime_types()
     }
 
-    /// returns the claim version for this builder.
+    /// Returns the claim version for this builder.
+    ///
     /// If not set, defaults to 2.
     pub fn claim_version(&self) -> u8 {
         self.definition.claim_version.unwrap_or(2)
@@ -385,8 +387,10 @@ impl Builder {
     }
 
     /// Sets the remote_url for this [`Builder`].
+    ///
     /// The URL must return the manifest data and is injected into the destination asset when signing.
     /// For remote-only manifests, set the `no_embed` flag to `true`.
+    ///
     /// # Arguments
     /// * `url` - The URL where the manifest will be available.
     /// # Returns
@@ -397,8 +401,10 @@ impl Builder {
     }
 
     /// Sets the `no_embed` flag for this [`Builder`].
+    ///
     /// If true, the manifest store will not be embedded in the destination asset on sign.
     /// This is useful for sidecar and remote manifests.
+    ///
     /// # Arguments
     /// * `no_embed` - A Boolean flag to set the `no_embed` flag.
     /// # Returns
@@ -411,7 +417,6 @@ impl Builder {
     /// Sets a thumbnail for the [`Builder`].
     ///
     /// The thumbnail should represent the associated asset for this [`Builder`].
-    // TODO: Add example
     ///
     /// # Arguments
     /// * `format` - The format of the thumbnail.
@@ -439,6 +444,7 @@ impl Builder {
 
     /// Adds a CBOR assertion to the manifest.
     /// In most cases, use this function instead of `add_assertion_json`, unless the assertion must be stored in JSON format.
+    ///
     /// # Arguments
     /// * `label` - A label for the assertion.
     /// * `data` - The data for the assertion. The data is any Serde-serializable type.
@@ -460,6 +466,7 @@ impl Builder {
 
     /// Adds a JSON assertion to the manifest.
     /// Use only when the assertion must be stored in JSON format.
+    ///
     /// # Arguments
     /// * `label` - A label for the assertion.
     /// * `data` - The data for the assertion; must be a Serde-serializable type.
@@ -481,6 +488,7 @@ impl Builder {
 
     /// Adds a single action to the manifest.
     /// This is a convenience method for adding an action to the `Actions` assertion.
+    ///
     /// # Arguments
     /// * `action` - The action name as a string.
     /// * `data` - The data for the action as a Serde-serializable type.
@@ -598,7 +606,9 @@ impl Builder {
     }
 
     /// Adds a resource to the manifest.
+    ///
     /// The ID must match an identifier in the manifest.
+    ///
     /// # Arguments
     /// * `id` - The identifier for the resource.
     /// * `stream` - A stream to read the resource from.
@@ -680,6 +690,7 @@ impl Builder {
     }
 
     /// Unpacks an archive stream into a Builder.
+    ///
     /// # Arguments
     /// * `stream` - A stream from which to read the archive.
     /// # Returns
@@ -1265,7 +1276,9 @@ impl Builder {
     }
 
     /// Create a placeholder for a hashed data manifest.
+    ///
     /// This is only used for applications doing their own data_hashed asset management.
+    ///
     /// # Arguments
     /// * `reserve_size` - The size to reserve for the signature (taken from the signer).
     /// * `format` - The format of the target asset, the placeholder will be preformatted for this format.
@@ -1294,6 +1307,7 @@ impl Builder {
     }
 
     /// Create a signed data hashed embeddable manifest using a supplied signer.
+    ///
     /// This is used to create a manifest that can be embedded into a stream.
     /// It allows the caller to do the embedding.
     /// You must call `data_hashed` placeholder first to create the placeholder.
@@ -1330,6 +1344,7 @@ impl Builder {
     }
 
     /// Create a signed box hashed embeddable manifest using a supplied signer.
+    ///
     /// This is used to create a manifest that can be embedded into a stream.
     /// It allows the caller to do the embedding.
     /// The manifest definition must already include a `BoxHash` assertion.
@@ -1361,6 +1376,7 @@ impl Builder {
     }
 
     /// Embed a signed manifest into a stream using a supplied signer.
+    ///
     /// # Arguments
     /// * `format` - The format of the stream.
     /// * `source` - The source stream from which to read.
@@ -1501,6 +1517,7 @@ impl Builder {
 
     #[cfg(feature = "file_io")]
     /// Sign a file using a supplied signer.
+    ///
     /// # Arguments
     /// * `source` - The path to the source file to read from.
     /// * `dest` - The path to the destination file to write to (must not already exist).
@@ -1550,8 +1567,10 @@ impl Builder {
     }
 
     /// Converts a manifest into a composed manifest with the specified format.
+    ///
     /// This wraps the bytes in the container format of the specified format.
     /// So that it can be directly embedded into a stream of that format.
+    ///
     /// # Arguments
     /// * `manifest_bytes` - The bytes of the manifest to convert.
     /// * `format` - The format to convert to.
