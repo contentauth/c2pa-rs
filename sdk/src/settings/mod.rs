@@ -322,7 +322,9 @@ impl Settings {
         let toml = ureq::get(url)
             .call()
             .map_err(|_| Error::FailedToFetchSettings)?
-            .into_string()?;
+            .into_body()
+            .read_to_string()
+            .map_err(|_| Error::FailedToFetchSettings)?;
         Settings::from_toml(&toml)
     }
 

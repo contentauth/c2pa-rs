@@ -123,10 +123,11 @@ impl Signer for RemoteSigner {
         use std::io::Read;
 
         let response = ureq::post(&self.url)
-            .send_bytes(data)
+            .send(data)
             .map_err(|_| Error::FailedToRemoteSign)?;
         let mut bytes: Vec<u8> = Vec::with_capacity(self.reserve_size);
         response
+            .into_body()
             .into_reader()
             .take(self.reserve_size as u64)
             .read_to_end(&mut bytes)?;
