@@ -52,9 +52,20 @@ const XMP_EXTENSION_SIGNATURE: &str = "http://ns.adobe.com/xmp/extension/";
 
 const XMP_EXTENSION_SIGNATURE_BUFFER_SIZE: usize = XMP_EXTENSION_SIGNATURE.len() + 1;
 
+const XMP_EXTENDED_NOTE: &str = "xmpNote:HasExtendedXMP";
+const XMP_EXTENDED_NOTE_SIZE: usize = XMP_EXTENDED_NOTE.len() + 1 + 1; // skip '=' and '"'
+
 const MAX_JPEG_MARKER_SIZE: usize = 64000; // technically it's 64K but a bit smaller is fine
 
 const C2PA_MARKER: [u8; 4] = [0x63, 0x32, 0x70, 0x61];
+
+struct XmpExtension {
+    guid: String,
+    #[allow(dead_code)]
+    length: u32,
+    offset: u32,
+    content: String,
+}
 
 fn vec_compare(va: &[u8], vb: &[u8]) -> bool {
     (va.len() == vb.len()) &&  // zip stops at the shortest
@@ -76,56 +87,65 @@ fn extract_xmp(seg: &JpegSegment) -> Option<&str> {
 fn read_be_u32(input: &mut &[u8]) -> Result<u32> {
     let (int_bytes, rest) = input.split_at(size_of::<u32>());
     *input = rest;
-    Ok(u32::from_be_bytes(
-        int_bytes.try_into().map_err(|_| Error::InvalidAsset("Invalid u32 bytes".to_string()))?
-    ))
+    Ok(u32::from_be_bytes(int_bytes.try_into().map_err(|_| {
+        Error::InvalidAsset("Invalid u32 bytes".to_string())
+    })?))
 }
 
-fn extract_xmp_extension_with_offset(seg: &JpegSegment) -> Option<(u32, &str)> {
+fn extract_xmp_extension_with_offset(seg: &JpegSegment) -> Option<XmpExtension> {
     let (sig, rest) = seg
         .contents()
-        .split_at_checked(XMP_EXTENSION_SIGNATURE_BUFFER_SIZE + 36)?; // 32 byte GUID, 4 byte length
+        .split_at_checked(XMP_EXTENSION_SIGNATURE_BUFFER_SIZE)?;
 
-    if sig.starts_with(XMP_EXTENSION_SIGNATURE.as_bytes()) {
-        if rest.len() > 4 {
-            // 4 byte offset
-            let offset = read_be_u32(&mut &rest[..4]).ok()?;
-            let content = std::str::from_utf8(&rest[4..]).ok()?;
-            Some((offset, content))
-        } else {
-            None
-        }
-    } else {
-        None
+    if sig.starts_with(XMP_EXTENSION_SIGNATURE.as_bytes()) && rest.len() > 40 {
+        // 32 byte GUID, 4 byte length, 4 byte offset
+        let guid = std::str::from_utf8(&rest[..32]).ok()?.to_string();
+        let length = read_be_u32(&mut &rest[32..36]).ok()?;
+        let offset = read_be_u32(&mut &rest[36..40]).ok()?;
+        let content = std::str::from_utf8(&rest[40..]).ok()?.to_string();
+        return Some(XmpExtension {
+            guid,
+            length,
+            offset,
+            content,
+        });
     }
+    None
 }
 
 fn xmp_from_bytes(asset_bytes: &[u8]) -> Option<String> {
     let jpeg = Jpeg::from_bytes(Bytes::copy_from_slice(asset_bytes)).ok()?;
     let mut segs = jpeg.segments_by_marker(markers::APP1);
 
-    let standard_xmp = segs.find_map(extract_xmp).map(String::from);
+    let mut standard_xmp = segs.find_map(extract_xmp).map(String::from)?;
 
-    let mut extensions_with_offset: Vec<(u32, &str)> = segs
-        .filter_map(extract_xmp_extension_with_offset)
-        .collect();
-    
-    extensions_with_offset.sort_by_key(|(offset, _)| *offset);
-    
-    let extensions: Vec<String> = extensions_with_offset
-        .into_iter()
-        .map(|(_, content)| content.to_string())
-        .collect();
+    if let Some(pos) = standard_xmp.find(XMP_EXTENDED_NOTE) {
+        let beginning = pos + XMP_EXTENDED_NOTE_SIZE;
+        let guid = &standard_xmp[beginning..beginning + 32];
 
-    match (standard_xmp, extensions.is_empty()) {
-        (Some(xmp), true) => Some(xmp.to_string()),
-        (Some(xmp), false) => {
-            let mut combined = xmp.to_string();
-            combined.push_str(&extensions.join(""));
-            Some(combined)
+        let mut extensions: Vec<XmpExtension> = segs
+            .filter_map(|seg| {
+                let extension = extract_xmp_extension_with_offset(seg)?;
+                if extension.guid != guid {
+                    return None;
+                }
+                Some(extension)
+            })
+            .collect();
+
+        extensions.sort_by_key(|extensions| extensions.offset);
+
+        let extensions_content: Vec<String> = extensions
+            .into_iter()
+            .map(|extension| extension.content)
+            .collect();
+
+        if !extensions_content.is_empty() {
+            standard_xmp.push_str(&extensions_content.join(""));
         }
-        _ => None,
     }
+
+    Some(standard_xmp)
 }
 
 fn add_required_segs_to_stream(
@@ -1179,6 +1199,23 @@ pub mod tests {
     use crate::utils::io_utils::tempdirectory;
 
     #[test]
+    fn test() {
+        let source = crate::utils::test::fixture_path("MP.jpg");
+
+        let handler = JpegIO::new("");
+        let assetio_handler = handler.get_handler("jpg");
+
+        // read in XMP
+        let mut file_reader = std::fs::File::open(&source).unwrap();
+        let read_xmp = assetio_handler
+            .get_reader()
+            .read_xmp(&mut file_reader)
+            .unwrap();
+
+        println!("{}", read_xmp);
+    }
+
+    #[test]
     fn test_extract_extensions_xmp() {
         let jpeg = Jpeg::from_bytes(Bytes::copy_from_slice(include_bytes!(
             "../../tests/fixtures/MP.jpg"
@@ -1187,27 +1224,20 @@ pub mod tests {
         .unwrap();
         let segs = jpeg.segments_by_marker(markers::APP1);
 
-        let mut extensions_with_offset: Vec<(u32, &str)> = segs
-            .filter_map(extract_xmp_extension_with_offset)
-            .map(|(offset, content)| (offset, content))
-            .collect();
-        
-        extensions_with_offset.sort_by_key(|(offset, _)| *offset);
-        
-        let extensions: Vec<String> = extensions_with_offset
+        let mut extensions: Vec<XmpExtension> =
+            segs.filter_map(extract_xmp_extension_with_offset).collect();
+
+        extensions.sort_by_key(|extension| extension.offset);
+
+        let extensions_content: Vec<String> = extensions
             .iter()
-            .map(|(_, content)| content.to_string())
+            .map(|extensions| extensions.content.clone())
             .collect();
 
-        assert_eq!(extensions.len(), 8);
-        
-        let offsets: Vec<u32> = extensions_with_offset
-            .iter()
-            .map(|(offset, _)| *offset)
-            .collect();
-        
-        for i in 1..offsets.len() {
-            assert!(offsets[i] >= offsets[i-1]);
+        assert_eq!(extensions_content.len(), 8);
+
+        for i in 1..extensions.len() {
+            assert!(extensions[i].offset >= extensions[i - 1].offset);
         }
     }
 
