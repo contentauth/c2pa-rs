@@ -169,16 +169,6 @@ mod integration_1 {
     fn test_embed_bmff_manifest() -> Result<()> {
         Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml"))?;
 
-        // we need to disable thumbnail generation for this test since heic inst't supported
-        Settings::from_toml(
-            &toml::toml! {
-                [builder.thumbnail]
-                enabled = false
-            }
-            .to_string(),
-        )
-        .expect("failed to set verify settings");
-
         // set up parent and destination paths
         let temp_dir = tempdirectory()?;
         let output_path = temp_dir.path().join("test_bmff.heic");
