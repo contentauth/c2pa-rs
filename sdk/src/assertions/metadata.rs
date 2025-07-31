@@ -35,7 +35,7 @@ pub struct Metadata {
 impl Metadata {
     pub fn new(jsonld: &str, label: &str) -> Result<Self, Error> {
         let metadata = serde_json::from_slice::<Metadata>(jsonld.as_bytes())
-            .map_err(|e| Error::BadParam(format!("Invalid JSON format: {}", e)))?;
+            .map_err(|e| Error::BadParam(format!("Invalid JSON format: {e}")))?;
 
         Ok(Self {
             context: metadata.context,
