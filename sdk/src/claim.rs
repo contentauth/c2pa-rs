@@ -33,8 +33,8 @@ use crate::{
     assertions::{
         self, c2pa_action,
         labels::{self, ACTIONS, ASSERTION_STORE, BMFF_HASH, CLAIM_THUMBNAIL, DATABOX_STORE},
-        Actions, AssetType, BmffHash, BoxHash, DataBox, DataHash, Ingredient, Meta, Metadata,
-        Relationship, V2_DEPRECATED_ACTIONS,
+        Actions, AssertionMetadata, AssetType, BmffHash, BoxHash, DataBox, DataHash, Ingredient,
+        Meta, Relationship, V2_DEPRECATED_ACTIONS,
     },
     asset_io::CAIRead,
     cbor_types::{map_cbor_to_type, value_cbor_to_type},
@@ -309,7 +309,7 @@ pub struct Claim {
 
     claim_generator_hints: Option<HashMap<String, Value>>,
 
-    metadata: Option<Vec<Metadata>>,
+    metadata: Option<Vec<AssertionMetadata>>,
 
     data_boxes: Vec<(HashedUri, DataBox)>, /* list of the data boxes and their hashed URIs found for this manifest */
 
@@ -623,7 +623,8 @@ impl Claim {
                 map_cbor_to_type(REDACTED_ASSERTIONS_F, &claim_value);
             let alg: Option<String> = map_cbor_to_type(ALG_F, &claim_value);
             let alg_soft: Option<String> = map_cbor_to_type(ALG_SOFT_F, &claim_value);
-            let metadata: Option<Vec<Metadata>> = map_cbor_to_type(METADATA_F, &claim_value);
+            let metadata: Option<Vec<AssertionMetadata>> =
+                map_cbor_to_type(METADATA_F, &claim_value);
 
             Ok(Claim {
                 remote_manifest: RemoteManifest::NoRemote,
@@ -711,7 +712,8 @@ impl Claim {
                 map_cbor_to_type(REDACTED_ASSERTIONS_F, &claim_value);
             let alg: Option<String> = map_cbor_to_type(ALG_F, &claim_value);
             let alg_soft: Option<String> = map_cbor_to_type(ALG_SOFT_F, &claim_value);
-            let metadata: Option<Vec<Metadata>> = map_cbor_to_type(METADATA_F, &claim_value);
+            let metadata: Option<Vec<AssertionMetadata>> =
+                map_cbor_to_type(METADATA_F, &claim_value);
 
             // create merged list of created and gathered assertions for processing compatibility
             // created are added first with highest priority than gathered
@@ -1136,7 +1138,7 @@ impl Claim {
         self.claim_generator_info.as_deref()
     }
 
-    pub fn add_claim_metadata(&mut self, md: Metadata) -> &mut Self {
+    pub fn add_claim_metadata(&mut self, md: AssertionMetadata) -> &mut Self {
         match self.metadata.as_mut() {
             Some(md_vec) => md_vec.push(md),
             None => self.metadata = Some([md].to_vec()),
@@ -1144,7 +1146,7 @@ impl Claim {
         self
     }
 
-    pub fn metadata(&self) -> Option<&[Metadata]> {
+    pub fn metadata(&self) -> Option<&[AssertionMetadata]> {
         self.metadata.as_deref()
     }
 
@@ -2958,7 +2960,10 @@ impl Claim {
 
             // while this is a vec the spec only expects one at the moment and is checked above
             for hash_binding_assertion in hash_assertions {
-                if hash_binding_assertion.label_raw() == DataHash::LABEL {
+                if hash_binding_assertion
+                    .label_raw()
+                    .starts_with(DataHash::LABEL)
+                {
                     let mut dh = DataHash::from_assertion(hash_binding_assertion.assertion())?;
                     let name = dh.name.as_ref().map_or(UNNAMED.to_string(), default_str);
 
@@ -2969,8 +2974,10 @@ impl Claim {
                                 exclusions.sort_by_key(|a| a.start());
 
                                 // new range using the size that covers entire manifest (includin update manifests)
-                                let new_range =
-                                    HashRange::new(exclusions[0].start(), svi.update_manifest_size);
+                                let new_range = HashRange::new(
+                                    exclusions[0].start(),
+                                    svi.update_manifest_size as u64,
+                                );
 
                                 exclusions.clear();
                                 exclusions.push(new_range);
@@ -3033,7 +3040,10 @@ impl Claim {
                             ),
                         )?;
                     }
-                } else if hash_binding_assertion.label_raw() == BmffHash::LABEL {
+                } else if hash_binding_assertion
+                    .label_raw()
+                    .starts_with(BmffHash::LABEL)
+                {
                     // handle BMFF data hashes
                     let dh = BmffHash::from_assertion(hash_binding_assertion.assertion())?;
 
@@ -3078,19 +3088,33 @@ impl Claim {
                             continue;
                         }
                         Err(e) => {
+                            let err_str = match e {
+                                Error::C2PAValidation(es) => {
+                                    if es == validation_status::ASSERTION_BMFFHASH_MALFORMED {
+                                        validation_status::ASSERTION_BMFFHASH_MALFORMED
+                                    } else {
+                                        validation_status::ASSERTION_BMFFHASH_MISMATCH
+                                    }
+                                }
+                                _ => validation_status::ASSERTION_BMFFHASH_MISMATCH,
+                            };
+
                             log_item!(
                                 claim.assertion_uri(&hash_binding_assertion.label()),
-                                format!("asset hash error, name: {name}, error: {e}"),
+                                format!("asset hash error, name: {name}, error: {}", err_str),
                                 "verify_internal"
                             )
-                            .validation_status(validation_status::ASSERTION_BMFFHASH_MISMATCH)
+                            .validation_status(err_str)
                             .failure(
                                 validation_log,
-                                Error::HashMismatch(format!("Asset hash failure: {e}")),
+                                Error::HashMismatch(format!("Asset hash failure: {err_str}")),
                             )?;
                         }
                     }
-                } else if hash_binding_assertion.label_raw() == BoxHash::LABEL {
+                } else if hash_binding_assertion
+                    .label_raw()
+                    .starts_with(BoxHash::LABEL)
+                {
                     // box hash case
                     // handle BMFF data hashes
                     let bh = BoxHash::from_assertion(hash_binding_assertion.assertion())?;
@@ -3164,6 +3188,17 @@ impl Claim {
                             )?;
                         }
                     }
+                } else {
+                    log_item!(
+                        claim.assertion_uri(&hash_binding_assertion.label()),
+                        "hash binding unknown or not found",
+                        "verify_internal"
+                    )
+                    .validation_status(validation_status::HARD_BINDINGS_MISSING)
+                    .failure(
+                        validation_log,
+                        Error::HashMismatch("hash binding unknown format".into()),
+                    )?;
                 }
             }
         }
