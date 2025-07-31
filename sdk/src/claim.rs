@@ -20,7 +20,6 @@ use std::{
 
 use async_generic::async_generic;
 use chrono::{DateTime, Utc};
-use regex::Regex;
 use serde::{ser::SerializeStruct, Deserialize, Serialize, Serializer};
 use serde_json::{json, Map, Value};
 use uuid::Uuid;
@@ -32,7 +31,10 @@ use crate::{
     },
     assertions::{
         self, c2pa_action,
-        labels::{self, ACTIONS, ASSERTION_STORE, BMFF_HASH, CLAIM_THUMBNAIL, DATABOX_STORE},
+        labels::{
+            self, ACTIONS, ASSERTION_STORE, BMFF_HASH, CLAIM_THUMBNAIL, DATABOX_STORE,
+            METADATA_LABEL_REGEX,
+        },
         Actions, AssertionMetadata, AssetType, BmffHash, BoxHash, DataBox, DataHash, Ingredient,
         Metadata, Relationship, V2_DEPRECATED_ACTIONS,
     },
@@ -3232,18 +3234,11 @@ impl Claim {
         Ok(())
     }
 
-    #[allow(clippy::unwrap_used)]
     ///Returns list of metadata assertions
     pub fn metadata_assertions(&self) -> Vec<&ClaimAssertion> {
-        lazy_static::lazy_static! {
-            /// Must have a label that ends in '.metadata' and is preceded by an entity-specific namespace.
-            /// For example, a 'com.litware.metadata' assertion would be valid.
-            static ref METADATA_LABEL : Regex = Regex::new(r"^(?:[a-zA-Z0-9][a-zA-Z0-9_-]*)(?:\.(?:[a-zA-Z0-9][a-zA-Z0-9_-]*))*\.metadata$").unwrap();
-        }
-
         self.assertion_store
             .iter()
-            .filter(|x| METADATA_LABEL.is_match(&x.label_raw()))
+            .filter(|x| METADATA_LABEL_REGEX.is_match(&x.label_raw()))
             .collect()
     }
 
