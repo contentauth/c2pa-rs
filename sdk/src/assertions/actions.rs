@@ -294,16 +294,20 @@ impl Action {
     }
 
     /// Returns an individual action parameter if it exists.
-    pub fn get_parameter(&self, key: &str) -> Option<&Value> {
+    pub fn get_parameter(&self, key: &str) -> Option<Value> {
         match self.parameters.as_ref() {
-            Some(parameters) => parameters.common.get(key),
-            None => None,
-        }
-    }
-
-    pub fn get_parameter_mut(&mut self, key: &str) -> Option<&mut Value> {
-        match &mut self.parameters {
-            Some(parameters) => parameters.common.get_mut(key),
+            Some(parameters) => match key {
+                "ingredient" => serde_cbor::value::to_value(&parameters.ingredient).ok(),
+                "description" => serde_cbor::value::to_value(&parameters.description).ok(),
+                "redacted" => serde_cbor::value::to_value(&parameters.redacted).ok(),
+                "ingredients" => serde_cbor::value::to_value(&parameters.ingredients).ok(),
+                "source_language" => serde_cbor::value::to_value(&parameters.source_language).ok(),
+                "target_language" => serde_cbor::value::to_value(&parameters.target_language).ok(),
+                "multiple_instances" => {
+                    serde_cbor::value::to_value(parameters.multiple_instances).ok()
+                }
+                _ => parameters.common.get(key).cloned(),
+            },
             None => None,
         }
     }
@@ -359,10 +363,9 @@ impl Action {
     /// Sets the value of the `xmpMM:InstanceID` property for the
     /// modified (output) resource.
     #[deprecated(since = "0.37.0", note = "Use `add_ingredient_id()` instead")]
-    pub fn set_instance_id<S: Into<String>>(mut self, id: S) -> Self {
+    pub fn set_instance_id<S: Into<String>>(self, id: S) -> Self {
         #[allow(clippy::unwrap_used)]
-        self.add_ingredient_id(&id.into()).unwrap(); // Supporting deprecated feature.
-        self
+        self.add_ingredient_id(&id.into()).unwrap() // Supporting deprecated feature.
     }
 
     // Internal function to return any ingredients referenced by this action.
@@ -396,8 +399,7 @@ impl Action {
         key: S,
         value: T,
     ) -> Result<Self> {
-        let value_bytes = serde_cbor::ser::to_vec(&value)?;
-        let value = serde_cbor::from_slice(&value_bytes)?;
+        let value = serde_cbor::value::to_value(value)?;
 
         let parameters = match &mut self.parameters {
             Some(parameters) => parameters,
@@ -408,7 +410,32 @@ impl Action {
             }
         };
 
-        parameters.common.insert(key.into(), value);
+        match key.into().as_str() {
+            "ingredient" => {
+                parameters.ingredient = serde_cbor::value::from_value(value)?;
+            }
+            "description" => {
+                parameters.description = serde_cbor::value::from_value(value)?;
+            }
+            "redacted" => {
+                parameters.redacted = serde_cbor::value::from_value(value)?;
+            }
+            "ingredients" => {
+                parameters.ingredients = serde_cbor::value::from_value(value)?;
+            }
+            "source_language" => {
+                parameters.source_language = serde_cbor::value::from_value(value)?;
+            }
+            "target_language" => {
+                parameters.target_language = serde_cbor::value::from_value(value)?;
+            }
+            "multiple_instances" => {
+                parameters.multiple_instances = serde_cbor::value::from_value(value)?;
+            }
+            key => {
+                parameters.common.insert(key.to_owned(), value);
+            }
+        }
 
         Ok(self)
     }
@@ -479,10 +506,10 @@ impl Action {
     }
 
     /// Adds an ingredient id to the action.
-    pub fn add_ingredient_id(&mut self, ingredient_id: &str) -> Result<&mut Self> {
-        if let Some(Value::Array(ids)) = self.get_parameter_mut(CAI_INGREDIENT_IDS) {
+    pub fn add_ingredient_id(mut self, ingredient_id: &str) -> Result<Self> {
+        if let Some(Value::Array(mut ids)) = self.get_parameter(CAI_INGREDIENT_IDS) {
             ids.push(Value::Text(ingredient_id.to_string()));
-            return Ok(self);
+            return self.set_parameter(CAI_INGREDIENT_IDS, ids);
         }
         let ids = vec![Value::Text(ingredient_id.to_string())];
         self.set_parameter_ref(CAI_INGREDIENT_IDS, ids)?;
