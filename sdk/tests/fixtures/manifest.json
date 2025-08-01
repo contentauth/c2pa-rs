@@ -1,5 +1,4 @@
 {
-    "claim_generator": "test",
     "claim_generator_info": [
         {
             "name": "test",
@@ -12,8 +11,7 @@
     ],
     "metadata": [
         {
-            "dateTime": "1985-04-12T23:20:50.52Z",
-            "my_custom_metadata": "my custom metatdata value"
+            "dateTime": "1985-04-12T23:20:50.52Z"
         }
     ],
     "format" : "image/jpeg",

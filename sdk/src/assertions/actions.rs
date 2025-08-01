@@ -363,7 +363,7 @@ impl Action {
 
     // Internal function to return any ingredients referenced by this action.
     #[allow(dead_code)] // not used in some scenarios
-    pub(crate) fn ingredient_ids(&mut self) -> Option<Vec<String>> {
+    pub(crate) fn ingredient_ids(&mut self, claim_version: u8) -> Option<Vec<String>> {
         match self.get_parameter(CAI_INGREDIENT_IDS) {
             Some(Value::Array(ids)) => {
                 let mut result = Vec::new();
@@ -378,9 +378,15 @@ impl Action {
                 error!("Invalid format for org.cai.ingredientIds parameter, expected an array of strings.");
                 None // Invalid format, so ignore it.
             }
-            // If there is no org.cai.ingredientIds parameter, check for the deprecated instance_id
+            // If there is no CAI_INGREDIENT_IDS parameter, check for the deprecated instance_id
             #[allow(deprecated)]
-            None => self.instance_id.as_ref().map(|id| vec![id.to_string()]),
+            None => {
+                if claim_version == 1 && self.instance_id.is_some() {
+                    self.instance_id.as_ref().map(|id| vec![id.to_string()])
+                } else {
+                    None
+                }
+            }
         }
     }
 
@@ -432,6 +438,11 @@ impl Action {
         }
 
         Ok(self)
+    }
+
+    // Removes a parameter with the given key, returning the parameter if it existed.
+    pub(crate) fn remove_parameter<S: Into<String>>(&mut self, key: S) -> Option<Value> {
+        self.parameters.as_mut()?.common.remove(&key.into())
     }
 
     pub(crate) fn set_parameter_ref<S: Into<String>, T: Serialize>(
@@ -501,13 +512,50 @@ impl Action {
 
     /// Adds an ingredient id to the action.
     pub fn add_ingredient_id(mut self, ingredient_id: &str) -> Result<Self> {
-        if let Some(Value::Array(mut ids)) = self.get_parameter(CAI_INGREDIENT_IDS) {
+        if let Some(Value::Array(mut ids)) = self.get_parameter("ingredientIds") {
             ids.push(Value::Text(ingredient_id.to_string()));
             return self.set_parameter(CAI_INGREDIENT_IDS, ids);
         }
         let ids = vec![Value::Text(ingredient_id.to_string())];
-        self.set_parameter_ref(CAI_INGREDIENT_IDS, ids)?;
+        self.set_parameter_ref("ingredientIds", ids)?;
         Ok(self)
+    }
+
+    /// Extracts ingredient IDs from the action, prioritizing ingredientIds, then org.cai.ingredientIds, then instanceId.
+    /// This is used to map actions to their associated ingredients.
+    /// We don't want any of these fields in the final CBOR, so we remove them after extracting.
+    pub(crate) fn extract_ingredient_ids(&mut self) -> Option<Vec<String>> {
+        let ingredient_ids = self.remove_parameter("ingredientIds");
+        let cai_ingredient_ids = self.remove_parameter("org.cai.ingredientIds");
+        #[allow(deprecated)]
+        let instance_id = self.instance_id.take();
+
+        let mut ids: Vec<String> = Vec::new();
+
+        let mut convert_ids = |val: Option<serde_cbor::Value>| {
+            if let Some(val) = val {
+                match val {
+                    serde_cbor::Value::Array(arr) => {
+                        for v in arr {
+                            if let serde_cbor::Value::Text(s) = v {
+                                ids.push(s);
+                            }
+                        }
+                    }
+                    serde_cbor::Value::Text(s) => ids.push(s),
+                    _ => {}
+                }
+            }
+        };
+
+        convert_ids(ingredient_ids);
+        convert_ids(cai_ingredient_ids);
+
+        if !ids.is_empty() {
+            Some(ids)
+        } else {
+            instance_id.map(|s| vec![s])
+        }
     }
 }
 
@@ -918,7 +966,7 @@ pub mod tests {
                     "action": "c2pa.opened",
                     "parameters": {
                       "description": "import",
-                      "org.cai.ingredientIds": ["xmp.iid:7b57930e-2f23-47fc-affe-0400d70b738d"],
+                      CAI_INGREDIENT_IDS: ["xmp.iid:7b57930e-2f23-47fc-affe-0400d70b738d"],
                     },
                     "digitalSourceType": "http://cv.iptc.org/newscodes/digitalsourcetype/algorithmicMedia",
                     "softwareAgent": "TestApp 1.0",

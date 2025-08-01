@@ -13,6 +13,7 @@
 
 use async_generic::async_generic;
 use bcder::{decode::Constructed, encode::Values};
+use http::header;
 
 use crate::{
     crypto::{
@@ -85,24 +86,27 @@ fn time_stamp_request_http(
 
     if let Some(headers) = headers {
         for (ref name, ref value) in headers {
-            req = req.set(name.as_str(), value.as_str());
+            req = req.header(name.as_str(), value.as_str());
         }
     }
 
     let response = req
-        .set("Content-Type", HTTP_CONTENT_TYPE_REQUEST)
-        .send_bytes(&body)?;
+        .header(header::CONTENT_TYPE, HTTP_CONTENT_TYPE_REQUEST)
+        .send(&body)?;
 
-    if response.status() == 200 && response.content_type() == HTTP_CONTENT_TYPE_RESPONSE {
-        let len = response
-            .header("Content-Length")
-            .and_then(|s| s.parse::<usize>().ok())
+    let content_type = response
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .and_then(|header| header.to_str().ok());
+    if response.status() == 200 && content_type == Some(HTTP_CONTENT_TYPE_RESPONSE) {
+        let body = response.into_body();
+        let len = body
+            .content_length()
+            .and_then(|content_length| content_length.try_into().ok())
             .unwrap_or(20000);
-
         let mut response_bytes: Vec<u8> = Vec::with_capacity(len);
 
-        response
-            .into_reader()
+        body.into_reader()
             .take(1000000)
             .read_to_end(&mut response_bytes)?;
 
@@ -125,8 +129,8 @@ fn time_stamp_request_http(
         Ok(response_bytes)
     } else {
         Err(TimeStampError::HttpErrorResponse(
-            response.status(),
-            response.content_type().to_string(),
+            response.status().as_u16(),
+            content_type.map(|content_type| content_type.to_owned()),
         ))
     }
 }
