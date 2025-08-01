@@ -11,7 +11,7 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use std::io::Write;
+use std::{borrow::Cow, io::Write};
 
 use async_generic::async_generic;
 use x509_parser::{num_bigint::BigUint, prelude::*};
@@ -56,8 +56,8 @@ pub(crate) fn verify_cose(
 ) -> Result<CertificateInfo> {
     let verifier = if cert_check {
         match get_settings_value::<bool>("verify.verify_trust") {
-            Ok(true) => Verifier::VerifyTrustPolicy(ctp),
-            _ => Verifier::VerifyCertificateProfileOnly(ctp),
+            Ok(true) => Verifier::VerifyTrustPolicy(Cow::Borrowed(ctp)),
+            _ => Verifier::VerifyCertificateProfileOnly(Cow::Borrowed(ctp)),
         }
     } else {
         Verifier::IgnoreProfileAndTrustPolicy
