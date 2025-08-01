@@ -296,6 +296,7 @@ impl Action {
     /// Returns an individual action parameter if it exists.
     pub fn get_parameter(&self, key: &str) -> Option<Value> {
         match self.parameters.as_ref() {
+            // This is for backwards compatibility purposes.
             Some(parameters) => match key {
                 "ingredient" => serde_cbor::value::to_value(&parameters.ingredient).ok(),
                 "description" => serde_cbor::value::to_value(&parameters.description).ok(),
@@ -360,14 +361,6 @@ impl Action {
         self
     }
 
-    /// Sets the value of the `xmpMM:InstanceID` property for the
-    /// modified (output) resource.
-    #[deprecated(since = "0.37.0", note = "Use `add_ingredient_id()` instead")]
-    pub fn set_instance_id<S: Into<String>>(self, id: S) -> Self {
-        #[allow(clippy::unwrap_used)]
-        self.add_ingredient_id(&id.into()).unwrap() // Supporting deprecated feature.
-    }
-
     // Internal function to return any ingredients referenced by this action.
     #[allow(dead_code)] // not used in some scenarios
     pub(crate) fn ingredient_ids(&mut self) -> Option<Vec<String>> {
@@ -410,6 +403,7 @@ impl Action {
             }
         };
 
+        // This is for backwards compatibility purposes.
         match key.into().as_str() {
             "ingredient" => {
                 parameters.ingredient = serde_cbor::value::from_value(value)?;
