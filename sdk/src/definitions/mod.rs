@@ -222,6 +222,7 @@ impl ActionTemplateDefinition {
             //     .transpose()?,
             icon: None,
             description: self.description,
+            // TODO: TODO: we can implement jsonschema for serde_cbor::Value and we don't have to go through this loophole
             template_parameters: self
                 .template_parameters
                 .map(|template_parameters| {

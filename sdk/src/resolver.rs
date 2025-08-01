@@ -51,7 +51,7 @@ pub trait AsyncHttpResolver {
 
 pub trait HttpResolver {
     type Error: error::Error;
-    type Stream: Read + Seek + Send + 'static;
+    type Stream: Read + Seek + Send;
 
     fn http_resolve_raw(
         &self,
@@ -79,7 +79,7 @@ pub trait HttpResolver {
 
 pub trait PathResolver {
     type Error: error::Error;
-    type Stream: Read + Seek + Send + 'static;
+    type Stream: Read + Seek + Send;
 
     fn path_resolve(&self, path: &Path) -> Result<Resource<Self::Stream>, Self::Error>;
 }
