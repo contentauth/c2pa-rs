@@ -102,7 +102,10 @@ impl UriOrResource {
                             .ok_or(Error::AssertionMissing {
                                 url: h.url().to_string(),
                             })?;
-                    (assertion.label(), assertion.data().to_vec())
+                    (
+                        assertion.content_type().to_string(),
+                        assertion.data().to_vec(),
+                    )
                 };
                 let url = to_absolute_uri(claim.label(), &h.url());
                 let resource_ref = resources.add_with(&url, &format, data)?;
@@ -444,11 +447,23 @@ mod tests {
             "claim_generator": "test",
             "format" : "image/jpeg",
             "instance_id": "12345",
-            "assertions": [],
             "thumbnail": {
                 "format": "image/jpeg",
                 "identifier": "abc123"
             },
+            "assertions": [
+                {
+                    "label": "c2pa.actions",
+                    "data": {
+                        "actions": [
+                            {
+                                "action": "c2pa.created",
+                                "digitalSourceType": "http://c2pa.org/digitalsourcetype/empty"
+                            }
+                        ]
+                    }
+                }
+            ],
             "ingredients": [{
                 "title": "A.jpg",
                 "format": "image/jpeg",
