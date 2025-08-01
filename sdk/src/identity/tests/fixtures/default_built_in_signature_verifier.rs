@@ -17,9 +17,9 @@ use crate::identity::{
 
 /// Create a `BuiltInSignatureVerifier` that is configured to read the
 /// credentials used in test.
-pub(crate) fn default_built_in_signature_verifier() -> BuiltInSignatureVerifier {
+pub(crate) fn default_built_in_signature_verifier<'a>() -> BuiltInSignatureVerifier<'a> {
     BuiltInSignatureVerifier {
         ica_verifier: IcaSignatureVerifier {},
-        x509_verifier: X509SignatureVerifier {},
+        x509_verifier: X509SignatureVerifier::default(),
     }
 }

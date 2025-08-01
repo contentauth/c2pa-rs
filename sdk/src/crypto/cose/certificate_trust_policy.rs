@@ -294,6 +294,11 @@ impl CertificateTrustPolicy {
         Ok(())
     }
 
+    /// Add default extended key usage (EKU) values.
+    pub fn add_default_valid_ekus(&mut self) {
+        self.add_valid_ekus(include_bytes!("./valid_eku_oids.cfg"));
+    }
+
     /// Add extended key usage (EKU) values that shall be accepted when
     /// verifying COSE signatures.
     ///
