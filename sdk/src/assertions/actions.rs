@@ -188,6 +188,7 @@ mod digital_source_type {
         )]
         CompositeSynthetic,
         /// An unknown digital source type.
+        #[serde(untagged)]
         Other(String),
     }
 
