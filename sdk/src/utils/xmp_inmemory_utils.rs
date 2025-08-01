@@ -220,6 +220,59 @@ fn extract_document_id(xmp: &str) -> Option<String> {
     extract_xmp_key(xmp, "xmpMM:DocumentID")
 }
 
+#[derive(Debug, Clone)]
+pub struct ContainerItem {
+    pub mime: Option<String>,
+    pub semantic: Option<String>,
+    pub length: Option<String>,
+    pub padding: Option<String>,
+}
+
+pub fn extract_container_items(xmp: &str) -> Vec<ContainerItem> {
+    let mut reader = Reader::from_str(xmp);
+    reader.config_mut().trim_text(true);
+    let mut items = Vec::new();
+
+    loop {
+        match reader.read_event() {
+            Ok(Event::Empty(ref e)) => {
+                if e.name() == QName(b"Container:Item") {
+                    let mut current_item = ContainerItem {
+                        mime: None,
+                        semantic: None,
+                        length: None,
+                        padding: None,
+                    };
+
+                    for attr in e.attributes().flatten() {
+                        let key = attr.key;
+                        if let Ok(value) = String::from_utf8(attr.value.to_vec()) {
+                            match key.as_ref() {
+                                b"Item:Mime" => current_item.mime = Some(value),
+                                b"Item:Semantic" => current_item.semantic = Some(value),
+                                b"Item:Length" => current_item.length = Some(value),
+                                b"Item:Padding" => current_item.padding = Some(value),
+                                _ => {}
+                            }
+                        }
+                    }
+
+                    items.push(current_item.clone());
+                }
+            }
+            Ok(Event::End(ref e)) => {
+                if e.name() == QName(b"Container:Directory") {
+                    break;
+                }
+            }
+            Ok(Event::Eof) => break,
+            _ => {}
+        }
+    }
+
+    items
+}
+
 /// add or replace a dc:provenance value to xmp, including dc:terms if needed
 pub fn add_provenance(xmp: &str, provenance: &str) -> Result<String> {
     let xmp = add_xmp_key(xmp, "xmlns:dcterms", "http://purl.org/dc/terms/")?;
@@ -317,6 +370,61 @@ mod tests {
         let unicorn = extract_provenance(&xmp);
         println!("{xmp}");
         assert_eq!(unicorn, Some(PROVENANCE.to_string()));
+    }
+
+    #[test]
+    fn test_extract_container_items() {
+        let xmp_with_container = r#"
+        <?xpacket begin="" id="W5M0MpCehiHzreSzNTczkc9d"?>
+            <x:xmpmeta xmlns:x="adobe:ns:meta/">
+                <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+                        xmlns:Container="http://ns.google.com/photos/1.0/container/">
+                    <rdf:Description rdf:about="">
+                        <Container:Directory>
+                            <rdf:Seq>
+                                <rdf:li rdf:parseType="Resource">
+                                    <Container:Item
+                                        Item:Mime="image/jpeg"
+                                        Item:Semantic="Primary"/>
+                                </rdf:li>
+                                <rdf:li rdf:parseType="Resource">
+                                    <Container:Item
+                                        Item:Semantic="GainMap"
+                                        Item:Mime="image/jpeg"
+                                        Item:Length="10232"/>
+                                </rdf:li>
+                                <rdf:li rdf:parseType="Resource">
+                                    <Container:Item
+                                        Item:Mime="video/mp4"
+                                        Item:Semantic="MotionPhoto"
+                                        Item:Length="4548908"
+                                        Item:Padding="0"/>
+                                </rdf:li>
+                            </rdf:Seq>
+                        </Container:Directory>
+                    </rdf:Description>
+                </rdf:RDF>
+            </x:xmpmeta>
+        <?xpacket end="w"?>"#;
+
+        let items = extract_container_items(xmp_with_container);
+
+        assert_eq!(items.len(), 3);
+
+        assert_eq!(items[0].mime, Some("image/jpeg".to_string()));
+        assert_eq!(items[0].semantic, Some("Primary".to_string()));
+        assert_eq!(items[0].length, None);
+        assert_eq!(items[0].padding, None);
+
+        assert_eq!(items[1].mime, Some("image/jpeg".to_string()));
+        assert_eq!(items[1].semantic, Some("GainMap".to_string()));
+        assert_eq!(items[1].length, Some("10232".to_string()));
+        assert_eq!(items[1].padding, None);
+
+        assert_eq!(items[2].mime, Some("video/mp4".to_string()));
+        assert_eq!(items[2].semantic, Some("MotionPhoto".to_string()));
+        assert_eq!(items[2].length, Some("4548908".to_string()));
+        assert_eq!(items[2].padding, Some("0".to_string()));
     }
 
     #[cfg_attr(not(target_arch = "wasm32"), actix::test)]

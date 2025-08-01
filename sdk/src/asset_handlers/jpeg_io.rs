@@ -39,7 +39,7 @@ use crate::{
     error::{Error, Result},
     utils::{
         io_utils::tempfile_builder,
-        xmp_inmemory_utils::{add_provenance, MIN_XMP},
+        xmp_inmemory_utils::{add_provenance, extract_container_items, MIN_XMP},
     },
 };
 
@@ -140,7 +140,7 @@ fn xmp_from_bytes(asset_bytes: &[u8]) -> Option<String> {
             let curr = &extensions[i];
 
             if prev.offset + (prev.content.len() as u32) != curr.offset {
-                return None
+                return None;
             }
         }
 
@@ -156,7 +156,6 @@ fn xmp_from_bytes(asset_bytes: &[u8]) -> Option<String> {
 
     Some(standard_xmp)
 }
-
 
 fn add_required_segs_to_stream(
     input_stream: &mut dyn CAIRead,
@@ -1200,9 +1199,7 @@ impl ComposedManifestRef for JpegIO {
 pub mod tests {
     #![allow(clippy::unwrap_used)]
 
-    use std::{
-        io::{Read, Seek, Write},
-    };
+    use std::io::{Read, Seek, Write};
 
     #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
     use wasm_bindgen_test::*;
@@ -1224,6 +1221,7 @@ pub mod tests {
             .read_xmp(&mut file_reader)
             .unwrap();
 
+        dbg!(extract_container_items(&read_xmp));
         // // write XMP to a file
         // let mut output_file = File::create("output.xmp").unwrap();
         // write!(output_file, "{}", read_xmp).unwrap();
