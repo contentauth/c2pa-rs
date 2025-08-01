@@ -43,7 +43,6 @@ use crate::{
     crypto::{cose::CertificateTrustPolicy, raw_signature::SigningAlg},
     hash_utils::Hasher,
     jumbf_io::get_assetio_handler,
-    resource_store::UriOrResource,
     salt::DefaultSalt,
     store::Store,
     AsyncSigner, ClaimGeneratorInfo, Result,
@@ -111,7 +110,7 @@ pub fn create_test_claim() -> Result<Claim> {
 
     let mut cg_info = ClaimGeneratorInfo::new("test app");
     cg_info.version = Some("2.3.4".to_string());
-    cg_info.icon = Some(UriOrResource::HashedUri(icon_ref));
+    cg_info.icon = Some(icon_ref);
     cg_info.insert("something", "else");
 
     claim.add_claim_generator_info(cg_info);

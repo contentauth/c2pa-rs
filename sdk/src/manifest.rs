@@ -584,9 +584,10 @@ impl Manifest {
         if let Some(info_vec) = claim.claim_generator_info() {
             let mut generators = Vec::new();
             for claim_info in info_vec {
-                let mut info = claim_info.to_owned();
+                let info = claim_info.to_owned();
                 if let Some(icon) = claim_info.icon.as_ref() {
-                    info.set_icon(icon.to_resource_ref(manifest.resources_mut(), claim)?);
+                    // TODO: do we need this?
+                    // info.set_icon(icon.to_resource_ref(manifest.resources_mut(), claim)?);
                 }
                 generators.push(info);
             }
@@ -671,8 +672,9 @@ impl Manifest {
                             action.software_agent_mut()
                         {
                             if let Some(icon) = info.icon.as_mut() {
-                                let icon = icon.to_resource_ref(manifest.resources_mut(), claim)?;
-                                info.set_icon(icon);
+                                // TODO: do we need this?
+                                // let icon = icon.to_resource_ref(manifest.resources_mut(), claim)?;
+                                // info.set_icon(icon);
                             }
                         }
                     }
@@ -692,9 +694,9 @@ impl Manifest {
                             template.software_agent = match template.software_agent.take() {
                                 Some(mut info) => {
                                     if let Some(icon) = info.icon.as_mut() {
-                                        let icon =
-                                            icon.to_resource_ref(manifest.resources_mut(), claim)?;
-                                        info.set_icon(icon);
+                                        // let icon =
+                                        // icon.to_resource_ref(manifest.resources_mut(), claim)?;
+                                        // info.set_icon(icon);
                                     }
                                     Some(info)
                                 }
@@ -835,9 +837,6 @@ impl Manifest {
         if let Some(info_vec) = self.claim_generator_info.as_ref() {
             for info in info_vec {
                 let mut claim_info = info.to_owned();
-                if let Some(icon) = claim_info.icon.as_ref() {
-                    claim_info.icon = Some(icon.to_hashed_uri(self.resources(), &mut claim)?);
-                }
                 claim.add_claim_generator_info(claim_info);
             }
         }
@@ -944,31 +943,6 @@ impl Manifest {
                         }
                     }
 
-                    if let Some(templates) = actions.templates.as_mut() {
-                        for template in templates {
-                            // replace icon with hashed_uri
-                            template.icon = match template.icon.take() {
-                                Some(icon) => {
-                                    Some(icon.to_hashed_uri(self.resources(), &mut claim)?)
-                                }
-                                None => None,
-                            };
-
-                            // replace software agent with hashed_uri
-                            template.software_agent = match template.software_agent.take() {
-                                Some(mut info) => {
-                                    if let Some(icon) = info.icon.as_mut() {
-                                        let icon =
-                                            icon.to_hashed_uri(self.resources(), &mut claim)?;
-                                        info.set_icon(icon);
-                                    }
-                                    Some(info)
-                                }
-                                agent => agent,
-                            };
-                        }
-                    }
-
                     // convert icons in software agents to hashed uris
                     let actions_mut = actions.actions_mut();
                     #[allow(clippy::needless_range_loop)]
@@ -980,8 +954,7 @@ impl Manifest {
                         {
                             if let Some(icon) = info.icon.as_ref() {
                                 let mut info = info.to_owned();
-                                let icon_uri = icon.to_hashed_uri(self.resources(), &mut claim)?;
-                                let update = info.set_icon(icon_uri);
+                                let update = info.set_icon(icon.to_owned());
                                 let mut action = action.to_owned();
                                 action = action.set_software_agent(update.to_owned());
                                 actions_mut[index] = action;

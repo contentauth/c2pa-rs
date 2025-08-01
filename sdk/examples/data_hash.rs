@@ -27,8 +27,8 @@ use c2pa::{
     assertions::{
         c2pa_action, labels::*, Action, Actions, CreativeWork, DataHash, Exif, SchemaDotOrgPerson,
     },
-    create_signer, hash_stream_by_alg, Builder, ClaimGeneratorInfo, HashRange, Ingredient, Reader,
-    Relationship, Result,
+    create_signer, hash_stream_by_alg, Builder, HashRange, Ingredient, Reader, Relationship,
+    Result,
 };
 
 fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
@@ -45,6 +45,8 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
 
 #[cfg(feature = "file_io")]
 fn builder_from_source<S: AsRef<Path>>(source: S) -> Result<Builder> {
+    use c2pa::definitions::ClaimGeneratorInfoDefinition;
+
     let mut parent = Ingredient::from_file(source.as_ref())?;
     parent.set_relationship(Relationship::ParentOf);
     // create an action assertion stating that we imported this file
@@ -73,8 +75,11 @@ fn builder_from_source<S: AsRef<Path>>(source: S) -> Result<Builder> {
 
     let mut builder = Builder::default();
 
-    let mut claim_generator = ClaimGeneratorInfo::new("test_app".to_string());
-    claim_generator.set_version("0.1");
+    let claim_generator = ClaimGeneratorInfoDefinition {
+        name: "test_app".to_string(),
+        version: Some("0.1".to_owned()),
+        ..Default::default()
+    };
 
     builder
         .set_claim_generator_info(claim_generator)

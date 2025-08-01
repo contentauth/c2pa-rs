@@ -3,7 +3,10 @@
     "claim_generator_info": [
         {
             "name": "test",
-            "version": "1.0"
+            "version": "1.0",
+            "operatingSystem" : {
+                "infer": false
+            }
         }
     ],
     "assertions": [
@@ -20,6 +23,9 @@
                         "softwareAgent": {
                             "name": "TestApp",
                             "version": "1.0",
+                            "operatingSystem": {
+                                "infer": false
+                            },
                             "something": "else"
                         }
                     }

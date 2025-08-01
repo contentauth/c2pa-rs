@@ -18,7 +18,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::resource_store::UriOrResource;
+use crate::HashedUri;
 
 /// Description of the claim generator, or the software used in generating the claim.
 ///
@@ -33,7 +33,7 @@ pub struct ClaimGeneratorInfo {
     pub version: Option<String>,
     /// hashed URI to the icon (either embedded or remote)
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub icon: Option<UriOrResource>,
+    pub icon: Option<HashedUri>,
     /// A human readable string of the OS the claim generator is running on
     #[serde(skip_serializing_if = "Option::is_none")]
     pub operating_system: Option<String>,
@@ -66,7 +66,7 @@ impl ClaimGeneratorInfo {
     }
 
     /// Returns the software agent that performed the action.
-    pub fn icon(&self) -> Option<&UriOrResource> {
+    pub fn icon(&self) -> Option<&HashedUri> {
         self.icon.as_ref()
     }
 
@@ -77,7 +77,7 @@ impl ClaimGeneratorInfo {
     }
 
     /// Sets the icon of the generator.
-    pub fn set_icon<S: Into<UriOrResource>>(&mut self, uri_or_resource: S) -> &mut Self {
+    pub fn set_icon<S: Into<HashedUri>>(&mut self, uri_or_resource: S) -> &mut Self {
         self.icon = Some(uri_or_resource.into());
         self
     }
@@ -104,22 +104,7 @@ pub mod tests {
     #![allow(clippy::unwrap_used)]
 
     use super::*;
-    use crate::{hashed_uri::HashedUri, resource_store::ResourceRef};
-
-    #[test]
-    fn test_resource_ref() {
-        let mut g = super::ClaimGeneratorInfo::new("test");
-        g.set_version("1.0")
-            .set_icon(ResourceRef::new("image/svg", "myicon"));
-
-        let json = serde_json::to_string_pretty(&g).expect("Failed to serialize");
-        println!("{json}");
-
-        let result: ClaimGeneratorInfo =
-            serde_json::from_str(&json).expect("Failed to deserialize");
-
-        assert_eq!(g, result);
-    }
+    use crate::hashed_uri::HashedUri;
 
     #[test]
     fn test_hashed_uri() {

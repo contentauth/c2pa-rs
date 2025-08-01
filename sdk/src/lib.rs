@@ -129,14 +129,17 @@ pub mod validation_results;
 #[doc(hidden)]
 pub mod validation_status;
 
+pub mod definitions;
+
 // Public exports
 #[doc(inline)]
 pub use assertions::Relationship;
 #[cfg(feature = "v1_api")]
 pub use asset_io::{CAIRead, CAIReadWrite};
-pub use builder::{Builder, ManifestDefinition};
+pub use builder::Builder;
 pub use callback_signer::{CallbackFunc, CallbackSigner};
 pub use claim_generator_info::ClaimGeneratorInfo;
+pub use definitions::ManifestDefinition;
 // pub use dynamic_assertion::{
 //     AsyncDynamicAssertion, DynamicAssertion, DynamicAssertionContent, PartialClaim,
 // };
@@ -191,6 +194,7 @@ pub(crate) mod manifest_store_report;
 #[allow(dead_code)]
 // TODO: Remove this when the feature is released (used in tests only for some builds now)
 pub(crate) mod reader;
+pub(crate) mod resolver;
 pub(crate) mod resource_store;
 pub(crate) mod salt;
 pub(crate) mod signer;

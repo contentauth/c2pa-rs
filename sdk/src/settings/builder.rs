@@ -11,18 +11,12 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use std::{collections::HashMap, env::consts};
-
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    assertions::{
-        region_of_interest::RegionOfInterest, Action, ActionTemplate, Actor, SoftwareAgent,
-    },
-    cbor_types::DateT,
-    resource_store::UriOrResource,
+    definitions::{ActionDefinition, ActionTemplateDefinition, ClaimGeneratorInfoDefinition},
     settings::SettingsValidate,
-    ClaimGeneratorInfo, Error, ResourceRef, Result,
+    Error, Result,
 };
 
 // TODO: thumbnails/previews for audio?
@@ -116,6 +110,96 @@ impl SettingsValidate for ThumbnailSettings {
     }
 }
 
+// #[allow(unused)]
+// #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+// pub(crate) struct ClaimGeneratorInfoSettings {
+//     #[serde(flatten)]
+//     pub other: HashMap<String, toml::Value>,
+
+//     #[serde(flatten)]
+//     pub definition: ClaimGeneratorInfoDefinition,
+// }
+
+// impl TryFrom<ClaimGeneratorInfoSettings> for ClaimGeneratorInfoDefinition {
+//     type Error = Error;
+
+//     fn try_from(value: ClaimGeneratorInfoSettings) -> Result<Self> {
+//         let mut definition = value.definition;
+//         definition.other = value
+//             .other
+//             .into_iter()
+//             .map(|(key, value)| {
+//                 serde_json::to_value(value)
+//                     .map(|value| (key, value))
+//                     .map_err(|err| err.into())
+//             })
+//             .collect::<Result<HashMap<String, serde_json::Value>>>()?;
+//         Ok(definition)
+//     }
+// }
+
+// #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+// pub(crate) struct ActionTemplateSettings {
+//     #[serde(skip_serializing_if = "Option::is_none")]
+//     pub template_parameters: Option<HashMap<String, toml::Value>>,
+
+//     #[serde(flatten)]
+//     pub definition: ActionTemplateDefinition,
+// }
+
+// impl TryFrom<ActionTemplateSettings> for ActionTemplateDefinition {
+//     type Error = Error;
+
+//     fn try_from(value: ActionTemplateSettings) -> Result<Self> {
+//         let mut definition = value.definition;
+//         definition.template_parameters = value
+//             .template_parameters
+//             .map(|template_parameters| {
+//                 template_parameters
+//                     .into_iter()
+//                     .map(|(key, value)| {
+//                         serde_json::to_value(value)
+//                             .map(|value| (key, value))
+//                             .map_err(|err| err.into())
+//                     })
+//                     .collect::<Result<HashMap<String, serde_json::Value>>>()
+//             })
+//             .transpose()?;
+//         Ok(definition)
+//     }
+// }
+
+// #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+// pub(crate) struct ActionSettings {
+//     #[serde(skip_serializing_if = "Option::is_none")]
+//     pub parameters: Option<HashMap<String, toml::Value>>,
+
+//     #[serde(flatten)]
+//     pub definition: ActionDefinition,
+// }
+
+// impl TryFrom<ActionSettings> for ActionDefinition {
+//     type Error = Error;
+
+//     fn try_from(value: ActionSettings) -> Result<Self> {
+//         let mut definition = value.definition;
+//         definition.parameters = value
+//             .parameters
+//             .map(|template_parameters| {
+//                 template_parameters
+//                     .into_iter()
+//                     .map(|(key, value)| {
+//                         serde_json::value::to_value(value)
+//                             .map(|value| (key, value))
+//                             .map_err(|err| err.into())
+//                     })
+//                     .collect::<Result<HashMap<String, serde_json::Value>>>()
+//             })
+//             .transpose()?;
+//         Ok(definition)
+//     }
+// }
+
 /// Settings for the auto actions (e.g. created, opened, placed).
 #[allow(unused)]
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -126,222 +210,6 @@ pub(crate) struct AutoActionSettings {
     /// The default source type for the auto action.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub source_type: Option<String>,
-}
-
-/// Settings for how to specify the claim generator info's operating system.
-#[allow(unused)]
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-pub(crate) struct ClaimGeneratorInfoOSSettings {
-    /// Whether or not to infer the operating system.
-    pub infer: bool,
-    /// The name of the operating system.
-    ///
-    /// Note this field overrides [ClaimGeneratorInfoOSSettings::infer].
-    pub name: Option<String>,
-}
-
-impl Default for ClaimGeneratorInfoOSSettings {
-    fn default() -> Self {
-        Self {
-            infer: true,
-            name: None,
-        }
-    }
-}
-
-/// Settings for the claim generator info.
-#[allow(unused)]
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-pub(crate) struct ClaimGeneratorInfoSettings {
-    /// A human readable string naming the claim_generator.
-    pub name: String,
-    /// A human readable string of the product's version.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub version: Option<String>,
-    /// Reference to an icon.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub icon: Option<ResourceRef>,
-    /// Settings for the claim generator info's operating system field.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub operating_system: Option<ClaimGeneratorInfoOSSettings>,
-    /// Any other values that are not part of the standard.
-    #[serde(flatten)]
-    pub other: HashMap<String, toml::Value>,
-}
-
-impl TryFrom<ClaimGeneratorInfoSettings> for ClaimGeneratorInfo {
-    type Error = Error;
-
-    fn try_from(value: ClaimGeneratorInfoSettings) -> Result<Self> {
-        Ok(ClaimGeneratorInfo {
-            name: value.name,
-            version: value.version,
-            icon: value.icon.map(UriOrResource::ResourceRef),
-            operating_system: {
-                let os = value.operating_system.unwrap_or_default();
-                match os.infer {
-                    true => Some(consts::OS.to_owned()),
-                    false => os.name,
-                }
-            },
-            other: value
-                .other
-                .into_iter()
-                .map(|(key, value)| {
-                    serde_json::to_value(value)
-                        .map(|value| (key, value))
-                        .map_err(|err| err.into())
-                })
-                .collect::<Result<HashMap<String, serde_json::Value>>>()?,
-        })
-    }
-}
-
-/// Settings for an action template.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-pub(crate) struct ActionTemplateSettings {
-    /// The label associated with this action. See ([c2pa_action][crate::assertions::actions::c2pa_action]).
-    pub action: String,
-    /// The software agent that performed the action.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub software_agent: Option<ClaimGeneratorInfoSettings>,
-    // TODO: change this to use string names and document in c2pa.toml
-    /// 0-based index into the softwareAgents array
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub software_agent_index: Option<usize>,
-    /// One of the defined URI values at `<https://cv.iptc.org/newscodes/digitalsourcetype/>`
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub source_type: Option<String>,
-    // TODO: handle paths/urls and document in the sample c2pa.toml
-    /// Reference to an icon.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub icon: Option<ResourceRef>,
-    /// Description of the template.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub description: Option<String>,
-    /// Additional parameters for the template
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub template_parameters: Option<HashMap<String, toml::Value>>,
-}
-
-impl TryFrom<ActionTemplateSettings> for ActionTemplate {
-    type Error = Error;
-
-    fn try_from(value: ActionTemplateSettings) -> Result<Self> {
-        Ok(ActionTemplate {
-            action: value.action,
-            software_agent: value
-                .software_agent
-                .map(|software_agent| software_agent.try_into())
-                .transpose()?,
-            software_agent_index: value.software_agent_index,
-            source_type: value.source_type,
-            icon: value.icon.map(UriOrResource::ResourceRef),
-            description: value.description,
-            template_parameters: value
-                .template_parameters
-                .map(|template_parameters| {
-                    template_parameters
-                        .into_iter()
-                        .map(|(key, value)| {
-                            serde_cbor::value::to_value(value)
-                                .map(|value| (key, value))
-                                .map_err(|err| err.into())
-                        })
-                        .collect::<Result<HashMap<String, serde_cbor::Value>>>()
-                })
-                .transpose()?,
-        })
-    }
-}
-
-/// Settings for an action.
-#[allow(unused)]
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-pub(crate) struct ActionSettings {
-    /// The label associated with this action. See ([`c2pa_action`]).
-    pub action: String,
-    /// Timestamp of when the action occurred.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub when: Option<DateT>,
-    /// The software agent that performed the action.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub software_agent: Option<ClaimGeneratorInfoSettings>,
-    /// 0-based index into the softwareAgents array.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub software_agent_index: Option<usize>,
-    /// A semicolon-delimited list of the parts of the resource that were changed since the previous event history.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub changed: Option<String>,
-    /// A list of the regions of interest of the resource that were changed.
-    ///
-    /// If not present, presumed to be undefined.
-    /// When tracking changes and the scope of the changed components is unknown,
-    /// it should be assumed that anything might have changed.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub changes: Option<Vec<RegionOfInterest>>,
-    // TODO: is deprecated, do we still read it? validate it?
-    /// This is NOT the instanceID in the spec.
-    /// It is now deprecated but was previously used to map the action to an ingredient.
-    #[serde(skip_serializing)]
-    pub instance_id: Option<String>,
-    /// Additional parameters of the action. These vary by the type of action.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub parameters: Option<HashMap<String, toml::Value>>,
-    /// An array of the creators that undertook this action.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub actors: Option<Vec<Actor>>,
-    /// One of the defined URI values at `<https://cv.iptc.org/newscodes/digitalsourcetype/>`.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub source_type: Option<String>,
-    /// List of related actions.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub related: Option<Vec<Action>>,
-    // The reason why this action was performed, required when the action is `c2pa.redacted`.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub reason: Option<String>,
-    /// Description of the action.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub description: Option<String>,
-}
-
-impl TryFrom<ActionSettings> for Action {
-    type Error = Error;
-
-    fn try_from(value: ActionSettings) -> Result<Self> {
-        Ok(Action {
-            action: value.action,
-            when: value.when,
-            software_agent: value
-                .software_agent
-                .map(|software_agent| software_agent.try_into())
-                .transpose()?
-                .map(SoftwareAgent::ClaimGeneratorInfo),
-            software_agent_index: value.software_agent_index,
-            changed: value.changed,
-            changes: value.changes,
-            #[allow(deprecated)]
-            instance_id: value.instance_id,
-            parameters: value
-                .parameters
-                .map(|template_parameters| {
-                    template_parameters
-                        .into_iter()
-                        .map(|(key, value)| {
-                            serde_cbor::value::to_value(value)
-                                .map(|value| (key, value))
-                                .map_err(|err| err.into())
-                        })
-                        .collect::<Result<HashMap<String, serde_cbor::Value>>>()
-                })
-                .transpose()?,
-            actors: value.actors,
-            source_type: value.source_type,
-            related: value.related,
-            reason: value.reason,
-            description: value.description,
-        })
-    }
 }
 
 /// Settings for configuring the "base" [Actions][crate::assertions::Actions] assertion.
@@ -356,11 +224,10 @@ pub(crate) struct ActionsSettings {
     pub all_actions_included: bool,
     /// Templates to be added to the [Actions::templates][crate::assertions::Actions::templates] field.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub templates: Option<Vec<ActionTemplateSettings>>,
-    // TODO: should we define a new struct for "Action" too, like ActionTemplateSettings?
+    pub templates: Option<Vec<ActionTemplateDefinition>>,
     /// Actions to be added to the [Actions::actions][crate::assertions::Actions::actions] field.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub actions: Option<Vec<ActionSettings>>,
+    pub actions: Option<Vec<ActionDefinition>>,
     /// Whether to automatically generate a c2pa.created [Action][crate::assertions::Action]
     /// assertion or error that it doesn't already exist.
     ///
@@ -422,7 +289,7 @@ pub(crate) struct BuilderSettings {
     /// Note that this information will prepend any claim generator info
     /// provided explicitly to the builder.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub claim_generator_info: Option<ClaimGeneratorInfoSettings>,
+    pub claim_generator_info: Option<ClaimGeneratorInfoDefinition>,
     /// Various settings for configuring automatic thumbnail generation.
     pub thumbnail: ThumbnailSettings,
     /// Settings for configuring fields in an [Actions][crate::assertions::Actions] assertion.

@@ -63,6 +63,13 @@ rust_native_crypto = [
 ]
 v1_api = []
 
+# TODO: feature flag http resolvers depending on features implemented
+#       (not expecting to plumb through everything in this change)
+reqwest = []
+reqwest_blocking = []
+ureq = []
+curl = []
+
 # The diagnostics feature is unsupported and might be removed.
 # It enables some low-overhead timing features used in our development cycle.
 diagnostics = []
@@ -168,7 +175,7 @@ rasn-pkix = "0.26.0"
 regex = "1.11"
 riff = "2.0.0"
 rsa = { version = "0.9.7", features = ["pem", "sha2", "std"], optional = true }
-schemars = { version = "0.8.21", optional = true }
+schemars = { version = "0.8.21", features = ["url"], optional = true }
 serde = { version = "1.0.197", features = ["derive"] }
 serde_bytes = "0.11.14"
 serde_cbor = "0.11.1"
@@ -183,13 +190,14 @@ static-iref = "3.0"
 tempfile = "=3.15.0"
 thiserror = "2.0.8"
 treeline = "0.1.0"
-url = "2.5.3"
+url = { version = "2.5.3", features = ["serde"] }
 uuid = { version = "=1.12.0", features = ["serde", "v4"] }
 web-time = "1.1"
 x509-certificate = "0.24.0"
 x509-parser = "0.16.0"
 zeroize = { version = "1.8", features = ["zeroize_derive"] }
 zip = { version = "3.0.0", default-features = false }
+http = "1.3.1"
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 const-oid = "0.9.6"
@@ -261,8 +269,10 @@ web-sys = { version = "0.3.58", features = [
 windows-core = "0.61.2" # Override yanked version used in chrono and other crates.
 
 [target.'cfg(not(target_os = "wasi"))'.dependencies]
-reqwest = { version = "0.12.8", default-features = false, features = [
+reqwest = { version = "0.12.22", default-features = false, features = [
     "rustls-tls",
+    "stream",
+    "blocking",
 ] }
 
 [dev-dependencies]

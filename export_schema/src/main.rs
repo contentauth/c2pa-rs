@@ -15,8 +15,9 @@ fn write_schema(schema: &RootSchema, name: &str) {
 }
 
 fn main() -> Result<()> {
-    let builder = schema_for!(Builder);
-    write_schema(&builder, "Builder");
+    // TODO: schema for manifest def instead?
+    // let builder = schema_for!(Builder);
+    // write_schema(&builder, "Builder");
 
     let manifest_definition = schema_for!(ManifestDefinition);
     write_schema(&manifest_definition, "ManifestDefinition");

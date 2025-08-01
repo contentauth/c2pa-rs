@@ -20,7 +20,8 @@ use c2pa::{
     assertions::{c2pa_action, labels, Action, Actions, CreativeWork, Exif, SchemaDotOrgPerson},
     create_signer,
     crypto::raw_signature::SigningAlg,
-    Builder, ClaimGeneratorInfo, Ingredient, Reader, Relationship,
+    definitions::ClaimGeneratorInfoDefinition,
+    Builder, Ingredient, Reader, Relationship,
 };
 
 const GENERATOR: &str = "test_app";
@@ -138,8 +139,11 @@ pub fn main() -> Result<()> {
     // create a new Manifest
     let mut builder = Builder::new();
     builder.definition.claim_version = Some(2);
-    let mut generator = ClaimGeneratorInfo::new(GENERATOR);
-    generator.set_version("0.1");
+    let generator = ClaimGeneratorInfoDefinition {
+        name: GENERATOR.to_owned(),
+        version: Some("0.1".to_owned()),
+        ..Default::default()
+    };
     builder
         .set_claim_generator_info(generator)
         .add_ingredient(parent)

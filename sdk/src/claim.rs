@@ -2040,7 +2040,7 @@ impl Claim {
             // 2.e.i Actions icons
             if let Some(cgi_vec) = actions.software_agents() {
                 for cgi in cgi_vec {
-                    if let Some(UriOrResource::HashedUri(icon)) = cgi.icon() {
+                    if let Some(icon) = cgi.icon() {
                         icons.push(icon);
                     }
                 }
@@ -2543,7 +2543,7 @@ impl Claim {
                 if let Some(assertions::SoftwareAgent::ClaimGeneratorInfo(cgi)) =
                     action.software_agent()
                 {
-                    if let Some(UriOrResource::HashedUri(icon)) = cgi.icon() {
+                    if let Some(icon) = cgi.icon() {
                         icons.push(icon);
                     }
                 }
@@ -2647,7 +2647,7 @@ impl Claim {
         if let Some(cgi_vec) = claim.claim_generator_info() {
             let mut icons = Vec::new();
             for cgi in cgi_vec {
-                if let Some(UriOrResource::HashedUri(icon)) = cgi.icon() {
+                if let Some(icon) = cgi.icon() {
                     icons.push(icon);
                 }
             }
@@ -3870,7 +3870,7 @@ pub mod tests {
     #![allow(clippy::unwrap_used)]
 
     use super::*;
-    use crate::{resource_store::UriOrResource, utils::test::create_test_claim};
+    use crate::utils::test::create_test_claim;
 
     #[test]
     fn test_build_claim() {
@@ -3936,11 +3936,11 @@ pub mod tests {
 
         let mut info = ClaimGeneratorInfo::new("test app");
         info.version = Some("2.3.4".to_string());
-        info.icon = Some(UriOrResource::HashedUri(HashedUri::new(
+        info.icon = Some(HashedUri::new(
             "self#jumbf=c2pa.databoxes.data_box".to_string(),
             None,
             b"hashed",
-        )));
+        ));
         info.insert("something", "else");
 
         claim.add_claim_generator_info(info);
@@ -3949,9 +3949,8 @@ pub mod tests {
 
         assert_eq!(&cgi[0].name, "test app");
         assert_eq!(cgi[0].version.as_deref(), Some("2.3.4"));
-        if let UriOrResource::HashedUri(r) = cgi[1].icon.as_ref().unwrap() {
-            assert_eq!(r.hash(), b"hashed");
-        }
+        let r = cgi[1].icon.as_ref().unwrap();
+        assert_eq!(r.hash(), b"hashed");
     }
 
     #[test]

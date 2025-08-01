@@ -27,8 +27,8 @@ use std::{
 
 use anyhow::{anyhow, bail, Context, Result};
 use c2pa::{
-    identity::validator::CawgValidator, settings::Settings, Builder, ClaimGeneratorInfo, Error,
-    Ingredient, ManifestDefinition, Reader, Signer,
+    definitions::ClaimGeneratorInfoDefinition, identity::validator::CawgValidator,
+    settings::Settings, Builder, Error, Ingredient, ManifestDefinition, Reader, Signer,
 };
 use clap::{Parser, Subcommand};
 use etcetera::BaseStrategy;
@@ -669,8 +669,11 @@ fn main() -> Result<()> {
         let mut manifest = manifest_def.manifest;
 
         // add claim_tool generator so we know this was created using this tool
-        let mut tool_generator = ClaimGeneratorInfo::new(env!("CARGO_PKG_NAME"));
-        tool_generator.set_version(env!("CARGO_PKG_VERSION"));
+        let tool_generator = ClaimGeneratorInfoDefinition {
+            name: env!("CARGO_PKG_NAME").to_owned(),
+            version: Some(env!("CARGO_PKG_VERSION").to_owned()),
+            ..Default::default()
+        };
         if !manifest.claim_generator_info.is_empty()
             || manifest.claim_generator_info[0].name == "c2pa-rs"
         {
@@ -855,6 +858,7 @@ fn main() -> Result<()> {
         let mut reader = Reader::from_file(&args.path).map_err(special_errs)?;
         validate_cawg(&mut reader)?;
         println!("{reader}");
+        println!("{:?}", reader.validation_state());
     }
 
     Ok(())

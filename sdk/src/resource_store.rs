@@ -35,8 +35,9 @@ use crate::{
     claim::Claim,
     hashed_uri::HashedUri,
     jumbf::labels::{assertion_label_from_uri, to_absolute_uri, DATABOXES},
+    resolver::{HttpResolver, PathResolver},
     salt::DefaultSalt,
-    utils::mime::format_to_mime,
+    utils::mime::{self, format_to_mime},
     Error, Result,
 };
 
@@ -162,6 +163,24 @@ impl ResourceRef {
             alg: None,
             hash: None,
         }
+    }
+
+    pub fn to_hashed_uri<T: HttpResolver + PathResolver>(
+        &self,
+        resolver: &T,
+        claim: &mut Claim,
+    ) -> Result<HashedUri> {
+        // TODO: use resolver to resolve self.identifier into data
+        let data: Vec<u8> = todo!();
+        let hashed_uri = match claim.version() {
+            1 => claim.add_databox(&self.format, data, None)?,
+            _ => {
+                let icon_assertion =
+                    EmbeddedData::new(labels::ICON, mime::format_to_mime(&self.format), data);
+                claim.add_assertion_with_salt(&icon_assertion, &DefaultSalt::default())?
+            }
+        };
+        Ok(hashed_uri)
     }
 }
 

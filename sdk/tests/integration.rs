@@ -22,7 +22,7 @@ mod integration_1 {
         create_signer,
         crypto::raw_signature::SigningAlg,
         settings::Settings,
-        Builder, ClaimGeneratorInfo, Ingredient, Reader, Result, Signer,
+        Builder, Ingredient, Reader, Result, Signer,
     };
     #[allow(unused)] // different code path for WASI
     use tempfile::{tempdir, TempDir};
@@ -118,6 +118,8 @@ mod integration_1 {
     #[cfg(feature = "file_io")]
     fn test_embed_manifest() -> Result<()> {
         // set up parent and destination paths
+
+        use c2pa::definitions::ClaimGeneratorInfoDefinition;
         let dir = tempdirectory()?;
         let output_path = dir.path().join("test_file.jpg");
         #[cfg(target_os = "wasi")]
@@ -142,7 +144,10 @@ mod integration_1 {
             Some(String::from_utf8_lossy(config).to_string()),
         )?;
 
-        let generator = ClaimGeneratorInfo::new("app");
+        let generator = ClaimGeneratorInfoDefinition {
+            name: "app".to_owned(),
+            ..Default::default()
+        };
         // create a new Manifest
         let mut builder = Builder::new();
         builder.set_claim_generator_info(generator);
@@ -304,6 +309,8 @@ mod integration_1 {
     #[cfg(feature = "file_io")]
     fn test_asset_reference_assertion() -> Result<()> {
         // set up parent and destination paths
+
+        use c2pa::definitions::ClaimGeneratorInfoDefinition;
         let dir = tempdirectory()?;
         let output_path = dir.path().join("test_file.jpg");
         #[cfg(target_os = "wasi")]
@@ -328,7 +335,10 @@ mod integration_1 {
             Some(String::from_utf8_lossy(config).to_string()),
         )?;
 
-        let generator = ClaimGeneratorInfo::new("app");
+        let generator = ClaimGeneratorInfoDefinition {
+            name: "app".to_owned(),
+            ..Default::default()
+        };
         // create a new Manifest
         let mut builder = Builder::new();
         builder.set_claim_generator_info(generator);

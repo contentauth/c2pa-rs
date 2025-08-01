@@ -12,6 +12,7 @@
 // each license.
 
 pub(crate) mod builder;
+pub(crate) mod model;
 pub(crate) mod signer;
 
 #[cfg(feature = "file_io")]
@@ -752,7 +753,7 @@ pub mod tests {
 
             [trust]
 
-            [Core]
+            [core]
             debug = false
             hash_alg = "sha256"
             salt_jumbf_boxes = true
@@ -760,7 +761,7 @@ pub mod tests {
             prefer_bmff_merkle_tree = false
             compress_manifests = true
 
-            [Verify]
+            [verify]
             verify_after_reading = true
             verify_after_sign = true
             verify_trust = true
