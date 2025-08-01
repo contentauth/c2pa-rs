@@ -23,7 +23,7 @@ use crate::{
     error::Result,
     resource_store::UriOrResource,
     utils::cbor_types::DateT,
-    ClaimGeneratorInfo,
+    ClaimGeneratorInfo, HashedUri,
 };
 
 const ASSERTION_CREATION_VERSION: usize = 2;
@@ -135,6 +135,40 @@ impl From<ClaimGeneratorInfo> for SoftwareAgent {
     }
 }
 
+/// Additional parameters of the action.
+#[derive(Deserialize, Serialize, Clone, Debug, Default, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ParametersMap {
+    // v1 fields
+    /// A hashed-uri to the ingredient assertion that this action acts on.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ingredient: Option<HashedUri>,
+    /// Additional description of the action.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+
+    // v2 fields
+    /// A JUMBF URI to the redacted assertion, required when the action is `c2pa.redacted`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub redacted: Option<String>,
+    /// A list of hashed JUMBF URI(s) to the ingredient (v2 or v3) assertion(s) that this action acts on.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ingredients: Option<Vec<HashedUri>>,
+    /// BCP-47 code of the source language of a `c2pa.translated` action.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_language: Option<String>,
+    /// BCP-47 code of the target language of a `c2pa.translated` action.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub target_language: Option<String>,
+    /// Was this action performed multiple times.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub multiple_instances: Option<bool>,
+
+    /// Anything from the common parameters.
+    #[serde(flatten)]
+    pub common: HashMap<String, Value>,
+}
+
 /// Defines a single action taken on an asset.
 ///
 /// An [`Action`] describes what took place on the asset, when it took place,
@@ -180,7 +214,7 @@ pub struct Action {
 
     /// Additional parameters of the action. These vary by the type of action.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) parameters: Option<HashMap<String, Value>>,
+    pub(crate) parameters: Option<ParametersMap>,
 
     /// An array of the creators that undertook this action.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -255,21 +289,26 @@ impl Action {
     /// Returns the additional parameters for this action.
     ///
     /// These vary by the type of action.
-    pub fn parameters(&self) -> Option<&HashMap<String, Value>> {
+    pub fn parameters(&self) -> Option<&ParametersMap> {
         self.parameters.as_ref()
     }
 
     /// Returns an individual action parameter if it exists.
-    pub fn get_parameter(&self, key: &str) -> Option<&Value> {
+    pub fn get_parameter(&self, key: &str) -> Option<Value> {
         match self.parameters.as_ref() {
-            Some(parameters) => parameters.get(key),
-            None => None,
-        }
-    }
-
-    pub fn get_parameter_mut(&mut self, key: &str) -> Option<&mut Value> {
-        match &mut self.parameters {
-            Some(parameters) => parameters.get_mut(key),
+            // This is for backwards compatibility purposes.
+            Some(parameters) => match key {
+                "ingredient" => serde_cbor::value::to_value(&parameters.ingredient).ok(),
+                "description" => serde_cbor::value::to_value(&parameters.description).ok(),
+                "redacted" => serde_cbor::value::to_value(&parameters.redacted).ok(),
+                "ingredients" => serde_cbor::value::to_value(&parameters.ingredients).ok(),
+                "source_language" => serde_cbor::value::to_value(&parameters.source_language).ok(),
+                "target_language" => serde_cbor::value::to_value(&parameters.target_language).ok(),
+                "multiple_instances" => {
+                    serde_cbor::value::to_value(parameters.multiple_instances).ok()
+                }
+                _ => parameters.common.get(key).cloned(),
+            },
             None => None,
         }
     }
@@ -322,15 +361,6 @@ impl Action {
         self
     }
 
-    /// Sets the value of the `xmpMM:InstanceID` property for the
-    /// modified (output) resource.
-    #[deprecated(since = "0.37.0", note = "Use `add_ingredient_id()` instead")]
-    pub fn set_instance_id<S: Into<String>>(mut self, id: S) -> Self {
-        #[allow(clippy::unwrap_used)]
-        self.add_ingredient_id(&id.into()).unwrap(); // Supporting deprecated feature.
-        self
-    }
-
     // Internal function to return any ingredients referenced by this action.
     #[allow(dead_code)] // not used in some scenarios
     pub(crate) fn ingredient_ids(&mut self, claim_version: u8) -> Option<Vec<String>> {
@@ -368,26 +398,51 @@ impl Action {
         key: S,
         value: T,
     ) -> Result<Self> {
-        let value_bytes = serde_cbor::ser::to_vec(&value)?;
-        let value = serde_cbor::from_slice(&value_bytes)?;
+        let value = serde_cbor::value::to_value(value)?;
 
-        self.parameters = Some(match self.parameters {
-            Some(mut parameters) => {
-                parameters.insert(key.into(), value);
-                parameters
-            }
+        let parameters = match &mut self.parameters {
+            Some(parameters) => parameters,
             None => {
-                let mut p = HashMap::new();
-                p.insert(key.into(), value);
-                p
+                self.parameters = Some(ParametersMap::default());
+                #[allow(clippy::unwrap_used)]
+                self.parameters.as_mut().unwrap()
             }
-        });
+        };
+
+        // This is for backwards compatibility purposes.
+        match key.into().as_str() {
+            "ingredient" => {
+                parameters.ingredient = serde_cbor::value::from_value(value)?;
+            }
+            "description" => {
+                parameters.description = serde_cbor::value::from_value(value)?;
+            }
+            "redacted" => {
+                parameters.redacted = serde_cbor::value::from_value(value)?;
+            }
+            "ingredients" => {
+                parameters.ingredients = serde_cbor::value::from_value(value)?;
+            }
+            "source_language" => {
+                parameters.source_language = serde_cbor::value::from_value(value)?;
+            }
+            "target_language" => {
+                parameters.target_language = serde_cbor::value::from_value(value)?;
+            }
+            "multiple_instances" => {
+                parameters.multiple_instances = serde_cbor::value::from_value(value)?;
+            }
+            key => {
+                parameters.common.insert(key.to_owned(), value);
+            }
+        }
+
         Ok(self)
     }
 
     // Removes a parameter with the given key, returning the parameter if it existed.
     pub(crate) fn remove_parameter<S: Into<String>>(&mut self, key: S) -> Option<Value> {
-        self.parameters.as_mut()?.remove(&key.into())
+        self.parameters.as_mut()?.common.remove(&key.into())
     }
 
     pub(crate) fn set_parameter_ref<S: Into<String>, T: Serialize>(
@@ -397,17 +452,18 @@ impl Action {
     ) -> Result<&mut Self> {
         let value_bytes = serde_cbor::ser::to_vec(&value)?;
         let value = serde_cbor::from_slice(&value_bytes)?;
-        self.parameters = Some(match self.parameters.take() {
-            Some(mut parameters) => {
-                parameters.insert(key.into(), value);
-                parameters
-            }
+
+        let parameters = match &mut self.parameters {
+            Some(parameters) => parameters,
             None => {
-                let mut p = HashMap::new();
-                p.insert(key.into(), value);
-                p
+                self.parameters = Some(ParametersMap::default());
+                #[allow(clippy::unwrap_used)]
+                self.parameters.as_mut().unwrap()
             }
-        });
+        };
+
+        parameters.common.insert(key.into(), value);
+
         Ok(self)
     }
 
@@ -455,10 +511,10 @@ impl Action {
     }
 
     /// Adds an ingredient id to the action.
-    pub fn add_ingredient_id(&mut self, ingredient_id: &str) -> Result<&mut Self> {
-        if let Some(Value::Array(ids)) = self.get_parameter_mut("ingredientIds") {
+    pub fn add_ingredient_id(mut self, ingredient_id: &str) -> Result<Self> {
+        if let Some(Value::Array(mut ids)) = self.get_parameter("ingredientIds") {
             ids.push(Value::Text(ingredient_id.to_string()));
-            return Ok(self);
+            return self.set_parameter(CAI_INGREDIENT_IDS, ids);
         }
         let ids = vec![Value::Text(ingredient_id.to_string())];
         self.set_parameter_ref("ingredientIds", ids)?;
@@ -786,13 +842,13 @@ pub mod tests {
         assert_eq!(result.actions.len(), 2);
         assert_eq!(result.actions[0].action(), original.actions[0].action());
         assert_eq!(
-            result.actions[0].parameters().unwrap().get("name"),
-            original.actions[0].parameters().unwrap().get("name")
+            result.actions[0].get_parameter("name"),
+            original.actions[0].get_parameter("name")
         );
         assert_eq!(result.actions[1].action(), original.actions[1].action());
         assert_eq!(
-            result.actions[1].parameters().unwrap().get("name"),
-            original.actions[1].parameters().unwrap().get("name")
+            result.actions[1].get_parameter("name"),
+            original.actions[1].get_parameter("name")
         );
         assert_eq!(result.actions[1].when(), original.actions[1].when());
         assert_eq!(
