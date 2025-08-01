@@ -70,7 +70,7 @@ impl StatusTracker {
                 log_item.label = std::borrow::Cow::Owned(current_uri.to_string());
             }
         }
-        info!("Validation error: {log_item:#?}");
+        info!("Validation info: {log_item:#?}");
         self.logged_items.push(log_item);
     }
 

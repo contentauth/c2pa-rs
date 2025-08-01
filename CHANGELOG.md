@@ -6,6 +6,77 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 Since version 0.36.2, the format of this changelog is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.58.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.57.0...c2pa-v0.58.0)
+_18 July 2025_
+
+### Added
+
+* Add C binding for setting the base path ([#1237](https://github.com/contentauth/c2pa-rs/pull/1237))
+* Asset reference assertion ([#1203](https://github.com/contentauth/c2pa-rs/pull/1203))
+* Add `Reader::remote_url` and `Reader::is_embedded` ([#1150](https://github.com/contentauth/c2pa-rs/pull/1150))
+* Store icon references into c2pa.icon assertions for v2 instead of using data_boxes. ([#1235](https://github.com/contentauth/c2pa-rs/pull/1235))
+* Remove file type from thumbnail names ([#1187](https://github.com/contentauth/c2pa-rs/pull/1187))
+* Update MSRV to 1.85 ([#1208](https://github.com/contentauth/c2pa-rs/pull/1208))
+
+### Documented
+
+* Fix spec link for EmbeddedData ([#1226](https://github.com/contentauth/c2pa-rs/pull/1226))
+* API doc clean up and improvement ([#1178](https://github.com/contentauth/c2pa-rs/pull/1178))
+* Fix formatting of top level example. ([#1161](https://github.com/contentauth/c2pa-rs/pull/1161))
+
+### Fixed
+
+* Panic when adding empty actions assertion ([#1227](https://github.com/contentauth/c2pa-rs/pull/1227))
+* Generated JPEG thumbnail incorrectly rotated ([#1233](https://github.com/contentauth/c2pa-rs/pull/1233))
+* Unfreeze dependency on base64ct crate now that we're up to MSRV 1.85 ([#1228](https://github.com/contentauth/c2pa-rs/pull/1228))
+* Clean up logs ([#1181](https://github.com/contentauth/c2pa-rs/pull/1181))
+* Change timestamp validation to return new required info fields ([#1191](https://github.com/contentauth/c2pa-rs/pull/1191))
+* Xmp jpeg write ([#1156](https://github.com/contentauth/c2pa-rs/pull/1156))
+* Clippy warnings for Rust 1.88 ([#1204](https://github.com/contentauth/c2pa-rs/pull/1204))
+
+### Other
+
+* Move uri_to_path into utils ([#1186](https://github.com/contentauth/c2pa-rs/pull/1186))
+
+## [0.57.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.56.2...c2pa-v0.57.0)
+_19 June 2025_
+
+### Fixed
+
+* No-op change to trigger c2pa core crate publish
+
+## [0.56.2](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.56.1...c2pa-v0.56.2)
+_18 June 2025_
+
+### Fixed
+
+* No-op change to trigger rebuild
+
+## [0.56.1](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.56.0...c2pa-v0.56.1)
+_18 June 2025_
+
+### Fixed
+
+* To_archive does not store resources associated with ingredients ([#1151](https://github.com/contentauth/c2pa-rs/pull/1151))
+
+## [0.56.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.55.0...c2pa-v0.56.0)
+_17 June 2025_
+
+### Added
+
+* *(sdk)* Introduces get_supported_types api ([#1138](https://github.com/contentauth/c2pa-rs/pull/1138))
+* Update Validation for 2.2 spec compliance ([#1144](https://github.com/contentauth/c2pa-rs/pull/1144))
+
+### Documented
+
+* Doc cleanup ([#1143](https://github.com/contentauth/c2pa-rs/pull/1143))
+
+### Fixed
+
+* Freeze base64ct crate at 1.7.3 for now ([#1163](https://github.com/contentauth/c2pa-rs/pull/1163))
+* C2patool reports cawg.ica.credential_valid for valid CAWG X.509 signature (CAI-8751) ([#1155](https://github.com/contentauth/c2pa-rs/pull/1155))
+* Docs.rs build using openssl and rust_native_crypto simulatenously ([#1139](https://github.com/contentauth/c2pa-rs/pull/1139))
+
 ## [0.55.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.54.0...c2pa-v0.55.0)
 _27 May 2025_
 

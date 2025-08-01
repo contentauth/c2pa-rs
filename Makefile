@@ -18,12 +18,12 @@ check-format:
 
 check-docs:
 	cargo doc --no-deps --workspace --features="file_io"
+
 clippy:
 	cargo clippy --features="file_io" --all-targets -- -D warnings
 
 test-local:
 	cargo test --features="file_io, fetch_remote_manifests, add_thumbnails, v1_api" --all-targets
-# Builds and views documentation
 
 test-wasm:
 	cd sdk && wasm-pack test --node -- --no-default-features --features="rust_native_crypto"
@@ -70,4 +70,4 @@ show:
 	cargo run --example show -- sdk/tests/fixtures/ca.jpg
 
 release:
-	cd c_api && make release
+	cd c2pa_c_ffi && make release

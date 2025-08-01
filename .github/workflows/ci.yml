@@ -55,7 +55,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [windows-latest, macos-latest, ubuntu-latest]
-        rust_version: [stable, 1.82.0]
+        rust_version: [stable, 1.86.0]
 
     steps:
       - name: Checkout repository
@@ -269,7 +269,7 @@ jobs:
       fail-fast: false
       matrix:
         target: [aarch64-unknown-linux-gnu]
-        rust_version: [stable, 1.82.0]
+        rust_version: [stable, 1.86.0]
 
     steps:
       - name: Checkout repository
@@ -316,12 +316,21 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Set up Chrome
+        id: setup-chrome
+        uses: browser-actions/setup-chrome@v2
+        with:
+          chrome-version: 137
+          install-chromedriver: true
+
       - name: Install wasm-pack
         run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
 
       - name: Run Wasm tests
-        run: wasm-pack test --chrome --headless --no-default-features --features rust_native_crypto
+        run: wasm-pack test --chrome --chromedriver ${{ steps.setup-chrome.outputs.chromedriver-path }} --headless --no-default-features --features rust_native_crypto
         working-directory: ./sdk
+        env:
+          WASM_BINDGEN_TEST_TIMEOUT: 60
 
   tests-wasi:
     name: Unit tests (WASI)
@@ -378,7 +387,7 @@ jobs:
           RUST_MIN_STACK: 16777216
           FEATURES: ${{needs.get-features.outputs.rust-native-features}}
         run: |
-          cargo +nightly-2025-05-14 test --target wasm32-wasip2 -p c2pa --features "$FEATURES" --no-default-features
+          cargo +nightly-2025-05-14 test --target wasm32-wasip2 -p c2pa --features "$FEATURES" --no-default-features -- --no-capture
 
       # - name: Run WASI tests (c2patool)
       #   env:
@@ -388,7 +397,7 @@ jobs:
       #     RUST_MIN_STACK: 16777216
       #     FEATURES: ${{needs.get-features.outputs.rust-native-features}}
       #   run: |
-      #     cargo +nightly-2025-05-14 test --target wasm32-wasip2 -p c2patool --features "$FEATURES" --no-default-features
+      #     cargo +nightly-2025-05-14 test --target wasm32-wasip2 -p c2patool --features "$FEATURES" --no-default-features -- --no-capture
 
   test-direct-minimal-versions:
     name: Unit tests with minimum versions of direct dependencies
@@ -414,12 +423,7 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: nightly-2025-01-24
-          # Pinning to specific nightly build for now. More recent versions
-          # (not sure of start date) cause linker problems with OpenSSL native
-          # code on Mac and Windows, but only when built with minimal dependencies.
-          # Problem discovered on 2025-01-27.
-          # TO DO: Investigate and file bugs if necessary against rust-lang.
+          toolchain: nightly-2025-07-28
 
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
@@ -428,7 +432,7 @@ jobs:
         env:
           FEATURES: ${{needs.get-features.outputs.openssl-features}}
         run: |
-          cargo +nightly-2025-01-24 test -Z direct-minimal-versions --all-targets --features "$FEATURES"
+          cargo +nightly-2025-07-28 test -Z direct-minimal-versions --all-targets --features "$FEATURES"
 
   clippy_check:
     name: Clippy
@@ -478,14 +482,11 @@ jobs:
       - name: Install nightly toolchain
         uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: nightly-2025-06-05
+          toolchain: nightly-2025-07-28
           components: rustfmt
-          # Pinning to specific nightly build for now. More recent versions
-          # introduce a lifetime check that creates a whole slew of build
-          # errors.
 
       - name: Check format
-        run: cargo +nightly-2025-06-05 fmt --all -- --check
+        run: cargo +nightly-2025-07-28 fmt --all -- --check
 
   docs_rs:
     name: Preflight docs.rs build
@@ -631,4 +632,4 @@ jobs:
 
       - name: Build C library for mobile target
         run: make release TARGET=${{ matrix.target }}
-        working-directory: ./c_api
+        working-directory: ./c2pa_c_ffi
