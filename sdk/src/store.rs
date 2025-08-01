@@ -2785,6 +2785,21 @@ impl Store {
                 let pc_mut = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
                 pc_mut.set_signature_val(s);
 
+                if let Ok(verify_after_sign) =
+                    get_settings_value::<bool>("verify.verify_after_sign")
+                {
+                    // Also catch the case where we may have written to io::empty() or similar
+                    if verify_after_sign && output_stream.stream_position()? > 0 {
+                        // verify the store
+                        let mut validation_log =
+                            StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
+                        Store::verify_store(
+                            self,
+                            &mut crate::claim::ClaimAssetData::Stream(output_stream, format),
+                            &mut validation_log,
+                        )?;
+                    }
+                }
                 Ok(m)
             }
             Err(e) => Err(e),
@@ -3711,7 +3726,6 @@ impl Store {
     #[cfg(all(feature = "fetch_remote_manifests", not(target_os = "wasi")))]
     fn fetch_remote_manifest(url: &str) -> Result<Vec<u8>> {
         use conv::ValueFrom;
-        use ureq::Error as uError;
 
         //const MANIFEST_CONTENT_TYPE: &str = "application/x-c2pa-manifest-store"; // todo verify once these are served
         const DEFAULT_MANIFEST_RESPONSE_SIZE: usize = 10 * 1024 * 1024; // 10 MB
@@ -3719,9 +3733,10 @@ impl Store {
         match ureq::get(url).call() {
             Ok(response) => {
                 if response.status() == 200 {
-                    let len = response
-                        .header("Content-Length")
-                        .and_then(|s| s.parse::<usize>().ok())
+                    let body = response.into_body();
+                    let len = body
+                        .content_length()
+                        .and_then(|content_length| content_length.try_into().ok())
                         .unwrap_or(DEFAULT_MANIFEST_RESPONSE_SIZE); // todo figure out good max to accept
 
                     let mut response_bytes: Vec<u8> = Vec::with_capacity(len);
@@ -3729,8 +3744,7 @@ impl Store {
                     let len64 = u64::value_from(len)
                         .map_err(|_err| Error::BadParam("value out of range".to_string()))?;
 
-                    response
-                        .into_reader()
+                    body.into_reader()
                         .take(len64)
                         .read_to_end(&mut response_bytes)
                         .map_err(|_err| {
@@ -3741,17 +3755,12 @@ impl Store {
                 } else {
                     Err(Error::RemoteManifestFetch(format!(
                         "fetch failed: code: {}, status: {}",
-                        response.status(),
-                        response.status_text()
+                        response.status().as_u16(),
+                        response.status().as_str()
                     )))
                 }
             }
-            Err(uError::Status(code, resp)) => Err(Error::RemoteManifestFetch(format!(
-                "code: {}, response: {}",
-                code,
-                resp.status_text()
-            ))),
-            Err(uError::Transport(_)) => Err(Error::RemoteManifestFetch(url.to_string())),
+            Err(err) => Err(Error::RemoteManifestFetch(err.to_string())),
         }
     }
 
@@ -8243,10 +8252,11 @@ pub mod tests {
     #[test]
     #[cfg(feature = "file_io")]
     fn test_bogus_cert() {
+        use crate::builder::Builder;
         let png = include_bytes!("../tests/fixtures/libpng-test.png"); // Randomly generated local Ed25519
         let ed25519 = include_bytes!("../tests/fixtures/certs/ed25519.pem");
         let certs = include_bytes!("../tests/fixtures/certs/es256.pub");
-        let mut builder = crate::Builder::default();
+        let mut builder = Builder::create(DigitalSourceType::Empty);
         let signer =
             crate::create_signer::from_keys(certs, ed25519, SigningAlg::Ed25519, None).unwrap();
         let mut dst = Cursor::new(Vec::new());
@@ -8262,5 +8272,26 @@ pub mod tests {
         let reader = crate::Reader::from_stream("image/png", &mut dst).unwrap();
 
         assert_eq!(reader.validation_state(), crate::ValidationState::Invalid);
+    }
+
+    #[test]
+    /// Test that we can we load a store from JUMBF and then convert it back to the identical JUMBF.
+    fn test_from_and_to_jumbf() {
+        // test adding to actual image
+        let ap = fixture_path("C.jpg");
+
+        let mut stream = std::fs::File::open(&ap).unwrap();
+        let format = "image/jpeg";
+
+        let (manifest_bytes, _remote_url) =
+            Store::load_jumbf_from_stream(format, &mut stream).unwrap();
+
+        let store = Store::from_jumbf(&manifest_bytes, &mut StatusTracker::default()).unwrap();
+
+        let jumbf = store
+            .to_jumbf_internal(0)
+            .expect("Failed to convert store to JUMBF");
+
+        assert_eq!(jumbf, manifest_bytes);
     }
 }

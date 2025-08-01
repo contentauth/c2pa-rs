@@ -130,6 +130,7 @@ pub mod validation_results;
 pub mod validation_status;
 
 // Public exports
+pub use assertions::DigitalSourceType;
 #[doc(inline)]
 pub use assertions::Relationship;
 #[cfg(feature = "v1_api")]

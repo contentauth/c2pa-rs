@@ -17,7 +17,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     assertions::{
-        region_of_interest::RegionOfInterest, Action, ActionTemplate, Actor, DigitalSourceType,
+        region_of_interest::RegionOfInterest, Action, ActionTemplate, DigitalSourceType,
         SoftwareAgent,
     },
     cbor_types::DateT,
@@ -270,9 +270,6 @@ pub(crate) struct ActionSettings {
     /// 0-based index into the softwareAgents array.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub software_agent_index: Option<usize>,
-    /// A semicolon-delimited list of the parts of the resource that were changed since the previous event history.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub changed: Option<String>,
     /// A list of the regions of interest of the resource that were changed.
     ///
     /// If not present, presumed to be undefined.
@@ -280,18 +277,11 @@ pub(crate) struct ActionSettings {
     /// it should be assumed that anything might have changed.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub changes: Option<Vec<RegionOfInterest>>,
-    // TODO: is deprecated, do we still read it? validate it?
-    /// This is NOT the instanceID in the spec.
-    /// It is now deprecated but was previously used to map the action to an ingredient.
-    #[serde(skip_serializing)]
-    pub instance_id: Option<String>,
+
     /// Additional parameters of the action. These vary by the type of action.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub parameters: Option<HashMap<String, toml::Value>>,
-    /// An array of the creators that undertook this action.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub actors: Option<Vec<Actor>>,
-    /// One of the defined URI values at `<https://cv.iptc.org/newscodes/digitalsourcetype/>`.
+
     #[serde(skip_serializing_if = "Option::is_none")]
     pub source_type: Option<DigitalSourceType>,
     /// List of related actions.
@@ -318,10 +308,7 @@ impl TryFrom<ActionSettings> for Action {
                 .transpose()?
                 .map(SoftwareAgent::ClaimGeneratorInfo),
             software_agent_index: value.software_agent_index,
-            changed: value.changed,
             changes: value.changes,
-            #[allow(deprecated)]
-            instance_id: value.instance_id,
             parameters: value
                 .parameters
                 .map(|template_parameters| {
@@ -335,11 +322,11 @@ impl TryFrom<ActionSettings> for Action {
                         .collect::<Result<HashMap<String, serde_cbor::Value>>>()
                 })
                 .transpose()?,
-            actors: value.actors,
             source_type: value.source_type,
             related: value.related,
             reason: value.reason,
             description: value.description,
+            ..Default::default()
         })
     }
 }
@@ -388,8 +375,8 @@ impl Default for ActionsSettings {
             templates: None,
             actions: None,
             auto_created_action: AutoActionSettings {
-                enabled: false,
-                source_type: None,
+                enabled: true,
+                source_type: Some(DigitalSourceType::Empty),
             },
             auto_opened_action: AutoActionSettings {
                 enabled: true,
