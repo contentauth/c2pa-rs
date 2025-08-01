@@ -14,14 +14,17 @@
 use std::{
     ffi::CString,
     os::raw::{c_char, c_int, c_uchar, c_void},
+    ptr,
 };
 
+// C has no namespace so we prefix things with C2PA to make them unique
+#[allow(deprecated)]
+use c2pa::settings::load_settings_from_str;
 #[cfg(feature = "file_io")]
 use c2pa::Ingredient;
-// C has no namespace so we prefix things with C2PA to make them unique
 use c2pa::{
-    assertions::DataHash, identity::validator::CawgValidator, settings::load_settings_from_str,
-    Builder as C2paBuilder, CallbackSigner, Reader as C2paReader, SigningAlg,
+    assertions::DataHash, identity::validator::CawgValidator, Builder as C2paBuilder,
+    CallbackSigner, Reader as C2paReader, SigningAlg,
 };
 use scopeguard::guard;
 use tokio::runtime::Runtime; // cawg validator requires async
@@ -280,6 +283,7 @@ pub unsafe extern "C" fn c2pa_load_settings(
 ) -> c_int {
     let settings = from_cstr_or_return_int!(settings);
     let format = from_cstr_or_return_int!(format);
+    #[allow(deprecated)]
     let result = load_settings_from_str(&settings, &format);
     ok_or_return_int!(result, |_| 0) // returns 0 on success
 }
@@ -595,6 +599,39 @@ pub unsafe extern "C" fn c2pa_reader_json(reader_ptr: *mut C2paReader) -> *mut c
     to_c_string(c2pa_reader.json())
 }
 
+/// Returns the remote url of the manifest if it was obtained remotely.
+///
+/// # Parameters
+/// * reader_ptr: pointer to a C2paReader.
+///
+/// # Safety
+/// reader_ptr must be a valid pointer to a C2paReader.
+#[no_mangle]
+pub unsafe extern "C" fn c2pa_reader_remote_url(reader_ptr: *mut C2paReader) -> *const c_char {
+    check_or_return_null!(reader_ptr);
+    let c2pa_reader = guard_boxed!(reader_ptr);
+
+    match c2pa_reader.remote_url() {
+        Some(url) => to_c_string(url.to_string()),
+        None => ptr::null(),
+    }
+}
+
+/// Returns if the reader was created from an embedded manifest.
+///
+/// # Parameters
+/// * reader_ptr: pointer to a C2paReader.
+///
+/// # Safety
+/// reader_ptr must be a valid pointer to a C2paReader.
+#[no_mangle]
+pub unsafe extern "C" fn c2pa_reader_is_embedded(reader_ptr: *mut C2paReader) -> bool {
+    null_check!((reader_ptr), |ptr| ptr, false);
+    let c2pa_reader = guard_boxed!(reader_ptr);
+
+    c2pa_reader.is_embedded()
+}
+
 /// Writes a C2paReader resource to a stream given a URI.
 ///
 /// The resource uri should match an identifier in the the manifest store.
@@ -760,6 +797,31 @@ pub unsafe extern "C" fn c2pa_builder_set_remote_url(
     let mut builder = guard_boxed_int!(builder_ptr);
     let remote_url = from_cstr_or_return_int!(remote_url);
     builder.set_remote_url(&remote_url);
+    0 as c_int
+}
+
+/// ⚠️ **Deprecated Soon**
+/// This method is planned to be deprecated in a future release.
+/// Usage should be limited and temporary.
+///
+/// Sets the resource directory on the Builder.
+/// When set, resources that are not found in memory will be searched for in the given directory.
+/// # Parameters
+/// * builder_ptr: pointer to a Builder.
+/// * base_path: pointer to a C string with the resource directory.
+/// # Errors
+/// Returns -1 if there were errors, otherwise returns 0.
+/// The error string can be retrieved by calling c2pa_error.
+/// # Safety
+/// Reads from NULL-terminated C strings.
+#[no_mangle]
+pub unsafe extern "C" fn c2pa_builder_set_base_path(
+    builder_ptr: *mut C2paBuilder,
+    base_path: *const c_char,
+) -> c_int {
+    let mut builder = guard_boxed_int!(builder_ptr);
+    let base_path = from_cstr_or_return_int!(base_path);
+    builder.set_base_path(&base_path);
     0 as c_int
 }
 
@@ -1491,6 +1553,21 @@ mod tests {
     }
 
     #[test]
+    fn test_c2pa_reader_remote_url() {
+        let mut stream = TestC2paStream::new(include_bytes!(fixture_path!("cloud.jpg")).to_vec())
+            .into_c_stream();
+
+        let format = CString::new("image/jpeg").unwrap();
+        let result = unsafe { c2pa_reader_from_stream(format.as_ptr(), &mut stream) };
+        assert!(!result.is_null());
+        let remote_url = unsafe { c2pa_reader_remote_url(result) };
+        assert!(!remote_url.is_null());
+        let remote_url = unsafe { std::ffi::CStr::from_ptr(remote_url) };
+        assert_eq!(remote_url, c"https://cai-manifests.adobe.com/manifests/adobe-urn-uuid-5f37e182-3687-462e-a7fb-573462780391");
+        TestC2paStream::drop_c_stream(stream);
+    }
+
+    #[test]
     fn test_c2pa_reader_from_stream_null_format() {
         let mut stream = TestC2paStream::new(Vec::new()).into_c_stream();
 
@@ -1590,7 +1667,7 @@ mod tests {
 
     #[test]
     fn test_c2pa_free_string_array_with_count_1() {
-        let strings = vec![CString::new("image/jpg").unwrap()];
+        let strings = vec![CString::new("image/jpeg").unwrap()];
         let ptrs: Vec<*mut c_char> = strings.into_iter().map(|s| s.into_raw()).collect();
         let ptr = ptrs.as_ptr() as *const *const c_char;
         let count = ptrs.len();
@@ -1758,8 +1835,9 @@ mod tests {
         let json = unsafe { c2pa_reader_json(reader) };
         assert!(!json.is_null());
         let json_str = unsafe { CString::from_raw(json) };
+        println!("JSON Report: {}", json_str.to_str().unwrap());
         let json_report = json_str.to_str().unwrap();
         assert!(json_report.contains("cawg.identity"));
-        assert!(json_report.contains("cawg.ica.credential_valid"));
+        assert!(json_report.contains("cawg.identity.well-formed"));
     }
 }

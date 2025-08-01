@@ -11,13 +11,10 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use std::collections::HashMap;
-
 use chrono::{SecondsFormat, Utc};
 #[cfg(feature = "json_schema")]
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 
 use crate::{
     assertion::{Assertion, AssertionBase, AssertionCbor},
@@ -29,10 +26,10 @@ use crate::{
 
 const ASSERTION_CREATION_VERSION: usize = 1;
 
-/// The Metadata structure can be used as part of other assertions or on its own to reference others
+/// The AssertionMetadata structure can be used as part of other assertions or on its own to reference others
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "json_schema", derive(JsonSchema))]
-pub struct Metadata {
+pub struct AssertionMetadata {
     #[serde(rename = "reviewRatings", skip_serializing_if = "Option::is_none")]
     reviews: Option<Vec<ReviewRating>>,
     #[serde(rename = "dateTime", skip_serializing_if = "Option::is_none")]
@@ -43,11 +40,9 @@ pub struct Metadata {
     data_source: Option<DataSource>,
     #[serde(rename = "regionOfInterest", skip_serializing_if = "Option::is_none")]
     region_of_interest: Option<RegionOfInterest>,
-    #[serde(flatten)]
-    other: HashMap<String, Value>,
 }
 
-impl Metadata {
+impl AssertionMetadata {
     /// Label prefix for an assertion metadata assertion.
     ///
     /// See <https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_metadata_about_assertions>.
@@ -62,7 +57,6 @@ impl Metadata {
             reference: None,
             data_source: None,
             region_of_interest: None,
-            other: HashMap::new(),
         }
     }
 
@@ -84,11 +78,6 @@ impl Metadata {
     /// Returns the [`RegionOfInterest`] for this assertion if it exists.
     pub fn region_of_interest(&self) -> Option<&RegionOfInterest> {
         self.region_of_interest.as_ref()
-    }
-
-    /// Returns map containing custom metadata fields.
-    pub fn other(&self) -> &HashMap<String, Value> {
-        &self.other
     }
 
     /// Adds a [`ReviewRating`] associated with the assertion.
@@ -132,34 +121,23 @@ impl Metadata {
         self.region_of_interest = Some(region_of_interest);
         self
     }
-
-    /// Adds an additional key / value pair.
-    pub fn insert(&mut self, key: &str, value: Value) -> &mut Self {
-        self.other.insert(key.to_string(), value);
-        self
-    }
-
-    /// Gets additional values by key.
-    pub fn get(&self, key: &str) -> Option<&Value> {
-        self.other.get(key)
-    }
 }
 
-impl Default for Metadata {
+impl Default for AssertionMetadata {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl std::fmt::Display for Metadata {
+impl std::fmt::Display for AssertionMetadata {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(&serde_json::to_string_pretty(self).unwrap_or_default())
     }
 }
 
-impl AssertionCbor for Metadata {}
+impl AssertionCbor for AssertionMetadata {}
 
-impl AssertionBase for Metadata {
+impl AssertionBase for AssertionMetadata {
     const LABEL: &'static str = Self::LABEL;
     const VERSION: Option<usize> = Some(ASSERTION_CREATION_VERSION);
 
@@ -334,32 +312,28 @@ pub mod tests {
     #[test]
     fn assertion_metadata() {
         let review = ReviewRating::new("foo", Some("bar".to_owned()), 3);
-        let test_value = Value::from("test");
-        let mut original =
-            Metadata::new()
-                .add_review(review)
-                .set_region_of_interest(RegionOfInterest {
-                    region: vec![Range {
-                        range_type: RangeType::Temporal,
-                        time: Some(Time {
-                            time_type: TimeType::Npt,
-                            start: None,
-                            end: None,
-                        }),
-                        ..Default::default()
-                    }],
+        let original = AssertionMetadata::new()
+            .add_review(review)
+            .set_region_of_interest(RegionOfInterest {
+                region: vec![Range {
+                    range_type: RangeType::Temporal,
+                    time: Some(Time {
+                        time_type: TimeType::Npt,
+                        start: None,
+                        end: None,
+                    }),
                     ..Default::default()
-                });
-        original.insert("foo", test_value);
+                }],
+                ..Default::default()
+            });
         println!("{:}", &original);
         let assertion = original.to_assertion().expect("build_assertion");
         assert_eq!(assertion.mime_type(), "application/cbor");
-        assert_eq!(assertion.label(), Metadata::LABEL);
-        let result = Metadata::from_assertion(&assertion).expect("extract_assertion");
+        assert_eq!(assertion.label(), AssertionMetadata::LABEL);
+        let result = AssertionMetadata::from_assertion(&assertion).expect("extract_assertion");
         println!("{:?}", serde_json::to_string(&result));
         assert_eq!(original.date_time, result.date_time);
         assert_eq!(original.reviews, result.reviews);
-        assert_eq!(original.get("foo").unwrap(), "test");
         assert_eq!(
             original.region_of_interest.as_ref(),
             result.region_of_interest()

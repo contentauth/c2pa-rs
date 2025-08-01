@@ -27,7 +27,7 @@ use uuid::Uuid;
 use crate::Manifest;
 use crate::{
     assertion::{Assertion, AssertionBase},
-    assertions::{self, labels, AssetType, EmbeddedData, Metadata, Relationship},
+    assertions::{self, labels, AssertionMetadata, AssetType, EmbeddedData, Relationship},
     asset_io::CAIRead,
     claim::{Claim, ClaimAssetData},
     crypto::base64,
@@ -126,7 +126,7 @@ pub struct Ingredient {
     ///
     /// [`Metadata`]: crate::Metadata
     #[serde(skip_serializing_if = "Option::is_none")]
-    metadata: Option<Metadata>,
+    metadata: Option<AssertionMetadata>,
 
     /// Additional information about the data's type to the ingredient V2 structure.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -255,14 +255,14 @@ impl Ingredient {
     }
 
     /// Returns thumbnail tuple Some((format, bytes)) or None.
-    pub fn thumbnail(&self) -> Option<(&str, Cow<Vec<u8>>)> {
+    pub fn thumbnail(&self) -> Option<(&str, Cow<'_, Vec<u8>>)> {
         self.thumbnail
             .as_ref()
             .and_then(|t| Some(t.format.as_str()).zip(self.resources.get(&t.identifier).ok()))
     }
 
     /// Returns a Cow of thumbnail bytes or Err(Error::NotFound)`.
-    pub fn thumbnail_bytes(&self) -> Result<Cow<Vec<u8>>> {
+    pub fn thumbnail_bytes(&self) -> Result<Cow<'_, Vec<u8>>> {
         match self.thumbnail.as_ref() {
             Some(thumbnail) => self.resources.get(&thumbnail.identifier),
             None => Err(Error::NotFound),
@@ -294,8 +294,8 @@ impl Ingredient {
         self.validation_results.as_ref()
     }
 
-    /// Returns a reference to [`Metadata`] if it exists.
-    pub fn metadata(&self) -> Option<&Metadata> {
+    /// Returns a reference to [`AssertionMetadata`] if it exists.
+    pub fn metadata(&self) -> Option<&AssertionMetadata> {
         self.metadata.as_ref()
     }
 
@@ -317,7 +317,7 @@ impl Ingredient {
     /// Returns a copy on write ref to the manifest data bytes or None`.
     ///
     /// manifest_data is the binary form of a manifest store in .c2pa format.
-    pub fn manifest_data(&self) -> Option<Cow<Vec<u8>>> {
+    pub fn manifest_data(&self) -> Option<Cow<'_, Vec<u8>>> {
         self.manifest_data
             .as_ref()
             .and_then(|r| self.resources.get(&r.identifier).ok())
@@ -452,8 +452,8 @@ impl Ingredient {
         self
     }
 
-    /// Adds any desired [`Metadata`] to this ingredient.
-    pub fn set_metadata(&mut self, metadata: Metadata) -> &mut Self {
+    /// Adds any desired [`AssertionMetadata`] to this ingredient.
+    pub fn set_metadata(&mut self, metadata: AssertionMetadata) -> &mut Self {
         self.metadata = Some(metadata);
         self
     }
@@ -869,10 +869,11 @@ impl Ingredient {
     fn add_stream_internal(mut self, format: &str, stream: &mut dyn CAIRead) -> Result<Self> {
         let mut validation_log = StatusTracker::default();
 
-        // retrieve the manifest bytes from embedded, sidecar or remote and convert to store if found
+        // retrieve the manifest bytes from embedded or remote and convert to store if found
         let jumbf_result = match self.manifest_data() {
             Some(data) => Ok(data.into_owned()),
-            None => Store::load_jumbf_from_stream(format, stream),
+            None => Store::load_jumbf_from_stream(format, stream)
+                .map(|(manifest_bytes, _)| manifest_bytes),
         };
 
         // We can't use functional combinators since we can't use async callbacks (https://github.com/rust-lang/rust/issues/62290)
@@ -897,13 +898,14 @@ impl Ingredient {
         #[cfg(feature = "add_thumbnails")]
         if self.thumbnail.is_none() {
             stream.rewind()?;
-            match crate::utils::thumbnail::make_thumbnail_from_stream(format, stream) {
-                Ok((format, image)) => {
-                    self.set_thumbnail(format, image)?;
-                }
-                Err(err) => {
-                    log::warn!("Could not create thumbnail. {err}");
-                }
+
+            if let Some((output_format, image)) =
+                crate::utils::thumbnail::make_thumbnail_bytes_from_stream(
+                    format,
+                    std::io::BufReader::new(stream),
+                )?
+            {
+                self.set_thumbnail(output_format.to_string(), image)?;
             }
         }
 
@@ -931,7 +933,7 @@ impl Ingredient {
 
         // retrieve the manifest bytes from embedded, sidecar or remote and convert to store if found
         let (result, manifest_bytes) = match Store::load_jumbf_from_stream(format, stream) {
-            Ok(manifest_bytes) => {
+            Ok((manifest_bytes, _)) => {
                 (
                     // generate a store from the buffer and then validate from the asset path
                     match Store::from_jumbf(&manifest_bytes, &mut validation_log) {
@@ -969,13 +971,14 @@ impl Ingredient {
         #[cfg(feature = "add_thumbnails")]
         if ingredient.thumbnail.is_none() {
             stream.rewind()?;
-            match crate::utils::thumbnail::make_thumbnail_from_stream(format, stream) {
-                Ok((format, image)) => {
-                    ingredient.set_thumbnail(format, image)?;
-                }
-                Err(err) => {
-                    log::warn!("Could not create thumbnail. {err}");
-                }
+
+            if let Some((output_format, image)) =
+                crate::utils::thumbnail::make_thumbnail_bytes_from_stream(
+                    format,
+                    std::io::BufReader::new(stream),
+                )?
+            {
+                ingredient.set_thumbnail(output_format.to_string(), image)?;
             }
         }
 
@@ -1037,6 +1040,7 @@ impl Ingredient {
             ingredient.resources_mut().set_base_path(base_path)
         }
 
+        // Find the thumbnail and add as a ResourceRef.
         if let Some(hashed_uri) = ingredient_assertion.thumbnail.as_ref() {
             // This could be a relative or absolute thumbnail reference to another manifest
             let target_claim_label = match manifest_label_from_uri(&hashed_uri.url()) {
@@ -1045,7 +1049,8 @@ impl Ingredient {
             };
             let maybe_resource_ref = match hashed_uri.url() {
                 uri if uri.contains(jumbf::labels::ASSERTIONS) => {
-                    // if this is a claim thumbnail, then use the label from the thumbnail uri
+                    // Get the bits of the thumbnail and convert it to a resource
+                    // it may be in an assertion or a data box
                     store
                         .get_assertion_from_uri_and_claim(&hashed_uri.url(), &target_claim_label)
                         .map(|assertion| {
@@ -1082,24 +1087,46 @@ impl Ingredient {
             }
         };
 
+        // if the ingredient as a data field, we need to resolve that as well
         if let Some(data_uri) = ingredient_assertion.data.as_ref() {
-            let data_box = store
-                .get_data_box_from_uri_and_claim(data_uri, claim_label)
-                .ok_or_else(|| {
+            let maybe_data_ref = match data_uri.url() {
+                uri if uri.contains(jumbf::labels::ASSERTIONS) => {
+                    // if this is a claim data box, then use the label from the data uri
+                    store
+                        .get_assertion_from_uri_and_claim(&uri, claim_label)
+                        .map(|assertion| {
+                            let embedded_data = EmbeddedData::from_assertion(assertion)?;
+                            ingredient.resources.add_uri(
+                                &data_uri.url(),
+                                &embedded_data.content_type,
+                                embedded_data.data,
+                            )
+                        })
+                }
+                uri if uri.contains(jumbf::labels::DATABOXES) => store
+                    .get_data_box_from_uri_and_claim(data_uri, claim_label)
+                    .map(|data_box| {
+                        ingredient
+                            .resources
+                            .add_uri(&uri, &data_box.format, data_box.data.clone())
+                    }),
+                _ => None,
+            };
+            match maybe_data_ref {
+                Some(data_ref) => {
+                    ingredient.data = Some(data_ref?);
+                }
+                None => {
                     error!("failed to get {} from {}", data_uri.url(), ingredient_uri);
-                    Error::AssertionMissing {
-                        url: data_uri.url(),
-                    }
-                })?;
-
-            let mut data_ref = ingredient.resources_mut().add_uri(
-                &data_uri.url(),
-                &data_box.format,
-                data_box.data.clone(),
-            )?;
-            data_ref.data_types.clone_from(&data_box.data_types);
-            ingredient.set_data_ref(data_ref)?;
-        }
+                    validation_status.push(
+                        ValidationStatus::new_failure(
+                            validation_status::ASSERTION_MISSING.to_string(),
+                        )
+                        .set_url(data_uri.url()),
+                    );
+                }
+            }
+        };
 
         if !validation_status.is_empty() {
             ingredient.validation_status = Some(validation_status)
@@ -1369,13 +1396,14 @@ impl Ingredient {
         #[cfg(feature = "add_thumbnails")]
         if ingredient.thumbnail.is_none() {
             stream.rewind()?;
-            match crate::utils::thumbnail::make_thumbnail_from_stream(format, stream) {
-                Ok((format, image)) => {
-                    ingredient.set_thumbnail(format, image)?;
-                }
-                Err(err) => {
-                    log::warn!("Could not create thumbnail. {err}");
-                }
+
+            if let Some((output_format, image)) =
+                crate::utils::thumbnail::make_thumbnail_bytes_from_stream(
+                    format,
+                    std::io::BufReader::new(stream),
+                )?
+            {
+                ingredient.set_thumbnail(output_format.to_string(), image)?;
             }
         }
         Ok(ingredient)
@@ -1414,7 +1442,10 @@ pub trait IngredientOptions {
     /// The default is no thumbnail, so you must provide an override to have a thumbnail image.
     fn thumbnail(&self, _path: &Path) -> Option<(String, Vec<u8>)> {
         #[cfg(feature = "add_thumbnails")]
-        return crate::utils::thumbnail::make_thumbnail(_path).ok();
+        return crate::utils::thumbnail::make_thumbnail_bytes_from_path(_path)
+            .ok()
+            .flatten()
+            .map(|(format, image)| (format.to_string(), image));
         #[cfg(not(feature = "add_thumbnails"))]
         None
     }
@@ -1475,7 +1506,7 @@ mod tests {
             .set_provenance("provenance")
             .set_is_parent()
             .set_relationship(Relationship::ParentOf)
-            .set_metadata(Metadata::new())
+            .set_metadata(AssertionMetadata::new())
             .set_thumbnail("format", "thumbnail".as_bytes().to_vec())
             .unwrap()
             .set_active_manifest("active_manifest")
@@ -1938,12 +1969,12 @@ mod tests_file_io {
 
         assert_eq!(ingredient.thumbnail_ref(), None);
         // assert!(ingredient
-        //     .set_manifest_data_ref(ResourceRef::new("image/jpg", "foo"))
+        //     .set_manifest_data_ref(ResourceRef::new("image/jpeg", "foo"))
         //     .is_err());
         assert_eq!(ingredient.manifest_data_ref(), None);
         // verify we can set a reference
         assert!(ingredient
-            .set_thumbnail_ref(ResourceRef::new("image/jpg", "C.jpg"))
+            .set_thumbnail_ref(ResourceRef::new("image/jpeg", "C.jpg"))
             .is_ok());
         assert!(ingredient.thumbnail_ref().is_some());
         assert!(ingredient
@@ -1996,7 +2027,7 @@ mod tests_file_io {
         folder.push("tests/fixtures");
         let mut ingredient = Ingredient::new_v2("title", "format");
         ingredient.resources.set_base_path(folder);
-        //let mut _data_ref = ResourceRef::new("image/jpg", "foo");
+        //let mut _data_ref = ResourceRef::new("image/jpeg", "foo");
         //data_ref.data_types = vec!["c2pa.types.dataset.pytorch".to_string()];
     }
 
