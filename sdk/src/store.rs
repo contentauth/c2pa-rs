@@ -3711,7 +3711,6 @@ impl Store {
     #[cfg(all(feature = "fetch_remote_manifests", not(target_os = "wasi")))]
     fn fetch_remote_manifest(url: &str) -> Result<Vec<u8>> {
         use conv::ValueFrom;
-        use ureq::Error as uError;
 
         //const MANIFEST_CONTENT_TYPE: &str = "application/x-c2pa-manifest-store"; // todo verify once these are served
         const DEFAULT_MANIFEST_RESPONSE_SIZE: usize = 10 * 1024 * 1024; // 10 MB
@@ -3719,9 +3718,10 @@ impl Store {
         match ureq::get(url).call() {
             Ok(response) => {
                 if response.status() == 200 {
-                    let len = response
-                        .header("Content-Length")
-                        .and_then(|s| s.parse::<usize>().ok())
+                    let body = response.into_body();
+                    let len = body
+                        .content_length()
+                        .and_then(|content_length| content_length.try_into().ok())
                         .unwrap_or(DEFAULT_MANIFEST_RESPONSE_SIZE); // todo figure out good max to accept
 
                     let mut response_bytes: Vec<u8> = Vec::with_capacity(len);
@@ -3729,8 +3729,7 @@ impl Store {
                     let len64 = u64::value_from(len)
                         .map_err(|_err| Error::BadParam("value out of range".to_string()))?;
 
-                    response
-                        .into_reader()
+                    body.into_reader()
                         .take(len64)
                         .read_to_end(&mut response_bytes)
                         .map_err(|_err| {
@@ -3741,17 +3740,12 @@ impl Store {
                 } else {
                     Err(Error::RemoteManifestFetch(format!(
                         "fetch failed: code: {}, status: {}",
-                        response.status(),
-                        response.status_text()
+                        response.status().as_u16(),
+                        response.status().as_str()
                     )))
                 }
             }
-            Err(uError::Status(code, resp)) => Err(Error::RemoteManifestFetch(format!(
-                "code: {}, response: {}",
-                code,
-                resp.status_text()
-            ))),
-            Err(uError::Transport(_)) => Err(Error::RemoteManifestFetch(url.to_string())),
+            Err(err) => Err(Error::RemoteManifestFetch(err.to_string())),
         }
     }
 
