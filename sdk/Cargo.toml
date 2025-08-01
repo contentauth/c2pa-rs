@@ -254,6 +254,10 @@ criterion = { package = "codspeed-criterion-compat", version = "*" }
 name = "signing"
 harness = false
 
+[[bench]]
+name = "reading"
+harness = false
+
 [target.'cfg(all(target_arch = "wasm32", not(target_os = "wasi")))'.dev-dependencies]
 wasm-bindgen-test = "0.3.45"
 

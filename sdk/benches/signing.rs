@@ -171,15 +171,7 @@ fn sign_wav(c: &mut Criterion) {
 }
 
 criterion_group!(
-    benches,
-    sign_jpeg,
-    sign_png,
-    sign_gif,
-    sign_tiff,
-    sign_svg,
-    sign_pdf,
-    sign_mp3,
-    sign_mp4,
+    benches, sign_jpeg, sign_png, sign_gif, sign_tiff, sign_svg, sign_pdf, sign_mp3, sign_mp4,
     sign_wav
 );
 criterion_main!(benches);
