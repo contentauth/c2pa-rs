@@ -1452,7 +1452,7 @@ mod tests {
     #[cfg(feature = "file_io")]
     use crate::utils::test::fixture_path;
     use crate::{
-        assertions::{c2pa_action, BoxHash, C2paDigitalSourceType},
+        assertions::{c2pa_action, BoxHash, DigitalSourceType},
         asset_handlers::jpeg_io::JpegIO,
         cbor_types::value_cbor_to_type,
         crypto::raw_signature::SigningAlg,
@@ -1710,7 +1710,7 @@ mod tests {
             &toml::toml! {
                 [builder.actions.auto_created_action]
                 enabled = true
-                source_type = (C2paDigitalSourceType::Empty.to_string())
+                source_type = (DigitalSourceType::Empty.to_string())
             }
             .to_string(),
         )
@@ -1808,7 +1808,7 @@ mod tests {
             &toml::toml! {
                 [builder.actions.auto_created_action]
                 enabled = true
-                source_type = (C2paDigitalSourceType::Empty.to_string())
+                source_type = (DigitalSourceType::Empty.to_string())
 
                 [builder.actions.auto_placed_action]
                 enabled = true
@@ -1902,7 +1902,7 @@ mod tests {
 
                 [builder.actions.auto_created_action]
                 enabled = true
-                source_type = (C2paDigitalSourceType::Empty.to_string())
+                source_type = (DigitalSourceType::Empty.to_string())
             }
             .to_string(),
         )
@@ -1939,15 +1939,15 @@ mod tests {
             &toml::toml! {
                 [builder.actions.auto_created_action]
                 enabled = true
-                source_type = (C2paDigitalSourceType::Empty.to_string())
+                source_type = (DigitalSourceType::Empty.to_string())
 
                 [[builder.actions.templates]]
                 action = (c2pa_action::EDITED)
-                source_type = (C2paDigitalSourceType::Empty.to_string())
+                source_type = (DigitalSourceType::Empty.to_string())
 
                 [[builder.actions.templates]]
                 action = (c2pa_action::COLOR_ADJUSTMENTS)
-                source_type = (C2paDigitalSourceType::TrainedAlgorithmicData.to_string())
+                source_type = (DigitalSourceType::TrainedAlgorithmicData.to_string())
             }
             .to_string(),
         )
@@ -1978,15 +1978,12 @@ mod tests {
         for template in templates {
             match template.action.as_str() {
                 c2pa_action::EDITED => {
-                    assert_eq!(
-                        template.source_type,
-                        Some(C2paDigitalSourceType::Empty.into())
-                    );
+                    assert_eq!(template.source_type, Some(DigitalSourceType::Empty));
                 }
                 c2pa_action::COLOR_ADJUSTMENTS => {
                     assert_eq!(
                         template.source_type,
-                        Some(C2paDigitalSourceType::TrainedAlgorithmicData.into())
+                        Some(DigitalSourceType::TrainedAlgorithmicData)
                     );
                 }
                 _ => {}
@@ -2003,15 +2000,15 @@ mod tests {
             &toml::toml! {
                 [builder.actions.auto_created_action]
                 enabled = true
-                source_type = (C2paDigitalSourceType::Empty.to_string())
+                source_type = (DigitalSourceType::Empty.to_string())
 
                 [[builder.actions.actions]]
                 action = (c2pa_action::EDITED)
-                source_type = (C2paDigitalSourceType::Empty.to_string())
+                source_type = (DigitalSourceType::Empty.to_string())
 
                 [[builder.actions.actions]]
                 action = (c2pa_action::COLOR_ADJUSTMENTS)
-                source_type = (C2paDigitalSourceType::TrainedAlgorithmicData.to_string())
+                source_type = (DigitalSourceType::TrainedAlgorithmicData.to_string())
             }
             .to_string(),
         )
@@ -2041,15 +2038,12 @@ mod tests {
         for action in actions.actions {
             match action.action() {
                 c2pa_action::EDITED => {
-                    assert_eq!(
-                        action.source_type(),
-                        Some(&C2paDigitalSourceType::Empty.into())
-                    );
+                    assert_eq!(action.source_type(), Some(&DigitalSourceType::Empty));
                 }
                 c2pa_action::COLOR_ADJUSTMENTS => {
                     assert_eq!(
                         action.source_type(),
-                        Some(&C2paDigitalSourceType::TrainedAlgorithmicData.into())
+                        Some(&DigitalSourceType::TrainedAlgorithmicData)
                     );
                 }
                 _ => {}

@@ -29,81 +29,34 @@ use crate::{
 const ASSERTION_CREATION_VERSION: usize = 2;
 pub const CAI_INGREDIENT_IDS: &str = "org.cai.ingredientIds";
 
-/// Description of the source of an asset.
-///
-/// The full list of possible digital source types are found below:
-/// <https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_digital_source_type>
-/// <https://cv.iptc.org/newscodes/digitalsourcetype>
-#[derive(Deserialize, Serialize, Clone, Debug, PartialEq)]
-#[serde(untagged)]
-pub enum DigitalSourceType {
-    C2pa(C2paDigitalSourceType),
-    Iptc(IptcDigitalSourceType),
-    Other(String),
-}
-
-impl From<IptcDigitalSourceType> for DigitalSourceType {
-    fn from(value: IptcDigitalSourceType) -> Self {
-        DigitalSourceType::Iptc(value)
-    }
-}
-
-impl From<C2paDigitalSourceType> for DigitalSourceType {
-    fn from(value: C2paDigitalSourceType) -> Self {
-        DigitalSourceType::C2pa(value)
-    }
-}
-
-impl fmt::Display for DigitalSourceType {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.serialize(f)
-    }
-}
-
-/// C2PA description of the source of an asset.
-///
-/// The full list of possible C2PA digital source types are found below:
-/// <https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_digital_source_type>
-#[non_exhaustive]
-#[derive(Deserialize, Serialize, Clone, Debug, PartialEq)]
-pub enum C2paDigitalSourceType {
-    /// Media whose digital content is effectively empty, such as a blank canvas or zero-length video.
-    #[serde(
-        alias = "digsrctype:empty",
-        rename = "http://c2pa.org/digitalsourcetype/empty"
-    )]
-    Empty,
-    /// Data that is the result of algorithmically using a model derived from sampled content and data.
-    /// Differs from <http://cv.iptc.org/newscodes/digitalsourcetype/>trainedAlgorithmicMedia in that
-    /// the result isn’t a media type (e.g., image or video) but is a data format (e.g., CSV, pickle).
-    #[serde(
-        alias = "digsrctype:trainedAlgorithmicMedia",
-        rename = "http://c2pa.org/digitalsourcetype/trainedAlgorithmicData"
-    )]
-    TrainedAlgorithmicData,
-}
-
-impl fmt::Display for C2paDigitalSourceType {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.serialize(f)
-    }
-}
-
 // TODO: this is needed to supress clippy deprecated field warning:  https://github.com/serde-rs/serde/pull/2879
-pub use iptc_digital_source_type::IptcDigitalSourceType;
-mod iptc_digital_source_type {
+pub use digital_source_type::DigitalSourceType;
+mod digital_source_type {
     #![allow(deprecated)]
 
     use super::*;
-
-    // NOTE: Actions v1 only supports these (not the C2PADigitalSourceType as well)
-    /// IPTC description of the source of an asset.
+    /// Description of the source of an asset.
     ///
-    /// The full list of possible IPTC digital source types are found below:
+    /// The full list of possible digital source types are found below:
+    /// <https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_digital_source_type>
     /// <https://cv.iptc.org/newscodes/digitalsourcetype>
     #[non_exhaustive]
     #[derive(Deserialize, Serialize, Clone, Debug, PartialEq)]
-    pub enum IptcDigitalSourceType {
+    pub enum DigitalSourceType {
+        /// Media whose digital content is effectively empty, such as a blank canvas or zero-length video.
+        #[serde(
+            alias = "digsrctype:empty",
+            rename = "http://c2pa.org/digitalsourcetype/empty"
+        )]
+        Empty,
+        /// Data that is the result of algorithmically using a model derived from sampled content and data.
+        /// Differs from <http://cv.iptc.org/newscodes/digitalsourcetype/>trainedAlgorithmicMedia in that
+        /// the result isn’t a media type (e.g., image or video) but is a data format (e.g., CSV, pickle).
+        #[serde(
+            alias = "digsrctype:trainedAlgorithmicData",
+            rename = "http://c2pa.org/digitalsourcetype/trainedAlgorithmicData"
+        )]
+        TrainedAlgorithmicData,
         /// The media was captured from a real-life source using a digital camera or digital recording device.
         #[serde(
             alias = "digsrctype:digitalCapture",
@@ -234,9 +187,11 @@ mod iptc_digital_source_type {
             rename = "http://cv.iptc.org/newscodes/digitalsourcetype/compositeSynthetic"
         )]
         CompositeSynthetic,
+        /// An unknown digital source type.
+        Other(String),
     }
 
-    impl fmt::Display for IptcDigitalSourceType {
+    impl fmt::Display for DigitalSourceType {
         fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
             self.serialize(f)
         }
@@ -907,7 +862,7 @@ pub mod tests {
                     .set_parameter("name".to_owned(), "gaussian blur")
                     .unwrap()
                     .set_when("2015-06-26T16:43:23+0200")
-                    .set_source_type(IptcDigitalSourceType::AlgorithmicMedia)
+                    .set_source_type(DigitalSourceType::AlgorithmicMedia)
                     .add_change(RegionOfInterest {
                         region: vec![Range {
                             range_type: RangeType::Temporal,
@@ -948,7 +903,7 @@ pub mod tests {
         assert_eq!(result.actions[1].when(), original.actions[1].when());
         assert_eq!(
             result.actions[1].source_type().unwrap(),
-            &IptcDigitalSourceType::AlgorithmicMedia.into()
+            &DigitalSourceType::AlgorithmicMedia
         );
         assert_eq!(result.actions[1].changes(), original.actions()[1].changes());
         assert_eq!(

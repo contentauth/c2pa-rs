@@ -443,7 +443,7 @@ pub mod tests {
     #![allow(clippy::unwrap_used)]
 
     use super::*;
-    use crate::assertions::C2paDigitalSourceType;
+    use crate::assertions::DigitalSourceType;
 
     #[test]
     fn test_auto_created_action_without_source_type() {
@@ -463,7 +463,7 @@ pub mod tests {
         let actions_settings = ActionsSettings {
             auto_created_action: AutoActionSettings {
                 enabled: true,
-                source_type: Some(C2paDigitalSourceType::Empty.into()),
+                source_type: Some(DigitalSourceType::Empty),
             },
             ..Default::default()
         };

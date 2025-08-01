@@ -4596,7 +4596,7 @@ pub mod tests {
     use sha2::Sha256;
 
     use super::*;
-    use crate::assertions::C2paDigitalSourceType;
+    use crate::assertions::DigitalSourceType;
     #[cfg(all(feature = "file_io", feature = "v1_api"))]
     use crate::{
         assertion::AssertionJson,
@@ -4641,7 +4641,7 @@ pub mod tests {
 
     fn create_capture_claim(claim: &mut Claim) -> Result<&mut Claim> {
         let actions = Actions::new()
-            .add_action(Action::new("c2pa.created").set_source_type(C2paDigitalSourceType::Empty));
+            .add_action(Action::new("c2pa.created").set_source_type(DigitalSourceType::Empty));
 
         claim.add_assertion(&actions)?;
 
