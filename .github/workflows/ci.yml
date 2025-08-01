@@ -376,16 +376,6 @@ jobs:
 
     runs-on: ubuntu-latest
 
-    strategy:
-      fail-fast: false
-      matrix:
-        checks:
-          - advisories
-          - bans licenses sources
-
-    # Prevent sudden announcement of a new advisory from failing CI:
-    continue-on-error: ${{ matrix.checks == 'advisories' }}
-
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -393,4 +383,4 @@ jobs:
       - name: Audit crate dependencies
         uses: EmbarkStudios/cargo-deny-action@v2
         with:
-          command: check ${{ matrix.checks }}
+          command: check advisories bans licenses sources
