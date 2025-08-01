@@ -23,7 +23,7 @@ use crate::{
     cbor_types::DateT,
     resource_store::UriOrResource,
     settings::SettingsValidate,
-    ClaimGeneratorInfo, Error, HashedUri, ResourceRef, Result,
+    ClaimGeneratorInfo, Error, ResourceRef, Result,
 };
 
 // TODO: thumbnails/previews for audio?
@@ -256,55 +256,6 @@ impl TryFrom<ActionTemplateSettings> for ActionTemplate {
     }
 }
 
-/// Settings for additional parameters of the action.
-#[derive(Deserialize, Serialize, Clone, Debug, Default, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct ParametersMapSettings {
-    /// A JUMBF URI to the redacted assertion, required when the action is `c2pa.redacted`.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub redacted: Option<String>,
-    /// A list of hashed JUMBF URI(s) to the ingredient (v2 or v3) assertion(s) that this action acts on.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub ingredients: Option<Vec<HashedUri>>,
-    /// BCP-47 code of the source language of a `c2pa.translated` action.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub source_language: Option<String>,
-    /// BCP-47 code of the target language of a `c2pa.translated` action.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub target_language: Option<String>,
-    /// Was this action performed multiple times.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub multiple_instances: Option<bool>,
-    /// Anything from the common parameters.
-    #[serde(flatten)]
-    pub common: HashMap<String, toml::Value>,
-}
-
-impl TryFrom<ParametersMapSettings> for ParametersMap {
-    type Error = Error;
-
-    fn try_from(value: ParametersMapSettings) -> Result<Self> {
-        Ok(ParametersMap {
-            ingredient: None,
-            description: None,
-            redacted: value.redacted,
-            ingredients: value.ingredients,
-            source_language: value.source_language,
-            target_language: value.target_language,
-            multiple_instances: value.multiple_instances,
-            common: value
-                .common
-                .into_iter()
-                .map(|(key, value)| {
-                    serde_cbor::value::to_value(value)
-                        .map(|value| (key, value))
-                        .map_err(|err| err.into())
-                })
-                .collect::<Result<HashMap<String, serde_cbor::Value>>>()?,
-        })
-    }
-}
-
 /// Settings for an action.
 #[allow(unused)]
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -337,7 +288,7 @@ pub(crate) struct ActionSettings {
     pub instance_id: Option<String>,
     /// Additional parameters of the action. These vary by the type of action.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub parameters: Option<ParametersMapSettings>,
+    pub parameters: Option<ParametersMap>,
     /// An array of the creators that undertook this action.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub actors: Option<Vec<Actor>>,
@@ -372,10 +323,7 @@ impl TryFrom<ActionSettings> for Action {
             changes: value.changes,
             #[allow(deprecated)]
             instance_id: value.instance_id,
-            parameters: value
-                .parameters
-                .map(|parameters| parameters.try_into())
-                .transpose()?,
+            parameters: value.parameters,
             actors: value.actors,
             source_type: value.source_type,
             related: value.related,
