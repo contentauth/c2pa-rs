@@ -1,6 +1,9 @@
 # Additional checks that we no longer run on PR validation
 # but want to verify before publishing a new crate version.
 
+# Cool trick: If you want to assess release readiness for any PR,
+# add the "check-release" label to the PR.
+
 name: Release readiness
 
 on:
@@ -15,7 +18,7 @@ jobs:
   get-features:
     name: Get features
     runs-on: ubuntu-latest
-    if: contains(github.event.pull_request.labels.*.name, 'release')
+    if: contains(github.event.pull_request.labels.*.name, 'release') || contains(github.event.pull_request.labels.*.name, 'check-release')
     outputs:
       rust-native-features: ${{ steps.get-features.outputs.rust-native-features }}
       openssl-features: ${{ steps.get-features.outputs.openssl-features }}
@@ -40,7 +43,7 @@ jobs:
   tests-openssl:
     name: Unit tests (with OpenSSL installed)
     needs: get-features
-    if: contains(github.event.pull_request.labels.*.name, 'release')
+    if: contains(github.event.pull_request.labels.*.name, 'release') || contains(github.event.pull_request.labels.*.name, 'check-release')
     runs-on: ${{ matrix.os }}
 
     strategy:
@@ -71,7 +74,7 @@ jobs:
   tests-rust-native-crypto:
     name: Unit tests (with Rust native crypto installed)
     needs: get-features
-    if: contains(github.event.pull_request.labels.*.name, 'release')
+    if: contains(github.event.pull_request.labels.*.name, 'release') || contains(github.event.pull_request.labels.*.name, 'check-release')
     runs-on: ${{ matrix.os }}
 
     strategy:
@@ -102,7 +105,7 @@ jobs:
   tests-cross:
     name: Unit tests
     needs: get-features
-    if: contains(github.event.pull_request.labels.*.name, 'release')
+    if: contains(github.event.pull_request.labels.*.name, 'release') || contains(github.event.pull_request.labels.*.name, 'check-release')
     runs-on: ubuntu-latest
 
     strategy:
@@ -136,7 +139,7 @@ jobs:
   tests-wasi:
     name: Unit tests (WASI)
     needs: get-features
-    if: contains(github.event.pull_request.labels.*.name, 'release')
+    if: contains(github.event.pull_request.labels.*.name, 'release') || contains(github.event.pull_request.labels.*.name, 'check-release')
     runs-on: ubuntu-latest
 
     steps:
@@ -197,7 +200,7 @@ jobs:
   test-direct-minimal-versions:
     name: Unit tests with minimum versions of direct dependencies
     needs: get-features
-    if: contains(github.event.pull_request.labels.*.name, 'release')
+    if: contains(github.event.pull_request.labels.*.name, 'release') || contains(github.event.pull_request.labels.*.name, 'check-release')
     runs-on: ${{ matrix.os }}
 
     strategy:
@@ -226,7 +229,7 @@ jobs:
   docs_rs:
     name: Preflight docs.rs build
     needs: get-features
-    if: contains(github.event.pull_request.labels.*.name, 'release')
+    if: contains(github.event.pull_request.labels.*.name, 'release') || contains(github.event.pull_request.labels.*.name, 'check-release')
     runs-on: ubuntu-latest
 
     steps:
@@ -259,7 +262,7 @@ jobs:
   unused_deps:
     name: Check for unused dependencies
     needs: get-features
-    if: contains(github.event.pull_request.labels.*.name, 'release')
+    if: contains(github.event.pull_request.labels.*.name, 'release') || contains(github.event.pull_request.labels.*.name, 'check-release')
     runs-on: ubuntu-latest
 
     permissions:
@@ -288,7 +291,7 @@ jobs:
 
   c-library-mobile-builds:
     name: C library mobile builds
-    if: contains(github.event.pull_request.labels.*.name, 'release')
+    if: contains(github.event.pull_request.labels.*.name, 'release') || contains(github.event.pull_request.labels.*.name, 'check-release')
     runs-on: ${{ matrix.os }}
 
     strategy:

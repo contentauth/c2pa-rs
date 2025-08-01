@@ -1,3 +1,9 @@
+# A minimal set of tests to catch common issues.
+
+# See release_readiness.yml for a more complete suite of tests.
+# You can add the label "check-release" to any PR to invoke that
+# larger set of tests.
+
 name: CI
 
 on:
