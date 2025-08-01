@@ -1667,7 +1667,7 @@ mod tests {
 
     #[test]
     fn test_c2pa_free_string_array_with_count_1() {
-        let strings = vec![CString::new("image/jpg").unwrap()];
+        let strings = vec![CString::new("image/jpeg").unwrap()];
         let ptrs: Vec<*mut c_char> = strings.into_iter().map(|s| s.into_raw()).collect();
         let ptr = ptrs.as_ptr() as *const *const c_char;
         let count = ptrs.len();

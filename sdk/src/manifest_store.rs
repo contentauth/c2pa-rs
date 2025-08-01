@@ -429,7 +429,7 @@ impl ManifestStore {
     ///         let asset_bytes = include_bytes!("../tests/fixtures/cloud.jpg");
     ///         let manifest_bytes = include_bytes!("../tests/fixtures/cloud_manifest.c2pa");
     ///
-    ///         let manifest_store = ManifestStore::from_manifest_and_asset_bytes_async(manifest_bytes, "image/jpg", asset_bytes)
+    ///         let manifest_store = ManifestStore::from_manifest_and_asset_bytes_async(manifest_bytes, "image/jpeg", asset_bytes)
     ///             .await
     ///             .unwrap();
     ///
@@ -474,7 +474,7 @@ impl ManifestStore {
     ///         let asset_bytes = include_bytes!("../tests/fixtures/cloud.jpg");
     ///         let manifest_bytes = include_bytes!("../tests/fixtures/cloud_manifest.c2pa");
     ///
-    ///         let manifest_store = ManifestStore::from_manifest_and_asset_bytes(manifest_bytes, "image/jpg", asset_bytes)
+    ///         let manifest_store = ManifestStore::from_manifest_and_asset_bytes(manifest_bytes, "image/jpeg", asset_bytes)
     ///             .unwrap();
     ///
     ///         println!("{}", manifest_store);
@@ -681,7 +681,7 @@ mod tests {
 
         let manifest_store = ManifestStore::from_manifest_and_asset_bytes_async(
             manifest_bytes,
-            "image/jpg",
+            "image/jpeg",
             asset_bytes,
         )
         .await

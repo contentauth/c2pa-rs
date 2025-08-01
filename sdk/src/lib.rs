@@ -134,7 +134,7 @@ pub mod validation_status;
 pub use assertions::Relationship;
 #[cfg(feature = "v1_api")]
 pub use asset_io::{CAIRead, CAIReadWrite};
-pub use builder::{Builder, ManifestDefinition};
+pub use builder::{Builder, DigitalSourceType, ManifestDefinition};
 pub use callback_signer::{CallbackFunc, CallbackSigner};
 pub use claim_generator_info::ClaimGeneratorInfo;
 // pub use dynamic_assertion::{
