@@ -14,8 +14,7 @@
 #[cfg(feature = "file_io")]
 use std::path::{Path, PathBuf};
 use std::{
-    collections::HashMap,
-    io::{Read, Seek, Write},
+    collections::HashMap, hint::black_box, io::{Read, Seek, Write}
 };
 
 use async_generic::async_generic;
@@ -1046,6 +1045,15 @@ impl Builder {
         R: Read + Seek + Send,
         W: Write + Read + Seek + Send,
     {
+
+        let mut count = 0;
+        loop {
+            black_box(count += 1);
+            if count >= 20000000 {
+                break;
+            }
+        }
+
         let format = format_to_mime(format);
         self.definition.format.clone_from(&format);
         // todo:: read instance_id from xmp from stream ?
