@@ -100,6 +100,7 @@ impl fmt::Display for UriT {
     }
 }
 
+#[allow(dead_code)]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BytesT(pub Vec<u8>);
 

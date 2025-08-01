@@ -65,13 +65,14 @@ const FULL_BOX_TYPES: &[&str; 80] = &[
     "txtC", "mime", "uri ", "uriI", "hmhd", "sthd", "vvhd", "medc",
 ];
 
-static SUPPORTED_TYPES: [&str; 13] = [
+static SUPPORTED_TYPES: [&str; 15] = [
     "avif",
     "heif",
     "heic",
     "mp4",
     "m4a",
     "mov",
+    "m4v",
     "application/mp4",
     "audio/mp4",
     "image/avif",
@@ -79,6 +80,7 @@ static SUPPORTED_TYPES: [&str; 13] = [
     "image/heif",
     "video/mp4",
     "video/quicktime",
+    "video/x-m4v",
 ];
 
 macro_rules! boxtype {
@@ -256,6 +258,20 @@ pub(crate) struct BoxInfoLite {
     pub path: String,
     pub offset: u64,
     pub size: u64,
+}
+
+impl BoxInfoLite {
+    pub fn start(&self) -> u64 {
+        self.offset
+    }
+
+    pub fn end(&self) -> u64 {
+        self.offset + self.size
+    }
+
+    pub fn size(&self) -> u64 {
+        self.size
+    }
 }
 
 fn read_box_header_ext<R: Read + Seek + ?Sized>(reader: &mut R) -> Result<(u8, u32)> {
@@ -485,7 +501,7 @@ where
 
                 // check the length
                 if let Some(desired_length) = bmff_exclusion.length {
-                    if desired_length as u64 != box_length {
+                    if desired_length != box_length {
                         continue;
                     }
                 }
@@ -531,7 +547,7 @@ where
 
                     for data_map in data_map_vec {
                         // move to the start of exclusion
-                        skip_bytes_to(reader, box_start + data_map.offset as u64)?;
+                        skip_bytes_to(reader, box_start + data_map.offset)?;
 
                         // match the data
                         let buf = reader.read_to_vec(data_map.value.len() as u64)?;
@@ -550,21 +566,25 @@ where
                 // reduce range if desired
                 if let Some(subset_vec) = &bmff_exclusion.subset {
                     for subset in subset_vec {
-                        let exclusion = HashRange::new(
-                            (exclusion_start + subset.offset as u64) as usize,
-                            (if subset.length == 0 {
-                                exclusion_length - subset.offset as u64
-                            } else {
-                                min(subset.length as u64, exclusion_length)
-                            }) as usize,
-                        );
+                        // if the subset offset is past the end of the box, skip
+                        if subset.offset > exclusion_length {
+                            continue;
+                        }
+
+                        let new_start = exclusion_start + subset.offset;
+                        let new_length = if subset.length == 0 {
+                            exclusion_length - subset.offset
+                        } else {
+                            min(subset.length, exclusion_length - subset.offset)
+                        };
+
+                        let exclusion = HashRange::new(new_start, new_length);
 
                         exclusions.push(exclusion);
                     }
                 } else {
                     // exclude box in its entirty
-                    let exclusion =
-                        HashRange::new(exclusion_start as usize, exclusion_length as usize);
+                    let exclusion = HashRange::new(exclusion_start, exclusion_length);
 
                     exclusions.push(exclusion);
 
@@ -582,7 +602,7 @@ where
     // note: this is technically not an exclusion but a replacement with a new range of bytes to be hashed
     if bmff_v2 {
         for tl_start in tl_offsets {
-            let mut exclusion = HashRange::new(tl_start as usize, 1);
+            let mut exclusion = HashRange::new(tl_start, 1u64);
             exclusion.set_bmff_offset(tl_start);
 
             exclusions.push(exclusion);
@@ -1114,6 +1134,8 @@ pub(crate) struct C2PABmffBoxes {
     pub bmff_merkle_box_infos: Vec<BoxInfoLite>,
     pub box_infos: Vec<BoxInfoLite>,
     pub xmp: Option<String>,
+    pub manifest_offset: Option<u64>,
+    pub first_aux_uuid_offset: u64,
 }
 
 pub(crate) fn read_bmff_c2pa_boxes(mut reader: &mut dyn CAIRead) -> Result<C2PABmffBoxes> {
@@ -1140,7 +1162,8 @@ pub(crate) fn read_bmff_c2pa_boxes(mut reader: &mut dyn CAIRead) -> Result<C2PAB
 
     let mut output: Option<Vec<u8>> = None;
     let mut xmp: Option<String> = None;
-    let mut _first_aux_uuid = 0;
+    let mut manifest_offset: Option<u64> = None;
+    let mut first_aux_uuid_offset = 0u64;
     let mut merkle_boxes: Vec<BmffMerkleMap> = Vec::new();
     let mut merkle_box_infos: Vec<BoxInfoLite> = Vec::new();
 
@@ -1186,21 +1209,18 @@ pub(crate) fn read_bmff_c2pa_boxes(mut reader: &mut dyn CAIRead) -> Result<C2PAB
                             data_len -= 8;
 
                             // offset to first aux uuid
-                            let offset = u64::from_be_bytes(buf);
+                            first_aux_uuid_offset = u64::from_be_bytes(buf);
 
                             // read the manifest
                             if manifest_store_cnt == 0 {
                                 let manifest = reader.read_to_vec(data_len)?;
                                 output = Some(manifest);
 
+                                manifest_offset = Some(box_info.data.offset);
+
                                 manifest_store_cnt += 1;
                             } else {
                                 return Err(Error::TooManyManifestStores);
-                            }
-
-                            // if contains offset this asset contains additional UUID boxes
-                            if offset != 0 {
-                                _first_aux_uuid = offset;
                             }
                         } else if vec_compare(&purpose, MERKLE.as_bytes()) {
                             let merkle = reader.read_to_vec(data_len)?;
@@ -1243,6 +1263,8 @@ pub(crate) fn read_bmff_c2pa_boxes(mut reader: &mut dyn CAIRead) -> Result<C2PAB
         bmff_merkle_box_infos: merkle_box_infos,
         box_infos,
         xmp,
+        manifest_offset,
+        first_aux_uuid_offset,
     })
 }
 
@@ -1429,41 +1451,44 @@ impl CAIWriter for BmffIO {
         std::io::copy(input_stream, output_stream)?;
 
         // Manipulating the UUID box means we may need some patch offsets if they are file absolute offsets.
+        if offset_adjust != 0 {
+            // create root node
+            let root_box = BoxInfo {
+                path: "".to_string(),
+                offset: 0,
+                size,
+                box_type: BoxType::Empty,
+                parent: None,
+                user_type: None,
+                version: None,
+                flags: None,
+            };
 
-        // create root node
-        let root_box = BoxInfo {
-            path: "".to_string(),
-            offset: 0,
-            size,
-            box_type: BoxType::Empty,
-            parent: None,
-            user_type: None,
-            version: None,
-            flags: None,
-        };
+            // map box layout of current output file
+            let (mut output_bmff_tree, root_token) = Arena::with_data(root_box);
+            let mut output_bmff_map: HashMap<String, Vec<Token>> = HashMap::new();
 
-        // map box layout of current output file
-        let (mut output_bmff_tree, root_token) = Arena::with_data(root_box);
-        let mut output_bmff_map: HashMap<String, Vec<Token>> = HashMap::new();
+            let size = stream_len(output_stream)?;
+            output_stream.rewind()?;
+            build_bmff_tree(
+                output_stream,
+                size,
+                &mut output_bmff_tree,
+                &root_token,
+                &mut output_bmff_map,
+            )?;
 
-        let size = stream_len(output_stream)?;
-        output_stream.rewind()?;
-        build_bmff_tree(
-            output_stream,
-            size,
-            &mut output_bmff_tree,
-            &root_token,
-            &mut output_bmff_map,
-        )?;
+            // adjust offsets based on current layout
+            output_stream.rewind()?;
+            adjust_known_offsets(
+                output_stream,
+                &output_bmff_tree,
+                &output_bmff_map,
+                offset_adjust,
+            )?;
+        }
 
-        // adjust offsets based on current layout
-        output_stream.rewind()?;
-        adjust_known_offsets(
-            output_stream,
-            &output_bmff_tree,
-            &output_bmff_map,
-            offset_adjust,
-        )
+        Ok(())
     }
 
     fn get_object_locations_from_stream(
