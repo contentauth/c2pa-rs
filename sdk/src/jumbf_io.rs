@@ -376,6 +376,7 @@ pub mod tests {
             Box::new(TiffIO::new("")),
             Box::new(SvgIO::new("")),
             Box::new(Mp3IO::new("")),
+            Box::new(EpubIo::new("")),
         ];
 
         // build handler map
@@ -400,6 +401,7 @@ pub mod tests {
             Box::new(TiffIO::new("")),
             Box::new(SvgIO::new("")),
             Box::new(Mp3IO::new("")),
+            Box::new(EpubIo::new("")),
         ];
 
         // build handler map
@@ -420,6 +422,7 @@ pub mod tests {
             Box::new(SvgIO::new("")),
             Box::new(RiffIO::new("")),
             Box::new(GifIO::new("")),
+            Box::new(EpubIo::new("")),
         ];
 
         // build handler map

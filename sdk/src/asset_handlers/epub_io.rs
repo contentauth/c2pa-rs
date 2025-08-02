@@ -24,10 +24,11 @@ static SUPPORTED_TYPES: [&str; 6] = [
     ""
 ];
 
-const CAI_STORE_PATHS: [&str; 3] = [
+const CAI_STORE_PATHS: [&str; 4] = [
     "META-INF/c2pa.json",
     "META-INF/manifest.c2pa",
     "META-INF/manifest.json",
+    "META-INF/content_credential.c2pa"
 ];
 
 pub struct EpubIo;
@@ -689,16 +690,13 @@ mod tests {
 
             let mut output_stream2 = Cursor::new(Vec::with_capacity(sample.len() + 5));
             let random_bytes = [3, 2, 1, 2, 3];
-            output_stream1.rewind()?;
             epub_io.write_cai(&mut output_stream1, &mut output_stream2, &random_bytes)?;
 
-            output_stream2.rewind()?;
             let data_written = epub_io.read_cai(&mut output_stream2)?;
             println!("Data written: {:?}", data_written);
             assert_eq!(data_written, random_bytes);
 
             let mut bytes = Vec::new();
-            stream.rewind()?;
             stream.read_to_end(&mut bytes)?;
             assert_eq!(sample, bytes);
         }
@@ -776,6 +774,7 @@ mod tests {
         
         // verify binary content contains expected markers
         // C2PA manifest usually starts with a specific byte sequence
+        println!("jumbf header: {:02x?}", &result[0..4]); // => [00, 00, 3c, 1d]
         let has_jumbf_header = result.len() >= 4 && result[0..4] == [0x00, 0x00, 0x60, 0x1D]; // JUMBF box header
         let has_c2pa_marker = result.windows(4).any(|window| window == b"c2pa");
         
