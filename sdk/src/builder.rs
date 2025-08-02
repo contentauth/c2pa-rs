@@ -32,8 +32,8 @@ use crate::{
         c2pa_action, labels, Action, ActionTemplate, Actions, AssertionMetadata, BmffHash, BoxHash,
         CreativeWork, DataHash, EmbeddedData, Exif, SoftwareAgent, Thumbnail, User, UserCbor,
     },
-    claim::{Claim, ALLOWED_UPDATE_MANIFEST_ACTIONS},
     cbor_types::value_cbor_to_type,
+    claim::{Claim, ALLOWED_UPDATE_MANIFEST_ACTIONS},
     error::{Error, Result},
     jumbf_io,
     resource_store::{ResourceRef, ResourceResolver, ResourceStore},
@@ -1684,6 +1684,7 @@ mod tests {
                 }
             ],
             "title": "Test_Manifest",
+            "format": "image/jpeg",
             "instance_id": "1234",
             "thumbnail": {
                 "format": "image/jpeg",
@@ -1955,6 +1956,7 @@ mod tests {
             &toml::toml! {
                 [builder.actions.auto_opened_action]
                 enabled = true
+                verify.check_ingredient_trust = false
             }
             .to_string(),
         )
@@ -2900,8 +2902,15 @@ mod tests {
 
     #[test]
     fn test_redaction() {
-        // use crate::utils::test::setup_logger;
-        // setup_logger();
+        // Settings::from_toml(
+        //     &toml::toml! {
+        //         verify.check_ingredient_trust = false
+        //         builder.verify_after_sign = false
+        //     }
+        //     .to_string(),
+        // )
+        // .unwrap();
+
         // We use this to associate the parent ingredient with c2pa.opened action
         const PARENT_LABEL: &str = "parent_ingredient";
 
