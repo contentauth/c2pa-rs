@@ -2852,7 +2852,7 @@ mod tests {
 
     #[test]
     fn test_redaction() {
-        //Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml")).unwrap();
+        Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml")).unwrap();
         //crate::utils::test::setup_logger();
 
         // the label of the assertion we are going to redact
