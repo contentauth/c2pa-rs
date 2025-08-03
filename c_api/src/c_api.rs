@@ -12,7 +12,7 @@
 // each license.
 
 use std::{
-    ffi::CString,
+    ffi::{CStr, CString},
     os::raw::{c_char, c_int, c_uchar, c_void},
 };
 
@@ -1180,6 +1180,78 @@ pub unsafe extern "C" fn c2pa_ed25519_sign(
 pub unsafe extern "C" fn c2pa_signature_free(signature_ptr: *const u8) {
     if !signature_ptr.is_null() {
         drop(Box::from_raw(signature_ptr as *mut u8));
+    }
+}
+
+// ===== EPUB Metadata C ABI Export =====
+
+#[repr(C)]
+pub struct CEpubMetadata {
+    pub title: *mut c_char,
+    pub author: *mut c_char,
+    pub language: *mut c_char,
+    pub publisher: *mut c_char,
+    pub description: *mut c_char,
+    pub date: *mut c_char,
+}
+
+#[no_mangle]
+pub extern "C" fn c2pa_get_epub_metadata(epub_path: *const c_char) -> *mut CEpubMetadata {
+    if epub_path.is_null() {
+        return std::ptr::null_mut();
+    }
+    let c_str = unsafe { CStr::from_ptr(epub_path) };
+    let path = match c_str.to_str() {
+        Ok(s) => s,
+        Err(_) => return std::ptr::null_mut(),
+    };
+    match c2pa::get_epub_metadata(path) {
+        Ok(meta) => {
+            let c_title = meta.title.map(|s| CString::new(s).unwrap().into_raw()).unwrap_or(std::ptr::null_mut());
+            let c_author = meta.author.map(|s| CString::new(s).unwrap().into_raw()).unwrap_or(std::ptr::null_mut());
+            let c_language = meta.language.map(|s| CString::new(s).unwrap().into_raw()).unwrap_or(std::ptr::null_mut());
+            let c_publisher = meta.publisher.map(|s| CString::new(s).unwrap().into_raw()).unwrap_or(std::ptr::null_mut());
+            let c_description = meta.description.map(|s| CString::new(s).unwrap().into_raw()).unwrap_or(std::ptr::null_mut());
+            let c_date = meta.date.map(|s| CString::new(s).unwrap().into_raw()).unwrap_or(std::ptr::null_mut());
+            let c_meta = Box::new(CEpubMetadata {
+                title: c_title,
+                author: c_author,
+                language: c_language,
+                publisher: c_publisher,
+                description: c_description,
+                date: c_date,
+            });
+            Box::into_raw(c_meta)
+        }
+        Err(_) => std::ptr::null_mut(),
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn c2pa_free_epub_metadata(meta: *mut CEpubMetadata) {
+    if meta.is_null() {
+        return;
+    }
+    unsafe {
+        if !(*meta).title.is_null() {
+            let _ = CString::from_raw((*meta).title);
+        }
+        if !(*meta).author.is_null() {
+            let _ = CString::from_raw((*meta).author);
+        }
+        if !(*meta).language.is_null() {
+            let _ = CString::from_raw((*meta).language);
+        }
+        if !(*meta).publisher.is_null() {
+            let _ = CString::from_raw((*meta).publisher);
+        }
+        if !(*meta).description.is_null() {
+            let _ = CString::from_raw((*meta).description);
+        }
+        if !(*meta).date.is_null() {
+            let _ = CString::from_raw((*meta).date);
+        }
+        let _ = Box::from_raw(meta);
     }
 }
 

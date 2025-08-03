@@ -20,6 +20,7 @@ c2pa = { workspace = true , features = [
     "file_io",
     "add_thumbnails",
     "fetch_remote_manifests",
+    "rust_native_crypto",
 ]}
 scopeguard = "1.2.0"
 serde = { version = "1.0", features = ["derive"] }
