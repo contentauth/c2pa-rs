@@ -40,7 +40,7 @@ use crate::{
     assertions::{
         labels::{self, CLAIM},
         BmffHash, CertificateStatus, DataBox, DataHash, DataMap, ExclusionsMap, Ingredient,
-        Relationship, SubsetMap, TimeStamp, User, UserCbor, VecByteBuf,
+        MerkleMap, Relationship, SubsetMap, TimeStamp, User, UserCbor, VecByteBuf,
     },
     asset_handlers::bmff_io::read_bmff_c2pa_boxes,
     asset_io::{
