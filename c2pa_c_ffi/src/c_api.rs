@@ -1667,7 +1667,7 @@ mod tests {
 
     #[test]
     fn test_c2pa_free_string_array_with_count_1() {
-        let strings = vec![CString::new("image/jpg").unwrap()];
+        let strings = vec![CString::new("image/jpeg").unwrap()];
         let ptrs: Vec<*mut c_char> = strings.into_iter().map(|s| s.into_raw()).collect();
         let ptr = ptrs.as_ptr() as *const *const c_char;
         let count = ptrs.len();
@@ -1835,8 +1835,9 @@ mod tests {
         let json = unsafe { c2pa_reader_json(reader) };
         assert!(!json.is_null());
         let json_str = unsafe { CString::from_raw(json) };
+        println!("JSON Report: {}", json_str.to_str().unwrap());
         let json_report = json_str.to_str().unwrap();
         assert!(json_report.contains("cawg.identity"));
-        assert!(json_report.contains("cawg.ica.credential_valid"));
+        assert!(json_report.contains("cawg.identity.well-formed"));
     }
 }

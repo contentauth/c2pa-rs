@@ -53,8 +53,8 @@ pub enum TimeStampError {
     NonceMismatch,
 
     /// The time stamp service responded with an error condition.
-    #[error("service responded with an HTTP error (status = {0}, content-type = {1})")]
-    HttpErrorResponse(u16, String),
+    #[error("service responded with an HTTP error (status = {0}, content-type = {1:?})")]
+    HttpErrorResponse(u16, Option<String>),
 
     /// Unable to complete the HTTPS time stamp request.
     ///
