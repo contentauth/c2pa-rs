@@ -20,6 +20,9 @@ crate-type = ["cdylib", "staticlib", "rlib"]
 [features]
 file_io = ["c2pa/file_io"]
 rust_native_crypto = ["c2pa/rust_native_crypto"]
+pdf = ["c2pa/pdf"]
+add_thumbnails = ["c2pa/add_thumbnails"]
+fetch_remote_manifests = ["c2pa/fetch_remote_manifests"]
 
 [dependencies]
 c2pa = { path = "../sdk", version = "0.58.0", default-features = false, features = [
