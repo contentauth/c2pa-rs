@@ -788,7 +788,7 @@ async fn unresolvable_did() {
         .err_val
         .as_ref()
         .unwrap(),
-        "SignatureError(DidResolutionError(\"the document was not found: https://example.com/.well-known/did.json\"))");
+        "SignatureError(DidResolutionError(\"the document was not found: https://cawg-test-data.github.io/test-case/unresolvable-did/did.json\"))");
 
     assert_eq!(
         li.validation_status.as_ref().unwrap(),
