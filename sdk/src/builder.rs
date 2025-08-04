@@ -1952,16 +1952,6 @@ mod tests {
         #[cfg(target_os = "wasi")]
         Settings::reset().unwrap();
 
-        Settings::from_toml(
-            &toml::toml! {
-                [builder.actions.auto_opened_action]
-                enabled = true
-                verify.check_ingredient_trust = false
-            }
-            .to_string(),
-        )
-        .unwrap();
-
         let mut builder = Builder::new();
         builder
             .add_ingredient_from_stream(parent_json(), "image/jpeg", &mut Cursor::new(TEST_IMAGE))

@@ -326,9 +326,9 @@ impl Store {
         Ok(claim_label)
     }
 
-    /// Test if this can be an update manifest.
+    /// Test if this can be an update manifest.]
     #[cfg(all(feature = "v1_api", feature = "file_io"))]
-    pub fn update_manifest_test(&mut self, claim: &mut Claim) -> Result<()> {
+    fn update_manifest_test(&mut self, claim: &mut Claim) -> Result<()> {
         use crate::{
             assertions::{labels::CLAIM_THUMBNAIL, Actions},
             claim::ALLOWED_UPDATE_MANIFEST_ACTIONS,
