@@ -30,9 +30,12 @@ use crate::{
         HashObjectPositions, RemoteRefEmbed, RemoteRefEmbedType,
     },
     error::{Error, Result},
+    status_tracker::{ErrorBehavior, StatusTracker},
+    store::Store,
     utils::{
         hash_utils::{vec_compare, HashRange},
-        io_utils::{stream_len, tempfile_builder, ReaderUtils},
+        io_utils::{patch_stream, stream_len, tempfile_builder, ReaderUtils},
+        patch::patch_bytes,
         xmp_inmemory_utils::{add_provenance, MIN_XMP},
     },
 };
@@ -51,8 +54,10 @@ const C2PA_UUID: [u8; 16] = [
 const XMP_UUID: [u8; 16] = [
     0xbe, 0x7a, 0xcf, 0xcb, 0x97, 0xa9, 0x42, 0xe8, 0x9c, 0x71, 0x99, 0x94, 0x91, 0xe3, 0xaf, 0xac,
 ];
-const MANIFEST: &str = "manifest";
-const MERKLE: &str = "merkle";
+pub(crate) const MANIFEST: &str = "manifest";
+pub(crate) const MERKLE: &str = "merkle";
+const ORIGINAL: &str = "original";
+const UPDATE: &str = "update";
 
 // ISO IEC 14496-12_2022 FullBoxes
 const FULL_BOX_TYPES: &[&str; 80] = &[
@@ -306,16 +311,18 @@ fn skip_bytes_to<R: Read + Seek + ?Sized>(reader: &mut R, pos: u64) -> Result<u6
 pub(crate) fn write_c2pa_box<W: Write>(
     w: &mut W,
     data: &[u8],
-    is_manifest: bool,
+    purpose: &str,
     merkle_data: &[u8],
+    merkle_offset: u64,
 ) -> Result<()> {
-    let purpose_size = if is_manifest {
-        MANIFEST.len() + 1
+    let purpose_size = purpose.len() + 1;
+
+    let box_size = if purpose == MERKLE {
+        merkle_data.len()
     } else {
-        MERKLE.len() + 1
+        8
     };
-    let merkle_size = if is_manifest { 8 } else { merkle_data.len() };
-    let size = 8 + 16 + 4 + purpose_size + merkle_size + data.len(); // header + UUID + version/flags + data + zero terminated purpose + merkle data
+    let size = 8 + 16 + 4 + purpose_size + box_size + data.len(); // header + UUID + version/flags + data + zero terminated purpose + merkle data
     let bh = BoxHeaderLite::new(BoxType::UuidBox, size as u64, "uuid");
 
     // write out header
@@ -329,19 +336,15 @@ pub(crate) fn write_c2pa_box<W: Write>(
     let flags: u32 = 0;
     write_box_header_ext(w, version, flags)?;
 
-    // write purpose
-    if is_manifest {
-        w.write_all(MANIFEST.as_bytes())?;
-        w.write_u8(0)?;
-
-        // write no merkle flag
-        w.write_u64::<BigEndian>(0)?;
-    } else {
-        w.write_all(MERKLE.as_bytes())?;
-        w.write_u8(0)?;
-
+    // write with appropriate purpose
+    w.write_all(purpose.as_bytes())?;
+    w.write_u8(0)?;
+    if purpose == MERKLE {
         // write merkle cbor
         w.write_all(merkle_data)?;
+    } else {
+        // write merkle offset
+        w.write_u64::<BigEndian>(merkle_offset)?;
     }
 
     // write out data
@@ -1130,39 +1133,32 @@ fn get_uuid_token(
 #[allow(dead_code)]
 pub(crate) struct C2PABmffBoxes {
     pub manifest_bytes: Option<Vec<u8>>,
+    pub original_bytes: Option<Vec<u8>>,
+    pub update_bytes: Option<Vec<u8>>,
+    pub manifest_box_bytes: Option<Vec<u8>>,
+    pub update_box_bytes: Option<Vec<u8>>,
     pub bmff_merkle: Vec<BmffMerkleMap>,
     pub bmff_merkle_box_infos: Vec<BoxInfoLite>,
     pub box_infos: Vec<BoxInfoLite>,
     pub xmp: Option<String>,
-    pub manifest_offset: Option<u64>,
+    pub manifest_box_offset: Option<u64>,
+    pub update_box_offset: Option<u64>,
     pub first_aux_uuid_offset: u64,
 }
 
-pub(crate) fn read_bmff_c2pa_boxes(mut reader: &mut dyn CAIRead) -> Result<C2PABmffBoxes> {
-    let size = stream_len(reader)?;
-    reader.rewind()?;
-
-    // create root node
-    let root_box = BoxInfo {
-        path: "".to_string(),
-        offset: 0,
-        size,
-        box_type: BoxType::Empty,
-        parent: None,
-        user_type: None,
-        version: None,
-        flags: None,
-    };
-
-    let (mut bmff_tree, root_token) = Arena::with_data(root_box);
-    let mut bmff_map: HashMap<String, Vec<Token>> = HashMap::new();
-
-    // build layout of the BMFF structure
-    build_bmff_tree(reader, size, &mut bmff_tree, &root_token, &mut bmff_map)?;
-
-    let mut output: Option<Vec<u8>> = None;
+fn c2pa_boxes_from_tree_and_map<R: Read + Seek + ?Sized>(
+    mut reader: &mut R,
+    bmff_tree: &Arena<BoxInfo>,
+    bmff_map: &HashMap<String, Vec<Token>>,
+) -> Result<C2PABmffBoxes> {
+    let mut manifest_bytes: Option<Vec<u8>> = None;
+    let mut original_bytes: Option<Vec<u8>> = None;
+    let mut update_bytes: Option<Vec<u8>> = None;
+    let mut manifest_box_bytes: Option<Vec<u8>> = None;
+    let mut update_box_bytes: Option<Vec<u8>> = None;
     let mut xmp: Option<String> = None;
-    let mut manifest_offset: Option<u64> = None;
+    let mut manifest_box_offset = None;
+    let mut update_box_offset = None;
     let mut first_aux_uuid_offset = 0u64;
     let mut merkle_boxes: Vec<BmffMerkleMap> = Vec::new();
     let mut merkle_box_infos: Vec<BoxInfoLite> = Vec::new();
@@ -1170,6 +1166,7 @@ pub(crate) fn read_bmff_c2pa_boxes(mut reader: &mut dyn CAIRead) -> Result<C2PAB
     // grab top level (for now) C2PA box
     if let Some(uuid_list) = bmff_map.get("/uuid") {
         let mut manifest_store_cnt = 0;
+        let mut update_store_cnt = 0;
 
         for uuid_token in uuid_list {
             let box_info = &bmff_tree[*uuid_token];
@@ -1202,24 +1199,44 @@ pub(crate) fn read_bmff_c2pa_boxes(mut reader: &mut dyn CAIRead) -> Result<C2PAB
                         }
 
                         // is the purpose manifest?
-                        if vec_compare(&purpose, MANIFEST.as_bytes()) {
+                        if vec_compare(&purpose, MANIFEST.as_bytes())
+                            || vec_compare(&purpose, ORIGINAL.as_bytes())
+                            || vec_compare(&purpose, UPDATE.as_bytes())
+                        {
                             // offset to first aux uuid with purpose merkle
                             let mut buf = [0u8; 8];
                             reader.read_exact(&mut buf)?;
                             data_len -= 8;
 
-                            // offset to first aux uuid
-                            first_aux_uuid_offset = u64::from_be_bytes(buf);
+                            // read the manifest box contents
+                            let manifest = reader.read_to_vec(data_len)?;
 
-                            // read the manifest
-                            if manifest_store_cnt == 0 {
-                                let manifest = reader.read_to_vec(data_len)?;
-                                output = Some(manifest);
+                            // read the entire manifest box
+                            skip_bytes_to(reader, box_info.data.offset)?;
+                            let box_bytes = Some(reader.read_to_vec(box_info.data.size)?);
 
-                                manifest_offset = Some(box_info.data.offset);
-
+                            if purpose == MANIFEST.as_bytes() {
+                                manifest_bytes = Some(manifest);
+                                manifest_box_offset = Some(box_info.data.offset);
+                                manifest_box_bytes = box_bytes;
                                 manifest_store_cnt += 1;
-                            } else {
+                                // offset to first aux uuid
+                                first_aux_uuid_offset = u64::from_be_bytes(buf);
+                            } else if purpose == ORIGINAL.as_bytes() {
+                                original_bytes = Some(manifest);
+                                manifest_box_offset = Some(box_info.data.offset);
+                                manifest_box_bytes = box_bytes;
+                                manifest_store_cnt += 1;
+                                // offset to first aux uuid
+                                first_aux_uuid_offset = u64::from_be_bytes(buf);
+                            } else if purpose == UPDATE.as_bytes() {
+                                update_bytes = Some(manifest);
+                                update_box_offset = Some(box_info.data.offset);
+                                update_box_bytes = box_bytes;
+                                update_store_cnt += 1;
+                            }
+
+                            if manifest_store_cnt > 1 || update_store_cnt > 1 {
                                 return Err(Error::TooManyManifestStores);
                             }
                         } else if vec_compare(&purpose, MERKLE.as_bytes()) {
@@ -1254,23 +1271,71 @@ pub(crate) fn read_bmff_c2pa_boxes(mut reader: &mut dyn CAIRead) -> Result<C2PAB
     }
 
     // get position ordered list of boxes
-    let mut box_infos: Vec<BoxInfoLite> = get_top_level_boxes(&bmff_tree, &bmff_map);
+    let mut box_infos: Vec<BoxInfoLite> = get_top_level_boxes(bmff_tree, bmff_map);
     box_infos.sort_by(|a, b| a.offset.cmp(&b.offset));
 
     Ok(C2PABmffBoxes {
-        manifest_bytes: output,
+        manifest_bytes,
+        original_bytes,
+        update_bytes,
+        manifest_box_bytes,
+        update_box_bytes,
         bmff_merkle: merkle_boxes,
         bmff_merkle_box_infos: merkle_box_infos,
         box_infos,
         xmp,
-        manifest_offset,
+        manifest_box_offset,
+        update_box_offset,
         first_aux_uuid_offset,
     })
+}
+
+pub(crate) fn read_bmff_c2pa_boxes(reader: &mut dyn CAIRead) -> Result<C2PABmffBoxes> {
+    let size = stream_len(reader)?;
+    reader.rewind()?;
+
+    // create root node
+    let root_box = BoxInfo {
+        path: "".to_string(),
+        offset: 0,
+        size,
+        box_type: BoxType::Empty,
+        parent: None,
+        user_type: None,
+        version: None,
+        flags: None,
+    };
+
+    let (mut bmff_tree, root_token) = Arena::with_data(root_box);
+    let mut bmff_map: HashMap<String, Vec<Token>> = HashMap::new();
+
+    // build layout of the BMFF structure
+    build_bmff_tree(reader, size, &mut bmff_tree, &root_token, &mut bmff_map)?;
+    c2pa_boxes_from_tree_and_map(reader, &bmff_tree, &bmff_map)
 }
 
 impl CAIReader for BmffIO {
     fn read_cai(&self, reader: &mut dyn CAIRead) -> Result<Vec<u8>> {
         let c2pa_boxes = read_bmff_c2pa_boxes(reader)?;
+
+        // is this an update manifest?
+        if let Some(original_bytes) = c2pa_boxes.original_bytes {
+            if let Some(update_bytes) = c2pa_boxes.update_bytes {
+                let mut validation_log = StatusTracker::default();
+
+                // combine original Store and update Store to single logical manifest Store
+                let mut original_store = Store::from_jumbf(&original_bytes, &mut validation_log)?;
+                let update_store = Store::from_jumbf(&update_bytes, &mut validation_log)?;
+
+                original_store.append_store(&update_store);
+
+                return original_store.to_jumbf_internal(0);
+            } else {
+                return Err(Error::C2PAValidation(
+                    "original manifest without update manifest".to_string(),
+                ));
+            }
+        }
 
         c2pa_boxes.manifest_bytes.ok_or(Error::JumbfNotFound)
     }
@@ -1390,6 +1455,119 @@ impl CAIWriter for BmffIO {
             &mut bmff_map,
         )?;
 
+        // figure out what state we are in
+        let c2pa_boxes = c2pa_boxes_from_tree_and_map(input_stream, &bmff_tree, &bmff_map)?;
+        let has_manifest = c2pa_boxes.manifest_bytes.is_some();
+        let has_original = c2pa_boxes.original_bytes.is_some();
+        let has_update = c2pa_boxes.update_bytes.is_some();
+        // if the incoming Store has an update manifest we must split it into original and update stores
+        let mut validation_log =
+            StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
+        let (pc, is_update) = if let Ok(store) = Store::from_jumbf(store_bytes, &mut validation_log)
+        {
+            let pc = store
+                .provenance_claim()
+                .ok_or(Error::BadParam("no provenance claim".to_string()))?;
+            let is_update = pc.update_manifest();
+            (Some(pc.clone()), is_update)
+        } else {
+            (None, false)
+        };
+
+        // "original" manifest store and "update" manifest store can only appear together
+        if has_original && !has_update || !has_original && has_update {
+            return Err(Error::BadParam(
+                "BMFF save failure, found original manifest store without update manifest store"
+                    .to_string(),
+            ));
+        }
+
+        // if is an ordinary manifest then it should not have an update manifest
+        if has_manifest && has_update {
+            return Err(Error::BadParam(
+                "BMFF save failure, found manifest store with update manifest store".to_string(),
+            ));
+        }
+
+        // if we already have an "original" manifest store and an "update" manifest store
+        // then we can just apppend to the update store
+        if has_original && has_update && is_update {
+            let update_manifest_bytes = &c2pa_boxes
+                .update_bytes
+                .ok_or(Error::BadParam("no update manifest".to_string()))?;
+            let update_box_offset = c2pa_boxes
+                .update_box_offset
+                .ok_or(Error::BadParam("no update manifest".to_string()))?;
+            let update_box_size = c2pa_boxes
+                .update_box_bytes
+                .ok_or(Error::BadParam("no update manifest".to_string()))?
+                .len();
+            let pc = pc.ok_or(Error::BadParam("no provenance manifest".to_string()))?;
+
+            let mut update_store = Store::from_jumbf(update_manifest_bytes, &mut validation_log)?;
+            // add new update manfiest or replace existing one if the is a finalization pass
+            update_store.replace_claim_or_insert(pc.label().to_string(), pc);
+
+            let new_update_bytes = update_store.to_jumbf_internal(0)?;
+            let mut new_update_box = Vec::new();
+            write_c2pa_box(&mut new_update_box, &new_update_bytes, UPDATE, &[], 0)?;
+
+            patch_stream(
+                input_stream,
+                output_stream,
+                update_box_offset,
+                update_box_size as u64,
+                &new_update_box,
+            )?;
+
+            return Ok(());
+        }
+
+        // if we have an ordinary manifest store and we are adding a new update manifest
+        // then we need to split off incoming provenance claim into and add to update new update manifest
+        if has_manifest && !has_update && is_update {
+            let pc = pc.ok_or(Error::BadParam("no provenance manifest".to_string()))?;
+
+            let mut update_store = Store::new();
+            update_store.insert_restored_claim(pc.label().to_string(), pc);
+            let new_update_bytes = update_store.to_jumbf_internal(0)?;
+
+            // patch the purpose of the original manifest store
+            let mut manifest_box_bytes = c2pa_boxes
+                .manifest_box_bytes
+                .ok_or(Error::BadParam("no original manifest".to_string()))?
+                .clone();
+            let manifest_box_offset = c2pa_boxes
+                .manifest_box_offset
+                .ok_or(Error::BadParam("no original manifest offset".to_string()))?;
+
+            // update the manifest purpose
+            patch_bytes(
+                &mut manifest_box_bytes,
+                MANIFEST.as_bytes(),
+                ORIGINAL.as_bytes(),
+            )?;
+
+            // write the stream with manifest bytes containing updated manifest PURPOSE
+            patch_stream(
+                input_stream,
+                output_stream,
+                manifest_box_offset,
+                manifest_box_bytes.len() as u64,
+                &manifest_box_bytes,
+            )?;
+
+            // append new update manifest store to end of stream
+            let mut update_manifest = Vec::new();
+            write_c2pa_box(&mut update_manifest, &new_update_bytes, UPDATE, &[], 0)?;
+            output_stream.seek(SeekFrom::End(0))?;
+            output_stream.write_all(&update_manifest)?;
+
+            return Ok(());
+        }
+
+        // since we reached this point we must have an ordinary manifest store so we may need to truncate off
+        // the update manifest
         // get ftyp location
         // start after ftyp
         let ftyp_token = bmff_map.get("/ftyp").ok_or(Error::UnsupportedType)?; // todo check ftyps to make sure we support any special format requirements
@@ -1409,7 +1587,7 @@ impl CAIWriter for BmffIO {
 
         let mut new_c2pa_box: Vec<u8> = Vec::with_capacity(store_bytes.len() * 2);
         let merkle_data: &[u8] = &[]; // not yet supported
-        write_c2pa_box(&mut new_c2pa_box, store_bytes, true, merkle_data)?;
+        write_c2pa_box(&mut new_c2pa_box, store_bytes, MANIFEST, merkle_data, 0)?;
         let new_c2pa_box_size = new_c2pa_box.len();
 
         let (start, end) = if let Some(c2pa_length) = c2pa_length {
@@ -1447,8 +1625,19 @@ impl CAIWriter for BmffIO {
         };
 
         // write content after ContentProvenanceBox
+        // since we reached this point we must have an ordinary manifest store so we may need to truncate off
+        // the update manifest
         input_stream.seek(SeekFrom::Start(end as u64))?;
-        std::io::copy(input_stream, output_stream)?;
+        if has_update {
+            let update_offset = c2pa_boxes
+                .update_box_offset
+                .ok_or(Error::BadParam("no update manifest".to_string()))?;
+            let len_to_update = update_offset - end as u64;
+            let mut truncating_reader = input_stream.take(len_to_update);
+            std::io::copy(&mut truncating_reader, output_stream)?;
+        } else {
+            std::io::copy(input_stream, output_stream)?;
+        }
 
         // Manipulating the UUID box means we may need some patch offsets if they are file absolute offsets.
         if offset_adjust != 0 {
@@ -1663,7 +1852,7 @@ impl AssetPatch for BmffIO {
         if let Some(manifest_length) = c2pa_length {
             let mut new_c2pa_box: Vec<u8> = Vec::with_capacity(store_bytes.len() * 2);
             let merkle_data: &[u8] = &[]; // not yet supported
-            write_c2pa_box(&mut new_c2pa_box, store_bytes, true, merkle_data)?;
+            write_c2pa_box(&mut new_c2pa_box, store_bytes, MANIFEST, merkle_data, 0)?;
             let new_c2pa_box_size = new_c2pa_box.len();
 
             if new_c2pa_box_size as u64 == manifest_length {
