@@ -917,7 +917,7 @@ impl Manifest {
                         .filter_map(|(i, a)| {
                             #[allow(deprecated)]
                             if a.instance_id().is_some()
-                                && a.get_parameter(ingredients_key).is_none()
+                                && a.get_parameter::<Vec<String>>(ingredients_key).is_none()
                             {
                                 Some((i, a.clone()))
                             } else {
@@ -2350,7 +2350,7 @@ pub(crate) mod tests {
 
     // This is only used for testing obsolete v1 manifest creation code
     const MANIFEST_JSON: &str = r#"{
-        
+
         "claim_version": 1,
         "claim_generator": "test",
         "claim_generator_info": [

@@ -14,7 +14,7 @@
 use std::collections::HashMap;
 
 use log::error;
-use serde::{Deserialize, Serialize};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_cbor::Value;
 
 use crate::{
@@ -294,21 +294,28 @@ impl Action {
     }
 
     /// Returns an individual action parameter if it exists.
-    pub fn get_parameter(&self, key: &str) -> Option<Value> {
+    pub fn get_parameter<T: DeserializeOwned>(&self, key: &str) -> Option<T> {
         match self.parameters.as_ref() {
             // This is for backwards compatibility purposes.
-            Some(parameters) => match key {
-                "ingredient" => serde_cbor::value::to_value(&parameters.ingredient).ok(),
-                "description" => serde_cbor::value::to_value(&parameters.description).ok(),
-                "redacted" => serde_cbor::value::to_value(&parameters.redacted).ok(),
-                "ingredients" => serde_cbor::value::to_value(&parameters.ingredients).ok(),
-                "source_language" => serde_cbor::value::to_value(&parameters.source_language).ok(),
-                "target_language" => serde_cbor::value::to_value(&parameters.target_language).ok(),
-                "multiple_instances" => {
-                    serde_cbor::value::to_value(parameters.multiple_instances).ok()
-                }
-                _ => parameters.common.get(key).cloned(),
-            },
+            Some(parameters) => {
+                let value = match key {
+                    "ingredient" => serde_cbor::value::to_value(&parameters.ingredient).ok(),
+                    "description" => serde_cbor::value::to_value(&parameters.description).ok(),
+                    "redacted" => serde_cbor::value::to_value(&parameters.redacted).ok(),
+                    "ingredients" => serde_cbor::value::to_value(&parameters.ingredients).ok(),
+                    "source_language" => {
+                        serde_cbor::value::to_value(&parameters.source_language).ok()
+                    }
+                    "target_language" => {
+                        serde_cbor::value::to_value(&parameters.target_language).ok()
+                    }
+                    "multiple_instances" => {
+                        serde_cbor::value::to_value(parameters.multiple_instances).ok()
+                    }
+                    _ => parameters.common.get(key).cloned(),
+                };
+                value.and_then(|value| serde_cbor::value::from_value(value).ok())
+            }
             None => None,
         }
     }
@@ -400,14 +407,7 @@ impl Action {
     ) -> Result<Self> {
         let value = serde_cbor::value::to_value(value)?;
 
-        let parameters = match &mut self.parameters {
-            Some(parameters) => parameters,
-            None => {
-                self.parameters = Some(ParametersMap::default());
-                #[allow(clippy::unwrap_used)]
-                self.parameters.as_mut().unwrap()
-            }
-        };
+        let parameters = self.parameters.get_or_insert_default();
 
         // This is for backwards compatibility purposes.
         match key.into().as_str() {
@@ -842,13 +842,13 @@ pub mod tests {
         assert_eq!(result.actions.len(), 2);
         assert_eq!(result.actions[0].action(), original.actions[0].action());
         assert_eq!(
-            result.actions[0].get_parameter("name"),
-            original.actions[0].get_parameter("name")
+            result.actions[0].get_parameter::<String>("name"),
+            original.actions[0].get_parameter::<String>("name")
         );
         assert_eq!(result.actions[1].action(), original.actions[1].action());
         assert_eq!(
-            result.actions[1].get_parameter("name"),
-            original.actions[1].get_parameter("name")
+            result.actions[1].get_parameter::<String>("name"),
+            original.actions[1].get_parameter::<String>("name")
         );
         assert_eq!(result.actions[1].when(), original.actions[1].when());
         assert_eq!(
