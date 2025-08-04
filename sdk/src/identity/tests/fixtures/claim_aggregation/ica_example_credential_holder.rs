@@ -114,19 +114,6 @@ impl AsyncCredentialHolder for IcaExampleCredentialHolder {
 
         signer_payload.referenced_assertions = encoded_assertions;
 
-        // WRONG: Tamper with the signer_payload so it doesn't match what's in the outer
-        // wrapper of the identity assertion.
-
-        let mut signer_payload = signer_payload.clone();
-
-        let ref_0 = signer_payload.referenced_assertions[0].clone();
-        let mut wrong_hash = ref_0.hash();
-        wrong_hash[0] = 42;
-        wrong_hash[4] = 98;
-
-        signer_payload.referenced_assertions[0] =
-            HashedUri::new(ref_0.url(), ref_0.alg(), &wrong_hash);
-
         // Generate VC to embed.
         let ica_subject = IdentityClaimsAggregationVc {
             c2pa_asset: signer_payload.clone(),
@@ -167,6 +154,7 @@ const TEST_THUMBNAIL: &[u8] = include_bytes!("../../../../../tests/fixtures/thum
 
 #[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
 async fn ica_signing() {
+    #![allow(unused)]
     let format = "image/jpeg";
     let mut source = Cursor::new(TEST_IMAGE);
     let mut dest = Cursor::new(Vec::new());
@@ -221,7 +209,9 @@ async fn ica_signing() {
 
     let jwk_id = serde_json::to_string(&jwk).unwrap();
     let jwk_base64 = crate::crypto::base64::encode(jwk_id.as_bytes());
-    let issuer_did = format!("did:jwk:{jwk_base64}");
+
+    // WRONG: Generate an ICA with an unresolvable did:web URI.
+    let issuer_did = "did:web:cawg-test-data.github.io:test-case:unresolvable-did".to_owned();
 
     let ica_holder = IcaExampleCredentialHolder::from_async_raw_signer(cawg_raw_signer, issuer_did);
     let iab = AsyncIdentityAssertionBuilder::for_credential_holder(ica_holder);
@@ -243,7 +233,7 @@ async fn ica_signing() {
         .unwrap();
 
     std::fs::write(
-        "src/identity/tests/fixtures/claim_aggregation/ica_validation/signer_payload_mismatch.jpg",
+        "src/identity/tests/fixtures/claim_aggregation/ica_validation/unresolvable_did.jpg",
         dest.get_ref(),
     )
     .unwrap();
