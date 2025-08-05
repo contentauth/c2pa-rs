@@ -80,7 +80,7 @@ use crate::{
     log_item,
     manifest_store_report::ManifestStoreReport,
     salt::DefaultSalt,
-    settings::get_settings_value,
+    settings::{builder::OcspFetch, get_settings_value},
     status_tracker::{ErrorBehavior, StatusTracker},
     utils::{
         hash_utils::HashRange,
@@ -625,6 +625,38 @@ impl Store {
                 Ok(sig)
             }
             Err(e) => Err(e),
+        }
+    }
+
+    pub fn get_manifest_labels_for_ocsp(&self) -> Vec<String> {
+        let labels = match crate::settings::get_settings_value::<OcspFetch>(
+            "builder.signature.ocsp_fetch",
+        ) {
+            Ok(ocsp_fetch) => match ocsp_fetch {
+                OcspFetch::All => self.claims.clone(),
+                OcspFetch::Active => {
+                    if let Some(active_label) = self.provenance_label() {
+                        vec![active_label]
+                    } else {
+                        Vec::new()
+                    }
+                }
+            },
+            _ => Vec::new(),
+        };
+
+        match crate::settings::get_settings_value::<bool>("builder.signature.ocsp_fetch_if_needed")
+        {
+            Ok(should_fetch) => {
+                if should_fetch {
+                    //TODO: Need to determine what is considered "needed", i.e. if there is no OCSP vals in COSE signature?
+                    let claims = labels.iter().filter_map(|k| self.claims_map.get(k));
+
+                    return labels;
+                }
+                labels
+            }
+            _ => Vec::new(),
         }
     }
 
@@ -4668,19 +4700,19 @@ impl Store {
     }
 
     #[allow(dead_code)]
-    /// Creates certificate status assertion from the specified manifests.
+    /// Fetches ocsp response ders from the specified manifests.
     ///
     /// # Arguments
     /// * `manifest_labels` - Vector of manifest labels to check for ocsp responses
     /// * `validation_log` - Status tracker for logging validation events
     ///
     /// # Returns
-    /// A `Result` containing a [`CertificateStatus`] assertion
-    pub fn get_certificate_status_assertion(
+    /// A `Result` containing ocsp response ders
+    pub fn get_ocsp_response_ders(
         &self,
-        manifest_labels: &Vec<String>,
+        manifest_labels: Vec<&str>,
         validation_log: &mut StatusTracker,
-    ) -> Result<CertificateStatus> {
+    ) -> Result<Vec<Vec<u8>>> {
         let mut oscp_response_ders: Vec<Vec<u8>> = Vec::new();
 
         for manifest_label in manifest_labels {
@@ -4697,7 +4729,8 @@ impl Store {
                 }
             }
         }
-        Ok(CertificateStatus::new(oscp_response_ders))
+
+        Ok(oscp_response_ders)
     }
 }
 

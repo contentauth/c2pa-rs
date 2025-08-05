@@ -414,6 +414,30 @@ pub(crate) struct BuilderSettings {
     ///
     /// For more information on the reasoning behind this field see [ActionsSettings].
     pub actions: ActionsSettings,
+
+    pub signature: SignatureSettings,
+}
+
+#[derive(Copy, Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub(crate) enum OcspFetch {
+    All,
+    Active,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub(crate) struct SignatureSettings {
+    ocsp_fetch: OcspFetch,
+    ocsp_fetch_if_needed: bool,
+}
+
+impl Default for SignatureSettings {
+    fn default() -> Self {
+        Self {
+            ocsp_fetch: OcspFetch::Active,
+            ocsp_fetch_if_needed: true,
+        }
+    }
 }
 
 impl SettingsValidate for BuilderSettings {
