@@ -20,19 +20,9 @@ use std::{
     path::PathBuf,
 };
 
-#[cfg(feature = "v1_api")]
-use async_trait::async_trait;
 use env_logger;
 use tempfile::TempDir;
 
-#[cfg(feature = "v1_api")]
-use crate::crypto::{
-    cose::TimeStampStorage,
-    raw_signature::{AsyncRawSigner, RawSignerError},
-    time_stamp::{AsyncTimeStampProvider, TimeStampError},
-};
-#[cfg(feature = "v1_api")]
-use crate::signer::RemoteSigner;
 use crate::{
     assertions::{
         labels, Action, Actions, EmbeddedData, Ingredient, Relationship, ReviewRating,
@@ -46,6 +36,7 @@ use crate::{
     resource_store::UriOrResource,
     salt::DefaultSalt,
     store::Store,
+    utils::mime::extension_to_mime,
     AsyncSigner, ClaimGeneratorInfo, Result,
 };
 
@@ -54,6 +45,9 @@ pub const TEST_SMALL_JPEG: &str = "earth_apollo17.jpg";
 pub const TEST_WEBP: &str = "mars.webp";
 
 pub const TEST_USER_ASSERTION: &str = "test_label";
+
+/// File extension for external manifest sidecar files
+pub const MANIFEST_STORE_EXT: &str = "c2pa";
 
 pub const TEST_VC: &str = r#"{
     "@context": [
@@ -290,6 +284,161 @@ pub fn fixture_path(file_name: &str) -> PathBuf {
     path
 }
 
+/// Create in-memory test streams from a fixture file
+pub fn create_test_streams(
+    fixture_name: &str,
+) -> (
+    &'static str,
+    std::io::Cursor<Vec<u8>>,
+    std::io::Cursor<Vec<u8>>,
+) {
+    let input_path = fixture_path(fixture_name);
+    let input_data = std::fs::read(&input_path).expect("could not read input file");
+
+    // Determine format from input file extension
+    let format = input_path
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .and_then(extension_to_mime)
+        .unwrap_or("application/octet-stream");
+
+    let input_cursor = std::io::Cursor::new(input_data);
+    let output_cursor = std::io::Cursor::new(Vec::new());
+
+    (format, input_cursor, output_cursor)
+}
+
+/// Setup for file-based tests that need actual file I/O operations
+pub struct TestFileSetup {
+    pub temp_dir: TempDir,
+    pub input_path: PathBuf,
+    pub output_path: PathBuf,
+    pub format: String,
+}
+
+impl TestFileSetup {
+    /// Create a new test file setup from a fixture file
+    pub fn new(fixture_name: &str) -> Self {
+        let input_path = fixture_path(fixture_name);
+        let extension = input_path
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .unwrap_or("bin");
+
+        let format = extension_to_mime(extension)
+            .unwrap_or("application/octet-stream")
+            .to_string();
+        let temp_dir = tempfile::tempdir().expect("create temp dir");
+
+        // Create output path with same extension as input
+        let mut output_path = temp_dir.path().join(fixture_name);
+        output_path.set_extension(extension);
+
+        Self {
+            temp_dir,
+            input_path,
+            output_path,
+            format,
+        }
+    }
+
+    /// Create a new test file setup with a custom output filename
+    pub fn new_with_output_name(fixture_name: &str, output_name: &str) -> Self {
+        let input_path = fixture_path(fixture_name);
+        let extension = input_path
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .unwrap_or("bin");
+
+        let format = extension_to_mime(extension)
+            .unwrap_or("application/octet-stream")
+            .to_string();
+        let temp_dir = tempfile::tempdir().expect("create temp dir");
+
+        let output_path = temp_dir.path().join(output_name);
+
+        Self {
+            temp_dir,
+            input_path,
+            output_path,
+            format,
+        }
+    }
+
+    /// Get the path to the temporary directory
+    pub fn temp_dir_path(&self) -> &std::path::Path {
+        self.temp_dir.path()
+    }
+
+    /// Create a path within the temporary directory
+    pub fn temp_path(&self, filename: &str) -> PathBuf {
+        self.temp_dir.path().join(filename)
+    }
+
+    /// Get a sidecar path for the output file (with .c2pa extension)
+    pub fn sidecar_path(&self) -> PathBuf {
+        self.output_path.with_extension(MANIFEST_STORE_EXT)
+    }
+
+    /// Create a file:// URL for the sidecar file
+    pub fn sidecar_url(&self) -> String {
+        format!("file:/{}", self.sidecar_path().to_str().unwrap())
+    }
+
+    /// Get the file extension of the input file
+    pub fn extension(&self) -> &str {
+        self.input_path
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .unwrap_or("bin")
+    }
+
+    /// Create an input file stream for reading
+    pub fn input_stream(&self) -> std::fs::File {
+        std::fs::File::open(&self.input_path).expect("open input file")
+    }
+
+    /// Create an output file stream for writing
+    pub fn output_stream(&self) -> std::fs::File {
+        std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(true)
+            .read(true)
+            .write(true)
+            .open(&self.output_path)
+            .expect("create output file")
+    }
+
+    /// Create format and streams tuple like create_test_streams
+    /// Returns (format, input_stream, output_stream)
+    pub fn create_streams(&self) -> (&str, std::fs::File, std::fs::File) {
+        (&self.format, self.input_stream(), self.output_stream())
+    }
+}
+
+/// Run a test that requires file I/O operations
+///
+/// This helper manages the temporary directory lifecycle and provides
+/// the test function with file paths for input and output operations.
+pub fn run_file_test<F>(fixture_name: &str, test_fn: F)
+where
+    F: FnOnce(&TestFileSetup),
+{
+    let setup = TestFileSetup::new(fixture_name);
+    test_fn(&setup);
+    // TestFileSetup automatically cleans up temp_dir when dropped
+}
+
+/// Run a test that requires file I/O operations with custom output name
+pub fn run_file_test_with_output<F>(fixture_name: &str, output_name: &str, test_fn: F)
+where
+    F: FnOnce(&TestFileSetup),
+{
+    let setup = TestFileSetup::new_with_output_name(fixture_name, output_name);
+    test_fn(&setup);
+    // TestFileSetup automatically cleans up temp_dir when dropped
+}
+
 /// returns a path to a file in the temp_dir folder
 // note, you must pass TempDir from the caller's context
 pub fn temp_dir_path(temp_dir: &TempDir, file_name: &str) -> PathBuf {
@@ -453,137 +602,6 @@ impl AsyncSigner for AsyncTestGoodSigner {
     ) -> Option<crate::error::Result<Vec<u8>>> {
         Some(Ok(Vec::new()))
     }
-}
-
-#[cfg(feature = "v1_api")]
-struct TempRemoteSigner {}
-
-#[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
-#[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
-#[cfg(feature = "v1_api")]
-impl crate::signer::RemoteSigner for TempRemoteSigner {
-    async fn sign_remote(&self, claim_bytes: &[u8]) -> crate::error::Result<Vec<u8>> {
-        let signer = crate::utils::test_signer::async_test_signer(SigningAlg::Ps256);
-
-        // this would happen on some remote server
-        // TEMPORARY: Assume v1 until we plumb things through further.
-        crate::cose_sign::cose_sign_async(
-            &signer,
-            claim_bytes,
-            self.reserve_size(),
-            TimeStampStorage::V1_sigTst,
-        )
-        .await
-    }
-
-    fn reserve_size(&self) -> usize {
-        10000
-    }
-}
-
-/// Create a [`RemoteSigner`] instance that can be used for testing purposes.
-///
-/// # Returns
-///
-/// Returns a boxed [`RemoteSigner`] instance.X509SignatureVerifier
-#[cfg(feature = "v1_api")]
-pub fn temp_remote_signer() -> Box<dyn RemoteSigner> {
-    Box::new(TempRemoteSigner {})
-}
-
-/// Create an AsyncSigner that acts as a RemoteSigner
-#[cfg(feature = "v1_api")]
-struct TempAsyncRemoteSigner {
-    signer: TempRemoteSigner,
-}
-
-#[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
-#[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
-#[cfg(feature = "v1_api")]
-impl AsyncSigner for TempAsyncRemoteSigner {
-    // this will not be called but requires an implementation
-    async fn sign(&self, claim_bytes: Vec<u8>) -> Result<Vec<u8>> {
-        let signer = crate::utils::test_signer::async_test_signer(SigningAlg::Ps256);
-
-        // this would happen on some remote server
-        // TEMPORARY: Assume V1 until we plumb through further.
-        crate::cose_sign::cose_sign_async(
-            &signer,
-            &claim_bytes,
-            AsyncSigner::reserve_size(self),
-            TimeStampStorage::V1_sigTst,
-        )
-        .await
-    }
-
-    // signer will return a COSE structure
-    fn direct_cose_handling(&self) -> bool {
-        true
-    }
-
-    fn alg(&self) -> SigningAlg {
-        SigningAlg::Ps256
-    }
-
-    fn certs(&self) -> Result<Vec<Vec<u8>>> {
-        Ok(Vec::new())
-    }
-
-    fn reserve_size(&self) -> usize {
-        10000
-    }
-
-    async fn send_timestamp_request(
-        &self,
-        _message: &[u8],
-    ) -> Option<crate::error::Result<Vec<u8>>> {
-        Some(Ok(Vec::new()))
-    }
-}
-
-#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
-#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
-#[cfg(feature = "v1_api")]
-impl AsyncRawSigner for TempAsyncRemoteSigner {
-    async fn sign(&self, _claim_bytes: Vec<u8>) -> std::result::Result<Vec<u8>, RawSignerError> {
-        unreachable!("Should not be called");
-    }
-
-    fn alg(&self) -> SigningAlg {
-        SigningAlg::Ps256
-    }
-
-    fn cert_chain(&self) -> std::result::Result<Vec<Vec<u8>>, RawSignerError> {
-        Ok(Vec::new())
-    }
-
-    fn reserve_size(&self) -> usize {
-        10000
-    }
-}
-
-#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
-#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
-#[cfg(feature = "v1_api")]
-impl AsyncTimeStampProvider for TempAsyncRemoteSigner {
-    async fn send_time_stamp_request(
-        &self,
-        _message: &[u8],
-    ) -> Option<std::result::Result<Vec<u8>, TimeStampError>> {
-        Some(Ok(Vec::new()))
-    }
-}
-
-/// Create a [`AsyncSigner`] that does it's own COSE handling for testing.
-///
-/// # Returns
-///
-/// Returns a boxed [`RemoteSigner`] instance.
-#[cfg(feature = "v1_api")]
-pub fn temp_async_remote_signer() -> Box<dyn crate::signer::AsyncSigner> {
-    Box::new(TempAsyncRemoteSigner {
-        signer: TempRemoteSigner {},
-    })
 }
 
 #[test]

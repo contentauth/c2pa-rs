@@ -34,7 +34,6 @@ features = [
     "fetch_remote_manifests",
     "json_schema",
     "pdf",
-    "v1_api",
     "diagnostics",
 ]
 rustdoc-args = ["--cfg", "docsrs"]
@@ -61,7 +60,6 @@ rust_native_crypto = [
     "dep:rsa",
     "dep:spki",
 ]
-v1_api = []
 
 # The diagnostics feature is unsupported and might be removed.
 # It enables some low-overhead timing features used in our development cycle.

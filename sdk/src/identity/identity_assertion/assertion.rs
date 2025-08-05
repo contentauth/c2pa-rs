@@ -193,36 +193,6 @@ impl IdentityAssertion {
         }
     }
 
-    /// Summarize all of the identity assertions found for a [`ManifestStore`].
-    ///
-    /// [`ManifestStore`]: crate::ManifestStore
-    #[cfg(feature = "v1_api")]
-    pub async fn summarize_manifest_store<SV: SignatureVerifier>(
-        store: &crate::ManifestStore,
-        status_tracker: &mut StatusTracker,
-        verifier: &SV,
-    ) -> impl Serialize {
-        // NOTE: We can't write this using .map(...).collect() because there are async
-        // calls.
-        let mut reports: BTreeMap<
-            String,
-            IdentityAssertionsForManifest<
-                <<SV as SignatureVerifier>::Output as ToCredentialSummary>::CredentialSummary,
-            >,
-        > = BTreeMap::new();
-
-        for (id, manifest) in store.manifests() {
-            let report = Self::summarize_all_impl(manifest, status_tracker, verifier).await;
-            reports.insert(id.clone(), report);
-        }
-
-        IdentityAssertionsForManifestStore::<
-            <<SV as SignatureVerifier>::Output as ToCredentialSummary>::CredentialSummary,
-        > {
-            assertions_for_manifest: reports,
-        }
-    }
-
     /// Summarize all of the identity assertions found for a [`Reader`].
     pub async fn summarize_from_reader<SV: SignatureVerifier>(
         reader: &Reader,

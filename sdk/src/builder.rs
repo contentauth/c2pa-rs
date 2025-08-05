@@ -2318,45 +2318,9 @@ mod tests {
         all(target_arch = "wasm32", not(target_os = "wasi")),
         wasm_bindgen_test
     )]
-    #[cfg_attr(target_os = "wasi", wstd::test)]
-    #[cfg(feature = "v1_api")]
-    async fn test_builder_remote_sign() {
-        let format = "image/jpeg";
-        let mut source = Cursor::new(TEST_IMAGE);
-        let mut dest = Cursor::new(Vec::new());
-
-        let mut builder = Builder::from_json(&simple_manifest_json()).unwrap();
-        builder
-            .add_ingredient_from_stream(parent_json(), format, &mut source)
-            .unwrap();
-
-        builder
-            .resources
-            .add("thumbnail.jpg", TEST_THUMBNAIL.to_vec())
-            .unwrap();
-
-        // sign the Builder and write it to the output stream
-        let signer = crate::utils::test::temp_async_remote_signer();
-        builder
-            .sign_async(signer.as_ref(), format, &mut source, &mut dest)
-            .await
-            .unwrap();
-
-        // read and validate the signed manifest store
-        dest.rewind().unwrap();
-        let manifest_store = Reader::from_stream(format, &mut dest).expect("from_bytes");
-
-        assert_eq!(manifest_store.validation_status(), None);
-
-        assert_eq!(
-            manifest_store.active_manifest().unwrap().title().unwrap(),
-            "Test_Manifest"
-        );
-    }
-
     #[test]
     #[cfg(feature = "file_io")]
-    fn test_builder_remote_url() {
+    async fn test_builder_remote_url() {
         let mut source = Cursor::new(TEST_IMAGE_CLEAN);
         let mut dest = Cursor::new(Vec::new());
 

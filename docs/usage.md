@@ -40,18 +40,9 @@ The Rust library crate provides the following capabilities:
 * `json_schema` is used by `make schema` to produce a JSON schema document that represents the `ManifestStore` data structures.
 * `no_interleaved_io` forces fully-synchronous I/O; otherwise, the library uses threaded I/O for some operations to improve performance.
 * `serialize_thumbnails` includes binary thumbnail data in the [Serde](https://serde.rs/) serialization output.
-* `v1_api` - Use the old API (which will soon be deprecated) instead of the [new API](release-notes.md#new-api).
 * `pdf` - Enable support for reading claims on PDF files.
 
-### New API
-
-The new API is now enabled by default. The `unstable_api` feature is no longer available.
-
-To use the deprecated v1 API, enable the v1_api feature; for example:
-
-```
-c2pa = {version="0.43.0", features=["v1_api"]}
-```
+* the `v1_api` feature is no longer supported.
 
 ### Resource references
 

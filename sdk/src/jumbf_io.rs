@@ -292,16 +292,6 @@ pub fn load_jumbf_from_file<P: AsRef<Path>>(in_path: P) -> Result<Vec<u8>> {
     }
 }
 
-#[cfg(all(feature = "v1_api", feature = "file_io"))]
-pub(crate) fn object_locations(in_path: &Path) -> Result<Vec<HashObjectPositions>> {
-    let ext = get_file_extension(in_path).ok_or(Error::UnsupportedType)?;
-
-    match get_assetio_handler(&ext) {
-        Some(asset_handler) => asset_handler.get_object_locations(in_path),
-        _ => Err(Error::UnsupportedType),
-    }
-}
-
 struct CAIReadAdapter<R> {
     pub reader: R,
 }
