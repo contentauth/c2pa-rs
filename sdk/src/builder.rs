@@ -151,7 +151,7 @@ impl AssertionDefinition {
 #[skip_serializing_none]
 #[derive(Debug, Default, Deserialize, Serialize)]
 #[cfg_attr(feature = "json_schema", derive(JsonSchema))]
-pub struct Builder<T = GenericResolver> {
+pub struct Builder {
     #[serde(flatten)]
     /// A collection of ingredients and assertions used to define a claim that can be signed and embedded into a file.
     /// In most cases, you create this from a JSON manifest definition.
@@ -171,22 +171,13 @@ pub struct Builder<T = GenericResolver> {
     #[serde(skip)]
     resources: ResourceStore,
 
+    // TODO: allow users to specify this manually
     #[serde(skip)]
-    resolver: T,
+    resolver: GenericResolver,
 }
 
 impl AsRef<Builder> for Builder {
     fn as_ref(&self) -> &Self {
-        self
-    }
-}
-
-// TODO: this is just an example of what it could look like,
-// there is also an opportunity here to make ManifestDefinition "the builder" so we can
-// construct a Builder with builder-local settings or a builder-local resolver
-impl<T: Resolver> Builder<T> {
-    pub fn set_resolver(&mut self, resolver: T) -> &mut Self {
-        self.resolver = resolver;
         self
     }
 }

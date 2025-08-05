@@ -2048,7 +2048,7 @@ impl Claim {
             // 2.f Template icons
             if let Some(template_vec) = actions.templates() {
                 for template in template_vec {
-                    if let Some(UriOrResource::HashedUri(icon)) = &template.icon {
+                    if let Some(icon) = &template.icon {
                         icons.push(icon);
                     }
                 }

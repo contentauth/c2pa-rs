@@ -21,9 +21,8 @@ use crate::{
     assertion::{Assertion, AssertionBase, AssertionCbor},
     assertions::{labels, region_of_interest::RegionOfInterest, Actor, AssertionMetadata},
     error::Result,
-    resource_store::UriOrResource,
     utils::cbor_types::DateT,
-    ClaimGeneratorInfo,
+    ClaimGeneratorInfo, HashedUri,
 };
 
 const ASSERTION_CREATION_VERSION: usize = 2;
@@ -474,7 +473,7 @@ pub struct ActionTemplate {
     pub source_type: Option<String>,
 
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub icon: Option<UriOrResource>,
+    pub icon: Option<HashedUri>,
 
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,

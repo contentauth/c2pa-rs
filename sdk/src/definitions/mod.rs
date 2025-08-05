@@ -27,61 +27,23 @@ use crate::{
     cbor_types::DateT,
     claim::Claim,
     resolver::{Resolver, ResourceResolver},
-    ClaimGeneratorInfo, HashedUri, Ingredient, ResourceRef, Result,
+    ClaimGeneratorInfo, HashedUri, Ingredient, ResourceRef, Result, SigningAlg,
 };
 
-// #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-// #[cfg_attr(feature = "json_schema", derive(JsonSchema))]
-// #[serde(untagged)]
-// pub enum Identifier {
-//     Path(PathBuf),
-//     Url(Url),
-// }
-
-// impl Identifier {
-//     pub fn resolve<T>(self, resolver: &T, claim: &mut Claim) -> Result<HashedUri>
-//     where
-//         T: HttpResolver + PathResolver,
-//     {
-//         match self {
-//             // TODO: handle
-//             #[allow(clippy::unwrap_used)]
-//             Identifier::Path(path) => {
-//                 let mut stream = resolver.path_resolve(&path).unwrap();
-//                 Ok(resolver
-//                     .resource_resolve(claim, &stream.format, &mut stream.stream)
-//                     .unwrap())
-//             }
-//             // TODO: handle
-//             #[allow(clippy::unwrap_used)]
-//             Identifier::Url(url) => {
-//                 let mut stream = resolver
-//                     .http_resolve_stream(
-//                         Request::builder()
-//                             .uri(url.as_str())
-//                             .body(Vec::new())
-//                             .unwrap(),
-//                     )
-//                     .unwrap();
-//                 Ok(resolver
-//                     .resource_resolve(claim, &stream.format, &mut stream.stream)
-//                     .unwrap())
-//             }
-//         }
-//     }
-// }
-
+// TODO: does these fields (besides id) need to be specified at the manifest level or the resolver level?
+//       the resolver is responsible for inheriting these properties anyways
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 pub struct ResourceDefinition {
     pub identifier: String,
+    // #[serde(skip_serializing_if = "Option::is_none")]
+    // pub format: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub format: Option<String>,
-    #[serde(alias = "dataTypes")]
+    pub name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub data_types: Option<Vec<AssetType>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub alg: Option<String>,
+    pub alg: Option<SigningAlg>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub hash: Option<String>,
 }
@@ -90,7 +52,7 @@ impl ResourceDefinition {
     pub fn resolve<T: Resolver>(self, resolver: &T, claim: &mut Claim) -> Result<HashedUri> {
         // TODO: handle
         #[allow(clippy::unwrap_used)]
-        let resource = resolver.resolve(self.identifier).unwrap();
+        let resource = resolver.resolve(self).unwrap();
         resolver.resource_resolve(claim, resource)
     }
 }
@@ -215,14 +177,11 @@ impl ActionTemplateDefinition {
                 .transpose()?,
             software_agent_index: self.software_agent_index,
             source_type: self.source_type,
-            // TODO: change UriOrResource to HashedUri only
-            // icon: self
-            //     .icon
-            //     .map(|icon| icon.resolve(resolver, claim))
-            //     .transpose()?,
-            icon: None,
+            icon: self
+                .icon
+                .map(|icon| icon.resolve(resolver, claim))
+                .transpose()?,
             description: self.description,
-            // TODO: TODO: we can implement jsonschema for serde_cbor::Value and we don't have to go through this loophole
             template_parameters: self
                 .template_parameters
                 .map(|template_parameters| {
@@ -253,6 +212,7 @@ pub struct ActionDefinition {
     #[serde(alias = "softwareAgent")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub software_agent: Option<ClaimGeneratorInfoDefinition>,
+    // TODO: this can be abstracted
     /// 0-based index into the softwareAgents array.
     #[serde(alias = "softwareAgentIndex")]
     #[serde(skip_serializing_if = "Option::is_none")]

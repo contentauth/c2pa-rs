@@ -667,41 +667,43 @@ impl Manifest {
                 base if base.starts_with(labels::ACTIONS) => {
                     let mut actions = Actions::from_assertion(assertion)?;
 
-                    for action in actions.actions_mut() {
-                        if let Some(SoftwareAgent::ClaimGeneratorInfo(info)) =
-                            action.software_agent_mut()
-                        {
-                            if let Some(icon) = info.icon.as_mut() {
-                                // TODO: do we need this?
-                                // let icon = icon.to_resource_ref(manifest.resources_mut(), claim)?;
-                                // info.set_icon(icon);
-                            }
-                        }
-                    }
+                    // TODO: not needed, remove
+                    // for action in actions.actions_mut() {
+                    //     if let Some(SoftwareAgent::ClaimGeneratorInfo(info)) =
+                    //         action.software_agent_mut()
+                    //     {
+                    //         if let Some(icon) = info.icon.as_mut() {
+                    //             // TODO: do we need this?
+                    //             // let icon = icon.to_resource_ref(manifest.resources_mut(), claim)?;
+                    //             // info.set_icon(icon);
+                    //         }
+                    //     }
+                    // }
 
                     // convert icons in templates to resource refs
                     if let Some(templates) = actions.templates.as_mut() {
                         for template in templates {
-                            // replace icon with resource ref
-                            template.icon = match template.icon.take() {
-                                Some(icon) => {
-                                    Some(icon.to_resource_ref(manifest.resources_mut(), claim)?)
-                                }
-                                None => None,
-                            };
+                            // TODO: not needed, remove
+                            // // replace icon with resource ref
+                            // template.icon = match template.icon.take() {
+                            //     Some(icon) => {
+                            //         Some(icon.to_resource_ref(manifest.resources_mut(), claim)?)
+                            //     }
+                            //     None => None,
+                            // };
 
-                            // replace software agent with resource ref
-                            template.software_agent = match template.software_agent.take() {
-                                Some(mut info) => {
-                                    if let Some(icon) = info.icon.as_mut() {
-                                        // let icon =
-                                        // icon.to_resource_ref(manifest.resources_mut(), claim)?;
-                                        // info.set_icon(icon);
-                                    }
-                                    Some(info)
-                                }
-                                agent => agent,
-                            };
+                            // // replace software agent with resource ref
+                            // template.software_agent = match template.software_agent.take() {
+                            //     Some(mut info) => {
+                            //         if let Some(icon) = info.icon.as_mut() {
+                            //             // let icon =
+                            //             // icon.to_resource_ref(manifest.resources_mut(), claim)?;
+                            //             // info.set_icon(icon);
+                            //         }
+                            //         Some(info)
+                            //     }
+                            //     agent => agent,
+                            // };
                         }
                     }
                     let manifest_assertion = ManifestAssertion::from_assertion(&actions)?
