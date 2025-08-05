@@ -17,15 +17,16 @@
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg, doc_cfg_hide))]
 
 //! This library supports reading, creating, and embedding C2PA data
-//! with a variety of asset types.
+//! for a variety of asset types.
 //!
 //! Some functionality requires you to enable specific crate features,
 //! as noted in the documentation.
 //!
-//! The library has a new Builder/Reader API
-//! The new API focuses on stream support and can do more with fewer methods.
+//! The library has a Builder/Reader API that focuses on simplicity
+//! and stream support.
 //!
-//! # Example: Reading a ManifestStore
+//! ## Example: Reading a ManifestStore
+//!
 //! ```
 //! # use c2pa::Result;
 //! use c2pa::{assertions::Actions, Reader};
@@ -45,9 +46,9 @@
 //! # }
 //! ```
 //!
-//! # Example: Adding a Manifest to a file
+//! ## Example: Adding a Manifest to a file
 //!
-//!
+//! ```
 //! # use c2pa::Result;
 //! use std::path::PathBuf;
 //!
@@ -81,6 +82,7 @@
 //! )?;
 //! # Ok(())
 //! # }
+//! ```
 
 /// The internal name of the C2PA SDK
 pub const NAME: &str = "c2pa-rs";
@@ -91,44 +93,56 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 // Public modules
 /// The assertions module contains the definitions for the assertions that are part of the C2PA specification.
 pub mod assertions;
+
 /// The cose_sign module contains the definitions for the COSE signing algorithms.
 pub mod cose_sign;
+
 /// The create_signer module contains the definitions for the signers that are part of the C2PA specification.
 pub mod create_signer;
 
 /// Cryptography primitives.
+#[doc(hidden)]
 pub mod crypto;
 
 /// Dynamic assertions are a new feature that allows you to add assertions to a C2PA file as a part of the signing process.
+#[doc(hidden)]
 pub mod dynamic_assertion;
 
 /// The `identity` module provides support for the [CAWG identity assertion](https://cawg.io/identity).
+#[doc(hidden)]
 pub mod identity;
 
 /// The jumbf_io module contains the definitions for the JUMBF data in assets.
 pub mod jumbf_io;
+
 /// The settings module provides a way to configure the C2PA SDK.
 pub mod settings;
 
 /// Supports status tracking as defined in the C2PA Technical Specification.
+#[doc(hidden)]
 pub mod status_tracker;
 
 /// The validation_results module contains the definitions for the validation results that are part of the C2PA specification.
 pub mod validation_results;
+
 /// The validation_status module contains the definitions for the validation status that are part of the C2PA specification.
+#[doc(hidden)]
 pub mod validation_status;
 
 // Public exports
+#[doc(inline)]
 pub use assertions::Relationship;
 #[cfg(feature = "v1_api")]
 pub use asset_io::{CAIRead, CAIReadWrite};
-pub use builder::{Builder, ManifestDefinition};
+pub use builder::{Builder, DigitalSourceType, ManifestDefinition};
 pub use callback_signer::{CallbackFunc, CallbackSigner};
 pub use claim_generator_info::ClaimGeneratorInfo;
 // pub use dynamic_assertion::{
 //     AsyncDynamicAssertion, DynamicAssertion, DynamicAssertionContent, PartialClaim,
 // };
+pub use crypto::raw_signature::SigningAlg;
 pub use error::{Error, Result};
+#[doc(inline)]
 pub use external_manifest::ManifestPatchCallback;
 pub use hash_utils::{hash_stream_by_alg, HashRange};
 pub use hashed_uri::HashedUri;
@@ -142,14 +156,14 @@ pub use manifest_store::ManifestStore;
 #[cfg(feature = "v1_api")]
 pub use manifest_store_report::ManifestStoreReport;
 pub use reader::Reader;
+#[doc(inline)]
 pub use resource_store::{ResourceRef, ResourceStore};
 #[cfg(feature = "v1_api")]
 pub use signer::RemoteSigner;
 pub use signer::{AsyncSigner, Signer};
 pub use utils::mime::format_from_path;
+#[doc(inline)]
 pub use validation_results::{ValidationResults, ValidationState};
-
-pub use crate::crypto::raw_signature::SigningAlg;
 
 // Internal modules
 pub(crate) mod assertion;
@@ -173,6 +187,7 @@ pub(crate) mod manifest_assertion;
 #[cfg(feature = "v1_api")]
 pub(crate) mod manifest_store;
 pub(crate) mod manifest_store_report;
+
 #[allow(dead_code)]
 // TODO: Remove this when the feature is released (used in tests only for some builds now)
 pub(crate) mod reader;

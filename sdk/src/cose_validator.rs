@@ -11,7 +11,7 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use std::io::Write;
+use std::{borrow::Cow, io::Write};
 
 use async_generic::async_generic;
 use x509_parser::{num_bigint::BigUint, prelude::*};
@@ -22,8 +22,8 @@ use crate::{
         base64,
         cose::{
             cert_chain_from_sign1, parse_cose_sign1, signing_alg_from_sign1,
-            signing_time_from_sign1, signing_time_from_sign1_async, CertificateInfo,
-            CertificateTrustPolicy, Verifier,
+            signing_time_from_sign1, signing_time_from_sign1_async, validate_cose_tst_info,
+            validate_cose_tst_info_async, CertificateInfo, CertificateTrustPolicy, Verifier,
         },
         raw_signature::SigningAlg,
     },
@@ -42,7 +42,7 @@ fn get_sign_cert(sign1: &coset::CoseSign1) -> Result<Vec<u8>> {
 /// cose_bytes - byte array containing the raw COSE_SIGN1 data
 /// data:  data that was used to create the cose_bytes, these must match
 /// addition_data: additional optional data that may have been used during signing
-/// tst
+/// tst_info allows for overriding the timestamp, this is used by the timestamp assertion
 /// returns - Ok on success
 #[async_generic]
 pub(crate) fn verify_cose(
@@ -51,16 +51,34 @@ pub(crate) fn verify_cose(
     additional_data: &[u8],
     cert_check: bool,
     ctp: &CertificateTrustPolicy,
-    tst_info: Option<TstInfo>,
+    tst_info: Option<&TstInfo>,
     validation_log: &mut StatusTracker,
 ) -> Result<CertificateInfo> {
     let verifier = if cert_check {
         match get_settings_value::<bool>("verify.verify_trust") {
-            Ok(true) => Verifier::VerifyTrustPolicy(ctp),
-            _ => Verifier::VerifyCertificateProfileOnly(ctp),
+            Ok(true) => Verifier::VerifyTrustPolicy(Cow::Borrowed(ctp)),
+            _ => Verifier::VerifyCertificateProfileOnly(Cow::Borrowed(ctp)),
         }
     } else {
         Verifier::IgnoreProfileAndTrustPolicy
+    };
+
+    let sign1 = parse_cose_sign1(cose_bytes, data, validation_log)?;
+
+    // Timestamps failures are not fatal according to C2PA spec, we just need to log the state and use
+    // the returned value unless an alternate timestamp is provided.  Timestamp certs are subject to the same
+    // trust list checks as the signing certificate.
+    let tst_info = match tst_info {
+        Some(tst_info) => Some(tst_info.clone()),
+        None => {
+            if _sync {
+                validate_cose_tst_info(&sign1, data, ctp, validation_log).ok()
+            } else {
+                validate_cose_tst_info_async(&sign1, data, ctp, validation_log)
+                    .await
+                    .ok()
+            }
+        }
     };
 
     if _sync {
@@ -68,12 +86,18 @@ pub(crate) fn verify_cose(
             cose_bytes,
             data,
             additional_data,
-            tst_info,
+            tst_info.as_ref(),
             validation_log,
         )?)
     } else {
         Ok(verifier
-            .verify_signature_async(cose_bytes, data, additional_data, tst_info, validation_log)
+            .verify_signature_async(
+                cose_bytes,
+                data,
+                additional_data,
+                tst_info.as_ref(),
+                validation_log,
+            )
             .await?)
     }
 }
@@ -99,15 +123,15 @@ fn dump_cert_chain(certs: &[Vec<u8>]) -> Result<Vec<u8>> {
 
         // write lines
         writer
-            .write_fmt(format_args!("{}\n", cert_begin))
+            .write_fmt(format_args!("{cert_begin}\n"))
             .map_err(|_e| Error::UnsupportedType)?;
         for l in cert_lines {
             writer
-                .write_fmt(format_args!("{}\n", l))
+                .write_fmt(format_args!("{l}\n"))
                 .map_err(|_e| Error::UnsupportedType)?;
         }
         writer
-            .write_fmt(format_args!("{}\n", cert_end))
+            .write_fmt(format_args!("{cert_end}\n"))
             .map_err(|_e| Error::UnsupportedType)?;
     }
 

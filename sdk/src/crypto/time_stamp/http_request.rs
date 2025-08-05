@@ -13,14 +13,19 @@
 
 use async_generic::async_generic;
 use bcder::{decode::Constructed, encode::Values};
+use http::header;
 
-use crate::crypto::{
-    asn1::rfc3161::{TimeStampReq, TimeStampResp},
-    time_stamp::{
-        response::TimeStampResponse,
-        verify::{verify_time_stamp, verify_time_stamp_async},
-        TimeStampError,
+use crate::{
+    crypto::{
+        asn1::rfc3161::{TimeStampReq, TimeStampResp},
+        cose::CertificateTrustPolicy,
+        time_stamp::{
+            response::TimeStampResponse,
+            verify::{verify_time_stamp, verify_time_stamp_async},
+            TimeStampError,
+        },
     },
+    status_tracker::StatusTracker,
 };
 
 /// Request an [RFC 3161] time stamp for a given piece of data from a timestamp
@@ -47,11 +52,14 @@ pub fn default_rfc3161_request(
 
     let ts = time_stamp_request_http(url, headers, &request)?;
 
+    let mut local_log = StatusTracker::default();
+    let ctp = CertificateTrustPolicy::passthrough();
+
     // Make sure the time stamp is valid before we return it.
     if _sync {
-        verify_time_stamp(&ts, message)?;
+        verify_time_stamp(&ts, message, &ctp, &mut local_log)?;
     } else {
-        verify_time_stamp_async(&ts, message).await?;
+        verify_time_stamp_async(&ts, message, &ctp, &mut local_log).await?;
     }
 
     Ok(ts)
@@ -78,24 +86,27 @@ fn time_stamp_request_http(
 
     if let Some(headers) = headers {
         for (ref name, ref value) in headers {
-            req = req.set(name.as_str(), value.as_str());
+            req = req.header(name.as_str(), value.as_str());
         }
     }
 
     let response = req
-        .set("Content-Type", HTTP_CONTENT_TYPE_REQUEST)
-        .send_bytes(&body)?;
+        .header(header::CONTENT_TYPE, HTTP_CONTENT_TYPE_REQUEST)
+        .send(&body)?;
 
-    if response.status() == 200 && response.content_type() == HTTP_CONTENT_TYPE_RESPONSE {
-        let len = response
-            .header("Content-Length")
-            .and_then(|s| s.parse::<usize>().ok())
+    let content_type = response
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .and_then(|header| header.to_str().ok());
+    if response.status() == 200 && content_type == Some(HTTP_CONTENT_TYPE_RESPONSE) {
+        let body = response.into_body();
+        let len = body
+            .content_length()
+            .and_then(|content_length| content_length.try_into().ok())
             .unwrap_or(20000);
-
         let mut response_bytes: Vec<u8> = Vec::with_capacity(len);
 
-        response
-            .into_reader()
+        body.into_reader()
             .take(1000000)
             .read_to_end(&mut response_bytes)?;
 
@@ -118,8 +129,8 @@ fn time_stamp_request_http(
         Ok(response_bytes)
     } else {
         Err(TimeStampError::HttpErrorResponse(
-            response.status(),
-            response.content_type().to_string(),
+            response.status().as_u16(),
+            content_type.map(|content_type| content_type.to_owned()),
         ))
     }
 }

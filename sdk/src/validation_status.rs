@@ -13,7 +13,7 @@
 
 //! Implements validation status for specific parts of a manifest.
 //!
-//! See <https://c2pa.org/specifications/specifications/1.0/specs/C2PA_Specification.html#_existing_manifests>.
+//! See <https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_existing_manifests>.
 
 #![deny(missing_docs)]
 
@@ -36,7 +36,7 @@ use crate::{
 /// A `ValidationStatus` struct describes the validation status of a
 /// specific part of a manifest.
 ///
-/// See <https://c2pa.org/specifications/specifications/1.0/specs/C2PA_Specification.html#_existing_manifests>.
+/// See <https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_existing_manifests>.
 #[derive(Clone, Debug, Deserialize, Serialize, Eq)]
 #[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 pub struct ValidationStatus {
@@ -83,7 +83,7 @@ impl ValidationStatus {
     /// Returns the validation status code.
     ///
     /// Validation status codes are the labels from the "Value"
-    /// column in <https://c2pa.org/specifications/specifications/1.0/specs/C2PA_Specification.html#_existing_manifests>.
+    /// column in <https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_existing_manifests>.
     ///
     /// These are also defined as constants in the
     /// [`validation_status`](crate::validation_status) mod.
@@ -170,7 +170,7 @@ impl ValidationStatus {
     pub(crate) fn from_error(error: &Error) -> Self {
         // We need to create error codes here for client processing.
         let code = Self::code_from_error(error);
-        debug!("ValidationStatus {} from error {:#?}", code, error);
+        debug!("ValidationStatus {code} from error {error:#?}");
         Self::new_failure(code.to_string()).set_explanation(error.to_string())
     }
 

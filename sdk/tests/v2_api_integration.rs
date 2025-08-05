@@ -72,7 +72,10 @@ mod integration_v2 {
                         {
                             "action": "c2pa.created",
                             "digitalSourceType": "http://cv.iptc.org/newscodes/digitalsourcetype/trainedAlgorithmicMedia",
-                            "softwareAgent": "Adobe Firefly 0.1.0",
+                            "softwareAgent": {
+                                "name": "Adobe Firefly",
+                                "version": "0.1.0",
+                            },
                             "description": "This image was edited by Adobe Firefly",
                             "when": "2025-04-22T17:25:28Z",
                             "parameters": {

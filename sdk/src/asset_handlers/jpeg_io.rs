@@ -620,7 +620,7 @@ impl RemoteRefEmbed for JpegIO {
                     .unwrap_or((None, MIN_XMP));
 
                 // add provenance and JPEG XMP prefix
-                let xmp = format!("{XMP_SIGNATURE}\0 {}", add_provenance(xmp, &manifest_uri)?);
+                let xmp = format!("{XMP_SIGNATURE}\0{}", add_provenance(xmp, &manifest_uri)?);
                 let segment = JpegSegment::new_with_contents(markers::APP1, Bytes::from(xmp));
                 // insert or add the segment
                 match xmp_index {
@@ -770,7 +770,7 @@ fn make_box_maps(input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>> {
                     alg: None,
                     hash: ByteBuf::from(Vec::new()),
                     pad: ByteBuf::from(Vec::new()),
-                    range_start: seg.position,
+                    range_start: seg.position as u64,
                     range_len: 0,
                 };
 
@@ -782,7 +782,7 @@ fn make_box_maps(input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>> {
                     alg: None,
                     hash: ByteBuf::from(Vec::new()),
                     pad: ByteBuf::from(Vec::new()),
-                    range_start: seg.position,
+                    range_start: seg.position as u64,
                     range_len: 0,
                 };
 
@@ -806,7 +806,7 @@ fn make_box_maps(input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>> {
                         cai_seg_cnt += 1;
 
                         if let Some(cai_bm) = box_maps.get_mut(cai_index) {
-                            cai_bm.range_len += raw_bytes.len() + 4;
+                            cai_bm.range_len += (raw_bytes.len() + 4) as u64;
                         } else {
                             return Err(Error::InvalidAsset(
                                 "CAI segment index out of bounds".to_string(),
@@ -831,8 +831,8 @@ fn make_box_maps(input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>> {
                                 alg: None,
                                 hash: ByteBuf::from(Vec::new()),
                                 pad: ByteBuf::from(Vec::new()),
-                                range_start: seg.position,
-                                range_len: raw_bytes.len() + 4,
+                                range_start: seg.position as u64,
+                                range_len: (raw_bytes.len() + 4) as u64,
                             };
 
                             box_maps.push(c2pa_bm);
@@ -847,7 +847,7 @@ fn make_box_maps(input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>> {
                                 alg: None,
                                 hash: ByteBuf::from(Vec::new()),
                                 pad: ByteBuf::from(Vec::new()),
-                                range_start: seg.position,
+                                range_start: seg.position as u64,
                                 range_len: 0,
                             };
 
@@ -869,7 +869,7 @@ fn make_box_maps(input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>> {
                     alg: None,
                     hash: ByteBuf::from(Vec::new()),
                     pad: ByteBuf::from(Vec::new()),
-                    range_start: seg.position,
+                    range_start: seg.position as u64,
                     range_len: 0,
                 };
 
@@ -881,7 +881,7 @@ fn make_box_maps(input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>> {
                     alg: None,
                     hash: ByteBuf::from(Vec::new()),
                     pad: ByteBuf::from(Vec::new()),
-                    range_start: seg.position,
+                    range_start: seg.position as u64,
                     range_len: 0,
                 };
 
@@ -893,7 +893,7 @@ fn make_box_maps(input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>> {
                     alg: None,
                     hash: ByteBuf::from(Vec::new()),
                     pad: ByteBuf::from(Vec::new()),
-                    range_start: seg.position,
+                    range_start: seg.position as u64,
                     range_len: 0,
                 };
 
@@ -905,7 +905,7 @@ fn make_box_maps(input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>> {
                     alg: None,
                     hash: ByteBuf::from(Vec::new()),
                     pad: ByteBuf::from(Vec::new()),
-                    range_start: seg.position,
+                    range_start: seg.position as u64,
                     range_len: 0,
                 };
 
@@ -917,7 +917,7 @@ fn make_box_maps(input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>> {
                     alg: None,
                     hash: ByteBuf::from(Vec::new()),
                     pad: ByteBuf::from(Vec::new()),
-                    range_start: seg.position,
+                    range_start: seg.position as u64,
                     range_len: 0,
                 };
 
@@ -933,7 +933,7 @@ fn make_box_maps(input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>> {
                     alg: None,
                     hash: ByteBuf::from(Vec::new()),
                     pad: ByteBuf::from(Vec::new()),
-                    range_start: seg.position,
+                    range_start: seg.position as u64,
                     range_len: 0,
                 };
 
@@ -945,7 +945,7 @@ fn make_box_maps(input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>> {
                     alg: None,
                     hash: ByteBuf::from(Vec::new()),
                     pad: ByteBuf::from(Vec::new()),
-                    range_start: seg.position,
+                    range_start: seg.position as u64,
                     range_len: 0,
                 };
 
@@ -957,7 +957,7 @@ fn make_box_maps(input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>> {
                     alg: None,
                     hash: ByteBuf::from(Vec::new()),
                     pad: ByteBuf::from(Vec::new()),
-                    range_start: seg.position,
+                    range_start: seg.position as u64,
                     range_len: 0,
                 };
 
@@ -969,7 +969,7 @@ fn make_box_maps(input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>> {
                     alg: None,
                     hash: ByteBuf::from(Vec::new()),
                     pad: ByteBuf::from(Vec::new()),
-                    range_start: seg.position,
+                    range_start: seg.position as u64,
                     range_len: 0,
                 };
 
@@ -981,7 +981,7 @@ fn make_box_maps(input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>> {
                     alg: None,
                     hash: ByteBuf::from(Vec::new()),
                     pad: ByteBuf::from(Vec::new()),
-                    range_start: seg.position,
+                    range_start: seg.position as u64,
                     range_len: 0,
                 };
 
@@ -997,7 +997,7 @@ fn make_box_maps(input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>> {
                     alg: None,
                     hash: ByteBuf::from(Vec::new()),
                     pad: ByteBuf::from(Vec::new()),
-                    range_start: seg.position,
+                    range_start: seg.position as u64,
                     range_len: 0,
                 };
 
@@ -1020,12 +1020,12 @@ impl AssetBoxHash for JpegIO {
                 }
             }
 
-            input_stream.seek(std::io::SeekFrom::Start(bm.range_start as u64))?;
+            input_stream.seek(std::io::SeekFrom::Start(bm.range_start))?;
 
             let size = if bm.names.first().is_some_and(|name| name == "SOS") {
                 let mut size = get_seg_size(input_stream)?;
 
-                input_stream.seek(std::io::SeekFrom::Start((bm.range_start + size) as u64))?;
+                input_stream.seek(std::io::SeekFrom::Start(bm.range_start + size as u64))?;
 
                 size += get_entropy_size(input_stream)?;
 
@@ -1034,7 +1034,7 @@ impl AssetBoxHash for JpegIO {
                 get_seg_size(input_stream)?
             };
 
-            bm.range_len = size;
+            bm.range_len = size as u64;
         }
 
         Ok(box_maps)

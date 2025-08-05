@@ -32,13 +32,14 @@ use crate::{
     assertions::{
         self, c2pa_action,
         labels::{self, ACTIONS, ASSERTION_STORE, BMFF_HASH, CLAIM_THUMBNAIL, DATABOX_STORE},
-        Actions, AssetType, BmffHash, BoxHash, DataBox, DataHash, Ingredient, Metadata,
+        Actions, AssertionMetadata, AssetType, BmffHash, BoxHash, DataBox, DataHash, Ingredient,
         Relationship, V2_DEPRECATED_ACTIONS,
     },
     asset_io::CAIRead,
     cbor_types::{map_cbor_to_type, value_cbor_to_type},
     cose_validator::{get_signing_info, get_signing_info_async, verify_cose, verify_cose_async},
     crypto::{
+        asn1::rfc3161::TstInfo,
         base64,
         cose::{parse_cose_sign1, CertificateInfo, CertificateTrustPolicy, OcspFetchPolicy},
         ocsp::OcspResponse,
@@ -53,8 +54,8 @@ use crate::{
         },
         labels::{
             assertion_label_from_uri, box_name_from_uri, manifest_label_from_uri,
-            manifest_label_to_parts, to_absolute_uri, to_assertion_uri, to_databox_uri, ASSERTIONS,
-            CLAIM, CREDENTIALS, DATABOX, DATABOXES, SIGNATURE,
+            manifest_label_to_parts, to_absolute_uri, to_assertion_uri, to_databox_uri,
+            to_signature_uri, ASSERTIONS, CLAIM, CREDENTIALS, DATABOX, DATABOXES, SIGNATURE,
         },
     },
     jumbf_io::get_assetio_handler,
@@ -160,7 +161,7 @@ impl ClaimAssertion {
                 let label = format!("{}__{}", get_thumbnail_type(&al_ref), self.instance);
 
                 match get_thumbnail_image_type(&al_ref) {
-                    Some(image_type) => format!("{}.{}", label, image_type),
+                    Some(image_type) => format!("{label}.{image_type}"),
                     None => label,
                 }
             } else {
@@ -307,7 +308,7 @@ pub struct Claim {
 
     claim_generator_hints: Option<HashMap<String, Value>>,
 
-    metadata: Option<Vec<Metadata>>,
+    metadata: Option<Vec<AssertionMetadata>>,
 
     data_boxes: Vec<(HashedUri, DataBox)>, /* list of the data boxes and their hashed URIs found for this manifest */
 
@@ -413,7 +414,11 @@ impl Claim {
             conflict_label: None,
             signature: "".to_string(),
 
-            claim_generator: Some(claim_generator.into()),
+            claim_generator: if claim_version == 1 {
+                Some(claim_generator.into())
+            } else {
+                None
+            },
             claim_generator_info: None,
             assertion_store: Vec::new(),
             vc_store: Vec::new(),
@@ -506,7 +511,11 @@ impl Claim {
             conflict_label: None,
             signature: "".to_string(),
 
-            claim_generator: Some(claim_generator.into()),
+            claim_generator: if claim_version == 1 {
+                Some(claim_generator.into())
+            } else {
+                None
+            },
             claim_generator_info: None,
             assertion_store: Vec::new(),
             vc_store: Vec::new(),
@@ -546,7 +555,9 @@ impl Claim {
         {
             2
         } else {
-            return Err(Error::ClaimDecoding);
+            return Err(Error::ClaimDecoding(
+                "unsupported claim version".to_string(),
+            ));
         };
 
         if claim_version == 1 {
@@ -582,26 +593,31 @@ impl Claim {
 
             // make sure only V1 fields are present
             if let serde_cbor::Value::Map(m) = &claim_value {
-                if !m.keys().all(|v| match v {
-                    serde_cbor::Value::Text(t) => V1_FIELDS.contains(&t.as_str()),
-                    _ => false,
-                }) {
-                    return Err(Error::ClaimDecoding);
+                for v in m.keys() {
+                    if let serde_cbor::Value::Text(t) = v {
+                        if !V1_FIELDS.contains(&t.as_str()) {
+                            return Err(Error::ClaimDecoding(format!(
+                                "unknown V1 claim field: {t}"
+                            )));
+                        }
+                    } else {
+                        return Err(Error::ClaimDecoding("non-text key in V1 claim".to_string()));
+                    }
                 }
             } else {
-                return Err(Error::ClaimDecoding);
+                return Err(Error::ClaimDecoding("claim is not an object".to_string()));
             }
 
-            let claim_generator: String =
-                map_cbor_to_type(CLAIM_GENERATOR_F, &claim_value).ok_or(Error::ClaimDecoding)?;
-            let signature: String =
-                map_cbor_to_type(SIGNATURE_F, &claim_value).ok_or(Error::ClaimDecoding)?;
-            let assertions: Vec<HashedUri> =
-                map_cbor_to_type(ASSERTIONS_F, &claim_value).ok_or(Error::ClaimDecoding)?;
-            let format: String =
-                map_cbor_to_type(DC_FORMAT_F, &claim_value).ok_or(Error::ClaimDecoding)?;
-            let instance_id =
-                map_cbor_to_type(INSTANCE_ID_F, &claim_value).ok_or(Error::ClaimDecoding)?;
+            let claim_generator: String = map_cbor_to_type(CLAIM_GENERATOR_F, &claim_value)
+                .ok_or(Error::ClaimDecoding(CLAIM_GENERATOR_F.to_string()))?;
+            let signature: String = map_cbor_to_type(SIGNATURE_F, &claim_value)
+                .ok_or(Error::ClaimDecoding(SIGNATURE_F.to_string()))?;
+            let assertions: Vec<HashedUri> = map_cbor_to_type(ASSERTIONS_F, &claim_value)
+                .ok_or(Error::ClaimDecoding(ASSERTIONS_F.to_string()))?;
+            let format: String = map_cbor_to_type(DC_FORMAT_F, &claim_value)
+                .ok_or(Error::ClaimDecoding(DC_FORMAT_F.to_string()))?;
+            let instance_id = map_cbor_to_type(INSTANCE_ID_F, &claim_value)
+                .ok_or(Error::ClaimDecoding(INSTANCE_ID_F.to_string()))?;
 
             // optional V1 fields
             let claim_generator_info: Option<Vec<ClaimGeneratorInfo>> =
@@ -613,7 +629,8 @@ impl Claim {
                 map_cbor_to_type(REDACTED_ASSERTIONS_F, &claim_value);
             let alg: Option<String> = map_cbor_to_type(ALG_F, &claim_value);
             let alg_soft: Option<String> = map_cbor_to_type(ALG_SOFT_F, &claim_value);
-            let metadata: Option<Vec<Metadata>> = map_cbor_to_type(METADATA_F, &claim_value);
+            let metadata: Option<Vec<AssertionMetadata>> =
+                map_cbor_to_type(METADATA_F, &claim_value);
 
             Ok(Claim {
                 remote_manifest: RemoteManifest::NoRemote,
@@ -673,25 +690,35 @@ impl Claim {
 
             // make sure only V2 fields are present
             if let serde_cbor::Value::Map(m) = &claim_value {
-                if !m.keys().all(|v| match v {
-                    serde_cbor::Value::Text(t) => V2_FIELDS.contains(&t.as_str()),
-                    _ => false,
-                }) {
-                    return Err(Error::ClaimDecoding);
+                for v in m.keys() {
+                    if let serde_cbor::Value::Text(t) = v {
+                        if !V2_FIELDS.contains(&t.as_str()) {
+                            return Err(Error::ClaimDecoding(format!(
+                                "unknown V2 claim field: {t}",
+                            )));
+                        }
+                    } else {
+                        return Err(Error::ClaimDecoding("non-text key in V2 claim".to_string()));
+                    }
                 }
             } else {
-                return Err(Error::ClaimDecoding);
+                return Err(Error::ClaimDecoding("claim is not an object".to_string()));
             }
 
-            let instance_id =
-                map_cbor_to_type(INSTANCE_ID_F, &claim_value).ok_or(Error::ClaimDecoding)?;
+            let instance_id = map_cbor_to_type(INSTANCE_ID_F, &claim_value).ok_or(
+                Error::ClaimDecoding("instanceID is missing or invalid".to_string()),
+            )?;
             let claim_generator_info: ClaimGeneratorInfo =
-                map_cbor_to_type(CLAIM_GENERATOR_INFO_F, &claim_value)
-                    .ok_or(Error::ClaimDecoding)?;
-            let signature: String =
-                map_cbor_to_type(SIGNATURE_F, &claim_value).ok_or(Error::ClaimDecoding)?;
+                map_cbor_to_type(CLAIM_GENERATOR_INFO_F, &claim_value).ok_or(
+                    Error::ClaimDecoding("claim_generator_info is missing or invalid".to_string()),
+                )?;
+            let signature: String = map_cbor_to_type(SIGNATURE_F, &claim_value).ok_or(
+                Error::ClaimDecoding("signature is missing or invalid".to_string()),
+            )?;
             let created_assertions: Vec<HashedUri> =
-                map_cbor_to_type(CREATED_ASSERTIONS_F, &claim_value).ok_or(Error::ClaimDecoding)?;
+                map_cbor_to_type(CREATED_ASSERTIONS_F, &claim_value).ok_or(
+                    Error::ClaimDecoding("created_assertions is missing or invalid".to_string()),
+                )?;
 
             // optional V2 fields
             let gathered_assertions: Option<Vec<HashedUri>> =
@@ -701,7 +728,8 @@ impl Claim {
                 map_cbor_to_type(REDACTED_ASSERTIONS_F, &claim_value);
             let alg: Option<String> = map_cbor_to_type(ALG_F, &claim_value);
             let alg_soft: Option<String> = map_cbor_to_type(ALG_SOFT_F, &claim_value);
-            let metadata: Option<Vec<Metadata>> = map_cbor_to_type(METADATA_F, &claim_value);
+            let metadata: Option<Vec<AssertionMetadata>> =
+                map_cbor_to_type(METADATA_F, &claim_value);
 
             // create merged list of created and gathered assertions for processing compatibility
             // created are added first with highest priority than gathered
@@ -939,7 +967,7 @@ impl Claim {
 
     /// return max version this Claim supports
     pub fn build_version_support() -> String {
-        format!("{}.v{}", CLAIM, BUILD_VER_SUPPORT)
+        format!("{CLAIM}.v{BUILD_VER_SUPPORT}")
     }
 
     /// Return the JUMBF label for this claim.
@@ -1060,6 +1088,11 @@ impl Claim {
         }
     }
 
+    /// true algorithm
+    pub fn alg_raw(&self) -> Option<&str> {
+        self.alg.as_deref()
+    }
+
     /// get soft algorithm
     pub fn alg_soft(&self) -> Option<&String> {
         self.alg_soft.as_ref()
@@ -1121,7 +1154,7 @@ impl Claim {
         self.claim_generator_info.as_deref()
     }
 
-    pub fn add_claim_metadata(&mut self, md: Metadata) -> &mut Self {
+    pub fn add_claim_metadata(&mut self, md: AssertionMetadata) -> &mut Self {
         match self.metadata.as_mut() {
             Some(md_vec) => md_vec.push(md),
             None => self.metadata = Some([md].to_vec()),
@@ -1129,7 +1162,7 @@ impl Claim {
         self
     }
 
-    pub fn metadata(&self) -> Option<&[Metadata]> {
+    pub fn metadata(&self) -> Option<&[AssertionMetadata]> {
         self.metadata.as_deref()
     }
 
@@ -1786,7 +1819,7 @@ impl Claim {
         let data = claim.data()?;
 
         // use the signature uri as the current uri while validating the signature info
-        validation_log.push_current_uri(claim.signature.clone());
+        validation_log.push_current_uri(to_signature_uri(claim.label()));
 
         // make sure signature manifest if present points to this manifest
         let sig_box_err = match jumbf::labels::manifest_label_from_uri(&claim.signature) {
@@ -1799,7 +1832,7 @@ impl Claim {
 
         if sig_box_err {
             log_item!(
-                claim.signature_uri(),
+                to_signature_uri(claim.label()),
                 "signature missing",
                 "verify_claim_async"
             )
@@ -1810,7 +1843,13 @@ impl Claim {
         let sign1 = parse_cose_sign1(&sig, &data, validation_log)?;
 
         // check certificate revocation
-        check_ocsp_status(&sign1, &data, ctp, validation_log)?;
+        check_ocsp_status(
+            &sign1,
+            &data,
+            ctp,
+            svi.timestamps.get(claim.label()),
+            validation_log,
+        )?;
 
         let verified = verify_cose_async(
             &sig,
@@ -1818,7 +1857,7 @@ impl Claim {
             &additional_bytes,
             cert_check,
             ctp,
-            svi.timestamps.get(claim.label()).cloned(),
+            svi.timestamps.get(claim.label()),
             validation_log,
         )
         .await;
@@ -1844,7 +1883,7 @@ impl Claim {
         let additional_bytes: Vec<u8> = Vec::new();
 
         // use the signature uri as the current uri while validating the signature info
-        validation_log.push_current_uri(claim.signature.clone());
+        validation_log.push_current_uri(to_signature_uri(claim.label()));
 
         // make sure signature manifest if present points to this manifest
         let sig_box_err = match jumbf::labels::manifest_label_from_uri(&claim.signature) {
@@ -1856,21 +1895,37 @@ impl Claim {
         };
 
         if sig_box_err {
-            log_item!(claim.signature_uri(), "signature missing", "verify_claim")
-                .validation_status(validation_status::CLAIM_SIGNATURE_MISSING)
-                .failure(validation_log, Error::ClaimMissingSignatureBox)?;
+            log_item!(
+                to_signature_uri(claim.label()),
+                "signature missing",
+                "verify_claim"
+            )
+            .validation_status(validation_status::CLAIM_SIGNATURE_MISSING)
+            .failure(validation_log, Error::ClaimMissingSignatureBox)?;
         }
 
-        let data = if let Some(ref original_bytes) = claim.original_bytes {
-            original_bytes
-        } else {
-            return Err(Error::ClaimDecoding);
+        // If we are validating a claim that has been loaded from a file
+        // we need the original data but if we are signing, we generate the data
+        // This avoids cloning the data when we are only referencing it.
+        let mut _generated_data = vec![];
+        let data = match claim.original_bytes {
+            Some(ref original_bytes) => original_bytes,
+            None => {
+                _generated_data = claim.data()?;
+                &_generated_data
+            }
         };
 
         let sign1 = parse_cose_sign1(sig, data, validation_log)?;
 
         // check certificate revocation
-        check_ocsp_status(&sign1, data, ctp, validation_log)?;
+        check_ocsp_status(
+            &sign1,
+            data,
+            ctp,
+            svi.timestamps.get(claim.label()),
+            validation_log,
+        )?;
 
         let verified = verify_cose(
             sig,
@@ -1878,7 +1933,7 @@ impl Claim {
             &additional_bytes,
             cert_check,
             ctp,
-            svi.timestamps.get(claim.label()).cloned(),
+            svi.timestamps.get(claim.label()),
             validation_log,
         );
 
@@ -1941,58 +1996,33 @@ impl Claim {
                     validation_log,
                     Error::ValidationRule("No Action array in Actions".into()),
                 )?;
+
+            // failure full stop
+            return Err(Error::ValidationRule("No Action array in Actions".into()));
         }
-
-        // check Claim.v2 first action rules
-        let first_actions_assertion = if claim.version() > 1 {
-            // check created actions first
-            let mut found_first_action = None;
-
-            if let Some(assertion) = created_actions.first() {
-                let first_actions = Actions::from_assertion(assertion.assertion())?;
-                let first_actions_first_action = &first_actions.actions()[0];
-
-                if first_actions_first_action.action() == c2pa_action::OPENED
-                    || first_actions_first_action.action() == c2pa_action::CREATED
-                {
-                    found_first_action = Some(assertion);
-                }
-            }
-
-            // check gathered actions if not found in created actions
-            if found_first_action.is_none() {
-                if let Some(assertion) = gathered_actions.first() {
-                    let first_actions = Actions::from_assertion(assertion.assertion())?;
-                    let first_actions_first_action = &first_actions.actions()[0];
-
-                    if first_actions_first_action.action() == c2pa_action::OPENED
-                        || first_actions_first_action.action() == c2pa_action::CREATED
-                    {
-                        found_first_action = Some(assertion);
-                    }
-                }
-            }
-            found_first_action
-        } else {
-            let mut found_first_action = None;
-            // for v1 claims check the single assertion store
-            if let Some(assertion) = all_actions.first() {
-                let first_actions = Actions::from_assertion(assertion.assertion())?;
-                let first_actions_first_action = &first_actions.actions()[0];
-
-                if first_actions_first_action.action() == c2pa_action::OPENED
-                    || first_actions_first_action.action() == c2pa_action::CREATED
-                {
-                    found_first_action = Some(assertion);
-                }
-            }
-            found_first_action
-        };
 
         // Skip further checks for v1 claims if not in strict validation mode
         if claim.version() == 1 {
             if let Ok(false) = get_settings_value::<bool>("verify.strict_v1_validation") {
                 return Ok(()); // no further checks for v1 claims
+            }
+        }
+
+        let mut first_actions_assertion = None;
+
+        // check created actions then gathered actions if not found in created actions
+        for actions in [&created_actions, &gathered_actions] {
+            if let Some(assertion) = actions.first() {
+                let first_actions = Actions::from_assertion(assertion.assertion())?;
+                let first_actions_first_action = &first_actions.actions().first();
+
+                if let Some(first_actions_first_action) = first_actions_first_action {
+                    if first_actions_first_action.action() == c2pa_action::OPENED
+                        || first_actions_first_action.action() == c2pa_action::CREATED
+                    {
+                        first_actions_assertion = Some(assertion);
+                    }
+                }
             }
         }
 
@@ -2572,6 +2602,10 @@ impl Claim {
                         Error::HashMismatch(format!("Assertion hash failure: {}", icon.url(),)),
                     )?;
                 }
+            } else if claim.get_databox(icon).is_some() {
+                // We have a databox with this icon
+                // todo: check the hash on the databox?
+                return Ok(());
             } else {
                 log_item!(icon.url(), "could not resolve icon address", "verify_icons")
                     .validation_status(validation_status::ASSERTION_MISSING)
@@ -2596,7 +2630,7 @@ impl Claim {
             Ok(vi) => {
                 if !vi.validated {
                     log_item!(
-                        claim.signature_uri(),
+                        to_signature_uri(claim.label()),
                         "claim signature is not valid",
                         "verify_internal"
                     )
@@ -2605,7 +2639,7 @@ impl Claim {
                 } else {
                     // signing cert has not expired
                     log_item!(
-                        claim.signature_uri(),
+                        to_signature_uri(claim.label()),
                         "claim signature valid",
                         "verify_internal"
                     )
@@ -2614,7 +2648,7 @@ impl Claim {
 
                     // add signature validated status
                     log_item!(
-                        claim.signature_uri(),
+                        to_signature_uri(claim.label()),
                         "claim signature valid",
                         "verify_internal"
                     )
@@ -2625,7 +2659,7 @@ impl Claim {
             Err(parse_err) => {
                 // handle case where lower level failed to log
                 log_item!(
-                    claim.signature_uri(),
+                    to_signature_uri(claim.label()),
                     "claim signature is not valid",
                     "verify_internal"
                 )
@@ -2952,7 +2986,10 @@ impl Claim {
 
             // while this is a vec the spec only expects one at the moment and is checked above
             for hash_binding_assertion in hash_assertions {
-                if hash_binding_assertion.label_raw() == DataHash::LABEL {
+                if hash_binding_assertion
+                    .label_raw()
+                    .starts_with(DataHash::LABEL)
+                {
                     let mut dh = DataHash::from_assertion(hash_binding_assertion.assertion())?;
                     let name = dh.name.as_ref().map_or(UNNAMED.to_string(), default_str);
 
@@ -2963,8 +3000,10 @@ impl Claim {
                                 exclusions.sort_by_key(|a| a.start());
 
                                 // new range using the size that covers entire manifest (includin update manifests)
-                                let new_range =
-                                    HashRange::new(exclusions[0].start(), svi.update_manifest_size);
+                                let new_range = HashRange::new(
+                                    exclusions[0].start(),
+                                    svi.update_manifest_size as u64,
+                                );
 
                                 exclusions.clear();
                                 exclusions.push(new_range);
@@ -3027,7 +3066,10 @@ impl Claim {
                             ),
                         )?;
                     }
-                } else if hash_binding_assertion.label_raw() == BmffHash::LABEL {
+                } else if hash_binding_assertion
+                    .label_raw()
+                    .starts_with(BmffHash::LABEL)
+                {
                     // handle BMFF data hashes
                     let dh = BmffHash::from_assertion(hash_binding_assertion.assertion())?;
 
@@ -3072,19 +3114,33 @@ impl Claim {
                             continue;
                         }
                         Err(e) => {
+                            let err_str = match e {
+                                Error::C2PAValidation(es) => {
+                                    if es == validation_status::ASSERTION_BMFFHASH_MALFORMED {
+                                        validation_status::ASSERTION_BMFFHASH_MALFORMED
+                                    } else {
+                                        validation_status::ASSERTION_BMFFHASH_MISMATCH
+                                    }
+                                }
+                                _ => validation_status::ASSERTION_BMFFHASH_MISMATCH,
+                            };
+
                             log_item!(
                                 claim.assertion_uri(&hash_binding_assertion.label()),
-                                format!("asset hash error, name: {name}, error: {e}"),
+                                format!("asset hash error, name: {name}, error: {}", err_str),
                                 "verify_internal"
                             )
-                            .validation_status(validation_status::ASSERTION_BMFFHASH_MISMATCH)
+                            .validation_status(err_str)
                             .failure(
                                 validation_log,
-                                Error::HashMismatch(format!("Asset hash failure: {e}")),
+                                Error::HashMismatch(format!("Asset hash failure: {err_str}")),
                             )?;
                         }
                     }
-                } else if hash_binding_assertion.label_raw() == BoxHash::LABEL {
+                } else if hash_binding_assertion
+                    .label_raw()
+                    .starts_with(BoxHash::LABEL)
+                {
                     // box hash case
                     // handle BMFF data hashes
                     let bh = BoxHash::from_assertion(hash_binding_assertion.assertion())?;
@@ -3158,6 +3214,17 @@ impl Claim {
                             )?;
                         }
                     }
+                } else {
+                    log_item!(
+                        claim.assertion_uri(&hash_binding_assertion.label()),
+                        "hash binding unknown or not found",
+                        "verify_internal"
+                    )
+                    .validation_status(validation_status::HARD_BINDINGS_MISSING)
+                    .failure(
+                        validation_log,
+                        Error::HashMismatch("hash binding unknown format".into()),
+                    )?;
                 }
             }
         }
@@ -3391,8 +3458,8 @@ impl Claim {
 
     /// Create claim from binary data (not including assertions).
     pub fn from_data(label: &str, data: &[u8]) -> Result<Claim> {
-        let claim_value: serde_cbor::Value =
-            serde_cbor::from_slice(data).map_err(|_err| Error::ClaimDecoding)?;
+        let claim_value: serde_cbor::Value = serde_cbor::from_slice(data)
+            .map_err(|err| Error::ClaimDecoding(format!("claim_cbor: {err}")))?;
 
         Claim::from_value(claim_value, label, data)
     }
@@ -3663,7 +3730,7 @@ impl Claim {
             let output_label = format!("{}__{}", get_thumbnail_type(label), instance);
 
             match get_thumbnail_image_type(label) {
-                Some(image_type) => format!("{}.{}", output_label, image_type),
+                Some(image_type) => format!("{output_label}.{image_type}"),
                 None => output_label,
             }
         } else {
@@ -3792,6 +3859,7 @@ pub(crate) fn check_ocsp_status(
     sign1: &coset::CoseSign1,
     data: &[u8],
     ctp: &CertificateTrustPolicy,
+    tst_info: Option<&TstInfo>,
     validation_log: &mut StatusTracker,
 ) -> Result<OcspResponse> {
     // Moved here instead of c2pa-crypto because of the dependency on settings.
@@ -3807,6 +3875,7 @@ pub(crate) fn check_ocsp_status(
             data,
             fetch_policy,
             ctp,
+            tst_info,
             validation_log,
         )?)
     } else {
@@ -3815,6 +3884,7 @@ pub(crate) fn check_ocsp_status(
             data,
             fetch_policy,
             ctp,
+            tst_info,
             validation_log,
         )
         .await?)

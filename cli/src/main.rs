@@ -19,7 +19,7 @@
 /// in that file. If a manifest definition JSON file is specified,
 /// the claim will be added to any existing claims.
 use std::{
-    fs::{create_dir_all, remove_dir_all, remove_file, File},
+    fs::{self, create_dir_all, remove_dir_all, remove_file, File},
     io::Write,
     path::{Path, PathBuf},
     str::FromStr,
@@ -27,10 +27,11 @@ use std::{
 
 use anyhow::{anyhow, bail, Context, Result};
 use c2pa::{
-    identity::validator::CawgValidator, Builder, ClaimGeneratorInfo, Error, Ingredient,
-    ManifestDefinition, Reader, Signer,
+    identity::validator::CawgValidator, settings::Settings, Builder, ClaimGeneratorInfo, Error,
+    Ingredient, ManifestDefinition, Reader, Signer,
 };
 use clap::{Parser, Subcommand};
+use etcetera::BaseStrategy;
 use log::debug;
 use serde::Deserialize;
 use signer::SignConfig;
@@ -138,6 +139,25 @@ struct CliArgs {
     /// will probably leave extra `0`s of unused space. Please specify a reserve-size if possible.
     #[clap(long, default_value("20000"))]
     reserve_size: usize,
+
+    // TODO: ideally this would be called config, not to be confused with the other config arg
+    /// Path to the config file.
+    ///
+    /// By default config files are read from `$XDG_CONFIG_HOME/c2pa/c2pa.toml`.
+    #[clap(
+        long,
+        env = "C2PATOOL_SETTINGS",
+        default_value = default_settings_path().into_os_string()
+    )]
+    settings: PathBuf,
+}
+
+fn default_settings_path() -> PathBuf {
+    let strategy = etcetera::choose_base_strategy().unwrap();
+    let mut path = strategy.config_dir();
+    path.push("c2pa");
+    path.push("c2pa.toml");
+    path
 }
 
 #[derive(Clone, Debug)]
@@ -253,7 +273,7 @@ fn load_trust_resource(resource: &TrustResource) -> Result<String> {
     match resource {
         TrustResource::File(path) => {
             let data = std::fs::read_to_string(path)
-                .with_context(|| format!("Failed to read trust resource from path: {:?}", path))?;
+                .with_context(|| format!("Failed to read trust resource from path: {path:?}"))?;
 
             Ok(data)
         }
@@ -261,7 +281,7 @@ fn load_trust_resource(resource: &TrustResource) -> Result<String> {
             #[cfg(not(target_os = "wasi"))]
             let data = reqwest::blocking::get(url.to_string())?
                 .text()
-                .with_context(|| format!("Failed to read trust resource from URL: {}", url))?;
+                .with_context(|| format!("Failed to read trust resource from URL: {url}"))?;
 
             #[cfg(target_os = "wasi")]
             let data = blocking_get(&url.to_string())?;
@@ -361,10 +381,10 @@ fn blocking_get(url: &str) -> Result<String> {
 }
 
 fn configure_sdk(args: &CliArgs) -> Result<()> {
-    const TA: &str = r#"{"trust": { "trust_anchors": replacement_val } }"#;
-    const AL: &str = r#"{"trust": { "allowed_list": replacement_val } }"#;
-    const TC: &str = r#"{"trust": { "trust_config": replacement_val } }"#;
-    const VS: &str = r#"{"verify": { "verify_after_sign": replacement_val } }"#;
+    if args.settings.exists() {
+        let settings = fs::read_to_string(&args.settings)?;
+        Settings::from_toml(&settings)?
+    }
 
     let mut enable_trust_checks = false;
 
@@ -375,34 +395,46 @@ fn configure_sdk(args: &CliArgs) -> Result<()> {
     }) = &args.command
     {
         if let Some(trust_list) = &trust_anchors {
-            let data = load_trust_resource(trust_list)?;
-            debug!("Using trust anchors from {:?}", trust_list);
-            let replacement_val = serde_json::Value::String(data).to_string(); // escape string
-            let setting = TA.replace("replacement_val", &replacement_val);
+            debug!("Using trust anchors from {trust_list:?}");
 
-            c2pa::settings::load_settings_from_str(&setting, "json")?;
+            let data = load_trust_resource(trust_list)?;
+            Settings::from_toml(
+                &toml::toml! {
+                    [trust]
+                    trust_anchors = data
+                }
+                .to_string(),
+            )?;
 
             enable_trust_checks = true;
         }
 
         if let Some(allowed_list) = &allowed_list {
-            let data = load_trust_resource(allowed_list)?;
-            debug!("Using allowed list from {:?}", allowed_list);
-            let replacement_val = serde_json::Value::String(data).to_string(); // escape string
-            let setting = AL.replace("replacement_val", &replacement_val);
+            debug!("Using allowed list from {allowed_list:?}");
 
-            c2pa::settings::load_settings_from_str(&setting, "json")?;
+            let data = load_trust_resource(allowed_list)?;
+            Settings::from_toml(
+                &toml::toml! {
+                    [trust]
+                    allowed_list = data
+                }
+                .to_string(),
+            )?;
 
             enable_trust_checks = true;
         }
 
         if let Some(trust_config) = &trust_config {
-            let data = load_trust_resource(trust_config)?;
-            debug!("Using trust config from {:?}", trust_config);
-            let replacement_val = serde_json::Value::String(data).to_string(); // escape string
-            let setting = TC.replace("replacement_val", &replacement_val);
+            debug!("Using trust config from {trust_config:?}");
 
-            c2pa::settings::load_settings_from_str(&setting, "json")?;
+            let data = load_trust_resource(trust_config)?;
+            Settings::from_toml(
+                &toml::toml! {
+                    [trust]
+                    trust_config = data
+                }
+                .to_string(),
+            )?;
 
             enable_trust_checks = true;
         }
@@ -410,17 +442,32 @@ fn configure_sdk(args: &CliArgs) -> Result<()> {
 
     // if any trust setting is provided enable the trust checks
     if enable_trust_checks {
-        c2pa::settings::load_settings_from_str(r#"{"verify": { "verify_trust": true} }"#, "json")?;
+        Settings::from_toml(
+            &toml::toml! {
+                [verify]
+                verify_trust = true
+            }
+            .to_string(),
+        )?;
     } else {
-        c2pa::settings::load_settings_from_str(r#"{"verify": { "verify_trust": false} }"#, "json")?;
+        Settings::from_toml(
+            &toml::toml! {
+                [verify]
+                verify_trust = false
+            }
+            .to_string(),
+        )?;
     }
 
     // enable or disable verification after signing
     {
-        let replacement_val = serde_json::Value::Bool(!args.no_signing_verify).to_string();
-        let setting = VS.replace("replacement_val", &replacement_val);
-
-        c2pa::settings::load_settings_from_str(&setting, "json")?;
+        Settings::from_toml(
+            &toml::toml! {
+                [trust]
+                verify_after_sign = (!args.no_signing_verify)
+            }
+            .to_string(),
+        )?;
     }
 
     Ok(())
@@ -456,7 +503,7 @@ fn sign_fragmented(
                     }
                 }
 
-                println!("Adding manifest to: {:?}", p);
+                println!("Adding manifest to: {p:?}");
                 let new_output_path =
                     output_path.join(init_dir.file_name().context("invalid file name")?);
                 builder.sign_fragmented_files(signer, &p, &fragments, &new_output_path)?;
@@ -467,7 +514,7 @@ fn sign_fragmented(
         }
     }
     if count == 0 {
-        println!("No files matching pattern: {}", ip);
+        println!("No files matching pattern: {ip}");
     }
     Ok(())
 }
@@ -499,11 +546,11 @@ fn verify_fragmented(init_pattern: &Path, frag_pattern: &Path) -> Result<Vec<Rea
                     }
                 }
 
-                println!("Verifying manifest: {:?}", p);
+                println!("Verifying manifest: {p:?}");
                 let reader = Reader::from_fragmented_files(p, &fragments)?;
                 if let Some(vs) = reader.validation_status() {
                     if let Some(e) = vs.iter().find(|v| !v.passed()) {
-                        eprintln!("Error validating segments: {:?}", e);
+                        eprintln!("Error validating segments: {e:?}");
                         return Ok(readers);
                     }
                 }
@@ -517,7 +564,7 @@ fn verify_fragmented(init_pattern: &Path, frag_pattern: &Path) -> Result<Vec<Rea
     }
 
     if count == 0 {
-        println!("No files matching pattern: {}", ip);
+        println!("No files matching pattern: {ip}");
     }
 
     Ok(readers)
@@ -739,9 +786,9 @@ fn main() -> Result<()> {
                 let mut reader = Reader::from_file(&output).map_err(special_errs)?;
                 validate_cawg(&mut reader)?;
                 if args.detailed {
-                    println!("{:#?}", reader);
+                    println!("{reader:#?}");
                 } else {
-                    println!("{}", reader)
+                    println!("{reader}")
                 }
             }
         } else {
@@ -775,7 +822,7 @@ fn main() -> Result<()> {
             if args.detailed {
                 // for a detailed report first call the above to generate the thumbnails
                 // then call this to add the detailed report
-                let detailed = format!("{:#?}", reader);
+                let detailed = format!("{reader:#?}");
                 File::create(output.join("detailed.json"))?.write_all(&detailed.into_bytes())?;
             }
             File::create(output.join("manifest_store.json"))?.write_all(&report.into_bytes())?;
@@ -789,7 +836,7 @@ fn main() -> Result<()> {
     } else if args.detailed {
         let mut reader = Reader::from_file(&args.path).map_err(special_errs)?;
         validate_cawg(&mut reader)?;
-        println!("{:#?}", reader);
+        println!("{reader:#?}");
     } else if let Some(Commands::Fragment {
         fragments_glob: Some(fg),
     }) = &args.command
@@ -807,7 +854,7 @@ fn main() -> Result<()> {
     } else {
         let mut reader = Reader::from_file(&args.path).map_err(special_errs)?;
         validate_cawg(&mut reader)?;
-        println!("{}", reader);
+        println!("{reader}");
     }
 
     Ok(())
@@ -862,7 +909,7 @@ pub mod tests {
         let ms = Reader::from_file(output_path)
             .expect("from_file")
             .to_string();
-        println!("{}", ms);
+        println!("{ms}");
         //let ms = report_from_path(&OUTPUT_PATH, false).expect("report_from_path");
         assert!(ms.contains("my_key"));
     }
