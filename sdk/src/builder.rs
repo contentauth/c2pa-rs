@@ -29,8 +29,8 @@ use zip::{write::SimpleFileOptions, ZipArchive, ZipWriter};
 use crate::{
     assertion::AssertionDecodeError,
     assertions::{
-        c2pa_action, labels, Action, ActionTemplate, Actions, AssertionMetadata, BmffHash, BoxHash,
-        CreativeWork, DataHash, EmbeddedData, Exif, SoftwareAgent, Thumbnail, User, UserCbor,
+        c2pa_action, labels, Action, ActionTemplate, Actions, BmffHash, BoxHash, CreativeWork,
+        DataHash, EmbeddedData, Exif, SoftwareAgent, Thumbnail, User, UserCbor,
     },
     cbor_types::value_cbor_to_type,
     claim::Claim,
@@ -50,7 +50,8 @@ use crate::{
 /// Version of the Builder Archive file
 const ARCHIVE_VERSION: &str = "1";
 
-/// Use a ManifestDefinition to define a manifest and to build a `ManifestStore`.
+/// Contains the pre-defined elements of a manifest to be used in a [Builder].
+///
 /// A manifest is a collection of ingredients and assertions
 /// used to define a claim that can be signed and embedded into a file.
 #[skip_serializing_none]
@@ -58,7 +59,7 @@ const ARCHIVE_VERSION: &str = "1";
 #[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 #[non_exhaustive]
 pub struct ManifestDefinition {
-    /// The version of the claim.  Defaults to 1.
+    /// The version of the claim.  Defaults to 2.
     pub claim_version: Option<u8>,
 
     /// Optional prefix added to the generated Manifest Label
@@ -68,9 +69,6 @@ pub struct ManifestDefinition {
     /// Claim Generator Info is always required with at least one entry
     #[serde(default = "default_claim_generator_info")]
     pub claim_generator_info: Vec<ClaimGeneratorInfo>,
-
-    /// Optional manifest metadata. This will be deprecated in the future; not recommended to use.
-    pub metadata: Option<Vec<AssertionMetadata>>,
 
     /// A human-readable title, generally source filename.
     pub title: Option<String>,
@@ -190,71 +188,64 @@ impl DigitalSourceType {
 /// Represents the type of builder flow being used.
 ///
 /// This determines how the builder will be used, such as creating a new asset, opening an existing asset,
-/// or updating an existing asset.
+/// or making limited updates to an existing asset.
 #[derive(Debug, Deserialize, Serialize, PartialEq, Clone)]
 #[cfg_attr(feature = "json_schema", derive(JsonSchema))]
-enum BuilderFlow {
-    // Represents a builder for creating new assets.
+enum BuilderIntent {
+    /// This is a new digital creation, a DigitalSourceType is required.
+    ///
+    /// The Manifest must not have have a parent ingredient.
+    /// A `c2pa.created` action will be added if not provided.
+    #[serde(rename = "create")]
     Create(DigitalSourceType),
-    // Represents a builder for opening existing assets.
-    Open,
-    // Represents a builder for updating existing assets.
-    Update,
-}
 
-#[derive(Serialize, Deserialize)]
-struct StructuredAction {
-    action: String,
-    #[serde(flatten)]
-    data: serde_json::Value,
+    /// This is the result of modifying an pre-existing parent asset.
+    ///
+    /// The Manifest must have a parent ingredient.
+    /// A parent ingredient will be generated from the source stream if not otherwise provided.
+    /// A `c2pa.opened action will be tied to the parent ingredient.
+    #[serde(rename = "open")]
+    Open,
+
+    /// A restricted version of [Open] for non-editorial changes.
+    ///
+    /// There must be only one ingredient, as a parent.
+    /// No changes can be made to the hashed content of the parent.
+    #[serde(rename = "update")]
+    Update,
 }
 
 /// Use a Builder to add a signed manifest to an asset.
 ///
 /// # Example: Building and signing a manifest
-///
 /// ```
-/// use c2pa::Result;
-/// use std::path::PathBuf;
+/// use std::io::Cursor;
 ///
-/// use c2pa::{create_signer, Builder, SigningAlg};
+/// use c2pa::{Builder, Result, Settings};
 /// use serde::Serialize;
-/// use serde_json::json;
-/// use tempfile::tempdir;
 ///
 /// #[derive(Serialize)]
-/// struct Test {
+/// struct MyAssertion {
 ///     my_tag: usize,
 /// }
-///
 /// # fn main() -> Result<()> {
-/// let manifest_json = json!({
-///    "claim_generator_info": [
-///       {
-///           "name": "c2pa_test",
-///           "version": "1.0.0"
-///       }
-///    ],
-///    "title": "Test_Manifest"
-/// }).to_string();
 ///
-/// let mut builder = Builder::from_json(&manifest_json)?;
-/// builder.add_assertion("org.contentauth.test", &Test { my_tag: 42 })?;
+/// // read from a file and write to a vector
+/// let format = "image/jpeg";
+/// let source = std::fs::File::open("tests/fixtures/C.jpg")?;
+/// let mut dest = Cursor::new(Vec::new());
 ///
-/// let source = PathBuf::from("tests/fixtures/C.jpg");
-/// let dir = tempdir()?;
-/// let dest = dir.path().join("test_file.jpg");
+/// let mut builder = Builder::open()?;
 ///
-/// // Create a ps256 signer using certs and key files. TO DO: Update example.
-/// let signcert_path = "tests/fixtures/certs/ps256.pub";
-/// let pkey_path = "tests/fixtures/certs/ps256.pem";
-/// let signer = create_signer::from_files(signcert_path, pkey_path, SigningAlg::Ps256, None)?;
+/// builder.add_assertion("org.contentauth.test", &MyAssertion { my_tag: 42 })?;
 ///
-/// // embed a manifest using the signer
-/// builder.sign_file(
-///     signer.as_ref(),
-///     &source,
-///     &dest)?;
+/// // embed a manifest using our configured signer
+/// builder.sign(&Settings::signer()?, format, source, &mut dest)?;
+///
+/// // now read and validate the signed asset
+/// dest.set_position(0)?;
+/// let reader = Reader::from_stream(format, &mut dest)?;
+/// println!("{reader:?}");
 /// # Ok(())
 /// # }
 /// ```
@@ -263,7 +254,8 @@ struct StructuredAction {
 #[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 pub struct Builder {
     #[serde(flatten)]
-    /// A collection of ingredients and assertions used to define a claim that can be signed and embedded into a file.
+    /// Declaratively define a manifest.
+    ///
     /// In most cases, you create this from a JSON manifest definition.
     pub definition: ManifestDefinition,
 
@@ -277,8 +269,8 @@ pub struct Builder {
     #[cfg(feature = "file_io")]
     pub base_path: Option<PathBuf>,
 
-    /// The type of builder being used.
-    builder_flow: Option<BuilderFlow>,
+    /// A builder should construct a created, opened or updated manifest.
+    intent: Option<BuilderIntent>,
 
     /// Container for binary assets (like thumbnails).
     #[serde(skip)]
@@ -312,13 +304,32 @@ impl Builder {
     /// ```
     pub fn create(source_type: DigitalSourceType) -> Self {
         let mut builder = Self::new();
-        builder.builder_flow = Some(BuilderFlow::Create(source_type));
+        builder.intent = Some(BuilderIntent::Create(source_type));
         builder
     }
 
+    /// Creates a new [`Builder`] for for editing an existing asset.
+    ///
+    /// If a parent ingredient is not provided, it will be generated from the source stream.
+    /// and an associated `c2pa.opened` action will be added.
+    /// # Returns
+    /// * A new [`Builder`] for editing an existing asset.
+    pub fn open() -> Self {
+        let mut builder = Self::new();
+        builder.intent = Some(BuilderIntent::Open);
+        builder
+    }
+
+    /// Creates a new [`Builder`] for updating an existing asset.
+    ///
+    /// This creates an Update manifest, which is a restricted version of an Open manifest.
+    /// The benefit is a smaller manifest with only non-editorial changes.
+    /// It must have a parent and no other ingredients.
+    /// It cannot modify the hashed content of the parent.
+    /// Only a very limited set of actions can be performed.
     pub fn update() -> Self {
         let mut builder = Self::new();
-        builder.builder_flow = Some(BuilderFlow::Update);
+        builder.intent = Some(BuilderIntent::Update);
         builder
     }
 
@@ -1252,7 +1263,7 @@ impl Builder {
         R: Read + Seek + Send,
     {
         // check settings to see if we should add a parent ingredient
-        let auto_parent = self.builder_flow == Some(BuilderFlow::Update);
+        let auto_parent = self.intent == Some(BuilderIntent::Update);
         if auto_parent && !self.definition.ingredients.iter().any(|i| i.is_parent()) {
             let parent_def = serde_json::json!({
                 "relationship": "parentOf",
@@ -1627,11 +1638,6 @@ mod tests {
                 {
                     "name": "c2pa_test",
                     "version": "1.0.0"
-                }
-            ],
-            "metadata": [
-                {
-                    "dateTime": "1985-04-12T23:20:50.52Z"
                 }
             ],
             "title": "Test_Manifest",

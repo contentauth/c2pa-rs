@@ -15,57 +15,55 @@
 use std::io::{Cursor, Seek};
 
 use anyhow::Result;
-use c2pa::{
-    crypto::raw_signature::SigningAlg, settings::Settings, validation_results::ValidationState,
-    Builder, CallbackSigner, Reader,
-};
+use c2pa::{settings::Settings, validation_results::ValidationState, Builder, Reader};
 use serde_json::json;
 
+const TEST_SETTINGS: &str = include_str!("../tests/fixtures/test_settings.toml");
 const TEST_IMAGE: &[u8] = include_bytes!("../tests/fixtures/CA.jpg");
-const CERTS: &[u8] = include_bytes!("../tests/fixtures/certs/ed25519.pub");
-const PRIVATE_KEY: &[u8] = include_bytes!("../tests/fixtures/certs/ed25519.pem");
+// const CERTS: &[u8] = include_bytes!("../tests/fixtures/certs/ed25519.pub");
+// const PRIVATE_KEY: &[u8] = include_bytes!("../tests/fixtures/certs/ed25519.pem");
 
-fn manifest_def(title: &str, format: &str) -> String {
-    json!({
-        "title": title,
-        "format": format,
-        "claim_generator_info": [
-            {
-                "name": "c2pa test",
-                "version": env!("CARGO_PKG_VERSION")
-            }
-        ],
-        "thumbnail": {
-            "format": format,
-            "identifier": "manifest_thumbnail.jpg"
-        },
-        "ingredients": [
-            {
-                "title": "Test",
-                "format": "image/jpeg",
-                "instance_id": "12345",
-                "relationship": "inputTo"
-            }
-        ],
-        "assertions": [
-            {
-                "label": "c2pa.actions",
-                "data": {
-                    "actions": [
-                        {
-                            "action": "c2pa.edited",
-                            "digitalSourceType": "http://cv.iptc.org/newscodes/digitalsourcetype/trainedAlgorithmicMedia",
-                            "softwareAgent": {
-                                "name": "My AI Tool",
-                                "version": "0.1.0"
-                            }
-                        }
-                    ]
-                }
-            }
-        ]
-    }).to_string()
-}
+// fn manifest_def(title: &str, format: &str) -> String {
+//     json!({
+//         "title": title,
+//         "format": format,
+//         "claim_generator_info": [
+//             {
+//                 "name": "c2pa test",
+//                 "version": env!("CARGO_PKG_VERSION")
+//             }
+//         ],
+//         "thumbnail": {
+//             "format": format,
+//             "identifier": "manifest_thumbnail.jpg"
+//         },
+//         "ingredients": [
+//             {
+//                 "title": "Test",
+//                 "format": "image/jpeg",
+//                 "instance_id": "12345",
+//                 "relationship": "inputTo"
+//             }
+//         ],
+//         "assertions": [
+//             {
+//                 "label": "c2pa.actions",
+//                 "data": {
+//                     "actions": [
+//                         {
+//                             "action": "c2pa.edited",
+//                             "digitalSourceType": "http://cv.iptc.org/newscodes/digitalsourcetype/trainedAlgorithmicMedia",
+//                             "softwareAgent": {
+//                                 "name": "My AI Tool",
+//                                 "version": "0.1.0"
+//                             }
+//                         }
+//                     ]
+//                 }
+//             }
+//         ]
+//     }).to_string()
+// }
 
 /// This example demonstrates how to use the new v2 API to create a manifest store
 /// It uses only streaming apis, showing how to avoid file i/o
@@ -73,31 +71,28 @@ fn manifest_def(title: &str, format: &str) -> String {
 fn main() -> Result<()> {
     let title = "v2_edited.jpg";
     let format = "image/jpeg";
-    let parent_name = "CA.jpg";
     let mut source = Cursor::new(TEST_IMAGE);
 
-    let modified_core = toml::toml! {
-        [core]
-        debug = true
-        hash_alg = "sha512"
-        max_memory_usage = 123456
-    }
-    .to_string();
+    Settings::from_toml(TEST_SETTINGS)?;
 
-    Settings::from_toml(&modified_core)?;
+    let mut builder = Builder::update();
+    builder.definition.title = Some(title.to_string());
 
-    let json = manifest_def(title, format);
+    builder.add_action(json!({
+        "action": "c2pa.edited",
+        "digitalSourceType": "http://cv.iptc.org/newscodes/digitalsourcetype/trainedAlgorithmicMedia",
+        "softwareAgent": {
+            "name": "My AI Tool",
+            "version": "0.1.0"
+        }
+    }))?;
 
-    let mut builder = Builder::from_json(&json)?;
-    builder.add_ingredient_from_stream(
-        json!({
-            "title": parent_name,
-            "relationship": "parentOf"
-        })
-        .to_string(),
-        format,
-        &mut source,
-    )?;
+    // builder.add_ingredient(json!({
+    //     "title": "Test",
+    //     "format": format,
+    //     "instance_id": "12345",
+    //     "relationship": "inputTo"
+    // }));
 
     let thumb_uri = builder
         .definition
@@ -117,18 +112,13 @@ fn main() -> Result<()> {
     let mut zipped = Cursor::new(Vec::new());
     builder.to_archive(&mut zipped)?;
 
-    // write the zipped stream to a file for debugging
-    //let debug_path = format!("{}/../target/test.zip", env!("CARGO_MANIFEST_DIR"));
-    // std::fs::write(debug_path, zipped.get_ref())?;
-
     // unzip the manifest builder from the zipped stream
     zipped.rewind()?;
 
-    let ed_signer =
-        |_context: *const (), data: &[u8]| CallbackSigner::ed25519_sign(data, PRIVATE_KEY);
-    let signer = CallbackSigner::new(ed_signer, SigningAlg::Ed25519, CERTS);
+    let signer = Settings::signer()?;
 
-    let mut builder = Builder::from_archive(&mut zipped)?;
+    //let mut builder = Builder::from_archive(&mut zipped)?;
+
     // sign the ManifestStoreBuilder and write it to the output stream
     let mut dest = Cursor::new(Vec::new());
     builder.sign(&signer, format, &mut source, &mut dest)?;
@@ -152,19 +142,11 @@ fn main() -> Result<()> {
     }
 
     println!("{}", reader.json());
-    assert_ne!(reader.validation_state(), ValidationState::Invalid);
+    assert_eq!(reader.validation_state(), ValidationState::Valid);
     assert_eq!(reader.active_manifest().unwrap().title().unwrap(), title);
 
     Ok(())
 }
-
-// use openssl::{error::ErrorStack, pkey::PKey};
-// #[cfg(feature = "openssl")]
-// fn ed_sign(data: &[u8], pkey: &[u8]) -> std::result::Result<Vec<u8>, ErrorStack> {
-//     let pkey = PKey::private_key_from_pem(pkey)?;
-//     let mut signer = openssl::sign::Signer::new_without_digest(&pkey)?;
-//     signer.sign_oneshot_to_vec(data)
-// }
 
 #[cfg(test)]
 mod tests {

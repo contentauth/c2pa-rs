@@ -244,7 +244,6 @@ const MINOR_VERSION: usize = 0;
 /// [Settings::default] will be set thread-locally by default. Any settings set via
 /// [Settings::from_toml] or [Settings::from_file] will also be thread-local.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
-#[allow(unused)]
 pub struct Settings {
     version_major: usize,
     version_minor: usize,

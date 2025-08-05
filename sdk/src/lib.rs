@@ -22,6 +22,21 @@
 //! Some functionality requires you to enable specific crate features,
 //! as noted in the documentation.
 //!
+//! ## Settings
+//! All C2PA operations are configured via the `Settings` struct.
+//!
+//! Default settings can be overridden with custom values.
+//! Settings are defined in TOML format and can be loaded from a file, stream or url.
+//!
+//! ## Example: Loading settings from a file
+//! ```
+//! use c2pa::Settings;
+//! # fn main() -> c2pa::Result<()> {
+//!
+//! # Ok(())
+//! # }
+//! ```
+//!
 //! The library has a Builder/Reader API that focuses on simplicity
 //! and stream support.
 //!
@@ -49,37 +64,33 @@
 //! ## Example: Adding a Manifest to a file
 //!
 //! ```
-//! # use c2pa::Result;
-//! use std::path::PathBuf;
+//! use std::io::Cursor;
 //!
-//! use c2pa::{create_signer, Builder, SigningAlg};
+//! use c2pa::{Builder, Result, Settings};
 //! use serde::Serialize;
-//! use tempfile::tempdir;
 //!
 //! #[derive(Serialize)]
-//! struct Test {
+//! struct MyAssertion {
 //!     my_tag: usize,
 //! }
-//!
 //! # fn main() -> Result<()> {
-//! let mut builder = Builder::from_json(r#"{"title": "Test"}"#)?;
-//! builder.add_assertion("org.contentauth.test", &Test { my_tag: 42 })?;
 //!
-//! // Create a ps256 signer using certs and key files
-//! let signer = create_signer::from_files(
-//!     "tests/fixtures/certs/ps256.pub",
-//!     "tests/fixtures/certs/ps256.pem",
-//!     SigningAlg::Ps256,
-//!     None,
-//! )?;
+//! // read from a file and write to a vector
+//! let format = "image/jpeg";
+//! let source = std::fs::File::open("tests/fixtures/C.jpg")?;
+//! let mut dest = Cursor::new(Vec::new());
 //!
-//! // embed a manifest using the signer
-//! std::fs::remove_file("../target/tmp/lib_sign.jpg"); // ensure the file does not exist
-//! builder.sign_file(
-//!     &*signer,
-//!     "tests/fixtures/C.jpg",
-//!     "../target/tmp/lib_sign.jpg",
-//! )?;
+//! let mut builder = Builder::open()?;
+//!
+//! builder.add_assertion("org.contentauth.test", &MyAssertion { my_tag: 42 })?;
+//!
+//! // embed a manifest using our configured signer
+//! builder.sign(&Settings::signer()?, format, source, &mut dest)?;
+//!
+//! // now read and validate the signed asset
+//! dest.set_position(0)?;
+//! let reader = Reader::from_stream(format, &mut dest)?;
+//! println!("{reader:?}");
 //! # Ok(())
 //! # }
 //! ```
@@ -158,6 +169,8 @@ pub use manifest_store_report::ManifestStoreReport;
 pub use reader::Reader;
 #[doc(inline)]
 pub use resource_store::{ResourceRef, ResourceStore};
+#[doc(inline)]
+pub use settings::Settings;
 #[cfg(feature = "v1_api")]
 pub use signer::RemoteSigner;
 pub use signer::{AsyncSigner, Signer};
