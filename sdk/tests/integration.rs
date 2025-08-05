@@ -19,8 +19,6 @@ mod integration_1 {
 
     use c2pa::{
         assertions::{c2pa_action, Action, Actions, AssetReference, Metadata},
-        create_signer,
-        crypto::raw_signature::SigningAlg,
         settings::Settings,
         Builder, Ingredient, Reader, Result,
     };
@@ -245,37 +243,16 @@ mod integration_1 {
     #[test]
     #[cfg(feature = "file_io")]
     fn test_metadata_assertion() -> Result<()> {
+        Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml"))?;
         // set up parent and destination paths
+        let temp_dir = tempdirectory()?;
+        let output_path = temp_dir.path().join("test_file.jpg");
+        let parent_path = fixture_path("earth_apollo17.jpg");
 
-        let dir = tempdirectory()?;
-        let output_path = dir.path().join("test_file.jpg");
-        #[cfg(target_os = "wasi")]
-        let mut parent_path = PathBuf::from("/");
-        #[cfg(not(target_os = "wasi"))]
-        let mut parent_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        parent_path.push("tests/fixtures/earth_apollo17.jpg");
-        #[cfg(target_os = "wasi")]
-        let mut ingredient_path = PathBuf::from("/");
-        #[cfg(not(target_os = "wasi"))]
-        let mut ingredient_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        ingredient_path.push("tests/fixtures/libpng-test.png");
-
-        let config = include_bytes!("../tests/fixtures/certs/trust/store.cfg");
-        let priv_trust = include_bytes!("../tests/fixtures/certs/trust/test_cert_root_bundle.pem");
-
-        // Configure before first use so that trust settings are used for all calls.
-        // In production code you should check that the file is indeed UTF-8 text.
-        configure_trust(
-            Some(String::from_utf8_lossy(priv_trust).to_string()),
-            None,
-            Some(String::from_utf8_lossy(config).to_string()),
-        )?;
-
-        let generator = ClaimGeneratorInfo::new("app");
         // create a new Manifest
         let mut builder = Builder::new();
-        builder.set_claim_generator_info(generator);
 
+        // allocate references
         const C2PA_METADATA: &str = r#"{
          "@context" : {
             "exif": "http://ns.adobe.com/exif/1.0/",
@@ -298,21 +275,22 @@ mod integration_1 {
         "#;
 
         // allocate metadata
-        let c2pa_metadata_assertion = Metadata::new(C2PA_METADATA, "c2pa.metadata")?;
-        let custom_metadata_assertion = Metadata::new(CUSTOM_METADATA, "custom.foo.metadata")?;
+        let c2pa_metadata_assertion = Metadata::new("c2pa.metadata", C2PA_METADATA)?;
+        let custom_metadata_assertion = Metadata::new("custom.foo.metadata", CUSTOM_METADATA)?;
 
         // add metadata assertions
         builder.add_assertion_json(&c2pa_metadata_assertion.label, &c2pa_metadata_assertion)?;
         builder.add_assertion_json(&custom_metadata_assertion.label, &custom_metadata_assertion)?;
 
         // sign and embed into the target file
-        let signer = get_temp_signer();
+        let signer = Settings::signer()?;
         builder.sign_file(signer.as_ref(), &parent_path, &output_path)?;
 
         // read our new file with embedded manifest
         let reader = Reader::from_file(&output_path)?;
 
         println!("{reader}");
+
         Ok(())
     }
 

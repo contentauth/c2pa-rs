@@ -33,7 +33,7 @@ pub struct Metadata {
 }
 
 impl Metadata {
-    pub fn new(jsonld: &str, label: &str) -> Result<Self, Error> {
+    pub fn new(label: &str, jsonld: &str) -> Result<Self, Error> {
         let metadata = serde_json::from_slice::<Metadata>(jsonld.as_bytes())
             .map_err(|e| Error::BadParam(format!("Invalid JSON format: {e}")))?;
 
@@ -510,13 +510,13 @@ pub mod tests {
 
     #[test]
     fn metadata_from_json() {
-        let metadata = Metadata::new(SPEC_EXAMPLE, "c2pa.metadata").unwrap();
+        let metadata = Metadata::new("c2pa.metadata", SPEC_EXAMPLE).unwrap();
         assert!(metadata.is_valid());
     }
 
     #[test]
     fn assertion_round_trip() {
-        let metadata = Metadata::new(SPEC_EXAMPLE, "c2pa.metadata").unwrap();
+        let metadata = Metadata::new("c2pa.metadata", SPEC_EXAMPLE).unwrap();
         let assertion = metadata.to_assertion().unwrap();
         let result = Metadata::from_assertion(&assertion).unwrap();
         assert_eq!(metadata, result);
@@ -524,7 +524,7 @@ pub mod tests {
 
     #[test]
     fn test_custom_validation() {
-        let mut metadata = Metadata::new(CUSTOM_METADATA, "custom.metadata").unwrap();
+        let mut metadata = Metadata::new("custom.metadata", CUSTOM_METADATA).unwrap();
         assert!(metadata.is_valid());
         // c2pa.metadata has restrictions on fields
         metadata.label = "c2pa.metadata".to_owned();
@@ -533,7 +533,7 @@ pub mod tests {
 
     #[test]
     fn test_field_not_in_context() {
-        let mut metadata = Metadata::new(MISSING_CONTEXT, "custom.metadata").unwrap();
+        let mut metadata = Metadata::new("custom.metadata", MISSING_CONTEXT).unwrap();
         assert!(!metadata.is_valid());
         metadata.label = "c2pa.metadata".to_owned();
         assert!(!metadata.is_valid());
@@ -541,7 +541,7 @@ pub mod tests {
 
     #[test]
     fn test_url_is_not_allowed() {
-        let mut metadata = Metadata::new(MISMATCH_URL, "c2pa.metadata").unwrap();
+        let mut metadata = Metadata::new("c2pa.metadata", MISMATCH_URL).unwrap();
         assert!(!metadata.is_valid());
         // custom metadata does not have restriction on urls
         metadata.label = "custom.metadata".to_owned();
@@ -550,7 +550,7 @@ pub mod tests {
 
     #[test]
     fn test_empty_context() {
-        let metadata = Metadata::new(EMPTY_CONTEXT, "c2pa.metadata").unwrap();
+        let metadata = Metadata::new("c2pa.metadata", EMPTY_CONTEXT).unwrap();
         assert!(!metadata.is_valid());
     }
 }
