@@ -222,10 +222,10 @@ fn extract_document_id(xmp: &str) -> Option<String> {
 
 #[derive(Debug, Clone)]
 pub struct ContainerItem {
-    pub mime: Option<String>,
-    pub semantic: Option<String>,
-    pub length: Option<String>,
-    pub padding: Option<String>,
+    pub mime: String,
+    pub semantic: String,
+    pub length: usize,
+    pub padding: Option<usize>,
 }
 
 pub fn extract_container_items(xmp: &str) -> Vec<ContainerItem> {
@@ -238,9 +238,9 @@ pub fn extract_container_items(xmp: &str) -> Vec<ContainerItem> {
             Ok(Event::Empty(ref e)) => {
                 if e.name() == QName(b"Container:Item") {
                     let mut current_item = ContainerItem {
-                        mime: None,
-                        semantic: None,
-                        length: None,
+                        mime: String::new(),
+                        semantic: String::new(),
+                        length: 0,
                         padding: None,
                     };
 
@@ -248,10 +248,14 @@ pub fn extract_container_items(xmp: &str) -> Vec<ContainerItem> {
                         let key = attr.key;
                         if let Ok(value) = String::from_utf8(attr.value.to_vec()) {
                             match key.as_ref() {
-                                b"Item:Mime" => current_item.mime = Some(value),
-                                b"Item:Semantic" => current_item.semantic = Some(value),
-                                b"Item:Length" => current_item.length = Some(value),
-                                b"Item:Padding" => current_item.padding = Some(value),
+                                b"Item:Mime" => current_item.mime = value,
+                                b"Item:Semantic" => current_item.semantic = value,
+                                b"Item:Length" => {
+                                    if let Ok(value) = value.parse() {
+                                        current_item.length = value;
+                                    }
+                                }
+                                b"Item:Padding" => current_item.padding = value.parse().ok(),
                                 _ => {}
                             }
                         }
@@ -411,20 +415,20 @@ mod tests {
 
         assert_eq!(items.len(), 3);
 
-        assert_eq!(items[0].mime, Some("image/jpeg".to_string()));
-        assert_eq!(items[0].semantic, Some("Primary".to_string()));
-        assert_eq!(items[0].length, None);
+        assert_eq!(items[0].mime, "image/jpeg".to_string());
+        assert_eq!(items[0].semantic, "Primary".to_string());
+        assert_eq!(items[0].length, 0);
         assert_eq!(items[0].padding, None);
 
-        assert_eq!(items[1].mime, Some("image/jpeg".to_string()));
-        assert_eq!(items[1].semantic, Some("GainMap".to_string()));
-        assert_eq!(items[1].length, Some("10232".to_string()));
+        assert_eq!(items[1].mime, "image/jpeg".to_string());
+        assert_eq!(items[1].semantic, "GainMap".to_string());
+        assert_eq!(items[1].length, 10232);
         assert_eq!(items[1].padding, None);
 
-        assert_eq!(items[2].mime, Some("video/mp4".to_string()));
-        assert_eq!(items[2].semantic, Some("MotionPhoto".to_string()));
-        assert_eq!(items[2].length, Some("4548908".to_string()));
-        assert_eq!(items[2].padding, Some("0".to_string()));
+        assert_eq!(items[2].mime, "video/mp4".to_string());
+        assert_eq!(items[2].semantic, "MotionPhoto".to_string());
+        assert_eq!(items[2].length, 4548908);
+        assert_eq!(items[2].padding, None);
     }
 
     #[cfg_attr(not(target_arch = "wasm32"), actix::test)]

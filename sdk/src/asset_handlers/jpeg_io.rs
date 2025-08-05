@@ -14,7 +14,7 @@
 use std::{
     collections::HashMap,
     fs::File,
-    io::{BufReader, Cursor, Write},
+    io::{BufReader, Cursor, Read, Seek, SeekFrom, Write},
     mem::size_of,
     path::*,
 };
@@ -39,7 +39,8 @@ use crate::{
     error::{Error, Result},
     utils::{
         io_utils::tempfile_builder,
-        xmp_inmemory_utils::{add_provenance, extract_container_items, MIN_XMP},
+        mime::format_to_extension,
+        xmp_inmemory_utils::{add_provenance, extract_container_items, ContainerItem, MIN_XMP},
     },
 };
 
@@ -781,6 +782,35 @@ fn get_seg_size(input_stream: &mut dyn CAIRead) -> Result<usize> {
     }
 }
 
+fn extract_items(mut stream: impl Seek + Read, container_items: Vec<ContainerItem>) -> Result<()> {
+    let mut prev: i64 = 0;
+    for container_item in container_items.iter().skip(1).rev() {
+        let extension = format_to_extension(&container_item.mime).unwrap_or_default();
+        let mut output_path = "extracted.".to_owned();
+        output_path.push_str(extension);
+
+        let offset: i64 = -(container_item.length).try_into()?;
+        stream.seek(SeekFrom::End(offset + prev))?;
+        prev += offset;
+
+        let mut video_data = vec![0u8; container_item.length];
+        stream.read_exact(&mut video_data)?;
+
+        // Write to output file
+        let mut output = File::create(output_path)?;
+        output.write_all(&video_data)?;
+    }
+
+    let mut test = File::create("orig.jpg")?;
+    stream.seek(SeekFrom::Start(0))?;
+    prev *= -1;
+    let mut image_data = vec![0u8; prev.try_into()?];
+    stream.read_exact(&mut image_data)?;
+    test.write_all(&image_data)?;
+
+    Ok(())
+}
+
 fn make_box_maps(input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>> {
     let segment_names = HashMap::from([
         (0xe0u8, "APP0"),
@@ -1221,7 +1251,8 @@ pub mod tests {
             .read_xmp(&mut file_reader)
             .unwrap();
 
-        dbg!(extract_container_items(&read_xmp));
+        let test = extract_container_items(&read_xmp);
+        extract_items(file_reader, test).unwrap();
         // // write XMP to a file
         // let mut output_file = File::create("output.xmp").unwrap();
         // write!(output_file, "{}", read_xmp).unwrap();
