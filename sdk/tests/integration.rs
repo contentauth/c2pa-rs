@@ -22,33 +22,24 @@ mod integration_1 {
         create_signer,
         crypto::raw_signature::SigningAlg,
         settings::Settings,
-        Builder, ClaimGeneratorInfo, Ingredient, Reader, Result, Signer,
+        Builder, Ingredient, Reader, Result,
     };
     #[allow(unused)] // different code path for WASI
     use tempfile::{tempdir, TempDir};
 
-    //const GENERATOR: &str = "app";
+    /// Returns the path to a fixture file.
+    fn fixture_path(file_name: &str) -> PathBuf {
+        #[cfg(target_os = "wasi")]
+        let mut fixture_path = PathBuf::from("/");
+        #[cfg(not(target_os = "wasi"))]
+        let mut fixture_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        fixture_path.push("tests/fixtures");
+        fixture_path.push(file_name);
+        fixture_path
+    }
 
     // prevent tests from polluting the results of each other because of Rust unit test concurrency
-    static PROTECT: std::sync::Mutex<u32> = std::sync::Mutex::new(1);
-
-    fn get_temp_signer() -> Box<dyn Signer> {
-        let _protect = PROTECT.lock().unwrap();
-
-        // sign and embed into the target file
-        #[cfg(target_os = "wasi")]
-        let mut signcert_path = PathBuf::from("/");
-        #[cfg(not(target_os = "wasi"))]
-        let mut signcert_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        signcert_path.push("tests/fixtures/certs/ps256.pub");
-        #[cfg(target_os = "wasi")]
-        let mut pkey_path = PathBuf::from("/");
-        #[cfg(not(target_os = "wasi"))]
-        let mut pkey_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        pkey_path.push("tests/fixtures/certs/ps256.pem");
-        create_signer::from_files(signcert_path, pkey_path, SigningAlg::Ps256, None)
-            .expect("get_signer_from_files")
-    }
+    //static PROTECT: std::sync::Mutex<u32> = std::sync::Mutex::new(1);
 
     fn tempdirectory() -> io::Result<TempDir> {
         #[cfg(target_os = "wasi")]
@@ -58,111 +49,48 @@ mod integration_1 {
         return tempdir();
     }
 
-    fn configure_trust(
-        trust_anchors: Option<String>,
-        allowed_list: Option<String>,
-        trust_config: Option<String>,
-    ) -> Result<()> {
-        let mut enable_trust_checks = false;
-        if let Some(trust_list) = trust_anchors {
-            Settings::from_toml(
-                &toml::toml! {
-                    [trust]
-                    trust_anchors = trust_list
-                }
-                .to_string(),
-            )?;
-
-            enable_trust_checks = true;
-        }
-
-        if let Some(allowed_list) = allowed_list {
-            Settings::from_toml(
-                &toml::toml! {
-                    [trust]
-                    allowed_list = allowed_list
-                }
-                .to_string(),
-            )?;
-
-            enable_trust_checks = true;
-        }
-
-        if let Some(trust_config) = trust_config {
-            Settings::from_toml(
-                &toml::toml! {
-                    [trust]
-                    trust_config = trust_config
-                }
-                .to_string(),
-            )?;
-
-            enable_trust_checks = true;
-        }
-
-        // enable trust checks
-        if enable_trust_checks {
-            Settings::from_toml(
-                &toml::toml! {
-                    [verify]
-                    verify_trust = true
-                }
-                .to_string(),
-            )?;
-        }
-
-        Ok(())
-    }
-
     #[test]
     #[cfg(feature = "file_io")]
     fn test_embed_manifest() -> Result<()> {
+        Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml"))?;
+
         // set up parent and destination paths
-        let dir = tempdirectory()?;
-        let output_path = dir.path().join("test_file.jpg");
-        #[cfg(target_os = "wasi")]
-        let mut parent_path = PathBuf::from("/");
-        #[cfg(not(target_os = "wasi"))]
-        let mut parent_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        parent_path.push("tests/fixtures/earth_apollo17.jpg");
-        #[cfg(target_os = "wasi")]
-        let mut ingredient_path = PathBuf::from("/");
-        #[cfg(not(target_os = "wasi"))]
-        let mut ingredient_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        ingredient_path.push("tests/fixtures/libpng-test.png");
+        let temp_dir = tempdirectory()?;
+        let output_path = temp_dir.path().join("test_file.jpg");
+        let parent_path = fixture_path("earth_apollo17.jpg");
+        let ingredient_path = fixture_path("libpng-test.png");
 
-        let config = include_bytes!("../tests/fixtures/certs/trust/store.cfg");
-        let priv_trust = include_bytes!("../tests/fixtures/certs/trust/test_cert_root_bundle.pem");
-
-        // Configure before first use so that trust settings are used for all calls.
-        // In production code you should check that the file is indeed UTF-8 text.
-        configure_trust(
-            Some(String::from_utf8_lossy(priv_trust).to_string()),
-            None,
-            Some(String::from_utf8_lossy(config).to_string()),
-        )?;
-
-        let generator = ClaimGeneratorInfo::new("app");
+        // let generator = ClaimGeneratorInfo::new("app");
         // create a new Manifest
         let mut builder = Builder::new();
-        builder.set_claim_generator_info(generator);
 
         // allocate actions so we can add them
         let mut actions = Actions::new();
 
         // add a parent ingredient
-        let mut parent = Ingredient::from_file(&parent_path)?;
-        parent.set_is_parent();
+        // let mut parent = Ingredient::from_file(&parent_path)?;
+        // parent.set_is_parent();
         // add an action assertion stating that we imported this file
         actions = actions.add_action(
             Action::new(c2pa_action::OPENED)
                 .set_when("2015-06-26T16:43:23+0200")
                 .set_parameter("name".to_owned(), "import")?
-                .set_parameter("identifier".to_owned(), parent.instance_id().to_owned())?,
+                .set_parameter("org.cai.ingredientIds", ["apollo17"])?,
         );
 
+        let ingredient_json = serde_json::json!({
+            "name": "Earth from Apollo 17",
+            "description": "A photo of Earth taken from Apollo 17",
+            "relationship": "parentOf",
+            "label": "apollo17"
+        });
         // set the parent ingredient
-        builder.add_ingredient(parent);
+        let mut parent_file = std::fs::File::open(&parent_path)?;
+        builder.add_ingredient_from_stream(
+            ingredient_json.to_string(),
+            "image/jpeg",
+            &mut parent_file,
+        )?;
 
         actions = actions.add_action(
             Action::new("c2pa.edit").set_parameter("name".to_owned(), "brightnesscontrast")?,
@@ -175,8 +103,7 @@ mod integration_1 {
         actions = actions.add_action(
             Action::new(c2pa_action::EDITED)
                 .set_parameter("name".to_owned(), "import")?
-                .set_parameter("identifier".to_owned(), ingredient.instance_id().to_owned())?,
-            // could add other parameters for position and size here
+                .set_parameter("org.cai.ingredientIds", ["apollo17"])?,
         );
 
         builder.add_ingredient(ingredient);
@@ -184,7 +111,7 @@ mod integration_1 {
         builder.add_assertion(Actions::LABEL, &actions)?;
 
         // sign and embed into the target file
-        let signer = get_temp_signer();
+        let signer = Settings::signer()?;
         builder.sign_file(signer.as_ref(), &parent_path, &output_path)?;
 
         // read our new file with embedded manifest
@@ -205,34 +132,22 @@ mod integration_1 {
     #[test]
     #[cfg(feature = "file_io")]
     fn test_embed_json_manifest() -> Result<()> {
+        Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml"))?;
+
         // set up parent and destination paths
-        let dir = tempdirectory()?;
-        let output_path = dir.path().join("test_file.jpg");
+        let temp_dir = tempdirectory()?;
+        let output_path = temp_dir.path().join("test_file.jpg");
 
-        #[cfg(target_os = "wasi")]
-        let mut fixture_path = PathBuf::from("/");
-        #[cfg(not(target_os = "wasi"))]
-        let mut fixture_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        fixture_path.push("tests/fixtures");
-
-        let mut parent_path = fixture_path.clone();
-        parent_path.push("earth_apollo17.jpg");
-        let mut manifest_path = fixture_path.clone();
-        manifest_path.push("manifest.json");
+        let parent_path = fixture_path("earth_apollo17.jpg");
+        let manifest_path = fixture_path("manifest.json");
 
         let json = std::fs::read_to_string(manifest_path)?;
-        //
-        // WASI does not support canonicalize(), the path is canonical to begin with
-        #[cfg(target_os = "wasi")]
-        let base_path = fixture_path;
-        #[cfg(not(target_os = "wasi"))]
-        let base_path = fixture_path.canonicalize()?;
 
         let mut builder = Builder::from_json(&json)?;
-        builder.base_path = Some(base_path);
+        builder.base_path = Some(fixture_path(""));
 
         // sign and embed into the target file
-        let signer = get_temp_signer();
+        let signer = Settings::signer()?;
         builder.sign_file(signer.as_ref(), &parent_path, &output_path)?;
 
         // read our new file with embedded manifest
@@ -254,34 +169,18 @@ mod integration_1 {
     #[test]
     #[cfg(feature = "file_io")]
     fn test_embed_bmff_manifest() -> Result<()> {
+        Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml"))?;
+
         // set up parent and destination paths
-        let dir = tempdirectory()?;
-        let output_path = dir.path().join("test_bmff.heic");
+        let temp_dir = tempdirectory()?;
+        let output_path = temp_dir.path().join("test_bmff.heic");
 
-        #[cfg(target_os = "wasi")]
-        let mut fixture_path = PathBuf::from("/");
-        #[cfg(not(target_os = "wasi"))]
-        let mut fixture_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        fixture_path.push("tests/fixtures");
+        let parent_path = fixture_path("sample1.heic");
 
-        let mut parent_path = fixture_path.clone();
-        parent_path.push("sample1.heic");
-        let mut manifest_path = fixture_path.clone();
-        manifest_path.push("simple_manifest.json");
-
-        let json = std::fs::read_to_string(manifest_path)?;
-
-        // WASI does not support canonicalize(), the path is canonical to begin with
-        #[cfg(target_os = "wasi")]
-        let base_path = fixture_path;
-        #[cfg(not(target_os = "wasi"))]
-        let base_path = fixture_path.canonicalize()?;
-
-        let mut builder = Builder::from_json(&json)?;
-        builder.base_path = Some(base_path);
+        let mut builder = Builder::new();
 
         // sign and embed into the target file
-        let signer = get_temp_signer();
+        let signer = Settings::signer()?;
         builder.sign_file(signer.as_ref(), &parent_path, &output_path)?;
 
         // read our new file with embedded manifest
@@ -303,35 +202,14 @@ mod integration_1 {
     #[test]
     #[cfg(feature = "file_io")]
     fn test_asset_reference_assertion() -> Result<()> {
+        Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml"))?;
         // set up parent and destination paths
-        let dir = tempdirectory()?;
-        let output_path = dir.path().join("test_file.jpg");
-        #[cfg(target_os = "wasi")]
-        let mut parent_path = PathBuf::from("/");
-        #[cfg(not(target_os = "wasi"))]
-        let mut parent_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        parent_path.push("tests/fixtures/earth_apollo17.jpg");
-        #[cfg(target_os = "wasi")]
-        let mut ingredient_path = PathBuf::from("/");
-        #[cfg(not(target_os = "wasi"))]
-        let mut ingredient_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        ingredient_path.push("tests/fixtures/libpng-test.png");
+        let temp_dir = tempdirectory()?;
+        let output_path = temp_dir.path().join("test_file.jpg");
+        let parent_path = fixture_path("earth_apollo17.jpg");
 
-        let config = include_bytes!("../tests/fixtures/certs/trust/store.cfg");
-        let priv_trust = include_bytes!("../tests/fixtures/certs/trust/test_cert_root_bundle.pem");
-
-        // Configure before first use so that trust settings are used for all calls.
-        // In production code you should check that the file is indeed UTF-8 text.
-        configure_trust(
-            Some(String::from_utf8_lossy(priv_trust).to_string()),
-            None,
-            Some(String::from_utf8_lossy(config).to_string()),
-        )?;
-
-        let generator = ClaimGeneratorInfo::new("app");
         // create a new Manifest
         let mut builder = Builder::new();
-        builder.set_claim_generator_info(generator);
 
         // allocate references
         let references = AssetReference::new(
@@ -344,7 +222,7 @@ mod integration_1 {
         builder.add_assertion(AssetReference::LABEL, &references)?;
 
         // sign and embed into the target file
-        let signer = get_temp_signer();
+        let signer = Settings::signer()?;
         builder.sign_file(signer.as_ref(), &parent_path, &output_path)?;
 
         // read our new file with embedded manifest
@@ -355,8 +233,8 @@ mod integration_1 {
         assert!(reader.active_manifest().is_some());
         if let Some(manifest) = reader.active_manifest() {
             assert!(manifest.title().is_some());
-            assert_eq!(manifest.assertions().len(), 1);
-            let assertion_ref: AssetReference = manifest.assertions()[0].to_assertion()?;
+            assert_eq!(manifest.assertions().len(), 2); // one for AssetReference and one for Actions
+            let assertion_ref: AssetReference = manifest.assertions()[1].to_assertion()?;
             assert_eq!(assertion_ref, references);
         } else {
             panic!("no manifest in store");
@@ -487,8 +365,10 @@ mod integration_1 {
     #[test]
     #[cfg(all(feature = "file_io", feature = "v1_api"))]
     fn test_placed_manifest() -> Result<()> {
-        // set up parent and destination paths
+        Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml"))?;
 
+        // set up parent and destination paths
+        Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml"))?;
         use std::io::Seek;
         let dir = tempdirectory()?;
         let output_path = dir.path().join("test_file.jpg");
@@ -514,7 +394,7 @@ mod integration_1 {
         manifest.with_base_path(base_path)?;
 
         // sign and embed into the target file
-        let signer = get_temp_signer();
+        let signer = Settings::signer()?;
 
         let mut input_stream = std::fs::File::open(&parent_path).unwrap();
         let mut output_stream = std::fs::OpenOptions::new()
@@ -563,8 +443,9 @@ mod integration_1 {
     #[test]
     #[cfg(all(feature = "file_io", feature = "v1_api"))]
     fn test_placed_manifest_bmff() -> Result<()> {
-        // set up parent and destination paths
+        Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml"))?;
 
+        // set up parent and destination paths
         use std::io::Seek;
         let dir = tempdirectory()?;
         let output_path = dir.path().join("video1.mp4");
@@ -590,7 +471,7 @@ mod integration_1 {
         manifest.with_base_path(base_path)?;
 
         // sign and embed into the target file
-        let signer = get_temp_signer();
+        let signer = Settings::signer()?;
 
         let mut input_stream = std::fs::File::open(&parent_path).unwrap();
         let mut output_stream = std::fs::OpenOptions::new()

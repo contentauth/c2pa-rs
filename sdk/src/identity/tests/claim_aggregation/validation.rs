@@ -736,9 +736,11 @@ async fn unsupported_did_method() {
     assert!(log_items.next().is_none());
 }
 
-// TO DO (CAI-7996): Not sure why this doesn't run on Wasm/WASI.
-#[cfg(not(target_arch = "wasm32"))]
-#[tokio::test]
+#[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
+#[cfg_attr(
+    all(target_arch = "wasm32", not(target_os = "wasi")),
+    wasm_bindgen_test
+)]
 async fn unresolvable_did() {
     // If the DID can not be resolved, the validator MUST issue the failure code
     // `cawg.ica.did_unavailable` but MAY continue validation.
@@ -790,7 +792,7 @@ async fn unresolvable_did() {
         .err_val
         .as_ref()
         .unwrap(),
-        "SignatureError(DidResolutionError(\"the document was not found: https://example.com/.well-known/did.json\"))");
+        "SignatureError(DidResolutionError(\"the document was not found: https://cawg-test-data.github.io/test-case/unresolvable-did/did.json\"))");
 
     assert_eq!(
         li.validation_status.as_ref().unwrap(),
