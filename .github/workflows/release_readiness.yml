@@ -1,0 +1,325 @@
+# Additional checks that we no longer run on PR validation
+# but want to verify before publishing a new crate version.
+
+# Cool trick: If you want to assess release readiness for any PR,
+# add the "check-release" label to the PR.
+
+name: Release readiness
+
+on:
+  pull_request:
+    types:
+      - opened
+      - reopened
+      - synchronize
+      - labeled
+
+jobs:
+  get-features:
+    name: Get features
+    runs-on: ubuntu-latest
+    if: contains(github.event.pull_request.labels.*.name, 'release') || contains(github.event.pull_request.labels.*.name, 'check-release')
+    outputs:
+      rust-native-features: ${{ steps.get-features.outputs.rust-native-features }}
+      openssl-features: ${{ steps.get-features.outputs.openssl-features }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+
+      - name: Get all features
+        id: get-features
+        run: |
+          FEATURES=$(cargo metadata --format-version=1 | jq -r '[.packages[] | select(.name=="c2pa") | .features | keys | map(select(. != "default")) | .[]] | unique | join(" ")')
+          RUST_NATIVE_FEATURES=$(echo $FEATURES | sed 's/openssl//g')
+          OPENSSL_FEATURES=$(echo $FEATURES | sed 's/rust_native_crypto//g')
+          echo "rust-native-features=$RUST_NATIVE_FEATURES" >> "$GITHUB_OUTPUT"
+          echo "openssl-features=$OPENSSL_FEATURES" >> "$GITHUB_OUTPUT"
+
+  tests-openssl:
+    name: Unit tests (with OpenSSL installed)
+    needs: get-features
+    if: contains(github.event.pull_request.labels.*.name, 'release') || contains(github.event.pull_request.labels.*.name, 'check-release')
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest, ubuntu-latest]
+        rust_version: [stable, 1.86.0]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ matrix.rust_version }}
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: Run tests
+        env:
+          RUST_BACKTRACE: "1"
+          FEATURES: ${{needs.get-features.outputs.openssl-features}}
+        run: |
+          cargo test --features "$FEATURES"
+
+  tests-rust-native-crypto:
+    name: Unit tests (with Rust native crypto installed)
+    needs: get-features
+    if: contains(github.event.pull_request.labels.*.name, 'release') || contains(github.event.pull_request.labels.*.name, 'check-release')
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest, ubuntu-latest]
+        rust_version: [stable, 1.86.0]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ matrix.rust_version }}
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: Run tests
+        env:
+          RUST_BACKTRACE: "1"
+          FEATURES: ${{needs.get-features.outputs.rust_native_crypto-features}}
+        run: |
+          cargo test --features "$FEATURES"
+
+  tests-cross:
+    name: Unit tests
+    needs: get-features
+    if: contains(github.event.pull_request.labels.*.name, 'release') || contains(github.event.pull_request.labels.*.name, 'check-release')
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [aarch64-unknown-linux-gnu]
+        rust_version: [stable, 1.86.0]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ matrix.rust_version }}
+          targets: ${{ matrix.target }}
+
+      - name: Install cross-compilation toolset
+        run: cargo install cross
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: Run unit tests (cross build)
+        env:
+          FEATURES: ${{needs.get-features.outputs.openssl-features}}
+        run: |
+          cross test --all-targets --features "$FEATURES" --target ${{ matrix.target }}
+
+  tests-wasi:
+    name: Unit tests (WASI)
+    needs: get-features
+    if: contains(github.event.pull_request.labels.*.name, 'release') || contains(github.event.pull_request.labels.*.name, 'check-release')
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+        # nightly required for testing until this issue is resolved:
+        # wasip2 target should not conditionally feature gate stdlib APIs rust-lang/rust#130323 https://github.com/rust-lang/rust/issues/130323
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly-2025-05-14
+          # Pinning to specific nightly build for now. More recent versions seem
+          # be running doc tests that aren't intended for WASI.
+
+      - name: Install wasmtime
+        run: |
+          curl https://wasmtime.dev/install.sh -sSf | bash
+          echo "$HOME/.wasmtime/bin" >> $GITHUB_PATH
+
+      - name: Install WASI SDK
+        run: |
+          if [ "${RUNNER_ARCH}" = "X64" ]; then
+            ARCH="x86_64";
+          else
+            ARCH="${RUNNER_ARCH}";
+          fi
+          wget https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-25/wasi-sdk-25.0-${ARCH}-${RUNNER_OS}.tar.gz
+          tar xf wasi-sdk-25.0-${ARCH}-${RUNNER_OS}.tar.gz
+          mv $(echo wasi-sdk-25.0-${ARCH}-${RUNNER_OS} | tr '[:upper:]' '[:lower:]') /opt/wasi-sdk
+
+      - name: Add wasm32-wasip2 target
+        run: rustup target add --toolchain nightly-2025-05-14 wasm32-wasip2
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: Run WASI tests (c2pa-rs)
+        env:
+          CARGO_TARGET_WASM32_WASIP2_RUNNER: "wasmtime -S cli -S http --dir ."
+          CC: /opt/wasi-sdk/bin/clang
+          WASI_SDK_PATH: /opt/wasi-sdk
+          RUST_MIN_STACK: 16777216
+          FEATURES: ${{needs.get-features.outputs.rust-native-features}}
+        run: |
+          cargo +nightly-2025-05-14 test --target wasm32-wasip2 -p c2pa --features "$FEATURES" --no-default-features -- --no-capture
+
+      # - name: Run WASI tests (c2patool)
+      #   env:
+      #     CARGO_TARGET_WASM32_WASIP2_RUNNER: "wasmtime -S cli -S http --dir ."
+      #     CC: /opt/wasi-sdk/bin/clang
+      #     WASI_SDK_PATH: /opt/wasi-sdk
+      #     RUST_MIN_STACK: 16777216
+      #     FEATURES: ${{needs.get-features.outputs.rust-native-features}}
+      #   run: |
+      #     cargo +nightly-2025-05-14 test --target wasm32-wasip2 -p c2patool --features "$FEATURES" --no-default-features -- --no-capture
+
+  test-direct-minimal-versions:
+    name: Unit tests with minimum versions of direct dependencies
+    needs: get-features
+    if: contains(github.event.pull_request.labels.*.name, 'release') || contains(github.event.pull_request.labels.*.name, 'check-release')
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest, ubuntu-latest]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly-2025-07-28
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: Run tests
+        env:
+          FEATURES: ${{needs.get-features.outputs.openssl-features}}
+        run: |
+          cargo +nightly-2025-07-28 test -Z direct-minimal-versions --all-targets --features "$FEATURES"
+
+  docs_rs:
+    name: Preflight docs.rs build
+    needs: get-features
+    if: contains(github.event.pull_request.labels.*.name, 'release') || contains(github.event.pull_request.labels.*.name, 'check-release')
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly-2025-06-05
+          # Nightly is used here because the docs.rs build
+          # uses nightly and we use doc_cfg features that are
+          # not in stable Rust as of this writing (Rust 1.87).
+
+          # Pinning to specific nightly build for now. More recent versions
+          # introduce a lifetime check that creates a whole slew of build
+          # errors.
+
+      - name: Run cargo docs
+        # This is intended to mimic the docs.rs build
+        # environment. The goal is to fail PR validation
+        # if the subsequent release would result in a failed
+        # documentation build on docs.rs.
+        run: cargo +nightly-2025-06-05 doc --workspace --features "$FEATURES" --no-deps
+        env:
+          FEATURES: ${{needs.get-features.outputs.openssl-features}}
+          RUSTDOCFLAGS: --cfg docsrs
+          DOCS_RS: 1
+
+  unused_deps:
+    name: Check for unused dependencies
+    needs: get-features
+    if: contains(github.event.pull_request.labels.*.name, 'release') || contains(github.event.pull_request.labels.*.name, 'check-release')
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly-2025-06-05
+          # Pinning to specific nightly build for now. More recent versions
+          # introduce a lifetime check that creates a whole slew of build
+          # errors.
+
+      - name: Run cargo-udeps
+        env:
+          FEATURES: ${{needs.get-features.outputs.openssl-features}}
+        run: |
+          mv ./.github/temp-bin/cargo-udeps /home/runner/.cargo/bin/cargo-udeps
+          cargo udeps --all-targets --features "$FEATURES"
+          # NOTE: Using pre-built binary as a workaround for
+          # https://github.com/aig787/cargo-udeps-action/issues/6.
+
+  c-library-mobile-builds:
+    name: C library mobile builds
+    if: contains(github.event.pull_request.labels.*.name, 'release') || contains(github.event.pull_request.labels.*.name, 'check-release')
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            target: aarch64-apple-ios
+          - os: macos-latest
+            target: x86_64-apple-ios
+          - os: macos-latest
+            target: aarch64-apple-ios-sim
+          - os: ubuntu-latest
+            target: aarch64-linux-android
+          - os: ubuntu-latest
+            target: armv7-linux-androideabi
+          - os: ubuntu-latest
+            target: i686-linux-android
+          - os: ubuntu-latest
+            target: x86_64-linux-android
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Rust
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+
+      - name: Build C library for mobile target
+        run: make release TARGET=${{ matrix.target }}
+        working-directory: ./c2pa_c_ffi
