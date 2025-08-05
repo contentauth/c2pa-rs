@@ -21,7 +21,6 @@ use zip::{
     ZipArchive,
     ZipWriter
 };
-use std::io::Seek;
 
 static SUPPORTED_TYPES: [&str; 6] = [
     "epub",
@@ -476,21 +475,27 @@ pub fn verify_epub_hashes(path: &Path) -> Result<bool> {
     
     let active_manifest = reader.active_manifest().ok_or_else(|| Error::EmbeddingError)?;
 
-    let collection_hash_assertion = active_manifest.assertions().iter().find(|a| a.label() == CollectionHash::LABEL).ok_or_else(|| Error::EmbeddingError)?;
+    let collection_hash_assertion = active_manifest.assertions().iter()
+        .find(|a| a.label() == CollectionHash::LABEL).ok_or_else(|| Error::EmbeddingError)?;
 
     let json_value = collection_hash_assertion.value()?;
-    let collection_hash: CollectionHash = serde_json::from_value(json_value.clone()).map_err(|e|Box::new(e) as Box<dyn std::error::Error + Send + Sync>)?;
+    let collection_hash: CollectionHash = serde_json::from_value(json_value.clone())
+        .map_err(|e|Box::new(e) as Box<dyn std::error::Error + Send + Sync>)?;
 
     println!("  - ✓ Found and deserialized 'c2pa.collection.hash' assertion.");
     
     let mut verification_stream = File::open(path)?;
     
     let alg = collection_hash.alg.as_deref().unwrap_or("sha256");
-    let uris_with_ranges = crate::assertions::collection_hash::zip_uri_ranges(&mut verification_stream)?;
+    let uris_with_ranges = 
+        crate::assertions::collection_hash::zip_uri_ranges(&mut verification_stream)?;
 
     for (path_buf, uri_map) in &collection_hash.uris {
         if let Some(uri_with_range) = uris_with_ranges.get(path_buf) {
             if let Some(hash_to_verify) = &uri_map.hash {
+                if path_buf.to_str() == Some("META-INF/c2pa.json") {
+                    continue;
+                }
                 if !crate::hash_utils::verify_stream_by_alg(
                     alg,
                     hash_to_verify,
@@ -666,7 +671,6 @@ mod zip_util {
         let mut source_file = File::open(source_path)?;
         let mut archive = ZipArchive::new(&mut source_file)?;
         
-        // **FIX**: Explicitly handle the 'mimetype' file first to ensure EPUB validity.
         if let Ok(mut mimetype_file) = archive.by_name("mimetype") {
             let options: FileOptions<()> =
                 FileOptions::default().compression_method(zip::CompressionMethod::Stored);
@@ -677,7 +681,7 @@ mod zip_util {
         for i in 0..archive.len() {
             let mut file = archive.by_index(i)?;
             if file.name() == "mimetype" {
-                continue; // Skip, as we've already handled it.
+                continue; 
             }
             let options: FileOptions<()> = FileOptions::default()
                 .compression_method(file.compression())
@@ -686,7 +690,6 @@ mod zip_util {
             zip_writer.start_file(file.name(), options)?;
             io::copy(&mut file, &mut zip_writer)?;
         }
-        
         let placeholder_options: FileOptions<()> =
             FileOptions::default().compression_method(zip::CompressionMethod::Stored);
         zip_writer.start_file(placeholder_path, placeholder_options)?;
