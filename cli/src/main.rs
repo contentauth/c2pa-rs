@@ -695,14 +695,14 @@ fn main() -> Result<()> {
                     }
                 }
                 let ingredient = load_ingredient(&path)?;
-                builder.add_ingredient(ingredient);
+                builder.add_ingredient(ingredient)?;
             }
         }
 
         if let Some(parent_path) = args.parent {
             let mut ingredient = load_ingredient(&parent_path)?;
             ingredient.set_is_parent();
-            builder.add_ingredient(ingredient);
+            builder.add_ingredient(ingredient)?;
         }
 
         // If the source file has a manifest store, and no parent is specified treat the source as a parent.
@@ -712,7 +712,7 @@ fn main() -> Result<()> {
             let mut source_ingredient = Ingredient::from_file(&args.path)?;
             if source_ingredient.manifest_data().is_some() {
                 source_ingredient.set_is_parent();
-                builder.add_ingredient(source_ingredient);
+                builder.add_ingredient(source_ingredient)?;
             }
         }
 

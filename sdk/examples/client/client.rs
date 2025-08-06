@@ -17,13 +17,10 @@ use std::path::PathBuf;
 
 use anyhow::Result;
 use c2pa::{
-    assertions::{c2pa_action, labels, Action, Actions, CreativeWork, Exif, SchemaDotOrgPerson},
-    create_signer,
-    crypto::raw_signature::SigningAlg,
-    Builder, ClaimGeneratorInfo, Ingredient, Reader, Relationship,
+    assertions::{labels, Actions, CreativeWork, Exif, SchemaDotOrgPerson},
+    Builder, ClaimGeneratorInfo, Reader, Settings,
 };
 
-const GENERATOR: &str = "test_app";
 const INDENT_SPACE: usize = 2;
 
 // Example for reading the contents of a manifest store, recursively showing nested manifests
@@ -90,9 +87,13 @@ fn show_manifest(reader: &Reader, manifest_label: &str, level: usize) -> Result<
 }
 
 pub fn main() -> Result<()> {
+    // Load settings from a file
+    // this configures our signer and other settings
+    Settings::from_file("sdk/tests/fixtures/settings.toml")?;
+
     let args: Vec<String> = std::env::args().collect();
     // allow passing in source and dest paths or use defaults
-    let (src, dst) = match args.len() >= 3 {
+    let (source, dest) = match args.len() >= 3 {
         true => (args[1].as_str(), args[2].as_str()),
         false => (
             "sdk/tests/fixtures/earth_apollo17.jpg",
@@ -100,23 +101,11 @@ pub fn main() -> Result<()> {
         ),
     };
 
-    let source = PathBuf::from(src);
-    let dest = PathBuf::from(dst);
-    // if a filepath was provided on the command line, read it as a parent file
-    let mut parent = Ingredient::from_file(source.as_path())?;
-    parent.set_relationship(Relationship::ParentOf);
-
     // overwrite the destination file if it exists
-    if dest.exists() {
-        std::fs::remove_file(&dest)?;
+    let dest_path = PathBuf::from(dest);
+    if dest_path.exists() {
+        std::fs::remove_file(&dest_path)?;
     }
-
-    // create an action assertion stating that we imported this file
-    let actions = Actions::new().add_action(
-        Action::new(c2pa_action::OPENED)
-            .set_parameter("ingredients", [parent.instance_id().to_owned()])?,
-    );
-
     // build a creative work assertion
     let creative_work =
         CreativeWork::new().add_author(SchemaDotOrgPerson::new().set_name("me")?)?;
@@ -135,26 +124,18 @@ pub fn main() -> Result<()> {
     }"#,
     )?;
 
-    // create a new Manifest
-    let mut builder = Builder::new();
-    builder.definition.claim_version = Some(2);
-    let mut generator = ClaimGeneratorInfo::new(GENERATOR);
+    // create a new Manifest - the source file will be the parent
+    let mut builder = Builder::edit();
+    let mut generator = ClaimGeneratorInfo::new("c2pa-rs client example");
     generator.set_version("0.1");
     builder
         .set_claim_generator_info(generator)
-        .add_ingredient(parent)
-        .add_assertion(Actions::LABEL, &actions)?
         .add_assertion(CreativeWork::LABEL, &creative_work)?
         .add_assertion(Exif::LABEL, &exif)?;
 
-    // sign and embed into the target file
-    let signcert_path = "sdk/tests/fixtures/certs/es256.pub";
-    let pkey_path = "sdk/tests/fixtures/certs/es256.pem";
-    let signer = create_signer::from_files(signcert_path, pkey_path, SigningAlg::Es256, None)?;
+    builder.sign_file(&Settings::signer()?, source, dest)?;
 
-    builder.sign_file(&*signer, &source, &dest)?;
-
-    let reader = Reader::from_file(&dest)?;
+    let reader = Reader::from_file(&dest_path)?;
 
     // example of how to print out the whole manifest as json
     println!("{reader}\n");

@@ -199,15 +199,15 @@ enum BuilderIntent {
     #[serde(rename = "create")]
     Create(DigitalSourceType),
 
-    /// This is the result of modifying an pre-existing parent asset.
+    /// This is the result of editing an pre-existing parent asset.
     ///
     /// The Manifest must have a parent ingredient.
     /// A parent ingredient will be generated from the source stream if not otherwise provided.
     /// A `c2pa.opened action will be tied to the parent ingredient.
-    #[serde(rename = "open")]
-    Open,
+    #[serde(rename = "edit")]
+    Edit,
 
-    /// A restricted version of [Open] for non-editorial changes.
+    /// A restricted version of [Edit] for non-editorial changes.
     ///
     /// There must be only one ingredient, as a parent.
     /// No changes can be made to the hashed content of the parent.
@@ -314,9 +314,9 @@ impl Builder {
     /// and an associated `c2pa.opened` action will be added.
     /// # Returns
     /// * A new [`Builder`] for editing an existing asset.
-    pub fn open() -> Self {
+    pub fn edit() -> Self {
         let mut builder = Self::new();
-        builder.intent = Some(BuilderIntent::Open);
+        builder.intent = Some(BuilderIntent::Edit);
         builder
     }
 
@@ -549,16 +549,35 @@ impl Builder {
     }
 
     /// Adds an [`Ingredient`] to the manifest with JSON and a stream.
-    // TODO: Add example.
     ///
     /// # Arguments
-    /// * `ingredient_json` - A JSON string representing the [`Ingredient`].  This ingredient is merged  with the ingredient specified in the `stream` argument, and these values take precedence.
+    /// * `ingredient_json` - JSON data representing the [`Ingredient`]. Can be a JSON string, `serde_json::Value`, or any type that converts to an [`Ingredient`]. This ingredient is merged with the ingredient specified in the `stream` argument, and these values take precedence.
     /// * `format` - The format of the [`Ingredient`].
-    /// * `stream` - A stream from which to read the [`Ingredient`].  This ingredient is merged  with the ingredient specified in the `ingredient_json` argument, whose values take precedence.  You can specify values here that are not specified in `ingredient_json`.
+    /// * `stream` - A stream from which to read the [`Ingredient`]. This ingredient is merged with the ingredient specified in the `ingredient_json` argument, whose values take precedence. You can specify values here that are not specified in `ingredient_json`.
     /// # Returns
     /// * A mutable reference to the [`Ingredient`].
     /// # Errors
     /// * Returns an [`Error`] if the [`Ingredient`] is not valid
+    /// # Examples
+    /// ```rust
+    /// use c2pa::Builder;
+    /// use serde_json::json;
+    /// use std::io::Cursor;
+    ///
+    /// let mut builder = Builder::new();
+    /// let mut stream = Cursor::new(b"some image data");
+    ///
+    /// // From JSON value
+    /// let ingredient_json = json!({
+    ///     "title": "My Ingredient",
+    ///     "relationship": "parentOf"
+    /// });
+    /// builder.add_ingredient_from_stream(ingredient_json, "image/jpeg", &mut stream)?;
+    ///
+    /// // From JSON string
+    /// builder.add_ingredient_from_stream(r#"{"title": "Another", "relationship": "componentOf"}"#, "image/jpeg", &mut stream)?;
+    /// # Ok::<(), c2pa::Error>(())
+    /// ```
     #[async_generic()]
     pub fn add_ingredient_from_stream<'a, T, R>(
         &'a mut self,
@@ -567,53 +586,65 @@ impl Builder {
         stream: &mut R,
     ) -> Result<&'a mut Ingredient>
     where
-        T: Into<String>,
+        T: TryInto<Ingredient>,
+        T::Error: std::fmt::Display,
         R: Read + Seek + Send,
     {
-        let ingredient: Ingredient = Ingredient::from_json(&ingredient_json.into())?;
+        let ingredient = ingredient_json
+            .try_into()
+            .map_err(|e| Error::BadParam(format!("Invalid ingredient JSON: {e}")))?;
         let ingredient = if _sync {
             ingredient.with_stream(format, stream)?
         } else {
             ingredient.with_stream_async(format, stream).await?
         };
-        // let id = ingredient
-        //     .label()
-        //     .or_else(|| Some(ingredient.instance_id()))
-        //     .map(|s| s.to_string());
-        // let action_type = if ingredient.is_parent() {
-        //     "c2pa.opened"
-        // } else {
-        //     "c2pa.placed"
-        // };
-        // if let Some(id) = id {
-        //     self.add_assertion(
-        //         Actions::LABEL,
-        //         &serde_json::json!(
-        //             {
-        //                 "actions": [
-        //                     {
-        //                         "action": action_type,
-        //                         "parameters": {
-        //                             "org.cai.ingredientIds": [&id]
-        //                         }
-        //                     }
-        //                 ]
-        //             }
-        //         ),
-        //     )?;
-        // };
         self.definition.ingredients.push(ingredient);
         #[allow(clippy::unwrap_used)]
         Ok(self.definition.ingredients.last_mut().unwrap()) // ok since we just added it
     }
 
-    /// Adds an [`Ingredient`] to the manifest from an existing Ingredient.
-    pub fn add_ingredient<I>(&mut self, ingredient: I) -> &mut Self
+    /// Adds an [`Ingredient`] to the manifest from an existing Ingredient or JSON value.
+    ///
+    /// This method accepts any type that can be converted into an [`Ingredient`], including:
+    /// - An existing [`Ingredient`] instance
+    /// - A `serde_json::Value` containing ingredient data
+    /// - A JSON string (`&str` or `String`)
+    /// - Any other type that implements `TryInto<Ingredient>`
+    ///
+    /// # Arguments
+    /// * `ingredient` - The ingredient to add, either as an Ingredient or convertible type
+    /// # Returns
+    /// * A mutable reference to the [`Builder`].
+    /// # Errors
+    /// * Returns an [`Error`] if the ingredient cannot be converted or is invalid.
+    /// # Examples
+    /// ```rust
+    /// use c2pa::Builder;
+    /// use serde_json::json;
+    ///
+    /// let mut builder = Builder::new();
+    ///
+    /// // Add from JSON value
+    /// let ingredient_json = json!({
+    ///     "title": "My Ingredient",
+    ///     "relationship": "parentOf"
+    /// });
+    /// builder.add_ingredient(ingredient_json)?;
+    ///
+    /// // Add from JSON string
+    /// builder.add_ingredient(r#"{"title": "Another", "relationship": "componentOf"}"#)?;
+    /// # Ok::<(), c2pa::Error>(())
+    /// ```
+    pub fn add_ingredient<I>(&mut self, ingredient: I) -> Result<&mut Self>
     where
-        I: Into<Ingredient>,
+        I: TryInto<Ingredient>,
+        I::Error: std::fmt::Display,
     {
-        self.definition.ingredients.push(ingredient.into());
-        self
+        let ingredient = ingredient
+            .try_into()
+            .map_err(|e| Error::BadParam(format!("Invalid ingredient: {e}")))?;
+        self.definition.ingredients.push(ingredient);
+        Ok(self)
     }
 
     /// Adds a resource to the manifest.
@@ -1263,7 +1294,10 @@ impl Builder {
         R: Read + Seek + Send,
     {
         // check settings to see if we should add a parent ingredient
-        let auto_parent = self.intent == Some(BuilderIntent::Update);
+        let auto_parent = matches!(
+            self.intent,
+            Some(BuilderIntent::Edit | BuilderIntent::Update)
+        );
         if auto_parent && !self.definition.ingredients.iter().any(|i| i.is_parent()) {
             let parent_def = serde_json::json!({
                 "relationship": "parentOf",
@@ -3022,7 +3056,7 @@ mod tests {
             std::fs::read_to_string(ingredient_folder.join("ingredient.json")).unwrap();
 
         let ingredient = Ingredient::from_json(&ingredient_json).unwrap();
-        builder.add_ingredient(ingredient);
+        builder.add_ingredient(ingredient).unwrap();
 
         let signer = test_signer(SigningAlg::Ps256);
 

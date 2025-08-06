@@ -78,7 +78,7 @@ fn builder_from_source<S: AsRef<Path>>(source: S) -> Result<Builder> {
 
     builder
         .set_claim_generator_info(claim_generator)
-        .add_ingredient(parent)
+        .add_ingredient(parent)?
         .add_assertion(ACTIONS, &actions)?
         .add_assertion_json(CREATIVE_WORK, &creative_work)?
         .add_assertion_json(EXIF, &exif)?;

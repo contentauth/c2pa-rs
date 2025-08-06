@@ -20,50 +20,6 @@ use serde_json::json;
 
 const TEST_SETTINGS: &str = include_str!("../tests/fixtures/test_settings.toml");
 const TEST_IMAGE: &[u8] = include_bytes!("../tests/fixtures/CA.jpg");
-// const CERTS: &[u8] = include_bytes!("../tests/fixtures/certs/ed25519.pub");
-// const PRIVATE_KEY: &[u8] = include_bytes!("../tests/fixtures/certs/ed25519.pem");
-
-// fn manifest_def(title: &str, format: &str) -> String {
-//     json!({
-//         "title": title,
-//         "format": format,
-//         "claim_generator_info": [
-//             {
-//                 "name": "c2pa test",
-//                 "version": env!("CARGO_PKG_VERSION")
-//             }
-//         ],
-//         "thumbnail": {
-//             "format": format,
-//             "identifier": "manifest_thumbnail.jpg"
-//         },
-//         "ingredients": [
-//             {
-//                 "title": "Test",
-//                 "format": "image/jpeg",
-//                 "instance_id": "12345",
-//                 "relationship": "inputTo"
-//             }
-//         ],
-//         "assertions": [
-//             {
-//                 "label": "c2pa.actions",
-//                 "data": {
-//                     "actions": [
-//                         {
-//                             "action": "c2pa.edited",
-//                             "digitalSourceType": "http://cv.iptc.org/newscodes/digitalsourcetype/trainedAlgorithmicMedia",
-//                             "softwareAgent": {
-//                                 "name": "My AI Tool",
-//                                 "version": "0.1.0"
-//                             }
-//                         }
-//                     ]
-//                 }
-//             }
-//         ]
-//     }).to_string()
-// }
 
 /// This example demonstrates how to use the new v2 API to create a manifest store
 /// It uses only streaming apis, showing how to avoid file i/o
@@ -75,7 +31,7 @@ fn main() -> Result<()> {
 
     Settings::from_toml(TEST_SETTINGS)?;
 
-    let mut builder = Builder::update();
+    let mut builder = Builder::edit();
     builder.definition.title = Some(title.to_string());
 
     builder.add_action(json!({
@@ -87,12 +43,12 @@ fn main() -> Result<()> {
         }
     }))?;
 
-    // builder.add_ingredient(json!({
-    //     "title": "Test",
-    //     "format": format,
-    //     "instance_id": "12345",
-    //     "relationship": "inputTo"
-    // }));
+    builder.add_ingredient(json!({
+        "title": "Test",
+        "format": format,
+        "instance_id": "12345",
+        "relationship": "inputTo"
+    }))?;
 
     let thumb_uri = builder
         .definition
@@ -117,7 +73,7 @@ fn main() -> Result<()> {
 
     let signer = Settings::signer()?;
 
-    //let mut builder = Builder::from_archive(&mut zipped)?;
+    let mut builder = Builder::from_archive(&mut zipped)?;
 
     // sign the ManifestStoreBuilder and write it to the output stream
     let mut dest = Cursor::new(Vec::new());

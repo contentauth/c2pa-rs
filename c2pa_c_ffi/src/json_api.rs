@@ -62,7 +62,9 @@ pub fn sign_file(
             Ingredient::from_file(source).map_err(Error::from_c2pa_error)?;
         if source_ingredient.manifest_data().is_some() {
             source_ingredient.set_relationship(Relationship::ParentOf);
-            builder.add_ingredient(source_ingredient);
+            builder
+                .add_ingredient(source_ingredient)
+                .map_err(Error::from_c2pa_error)?;
         }
     }
 

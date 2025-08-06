@@ -1417,6 +1417,38 @@ impl std::fmt::Display for Ingredient {
     }
 }
 
+impl TryFrom<serde_json::Value> for Ingredient {
+    type Error = crate::Error;
+
+    fn try_from(value: serde_json::Value) -> std::result::Result<Self, Self::Error> {
+        serde_json::from_value(value).map_err(crate::Error::JsonError)
+    }
+}
+
+impl TryFrom<&str> for Ingredient {
+    type Error = crate::Error;
+
+    fn try_from(json: &str) -> std::result::Result<Self, Self::Error> {
+        Self::from_json(json)
+    }
+}
+
+impl TryFrom<String> for Ingredient {
+    type Error = crate::Error;
+
+    fn try_from(json: String) -> std::result::Result<Self, Self::Error> {
+        Self::from_json(&json)
+    }
+}
+
+impl TryFrom<&String> for Ingredient {
+    type Error = crate::Error;
+
+    fn try_from(json: &String) -> std::result::Result<Self, Self::Error> {
+        Self::from_json(json)
+    }
+}
+
 /// This defines optional operations when creating [`Ingredient`] structs from files.
 #[cfg(feature = "file_io")]
 pub trait IngredientOptions {
