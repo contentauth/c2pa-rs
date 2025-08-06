@@ -40,11 +40,13 @@ impl AsyncPostValidator for CawgValidator {
         if label == "cawg.identity" || label.starts_with("cawg.identity__") {
             let identity_assertion: IdentityAssertion = assertion.to_assertion()?;
             tracker.push_current_uri(uri);
+
             let result = identity_assertion
                 .validate_partial_claim(partial_claim, tracker)
                 .await
                 .map(Some)
                 .map_err(|e| crate::Error::ClaimVerification(e.to_string()));
+
             tracker.pop_current_uri();
             return result;
         };
