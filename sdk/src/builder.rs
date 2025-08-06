@@ -29,8 +29,8 @@ use zip::{write::SimpleFileOptions, ZipArchive, ZipWriter};
 use crate::{
     assertion::AssertionDecodeError,
     assertions::{
-        labels, Actions, BmffHash, BoxHash, CreativeWork, DataHash, Exif, Metadata, SoftwareAgent,
-        Thumbnail, User, UserCbor,
+        labels, Actions, BmffHash, BoxHash, CollectionHash, CreativeWork, DataHash, Exif, Metadata, SoftwareAgent,
+        Thumbnail, User, UserCbor, RawCollectionHash
     },
     claim::Claim,
     error::{Error, Result},
@@ -790,6 +790,11 @@ impl Builder {
                     let box_hash: BoxHash = manifest_assertion.to_assertion()?;
                     claim.add_assertion_with_salt(&box_hash, &salt)
                 }
+                // CollectionHash::LABEL => {
+                //     let raw: RawCollectionHash = manifest_assertion.to_assertion()?;
+                //     let collection_hash: CollectionHash = raw.into();
+                //     claim.add_assertion_with_salt(&collection_hash, &salt)
+                // }
                 DataHash::LABEL => {
                     let data_hash: DataHash = manifest_assertion.to_assertion()?;
                     claim.add_assertion_with_salt(&data_hash, &salt)
@@ -948,7 +953,7 @@ impl Builder {
         format: &str,
     ) -> Result<Vec<u8>> {
         self.definition.instance_id = format!("xmp:iid:{}", Uuid::new_v4());
-
+        println!("pub fn sign_box_hashed_embeddable: {}", format);
         let mut store = self.to_store()?;
         let bytes = if _sync {
             store.get_box_hashed_embeddable_manifest(signer)
@@ -988,6 +993,7 @@ impl Builder {
         W: Write + Read + Seek + Send,
     {
         let format = format_to_mime(format);
+        println!("Signing with format: {format}");
         self.definition.format.clone_from(&format);
         // todo:: read instance_id from xmp from stream ?
         self.definition.instance_id = format!("xmp:iid:{}", Uuid::new_v4());

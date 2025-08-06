@@ -18,6 +18,54 @@ use crate::{
 
 const ASSERTION_CREATION_VERSION: usize = 1;
 
+#[derive(Debug, Deserialize)]
+pub struct RawCollectionHash {
+    alg: Option<String>,
+    uris: Vec<RawUriEntry>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RawUriEntry {
+    uri: String,
+
+    #[serde(with = "serde_bytes")]
+    hash: Option<Vec<u8>>,
+
+    size: Option<u64>,
+
+    #[serde(rename = "dc:format")]
+    dc_format: Option<String>,
+}
+
+impl From<RawCollectionHash> for CollectionHash {
+    fn from(raw: RawCollectionHash) -> Self {
+        let uris = raw
+            .uris
+            .into_iter()
+            .map(|entry| {
+                (
+                    PathBuf::from(entry.uri),
+                    UriHashedDataMap {
+                        hash: entry.hash,
+                        size: entry.size,
+                        dc_format: entry.dc_format,
+                        data_types: None,
+                        zip_hash_range: None,
+                    },
+                )
+            })
+            .collect();
+
+        CollectionHash {
+            uris,
+            alg: raw.alg,
+            base_path: None,
+            zip_central_directory_hash: None,
+            zip_central_directory_hash_range: None,
+        }
+    }
+}
+
 /// A collection hash is used to hash multiple files within a collection (e.g. a folder or a zip file).
 #[derive(Serialize, Deserialize, Debug, PartialEq, Eq)]
 pub struct CollectionHash {
@@ -291,85 +339,18 @@ impl CollectionHash {
 
     //     Ok(())
     // }
-    // pub fn verify_zip_stream_hash<R>(&self, stream: &mut R, alg: Option<&str>) -> Result<()>
-    // where
-    //     R: Read + Seek + ?Sized,
-    // {
-    //     let alg = alg.unwrap_or_else(|| self.alg());
-    //     let zip_central_directory_hash = match &self.zip_central_directory_hash {
-    //         Some(hash) => Ok(hash),
-    //         None => Err(Error::BadParam(
-    //             "Missing zip central directory hash".to_owned(),
-    //         )),
-    //     }?;
-
-    //     // 【关键修正】在验证之前，重新计算中央目录的范围
-    //     // This ensures the range is always available and not dependent on deserialization.
-    //     let zip_central_directory_inclusions = zip_central_directory_range(stream)?;
-
-    //     if !verify_stream_by_alg(
-    //         alg,
-    //         zip_central_directory_hash,
-    //         stream,
-    //         Some(vec![zip_central_directory_inclusions]), // 使用刚刚计算出的范围
-    //         false,
-    //     ) {
-    //         return Err(Error::HashMismatch(
-    //             "Hashes do not match for zip central directory".to_owned(),
-    //         ));
-    //     }
-
-    //     // 【关键修正】同样地，在验证文件条目之前，需要重新获取它们的范围
-    //     // The uris from deserialization only have the hash, not the range.
-    //     let uris_with_ranges = zip_uri_ranges(stream)?;
-
-    //     for (path, uri_map) in &self.uris {
-    //         // Find the corresponding entry with a calculated range
-    //         if let Some(uri_with_range) = uris_with_ranges.get(path) {
-    //             if let Some(hash_to_verify) = &uri_map.hash {
-    //                 if !verify_stream_by_alg(
-    //                     alg,
-    //                     hash_to_verify,
-    //                     stream,
-    //                     Some(vec![uri_with_range.zip_hash_range.clone().unwrap()]), // Use the calculated range
-    //                     false,
-    //                 ) {
-    //                     return Err(Error::HashMismatch(format!(
-    //                         "hash for {} does not match",
-    //                         path.display()
-    //                     )));
-    //                 }
-    //             } else {
-    //                 return Err(Error::BadParam(format!(
-    //                     "Missing hash for {} in manifest",
-    //                     path.display()
-    //                 )));
-    //             }
-    //         } else {
-    //             return Err(Error::BadParam(format!(
-    //                 "Could not find entry for {} in the zip file to verify its hash",
-    //                 path.display()
-    //             )));
-    //         }
-    //     }
-
-    //     Ok(())
-    // }
+    
     pub fn verify_zip_stream_hash<R>(&self, stream: &mut R, alg: Option<&str>) -> Result<()>
 where
     R: Read + Seek + ?Sized,
 {
     let alg = alg.unwrap_or_else(|| self.alg());
 
-    // 重新从当前的文件流中计算所有文件条目的范围。
     let uris_from_stream = zip_uri_ranges(stream)?;
 
-    // 验证清单中存在的每一个文件哈希。
     for (path, uri_map_from_manifest) in &self.uris {
         if let Some(hash_to_verify) = &uri_map_from_manifest.hash {
-            // 在文件流中查找对应的文件，以获取其正确的字节范围。
             if let Some(uri_from_stream) = uris_from_stream.get(path) {
-                // 这个范围必须存在，因为它是由 zip_uri_ranges 生成的。
                 let range = uri_from_stream.zip_hash_range.clone().unwrap();
                 if !verify_stream_by_alg(alg, hash_to_verify, stream, Some(vec![range]), false) {
                     return Err(Error::HashMismatch(format!(
@@ -378,7 +359,6 @@ where
                     )));
                 }
             } else {
-                // 清单中列出的文件在当前的 ZIP 包中不存在。
                 return Err(Error::BadParam(format!(
                     "file {} not found in zip archive for verification",
                     path.display()
@@ -387,9 +367,8 @@ where
         }
     }
 
-    // **只有**当中央目录哈希存在于清单中时，才去验证它。
     if let Some(cd_hash_to_verify) = &self.zip_central_directory_hash {
-        let cd_range = zip_central_directory_range(stream)?; // 重新计算范围。
+        let cd_range = zip_central_directory_range(stream)?; 
         if !verify_stream_by_alg(alg, cd_hash_to_verify, stream, Some(vec![cd_range]), false)
         {
             return Err(Error::HashMismatch(

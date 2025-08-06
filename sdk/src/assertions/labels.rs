@@ -39,6 +39,10 @@ pub const DATA_HASH: &str = "c2pa.hash.data";
 /// See <https://c2pa.org/specifications/specifications/1.3/specs/C2PA_Specification.html#_general_boxes_hash>.
 pub const BOX_HASH: &str = "c2pa.hash.boxes";
 
+/// Label prefix for a collection hash assertion.
+/// See <https://c2pa.org/specifications/specifications/1.4/specs/C2PA_Specification.html#_collection_data_hash>.
+pub const COLLECTION_HASH: &str = "c2pa.hash.collection.data";
+
 /// Label prefix for a BMFF-based hash assertion.
 ///
 /// See <https://c2pa.org/specifications/specifications/1.0/specs/C2PA_Specification.html#_bmff_based_hash>.
@@ -149,10 +153,7 @@ pub const CLAIM_REVIEW: &str = "stds.schema-org.ClaimReview";
 /// See <https://c2pa.org/specifications/specifications/1.0/specs/C2PA_Specification.html#_creative_work>.
 pub const CREATIVE_WORK: &str = "stds.schema-org.CreativeWork";
 
-/// Label prefix for a collection hash assertion.
-///
-/// See <https://c2pa.org/specifications/specifications/1.4/specs/C2PA_Specification.html#_collection_data_hash>.
-pub const COLLECTION_HASH: &str = "c2pa.hash.collection.data";
+
 /// Return the version suffix from an assertion label if it exists.
 ///
 /// When an assertion's schema is changed in a backwards-compatible manner,

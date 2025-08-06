@@ -21,6 +21,8 @@ use zip::{
     ZipArchive,
     ZipWriter
 };
+// use std::io::Seek;  // 暂时注释掉，因为当前未使用
+use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 
 static SUPPORTED_TYPES: [&str; 6] = [
     "epub",
@@ -31,10 +33,11 @@ static SUPPORTED_TYPES: [&str; 6] = [
     ""
 ];
 
-const CAI_STORE_PATHS: [&str; 3] = [
+const CAI_STORE_PATHS: [&str; 4] = [
     "META-INF/c2pa.json",
     "META-INF/manifest.c2pa",
     "META-INF/manifest.json",
+    "META-INF/content_credential.c2pa"
 ];
 
 const MANIFEST_PATH: &str = "META-INF/c2pa.json";
@@ -402,17 +405,17 @@ pub async fn sign_epub_from_json(
     let temp_epub_with_placeholder =
         zip_util::create_epub_with_placeholder(source_path, MANIFEST_PATH, MANIFEST_PLACEHOLDER_SIZE)?;
     println!("  - ✓ Temporary EPUB with placeholder created.");
+    let mut temp_epub_file = File::open(temp_epub_with_placeholder.path())?;
 
     let mut collection_hash = CollectionHash::with_alg(
-        source_path.parent().unwrap_or(Path::new("")).to_path_buf(),
+        temp_epub_with_placeholder.path().parent().unwrap_or(Path::new("")).to_path_buf(),
         alg.to_string(),
     )?;
-    let mut temp_epub_file = File::open(temp_epub_with_placeholder.path())?;
     collection_hash.gen_hash_from_zip_stream(&mut temp_epub_file)?;
     println!("  - ✓ Hashes calculated using CollectionHash on the temporary file.");
 
-    collection_hash.zip_central_directory_hash = None;
-    println!("  - ✓ Central directory hash ignored for this workflow.");
+    // collection_hash.zip_central_directory_hash = None;
+    // println!("  - ✓ Central directory hash ignored for this workflow.");
     let mut builder = Builder::from_json(manifest_json)?;
     builder.add_assertion(
         CollectionHash::LABEL,
@@ -435,7 +438,13 @@ pub async fn sign_epub_from_json(
         return Err(Error::EmbeddingError);
     }
 
-    fs::copy(temp_epub_with_placeholder.path(), dest_path)?;
+    // zip_util::overwrite_placeholder(
+    //     temp_epub_with_placeholder.path(),
+    //     MANIFEST_PATH,
+    //     &manifest_bytes,
+    // )?;
+
+    // fs::copy(temp_epub_with_placeholder.path(), dest_path)?;
     
     // zip_util::overwrite_placeholder(dest_path, MANIFEST_PATH, &manifest_bytes)?;
     zip_util::rewrite_epub_with_manifest(
@@ -444,9 +453,66 @@ pub async fn sign_epub_from_json(
         MANIFEST_PATH,
         &manifest_bytes,
     )?;
+
     println!("  - ✓ Placeholder overwritten in destination file without changing structure.");
+    
+    // try removing crc-32 for manifest
+    patch_central_directory_crc(dest_path, MANIFEST_PATH);
 
     Ok(manifest_bytes)
+}
+
+pub fn patch_central_directory_crc(zip_path: &Path, target_filename: &str) -> Result<()> {
+    let mut file = OpenOptions::new().read(true).write(true).open(zip_path)?;
+
+    let file_size = file.seek(SeekFrom::End(0))?;
+    let search_buffer_size = (file_size).min(65535 + 22); // EOCD 注释最大 64KB
+    file.seek(SeekFrom::End(-(search_buffer_size as i64)))?;
+    
+    let mut buffer = vec![0; search_buffer_size as usize];
+    file.read_exact(&mut buffer)?;
+
+    let eocd_pos = buffer.windows(4)
+        .rposition(|window| window == b"\x50\x4b\x05\x06")
+        .ok_or_else(|| Error::EmbeddingError)?;
+
+    let eocd_start_in_file = file_size - search_buffer_size + eocd_pos as u64;
+
+    file.seek(SeekFrom::Start(eocd_start_in_file + 16))?;
+    let central_dir_offset = file.read_u32::<LittleEndian>()? as u64;
+
+    file.seek(SeekFrom::Start(central_dir_offset))?;
+    loop {
+        let signature = file.read_u32::<LittleEndian>()?;
+        if signature != 0x02014b50 {
+            break;
+        }
+
+        file.seek(SeekFrom::Current(12))?;
+        let crc_32_offset = file.stream_position()?; 
+        
+        file.seek(SeekFrom::Current(12))?;
+
+        let file_name_len = file.read_u16::<LittleEndian>()? as usize;
+        let extra_field_len = file.read_u16::<LittleEndian>()? as usize;
+        let file_comment_len = file.read_u16::<LittleEndian>()? as usize;
+
+        file.seek(SeekFrom::Current(12))?;
+
+        let mut file_name_bytes = vec![0; file_name_len];
+        file.read_exact(&mut file_name_bytes)?;
+        let file_name = String::from_utf8_lossy(&file_name_bytes);
+
+        if file_name == target_filename {
+            file.seek(SeekFrom::Start(crc_32_offset))?;
+            file.write_u32::<LittleEndian>(0)?;
+            println!("  - ✓ Patched CRC-32 for '{}' to 0.", target_filename);
+            return Ok(());
+        }
+
+        file.seek(SeekFrom::Current((extra_field_len + file_comment_len) as i64))?;
+    }
+    Err(Error::EmbeddingError)
 }
 
 #[derive(Deserialize, Debug)]
@@ -747,10 +813,13 @@ mod zip_util {
         zip_writer.raw_copy_file(raw_file)?;
     }
 
+    let mut padded_manifest = manifest_bytes.to_vec();
+    padded_manifest.resize(MANIFEST_PLACEHOLDER_SIZE as usize, 0);
+    
     let manifest_options: FileOptions<()> =
         FileOptions::default().compression_method(zip::CompressionMethod::Stored);
     zip_writer.start_file(manifest_path, manifest_options)?;
-    zip_writer.write_all(manifest_bytes)?;
+    zip_writer.write_all(&padded_manifest)?;
 
     zip_writer.finish()?;
     println!("  - ✓ Rewritten EPUB with raw file copy.");
@@ -796,6 +865,7 @@ pub fn create_test_signer() -> Result<Box<dyn Signer>> {
     Ok(signer)
 }
 
+#[allow(dead_code)]
 fn get_sample_epub_path(path_str: &str) -> std::path::PathBuf {
     let manifest_dir = env!("CARGO_MANIFEST_DIR");
     let mut path = std::path::PathBuf::from(manifest_dir);
@@ -1087,16 +1157,13 @@ mod tests {
 
             let mut output_stream2 = Cursor::new(Vec::with_capacity(sample.len() + 5));
             let random_bytes = [3, 2, 1, 2, 3];
-            output_stream1.rewind()?;
             epub_io.write_cai(&mut output_stream1, &mut output_stream2, &random_bytes)?;
 
-            output_stream2.rewind()?;
             let data_written = epub_io.read_cai(&mut output_stream2)?;
             println!("Data written: {:?}", data_written);
             assert_eq!(data_written, random_bytes);
 
             let mut bytes = Vec::new();
-            stream.rewind()?;
             stream.read_to_end(&mut bytes)?;
             assert_eq!(sample, bytes);
         }
@@ -1174,6 +1241,7 @@ mod tests {
 
         // verify binary content contains expected markers
         // C2PA manifest usually starts with a specific byte sequence
+        println!("jumbf header: {:02x?}", &result[0..4]); // => [00, 00, 3c, 1d]
         let has_jumbf_header = result.len() >= 4 && result[0..4] == [0x00, 0x00, 0x60, 0x1D]; // JUMBF box header
         let has_c2pa_marker = result.windows(4).any(|window| window == b"c2pa");
 
@@ -1257,7 +1325,7 @@ mod tests {
         println!("   - CAI store head: {:02x?}", &result[..32.min(result.len())]);
 
         assert!(result.len() > 0, "CAI store should not be empty");
-        assert!(result.len() > 1000, "CAI store should be substantial size"); // signed manifest is usually large
+        assert!(result.len() > 1000, "CAI store should be substantial size"); 
 
         let has_jumbf_header = result.len() >= 4 && result[0..4] == [0x00, 0x00, 0x60, 0x1D]; // JUMBF box header
         let has_c2pa_marker = result.windows(4).any(|window| window == b"c2pa");
@@ -1289,7 +1357,7 @@ mod tests {
         ).await?;
         println!("  - ✓ File signed successfully.");
 
-        // 2. Verify the untampered file. Should succeed.
+        // 2. Verify the untampered file. 
         let is_valid_before = verify_epub_hashes(&signed_epub_path)?;
         assert!(is_valid_before);
         println!("  - ✓ Verification successful on original signed file.");
@@ -1320,6 +1388,7 @@ fn test_get_epub_metadata() {
 
 // ========== EPUB Metadata Extraction ==========
 #[derive(Debug, Clone, Default)]
+#[allow(dead_code)]
 pub struct EpubMetadata {
     pub title: Option<String>,
     pub author: Option<String>,
@@ -1330,6 +1399,7 @@ pub struct EpubMetadata {
 }
 
 /// Read epub metadata from epub file
+#[allow(dead_code)]
 pub fn get_epub_metadata<P: AsRef<std::path::Path>>(epub_path: P) -> Result<EpubMetadata> {
     use zip::ZipArchive;
     use std::fs::File;
