@@ -790,11 +790,11 @@ impl Builder {
                     let box_hash: BoxHash = manifest_assertion.to_assertion()?;
                     claim.add_assertion_with_salt(&box_hash, &salt)
                 }
-                CollectionHash::LABEL => {
-                    let raw: RawCollectionHash = manifest_assertion.to_assertion()?;
-                    let collection_hash: CollectionHash = raw.into();
-                    claim.add_assertion_with_salt(&collection_hash, &salt)
-                }
+                // CollectionHash::LABEL => {
+                //     let raw: RawCollectionHash = manifest_assertion.to_assertion()?;
+                //     let collection_hash: CollectionHash = raw.into();
+                //     claim.add_assertion_with_salt(&collection_hash, &salt)
+                // }
                 DataHash::LABEL => {
                     let data_hash: DataHash = manifest_assertion.to_assertion()?;
                     claim.add_assertion_with_salt(&data_hash, &salt)

@@ -153,6 +153,7 @@ pub const CLAIM_REVIEW: &str = "stds.schema-org.ClaimReview";
 /// See <https://c2pa.org/specifications/specifications/1.0/specs/C2PA_Specification.html#_creative_work>.
 pub const CREATIVE_WORK: &str = "stds.schema-org.CreativeWork";
 
+
 /// Return the version suffix from an assertion label if it exists.
 ///
 /// When an assertion's schema is changed in a backwards-compatible manner,
