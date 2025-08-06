@@ -77,7 +77,7 @@ impl IdentityAssertion {
         manifest
             .assertions()
             .iter()
-            .filter(|a| a.label().starts_with("cawg.identity"))
+            .filter(|a| a.label() == "cawg.identity" || a.label().starts_with("cawg.identity__"))
             .map(|a| (a.label().to_owned(), a.to_assertion()))
             .inspect(|(label, r)| {
                 if let Err(err) = r {
