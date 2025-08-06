@@ -1657,7 +1657,7 @@ mod tests {
     #[cfg_attr(target_os = "wasi", wstd::test)]
     #[cfg(any(target_arch = "wasm32", feature = "file_io"))]
     async fn test_builder_box_hashed_embeddable() {
-        use crate::asset_io::{CAIWriter, HashBlockObjectType};
+        use crate::{asset_handlers::jpeg_io::JpegIO, asset_io::{CAIWriter, HashBlockObjectType}};
         const BOX_HASH_IMAGE: &[u8] = include_bytes!("../tests/fixtures/boxhash.jpg");
         const BOX_HASH: &[u8] = include_bytes!("../tests/fixtures/boxhash.json");
 

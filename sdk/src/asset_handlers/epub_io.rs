@@ -42,7 +42,10 @@ const CAI_STORE_PATHS: [&str; 4] = [
     "META-INF/content_credential.c2pa",
 ];
 
+
+#[allow(dead_code)]
 const MANIFEST_PATH: &str = "META-INF/c2pa.json";
+#[allow(dead_code)]
 const MANIFEST_PLACEHOLDER_SIZE: u64 = 32768;
 
 pub struct EpubIo;
@@ -389,6 +392,7 @@ pub fn sign_epub_with_manifest(
 }
 
 
+#[allow(dead_code)]
 pub async fn sign_epub_from_json(
     source_path: &Path,
     dest_path: &Path,
@@ -460,6 +464,7 @@ pub async fn sign_epub_from_json(
     Ok(manifest_bytes)
 }
 
+#[allow(dead_code)]
 pub fn patch_central_directory_crc(zip_path: &Path, target_filename: &str) -> Result<()> {
     let mut file = OpenOptions::new().read(true).write(true).open(zip_path)?;
 
@@ -734,6 +739,7 @@ mod zip_util {
 
     use super::*;
 
+    #[allow(dead_code)]
     pub fn create_epub_with_placeholder(
         source_path: &Path,
         placeholder_path: &str,
@@ -772,6 +778,7 @@ mod zip_util {
         Ok(temp_file)
     }
 
+    #[allow(dead_code)]
     pub fn overwrite_placeholder(
         epub_path: &Path,
         placeholder_path: &str,
@@ -789,6 +796,7 @@ mod zip_util {
         Ok(())
     }
 
+    #[allow(dead_code)]
     pub fn rewrite_epub_with_manifest(
         source_path: &Path,
         dest_path: &Path,
