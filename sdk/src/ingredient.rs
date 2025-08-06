@@ -902,18 +902,15 @@ impl Ingredient {
         };
 
         if let Ok(ref mut store) = result {
-            let label = store.provenance_label();
+            let labels = store.get_manifest_labels_for_ocsp();
 
-            if let Some(label) = label {
-                let ocsp_response_ders =
-                    store.get_ocsp_response_ders(vec![&label], &mut validation_log)?;
-                let resource_refs: Vec<ResourceRef> = ocsp_response_ders
-                    .into_iter()
-                    .filter_map(|o| self.resources.add_with(&label, "ocsp", o).ok())
-                    .collect();
+            let ocsp_response_ders = store.get_ocsp_response_ders(labels, &mut validation_log)?;
+            let resource_refs: Vec<ResourceRef> = ocsp_response_ders
+                .into_iter()
+                .filter_map(|o| self.resources.add_with("test", "ocsp", o).ok())
+                .collect();
 
-                self.ocsp_responses = Some(resource_refs);
-            }
+            self.ocsp_responses = Some(resource_refs);
         }
 
         // set validation status from result and log

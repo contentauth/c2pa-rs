@@ -252,7 +252,8 @@ pub(crate) fn fetch_and_check_ocsp_response(
     }
 }
 
-pub(crate) fn get_ocsp_der(sign1: &coset::CoseSign1) -> Option<Vec<u8>> {
+/// TODO: Add documentation
+pub fn get_ocsp_der(sign1: &coset::CoseSign1) -> Option<Vec<u8>> {
     let der = sign1
         .unprotected
         .rest

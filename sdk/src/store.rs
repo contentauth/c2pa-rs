@@ -649,12 +649,17 @@ impl Store {
         {
             Ok(should_fetch) => {
                 if should_fetch {
-                    //TODO: Need to determine what is considered "needed", i.e. if there is no OCSP vals in COSE signature?
-                    let claims = labels.iter().filter_map(|k| self.claims_map.get(k));
-
-                    return labels;
+                    labels
+                        .into_iter()
+                        .filter(|label| {
+                            self.claims_map
+                                .get(label)
+                                .is_some_and(|claim| !claim.has_ocsp_vals())
+                        })
+                        .collect()
+                } else {
+                    labels
                 }
-                labels
             }
             _ => Vec::new(),
         }
@@ -4710,13 +4715,13 @@ impl Store {
     /// A `Result` containing ocsp response ders
     pub fn get_ocsp_response_ders(
         &self,
-        manifest_labels: Vec<&str>,
+        manifest_labels: Vec<String>,
         validation_log: &mut StatusTracker,
     ) -> Result<Vec<Vec<u8>>> {
         let mut oscp_response_ders: Vec<Vec<u8>> = Vec::new();
 
         for manifest_label in manifest_labels {
-            if let Some(claim) = self.claims_map.get(manifest_label) {
+            if let Some(claim) = self.claims_map.get(&manifest_label) {
                 let sig = claim.signature_val().clone();
                 let data = claim.data()?;
 

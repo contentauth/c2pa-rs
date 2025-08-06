@@ -44,7 +44,10 @@ use crate::{
     crypto::{
         asn1::rfc3161::TstInfo,
         base64,
-        cose::{parse_cose_sign1, CertificateInfo, CertificateTrustPolicy, OcspFetchPolicy},
+        cose::{
+            get_ocsp_der, parse_cose_sign1, CertificateInfo, CertificateTrustPolicy,
+            OcspFetchPolicy,
+        },
         ocsp::OcspResponse,
     },
     error::{Error, Result},
@@ -3866,8 +3869,29 @@ impl Claim {
             uri
         }
     }
-}
 
+    /// Checks whether or not ocsp values are present in claim
+    pub fn has_ocsp_vals(&self) -> bool {
+        if !self.certificate_status_assertions().is_empty() {
+            return false;
+        }
+
+        let data = match self.data() {
+            Ok(data) => data,
+            Err(_) => return false,
+        };
+
+        let sig = self.signature_val().clone();
+        let mut validation_log = StatusTracker::default();
+
+        let sign1 = match parse_cose_sign1(&sig, &data, &mut validation_log) {
+            Ok(sign1) => sign1,
+            Err(_) => return false,
+        };
+
+        get_ocsp_der(&sign1).is_some()
+    }
+}
 #[allow(dead_code)]
 #[async_generic]
 pub(crate) fn check_ocsp_status(
