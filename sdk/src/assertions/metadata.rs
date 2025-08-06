@@ -22,7 +22,7 @@ use crate::{
     Error,
 };
 
-/// A `Metadata` assertion provides structured metadata using JSON-LD format for 
+/// A `Metadata` assertion provides structured metadata using JSON-LD format for
 /// both standardized C2PA metadata and custom metadata schemas.
 ///
 /// This assertion contains a context object defining namespace mappings and a set
