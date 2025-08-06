@@ -248,6 +248,7 @@ fn finalize_identity_assertion(
         signature,
         pad1: vec![],
         pad2: None,
+        label: None,
     };
 
     let mut assertion_cbor: Vec<u8> = vec![];
@@ -362,6 +363,10 @@ mod tests {
         let ia = ia_iter.next().unwrap().unwrap();
         assert!(ia_iter.next().is_none());
         drop(ia_iter);
+
+        let label = ia.label.as_ref().unwrap();
+        assert!(label.ends_with("cawg.identity"));
+        assert!(label.contains("/c2pa.assertions/"));
 
         // And that identity assertion should be valid for this manifest.
         let nsv = NaiveSignatureVerifier {};
