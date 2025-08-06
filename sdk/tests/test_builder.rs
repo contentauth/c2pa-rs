@@ -74,6 +74,48 @@ fn test_builder_riff() -> Result<()> {
 }
 
 #[test]
+fn test_builder_riff_audio_with_manifest() -> Result<()> {
+    Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml"))?;
+    let mut source = Cursor::new(include_bytes!("fixtures/audio.wav"));
+    let format = "audio/wav";
+
+    let mut builder = Builder::update();
+    builder.definition.claim_version = Some(1); // use v1 for this test
+    builder.no_embed = true;
+    builder.sign(&Settings::signer()?, format, &mut source, &mut io::empty())?;
+
+    Ok(())
+}
+
+#[test]
+fn test_builder_riff_v2_audio_with_manifest() -> Result<()> {
+    Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml"))?;
+    let mut source = Cursor::new(include_bytes!("fixtures/audio.wav"));
+    let format = "audio/wav";
+
+    let mut builder = Builder::update();
+    builder.definition.claim_version = Some(2);
+    builder.no_embed = true;
+    builder.sign(&Settings::signer()?, format, &mut source, &mut io::empty())?;
+
+    Ok(())
+}
+
+#[test]
+fn test_builder_riff_v2() -> Result<()> {
+    Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml"))?;
+    let mut source = Cursor::new(include_bytes!("fixtures/sample1.wav"));
+    let format = "audio/wav";
+
+    let mut builder = Builder::update();
+    builder.definition.claim_version = Some(2);
+    builder.no_embed = true;
+    builder.sign(&Settings::signer()?, format, &mut source, &mut io::empty())?;
+
+    Ok(())
+}
+
+#[test]
 #[cfg(feature = "file_io")]
 fn test_builder_fragmented() -> Result<()> {
     use common::tempdirectory;
