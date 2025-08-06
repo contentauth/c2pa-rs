@@ -276,12 +276,25 @@ impl IdentityAssertion {
         status_tracker: &mut StatusTracker,
         verifier: &SV,
     ) -> Result<SV::Output, ValidationError<SV::Error>> {
-        // TO DO: Create new status tracker here and pass it through
-        // the rest of this code. Then we can rewrite the log with
-        // assertion label at the end of this process.
+        if let Some(ref label) = self.label {
+            status_tracker.push_current_uri(label);
+        }
 
-        // UPDATED TO DO: Hold off until Gavin lands the post-validate branch.
-        // Then we'll get the assertion label handed to us nicely.
+        let result = self.validate_imp(manifest, status_tracker, verifier).await;
+
+        if self.label.is_some() {
+            status_tracker.pop_current_uri();
+        }
+
+        result
+    }
+
+    async fn validate_imp<SV: SignatureVerifier>(
+        &self,
+        manifest: &Manifest,
+        status_tracker: &mut StatusTracker,
+        verifier: &SV,
+    ) -> Result<SV::Output, ValidationError<SV::Error>> {
         self.check_padding(status_tracker)?;
 
         self.signer_payload
