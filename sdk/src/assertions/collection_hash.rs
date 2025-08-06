@@ -557,100 +557,100 @@ mod tests {
 
     use super::*;
 
-    // const ZIP_SAMPLE1: &[u8] = include_bytes!("../../tests/fixtures/sample1.zip");
+    const ZIP_SAMPLE1: &[u8] = include_bytes!("../../tests/fixtures/sample1.zip");
 
-    // #[test]
-    // fn test_zip_hash() -> Result<()> {
-    //     let mut stream = Cursor::new(ZIP_SAMPLE1);
+    #[test]
+    fn test_zip_hash() -> Result<()> {
+        let mut stream = Cursor::new(ZIP_SAMPLE1);
 
-    //     let mut collection = CollectionHash {
-    //         uris: HashMap::new(),
-    //         alg: None,
-    //         zip_central_directory_hash: None,
-    //         base_path: None,
-    //         zip_central_directory_hash_range: None,
-    //     };
-    //     collection.gen_hash_from_zip_stream(&mut stream)?;
+        let mut collection = CollectionHash {
+            uris: HashMap::new(),
+            alg: None,
+            zip_central_directory_hash: None,
+            base_path: None,
+            zip_central_directory_hash_range: None,
+        };
+        collection.gen_hash_from_zip_stream(&mut stream)?;
 
-    //     assert_eq!(
-    //         collection.zip_central_directory_hash,
-    //         Some(vec![
-    //             103, 27, 141, 219, 82, 200, 254, 44, 155, 221, 183, 146, 193, 94, 154, 77, 133, 93,
-    //             148, 88, 160, 123, 224, 170, 61, 140, 13, 2, 153, 86, 225, 231
-    //         ])
-    //     );
-    //     assert_eq!(
-    //         collection.zip_central_directory_hash_range,
-    //         Some(HashRange::new(369, 727))
-    //     );
+        assert_eq!(
+            collection.zip_central_directory_hash,
+            Some(vec![
+                103, 27, 141, 219, 82, 200, 254, 44, 155, 221, 183, 146, 193, 94, 154, 77, 133, 93,
+                148, 88, 160, 123, 224, 170, 61, 140, 13, 2, 153, 86, 225, 231
+            ])
+        );
+        assert_eq!(
+            collection.zip_central_directory_hash_range,
+            Some(HashRange::new(369, 727))
+        );
 
-    //     assert_eq!(
-    //         collection.uris.get(Path::new("sample1/test1.txt")),
-    //         Some(&UriHashedDataMap {
-    //             hash: Some(vec![
-    //                 39, 147, 91, 240, 68, 172, 194, 43, 70, 207, 141, 151, 141, 239, 180, 17, 170,
-    //                 106, 248, 168, 169, 245, 207, 172, 29, 204, 80, 155, 37, 30, 186, 60
-    //             ]),
-    //             size: Some(47),
-    //             dc_format: Some("txt".to_string()),
-    //             data_types: None,
-    //             zip_hash_range: Some(HashRange::new(44, 47))
-    //         })
-    //     );
-    //     assert_eq!(
-    //         collection.uris.get(Path::new("sample1/test1/test1.txt")),
-    //         Some(&UriHashedDataMap {
-    //             hash: Some(vec![
-    //                 136, 103, 106, 251, 180, 19, 60, 244, 42, 171, 44, 215, 65, 252, 59, 127, 84,
-    //                 63, 175, 25, 6, 118, 200, 12, 188, 128, 67, 78, 249, 182, 242, 156
-    //             ]),
-    //             size: Some(57),
-    //             dc_format: Some("txt".to_string()),
-    //             data_types: None,
-    //             zip_hash_range: Some(HashRange::new(91, 57))
-    //         })
-    //     );
-    //     assert_eq!(
-    //         collection.uris.get(Path::new("sample1/test1/test2.txt")),
-    //         Some(&UriHashedDataMap {
-    //             hash: Some(vec![
-    //                 164, 100, 0, 41, 229, 201, 3, 228, 30, 254, 72, 205, 60, 70, 104, 78, 121, 21,
-    //                 187, 230, 19, 242, 52, 212, 181, 104, 99, 179, 177, 81, 150, 33
-    //             ]),
-    //             size: Some(53),
-    //             dc_format: Some("txt".to_string()),
-    //             data_types: None,
-    //             zip_hash_range: Some(HashRange::new(148, 53))
-    //         })
-    //     );
-    //     assert_eq!(
-    //         collection.uris.get(Path::new("sample1/test1/test3.txt")),
-    //         Some(&UriHashedDataMap {
-    //             hash: Some(vec![
-    //                 129, 96, 58, 105, 119, 67, 2, 71, 77, 151, 99, 201, 192, 32, 213, 77, 19, 22,
-    //                 106, 204, 158, 142, 176, 247, 251, 174, 145, 243, 12, 22, 151, 116
-    //             ]),
-    //             size: Some(68),
-    //             dc_format: Some("txt".to_string()),
-    //             data_types: None,
-    //             zip_hash_range: Some(HashRange::new(201, 68))
-    //         })
-    //     );
-    //     assert_eq!(
-    //         collection.uris.get(Path::new("sample1/test2.txt")),
-    //         Some(&UriHashedDataMap {
-    //             hash: Some(vec![
-    //                 118, 254, 231, 173, 246, 184, 45, 104, 69, 72, 23, 21, 177, 202, 184, 241, 162,
-    //                 36, 28, 55, 23, 62, 109, 143, 182, 233, 99, 144, 23, 139, 9, 118
-    //             ]),
-    //             size: Some(56),
-    //             dc_format: Some("txt".to_string()),
-    //             data_types: None,
-    //             zip_hash_range: Some(HashRange::new(313, 56))
-    //         })
-    //     );
-    //     assert_eq!(collection.uris.len(), 5);
+        assert_eq!(
+            collection.uris.get(Path::new("sample1/test1.txt")),
+            Some(&UriHashedDataMap {
+                hash: Some(vec![
+                    39, 147, 91, 240, 68, 172, 194, 43, 70, 207, 141, 151, 141, 239, 180, 17, 170,
+                    106, 248, 168, 169, 245, 207, 172, 29, 204, 80, 155, 37, 30, 186, 60
+                ]),
+                size: Some(47),
+                dc_format: Some("txt".to_string()),
+                data_types: None,
+                zip_hash_range: Some(HashRange::new(44, 47))
+            })
+        );
+        assert_eq!(
+            collection.uris.get(Path::new("sample1/test1/test1.txt")),
+            Some(&UriHashedDataMap {
+                hash: Some(vec![
+                    136, 103, 106, 251, 180, 19, 60, 244, 42, 171, 44, 215, 65, 252, 59, 127, 84,
+                    63, 175, 25, 6, 118, 200, 12, 188, 128, 67, 78, 249, 182, 242, 156
+                ]),
+                size: Some(57),
+                dc_format: Some("txt".to_string()),
+                data_types: None,
+                zip_hash_range: Some(HashRange::new(91, 57))
+            })
+        );
+        assert_eq!(
+            collection.uris.get(Path::new("sample1/test1/test2.txt")),
+            Some(&UriHashedDataMap {
+                hash: Some(vec![
+                    164, 100, 0, 41, 229, 201, 3, 228, 30, 254, 72, 205, 60, 70, 104, 78, 121, 21,
+                    187, 230, 19, 242, 52, 212, 181, 104, 99, 179, 177, 81, 150, 33
+                ]),
+                size: Some(53),
+                dc_format: Some("txt".to_string()),
+                data_types: None,
+                zip_hash_range: Some(HashRange::new(148, 53))
+            })
+        );
+        assert_eq!(
+            collection.uris.get(Path::new("sample1/test1/test3.txt")),
+            Some(&UriHashedDataMap {
+                hash: Some(vec![
+                    129, 96, 58, 105, 119, 67, 2, 71, 77, 151, 99, 201, 192, 32, 213, 77, 19, 22,
+                    106, 204, 158, 142, 176, 247, 251, 174, 145, 243, 12, 22, 151, 116
+                ]),
+                size: Some(68),
+                dc_format: Some("txt".to_string()),
+                data_types: None,
+                zip_hash_range: Some(HashRange::new(201, 68))
+            })
+        );
+        assert_eq!(
+            collection.uris.get(Path::new("sample1/test2.txt")),
+            Some(&UriHashedDataMap {
+                hash: Some(vec![
+                    118, 254, 231, 173, 246, 184, 45, 104, 69, 72, 23, 21, 177, 202, 184, 241, 162,
+                    36, 28, 55, 23, 62, 109, 143, 182, 233, 99, 144, 23, 139, 9, 118
+                ]),
+                size: Some(56),
+                dc_format: Some("txt".to_string()),
+                data_types: None,
+                zip_hash_range: Some(HashRange::new(313, 56))
+            })
+        );
+        assert_eq!(collection.uris.len(), 5);
 
-    //     Ok(())
-    // }
+        Ok(())
+    }
 }

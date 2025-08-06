@@ -29,8 +29,8 @@ use zip::{write::SimpleFileOptions, ZipArchive, ZipWriter};
 use crate::{
     assertion::AssertionDecodeError,
     assertions::{
-        labels, Actions, BmffHash, BoxHash, CollectionHash, CreativeWork, DataHash, Exif, Metadata, SoftwareAgent,
-        Thumbnail, User, UserCbor, RawCollectionHash
+        labels, Actions, BmffHash, BoxHash, CreativeWork, DataHash, Exif, Metadata, SoftwareAgent,
+        Thumbnail, User, UserCbor
     },
     claim::Claim,
     error::{Error, Result},
@@ -790,6 +790,7 @@ impl Builder {
                     let box_hash: BoxHash = manifest_assertion.to_assertion()?;
                     claim.add_assertion_with_salt(&box_hash, &salt)
                 }
+                // TODO: Possible fix for EPUB Verification error
                 // CollectionHash::LABEL => {
                 //     let raw: RawCollectionHash = manifest_assertion.to_assertion()?;
                 //     let collection_hash: CollectionHash = raw.into();
@@ -1178,8 +1179,8 @@ mod tests {
 
     use super::*;
     use crate::{
-        assertions::{c2pa_action, BoxHash},
-        asset_handlers::jpeg_io::JpegIO,
+        assertions::{c2pa_action},
+        // asset_handlers::jpeg_io::JpegIO,
         crypto::raw_signature::SigningAlg,
         hash_stream_by_alg,
         utils::{test::write_jpeg_placeholder_stream, test_signer::test_signer},
