@@ -67,7 +67,7 @@ async fn malformed_cbor() {
 
     let log = &status_tracker.logged_items()[0];
     assert_eq!(log.kind, LogKind::Failure);
-    assert_eq!(log.label, "cawg.identity");
+    assert!(log.label.ends_with("/c2pa.assertions/cawg.identity"));
     assert_eq!(log.description, "invalid CBOR");
     assert_eq!(
         log.validation_status.as_ref().unwrap().as_ref(),
