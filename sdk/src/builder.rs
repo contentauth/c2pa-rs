@@ -202,6 +202,7 @@ enum BuilderFlow {
     Update,
 }
 
+#[allow(unused)] // TEMPORARY: @gpeacock please investigate
 #[derive(Serialize, Deserialize)]
 struct StructuredAction {
     action: String,
