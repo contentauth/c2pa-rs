@@ -22,17 +22,29 @@ use crate::{
     Error,
 };
 
+/// A `Metadata` assertion provides structured metadata using JSON-LD format for 
+/// both standardized C2PA metadata and custom metadata schemas.
+///
+/// This assertion contains a context object defining namespace mappings and a set
+///of metadata fields. For `c2pa.metadata` assertions, only specific schemas and fields
+/// are allowed as defined in the C2PA specification.
+///
+/// <https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_metadata_assertions>
 #[derive(Serialize, Deserialize, Debug, PartialEq)]
 pub struct Metadata {
+    /// JSON-LD context mapping prefixes to namespace URIs.
     #[serde(rename = "@context")]
     pub context: HashMap<String, String>,
+    /// Metadata fields with namespace prefixes.
     #[serde(flatten)]
     pub value: HashMap<String, Value>,
+    /// Assertion label (not serialized).
     #[serde(skip)]
     pub label: String,
 }
 
 impl Metadata {
+    /// Creates a new metadata assertion from a JSON-LD string.
     pub fn new(label: &str, jsonld: &str) -> Result<Self, Error> {
         let metadata = serde_json::from_slice::<Metadata>(jsonld.as_bytes())
             .map_err(|e| Error::BadParam(format!("Invalid JSON format: {e}")))?;
@@ -56,9 +68,9 @@ impl Metadata {
         }
 
         if self.label == labels::METADATA {
-            for (namespace, url) in &self.context {
-                if let Some(expected_url) = ALLOWED_SCHEMAS.get(namespace.as_str()) {
-                    if url != expected_url {
+            for (namespace, uri) in &self.context {
+                if let Some(expected_uri) = ALLOWED_SCHEMAS.get(namespace.as_str()) {
+                    if uri != expected_uri {
                         return false;
                     }
                 }
@@ -498,7 +510,7 @@ pub mod tests {
         }
         "#;
 
-    const MISMATCH_URL: &str = r#" {
+    const MISMATCH_URI: &str = r#" {
         "@context" : {
             "exif": "http://ns.adobe.com/exif/10.0/"
         },
@@ -540,10 +552,10 @@ pub mod tests {
     }
 
     #[test]
-    fn test_url_is_not_allowed() {
-        let mut metadata = Metadata::new("c2pa.metadata", MISMATCH_URL).unwrap();
+    fn test_uri_is_not_allowed() {
+        let mut metadata = Metadata::new("c2pa.metadata", MISMATCH_URI).unwrap();
         assert!(!metadata.is_valid());
-        // custom metadata does not have restriction on urls
+        // custom metadata does not have restriction on uris
         metadata.label = "custom.metadata".to_owned();
         assert!(metadata.is_valid());
     }
