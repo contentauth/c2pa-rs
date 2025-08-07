@@ -575,11 +575,14 @@ impl Reader {
     /// # Example
     /// ```no_run
     /// use c2pa::Reader;
-    /// let stream = std::io::Cursor::new(Vec::new());
-    /// let reader = Reader::from_file("path/to/file.jpg").unwrap();
-    /// let manifest = reader.active_manifest().unwrap();
-    /// let uri = &manifest.thumbnail_ref().unwrap().identifier;
-    /// let bytes_written = reader.resource_to_stream(uri, stream).unwrap();
+    /// #[cfg(feature = "file_io")]
+    /// {
+    ///     let stream = std::io::Cursor::new(Vec::new());
+    ///     let reader = Reader::from_file("path/to/file.jpg").unwrap();
+    ///     let manifest = reader.active_manifest().unwrap();
+    ///     let uri = &manifest.thumbnail_ref().unwrap().identifier;
+    ///     let bytes_written = reader.resource_to_stream(uri, stream).unwrap();
+    /// }
     /// ```
     /// TODO: Fix the example to not read from a file.
     pub fn resource_to_stream(
