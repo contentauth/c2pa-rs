@@ -168,7 +168,22 @@ pub mod tests {
     #![allow(clippy::expect_used)]
     #![allow(clippy::unwrap_used)]
 
-    use crate::{assertion::AssertionBase, assertions::MultiAssetHash};
+    use std::io::Cursor;
+
+    use crate::{assertion::AssertionBase, assertions::MultiAssetHash, status_tracker::StatusTracker, store::Store};
+
+    const TEST_IMAGE: &[u8] = include_bytes!("../../tests/fixtures/multi_asset_hash_signed.jpg");
+    
+    #[test]
+    fn test_validation() {
+        let mut validation_log = StatusTracker::default();
+        let source = Cursor::new(TEST_IMAGE);
+        let store = Store::from_stream("image/jpeg", source, true, &mut validation_log).unwrap();
+        let claim = store.provenance_claim().unwrap();
+        let assertion = MultiAssetHash::from_assertion(claim.get_assertion(MultiAssetHash::LABEL, 0).unwrap()).unwrap();
+        let mut source = Cursor::new(TEST_IMAGE);
+        assertion.verify_stream_hash(&mut source, claim).unwrap();
+    }
 
     #[test]
     fn test_json_round_trip() {
