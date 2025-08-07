@@ -14,10 +14,13 @@
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    assertion::{Assertion, AssertionBase, AssertionCbor},
-    assertions::labels,
-    error::Result,
-    HashedUri,
+    assertion::{Assertion, AssertionBase, AssertionCbor}, 
+    assertions::{labels, BmffHash, DataHash}, 
+    asset_io::CAIRead,
+    claim::Claim, 
+    error::{Error, Result}, 
+    validation_status::{ASSERTION_MULTI_ASSET_HASH_MALFORMED, ASSERTION_MULTI_ASSET_HASH_MISSING_PART}, 
+    HashedUri
 };
 
 /// A `MultiAssetHash` assertion provides information on hash values for multiple parts of an asset.
@@ -40,15 +43,65 @@ impl MultiAssetHash {
         }
     }
 
-    pub fn add_part(
-        mut self,
-        location: LocationMap,
-        hash_assertion: HashedUri,
-        optional: Option<bool>,
-    ) -> Self {
-        self.parts
-            .push(PartHashMap::new(location, hash_assertion, optional));
-        self
+    pub fn verify_self(&self, total_size: u64) -> Result<()>{
+        let mut expected_offset: u64 = 0;
+
+        if self.parts.is_empty() {
+              return Err(Error::C2PAValidation(
+                ASSERTION_MULTI_ASSET_HASH_MALFORMED.to_string()));
+        }
+
+        for part in &self.parts {
+            if part.location.byte_offset != expected_offset {
+                return Err(Error::C2PAValidation(
+                ASSERTION_MULTI_ASSET_HASH_MALFORMED.to_string(),
+            ));
+            }
+            expected_offset += part.location.length;
+        }
+
+        if expected_offset != total_size {
+            return Err(Error::C2PAValidation(ASSERTION_MULTI_ASSET_HASH_MALFORMED.to_string()));
+        }
+
+        Ok(())
+    }
+
+    pub fn verify_stream_hash(&self, reader: &mut dyn CAIRead, claim: &Claim) -> Result<()>
+    {
+        let mut asset_data = Vec::new();
+        let length = reader.read_to_end(&mut asset_data)? as u64;
+        self.verify_self(length)?;
+
+        for part in &self.parts {
+            if let Some(optional) = part.optional {
+                if optional {continue};
+            }
+            if let Some(assertion) = claim.get_assertion_from_link(&part.hash_assertion.url()){
+                let label = assertion.label();
+                let offset = part.location.byte_offset as usize;
+                let length = part.location.length as usize;
+                
+                if offset + length > asset_data.len() {
+                    return Err(Error::C2PAValidation(ASSERTION_MULTI_ASSET_HASH_MISSING_PART.to_string()));
+                }
+                
+                let asset_part = &asset_data[offset..offset + length];
+                
+                match label.as_str() {
+                    DataHash::LABEL => {
+                        let dh = DataHash::from_assertion(assertion)?;
+                        dh.verify_in_memory_hash(asset_part, dh.alg.as_deref())?;
+                    }
+                    BmffHash::LABEL => {
+                        let bmff_hash = BmffHash::from_assertion(assertion)?;
+                        bmff_hash.verify_in_memory_hash(asset_part, bmff_hash.alg().map(|x| x.as_str()))?;
+                    }
+                    _ => {}
+                }
+            }
+        }
+        Ok(())
     }
 }
 

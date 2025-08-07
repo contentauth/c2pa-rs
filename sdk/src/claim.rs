@@ -3771,6 +3771,12 @@ impl Claim {
             .find(|ca| ca.label_raw() == assertion_label && ca.instance() == instance)
     }
 
+    /// returns assertion from link
+    pub fn get_assertion_from_link(&self, assertion_link: &str) -> Option<&Assertion>{
+        let (label, instance) = Claim::assertion_label_from_link(assertion_link);
+        self.get_assertion(&label, instance) 
+    }
+
     /// returns hash of an assertion whose label and instance match
     pub fn get_claim_assertion_hash(&self, assertion_label: &str) -> Option<Vec<u8>> {
         let (l, i) = Claim::assertion_label_from_link(assertion_label);
