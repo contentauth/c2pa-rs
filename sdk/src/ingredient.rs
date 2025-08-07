@@ -1298,9 +1298,10 @@ impl Ingredient {
                 .filter_map(|i| get_resource(&i.identifier).ok())
                 .map(|cow| cow.into_owned())
                 .collect();
-            let certificate_status = CertificateStatus::new(ocsp_responses);
-
-            claim.add_assertion(&certificate_status)?;
+            if !ocsp_responses.is_empty() {
+                let certificate_status = CertificateStatus::new(ocsp_responses);
+                claim.add_assertion(&certificate_status)?;
+            }
         }
 
         let mut ingredient_assertion = match claim.version() {
