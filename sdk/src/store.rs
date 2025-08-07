@@ -630,7 +630,7 @@ impl Store {
 
     pub fn get_manifest_labels_for_ocsp(&self) -> Vec<String> {
         let labels = match crate::settings::get_settings_value::<OcspFetch>(
-            "builder.signature.ocsp_fetch",
+            "builder.certificate_status_fetch",
         ) {
             Ok(ocsp_fetch) => match ocsp_fetch {
                 OcspFetch::All => self.claims.clone(),
@@ -645,7 +645,7 @@ impl Store {
             _ => Vec::new(),
         };
 
-        match crate::settings::get_settings_value::<bool>("builder.signature.ocsp_fetch_if_needed")
+        match crate::settings::get_settings_value::<bool>("builder.certificate_status_only_needed")
         {
             Ok(should_fetch) => {
                 if should_fetch {
