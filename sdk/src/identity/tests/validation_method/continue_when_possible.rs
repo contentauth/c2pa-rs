@@ -210,11 +210,17 @@ async fn assertion_not_in_claim_v1() {
 
     let log = &status_tracker.logged_items()[1];
     assert_eq!(log.kind, LogKind::Success);
-    assert_eq!(log.label, IDENTITY_URI);
+
+    assert_eq!(
+        log.label,
+        "self#jumbf=/c2pa/test:urn:uuid:4baf4dc3-c464-4c70-902b-d28d832a29e3/c2pa.assertions/cawg.identity"
+    );
+
     assert_eq!(
         log.description,
         "signing certificate trusted, found in User trust anchors"
     );
+
     assert_eq!(
         log.validation_status.as_ref().unwrap().as_ref(),
         "signingCredential.trusted"
@@ -326,7 +332,12 @@ async fn duplicate_assertion_reference() {
 
     let log = &status_tracker.logged_items()[1];
     assert_eq!(log.kind, LogKind::Success);
-    assert_eq!(log.label, IDENTITY_URI);
+
+    assert_eq!(
+        log.label,
+        "self#jumbf=/c2pa/test:urn:uuid:9b9f27bc-394b-419f-a8d5-81777c9fa76c/c2pa.assertions/cawg.identity"
+    );
+
     assert_eq!(
         log.description,
         "signing certificate trusted, found in User trust anchors"
@@ -416,11 +427,17 @@ async fn no_hard_binding() {
 
     let log = &status_tracker.logged_items()[1];
     assert_eq!(log.kind, LogKind::Success);
-    assert_eq!(log.label, IDENTITY_URI);
+
+    assert_eq!(
+        log.label,
+        "self#jumbf=/c2pa/test:urn:uuid:6df39abb-e6b4-49af-a826-ba44b7b248b7/c2pa.assertions/cawg.identity"
+    );
+
     assert_eq!(
         log.description,
         "signing certificate trusted, found in User trust anchors"
     );
+
     assert_eq!(
         log.validation_status.as_ref().unwrap().as_ref(),
         "signingCredential.trusted"
@@ -681,6 +698,7 @@ async fn pad1_invalid() {
     );
 
     assert_eq!(log.description, "invalid value in pad fields");
+
     assert_eq!(
         log.validation_status.as_ref().unwrap().as_ref(),
         "cawg.identity.pad.invalid"
@@ -688,11 +706,17 @@ async fn pad1_invalid() {
 
     let log = &status_tracker.logged_items()[1];
     assert_eq!(log.kind, LogKind::Success);
-    assert_eq!(log.label, IDENTITY_URI);
+
+    assert_eq!(
+        log.label,
+        "self#jumbf=/c2pa/test:urn:uuid:8d938dd8-d194-4d24-a0bf-55aae143b692/c2pa.assertions/cawg.identity"
+    );
+
     assert_eq!(
         log.description,
         "signing certificate trusted, found in User trust anchors"
     );
+
     assert_eq!(
         log.validation_status.as_ref().unwrap().as_ref(),
         "signingCredential.trusted"
@@ -778,11 +802,17 @@ async fn pad2_invalid() {
 
     let log = &status_tracker.logged_items()[1];
     assert_eq!(log.kind, LogKind::Success);
-    assert_eq!(log.label, IDENTITY_URI);
+
+    assert_eq!(
+        log.label,
+        "self#jumbf=/c2pa/test:urn:uuid:d686f86c-63d9-43e9-822c-7789acefe102/c2pa.assertions/cawg.identity"
+    );
+
     assert_eq!(
         log.description,
         "signing certificate trusted, found in User trust anchors"
     );
+
     assert_eq!(
         log.validation_status.as_ref().unwrap().as_ref(),
         "signingCredential.trusted"

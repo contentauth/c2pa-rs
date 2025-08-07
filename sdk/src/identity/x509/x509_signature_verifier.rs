@@ -175,7 +175,6 @@ mod tests {
 
     const TEST_IMAGE: &[u8] = include_bytes!("../../../tests/fixtures/CA.jpg");
     const TEST_THUMBNAIL: &[u8] = include_bytes!("../../../tests/fixtures/thumbnail.jpg");
-    const IDENTITY_URI: &str = "self#jumbf=c2pa.assertions/cawg.identity";
 
     // NOTE: Success case is covered in tests for x509_credential_holder.rs.
 
@@ -260,19 +259,17 @@ mod tests {
             }
         }
 
-        dbg!(&st);
-
         assert_eq!(st.logged_items().len(), 1);
 
         let log = &st.logged_items()[0];
         assert_eq!(log.kind, LogKind::Failure);
-        assert_eq!(log.label, IDENTITY_URI);
+
+        assert!(log.label.ends_with("/c2pa.assertions/cawg.identity"));
         assert_eq!(log.description, "signing certificate untrusted");
+
         assert_eq!(
             log.validation_status.as_ref().unwrap().as_ref(),
             "signingCredential.untrusted"
         );
-
-        panic!("Now what?");
     }
 }
