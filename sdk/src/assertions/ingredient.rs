@@ -18,7 +18,7 @@ use serde::{ser::SerializeStruct, Deserialize, Serialize, Serializer};
 use super::AssetType;
 use crate::{
     assertion::{Assertion, AssertionBase, AssertionDecodeError, AssertionDecodeErrorCause},
-    assertions::{labels, Metadata, ReviewRating},
+    assertions::{labels, AssertionMetadata, ReviewRating},
     cbor_types::map_cbor_to_type,
     error::Result,
     hashed_uri::HashedUri,
@@ -56,7 +56,7 @@ pub struct Ingredient {
     pub validation_status: Option<Vec<ValidationStatus>>,
     pub relationship: Relationship,
     pub thumbnail: Option<HashedUri>,
-    pub metadata: Option<Metadata>,
+    pub metadata: Option<AssertionMetadata>,
     pub data: Option<HashedUri>,
     pub description: Option<String>,
     pub informational_uri: Option<String>,
@@ -220,7 +220,7 @@ impl Ingredient {
 
     pub fn add_reviews(mut self, reviews: Option<Vec<ReviewRating>>) -> Self {
         if let Some(reviews) = reviews {
-            let metadata = Metadata::new().set_reviews(reviews);
+            let metadata = AssertionMetadata::new().set_reviews(reviews);
             self.metadata = Some(metadata);
         };
         self
@@ -641,7 +641,8 @@ impl AssertionBase for Ingredient {
                 let thumbnail: Option<HashedUri> = map_cbor_to_type("thumbnail", &ingredient_value);
                 let validation_status: Option<Vec<ValidationStatus>> =
                     map_cbor_to_type("validationStatus", &ingredient_value);
-                let metadata: Option<Metadata> = map_cbor_to_type("metadata", &ingredient_value);
+                let metadata: Option<AssertionMetadata> =
+                    map_cbor_to_type("metadata", &ingredient_value);
 
                 Ingredient {
                     title: Some(title),
@@ -707,7 +708,8 @@ impl AssertionBase for Ingredient {
                     map_cbor_to_type("description", &ingredient_value);
                 let informational_uri: Option<String> =
                     map_cbor_to_type("informational_URI", &ingredient_value);
-                let metadata: Option<Metadata> = map_cbor_to_type("metadata", &ingredient_value);
+                let metadata: Option<AssertionMetadata> =
+                    map_cbor_to_type("metadata", &ingredient_value);
 
                 Ingredient {
                     title: Some(title),
@@ -774,7 +776,8 @@ impl AssertionBase for Ingredient {
                     map_cbor_to_type("description", &ingredient_value);
                 let informational_uri: Option<String> =
                     map_cbor_to_type("informationalURI", &ingredient_value);
-                let metadata: Option<Metadata> = map_cbor_to_type("metadata", &ingredient_value);
+                let metadata: Option<AssertionMetadata> =
+                    map_cbor_to_type("metadata", &ingredient_value);
 
                 Ingredient {
                     title,
@@ -972,7 +975,7 @@ pub mod tests {
 
         let review_rating = ReviewRating::new("Content bindings validated", None, 5);
 
-        let metadata = Metadata::new()
+        let metadata = AssertionMetadata::new()
             .set_date_time("2021-06-28T16:49:32.874Z".to_owned())
             .add_review(review_rating);
 
@@ -983,7 +986,7 @@ pub mod tests {
 
         let mut all_vals = Ingredient {
             title: Some("test_title".to_owned()),
-            format: Some("image/jpg".to_owned()),
+            format: Some("image/jpeg".to_owned()),
             document_id: Some("12345".to_owned()),
             instance_id: Some("67890".to_owned()),
             c2pa_manifest: Some(HashedUri::new("self#jumbf=c2pa/urn:c2pa:5E7B01FC-4932-4BAB-AB32-D4F12A8AA322".to_owned(), Some("sha256".to_owned()), &[1,2,3,4,5,6,7,8,9,0])),
@@ -1016,7 +1019,7 @@ pub mod tests {
         let v1_decoded = Ingredient::from_assertion(&v1).unwrap();
         let v1_expected = Ingredient {
             title: Some("test_title".to_owned()),
-            format: Some("image/jpg".to_owned()),
+            format: Some("image/jpeg".to_owned()),
             document_id: Some("12345".to_owned()),
             instance_id: Some("67890".to_owned()),
             c2pa_manifest: Some(HashedUri::new("self#jumbf=c2pa/urn:c2pa:5E7B01FC-4932-4BAB-AB32-D4F12A8AA322".to_owned(), Some("sha256".to_owned()), &[1,2,3,4,5,6,7,8,9,0])),
@@ -1036,7 +1039,7 @@ pub mod tests {
         let v2_decoded = Ingredient::from_assertion(&v2).unwrap();
         let v2_expected = Ingredient {
             title: Some("test_title".to_owned()),
-            format: Some("image/jpg".to_owned()),
+            format: Some("image/jpeg".to_owned()),
             document_id: Some("12345".to_owned()),
             instance_id: Some("67890".to_owned()),
             c2pa_manifest: Some(HashedUri::new("self#jumbf=c2pa/urn:c2pa:5E7B01FC-4932-4BAB-AB32-D4F12A8AA322".to_owned(), Some("sha256".to_owned()), &[1,2,3,4,5,6,7,8,9,0])),
@@ -1060,7 +1063,7 @@ pub mod tests {
         let v3_decoded = Ingredient::from_assertion(&v3).unwrap();
         let v3_expected = Ingredient {
             title: Some("test_title".to_owned()),
-            format: Some("image/jpg".to_owned()),
+            format: Some("image/jpeg".to_owned()),
             instance_id: Some("67890".to_owned()),
             relationship: Relationship::ParentOf,
             thumbnail: Some(HashedUri::new("self#jumbf=c2pa/urn:c2pa:5E7B01FC-4932-4BAB-AB32-D4F12A8AA322/c2pa.thumbnail.ingredient_1.jpg".to_owned(), Some("sha256".to_owned()), &[1,2,3,4,5,6,7,8,9,0])),

@@ -98,7 +98,7 @@ pub struct Reader {
     store: Store,
 
     #[serde(skip)]
-    /// Map to hold post-validation assertion values for resports
+    /// Map to hold post-validation assertion values for reports
     /// the key is an assertion uri and the value is the assertion value
     assertion_values: HashMap<String, Value>,
 }
@@ -378,22 +378,25 @@ impl Reader {
     fn to_json_formatted(&self) -> Result<Value> {
         let mut json = serde_json::to_value(self).map_err(Error::JsonError)?;
 
-        // Process manifests
-        if let Some(manifests) = json.get_mut("manifests").and_then(|m| m.as_object_mut()) {
-            for (manifest_label, manifest) in manifests.iter_mut() {
-                // Get assertions array once instead of multiple lookups
-                if let Some(assertions) = manifest
-                    .get_mut("assertions")
-                    .and_then(|a| a.as_array_mut())
-                {
-                    for assertion in assertions.iter_mut() {
-                        // Get label once and reuse
-                        if let Some(label) = assertion.get("label").and_then(|l| l.as_str()) {
-                            let uri = crate::jumbf::labels::to_assertion_uri(manifest_label, label);
-                            if let Some(value) = self.assertion_values.get(&uri) {
-                                // Only create new string if we need to insert
-                                if let Some(assertion_mut) = assertion.as_object_mut() {
-                                    assertion_mut.insert("data".to_string(), value.clone());
+        // If we ran post-validation, we need to update the assertion values in the report
+        if !self.assertion_values.is_empty() {
+            if let Some(manifests) = json.get_mut("manifests").and_then(|m| m.as_object_mut()) {
+                for (manifest_label, manifest) in manifests.iter_mut() {
+                    // Get assertions array once instead of multiple lookups
+                    if let Some(assertions) = manifest
+                        .get_mut("assertions")
+                        .and_then(|a| a.as_array_mut())
+                    {
+                        for assertion in assertions.iter_mut() {
+                            // Get label once and reuse
+                            if let Some(label) = assertion.get("label").and_then(|l| l.as_str()) {
+                                let uri =
+                                    crate::jumbf::labels::to_assertion_uri(manifest_label, label);
+                                if let Some(value) = self.assertion_values.get(&uri) {
+                                    // Only create new string if we need to insert
+                                    if let Some(assertion_mut) = assertion.as_object_mut() {
+                                        assertion_mut.insert("data".to_string(), value.clone());
+                                    }
                                 }
                             }
                         }
@@ -401,36 +404,45 @@ impl Reader {
                 }
             }
         }
-
+        // Convert hash values to base64 strings
         Ok(Self::hash_to_b64(json))
     }
 
+    /// Convert the reader to a JSON value with detailed formatting.
+    /// This view more closely resembles the original JUMBF manifest store.
     fn to_json_detailed_formatted(&self) -> Result<Value> {
         let report = match self.validation_results() {
             Some(results) => ManifestStoreReport::from_store_with_results(&self.store, results),
             None => ManifestStoreReport::from_store(&self.store),
         }?;
+
         let mut json = serde_json::to_value(report).map_err(Error::JsonError)?;
-        if let Some(manifests) = json.get_mut("manifests").and_then(|m| m.as_object_mut()) {
-            for (manifest_label, manifest) in manifests.iter_mut() {
-                if let Some(assertions) = manifest
-                    .get_mut("assertion_store")
-                    .and_then(|a| a.as_object_mut())
-                {
-                    for (label, assertion) in assertions.iter_mut() {
-                        let uri = crate::jumbf::labels::to_assertion_uri(manifest_label, label);
-                        if let Some(value) = self.assertion_values.get(&uri) {
-                            *assertion = value.clone();
+
+        // If we ran post-validation, we need to update the assertion values in the report
+        if !self.assertion_values.is_empty() {
+            if let Some(manifests) = json.get_mut("manifests").and_then(|m| m.as_object_mut()) {
+                for (manifest_label, manifest) in manifests.iter_mut() {
+                    if let Some(assertions) = manifest
+                        .get_mut("assertion_store")
+                        .and_then(|a| a.as_object_mut())
+                    {
+                        for (label, assertion) in assertions.iter_mut() {
+                            let uri = crate::jumbf::labels::to_assertion_uri(manifest_label, label);
+                            if let Some(value) = self.assertion_values.get(&uri) {
+                                *assertion = value.clone();
+                            }
                         }
                     }
                 }
             }
-        };
+        }
+        // Convert hash values to base64 strings
         json = Self::hash_to_b64(json);
         Ok(json)
     }
 
-    /// Get the manifest store as a JSON string
+    /// Get the Reader as a JSON string
+    /// This just calls to_
     pub fn json(&self) -> String {
         match self.to_json_formatted() {
             Ok(value) => serde_json::to_string_pretty(&value).unwrap_or_default(),

@@ -19,7 +19,7 @@ use serde_cbor::Value;
 
 use crate::{
     assertion::{Assertion, AssertionBase, AssertionCbor},
-    assertions::{labels, region_of_interest::RegionOfInterest, Actor, Metadata},
+    assertions::{labels, region_of_interest::RegionOfInterest, Actor, AssertionMetadata},
     error::Result,
     resource_store::UriOrResource,
     utils::cbor_types::DateT,
@@ -333,7 +333,7 @@ impl Action {
 
     // Internal function to return any ingredients referenced by this action.
     #[allow(dead_code)] // not used in some scenarios
-    pub(crate) fn ingredient_ids(&mut self) -> Option<Vec<String>> {
+    pub(crate) fn ingredient_ids(&mut self, claim_version: u8) -> Option<Vec<String>> {
         match self.get_parameter(CAI_INGREDIENT_IDS) {
             Some(Value::Array(ids)) => {
                 let mut result = Vec::new();
@@ -348,9 +348,15 @@ impl Action {
                 error!("Invalid format for org.cai.ingredientIds parameter, expected an array of strings.");
                 None // Invalid format, so ignore it.
             }
-            // If there is no org.cai.ingredientIds parameter, check for the deprecated instance_id
+            // If there is no CAI_INGREDIENT_IDS parameter, check for the deprecated instance_id
             #[allow(deprecated)]
-            None => self.instance_id.as_ref().map(|id| vec![id.to_string()]),
+            None => {
+                if claim_version == 1 && self.instance_id.is_some() {
+                    self.instance_id.as_ref().map(|id| vec![id.to_string()])
+                } else {
+                    None
+                }
+            }
         }
     }
 
@@ -377,6 +383,11 @@ impl Action {
             }
         });
         Ok(self)
+    }
+
+    // Removes a parameter with the given key, returning the parameter if it existed.
+    pub(crate) fn remove_parameter<S: Into<String>>(&mut self, key: S) -> Option<Value> {
+        self.parameters.as_mut()?.remove(&key.into())
     }
 
     pub(crate) fn set_parameter_ref<S: Into<String>, T: Serialize>(
@@ -445,13 +456,50 @@ impl Action {
 
     /// Adds an ingredient id to the action.
     pub fn add_ingredient_id(&mut self, ingredient_id: &str) -> Result<&mut Self> {
-        if let Some(Value::Array(ids)) = self.get_parameter_mut(CAI_INGREDIENT_IDS) {
+        if let Some(Value::Array(ids)) = self.get_parameter_mut("ingredientIds") {
             ids.push(Value::Text(ingredient_id.to_string()));
             return Ok(self);
         }
         let ids = vec![Value::Text(ingredient_id.to_string())];
-        self.set_parameter_ref(CAI_INGREDIENT_IDS, ids)?;
+        self.set_parameter_ref("ingredientIds", ids)?;
         Ok(self)
+    }
+
+    /// Extracts ingredient IDs from the action, prioritizing ingredientIds, then org.cai.ingredientIds, then instanceId.
+    /// This is used to map actions to their associated ingredients.
+    /// We don't want any of these fields in the final CBOR, so we remove them after extracting.
+    pub(crate) fn extract_ingredient_ids(&mut self) -> Option<Vec<String>> {
+        let ingredient_ids = self.remove_parameter("ingredientIds");
+        let cai_ingredient_ids = self.remove_parameter("org.cai.ingredientIds");
+        #[allow(deprecated)]
+        let instance_id = self.instance_id.take();
+
+        let mut ids: Vec<String> = Vec::new();
+
+        let mut convert_ids = |val: Option<serde_cbor::Value>| {
+            if let Some(val) = val {
+                match val {
+                    serde_cbor::Value::Array(arr) => {
+                        for v in arr {
+                            if let serde_cbor::Value::Text(s) = v {
+                                ids.push(s);
+                            }
+                        }
+                    }
+                    serde_cbor::Value::Text(s) => ids.push(s),
+                    _ => {}
+                }
+            }
+        };
+
+        convert_ids(ingredient_ids);
+        convert_ids(cai_ingredient_ids);
+
+        if !ids.is_empty() {
+            Some(ids)
+        } else {
+            instance_id.map(|s| vec![s])
+        }
     }
 }
 
@@ -521,7 +569,7 @@ pub struct Actions {
 
     /// Additional information about the assertion.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub metadata: Option<Metadata>,
+    pub metadata: Option<AssertionMetadata>,
 }
 
 impl Actions {
@@ -580,8 +628,8 @@ impl Actions {
         &mut self.actions
     }
 
-    /// Returns the assertion's [`Metadata`], if it exists.
-    pub fn metadata(&self) -> Option<&Metadata> {
+    /// Returns the assertion's [`AssertionMetadata`], if it exists.
+    pub fn metadata(&self) -> Option<&AssertionMetadata> {
         self.metadata.as_ref()
     }
 
@@ -597,8 +645,8 @@ impl Actions {
         self
     }
 
-    /// Sets [`Metadata`] for the action.
-    pub fn add_metadata(mut self, metadata: Metadata) -> Self {
+    /// Sets [`AssertionMetadata`] for the action.
+    pub fn add_metadata(mut self, metadata: AssertionMetadata) -> Self {
         self.metadata = Some(metadata);
         self
     }
@@ -657,7 +705,7 @@ pub mod tests {
     use crate::{
         assertion::AssertionData,
         assertions::{
-            metadata::{c2pa_source::GENERATOR_REE, DataSource, ReviewRating},
+            assertion_metadata::{c2pa_source::GENERATOR_REE, DataSource, ReviewRating},
             region_of_interest::{Range, RangeType, Time, TimeType},
         },
         hashed_uri::HashedUri,
@@ -723,7 +771,7 @@ pub mod tests {
                     }),
             )
             .add_metadata(
-                Metadata::new()
+                AssertionMetadata::new()
                     .add_review(ReviewRating::new("foo", Some("bar".to_owned()), 3))
                     .set_reference(make_hashed_uri1())
                     .set_data_source(DataSource::new(GENERATOR_REE)),
@@ -862,7 +910,7 @@ pub mod tests {
                     "action": "c2pa.opened",
                     "parameters": {
                       "description": "import",
-                      "org.cai.ingredientIds": ["xmp.iid:7b57930e-2f23-47fc-affe-0400d70b738d"],
+                      CAI_INGREDIENT_IDS: ["xmp.iid:7b57930e-2f23-47fc-affe-0400d70b738d"],
                     },
                     "digitalSourceType": "http://cv.iptc.org/newscodes/digitalsourcetype/algorithmicMedia",
                     "softwareAgent": "TestApp 1.0",

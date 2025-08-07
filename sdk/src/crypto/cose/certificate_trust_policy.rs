@@ -41,7 +41,7 @@ pub enum TrustAnchorType {
 /// A `CertificateTrustPolicy` is configured with information about trust
 /// anchors, privately-accepted end-entity certificates, and allowed EKUs. It
 /// can be used to evaluate a signing certificate against those policies.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct CertificateTrustPolicy {
     /// Trust anchors (root X.509 certificates) in DER format.
     trust_anchor_ders: Vec<Vec<u8>>,

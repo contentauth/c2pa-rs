@@ -80,7 +80,7 @@ impl Error {
             | UpdateManifestInvalid
             | TooManyManifestStores => Self::Manifest(err_str),
             ClaimMissing { label } => Self::ManifestNotFound(err_str),
-            AssertionDecoding(_) | ClaimDecoding => Self::Decoding(err_str),
+            AssertionDecoding(_) | ClaimDecoding(_) => Self::Decoding(err_str),
             AssertionEncoding(_) | XmlWriteError | ClaimEncoding => Self::Encoding(err_str),
             InvalidCoseSignature { coset_error } => Self::Signature(err_str),
             CoseSignatureAlgorithmNotSupported

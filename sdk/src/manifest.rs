@@ -29,7 +29,7 @@ use uuid::Uuid;
 
 use crate::{
     assertion::{AssertionBase, AssertionData},
-    assertions::{labels, Actions, EmbeddedData, Metadata, SoftwareAgent},
+    assertions::{labels, Actions, AssertionMetadata, EmbeddedData, SoftwareAgent},
     claim::RemoteManifest,
     crypto::raw_signature::SigningAlg,
     error::{Error, Result},
@@ -82,7 +82,7 @@ pub struct Manifest {
 
     /// A list of user metadata for this claim.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub metadata: Option<Vec<Metadata>>,
+    pub metadata: Option<Vec<AssertionMetadata>>,
 
     /// A human-readable title, generally source filename.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1352,7 +1352,7 @@ impl Manifest {
         if dh.is_err() {
             let mut ph = DataHash::new("jumbf manifest", "sha256");
             for _ in 0..10 {
-                ph.add_exclusion(HashRange::new(0, 2));
+                ph.add_exclusion(HashRange::new(0u64, 2u64));
             }
             self.add_assertion(&ph)?;
         }
@@ -2348,7 +2348,10 @@ pub(crate) mod tests {
         assert_eq!(image.into_owned(), thumb_data);
     }
 
+    // This is only used for testing obsolete v1 manifest creation code
     const MANIFEST_JSON: &str = r#"{
+        
+        "claim_version": 1,
         "claim_generator": "test",
         "claim_generator_info": [
             {
@@ -2699,7 +2702,7 @@ pub(crate) mod tests {
         manifest.with_base_path(fixtures).expect("with_base");
         // verify we can't set a references that don't exist
         assert!(manifest
-            .set_thumbnail_ref(ResourceRef::new("image/jpg", "foo"))
+            .set_thumbnail_ref(ResourceRef::new("image/jpeg", "foo"))
             .is_err());
         assert_eq!(manifest.thumbnail_ref(), None);
         // verify we can set a references that do exist
@@ -2808,7 +2811,7 @@ pub(crate) mod tests {
         // build manifest to insert in the hole
 
         // create an hash exclusion for the manifest
-        let exclusion = HashRange::new(offset, placeholder.len());
+        let exclusion = HashRange::new(offset as u64, placeholder.len() as u64);
         let exclusions = vec![exclusion];
 
         let mut dh = DataHash::new("source_hash", "sha256");
@@ -2867,7 +2870,7 @@ pub(crate) mod tests {
         // build manifest to insert in the hole
 
         // create an hash exclusion for the manifest
-        let exclusion = HashRange::new(offset, placeholder.len());
+        let exclusion = HashRange::new(offset as u64, placeholder.len() as u64);
         let exclusions = vec![exclusion];
 
         let mut dh = DataHash::new("source_hash", "sha256");
