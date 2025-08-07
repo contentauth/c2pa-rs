@@ -3772,9 +3772,9 @@ impl Claim {
     }
 
     /// returns assertion from link
-    pub fn get_assertion_from_link(&self, assertion_link: &str) -> Option<&Assertion>{
+    pub fn get_assertion_from_link(&self, assertion_link: &str) -> Option<&Assertion> {
         let (label, instance) = Claim::assertion_label_from_link(assertion_link);
-        self.get_assertion(&label, instance) 
+        self.get_assertion(&label, instance)
     }
 
     /// returns hash of an assertion whose label and instance match

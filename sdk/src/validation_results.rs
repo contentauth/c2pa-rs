@@ -813,9 +813,10 @@ pub mod validation_codes {
     pub const ASSERTION_MULTI_ASSET_HASH_MALFORMED: &str = "assertion.multiAssetHash.malformed";
 
     /// A required part of the multi-part asset cannot be located
-    /// 
+    ///
     /// Any corresponding URL should point to a C2PA assertion box.
-    pub const ASSERTION_MULTI_ASSET_HASH_MISSING_PART: &str = "assertion.multiAssetHash.missingPart";
+    pub const ASSERTION_MULTI_ASSET_HASH_MISSING_PART: &str =
+        "assertion.multiAssetHash.missingPart";
 
     /// The ingredient assertion was incomplete.
     ///
