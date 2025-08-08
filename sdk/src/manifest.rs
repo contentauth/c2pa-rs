@@ -441,11 +441,14 @@ impl Manifest {
     /// # use c2pa::Result;
     /// use c2pa::{assertions::Actions, Manifest, Reader};
     /// # fn main() -> Result<()> {
-    /// let reader = Reader::from_file("tests/fixtures/CA.jpg")?;
-    /// let manifest = reader.active_manifest().unwrap();
-    /// let actions: Actions = manifest.find_assertion(Actions::LABEL)?;
-    /// for action in actions.actions {
-    ///     println!("{}", action.action());
+    /// #[cfg(feature = "file_io")]
+    /// {
+    ///     let reader = Reader::from_file("tests/fixtures/CA.jpg")?;
+    ///     let manifest = reader.active_manifest().unwrap();
+    ///     let actions: Actions = manifest.find_assertion(Actions::LABEL)?;
+    ///     for action in actions.actions {
+    ///         println!("{}", action.action());
+    ///     }
     /// }
     /// # Ok(())
     /// # }
