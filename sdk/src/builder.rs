@@ -229,33 +229,36 @@ struct StructuredAction {
 /// }
 ///
 /// # fn main() -> Result<()> {
-/// let manifest_json = json!({
-///    "claim_generator_info": [
-///       {
-///           "name": "c2pa_test",
-///           "version": "1.0.0"
-///       }
-///    ],
-///    "title": "Test_Manifest"
-/// }).to_string();
+/// #[cfg(feature = "file_io")]
+/// {
+///     let manifest_json = json!({
+///        "claim_generator_info": [
+///           {
+///               "name": "c2pa_test",
+///               "version": "1.0.0"
+///           }
+///        ],
+///        "title": "Test_Manifest"
+///     }).to_string();
 ///
-/// let mut builder = Builder::from_json(&manifest_json)?;
-/// builder.add_assertion("org.contentauth.test", &Test { my_tag: 42 })?;
+///     let mut builder = Builder::from_json(&manifest_json)?;
+///     builder.add_assertion("org.contentauth.test", &Test { my_tag: 42 })?;
 ///
-/// let source = PathBuf::from("tests/fixtures/C.jpg");
-/// let dir = tempdir()?;
-/// let dest = dir.path().join("test_file.jpg");
+///     let source = PathBuf::from("tests/fixtures/C.jpg");
+///     let dir = tempdir()?;
+///     let dest = dir.path().join("test_file.jpg");
 ///
-/// // Create a ps256 signer using certs and key files. TO DO: Update example.
-/// let signcert_path = "tests/fixtures/certs/ps256.pub";
-/// let pkey_path = "tests/fixtures/certs/ps256.pem";
-/// let signer = create_signer::from_files(signcert_path, pkey_path, SigningAlg::Ps256, None)?;
+///     // Create a ps256 signer using certs and key files. TO DO: Update example.
+///     let signcert_path = "tests/fixtures/certs/ps256.pub";
+///     let pkey_path = "tests/fixtures/certs/ps256.pem";
+///     let signer = create_signer::from_files(signcert_path, pkey_path, SigningAlg::Ps256, None)?;
 ///
-/// // embed a manifest using the signer
-/// builder.sign_file(
-///     signer.as_ref(),
-///     &source,
-///     &dest)?;
+///     // embed a manifest using the signer
+///     builder.sign_file(
+///         signer.as_ref(),
+///         &source,
+///         &dest)?;
+///     }
 /// # Ok(())
 /// # }
 /// ```
