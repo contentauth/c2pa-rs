@@ -179,7 +179,7 @@ async fn assertion_not_in_claim_v1() {
 
     assert_eq!(sp.sig_type, "cawg.x509.cose".to_owned());
 
-    let x509_verifier = X509SignatureVerifier {};
+    let x509_verifier = X509SignatureVerifier::default();
     let err = ia
         .validate(
             reader.active_manifest().unwrap(),
@@ -275,7 +275,7 @@ async fn duplicate_assertion_reference() {
 
     assert_eq!(sp.sig_type, "cawg.x509.cose".to_owned());
 
-    let x509_verifier = X509SignatureVerifier {};
+    let x509_verifier = X509SignatureVerifier::default();
     let err = ia
         .validate(
             reader.active_manifest().unwrap(),
@@ -345,7 +345,7 @@ async fn no_hard_binding() {
     assert!(sp.referenced_assertions.is_empty());
     assert_eq!(sp.sig_type, "cawg.x509.cose".to_owned());
 
-    let x509_verifier = X509SignatureVerifier {};
+    let x509_verifier = X509SignatureVerifier::default();
     let err = ia
         .validate(
             reader.active_manifest().unwrap(),
@@ -445,7 +445,7 @@ mod invalid_sig_type {
         assert_eq!(sp.sig_type, "INVALID.identity.naive_credential".to_owned());
 
         // Intentionally not using NaiveSignatureVerifier here.
-        let x509_verifier = X509SignatureVerifier {};
+        let x509_verifier = X509SignatureVerifier::default();
         let err = ia
             .validate(
                 reader.active_manifest().unwrap(),
@@ -606,7 +606,7 @@ async fn pad1_invalid() {
 
     assert_eq!(sp.sig_type, "cawg.x509.cose".to_owned());
 
-    let x509_verifier = X509SignatureVerifier {};
+    let x509_verifier = X509SignatureVerifier::default();
     let err = ia
         .validate(
             reader.active_manifest().unwrap(),
@@ -675,7 +675,7 @@ async fn pad2_invalid() {
 
     assert_eq!(sp.sig_type, "cawg.x509.cose".to_owned());
 
-    let x509_verifier = X509SignatureVerifier {};
+    let x509_verifier = X509SignatureVerifier::default();
     let err = ia
         .validate(
             reader.active_manifest().unwrap(),
