@@ -7,11 +7,8 @@ use crate::{
     error::{Error, Result},
     Builder, Reader, Signer
 };
-use digest::{Digest, DynDigest};
 
-use sha2::{Sha256, Sha384, Sha512};
 use std::{
-    collections::BTreeMap,
     fs::{self, File, OpenOptions},
     io::{self, Cursor, Read, Seek, SeekFrom, Write},
     path::{Path},
@@ -405,7 +402,7 @@ pub async fn sign_epub_from_json(
         MANIFEST_PATH,
         MANIFEST_PLACEHOLDER_SIZE,
     )?;
-    println!("  - ✓ Temporary EPUB with placeholder created.");
+    println!("  - Temporary EPUB with placeholder created.");
     let mut temp_epub_file = File::open(temp_epub_with_placeholder.path())?;
 
     let mut collection_hash = CollectionHash::with_alg(
@@ -417,7 +414,7 @@ pub async fn sign_epub_from_json(
         alg.to_string(),
     )?;
     collection_hash.gen_hash_from_zip_stream(&mut temp_epub_file)?;
-    println!("  - ✓ Hashes calculated using CollectionHash on the temporary file.");
+    println!("  - Hashes calculated using CollectionHash on the temporary file.");
 
     let mut builder = Builder::from_json(manifest_json)?;
     builder.add_assertion(CollectionHash::LABEL, &collection_hash)?;
@@ -433,21 +430,13 @@ pub async fn sign_epub_from_json(
         &mut dest_file,
     )?;
     println!(
-        "  - ✓ Manifest generated in memory ({} bytes).",
+        "  - Manifest generated in memory ({} bytes).",
         manifest_bytes.len()
     );
 
     if manifest_bytes.len() as u64 > MANIFEST_PLACEHOLDER_SIZE {
         return Err(Error::EmbeddingError);
     }
-
-    zip_util::overwrite_placeholder(
-        temp_epub_with_placeholder.path(),
-        MANIFEST_PATH,
-        &manifest_bytes,
-    )?;
-
-    // fs::copy(temp_epub_with_placeholder.path(), dest_path)?;
 
     zip_util::rewrite_epub_with_manifest(
         temp_epub_with_placeholder.path(),
@@ -456,7 +445,7 @@ pub async fn sign_epub_from_json(
         &manifest_bytes,
     )?;
 
-    println!("  - ✓ Placeholder overwritten in destination file without changing structure.");
+    println!("  - Placeholder overwritten in destination file without changing structure.");
 
     // try removing crc-32 for manifest
     let _ = patch_central_directory_crc(dest_path, MANIFEST_PATH);
@@ -510,7 +499,7 @@ pub fn patch_central_directory_crc(zip_path: &Path, target_filename: &str) -> Re
         if file_name == target_filename {
             file.seek(SeekFrom::Start(crc_32_offset))?;
             file.write_u32::<LittleEndian>(0)?;
-            println!("  - ✓ Patched CRC-32 for '{}' to 0.", target_filename);
+            println!("  - Patched CRC-32 for '{}' to 0.", target_filename);
             return Ok(());
         }
 
@@ -524,11 +513,8 @@ pub fn patch_central_directory_crc(zip_path: &Path, target_filename: &str) -> Re
 
 #[allow(dead_code)]
 pub fn verify_epub_hashes(path: &Path) -> Result<bool> {
-    println!("\nVerifying EPUB at: {:?}", path);
-
     let mut file_stream = File::open(path)?;
     let reader = Reader::from_stream("application/epub+zip", &mut file_stream)?;
-    println!("  - ✓ EPUB file opened successfully.");
 
     let active_manifest = reader
         .active_manifest()
@@ -544,7 +530,7 @@ pub fn verify_epub_hashes(path: &Path) -> Result<bool> {
     let collection_hash: CollectionHash = serde_json::from_value(json_value.clone())
         .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)?;
 
-    println!("  - ✓ Found and deserialized 'c2pa.collection.hash' assertion.");
+    println!("  - Deserialized 'c2pa.collection.hash' assertion.");
 
     let mut verification_stream = File::open(path)?;
 
@@ -566,7 +552,7 @@ pub fn verify_epub_hashes(path: &Path) -> Result<bool> {
                     false,
                 ) {
                     println!(
-                        "  - ✗ Verification FAILED: Hash mismatch for entry '{}'.",
+                        "  - Verification FAILED: Hash mismatch for entry '{}'.",
                         path_buf.display()
                     );
                     return Ok(false);
@@ -574,7 +560,7 @@ pub fn verify_epub_hashes(path: &Path) -> Result<bool> {
             }
         } else {
             println!(
-                "  - ✗ Verification FAILED: Entry '{}' not found in ZIP file.",
+                "  - Verification FAILED: Entry '{}' not found in ZIP file.",
                 path_buf.display()
             );
             return Ok(false);
@@ -592,12 +578,12 @@ pub fn verify_epub_hashes(path: &Path) -> Result<bool> {
             Some(vec![cd_range]),
             false,
         ) {
-            println!("  - ✗ Verification FAILED: Central directory hash mismatch.");
+            println!("  - Verification FAILED: Central directory hash mismatch.");
             return Ok(false);
         }
     }
 
-    println!("  - ✓ Verification successful: All hashes match.");
+    println!("  - Verification succeeded: All hashes match.");
     Ok(true)
 }
 
@@ -638,100 +624,6 @@ pub fn add_empty_file_to_epub(path: &Path) -> Result<()> {
     }
     fs::copy(temp_file.path(), path)?;
     Ok(())
-}
-
-mod zip_hasher {
-    use super::*;
-    use std::io::{BufReader, Read, Seek, SeekFrom};
-
-    #[derive(Debug, Default)]
-    pub struct ZipHashCollection {
-        pub entry_hashes: BTreeMap<String, Vec<u8>>,
-        pub central_directory_hash: Vec<u8>,
-    }
-
-    fn new_hasher(alg: &str) -> Result<Box<dyn DynDigest>> {
-        match alg {
-            "sha256" | "256" => Ok(Box::new(Sha256::new())),
-            "sha384" | "384" => Ok(Box::new(Sha384::new())),
-            "sha512" | "512" => Ok(Box::new(Sha512::new())),
-            _ => Err(Error::UnsupportedAlgorithm(alg.to_string())),
-        }
-    }
-
-    fn hash_block<R: Read + Seek>(
-        reader: &mut R,
-        hasher: &mut dyn DynDigest,
-        start: u64,
-        size: u64,
-    ) -> Result<()> {
-        reader.seek(SeekFrom::Start(start))?;
-        let mut take_reader = reader.take(size);
-        let mut buffer = [0; 8192];
-        loop {
-            let bytes_read = take_reader.read(&mut buffer)?;
-            if bytes_read == 0 {
-                break;
-            }
-            hasher.update(&buffer[..bytes_read]);
-        }
-        Ok(())
-    }
-
-    #[allow(dead_code)]
-    pub fn calculate_hashes(
-        path: &Path,
-        alg: &str,
-        manifest_path: &str,
-    ) -> Result<ZipHashCollection> {
-        let file = File::open(path)?;
-        let mut reader = BufReader::new(file);
-        let mut result = ZipHashCollection::default();
-
-        let entry_metadata: Vec<(String, u64, u64)>;
-        let cd_metadata: (u64, u64);
-        let file_size = reader.get_ref().metadata()?.len();
-        {
-            let mut archive = ZipArchive::new(&mut reader)?;
-            let mut entries = Vec::new();
-            for i in 0..archive.len() {
-                let file_in_zip = archive.by_index_raw(i)?;
-                let file_name = file_in_zip.name().to_string();
-                if file_name == manifest_path {
-                    continue;
-                }
-                let header_offset = file_in_zip.header_start();
-                let data_size = file_in_zip.compressed_size();
-                let local_header_size = file_in_zip.data_start() - header_offset;
-                let total_block_size = local_header_size + data_size;
-                entries.push((file_name, header_offset, total_block_size));
-            }
-            entry_metadata = entries;
-
-            let cd_start = archive.central_directory_start();
-
-            if file_size < cd_start {
-                println!(" Invalid ZIP structure: EOCD offset is before Central Directory offset.");
-                return Err(Error::EmbeddingError);
-            }
-            cd_metadata = (cd_start, file_size - cd_start);
-        }
-
-        for (file_name, offset, size) in entry_metadata {
-            let mut hasher = new_hasher(alg)?;
-            hash_block(&mut reader, &mut *hasher, offset, size)?;
-            result
-                .entry_hashes
-                .insert(file_name, hasher.finalize().to_vec());
-        }
-
-        let (cd_start, cd_size) = cd_metadata;
-        let mut cd_hasher = new_hasher(alg)?;
-        hash_block(&mut reader, &mut *cd_hasher, cd_start, cd_size)?;
-        result.central_directory_hash = cd_hasher.finalize().to_vec();
-
-        Ok(result)
-    }
 }
 
 mod zip_util {
@@ -836,7 +728,7 @@ mod zip_util {
         zip_writer.write_all(&padded_manifest)?;
 
         zip_writer.finish()?;
-        println!("  - ✓ Rewritten EPUB with raw file copy.");
+        println!("  - Rewritten EPUB with raw file copy.");
         Ok(())
     }
 }

@@ -285,60 +285,6 @@ impl CollectionHash {
 
         Ok(())
     }
-
-    // pub fn verify_zip_stream_hash<R>(&self, stream: &mut R, alg: Option<&str>) -> Result<()>
-    // where
-    //     R: Read + Seek + ?Sized,
-    // {
-    //     let alg = alg.unwrap_or_else(|| self.alg());
-    //     let zip_central_directory_hash = match &self.zip_central_directory_hash {
-    //         Some(hash) => Ok(hash),
-    //         None => Err(Error::BadParam(
-    //             "Missing zip central directory hash".to_owned(),
-    //         )),
-    //     }?;
-    //     if !verify_stream_by_alg(
-    //         alg,
-    //         zip_central_directory_hash,
-    //         stream,
-    //         // If zip_central_directory_hash exists (we checked above), then this must exist.
-    //         #[allow(clippy::unwrap_used)]
-    //         Some(vec![self.zip_central_directory_hash_range.clone().unwrap()]),
-    //         false,
-    //     ) {
-    //         return Err(Error::HashMismatch(
-    //             "Hashes do not match for zip central directory".to_owned(),
-    //         ));
-    //     }
-
-    //     for (path, uri_map) in &self.uris {
-    //         match &uri_map.hash {
-    //             Some(hash) => {
-    //                 if !verify_stream_by_alg(
-    //                     alg,
-    //                     hash,
-    //                     stream,
-    //                     // Same reason as above.
-    //                     #[allow(clippy::unwrap_used)]
-    //                     Some(vec![uri_map.zip_hash_range.clone().unwrap()]),
-    //                     false,
-    //                 ) {
-    //                     return Err(Error::HashMismatch(format!(
-    //                         "hash for {} does not match",
-    //                         path.display()
-    //                     )));
-    //                 }
-    //             }
-    //             None => {
-    //                 return Err(Error::BadParam(
-    //                     "Must generate hashes before verifying".to_owned(),
-    //                 ));
-    //             }
-    //         }
-    //     }
-
-    //     Ok(())
-    // }
     
     pub fn verify_zip_stream_hash<R>(&self, stream: &mut R, alg: Option<&str>) -> Result<()>
 where
