@@ -187,6 +187,11 @@ pub(crate) const DATABOX_STORE: &str = "c2pa.databoxes";
 /// See <https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_asset_reference>
 pub const ASSET_REFERENCE: &str = "c2pa.asset-ref";
 
+/// Label prefix for multi-asset hash assertion.
+///
+/// See <https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_multi_asset_hash>
+pub const MULTI_ASSET_HASH: &str = "c2pa.hash.multi-asset";
+
 /// Return the version suffix from an assertion label if it exists.
 ///
 /// When an assertion's schema is changed in a backwards-compatible manner,

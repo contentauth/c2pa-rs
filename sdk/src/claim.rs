@@ -33,7 +33,7 @@ use crate::{
         self, c2pa_action,
         labels::{self, ACTIONS, ASSERTION_STORE, BMFF_HASH, CLAIM_THUMBNAIL, DATABOX_STORE},
         Actions, AssertionMetadata, AssetType, BmffHash, BoxHash, DataBox, DataHash, Ingredient,
-        Relationship, V2_DEPRECATED_ACTIONS,
+        MultiAssetHash, Relationship, V2_DEPRECATED_ACTIONS,
     },
     asset_io::CAIRead,
     cbor_types::{map_cbor_to_type, value_cbor_to_type},
@@ -3040,16 +3040,58 @@ impl Claim {
                                 continue;
                             }
                             Err(e) => {
-                                log_item!(
-                                    claim.assertion_uri(&hash_binding_assertion.label()),
-                                    format!("asset hash error, name: {name}, error: {e}"),
-                                    "verify_internal"
-                                )
-                                .validation_status(validation_status::ASSERTION_DATAHASH_MISMATCH)
-                                .failure(
-                                    validation_log,
-                                    Error::HashMismatch(format!("Asset hash failure: {e}")),
-                                )?;
+                                if let Some(assertion) =
+                                    claim.get_assertion(MultiAssetHash::LABEL, 0)
+                                {
+                                    let multi_asset_assertion =
+                                        MultiAssetHash::from_assertion(assertion)?;
+
+                                    let multi_hash_result =
+                                        multi_asset_assertion.verify_hash(asset_data, claim);
+
+                                    match multi_hash_result {
+                                        Ok(_) => {
+                                            log_item!(
+                                                claim.assertion_uri(MultiAssetHash::LABEL),
+                                                "multi-asset hash valid",
+                                                "verify_internal"
+                                            )
+                                            .validation_status(
+                                                validation_status::ASSERTION_DATAHASH_MATCH,
+                                            )
+                                            .success(validation_log);
+
+                                            continue;
+                                        }
+                                        Err(multi_e) => {
+                                            log_item!(
+                                                claim.assertion_uri(&hash_binding_assertion.label()),
+                                                format!("asset hash error, name: {name}, data hash error: {e}, multi-asset hash error: {multi_e}"),
+                                                "verify_internal"
+                                            )
+                                            .validation_status(
+                                                validation_status::ASSERTION_DATAHASH_MISMATCH,
+                                            )
+                                            .failure(
+                                                validation_log,
+                                                Error::HashMismatch(format!("Asset hash failure: {e}, Multi-asset hash failure: {multi_e}")),
+                                            )?;
+                                        }
+                                    }
+                                } else {
+                                    log_item!(
+                                        claim.assertion_uri(&hash_binding_assertion.label()),
+                                        format!("asset hash error, name: {name}, error: {e}"),
+                                        "verify_internal"
+                                    )
+                                    .validation_status(
+                                        validation_status::ASSERTION_DATAHASH_MISMATCH,
+                                    )
+                                    .failure(
+                                        validation_log,
+                                        Error::HashMismatch(format!("Asset hash failure: {e}")),
+                                    )?;
+                                }
                             }
                         }
                     } else {
@@ -3796,6 +3838,12 @@ impl Claim {
         self.claim_assertion_store()
             .iter()
             .find(|ca| ca.label_raw() == assertion_label && ca.instance() == instance)
+    }
+
+    /// returns assertion from link
+    pub fn get_assertion_from_link(&self, assertion_link: &str) -> Option<&Assertion> {
+        let (label, instance) = Claim::assertion_label_from_link(assertion_link);
+        self.get_assertion(&label, instance)
     }
 
     /// returns hash of an assertion whose label and instance match
