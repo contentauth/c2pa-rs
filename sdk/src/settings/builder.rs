@@ -417,7 +417,7 @@ pub(crate) struct BuilderSettings {
 
     pub certificate_status_fetch: Option<OcspFetch>,
 
-    pub certificate_status_only_needed: Option<bool>,
+    pub certificate_status_should_override: Option<bool>,
 }
 
 #[derive(Copy, Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -434,7 +434,7 @@ impl Default for BuilderSettings {
             thumbnail: Default::default(),
             actions: Default::default(),
             certificate_status_fetch: Some(OcspFetch::Active),
-            certificate_status_only_needed: Some(true),
+            certificate_status_should_override: Some(true),
         }
     }
 }

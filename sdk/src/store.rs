@@ -645,10 +645,11 @@ impl Store {
             _ => Vec::new(),
         };
 
-        match crate::settings::get_settings_value::<bool>("builder.certificate_status_only_needed")
-        {
-            Ok(should_fetch) => {
-                if should_fetch {
+        match crate::settings::get_settings_value::<bool>(
+            "builder.certificate_status_should_override",
+        ) {
+            Ok(should_override) => {
+                if !should_override {
                     labels
                         .into_iter()
                         .filter(|label| {
