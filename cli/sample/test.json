@@ -8,19 +8,6 @@
   "title": "My Title",
   "assertions": [
     {
-      "label": "stds.schema-org.CreativeWork",
-      "data": {
-        "@context": "https://schema.org",
-        "@type": "CreativeWork",
-        "author": [
-          {
-            "@type": "Person",
-            "name": "Joe Bloggs"
-          }
-        ]
-      }
-    },
-    {
       "label": "c2pa.actions",
       "data": {
         "actions": [

@@ -68,7 +68,7 @@ pub enum Error {
 
     /// The attempt to deserialize the claim from CBOR failed.
     #[error("claim could not be converted from CBOR")]
-    ClaimDecoding,
+    ClaimDecoding(String),
 
     #[error("claim already signed, no further changes allowed")]
     ClaimAlreadySigned,

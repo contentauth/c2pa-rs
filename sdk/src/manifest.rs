@@ -441,11 +441,14 @@ impl Manifest {
     /// # use c2pa::Result;
     /// use c2pa::{assertions::Actions, Manifest, Reader};
     /// # fn main() -> Result<()> {
-    /// let reader = Reader::from_file("tests/fixtures/CA.jpg")?;
-    /// let manifest = reader.active_manifest().unwrap();
-    /// let actions: Actions = manifest.find_assertion(Actions::LABEL)?;
-    /// for action in actions.actions {
-    ///     println!("{}", action.action());
+    /// #[cfg(feature = "file_io")]
+    /// {
+    ///     let reader = Reader::from_file("tests/fixtures/CA.jpg")?;
+    ///     let manifest = reader.active_manifest().unwrap();
+    ///     let actions: Actions = manifest.find_assertion(Actions::LABEL)?;
+    ///     for action in actions.actions {
+    ///         println!("{}", action.action());
+    ///     }
     /// }
     /// # Ok(())
     /// # }
@@ -2348,7 +2351,10 @@ pub(crate) mod tests {
         assert_eq!(image.into_owned(), thumb_data);
     }
 
+    // This is only used for testing obsolete v1 manifest creation code
     const MANIFEST_JSON: &str = r#"{
+        
+        "claim_version": 1,
         "claim_generator": "test",
         "claim_generator_info": [
             {
@@ -2699,7 +2705,7 @@ pub(crate) mod tests {
         manifest.with_base_path(fixtures).expect("with_base");
         // verify we can't set a references that don't exist
         assert!(manifest
-            .set_thumbnail_ref(ResourceRef::new("image/jpg", "foo"))
+            .set_thumbnail_ref(ResourceRef::new("image/jpeg", "foo"))
             .is_err());
         assert_eq!(manifest.thumbnail_ref(), None);
         // verify we can set a references that do exist
