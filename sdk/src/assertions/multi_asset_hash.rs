@@ -11,7 +11,7 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use std::io::Cursor;
+use std::{fs::File, io::Cursor};
 
 use serde::{Deserialize, Serialize};
 
@@ -19,12 +19,10 @@ use crate::{
     assertion::{Assertion, AssertionBase, AssertionCbor},
     assertions::{labels, BmffHash, DataHash},
     asset_io::CAIRead,
-    claim::Claim,
+    claim::{Claim, ClaimAssetData},
     error::{Error, Result},
     utils::io_utils::{stream_len, ReaderUtils},
-    validation_status::{
-        ASSERTION_MULTI_ASSET_HASH_MALFORMED, ASSERTION_MULTI_ASSET_HASH_MISSING_PART,
-    },
+    validation_status::ASSERTION_MULTI_ASSET_HASH_MALFORMED,
     HashedUri,
 };
 
@@ -75,6 +73,22 @@ impl MultiAssetHash {
         Ok(())
     }
 
+    pub fn verify_hash(&self, asset_data: &mut ClaimAssetData<'_>, claim: &Claim) -> Result<()> {
+        match asset_data {
+            #[cfg(feature = "file_io")]
+            ClaimAssetData::Path(asset_path) => {
+                let mut file = File::open(asset_path).map_err(Error::IoError)?;
+                self.verify_stream_hash(&mut file, claim)
+            }
+            ClaimAssetData::Bytes(asset_bytes, _) => {
+                let mut cursor = Cursor::new(*asset_bytes);
+                self.verify_stream_hash(&mut cursor, claim)
+            }
+            ClaimAssetData::Stream(stream_data, _) => self.verify_stream_hash(*stream_data, claim),
+            _ => Err(Error::UnsupportedType),
+        }
+    }
+
     pub fn verify_stream_hash(&self, mut reader: &mut dyn CAIRead, claim: &Claim) -> Result<()> {
         let length = stream_len(reader)?;
         self.verify_self(length)?;
@@ -104,7 +118,11 @@ impl MultiAssetHash {
                         };
                         dh.verify_stream_hash(&mut part_reader, Some(alg))?;
                     }
-                    l if l.starts_with(BmffHash::LABEL) => {}
+                    l if l.starts_with(BmffHash::LABEL) => {
+                        return Err(Error::NotImplemented(
+                            "BmffHash not yet implemented for Multi-Asset hashes".to_string(),
+                        ));
+                    }
                     _ => {}
                 }
             }
@@ -170,17 +188,22 @@ pub mod tests {
 
     use std::io::Cursor;
 
-    use crate::{assertion::AssertionBase, assertions::MultiAssetHash, status_tracker::StatusTracker, store::Store};
+    use crate::{
+        assertion::AssertionBase, assertions::MultiAssetHash, status_tracker::StatusTracker,
+        store::Store,
+    };
 
     const TEST_IMAGE: &[u8] = include_bytes!("../../tests/fixtures/multi_asset_hash_signed.jpg");
-    
+
     #[test]
     fn test_validation() {
         let mut validation_log = StatusTracker::default();
         let source = Cursor::new(TEST_IMAGE);
         let store = Store::from_stream("image/jpeg", source, true, &mut validation_log).unwrap();
         let claim = store.provenance_claim().unwrap();
-        let assertion = MultiAssetHash::from_assertion(claim.get_assertion(MultiAssetHash::LABEL, 0).unwrap()).unwrap();
+        let assertion =
+            MultiAssetHash::from_assertion(claim.get_assertion(MultiAssetHash::LABEL, 0).unwrap())
+                .unwrap();
         let mut source = Cursor::new(TEST_IMAGE);
         assertion.verify_stream_hash(&mut source, claim).unwrap();
     }
