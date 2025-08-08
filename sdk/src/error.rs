@@ -296,9 +296,24 @@ pub enum Error {
     #[error("invalid signing key")]
     InvalidSigningKey,
 
+    #[error("missing bearer token for url `{0}`")]
+    MissingBearerToken(String),
+
+    #[error("max results must be >1")]
+    MaxResultsTooSmall,
+
+    #[error("unknown soft binding algorithm `{0}`")]
+    UnknownSoftBindingAlgorithm(String),
+
+    #[error("no soft binding resolution APIs for `{0}` were found")]
+    NoSoftBindingResolutionApisFound(String),
+
     // --- third-party errors ---
     #[error(transparent)]
     Utf8Error(#[from] std::str::Utf8Error),
+
+    #[error(transparent)]
+    UreqError(#[from] ureq::Error),
 
     #[error(transparent)]
     TryFromIntError(#[from] std::num::TryFromIntError),

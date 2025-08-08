@@ -1,10 +1,23 @@
+// Copyright 2025 Adobe. All rights reserved.
+// This file is licensed to you under the Apache License,
+// Version 2.0 (http://www.apache.org/licenses/LICENSE-2.0)
+// or the MIT license (http://opensource.org/licenses/MIT),
+// at your option.
+
+// Unless required by applicable law or agreed to in writing,
+// this software is distributed on an "AS IS" BASIS, WITHOUT
+// WARRANTIES OR REPRESENTATIONS OF ANY KIND, either express or
+// implied. See the LICENSE-MIT and LICENSE-APACHE files for the
+// specific language governing permissions and limitations under
+// each license.
+
 use serde::{Deserialize, Serialize};
 
-use super::labels;
 use crate::{
     assertion::{Assertion, AssertionBase, AssertionCbor},
-    assertions::region_of_interest::RegionOfInterest,
+    assertions::{labels, region_of_interest::RegionOfInterest},
     cbor_types::UriT,
+    soft_binding::algorithm_list::{SoftBindingAlgorithmEntry, SoftBindingAlgorithmKind},
     Result,
 };
 
@@ -67,6 +80,16 @@ impl SoftBinding {
     /// See [`SoftBinding::pad`] for more information.
     pub fn pad2(&self) -> Option<&[u8]> {
         self.pad2.as_ref().map(|bytes| bytes.as_slice())
+    }
+
+    pub fn kind(&self, list: &[SoftBindingAlgorithmEntry]) -> Option<SoftBindingAlgorithmKind> {
+        // TODO: alg should be inherited from the claim soft_alg
+        self.alg.as_ref().and_then(|alg| {
+            list.iter().find_map(|entry| match &entry.alg == alg {
+                true => Some(entry.kind),
+                false => None,
+            })
+        })
     }
 }
 
