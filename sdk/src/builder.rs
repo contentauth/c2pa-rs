@@ -29,8 +29,10 @@ use zip::{write::SimpleFileOptions, ZipArchive, ZipWriter};
 use crate::{
     assertion::AssertionDecodeError,
     assertions::{
-        c2pa_action, labels, Action, ActionTemplate, Actions, AssertionMetadata, BmffHash, BoxHash,
-        CreativeWork, DataHash, EmbeddedData, Exif, SoftwareAgent, Thumbnail, User, UserCbor,
+        c2pa_action,
+        labels::{self, METADATA_LABEL_REGEX},
+        Action, ActionTemplate, Actions, AssertionMetadata, BmffHash, BoxHash, CreativeWork,
+        DataHash, EmbeddedData, Exif, Metadata, SoftwareAgent, Thumbnail, User, UserCbor,
     },
     cbor_types::value_cbor_to_type,
     claim::Claim,
@@ -1012,6 +1014,10 @@ impl Builder {
                 BmffHash::LABEL => {
                     let bmff_hash: BmffHash = manifest_assertion.to_assertion()?;
                     claim.add_assertion_with_salt(&bmff_hash, &salt)
+                }
+                l if METADATA_LABEL_REGEX.is_match(l) => {
+                    let metadata: Metadata = manifest_assertion.to_assertion()?;
+                    claim.add_gathered_assertion_with_salt(&metadata, &salt)
                 }
                 _ => match &manifest_assertion.data {
                     AssertionData::Json(value) => claim.add_gathered_assertion_with_salt(
