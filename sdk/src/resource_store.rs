@@ -225,6 +225,7 @@ impl ResourceStore {
             "png" | "image/png" => ".png",
             //make "svg" | "image/svg+xml" => ".svg",
             "c2pa" | "application/x-c2pa-manifest-store" | "application/c2pa" => ".c2pa",
+            "ocsp" => ".ocsp",
             _ => "",
         };
         // clean string for possible filesystem use
