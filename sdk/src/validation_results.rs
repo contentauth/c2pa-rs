@@ -903,7 +903,8 @@ pub mod validation_codes {
             | MANIFEST_UNKNOWN_PROVENANCE
             | INGREDIENT_UNKNOWN_PROVENANCE
             | ALGORITHM_DEPRECATED
-            | TIME_OF_SIGNING_INSIDE_VALIDITY => LogKind::Informational,
+            | TIME_OF_SIGNING_INSIDE_VALIDITY
+            | ASSERTION_DATAHASH_ADDITIONAL_EXCLUSIONS => LogKind::Informational,
             _ => LogKind::Failure,
         }
     }

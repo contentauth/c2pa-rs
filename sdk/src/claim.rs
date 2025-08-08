@@ -66,7 +66,7 @@ use crate::{
     status_tracker::{ErrorBehavior, StatusTracker},
     store::StoreValidationInfo,
     utils::hash_utils::{hash_by_alg, vec_compare},
-    validation_status, ClaimGeneratorInfo, HashRange,
+    validation_status, ClaimGeneratorInfo,
 };
 
 const BUILD_HASH_ALG: &str = "sha256";
@@ -2994,24 +2994,36 @@ impl Claim {
                     let name = dh.name.as_ref().map_or(UNNAMED.to_string(), default_str);
 
                     // update with any needed update hash adjustments
-                    if svi.update_manifest_size != 0 {
+                    if svi.update_manifest_label.is_some() {
                         if let Some(exclusions) = &mut dh.exclusions {
-                            if !exclusions.is_empty() {
-                                exclusions.sort_by_key(|a| a.start());
-
-                                // new range using the size that covers entire manifest (includin update manifests)
-                                let new_range = HashRange::new(
-                                    exclusions[0].start(),
-                                    svi.update_manifest_size as u64,
-                                );
-
-                                exclusions.clear();
-                                exclusions.push(new_range);
+                            if let Some(range) = &svi.manifest_store_range {
+                                // find the range that starts at the same position as the manifest store range
+                                if let Some(pos) =
+                                    exclusions.iter().position(|r| r.start() == range.start())
+                                {
+                                    // replace range using the size that covers entire manifest (including update manifests)
+                                    exclusions.insert(pos, range.clone());
+                                }
                             }
                         }
                     }
 
                     if !dh.is_remote_hash() {
+                        // there are extra exclusion then log the information code about extra exclusion
+                        if let Some(exclusions) = &dh.exclusions {
+                            if exclusions.len() > 1 {
+                                log_item!(
+                                    claim.assertion_uri(&hash_binding_assertion.label()),
+                                    "extra data hash exclusions found",
+                                    "verify_internal"
+                                )
+                                .validation_status(
+                                    validation_status::ASSERTION_DATAHASH_ADDITIONAL_EXCLUSIONS,
+                                )
+                                .informational(validation_log);
+                            }
+                        }
+
                         // only verify local hashes here
                         let hash_result = match asset_data {
                             #[cfg(feature = "file_io")]
@@ -3250,6 +3262,9 @@ impl Claim {
         let dummy_box_data = AssertionData::Cbor(Vec::new());
         let dummy_box_hash = Assertion::new(assertions::labels::BOX_HASH, None, dummy_box_data);
         data_hashes.append(&mut self.assertions_by_type(&dummy_box_hash, None));
+
+        // remove any multipart hashes, those are handled elsewhere
+        data_hashes.retain(|x| !x.label_raw().ends_with(assertions::labels::PART));
 
         data_hashes
     }

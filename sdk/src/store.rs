@@ -109,7 +109,8 @@ pub(crate) struct StoreValidationInfo<'a> {
     pub manifest_map: HashMap<String, &'a Claim>, // list of the addressable items in ingredient, saves re-parsing the items during validation
     pub binding_claim: String,                    // name of the claim that has the hash binding
     pub timestamps: HashMap<String, TstInfo>,     // list of timestamp assertions for each claim
-    pub update_manifest_size: usize,              // offset needed to correct for update manifests
+    pub update_manifest_label: Option<String>,    // label of the update manifest if it exists
+    pub manifest_store_range: Option<HashRange>, // range of the manifest store in the asset for data hash exclusions
 }
 
 /// A `Store` maintains a list of `Claim` structs.
@@ -1730,52 +1731,49 @@ impl Store {
             }
         };
 
-        // get the manifest offset size if needed
+        // save the update manifest label if it exists
         if claim.update_manifest() {
-            let locations = match asset_data {
-                #[cfg(feature = "file_io")]
-                ClaimAssetData::Path(path) => {
-                    let format =
-                        get_supported_file_extension(path).ok_or(Error::UnsupportedType)?;
-                    let mut reader = std::fs::File::open(path)?;
+            svi.update_manifest_label = Some(claim.label().to_owned());
+        }
 
-                    object_locations_from_stream(&format, &mut reader)?
-                }
-                ClaimAssetData::Bytes(items, typ) => {
-                    let format = typ.to_owned();
-                    let mut reader = Cursor::new(items);
+        // get the manifest offset position
+        let locations = match asset_data {
+            #[cfg(feature = "file_io")]
+            ClaimAssetData::Path(path) => {
+                let format = get_supported_file_extension(path).ok_or(Error::UnsupportedType)?;
+                let mut reader = std::fs::File::open(path)?;
 
-                    object_locations_from_stream(&format, &mut reader)?
-                }
-                ClaimAssetData::Stream(reader, typ) => {
-                    let format = typ.to_owned();
-                    object_locations_from_stream(&format, reader)?
-                }
-                ClaimAssetData::StreamFragment(reader, _read1, typ) => {
-                    let format = typ.to_owned();
-                    object_locations_from_stream(&format, reader)?
-                }
-                #[cfg(feature = "file_io")]
-                ClaimAssetData::StreamFragments(reader, _path_bufs, typ) => {
-                    let format = typ.to_owned();
-                    object_locations_from_stream(&format, reader)?
-                }
-            };
-
-            if let Some(manifest_loc) = locations
-                .iter()
-                .find(|o| o.htype == HashBlockObjectType::Cai)
-            {
-                svi.update_manifest_size = manifest_loc.length;
-            } else {
-                log_item!(
-                    claim.label().to_owned(),
-                    "there were unreference manifests in the ",
-                    "get_store_validation_info"
-                )
-                .validation_status(validation_status::HARD_BINDINGS_MISSING)
-                .failure(validation_log, Error::ClaimMissingHardBinding)?;
+                object_locations_from_stream(&format, &mut reader)?
             }
+            ClaimAssetData::Bytes(items, typ) => {
+                let format = typ.to_owned();
+                let mut reader = Cursor::new(items);
+
+                object_locations_from_stream(&format, &mut reader)?
+            }
+            ClaimAssetData::Stream(reader, typ) => {
+                let format = typ.to_owned();
+                object_locations_from_stream(&format, reader)?
+            }
+            ClaimAssetData::StreamFragment(reader, _read1, typ) => {
+                let format = typ.to_owned();
+                object_locations_from_stream(&format, reader)?
+            }
+            #[cfg(feature = "file_io")]
+            ClaimAssetData::StreamFragments(reader, _path_bufs, typ) => {
+                let format = typ.to_owned();
+                object_locations_from_stream(&format, reader)?
+            }
+        };
+
+        if let Some(manifest_loc) = locations
+            .iter()
+            .find(|o| o.htype == HashBlockObjectType::Cai)
+        {
+            svi.manifest_store_range = Some(HashRange::new(
+                manifest_loc.offset as u64,
+                manifest_loc.length as u64,
+            ));
         }
 
         // get the timestamp assertions
