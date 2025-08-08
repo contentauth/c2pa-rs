@@ -36,7 +36,7 @@ use crate::{
         Relationship, V2_DEPRECATED_ACTIONS,
     },
     asset_io::CAIRead,
-    cbor_types::{map_cbor_to_type, value_cbor_to_type},
+    cbor_types::map_cbor_to_type,
     cose_validator::{get_signing_info, get_signing_info_async, verify_cose, verify_cose_async},
     crypto::{
         asn1::rfc3161::TstInfo,
@@ -2157,7 +2157,7 @@ impl Claim {
                         ))?;
 
                     // 2.b.ii must have ingredient or ingredients param
-                    if params.get("ingredients").is_none() && params.get("ingredient").is_none() {
+                    if params.ingredients.is_none() && params.ingredient.is_none() {
                         log_item!(
                             label.clone(),
                             "opened, placed and removed items must have ingredient(s) parameters",
@@ -2171,14 +2171,8 @@ impl Claim {
                     }
 
                     // 2.b.iii if ingredients, must be an array with at least one item
-                    if let Some(v) = params.get("ingredients") {
-                        let good_val = if let serde_cbor::Value::Array(ingredients) = v {
-                            !ingredients.is_empty()
-                        } else {
-                            false
-                        };
-
-                        if !good_val {
+                    if let Some(h_vec) = &params.ingredients {
+                        if h_vec.is_empty() {
                             log_item!(
                                 label.clone(),
                                 "opened, placed and removed items must have ingredients parameter must be non empty array",
@@ -2196,24 +2190,7 @@ impl Claim {
                     if action.action() == c2pa_action::OPENED {
                         let mut found_good = 0usize;
 
-                        if let Some(v) = params.get("ingredient") {
-                            let h = value_cbor_to_type::<HashedUri>(v).ok_or_else(|| {
-                                log_item!(
-                                    label.clone(),
-                                    "could not parse action ingredient parameter",
-                                    "verify_actions"
-                                )
-                                .validation_status(
-                                    validation_status::ASSERTION_ACTION_INGREDIENT_MISMATCH,
-                                )
-                                .failure_as_err(
-                                    validation_log,
-                                    Error::ValidationRule(
-                                        "could not parse action ingredient parameter".into(),
-                                    ),
-                                )
-                            })?;
-
+                        if let Some(h) = &params.ingredient {
                             // can we find a reference in the ingredient list
                             // is it referenced from this manifest
                             if claim.ingredient_assertions().iter().any(|i| {
@@ -2227,26 +2204,8 @@ impl Claim {
                             }) {
                                 found_good = 1;
                             }
-                        } else if let Some(v) = params.get("ingredients") {
-                            let h_vec =
-                                value_cbor_to_type::<Vec<HashedUri>>(v).ok_or_else(|| {
-                                    log_item!(
-                                        label.clone(),
-                                        "could not parse action ingredients parameter",
-                                        "verify_actions"
-                                    )
-                                    .validation_status(
-                                        validation_status::ASSERTION_ACTION_INGREDIENT_MISMATCH,
-                                    )
-                                    .failure_as_err(
-                                        validation_log,
-                                        Error::ValidationRule(
-                                            "could not parse action ingredients parameter".into(),
-                                        ),
-                                    )
-                                })?;
-
-                            for h in h_vec {
+                        } else if let Some(ingredients) = &params.ingredients {
+                            for h in ingredients {
                                 // can we find a reference in the ingredient list
                                 // is it referenced from this manifest
                                 if claim.ingredient_assertions().iter().any(|i| {
@@ -2293,24 +2252,7 @@ impl Claim {
                     {
                         let mut found_good = 0usize;
 
-                        if let Some(v) = params.get("ingredient") {
-                            let h = value_cbor_to_type::<HashedUri>(v).ok_or_else(|| {
-                                log_item!(
-                                    label.clone(),
-                                    "could not parse action ingredient parameter",
-                                    "verify_actions"
-                                )
-                                .validation_status(
-                                    validation_status::ASSERTION_ACTION_INGREDIENT_MISMATCH,
-                                )
-                                .failure_as_err(
-                                    validation_log,
-                                    Error::ValidationRule(
-                                        "could not parse action ingredient parameter".into(),
-                                    ),
-                                )
-                            })?;
-
+                        if let Some(h) = &params.ingredient {
                             // can we find a reference in the ingredient list
                             // is it referenced from this manifest
                             if claim.ingredient_assertions().iter().any(|i| {
@@ -2325,25 +2267,7 @@ impl Claim {
                             }) {
                                 found_good = 1;
                             }
-                        } else if let Some(v) = params.get("ingredients") {
-                            let h_vec =
-                                value_cbor_to_type::<Vec<HashedUri>>(v).ok_or_else(|| {
-                                    log_item!(
-                                        label.clone(),
-                                        "could not parse action ingredients parameter",
-                                        "verify_actions"
-                                    )
-                                    .validation_status(
-                                        validation_status::ASSERTION_ACTION_INGREDIENT_MISMATCH,
-                                    )
-                                    .failure_as_err(
-                                        validation_log,
-                                        Error::ValidationRule(
-                                            "could not parse action ingredients parameter".into(),
-                                        ),
-                                    )
-                                })?;
-
+                        } else if let Some(h_vec) = &params.ingredients {
                             for h in h_vec {
                                 // can we find a reference in the ingredient list
                                 // is it referenced from this manifest
@@ -2405,24 +2329,7 @@ impl Claim {
                         ))?;
 
                     let mut parent_tested = None; // on exists if action actually pointed to an ingredient
-                    if let Some(v) = params.get("ingredient") {
-                        let h = value_cbor_to_type::<HashedUri>(v).ok_or_else(|| {
-                            log_item!(
-                                label.clone(),
-                                "could not parse action ingredient parameter",
-                                "verify_actions"
-                            )
-                            .validation_status(
-                                validation_status::ASSERTION_ACTION_INGREDIENT_MISMATCH,
-                            )
-                            .failure_as_err(
-                                validation_log,
-                                Error::ValidationRule(
-                                    "could not parse action ingredient parameter".into(),
-                                ),
-                            )
-                        })?;
-
+                    if let Some(h) = &params.ingredient {
                         // can we find a reference in the ingredient list
                         // is it referenced from this manifest
                         if claim.ingredient_assertions().iter().any(|i| {
@@ -2441,24 +2348,7 @@ impl Claim {
                             Some(v) => parent_tested = Some(v),
                             None => parent_tested = Some(false),
                         }
-                    } else if let Some(v) = params.get("ingredients") {
-                        let h_vec = value_cbor_to_type::<Vec<HashedUri>>(v).ok_or_else(|| {
-                            log_item!(
-                                label.clone(),
-                                "could not parse action ingredients parameter",
-                                "verify_actions"
-                            )
-                            .validation_status(
-                                validation_status::ASSERTION_ACTION_INGREDIENT_MISMATCH,
-                            )
-                            .failure_as_err(
-                                validation_log,
-                                Error::ValidationRule(
-                                    "could not parse action ingredients parameter".into(),
-                                ),
-                            )
-                        })?;
-
+                    } else if let Some(h_vec) = &params.ingredients {
                         for h in h_vec {
                             // can we find a reference in the ingredient list
                             // is it referenced from this manifest
@@ -2501,31 +2391,13 @@ impl Claim {
                 if action.action() == c2pa_action::REDACTED {
                     if let Some(params) = action.parameters() {
                         let mut parent_tested = None; // on exists if action actually pointed to an ingredient
-                        if let Some(v) = params.get("redacted") {
-                            let redacted_uri =
-                                value_cbor_to_type::<String>(v).ok_or_else(|| {
-                                    log_item!(
-                                        label.clone(),
-                                        "could not parse action redacted parameter",
-                                        "verify_actions"
-                                    )
-                                    .validation_status(
-                                        validation_status::ASSERTION_ACTION_MALFORMED,
-                                    )
-                                    .failure_as_err(
-                                        validation_log,
-                                        Error::ValidationRule(
-                                            "could not parse action redacted parameter".into(),
-                                        ),
-                                    )
-                                })?;
-
-                            if let Some(ingredient_label) = manifest_label_from_uri(&redacted_uri) {
+                        if let Some(redacted_uri) = &params.redacted {
+                            if let Some(ingredient_label) = manifest_label_from_uri(redacted_uri) {
                                 // can we find a reference in the ingredient list
                                 if let Some(ingredient) = svi.manifest_map.get(&ingredient_label) {
                                     // does the assertion exist
                                     if let Some(readaction_label) =
-                                        assertion_label_from_uri(&redacted_uri)
+                                        assertion_label_from_uri(redacted_uri)
                                     {
                                         let (label, instance) =
                                             Claim::assertion_label_from_link(&readaction_label);
