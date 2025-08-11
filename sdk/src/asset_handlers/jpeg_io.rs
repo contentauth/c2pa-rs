@@ -783,6 +783,7 @@ fn get_seg_size(input_stream: &mut dyn CAIRead) -> Result<usize> {
 }
 
 fn extract_items(mut stream: impl Seek + Read, container_items: Vec<ContainerItem>) -> Result<()> {
+    let total_length = stream.seek(SeekFrom::End(0))?;
     let mut prev: i64 = 0;
     for container_item in container_items.iter().skip(1).rev() {
         let extension = format_to_extension(&container_item.mime).unwrap_or_default();
@@ -803,8 +804,8 @@ fn extract_items(mut stream: impl Seek + Read, container_items: Vec<ContainerIte
 
     let mut test = File::create("orig.jpg")?;
     stream.seek(SeekFrom::Start(0))?;
-    prev *= -1;
-    let mut image_data = vec![0u8; prev.try_into()?];
+    let original_length = (total_length as i64 + prev) as usize;
+    let mut image_data = vec![0u8; original_length];
     stream.read_exact(&mut image_data)?;
     test.write_all(&image_data)?;
 
@@ -1239,7 +1240,7 @@ pub mod tests {
 
     #[test]
     fn test() {
-        let source = crate::utils::test::fixture_path("MP.jpg");
+        let source = crate::utils::test::fixture_path("motion_photo.jpg");
 
         let handler = JpegIO::new("");
         let assetio_handler = handler.get_handler("jpg");

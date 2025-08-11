@@ -48,6 +48,7 @@ impl MultiAssetHash {
 
     pub fn verify_self(&self, total_size: u64) -> Result<()> {
         let mut expected_offset: u64 = 0;
+        let mut optional_lengths: u64 = 0;
 
         if self.parts.is_empty() {
             return Err(Error::C2PAValidation(
@@ -61,10 +62,13 @@ impl MultiAssetHash {
                     ASSERTION_MULTI_ASSET_HASH_MALFORMED.to_string(),
                 ));
             }
+            if part.optional.unwrap_or(false) {
+                optional_lengths += part.location.length
+            };
             expected_offset += part.location.length;
         }
 
-        if expected_offset != total_size {
+        if expected_offset - optional_lengths > total_size {
             return Err(Error::C2PAValidation(
                 ASSERTION_MULTI_ASSET_HASH_MALFORMED.to_string(),
             ));
@@ -193,18 +197,33 @@ pub mod tests {
         store::Store,
     };
 
-    const TEST_IMAGE: &[u8] = include_bytes!("../../tests/fixtures/multi_asset_hash_signed.jpg");
+    const ORIG_MOTION_PHOTO: &[u8] = include_bytes!("../../tests/fixtures/motion_photo.jpg");
+    const NO_MOVIE_MOTION_PHOTO: &[u8] =
+        include_bytes!("../../tests/fixtures/no_movie_motion_photo.jpg");
 
     #[test]
     fn test_validation() {
         let mut validation_log = StatusTracker::default();
-        let source = Cursor::new(TEST_IMAGE);
+        let source = Cursor::new(ORIG_MOTION_PHOTO);
         let store = Store::from_stream("image/jpeg", source, true, &mut validation_log).unwrap();
         let claim = store.provenance_claim().unwrap();
         let assertion =
             MultiAssetHash::from_assertion(claim.get_assertion(MultiAssetHash::LABEL, 0).unwrap())
                 .unwrap();
-        let mut source = Cursor::new(TEST_IMAGE);
+        let mut source = Cursor::new(ORIG_MOTION_PHOTO);
+        assertion.verify_stream_hash(&mut source, claim).unwrap();
+    }
+
+    #[test]
+    fn test_validation_with_exclusion_of_optional_data_hash() {
+        let mut validation_log = StatusTracker::default();
+        let source = Cursor::new(NO_MOVIE_MOTION_PHOTO);
+        let store = Store::from_stream("image/jpeg", source, true, &mut validation_log).unwrap();
+        let claim = store.provenance_claim().unwrap();
+        let assertion =
+            MultiAssetHash::from_assertion(claim.get_assertion(MultiAssetHash::LABEL, 0).unwrap())
+                .unwrap();
+        let mut source = Cursor::new(NO_MOVIE_MOTION_PHOTO);
         assertion.verify_stream_hash(&mut source, claim).unwrap();
     }
 

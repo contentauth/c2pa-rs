@@ -240,6 +240,41 @@ mod integration_1 {
         Ok(())
     }
 
+    #[test]
+    #[cfg(feature = "file_io")]
+    fn test_multi_asset_hash_assertion() -> Result<()> {
+        use std::io::Cursor;
+
+        use serde_json::json;
+
+        Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml"))?;
+        // set up parent and destination paths
+        let temp_dir = tempdirectory()?;
+        let output_path = temp_dir.path().join("test_file.jpg");
+        let parent_path = fixture_path("earth_apollo17.jpg");
+        let parent_json = json!({
+            "title": "Parent Test",
+            "relationship": "parentOf",
+            "label": "CA.jpg",
+        })
+        .to_string();
+        // create a new Manifest
+        let mut builder = Builder::new();
+        let mut source = Cursor::new(include_bytes!("fixtures/no_movie_motion_photo.jpg"));
+
+        builder.add_ingredient_from_stream(parent_json, "image/jpeg", &mut source)?;
+
+        // sign and embed into the target file
+        let signer = Settings::signer()?;
+        builder.sign_file(signer.as_ref(), &parent_path, &output_path)?;
+
+        // read our new file with embedded manifest
+        let reader = Reader::from_file(&output_path)?;
+
+        println!("{reader}");
+        Ok(())
+    }
+
     #[cfg(feature = "v1_api")]
     struct PlacedCallback {
         path: String,
