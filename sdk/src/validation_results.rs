@@ -813,7 +813,7 @@ pub mod validation_codes {
     /// Any corresponding URL should point to a C2PA assertion box.
     pub const ASSERTION_MULTI_ASSET_HASH_MALFORMED: &str = "assertion.multiAssetHash.malformed";
 
-    /// The hash of a part of a multi-part asset does not match the hash 
+    /// The hash of a part of a multi-part asset does not match the hash
     /// declared in the multi-asset hash assertion.
     ///
     /// Any corresponding URL should point to a C2PA assertion box.

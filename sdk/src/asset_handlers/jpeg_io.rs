@@ -1216,8 +1216,7 @@ pub mod tests {
         .unwrap();
         let segs = jpeg.segments_by_marker(markers::APP1);
 
-        let mut extensions: Vec<XmpExtension> =
-            segs.filter_map(extract_xmp_extensions).collect();
+        let mut extensions: Vec<XmpExtension> = segs.filter_map(extract_xmp_extensions).collect();
 
         extensions.sort_by_key(|extension| extension.offset);
 
