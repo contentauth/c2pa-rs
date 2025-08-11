@@ -44,13 +44,9 @@ pub struct MultiAssetHash {
 impl MultiAssetHash {
     pub const LABEL: &'static str = labels::MULTI_ASSET_HASH;
 
-    pub fn new(location: LocatorMap, hash_assertion: HashedUri, optional: Option<bool>) -> Self {
-        Self {
-            parts: vec![PartHashMap::new(location, hash_assertion, optional)],
-        }
-    }
-
-    pub fn verify_self(&self, total_size: u64) -> Result<()> {
+    /// The parts within the parts array shall be listed in the order in which they appear in the file,
+    /// and the parts shall be contiguous, non-overlapping, and cover every byte of the asset.
+    fn verify_self(&self, total_size: u64) -> Result<()> {
         if self.parts.is_empty() {
             return Err(Error::C2PAValidation(
                 ASSERTION_MULTI_ASSET_HASH_MALFORMED.to_string(),
@@ -90,6 +86,7 @@ impl MultiAssetHash {
         Ok(())
     }
 
+    /// Verifies the multi-asset hash assertion against the provided asset data.
     pub fn verify_hash(&self, asset_data: &mut ClaimAssetData<'_>, claim: &Claim) -> Result<()> {
         match asset_data {
             #[cfg(feature = "file_io")]
@@ -106,7 +103,9 @@ impl MultiAssetHash {
         }
     }
 
-    pub fn verify_stream_hash(&self, mut reader: &mut dyn CAIRead, claim: &Claim) -> Result<()> {
+    /// Verifies each part of the multi-asset hash through comparing computed hashes.
+    /// Validates part locations, reads the specified byte ranges, and verifies against referenced hash assertions.
+    fn verify_stream_hash(&self, mut reader: &mut dyn CAIRead, claim: &Claim) -> Result<()> {
         let length = stream_len(reader)?;
         self.verify_self(length)?;
 
@@ -133,7 +132,6 @@ impl MultiAssetHash {
                         let mut part_reader = Cursor::new(buf);
 
                         match label.as_str() {
-                            // starts with for all
                             l if l.starts_with(DataHash::LABEL) => {
                                 let dh = DataHash::from_assertion(assertion)?;
                                 let alg = match &dh.alg {
@@ -172,16 +170,6 @@ pub struct PartHashMap {
 
     #[serde(skip_serializing_if = "Option::is_none")]
     pub optional: Option<bool>,
-}
-
-impl PartHashMap {
-    pub fn new(location: LocatorMap, hash_assertion: HashedUri, optional: Option<bool>) -> Self {
-        Self {
-            location,
-            hash_assertion,
-            optional,
-        }
-    }
 }
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]

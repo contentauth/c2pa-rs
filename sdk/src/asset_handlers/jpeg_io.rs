@@ -49,8 +49,7 @@ const XMP_SIGNATURE: &str = "http://ns.adobe.com/xap/1.0/";
 const XMP_SIGNATURE_BUFFER_SIZE: usize = XMP_SIGNATURE.len() + 1; // skip null or space char at end
 
 const XMP_EXTENSION_SIGNATURE: &str = "http://ns.adobe.com/xmp/extension/";
-
-const XMP_EXTENSION_SIGNATURE_BUFFER_SIZE: usize = XMP_EXTENSION_SIGNATURE.len() + 1;
+const XMP_EXTENSION_SIGNATURE_BUFFER_SIZE: usize = XMP_EXTENSION_SIGNATURE.len() + 1; // skip null or space char at end
 
 const XMP_EXTENDED_NOTE: &str = "xmpNote:HasExtendedXMP";
 const XMP_EXTENDED_NOTE_SIZE: usize = XMP_EXTENDED_NOTE.len() + 1 + 1; // skip '=' and '"'

@@ -3909,6 +3909,7 @@ impl Claim {
             .find(|ca| ca.label_raw() == assertion_label && ca.instance() == instance)
     }
 
+    /// TODO: Refactor instances of this pattern to use this method
     /// returns assertion from link
     pub fn get_assertion_from_link(&self, assertion_link: &str) -> Option<&Assertion> {
         let (label, instance) = Claim::assertion_label_from_link(assertion_link);
