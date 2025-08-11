@@ -54,7 +54,7 @@ impl MultiAssetHash {
         }
 
         let mut expected_offset: u64 = 0;
-        let mut optional_lengths: u64 = 0;
+        let mut optional_sizes: u64 = 0;
 
         for part in &self.parts {
             match &part.location {
@@ -64,8 +64,9 @@ impl MultiAssetHash {
                             ASSERTION_MULTI_ASSET_HASH_MALFORMED.to_string(),
                         ));
                     }
+                    // Keep track of the size of optional parts.
                     if part.optional.unwrap_or(false) {
-                        optional_lengths += locator.length;
+                        optional_sizes += locator.length;
                     }
                     expected_offset += locator.length;
                 }
@@ -77,7 +78,8 @@ impl MultiAssetHash {
             }
         }
 
-        if expected_offset - optional_lengths > total_size {
+        // Deduct optional sizes and ensure that the offsets are less than the total size.
+        if expected_offset - optional_sizes > total_size {
             return Err(Error::C2PAValidation(
                 ASSERTION_MULTI_ASSET_HASH_MALFORMED.to_string(),
             ));
@@ -86,6 +88,7 @@ impl MultiAssetHash {
         Ok(())
     }
 
+    // Verifies the multi-asset hash assertion against the provided asset data.
     pub fn verify_hash(&self, asset_data: &mut ClaimAssetData<'_>, claim: &Claim) -> Result<()> {
         match asset_data {
             #[cfg(feature = "file_io")]
@@ -102,6 +105,8 @@ impl MultiAssetHash {
         }
     }
 
+    /// Verifies each part of the multi-asset hash through comparing computed hashes.
+    /// Validates part locations, reads the specified byte ranges, and verifies against referenced hash assertions.
     fn verify_stream_hash(&self, mut reader: &mut dyn CAIRead, claim: &Claim) -> Result<()> {
         let length = stream_len(reader)?;
         self.verify_self(length)?;
@@ -112,6 +117,8 @@ impl MultiAssetHash {
                     continue;
                 };
             }
+
+            // Retrieve the assertion linked in the multi-asset assertions.
             if let Some(assertion) = claim.get_assertion_from_link(&part.hash_assertion.url()) {
                 let label = assertion.label();
 
@@ -120,6 +127,7 @@ impl MultiAssetHash {
                         let offset = locator.byte_offset;
                         let length = locator.length;
 
+                        // Read only the specified parts within the larger stream.
                         reader.seek(std::io::SeekFrom::Start(offset))?;
                         let buf = reader.read_to_vec(length).map_err(|_| {
                             Error::C2PAValidation(
@@ -128,6 +136,7 @@ impl MultiAssetHash {
                         })?;
                         let mut part_reader = Cursor::new(buf);
 
+                        // Perform validation on each part depending on type of hash.
                         match label.as_str() {
                             l if l.starts_with(DataHash::LABEL) => {
                                 let dh = DataHash::from_assertion(assertion)?;

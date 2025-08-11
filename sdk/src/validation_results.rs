@@ -819,7 +819,7 @@ pub mod validation_codes {
     /// Any corresponding URL should point to a C2PA assertion box.
     pub const ASSERTION_MULTI_ASSET_HASH_MISMATCH: &str = "assertion.multiAssetHash.mismatch";
 
-    /// A required part of the multi-part asset cannot be located
+    /// A required part of the multi-part asset cannot be located.
     ///
     /// Any corresponding URL should point to a C2PA assertion box.
     pub const ASSERTION_MULTI_ASSET_HASH_MISSING_PART: &str =

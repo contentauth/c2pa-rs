@@ -119,10 +119,12 @@ fn xmp_from_bytes(asset_bytes: &[u8]) -> Option<String> {
 
     let mut standard_xmp = segs.find_map(extract_xmp).map(String::from)?;
 
+    // Check for the existence of XMP extensions.
     if let Some(pos) = standard_xmp.find(XMP_EXTENDED_NOTE) {
         let beginning = pos + XMP_EXTENDED_NOTE_SIZE;
         let guid = &standard_xmp[beginning..beginning + 32];
 
+        // Only incorporate ExtendedXMP blocks whose GUID matches the value of xmpNote:HasExtendedXMP.
         let mut extensions: Vec<XmpExtension> = segs
             .filter_map(|seg| {
                 let extension = extract_xmp_extensions(seg)?;
@@ -135,6 +137,7 @@ fn xmp_from_bytes(asset_bytes: &[u8]) -> Option<String> {
 
         extensions.sort_by_key(|extensions| extensions.offset);
 
+        // The first chunk has offset 0, the second chunk has an offset equal to the first chunk's size, and so on.
         for i in 1..extensions.len() {
             let prev = &extensions[i - 1];
             let curr = &extensions[i];
