@@ -14,7 +14,7 @@
 use std::{
     collections::HashMap,
     fs::File,
-    io::{BufReader, Cursor, Read, Seek, SeekFrom, Write},
+    io::{BufReader, Cursor, Write},
     mem::size_of,
     path::*,
 };
@@ -39,8 +39,7 @@ use crate::{
     error::{Error, Result},
     utils::{
         io_utils::tempfile_builder,
-        mime::format_to_extension,
-        xmp_inmemory_utils::{add_provenance, extract_container_items, ContainerItem, MIN_XMP},
+        xmp_inmemory_utils::{add_provenance, MIN_XMP},
     },
 };
 
@@ -782,34 +781,36 @@ fn get_seg_size(input_stream: &mut dyn CAIRead) -> Result<usize> {
     }
 }
 
-fn extract_items(mut stream: impl Seek + Read, container_items: Vec<ContainerItem>) -> Result<()> {
-    let total_length = stream.seek(SeekFrom::End(0))?;
+#[allow(dead_code)] // Used to extract each media item individually as specified in the xmp
+fn extract_media_items_from_xmp(
+    mut stream: impl std::io::Seek + std::io::Read,
+    xmp: &str,
+) -> Result<Vec<Vec<u8>>> {
+    let container_items = crate::utils::xmp_inmemory_utils::extract_container_items(xmp);
+    let total_length = stream.seek(std::io::SeekFrom::End(0))?;
     let mut prev: i64 = 0;
-    for container_item in container_items.iter().skip(1).rev() {
-        let extension = format_to_extension(&container_item.mime).unwrap_or_default();
-        let mut output_path = "extracted.".to_owned();
-        output_path.push_str(extension);
+    let mut parts_data = Vec::new();
 
+    for container_item in container_items.iter().skip(1).rev() {
         let offset: i64 = -(container_item.length).try_into()?;
-        stream.seek(SeekFrom::End(offset + prev))?;
+        stream.seek(std::io::SeekFrom::End(offset + prev))?;
         prev += offset;
 
-        let mut video_data = vec![0u8; container_item.length];
-        stream.read_exact(&mut video_data)?;
+        let mut secondary_media = vec![0u8; container_item.length];
+        stream.read_exact(&mut secondary_media)?;
 
-        // Write to output file
-        let mut output = File::create(output_path)?;
-        output.write_all(&video_data)?;
+        parts_data.push(secondary_media);
     }
 
-    let mut test = File::create("orig.jpg")?;
-    stream.seek(SeekFrom::Start(0))?;
-    let original_length = (total_length as i64 + prev) as usize;
-    let mut image_data = vec![0u8; original_length];
-    stream.read_exact(&mut image_data)?;
-    test.write_all(&image_data)?;
+    stream.seek(std::io::SeekFrom::Start(0))?;
+    let primary_media_length = (total_length as i64 + prev) as usize;
+    let mut primary_media = vec![0u8; primary_media_length];
+    stream.read_exact(&mut primary_media)?;
 
-    Ok(())
+    parts_data.push(primary_media);
+    parts_data.reverse();
+
+    Ok(parts_data)
 }
 
 fn make_box_maps(input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>> {
@@ -1237,27 +1238,6 @@ pub mod tests {
 
     use super::*;
     use crate::utils::io_utils::tempdirectory;
-
-    #[test]
-    fn test() {
-        let source = crate::utils::test::fixture_path("motion_photo.jpg");
-
-        let handler = JpegIO::new("");
-        let assetio_handler = handler.get_handler("jpg");
-
-        // read in XMP
-        let mut file_reader = std::fs::File::open(&source).unwrap();
-        let read_xmp = assetio_handler
-            .get_reader()
-            .read_xmp(&mut file_reader)
-            .unwrap();
-
-        let test = extract_container_items(&read_xmp);
-        extract_items(file_reader, test).unwrap();
-        // // write XMP to a file
-        // let mut output_file = File::create("output.xmp").unwrap();
-        // write!(output_file, "{}", read_xmp).unwrap();
-    }
 
     #[test]
     fn test_extract_extensions_xmp() {
