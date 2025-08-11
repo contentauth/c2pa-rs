@@ -1132,8 +1132,9 @@ impl BmffHash {
             crate::asset_handlers::bmff_io::write_c2pa_box(
                 &mut uuid_box_data,
                 &[],
-                false,
+                crate::asset_handlers::bmff_io::MERKLE,
                 &mm_cbor,
+                0,
             )?;
 
             let first_moof = box_infos
@@ -1226,8 +1227,9 @@ impl BmffHash {
                 crate::asset_handlers::bmff_io::write_c2pa_box(
                     &mut uuid_box_data,
                     &[],
-                    false,
+                    crate::asset_handlers::bmff_io::MERKLE,
                     &mm_cbor,
+                    0,
                 )?;
 
                 // replace temp C2PA Merkle box
@@ -1413,8 +1415,9 @@ impl BmffHash {
                 crate::asset_handlers::bmff_io::write_c2pa_box(
                     &mut uuid_box_data,
                     &[],
-                    false,
+                    crate::asset_handlers::bmff_io::MERKLE,
                     cbor_data,
+                    0,
                 )
                 .unwrap_or_default(); // this cannot fail unless the vec allocation above fails
                 uuid_box_data
@@ -1522,7 +1525,7 @@ impl BmffHash {
                 // the number of MM entries should match the number of ranges
                 if ranges.len() != mm.count {
                     return Err(Error::C2PAValidation(
-                        "number of leaves does not match the Merkle".to_string(),
+                        "number of leaves does not match the MerkleMap count".to_string(),
                     ));
                 }
 
@@ -1551,20 +1554,22 @@ impl BmffHash {
                 .collect::<Vec<(&Vec<BmffMerkleMap>, &Vec<HashRange>)>>();
 
             for (mm_index, (bmff_mm, ranges)) in merkle_maps_with_ranges.into_iter().enumerate() {
+                let current_mm = &mm_vec[mm_index];
+
+                let alg = match &current_mm.alg {
+                    Some(a) => a,
+                    None => self
+                        .alg()
+                        .ok_or(Error::HashMismatch("alg is required".to_string()))?,
+                };
+
                 // check all the ranges in this for this mdat
                 for (range_index, range) in ranges.iter().enumerate() {
-                    let alg = match &mm_vec[mm_index].alg {
-                        Some(a) => a,
-                        None => self
-                            .alg()
-                            .ok_or(Error::HashMismatch("alg is required".to_string()))?,
-                    };
-
                     // hash the entire fragment minus exclusions
                     let hash = hash_stream_by_alg(alg, reader, Some(vec![range.clone()]), false)?;
 
                     // check MerkleMap for the hash
-                    if !mm_vec[mm_index].check_merkle_tree(
+                    if !current_mm.check_merkle_tree(
                         alg,
                         &hash,
                         bmff_mm[range_index].location,
