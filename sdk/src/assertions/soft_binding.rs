@@ -30,7 +30,7 @@ pub struct SoftBinding {
     pub name: Option<String>,
 
     /// A string describing parameters of the soft binding algorithm.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "alg-params", skip_serializing_if = "Option::is_none")]
     pub alg_params: Option<String>,
 
     #[serde(default, with = "serde_bytes")]
