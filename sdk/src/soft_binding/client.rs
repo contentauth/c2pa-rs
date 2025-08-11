@@ -11,7 +11,11 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use std::cmp::Ordering;
+use std::{
+    cell::RefCell,
+    cmp::Ordering,
+    io::{Read, Seek},
+};
 
 use crate::{
     soft_binding::{
@@ -106,18 +110,16 @@ where
     ///
     /// This is derived from the [fingerprint-golden](https://spec.c2pa.org/specifications/specifications/2.2/softbinding/Decoupled.html#_fingerprinting_algorithms_2)
     /// usage flow defined in the spec.
-    pub fn fingerprint_match_by_stream(
+    pub fn fingerprint_match_by_stream<U: Read + Seek>(
         &self,
         entry: &SoftBindingAlgorithmEntry,
-        // TODO: validate this based on the entry
         mime_type: &str,
-        // TODO: stream this
-        asset_bytes: &[u8],
+        asset_stream: &mut U,
     ) -> Result<Option<SoftBindingMatch>> {
         let matches = self.fetch_matches_by_stream(
             entry,
             mime_type,
-            asset_bytes,
+            asset_stream,
             // TODO: what would hint value be for a fingerprint or is it only for watermark?
             None,
             None,
@@ -134,18 +136,16 @@ where
     ///
     /// This is derived from the [watermark-golden](https://spec.c2pa.org/specifications/specifications/2.2/softbinding/Decoupled.html#_watermarking_algorithms_2)
     /// usage flow defined in the spec.
-    pub fn watermark_match_by_stream(
+    pub fn watermark_match_by_stream<U: Read + Seek>(
         &self,
         entry: &SoftBindingAlgorithmEntry,
-        // TODO: validate this based on the entry
         mime_type: &str,
-        // TODO: stream this
-        asset_bytes: &[u8],
+        asset_stream: &mut U,
     ) -> Result<Option<SoftBindingMatch>> {
         let matches = self.fetch_matches_by_stream(
             entry,
             mime_type,
-            asset_bytes,
+            asset_stream,
             // TODO: can we take a hint?
             None,
             Some(1),
@@ -184,25 +184,28 @@ where
     /// This is commonly used when the algorithm identifier value is unknown and can't be computed locally,
     /// but can be computed by a remote soft binding resolution API on the source asset.
     #[inline]
-    pub fn fetch_matches_by_stream(
+    pub fn fetch_matches_by_stream<U: Read + Seek>(
         &self,
         entry: &SoftBindingAlgorithmEntry,
-        // TODO: validate this based on the entry
         mime_type: &str,
-        // TODO: stream this
-        asset_bytes: &[u8],
+        asset_stream: &mut U,
         hint_value: Option<&str>,
         max_results_per_api: Option<u32>,
         hint_max_results: Option<u32>,
     ) -> Result<Vec<Result<SoftBindingMatch>>> {
+        // TODO: not a great solution but allows us to mutate the asset stream from the closure multiple times
+        let cell = RefCell::new(asset_stream);
         self.fetch_matches_impl(entry, hint_max_results, |url: &str, token: &str| {
+            let mut asset_stream = cell.borrow_mut();
+            asset_stream.rewind()?;
+
             // TODO: depending on what hint_value is, if that's specified we can just call the binding APIs
             SoftBindingResolutionApi::upload_file(
                 url,
                 token,
                 &entry.alg,
                 mime_type,
-                asset_bytes,
+                &mut *asset_stream,
                 max_results_per_api,
                 Some(&entry.alg),
                 hint_value,
@@ -306,6 +309,8 @@ pub mod tests {
     #![allow(clippy::panic)]
     #![allow(clippy::unwrap_used)]
 
+    use std::io::Cursor;
+
     use httpmock::MockServer;
 
     use crate::soft_binding::{
@@ -356,7 +361,7 @@ pub mod tests {
 
         let client = mock_soft_binding_client();
         let fingerprint_match = client
-            .fingerprint_match_by_stream(entry, "image/jpeg", &query.asset_bytes)
+            .fingerprint_match_by_stream(entry, "image/jpeg", &mut Cursor::new(&query.asset_bytes))
             .unwrap()
             .unwrap();
 
@@ -395,7 +400,7 @@ pub mod tests {
 
         let client = mock_soft_binding_client();
         let watermark_match = client
-            .watermark_match_by_stream(entry, "image/jpeg", &query.asset_bytes)
+            .watermark_match_by_stream(entry, "image/jpeg", &mut Cursor::new(&query.asset_bytes))
             .unwrap()
             .unwrap();
 
@@ -475,7 +480,7 @@ pub mod tests {
             .fetch_matches_by_stream(
                 entry,
                 &query.mime_type,
-                &query.asset_bytes,
+                &mut Cursor::new(&query.asset_bytes),
                 None,
                 None,
                 None,

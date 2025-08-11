@@ -11,8 +11,11 @@
 // specific language governing permissions and limitations under
 // each license.
 
+use std::io::Read;
+
 use http::header;
 use serde::{Deserialize, Serialize};
+use ureq::SendBody;
 
 use crate::{Error, Result};
 
@@ -132,8 +135,7 @@ impl SoftBindingResolutionApi {
         bearer_token: &str,
         alg: &str,
         mime_type: &str,
-        // TODO: stream it
-        asset_bytes: &[u8],
+        asset_stream: &mut impl Read,
         max_results: Option<u32>,
         // TODO: when is hint_alg actually used?
         hint_alg: Option<&str>,
@@ -157,7 +159,7 @@ impl SoftBindingResolutionApi {
         let response = ureq::post(url)
             .header(header::AUTHORIZATION, &format!("Bearer {bearer_token}"))
             .header(header::CONTENT_TYPE, mime_type)
-            .send(asset_bytes)?;
+            .send(SendBody::from_reader(asset_stream))?;
 
         Ok(response.into_body().read_json()?)
     }
@@ -199,6 +201,8 @@ impl SoftBindingResolutionApi {
 pub mod tests {
     #![allow(clippy::panic)]
     #![allow(clippy::unwrap_used)]
+
+    use std::io::Cursor;
 
     use httpmock::MockServer;
 
@@ -439,7 +443,7 @@ pub mod tests {
             TEST_BEARER_TOKEN,
             &query.alg,
             &query.mime_type,
-            &query.asset_bytes,
+            &mut Cursor::new(&query.asset_bytes),
             query.max_results,
             query.hint_alg.as_deref(),
             query.hint_value.as_deref(),
