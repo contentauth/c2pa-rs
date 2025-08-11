@@ -83,6 +83,7 @@ fn extract_xmp(seg: &JpegSegment) -> Option<&str> {
     }
 }
 
+// Extract XMP from bytes.
 fn read_be_u32(input: &mut &[u8]) -> Result<u32> {
     let (int_bytes, rest) = input.split_at(size_of::<u32>());
     *input = rest;

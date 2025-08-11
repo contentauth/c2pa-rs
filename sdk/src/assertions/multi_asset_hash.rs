@@ -86,7 +86,6 @@ impl MultiAssetHash {
         Ok(())
     }
 
-    /// Verifies the multi-asset hash assertion against the provided asset data.
     pub fn verify_hash(&self, asset_data: &mut ClaimAssetData<'_>, claim: &Claim) -> Result<()> {
         match asset_data {
             #[cfg(feature = "file_io")]
@@ -103,8 +102,6 @@ impl MultiAssetHash {
         }
     }
 
-    /// Verifies each part of the multi-asset hash through comparing computed hashes.
-    /// Validates part locations, reads the specified byte ranges, and verifies against referenced hash assertions.
     fn verify_stream_hash(&self, mut reader: &mut dyn CAIRead, claim: &Claim) -> Result<()> {
         let length = stream_len(reader)?;
         self.verify_self(length)?;
