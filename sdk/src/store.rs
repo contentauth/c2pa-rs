@@ -1466,10 +1466,10 @@ impl Store {
                     let ingredient_version = ingredient.version();
                     let has_redactions = svi.redactions.iter().any(|r| r.contains(&label));
 
-                    // only allow the extra ingredient trust checks for 1.x ingredients
+                    // allow the extra ingredient trust checks
                     // these checks are to prevent the trust spoofing
-                    let check_ingredient_trust: bool = ingredient_version < 2
-                        && crate::settings::get_settings_value("verify.check_ingredient_trust")?;
+                    let check_ingredient_trust: bool =
+                        crate::settings::get_settings_value("verify.check_ingredient_trust")?;
 
                     // get the 1.1-1.2 box hash
                     let ingredient_hashes = store.get_manifest_box_hashes(ingredient);
@@ -6310,7 +6310,7 @@ pub mod tests {
         let cgi = ClaimGeneratorInfo::new("claim_v2_unit_test");
         claim.add_claim_generator_info(cgi);
 
-        let ingredient_hashes = store.get_manifest_box_hashes(&pc);
+        let ingredient_hashes = store.get_manifest_box_hashes(pc);
         let parent_hashed_uri = HashedUri::new(
             store.provenance_path().unwrap(),
             Some(pc.alg().to_string()),
@@ -6377,7 +6377,7 @@ pub mod tests {
 
         // make update PC claim the parent of the ordinary claim
         let update_pc = um_store.provenance_claim().unwrap();
-        let ingredient_hashes = um_store.get_manifest_box_hashes(&update_pc);
+        let ingredient_hashes = um_store.get_manifest_box_hashes(update_pc);
         let parent_hashed_uri = HashedUri::new(
             um_store.provenance_path().unwrap(),
             Some(update_pc.alg().to_string()),

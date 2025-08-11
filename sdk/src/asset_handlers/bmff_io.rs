@@ -1482,7 +1482,7 @@ impl CAIWriter for BmffIO {
             ));
         }
 
-        // if is an ordinary manifest then it should not have an update manifest
+        // if is an ordinary manifest store then it should not have an update manifest store
         if has_manifest && has_update {
             return Err(Error::BadParam(
                 "BMFF save failure, found manifest store with update manifest store".to_string(),
