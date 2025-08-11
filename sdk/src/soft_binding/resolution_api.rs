@@ -16,6 +16,7 @@ use std::io::Read;
 use http::header;
 use serde::{Deserialize, Serialize};
 use ureq::SendBody;
+use url::Url;
 
 use crate::{Error, Result};
 
@@ -86,16 +87,19 @@ impl SoftBindingResolutionApi {
         value: &str,
         max_results: Option<u32>,
     ) -> Result<SoftBindingQueryResult> {
-        let mut url = format!("{base_url}/matches/byBinding?value={value}&alg={alg}");
+        let mut url = Url::parse_with_params(base_url, &[("value", value), ("alg", alg)])?;
+        url.set_path("matches/byBinding");
+
         if let Some(max_results) = max_results {
             if max_results < 1 {
                 return Err(Error::MaxResultsTooSmall);
             }
 
-            url.push_str(&format!("&maxResults={max_results}"));
+            url.query_pairs_mut()
+                .append_pair("maxResults", &max_results.to_string());
         }
 
-        let response = ureq::get(url)
+        let response = ureq::get(url.as_str())
             .header(header::AUTHORIZATION, &format!("Bearer {bearer_token}"))
             .call()?;
 
@@ -112,16 +116,19 @@ impl SoftBindingResolutionApi {
         value: &str,
         max_results: Option<u32>,
     ) -> Result<SoftBindingQueryResult> {
-        let mut url = format!("{base_url}/matches/byBinding");
+        let mut url = Url::parse(base_url)?;
+        url.set_path("matches/byBinding");
+
         if let Some(max_results) = max_results {
             if max_results < 1 {
                 return Err(Error::MaxResultsTooSmall);
             }
 
-            url.push_str(&format!("?maxResults={max_results}"));
+            url.query_pairs_mut()
+                .append_pair("maxResults", &max_results.to_string());
         }
 
-        let response = ureq::post(url)
+        let response = ureq::post(url.as_str())
             .header(header::AUTHORIZATION, &format!("Bearer {bearer_token}"))
             .send_json(SoftBindingQuery { alg, value })?;
 
@@ -130,6 +137,7 @@ impl SoftBindingResolutionApi {
 
     /// Find zero or more C2PA Manifest identifiers within the manifest store using an
     /// uploaded file containing a digital asset.
+    #[allow(clippy::too_many_arguments)]
     pub fn upload_file(
         base_url: &str,
         bearer_token: &str,
@@ -141,22 +149,25 @@ impl SoftBindingResolutionApi {
         hint_alg: Option<&str>,
         hint_value: Option<&str>,
     ) -> Result<SoftBindingQueryResult> {
-        let mut url = format!("{base_url}/matches/byContent?alg={alg}");
+        let mut url = Url::parse_with_params(base_url, &[("alg", alg)])?;
+        url.set_path("matches/byContent");
+
         if let Some(hint_alg) = hint_alg {
-            url.push_str(&format!("&hintAlg={hint_alg}"));
+            url.query_pairs_mut().append_pair("hintAlg", hint_alg);
         }
         if let Some(hint_value) = hint_value {
-            url.push_str(&format!("&hintValue={hint_value}"));
+            url.query_pairs_mut().append_pair("hintAlg", hint_value);
         }
         if let Some(max_results) = max_results {
             if max_results < 1 {
                 return Err(Error::MaxResultsTooSmall);
             }
 
-            url.push_str(&format!("&maxResults={max_results}"));
+            url.query_pairs_mut()
+                .append_pair("maxResults", &max_results.to_string());
         }
 
-        let response = ureq::post(url)
+        let response = ureq::post(url.as_str())
             .header(header::AUTHORIZATION, &format!("Bearer {bearer_token}"))
             .header(header::CONTENT_TYPE, mime_type)
             .send(SendBody::from_reader(asset_stream))?;
@@ -174,12 +185,15 @@ impl SoftBindingResolutionApi {
         manifest_id: &str,
         return_active_manifest: Option<bool>,
     ) -> Result<Vec<u8>> {
-        let mut url = format!("{base_url}/manifests/{manifest_id}");
+        let mut url = Url::parse(base_url)?;
+        url.set_path(&format!("manifests/{manifest_id}"));
+
         if let Some(return_active_manifest) = return_active_manifest {
-            url.push_str(&format!("?returnActiveManifest={return_active_manifest}"));
+            url.query_pairs_mut()
+                .append_pair("returnActiveManifest", &return_active_manifest.to_string());
         }
 
-        let response = ureq::get(url)
+        let response = ureq::get(url.as_str())
             .header(header::AUTHORIZATION, &format!("Bearer {bearer_token}"))
             .call()?;
 
@@ -190,9 +204,10 @@ impl SoftBindingResolutionApi {
     /// See <https://github.com/c2pa-org/softbinding-algorithm-list> for an authoritative
     /// list of C2PA soft binding algorithm names.
     pub fn get_supported_bindings(base_url: &str) -> Result<SoftBindingAlgList> {
-        let url = format!("{base_url}/services/supportedAlgorithms");
+        let mut url = Url::parse(base_url)?;
+        url.set_path("services/supportedAlgorithms");
 
-        let response = ureq::get(url).call()?;
+        let response = ureq::get(url.as_str()).call()?;
         Ok(response.into_body().read_json()?)
     }
 }
@@ -204,7 +219,7 @@ pub mod tests {
 
     use std::io::Cursor;
 
-    use httpmock::MockServer;
+    use httpmock::{Method, MockServer};
 
     use super::*;
 
@@ -232,11 +247,14 @@ pub mod tests {
 
         server.mock(|when, then| {
             let when = when
-                .method("GET")
+                .method(Method::GET)
                 .path("/matches/byBinding")
                 .query_param("value", &query.value)
                 .query_param("alg", &query.alg)
-                .header(header::AUTHORIZATION.as_str(), TEST_BEARER_TOKEN);
+                .header(
+                    header::AUTHORIZATION.as_str(),
+                    format!("Bearer {TEST_BEARER_TOKEN}"),
+                );
             if let Some(max_results) = query.max_results {
                 when.query_param("maxResults", max_results.to_string());
             }
@@ -256,16 +274,16 @@ pub mod tests {
 
         server.mock(|when, then| {
             let when = when
-                .method("POST")
+                .method(Method::POST)
                 .path("/matches/byBinding")
-                .body(
-                    serde_json::to_string(&SoftBindingQuery {
-                        alg: &query.alg,
-                        value: &query.value,
-                    })
-                    .unwrap(),
-                )
-                .header(header::AUTHORIZATION.as_str(), TEST_BEARER_TOKEN);
+                .json_body_obj(&SoftBindingQuery {
+                    alg: &query.alg,
+                    value: &query.value,
+                })
+                .header(
+                    header::AUTHORIZATION.as_str(),
+                    format!("Bearer {TEST_BEARER_TOKEN}"),
+                );
             if let Some(max_results) = query.max_results {
                 when.query_param("maxResults", max_results.to_string());
             }
@@ -295,12 +313,15 @@ pub mod tests {
 
         server.mock(|when, then| {
             let when = when
-                .method("POST")
+                .method(Method::POST)
                 .path("/matches/byContent")
                 .query_param("alg", &query.alg)
                 .header(header::CONTENT_TYPE.as_str(), &query.mime_type)
                 .body(str::from_utf8(&query.asset_bytes).unwrap())
-                .header(header::AUTHORIZATION.as_str(), TEST_BEARER_TOKEN);
+                .header(
+                    header::AUTHORIZATION.as_str(),
+                    format!("Bearer {TEST_BEARER_TOKEN}"),
+                );
             let when = if let Some(max_results) = query.max_results {
                 when.query_param("maxResults", max_results.to_string())
             } else {
@@ -329,11 +350,15 @@ pub mod tests {
         query: &GetManifestByIdQuery,
         result: &[u8],
     ) -> httpmock::Mock<'a> {
+        // Little bit of a hack to ensure `query.manifest_id` is url-encoded.
+        let mut url = Url::parse(&server.base_url()).unwrap();
+        url.set_path(&format!("/manifests/{}", query.manifest_id));
+
         server.mock(|when, then| {
-            let when = when
-                .method("GET")
-                .path(format!("/manifests/{}", query.manifest_id))
-                .header(header::AUTHORIZATION.as_str(), TEST_BEARER_TOKEN);
+            let when = when.method(Method::GET).path(url.path()).header(
+                header::AUTHORIZATION.as_str(),
+                format!("Bearer {TEST_BEARER_TOKEN}"),
+            );
             if let Some(return_active_manifest) = query.return_active_manifest {
                 when.query_param("returnActiveManifest", return_active_manifest.to_string());
             }
@@ -348,7 +373,8 @@ pub mod tests {
         result: &SoftBindingAlgList,
     ) -> httpmock::Mock<'a> {
         server.mock(|when, then| {
-            when.method("GET").path("/services/supportedAlgorithms");
+            when.method(Method::GET)
+                .path("/services/supportedAlgorithms");
             then.status(200).json_body_obj(&result);
         })
     }

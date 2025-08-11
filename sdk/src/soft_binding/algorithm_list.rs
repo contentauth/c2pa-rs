@@ -137,8 +137,13 @@ pub mod tests {
     use super::*;
 
     /// A small mock soft binding algorithm list used for testing.
-    pub fn mock_soft_binding_algorithm_list() -> Vec<SoftBindingAlgorithmEntry> {
-        serde_json::from_value(mock_soft_binding_algorithm_list_raw()).unwrap()
+    pub fn mock_soft_binding_algorithm_list(base_url: &str) -> Vec<SoftBindingAlgorithmEntry> {
+        let mut list: Vec<SoftBindingAlgorithmEntry> =
+            serde_json::from_value(mock_soft_binding_algorithm_list_raw()).unwrap();
+        for entry in &mut list {
+            entry.soft_binding_resolution_apis = Some(vec![base_url.to_owned()]);
+        }
+        list
     }
 
     /// The first 3 soft binding algorithms defined in the soft binding algorithm list:

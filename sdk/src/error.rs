@@ -316,6 +316,9 @@ pub enum Error {
     UreqError(#[from] ureq::Error),
 
     #[error(transparent)]
+    UrlError(#[from] url::ParseError),
+
+    #[error(transparent)]
     TryFromIntError(#[from] std::num::TryFromIntError),
 
     #[error(transparent)]

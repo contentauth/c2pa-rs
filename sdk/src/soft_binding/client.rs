@@ -330,12 +330,13 @@ pub mod tests {
 
     #[test]
     fn test_fingerprint_match_by_stream() {
-        let list = mock_soft_binding_algorithm_list();
+        let server = MockServer::start();
+        let list = mock_soft_binding_algorithm_list(&server.base_url());
         let entry = list.first().unwrap();
 
         let query = UploadFileQuery {
             alg: entry.alg.to_owned(),
-            max_results: Some(1),
+            max_results: None,
             mime_type: "image/jpeg".to_owned(),
             asset_bytes: vec![1, 2, 3],
             hint_alg: None,
@@ -356,7 +357,6 @@ pub mod tests {
             ],
         };
 
-        let server = MockServer::start();
         let upload_file_mock = mock_upload_file(&server, &query, &result);
 
         let client = mock_soft_binding_client();
@@ -376,7 +376,8 @@ pub mod tests {
 
     #[test]
     fn test_watermark_match_by_stream() {
-        let list = mock_soft_binding_algorithm_list();
+        let server = MockServer::start();
+        let list = mock_soft_binding_algorithm_list(&server.base_url());
         let entry = list.first().unwrap();
 
         let query = UploadFileQuery {
@@ -389,13 +390,12 @@ pub mod tests {
         };
         let result = SoftBindingQueryResult {
             matches: vec![SoftBindingQueryResultMatch {
-                manifest_id: "some manifest id 1".to_owned(),
+                manifest_id: "some manifest id".to_owned(),
                 endpoint: None,
                 similarity_score: None,
             }],
         };
 
-        let server = MockServer::start();
         let upload_file_mock = mock_upload_file(&server, &query, &result);
 
         let client = mock_soft_binding_client();
@@ -415,32 +415,32 @@ pub mod tests {
 
     #[test]
     fn test_fetch_matches_by_algorithm_value() {
-        let list = mock_soft_binding_algorithm_list();
+        let server = MockServer::start();
+        let list = mock_soft_binding_algorithm_list(&server.base_url());
         let entry = list.first().unwrap();
 
         let query = ByBindingQuery {
             value: "test value".to_owned(),
-            alg: "com.example.dense".to_owned(),
-            max_results: Some(1),
+            alg: entry.alg.clone(),
+            max_results: None,
         };
         let result = SoftBindingQueryResult {
             matches: vec![SoftBindingQueryResultMatch {
-                manifest_id: "some manifest id 1".to_owned(),
+                manifest_id: "some manifest id".to_owned(),
                 endpoint: None,
                 similarity_score: None,
             }],
         };
 
-        let server = MockServer::start();
         let by_large_binding_mock = mock_by_large_binding(&server, &query, &result);
 
         let client = mock_soft_binding_client();
         let a_match: Vec<SoftBindingMatch> = client
-            .fetch_matches_by_algorithm_value(entry, &query.value, None, None)
+            .fetch_matches_by_algorithm_value(entry, &query.value, query.max_results, None)
             .unwrap()
             .into_iter()
-            .flatten()
-            .collect();
+            .collect::<Result<_>>()
+            .unwrap();
 
         let correct_match = SoftBindingMatch::from_query(
             server.base_url(),
@@ -453,12 +453,13 @@ pub mod tests {
 
     #[test]
     fn test_fetch_matches_by_stream() {
-        let list = mock_soft_binding_algorithm_list();
+        let server = MockServer::start();
+        let list = mock_soft_binding_algorithm_list(&server.base_url());
         let entry = list.first().unwrap();
 
         let query = UploadFileQuery {
-            alg: "com.example.dense".to_owned(),
-            max_results: Some(1),
+            alg: entry.alg.clone(),
+            max_results: None,
             mime_type: "image/jpeg".to_owned(),
             asset_bytes: vec![1, 2, 3],
             hint_alg: None,
@@ -466,13 +467,12 @@ pub mod tests {
         };
         let result = SoftBindingQueryResult {
             matches: vec![SoftBindingQueryResultMatch {
-                manifest_id: "some manifest id 1".to_owned(),
+                manifest_id: "some manifest id".to_owned(),
                 endpoint: None,
                 similarity_score: None,
             }],
         };
 
-        let server = MockServer::start();
         let upload_file_mock = mock_upload_file(&server, &query, &result);
 
         let client = mock_soft_binding_client();
@@ -482,7 +482,7 @@ pub mod tests {
                 &query.mime_type,
                 &mut Cursor::new(&query.asset_bytes),
                 None,
-                None,
+                query.max_results,
                 None,
             )
             .unwrap()
