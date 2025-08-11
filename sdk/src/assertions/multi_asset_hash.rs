@@ -11,7 +11,9 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use std::{fs::File, io::Cursor};
+#[cfg(feature = "file_io")]
+use std::fs::File;
+use std::io::Cursor;
 
 use serde::{Deserialize, Serialize};
 
@@ -42,32 +44,41 @@ pub struct MultiAssetHash {
 impl MultiAssetHash {
     pub const LABEL: &'static str = labels::MULTI_ASSET_HASH;
 
-    pub fn new(location: LocationMap, hash_assertion: HashedUri, optional: Option<bool>) -> Self {
+    pub fn new(location: LocatorMap, hash_assertion: HashedUri, optional: Option<bool>) -> Self {
         Self {
             parts: vec![PartHashMap::new(location, hash_assertion, optional)],
         }
     }
 
     pub fn verify_self(&self, total_size: u64) -> Result<()> {
-        let mut expected_offset: u64 = 0;
-        let mut optional_lengths: u64 = 0;
-
         if self.parts.is_empty() {
             return Err(Error::C2PAValidation(
                 ASSERTION_MULTI_ASSET_HASH_MALFORMED.to_string(),
             ));
         }
 
+        let mut expected_offset: u64 = 0;
+        let mut optional_lengths: u64 = 0;
+
         for part in &self.parts {
-            if part.location.byte_offset != expected_offset {
-                return Err(Error::C2PAValidation(
-                    ASSERTION_MULTI_ASSET_HASH_MALFORMED.to_string(),
-                ));
+            match &part.location {
+                LocatorMap::ByteRangeLocator(locator) => {
+                    if locator.byte_offset != expected_offset {
+                        return Err(Error::C2PAValidation(
+                            ASSERTION_MULTI_ASSET_HASH_MALFORMED.to_string(),
+                        ));
+                    }
+                    if part.optional.unwrap_or(false) {
+                        optional_lengths += locator.length;
+                    }
+                    expected_offset += locator.length;
+                }
+                LocatorMap::BmffBox { .. } => {
+                    return Err(Error::NotImplemented(
+                        "BmffBox locators not yet implemented for Multi-Asset hashes".to_string(),
+                    ));
+                }
             }
-            if part.optional.unwrap_or(false) {
-                optional_lengths += part.location.length
-            };
-            expected_offset += part.location.length;
         }
 
         if expected_offset - optional_lengths > total_size {
@@ -107,31 +118,45 @@ impl MultiAssetHash {
             }
             if let Some(assertion) = claim.get_assertion_from_link(&part.hash_assertion.url()) {
                 let label = assertion.label();
-                let offset = part.location.byte_offset;
-                let length = part.location.length;
 
-                reader.seek(std::io::SeekFrom::Start(offset))?;
-                let buf = reader.read_to_vec(length).map_err(|_| {
-                    Error::C2PAValidation(ASSERTION_MULTI_ASSET_HASH_MISSING_PART.to_string())
-                })?;
-                let mut part_reader = Cursor::new(buf);
+                match &part.location {
+                    LocatorMap::ByteRangeLocator(locator) => {
+                        let offset = locator.byte_offset;
+                        let length = locator.length;
 
-                match label.as_str() {
-                    // starts with for all
-                    l if l.starts_with(DataHash::LABEL) => {
-                        let dh = DataHash::from_assertion(assertion)?;
-                        let alg = match &dh.alg {
-                            Some(alg) => alg,
-                            None => claim.alg(),
-                        };
-                        dh.verify_stream_hash(&mut part_reader, Some(alg))?;
+                        reader.seek(std::io::SeekFrom::Start(offset))?;
+                        let buf = reader.read_to_vec(length).map_err(|_| {
+                            Error::C2PAValidation(
+                                ASSERTION_MULTI_ASSET_HASH_MISSING_PART.to_string(),
+                            )
+                        })?;
+                        let mut part_reader = Cursor::new(buf);
+
+                        match label.as_str() {
+                            // starts with for all
+                            l if l.starts_with(DataHash::LABEL) => {
+                                let dh = DataHash::from_assertion(assertion)?;
+                                let alg = match &dh.alg {
+                                    Some(alg) => alg,
+                                    None => claim.alg(),
+                                };
+                                dh.verify_stream_hash(&mut part_reader, Some(alg))?;
+                            }
+                            l if l.starts_with(BmffHash::LABEL) => {
+                                return Err(Error::NotImplemented(
+                                    "BmffHash not yet implemented for Multi-Asset hashes"
+                                        .to_string(),
+                                ));
+                            }
+                            _ => {}
+                        }
                     }
-                    l if l.starts_with(BmffHash::LABEL) => {
+                    LocatorMap::BmffBox { .. } => {
                         return Err(Error::NotImplemented(
-                            "BmffHash not yet implemented for Multi-Asset hashes".to_string(),
+                            "BmffBox locators not yet implemented for Multi-Asset hashes"
+                                .to_string(),
                         ));
                     }
-                    _ => {}
                 }
             }
         }
@@ -141,7 +166,7 @@ impl MultiAssetHash {
 
 #[derive(Deserialize, Serialize, Debug, PartialEq, Eq)]
 pub struct PartHashMap {
-    pub location: LocationMap,
+    pub location: LocatorMap,
     #[serde(rename = "hashAssertion")]
     pub hash_assertion: HashedUri,
 
@@ -150,7 +175,7 @@ pub struct PartHashMap {
 }
 
 impl PartHashMap {
-    pub fn new(location: LocationMap, hash_assertion: HashedUri, optional: Option<bool>) -> Self {
+    pub fn new(location: LocatorMap, hash_assertion: HashedUri, optional: Option<bool>) -> Self {
         Self {
             location,
             hash_assertion,
@@ -159,20 +184,21 @@ impl PartHashMap {
     }
 }
 
-#[derive(Deserialize, Serialize, Debug, PartialEq, Eq)]
-pub struct LocationMap {
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(untagged)]
+pub enum LocatorMap {
+    ByteRangeLocator(ByteRangeLocator),
+    BmffBox {
+        #[serde(rename = "bmffBox")]
+        bmff_box: String,
+    },
+}
+
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ByteRangeLocator {
     #[serde(rename = "byteOffset")]
     pub byte_offset: u64,
     pub length: u64,
-}
-
-impl LocationMap {
-    pub fn new(byte_offset: u64, length: u64) -> Self {
-        Self {
-            byte_offset,
-            length,
-        }
-    }
 }
 
 impl AssertionCbor for MultiAssetHash {}
