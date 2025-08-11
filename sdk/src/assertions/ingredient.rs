@@ -66,6 +66,8 @@ pub struct Ingredient {
     pub active_manifest: Option<HashedUri>,
     pub claim_signature: Option<HashedUri>,
 
+    pub soft_bindings_matched: Option<bool>,
+    pub soft_bindings_algorithms_matched: Option<Vec<String>>,
     pub version: usize,
 }
 
@@ -1001,6 +1003,8 @@ pub mod tests {
             validation_results: Some(validation_results.clone()),
             active_manifest: Some(HashedUri::new("self#jumbf=c2pa/urn:c2pa:5E7B01FC-4932-4BAB-AB32-D4F12A8AA322".to_owned(), Some("sha256".to_owned()), &[1,2,3,4,5,6,7,8,9,0])),
             claim_signature: Some(HashedUri::new("self#jumbf=c2pa/urn:c2pa:5E7B01FC-4932-4BAB-AB32-D4F12A8AA322/c2pa.signature".to_owned(), Some("sha256".to_owned()), &[1,2,3,4,5,6,7,8,9,0])),
+            soft_bindings_matched: Some(true),
+            soft_bindings_algorithms_matched: Some(vec!["alg1".to_owned(), "alg2".to_owned()]),
             version: 1,
         };
 
