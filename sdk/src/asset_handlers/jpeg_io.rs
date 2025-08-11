@@ -92,7 +92,7 @@ fn read_be_u32(input: &mut &[u8]) -> Result<u32> {
     })?))
 }
 
-fn extract_xmp_extension_with_offset(seg: &JpegSegment) -> Option<XmpExtension> {
+fn extract_xmp_extensions(seg: &JpegSegment) -> Option<XmpExtension> {
     let (sig, rest) = seg
         .contents()
         .split_at_checked(XMP_EXTENSION_SIGNATURE_BUFFER_SIZE)?;
@@ -125,7 +125,7 @@ fn xmp_from_bytes(asset_bytes: &[u8]) -> Option<String> {
 
         let mut extensions: Vec<XmpExtension> = segs
             .filter_map(|seg| {
-                let extension = extract_xmp_extension_with_offset(seg)?;
+                let extension = extract_xmp_extensions(seg)?;
                 if extension.guid != guid {
                     return None;
                 }
@@ -781,38 +781,6 @@ fn get_seg_size(input_stream: &mut dyn CAIRead) -> Result<usize> {
     }
 }
 
-#[allow(dead_code)] // Used to extract each media item individually as specified in the xmp
-fn extract_media_items_from_xmp(
-    mut stream: impl std::io::Seek + std::io::Read,
-    xmp: &str,
-) -> Result<Vec<Vec<u8>>> {
-    let container_items = crate::utils::xmp_inmemory_utils::extract_container_items(xmp);
-    let total_length = stream.seek(std::io::SeekFrom::End(0))?;
-    let mut prev: i64 = 0;
-    let mut parts_data = Vec::new();
-
-    for container_item in container_items.iter().skip(1).rev() {
-        let offset: i64 = -(container_item.length).try_into()?;
-        stream.seek(std::io::SeekFrom::End(offset + prev))?;
-        prev += offset;
-
-        let mut secondary_media = vec![0u8; container_item.length];
-        stream.read_exact(&mut secondary_media)?;
-
-        parts_data.push(secondary_media);
-    }
-
-    stream.seek(std::io::SeekFrom::Start(0))?;
-    let primary_media_length = (total_length as i64 + prev) as usize;
-    let mut primary_media = vec![0u8; primary_media_length];
-    stream.read_exact(&mut primary_media)?;
-
-    parts_data.push(primary_media);
-    parts_data.reverse();
-
-    Ok(parts_data)
-}
-
 fn make_box_maps(input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>> {
     let segment_names = HashMap::from([
         (0xe0u8, "APP0"),
@@ -1242,14 +1210,14 @@ pub mod tests {
     #[test]
     fn test_extract_extensions_xmp() {
         let jpeg = Jpeg::from_bytes(Bytes::copy_from_slice(include_bytes!(
-            "../../tests/fixtures/MP.jpg"
+            "../../tests/fixtures/motion_photo.jpg"
         )))
         .ok()
         .unwrap();
         let segs = jpeg.segments_by_marker(markers::APP1);
 
         let mut extensions: Vec<XmpExtension> =
-            segs.filter_map(extract_xmp_extension_with_offset).collect();
+            segs.filter_map(extract_xmp_extensions).collect();
 
         extensions.sort_by_key(|extension| extension.offset);
 
@@ -1258,7 +1226,7 @@ pub mod tests {
             .map(|extensions| extensions.content.clone())
             .collect();
 
-        assert_eq!(extensions_content.len(), 8);
+        assert_eq!(extensions_content.len(), 11);
 
         for i in 1..extensions.len() {
             assert!(extensions[i].offset >= extensions[i - 1].offset);
