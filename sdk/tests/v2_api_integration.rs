@@ -101,7 +101,7 @@ mod integration_v2 {
                         "Iptc4xmpExt": "http://iptc.org/std/Iptc4xmpExt/2008-02-29/",
                         "photoshop" : "http://ns.adobe.com/photoshop/1.0/"
                     },
-                    "photoshop:DateCreated": "Aug 31, 2022", 
+                    "photoshop:DateCreated": "Aug 31, 2022",
                     "Iptc4xmpExt:DigitalSourceType": "https://cv.iptc.org/newscodes/digitalsourcetype/digitalCapture",
                     "exif:GPSVersionID": "2.2.0.0",
                     "exif:GPSLatitude": "39,21.102N",
@@ -111,6 +111,33 @@ mod integration_v2 {
                     "exifEX:LensSpecification": { "@list": [ 1.55, 4.2, 1.6, 2.4 ] }
                 },
                 "kind": "Json"
+            },
+            {
+                "label": "c2pa.soft-binding",
+                "data": {
+                    "alg": "phash",
+                    "pad": [0],
+                    "blocks": [
+                        {
+                            "scope": {
+                                "timespan": {
+                                    "end": 133016,
+                                    "start": 0,
+                                }
+                            },
+                            "value": "dmFsdWUxCg=="
+                        },
+                        {
+                            "scope": {
+                                "timespan": {
+                                    "end": 245009,
+                                    "start": 133017,
+                                }
+                            },
+                            "value": "ZG1Gc2RXVXlDZz09=="
+                        }
+                    ]
+                }
             }
         ]
     }).to_string()
