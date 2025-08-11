@@ -4713,13 +4713,13 @@ impl Store {
     /// * `validation_log` - Status tracker for logging validation events
     ///
     /// # Returns
-    /// A `Result` containing ocsp response ders
+    /// A `Result` containing tuples of manifest labels and their associated ocsp response
     pub fn get_ocsp_response_ders(
         &self,
         manifest_labels: Vec<String>,
         validation_log: &mut StatusTracker,
-    ) -> Result<Vec<Vec<u8>>> {
-        let mut oscp_response_ders: Vec<Vec<u8>> = Vec::new();
+    ) -> Result<Vec<(String, Vec<u8>)>> {
+        let mut oscp_response_ders = Vec::new();
 
         for manifest_label in manifest_labels {
             if let Some(claim) = self.claims_map.get(&manifest_label) {
@@ -4731,7 +4731,7 @@ impl Store {
                     fetch_and_check_ocsp_response(&sign1, &data, &self.ctp, None, validation_log)?
                         .ocsp_der;
                 if !ocsp_response_der.is_empty() {
-                    oscp_response_ders.push(ocsp_response_der);
+                    oscp_response_ders.push((manifest_label, ocsp_response_der));
                 }
             }
         }

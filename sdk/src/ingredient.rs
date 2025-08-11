@@ -907,7 +907,7 @@ impl Ingredient {
             let ocsp_response_ders = store.get_ocsp_response_ders(labels, &mut validation_log)?;
             let resource_refs: Vec<ResourceRef> = ocsp_response_ders
                 .into_iter()
-                .filter_map(|o| self.resources.add_with("test", "ocsp", o).ok())
+                .filter_map(|o| self.resources.add_with(&o.0, "ocsp", o.1).ok())
                 .collect();
 
             self.ocsp_responses = Some(resource_refs);
@@ -1299,8 +1299,14 @@ impl Ingredient {
                 .map(|cow| cow.into_owned())
                 .collect();
             if !ocsp_responses.is_empty() {
-                let certificate_status = CertificateStatus::new(ocsp_responses);
-                claim.add_assertion(&certificate_status)?;
+                let certificate_status =
+                    if let Some(assertion) = claim.get_assertion(CertificateStatus::LABEL, 0) {
+                        let certificate_status = CertificateStatus::from_assertion(assertion)?;
+                        certificate_status.add_ocsp_vals(ocsp_responses)
+                    } else {
+                        CertificateStatus::new(ocsp_responses)
+                    };
+                claim.add_assertion_with_salt(&certificate_status, &DefaultSalt::default())?;
             }
         }
 
