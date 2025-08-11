@@ -11,9 +11,15 @@
 // specific language governing permissions and limitations under
 // each license.
 
+/// The soft binding algorithm list API.
 pub mod algorithm_list;
-pub mod client;
+
+/// The low-level soft binding resolution API.
 pub mod resolution_api;
+
 pub use crate::assertions::{
     SoftBinding, SoftBindingBlockMap, SoftBindingScopeMap, SoftBindingTimespanMap,
 };
+pub use client::{SoftBindingClient, SoftBindingMatch};
+
+mod client;
