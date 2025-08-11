@@ -109,7 +109,8 @@ mod integration_v2 {
                     "exif:GPSAltitudeRef": 0,
                     "exif:GPSAltitude": "100963/29890",
                     "exifEX:LensSpecification": { "@list": [ 1.55, 4.2, 1.6, 2.4 ] }
-                }
+                },
+                "kind": "Json"
             }
         ]
     }).to_string()
