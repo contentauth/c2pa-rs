@@ -2503,7 +2503,7 @@ impl Claim {
                 // 2.d if redacted actions contains a redacted parameter if must be a resolvable reference
                 if action.action() == c2pa_action::REDACTED {
                     if let Some(params) = action.parameters() {
-                        let mut parent_tested = None; // on exists if action actually pointed to an ingredient
+                        let mut parent_tested = None; // only exists if action actually pointed to an ingredient
                         if let Some(v) = params.get("redacted") {
                             let redacted_uri =
                                 value_cbor_to_type::<String>(v).ok_or_else(|| {
@@ -2525,41 +2525,63 @@ impl Claim {
 
                             if let Some(ingredient_label) = manifest_label_from_uri(&redacted_uri) {
                                 // can we find a reference in the ingredient list
-                                if let Some(ingredient) = svi.manifest_map.get(&ingredient_label) {
-                                    // does the assertion exist
-                                    if let Some(readaction_label) =
+                                if let Some(ingredient_claim) =
+                                    svi.manifest_map.get(&ingredient_label)
+                                {
+                                    // The referenced manifest exists, so far so good.
+                                    // now get the assertion label and try to resolve it.
+                                    if let Some(redaction_label) =
                                         assertion_label_from_uri(&redacted_uri)
                                     {
-                                        let (label, instance) =
-                                            Claim::assertion_label_from_link(&readaction_label);
-                                        parent_tested = Some(
-                                            ingredient.get_assertion(&label, instance).is_some(),
-                                        );
-                                    } else {
-                                        parent_tested = Some(false);
+                                        if ingredient_claim
+                                            .assertion_hashed_uri_from_label(&redaction_label)
+                                            .is_some()
+                                        {
+                                            // The url reference is valid, now check if it was actually redacted
+                                            parent_tested = Some(false);
+                                            // Now if the assertion is not in the assertion store we are ok.
+                                            // Todo: would a zeroed out assertion show up here? if so we need to do a zero check
+                                            if ingredient_claim
+                                                .get_claim_assertion(&redaction_label, 0)
+                                                .is_none()
+                                            {
+                                                parent_tested = Some(true); // it was redacted - all good!
+                                            }
+                                        }
                                     }
                                 }
                             }
-                            match parent_tested {
-                                Some(v) => parent_tested = Some(v),
-                                None => parent_tested = Some(false), // if test fail early this is a tested failure
-                            }
                         }
-
-                        // will only exist if we actual tested for an ingredient
-                        if let Some(false) = parent_tested {
-                            log_item!(
-                                label.clone(),
-                                "action must have valid ingredient",
-                                "verify_actions"
-                            )
-                            .validation_status(
-                                validation_status::ASSERTION_ACTION_REDACTION_MISMATCH,
-                            )
-                            .failure(
-                                validation_log,
-                                Error::ValidationRule("action must have valid ingredient".into()),
-                            )?;
+                        match parent_tested {
+                            None => {
+                                log_item!(
+                                    label.clone(),
+                                    "redaction uri must be a valid reference",
+                                    "verify_actions"
+                                )
+                                .validation_status(
+                                    validation_status::ASSERTION_ACTION_REDACTION_MISMATCH,
+                                )
+                                .failure(
+                                    validation_log,
+                                    Error::ValidationRule(
+                                        "redaction action must have valid ingredient".into(),
+                                    ),
+                                )?;
+                            }
+                            Some(false) => {
+                                log_item!(
+                                    label.clone(),
+                                    "The assertion was not redacted",
+                                    "verify_actions"
+                                )
+                                .validation_status(validation_status::ASSERTION_NOT_REDACTED)
+                                .failure(
+                                    validation_log,
+                                    Error::ValidationRule("the assertion was not redacted".into()),
+                                )?;
+                            }
+                            Some(true) => {}
                         }
                     }
                 }
@@ -2808,7 +2830,7 @@ impl Claim {
             if parent_count > 1 {
                 log_item!(
                     claim.uri(),
-                    "too many ingredient parentsf",
+                    "too many ingredient parents",
                     "ingredient_checks"
                 )
                 .validation_status(validation_status::MANIFEST_MULTIPLE_PARENTS)

@@ -69,11 +69,7 @@ async fn success_case() {
     // And that identity assertion should be valid for this manifest.
     let isv = IcaSignatureVerifier {};
 
-    // HACK: See if we can transition to PostValidate without losing access
-    // to the ica_vc member below.
-    st.push_current_uri("(IA label goes here)");
     let ica_vc = ia.validate(manifest, &mut st, &isv).await.unwrap();
-    st.pop_current_uri();
 
     // Start matching against expected values.
     let expected_identities = ica_credential_example::ica_example_identities();
@@ -88,9 +84,15 @@ async fn success_case() {
     let li = log_items.next().unwrap();
 
     assert_eq!(li.kind, LogKind::Success);
-    assert_eq!(li.label, "(IA label goes here)");
+
+    assert_eq!(
+        li.label,
+        "self#jumbf=/c2pa/test:urn:uuid:71b584f1-da28-4bf7-89a8-417be6bb07ac/c2pa.assertions/cawg.identity"
+    );
+
     assert_eq!(li.description, "ICA credential is valid");
     assert_eq!(li.crate_name, "c2pa");
+
     assert_eq!(
         li.validation_status.as_ref().unwrap(),
         "cawg.ica.credential_valid"
@@ -131,11 +133,7 @@ async fn invalid_cose_sign1() {
     // And that identity assertion should be valid for this manifest.
     let isv = IcaSignatureVerifier {};
 
-    // HACK: See if we can transition to PostValidate without losing access
-    // to the ica_vc member below.
-    st.push_current_uri("(IA label goes here)");
     let ica_err = ia.validate(manifest, &mut st, &isv).await.unwrap_err();
-    st.pop_current_uri();
 
     assert_eq!(
         ica_err,
@@ -149,13 +147,20 @@ async fn invalid_cose_sign1() {
     let li = log_items.next().unwrap();
 
     assert_eq!(li.kind, LogKind::Failure);
-    assert_eq!(li.label, "(IA label goes here)");
+
+    assert_eq!(
+        li.label,
+        "self#jumbf=/c2pa/test:urn:uuid:3572182b-dc6d-4781-a237-f866924d2f47/c2pa.assertions/cawg.identity"
+    );
+
     assert_eq!(li.description, "Invalid COSE_Sign1 data structure");
     assert_eq!(li.crate_name, "c2pa");
+
     assert_eq!(
         li.err_val.as_ref().unwrap(),
         "SignatureError(extraneous data in CBOR input)"
     );
+
     assert_eq!(
         li.validation_status.as_ref().unwrap(),
         "cawg.ica.invalid_cose_sign1"
@@ -208,11 +213,7 @@ async fn invalid_cose_sign_alg() {
     // And that identity assertion should be valid for this manifest.
     let isv = IcaSignatureVerifier {};
 
-    // HACK: See if we can transition to PostValidate without losing access
-    // to the ica_vc member below.
-    st.push_current_uri("(IA label goes here)");
     let ica_err = ia.validate(manifest, &mut st, &isv).await.unwrap_err();
-    st.pop_current_uri();
 
     assert_eq!(
         ica_err,
@@ -226,13 +227,20 @@ async fn invalid_cose_sign_alg() {
     let li = log_items.next().unwrap();
 
     assert_eq!(li.kind, LogKind::Failure);
-    assert_eq!(li.label, "(IA label goes here)");
+
+    assert_eq!(
+        li.label,
+        "self#jumbf=/c2pa/test:urn:uuid:44f2c7e6-66f0-40d9-bbac-49bac24abe65/c2pa.assertions/cawg.identity"
+    );
+
     assert_eq!(li.description, "Invalid COSE_Sign1 signature algorithm");
     assert_eq!(li.crate_name, "c2pa");
+
     assert_eq!(
         li.err_val.as_ref().unwrap(),
         "SignatureError(UnsupportedSignatureType(\"Assigned(SHA_1)\"))"
     );
+
     assert_eq!(
         li.validation_status.as_ref().unwrap(),
         "cawg.ica.invalid_alg"
@@ -267,11 +275,7 @@ async fn missing_cose_sign_alg() {
     // And that identity assertion should be valid for this manifest.
     let isv = IcaSignatureVerifier {};
 
-    // HACK: See if we can transition to PostValidate without losing access
-    // to the ica_vc member below.
-    st.push_current_uri("(IA label goes here)");
     let ica_err = ia.validate(manifest, &mut st, &isv).await.unwrap_err();
-    st.pop_current_uri();
 
     assert_eq!(
         ica_err,
@@ -283,13 +287,20 @@ async fn missing_cose_sign_alg() {
     let li = log_items.next().unwrap();
 
     assert_eq!(li.kind, LogKind::Failure);
-    assert_eq!(li.label, "(IA label goes here)");
+
+    assert_eq!(
+        li.label,
+        "self#jumbf=/c2pa/test:urn:uuid:0b13bcdc-4942-4d73-9666-0ea2e9e124aa/c2pa.assertions/cawg.identity"
+    );
+
     assert_eq!(li.description, "Missing COSE_Sign1 signature algorithm");
     assert_eq!(li.crate_name, "c2pa");
+
     assert_eq!(
         li.err_val.as_ref().unwrap(),
         "SignatureError(SignatureTypeMissing)"
     );
+
     assert_eq!(
         li.validation_status.as_ref().unwrap(),
         "cawg.ica.invalid_alg"
@@ -327,11 +338,7 @@ async fn invalid_content_type() {
     // And that identity assertion should be valid for this manifest.
     let isv = IcaSignatureVerifier {};
 
-    // HACK: See if we can transition to PostValidate without losing access
-    // to the ica_vc member below.
-    st.push_current_uri("(IA label goes here)");
     let ica_vc = ia.validate(manifest, &mut st, &isv).await.unwrap();
-    st.pop_current_uri();
 
     // Start matching against expected values.
     let expected_identities = ica_credential_example::ica_example_identities();
@@ -345,13 +352,20 @@ async fn invalid_content_type() {
     let li = log_items.next().unwrap();
 
     assert_eq!(li.kind, LogKind::Failure);
-    assert_eq!(li.label, "(IA label goes here)");
+
+    assert_eq!(
+        li.label,
+        "self#jumbf=/c2pa/test:urn:uuid:d9286754-694e-44cb-a465-e7016516dade/c2pa.assertions/cawg.identity"
+    );
+
     assert_eq!(li.description, "Invalid COSE_Sign1 content type header");
     assert_eq!(li.crate_name, "c2pa");
+
     assert_eq!(
         li.err_val.as_ref().unwrap(),
         "SignatureError(UnsupportedContentType(\"\\\"application/bogus\\\"\"))"
     );
+
     assert_eq!(
         li.validation_status.as_ref().unwrap(),
         "cawg.ica.invalid_content_type"
@@ -387,11 +401,7 @@ async fn invalid_content_type_assigned() {
     // And that identity assertion should be valid for this manifest.
     let isv = IcaSignatureVerifier {};
 
-    // HACK: See if we can transition to PostValidate without losing access
-    // to the ica_vc member below.
-    st.push_current_uri("(IA label goes here)");
     let ica_vc = ia.validate(manifest, &mut st, &isv).await.unwrap();
-    st.pop_current_uri();
 
     // Start matching against expected values.
     let expected_identities = ica_credential_example::ica_example_identities();
@@ -405,13 +415,20 @@ async fn invalid_content_type_assigned() {
     let li = log_items.next().unwrap();
 
     assert_eq!(li.kind, LogKind::Failure);
-    assert_eq!(li.label, "(IA label goes here)");
+
+    assert_eq!(
+        li.label,
+        "self#jumbf=/c2pa/test:urn:uuid:d7a97a73-2508-474b-b4fc-2d273b643e73/c2pa.assertions/cawg.identity"
+    );
+
     assert_eq!(li.description, "Invalid COSE_Sign1 content type header");
     assert_eq!(li.crate_name, "c2pa");
+
     assert_eq!(
         li.err_val.as_ref().unwrap(),
         "SignatureError(UnsupportedContentType(\"Assigned(OctetStream)\"))"
     );
+
     assert_eq!(
         li.validation_status.as_ref().unwrap(),
         "cawg.ica.invalid_content_type"
@@ -446,11 +463,7 @@ async fn missing_content_type() {
     // And that identity assertion should be valid for this manifest.
     let isv = IcaSignatureVerifier {};
 
-    // HACK: See if we can transition to PostValidate without losing access
-    // to the ica_vc member below.
-    st.push_current_uri("(IA label goes here)");
     let ica_vc = ia.validate(manifest, &mut st, &isv).await.unwrap();
-    st.pop_current_uri();
 
     // Start matching against expected values.
     let expected_identities = ica_credential_example::ica_example_identities();
@@ -464,13 +477,20 @@ async fn missing_content_type() {
     let li = log_items.next().unwrap();
 
     assert_eq!(li.kind, LogKind::Failure);
-    assert_eq!(li.label, "(IA label goes here)");
+
+    assert_eq!(
+        li.label,
+        "self#jumbf=/c2pa/test:urn:uuid:4b29a885-a12b-49e6-83b6-e3701abc6a24/c2pa.assertions/cawg.identity"
+    );
+
     assert_eq!(li.description, "Invalid COSE_Sign1 content type header");
     assert_eq!(li.crate_name, "c2pa");
+
     assert_eq!(
         li.err_val.as_ref().unwrap(),
         "SignatureError(ContentTypeMissing)"
     );
+
     assert_eq!(
         li.validation_status.as_ref().unwrap(),
         "cawg.ica.invalid_content_type"
@@ -517,11 +537,7 @@ async fn missing_vc() {
     // And that identity assertion should be valid for this manifest.
     let isv = IcaSignatureVerifier {};
 
-    // HACK: See if we can transition to PostValidate without losing access
-    // to the ica_vc member below.
-    st.push_current_uri("(IA label goes here)");
     let ica_err = ia.validate(manifest, &mut st, &isv).await.unwrap_err();
-    st.pop_current_uri();
 
     assert_eq!(
         ica_err,
@@ -533,13 +549,20 @@ async fn missing_vc() {
     let li = log_items.next().unwrap();
 
     assert_eq!(li.kind, LogKind::Failure);
-    assert_eq!(li.label, "(IA label goes here)");
+
+    assert_eq!(
+        li.label,
+        "self#jumbf=/c2pa/test:urn:uuid:2db725ac-fd2a-496c-ab1c-6c0fafe7989d/c2pa.assertions/cawg.identity"
+    );
+
     assert_eq!(li.description, "Missing COSE_Sign1 payload");
     assert_eq!(li.crate_name, "c2pa");
+
     assert_eq!(
         li.err_val.as_ref().unwrap(),
         "SignatureError(CredentialPayloadMissing)"
     );
+
     assert_eq!(
         li.validation_status.as_ref().unwrap(),
         "cawg.ica.invalid_verifiable_credential"
@@ -572,11 +595,7 @@ async fn invalid_vc() {
     // And that identity assertion should be valid for this manifest.
     let isv = IcaSignatureVerifier {};
 
-    // HACK: See if we can transition to PostValidate without losing access
-    // to the ica_vc member below.
-    st.push_current_uri("(IA label goes here)");
     let ica_err = ia.validate(manifest, &mut st, &isv).await.unwrap_err();
-    st.pop_current_uri();
 
     assert_eq!(
         ica_err,
@@ -590,13 +609,20 @@ async fn invalid_vc() {
     let li = log_items.next().unwrap();
 
     assert_eq!(li.kind, LogKind::Failure);
-    assert_eq!(li.label, "(IA label goes here)");
+
+    assert_eq!(
+        li.label,
+        "self#jumbf=/c2pa/test:urn:uuid:10a7d93c-b747-4ef5-b734-032d5a3628f7/c2pa.assertions/cawg.identity"
+    );
+
     assert_eq!(li.description, "Invalid JSON-LD for verifiable credential");
     assert_eq!(li.crate_name, "c2pa");
+
     assert_eq!(
         li.err_val.as_ref().unwrap(),
         "SignatureError(JsonDecodeError(\"expected value at line 1 column 1\"))"
     );
+
     assert_eq!(
         li.validation_status.as_ref().unwrap(),
         "cawg.ica.invalid_verifiable_credential"
@@ -636,11 +662,7 @@ async fn invalid_issuer_did() {
     // And that identity assertion should be valid for this manifest.
     let isv = IcaSignatureVerifier {};
 
-    // HACK: See if we can transition to PostValidate without losing access
-    // to the ica_vc member below.
-    st.push_current_uri("(IA label goes here)");
     let ica_vc = ia.validate(manifest, &mut st, &isv).await.unwrap();
-    st.pop_current_uri();
 
     // Start matching against expected values.
     let expected_identities = ica_credential_example::ica_example_identities();
@@ -654,7 +676,12 @@ async fn invalid_issuer_did() {
     let li = log_items.next().unwrap();
 
     assert_eq!(li.kind, LogKind::Failure);
-    assert_eq!(li.label, "(IA label goes here)");
+
+    assert_eq!(
+        li.label,
+        "self#jumbf=/c2pa/test:urn:uuid:3bf72495-6f83-4634-be3f-ca8c423e830e/c2pa.assertions/cawg.identity"
+    );
+
     assert_eq!(li.description, "Invalid issuer DID");
     assert_eq!(li.crate_name, "c2pa");
 
@@ -700,11 +727,7 @@ async fn unsupported_did_method() {
     // And that identity assertion should be valid for this manifest.
     let isv = IcaSignatureVerifier {};
 
-    // HACK: See if we can transition to PostValidate without losing access
-    // to the ica_vc member below.
-    st.push_current_uri("(IA label goes here)");
     let ica_vc = ia.validate(manifest, &mut st, &isv).await.unwrap();
-    st.pop_current_uri();
 
     // Start matching against expected values.
     let expected_identities = ica_credential_example::ica_example_identities();
@@ -718,7 +741,12 @@ async fn unsupported_did_method() {
     let li = log_items.next().unwrap();
 
     assert_eq!(li.kind, LogKind::Failure);
-    assert_eq!(li.label, "(IA label goes here)");
+
+    assert_eq!(
+        li.label,
+        "self#jumbf=/c2pa/test:urn:uuid:3bf72495-6f83-4634-be3f-ca8c423e830e/c2pa.assertions/cawg.identity"
+    );
+
     assert_eq!(li.description, "Invalid issuer DID");
     assert_eq!(li.crate_name, "c2pa");
 
@@ -766,11 +794,7 @@ async fn unresolvable_did() {
     // And that identity assertion should be valid for this manifest.
     let isv = IcaSignatureVerifier {};
 
-    // HACK: See if we can transition to PostValidate without losing access
-    // to the ica_vc member below.
-    st.push_current_uri("(IA label goes here)");
     let ica_vc = ia.validate(manifest, &mut st, &isv).await.unwrap();
-    st.pop_current_uri();
 
     // Start matching against expected values.
     let expected_identities = ica_credential_example::ica_example_identities();
@@ -784,7 +808,7 @@ async fn unresolvable_did() {
     let li = log_items.next().unwrap();
 
     assert_eq!(li.kind, LogKind::Failure);
-    assert_eq!(li.label, "(IA label goes here)");
+    assert_eq!(li.label, "self#jumbf=/c2pa/test:urn:uuid:e3d867e8-c875-4daa-910e-b5ae2b1b45f3/c2pa.assertions/cawg.identity");
     assert_eq!(li.description, "Unable to resolve issuer DID");
     assert_eq!(li.crate_name, "c2pa");
 
@@ -833,11 +857,7 @@ async fn did_doc_without_assertion_method() {
     // And that identity assertion should be valid for this manifest.
     let isv = IcaSignatureVerifier {};
 
-    // HACK: See if we can transition to PostValidate without losing access
-    // to the ica_vc member below.
-    st.push_current_uri("(IA label goes here)");
     let ica_vc = ia.validate(manifest, &mut st, &isv).await.unwrap();
-    st.pop_current_uri();
 
     // Start matching against expected values.
     let expected_identities = ica_credential_example::ica_example_identities();
@@ -851,7 +871,9 @@ async fn did_doc_without_assertion_method() {
     let li = log_items.next().unwrap();
 
     assert_eq!(li.kind, LogKind::Failure);
-    assert_eq!(li.label, "(IA label goes here)");
+
+    assert_eq!(li.label,   "self#jumbf=/c2pa/test:urn:uuid:f3fdb6a6-46d3-41f5-ad13-0ff57948347e/c2pa.assertions/cawg.identity");
+
     assert_eq!(li.description, "Invalid issuer DID document");
     assert_eq!(li.crate_name, "c2pa");
 
@@ -911,11 +933,7 @@ async fn signature_mismatch() {
     // And that identity assertion should be valid for this manifest.
     let isv = IcaSignatureVerifier {};
 
-    // HACK: See if we can transition to PostValidate without losing access
-    // to the ica_vc member below.
-    st.push_current_uri("(IA label goes here)");
     let ica_vc = ia.validate(manifest, &mut st, &isv).await.unwrap();
-    st.pop_current_uri();
 
     // Start matching against expected values.
     let expected_identities = ica_credential_example::ica_example_identities();
@@ -929,7 +947,12 @@ async fn signature_mismatch() {
     let li = log_items.next().unwrap();
 
     assert_eq!(li.kind, LogKind::Failure);
-    assert_eq!(li.label, "(IA label goes here)");
+
+    assert_eq!(
+        li.label,
+        "self#jumbf=/c2pa/test:urn:uuid:0dcbec68-4952-40d9-bb01-3be603f32a33/c2pa.assertions/cawg.identity"
+);
+
     assert_eq!(li.description, "Signature does not match credential");
     assert_eq!(li.crate_name, "c2pa");
 
@@ -978,11 +1001,7 @@ async fn valid_time_stamp() {
     // And that identity assertion should be valid for this manifest.
     let isv = IcaSignatureVerifier {};
 
-    // HACK: See if we can transition to PostValidate without losing access
-    // to the ica_vc member below.
-    st.push_current_uri("(IA label goes here)");
     let ica_vc = ia.validate(manifest, &mut st, &isv).await.unwrap();
-    st.pop_current_uri();
 
     // Start matching against expected values.
     let expected_identities = ica_credential_example::ica_example_identities();
@@ -1000,9 +1019,15 @@ async fn valid_time_stamp() {
     let li = log_items.next().unwrap();
 
     assert_eq!(li.kind, LogKind::Success);
-    assert_eq!(li.label, "(IA label goes here)");
+
+    assert_eq!(
+        li.label,
+        "self#jumbf=/c2pa/test:urn:uuid:0e16ab9b-e3e8-425e-a83b-fa2846f178e9/c2pa.assertions/cawg.identity"
+    );
+
     assert_eq!(li.description, "Time stamp validated");
     assert_eq!(li.crate_name, "c2pa");
+
     assert_eq!(
         li.validation_status.as_ref().unwrap(),
         "cawg.ica.time_stamp.validated"
@@ -1011,9 +1036,15 @@ async fn valid_time_stamp() {
     let li = log_items.next().unwrap();
 
     assert_eq!(li.kind, LogKind::Success);
-    assert_eq!(li.label, "(IA label goes here)");
+
+    assert_eq!(
+        li.label,
+        "self#jumbf=/c2pa/test:urn:uuid:0e16ab9b-e3e8-425e-a83b-fa2846f178e9/c2pa.assertions/cawg.identity"
+    );
+
     assert_eq!(li.description, "ICA credential is valid");
     assert_eq!(li.crate_name, "c2pa");
+
     assert_eq!(
         li.validation_status.as_ref().unwrap(),
         "cawg.ica.credential_valid"
@@ -1057,11 +1088,7 @@ async fn invalid_time_stamp() {
     // And that identity assertion should be valid for this manifest.
     let isv = IcaSignatureVerifier {};
 
-    // HACK: See if we can transition to PostValidate without losing access
-    // to the ica_vc member below.
-    st.push_current_uri("(IA label goes here)");
     let ica_vc = ia.validate(manifest, &mut st, &isv).await.unwrap();
-    st.pop_current_uri();
 
     // Start matching against expected values.
     let expected_identities = ica_credential_example::ica_example_identities();
@@ -1077,9 +1104,15 @@ async fn invalid_time_stamp() {
     let li = log_items.next().unwrap();
 
     assert_eq!(li.kind, LogKind::Failure);
-    assert_eq!(li.label, "(IA label goes here)");
+
+    assert_eq!(
+        li.label,
+        "self#jumbf=/c2pa/test:urn:uuid:4caa21a4-0d9c-43ed-aa7b-5dcd4ae20e20/c2pa.assertions/cawg.identity"
+    );
+
     assert_eq!(li.description, "Time stamp does not match credential");
     assert_eq!(li.crate_name, "c2pa");
+
     assert_eq!(
         li.err_val.as_ref().unwrap(),
         "SignatureError(InvalidTimeStamp)"
@@ -1124,11 +1157,7 @@ async fn valid_from_missing() {
     // And that identity assertion should be valid for this manifest.
     let isv = IcaSignatureVerifier {};
 
-    // HACK: See if we can transition to PostValidate without losing access
-    // to the ica_vc member below.
-    st.push_current_uri("(IA label goes here)");
     let ica_vc = ia.validate(manifest, &mut st, &isv).await.unwrap();
-    st.pop_current_uri();
 
     // Start matching against expected values.
     let expected_identities = ica_credential_example::ica_example_identities();
@@ -1144,9 +1173,15 @@ async fn valid_from_missing() {
     let li = log_items.next().unwrap();
 
     assert_eq!(li.kind, LogKind::Failure);
-    assert_eq!(li.label, "(IA label goes here)");
+
+    assert_eq!(
+        li.label,
+        "self#jumbf=/c2pa/test:urn:uuid:0a1587c4-b125-4f0d-aeaa-994f10d1f736/c2pa.assertions/cawg.identity"
+    );
+
     assert_eq!(li.description, "credential does not have a validFrom date");
     assert_eq!(li.crate_name, "c2pa");
+
     assert_eq!(
         li.err_val.as_ref().unwrap(),
         "SignatureError(MissingValidFromDate)"
@@ -1192,11 +1227,7 @@ async fn valid_from_in_future() {
     // And that identity assertion should be valid for this manifest.
     let isv = IcaSignatureVerifier {};
 
-    // HACK: See if we can transition to PostValidate without losing access
-    // to the ica_vc member below.
-    st.push_current_uri("(IA label goes here)");
     let ica_vc = ia.validate(manifest, &mut st, &isv).await.unwrap();
-    st.pop_current_uri();
 
     // Start matching against expected values.
     let expected_identities = ica_credential_example::ica_example_identities();
@@ -1211,12 +1242,19 @@ async fn valid_from_in_future() {
     let li = log_items.next().unwrap();
 
     assert_eq!(li.kind, LogKind::Failure);
-    assert_eq!(li.label, "(IA label goes here)");
+
+    assert_eq!(
+        li.label,
+        "self#jumbf=/c2pa/test:urn:uuid:ebec2691-55ae-4255-a116-14e721c0a3cc/c2pa.assertions/cawg.identity"
+    );
+
     assert_eq!(
         li.description,
         "credential's validFrom date is unacceptable (validFrom is after current date/time)"
     );
+
     assert_eq!(li.crate_name, "c2pa");
+
     assert_eq!(
         li.err_val.as_ref().unwrap(),
         "SignatureError(InvalidValidFromDate(\"validFrom is after current date/time\"))"
@@ -1264,11 +1302,7 @@ async fn valid_from_after_time_stamp() {
     // And that identity assertion should be valid for this manifest.
     let isv = IcaSignatureVerifier {};
 
-    // HACK: See if we can transition to PostValidate without losing access
-    // to the ica_vc member below.
-    st.push_current_uri("(IA label goes here)");
     let ica_vc = ia.validate(manifest, &mut st, &isv).await.unwrap();
-    st.pop_current_uri();
 
     // Start matching against expected values.
     let expected_identities = ica_credential_example::ica_example_identities();
@@ -1283,9 +1317,15 @@ async fn valid_from_after_time_stamp() {
     let li = log_items.next().unwrap();
 
     assert_eq!(li.kind, LogKind::Success);
-    assert_eq!(li.label, "(IA label goes here)");
+
+    assert_eq!(
+        li.label,
+        "self#jumbf=/c2pa/test:urn:uuid:8e926af3-e3d4-4945-bcc3-c2680bc50526/c2pa.assertions/cawg.identity"
+    );
+
     assert_eq!(li.description, "Time stamp validated");
     assert_eq!(li.crate_name, "c2pa");
+
     assert_eq!(
         li.validation_status.as_ref().unwrap(),
         "cawg.ica.time_stamp.validated"
@@ -1294,12 +1334,19 @@ async fn valid_from_after_time_stamp() {
     let li = log_items.next().unwrap();
 
     assert_eq!(li.kind, LogKind::Failure);
-    assert_eq!(li.label, "(IA label goes here)");
+
+    assert_eq!(
+        li.label,
+        "self#jumbf=/c2pa/test:urn:uuid:8e926af3-e3d4-4945-bcc3-c2680bc50526/c2pa.assertions/cawg.identity"
+    );
+
     assert_eq!(
         li.description,
         "credential's validFrom date is unacceptable (validFrom is after CAWG signature time stamp)"
     );
+
     assert_eq!(li.crate_name, "c2pa");
+
     assert_eq!(
         li.err_val.as_ref().unwrap(),
         "SignatureError(InvalidValidFromDate(\"validFrom is after CAWG signature time stamp\"))"
@@ -1351,11 +1398,7 @@ async fn valid_until_in_future() {
     // And that identity assertion should be valid for this manifest.
     let isv = IcaSignatureVerifier {};
 
-    // HACK: See if we can transition to PostValidate without losing access
-    // to the ica_vc member below.
-    st.push_current_uri("(IA label goes here)");
     let ica_vc = ia.validate(manifest, &mut st, &isv).await.unwrap();
-    st.pop_current_uri();
 
     // Start matching against expected values.
     let expected_identities = ica_credential_example::ica_example_identities();
@@ -1369,9 +1412,15 @@ async fn valid_until_in_future() {
     let li = log_items.next().unwrap();
 
     assert_eq!(li.kind, LogKind::Success);
-    assert_eq!(li.label, "(IA label goes here)");
+
+    assert_eq!(
+        li.label,
+        "self#jumbf=/c2pa/test:urn:uuid:13e59d1a-1373-4d18-94ad-3116713ba95a/c2pa.assertions/cawg.identity"
+    );
+
     assert_eq!(li.description, "ICA credential is valid");
     assert_eq!(li.crate_name, "c2pa");
+
     assert_eq!(
         li.validation_status.as_ref().unwrap(),
         "cawg.ica.credential_valid"
@@ -1420,11 +1469,7 @@ async fn valid_until_in_past() {
     // And that identity assertion should be valid for this manifest.
     let isv = IcaSignatureVerifier {};
 
-    // HACK: See if we can transition to PostValidate without losing access
-    // to the ica_vc member below.
-    st.push_current_uri("(IA label goes here)");
     let ica_vc = ia.validate(manifest, &mut st, &isv).await.unwrap();
-    st.pop_current_uri();
 
     // Start matching against expected values.
     let expected_identities = ica_credential_example::ica_example_identities();
@@ -1439,12 +1484,19 @@ async fn valid_until_in_past() {
     let li = log_items.next().unwrap();
 
     assert_eq!(li.kind, LogKind::Failure);
-    assert_eq!(li.label, "(IA label goes here)");
+
+    assert_eq!(
+        li.label,
+        "self#jumbf=/c2pa/test:urn:uuid:afffd936-e004-4bd0-aad3-7965f8eccb7c/c2pa.assertions/cawg.identity"
+    );
+
     assert_eq!(
         li.description,
         "credential's validUntil date is unacceptable (validUntil is before current date/time)"
     );
+
     assert_eq!(li.crate_name, "c2pa");
+
     assert_eq!(
         li.err_val.as_ref().unwrap(),
         "SignatureError(InvalidValidUntilDate(\"validUntil is before current date/time\"))"
@@ -1505,11 +1557,7 @@ async fn signer_payload_mismatch() {
     // And that identity assertion should be valid for this manifest.
     let isv = IcaSignatureVerifier {};
 
-    // HACK: See if we can transition to PostValidate without losing access
-    // to the ica_vc member below.
-    st.push_current_uri("(IA label goes here)");
     let ica_vc = ia.validate(manifest, &mut st, &isv).await.unwrap();
-    st.pop_current_uri();
 
     // Start matching against expected values.
     let expected_identities = ica_credential_example::ica_example_identities();
@@ -1524,9 +1572,15 @@ async fn signer_payload_mismatch() {
     let li = log_items.next().unwrap();
 
     assert_eq!(li.kind, LogKind::Failure);
-    assert_eq!(li.label, "(IA label goes here)");
+
+    assert_eq!(
+        li.label,
+        "self#jumbf=/c2pa/test:urn:uuid:96f26ecf-c335-4a43-ba4f-55acb5fdcd79/c2pa.assertions/cawg.identity"
+    );
+
     assert_eq!(li.description, "c2paAsset does not match signer_payload");
     assert_eq!(li.crate_name, "c2pa");
+
     assert_eq!(
         li.err_val.as_ref().unwrap(),
         "SignatureError(SignerPayloadMismatch)"

@@ -231,33 +231,36 @@ struct StructuredAction {
 /// }
 ///
 /// # fn main() -> Result<()> {
-/// let manifest_json = json!({
-///    "claim_generator_info": [
-///       {
-///           "name": "c2pa_test",
-///           "version": "1.0.0"
-///       }
-///    ],
-///    "title": "Test_Manifest"
-/// }).to_string();
+/// #[cfg(feature = "file_io")]
+/// {
+///     let manifest_json = json!({
+///        "claim_generator_info": [
+///           {
+///               "name": "c2pa_test",
+///               "version": "1.0.0"
+///           }
+///        ],
+///        "title": "Test_Manifest"
+///     }).to_string();
 ///
-/// let mut builder = Builder::from_json(&manifest_json)?;
-/// builder.add_assertion("org.contentauth.test", &Test { my_tag: 42 })?;
+///     let mut builder = Builder::from_json(&manifest_json)?;
+///     builder.add_assertion("org.contentauth.test", &Test { my_tag: 42 })?;
 ///
-/// let source = PathBuf::from("tests/fixtures/C.jpg");
-/// let dir = tempdir()?;
-/// let dest = dir.path().join("test_file.jpg");
+///     let source = PathBuf::from("tests/fixtures/C.jpg");
+///     let dir = tempdir()?;
+///     let dest = dir.path().join("test_file.jpg");
 ///
-/// // Create a ps256 signer using certs and key files. TO DO: Update example.
-/// let signcert_path = "tests/fixtures/certs/ps256.pub";
-/// let pkey_path = "tests/fixtures/certs/ps256.pem";
-/// let signer = create_signer::from_files(signcert_path, pkey_path, SigningAlg::Ps256, None)?;
+///     // Create a ps256 signer using certs and key files. TO DO: Update example.
+///     let signcert_path = "tests/fixtures/certs/ps256.pub";
+///     let pkey_path = "tests/fixtures/certs/ps256.pem";
+///     let signer = create_signer::from_files(signcert_path, pkey_path, SigningAlg::Ps256, None)?;
 ///
-/// // embed a manifest using the signer
-/// builder.sign_file(
-///     signer.as_ref(),
-///     &source,
-///     &dest)?;
+///     // embed a manifest using the signer
+///     builder.sign_file(
+///         signer.as_ref(),
+///         &source,
+///         &dest)?;
+///     }
 /// # Ok(())
 /// # }
 /// ```
@@ -2859,8 +2862,8 @@ mod tests {
 
     #[test]
     fn test_redaction() {
-        // We use this to associate the parent ingredient with c2pa.opened action
-        const PARENT_LABEL: &str = "parent_ingredient";
+        Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml")).unwrap();
+        //crate::utils::test::setup_logger();
 
         // the label of the assertion we are going to redact
         const ASSERTION_LABEL: &str = "stds.schema-org.CreativeWork";
@@ -2868,67 +2871,33 @@ mod tests {
         let mut input = Cursor::new(TEST_IMAGE);
 
         let parent = Reader::from_stream("image/jpeg", &mut input).expect("from_stream");
-        input.rewind().unwrap(); // we will use this again to add the parent ingredient
-        print!("{parent}");
         let parent_manifest_label = parent.active_label().unwrap();
-        // you can extract a references any manifest and any assertion label here.
-
+        // Create a redacted uri for the assertion we are going to redact.
         let redacted_uri =
             crate::jumbf::labels::to_assertion_uri(parent_manifest_label, ASSERTION_LABEL);
 
-        //let parent_manifest_label = parent_manifest_label.to_owned();
+        let mut builder = Builder::update();
 
-        // Create a parent with a c2pa_action type assertion.
-        let opened_action = crate::assertions::Action::new(c2pa_action::OPENED)
-            .set_parameter("org.cai.ingredientIds", [PARENT_LABEL.to_string()].to_vec())
-            .unwrap();
+        builder.definition.redactions = Some(vec![redacted_uri.clone()]);
 
         let redacted_action = crate::assertions::Action::new("c2pa.redacted")
             .set_reason("testing".to_owned())
             .set_parameter("redacted".to_owned(), redacted_uri.clone())
             .unwrap();
 
-        let actions = crate::assertions::Actions::new()
-            .add_action(opened_action)
-            .add_action(redacted_action);
-
-        let definition = ManifestDefinition {
-            claim_version: Some(1),
-            claim_generator_info: [ClaimGeneratorInfo::default()].to_vec(),
-            title: Some("Redaction Test".to_string()),
-            redactions: Some(vec![redacted_uri]), // add the redaction
-            ..Default::default()
-        };
-
-        let mut builder = Builder {
-            definition,
-            ..Default::default()
-        };
-
-        let parent_json = json!({
-            "relationship": "parentOf",
-            "label": PARENT_LABEL,
-        })
-        .to_string();
-
-        // add the parent ingredient from the asset here
-        builder
-            .add_ingredient_from_stream(parent_json, "image/jpeg", &mut input)
-            .expect("add ingredient");
-
-        builder.add_assertion(Actions::LABEL, &actions).unwrap();
+        builder.add_action(redacted_action).unwrap();
 
         let signer = test_signer(SigningAlg::Ps256);
         // Embed a manifest using the signer.
         let mut output = Cursor::new(Vec::new());
         builder
-            .sign(signer.as_ref(), "jpeg", &mut input, &mut output)
+            .sign(signer.as_ref(), "image/jpeg", &mut input, &mut output)
             .expect("builder sign");
 
         output.set_position(0);
 
-        let reader = Reader::from_stream("jpeg", &mut output).expect("from_bytes");
-        println!("{reader}");
+        let reader = Reader::from_stream("image/jpeg", &mut output).expect("from_bytes");
+        //println!("{reader}");
         let m = reader.active_manifest().unwrap();
         assert_eq!(m.ingredients().len(), 1);
         let parent = reader.get_manifest(parent_manifest_label).unwrap();
