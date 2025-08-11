@@ -23,11 +23,12 @@ use crate::{
     Error, Result,
 };
 
+/// A soft binding match contaning information about the match.
 #[derive(Debug, PartialEq, Eq)]
 pub struct SoftBindingMatch {
     /// Unique identifier of a matched C2PA Manifest.
     pub manifest_id: String,
-    /// TODO: doc
+    /// Absolute URL to the web API implementing the "getManifestById" endpoint.
     pub url: String,
     /// An integer score in the range (0-100) representing the strength of match, if
     /// appropriate, where 0 is the weakest possible match and 100 is the strongest
@@ -36,7 +37,13 @@ pub struct SoftBindingMatch {
 }
 
 impl SoftBindingMatch {
-    pub fn from_query(mut base_url: String, query: SoftBindingQueryResultMatch) -> Self {
+    /// Create a [`SoftBindingMatch`] from a "raw" [`SoftBindingQueryResultMatch`] returned by
+    /// the resolution API.
+    ///
+    /// The [`SoftBindingQueryResultMatch`] differs in that it contains an optional
+    /// [`SoftBindingQueryResultMatch::endpoint`] field which is fully qualified in the
+    /// [`SoftBindingMatch::url`] field.
+    fn from_query(mut base_url: String, query: SoftBindingQueryResultMatch) -> Self {
         SoftBindingMatch {
             manifest_id: query.manifest_id,
             url: match query.endpoint {
@@ -67,34 +74,8 @@ impl PartialOrd for SoftBindingMatch {
     }
 }
 
-// TODO: I don't think we need to do this comparison, the spec refers to a "matcher" in what I assume
-//       is the server we fetch the soft binding match from. Thus, I believe we just have to trust
-//       what they return?
-// #[derive(Debug)]
-// pub struct SoftBindingManifest {
-//     bytes: Vec<u8>,
-// }
-
-// impl SoftBindingManifest {
-//     pub fn matches(&self, that_manifest: &Manifest) -> bool {
-//         // TODO: ensure if .alg is absent it's taken from the claim
-//         let this_soft_binding: SoftBinding = todo!();
-//         let that_soft_binding: SoftBinding = todo!();
-
-//         // TODO: line up this and that blocks
-
-//         // IMPORTANT:
-//         // https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_validating_soft_binding_matches
-//         // > Matching is performed in the manner prescribed by the specified algorithm.
-//         // so how would we see if a soft binding matches another generically?
-
-//         this_soft_binding.alg.is_some()
-//             && that_soft_binding.alg.is_some()
-//             && this_soft_binding.alg == that_soft_binding.alg
-//             && this_soft_binding.blocks == that_soft_binding.blocks
-//     }
-// }
-
+/// A high-level client for interacting with the [`SoftBindingResolutionApi`]
+/// [defined in the spec](https://spec.c2pa.org/specifications/specifications/2.2/softbinding/Decoupled.html).
 #[derive(Debug)]
 pub struct SoftBindingClient<T> {
     oauth_resolver: T,
@@ -104,11 +85,27 @@ impl<T> SoftBindingClient<T>
 where
     T: Fn(&str) -> Option<&str>,
 {
+    // TODO: provide more info and example code on how to obtain a bearer token. note that this will require a
+    //       custom redirect URI that the user will need to handle (and hence why we don't provide this functionality)
+    /// Create a new [`SoftBindingClient`] with an oauth2 resolver callback.
+    ///
+    /// The callback takes in a complete URL to the soft binding algorithm API and returns a
+    /// bearer token for accessing that API.
+    ///
+    /// For more information on how to obtain a bearer token, read the
+    /// "[Soft Binding Resolution API specification](https://spec.c2pa.org/specifications/specifications/2.2/softbinding/Decoupled.html#soft-binding-resolution-api)"
+    /// described by the spec.
     pub fn new(oauth_resolver: T) -> Self {
         SoftBindingClient { oauth_resolver }
     }
 
-    // this is impled according to the fingerprint-golden in the spec
+    /// Fetch the closest fingerprint match for an asset by a byte stream.
+    ///
+    /// Given the specified algorithm entries, this function will query all soft binding resolution APIs
+    /// and return the match with the highest [`SoftBindingMatch::similarity_score`].
+    ///
+    /// This is derived from the [fingerprint-golden](https://spec.c2pa.org/specifications/specifications/2.2/softbinding/Decoupled.html#_fingerprinting_algorithms_2)
+    /// usage flow defined in the spec.
     pub fn fingerprint_match_by_stream(
         &self,
         entry: &SoftBindingAlgorithmEntry,
@@ -130,7 +127,13 @@ where
         Ok(matches.into_iter().flatten().max())
     }
 
-    // this is impled according to the watermark-golden in the spec
+    /// Fetch the watermark match for an asset by a byte stream.
+    ///
+    /// Given the specified algorithm entries, this function will query all soft binding resolution APIs
+    /// until the first match is found.
+    ///
+    /// This is derived from the [watermark-golden](https://spec.c2pa.org/specifications/specifications/2.2/softbinding/Decoupled.html#_watermarking_algorithms_2)
+    /// usage flow defined in the spec.
     pub fn watermark_match_by_stream(
         &self,
         entry: &SoftBindingAlgorithmEntry,
@@ -152,6 +155,10 @@ where
         Ok(matches.into_iter().find_map(|a_match| a_match.ok()))
     }
 
+    /// Fetch matches by an algorithm value.
+    ///
+    /// This is commonly used when the watermark/fingerprint algorithm is computed for an asset locally and
+    /// can be looked up via a small identifier value.
     #[inline]
     pub fn fetch_matches_by_algorithm_value(
         &self,
@@ -172,6 +179,10 @@ where
         })
     }
 
+    /// Fetch matches by stream.
+    ///
+    /// This is commonly used when the algorithm identifier value is unknown and can't be computed locally,
+    /// but can be computed by a remote soft binding resolution API on the source asset.
     #[inline]
     pub fn fetch_matches_by_stream(
         &self,
@@ -199,11 +210,15 @@ where
         })
     }
 
+    /// Fetch the manifest bytes for a [`SoftBindingMatch`], querying the soft binding resolution API
+    /// defined in [`SoftBindingMatch::url`].
     #[inline]
     pub fn fetch_manifest_bytes(&self, manifest_match: &SoftBindingMatch) -> Result<Vec<u8>> {
         self.fetch_manifest_bytes_impl(manifest_match, false)
     }
 
+    /// Fetch the active manifest bytes for a [`SoftBindingMatch`], querying the soft binding resolution API
+    /// defined in [`SoftBindingMatch::url`].
     #[inline]
     pub fn fetch_active_manifest_bytes(
         &self,
@@ -212,6 +227,8 @@ where
         self.fetch_manifest_bytes_impl(manifest_match, true)
     }
 
+    /// Fetch the manifest or active manifest bytes for a [`SoftBindingMatch`], querying the soft binding resolution API
+    /// defined in [`SoftBindingMatch::url`].
     fn fetch_manifest_bytes_impl(
         &self,
         manifest_match: &SoftBindingMatch,
@@ -229,6 +246,10 @@ where
         }
     }
 
+    /// Fetch matches given a callback that calls the [`SoftBindingResolutionApi`].
+    ///
+    /// The callback takes two parameters, (1) the url and (2) the bearer token for the url, and
+    /// is expected to return the [`SoftBindingQueryResult`] obtained from the [`SoftBindingResolutionApi`].
     fn fetch_matches_impl<F>(
         &self,
         entry: &SoftBindingAlgorithmEntry,
@@ -289,11 +310,15 @@ pub mod tests {
 
     use crate::soft_binding::{
         algorithm_list::tests::mock_soft_binding_algorithm_list,
-        resolution_api::tests::{mock_upload_file, UploadFileQuery, TEST_BEARER_TOKEN},
+        resolution_api::tests::{
+            mock_by_large_binding, mock_get_manifest_by_id, mock_upload_file, ByBindingQuery,
+            GetManifestByIdQuery, UploadFileQuery, TEST_BEARER_TOKEN,
+        },
     };
 
     use super::*;
 
+    /// A mock soft binding client that includes an oauth resolver to a test bearer token.
     pub fn mock_soft_binding_client() -> SoftBindingClient<impl Fn(&str) -> Option<&str>> {
         SoftBindingClient::new(|_| Some(TEST_BEARER_TOKEN))
     }
@@ -312,11 +337,18 @@ pub mod tests {
             hint_value: None,
         };
         let result = SoftBindingQueryResult {
-            matches: vec![SoftBindingQueryResultMatch {
-                manifest_id: "some manifest id".to_owned(),
-                endpoint: None,
-                similarity_score: Some(75),
-            }],
+            matches: vec![
+                SoftBindingQueryResultMatch {
+                    manifest_id: "some manifest id 1".to_owned(),
+                    endpoint: None,
+                    similarity_score: Some(75),
+                },
+                SoftBindingQueryResultMatch {
+                    manifest_id: "some manifest id 2".to_owned(),
+                    endpoint: None,
+                    similarity_score: Some(50),
+                },
+            ],
         };
 
         let server = MockServer::start();
@@ -337,5 +369,178 @@ pub mod tests {
         upload_file_mock.assert();
     }
 
-    // TODO: rest of the tests
+    #[test]
+    fn test_watermark_match_by_stream() {
+        let list = mock_soft_binding_algorithm_list();
+        let entry = list.first().unwrap();
+
+        let query = UploadFileQuery {
+            alg: entry.alg.to_owned(),
+            max_results: Some(1),
+            mime_type: "image/jpeg".to_owned(),
+            asset_bytes: vec![1, 2, 3],
+            hint_alg: None,
+            hint_value: None,
+        };
+        let result = SoftBindingQueryResult {
+            matches: vec![SoftBindingQueryResultMatch {
+                manifest_id: "some manifest id 1".to_owned(),
+                endpoint: None,
+                similarity_score: None,
+            }],
+        };
+
+        let server = MockServer::start();
+        let upload_file_mock = mock_upload_file(&server, &query, &result);
+
+        let client = mock_soft_binding_client();
+        let watermark_match = client
+            .watermark_match_by_stream(entry, "image/jpeg", &query.asset_bytes)
+            .unwrap()
+            .unwrap();
+
+        let correct_watermark_match = SoftBindingMatch::from_query(
+            server.base_url(),
+            result.matches.first().unwrap().to_owned(),
+        );
+        assert_eq!(correct_watermark_match, watermark_match);
+
+        upload_file_mock.assert();
+    }
+
+    #[test]
+    fn test_fetch_matches_by_algorithm_value() {
+        let list = mock_soft_binding_algorithm_list();
+        let entry = list.first().unwrap();
+
+        let query = ByBindingQuery {
+            value: "test value".to_owned(),
+            alg: "com.example.dense".to_owned(),
+            max_results: Some(1),
+        };
+        let result = SoftBindingQueryResult {
+            matches: vec![SoftBindingQueryResultMatch {
+                manifest_id: "some manifest id 1".to_owned(),
+                endpoint: None,
+                similarity_score: None,
+            }],
+        };
+
+        let server = MockServer::start();
+        let by_large_binding_mock = mock_by_large_binding(&server, &query, &result);
+
+        let client = mock_soft_binding_client();
+        let a_match: Vec<SoftBindingMatch> = client
+            .fetch_matches_by_algorithm_value(entry, &query.value, None, None)
+            .unwrap()
+            .into_iter()
+            .flatten()
+            .collect();
+
+        let correct_match = SoftBindingMatch::from_query(
+            server.base_url(),
+            result.matches.first().unwrap().to_owned(),
+        );
+        assert_eq!(vec![correct_match], a_match);
+
+        by_large_binding_mock.assert();
+    }
+
+    #[test]
+    fn test_fetch_matches_by_stream() {
+        let list = mock_soft_binding_algorithm_list();
+        let entry = list.first().unwrap();
+
+        let query = UploadFileQuery {
+            alg: "com.example.dense".to_owned(),
+            max_results: Some(1),
+            mime_type: "image/jpeg".to_owned(),
+            asset_bytes: vec![1, 2, 3],
+            hint_alg: None,
+            hint_value: None,
+        };
+        let result = SoftBindingQueryResult {
+            matches: vec![SoftBindingQueryResultMatch {
+                manifest_id: "some manifest id 1".to_owned(),
+                endpoint: None,
+                similarity_score: None,
+            }],
+        };
+
+        let server = MockServer::start();
+        let upload_file_mock = mock_upload_file(&server, &query, &result);
+
+        let client = mock_soft_binding_client();
+        let a_match: Vec<SoftBindingMatch> = client
+            .fetch_matches_by_stream(
+                entry,
+                &query.mime_type,
+                &query.asset_bytes,
+                None,
+                None,
+                None,
+            )
+            .unwrap()
+            .into_iter()
+            .flatten()
+            .collect();
+
+        let correct_match = SoftBindingMatch::from_query(
+            server.base_url(),
+            result.matches.first().unwrap().to_owned(),
+        );
+        assert_eq!(vec![correct_match], a_match);
+
+        upload_file_mock.assert();
+    }
+
+    #[test]
+    fn test_fetch_manifest_bytes() {
+        let query = GetManifestByIdQuery {
+            manifest_id: "some manifest id".to_owned(),
+            return_active_manifest: Some(false),
+        };
+        let result = vec![1, 2, 3];
+
+        let server = MockServer::start();
+        let get_manifest_by_id_mock = mock_get_manifest_by_id(&server, &query, &result);
+
+        let a_match = SoftBindingMatch {
+            manifest_id: query.manifest_id,
+            url: server.base_url(),
+            similarity_score: None,
+        };
+
+        let client = mock_soft_binding_client();
+        let response = client.fetch_manifest_bytes(&a_match).unwrap();
+
+        assert_eq!(result, response);
+
+        get_manifest_by_id_mock.assert();
+    }
+
+    #[test]
+    fn test_fetch_active_manifest_bytes() {
+        let query = GetManifestByIdQuery {
+            manifest_id: "some manifest id".to_owned(),
+            return_active_manifest: Some(true),
+        };
+        let result = vec![1, 2, 3];
+
+        let server = MockServer::start();
+        let get_manifest_by_id_mock = mock_get_manifest_by_id(&server, &query, &result);
+
+        let a_match = SoftBindingMatch {
+            manifest_id: query.manifest_id,
+            url: server.base_url(),
+            similarity_score: None,
+        };
+
+        let client = mock_soft_binding_client();
+        let response = client.fetch_active_manifest_bytes(&a_match).unwrap();
+
+        assert_eq!(result, response);
+
+        get_manifest_by_id_mock.assert();
+    }
 }

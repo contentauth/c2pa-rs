@@ -16,15 +16,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{Error, Result};
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
-pub struct SoftBindingQuery<'a> {
-    /// A string identifying the soft binding algorithm and version of that algorithm used.
-    pub alg: &'a str,
-    /// A base64-encoded string describing, in algorithm specific format, the value of the
-    /// soft binding to be used as the query.
-    pub value: &'a str,
-}
-
+/// Information on the algorithm used for the sot binding.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct SoftBindingAlg {
     /// Unique identifier of a fingerprint algorithm.
@@ -33,7 +25,7 @@ pub struct SoftBindingAlg {
 
 // TODO: the spec has a very questionable definition for this schema
 /// List of the names of soft binding algorithms supported by this service. The authoritative
-/// list of name is available here: <https://github.com/c2pa-org/softbinding-algorithm-list>
+/// list of name is available here: <https://github.com/c2pa-org/softbinding-algorithm-list>.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct SoftBindingAlgList {
     /// Unique identifier of a watermark algorithm.
@@ -42,6 +34,7 @@ pub struct SoftBindingAlgList {
     pub fingerprints: Vec<SoftBindingAlg>,
 }
 
+/// A soft binding match containing information about the match.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SoftBindingQueryResultMatch {
@@ -57,11 +50,25 @@ pub struct SoftBindingQueryResultMatch {
     pub similarity_score: Option<u32>,
 }
 
+/// A list of soft binding matches returned by a soft binding resolution API.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct SoftBindingQueryResult {
     pub matches: Vec<SoftBindingQueryResultMatch>,
 }
 
+/// Internal struct used for constructing the body for [`SoftBindingResolutionApi::query_by_large_binding`].
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+struct SoftBindingQuery<'a> {
+    /// A string identifying the soft binding algorithm and version of that algorithm used.
+    pub alg: &'a str,
+    /// A base64-encoded string describing, in algorithm specific format, the value of the
+    /// soft binding to be used as the query.
+    pub value: &'a str,
+}
+
+/// Raw web API for interacting with a soft binding resolution API.
+///
+/// Read more [in the spec](https://spec.c2pa.org/specifications/specifications/2.2/softbinding/Decoupled.html#soft-binding-resolution-api).
 #[derive(Debug)]
 pub struct SoftBindingResolutionApi;
 
@@ -158,7 +165,7 @@ impl SoftBindingResolutionApi {
     /// Retrieve a C2PA Manifest by manifest identifier. This either returns the active
     /// manifest or the entire C2PA Manifest Store that the active manifest identifier
     /// is part of. C2PA Manifest identifiers should follow the format described in the
-    /// C2PA Technical specification at xref:specs:C2PA_Specification.adoc[_unique_identifiers]
+    /// C2PA Technical specification at xref:specs:C2PA_Specification.adoc\[_unique_identifiers]
     pub fn get_manifest_by_id(
         base_url: &str,
         bearer_token: &str,
@@ -187,165 +194,6 @@ impl SoftBindingResolutionApi {
         Ok(response.into_body().read_json()?)
     }
 }
-
-// #[derive(Debug)]
-// pub struct SoftBindingResolutionClient {
-//     // TODO: is /v1 just as an example or required and will future versions be backwards compatible or should we explicitly check for v1?
-//     base_url: String,
-//     bearer_token: Option<String>,
-// }
-
-// // TODO: also need async counterparts for these functions
-// impl SoftBindingResolutionClient {
-//     pub fn new(base_url: String) -> Self {
-//         SoftBindingResolutionClient {
-//             base_url,
-//             bearer_token: None,
-//         }
-//     }
-
-//     // TODO: oauth2 stuff should be handled by the user bc it's dependent on
-//     //       redirect uris and how their website is implemented
-//     pub fn set_bearer_token(&mut self, token: String) {
-//         self.bearer_token = Some(token);
-//     }
-
-//     /// Given one soft binding, find zero or more manifests identifiers within the manifest
-//     /// store matching the soft binding.
-//     pub fn query_by_binding(
-//         &self,
-//         alg: &str,
-//         value: &str,
-//         max_results: Option<u32>,
-//     ) -> Result<SoftBindingQueryResult> {
-//         let max_results = max_results.unwrap_or(10);
-//         if max_results < 1 {
-//             return Err(Error::MaxResultsTooSmall);
-//         }
-
-//         let bearer_token = self
-//             .bearer_token
-//             .as_ref()
-//             .ok_or(Error::MissingBearerToken)?;
-//         let url = format!(
-//             "{}/matches/byBinding?value={value}&alg={alg}&maxResults={max_results}",
-//             self.base_url,
-//         );
-//         let response = ureq::get(url)
-//             .header(header::AUTHORIZATION, &format!("Bearer {bearer_token}"))
-//             .call()?;
-
-//         Ok(response.into_body().read_json()?)
-//     }
-
-//     /// Given a large soft binding value, find zero or more matching manifest identifiers.
-//     /// Use this method if the size of the soft binding value is expected to be large too
-//     /// large to fit in a URL, otherwise favor the use of GET.
-//     pub fn query_by_large_binding(
-//         &self,
-//         alg: &str,
-//         value: &str,
-//         max_results: Option<u32>,
-//     ) -> Result<SoftBindingQueryResult> {
-//         let max_results = max_results.unwrap_or(10);
-//         if max_results < 1 {
-//             return Err(Error::MaxResultsTooSmall);
-//         }
-
-//         let bearer_token = self
-//             .bearer_token
-//             .as_ref()
-//             .ok_or(Error::MissingBearerToken)?;
-//         let url = format!(
-//             "{}/matches/byBinding?maxResults={max_results}",
-//             self.base_url,
-//         );
-//         let response = ureq::post(url)
-//             .header(header::AUTHORIZATION, &format!("Bearer {bearer_token}"))
-//             .send_json(SoftBindingQuery { alg, value })?;
-
-//         Ok(response.into_body().read_json()?)
-//     }
-
-//     /// Find zero or more C2PA Manifest identifiers within the manifest store using an
-//     /// uploaded file containing a digital asset.
-//     pub fn upload_file(
-//         &self,
-//         alg: &str,
-//         mime_type: &str,
-//         // TODO: stream it
-//         asset_bytes: &[u8],
-//         max_results: Option<u32>,
-//         // TODO: when is hint_alg actually used?
-//         hint_alg: Option<&str>,
-//         hint_value: Option<&str>,
-//     ) -> Result<SoftBindingQueryResult> {
-//         let max_results = max_results.unwrap_or(10);
-//         if max_results < 1 {
-//             return Err(Error::MaxResultsTooSmall);
-//         }
-
-//         let bearer_token = self
-//             .bearer_token
-//             .as_ref()
-//             .ok_or(Error::MissingBearerToken)?;
-//         let mut url = format!(
-//             "{}/matches/byContent?alg={alg}&maxResults={max_results}",
-//             self.base_url,
-//         );
-//         if let Some(hint_alg) = hint_alg {
-//             url.push_str(&format!("&hintAlg={hint_alg}"));
-//         }
-//         if let Some(hint_value) = hint_value {
-//             url.push_str(&format!("&hintValue={hint_value}"));
-//         }
-
-//         let response = ureq::post(url)
-//             .header(header::AUTHORIZATION, &format!("Bearer {bearer_token}"))
-//             .header(header::CONTENT_TYPE, mime_type)
-//             .send(asset_bytes)?;
-
-//         Ok(response.into_body().read_json()?)
-//     }
-
-//     /// Retrieve a C2PA Manifest by manifest identifier. This either returns the active
-//     /// manifest or the entire C2PA Manifest Store that the active manifest identifier
-//     /// is part of. C2PA Manifest identifiers should follow the format described in the
-//     /// C2PA Technical specification at xref:specs:C2PA_Specification.adoc[_unique_identifiers]
-//     pub fn get_manifest_by_id(
-//         &self,
-//         manifest_id: &str,
-//         return_active_manifest: Option<bool>,
-//     ) -> Result<Vec<u8>> {
-//         let return_active_manifest = return_active_manifest.unwrap_or(false);
-
-//         let bearer_token = self
-//             .bearer_token
-//             .as_ref()
-//             .ok_or(Error::MissingBearerToken)?;
-//         let url = format!(
-//             "{}/manifests/{manifest_id}?returnActiveManifest={return_active_manifest}",
-//             self.base_url,
-//         );
-
-//         let response = ureq::post(url)
-//             .header(header::AUTHORIZATION, &format!("Bearer {bearer_token}"))
-//             .send_empty()?;
-
-//         Ok(response.into_body().read_to_vec()?)
-//     }
-
-//     // TODO: this endpoint doesn't require auth
-//     /// Enumerate the names of soft binding algorithms supported as queries by the service.
-//     /// See <https://github.com/c2pa-org/softbinding-algorithm-list> for an authoritative
-//     /// list of C2PA soft binding algorithm names.
-//     pub fn get_supported_bindings(&self) -> Result<SoftBindingAlgList> {
-//         let url = format!("{}/services/supportedAlgorithms", self.base_url,);
-
-//         let response = ureq::post(url).send_empty()?;
-//         Ok(response.into_body().read_json()?)
-//     }
-// }
 
 #[cfg(test)]
 pub mod tests {
