@@ -79,6 +79,4 @@ pub use embedded_data::EmbeddedData;
 pub mod region_of_interest;
 
 mod soft_binding;
-pub use soft_binding::{
-    SoftBinding, SoftBindingBlockMap, SoftBindingScopeMap, SoftBindingTimespanMap,
-};
+pub use soft_binding::{SoftBinding, SoftBindingBlock, SoftBindingScope, SoftBindingTimespan};

@@ -23,7 +23,7 @@ pub struct SoftBinding {
     pub alg: Option<String>,
 
     /// A list of details about the soft binding.
-    pub blocks: Vec<SoftBindingBlockMap>,
+    pub blocks: Vec<SoftBindingBlock>,
 
     /// A human-readable description of what this hash covers.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -33,13 +33,11 @@ pub struct SoftBinding {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub alg_params: Option<String>,
 
-    /// Zero-filled bytes used for filling up space.
-    #[serde(with = "serde_bytes")]
-    pub pad: Vec<u8>,
+    #[serde(default, with = "serde_bytes")]
+    pad: Vec<u8>,
 
-    /// Zero-filled bytes used for filling up space.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub pad2: Option<serde_bytes::ByteBuf>,
+    pad2: Option<serde_bytes::ByteBuf>,
 
     #[serde(skip_serializing)]
     url: Option<UriT>,
@@ -54,24 +52,40 @@ impl SoftBinding {
     pub fn url(&self) -> Option<&UriT> {
         self.url.as_ref()
     }
+
+    /// Zero-filled bytes used for filling up space.
+    ///
+    /// This field is not applicable to `c2pa-rs` as it employs a single step processing approach to precompute assertion sizes, unlike the
+    /// "[Multiple Step Processing](https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_multiple_step_processing)"
+    /// approach described by the spec.
+    pub fn pad(&self) -> &[u8] {
+        &self.pad
+    }
+
+    /// Zero-filled bytes used for filling up space.
+    ///
+    /// See [`SoftBinding::pad`] for more information.
+    pub fn pad2(&self) -> Option<&[u8]> {
+        self.pad2.as_ref().map(|bytes| bytes.as_slice())
+    }
 }
 
 /// Details about the soft binding, including the referenced value and scope.
 #[derive(Serialize, Deserialize, Debug, PartialEq)]
-pub struct SoftBindingBlockMap {
+pub struct SoftBindingBlock {
     /// The scope of the soft binding where it is applicable.
-    pub scope: SoftBindingScopeMap,
+    pub scope: SoftBindingScope,
 
     /// In algorithm specific format, the value of the soft binding computed over this block of digital content.
     pub value: String,
 }
 
 /// Soft binding scope, specifying specifically where in an asset the soft binding is applicable.
-#[derive(Serialize, Deserialize, Debug, PartialEq)]
-pub struct SoftBindingScopeMap {
+#[derive(Serialize, Deserialize, Debug, Default, PartialEq)]
+pub struct SoftBindingScope {
     /// For temporal assets, the timespan in which the soft binding is applicable.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub timespan: Option<SoftBindingTimespanMap>,
+    pub timespan: Option<SoftBindingTimespan>,
 
     /// Region of interest in regard to the soft binding.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -81,7 +95,7 @@ pub struct SoftBindingScopeMap {
     extent: Option<String>,
 }
 
-impl SoftBindingScopeMap {
+impl SoftBindingScope {
     /// In algorithm specific format, the part of the digital content over which the soft binding value has been computed.
     #[deprecated = "deprecated in c2pa v2.1, use the `region` field instead"]
     pub fn extent(&self) -> Option<&str> {
@@ -91,7 +105,7 @@ impl SoftBindingScopeMap {
 
 /// Soft binding timespan for temporal assets.
 #[derive(Serialize, Deserialize, Debug, PartialEq)]
-pub struct SoftBindingTimespanMap {
+pub struct SoftBindingTimespan {
     /// Start of the time range (as milliseconds from media start) over which the soft binding value has been computed.
     pub start: u64,
 
