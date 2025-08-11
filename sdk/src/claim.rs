@@ -3064,17 +3064,30 @@ impl Claim {
                                             continue;
                                         }
                                         Err(multi_e) => {
+                                            let err_str = match multi_e {
+                                                Error::C2PAValidation(ref es) => {
+                                                    if es == validation_status::ASSERTION_MULTI_ASSET_HASH_MALFORMED {
+                                                        validation_status::ASSERTION_MULTI_ASSET_HASH_MALFORMED
+                                                    } else if es == validation_status::ASSERTION_MULTI_ASSET_HASH_MISSING_PART {
+                                                        validation_status::ASSERTION_MULTI_ASSET_HASH_MISSING_PART
+                                                    } else {
+                                                        validation_status::ASSERTION_MULTI_ASSET_HASH_MISMATCH
+                                                    }
+                                                }
+                                                _ => validation_status::ASSERTION_MULTI_ASSET_HASH_MISMATCH,
+                                            };
+
                                             log_item!(
                                                 claim.assertion_uri(&hash_binding_assertion.label()),
-                                                format!("asset hash error, name: {name}, data hash error: {e}, multi-asset hash error: {multi_e}"),
+                                                format!("multi asset hash error, name: {name}, error: {}", err_str),
                                                 "verify_internal"
                                             )
-                                            .validation_status(
-                                                validation_status::ASSERTION_DATAHASH_MISMATCH,
-                                            )
+                                            .validation_status(err_str)
                                             .failure(
                                                 validation_log,
-                                                Error::HashMismatch(format!("Asset hash failure: {e}, Multi-asset hash failure: {multi_e}")),
+                                                Error::HashMismatch(format!(
+                                                    "Asset hash failure: {err_str}"
+                                                )),
                                             )?;
                                         }
                                     }

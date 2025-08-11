@@ -22,7 +22,9 @@ use crate::{
     claim::{Claim, ClaimAssetData},
     error::{Error, Result},
     utils::io_utils::{stream_len, ReaderUtils},
-    validation_status::ASSERTION_MULTI_ASSET_HASH_MALFORMED,
+    validation_status::{
+        ASSERTION_MULTI_ASSET_HASH_MALFORMED, ASSERTION_MULTI_ASSET_HASH_MISSING_PART,
+    },
     HashedUri,
 };
 
@@ -109,7 +111,9 @@ impl MultiAssetHash {
                 let length = part.location.length;
 
                 reader.seek(std::io::SeekFrom::Start(offset))?;
-                let buf = reader.read_to_vec(length)?;
+                let buf = reader.read_to_vec(length).map_err(|_| {
+                    Error::C2PAValidation(ASSERTION_MULTI_ASSET_HASH_MISSING_PART.to_string())
+                })?;
                 let mut part_reader = Cursor::new(buf);
 
                 match label.as_str() {
