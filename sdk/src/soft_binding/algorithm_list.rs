@@ -91,7 +91,7 @@ pub struct SoftBindingAlgorithmEntry {
     /// Metadata about this soft binding algorithm.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub entry_metadata: Option<SoftBindingAlgorithmEntryMetadata>,
-    // TODO: URI only
+    // TODO: URI only, either http(s) or smart contract id, only evm is defined?
     /// A list of Soft Binding Resolution APIs supporting this algorithm.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub soft_binding_resolution_apis: Option<Vec<String>>,

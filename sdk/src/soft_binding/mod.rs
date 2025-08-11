@@ -17,9 +17,7 @@ pub mod algorithm_list;
 /// The low-level soft binding resolution API.
 pub mod resolution_api;
 
-pub use crate::assertions::{
-    SoftBinding, SoftBindingBlockMap, SoftBindingScopeMap, SoftBindingTimespanMap,
-};
+pub use crate::assertions::{SoftBinding, SoftBindingBlock, SoftBindingScope, SoftBindingTimespan};
 pub use client::{SoftBindingClient, SoftBindingMatch};
 
 mod client;
