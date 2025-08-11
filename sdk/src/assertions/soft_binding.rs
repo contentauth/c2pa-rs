@@ -82,8 +82,9 @@ impl SoftBinding {
         self.pad2.as_ref().map(|bytes| bytes.as_slice())
     }
 
+    // TODO: self.alg should be inherited from the claim soft_alg
+    /// Return the kind of soft binding algorithm used, given a list of known soft binding algorithms.
     pub fn kind(&self, list: &[SoftBindingAlgorithmEntry]) -> Option<SoftBindingAlgorithmKind> {
-        // TODO: alg should be inherited from the claim soft_alg
         self.alg.as_ref().and_then(|alg| {
             list.iter().find_map(|entry| match &entry.alg == alg {
                 true => Some(entry.kind),
