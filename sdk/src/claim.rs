@@ -3151,6 +3151,15 @@ impl Claim {
                                 _ => validation_status::ASSERTION_BMFFHASH_MISMATCH,
                             };
 
+                            Claim::verify_multi_asset_hash(
+                                claim,
+                                asset_data,
+                                validation_log,
+                                hash_binding_assertion,
+                                err_str,
+                                Some(&name),
+                            )?;
+
                             log_item!(
                                 claim.assertion_uri(&hash_binding_assertion.label()),
                                 format!("asset hash error, name: {name}, error: {}", err_str),
@@ -3342,6 +3351,8 @@ impl Claim {
             return multi_hash_result;
         }
 
+        // If there is no multi asset assertion, passthrough the error handling
+        // reporting from the caller.
         let description = if let Some(name) = hash_binding_name {
             format!("asset hash error, name:{name}, error: {hash_binding_err_str}")
         } else {
