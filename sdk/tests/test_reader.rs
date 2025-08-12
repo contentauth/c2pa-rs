@@ -14,7 +14,7 @@
 mod common;
 use c2pa::{validation_status, Error, Reader, Result};
 use common::{assert_err, compare_to_known_good, fixture_stream};
-#[cfg(not(target_os = "wasi"))]
+#[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
 use wasm_bindgen_test::wasm_bindgen_test;
 #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
 wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
@@ -67,8 +67,12 @@ fn test_reader_xca_jpg() -> Result<()> {
     compare_to_known_good(&reader, "XCA.json")
 }
 
-#[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
-#[wasm_bindgen_test]
+#[cfg(not(target_os = "wasi"))]
+#[cfg_attr(not(target_arch = "wasm32"), actix::test)]
+#[cfg_attr(
+    all(target_arch = "wasm32", not(target_os = "wasi")),
+    wasm_bindgen_test
+)]
 async fn test_reader_remote_url_async() -> Result<()> {
     let reader = Reader::from_stream_async(
         "image/jpeg",

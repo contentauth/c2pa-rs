@@ -4231,7 +4231,11 @@ impl Store {
         verify: bool,
         validation_log: &mut StatusTracker,
     ) -> Result<Self> {
-        let (manifest_bytes, remote_url) = Store::load_jumbf_from_stream(format, &mut stream)?;
+        let (manifest_bytes, remote_url) = if _sync {
+            Store::load_jumbf_from_stream(format, &mut stream)?
+        } else {
+            Store::load_jumbf_from_stream_async(format, &mut stream).await?
+        };
 
         let store = if _sync {
             Self::from_manifest_data_and_stream(
