@@ -19,10 +19,11 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     assertion::{Assertion, AssertionBase, AssertionCbor},
-    assertions::{labels, BmffHash, DataHash},
-    asset_io::CAIRead,
+    assertions::{labels, BmffHash, BoxHash, DataHash},
+    asset_io::{AssetIO, CAIRead},
     claim::{Claim, ClaimAssetData},
     error::{Error, Result},
+    jumbf_io::get_assetio_handler,
     utils::io_utils::{stream_len, ReaderUtils},
     validation_status::{
         ASSERTION_MULTI_ASSET_HASH_MALFORMED, ASSERTION_MULTI_ASSET_HASH_MISSING_PART,
@@ -93,21 +94,31 @@ impl MultiAssetHash {
         match asset_data {
             #[cfg(feature = "file_io")]
             ClaimAssetData::Path(asset_path) => {
-                let mut file = File::open(asset_path).map_err(Error::IoError)?;
-                self.verify_stream_hash(&mut file, claim)
+                let mut file = File::open(&asset_path).map_err(Error::IoError)?;
+                let asset_handler = crate::jumbf_io::get_assetio_handler_from_path(asset_path);
+                self.verify_stream_hash(&mut file, claim, asset_handler)
             }
-            ClaimAssetData::Bytes(asset_bytes, _) => {
+            ClaimAssetData::Bytes(asset_bytes, asset_type) => {
                 let mut cursor = Cursor::new(*asset_bytes);
-                self.verify_stream_hash(&mut cursor, claim)
+                let asset_handler = get_assetio_handler(asset_type);
+                self.verify_stream_hash(&mut cursor, claim, asset_handler)
             }
-            ClaimAssetData::Stream(stream_data, _) => self.verify_stream_hash(*stream_data, claim),
+            ClaimAssetData::Stream(stream_data, asset_type) => {
+                let asset_handler = get_assetio_handler(asset_type);
+                self.verify_stream_hash(*stream_data, claim, asset_handler)
+            }
             _ => Err(Error::UnsupportedType),
         }
     }
 
     /// Verifies each part of the multi-asset hash through comparing computed hashes.
     /// Validates part locations, reads the specified byte ranges, and verifies against referenced hash assertions.
-    fn verify_stream_hash(&self, mut reader: &mut dyn CAIRead, claim: &Claim) -> Result<()> {
+    fn verify_stream_hash(
+        &self,
+        mut reader: &mut dyn CAIRead,
+        claim: &Claim,
+        asset_handler: Option<&dyn AssetIO>,
+    ) -> Result<()> {
         let length = stream_len(reader)?;
         self.verify_self(length)?;
 
@@ -119,51 +130,64 @@ impl MultiAssetHash {
             }
 
             // Retrieve the assertion linked in the multi-asset assertions.
-            if let Some(assertion) = claim.get_assertion_from_link(&part.hash_assertion.url()) {
-                let label = assertion.label();
+            let assertion = claim
+                .get_assertion_from_link(&part.hash_assertion.url())
+                .ok_or_else(|| {
+                    Error::C2PAValidation(ASSERTION_MULTI_ASSET_HASH_MISSING_PART.to_string())
+                })?;
 
-                match &part.location {
-                    LocatorMap::ByteRangeLocator(locator) => {
-                        let offset = locator.byte_offset;
-                        let length = locator.length;
+            let label = assertion.label();
 
-                        // Read only the specified parts within the larger stream.
-                        reader.seek(std::io::SeekFrom::Start(offset))?;
-                        let buf = reader.read_to_vec(length).map_err(|_| {
-                            Error::C2PAValidation(
-                                ASSERTION_MULTI_ASSET_HASH_MISSING_PART.to_string(),
-                            )
-                        })?;
-                        let mut part_reader = Cursor::new(buf);
+            match &part.location {
+                LocatorMap::ByteRangeLocator(locator) => {
+                    let offset = locator.byte_offset;
+                    let length = locator.length;
 
-                        // Perform validation on each part depending on type of hash.
-                        match label.as_str() {
-                            l if l.starts_with(DataHash::LABEL) => {
-                                let dh = DataHash::from_assertion(assertion)?;
-                                let alg = match &dh.alg {
-                                    Some(alg) => alg,
-                                    None => claim.alg(),
-                                };
-                                dh.verify_stream_hash(&mut part_reader, Some(alg))?;
-                            }
-                            l if l.starts_with(BmffHash::LABEL) => {
-                                return Err(Error::NotImplemented(
-                                    "BmffHash not yet implemented for Multi-Asset hashes"
-                                        .to_string(),
-                                ));
-                            }
-                            _ => {}
+                    // Read only the specified parts within the larger stream.
+                    reader.seek(std::io::SeekFrom::Start(offset))?;
+                    let buf = reader.read_to_vec(length).map_err(|_| {
+                        Error::C2PAValidation(ASSERTION_MULTI_ASSET_HASH_MISSING_PART.to_string())
+                    })?;
+                    let mut part_reader = Cursor::new(buf);
+
+                    // Perform validation on each part depending on type of hash.
+                    match label.as_str() {
+                        l if l.starts_with(DataHash::LABEL) => {
+                            let dh = DataHash::from_assertion(assertion)?;
+                            let alg = match &dh.alg {
+                                Some(alg) => alg,
+                                None => claim.alg(),
+                            };
+                            dh.verify_stream_hash(&mut part_reader, Some(alg))?;
                         }
+                        l if l.starts_with(BoxHash::LABEL) => {
+                            let bh = BoxHash::from_assertion(assertion)?;
+                            let box_hash_processor = asset_handler
+                                .ok_or(Error::UnsupportedType)?
+                                .asset_box_hash_ref()
+                                .ok_or(Error::HashMismatch("Box hash not supported".to_string()))?;
+                            bh.verify_stream_hash(
+                                &mut part_reader,
+                                Some(claim.alg()),
+                                box_hash_processor,
+                            )?;
+                        }
+                        l if l.starts_with(BmffHash::LABEL) => {
+                            return Err(Error::NotImplemented(
+                                "BmffHash not yet implemented for Multi-Asset hashes".to_string(),
+                            ));
+                        }
+                        _ => {}
                     }
-                    LocatorMap::BmffBox { .. } => {
-                        return Err(Error::NotImplemented(
-                            "BmffBox locators not yet implemented for Multi-Asset hashes"
-                                .to_string(),
-                        ));
-                    }
+                }
+                LocatorMap::BmffBox { .. } => {
+                    return Err(Error::NotImplemented(
+                        "BmffBox locators not yet implemented for Multi-Asset hashes".to_string(),
+                    ));
                 }
             }
         }
+
         Ok(())
     }
 }
@@ -235,7 +259,9 @@ pub mod tests {
             MultiAssetHash::from_assertion(claim.get_assertion(MultiAssetHash::LABEL, 0).unwrap())
                 .unwrap();
         let mut source = Cursor::new(ORIG_MOTION_PHOTO);
-        assertion.verify_stream_hash(&mut source, claim).unwrap();
+        assertion
+            .verify_stream_hash(&mut source, claim, None)
+            .unwrap();
     }
 
     #[test]
@@ -248,7 +274,9 @@ pub mod tests {
             MultiAssetHash::from_assertion(claim.get_assertion(MultiAssetHash::LABEL, 0).unwrap())
                 .unwrap();
         let mut source = Cursor::new(NO_MOVIE_MOTION_PHOTO);
-        assertion.verify_stream_hash(&mut source, claim).unwrap();
+        assertion
+            .verify_stream_hash(&mut source, claim, None)
+            .unwrap();
     }
 
     #[test]

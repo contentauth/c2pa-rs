@@ -69,7 +69,8 @@ use crate::{
     status_tracker::{ErrorBehavior, StatusTracker},
     store::StoreValidationInfo,
     utils::hash_utils::{hash_by_alg, vec_compare},
-    validation_status, ClaimGeneratorInfo, HashRange,
+    validation_status::{self, ASSERTION_MULTI_ASSET_HASH_MALFORMED},
+    ClaimGeneratorInfo, HashRange,
 };
 
 const BUILD_HASH_ALG: &str = "sha256";
@@ -3067,57 +3068,12 @@ impl Claim {
                             Err(e) => {
                                 // If standard asset hard binding fails, try multi-asset hash validation.
                                 // Only one multi-asset hash assertion is allowed per manifest.
-                                if let Some(assertion) =
-                                    claim.get_assertion(MultiAssetHash::LABEL, 0)
-                                {
-                                    let multi_asset_assertion =
-                                        MultiAssetHash::from_assertion(assertion)?;
-
-                                    let multi_hash_result =
-                                        multi_asset_assertion.verify_hash(asset_data, claim);
-
-                                    match multi_hash_result {
-                                        Ok(_) => {
-                                            log_item!(
-                                                claim.assertion_uri(MultiAssetHash::LABEL),
-                                                "multi-asset hash valid",
-                                                "verify_internal"
-                                            )
-                                            .validation_status(
-                                                validation_status::ASSERTION_DATAHASH_MATCH,
-                                            )
-                                            .success(validation_log);
-
-                                            continue;
-                                        }
-                                        Err(multi_e) => {
-                                            let err_str = match multi_e {
-                                                Error::C2PAValidation(ref es) => {
-                                                    if es == validation_status::ASSERTION_MULTI_ASSET_HASH_MALFORMED {
-                                                        validation_status::ASSERTION_MULTI_ASSET_HASH_MALFORMED
-                                                    } else if es == validation_status::ASSERTION_MULTI_ASSET_HASH_MISSING_PART {
-                                                        validation_status::ASSERTION_MULTI_ASSET_HASH_MISSING_PART
-                                                    } else {
-                                                        validation_status::ASSERTION_MULTI_ASSET_HASH_MISMATCH
-                                                    }
-                                                }
-                                                _ => validation_status::ASSERTION_MULTI_ASSET_HASH_MISMATCH,
-                                            };
-
-                                            log_item!(
-                                                claim.assertion_uri(&hash_binding_assertion.label()),
-                                                format!("multi asset hash error, name: {name}, error: {}", err_str),
-                                                "verify_internal"
-                                            )
-                                            .validation_status(err_str)
-                                            .failure(
-                                                validation_log,
-                                                Error::HashMismatch(format!(
-                                                    "Asset hash failure: {err_str}"
-                                                )),
-                                            )?;
-                                        }
-                                    }
+                                if !claim.multi_asset_hash_assertions().is_empty() {
+                                    Claim::verify_multi_asset_data_hash(
+                                        claim,
+                                        asset_data,
+                                        validation_log,
+                                    )?;
                                 } else {
                                     log_item!(
                                         claim.assertion_uri(&hash_binding_assertion.label()),
@@ -3340,7 +3296,74 @@ impl Claim {
         Ok(())
     }
 
-    ///Returns list of metadata assertions
+    fn verify_multi_asset_data_hash(
+        claim: &Claim,
+        asset_data: &mut ClaimAssetData<'_>,
+        validation_log: &mut StatusTracker,
+    ) -> Result<()> {
+        let all_multi_asset_hashes: Vec<&ClaimAssertion> = claim.multi_asset_hash_assertions();
+        if all_multi_asset_hashes.len() > 1 {
+            return Err(Error::C2PAValidation(
+                ASSERTION_MULTI_ASSET_HASH_MALFORMED.to_string(),
+            ));
+        }
+
+        if let Some(assertion) = all_multi_asset_hashes.first() {
+            let multi_asset_hash_assertion = MultiAssetHash::from_assertion(assertion.assertion())?;
+            let multi_hash_result = multi_asset_hash_assertion.verify_hash(asset_data, claim);
+
+            match &multi_hash_result {
+                Ok(_) => {
+                    log_item!(
+                        claim.assertion_uri(MultiAssetHash::LABEL),
+                        "multi-asset hash valid",
+                        "verify_multi_asset_data_hash"
+                    )
+                    .validation_status(validation_status::ASSERTION_DATAHASH_MATCH)
+                    .success(validation_log);
+                }
+                Err(multi_e) => {
+                    let err_str = match multi_e {
+                        Error::C2PAValidation(ref es) => {
+                            if es == validation_status::ASSERTION_MULTI_ASSET_HASH_MALFORMED {
+                                validation_status::ASSERTION_MULTI_ASSET_HASH_MALFORMED
+                            } else if es
+                                == validation_status::ASSERTION_MULTI_ASSET_HASH_MISSING_PART
+                            {
+                                validation_status::ASSERTION_MULTI_ASSET_HASH_MISSING_PART
+                            } else {
+                                validation_status::ASSERTION_MULTI_ASSET_HASH_MISMATCH
+                            }
+                        }
+                        _ => validation_status::ASSERTION_MULTI_ASSET_HASH_MISMATCH,
+                    };
+
+                    log_item!(
+                        claim.assertion_uri(multi_asset_hash_assertion.label()),
+                        format!("multi asset hash error, error: {}", err_str),
+                        "verify_multi_asset_data_hash"
+                    )
+                    .validation_status(err_str)
+                    .failure(
+                        validation_log,
+                        Error::HashMismatch(format!("Asset hash failure: {err_str}")),
+                    )?;
+                }
+            }
+            return multi_hash_result;
+        }
+        Ok(())
+    }
+
+    /// Returns list of multi asset hash assertions
+    pub fn multi_asset_hash_assertions(&self) -> Vec<&ClaimAssertion> {
+        let dummy_data = AssertionData::Cbor(Vec::new());
+        let dummy_multi_asset_hash =
+            Assertion::new(assertions::labels::MULTI_ASSET_HASH, None, dummy_data);
+        self.assertions_by_type(&dummy_multi_asset_hash, None)
+    }
+
+    /// Returns list of metadata assertions
     pub fn metadata_assertions(&self) -> Vec<&ClaimAssertion> {
         self.assertion_store
             .iter()

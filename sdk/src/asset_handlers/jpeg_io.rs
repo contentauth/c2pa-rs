@@ -15,11 +15,10 @@ use std::{
     collections::HashMap,
     fs::File,
     io::{BufReader, Cursor, Write},
-    mem::size_of,
     path::*,
 };
 
-use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
+use byteorder::{BigEndian, ByteOrder, ReadBytesExt, WriteBytesExt};
 use img_parts::{
     jpeg::{
         markers::{self, APP0, APP15, COM, DQT, DRI, P, RST0, RST7, SOF0, SOF15, SOS, Z},
@@ -83,15 +82,6 @@ fn extract_xmp(seg: &JpegSegment) -> Option<&str> {
     }
 }
 
-// Extract XMP from bytes.
-fn read_be_u32(input: &mut &[u8]) -> Result<u32> {
-    let (int_bytes, rest) = input.split_at(size_of::<u32>());
-    *input = rest;
-    Ok(u32::from_be_bytes(int_bytes.try_into().map_err(|_| {
-        Error::InvalidAsset("Invalid u32 bytes".to_string())
-    })?))
-}
-
 fn extract_xmp_extensions(seg: &JpegSegment) -> Option<XmpExtension> {
     let (sig, rest) = seg
         .contents()
@@ -100,8 +90,8 @@ fn extract_xmp_extensions(seg: &JpegSegment) -> Option<XmpExtension> {
     if sig.starts_with(XMP_EXTENSION_SIGNATURE.as_bytes()) && rest.len() > 40 {
         // 32 byte GUID, 4 byte length, 4 byte offset
         let guid = std::str::from_utf8(&rest[..32]).ok()?.to_string();
-        let length = read_be_u32(&mut &rest[32..36]).ok()?;
-        let offset = read_be_u32(&mut &rest[36..40]).ok()?;
+        let length = BigEndian::read_u32(&rest[32..36]);
+        let offset = BigEndian::read_u32(&rest[36..40]);
         let content = std::str::from_utf8(&rest[40..]).ok()?.to_string();
         return Some(XmpExtension {
             guid,
