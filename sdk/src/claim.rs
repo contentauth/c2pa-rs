@@ -3068,29 +3068,14 @@ impl Claim {
                             Err(e) => {
                                 // If standard asset hard binding fails, try multi-asset hash validation.
                                 // Only one multi-asset hash assertion is allowed per manifest.
-                                let multi_asset_hash_assertions =
-                                    claim.multi_asset_hash_assertions();
-                                if !multi_asset_hash_assertions.is_empty() {
-                                    Claim::verify_multi_asset_data_hash(
-                                        claim,
-                                        asset_data,
-                                        multi_asset_hash_assertions,
-                                        validation_log,
-                                    )?;
-                                } else {
-                                    log_item!(
-                                        claim.assertion_uri(&hash_binding_assertion.label()),
-                                        format!("asset hash error, name: {name}, error: {e}"),
-                                        "verify_internal"
-                                    )
-                                    .validation_status(
-                                        validation_status::ASSERTION_DATAHASH_MISMATCH,
-                                    )
-                                    .failure(
-                                        validation_log,
-                                        Error::HashMismatch(format!("Asset hash failure: {e}")),
-                                    )?;
-                                }
+                                Claim::verify_multi_asset_hash(
+                                    claim,
+                                    asset_data,
+                                    validation_log,
+                                    hash_binding_assertion,
+                                    &e.to_string(),
+                                    Some(&name),
+                                )?;
                             }
                         }
                     } else {
@@ -3243,15 +3228,13 @@ impl Claim {
                             continue;
                         }
                         Err(e) => {
-                            log_item!(
-                                claim.assertion_uri(&hash_binding_assertion.label()),
-                                format!("asset hash error: {e}"),
-                                "verify_internal"
-                            )
-                            .validation_status(validation_status::ASSERTION_BOXHASH_MISMATCH)
-                            .failure(
+                            Claim::verify_multi_asset_hash(
+                                claim,
+                                asset_data,
                                 validation_log,
-                                Error::HashMismatch(format!("Asset hash failure: {e}")),
+                                hash_binding_assertion,
+                                &e.to_string(),
+                                None,
                             )?;
                         }
                     }
@@ -3299,12 +3282,15 @@ impl Claim {
         Ok(())
     }
 
-    fn verify_multi_asset_data_hash(
+    fn verify_multi_asset_hash(
         claim: &Claim,
         asset_data: &mut ClaimAssetData<'_>,
-        multi_asset_hash_assertions: Vec<&ClaimAssertion>,
         validation_log: &mut StatusTracker,
+        hash_binding_assertion: &ClaimAssertion,
+        hash_binding_err_str: &str,
+        hash_binding_name: Option<&str>,
     ) -> Result<()> {
+        let multi_asset_hash_assertions = claim.multi_asset_hash_assertions();
         if multi_asset_hash_assertions.len() > 1 {
             return Err(Error::C2PAValidation(
                 ASSERTION_MULTI_ASSET_HASH_MALFORMED.to_string(),
@@ -3320,7 +3306,7 @@ impl Claim {
                     log_item!(
                         claim.assertion_uri(MultiAssetHash::LABEL),
                         "multi-asset hash valid",
-                        "verify_multi_asset_data_hash"
+                        "verify_multi_asset_hash"
                     )
                     .validation_status(validation_status::ASSERTION_MULTI_ASSET_HASH_MATCH)
                     .success(validation_log);
@@ -3344,7 +3330,7 @@ impl Claim {
                     log_item!(
                         claim.assertion_uri(multi_asset_hash_assertion.label()),
                         format!("multi asset hash error, error: {}", err_str),
-                        "verify_multi_asset_data_hash"
+                        "verify_multi_asset_hash"
                     )
                     .validation_status(err_str)
                     .failure(
@@ -3355,6 +3341,30 @@ impl Claim {
             }
             return multi_hash_result;
         }
+
+        let description = if let Some(name) = hash_binding_name {
+            format!("asset hash error, name:{name}, error: {hash_binding_err_str}")
+        } else {
+            format!("asset hash error, error: {hash_binding_err_str}")
+        };
+
+        let validation_status = match hash_binding_assertion.label_raw() {
+            l if l.starts_with(DataHash::LABEL) => validation_status::ASSERTION_DATAHASH_MISMATCH,
+            l if l.starts_with(BoxHash::LABEL) => validation_status::ASSERTION_BOXHASH_MISMATCH,
+            l if l.starts_with(BmffHash::LABEL) => validation_status::ASSERTION_BMFFHASH_MISMATCH,
+            _ => "",
+        };
+
+        log_item!(
+            claim.assertion_uri(&hash_binding_assertion.label()),
+            description,
+            "verify_multi_asset_hash"
+        )
+        .validation_status(validation_status)
+        .failure(
+            validation_log,
+            Error::HashMismatch(format!("Asset hash failure: {hash_binding_err_str}")),
+        )?;
         Ok(())
     }
 
