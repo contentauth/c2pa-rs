@@ -93,7 +93,6 @@ name = "fragmented_bmff"
 required-features = ["file_io"]
 
 [lib]
-doctest = false
 crate-type = ["lib"]
 
 [dependencies]
