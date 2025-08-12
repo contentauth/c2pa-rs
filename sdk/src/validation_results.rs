@@ -808,6 +808,12 @@ pub mod validation_codes {
     /// Any corresponding URL should point to a C2PA assertion box.
     pub const ASSERTION_COLLECTIONHASH_MALFORMED: &str = "assertion.collectionHash.malformed";
 
+    /// The hash of one part of a multi-asset hash assertion matches
+    /// the corresponding hash in the assertion’s multi-asset-hash-map.
+    /// 
+    /// Any corresponding URL should point to a C2PA assertion box.
+    pub const ASSERTION_MULTI_ASSET_HASH_MATCH: &str = "assertion.multiAssetHash.match";
+
     /// A multi asset hash assertion is malformed.
     ///
     /// Any corresponding URL should point to a C2PA assertion box.

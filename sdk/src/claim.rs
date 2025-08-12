@@ -3068,10 +3068,12 @@ impl Claim {
                             Err(e) => {
                                 // If standard asset hard binding fails, try multi-asset hash validation.
                                 // Only one multi-asset hash assertion is allowed per manifest.
-                                if !claim.multi_asset_hash_assertions().is_empty() {
+                                let multi_asset_hash_assertions = claim.multi_asset_hash_assertions();
+                                if !multi_asset_hash_assertions.is_empty() {
                                     Claim::verify_multi_asset_data_hash(
                                         claim,
                                         asset_data,
+                                        multi_asset_hash_assertions,
                                         validation_log,
                                     )?;
                                 } else {
@@ -3299,16 +3301,16 @@ impl Claim {
     fn verify_multi_asset_data_hash(
         claim: &Claim,
         asset_data: &mut ClaimAssetData<'_>,
+        multi_asset_hash_assertions: Vec<&ClaimAssertion>,
         validation_log: &mut StatusTracker,
     ) -> Result<()> {
-        let all_multi_asset_hashes: Vec<&ClaimAssertion> = claim.multi_asset_hash_assertions();
-        if all_multi_asset_hashes.len() > 1 {
+        if multi_asset_hash_assertions.len() > 1 {
             return Err(Error::C2PAValidation(
                 ASSERTION_MULTI_ASSET_HASH_MALFORMED.to_string(),
             ));
         }
 
-        if let Some(assertion) = all_multi_asset_hashes.first() {
+        if let Some(assertion) = multi_asset_hash_assertions.first() {
             let multi_asset_hash_assertion = MultiAssetHash::from_assertion(assertion.assertion())?;
             let multi_hash_result = multi_asset_hash_assertion.verify_hash(asset_data, claim);
 
@@ -3319,7 +3321,7 @@ impl Claim {
                         "multi-asset hash valid",
                         "verify_multi_asset_data_hash"
                     )
-                    .validation_status(validation_status::ASSERTION_DATAHASH_MATCH)
+                    .validation_status(validation_status::ASSERTION_MULTI_ASSET_HASH_MATCH)
                     .success(validation_log);
                 }
                 Err(multi_e) => {
