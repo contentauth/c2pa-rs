@@ -3808,6 +3808,7 @@ pub mod tests {
         crypto::raw_signature::SigningAlg,
         hashed_uri::HashedUri,
         jumbf_io::get_assetio_handler_from_path,
+        settings::Settings,
         status_tracker::{LogItem, StatusTracker},
         utils::{
             hash_utils::Hasher,
@@ -3850,6 +3851,18 @@ pub mod tests {
         claim.add_assertion(&actions)?;
 
         Ok(claim)
+    }
+
+    // temporary fix for tests not designed for v2 claim verification
+    fn no_verify_after_sign() {
+        Settings::from_toml(
+            &toml::toml! {
+                [verify]
+                verify_after_sign = false
+            }
+            .to_string(),
+        )
+        .expect("failed to set verify settings");
     }
 
     #[test]
@@ -4207,17 +4220,9 @@ pub mod tests {
     #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
     #[cfg_attr(target_os = "wasi", wstd::test)]
     async fn test_jumbf_generation_async() {
-        use crate::settings::Settings;
         // Verify after sign is causing UnreferencedManifest errors here, since the manifests don't reference each other.
-        // This is a temporary fix to allow the tests to run.
-        Settings::from_toml(
-            &toml::toml! {
-                [verify]
-                verify_after_sign = false
-            }
-            .to_string(),
-        )
-        .expect("failed to set verify settings");
+        no_verify_after_sign();
+
         let signer = async_test_signer(SigningAlg::Ps256);
 
         let (format, mut input_stream, mut output_stream) =
