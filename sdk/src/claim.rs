@@ -3284,7 +3284,7 @@ impl Claim {
 
     fn verify_multi_asset_hash(
         claim: &Claim,
-        asset_data: &mut ClaimAssetData<'_>,
+        asset_data: &mut ClaimAssetData,
         validation_log: &mut StatusTracker,
         hash_binding_assertion: &ClaimAssertion,
         hash_binding_err_str: &str,
