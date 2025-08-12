@@ -245,20 +245,52 @@ pub mod tests {
         store::Store,
     };
 
-    const ORIG_MOTION_PHOTO: &[u8] = include_bytes!("../../tests/fixtures/motion_photo.jpg");
+    const MOTION_PHOTO: &[u8] = include_bytes!("../../tests/fixtures/motion_photo.jpg");
+    const MOTION_PHOTO_2: &[u8] = include_bytes!("../../tests/fixtures/motion_photo2.jpg");
     const NO_MOVIE_MOTION_PHOTO: &[u8] =
         include_bytes!("../../tests/fixtures/no_movie_motion_photo.jpg");
+    const STRIPPED_PHOTO: &[u8] = include_bytes!("../../tests/fixtures/stripped.jpg");
 
     #[test]
     fn test_validation() {
         let mut validation_log = StatusTracker::default();
-        let source = Cursor::new(ORIG_MOTION_PHOTO);
+        let source = Cursor::new(MOTION_PHOTO);
         let store = Store::from_stream("image/jpeg", source, true, &mut validation_log).unwrap();
         let claim = store.provenance_claim().unwrap();
         let assertion =
             MultiAssetHash::from_assertion(claim.get_assertion(MultiAssetHash::LABEL, 0).unwrap())
                 .unwrap();
-        let mut source = Cursor::new(ORIG_MOTION_PHOTO);
+        let mut source = Cursor::new(MOTION_PHOTO);
+        assertion
+            .verify_stream_hash(&mut source, claim, None)
+            .unwrap();
+    }
+
+    #[test]
+    fn test_multiple_parts_validation() {
+        let mut validation_log = StatusTracker::default();
+        let source = Cursor::new(MOTION_PHOTO_2);
+        let store = Store::from_stream("image/jpeg", source, true, &mut validation_log).unwrap();
+        let claim = store.provenance_claim().unwrap();
+        let assertion =
+            MultiAssetHash::from_assertion(claim.get_assertion(MultiAssetHash::LABEL, 0).unwrap())
+                .unwrap();
+        let mut source = Cursor::new(MOTION_PHOTO_2);
+        assertion
+            .verify_stream_hash(&mut source, claim, None)
+            .unwrap();
+    }
+
+    #[test]
+    fn test_stripped_validation() {
+        let mut validation_log = StatusTracker::default();
+        let source = Cursor::new(STRIPPED_PHOTO);
+        let store = Store::from_stream("image/jpeg", source, true, &mut validation_log).unwrap();
+        let claim = store.provenance_claim().unwrap();
+        let assertion =
+            MultiAssetHash::from_assertion(claim.get_assertion(MultiAssetHash::LABEL, 0).unwrap())
+                .unwrap();
+        let mut source = Cursor::new(STRIPPED_PHOTO);
         assertion
             .verify_stream_hash(&mut source, claim, None)
             .unwrap();
