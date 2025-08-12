@@ -3068,7 +3068,8 @@ impl Claim {
                             Err(e) => {
                                 // If standard asset hard binding fails, try multi-asset hash validation.
                                 // Only one multi-asset hash assertion is allowed per manifest.
-                                let multi_asset_hash_assertions = claim.multi_asset_hash_assertions();
+                                let multi_asset_hash_assertions =
+                                    claim.multi_asset_hash_assertions();
                                 if !multi_asset_hash_assertions.is_empty() {
                                     Claim::verify_multi_asset_data_hash(
                                         claim,
