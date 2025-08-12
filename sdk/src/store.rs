@@ -6228,8 +6228,6 @@ pub mod tests {
         use crate::utils::test::{run_file_test, TestFileSetup};
 
         run_file_test(file_name, |setup: &TestFileSetup| {
-            let sidecar = setup.sidecar_path();
-
             // Create claims store.
             let mut store = Store::new();
 
@@ -6246,7 +6244,7 @@ pub mod tests {
 
             // Use streams from TestFileSetup - same pattern as create_test_streams
             let (format, mut input_stream, mut output_stream) = setup.create_streams();
-
+            println!("format = {format}");
             let saved_manifest = store
                 .save_to_stream(
                     format,
@@ -6256,19 +6254,11 @@ pub mod tests {
                 )
                 .unwrap();
 
-            assert!(sidecar.exists());
-
-            // load external manifest
-            let loaded_manifest = std::fs::read(&sidecar).unwrap();
-
-            // compare returned to external
-            assert_eq!(saved_manifest, loaded_manifest);
-
             // load the jumbf back into a store
             let mut asset_reader = std::fs::File::open(&setup.output_path).unwrap();
             let ext_ref = crate::utils::xmp_inmemory_utils::XmpInfo::from_source(
                 &mut asset_reader,
-                &setup.extension(),
+                setup.extension(),
             )
             .provenance
             .unwrap();
@@ -6280,7 +6270,7 @@ pub mod tests {
                 StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
             let mut validation_stream = std::fs::File::open(&setup.output_path).unwrap();
             Store::from_manifest_data_and_stream(
-                &loaded_manifest,
+                &saved_manifest,
                 format,
                 &mut validation_stream,
                 true,

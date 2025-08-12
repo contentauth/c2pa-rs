@@ -285,6 +285,7 @@ pub fn fixture_path(file_name: &str) -> PathBuf {
 }
 
 /// Create in-memory test streams from a fixture file
+#[allow(clippy::expect_used)]
 pub fn create_test_streams(
     fixture_name: &str,
 ) -> (
@@ -318,6 +319,7 @@ pub struct TestFileSetup {
 
 impl TestFileSetup {
     /// Create a new test file setup from a fixture file
+    #[allow(clippy::expect_used)]
     pub fn new(fixture_name: &str) -> Self {
         let input_path = fixture_path(fixture_name);
         let extension = input_path
@@ -343,6 +345,7 @@ impl TestFileSetup {
     }
 
     /// Create a new test file setup with a custom output filename
+    #[allow(clippy::expect_used)]
     pub fn new_with_output_name(fixture_name: &str, output_name: &str) -> Self {
         let input_path = fixture_path(fixture_name);
         let extension = input_path
@@ -394,11 +397,13 @@ impl TestFileSetup {
     }
 
     /// Create an input file stream for reading
+    #[allow(clippy::expect_used)]
     pub fn input_stream(&self) -> std::fs::File {
         std::fs::File::open(&self.input_path).expect("open input file")
     }
 
     /// Create an output file stream for writing
+    #[allow(clippy::expect_used)]
     pub fn output_stream(&self) -> std::fs::File {
         std::fs::OpenOptions::new()
             .create(true)
