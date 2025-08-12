@@ -31,9 +31,12 @@ use crate::{
     },
     assertions::{
         self, c2pa_action,
-        labels::{self, ACTIONS, ASSERTION_STORE, BMFF_HASH, CLAIM_THUMBNAIL, DATABOX_STORE},
+        labels::{
+            self, ACTIONS, ASSERTION_STORE, BMFF_HASH, CLAIM_THUMBNAIL, DATABOX_STORE,
+            METADATA_LABEL_REGEX,
+        },
         Actions, AssertionMetadata, AssetType, BmffHash, BoxHash, DataBox, DataHash, Ingredient,
-        Relationship, V2_DEPRECATED_ACTIONS,
+        Metadata, Relationship, V2_DEPRECATED_ACTIONS,
     },
     asset_io::CAIRead,
     cbor_types::{map_cbor_to_type, value_cbor_to_type},
@@ -3254,7 +3257,38 @@ impl Claim {
         // check action rules
         Claim::verify_actions(claim, svi, validation_log)?;
 
+        // check metadata rules
+        Claim::verify_metadata(claim, validation_log)?;
         Ok(())
+    }
+
+    // Perform metadata validation check
+    fn verify_metadata(claim: &Claim, validation_log: &mut StatusTracker) -> Result<()> {
+        for metadata_assertion in claim.metadata_assertions() {
+            let metadata_assertion = Metadata::from_assertion(metadata_assertion.assertion())?;
+            if !metadata_assertion.is_valid() {
+                let label = to_assertion_uri(claim.label(), metadata_assertion.label());
+                log_item!(
+                    label,
+                    "metadata assertion contains disallowed field",
+                    "verify_internal"
+                )
+                .validation_status(validation_status::ASSERTION_METADATA_DISALLOWED)
+                .failure(
+                    validation_log,
+                    Error::ValidationRule("fields must be in allowed list".into()),
+                )?;
+            }
+        }
+        Ok(())
+    }
+
+    ///Returns list of metadata assertions
+    pub fn metadata_assertions(&self) -> Vec<&ClaimAssertion> {
+        self.assertion_store
+            .iter()
+            .filter(|x| METADATA_LABEL_REGEX.is_match(&x.label_raw()))
+            .collect()
     }
 
     /// Return list of data hash assertions
