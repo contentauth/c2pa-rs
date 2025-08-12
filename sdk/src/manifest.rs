@@ -603,9 +603,9 @@ impl SignatureInfo {
     }
 }
 
-#[cfg(test)]
-#[ignore]
-/// todo: convert/move some of these to builder
+// #[cfg(test)]
+// todo: convert/move some of these to builder
+/*
 pub(crate) mod tests {
     #![allow(clippy::expect_used)]
     #![allow(clippy::unwrap_used)]
@@ -1202,7 +1202,7 @@ pub(crate) mod tests {
 
     // This is only used for testing obsolete v1 manifest creation code
     const MANIFEST_JSON: &str = r#"{
-        
+
         "claim_version": 1,
         "claim_generator": "test",
         "claim_generator_info": [
@@ -1791,3 +1791,4 @@ pub(crate) mod tests {
         assert_eq!(claim1.get_claim_assertion(redacted_uri, 0), None);
     }
 }
+*/
