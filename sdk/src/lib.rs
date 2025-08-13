@@ -48,7 +48,7 @@
 //!
 //! ## Example: Adding a Manifest to a file
 //!
-//! ```
+//! ```ignore-wasm32
 //! # use c2pa::Result;
 //! use std::path::PathBuf;
 //!

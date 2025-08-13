@@ -194,7 +194,7 @@ struct StructuredAction {
 ///
 /// # Example: Building and signing a manifest
 ///
-/// ```
+/// ```ignore-wasm32
 /// use c2pa::Result;
 /// use std::path::PathBuf;
 ///

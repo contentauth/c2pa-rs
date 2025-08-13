@@ -769,6 +769,7 @@ async fn unsupported_did_method() {
     all(target_arch = "wasm32", not(target_os = "wasi")),
     wasm_bindgen_test
 )]
+#[cfg_attr(target_os = "wasi", wstd::test)]
 async fn unresolvable_did() {
     // If the DID can not be resolved, the validator MUST issue the failure code
     // `cawg.ica.did_unavailable` but MAY continue validation.
