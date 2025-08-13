@@ -26,10 +26,10 @@ test-local:
 	cargo test --features="file_io, fetch_remote_manifests, add_thumbnails, v1_api" --all-targets
 
 test-wasm:
-	cd sdk && wasm-pack test --node -- --no-default-features --features="rust_native_crypto"
+	cd sdk && wasm-pack test --node -- --no-default-features --features="rust_native_crypto, fetch_remote_manifests"
 
 test-wasm-web:
-	cd sdk && wasm-pack test --chrome --headless -- --no-default-features --features="rust_native_crypto"
+	cd sdk && wasm-pack test --chrome --headless -- --no-default-features --features="rust_native_crypto, fetch_remote_manifests"
 
 # WASI testing requires upstream llvm clang (not XCode), wasmtime, and the target wasm32-wasip2 on the nightly toolchain
 test-wasi:

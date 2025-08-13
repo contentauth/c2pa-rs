@@ -14,10 +14,10 @@
 //! Assertion helpers to build, validate, and parse assertions.
 
 mod actions;
-#[allow(unused)]
-pub(crate) use actions::source_type;
 pub(crate) use actions::V2_DEPRECATED_ACTIONS;
-pub use actions::{c2pa_action, Action, ActionTemplate, Actions, ParametersMap, SoftwareAgent};
+pub use actions::{
+    c2pa_action, Action, ActionTemplate, Actions, DigitalSourceType, ParametersMap, SoftwareAgent,
+};
 
 mod asset_reference;
 pub use asset_reference::AssetReference;
@@ -49,6 +49,9 @@ pub use ingredient::Relationship;
 
 pub mod labels;
 
+mod metadata;
+pub use metadata::Metadata;
+
 mod assertion_metadata;
 pub use assertion_metadata::{
     c2pa_source, Actor, AssertionMetadata, AssetType, DataBox, DataSource, ReviewCode, ReviewRating,
@@ -77,3 +80,6 @@ mod embedded_data;
 pub use embedded_data::EmbeddedData;
 
 pub mod region_of_interest;
+
+mod soft_binding;
+pub use soft_binding::{SoftBinding, SoftBindingBlock, SoftBindingScope, SoftBindingTimespan};

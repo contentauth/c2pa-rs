@@ -11,7 +11,7 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use std::io::Write;
+use std::{borrow::Cow, io::Write};
 
 use async_generic::async_generic;
 use x509_parser::{num_bigint::BigUint, prelude::*};
@@ -56,8 +56,8 @@ pub(crate) fn verify_cose(
 ) -> Result<CertificateInfo> {
     let verifier = if cert_check {
         match get_settings_value::<bool>("verify.verify_trust") {
-            Ok(true) => Verifier::VerifyTrustPolicy(ctp),
-            _ => Verifier::VerifyCertificateProfileOnly(ctp),
+            Ok(true) => Verifier::VerifyTrustPolicy(Cow::Borrowed(ctp)),
+            _ => Verifier::VerifyCertificateProfileOnly(Cow::Borrowed(ctp)),
         }
     } else {
         Verifier::IgnoreProfileAndTrustPolicy
@@ -138,14 +138,26 @@ fn dump_cert_chain(certs: &[Vec<u8>]) -> Result<Vec<u8>> {
     Ok(writer)
 }
 
-fn extract_subject_from_cert(cert: &X509Certificate) -> Result<String> {
+fn extract_subject_from_cert(cert: &X509Certificate) -> Option<String> {
     cert.subject()
         .iter_organization()
         .map(|attr| attr.as_str())
         .last()
-        .ok_or(Error::CoseX5ChainMissing)?
-        .map(|attr| attr.to_string())
-        .map_err(|_e| Error::CoseX5ChainMissing)
+        .map(|attr| match attr {
+            Ok(attr) => Some(attr.to_string()),
+            Err(_) => None,
+        })?
+}
+
+fn extract_common_name_from_cert(cert: &X509Certificate) -> Option<String> {
+    cert.subject()
+        .iter_common_name()
+        .map(|attr| attr.as_str())
+        .last()
+        .map(|attr| match attr {
+            Ok(attr) => Some(attr.to_string()),
+            Err(_) => None,
+        })?
 }
 
 /// Returns the unique serial number from the provided cert.
@@ -162,6 +174,7 @@ pub(crate) fn get_signing_info(
 ) -> CertificateInfo {
     let mut date = None;
     let mut issuer_org = None;
+    let mut common_name = None;
     let mut alg: Option<SigningAlg> = None;
     let mut cert_serial_number = None;
 
@@ -176,8 +189,9 @@ pub(crate) fn get_signing_info(
                         } else {
                             signing_time_from_sign1_async(&sign1, data).await
                         };
-                        issuer_org = extract_subject_from_cert(&signcert).ok();
+                        issuer_org = extract_subject_from_cert(&signcert);
                         cert_serial_number = Some(extract_serial_from_cert(&signcert));
+                        common_name = extract_common_name_from_cert(&signcert);
                         if let Ok(a) = signing_alg_from_sign1(&sign1) {
                             alg = Some(a);
                         }
@@ -208,6 +222,7 @@ pub(crate) fn get_signing_info(
         cert_serial_number,
         revocation_status: None,
         iat: None,
+        common_name,
     }
 }
 

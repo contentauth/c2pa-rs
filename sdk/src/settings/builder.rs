@@ -17,7 +17,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     assertions::{
-        region_of_interest::RegionOfInterest, Action, ActionTemplate, ParametersMap, SoftwareAgent,
+        region_of_interest::RegionOfInterest, Action, ActionTemplate, DigitalSourceType,
+        ParametersMap,
     },
     cbor_types::DateT,
     resource_store::UriOrResource,
@@ -122,10 +123,9 @@ impl SettingsValidate for ThumbnailSettings {
 pub(crate) struct AutoActionSettings {
     /// Whether to enable this auto action or not.
     pub enabled: bool,
-    // TODO: enum
     /// The default source type for the auto action.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub source_type: Option<String>,
+    pub source_type: Option<DigitalSourceType>,
 }
 
 /// Settings for how to specify the claim generator info's operating system.
@@ -211,7 +211,7 @@ pub(crate) struct ActionTemplateSettings {
     pub software_agent_index: Option<usize>,
     /// One of the defined URI values at `<https://cv.iptc.org/newscodes/digitalsourcetype/>`
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub source_type: Option<String>,
+    pub source_type: Option<DigitalSourceType>,
     // TODO: handle paths/urls and document in the sample c2pa.toml
     /// Reference to an icon.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -283,7 +283,7 @@ pub(crate) struct ActionSettings {
     pub parameters: Option<ParametersMap>,
     /// One of the defined URI values at `<https://cv.iptc.org/newscodes/digitalsourcetype/>`.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub source_type: Option<String>,
+    pub source_type: Option<DigitalSourceType>,
     /// List of related actions.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub related: Option<Vec<Action>>,
@@ -364,7 +364,7 @@ impl Default for ActionsSettings {
             actions: None,
             auto_created_action: AutoActionSettings {
                 enabled: true,
-                source_type: Some(crate::assertions::source_type::EMPTY.to_owned()),
+                source_type: Some(DigitalSourceType::Empty),
             },
             auto_opened_action: AutoActionSettings {
                 enabled: true,
@@ -418,7 +418,7 @@ pub mod tests {
     #![allow(clippy::unwrap_used)]
 
     use super::*;
-    use crate::assertions::source_type;
+    use crate::assertions::DigitalSourceType;
 
     #[test]
     fn test_auto_created_action_without_source_type() {
@@ -438,7 +438,7 @@ pub mod tests {
         let actions_settings = ActionsSettings {
             auto_created_action: AutoActionSettings {
                 enabled: true,
-                source_type: Some(source_type::EMPTY.to_owned()),
+                source_type: Some(DigitalSourceType::Empty),
             },
             ..Default::default()
         };
