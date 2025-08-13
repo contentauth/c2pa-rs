@@ -34,6 +34,7 @@ use crate::{
         x509::X509SignatureVerifier,
         SignatureVerifier, ToCredentialSummary, ValidationError,
     },
+    jumbf::labels::to_assertion_uri,
     log_current_item, log_item,
     status_tracker::StatusTracker,
     Manifest, Reader,
@@ -61,6 +62,10 @@ pub struct IdentityAssertion {
     // does not work with Option<Vec<u8>>.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) pad2: Option<ByteBuf>,
+
+    // Label for the assertion. Only assigned when reading from a manifest.
+    #[serde(skip)]
+    pub(crate) label: Option<String>,
 }
 
 impl IdentityAssertion {
@@ -77,21 +82,29 @@ impl IdentityAssertion {
         manifest
             .assertions()
             .iter()
-            .filter(|a| a.label().starts_with("cawg.identity"))
-            .map(|a| (a.label().to_owned(), a.to_assertion()))
+            .filter(|a| a.label() == "cawg.identity" || a.label().starts_with("cawg.identity__"))
+            .map(|a| {
+                let mut ia: Result<Self, crate::Error> = a.to_assertion();
+                if let Ok(ref mut ia) = ia {
+                    if let Some(manifest_label) = manifest.label() {
+                        ia.label = Some(to_assertion_uri(manifest_label, a.label()));
+                    }
+                }
+                (a.label().to_owned(), ia)
+            })
             .inspect(|(label, r)| {
+                let mut label = label.to_owned();
                 if let Err(err) = r {
-                    // TO DO: a.label() is probably wrong (not a full JUMBF URI)
-                    log_item!(
-                        label.clone(),
-                        "invalid CBOR",
-                        "IdentityAssertion::from_manifest"
-                    )
-                    .validation_status("cawg.identity.cbor.invalid")
-                    .failure_no_throw(
-                        status_tracker,
-                        crate::Error::AssertionSpecificError(err.to_string()),
-                    );
+                    if let Some(manifest_label) = manifest.label() {
+                        label = to_assertion_uri(manifest_label, &label);
+                    }
+
+                    log_item!(label, "invalid CBOR", "IdentityAssertion::from_manifest")
+                        .validation_status("cawg.identity.cbor.invalid")
+                        .failure_no_throw(
+                            status_tracker,
+                            crate::Error::AssertionSpecificError(err.to_string()),
+                        );
                 }
             })
             .map(move |(_label, r)| r)
@@ -233,12 +246,25 @@ impl IdentityAssertion {
         status_tracker: &mut StatusTracker,
         verifier: &SV,
     ) -> Result<SV::Output, ValidationError<SV::Error>> {
-        // TO DO: Create new status tracker here and pass it through
-        // the rest of this code. Then we can rewrite the log with
-        // assertion label at the end of this process.
+        if let Some(ref label) = self.label {
+            status_tracker.push_current_uri(label);
+        }
 
-        // UPDATED TO DO: Hold off until Gavin lands the post-validate branch.
-        // Then we'll get the assertion label handed to us nicely.
+        let result = self.validate_imp(manifest, status_tracker, verifier).await;
+
+        if self.label.is_some() {
+            status_tracker.pop_current_uri();
+        }
+
+        result
+    }
+
+    async fn validate_imp<SV: SignatureVerifier>(
+        &self,
+        manifest: &Manifest,
+        status_tracker: &mut StatusTracker,
+        verifier: &SV,
+    ) -> Result<SV::Output, ValidationError<SV::Error>> {
         self.check_padding(status_tracker)?;
 
         self.signer_payload
@@ -353,6 +379,7 @@ impl Debug for IdentityAssertion {
         f.debug_struct("IdentityAssertion")
             .field("signer_payload", &self.signer_payload)
             .field("signature", &DebugByteSlice(&self.signature))
+            .field("label", &self.label)
             .finish()
     }
 }

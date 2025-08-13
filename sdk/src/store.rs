@@ -169,28 +169,12 @@ impl Store {
         store
     }
 
-    /* for coming PR
     // Append new Store to the current Store preserving the order from the new Store
     pub(crate) fn append_store(&mut self, store: &Store) {
         for claim in store.claims() {
             self.insert_restored_claim(claim.label().to_string(), claim.clone());
         }
     }
-
-    // Extract list of claims and return them in a new Store preserving the order from the current Store
-    pub(crate) fn extract_claims_to_new_store(&mut self, labels: &[&str]) -> Store {
-        let mut new_store = Store::new();
-
-        let mut new_claims_list = self.claims();
-        new_claims_list.retain(|c| labels.contains(&c.label()));
-
-        for claim in new_claims_list {
-            new_store.insert_restored_claim(claim.label().to_string(), claim.clone());
-        }
-
-        new_store
-    }
-    */
 
     /// Return label for the store
     #[allow(dead_code)] // doesn't harm to have this
@@ -623,10 +607,19 @@ impl Store {
     }
 
     // add a restored claim
-    fn insert_restored_claim(&mut self, label: String, claim: Claim) {
+    pub(crate) fn insert_restored_claim(&mut self, label: String, claim: Claim) {
         self.set_provenance_path(&claim);
         self.claims_map.insert(label.clone(), claim);
         self.claims.push(label);
+    }
+
+    // replace a claim if it already exists
+    pub(crate) fn replace_claim_or_insert(&mut self, label: String, claim: Claim) {
+        if self.get_claim(&label).is_some() {
+            self.claims_map.insert(label.clone(), claim);
+        } else {
+            self.insert_restored_claim(label, claim);
+        }
     }
 
     fn add_assertion_to_jumbf_store(
@@ -881,7 +874,7 @@ impl Store {
         self.to_jumbf_internal(signer.reserve_size())
     }
 
-    fn to_jumbf_internal(&self, min_reserve_size: usize) -> Result<Vec<u8>> {
+    pub(crate) fn to_jumbf_internal(&self, min_reserve_size: usize) -> Result<Vec<u8>> {
         // Create the CAI block.
         let mut cai_block = Cai::new();
 
@@ -1446,10 +1439,10 @@ impl Store {
                     let ingredient_version = ingredient.version();
                     let has_redactions = svi.redactions.iter().any(|r| r.contains(&label));
 
-                    // only allow the extra ingredient trust checks for 1.x ingredients
+                    // allow the extra ingredient trust checks
                     // these checks are to prevent the trust spoofing
-                    let check_ingredient_trust: bool = ingredient_version < 2
-                        && crate::settings::get_settings_value("verify.check_ingredient_trust")?;
+                    let check_ingredient_trust: bool =
+                        crate::settings::get_settings_value("verify.check_ingredient_trust")?;
 
                     // get the 1.1-1.2 box hash
                     let ingredient_hashes = store.get_manifest_box_hashes(ingredient);
@@ -1689,8 +1682,17 @@ impl Store {
         Store::get_claim_referenced_manifests(claim, self, &mut svi, true, validation_log)?;
 
         // find the manifest with the hash binding
+        let is_bmff;
         svi.binding_claim = match self.get_hash_binding_manifest(claim) {
-            Some(label) => label,
+            Some(label) => {
+                is_bmff = self
+                    .get_claim(&label)
+                    .ok_or(Error::ClaimMissingHardBinding)?
+                    .hash_assertions()
+                    .iter()
+                    .any(|a| a.label_raw().starts_with(labels::BMFF_HASH));
+                label
+            }
             None => {
                 log_item!(
                     claim.label().to_owned(),
@@ -1704,7 +1706,9 @@ impl Store {
         };
 
         // get the manifest offset size if needed
-        if claim.update_manifest() {
+        // it is not needed for BMFF hash bindings since update manifests always appear
+        // in last BMFF box
+        if claim.update_manifest() && !is_bmff {
             let locations = match asset_data {
                 #[cfg(feature = "file_io")]
                 ClaimAssetData::Path(path) => {
@@ -3224,6 +3228,7 @@ impl Store {
 
     /// Load store from a stream
     #[async_generic]
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn from_stream(
         format: &str,
         mut stream: impl Read + Seek + Send,
@@ -3261,8 +3266,49 @@ impl Store {
         Ok(store)
     }
 
+    /// Load store from a stream
+    #[async_generic]
+    #[cfg(target_arch = "wasm32")]
+    pub fn from_stream(
+        format: &str,
+        mut stream: impl Read + Seek,
+        verify: bool,
+        validation_log: &mut StatusTracker,
+    ) -> Result<Self> {
+        let (manifest_bytes, remote_url) = Store::load_jumbf_from_stream(format, &mut stream)?;
+
+        let store = if _sync {
+            Self::from_manifest_data_and_stream(
+                &manifest_bytes,
+                format,
+                &mut stream,
+                verify,
+                validation_log,
+            )
+        } else {
+            Self::from_manifest_data_and_stream_async(
+                &manifest_bytes,
+                format,
+                &mut stream,
+                verify,
+                validation_log,
+            )
+            .await
+        };
+
+        let mut store = store?;
+        if remote_url.is_none() {
+            store.embedded = true;
+        } else {
+            store.remote_url = remote_url;
+        }
+
+        Ok(store)
+    }
+
     /// Load store from a manifest data and stream
     #[async_generic()]
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn from_manifest_data_and_stream(
         c2pa_data: &[u8],
         format: &str,
@@ -5324,18 +5370,173 @@ pub mod tests {
     }
 
     #[test]
-    fn test_update_manifest_with_timestamp_assertion() {
-        // add timestamp assertion to update manifest
-        let (format, mut input_stream, mut _output_stream) =
-            create_test_streams("update_manifest.jpg");
+    #[cfg(feature = "file_io")]
+    fn test_update_manifest_v2_bmff() {
+        use crate::{
+            hashed_uri::HashedUri, jumbf::labels::to_signature_uri, ClaimGeneratorInfo,
+            ValidationResults,
+        };
+
+        let signer = test_signer(SigningAlg::Ps256);
+
+        // test adding to actual image
+        let (format, mut input_stream, mut output_stream) = create_test_streams("video1.mp4");
+        let op2 = temp_dir_path(&temp_dir, "video_collapsed_manifest.mp4");
 
         let mut report = StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
-        let restored_store =
-            Store::from_stream(format, &mut input_stream, true, &mut report).unwrap();
-        let pc = restored_store.provenance_claim().unwrap();
+
+        // read in the store
+        let mut store = Store::from_stream(format, &mut input_stream, true, &mut report).unwrap();
+        let pc = store.provenance_claim().unwrap();
+
+        // create a new update manifest
+        let mut claim = Claim::new("adobe unit test", Some("update_manifest_vendor"), 2);
+        // ClaimGeneratorInfo is mandatory in Claim V2
+        let cgi = ClaimGeneratorInfo::new("claim_v2_unit_test");
+        claim.add_claim_generator_info(cgi);
+
+        let ingredient_hashes = store.get_manifest_box_hashes(pc);
+        let parent_hashed_uri = HashedUri::new(
+            store.provenance_path().unwrap(),
+            Some(pc.alg().to_string()),
+            &ingredient_hashes.manifest_box_hash,
+        );
+        let signature_hashed_uri = HashedUri::new(
+            to_signature_uri(pc.label()),
+            Some(pc.alg().to_string()),
+            &ingredient_hashes.signature_box_hash,
+        );
+
+        let validation_results = ValidationResults::from_store(&store, &report);
+
+        let ingredient = Ingredient::new_v3(Relationship::ParentOf)
+            .set_active_manifests_and_signature_from_hashed_uri(
+                Some(parent_hashed_uri),
+                Some(signature_hashed_uri),
+            ) // mandatory for v3
+            .set_validation_results(Some(validation_results)); // mandatory for v3
+
+        claim.add_assertion(&ingredient).unwrap();
+
+        // create mandatory opened action (optional for update manifest)
+        let ingredient = claim.ingredient_assertions()[0];
+        let ingregient_uri = to_assertion_uri(claim.label(), &ingredient.label());
+        let ingredient_hashed_uri = HashedUri::new(
+            ingregient_uri,
+            Some(claim.alg().to_owned()),
+            ingredient.hash(),
+        );
+
+        let opened = Action::new("c2pa.opened")
+            .set_parameter("ingredients", vec![ingredient_hashed_uri])
+            .unwrap();
+        let em = Action::new("c2pa.edited.metadata");
+        let actions = Actions::new().add_action(opened).add_action(em);
+
+        // add action (this is optional for update manifest)
+        claim.add_assertion(&actions).unwrap();
+
+        store.commit_update_manifest(claim).unwrap();
+        store
+            .save_to_stream(
+                format,
+                &mut input_stream,
+                &mut output_stream,
+                signer.as_ref(),
+            )
+            .unwrap();
+
+        let mut um_report = StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
+
+        // read back in store with update manifest
+        output_stream.rewind().unwrap();
+        let mut um_store =
+            Store::from_stream(format, &mut output_stream, true, &mut um_report).unwrap();
+
+        let um = um_store.provenance_claim().unwrap();
 
         // should be an update manifest
-        assert!(pc.update_manifest());
+        assert!(um.update_manifest());
+
+        // should have valid bmff hash binding
+        assert!(um_report.has_status(validation_status::ASSERTION_BMFFHASH_MATCH));
+
+        // now add a new oridinary manifest to restore the original manifest (collapsed manifest)
+
+        // create a new ordinary claim
+        let mut claim2 = Claim::new("adobe unit test", Some("ordinary_manifest_vendor"), 2);
+        // ClaimGeneratorInfo is mandatory in Claim V2
+        let cgi = ClaimGeneratorInfo::new("claim_v2_unit_test");
+        claim2.add_claim_generator_info(cgi);
+
+        // make update PC claim the parent of the ordinary claim
+        let update_pc = um_store.provenance_claim().unwrap();
+        let ingredient_hashes = um_store.get_manifest_box_hashes(update_pc);
+        let parent_hashed_uri = HashedUri::new(
+            um_store.provenance_path().unwrap(),
+            Some(update_pc.alg().to_string()),
+            &ingredient_hashes.manifest_box_hash,
+        );
+        let signature_hashed_uri = HashedUri::new(
+            to_signature_uri(update_pc.label()),
+            Some(update_pc.alg().to_string()),
+            &ingredient_hashes.signature_box_hash,
+        );
+
+        let validation_results = ValidationResults::from_store(&um_store, &report);
+
+        let ingredient = Ingredient::new_v3(Relationship::ParentOf)
+            .set_active_manifests_and_signature_from_hashed_uri(
+                Some(parent_hashed_uri),
+                Some(signature_hashed_uri),
+            ) // mandatory for v3
+            .set_validation_results(Some(validation_results)); // mandatory for v3
+
+        claim2.add_assertion(&ingredient).unwrap();
+
+        // create mandatory opened action
+        let ingredient = claim2.ingredient_assertions()[0];
+        let ingregient_uri = to_assertion_uri(claim2.label(), &ingredient.label());
+        let ingredient_hashed_uri = HashedUri::new(
+            ingregient_uri,
+            Some(claim2.alg().to_owned()),
+            ingredient.hash(),
+        );
+
+        let opened = Action::new("c2pa.opened")
+            .set_parameter("ingredients", vec![ingredient_hashed_uri])
+            .unwrap();
+        let editted = Action::new("c2pa.edited");
+        let actions = Actions::new().add_action(opened).add_action(editted);
+
+        // add action
+        claim2.add_assertion(&actions).unwrap();
+
+        um_store.commit_claim(claim2).unwrap();
+        output_stream.rewind().unwrap();
+        let output_stream2 = Cursor::new(Vec::new());
+        um_store
+            .save_to_stream(
+                format,
+                &mut output_stream,
+                &mut output_stream2,
+                signer.as_ref(),
+            )
+            .unwrap();
+
+        let mut collapsed_report =
+            StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
+
+        // read back in store with update manifest
+        output_stream2.rewind().unwrap();
+        let collapsed_store =
+            Store::from_stream(format, &mut output_stream2, true, &mut collapsed_report).unwrap();
+
+        let cm = collapsed_store.provenance_claim().unwrap();
+        assert!(!cm.update_manifest());
+
+        // should have valid bmff hash binding
+        assert!(collapsed_report.has_status(validation_status::ASSERTION_BMFFHASH_MATCH));
     }
 
     #[test]
