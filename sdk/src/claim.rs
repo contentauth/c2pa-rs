@@ -31,17 +31,26 @@ use crate::{
     },
     assertions::{
         self, c2pa_action,
-        labels::{self, ACTIONS, ASSERTION_STORE, BMFF_HASH, CLAIM_THUMBNAIL, DATABOX_STORE},
+        labels::{
+            self, ACTIONS, ASSERTION_STORE, BMFF_HASH, CLAIM_THUMBNAIL, DATABOX_STORE,
+            METADATA_LABEL_REGEX,
+        },
         Actions, AssertionMetadata, AssetType, BmffHash, BoxHash, DataBox, DataHash, Ingredient,
-        Relationship, V2_DEPRECATED_ACTIONS,
+        Metadata, Relationship, V2_DEPRECATED_ACTIONS,
     },
     asset_io::CAIRead,
     cbor_types::{map_cbor_to_type, value_cbor_to_type},
-    cose_validator::{get_signing_info, get_signing_info_async, verify_cose, verify_cose_async},
+    cose_validator::{
+        get_signing_cert_serial_num, get_signing_info, get_signing_info_async, verify_cose,
+        verify_cose_async,
+    },
     crypto::{
         asn1::rfc3161::TstInfo,
         base64,
-        cose::{parse_cose_sign1, CertificateInfo, CertificateTrustPolicy, OcspFetchPolicy},
+        cose::{
+            get_ocsp_der, parse_cose_sign1, CertificateInfo, CertificateTrustPolicy,
+            OcspFetchPolicy,
+        },
         ocsp::OcspResponse,
     },
     error::{Error, Result},
@@ -1841,12 +1850,14 @@ impl Claim {
         }
 
         let sign1 = parse_cose_sign1(&sig, &data, validation_log)?;
+        let certificate_serial_num = get_signing_cert_serial_num(&sign1)?.to_string();
 
         // check certificate revocation
         check_ocsp_status(
             &sign1,
             &data,
             ctp,
+            svi.certificate_statuses.get(&certificate_serial_num),
             svi.timestamps.get(claim.label()),
             validation_log,
         )?;
@@ -1918,11 +1929,13 @@ impl Claim {
 
         let sign1 = parse_cose_sign1(sig, data, validation_log)?;
 
+        let certificate_serial_num = get_signing_cert_serial_num(&sign1)?.to_string();
         // check certificate revocation
         check_ocsp_status(
             &sign1,
             data,
             ctp,
+            svi.certificate_statuses.get(&certificate_serial_num),
             svi.timestamps.get(claim.label()),
             validation_log,
         )?;
@@ -2500,7 +2513,7 @@ impl Claim {
                 // 2.d if redacted actions contains a redacted parameter if must be a resolvable reference
                 if action.action() == c2pa_action::REDACTED {
                     if let Some(params) = action.parameters() {
-                        let mut parent_tested = None; // on exists if action actually pointed to an ingredient
+                        let mut parent_tested = None; // only exists if action actually pointed to an ingredient
                         if let Some(v) = params.get("redacted") {
                             let redacted_uri =
                                 value_cbor_to_type::<String>(v).ok_or_else(|| {
@@ -2522,41 +2535,63 @@ impl Claim {
 
                             if let Some(ingredient_label) = manifest_label_from_uri(&redacted_uri) {
                                 // can we find a reference in the ingredient list
-                                if let Some(ingredient) = svi.manifest_map.get(&ingredient_label) {
-                                    // does the assertion exist
-                                    if let Some(readaction_label) =
+                                if let Some(ingredient_claim) =
+                                    svi.manifest_map.get(&ingredient_label)
+                                {
+                                    // The referenced manifest exists, so far so good.
+                                    // now get the assertion label and try to resolve it.
+                                    if let Some(redaction_label) =
                                         assertion_label_from_uri(&redacted_uri)
                                     {
-                                        let (label, instance) =
-                                            Claim::assertion_label_from_link(&readaction_label);
-                                        parent_tested = Some(
-                                            ingredient.get_assertion(&label, instance).is_some(),
-                                        );
-                                    } else {
-                                        parent_tested = Some(false);
+                                        if ingredient_claim
+                                            .assertion_hashed_uri_from_label(&redaction_label)
+                                            .is_some()
+                                        {
+                                            // The url reference is valid, now check if it was actually redacted
+                                            parent_tested = Some(false);
+                                            // Now if the assertion is not in the assertion store we are ok.
+                                            // Todo: would a zeroed out assertion show up here? if so we need to do a zero check
+                                            if ingredient_claim
+                                                .get_claim_assertion(&redaction_label, 0)
+                                                .is_none()
+                                            {
+                                                parent_tested = Some(true); // it was redacted - all good!
+                                            }
+                                        }
                                     }
                                 }
                             }
-                            match parent_tested {
-                                Some(v) => parent_tested = Some(v),
-                                None => parent_tested = Some(false), // if test fail early this is a tested failure
-                            }
                         }
-
-                        // will only exist if we actual tested for an ingredient
-                        if let Some(false) = parent_tested {
-                            log_item!(
-                                label.clone(),
-                                "action must have valid ingredient",
-                                "verify_actions"
-                            )
-                            .validation_status(
-                                validation_status::ASSERTION_ACTION_REDACTION_MISMATCH,
-                            )
-                            .failure(
-                                validation_log,
-                                Error::ValidationRule("action must have valid ingredient".into()),
-                            )?;
+                        match parent_tested {
+                            None => {
+                                log_item!(
+                                    label.clone(),
+                                    "redaction uri must be a valid reference",
+                                    "verify_actions"
+                                )
+                                .validation_status(
+                                    validation_status::ASSERTION_ACTION_REDACTION_MISMATCH,
+                                )
+                                .failure(
+                                    validation_log,
+                                    Error::ValidationRule(
+                                        "redaction action must have valid ingredient".into(),
+                                    ),
+                                )?;
+                            }
+                            Some(false) => {
+                                log_item!(
+                                    label.clone(),
+                                    "The assertion was not redacted",
+                                    "verify_actions"
+                                )
+                                .validation_status(validation_status::ASSERTION_NOT_REDACTED)
+                                .failure(
+                                    validation_log,
+                                    Error::ValidationRule("the assertion was not redacted".into()),
+                                )?;
+                            }
+                            Some(true) => {}
                         }
                     }
                 }
@@ -2805,7 +2840,7 @@ impl Claim {
             if parent_count > 1 {
                 log_item!(
                     claim.uri(),
-                    "too many ingredient parentsf",
+                    "too many ingredient parents",
                     "ingredient_checks"
                 )
                 .validation_status(validation_status::MANIFEST_MULTIPLE_PARENTS)
@@ -3232,7 +3267,38 @@ impl Claim {
         // check action rules
         Claim::verify_actions(claim, svi, validation_log)?;
 
+        // check metadata rules
+        Claim::verify_metadata(claim, validation_log)?;
         Ok(())
+    }
+
+    // Perform metadata validation check
+    fn verify_metadata(claim: &Claim, validation_log: &mut StatusTracker) -> Result<()> {
+        for metadata_assertion in claim.metadata_assertions() {
+            let metadata_assertion = Metadata::from_assertion(metadata_assertion.assertion())?;
+            if !metadata_assertion.is_valid() {
+                let label = to_assertion_uri(claim.label(), metadata_assertion.label());
+                log_item!(
+                    label,
+                    "metadata assertion contains disallowed field",
+                    "verify_internal"
+                )
+                .validation_status(validation_status::ASSERTION_METADATA_DISALLOWED)
+                .failure(
+                    validation_log,
+                    Error::ValidationRule("fields must be in allowed list".into()),
+                )?;
+            }
+        }
+        Ok(())
+    }
+
+    ///Returns list of metadata assertions
+    pub fn metadata_assertions(&self) -> Vec<&ClaimAssertion> {
+        self.assertion_store
+            .iter()
+            .filter(|x| METADATA_LABEL_REGEX.is_match(&x.label_raw()))
+            .collect()
     }
 
     /// Return list of data hash assertions
@@ -3282,6 +3348,14 @@ impl Claim {
         let dummy_data = AssertionData::Cbor(Vec::new());
         let dummy_timestamp = Assertion::new(assertions::labels::TIMESTAMP, None, dummy_data);
         self.assertions_by_type(&dummy_timestamp, None)
+    }
+
+    /// Returns list of certificate status assertions.
+    pub fn certificate_status_assertions(&self) -> Vec<&ClaimAssertion> {
+        let dummy_data = AssertionData::Cbor(Vec::new());
+        let dummy_certificate_status =
+            Assertion::new(assertions::labels::CERTIFICATE_STATUS, None, dummy_data);
+        self.assertions_by_type(&dummy_certificate_status, None)
     }
 
     /// Return list of action assertions.
@@ -3851,14 +3925,36 @@ impl Claim {
             uri
         }
     }
-}
 
+    /// Checks whether or not ocsp values are present in claim
+    pub fn has_ocsp_vals(&self) -> bool {
+        if !self.certificate_status_assertions().is_empty() {
+            return false;
+        }
+
+        let data = match self.data() {
+            Ok(data) => data,
+            Err(_) => return false,
+        };
+
+        let sig = self.signature_val().clone();
+        let mut validation_log = StatusTracker::default();
+
+        let sign1 = match parse_cose_sign1(&sig, &data, &mut validation_log) {
+            Ok(sign1) => sign1,
+            Err(_) => return false,
+        };
+
+        get_ocsp_der(&sign1).is_some()
+    }
+}
 #[allow(dead_code)]
 #[async_generic]
 pub(crate) fn check_ocsp_status(
     sign1: &coset::CoseSign1,
     data: &[u8],
     ctp: &CertificateTrustPolicy,
+    ocsp_responses: Option<&Vec<Vec<u8>>>,
     tst_info: Option<&TstInfo>,
     validation_log: &mut StatusTracker,
 ) -> Result<OcspResponse> {
@@ -3875,6 +3971,7 @@ pub(crate) fn check_ocsp_status(
             data,
             fetch_policy,
             ctp,
+            ocsp_responses,
             tst_info,
             validation_log,
         )?)
@@ -3884,6 +3981,7 @@ pub(crate) fn check_ocsp_status(
             data,
             fetch_policy,
             ctp,
+            ocsp_responses,
             tst_info,
             validation_log,
         )
