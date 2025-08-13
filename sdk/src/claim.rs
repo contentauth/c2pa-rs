@@ -2395,7 +2395,7 @@ impl Claim {
                     if let Some(params) = action.parameters() {
                         let mut parent_tested = None; // on exists if action actually pointed to an ingredient
                         if let Some(redacted_uri) = &params.redacted {
-                            if let Some(ingredient_label) = manifest_label_from_uri(&redacted_uri) {
+                            if let Some(ingredient_label) = manifest_label_from_uri(redacted_uri) {
                                 // can we find a reference in the ingredient list
                                 if let Some(ingredient_claim) =
                                     svi.manifest_map.get(&ingredient_label)
@@ -2403,7 +2403,7 @@ impl Claim {
                                     // The referenced manifest exists, so far so good.
                                     // now get the assertion label and try to resolve it.
                                     if let Some(redaction_label) =
-                                        assertion_label_from_uri(&redacted_uri)
+                                        assertion_label_from_uri(redacted_uri)
                                     {
                                         if ingredient_claim
                                             .assertion_hashed_uri_from_label(&redaction_label)
