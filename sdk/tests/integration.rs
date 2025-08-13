@@ -448,11 +448,15 @@ mod integration_1 {
 
         // read our new file with embedded manifest
         let reader = Reader::from_file(&output_path)?;
-
+        let reader_json = reader.json();
         // ensure certificate status assertion was created
-        assert!(reader
-            .json()
+        assert!(reader_json
             .contains(r#"label": "c2pa.certificate-status"#));
+
+        assert!(reader_json
+            .contains(r#"validation_state": "Valid"#));
+
+        assert!(reader_json.contains("signingCredential.ocsp.notRevoked"));
 
         Ok(())
     }
