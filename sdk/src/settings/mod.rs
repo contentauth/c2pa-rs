@@ -248,7 +248,9 @@ const MINOR_VERSION: usize = 0;
 pub struct Settings {
     version_major: usize,
     version_minor: usize,
+    // TODO: Rename to c2pa_trust? Discuss possibly breaking change.
     trust: Trust,
+    cawg_trust: Trust,
     core: Core,
     verify: Verify,
     builder: BuilderSettings,
@@ -422,6 +424,7 @@ impl Default for Settings {
             version_major: MAJOR_VERSION,
             version_minor: MINOR_VERSION,
             trust: Default::default(),
+            cawg_trust: Default::default(),
             core: Default::default(),
             verify: Default::default(),
             builder: Default::default(),
@@ -441,8 +444,8 @@ impl SettingsValidate for Settings {
             signer.validate()?;
         }
         self.trust.validate()?;
+        self.cawg_trust.validate()?;
         self.core.validate()?;
-        self.trust.validate()?;
         self.builder.validate()
     }
 }
@@ -519,6 +522,7 @@ pub mod tests {
 
         assert_eq!(settings.core, Core::default());
         assert_eq!(settings.trust, Trust::default());
+        assert_eq!(settings.cawg_trust, Trust::default());
         assert_eq!(settings.verify, Verify::default());
         assert_eq!(settings.builder, BuilderSettings::default());
 

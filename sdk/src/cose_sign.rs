@@ -151,6 +151,7 @@ fn signing_cert_valid(signing_cert: &[u8]) -> Result<()> {
     let mut passthrough_cap = CertificateTrustPolicy::default();
 
     // allow user EKUs through this check if configured
+    // TODO: Need to determine if we're using C2PA or CAWG trust config here.
     if let Ok(Some(trust_config)) = get_settings_value::<Option<String>>("trust.trust_config") {
         passthrough_cap.add_valid_ekus(trust_config.as_bytes());
     }
