@@ -299,22 +299,22 @@ impl Builder {
         Default::default()
     }
 
-    // /// Creates a new [`Builder`] for creating a new asset.
-    // ///
-    // /// # Arguments
-    // /// * `source_type` - The type of digital source, such as `DigitalSourceType::Empty` or `DigitalSourceType::TrainedAlgorithmicData`.
-    // /// # Returns
-    // /// * A new [`Builder`] with the specified source type.
-    // /// # Example
-    // /// ```rust
-    // /// use c2pa::{Builder, DigitalSourceType};
-    // /// let builder = Builder::create(DigitalSourceType::Empty);
-    // /// ```
-    // pub fn create(source_type: DigitalSourceType) -> Self {
-    //     let mut builder = Self::new();
-    //     builder.intent = Some(BuilderIntent::Create(source_type));
-    //     builder
-    // }
+    /// Creates a new [`Builder`] for creating a new asset.
+    ///
+    /// # Arguments
+    /// * `source_type` - The type of digital source, such as `DigitalSourceType::Empty` or `DigitalSourceType::TrainedAlgorithmicData`.
+    /// # Returns
+    /// * A new [`Builder`] with the specified source type.
+    /// # Example
+    /// ```rust
+    /// use c2pa::{Builder, DigitalSourceType};
+    /// let builder = Builder::create(DigitalSourceType::Empty);
+    /// ```
+    pub fn create(source_type: DigitalSourceType) -> Self {
+        let mut builder = Self::new();
+        builder.intent = Some(BuilderIntent::Create(source_type));
+        builder
+    }
 
     /// Creates a new [`Builder`] for for editing an existing asset.
     /// This is experimental and will likely change in the future.
