@@ -13,6 +13,7 @@
 
 use std::{io::Cursor, str::FromStr};
 
+use c2pa_macros::c2pa_test_async;
 use chrono::{DateTime, FixedOffset};
 use iref::UriBuf;
 use non_empty_string::NonEmptyString;
@@ -28,12 +29,7 @@ use crate::{
     HashedUri, Reader,
 };
 
-#[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
-#[cfg_attr(
-    all(target_arch = "wasm32", not(target_os = "wasi")),
-    wasm_bindgen_test
-)]
-#[cfg_attr(target_os = "wasi", wstd::test)]
+#[c2pa_test_async]
 async fn adobe_connected_identities() {
     crate::settings::set_settings_value("verify.verify_trust", false).unwrap();
 
@@ -119,12 +115,7 @@ async fn adobe_connected_identities() {
     );
 }
 
-#[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
-#[cfg_attr(
-    all(target_arch = "wasm32", not(target_os = "wasi")),
-    wasm_bindgen_test
-)]
-#[cfg_attr(target_os = "wasi", wstd::test)]
+#[c2pa_test_async]
 async fn ims_multiple_manifests() {
     crate::settings::set_settings_value("verify.verify_trust", false).unwrap();
 

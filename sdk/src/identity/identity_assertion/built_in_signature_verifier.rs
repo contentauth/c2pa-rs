@@ -163,9 +163,12 @@ mod tests {
         str::FromStr,
     };
 
+    use c2pa_macros::c2pa_test_async;
     use chrono::{DateTime, FixedOffset};
     use iref::UriBuf;
     use non_empty_string::NonEmptyString;
+    #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
+    use wasm_bindgen_test::wasm_bindgen_test;
 
     use crate::{
         crypto::raw_signature,
@@ -190,12 +193,7 @@ mod tests {
     const TEST_IMAGE: &[u8] = include_bytes!("../../../tests/fixtures/CA.jpg");
     const TEST_THUMBNAIL: &[u8] = include_bytes!("../../../tests/fixtures/thumbnail.jpg");
 
-    #[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
-    #[cfg_attr(
-        all(target_arch = "wasm32", not(target_os = "wasi")),
-        wasm_bindgen_test::wasm_bindgen_test
-    )]
-    #[cfg_attr(target_os = "wasi", wstd::test)]
+    #[c2pa_test_async]
     async fn x509_simple_case() {
         let format = "image/jpeg";
         let mut source = Cursor::new(TEST_IMAGE);
@@ -266,12 +264,7 @@ mod tests {
         // TO DO: Not sure what to check from COSE_Sign1.
     }
 
-    #[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
-    #[cfg_attr(
-        all(target_arch = "wasm32", not(target_os = "wasi")),
-        wasm_bindgen_test::wasm_bindgen_test
-    )]
-    #[cfg_attr(target_os = "wasi", wstd::test)]
+    #[c2pa_test_async]
     async fn adobe_connected_identities() {
         crate::settings::set_settings_value("verify.verify_trust", false).unwrap();
 
@@ -365,12 +358,7 @@ mod tests {
         );
     }
 
-    #[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
-    #[cfg_attr(
-        all(target_arch = "wasm32", not(target_os = "wasi")),
-        wasm_bindgen_test::wasm_bindgen_test
-    )]
-    #[cfg_attr(target_os = "wasi", wstd::test)]
+    #[c2pa_test_async]
     async fn err_naive_credential_holder() {
         let format = "image/jpeg";
         let mut source = Cursor::new(TEST_IMAGE);
