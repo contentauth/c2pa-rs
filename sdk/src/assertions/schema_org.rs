@@ -11,6 +11,8 @@
 // specific language governing permissions and limitations under
 // each license.
 
+#![allow(deprecated)]
+
 use std::collections::HashMap;
 
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
@@ -25,6 +27,7 @@ use crate::{
 
 const ASSERTION_CREATION_VERSION: usize = 1;
 
+/// Assertion that implements various schema.org-based assertions.
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct SchemaDotOrg {
     #[serde(rename = "@context", skip_serializing_if = "Option::is_none")]
@@ -130,6 +133,17 @@ impl AssertionBase for SchemaDotOrg {
         Self::from_json_assertion(assertion)
     }
 }
+
+/// Description of a person in the now-deprecated CreativeWork assertion.
+///
+/// This structure is here to allow parsing of existing C2PA 1.x manifests
+/// this assertion. The CreativeWork assertion is no longer part of the
+/// C2PA Technical Specification and it should not be used when creating
+/// new manifests.
+#[deprecated(
+    since = "0.59.0",
+    note = "The CreativeWork assertion is no longer part of the C2PA Technical Specification. Please use the CAWG identity assertion instead (https://opensource.contentauthenticity.org/docs/manifest/cawg-id)."
+)]
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct SchemaDotOrgPerson(SchemaDotOrg);
 

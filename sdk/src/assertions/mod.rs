@@ -37,6 +37,7 @@ mod data_hash;
 pub use data_hash::DataHash;
 
 mod creative_work;
+#[allow(deprecated)]
 pub use creative_work::CreativeWork;
 
 mod exif;
@@ -58,6 +59,7 @@ pub use assertion_metadata::{
 };
 
 mod schema_org;
+#[allow(deprecated)]
 pub use schema_org::{SchemaDotOrg, SchemaDotOrgPerson};
 
 mod thumbnail;
