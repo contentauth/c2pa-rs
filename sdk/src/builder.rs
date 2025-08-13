@@ -26,6 +26,7 @@ use serde_with::skip_serializing_none;
 use uuid::Uuid;
 use zip::{write::SimpleFileOptions, ZipArchive, ZipWriter};
 
+#[allow(deprecated)]
 use crate::{
     assertion::AssertionDecodeError,
     assertions::{
@@ -972,9 +973,9 @@ impl Builder {
 
                     claim.add_assertion(&actions)
                 }
+                #[allow(deprecated)]
                 CreativeWork::LABEL => {
                     let cw: CreativeWork = manifest_assertion.to_assertion()?;
-
                     claim.add_gathered_assertion_with_salt(&cw, &salt)
                 }
                 Exif::LABEL => {
