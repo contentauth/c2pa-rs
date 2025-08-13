@@ -90,7 +90,7 @@ action = "c2pa.edited"
 # The source type field is required for the c2pa.created action.
 #
 # For more information, see `c2pa::assertions::actions::source_type`.
-source_type = "http://c2pa.org/digitalsourcetype/empty"
+source_type = "empty"
 # Description for the action
 description = "Some edit action."
 # Arbitrary key/value pairs to store in the action.
@@ -122,7 +122,7 @@ enabled = true
 # The source type field is required for the c2pa.created action.
 #
 # For more information, see `c2pa::assertions::actions::source_type`.
-source_type = "http://c2pa.org/digitalsourcetype/empty"
+source_type = "empty"
 
 # Settings for configuring how c2pa.opened actions are auto created.
 #
@@ -134,7 +134,7 @@ enabled = true
 # For more information, see `c2pa::assertions::actions::source_type`.
 #
 # Note this field is optional for the c2pa.opened action.
-source_type = "http://c2pa.org/digitalsourcetype/empty"
+source_type = "empty"
 
 # Settings for configuring how c2pa.placed actions are auto created.
 #
@@ -146,7 +146,7 @@ enabled = true
 # For more information, see `c2pa::assertions::actions::source_type`.
 #
 # Note this field is optional for the c2pa.placed action.
-source_type = "http://c2pa.org/digitalsourcetype/empty"
+source_type = "empty"
 
 # Settings for automatic thumbnail generation.
 [builder.thumbnail]

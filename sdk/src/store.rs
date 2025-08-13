@@ -4805,6 +4805,7 @@ pub mod tests {
     use sha2::Sha256;
 
     use super::*;
+    use crate::assertions::DigitalSourceType;
     #[cfg(all(feature = "file_io", feature = "v1_api"))]
     use crate::{
         assertion::AssertionJson,
@@ -4848,9 +4849,8 @@ pub mod tests {
     }
 
     fn create_capture_claim(claim: &mut Claim) -> Result<&mut Claim> {
-        let actions = Actions::new().add_action(
-            Action::new("c2pa.created").set_source_type("http://c2pa.org/digitalsourcetype/empty"),
-        );
+        let actions = Actions::new()
+            .add_action(Action::new("c2pa.created").set_source_type(DigitalSourceType::Empty));
 
         claim.add_assertion(&actions)?;
 
@@ -8478,7 +8478,7 @@ pub mod tests {
     #[test]
     #[cfg(feature = "file_io")]
     fn test_bogus_cert() {
-        use crate::builder::{Builder, DigitalSourceType};
+        use crate::builder::Builder;
         let png = include_bytes!("../tests/fixtures/libpng-test.png"); // Randomly generated local Ed25519
         let ed25519 = include_bytes!("../tests/fixtures/certs/ed25519.pem");
         let certs = include_bytes!("../tests/fixtures/certs/es256.pub");
