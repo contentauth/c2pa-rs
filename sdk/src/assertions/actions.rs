@@ -953,6 +953,51 @@ pub mod tests {
     }
 
     #[test]
+    fn action_set_and_get_parameters() {
+        let action = Action::new("c2pa.filtered")
+            .set_parameter("ingredient", Some(make_hashed_uri1()))
+            .unwrap()
+            .set_parameter("description", Some("some description".to_owned()))
+            .unwrap()
+            .set_parameter("redacted", make_hashed_uri1().url())
+            .unwrap()
+            .set_parameter("ingredients", Some(vec![make_hashed_uri1()]))
+            .unwrap()
+            .set_parameter("source_language", Some("English".to_string()))
+            .unwrap()
+            .set_parameter("target_language", Some("English".to_string()))
+            .unwrap()
+            .set_parameter("multiple_instances", Some(true))
+            .unwrap()
+            .set_parameter("arbitrary", true)
+            .unwrap();
+
+        assert_eq!(action.get_parameter("ingredient"), Some(make_hashed_uri1()));
+        assert_eq!(
+            action.get_parameter("description"),
+            Some("some description".to_owned())
+        );
+        assert_eq!(
+            action.get_parameter("redacted"),
+            Some(make_hashed_uri1().url())
+        );
+        assert_eq!(
+            action.get_parameter("ingredients"),
+            Some(vec![make_hashed_uri1()])
+        );
+        assert_eq!(
+            action.get_parameter("source_language"),
+            Some("English".to_owned())
+        );
+        assert_eq!(
+            action.get_parameter("target_language"),
+            Some("English".to_owned())
+        );
+        assert_eq!(action.get_parameter("multiple_instances"), Some(true));
+        assert_eq!(action.get_parameter("arbitrary"), Some(true));
+    }
+
+    #[test]
     fn assertion_actions() {
         let original = Actions::new()
             .add_action(make_action1())
