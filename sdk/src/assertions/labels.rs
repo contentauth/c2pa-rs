@@ -190,10 +190,15 @@ pub(crate) const DATABOX_STORE: &str = "c2pa.databoxes";
 /// See <https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_asset_reference>.
 pub const ASSET_REFERENCE: &str = "c2pa.asset-ref";
 
-/// Label prefix for a metadata assertion.
+/// Label prefix for a c2pa.metadata assertion.
 ///
 /// See <https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_metadata>.
 pub const METADATA: &str = "c2pa.metadata";
+
+/// Label prefix for a cawg.metadata assertion.
+///
+/// See <https://cawg.io/metadata/1.2-draft/#_assertion_definition.
+pub const CAWG_METADATA: &str = "cawg.metadata";
 
 /// Must have a label that ends in '.metadata' and is preceded by an entity-specific namespace.
 /// For example, a 'com.litware.metadata' assertion would be valid.

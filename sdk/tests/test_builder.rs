@@ -204,10 +204,8 @@ fn test_builder_embedded_v1_otgp() -> Result<()> {
 #[test]
 fn test_dynamic_assertions_builder() -> Result<()> {
     use c2pa::{
-        // assertions::{CreativeWork, SchemaDotOrgPerson},
         dynamic_assertion::{DynamicAssertion, DynamicAssertionContent, PartialClaim},
-        Signer,
-        SigningAlg,
+        Signer, SigningAlg,
     };
     use serde::Serialize;
     #[derive(Serialize)]
@@ -220,7 +218,6 @@ fn test_dynamic_assertions_builder() -> Result<()> {
 
     impl DynamicAssertion for TestDynamicAssertion {
         fn label(&self) -> String {
-            //CreativeWork::LABEL.to_string()
             "com.mycompany.myassertion".to_string()
         }
 
@@ -228,9 +225,6 @@ fn test_dynamic_assertions_builder() -> Result<()> {
             let assertion = TestAssertion {
                 my_tag: "some value I will replace".to_string(),
             };
-            // let assertion = CreativeWork::new()
-            //     .add_author(SchemaDotOrgPerson::new().set_name("me").unwrap())
-            //     .unwrap();
             Ok(serde_json::to_string(&assertion)?.len())
         }
 
@@ -246,9 +240,6 @@ fn test_dynamic_assertions_builder() -> Result<()> {
                     dbg!(a);
                 })
                 .any(|a| a.url().contains("c2pa.hash")));
-
-            // let assertion =
-            //     CreativeWork::new().add_author(SchemaDotOrgPerson::new().set_name("me")?)?;
 
             let assertion = TestAssertion {
                 my_tag: "some value I will replace".to_string(),
