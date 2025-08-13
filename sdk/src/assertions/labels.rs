@@ -179,6 +179,11 @@ pub const CREATIVE_WORK: &str = "stds.schema-org.CreativeWork";
 /// See <https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#timestamp_assertion>.
 pub const TIMESTAMP: &str = "c2pa.time-stamp";
 
+/// Label prefix for a certificate status assertion.
+///
+/// See <https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#certificate_status_assertion>.
+pub const CERTIFICATE_STATUS: &str = "c2pa.certificate-status";
+
 // Assertion store label
 pub(crate) const ASSERTION_STORE: &str = "c2pa.assertions";
 
