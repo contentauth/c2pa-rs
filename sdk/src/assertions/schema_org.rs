@@ -142,7 +142,7 @@ impl AssertionBase for SchemaDotOrg {
 /// new manifests.
 #[deprecated(
     since = "0.59.0",
-    note = "The CreativeWork assertion is no longer part of the C2PA Technical Specification. Please use the CAWG identity assertion and/or metadata assertion instead (https://opensource.contentauthenticity.org/docs/manifest/cawg-id)."
+    note = "The CreativeWork assertion is no longer part of the C2PA Technical Specification. Please use the CAWG identity assertion and/or CAWG metadata assertion instead (https://opensource.contentauthenticity.org/docs/manifest/cawg-id)."
 )]
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct SchemaDotOrgPerson(SchemaDotOrg);
