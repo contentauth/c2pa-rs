@@ -423,6 +423,7 @@ mod integration_1 {
     fn test_certificate_status() -> Result<()> {
         use std::io::Cursor;
 
+        use c2pa::ValidationState;
         use serde_json::json;
         let parent_json = json!({
             "title": "Parent Test",
@@ -452,10 +453,8 @@ mod integration_1 {
         // ensure certificate status assertion was created
         assert!(reader_json
             .contains(r#"label": "c2pa.certificate-status"#));
-
-        assert!(reader_json
-            .contains(r#"validation_state": "Valid"#));
-
+        assert_eq!(reader.validation_status(), None);
+        assert_eq!(reader.validation_state(), ValidationState::Valid);
         assert!(reader_json.contains("signingCredential.ocsp.notRevoked"));
 
         Ok(())
