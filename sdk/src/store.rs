@@ -8630,6 +8630,7 @@ pub mod tests {
     }
 
     pub mod no_file_io {
+        #![allow(clippy::panic)]
         use std::io::Cursor;
 
         #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
@@ -8645,35 +8646,57 @@ pub mod tests {
         )]
         #[cfg_attr(target_os = "wasi", wstd::test)]
         async fn test_store_load_fragment_from_stream_async() {
-            // Placeholder data; replace with valid data for a real test
-            let manifest_data: Vec<u8> = vec![0x00, 0x01, 0x02, 0x03];
-            let fragment_data: Vec<u8> = vec![0x04, 0x05, 0x06, 0x07];
+            // Use the dash fixtures that are known to work with fragment loading
+            // These are the same files used in test_bmff_fragments
+            let init_segment = include_bytes!("../tests/fixtures/dashinit.mp4");
+            let fragment = include_bytes!("../tests/fixtures/dash1.m4s");
 
-            let mut stream = Cursor::new(manifest_data);
-            let mut fragment = Cursor::new(fragment_data);
+            let mut init_stream = Cursor::new(init_segment);
+            let mut fragment_stream = Cursor::new(fragment);
 
-            let format = "jumbf"; // Replace with a supported format if needed
+            let format = "mp4";
             let mut validation_log = StatusTracker::default();
 
+            // Test the async fragment loading (this is what we're actually testing)
             let result = Store::load_fragment_from_stream_async(
                 format,
-                &mut stream,
-                &mut fragment,
+                &mut init_stream,
+                &mut fragment_stream,
                 &mut validation_log,
             )
             .await;
 
+            // Same validation as test_fragmented_jumbf_generation - but allow expected certificate trust errors
             match result {
-                Ok(store) => {
-                    // If you have valid data, you can check store properties here
-                    assert!(store.claims().is_empty() || !store.claims().is_empty());
+                Ok(_manifest) => {
+                    // Verify that we successfully loaded a store from the fragment
+                    // The store should contain the manifest data from the fragment
+
+                    // Check for validation errors, but allow expected certificate trust errors
+                    if validation_log.has_any_error() {
+                        let errors: Vec<_> = validation_log.filter_errors().collect();
+                        let has_unexpected_errors = errors.iter().any(|item| {
+                            // Allow certificate trust errors (these are expected for test fixtures)
+                            // Check if the error is a CertificateTrustError
+                            if let Some(err_val) = &item.err_val {
+                                if err_val.contains("CertificateTrustError") {
+                                    return false; // This error is expected
+                                }
+                            }
+
+                            // Any other errors are unexpected
+                            true
+                        });
+
+                        if has_unexpected_errors {
+                            panic!("Validation log contains unexpected errors: {validation_log:?}",);
+                        }
+                        // Certificate trust errors are OK for test fixtures
+                    }
                 }
                 Err(e) => {
-                    // Accept UnsupportedType for placeholder data
-                    assert!(
-                        matches!(e, Error::UnsupportedType),
-                        "Unexpected error: {e:?}",
-                    );
+                    // Errors are NOT acceptable - this should work with fragments that contain manifest data
+                    panic!("Failed to load fragment from stream: {e:?}");
                 }
             }
         }
