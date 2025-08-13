@@ -612,6 +612,7 @@ impl Store {
         }
     }
 
+    /// Retrieves all manifest labels that need to fetch ocsp responses.
     pub fn get_manifest_labels_for_ocsp(&self) -> Vec<String> {
         let labels = match crate::settings::get_settings_value::<OcspFetch>(
             "builder.certificate_status_fetch",

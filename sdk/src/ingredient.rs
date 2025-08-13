@@ -901,6 +901,7 @@ impl Ingredient {
             Err(err) => (Err(err), None),
         };
 
+        // Fetch ocsp responses and store it with the ingredient
         if let Ok(ref mut store) = result {
             let labels = store.get_manifest_labels_for_ocsp();
 
@@ -1292,6 +1293,7 @@ impl Ingredient {
             data = Some(hash_uri);
         };
 
+        // if the ingredient has ocsp responses, resolve and add it to the claim as a certificate status assertion
         if let Some(ocsp_responses_ref) = self.ocsp_responses_ref() {
             let ocsp_responses: Vec<Vec<u8>> = ocsp_responses_ref
                 .iter()

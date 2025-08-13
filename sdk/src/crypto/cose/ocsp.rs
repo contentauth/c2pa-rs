@@ -326,7 +326,7 @@ pub(crate) fn fetch_and_check_ocsp_response(
     }
 }
 
-/// TODO: Add documentation
+/// Returns the DER-encoded OCSP response from the "rVals" unprotected header in a COSE_Sign1 message.
 pub fn get_ocsp_der(sign1: &coset::CoseSign1) -> Option<Vec<u8>> {
     let der = sign1
         .unprotected
