@@ -334,7 +334,7 @@ impl Ingredient {
     }
 
     /// Returns a reference to the ocsp responses if it exists.
-    pub fn oscp_responses_ref(&self) -> Option<&Vec<ResourceRef>> {
+    pub(crate) fn ocsp_responses_ref(&self) -> Option<&Vec<ResourceRef>> {
         self.ocsp_responses.as_ref()
     }
 
@@ -1292,7 +1292,7 @@ impl Ingredient {
             data = Some(hash_uri);
         };
 
-        if let Some(ocsp_responses_ref) = self.oscp_responses_ref() {
+        if let Some(ocsp_responses_ref) = self.ocsp_responses_ref() {
             let ocsp_responses: Vec<Vec<u8>> = ocsp_responses_ref
                 .iter()
                 .filter_map(|i| get_resource(&i.identifier).ok())

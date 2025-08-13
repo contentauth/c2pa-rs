@@ -421,10 +421,7 @@ mod integration_1 {
     #[test]
     #[cfg(feature = "file_io")]
     fn test_certificate_status() -> Result<()> {
-        use std::{
-            fs::File,
-            io::{Cursor, Write},
-        };
+        use std::io::Cursor;
 
         use serde_json::json;
         let parent_json = json!({
@@ -438,22 +435,24 @@ mod integration_1 {
         // set up parent and destination paths
         let temp_dir = tempdirectory()?;
         let output_path = temp_dir.path().join("test_file.jpg");
-        let parent_path = fixture_path("cai.jpg");
+        let parent_path = fixture_path("earth_apollo17.jpg");
 
         // create a new Manifest
         let mut builder = Builder::new();
 
         // sign and embed into the target file
         let signer = Settings::signer()?;
-        let mut source = Cursor::new(include_bytes!("fixtures/cai.jpg"));
+        let mut source = Cursor::new(include_bytes!("fixtures/ocsp.jpg"));
         builder.add_ingredient_from_stream(parent_json, "image/jpeg", &mut source)?;
         builder.sign_file(signer.as_ref(), &parent_path, &output_path)?;
 
         // read our new file with embedded manifest
         let reader = Reader::from_file(&output_path)?;
 
-        let mut file = File::create("foo.txt")?;
-        file.write_all(reader.to_string().as_bytes())?;
+        // ensure certificate status assertion was created
+        assert!(reader
+            .json()
+            .contains(r#"label": "c2pa.certificate-status"#));
 
         Ok(())
     }

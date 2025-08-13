@@ -400,7 +400,7 @@ impl SettingsValidate for ActionsSettings {
 // TODO: do more validation on URL fields, cert fields, etc.
 /// Settings for the [Builder][crate::Builder].
 #[allow(unused)]
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, Default)]
 pub(crate) struct BuilderSettings {
     /// Claim generator info that is automatically added to the builder.
     ///
@@ -415,8 +415,10 @@ pub(crate) struct BuilderSettings {
     /// For more information on the reasoning behind this field see [ActionsSettings].
     pub actions: ActionsSettings,
 
+    // Certificate statuses will be fetched for either all the manifest labels, or just the active manifest.
     pub certificate_status_fetch: Option<OcspFetch>,
 
+    // Whether or not existing OCSP responses should be overridden by new values.
     pub certificate_status_should_override: Option<bool>,
 }
 
@@ -425,18 +427,6 @@ pub(crate) struct BuilderSettings {
 pub(crate) enum OcspFetch {
     All,
     Active,
-}
-
-impl Default for BuilderSettings {
-    fn default() -> Self {
-        Self {
-            claim_generator_info: Default::default(),
-            thumbnail: Default::default(),
-            actions: Default::default(),
-            certificate_status_fetch: Some(OcspFetch::Active),
-            certificate_status_should_override: Some(true),
-        }
-    }
 }
 
 impl SettingsValidate for BuilderSettings {
