@@ -67,6 +67,7 @@ fn test_reader_xca_jpg() -> Result<()> {
     compare_to_known_good(&reader, "XCA.json")
 }
 
+#[cfg(feature = "fetch_remote_manifests")]
 #[cfg(not(target_os = "wasi"))]
 #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
 #[cfg_attr(
