@@ -34,6 +34,9 @@ pub struct CertificateInfo {
     /// Certificate issuer organization
     pub issuer_org: Option<String>,
 
+    /// Certificate common name
+    pub common_name: Option<String>,
+
     /// Signature validity
     ///
     /// TO REVIEW: What does this `bool` mean?
