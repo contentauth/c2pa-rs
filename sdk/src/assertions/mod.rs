@@ -59,6 +59,9 @@ pub use assertion_metadata::{
     c2pa_source, Actor, AssertionMetadata, AssetType, DataBox, DataSource, ReviewCode, ReviewRating,
 };
 
+mod multi_asset_hash;
+pub use multi_asset_hash::MultiAssetHash;
+
 mod schema_org;
 #[allow(deprecated)]
 pub use schema_org::{SchemaDotOrg, SchemaDotOrgPerson};
