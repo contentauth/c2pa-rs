@@ -13,7 +13,6 @@
 
 use std::{collections::HashMap, fmt};
 
-use log::error;
 use serde::{Deserialize, Serialize};
 use serde_cbor::Value;
 
@@ -27,7 +26,7 @@ use crate::{
 };
 
 const ASSERTION_CREATION_VERSION: usize = 2;
-pub const CAI_INGREDIENT_IDS: &str = "ingredientIds";
+pub const INGREDIENT_IDS: &str = "ingredientIds";
 
 // TODO: this is needed to supress clippy deprecated field warning:  https://github.com/serde-rs/serde/pull/2879
 pub use digital_source_type::DigitalSourceType;
@@ -398,7 +397,7 @@ impl Action {
 
     /// Returns the value of the `xmpMM:InstanceID` property for the modified
     /// (output) resource.
-    #[deprecated(since = "0.37.0", note = "Use `org.cai.ingredientIds` instead")]
+    #[deprecated(since = "0.37.0", note = "Use `ingredient_ids()` instead")]
     pub fn instance_id(&self) -> Option<&str> {
         #[allow(deprecated)]
         self.instance_id.as_deref()
@@ -486,37 +485,6 @@ impl Action {
         #[allow(clippy::unwrap_used)]
         self.add_ingredient_id(&id.into()).unwrap(); // Supporting deprecated feature.
         self
-    }
-
-    // Internal function to return any ingredients referenced by this action.
-    #[allow(dead_code)] // not used in some scenarios
-    pub(crate) fn ingredient_ids(&mut self, claim_version: u8) -> Option<Vec<String>> {
-        match self.get_parameter(CAI_INGREDIENT_IDS).or_else(|| {
-            self.get_parameter("org.cai.ingredientIds") // for backwards compatibility
-        }) {
-            Some(Value::Array(ids)) => {
-                let mut result = Vec::new();
-                for id in ids {
-                    if let Value::Text(s) = id {
-                        result.push(s.clone());
-                    }
-                }
-                Some(result)
-            }
-            Some(_) => {
-                error!("Invalid format for ingredientIds parameter, expected an array of strings.");
-                None // Invalid format, so ignore it.
-            }
-            // If there is no CAI_INGREDIENT_IDS parameter, check for the deprecated instance_id
-            #[allow(deprecated)]
-            None => {
-                if claim_version == 1 && self.instance_id.is_some() {
-                    self.instance_id.as_ref().map(|id| vec![id.to_string()])
-                } else {
-                    None
-                }
-            }
-        }
     }
 
     /// Sets the additional parameters for this action.
@@ -615,12 +583,12 @@ impl Action {
 
     /// Adds an ingredient id to the action.
     pub fn add_ingredient_id(&mut self, ingredient_id: &str) -> Result<&mut Self> {
-        if let Some(Value::Array(ids)) = self.get_parameter_mut("ingredientIds") {
+        if let Some(Value::Array(ids)) = self.get_parameter_mut(INGREDIENT_IDS) {
             ids.push(Value::Text(ingredient_id.to_string()));
             return Ok(self);
         }
         let ids = vec![Value::Text(ingredient_id.to_string())];
-        self.set_parameter_ref("ingredientIds", ids)?;
+        self.set_parameter_ref(INGREDIENT_IDS, ids)?;
         Ok(self)
     }
 
@@ -628,7 +596,7 @@ impl Action {
     /// This is used to map actions to their associated ingredients.
     /// We don't want any of these fields in the final CBOR, so we remove them after extracting.
     pub(crate) fn extract_ingredient_ids(&mut self) -> Option<Vec<String>> {
-        let ingredient_ids = self.remove_parameter("ingredientIds");
+        let ingredient_ids = self.remove_parameter(INGREDIENT_IDS);
         let cai_ingredient_ids = self.remove_parameter("org.cai.ingredientIds");
         #[allow(deprecated)]
         let instance_id = self.instance_id.take();
@@ -1069,7 +1037,7 @@ pub mod tests {
                     "action": "c2pa.opened",
                     "parameters": {
                       "description": "import",
-                      CAI_INGREDIENT_IDS: ["xmp.iid:7b57930e-2f23-47fc-affe-0400d70b738d"],
+                      INGREDIENT_IDS: ["xmp.iid:7b57930e-2f23-47fc-affe-0400d70b738d"],
                     },
                     "digitalSourceType": "http://cv.iptc.org/newscodes/digitalsourcetype/algorithmicMedia",
                     "softwareAgent": "TestApp 1.0",
