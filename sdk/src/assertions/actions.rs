@@ -27,7 +27,7 @@ use crate::{
 };
 
 const ASSERTION_CREATION_VERSION: usize = 2;
-pub const CAI_INGREDIENT_IDS: &str = "org.cai.ingredientIds";
+pub const CAI_INGREDIENT_IDS: &str = "ingredientIds";
 
 // TODO: this is needed to supress clippy deprecated field warning:  https://github.com/serde-rs/serde/pull/2879
 pub use digital_source_type::DigitalSourceType;
@@ -330,7 +330,7 @@ pub struct Action {
 
     /// This is NOT the instanceID in the spec
     /// It is now deprecated but was previously used to map the action to an ingredient
-    #[deprecated(since = "0.37.0", note = "Use `org.cai.ingredientIds` instead")]
+    #[deprecated(since = "0.37.0", note = "Use `parameters.ingredientIds[]` instead")]
     #[serde(skip_serializing)]
     #[serde(alias = "instanceId", alias = "instanceID")]
     pub(crate) instance_id: Option<String>,
@@ -491,7 +491,9 @@ impl Action {
     // Internal function to return any ingredients referenced by this action.
     #[allow(dead_code)] // not used in some scenarios
     pub(crate) fn ingredient_ids(&mut self, claim_version: u8) -> Option<Vec<String>> {
-        match self.get_parameter(CAI_INGREDIENT_IDS) {
+        match self.get_parameter(CAI_INGREDIENT_IDS).or_else(|| {
+            self.get_parameter("org.cai.ingredientIds") // for backwards compatibility
+        }) {
             Some(Value::Array(ids)) => {
                 let mut result = Vec::new();
                 for id in ids {
@@ -502,7 +504,7 @@ impl Action {
                 Some(result)
             }
             Some(_) => {
-                error!("Invalid format for org.cai.ingredientIds parameter, expected an array of strings.");
+                error!("Invalid format for ingredientIds parameter, expected an array of strings.");
                 None // Invalid format, so ignore it.
             }
             // If there is no CAI_INGREDIENT_IDS parameter, check for the deprecated instance_id
@@ -1096,7 +1098,7 @@ pub mod tests {
                     "action": "c2pa.opened",
                     "parameters": {
                         "description": "import",
-                        "org.cai.ingredientIds": ["xmp.iid:7b57930e-2f23-47fc-affe-0400d70b738d"]
+                        "ingredientIds": ["xmp.iid:7b57930e-2f23-47fc-affe-0400d70b738d"]
                     },
                     "digitalSourceType": "http://cv.iptc.org/newscodes/digitalsourcetype/algorithmicMedia",
                     "softwareAgent": {
