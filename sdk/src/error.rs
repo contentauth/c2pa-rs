@@ -299,6 +299,9 @@ pub enum Error {
     #[error("missing bearer token for url `{0}`")]
     MissingBearerToken(String),
 
+    #[error("soft binding api is not supported for non-http/s uris, given `{0}`")]
+    NotHttpOrHttps(String),
+
     #[error("max results must be >1")]
     MaxResultsTooSmall,
 
@@ -317,6 +320,9 @@ pub enum Error {
 
     #[error(transparent)]
     UrlError(#[from] url::ParseError),
+
+    #[error(transparent)]
+    UriError(#[from] http::uri::InvalidUri),
 
     #[error(transparent)]
     TryFromIntError(#[from] std::num::TryFromIntError),

@@ -49,13 +49,10 @@ pub enum SoftBindingAlgorithmKind {
 pub struct SoftBindingAlgorithmEntryMetadata {
     /// Human readable description of the algorithm.
     pub description: String,
-    // TODO: what format? chrono/time?
     /// Date of entry for this algorithm.
     pub date_entered: String,
-    // TODO: email only
     /// An email for contact information about the algorithm.
     pub contact: String,
-    // TODO: URI only
     /// A web page containing more details about the algorithm.
     pub informational_url: String,
 }
@@ -84,14 +81,12 @@ pub struct SoftBindingAlgorithmEntry {
     /// IANA top level media type (rendered) for which this soft binding algorithm applies.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub decoded_media_types: Option<Vec<IanaMediaType>>,
-    // TODO: mime type
     /// IANA media type for which this soft binding algorithm applies, e.g., application/pdf
     #[serde(skip_serializing_if = "Option::is_none")]
     pub encoded_media_types: Option<Vec<String>>,
     /// Metadata about this soft binding algorithm.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub entry_metadata: Option<SoftBindingAlgorithmEntryMetadata>,
-    // TODO: URI only, either http(s) or smart contract id, only evm is defined?
     /// A list of Soft Binding Resolution APIs supporting this algorithm.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub soft_binding_resolution_apis: Option<Vec<String>>,

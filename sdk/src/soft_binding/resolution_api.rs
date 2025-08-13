@@ -145,7 +145,6 @@ impl SoftBindingResolutionApi {
         mime_type: &str,
         asset_stream: &mut impl Read,
         max_results: Option<u32>,
-        // TODO: when is hint_alg actually used?
         hint_alg: Option<&str>,
         hint_value: Option<&str>,
     ) -> Result<SoftBindingQueryResult> {

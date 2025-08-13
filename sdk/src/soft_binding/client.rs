@@ -17,6 +17,8 @@ use std::{
     io::{Read, Seek},
 };
 
+use http::Uri;
+
 use crate::{
     soft_binding::{
         algorithm_list::SoftBindingAlgorithmEntry,
@@ -165,9 +167,9 @@ where
         entry: &SoftBindingAlgorithmEntry,
         value: &str,
         max_results_per_api: Option<u32>,
-        hint_max_results: Option<u32>,
+        prefer_max_results: Option<u32>,
     ) -> Result<Vec<Result<SoftBindingMatch>>> {
-        self.fetch_matches_impl(entry, hint_max_results, |url: &str, token: &str| {
+        self.fetch_matches_impl(entry, prefer_max_results, |url: &str, token: &str| {
             // TODO: should we always use large binding API or set a cutoff?
             SoftBindingResolutionApi::query_by_large_binding(
                 url,
@@ -191,15 +193,15 @@ where
         asset_stream: &mut U,
         hint_value: Option<&str>,
         max_results_per_api: Option<u32>,
-        hint_max_results: Option<u32>,
+        prefer_max_results: Option<u32>,
     ) -> Result<Vec<Result<SoftBindingMatch>>> {
         // TODO: not a great solution but allows us to mutate the asset stream from the closure multiple times
         let cell = RefCell::new(asset_stream);
-        self.fetch_matches_impl(entry, hint_max_results, |url: &str, token: &str| {
+        self.fetch_matches_impl(entry, prefer_max_results, |url: &str, token: &str| {
             let mut asset_stream = cell.borrow_mut();
             asset_stream.rewind()?;
 
-            // TODO: depending on what hint_value is, if that's specified we can just call the binding APIs
+            // TODO: how is hint_value used? if we have that can we call the byBinding APIs?
             SoftBindingResolutionApi::upload_file(
                 url,
                 token,
@@ -256,7 +258,7 @@ where
     fn fetch_matches_impl<F>(
         &self,
         entry: &SoftBindingAlgorithmEntry,
-        hint_max_results: Option<u32>,
+        prefer_max_results: Option<u32>,
         callback: F,
     ) -> Result<Vec<Result<SoftBindingMatch>>>
     where
@@ -274,24 +276,30 @@ where
                 let mut matches = Vec::new();
 
                 for url in urls {
-                    if let Some(token) = (self.oauth_resolver)(url) {
-                        match callback(url, token) {
-                            Ok(response) => {
-                                matches.extend(response.matches.into_iter().map(|query| {
-                                    Ok(SoftBindingMatch::from_query(url.to_owned(), query))
-                                }))
-                            }
-                            Err(err) => matches.push(Err(err)),
-                        }
+                    let uri = url.parse::<Uri>()?;
+                    match uri.scheme_str() {
+                        // TODO: match on http/s struct when https://doc.rust-lang.org/stable/std/marker/trait.StructuralPartialEq.html is stablized
+                        Some("http" | "https") => {
+                            if let Some(token) = (self.oauth_resolver)(url) {
+                                match callback(url, token) {
+                                    Ok(response) => {
+                                        matches.extend(response.matches.into_iter().map(|query| {
+                                            Ok(SoftBindingMatch::from_query(url.to_owned(), query))
+                                        }))
+                                    }
+                                    Err(err) => matches.push(Err(err)),
+                                }
 
-                        if let Some(max_results) = hint_max_results {
-                            if matches.len() == max_results as usize {
-                                break;
+                                if let Some(max_results) = prefer_max_results {
+                                    if matches.len() == max_results as usize {
+                                        break;
+                                    }
+                                }
+                            } else {
+                                matches.push(Err(Error::MissingBearerToken(url.to_owned())));
                             }
                         }
-                    } else {
-                        // TODO: reconsider if we need this
-                        matches.push(Err(Error::MissingBearerToken(url.to_owned())));
+                        _ => matches.push(Err(Error::NotHttpOrHttps(url.to_owned()))),
                     }
                 }
 
