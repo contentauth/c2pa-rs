@@ -32,7 +32,8 @@ use crate::{
         c2pa_action,
         labels::{self, METADATA_LABEL_REGEX},
         Action, ActionTemplate, Actions, AssertionMetadata, BmffHash, BoxHash, CreativeWork,
-        DataHash, EmbeddedData, Exif, Metadata, SoftwareAgent, Thumbnail, User, UserCbor,
+        DataHash, DigitalSourceType, EmbeddedData, Exif, Metadata, SoftwareAgent, Thumbnail, User,
+        UserCbor,
     },
     cbor_types::value_cbor_to_type,
     claim::Claim,
@@ -166,29 +167,6 @@ impl AssertionDefinition {
     }
 }
 
-#[derive(Debug, Default, Deserialize, Serialize, Clone, PartialEq)]
-#[cfg_attr(feature = "json_schema", derive(JsonSchema))]
-pub enum DigitalSourceType {
-    /// Media whose digital content is effectively empty, such as a blank canvas or zero-length video.
-    #[default]
-    Empty,
-    /// Data that is the result of algorithmically using a model derived from sampled content and data.
-    /// Differs from <http://cv.iptc.org/newscodes/digitalsourcetype/>trainedAlgorithmicMedia in that
-    /// the result isn’t a media type (e.g., image or video) but is a data format (e.g., CSV, pickle).
-    TrainedAlgorithmicData,
-}
-
-impl DigitalSourceType {
-    pub fn as_url(&self) -> &'static str {
-        match self {
-            Self::Empty => "http://c2pa.org/digitalsourcetype/empty",
-            Self::TrainedAlgorithmicData => {
-                "http://c2pa.org/digitalsourcetype/trainedAlgorithmicData"
-            }
-        }
-    }
-}
-
 /// Represents the type of builder flow being used.
 ///
 /// This determines how the builder will be used, such as creating a new asset, opening an existing asset,
@@ -216,7 +194,7 @@ struct StructuredAction {
 ///
 /// # Example: Building and signing a manifest
 ///
-/// ```
+/// ```ignore-wasm32
 /// use c2pa::Result;
 /// use std::path::PathBuf;
 ///
@@ -513,7 +491,7 @@ impl Builder {
     ///
     /// let mut builder = Builder::new();
     /// builder.add_action(created_action);
-    /// ```     
+    /// ```
     pub fn add_action<T>(&mut self, action: T) -> Result<&mut Self>
     where
         T: Serialize,
@@ -1128,7 +1106,7 @@ impl Builder {
                     let action =
                         action.set_parameter("ingredients", vec![parent_ingredient_uri])?;
 
-                    let source_type = settings::get_settings_value::<Option<String>>(
+                    let source_type = settings::get_settings_value::<Option<DigitalSourceType>>(
                         "builder.auto_opened_action.source_type",
                     );
                     match source_type {
@@ -1138,7 +1116,7 @@ impl Builder {
                 }
                 (None, true, _) => {
                     // The settings ensures this field always exists for the "c2pa.created" action.
-                    let source_type = settings::get_settings_value::<Option<String>>(
+                    let source_type = settings::get_settings_value::<Option<DigitalSourceType>>(
                         "builder.actions.auto_created_action.source_type",
                     );
                     match source_type {
@@ -1199,7 +1177,7 @@ impl Builder {
 
                     let action = action.set_parameter("ingredients", vec![uri])?;
 
-                    let source_type = settings::get_settings_value::<Option<String>>(
+                    let source_type = settings::get_settings_value::<Option<DigitalSourceType>>(
                         "builder.auto_placed_action.source_type",
                     );
                     let action = match source_type {
@@ -1607,7 +1585,7 @@ mod tests {
     #[cfg(feature = "file_io")]
     use crate::utils::test::fixture_path;
     use crate::{
-        assertions::{c2pa_action, source_type, BoxHash},
+        assertions::{c2pa_action, BoxHash, DigitalSourceType},
         asset_handlers::jpeg_io::JpegIO,
         cbor_types::value_cbor_to_type,
         crypto::raw_signature::SigningAlg,
@@ -1879,7 +1857,7 @@ mod tests {
             &toml::toml! {
                 [builder.actions.auto_created_action]
                 enabled = true
-                source_type = (source_type::EMPTY)
+                source_type = (DigitalSourceType::Empty.to_string())
             }
             .to_string(),
         )
@@ -1977,7 +1955,7 @@ mod tests {
             &toml::toml! {
                 [builder.actions.auto_created_action]
                 enabled = true
-                source_type = (source_type::EMPTY)
+                source_type = (DigitalSourceType::Empty.to_string())
 
                 [builder.actions.auto_placed_action]
                 enabled = true
@@ -2071,7 +2049,7 @@ mod tests {
 
                 [builder.actions.auto_created_action]
                 enabled = true
-                source_type = (source_type::EMPTY)
+                source_type = (DigitalSourceType::Empty.to_string())
             }
             .to_string(),
         )
@@ -2108,15 +2086,15 @@ mod tests {
             &toml::toml! {
                 [builder.actions.auto_created_action]
                 enabled = true
-                source_type = (source_type::EMPTY)
+                source_type = (DigitalSourceType::Empty.to_string())
 
                 [[builder.actions.templates]]
                 action = (c2pa_action::EDITED)
-                source_type = (source_type::EMPTY)
+                source_type = (DigitalSourceType::Empty.to_string())
 
                 [[builder.actions.templates]]
                 action = (c2pa_action::COLOR_ADJUSTMENTS)
-                source_type = (source_type::TRAINED_ALGORITHMIC_DATA)
+                source_type = (DigitalSourceType::TrainedAlgorithmicData.to_string())
             }
             .to_string(),
         )
@@ -2147,12 +2125,12 @@ mod tests {
         for template in templates {
             match template.action.as_str() {
                 c2pa_action::EDITED => {
-                    assert_eq!(template.source_type.as_deref(), Some(source_type::EMPTY));
+                    assert_eq!(template.source_type, Some(DigitalSourceType::Empty));
                 }
                 c2pa_action::COLOR_ADJUSTMENTS => {
                     assert_eq!(
-                        template.source_type.as_deref(),
-                        Some(source_type::TRAINED_ALGORITHMIC_DATA)
+                        template.source_type,
+                        Some(DigitalSourceType::TrainedAlgorithmicData)
                     );
                 }
                 _ => {}
@@ -2169,15 +2147,15 @@ mod tests {
             &toml::toml! {
                 [builder.actions.auto_created_action]
                 enabled = true
-                source_type = (source_type::EMPTY)
+                source_type = (DigitalSourceType::Empty.to_string())
 
                 [[builder.actions.actions]]
                 action = (c2pa_action::EDITED)
-                source_type = (source_type::EMPTY)
+                source_type = (DigitalSourceType::Empty.to_string())
 
                 [[builder.actions.actions]]
                 action = (c2pa_action::COLOR_ADJUSTMENTS)
-                source_type = (source_type::TRAINED_ALGORITHMIC_DATA)
+                source_type = (DigitalSourceType::TrainedAlgorithmicData.to_string())
             }
             .to_string(),
         )
@@ -2207,12 +2185,12 @@ mod tests {
         for action in actions.actions {
             match action.action() {
                 c2pa_action::EDITED => {
-                    assert_eq!(action.source_type(), Some(source_type::EMPTY));
+                    assert_eq!(action.source_type(), Some(&DigitalSourceType::Empty));
                 }
                 c2pa_action::COLOR_ADJUSTMENTS => {
                     assert_eq!(
                         action.source_type(),
-                        Some(source_type::TRAINED_ALGORITHMIC_DATA)
+                        Some(&DigitalSourceType::TrainedAlgorithmicData)
                     );
                 }
                 _ => {}
