@@ -4265,7 +4265,7 @@ pub mod tests {
 
     #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
     #[cfg_attr(target_os = "wasi", wstd::test)]
-    async fn test_jumbf_generation_async() {
+    async fn test_jumbf_generation_async() -> Result<()> {
         // Verify after sign is causing UnreferencedManifest errors here, since the manifests don't reference each other.
         no_verify_after_sign();
 
@@ -4278,15 +4278,15 @@ pub mod tests {
         let mut store = Store::new();
 
         // Create a new claim.
-        let claim1 = crate::utils::test::create_test_claim_v1().unwrap();
+        let claim1 = crate::utils::test::create_test_claim_v1()?;
 
         // Create a new claim.
         let mut claim2 = Claim::new("Photoshop", Some("Adobe"), 1);
-        create_editing_claim(&mut claim2).unwrap();
+        create_editing_claim(&mut claim2)?;
 
         // Create a 3rd party claim
         let mut claim_capture = Claim::new("capture", Some("claim_capture"), 1);
-        create_capture_claim(&mut claim_capture).unwrap();
+        create_capture_claim(&mut claim_capture)?;
 
         // Test generate JUMBF
         // Get labels for label test
@@ -4294,25 +4294,23 @@ pub mod tests {
         let capture = claim_capture.label().to_string();
         let claim2_label = claim2.label().to_string();
 
-        store.commit_claim(claim1).unwrap();
+        store.commit_claim(claim1)?;
         store
             .save_to_stream_async(format, &mut input_stream, &mut output_stream, &signer)
             .await
             .unwrap();
-        store.commit_claim(claim_capture).unwrap();
+        store.commit_claim(claim_capture)?;
         let mut temp_stream = Cursor::new(Vec::new());
-        output_stream.rewind().unwrap();
+        output_stream.rewind()?;
         store
             .save_to_stream_async(format, &mut output_stream, &mut temp_stream, &signer)
-            .await
-            .unwrap();
-        store.commit_claim(claim2).unwrap();
-        temp_stream.rewind().unwrap();
-        output_stream.rewind().unwrap();
+            .await?;
+        store.commit_claim(claim2)?;
+        temp_stream.rewind()?;
+        output_stream.rewind()?;
         store
             .save_to_stream_async(format, &mut temp_stream, &mut output_stream, &signer)
-            .await
-            .unwrap();
+            .await?;
 
         // test finding claims by label
         let c1 = store.get_claim(&claim1_label);
@@ -4323,7 +4321,7 @@ pub mod tests {
         assert_eq!(claim2_label, c3.unwrap().label());
 
         // Do we generate JUMBF
-        let jumbf_bytes = store.to_jumbf_internal(signer.reserve_size()).unwrap();
+        let jumbf_bytes = store.to_jumbf_internal(signer.reserve_size())?;
         assert!(!jumbf_bytes.is_empty());
 
         // write to new file
@@ -4331,16 +4329,17 @@ pub mod tests {
 
         // make sure we can read from new file
         let mut report = StatusTracker::default();
-        let _new_store = Store::from_stream_async(format, &mut output_stream, true, &mut report)
-            .await
-            .unwrap();
+        let _new_store =
+            Store::from_stream_async(format, &mut output_stream, true, &mut report).await?;
 
         // should have error for unreference manifests
         assert!(report.has_error(Error::UnreferencedManifest));
+        Ok(())
     }
 
     #[test]
     fn test_png_jumbf_generation() {
+        no_verify_after_sign();
         // test adding to actual image
         let (format, mut input_stream, mut output_stream) = create_test_streams("libpng-test.png");
 
@@ -4363,12 +4362,22 @@ pub mod tests {
 
         // Move the claim to claims list. Note this is not real, the claims would have to be signed in between commits
         store.commit_claim(claim1).unwrap();
+        store
+            .save_to_stream(format, &mut input_stream, &mut output_stream, &signer)
+            .unwrap();
         store.commit_claim(claim_capture).unwrap();
+        output_stream.rewind().unwrap();
+        let mut temp_stream = Cursor::new(Vec::new());
+        store
+            .save_to_stream(format, &mut output_stream, &mut temp_stream, &signer)
+            .unwrap();
         store.commit_claim(claim2).unwrap();
+        temp_stream.rewind().unwrap();
+        output_stream.rewind().unwrap();
         store
             .save_to_stream(
                 format,
-                &mut input_stream,
+                &mut temp_stream,
                 &mut output_stream,
                 signer.as_ref(),
             )
@@ -4608,6 +4617,7 @@ pub mod tests {
 
         // Move the claim to claims list. Note this is not real, the claims would have to be signed in between commits
         store.commit_claim(claim1).unwrap();
+
         store.commit_claim(claim_capture).unwrap();
         store.commit_claim(claim2).unwrap();
         store
@@ -5381,7 +5391,6 @@ pub mod tests {
 
         // test adding to actual image
         let (format, mut input_stream, mut output_stream) = create_test_streams("video1.mp4");
-        let op2 = temp_dir_path(&temp_dir, "video_collapsed_manifest.mp4");
 
         let mut report = StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
 
@@ -5514,7 +5523,7 @@ pub mod tests {
 
         um_store.commit_claim(claim2).unwrap();
         output_stream.rewind().unwrap();
-        let output_stream2 = Cursor::new(Vec::new());
+        let mut output_stream2 = Cursor::new(Vec::new());
         um_store
             .save_to_stream(
                 format,

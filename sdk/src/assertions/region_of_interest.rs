@@ -235,7 +235,7 @@ pub enum Role {
 ///
 /// This struct can be used from [`Action::changes`][crate::assertions::Action::changes],
 /// [`AssertionMetadata::region_of_interest`][crate::assertions::AssertionMetadata::region_of_interest], or
-/// [`SoftBindingScopeMap::region`][crate::assertions::soft_binding::SoftBindingScopeMap::region].
+/// [`SoftBindingScopeMap::region`][crate::assertions::soft_binding::SoftBindingScope::region].
 #[skip_serializing_none]
 #[derive(Debug, Default, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "json_schema", derive(JsonSchema))]
