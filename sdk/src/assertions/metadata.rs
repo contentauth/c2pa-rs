@@ -448,7 +448,13 @@ pub mod tests {
     #![allow(clippy::expect_used)]
     #![allow(clippy::unwrap_used)]
 
-    use crate::{assertion::AssertionBase, assertions::metadata::Metadata};
+    use crate::{
+        assertion::AssertionBase,
+        assertions::{
+            labels::{CAWG_METADATA, METADATA},
+            metadata::Metadata,
+        },
+    };
 
     const SPEC_EXAMPLE: &str = r#"{
         "@context" : {
@@ -484,6 +490,17 @@ pub mod tests {
         "exifEX:LensModel": "17.0-35.0 mm",
         "exifEX:LensSpecification": { "@list": [ 1.55, 4.2, 1.6, 2.4 ] }
     }"#;
+
+    const CAWG_METADATA_EXAMPLE: &str = r#" {
+        "@context" : {
+            "dc" : "http://purl.org/dc/elements/1.1/"
+        },
+        "dc:created": "2025 August 13", 
+        "dc:creator": [
+             "John Doe"
+        ]
+        }
+        "#;
 
     const CUSTOM_METADATA: &str = r#" {
         "@context" : {
@@ -522,13 +539,13 @@ pub mod tests {
 
     #[test]
     fn metadata_from_json() {
-        let metadata = Metadata::new("c2pa.metadata", SPEC_EXAMPLE).unwrap();
+        let metadata = Metadata::new(METADATA, SPEC_EXAMPLE).unwrap();
         assert!(metadata.is_valid());
     }
 
     #[test]
     fn assertion_round_trip() {
-        let metadata = Metadata::new("c2pa.metadata", SPEC_EXAMPLE).unwrap();
+        let metadata = Metadata::new(METADATA, SPEC_EXAMPLE).unwrap();
         let assertion = metadata.to_assertion().unwrap();
         let result = Metadata::from_assertion(&assertion).unwrap();
         assert_eq!(metadata, result);
@@ -539,21 +556,27 @@ pub mod tests {
         let mut metadata = Metadata::new("custom.metadata", CUSTOM_METADATA).unwrap();
         assert!(metadata.is_valid());
         // c2pa.metadata has restrictions on fields
-        metadata.label = "c2pa.metadata".to_owned();
+        metadata.label = METADATA.to_owned();
         assert!(!metadata.is_valid());
+    }
+
+    #[test]
+    fn test_cawg_metadata() {
+        let metadata = Metadata::new(CAWG_METADATA, CAWG_METADATA_EXAMPLE).unwrap();
+        assert!(metadata.is_valid());
     }
 
     #[test]
     fn test_field_not_in_context() {
         let mut metadata = Metadata::new("custom.metadata", MISSING_CONTEXT).unwrap();
         assert!(!metadata.is_valid());
-        metadata.label = "c2pa.metadata".to_owned();
+        metadata.label = METADATA.to_owned();
         assert!(!metadata.is_valid());
     }
 
     #[test]
     fn test_uri_is_not_allowed() {
-        let mut metadata = Metadata::new("c2pa.metadata", MISMATCH_URI).unwrap();
+        let mut metadata = Metadata::new(METADATA, MISMATCH_URI).unwrap();
         assert!(!metadata.is_valid());
         // custom metadata does not have restriction on uris
         metadata.label = "custom.metadata".to_owned();
@@ -562,7 +585,7 @@ pub mod tests {
 
     #[test]
     fn test_empty_context() {
-        let metadata = Metadata::new("c2pa.metadata", EMPTY_CONTEXT).unwrap();
+        let metadata = Metadata::new(METADATA, EMPTY_CONTEXT).unwrap();
         assert!(!metadata.is_valid());
     }
 }
