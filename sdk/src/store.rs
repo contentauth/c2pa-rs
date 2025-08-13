@@ -5051,43 +5051,43 @@ pub mod tests {
             Ok(claim)
         }
 
-    #[test]
-    #[cfg(feature = "file_io")]
-    fn test_certificate_map() {
-        let ap = fixture_path("ocsp_with_assertion.jpg");
-        let mut report = StatusTracker::default();
-        let source = Cursor::new(include_bytes!("../tests/fixtures/ocsp_with_assertion.jpg"));
-        let store = Store::from_stream("image/jpeg", source, true, &mut report).unwrap();
+        #[test]
+        #[cfg(feature = "file_io")]
+        fn test_certificate_map() {
+            let ap = fixture_path("ocsp_with_assertion.jpg");
+            let mut report = StatusTracker::default();
+            let source = Cursor::new(include_bytes!("../tests/fixtures/ocsp_with_assertion.jpg"));
+            let store = Store::from_stream("image/jpeg", source, true, &mut report).unwrap();
 
-        let svi = store
-            .get_store_validation_info(
-                store.claims()[0],
-                &mut ClaimAssetData::Path(&ap),
-                &mut report,
-            )
-            .unwrap();
-        assert!(svi
-            .certificate_statuses
-            .contains_key("310665949469838386185380984752231266212090716844"));
-        assert!(svi
-            .certificate_statuses
-            .contains_key("28651076926158642445677524766118780318"));
+            let svi = store
+                .get_store_validation_info(
+                    store.claims()[0],
+                    &mut ClaimAssetData::Path(&ap),
+                    &mut report,
+                )
+                .unwrap();
+            assert!(svi
+                .certificate_statuses
+                .contains_key("310665949469838386185380984752231266212090716844"));
+            assert!(svi
+                .certificate_statuses
+                .contains_key("28651076926158642445677524766118780318"));
 
-        let stored_ocsp_vals: Vec<Vec<u8>> =
-            svi.certificate_statuses.into_values().flatten().collect();
-        assert_eq!(stored_ocsp_vals.len(), 2);
+            let stored_ocsp_vals: Vec<Vec<u8>> =
+                svi.certificate_statuses.into_values().flatten().collect();
+            assert_eq!(stored_ocsp_vals.len(), 2);
 
-        assert!(stored_ocsp_vals.iter().all(|v| !v.is_empty()))
-    }
+            assert!(stored_ocsp_vals.iter().all(|v| !v.is_empty()))
+        }
 
-    #[test]
-    #[cfg(feature = "file_io")]
-    #[cfg(feature = "v1_api")]
-    fn test_jumbf_generation() {
-        let ap = fixture_path("earth_apollo17.jpg");
-        let temp_dir = tempdirectory().expect("temp dir");
-        let op = temp_dir_path(&temp_dir, "test-image.jpg");
-      
+        #[test]
+        #[cfg(feature = "file_io")]
+        #[cfg(feature = "v1_api")]
+        fn test_jumbf_generation() {
+            let ap = fixture_path("earth_apollo17.jpg");
+            let temp_dir = tempdirectory().expect("temp dir");
+            let op = temp_dir_path(&temp_dir, "test-image.jpg");
+
             // Create claims store.
             let mut store = Store::new();
 
