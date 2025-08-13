@@ -42,6 +42,7 @@ use crate::{
     ClaimGeneratorInfo, ManifestAssertionKind,
 };
 #[cfg(feature = "v1_api")]
+#[allow(deprecated)]
 use crate::{
     assertions::{CreativeWork, DataHash, Exif, User, UserCbor},
     asset_io::{CAIRead, CAIReadWrite},
@@ -994,6 +995,7 @@ impl Manifest {
 
                     claim.add_assertion(&actions)
                 }
+                #[allow(deprecated)]
                 CreativeWork::LABEL => {
                     let mut cw: CreativeWork = manifest_assertion.to_assertion()?;
                     // insert a credentials field if we have a vc that matches the identifier

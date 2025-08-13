@@ -23,6 +23,7 @@ use std::{
 #[cfg(feature = "file_io")]
 use c2pa::crypto::raw_signature::SigningAlg;
 #[cfg(feature = "file_io")]
+#[allow(deprecated)]
 use c2pa::{
     assertions::{
         c2pa_action, labels::*, Action, Actions, CreativeWork, DataHash, Exif, SchemaDotOrgPerson,
@@ -54,6 +55,8 @@ fn builder_from_source<S: AsRef<Path>>(source: S) -> Result<Builder> {
     );
 
     // build a creative work assertion
+    // TO DO: Remove this example.
+    #[allow(deprecated)]
     let creative_work =
         CreativeWork::new().add_author(SchemaDotOrgPerson::new().set_name("me")?)?;
 
