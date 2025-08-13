@@ -295,7 +295,7 @@ impl From<ClaimGeneratorInfo> for SoftwareAgent {
 /// Additional parameters of the action.
 #[derive(Deserialize, Serialize, Clone, Debug, Default, PartialEq)]
 #[serde(rename_all = "camelCase")]
-pub struct ParametersMap {
+pub struct ActionParameters {
     // v1 fields
     /// A hashed-uri to the ingredient assertion that this action acts on.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -371,7 +371,7 @@ pub struct Action {
 
     /// Additional parameters of the action. These vary by the type of action.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) parameters: Option<ParametersMap>,
+    pub(crate) parameters: Option<ActionParameters>,
 
     /// An array of the creators that undertook this action.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -446,7 +446,7 @@ impl Action {
     /// Returns the additional parameters for this action.
     ///
     /// These vary by the type of action.
-    pub fn parameters(&self) -> Option<&ParametersMap> {
+    pub fn parameters(&self) -> Option<&ActionParameters> {
         self.parameters.as_ref()
     }
 
@@ -610,15 +610,7 @@ impl Action {
         let value_bytes = serde_cbor::ser::to_vec(&value)?;
         let value = serde_cbor::from_slice(&value_bytes)?;
 
-        let parameters = match &mut self.parameters {
-            Some(parameters) => parameters,
-            None => {
-                self.parameters = Some(ParametersMap::default());
-                #[allow(clippy::unwrap_used)]
-                self.parameters.as_mut().unwrap()
-            }
-        };
-
+        let parameters = self.parameters.get_or_insert_default();
         parameters.common.insert(key.into(), value);
 
         Ok(self)

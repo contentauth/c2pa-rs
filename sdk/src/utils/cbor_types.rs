@@ -161,16 +161,6 @@ pub(crate) fn map_cbor_to_type<T: serde::de::DeserializeOwned>(
     }
 }
 
-// Convert Value to concrete value.  v must be a serde_cbor::Value
-#[allow(unused)]
-pub(crate) fn value_cbor_to_type<T: serde::de::DeserializeOwned>(
-    v: &serde_cbor::Value,
-) -> Option<T> {
-    let v_bytes = serde_cbor::ser::to_vec(v).ok()?;
-    let output: T = serde_cbor::from_slice(&v_bytes).ok()?;
-    Some(output)
-}
-
 #[cfg(test)]
 pub mod tests {
     #![allow(clippy::expect_used)]

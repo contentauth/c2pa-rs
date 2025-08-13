@@ -17,8 +17,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     assertions::{
-        region_of_interest::RegionOfInterest, Action, ActionTemplate, DigitalSourceType,
-        ParametersMap,
+        region_of_interest::RegionOfInterest, Action, ActionParameters, ActionTemplate,
+        DigitalSourceType, SoftwareAgent,
     },
     cbor_types::DateT,
     resource_store::UriOrResource,
@@ -280,7 +280,7 @@ pub(crate) struct ActionSettings {
 
     /// Additional parameters of the action. These vary by the type of action.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub parameters: Option<ParametersMap>,
+    pub parameters: Option<ActionParameters>,
     /// One of the defined URI values at `<https://cv.iptc.org/newscodes/digitalsourcetype/>`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub source_type: Option<DigitalSourceType>,
