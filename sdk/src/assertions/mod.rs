@@ -47,6 +47,9 @@ pub use ingredient::Relationship;
 
 pub mod labels;
 
+mod metadata;
+pub use metadata::Metadata;
+
 mod assertion_metadata;
 pub use assertion_metadata::{
     c2pa_source, Actor, AssertionMetadata, AssetType, DataBox, DataSource, ReviewCode, ReviewRating,
@@ -75,3 +78,6 @@ mod embedded_data;
 pub use embedded_data::EmbeddedData;
 
 pub mod region_of_interest;
+
+mod soft_binding;
+pub use soft_binding::{SoftBinding, SoftBindingBlock, SoftBindingScope, SoftBindingTimespan};
