@@ -39,8 +39,8 @@ use crate::{
     assertion::{Assertion, AssertionBase, AssertionData, AssertionDecodeError},
     assertions::{
         labels::{self, CLAIM},
-        BmffHash, DataBox, DataHash, DataMap, ExclusionsMap, Ingredient, MerkleMap, Relationship,
-        SubsetMap, TimeStamp, User, UserCbor, VecByteBuf,
+        BmffHash, CertificateStatus, DataBox, DataHash, DataMap, ExclusionsMap, Ingredient,
+        MerkleMap, Relationship, SubsetMap, TimeStamp, User, UserCbor, VecByteBuf,
     },
     asset_handlers::bmff_io::read_bmff_c2pa_boxes,
     asset_io::{
@@ -111,6 +111,7 @@ pub(crate) struct StoreValidationInfo<'a> {
     pub timestamps: HashMap<String, TstInfo>,     // list of timestamp assertions for each claim
     pub update_manifest_label: Option<String>,    // label of the update manifest if it exists
     pub manifest_store_range: Option<HashRange>, // range of the manifest store in the asset for data hash exclusions
+    pub certificate_statuses: HashMap<String, Vec<Vec<u8>>>, // list of certificate status assertions for each serial
 }
 
 /// A `Store` maintains a list of `Claim` structs.
@@ -1846,6 +1847,24 @@ impl Store {
                         validation_log,
                         Error::OtherError("timestamp assertion malformed".into()),
                     )?;
+                }
+            }
+        }
+
+        // get the certificate status assertions
+        let certificate_status_assertions = found_claim.certificate_status_assertions();
+        for csa in certificate_status_assertions {
+            let certificate_status_assertion = CertificateStatus::from_assertion(csa.assertion())?;
+
+            // save the ocsp_ders stored in the StoreValidationInfo
+            for ocsp_der in certificate_status_assertion.as_ref() {
+                if let Ok(response) = OcspResponse::from_der_checked(ocsp_der, None, validation_log)
+                {
+                    let ocsp_ders = svi
+                        .certificate_statuses
+                        .entry(response.certificate_serial_num)
+                        .or_insert(Vec::new());
+                    ocsp_ders.push(response.ocsp_der);
                 }
             }
         }
@@ -4851,6 +4870,35 @@ pub mod tests {
 
     #[test]
     #[cfg(feature = "file_io")]
+    fn test_certificate_map() {
+        let ap = fixture_path("ocsp_with_assertion.jpg");
+        let mut report = StatusTracker::default();
+        let source = Cursor::new(include_bytes!("../tests/fixtures/ocsp_with_assertion.jpg"));
+        let store = Store::from_stream("image/jpeg", source, true, &mut report).unwrap();
+
+        let svi = store
+            .get_store_validation_info(
+                store.claims()[0],
+                &mut ClaimAssetData::Path(&ap),
+                &mut report,
+            )
+            .unwrap();
+        assert!(svi
+            .certificate_statuses
+            .contains_key("310665949469838386185380984752231266212090716844"));
+        assert!(svi
+            .certificate_statuses
+            .contains_key("28651076926158642445677524766118780318"));
+
+        let stored_ocsp_vals: Vec<Vec<u8>> =
+            svi.certificate_statuses.into_values().flatten().collect();
+        assert_eq!(stored_ocsp_vals.len(), 2);
+
+        assert!(stored_ocsp_vals.iter().all(|v| !v.is_empty()))
+    }
+
+    #[test]
+    #[cfg(feature = "file_io")]
     #[cfg(feature = "v1_api")]
     fn test_jumbf_generation() {
         let ap = fixture_path("earth_apollo17.jpg");
@@ -6982,7 +7030,7 @@ pub mod tests {
     #[test]
     fn test_display() {
         //let ap = fixture_path("CA.jpg");
-        let ap = PathBuf::from_str("/Users/mfisher/Downloads/Screenshot 2025-07-15 at 3.49.35 PM 2025-08-08 - 14.05.35 - Cr.png").unwrap();
+        let ap = PathBuf::from_str("CA.jpg").unwrap();
 
         let mut report = StatusTracker::default();
         let store = Store::load_from_asset(&ap, true, &mut report).expect("load_from_asset");

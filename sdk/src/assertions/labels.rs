@@ -195,7 +195,11 @@ pub const ASSET_REFERENCE: &str = "c2pa.asset-ref";
 /// See <https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_multi_asset_hash>.
 pub const PART: &str = ".part";
 
-/// Label prefix for a metadata assertion.
+/// Label prefix for a C2PA metadata assertion.
+///
+/// A C2PA metadata assertion can only be used for [specific metadata fields]
+/// as described in the C2PA Technical Specification and only if those fields
+/// are generated from a hardware or software source.
 ///
 /// See <https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_metadata>.
 pub const METADATA: &str = "c2pa.metadata";
