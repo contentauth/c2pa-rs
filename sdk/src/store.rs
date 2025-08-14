@@ -69,8 +69,8 @@ use crate::{
         self,
         boxes::*,
         labels::{
-            manifest_label_from_uri, manifest_label_to_parts, to_assertion_uri, to_manifest_uri,
-            ASSERTIONS, CREDENTIALS, DATABOXES, SIGNATURE,
+            manifest_label_from_uri, manifest_label_to_parts, to_absolute_uri, to_assertion_uri,
+            to_manifest_uri, ASSERTIONS, CREDENTIALS, DATABOXES, SIGNATURE,
         },
     },
     jumbf_io::{
@@ -1511,7 +1511,7 @@ impl Store {
                     if ingredient_version >= 3 && ingredient_assertion.validation_results.is_none()
                     {
                         log_item!(
-                            i.label().clone(),
+                            jumbf::labels::to_assertion_uri(claim.label(), &i.label()),
                             "ingredient V3 must have validation results",
                             "ingredient_checks"
                         )
@@ -1796,7 +1796,7 @@ impl Store {
         // find the manifest with the hash binding
         svi.binding_claim = self.get_hash_binding_manifest(claim).ok_or_else(|| {
             log_item!(
-                claim.label().to_owned(),
+                to_manifest_uri(claim.label()),
                 "could not find manifest with hard binding",
                 "get_store_validation_info"
             )
