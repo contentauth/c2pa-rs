@@ -328,7 +328,6 @@ impl IdentityAssertion {
         let sig_type = self.signer_payload.sig_type.as_str();
 
         if sig_type == "cawg.x509.cose" {
-            // TO DO BEFORE MERGING: Should be able to configure this.
             let mut ctp = CertificateTrustPolicy::default();
 
             // TO REVIEW: Code I copied this from in `Store` says:
