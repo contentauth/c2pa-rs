@@ -10,7 +10,7 @@ use crate::{
 
 /// The data structure used to store one or more soft bindings across some or all of the asset's content.
 ///
-/// https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#soft_binding_assertion
+/// <https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#soft_binding_assertion>
 #[derive(Serialize, Deserialize, Debug, Default, PartialEq)]
 pub struct SoftBinding {
     /// A string identifying the soft binding algorithm and version of that algorithm used to compute the value,

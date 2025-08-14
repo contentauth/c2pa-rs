@@ -487,6 +487,7 @@ impl GifIO {
         Ok(())
     }
 
+    #[allow(dead_code)] // this here for wasm builds to pass clippy  (todo: remove)
     fn replace_block_in_place(
         &self,
         stream: &mut dyn CAIReadWrite,
