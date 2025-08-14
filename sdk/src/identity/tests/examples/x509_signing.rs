@@ -17,6 +17,8 @@
 
 use std::io::{Cursor, Seek};
 
+use c2pa_macros::c2pa_test_async;
+
 use crate::{
     crypto::{cose::Verifier, raw_signature},
     identity::{
@@ -32,7 +34,7 @@ use crate::{
 const TEST_IMAGE: &[u8] = include_bytes!("../../../../tests/fixtures/CA.jpg");
 const TEST_THUMBNAIL: &[u8] = include_bytes!("../../../../tests/fixtures/thumbnail.jpg");
 
-#[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
+#[c2pa_test_async]
 #[ignore] // We'll only run this occasionally if we need to update this test.
 async fn x509_signing() {
     let format = "image/jpeg";

@@ -60,6 +60,7 @@ mod tests {
     #![allow(clippy::unwrap_used)]
     use std::io::Cursor;
 
+    use c2pa_macros::c2pa_test_async;
     #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
     use wasm_bindgen_test::wasm_bindgen_test;
 
@@ -75,12 +76,7 @@ mod tests {
     const MULTIPLE_IDENTITIES_VALID: &[u8] =
         include_bytes!("tests/fixtures/claim_aggregation/ims_multiple_manifests.jpg");
 
-    #[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
-    #[cfg_attr(
-        all(target_arch = "wasm32", not(target_os = "wasi")),
-        wasm_bindgen_test
-    )]
-    #[cfg_attr(target_os = "wasi", wstd::test)]
+    #[c2pa_test_async]
     async fn test_connected_identities_valid() {
         crate::settings::set_settings_value("verify.verify_trust", false).unwrap();
 
@@ -102,12 +98,7 @@ mod tests {
         );
     }
 
-    #[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
-    #[cfg_attr(
-        all(target_arch = "wasm32", not(target_os = "wasi")),
-        wasm_bindgen_test
-    )]
-    #[cfg_attr(target_os = "wasi", wstd::test)]
+    #[c2pa_test_async]
     async fn test_multiple_identities_valid() {
         crate::settings::set_settings_value("verify.verify_trust", false).unwrap();
 
@@ -127,12 +118,7 @@ mod tests {
         assert_eq!(reader.validation_state(), ValidationState::Valid);
     }
 
-    #[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
-    #[cfg_attr(
-        all(target_arch = "wasm32", not(target_os = "wasi")),
-        wasm_bindgen_test
-    )]
-    #[cfg_attr(target_os = "wasi", wstd::test)]
+    #[c2pa_test_async]
     async fn test_post_validate_with_hard_binding_missing() {
         let mut stream = Cursor::new(NO_HARD_BINDING);
         let mut reader = Reader::from_stream("image/jpeg", &mut stream).unwrap();

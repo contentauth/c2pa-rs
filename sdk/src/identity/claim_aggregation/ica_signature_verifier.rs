@@ -605,19 +605,15 @@ impl IcaSignatureVerifier {
             ));
         };
 
-        // TO DO: Bring in substitute for now() on Wasm.
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            let now = Utc::now().fixed_offset();
+        let now = Utc::now().fixed_offset();
 
-            if now < valid_from {
-                return Err((
-                    IcaValidationError::InvalidValidFromDate(
-                        "validFrom is after current date/time".to_owned(),
-                    ),
-                    "cawg.ica.valid_from.invalid",
-                ));
-            }
+        if now < valid_from {
+            return Err((
+                IcaValidationError::InvalidValidFromDate(
+                    "validFrom is after current date/time".to_owned(),
+                ),
+                "cawg.ica.valid_from.invalid",
+            ));
         }
 
         if let Some(tst_info) = maybe_tst_info {
@@ -651,19 +647,15 @@ impl IcaSignatureVerifier {
             return Ok(());
         };
 
-        // TO DO: Bring in substitute for now() on Wasm.
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            let now = Utc::now().fixed_offset();
+        let now = Utc::now().fixed_offset();
 
-            if now > valid_until {
-                return Err((
-                    IcaValidationError::InvalidValidUntilDate(
-                        "validUntil is before current date/time".to_owned(),
-                    ),
-                    "cawg.ica.valid_until.invalid",
-                ));
-            }
+        if now > valid_until {
+            return Err((
+                IcaValidationError::InvalidValidUntilDate(
+                    "validUntil is before current date/time".to_owned(),
+                ),
+                "cawg.ica.valid_until.invalid",
+            ));
         }
 
         if let Some(tst_info) = maybe_tst_info {
