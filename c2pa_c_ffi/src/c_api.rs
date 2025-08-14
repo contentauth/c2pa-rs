@@ -17,12 +17,14 @@ use std::{
     ptr,
 };
 
+// C has no namespace so we prefix things with C2PA to make them unique
+#[allow(deprecated)]
+use c2pa::settings::load_settings_from_str;
 #[cfg(feature = "file_io")]
 use c2pa::Ingredient;
-// C has no namespace so we prefix things with C2PA to make them unique
 use c2pa::{
-    assertions::DataHash, identity::validator::CawgValidator, settings::load_settings_from_str,
-    Builder as C2paBuilder, CallbackSigner, Reader as C2paReader, SigningAlg,
+    assertions::DataHash, identity::validator::CawgValidator, Builder as C2paBuilder,
+    CallbackSigner, Reader as C2paReader, SigningAlg,
 };
 use scopeguard::guard;
 use tokio::runtime::Runtime; // cawg validator requires async
@@ -281,6 +283,7 @@ pub unsafe extern "C" fn c2pa_load_settings(
 ) -> c_int {
     let settings = from_cstr_or_return_int!(settings);
     let format = from_cstr_or_return_int!(format);
+    #[allow(deprecated)]
     let result = load_settings_from_str(&settings, &format);
     ok_or_return_int!(result, |_| 0) // returns 0 on success
 }
@@ -1664,7 +1667,7 @@ mod tests {
 
     #[test]
     fn test_c2pa_free_string_array_with_count_1() {
-        let strings = vec![CString::new("image/jpg").unwrap()];
+        let strings = vec![CString::new("image/jpeg").unwrap()];
         let ptrs: Vec<*mut c_char> = strings.into_iter().map(|s| s.into_raw()).collect();
         let ptr = ptrs.as_ptr() as *const *const c_char;
         let count = ptrs.len();
@@ -1832,8 +1835,9 @@ mod tests {
         let json = unsafe { c2pa_reader_json(reader) };
         assert!(!json.is_null());
         let json_str = unsafe { CString::from_raw(json) };
+        println!("JSON Report: {}", json_str.to_str().unwrap());
         let json_report = json_str.to_str().unwrap();
         assert!(json_report.contains("cawg.identity"));
-        assert!(json_report.contains("cawg.ica.credential_valid"));
+        assert!(json_report.contains("cawg.identity.well-formed"));
     }
 }

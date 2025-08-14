@@ -29,7 +29,7 @@ use uuid::Uuid;
 
 use crate::{
     assertion::{AssertionBase, AssertionData},
-    assertions::{labels, Actions, EmbeddedData, Metadata, SoftwareAgent},
+    assertions::{labels, Actions, AssertionMetadata, EmbeddedData, SoftwareAgent},
     claim::RemoteManifest,
     crypto::raw_signature::SigningAlg,
     error::{Error, Result},
@@ -42,6 +42,7 @@ use crate::{
     ClaimGeneratorInfo, ManifestAssertionKind,
 };
 #[cfg(feature = "v1_api")]
+#[allow(deprecated)]
 use crate::{
     assertions::{CreativeWork, DataHash, Exif, User, UserCbor},
     asset_io::{CAIRead, CAIReadWrite},
@@ -82,7 +83,7 @@ pub struct Manifest {
 
     /// A list of user metadata for this claim.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub metadata: Option<Vec<Metadata>>,
+    pub metadata: Option<Vec<AssertionMetadata>>,
 
     /// A human-readable title, generally source filename.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -193,7 +194,7 @@ impl Manifest {
     }
 
     /// Returns thumbnail tuple with Some((format, bytes)) or `None`.
-    pub fn thumbnail(&self) -> Option<(&str, Cow<Vec<u8>>)> {
+    pub fn thumbnail(&self) -> Option<(&str, Cow<'_, Vec<u8>>)> {
         self.thumbnail
             .as_ref()
             .and_then(|t| Some(t.format.as_str()).zip(self.resources.get(&t.identifier).ok()))
@@ -222,7 +223,7 @@ impl Manifest {
     }
 
     /// Returns raw assertion references.
-    pub fn assertion_references(&self) -> Iter<HashedUri> {
+    pub fn assertion_references(&self) -> Iter<'_, HashedUri> {
         self.assertion_references.iter()
     }
 
@@ -441,11 +442,14 @@ impl Manifest {
     /// # use c2pa::Result;
     /// use c2pa::{assertions::Actions, Manifest, Reader};
     /// # fn main() -> Result<()> {
-    /// let reader = Reader::from_file("tests/fixtures/CA.jpg")?;
-    /// let manifest = reader.active_manifest().unwrap();
-    /// let actions: Actions = manifest.find_assertion(Actions::LABEL)?;
-    /// for action in actions.actions {
-    ///     println!("{}", action.action());
+    /// #[cfg(feature = "file_io")]
+    /// {
+    ///     let reader = Reader::from_file("tests/fixtures/CA.jpg")?;
+    ///     let manifest = reader.active_manifest().unwrap();
+    ///     let actions: Actions = manifest.find_assertion(Actions::LABEL)?;
+    ///     for action in actions.actions {
+    ///         println!("{}", action.action());
+    ///     }
     /// }
     /// # Ok(())
     /// # }
@@ -802,10 +806,12 @@ impl Manifest {
         // if a thumbnail is not already defined, create one here
         if self.thumbnail_ref().is_none() {
             #[cfg(feature = "add_thumbnails")]
-            if let Ok((format, image)) = crate::utils::thumbnail::make_thumbnail(path.as_ref()) {
+            if let Some((output_format, image)) =
+                crate::utils::thumbnail::make_thumbnail_bytes_from_path(path.as_ref())?
+            {
                 // Do not write this as a file when reading from files
                 let base_path = self.resources_mut().take_base_path();
-                self.set_thumbnail(format, image)?;
+                self.set_thumbnail(output_format.to_string(), image)?;
                 if let Some(path) = base_path {
                     self.resources_mut().set_base_path(path)
                 }
@@ -989,6 +995,7 @@ impl Manifest {
 
                     claim.add_assertion(&actions)
                 }
+                #[allow(deprecated)]
                 CreativeWork::LABEL => {
                     let mut cw: CreativeWork = manifest_assertion.to_assertion()?;
                     // insert a credentials field if we have a vc that matches the identifier
@@ -1190,10 +1197,11 @@ impl Manifest {
         #[cfg(feature = "add_thumbnails")]
         {
             if self.thumbnail_ref().is_none() {
-                if let Ok((format, image)) =
-                    crate::utils::thumbnail::make_thumbnail_from_stream(format, source)
+                let source = std::io::BufReader::new(&mut *source);
+                if let Some((output_format, image)) =
+                    crate::utils::thumbnail::make_thumbnail_bytes_from_stream(format, source)?
                 {
-                    self.set_thumbnail(format, image)?;
+                    self.set_thumbnail(output_format.to_string(), image)?;
                 }
             }
         }
@@ -1234,12 +1242,10 @@ impl Manifest {
         let mut stream = std::io::Cursor::new(asset);
         #[cfg(feature = "add_thumbnails")]
         {
-            if self.thumbnail_ref().is_none() {
-                if let Ok((format, image)) =
-                    crate::utils::thumbnail::make_thumbnail_from_stream(format, &mut stream)
-                {
-                    self.set_thumbnail(format, image)?;
-                }
+            if let Some((output_format, image)) =
+                crate::utils::thumbnail::make_thumbnail_bytes_from_stream(format, &mut stream)?
+            {
+                self.set_thumbnail(output_format.to_string(), image)?;
             }
         }
         let asset = stream.into_inner();
@@ -1351,7 +1357,7 @@ impl Manifest {
         if dh.is_err() {
             let mut ph = DataHash::new("jumbf manifest", "sha256");
             for _ in 0..10 {
-                ph.add_exclusion(HashRange::new(0, 2));
+                ph.add_exclusion(HashRange::new(0u64, 2u64));
             }
             self.add_assertion(&ph)?;
         }
@@ -1491,7 +1497,7 @@ impl Manifest {
     /// specifies the format of the asset. The input_stream should point to the same asset
     /// used in get_placed_manifest.  The caller can supply list of ManifestPathCallback
     /// traits to make any modifications to assertions.  The callbacks are processed before
-    /// the manifest is signed.  
+    /// the manifest is signed.
     #[deprecated(since = "0.38.0", note = "use Builder.sign with dynamic assertions.")]
     #[cfg(feature = "v1_api")]
     pub fn embed_placed_manifest(
@@ -2347,7 +2353,10 @@ pub(crate) mod tests {
         assert_eq!(image.into_owned(), thumb_data);
     }
 
+    // This is only used for testing obsolete v1 manifest creation code
     const MANIFEST_JSON: &str = r#"{
+        
+        "claim_version": 1,
         "claim_generator": "test",
         "claim_generator_info": [
             {
@@ -2698,7 +2707,7 @@ pub(crate) mod tests {
         manifest.with_base_path(fixtures).expect("with_base");
         // verify we can't set a references that don't exist
         assert!(manifest
-            .set_thumbnail_ref(ResourceRef::new("image/jpg", "foo"))
+            .set_thumbnail_ref(ResourceRef::new("image/jpeg", "foo"))
             .is_err());
         assert_eq!(manifest.thumbnail_ref(), None);
         // verify we can set a references that do exist
@@ -2807,7 +2816,7 @@ pub(crate) mod tests {
         // build manifest to insert in the hole
 
         // create an hash exclusion for the manifest
-        let exclusion = HashRange::new(offset, placeholder.len());
+        let exclusion = HashRange::new(offset as u64, placeholder.len() as u64);
         let exclusions = vec![exclusion];
 
         let mut dh = DataHash::new("source_hash", "sha256");
@@ -2866,7 +2875,7 @@ pub(crate) mod tests {
         // build manifest to insert in the hole
 
         // create an hash exclusion for the manifest
-        let exclusion = HashRange::new(offset, placeholder.len());
+        let exclusion = HashRange::new(offset as u64, placeholder.len() as u64);
         let exclusions = vec![exclusion];
 
         let mut dh = DataHash::new("source_hash", "sha256");

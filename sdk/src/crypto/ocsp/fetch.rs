@@ -101,21 +101,21 @@ pub(crate) fn fetch_ocsp_response(certs: &[Vec<u8>]) -> Option<Vec<u8>> {
             // fetch OCSP response
             let request = ureq::get(req_url.as_str());
             let response = if let Some(host) = url.host() {
-                request.set("Host", &host.to_string()).call().ok()? // for responders that don't support http 1.0
+                request.header("Host", &host.to_string()).call().ok()? // for responders that don't support http 1.0
             } else {
                 request.call().ok()?
             };
 
             if response.status() == 200 {
-                let len = response
-                    .header("Content-Length")
-                    .and_then(|s| s.parse::<usize>().ok())
+                let body = response.into_body();
+                let len = body
+                    .content_length()
+                    .and_then(|s| s.try_into().ok())
                     .unwrap_or(10000);
 
                 let mut ocsp_rsp: Vec<u8> = Vec::with_capacity(len);
 
-                response
-                    .into_reader()
+                body.into_reader()
                     .take(1000000)
                     .read_to_end(&mut ocsp_rsp)
                     .ok()?;

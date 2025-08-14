@@ -18,7 +18,6 @@ use std::{
     path::Path,
 };
 
-//use conv::ValueFrom;
 use range_set::RangeSet;
 use serde::{Deserialize, Serialize};
 // direct sha functions
@@ -31,15 +30,15 @@ const MAX_HASH_BUF: usize = 256 * 1024 * 1024; // cap memory usage to 256MB
 #[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Eq)]
 /// Defines a hash range to be used with `hash_stream_by_alg`
 pub struct HashRange {
-    start: usize,
-    length: usize,
+    start: u64,
+    length: u64,
 
     #[serde(skip)]
     bmff_offset: Option<u64>, /* optional tracking of offset positions to include in BMFF_V2 hashes in BE format */
 }
 
 impl HashRange {
-    pub fn new(start: usize, length: usize) -> Self {
+    pub fn new(start: u64, length: u64) -> Self {
         HashRange {
             start,
             length,
@@ -49,21 +48,21 @@ impl HashRange {
 
     /// update the start value
     #[allow(dead_code)]
-    pub fn set_start(&mut self, start: usize) {
+    pub fn set_start(&mut self, start: u64) {
         self.start = start;
     }
 
     /// return start as usize
-    pub fn start(&self) -> usize {
+    pub fn start(&self) -> u64 {
         self.start
     }
 
     /// return length as usize
-    pub fn length(&self) -> usize {
+    pub fn length(&self) -> u64 {
         self.length
     }
 
-    pub fn set_length(&mut self, length: usize) {
+    pub fn set_length(&mut self, length: u64) {
         self.length = length;
     }
 
@@ -229,7 +228,7 @@ where
             let data_end = data_len - 1;
 
             // range extends past end of file so fail
-            if data_len < range_end as u64 {
+            if data_len < range_end {
                 return Err(Error::BadParam(
                     "The exclusion range exceed the data length".to_string(),
                 ));
@@ -240,31 +239,56 @@ where
                 let mut ranges_vec: Vec<RangeInclusive<u64>> = Vec::new();
                 let mut ranges = RangeSet::<[RangeInclusive<u64>; 1]>::from(0..=data_end);
                 for exclusion in hr {
-                    let end = (exclusion.start() + exclusion.length() - 1) as u64;
-                    let exclusion_start = exclusion.start() as u64;
-                    ranges.remove_range(exclusion_start..=end);
-
                     // add new BMFF V2 offset as a new range to be included so that we can
                     // pause to add the offset hash
                     if let Some(offset) = exclusion.bmff_offset() {
                         bmff_v2_starts.push(offset);
+                        continue;
                     }
+
+                    let end = exclusion.start() + exclusion.length() - 1;
+                    let exclusion_start = exclusion.start();
+                    ranges.remove_range(exclusion_start..=end);
                 }
 
                 // merge standard ranges and BMFF V2 ranges into single list
                 if !bmff_v2_starts.is_empty() {
-                    // remove any offset hashes that would be excluded
-                    let test_ranges = ranges.clone().into_smallvec();
-                    bmff_v2_starts.retain(|o| test_ranges.iter().any(|r| r.contains(&(*o + 1))));
+                    bmff_v2_starts.sort();
 
-                    // add in remaining BMFF V2 offsets
-                    for os in bmff_v2_starts.iter() {
-                        ranges_vec.push(RangeInclusive::new(*os, *os));
+                    // split ranges at BMFF V2 offsets and insert offset value
+                    for r in ranges.into_smallvec() {
+                        // if bmff_v2 offset is within the range then split the range at the off set and both side to ranges_vec
+                        let mut current_range = r;
+                        for os in &bmff_v2_starts {
+                            if current_range.contains(os) {
+                                if *current_range.start() == *os {
+                                    ranges_vec.push(RangeInclusive::new(*os, *os));
+                                // offset
+                                } else {
+                                    ranges_vec
+                                        .push(RangeInclusive::new(*current_range.start(), *os - 1)); // left side
+                                    ranges_vec.push(RangeInclusive::new(*os, *os)); // offset
+                                    current_range = RangeInclusive::new(*os, *current_range.end());
+                                    // right side
+                                }
+                            }
+                        }
+                        ranges_vec.push(current_range);
                     }
 
-                    // add regularly included ranges
-                    for r in ranges.into_smallvec() {
-                        ranges_vec.push(r);
+                    // add in remaining BMFF V2 offsets that were not included in the ranges because of subsets
+                    let range_start = RangeInclusive::new(0, 0);
+                    let range_end = RangeInclusive::new(data_end, data_end);
+                    let before_any_range = *ranges_vec.first().unwrap_or(&range_start).start();
+                    let after_any_range = *ranges_vec.last().unwrap_or(&range_end).end();
+
+                    for os in &bmff_v2_starts {
+                        if !ranges_vec.iter().any(|r| r.contains(os))
+                            && *os > before_any_range
+                            && *os < after_any_range
+                        {
+                            ranges_vec.push(RangeInclusive::new(*os, *os));
+                        }
                     }
 
                     // sort by start position
@@ -285,8 +309,8 @@ where
                 //build final ranges
                 let mut ranges_vec: Vec<RangeInclusive<u64>> = Vec::new();
                 for inclusion in hr {
-                    let end = (inclusion.start() + inclusion.length() - 1) as u64;
-                    let inclusion_start = inclusion.start() as u64;
+                    let end = inclusion.start() + inclusion.length() - 1;
+                    let inclusion_start = inclusion.start();
 
                     // add new BMFF V2 offset as a new range to be included so that we can
                     // pause to add the offset hash
@@ -317,13 +341,14 @@ where
             let end = r.end();
             let mut chunk_left = end - start + 1;
 
+            // check to see if this range is an BMFF V2 offset to include in the hash
+            if bmff_v2_starts.contains(start) && end == start {
+                hasher_enum.update(&start.to_be_bytes());
+                continue;
+            }
+
             // move to start of range
             data.seek(SeekFrom::Start(*start))?;
-
-            // check to see if this range is an BMFF V2 offset to include in the hash
-            if bmff_v2_starts.contains(start) && (end - start) == 0 {
-                hasher_enum.update(&start.to_be_bytes());
-            }
 
             loop {
                 let mut chunk = vec![0u8; std::cmp::min(chunk_left as usize, MAX_HASH_BUF)];
@@ -345,13 +370,14 @@ where
             let end = r.end();
             let mut chunk_left = end - start + 1;
 
+            // check to see if this range is an BMFF V2 offset to include in the hash
+            if bmff_v2_starts.contains(start) && end == start {
+                hasher_enum.update(&start.to_be_bytes());
+                continue;
+            }
+
             // move to start of range
             data.seek(SeekFrom::Start(*start))?;
-
-            // check to see if this range is an BMFF V2 offset to include in the hash
-            if bmff_v2_starts.contains(start) && (end - start) == 0 {
-                hasher_enum.update(&start.to_be_bytes());
-            }
 
             let mut chunk = vec![0u8; std::cmp::min(chunk_left as usize, MAX_HASH_BUF)];
             data.read_exact(&mut chunk)?;

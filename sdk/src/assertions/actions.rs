@@ -11,15 +11,14 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use std::collections::HashMap;
+use std::{collections::HashMap, fmt};
 
-use log::error;
 use serde::{Deserialize, Serialize};
 use serde_cbor::Value;
 
 use crate::{
     assertion::{Assertion, AssertionBase, AssertionCbor},
-    assertions::{labels, region_of_interest::RegionOfInterest, Actor, Metadata},
+    assertions::{labels, region_of_interest::RegionOfInterest, Actor, AssertionMetadata},
     error::Result,
     resource_store::UriOrResource,
     utils::cbor_types::DateT,
@@ -27,7 +26,179 @@ use crate::{
 };
 
 const ASSERTION_CREATION_VERSION: usize = 2;
-pub const CAI_INGREDIENT_IDS: &str = "org.cai.ingredientIds";
+pub const INGREDIENT_IDS: &str = "ingredientIds";
+
+// TODO: this is needed to supress clippy deprecated field warning:  https://github.com/serde-rs/serde/pull/2879
+pub use digital_source_type::DigitalSourceType;
+mod digital_source_type {
+    #![allow(deprecated)]
+
+    #[cfg(feature = "json_schema")]
+    use schemars::JsonSchema;
+
+    use super::*;
+
+    /// Description of the source of an asset.
+    ///
+    /// The full list of possible digital source types are found below:
+    /// <https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_digital_source_type>
+    /// <https://cv.iptc.org/newscodes/digitalsourcetype>
+    #[non_exhaustive]
+    #[derive(Deserialize, Serialize, Clone, Debug, PartialEq)]
+    #[cfg_attr(feature = "json_schema", derive(JsonSchema))]
+    pub enum DigitalSourceType {
+        /// Media whose digital content is effectively empty, such as a blank canvas or zero-length video.
+        #[serde(alias = "empty", rename = "http://c2pa.org/digitalsourcetype/empty")]
+        Empty,
+        /// Data that is the result of algorithmically using a model derived from sampled content and data.
+        /// Differs from <http://cv.iptc.org/newscodes/digitalsourcetype/>trainedAlgorithmicMedia in that
+        /// the result isn’t a media type (e.g., image or video) but is a data format (e.g., CSV, pickle).
+        #[serde(
+            alias = "trainedAlgorithmicData",
+            rename = "http://c2pa.org/digitalsourcetype/trainedAlgorithmicData"
+        )]
+        TrainedAlgorithmicData,
+        /// The media was captured from a real-life source using a digital camera or digital recording device.
+        #[serde(
+            alias = "digitalCapture",
+            rename = "http://cv.iptc.org/newscodes/digitalsourcetype/digitalCapture"
+        )]
+        DigitalCapture,
+        /// The media is the result of capturing multiple frames from a real-life source using a digital camera
+        /// or digital recording device, then automatically merging them into a single frame using digital signal
+        /// processing techniques and/or non-generative AI. Includes High Dynamic Range (HDR) processing common in
+        /// smartphone camera apps.
+        #[serde(
+            alias = "computationalCapture",
+            rename = "http://cv.iptc.org/newscodes/digitalsourcetype/computationalCapture"
+        )]
+        ComputationalCapture,
+        /// The media was digitised from a negative on film or other transparent medium.
+        #[serde(
+            alias = "negativeFilm",
+            rename = "http://cv.iptc.org/newscodes/digitalsourcetype/negativeFilm"
+        )]
+        NegativeFilm,
+        /// The media was digitised from a positive on a transparency or other transparent medium.
+        #[serde(
+            alias = "positiveFilm",
+            rename = "http://cv.iptc.org/newscodes/digitalsourcetype/positiveFilm"
+        )]
+        PositiveFilm,
+        /// The media was digitised from a non-transparent medium such as a photographic print.
+        #[serde(
+            alias = "print",
+            rename = "http://cv.iptc.org/newscodes/digitalsourcetype/print"
+        )]
+        Print,
+        /// Minor augmentation or correction by a human, such as a digitally-retouched photo used in a magazine.
+        #[deprecated]
+        #[serde(
+            alias = "minorHumanEdits",
+            rename = "http://cv.iptc.org/newscodes/digitalsourcetype/minorHumanEdits"
+        )]
+        MinorHumanEdits,
+        /// Augmentation, correction or enhancement by one or more humans using non-generative tools.
+        #[serde(
+            alias = "humanEdits",
+            rename = "http://cv.iptc.org/newscodes/digitalsourcetype/humanEdits"
+        )]
+        HumanEdits,
+        /// Augmentation, correction or enhancement using a Generative AI model, such as with inpainting or
+        /// outpainting operations.
+        #[serde(
+            alias = "compositeWithTrainedAlgorithmicMedia",
+            rename = "http://cv.iptc.org/newscodes/digitalsourcetype/compositeWithTrainedAlgorithmicMedia"
+        )]
+        CompositeWithTrainedAlgorithmicMedia,
+        /// Modification or correction by algorithm without changing the main content of the media, initiated
+        /// or configured by a human, such as sharpening or applying noise reduction.
+        #[serde(
+            alias = "algorithmicallyEnhanced",
+            rename = "http://cv.iptc.org/newscodes/digitalsourcetype/algorithmicallyEnhanced"
+        )]
+        AlgorithmicallyEnhanced,
+        /// The digital image was created by computer software.
+        #[deprecated]
+        #[serde(
+            alias = "softwareImage",
+            rename = "http://cv.iptc.org/newscodes/digitalsourcetype/softwareImage"
+        )]
+        SoftwareImage,
+        /// Media created by a human using digital tools.
+        #[deprecated]
+        #[serde(
+            alias = "digitalArt",
+            rename = "http://cv.iptc.org/newscodes/digitalsourcetype/digitalArt"
+        )]
+        DigitalArt,
+        /// Media created by a human using non-generative tools.
+        #[serde(
+            alias = "digitalCreation",
+            rename = "http://cv.iptc.org/newscodes/digitalsourcetype/digitalCreation"
+        )]
+        DigitalCreation,
+        /// Digital media representation of data via human programming or creativity.
+        #[serde(
+            alias = "dataDrivenMedia",
+            rename = "http://cv.iptc.org/newscodes/digitalsourcetype/dataDrivenMedia"
+        )]
+        DataDrivenMedia,
+        /// Digital media created algorithmically using an Artificial Intelligence model trained on captured
+        /// content.
+        #[serde(
+            alias = "trainedAlgorithmicMedia",
+            rename = "http://cv.iptc.org/newscodes/digitalsourcetype/trainedAlgorithmicMedia"
+        )]
+        TrainedAlgorithmicMedia,
+        /// Media created purely by an algorithm not based on any sampled training data, e.g. an image created
+        /// by software using a mathematical formula.
+        #[serde(
+            alias = "algorithmicMedia",
+            rename = "http://cv.iptc.org/newscodes/digitalsourcetype/algorithmicMedia"
+        )]
+        AlgorithmicMedia,
+        /// A capture of the contents of the screen of a computer or mobile device.
+        #[serde(
+            alias = "screenCapture",
+            rename = "http://cv.iptc.org/newscodes/digitalsourcetype/screenCapture"
+        )]
+        ScreenCapture,
+        /// Live recording of virtual event based on Generative AI and/or captured elements.
+        #[serde(
+            alias = "virtualRecording",
+            rename = "http://cv.iptc.org/newscodes/digitalsourcetype/virtualRecording"
+        )]
+        VirtualRecording,
+        /// Mix or composite of several elements, any of which may or may not be generative AI.
+        #[serde(
+            alias = "composite",
+            rename = "http://cv.iptc.org/newscodes/digitalsourcetype/composite"
+        )]
+        Composite,
+        /// Mix or composite of several elements that are all captures of real life.
+        #[serde(
+            alias = "compositeCapture",
+            rename = "http://cv.iptc.org/newscodes/digitalsourcetype/compositeCapture"
+        )]
+        CompositeCapture,
+        /// Mix or composite of several elements, at least one of which is Generative AI.
+        #[serde(
+            alias = "compositeSynthetic",
+            rename = "http://cv.iptc.org/newscodes/digitalsourcetype/compositeSynthetic"
+        )]
+        CompositeSynthetic,
+        /// An unknown digital source type.
+        #[serde(untagged)]
+        Other(String),
+    }
+
+    impl fmt::Display for DigitalSourceType {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            self.serialize(f)
+        }
+    }
+}
 
 /// C2PA actions defined in the C2PA specification.
 pub mod c2pa_action {
@@ -130,15 +301,15 @@ impl From<ClaimGeneratorInfo> for SoftwareAgent {
 #[derive(Deserialize, Serialize, Clone, Debug, Default, PartialEq)]
 pub struct Action {
     /// The label associated with this action. See ([`c2pa_action`]).
-    action: String,
+    pub(crate) action: String,
 
     /// Timestamp of when the action occurred.
     #[serde(skip_serializing_if = "Option::is_none")]
-    when: Option<DateT>,
+    pub(crate) when: Option<DateT>,
 
     /// The software agent that performed the action.
     #[serde(rename = "softwareAgent", skip_serializing_if = "Option::is_none")]
-    software_agent: Option<SoftwareAgent>,
+    pub(crate) software_agent: Option<SoftwareAgent>,
 
     /// 0-based index into the softwareAgents array
     #[serde(rename = "softwareAgentIndex", skip_serializing_if = "Option::is_none")]
@@ -146,7 +317,7 @@ pub struct Action {
 
     /// A semicolon-delimited list of the parts of the resource that were changed since the previous event history.
     #[serde(skip_serializing_if = "Option::is_none")]
-    changed: Option<String>,
+    pub(crate) changed: Option<String>,
 
     /// A list of the regions of interest of the resource that were changed.
     ///
@@ -154,37 +325,37 @@ pub struct Action {
     /// When tracking changes and the scope of the changed components is unknown,
     /// it should be assumed that anything might have changed.
     #[serde(skip_serializing_if = "Option::is_none")]
-    changes: Option<Vec<RegionOfInterest>>,
+    pub(crate) changes: Option<Vec<RegionOfInterest>>,
 
     /// This is NOT the instanceID in the spec
     /// It is now deprecated but was previously used to map the action to an ingredient
-    #[deprecated(since = "0.37.0", note = "Use `org.cai.ingredientIds` instead")]
+    #[deprecated(since = "0.37.0", note = "Use `parameters.ingredientIds[]` instead")]
     #[serde(skip_serializing)]
     #[serde(alias = "instanceId", alias = "instanceID")]
-    instance_id: Option<String>,
+    pub(crate) instance_id: Option<String>,
 
     /// Additional parameters of the action. These vary by the type of action.
     #[serde(skip_serializing_if = "Option::is_none")]
-    parameters: Option<HashMap<String, Value>>,
+    pub(crate) parameters: Option<HashMap<String, Value>>,
 
     /// An array of the creators that undertook this action.
     #[serde(skip_serializing_if = "Option::is_none")]
-    actors: Option<Vec<Actor>>,
+    pub(crate) actors: Option<Vec<Actor>>,
 
     /// One of the defined URI values at `<https://cv.iptc.org/newscodes/digitalsourcetype/>`
     #[serde(rename = "digitalSourceType", skip_serializing_if = "Option::is_none")]
-    source_type: Option<String>,
+    pub(crate) source_type: Option<DigitalSourceType>,
 
     /// List of related actions.
     #[serde(skip_serializing_if = "Option::is_none")]
-    related: Option<Vec<Action>>,
+    pub(crate) related: Option<Vec<Action>>,
 
     // The reason why this action was performed, required when the action is `c2pa.redacted`
     #[serde(skip_serializing_if = "Option::is_none")]
-    reason: Option<String>,
+    pub(crate) reason: Option<String>,
 
     #[serde(skip_serializing_if = "Option::is_none")]
-    description: Option<String>,
+    pub(crate) description: Option<String>,
 }
 
 impl Action {
@@ -226,7 +397,7 @@ impl Action {
 
     /// Returns the value of the `xmpMM:InstanceID` property for the modified
     /// (output) resource.
-    #[deprecated(since = "0.37.0", note = "Use `org.cai.ingredientIds` instead")]
+    #[deprecated(since = "0.37.0", note = "Use `ingredient_ids()` instead")]
     pub fn instance_id(&self) -> Option<&str> {
         #[allow(deprecated)]
         self.instance_id.as_deref()
@@ -266,8 +437,8 @@ impl Action {
 
     /// Returns a digitalSourceType as defined at <https://cv.iptc.org/newscodes/digitalsourcetype/>.
     // QUESTION: Keep in docs?
-    pub fn source_type(&self) -> Option<&str> {
-        self.source_type.as_deref()
+    pub fn source_type(&self) -> Option<&DigitalSourceType> {
+        self.source_type.as_ref()
     }
 
     /// Returns the list of related actions.
@@ -316,29 +487,6 @@ impl Action {
         self
     }
 
-    // Internal function to return any ingredients referenced by this action.
-    #[allow(dead_code)] // not used in some scenarios
-    pub(crate) fn ingredient_ids(&mut self) -> Option<Vec<String>> {
-        match self.get_parameter(CAI_INGREDIENT_IDS) {
-            Some(Value::Array(ids)) => {
-                let mut result = Vec::new();
-                for id in ids {
-                    if let Value::Text(s) = id {
-                        result.push(s.clone());
-                    }
-                }
-                Some(result)
-            }
-            Some(_) => {
-                error!("Invalid format for org.cai.ingredientIds parameter, expected an array of strings.");
-                None // Invalid format, so ignore it.
-            }
-            // If there is no org.cai.ingredientIds parameter, check for the deprecated instance_id
-            #[allow(deprecated)]
-            None => self.instance_id.as_ref().map(|id| vec![id.to_string()]),
-        }
-    }
-
     /// Sets the additional parameters for this action.
     ///
     /// These vary by the type of action.
@@ -362,6 +510,11 @@ impl Action {
             }
         });
         Ok(self)
+    }
+
+    // Removes a parameter with the given key, returning the parameter if it existed.
+    pub(crate) fn remove_parameter<S: Into<String>>(&mut self, key: S) -> Option<Value> {
+        self.parameters.as_mut()?.remove(&key.into())
     }
 
     pub(crate) fn set_parameter_ref<S: Into<String>, T: Serialize>(
@@ -392,8 +545,8 @@ impl Action {
     }
 
     /// Set a digitalSourceType URI as defined at <https://cv.iptc.org/newscodes/digitalsourcetype/>.
-    pub fn set_source_type<S: Into<String>>(mut self, uri: S) -> Self {
-        self.source_type = Some(uri.into());
+    pub fn set_source_type<T: Into<DigitalSourceType>>(mut self, source_type: T) -> Self {
+        self.source_type = Some(source_type.into());
         self
     }
 
@@ -430,17 +583,54 @@ impl Action {
 
     /// Adds an ingredient id to the action.
     pub fn add_ingredient_id(&mut self, ingredient_id: &str) -> Result<&mut Self> {
-        if let Some(Value::Array(ids)) = self.get_parameter_mut(CAI_INGREDIENT_IDS) {
+        if let Some(Value::Array(ids)) = self.get_parameter_mut(INGREDIENT_IDS) {
             ids.push(Value::Text(ingredient_id.to_string()));
             return Ok(self);
         }
         let ids = vec![Value::Text(ingredient_id.to_string())];
-        self.set_parameter_ref(CAI_INGREDIENT_IDS, ids)?;
+        self.set_parameter_ref(INGREDIENT_IDS, ids)?;
         Ok(self)
+    }
+
+    /// Extracts ingredient IDs from the action, prioritizing ingredientIds, then org.cai.ingredientIds, then instanceId.
+    /// This is used to map actions to their associated ingredients.
+    /// We don't want any of these fields in the final CBOR, so we remove them after extracting.
+    pub(crate) fn extract_ingredient_ids(&mut self) -> Option<Vec<String>> {
+        let ingredient_ids = self.remove_parameter(INGREDIENT_IDS);
+        let cai_ingredient_ids = self.remove_parameter("org.cai.ingredientIds");
+        #[allow(deprecated)]
+        let instance_id = self.instance_id.take();
+
+        let mut ids: Vec<String> = Vec::new();
+
+        let mut convert_ids = |val: Option<serde_cbor::Value>| {
+            if let Some(val) = val {
+                match val {
+                    serde_cbor::Value::Array(arr) => {
+                        for v in arr {
+                            if let serde_cbor::Value::Text(s) = v {
+                                ids.push(s);
+                            }
+                        }
+                    }
+                    serde_cbor::Value::Text(s) => ids.push(s),
+                    _ => {}
+                }
+            }
+        };
+
+        convert_ids(ingredient_ids);
+        convert_ids(cai_ingredient_ids);
+
+        if !ids.is_empty() {
+            Some(ids)
+        } else {
+            instance_id.map(|s| vec![s])
+        }
     }
 }
 
-#[derive(Deserialize, Serialize, Debug, Default, PartialEq, Eq)]
+#[derive(Deserialize, Serialize, Debug, Clone, Default, PartialEq)]
 #[non_exhaustive]
 pub struct ActionTemplate {
     /// The label associated with this action. See ([`c2pa_action`]).
@@ -456,7 +646,7 @@ pub struct ActionTemplate {
 
     /// One of the defined URI values at `<https://cv.iptc.org/newscodes/digitalsourcetype/>`
     #[serde(rename = "digitalSourceType", skip_serializing_if = "Option::is_none")]
-    pub source_type: Option<String>,
+    pub source_type: Option<DigitalSourceType>,
 
     #[serde(skip_serializing_if = "Option::is_none")]
     pub icon: Option<UriOrResource>,
@@ -506,7 +696,7 @@ pub struct Actions {
 
     /// Additional information about the assertion.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub metadata: Option<Metadata>,
+    pub metadata: Option<AssertionMetadata>,
 }
 
 impl Actions {
@@ -520,7 +710,7 @@ impl Actions {
     pub fn new() -> Self {
         Self {
             actions: Vec::new(),
-            all_actions_included: None,
+            all_actions_included: Some(true),
             templates: None,
             metadata: None,
             software_agents: None,
@@ -565,8 +755,8 @@ impl Actions {
         &mut self.actions
     }
 
-    /// Returns the assertion's [`Metadata`], if it exists.
-    pub fn metadata(&self) -> Option<&Metadata> {
+    /// Returns the assertion's [`AssertionMetadata`], if it exists.
+    pub fn metadata(&self) -> Option<&AssertionMetadata> {
         self.metadata.as_ref()
     }
 
@@ -582,8 +772,8 @@ impl Actions {
         self
     }
 
-    /// Sets [`Metadata`] for the action.
-    pub fn add_metadata(mut self, metadata: Metadata) -> Self {
+    /// Sets [`AssertionMetadata`] for the action.
+    pub fn add_metadata(mut self, metadata: AssertionMetadata) -> Self {
         self.metadata = Some(metadata);
         self
     }
@@ -642,7 +832,7 @@ pub mod tests {
     use crate::{
         assertion::AssertionData,
         assertions::{
-            metadata::{c2pa_source::GENERATOR_REE, DataSource, ReviewRating},
+            assertion_metadata::{c2pa_source::GENERATOR_REE, DataSource, ReviewRating},
             region_of_interest::{Range, RangeType, Time, TimeType},
         },
         hashed_uri::HashedUri,
@@ -693,7 +883,7 @@ pub mod tests {
                     .set_parameter("name".to_owned(), "gaussian blur")
                     .unwrap()
                     .set_when("2015-06-26T16:43:23+0200")
-                    .set_source_type("digsrctype:algorithmicMedia")
+                    .set_source_type(DigitalSourceType::AlgorithmicMedia)
                     .add_change(RegionOfInterest {
                         region: vec![Range {
                             range_type: RangeType::Temporal,
@@ -708,7 +898,7 @@ pub mod tests {
                     }),
             )
             .add_metadata(
-                Metadata::new()
+                AssertionMetadata::new()
                     .add_review(ReviewRating::new("foo", Some("bar".to_owned()), 3))
                     .set_reference(make_hashed_uri1())
                     .set_data_source(DataSource::new(GENERATOR_REE)),
@@ -734,7 +924,7 @@ pub mod tests {
         assert_eq!(result.actions[1].when(), original.actions[1].when());
         assert_eq!(
             result.actions[1].source_type().unwrap(),
-            "digsrctype:algorithmicMedia"
+            &DigitalSourceType::AlgorithmicMedia
         );
         assert_eq!(result.actions[1].changes(), original.actions()[1].changes());
         assert_eq!(
@@ -847,7 +1037,7 @@ pub mod tests {
                     "action": "c2pa.opened",
                     "parameters": {
                       "description": "import",
-                      "org.cai.ingredientIds": ["xmp.iid:7b57930e-2f23-47fc-affe-0400d70b738d"],
+                      INGREDIENT_IDS: ["xmp.iid:7b57930e-2f23-47fc-affe-0400d70b738d"],
                     },
                     "digitalSourceType": "http://cv.iptc.org/newscodes/digitalsourcetype/algorithmicMedia",
                     "softwareAgent": "TestApp 1.0",
@@ -876,7 +1066,7 @@ pub mod tests {
                     "action": "c2pa.opened",
                     "parameters": {
                         "description": "import",
-                        "org.cai.ingredientIds": ["xmp.iid:7b57930e-2f23-47fc-affe-0400d70b738d"]
+                        "ingredientIds": ["xmp.iid:7b57930e-2f23-47fc-affe-0400d70b738d"]
                     },
                     "digitalSourceType": "http://cv.iptc.org/newscodes/digitalsourcetype/algorithmicMedia",
                     "softwareAgent": {
