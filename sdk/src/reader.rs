@@ -136,7 +136,6 @@ impl Reader {
             Store::from_stream_async(format, &mut stream, verify, &mut validation_log).await
         }?;
 
-        println!("reader, from_store: ok!");
         Self::from_store(store, &validation_log)
     }
 

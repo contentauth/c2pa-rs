@@ -468,14 +468,12 @@ fn post_validate(result: Result<C2paReader, c2pa::Error>) -> Result<C2paReader, 
             let runtime = match Runtime::new() {
                 Ok(runtime) => runtime,
                 Err(err) => {
-                  println!("## Error creating runtime: {}", err);
                   return Err(c2pa::Error::OtherError(Box::new(err)))
                 },
             };
             match runtime.block_on(reader.post_validate_async(&CawgValidator {})) {
                 Ok(_) => Ok(reader),
                 Err(err) => {
-                  println!("## Error creating reader: {}", err);
                   return Err(err)
                 },
             }
