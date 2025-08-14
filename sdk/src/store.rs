@@ -113,7 +113,8 @@ pub(crate) struct StoreValidationInfo<'a> {
     pub manifest_map: HashMap<String, &'a Claim>, // list of the addressable items in ingredient, saves re-parsing the items during validation
     pub binding_claim: String,                    // name of the claim that has the hash binding
     pub timestamps: HashMap<String, TstInfo>,     // list of timestamp assertions for each claim
-    pub update_manifest_size: usize,              // offset needed to correct for update manifests
+    pub update_manifest_label: Option<String>,    // label of the update manifest if it exists
+    pub manifest_store_range: Option<HashRange>, // range of the manifest store in the asset for data hash exclusions
     pub certificate_statuses: HashMap<String, Vec<Vec<u8>>>, // list of certificate status assertions for each serial
 }
 
@@ -1480,6 +1481,11 @@ impl Store {
     ) -> Result<()> {
         // walk the ingredients
         for i in claim.ingredient_assertions() {
+            // allow for zero out ingredient assertions
+            if is_zero(i.assertion().data()) {
+                continue;
+            }
+
             let ingredient_assertion = Ingredient::from_assertion(i.assertion()).map_err(|e| {
                 log_item!(
                     i.label().clone(),
@@ -1500,6 +1506,25 @@ impl Store {
 
             // is this an ingredient
             if let Some(c2pa_manifest) = ingredient_assertion.c2pa_manifest() {
+                // if this is a v3 ingredient then it must have validation report indicating it was validated
+                if let Some(ingredient_version) = ingredient_assertion.version() {
+                    if ingredient_version >= 3 && ingredient_assertion.validation_results.is_none()
+                    {
+                        log_item!(
+                            jumbf::labels::to_assertion_uri(claim.label(), &i.label()),
+                            "ingredient V3 must have validation results",
+                            "ingredient_checks"
+                        )
+                        .validation_status(validation_status::ASSERTION_INGREDIENT_MALFORMED)
+                        .failure(
+                            validation_log,
+                            Error::HashMismatch(
+                                "ingredient V3 missing validation status".to_string(),
+                            ),
+                        )?;
+                    }
+                }
+
                 let label = Store::manifest_label_from_path(&c2pa_manifest.url());
 
                 if let Some(ingredient) = store.get_claim(&label) {
@@ -1536,7 +1561,7 @@ impl Store {
                         false
                     };
 
-                    // since the manifest hashes are equal we can short circuit the reset of the validation
+                    // since the manifest hashes are equal we can short circuit the rest of the validation
                     // we can only do this for post 1.3 Claims since manfiest box hashing was not available
                     if manifests_match && !pre_v1_3_hash {
                         log_item!(
@@ -1546,11 +1571,6 @@ impl Store {
                         )
                         .validation_status(validation_status::INGREDIENT_MANIFEST_VALIDATED)
                         .success(validation_log);
-
-                        // if we are not checking ingredient trust then we can continue
-                        if !check_ingredient_trust {
-                            continue;
-                        }
                     }
 
                     // if mismatch is not because of a redaction this is a hard error
@@ -1560,7 +1580,7 @@ impl Store {
                             "ingredient hash incorrect",
                             "ingredient_checks"
                         )
-                        .validation_status(validation_status::INGREDIENT_HASHEDURI_MISMATCH)
+                        .validation_status(validation_status::INGREDIENT_MANIFEST_MISMATCH)
                         .failure(
                             validation_log,
                             Error::HashMismatch(
@@ -1572,8 +1592,9 @@ impl Store {
                         )); // hard stop regardless of StatusTracker mode
                     }
 
-                    // if this is a V2 or greater claim then we must try the signature validation method before proceeding
-                    if ingredient_version > 1 {
+                    // if manifest hash did not match and this is a V2 or greater claim then we
+                    // must try the signature validation method before proceeding
+                    if !manifests_match && ingredient_version > 1 {
                         let claim_signature =
                             ingredient_assertion.signature().ok_or_else(|| {
                                 log_item!(
@@ -1628,15 +1649,23 @@ impl Store {
                         }
                     }
 
-                    // verify the ingredient claim
-                    Claim::verify_claim(
-                        ingredient,
-                        asset_data,
-                        svi,
-                        check_ingredient_trust,
-                        &store.ctp,
-                        validation_log,
-                    )?;
+                    // if this ingredient is the hash binding claim (update manifest)
+                    // then we have to check the binding here
+                    if ingredient.label() == svi.binding_claim {
+                        Claim::verify_hash_binding(ingredient, asset_data, svi, validation_log)?;
+                    }
+
+                    // if manifest hash did not match we continue on to do a full claim validation
+                    if !manifests_match {
+                        Claim::verify_claim(
+                            ingredient,
+                            asset_data,
+                            svi,
+                            check_ingredient_trust,
+                            &store.ctp,
+                            validation_log,
+                        )?;
+                    }
 
                     // recurse nested ingredients
                     Store::ingredient_checks(store, ingredient, svi, asset_data, validation_log)?;
@@ -1648,6 +1677,16 @@ impl Store {
                             Error::ClaimVerification(format!("ingredient: {label} is missing")),
                         )?;
                 }
+            } else {
+                let title = ingredient_assertion.title.unwrap_or("no title".into());
+                let description = format!("{title}: ingredient does not have provenance");
+                log_item!(
+                    jumbf::labels::to_assertion_uri(claim.label(), &i.label()),
+                    description,
+                    "ingredient_checks"
+                )
+                .validation_status(validation_status::INGREDIENT_PROVENANCE_UNKNOWN)
+                .informational(validation_log);
             }
             validation_log.pop_ingredient_uri();
         }
@@ -1755,81 +1794,65 @@ impl Store {
         Store::get_claim_referenced_manifests(claim, self, &mut svi, true, validation_log)?;
 
         // find the manifest with the hash binding
-        let is_bmff;
-        svi.binding_claim = match self.get_hash_binding_manifest(claim) {
-            Some(label) => {
-                is_bmff = self
-                    .get_claim(&label)
-                    .ok_or(Error::ClaimMissingHardBinding)?
-                    .hash_assertions()
-                    .iter()
-                    .any(|a| a.label_raw().starts_with(labels::BMFF_HASH));
-                label
+        svi.binding_claim = self.get_hash_binding_manifest(claim).ok_or_else(|| {
+            log_item!(
+                to_manifest_uri(claim.label()),
+                "could not find manifest with hard binding",
+                "get_store_validation_info"
+            )
+            .validation_status(validation_status::HARD_BINDINGS_MISSING)
+            .failure_as_err(validation_log, Error::ClaimMissingHardBinding)
+        })?;
+
+        // save the update manifest label if it exists
+        if claim.update_manifest() {
+            svi.update_manifest_label = Some(claim.label().to_owned());
+        }
+
+        // get the manifest offset position
+        let locations = match asset_data {
+            #[cfg(feature = "file_io")]
+            ClaimAssetData::Path(path) => {
+                let format = get_supported_file_extension(path).ok_or(Error::UnsupportedType)?;
+                let mut reader = std::fs::File::open(path)?;
+
+                object_locations_from_stream(&format, &mut reader)
             }
-            None => {
-                log_item!(
-                    claim.label().to_owned(),
-                    "could not find manifest with hard binding",
-                    "get_store_validation_info"
-                )
-                .validation_status(validation_status::HARD_BINDINGS_MISSING)
-                .failure(validation_log, Error::ClaimMissingHardBinding)?;
-                return Err(Error::ClaimMissingHardBinding);
+            ClaimAssetData::Bytes(items, typ) => {
+                let format = typ.to_owned();
+                let mut reader = Cursor::new(items);
+
+                object_locations_from_stream(&format, &mut reader)
+            }
+            ClaimAssetData::Stream(reader, typ) => {
+                let format = typ.to_owned();
+                object_locations_from_stream(&format, reader)
+            }
+            ClaimAssetData::StreamFragment(reader, _read1, typ) => {
+                let format = typ.to_owned();
+                object_locations_from_stream(&format, reader)
+            }
+            #[cfg(feature = "file_io")]
+            ClaimAssetData::StreamFragments(reader, _path_bufs, typ) => {
+                let format = typ.to_owned();
+                object_locations_from_stream(&format, reader)
             }
         };
 
-        // get the manifest offset size if needed
-        // it is not needed for BMFF hash bindings since update manifests always appear
-        // in last BMFF box
-        if claim.update_manifest() && !is_bmff {
-            let locations = match asset_data {
-                #[cfg(feature = "file_io")]
-                ClaimAssetData::Path(path) => {
-                    let format =
-                        get_supported_file_extension(path).ok_or(Error::UnsupportedType)?;
-                    let mut reader = std::fs::File::open(path)?;
-
-                    object_locations_from_stream(&format, &mut reader)?
-                }
-                ClaimAssetData::Bytes(items, typ) => {
-                    let format = typ.to_owned();
-                    let mut reader = Cursor::new(items);
-
-                    object_locations_from_stream(&format, &mut reader)?
-                }
-                ClaimAssetData::Stream(reader, typ) => {
-                    let format = typ.to_owned();
-                    object_locations_from_stream(&format, reader)?
-                }
-                ClaimAssetData::StreamFragment(reader, _read1, typ) => {
-                    let format = typ.to_owned();
-                    object_locations_from_stream(&format, reader)?
-                }
-                #[cfg(feature = "file_io")]
-                ClaimAssetData::StreamFragments(reader, _path_bufs, typ) => {
-                    let format = typ.to_owned();
-                    object_locations_from_stream(&format, reader)?
-                }
-            };
-
+        if let Ok(locations) = locations {
             if let Some(manifest_loc) = locations
                 .iter()
                 .find(|o| o.htype == HashBlockObjectType::Cai)
             {
-                svi.update_manifest_size = manifest_loc.length;
-            } else {
-                log_item!(
-                    claim.label().to_owned(),
-                    "there were unreference manifests in the ",
-                    "get_store_validation_info"
-                )
-                .validation_status(validation_status::HARD_BINDINGS_MISSING)
-                .failure(validation_log, Error::ClaimMissingHardBinding)?;
+                svi.manifest_store_range = Some(HashRange::new(
+                    manifest_loc.offset as u64,
+                    manifest_loc.length as u64,
+                ));
             }
         }
 
-        // get the timestamp assertions
         for found_claim in svi.manifest_map.values() {
+            // get the timestamp assertions
             let timestamp_assertions = found_claim.timestamp_assertions();
             for ta in timestamp_assertions {
                 let timestamp_assertion =
@@ -1891,21 +1914,6 @@ impl Store {
                     }
                 }
             }
-        }
-
-        // make sure there are not unreferenced manifests
-        if self
-            .claims()
-            .iter()
-            .any(|c| !svi.manifest_map.contains_key(c.label()))
-        {
-            log_item!(
-                claim.label().to_owned(),
-                "found unreference manifest in the store",
-                "get_store_validation_info"
-            )
-            .validation_status(validation_status::MANIFEST_UNREFERENCED)
-            .failure(validation_log, Error::UnreferencedManifest)?;
         }
 
         Ok(svi)
@@ -4622,23 +4630,7 @@ impl Store {
             // get correct hashed URI
             let c2pa_manifest = match ingredient_assertion.c2pa_manifest() {
                 Some(m) => m, // > v2 ingredient assertion
-                None => {
-                    if ingredient_assertion.relationship != Relationship::InputTo {
-                        let description = if let Some(title) = &ingredient_assertion.title {
-                            format!("{title}: ingredient does not have provenance")
-                        } else {
-                            "ingredient does not have provenance".to_owned()
-                        };
-                        log_item!(
-                            to_assertion_uri(&claim_label, &i.label()),
-                            description,
-                            "get_claim_referenced_manifests"
-                        )
-                        .validation_status(validation_status::INGREDIENT_UNKNOWN_PROVENANCE)
-                        .informational(validation_log);
-                    }
-                    continue;
-                }
+                None => continue,
             };
 
             // is this an ingredient
@@ -5242,6 +5234,7 @@ pub mod tests {
             let ap = fixture_path("unsupported_type.txt");
             let temp_dir = tempdirectory().expect("temp dir");
             let op = temp_dir_path(&temp_dir, "unsupported_type.txt");
+            let actual = temp_dir_path(&temp_dir, "unsupported_type.c2pa");
 
             // Create claims store.
             let mut store = Store::new();
@@ -5265,8 +5258,12 @@ pub mod tests {
             store.save_to_asset(&ap, signer.as_ref(), &op).unwrap();
 
             // read from new file
-            let new_store = Store::load_from_asset(
-                &op,
+            let c2pa_bytes = std::fs::read(&actual).unwrap();
+            let mut data = std::fs::File::open(&op).unwrap();
+            let new_store = Store::from_manifest_data_and_stream(
+                &c2pa_bytes,
+                "txt",
+                &mut data,
                 true,
                 &mut StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError),
             )
@@ -5471,9 +5468,6 @@ pub mod tests {
             )
             .await
             .unwrap();
-
-            // should have error for unreference manifests
-            assert!(report.has_error(Error::UnreferencedManifest));
         }
 
         #[cfg(feature = "v1_api")]

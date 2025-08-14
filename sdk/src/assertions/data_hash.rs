@@ -53,7 +53,7 @@ pub struct DataHash {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pad2: Option<serde_bytes::ByteBuf>,
 
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing)]
     pub url: Option<UriT>,
 
     #[serde(skip_deserializing, skip_serializing)]

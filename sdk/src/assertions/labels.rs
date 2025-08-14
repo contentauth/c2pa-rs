@@ -195,6 +195,11 @@ pub(crate) const DATABOX_STORE: &str = "c2pa.databoxes";
 /// See <https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_asset_reference>.
 pub const ASSET_REFERENCE: &str = "c2pa.asset-ref";
 
+/// extension to indicate a multipart hash
+///
+/// See <https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_multi_asset_hash>.
+pub const PART: &str = ".part";
+
 /// Label prefix for a C2PA metadata assertion.
 ///
 /// A C2PA metadata assertion can only be used for [specific metadata fields]

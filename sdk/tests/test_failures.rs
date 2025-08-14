@@ -13,7 +13,7 @@ fn test_reader_ts_changed() -> Result<()> {
             .unwrap()
             .active_manifest()
             .unwrap()
-            .informational[1]
+            .informational[0]
             .code(),
         validation_status::TIMESTAMP_MALFORMED
     );
