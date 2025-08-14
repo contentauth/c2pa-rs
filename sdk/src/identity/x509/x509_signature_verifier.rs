@@ -155,6 +155,7 @@ mod tests {
         io::{Cursor, Seek},
     };
 
+    use c2pa_macros::c2pa_test_async;
     #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
     use wasm_bindgen_test::wasm_bindgen_test;
 
@@ -178,12 +179,7 @@ mod tests {
 
     // NOTE: Success case is covered in tests for x509_credential_holder.rs.
 
-    #[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
-    #[cfg_attr(
-        all(target_arch = "wasm32", not(target_os = "wasi")),
-        wasm_bindgen_test
-    )]
-    #[cfg_attr(target_os = "wasi", wstd::test)]
+    #[c2pa_test_async]
     async fn untrusted_cert() {
         let format = "image/jpeg";
         let mut source = Cursor::new(TEST_IMAGE);
