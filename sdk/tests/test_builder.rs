@@ -13,33 +13,46 @@
 
 use std::io::{self, Cursor};
 
-use c2pa::{
-    settings::load_settings_from_str, validation_status, Builder, Reader, Result, ValidationState,
-};
+use c2pa::{settings::Settings, validation_status, Builder, Reader, Result, ValidationState};
 
 mod common;
 #[cfg(all(feature = "add_thumbnails", feature = "file_io"))]
 use common::compare_stream_to_known_good;
-use common::{fixtures_path, test_signer};
+use common::test_signer;
 
 #[test]
 #[cfg(all(feature = "add_thumbnails", feature = "file_io"))]
 fn test_builder_ca_jpg() -> Result<()> {
-    let manifest_def = std::fs::read_to_string(fixtures_path("simple_manifest.json"))?;
-    let mut builder = Builder::from_json(&manifest_def)?;
+    Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml"))?;
 
     const TEST_IMAGE: &[u8] = include_bytes!("fixtures/CA.jpg");
     let format = "image/jpeg";
     let mut source = Cursor::new(TEST_IMAGE);
 
+    let mut builder = Builder::edit();
+
+    use c2pa::assertions::Action;
+    builder.add_action(Action::new("c2pa.published"))?;
+
+    builder.add_action(serde_json::json!({
+        "action": "c2pa.edited",
+        "parameters": {
+            "description": "edited",
+            "name": "any value"
+        },
+        "softwareAgent": {
+            "name": "TestApp",
+            "version": "1.0.0"
+        }
+    }))?;
+
     let mut dest = Cursor::new(Vec::new());
 
-    builder.sign(&test_signer(), format, &mut source, &mut dest)?;
+    builder.sign(&Settings::signer()?, format, &mut source, &mut dest)?;
 
-    // dest.set_position(0);
-    // let path = common::known_good_path("CA_test.json");
-    // let reader = c2pa::Reader::from_stream(format, &mut dest)?;
-    // std::fs::write(path, reader.json())?;
+    //dest.set_position(0);
+    //let reader = Reader::from_stream(format, &mut dest)?;
+    //std::fs::write("CA_test.json", reader.json()).unwrap();
 
     dest.set_position(0);
     compare_stream_to_known_good(&mut dest, format, "CA_test.json")
@@ -48,13 +61,14 @@ fn test_builder_ca_jpg() -> Result<()> {
 // Source: https://github.com/contentauth/c2pa-rs/issues/530
 #[test]
 fn test_builder_riff() -> Result<()> {
-    let manifest_def = include_str!("fixtures/simple_manifest.json");
+    Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml"))?;
     let mut source = Cursor::new(include_bytes!("fixtures/sample1.wav"));
     let format = "audio/wav";
 
-    let mut builder = Builder::from_json(manifest_def)?;
+    let mut builder = Builder::edit();
+    builder.definition.claim_version = Some(1); // use v1 for this test
     builder.no_embed = true;
-    builder.sign(&test_signer(), format, &mut source, &mut io::empty())?;
+    builder.sign(&Settings::signer()?, format, &mut source, &mut io::empty())?;
 
     Ok(())
 }
@@ -63,9 +77,9 @@ fn test_builder_riff() -> Result<()> {
 #[cfg(feature = "file_io")]
 fn test_builder_fragmented() -> Result<()> {
     use common::tempdirectory;
+    Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml"))?;
 
-    let manifest_def = include_str!("fixtures/simple_manifest.json");
-    let mut builder = Builder::from_json(manifest_def)?;
+    let mut builder = Builder::edit();
     let tempdir = tempdirectory().expect("temp dir");
     let output_path = tempdir.path();
     let mut init_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -94,7 +108,7 @@ fn test_builder_fragmented() -> Result<()> {
 
                 builder
                     .sign_fragmented_files(
-                        &test_signer(),
+                        &Settings::signer()?,
                         p.as_path(),
                         &fragments,
                         new_output_path.as_path(),
@@ -125,10 +139,17 @@ fn test_builder_fragmented() -> Result<()> {
 
 #[test]
 fn test_builder_remote_url_no_embed() -> Result<()> {
-    let manifest_def = std::fs::read_to_string(fixtures_path("simple_manifest.json"))?;
-    let mut builder = Builder::from_json(&manifest_def)?;
+    Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml"))?;
+    //let manifest_def = std::fs::read_to_string(fixtures_path("simple_manifest.json"))?;
+    let mut builder = Builder::edit();
     // disable remote fetching for this test
-    load_settings_from_str(r#"{"verify": { "remote_manifest_fetch": false} }"#, "json")?;
+    Settings::from_toml(
+        &toml::toml! {
+            [verify]
+            remote_manifest_fetch = false
+        }
+        .to_string(),
+    )?;
     builder.no_embed = true;
     // very important to use a URL that does not exist, otherwise you may get a JumbfParseError or JumbfNotFound
     builder.set_remote_url("http://this_does_not_exist/foo.jpg");
@@ -139,7 +160,7 @@ fn test_builder_remote_url_no_embed() -> Result<()> {
 
     let mut dest = Cursor::new(Vec::new());
 
-    builder.sign(&test_signer(), format, &mut source, &mut dest)?;
+    builder.sign(&Settings::signer()?, format, &mut source, &mut dest)?;
 
     dest.set_position(0);
     let reader = Reader::from_stream(format, &mut dest);
@@ -153,25 +174,26 @@ fn test_builder_remote_url_no_embed() -> Result<()> {
 
 #[test]
 fn test_builder_embedded_v1_otgp() -> Result<()> {
-    let manifest_def = include_str!("fixtures/simple_manifest.json");
+    Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml"))?;
+
     let mut source = Cursor::new(include_bytes!("fixtures/XCA.jpg"));
     let format = "image/jpeg";
 
-    let mut builder = Builder::from_json(manifest_def)?;
-    builder.add_ingredient_from_stream(r#"{"relationship": "parentOf"}"#, format, &mut source)?;
-    source.set_position(0);
+    let mut builder = Builder::edit();
     let mut dest = Cursor::new(Vec::new());
-    builder.sign(&test_signer(), format, &mut source, &mut dest)?;
+    builder.sign(&Settings::signer()?, format, &mut source, &mut dest)?;
     dest.set_position(0);
     let reader = Reader::from_stream(format, &mut dest)?;
     // check that the v1 OTGP is embedded and we catch it correct with validation_results
-    assert_eq!(reader.validation_status(), None);
     assert_ne!(reader.validation_state(), ValidationState::Invalid);
     //println!("reader: {}", reader);
     assert_eq!(
         reader.active_manifest().unwrap().ingredients()[0]
-            .validation_status()
-            .unwrap()[0]
+            .validation_results()
+            .unwrap()
+            .active_manifest()
+            .unwrap()
+            .failure[0]
             .code(),
         validation_status::ASSERTION_DATAHASH_MISMATCH
     );
@@ -182,10 +204,8 @@ fn test_builder_embedded_v1_otgp() -> Result<()> {
 #[test]
 fn test_dynamic_assertions_builder() -> Result<()> {
     use c2pa::{
-        // assertions::{CreativeWork, SchemaDotOrgPerson},
         dynamic_assertion::{DynamicAssertion, DynamicAssertionContent, PartialClaim},
-        Signer,
-        SigningAlg,
+        Signer, SigningAlg,
     };
     use serde::Serialize;
     #[derive(Serialize)]
@@ -198,7 +218,6 @@ fn test_dynamic_assertions_builder() -> Result<()> {
 
     impl DynamicAssertion for TestDynamicAssertion {
         fn label(&self) -> String {
-            //CreativeWork::LABEL.to_string()
             "com.mycompany.myassertion".to_string()
         }
 
@@ -206,9 +225,6 @@ fn test_dynamic_assertions_builder() -> Result<()> {
             let assertion = TestAssertion {
                 my_tag: "some value I will replace".to_string(),
             };
-            // let assertion = CreativeWork::new()
-            //     .add_author(SchemaDotOrgPerson::new().set_name("me").unwrap())
-            //     .unwrap();
             Ok(serde_json::to_string(&assertion)?.len())
         }
 
@@ -224,9 +240,6 @@ fn test_dynamic_assertions_builder() -> Result<()> {
                     dbg!(a);
                 })
                 .any(|a| a.url().contains("c2pa.hash")));
-
-            // let assertion =
-            //     CreativeWork::new().add_author(SchemaDotOrgPerson::new().set_name("me")?)?;
 
             let assertion = TestAssertion {
                 my_tag: "some value I will replace".to_string(),
@@ -279,8 +292,8 @@ fn test_dynamic_assertions_builder() -> Result<()> {
         }
     }
 
-    let manifest_def = std::fs::read_to_string(fixtures_path("simple_manifest.json"))?;
-    let mut builder = Builder::from_json(&manifest_def)?;
+    //let manifest_def = std::fs::read_to_string(fixtures_path("simple_manifest.json"))?;
+    let mut builder = Builder::edit();
 
     const TEST_IMAGE: &[u8] = include_bytes!("fixtures/CA.jpg");
     let format = "image/jpeg";

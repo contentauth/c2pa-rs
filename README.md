@@ -26,15 +26,15 @@ You can also read the documentation directly in GitHub:
 
 ## Key features
 
-The [`c2pa` crate](https://crates.io/crates/c2pa) implements a subset of the [C2PA technical specification](https://c2pa.org/specifications/specifications/2.1/specs/C2PA_Specification.html) and the [CAWG identity assertion specification](https://cawg.io/identity) in the Rust programming language.
+The [`c2pa` crate](https://crates.io/crates/c2pa) implements a subset of the [C2PA technical specification](https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html) and the [CAWG identity assertion specification](https://cawg.io/identity) in the Rust programming language.
 
 The library enables a desktop, mobile, or embedded application to:
-* Create and sign C2PA [claims](https://c2pa.org/specifications/specifications/2.1/specs/C2PA_Specification.html#_claims) and [manifests](https://c2pa.org/specifications/specifications/2.1/specs/C2PA_Specification.html#_manifests).
+* Create and sign C2PA [claims](https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_claims) and [manifests](https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_manifests).
 * Create, sign, and validate [CAWG identity assertions](https://cawg.io/identity) in C2PA manifests.  See [Using the CAWG identity assertion](docs/cawg-identity.md) for more information.
 * Embed manifests in [supported file formats](docs/supported-formats.md).
 * Parse and validate manifests found in [supported file formats](docs/supported-formats.md).
 
-The library supports several common C2PA [assertions](https://c2pa.org/specifications/specifications/2.1/specs/C2PA_Specification.html#_c2pa_standard_assertions) and [hard bindings](https://c2pa.org/specifications/specifications/2.1/specs/C2PA_Specification.html#_hard_bindings).
+The library supports several common C2PA [assertions](https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_c2pa_standard_assertions) and [hard bindings](https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_hard_bindings).
 
 For details on what you can do with the library, see [Using the Rust library](https://opensource.contentauthenticity.org/docs/rust-sdk/docs/usage).
 
@@ -42,7 +42,7 @@ For details on what you can do with the library, see [Using the Rust library](ht
 
 This is a beta release (version 0.x.x) of the project. The minor version number (0.x.0) is incremented when there are breaking API changes, which may happen frequently.
 
-**NOTE**: The library now supports [C2PA v2 claims](https://c2pa.org/specifications/specifications/2.1/specs/C2PA_Specification.html#_claims), however development is still in progress and all features are not fully implemented yet. While you can experiment with this functionality, it is not recommended for production use at this time.  For details, see [C2PA v2 claims](https://opensource.contentauthenticity.org/docs/rust-sdk/docs/release-notes#c2pa-v2-claims).
+**NOTE**: The library now supports [C2PA v2 claims](https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_claims), however development is still in progress and all features are not fully implemented yet. While you can experiment with this functionality, it is not recommended for production use at this time.  For details, see [C2PA v2 claims](https://opensource.contentauthenticity.org/docs/rust-sdk/docs/release-notes#c2pa-v2-claims).
 
 ### New API
 
@@ -56,7 +56,7 @@ NOTE: The current release includes a new API that replaces old methods of readin
 
 To use the CAI Rust library, you must install [Rust and Cargo](https://doc.rust-lang.org/cargo/index.html).
 
-Minimal supported Rust version (MSRV): The `c2pa` crate requires Rust version 1.85.0 or newer. When a newer version of Rust becomes required, a new minor (0.x.0) version of this crate will be released.
+Minimal supported Rust version (MSRV): The `c2pa` crate requires Rust version 1.86.0 or newer. When a newer version of Rust becomes required, a new minor (0.x.0) version of this crate will be released.
 
 **Install C build tools**
 

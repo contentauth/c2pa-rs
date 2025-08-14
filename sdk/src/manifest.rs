@@ -29,7 +29,7 @@ use uuid::Uuid;
 
 use crate::{
     assertion::{AssertionBase, AssertionData},
-    assertions::{labels, Actions, Metadata, SoftwareAgent, Thumbnail},
+    assertions::{labels, Actions, AssertionMetadata, EmbeddedData, SoftwareAgent},
     claim::RemoteManifest,
     crypto::raw_signature::SigningAlg,
     error::{Error, Result},
@@ -42,6 +42,7 @@ use crate::{
     ClaimGeneratorInfo, ManifestAssertionKind,
 };
 #[cfg(feature = "v1_api")]
+#[allow(deprecated)]
 use crate::{
     assertions::{CreativeWork, DataHash, Exif, User, UserCbor},
     asset_io::{CAIRead, CAIReadWrite},
@@ -82,7 +83,7 @@ pub struct Manifest {
 
     /// A list of user metadata for this claim.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub metadata: Option<Vec<Metadata>>,
+    pub metadata: Option<Vec<AssertionMetadata>>,
 
     /// A human-readable title, generally source filename.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -96,8 +97,6 @@ pub struct Manifest {
     #[serde(default = "default_instance_id")]
     instance_id: String,
 
-    //#[serde(skip_serializing_if = "Option::is_none")]
-    // claim_generator_hints: Option<HashMap<String, Value>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     thumbnail: Option<ResourceRef>,
 
@@ -195,7 +194,7 @@ impl Manifest {
     }
 
     /// Returns thumbnail tuple with Some((format, bytes)) or `None`.
-    pub fn thumbnail(&self) -> Option<(&str, Cow<Vec<u8>>)> {
+    pub fn thumbnail(&self) -> Option<(&str, Cow<'_, Vec<u8>>)> {
         self.thumbnail
             .as_ref()
             .and_then(|t| Some(t.format.as_str()).zip(self.resources.get(&t.identifier).ok()))
@@ -224,7 +223,7 @@ impl Manifest {
     }
 
     /// Returns raw assertion references.
-    pub fn assertion_references(&self) -> Iter<HashedUri> {
+    pub fn assertion_references(&self) -> Iter<'_, HashedUri> {
         self.assertion_references.iter()
     }
 
@@ -443,17 +442,24 @@ impl Manifest {
     /// # use c2pa::Result;
     /// use c2pa::{assertions::Actions, Manifest, Reader};
     /// # fn main() -> Result<()> {
-    /// let reader = Reader::from_file("tests/fixtures/CA.jpg")?;
-    /// let manifest = reader.active_manifest().unwrap();
-    /// let actions: Actions = manifest.find_assertion(Actions::LABEL)?;
-    /// for action in actions.actions {
-    ///     println!("{}", action.action());
+    /// #[cfg(feature = "file_io")]
+    /// {
+    ///     let reader = Reader::from_file("tests/fixtures/CA.jpg")?;
+    ///     let manifest = reader.active_manifest().unwrap();
+    ///     let actions: Actions = manifest.find_assertion(Actions::LABEL)?;
+    ///     for action in actions.actions {
+    ///         println!("{}", action.action());
+    ///     }
     /// }
     /// # Ok(())
     /// # }
     /// ```
     pub fn find_assertion<T: DeserializeOwned>(&self, label: &str) -> Result<T> {
-        if let Some(manifest_assertion) = self.assertions.iter().find(|a| a.label() == label) {
+        if let Some(manifest_assertion) = self
+            .assertions
+            .iter()
+            .find(|a| a.label().starts_with(label))
+        {
             manifest_assertion.to_assertion()
         } else {
             Err(Error::NotFound)
@@ -469,7 +475,7 @@ impl Manifest {
         if let Some(manifest_assertion) = self
             .assertions
             .iter()
-            .find(|a| a.label() == label && a.instance() == instance)
+            .find(|a| a.label().starts_with(label) && a.instance() == instance)
         {
             manifest_assertion.to_assertion()
         } else {
@@ -613,8 +619,9 @@ impl Manifest {
             manifest.credentials = Some(credentials);
         }
 
-        manifest.redactions = claim.redactions().map(|rs| {
-            rs.iter()
+        manifest.redactions = claim.redactions().and_then(|rs| {
+            let v: Vec<_> = rs
+                .iter()
                 .map(|r| {
                     if !options.redacted_assertions.contains(r) {
                         options
@@ -623,7 +630,12 @@ impl Manifest {
                     }
                     r.to_owned()
                 })
-                .collect()
+                .collect();
+            if v.is_empty() {
+                None
+            } else {
+                Some(v)
+            }
         });
 
         manifest.assertion_references = claim
@@ -682,13 +694,13 @@ impl Manifest {
 
                             // replace software agent with resource ref
                             template.software_agent = match template.software_agent.take() {
-                                Some(SoftwareAgent::ClaimGeneratorInfo(mut info)) => {
+                                Some(mut info) => {
                                     if let Some(icon) = info.icon.as_mut() {
                                         let icon =
                                             icon.to_resource_ref(manifest.resources_mut(), claim)?;
                                         info.set_icon(icon);
                                     }
-                                    Some(SoftwareAgent::ClaimGeneratorInfo(info))
+                                    Some(info)
                                 }
                                 agent => agent,
                             };
@@ -714,7 +726,7 @@ impl Manifest {
                     // do not include data hash when reading manifests
                 }
                 label if label.starts_with(labels::CLAIM_THUMBNAIL) => {
-                    let thumbnail = Thumbnail::from_assertion(assertion)?;
+                    let thumbnail = EmbeddedData::from_assertion(assertion)?;
                     let id = to_assertion_uri(claim.label(), label);
                     //let id = jumbf::labels::to_relative_uri(&id);
                     manifest.thumbnail = Some(manifest.resources.add_uri(
@@ -794,10 +806,12 @@ impl Manifest {
         // if a thumbnail is not already defined, create one here
         if self.thumbnail_ref().is_none() {
             #[cfg(feature = "add_thumbnails")]
-            if let Ok((format, image)) = crate::utils::thumbnail::make_thumbnail(path.as_ref()) {
+            if let Some((output_format, image)) =
+                crate::utils::thumbnail::make_thumbnail_bytes_from_path(path.as_ref())?
+            {
                 // Do not write this as a file when reading from files
                 let base_path = self.resources_mut().take_base_path();
-                self.set_thumbnail(format, image)?;
+                self.set_thumbnail(output_format.to_string(), image)?;
                 if let Some(path) = base_path {
                     self.resources_mut().set_base_path(path)
                 }
@@ -859,7 +873,7 @@ impl Manifest {
             // Setting the format to "none" will ensure that no claim thumbnail is added
             if thumb_ref.format != "none" {
                 let data = self.resources.get(&thumb_ref.identifier)?;
-                claim.add_assertion(&Thumbnail::new(
+                claim.add_assertion(&crate::assertions::Thumbnail::new(
                     &labels::add_thumbnail_format(labels::CLAIM_THUMBNAIL, &thumb_ref.format),
                     data.into_owned(),
                 ))?;
@@ -946,13 +960,13 @@ impl Manifest {
 
                             // replace software agent with hashed_uri
                             template.software_agent = match template.software_agent.take() {
-                                Some(SoftwareAgent::ClaimGeneratorInfo(mut info)) => {
+                                Some(mut info) => {
                                     if let Some(icon) = info.icon.as_mut() {
                                         let icon =
                                             icon.to_hashed_uri(self.resources(), &mut claim)?;
                                         info.set_icon(icon);
                                     }
-                                    Some(SoftwareAgent::ClaimGeneratorInfo(info))
+                                    Some(info)
                                 }
                                 agent => agent,
                             };
@@ -981,6 +995,7 @@ impl Manifest {
 
                     claim.add_assertion(&actions)
                 }
+                #[allow(deprecated)]
                 CreativeWork::LABEL => {
                     let mut cw: CreativeWork = manifest_assertion.to_assertion()?;
                     // insert a credentials field if we have a vc that matches the identifier
@@ -1182,10 +1197,11 @@ impl Manifest {
         #[cfg(feature = "add_thumbnails")]
         {
             if self.thumbnail_ref().is_none() {
-                if let Ok((format, image)) =
-                    crate::utils::thumbnail::make_thumbnail_from_stream(format, source)
+                let source = std::io::BufReader::new(&mut *source);
+                if let Some((output_format, image)) =
+                    crate::utils::thumbnail::make_thumbnail_bytes_from_stream(format, source)?
                 {
-                    self.set_thumbnail(format, image)?;
+                    self.set_thumbnail(output_format.to_string(), image)?;
                 }
             }
         }
@@ -1226,12 +1242,10 @@ impl Manifest {
         let mut stream = std::io::Cursor::new(asset);
         #[cfg(feature = "add_thumbnails")]
         {
-            if self.thumbnail_ref().is_none() {
-                if let Ok((format, image)) =
-                    crate::utils::thumbnail::make_thumbnail_from_stream(format, &mut stream)
-                {
-                    self.set_thumbnail(format, image)?;
-                }
+            if let Some((output_format, image)) =
+                crate::utils::thumbnail::make_thumbnail_bytes_from_stream(format, &mut stream)?
+            {
+                self.set_thumbnail(output_format.to_string(), image)?;
             }
         }
         let asset = stream.into_inner();
@@ -1343,7 +1357,7 @@ impl Manifest {
         if dh.is_err() {
             let mut ph = DataHash::new("jumbf manifest", "sha256");
             for _ in 0..10 {
-                ph.add_exclusion(HashRange::new(0, 2));
+                ph.add_exclusion(HashRange::new(0u64, 2u64));
             }
             self.add_assertion(&ph)?;
         }
@@ -1483,7 +1497,7 @@ impl Manifest {
     /// specifies the format of the asset. The input_stream should point to the same asset
     /// used in get_placed_manifest.  The caller can supply list of ManifestPathCallback
     /// traits to make any modifications to assertions.  The callbacks are processed before
-    /// the manifest is signed.  
+    /// the manifest is signed.
     #[deprecated(since = "0.38.0", note = "use Builder.sign with dynamic assertions.")]
     #[cfg(feature = "v1_api")]
     pub fn embed_placed_manifest(
@@ -2339,7 +2353,10 @@ pub(crate) mod tests {
         assert_eq!(image.into_owned(), thumb_data);
     }
 
+    // This is only used for testing obsolete v1 manifest creation code
     const MANIFEST_JSON: &str = r#"{
+        
+        "claim_version": 1,
         "claim_generator": "test",
         "claim_generator_info": [
             {
@@ -2690,7 +2707,7 @@ pub(crate) mod tests {
         manifest.with_base_path(fixtures).expect("with_base");
         // verify we can't set a references that don't exist
         assert!(manifest
-            .set_thumbnail_ref(ResourceRef::new("image/jpg", "foo"))
+            .set_thumbnail_ref(ResourceRef::new("image/jpeg", "foo"))
             .is_err());
         assert_eq!(manifest.thumbnail_ref(), None);
         // verify we can set a references that do exist
@@ -2799,7 +2816,7 @@ pub(crate) mod tests {
         // build manifest to insert in the hole
 
         // create an hash exclusion for the manifest
-        let exclusion = HashRange::new(offset, placeholder.len());
+        let exclusion = HashRange::new(offset as u64, placeholder.len() as u64);
         let exclusions = vec![exclusion];
 
         let mut dh = DataHash::new("source_hash", "sha256");
@@ -2858,7 +2875,7 @@ pub(crate) mod tests {
         // build manifest to insert in the hole
 
         // create an hash exclusion for the manifest
-        let exclusion = HashRange::new(offset, placeholder.len());
+        let exclusion = HashRange::new(offset as u64, placeholder.len() as u64);
         let exclusions = vec![exclusion];
 
         let mut dh = DataHash::new("source_hash", "sha256");

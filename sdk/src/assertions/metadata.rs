@@ -10,360 +10,582 @@
 // implied. See the LICENSE-MIT and LICENSE-APACHE files for the
 // specific language governing permissions and limitations under
 // each license.
-
 use std::collections::HashMap;
 
-use chrono::{SecondsFormat, Utc};
-#[cfg(feature = "json_schema")]
-use schemars::JsonSchema;
+use lazy_static::lazy_static;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::{
-    assertion::{Assertion, AssertionBase, AssertionCbor},
-    assertions::{labels, region_of_interest::RegionOfInterest},
-    error::Result,
-    hashed_uri::HashedUri,
-    utils::cbor_types::DateT,
+    assertion::{Assertion, AssertionBase, AssertionJson},
+    assertions::labels,
+    Error,
 };
 
-const ASSERTION_CREATION_VERSION: usize = 1;
-
-/// The Metadata structure can be used as part of other assertions or on its own to reference others
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
-#[cfg_attr(feature = "json_schema", derive(JsonSchema))]
+/// A `Metadata` assertion provides structured metadata using JSON-LD format for
+/// both standardized C2PA metadata and custom metadata schemas.
+///
+/// This assertion contains a context object defining namespace mappings and a set
+///of metadata fields. For `c2pa.metadata` assertions, only specific schemas and fields
+/// are allowed as defined in the C2PA specification.
+///
+/// <https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_metadata_assertions>
+#[derive(Serialize, Deserialize, Debug, PartialEq)]
 pub struct Metadata {
-    #[serde(rename = "reviewRatings", skip_serializing_if = "Option::is_none")]
-    reviews: Option<Vec<ReviewRating>>,
-    #[serde(rename = "dateTime", skip_serializing_if = "Option::is_none")]
-    date_time: Option<DateT>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    reference: Option<HashedUri>,
-    #[serde(rename = "dataSource", skip_serializing_if = "Option::is_none")]
-    data_source: Option<DataSource>,
-    #[serde(rename = "regionOfInterest", skip_serializing_if = "Option::is_none")]
-    region_of_interest: Option<RegionOfInterest>,
+    /// JSON-LD context mapping prefixes to namespace URIs.
+    #[serde(rename = "@context")]
+    pub context: HashMap<String, String>,
+    /// Metadata fields with namespace prefixes.
     #[serde(flatten)]
-    other: HashMap<String, Value>,
+    pub value: HashMap<String, Value>,
+    /// Assertion label (not serialized).
+    #[serde(skip)]
+    pub label: String,
 }
 
 impl Metadata {
-    /// Label prefix for an assertion metadata assertion.
+    /// Creates a new metadata assertion from a JSON-LD string.
+    pub fn new(label: &str, jsonld: &str) -> Result<Self, Error> {
+        let metadata = serde_json::from_slice::<Metadata>(jsonld.as_bytes())
+            .map_err(|e| Error::BadParam(format!("Invalid JSON format: {e}")))?;
+
+        Ok(Self {
+            context: metadata.context,
+            value: metadata.value,
+            label: label.to_owned(),
+        })
+    }
+
+    /// Validates that each field in the assertion has a namespace within the '@context'.
+    /// For 'c2pa.metadata' assertions, ensures only allowed fields are present.
     ///
-    /// See <https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_metadata_about_assertions>.
-    pub const LABEL: &'static str = labels::ASSERTION_METADATA;
-
-    pub fn new() -> Self {
-        Self {
-            reviews: None,
-            date_time: Some(DateT(
-                Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true),
-            )),
-            reference: None,
-            data_source: None,
-            region_of_interest: None,
-            other: HashMap::new(),
+    /// See <https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_c2pa_metadata_validation>.
+    /// # Returns
+    /// * Returns `true` if the metadata assertion passes validation.
+    pub fn is_valid(&self) -> bool {
+        if self.context.is_empty() {
+            return false;
         }
-    }
 
-    /// Returns the list of [`ReviewRating`] for this assertion if it exists.
-    pub fn reviews(&self) -> Option<&[ReviewRating]> {
-        self.reviews.as_deref()
-    }
-
-    /// Returns the ISO 8601 date-time string when the assertion was created/generated.
-    pub fn date_time(&self) -> Option<&str> {
-        self.date_time.as_deref()
-    }
-
-    /// Returns the [`DataSource`] for this assertion if it exists.
-    pub fn data_source(&self) -> Option<&DataSource> {
-        self.data_source.as_ref()
-    }
-
-    /// Returns the [`RegionOfInterest`] for this assertion if it exists.
-    pub fn region_of_interest(&self) -> Option<&RegionOfInterest> {
-        self.region_of_interest.as_ref()
-    }
-
-    /// Returns map containing custom metadata fields.
-    pub fn other(&self) -> &HashMap<String, Value> {
-        &self.other
-    }
-
-    /// Adds a [`ReviewRating`] associated with the assertion.
-    pub fn add_review(mut self, review: ReviewRating) -> Self {
-        match &mut self.reviews {
-            None => self.reviews = Some(vec![review]),
-            Some(reviews) => reviews.push(review),
+        if self.label == labels::METADATA {
+            for (namespace, uri) in &self.context {
+                if let Some(expected_uri) = ALLOWED_SCHEMAS.get(namespace.as_str()) {
+                    if uri != expected_uri {
+                        return false;
+                    }
+                }
+            }
         }
-        self
-    }
 
-    /// Sets the list of [`ReviewRating`]s associated with the assertion.
-    ///
-    /// This replaces any previous list.
-    pub fn set_reviews(mut self, reviews: Vec<ReviewRating>) -> Self {
-        self.reviews = Some(reviews);
-        self
-    }
-
-    /// Sets the ISO 8601 date-time string when the assertion was created/generated.
-    pub fn set_date_time(mut self, date_time: String) -> Self {
-        self.date_time = Some(DateT(date_time));
-        self
-    }
-
-    /// Sets a [`HashedUri`] reference to another assertion to which this metadata applies.
-    #[cfg(test)] // only referenced from test code
-    pub(crate) fn set_reference(mut self, reference: HashedUri) -> Self {
-        self.reference = Some(reference);
-        self
-    }
-
-    /// Sets a description of the source of the assertion data, selected from a predefined list.
-    pub fn set_data_source(mut self, data_source: DataSource) -> Self {
-        self.data_source = Some(data_source);
-        self
-    }
-
-    /// Sets the region of interest.
-    pub fn set_region_of_interest(mut self, region_of_interest: RegionOfInterest) -> Self {
-        self.region_of_interest = Some(region_of_interest);
-        self
-    }
-
-    /// Adds an additional key / value pair.
-    pub fn insert(&mut self, key: &str, value: Value) -> &mut Self {
-        self.other.insert(key.to_string(), value);
-        self
-    }
-
-    /// Gets additional values by key.
-    pub fn get(&self, key: &str) -> Option<&Value> {
-        self.other.get(key)
+        for label in self.value.keys() {
+            if let Some((prefix, _)) = label.split_once(':') {
+                if !self.context.contains_key(prefix) {
+                    return false;
+                }
+            }
+            if self.label == labels::METADATA && !ALLOWED_FIELDS.contains(&label.as_str()) {
+                return false;
+            }
+        }
+        true
     }
 }
 
-impl Default for Metadata {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl std::fmt::Display for Metadata {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&serde_json::to_string_pretty(self).unwrap_or_default())
-    }
-}
-
-impl AssertionCbor for Metadata {}
+impl AssertionJson for Metadata {}
 
 impl AssertionBase for Metadata {
-    const LABEL: &'static str = Self::LABEL;
-    const VERSION: Option<usize> = Some(ASSERTION_CREATION_VERSION);
-
-    fn to_assertion(&self) -> Result<Assertion> {
-        Self::to_cbor_assertion(self)
+    fn label(&self) -> &str {
+        &self.label
     }
 
-    fn from_assertion(assertion: &Assertion) -> Result<Self> {
-        Self::from_cbor_assertion(assertion)
-    }
-}
-
-/// DATA_SOURCE Type values
-pub mod c2pa_source {
-    pub const SIGNER: &str = "signer";
-    pub const GENERATOR_REE: &str = "claimGenerator.REE";
-    pub const GENERATOR_TEE: &str = "claimGenerator.TEE";
-    pub const LOCAL_REE: &str = "localProvider.REE";
-    pub const LOCAL_TEE: &str = "localProvider.TEE";
-    pub const REMOTE_REE: &str = "remoteProvider.1stParty";
-    pub const REMOTE_TEE: &str = "remoteProvider.3rdParty";
-    pub const HUMAN_ANONYMOUS: &str = "humanEntry.anonymous";
-    pub const HUMAN_IDENTIFIED: &str = "humanEntry.identified";
-}
-
-/// A description of the source for assertion data
-#[derive(Deserialize, Serialize, Clone, Debug, Default, PartialEq, Eq)]
-#[cfg_attr(feature = "json_schema", derive(JsonSchema))]
-#[non_exhaustive]
-pub struct DataSource {
-    /// A value from among the enumerated list indicating the source of the assertion.
-    #[serde(rename = "type")]
-    pub source_type: String,
-
-    /// A human-readable string giving details about the source of the assertion data.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub details: Option<String>,
-
-    /// A list of [`Actor`]s associated with this source.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub actors: Option<Vec<Actor>>,
-}
-
-impl DataSource {
-    pub fn new(source_type: &str) -> Self {
-        Self {
-            source_type: source_type.to_owned(),
-            details: None,
-            actors: None,
-        }
+    fn to_assertion(&self) -> Result<Assertion, Error> {
+        Self::to_json_assertion(self)
     }
 
-    /// Sets a human-readable string giving details about the source of the assertion data.
-    pub fn set_details(mut self, details: String) -> Self {
-        self.details = Some(details);
-        self
-    }
-
-    /// Sets a list of [`Actor`]s associated with this source.
-    pub fn set_actors(mut self, actors: Option<Vec<Actor>>) -> Self {
-        self.actors = actors;
-        self
+    fn from_assertion(assertion: &Assertion) -> Result<Self, Error> {
+        let mut metadata = Self::from_json_assertion(assertion)?;
+        metadata.label = assertion.label().to_owned();
+        Ok(metadata)
     }
 }
 
-/// Identifies a person responsible for an action.
-#[derive(Deserialize, Serialize, Clone, Debug, Default, PartialEq, Eq)]
-#[cfg_attr(feature = "json_schema", derive(JsonSchema))]
-#[non_exhaustive]
-pub struct Actor {
-    /// An identifier for a human actor, used when the "type" is `humanEntry.identified`.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub identifier: Option<String>,
-
-    /// List of references to W3C Verifiable Credentials.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub credentials: Option<Vec<HashedUri>>,
+lazy_static! {
+    /// The c2pa.metadata assertion shall only contain certain schemas.
+    ///
+    /// See <https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#metadata_annex>.
+    static ref ALLOWED_SCHEMAS: HashMap<&'static str, &'static str> = vec![
+        ("xmp", "http://ns.adobe.com/xap/1.0/"),
+        ("xmpMM", "http://ns.adobe.com/xap/1.0/mm/"),
+        ("xmpTPg", "http://ns.adobe.com/xap/1.0/t/pg/"),
+        ("crs", "http://ns.adobe.com/camera-raw-settings/1.0/"),
+        ("pdf", "http://ns.adobe.com/pdf/1.3/"),
+        ("dc", "http://purl.org/dc/elements/1.1/"),
+        ("Iptc4xmpExt", "http://iptc.org/std/Iptc4xmpExt/2008-02-29/"),
+        ("exif", "http://ns.adobe.com/exif/1.0/"),
+        ("exifEX", "http://cipa.jp/exif/1.0/exifEX"),
+        ("photoshop", "http://ns.adobe.com/photoshop/1.0/"),
+        ("tiff", "http://ns.adobe.com/tiff/1.0/"),
+        ("xmpDM", "http://ns.adobe.com/xmp/1.0/DynamicMedia/"),
+        ("plus", "http://ns.useplus.org/ldf/xmp/1.0/"),
+    ]
+    .into_iter()
+    .collect();
 }
 
-impl Actor {
-    pub fn new(identifier: Option<&str>, credentials: Option<&Vec<HashedUri>>) -> Self {
-        Self {
-            identifier: identifier.map(|id| id.to_owned()),
-            credentials: credentials.cloned(),
-        }
-    }
-}
-
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
-pub enum ReviewCode {
-    #[serde(rename(serialize = "actions.unknownActionsPerformed"))]
-    ActionsUnknown,
-    #[serde(rename(serialize = "actions.missing"))]
-    ActionsMissing,
-    #[serde(rename(serialize = "actions.possiblyMissing"))]
-    ActionsPossiblyMissing,
-    #[serde(rename(serialize = "depthMap.sceneMismatch"))]
-    DepthMapSceneMismatch,
-    #[serde(rename(serialize = "ingredient.modified"))]
-    IngredientModified,
-    #[serde(rename(serialize = "ingredient.possiblyModified"))]
-    IngredientPossiblyModified,
-    #[serde(rename(serialize = "thumbnail.primaryMismatch"))]
-    ThumbnailPrimaryMismatch,
-    #[serde(rename(serialize = "stds.iptc.location.inaccurate"))]
-    IptcLocationInaccurate,
-    #[serde(rename(serialize = "stds.schema-org.CreativeWork.misattributed"))]
-    CreativeWorkMisAttributed,
-    #[serde(rename(serialize = "stds.schema-org.CreativeWork.missingAttribution"))]
-    CreativeWorkMissingAttribution,
-    Other(String),
-}
-
-/// A rating on an Assertion.
+/// The c2pa.metadata assertion shall only contain certain fields.
 ///
-/// See <https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_review_ratings>.
-#[derive(Serialize, Deserialize, Debug, PartialEq, Eq, Clone)]
-#[cfg_attr(feature = "json_schema", derive(JsonSchema))]
-pub struct ReviewRating {
-    pub explanation: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub code: Option<String>,
-    pub value: u8,
-}
-
-impl ReviewRating {
-    pub fn new(explanation: &str, code: Option<String>, value: u8) -> Self {
-        Self {
-            explanation: explanation.to_owned(),
-            value, // should be in range 1 to 5
-            code,
-        }
-    }
-}
-
-#[derive(Deserialize, Serialize, Debug, PartialEq, Eq, Clone)]
-#[cfg_attr(feature = "json_schema", derive(JsonSchema))]
-pub struct AssetType {
-    #[serde(rename = "type")]
-    pub asset_type: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub version: Option<String>,
-}
-
-impl AssetType {
-    pub fn new<S: Into<String>>(asset_type: S, version: Option<String>) -> Self {
-        AssetType {
-            asset_type: asset_type.into(),
-            version,
-        }
-    }
-}
-
-#[derive(Deserialize, Serialize, Debug, PartialEq, Clone)]
-pub struct DataBox {
-    #[serde(rename = "dc:format")]
-    pub format: String,
-    #[serde(with = "serde_bytes")]
-    pub data: Vec<u8>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub data_types: Option<Vec<AssetType>>,
-}
+/// See <https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#metadata_annex>.
+static ALLOWED_FIELDS: [&str; 292] = [
+    // xmp:
+    "xmp:CreateDate",
+    "xmp:CreatorTool",
+    "xmp:Identifier",
+    "xmp:Label",
+    "xmp:MetadataDate",
+    "xmp:ModifyDate",
+    "xmp:Rating",
+    "xmp:BaseURL",
+    "xmp:Nickname",
+    "xmp:Thumbnails",
+    // xmpMM:
+    "xmpMM:DerivedFrom",
+    "xmpMM:DocumentID",
+    "xmpMM:InstanceID",
+    "xmpMM:OriginalDocumentID",
+    "xmpMM:RenditionClass",
+    "xmpMM:RenditionParams",
+    "xmpMM:History",
+    "xmpMM:Ingredients",
+    "xmpMM:Pantry",
+    "xmpMM:ManagedFrom",
+    "xmpMM:Manager",
+    "xmpMM:ManageTo",
+    "xmpMM:ManageUI",
+    "xmpMM:ManagerVariant",
+    "xmpMM:VersionID",
+    "xmpMM:Versions",
+    // xmpTPg:
+    "xmpTPg:Colorants",
+    "xmpTPg:Fonts",
+    "xmpTPg:MaxPageSize",
+    "xmpTPg:NPages",
+    "xmpTPg:PlateNames",
+    // crs:
+    "crs:AutoBrightness",
+    "crs:AutoContrast",
+    "crs:AutoExposure",
+    "crs:AutoShadows",
+    "crs:BlueHue",
+    "crs:BlueSaturation",
+    "crs:Brightness",
+    "crs:CameraProfile",
+    "crs:ChromaticAberrationB",
+    "crs:ChromaticAberrationR",
+    "crs:ColorNoiseReduction",
+    "crs:Contrast",
+    "crs:CropTop",
+    "crs:CropLeft",
+    "crs:CropBottom",
+    "crs:CropRight",
+    "crs:CropAngle",
+    "crs:CropWidth",
+    "crs:CropHeight",
+    "crs:CropUnits",
+    "crs:Exposure",
+    "crs:GreenHue",
+    "crs:GreenSaturation",
+    "crs:HasCrop",
+    "crs:HasSettings",
+    "crs:LuminanceSmoothing",
+    "crs:RawFileName",
+    "crs:RedHue",
+    "crs:RedSaturation",
+    "crs:Saturation",
+    "crs:Shadows",
+    "crs:ShadowTint",
+    "crs:Sharpness",
+    "crs:Temperature",
+    "crs:Tint",
+    "crs:ToneCurve",
+    "crs:ToneCurveName",
+    "crs:Version",
+    "crs:VignetteAmount",
+    "crs:VignetteMidpoint",
+    "crs:WhiteBalance",
+    // pdf:
+    "pdf:Keywords",
+    "pdf:PDFVersion",
+    "pdf:Producer",
+    "pdf:Trapped",
+    // dc:
+    "dc:coverage",
+    "dc:date",
+    "dc:format",
+    "dc:identifier",
+    "dc:language",
+    "dc:relation",
+    "dc:type",
+    // Iptc4xmpExt:
+    "Iptc4xmpExt:DigImageGUID",
+    "Iptc4xmpExt:DigitalSourceType",
+    "Iptc4xmpExt:EventId",
+    "Iptc4xmpExt:Genre",
+    "Iptc4xmpExt:ImageRating",
+    "Iptc4xmpExt:ImageRegion",
+    "Iptc4xmpExt:RegistryId",
+    "Iptc4xmpExt:LocationCreated",
+    "Iptc4xmpExt:LocationShown",
+    "Iptc4xmpExt:MaxAvailHeight",
+    "Iptc4xmpExt:MaxAvailWidth",
+    // exif:
+    "exif:ApertureValue",
+    "exif:BrightnessValue",
+    "exif:CFAPattern",
+    "exif:ColorSpace",
+    "exif:CompressedBitsPerPixel",
+    "exif:Contrast",
+    "exif:CustomRendered",
+    "exif:DateTimeDigitized",
+    "exif:DateTimeOriginal",
+    "exif:DeviceSettingDescription",
+    "exif:DigitalZoomRatio",
+    "exif:ExifVersion",
+    "exif:ExposureBiasValue",
+    "exif:ExposureIndex",
+    "exif:ExposureMode",
+    "exif:ExposureProgram",
+    "exif:ExposureTime",
+    "exif:FileSource",
+    "exif:Flash",
+    "exif:FlashEnergy",
+    "exif:FlashpixVersion",
+    "exif:FNumber",
+    "exif:FocalLength",
+    "exif:FocalLengthIn35mmFilm",
+    "exif:FocalPlaneResolutionUnit",
+    "exif:FocalPlaneXResolution",
+    "exif:FocalPlaneYResolution",
+    "exif:GainControl",
+    "exif:ImageUniqueID",
+    "exif:ISOSpeedRatings",
+    "exif:LightSource",
+    "exif:MaxApertureValue",
+    "exif:MeteringMode",
+    "exif:OECF",
+    "exif:OffsetTimeOriginal",
+    "exif:PixelXDimension",
+    "exif:PixelYDimension",
+    "exif:RelatedSoundFile",
+    "exif:Saturation",
+    "exif:SceneCaptureType",
+    "exif:SceneType",
+    "exif:SensingMethod",
+    "exif:Sharpness",
+    "exif:ShutterSpeedValue",
+    "exif:SpatialFrequencyResponse",
+    "exif:SpectralSensitivity",
+    "exif:SubjectArea",
+    "exif:SubjectDistance",
+    "exif:SubjectDistanceRange",
+    "exif:SubjectLocation",
+    "exif:WhiteBalance",
+    "exif:GPSAltitude",
+    "exif:GPSAltitudeRef",
+    "exif:GPSDateStamp",
+    "exif:GPSDestBearing",
+    "exif:GPSDestBearingRef",
+    "exif:GPSDestDistance",
+    "exif:GPSDestDistanceRef",
+    "exif:GPSDestLatitude",
+    "exif:GPSDestLongitude",
+    "exif:GPSDifferential",
+    "exif:GPSDOP",
+    "exif:GPSHPositioningError",
+    "exif:GPSImgDirection",
+    "exif:GPSImgDirectionRef",
+    "exif:GPSLatitude",
+    "exif:GPSLongitude",
+    "exif:GPSMapDatum",
+    "exif:GPSMeasureMode",
+    "exif:GPSProcessingMethod",
+    "exif:GPSSatellites",
+    "exif:GPSSpeed",
+    "exif:GPSSpeedRef",
+    "exif:GPSStatus",
+    "exif:GPSTimeStamp",
+    "exif:GPSTrack",
+    "exif:GPSTrackRef",
+    "exif:GPSVersionID",
+    // exifEX:
+    "exifEX:BodySerialNumber",
+    "exifEX:Gamma",
+    "exifEX:InteroperabilityIndex",
+    "exifEX:ISOSpeed",
+    "exifEX:ISOSpeedLatitudeyyy",
+    "exifEX:ISOSpeedLatitudezzz",
+    "exifEX:LensMake",
+    "exifEX:LensModel",
+    "exifEX:LensSerialNumber",
+    "exifEX:LensSpecification",
+    "exifEX:PhotographicSensitivity",
+    "exifEX:RecommendedExposureIndex",
+    "exifEX:SensitivityType",
+    "exifEX:StandardOutput-Sensitivity",
+    // photoshop:
+    "photoshop:Category",
+    "photoshop:City",
+    "photoshop:ColorMode",
+    "photoshop:Country",
+    "photoshop:DateCreated",
+    "photoshop:DocumentAncestors",
+    "photoshop:History",
+    "photoshop:ICCProfile",
+    "photoshop:State",
+    "photoshop:SupplementalCategories",
+    "photoshop:TextLayers",
+    "photoshop:TransmissionReference",
+    "photoshop:Urgency",
+    // tiff:
+    "tiff:BitsPerSample",
+    "tiff:Compression",
+    "tiff:DateTime",
+    "tiff:ImageLength",
+    "tiff:ImageWidth",
+    "tiff:Make",
+    "tiff:Model",
+    "tiff:Orientation",
+    "tiff:PhotometricInterpretation",
+    "tiff:PlanarConfiguration",
+    "tiff:PrimaryChromaticities",
+    "tiff:ReferenceBlackWhite",
+    "tiff:ResolutionUnit",
+    "tiff:SamplesPerPixel",
+    "tiff:Software",
+    "tiff:TransferFunction",
+    "tiff:WhitePoint",
+    "tiff:XResolution",
+    "tiff:YResolution",
+    "tiff:YCbCrCoefficients",
+    "tiff:YCbCrPositioning",
+    "tiff:YCbCrSubSampling",
+    // xmpDM:
+    "xmpDM:absPeakAudioFilePath",
+    "xmpDM:album",
+    "xmpDM:altTapeName",
+    "xmpDM:altTimecode",
+    "xmpDM:audioChannelType",
+    "xmpDM:audioCompressor",
+    "xmpDM:audioSampleRate",
+    "xmpDM:audioSampleType",
+    "xmpDM:beatSpliceParams",
+    "xmpDM:cameraAngle",
+    "xmpDM:cameraLabel",
+    "xmpDM:cameraModel",
+    "xmpDM:cameraMove",
+    "xmpDM:comment",
+    "xmpDM:contributedMedia",
+    "xmpDM:duration",
+    "xmpDM:fileDataRate",
+    "xmpDM:genre",
+    "xmpDM:good",
+    "xmpDM:instrument",
+    "xmpDM:introTime",
+    "xmpDM:key",
+    "xmpDM:logComment",
+    "xmpDM:loop",
+    "xmpDM:numberOfBeats",
+    "xmpDM:markers",
+    "xmpDM:outCue",
+    "xmpDM:projectName",
+    "xmpDM:projectRef",
+    "xmpDM:pullDown",
+    "xmpDM:relativePeakAudioFilePath",
+    "xmpDM:relativeTimestamp",
+    "xmpDM:releaseDate",
+    "xmpDM:resampleParams",
+    "xmpDM:scaleType",
+    "xmpDM:scene",
+    "xmpDM:shotDate",
+    "xmpDM:shotDay",
+    "xmpDM:shotLocation",
+    "xmpDM:shotName",
+    "xmpDM:shotNumber",
+    "xmpDM:shotSize",
+    "xmpDM:speakerPlacement",
+    "xmpDM:startTimecode",
+    "xmpDM:stretchMode",
+    "xmpDM:takeNumber",
+    "xmpDM:tapeName",
+    "xmpDM:tempo",
+    "xmpDM:timeScaleParams",
+    "xmpDM:timeSignature",
+    "xmpDM:trackNumber",
+    "xmpDM:Tracks",
+    "xmpDM:videoAlphaMode",
+    "xmpDM:videoAlphaPremultipleColor",
+    "xmpDM:videoAlphaUnityIsTransparent",
+    "xmpDM:videoColorSpace",
+    "xmpDM:videoCompressor",
+    "xmpDM:videoFieldOrder",
+    "xmpDM:videoFrameRate",
+    "xmpDM:videoFrameSize",
+    "xmpDM:videoPixelAspectRatio",
+    "xmpDM:videoPixelDepth",
+    "xmpDM:partOfCompilation",
+    "xmpDM:lyrics",
+    "xmpDM:discNumber",
+    // plus:
+    "plus:FileNameAsDelivered",
+    "plus:FirstPublicationDate",
+    "plus:ImageFileFormatAsDelivered",
+    "plus:ImageFileSizeAsDelivered",
+    "plus:ImageType",
+    "plus:Version",
+];
 
 #[cfg(test)]
 pub mod tests {
     #![allow(clippy::expect_used)]
     #![allow(clippy::unwrap_used)]
 
-    use super::*;
-    use crate::assertions::region_of_interest::{Range, RangeType, Time, TimeType};
+    use crate::{
+        assertion::AssertionBase,
+        assertions::{
+            labels::{CAWG_METADATA, METADATA},
+            metadata::Metadata,
+        },
+    };
+
+    const SPEC_EXAMPLE: &str = r#"{
+        "@context" : {
+            "exif": "http://ns.adobe.com/exif/1.0/",
+            "exifEX": "http://cipa.jp/exif/1.0/exifEX",
+            "tiff": "http://ns.adobe.com/tiff/1.0/",
+            "Iptc4xmpExt": "http://iptc.org/std/Iptc4xmpExt/2008-02-29/",
+            "photoshop" : "http://ns.adobe.com/photoshop/1.0/"
+        },
+        "photoshop:DateCreated": "Aug 31, 2022",
+        "Iptc4xmpExt:DigitalSourceType": "http://cv.iptc.org/newscodes/digitalsourcetype/digitalCapture",
+        "exif:GPSVersionID": "2.2.0.0",
+        "exif:GPSLatitude": "39,21.102N",
+        "exif:GPSLongitude": "74,26.5737W",
+        "exif:GPSAltitudeRef": 0,
+        "exif:GPSAltitude": "100963/29890",
+        "exif:GPSTimeStamp": "18:22:57",
+        "exif:GPSDateStamp": "2019:09:22",
+        "exif:GPSSpeedRef": "K",
+        "exif:GPSSpeed": "4009/161323",
+        "exif:GPSImgDirectionRef": "T",
+        "exif:GPSImgDirection": "296140/911",
+        "exif:GPSDestBearingRef": "T",
+        "exif:GPSDestBearing": "296140/911",
+        "exif:GPSHPositioningError": "13244/2207",
+        "exif:ExposureTime": "1/100",
+        "exif:FNumber": 4.0,
+        "exif:ColorSpace": 1,
+        "exif:DigitalZoomRatio": 2.0,
+        "tiff:Make": "CameraCompany",
+        "tiff:Model": "Shooter S1",
+        "exifEX:LensMake": "CameraCompany",
+        "exifEX:LensModel": "17.0-35.0 mm",
+        "exifEX:LensSpecification": { "@list": [ 1.55, 4.2, 1.6, 2.4 ] }
+    }"#;
+
+    const CAWG_METADATA_EXAMPLE: &str = r#" {
+        "@context" : {
+            "dc" : "http://purl.org/dc/elements/1.1/"
+        },
+        "dc:created": "2025 August 13", 
+        "dc:creator": [
+             "John Doe"
+        ]
+        }
+        "#;
+
+    const CUSTOM_METADATA: &str = r#" {
+        "@context" : {
+            "bar": "http://foo.com/bar/1.0/"
+        },
+        "bar:baz" : "foo"
+        }
+        "#;
+
+    const MISSING_CONTEXT: &str = r#" {
+        "@context" : {
+            "exif": "http://ns.adobe.com/exif/1.0/"
+        },
+        "exif:GPSVersionID": "2.2.0.0",
+        "exif:GPSLatitude": "39,21.102N",
+        "exif:GPSLongitude": "74,26.5737W",
+        "tiff:Make": "CameraCompany",
+        "tiff:Model": "Shooter S1"
+        }
+        "#;
+    const EMPTY_CONTEXT: &str = r#" {
+        "@context" : {
+        }
+        }
+        "#;
+
+    const MISMATCH_URI: &str = r#" {
+        "@context" : {
+            "exif": "http://ns.adobe.com/exif/10.0/"
+        },
+        "exif:GPSVersionID": "2.2.0.0",
+        "exif:GPSLatitude": "39,21.102N",
+        "exif:GPSLongitude": "74,26.5737W"
+        }
+        "#;
 
     #[test]
-    fn assertion_metadata() {
-        let review = ReviewRating::new("foo", Some("bar".to_owned()), 3);
-        let test_value = Value::from("test");
-        let mut original =
-            Metadata::new()
-                .add_review(review)
-                .set_region_of_interest(RegionOfInterest {
-                    region: vec![Range {
-                        range_type: RangeType::Temporal,
-                        time: Some(Time {
-                            time_type: TimeType::Npt,
-                            start: None,
-                            end: None,
-                        }),
-                        ..Default::default()
-                    }],
-                    ..Default::default()
-                });
-        original.insert("foo", test_value);
-        println!("{:}", &original);
-        let assertion = original.to_assertion().expect("build_assertion");
-        assert_eq!(assertion.mime_type(), "application/cbor");
-        assert_eq!(assertion.label(), Metadata::LABEL);
-        let result = Metadata::from_assertion(&assertion).expect("extract_assertion");
-        println!("{:?}", serde_json::to_string(&result));
-        assert_eq!(original.date_time, result.date_time);
-        assert_eq!(original.reviews, result.reviews);
-        assert_eq!(original.get("foo").unwrap(), "test");
-        assert_eq!(
-            original.region_of_interest.as_ref(),
-            result.region_of_interest()
-        )
-        //assert_eq!(original.reviews.unwrap().len(), 1);
+    fn metadata_from_json() {
+        let metadata = Metadata::new(METADATA, SPEC_EXAMPLE).unwrap();
+        assert!(metadata.is_valid());
+    }
+
+    #[test]
+    fn assertion_round_trip() {
+        let metadata = Metadata::new(METADATA, SPEC_EXAMPLE).unwrap();
+        let assertion = metadata.to_assertion().unwrap();
+        let result = Metadata::from_assertion(&assertion).unwrap();
+        assert_eq!(metadata, result);
+    }
+
+    #[test]
+    fn test_custom_validation() {
+        let mut metadata = Metadata::new("custom.metadata", CUSTOM_METADATA).unwrap();
+        assert!(metadata.is_valid());
+        // c2pa.metadata has restrictions on fields
+        metadata.label = METADATA.to_owned();
+        assert!(!metadata.is_valid());
+    }
+
+    #[test]
+    fn test_cawg_metadata() {
+        let metadata = Metadata::new(CAWG_METADATA, CAWG_METADATA_EXAMPLE).unwrap();
+        assert!(metadata.is_valid());
+    }
+
+    #[test]
+    fn test_field_not_in_context() {
+        let mut metadata = Metadata::new("custom.metadata", MISSING_CONTEXT).unwrap();
+        assert!(!metadata.is_valid());
+        metadata.label = METADATA.to_owned();
+        assert!(!metadata.is_valid());
+    }
+
+    #[test]
+    fn test_uri_is_not_allowed() {
+        let mut metadata = Metadata::new(METADATA, MISMATCH_URI).unwrap();
+        assert!(!metadata.is_valid());
+        // custom metadata does not have restriction on uris
+        metadata.label = "custom.metadata".to_owned();
+        assert!(metadata.is_valid());
+    }
+
+    #[test]
+    fn test_empty_context() {
+        let metadata = Metadata::new(METADATA, EMPTY_CONTEXT).unwrap();
+        assert!(!metadata.is_valid());
     }
 }

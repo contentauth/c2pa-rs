@@ -23,6 +23,7 @@ use std::{
 #[cfg(feature = "file_io")]
 use c2pa::crypto::raw_signature::SigningAlg;
 #[cfg(feature = "file_io")]
+#[allow(deprecated)]
 use c2pa::{
     assertions::{
         c2pa_action, labels::*, Action, Actions, CreativeWork, DataHash, Exif, SchemaDotOrgPerson,
@@ -54,6 +55,8 @@ fn builder_from_source<S: AsRef<Path>>(source: S) -> Result<Builder> {
     );
 
     // build a creative work assertion
+    // TO DO: Remove this example.
+    #[allow(deprecated)]
     let creative_work =
         CreativeWork::new().add_author(SchemaDotOrgPerson::new().set_name("me")?)?;
 
@@ -118,7 +121,7 @@ fn user_data_hash_with_sdk_hashing() -> Result<()> {
 
     // we need to add a data hash that excludes the manifest
     let mut dh = DataHash::new("my_manifest", "sha265");
-    let hr = HashRange::new(manifest_pos, placeholder_manifest.len());
+    let hr = HashRange::new(manifest_pos as u64, placeholder_manifest.len() as u64);
     dh.add_exclusion(hr.clone());
 
     // Hash the bytes excluding the manifest we inserted
@@ -176,7 +179,7 @@ fn user_data_hash_with_user_hashing() -> Result<()> {
     // Figure out where you want to put the manifest, let's put it at the beginning of the JPEG as first segment
     // we will need to add a data hash that excludes the manifest
     let mut dh = DataHash::new("my_manifest", "sha265");
-    let hr = HashRange::new(2, placeholder_manifest.len());
+    let hr = HashRange::new(2, placeholder_manifest.len() as u64);
     dh.add_exclusion(hr);
 
     // since the only thing we are excluding in this example is the manifest we can just hash all the bytes

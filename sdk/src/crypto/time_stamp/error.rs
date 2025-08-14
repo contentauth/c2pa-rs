@@ -36,6 +36,10 @@ pub enum TimeStampError {
     #[error("time stamp contains an unsupported algorithm")]
     UnsupportedAlgorithm,
 
+    /// The time stamp authority is not on trust list
+    #[error("time stamp authority is untrusted")]
+    Untrusted,
+
     /// An error was encountered when decoding the time stamp response.
     #[error("decode error ({0})")]
     DecodeError(String),
@@ -49,8 +53,8 @@ pub enum TimeStampError {
     NonceMismatch,
 
     /// The time stamp service responded with an error condition.
-    #[error("service responded with an HTTP error (status = {0}, content-type = {1})")]
-    HttpErrorResponse(u16, String),
+    #[error("service responded with an HTTP error (status = {0}, content-type = {1:?})")]
+    HttpErrorResponse(u16, Option<String>),
 
     /// Unable to complete the HTTPS time stamp request.
     ///

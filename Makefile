@@ -18,18 +18,18 @@ check-format:
 
 check-docs:
 	cargo doc --no-deps --workspace --features="file_io"
+
 clippy:
 	cargo clippy --features="file_io" --all-targets -- -D warnings
 
 test-local:
 	cargo test --features="file_io, fetch_remote_manifests, add_thumbnails, v1_api" --all-targets
-# Builds and views documentation
 
 test-wasm:
-	cd sdk && wasm-pack test --node -- --no-default-features --features="rust_native_crypto"
+	cd sdk && wasm-pack test --node -- --no-default-features --features="rust_native_crypto, fetch_remote_manifests"
 
 test-wasm-web:
-	cd sdk && wasm-pack test --chrome --headless -- --no-default-features --features="rust_native_crypto"
+	cd sdk && wasm-pack test --chrome --headless -- --no-default-features --features="rust_native_crypto, fetch_remote_manifests"
 
 # WASI testing requires upstream llvm clang (not XCode), wasmtime, and the target wasm32-wasip2 on the nightly toolchain
 test-wasi:

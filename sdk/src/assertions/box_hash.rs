@@ -40,10 +40,10 @@ pub struct BoxMap {
     pub pad: ByteBuf,
 
     #[serde(skip)]
-    pub range_start: usize,
+    pub range_start: u64,
 
     #[serde(skip)]
-    pub range_len: usize,
+    pub range_len: u64,
 }
 
 /// Helper class to create BoxHash assertion
@@ -106,7 +106,7 @@ impl BoxHash {
 
             // build up current inclusion, consuming all names in this BoxMap
             let mut skip_c2pa = false;
-            let mut inclusion = HashRange::new(0, 0);
+            let mut inclusion = HashRange::new(0u64, 0u64);
             for name in &bm.names {
                 match source_bms.get(source_index) {
                     Some(next_source_bm) => {

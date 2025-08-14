@@ -16,6 +16,7 @@
 
 use std::io::Cursor;
 
+use c2pa_macros::c2pa_test_async;
 #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
 use wasm_bindgen_test::wasm_bindgen_test;
 
@@ -32,16 +33,10 @@ use crate::{
 /// report assertions that do not follow this rule.
 ///
 /// [Section 5.2, “CBOR schema”]: https://cawg.io/identity/1.1-draft/#_cbor_schema
-#[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
-#[cfg_attr(
-    all(target_arch = "wasm32", not(target_os = "wasi")),
-    wasm_bindgen_test
-)]
-#[cfg_attr(target_os = "wasi", wstd::test)]
+#[c2pa_test_async]
 async fn malformed_cbor() {
     let format = "image/jpeg";
     let test_image = include_bytes!("../fixtures/validation_method/malformed_cbor.jpg");
-    const IDENTITY_URI: &str = "self#jumbf=c2pa.assertions/cawg.identity";
 
     let mut test_image = Cursor::new(test_image);
 
@@ -51,7 +46,6 @@ async fn malformed_cbor() {
 
     // Re-parse with identity assertion code should find malformed CBOR error.
     let mut status_tracker = StatusTracker::default();
-    status_tracker.push_current_uri(IDENTITY_URI);
 
     let active_manifest = reader.active_manifest().unwrap();
     let ia_results: Vec<Result<IdentityAssertion, crate::Error>> =
@@ -66,7 +60,7 @@ async fn malformed_cbor() {
 
     let log = &status_tracker.logged_items()[0];
     assert_eq!(log.kind, LogKind::Failure);
-    assert_eq!(log.label, "cawg.identity");
+    assert!(log.label.ends_with("/c2pa.assertions/cawg.identity"));
     assert_eq!(log.description, "invalid CBOR");
     assert_eq!(
         log.validation_status.as_ref().unwrap().as_ref(),
@@ -76,12 +70,7 @@ async fn malformed_cbor() {
 
 /// A validator SHALL NOT consider any extra fields not documented in the
 /// `identity` rule during the validation process.
-#[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
-#[cfg_attr(
-    all(target_arch = "wasm32", not(target_os = "wasi")),
-    wasm_bindgen_test
-)]
-#[cfg_attr(target_os = "wasi", wstd::test)]
+#[c2pa_test_async]
 async fn extra_fields() {
     // The test asset `extra_field.jpg` was written using a temporarily modified
     // version of this SDK that generated an `other_stuff` string value at the top
@@ -89,7 +78,6 @@ async fn extra_fields() {
 
     let format = "image/jpeg";
     let test_image = include_bytes!("../fixtures/validation_method/extra_field.jpg");
-    const IDENTITY_URI: &str = "self#jumbf=c2pa.assertions/cawg.identity";
     let mut test_image = Cursor::new(test_image);
 
     // Initial read with default `Reader` should pass without issues.
@@ -98,7 +86,6 @@ async fn extra_fields() {
 
     // Re-parse with identity assertion code should find malformed CBOR error.
     let mut status_tracker = StatusTracker::default();
-    status_tracker.push_current_uri(IDENTITY_URI);
 
     let active_manifest = reader.active_manifest().unwrap();
     let ia_results: Vec<Result<IdentityAssertion, crate::Error>> =
@@ -138,12 +125,7 @@ async fn extra_fields() {
 /// entry must appear in the `assertions` entry.) The
 /// `cawg.identity.assertion.mismatch` error code SHALL be used to report
 /// violations of this rule.
-#[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
-#[cfg_attr(
-    all(target_arch = "wasm32", not(target_os = "wasi")),
-    wasm_bindgen_test
-)]
-#[cfg_attr(target_os = "wasi", wstd::test)]
+#[c2pa_test_async]
 async fn assertion_not_in_claim_v1() {
     // The test asset `extra_assertion_claim_v1.jpg` was written using a temporarily
     // modified version of this SDK that incorrectly added an extra hashed URI to
@@ -151,8 +133,6 @@ async fn assertion_not_in_claim_v1() {
 
     let format = "image/jpeg";
     let test_image = include_bytes!("../fixtures/validation_method/extra_assertion_claim_v1.jpg");
-
-    const IDENTITY_URI: &str = "self#jumbf=c2pa.assertions/cawg.identity";
 
     let mut test_image = Cursor::new(test_image);
 
@@ -162,7 +142,6 @@ async fn assertion_not_in_claim_v1() {
 
     // Re-parse with identity assertion code should find extra assertion error.
     let mut status_tracker = StatusTracker::default();
-    status_tracker.push_current_uri(IDENTITY_URI);
     let active_manifest = reader.active_manifest().unwrap();
     let ia_results: Vec<Result<IdentityAssertion, crate::Error>> =
         IdentityAssertion::from_manifest(active_manifest, &mut status_tracker).collect();
@@ -202,8 +181,14 @@ async fn assertion_not_in_claim_v1() {
 
     let log = &status_tracker.logged_items()[0];
     assert_eq!(log.kind, LogKind::Failure);
-    assert_eq!(log.label, IDENTITY_URI);
+
+    assert_eq!(
+        log.label,
+        "self#jumbf=/c2pa/test:urn:uuid:4baf4dc3-c464-4c70-902b-d28d832a29e3/c2pa.assertions/cawg.identity"
+    );
+
     assert_eq!(log.description, "referenced assertion not in claim");
+
     assert_eq!(
         log.validation_status.as_ref().unwrap().as_ref(),
         "cawg.identity.assertion.mismatch"
@@ -223,12 +208,7 @@ async fn assertion_not_in_claim_v1() {
 // entry must appear in the `assertions` entry.) The
 // `cawg.identity.assertion.mismatch` error code SHALL be used to report
 // violations of this rule.
-// #[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
-// #[cfg_attr(
-//     all(target_arch = "wasm32", not(target_os = "wasi")),
-//     wasm_bindgen_test
-// )]
-// #[cfg_attr(target_os = "wasi", wstd::test)]
+// #[c2pa_test_async]
 // #[ignore]
 // async fn assertion_not_in_claim_v2() {
 //     todo!("Generate a suitable V2 asset with an extra assertion");
@@ -238,12 +218,7 @@ async fn assertion_not_in_claim_v1() {
 /// `signer_payload.referenced_assertions` is duplicated. The
 /// `cawg.identity.assertion.duplicate` error code SHALL be used to report
 /// violations of this rule.
-#[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
-#[cfg_attr(
-    all(target_arch = "wasm32", not(target_os = "wasi")),
-    wasm_bindgen_test
-)]
-#[cfg_attr(target_os = "wasi", wstd::test)]
+#[c2pa_test_async]
 async fn duplicate_assertion_reference() {
     // The test asset `duplicate_assertion_reference.jpg` was written using a
     // temporarily modified version of this SDK that incorrectly added a
@@ -253,8 +228,6 @@ async fn duplicate_assertion_reference() {
     let test_image =
         include_bytes!("../fixtures/validation_method/duplicate_assertion_reference.jpg");
 
-    const IDENTITY_URI: &str = "self#jumbf=c2pa.assertions/cawg.identity";
-
     let mut test_image = Cursor::new(test_image);
 
     // Initial read with default `Reader` should pass without issues.
@@ -263,7 +236,6 @@ async fn duplicate_assertion_reference() {
 
     // Re-parse with identity assertion code should find extra assertion error.
     let mut status_tracker = StatusTracker::default();
-    status_tracker.push_current_uri(IDENTITY_URI);
     let active_manifest = reader.active_manifest().unwrap();
     let ia_results: Vec<Result<IdentityAssertion, crate::Error>> =
         IdentityAssertion::from_manifest(active_manifest, &mut status_tracker).collect();
@@ -303,8 +275,14 @@ async fn duplicate_assertion_reference() {
 
     let log = &status_tracker.logged_items()[0];
     assert_eq!(log.kind, LogKind::Failure);
-    assert_eq!(log.label, IDENTITY_URI);
+
+    assert_eq!(
+        log.label,
+        "self#jumbf=/c2pa/test:urn:uuid:9b9f27bc-394b-419f-a8d5-81777c9fa76c/c2pa.assertions/cawg.identity"
+    );
+
     assert_eq!(log.description, "multiple references to same assertion");
+
     assert_eq!(
         log.validation_status.as_ref().unwrap().as_ref(),
         "cawg.identity.assertion.duplicate"
@@ -325,12 +303,7 @@ async fn duplicate_assertion_reference() {
 /// missing hard binding assertion.
 ///
 /// [Section 9.2, “Hard bindings”]: https://c2pa.org/specifications/specifications/2.1/specs/C2PA_Specification.html#_hard_bindings
-#[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
-#[cfg_attr(
-    all(target_arch = "wasm32", not(target_os = "wasi")),
-    wasm_bindgen_test
-)]
-#[cfg_attr(target_os = "wasi", wstd::test)]
+#[c2pa_test_async]
 async fn no_hard_binding() {
     // The test asset `duplicate_assertion.jpg` was written using a temporarily
     // modified version of this SDK that incorrectly added a duplicate hashed URI to
@@ -338,8 +311,6 @@ async fn no_hard_binding() {
 
     let format = "image/jpeg";
     let test_image = include_bytes!("../fixtures/validation_method/no_hard_binding.jpg");
-
-    const IDENTITY_URI: &str = "self#jumbf=c2pa.assertions/cawg.identity";
 
     let mut test_image = Cursor::new(test_image);
 
@@ -349,7 +320,6 @@ async fn no_hard_binding() {
 
     // Re-parse with identity assertion code should find extra assertion error.
     let mut status_tracker = StatusTracker::default();
-    status_tracker.push_current_uri(IDENTITY_URI);
     let active_manifest = reader.active_manifest().unwrap();
     let ia_results: Vec<Result<IdentityAssertion, crate::Error>> =
         IdentityAssertion::from_manifest(active_manifest, &mut status_tracker).collect();
@@ -378,8 +348,14 @@ async fn no_hard_binding() {
 
     let log = &status_tracker.logged_items()[0];
     assert_eq!(log.kind, LogKind::Failure);
-    assert_eq!(log.label, IDENTITY_URI);
+
+    assert_eq!(
+        log.label,
+        "self#jumbf=/c2pa/test:urn:uuid:6df39abb-e6b4-49af-a826-ba44b7b248b7/c2pa.assertions/cawg.identity"
+    );
+
     assert_eq!(log.description, "no hard binding assertion");
+
     assert_eq!(
         log.validation_status.as_ref().unwrap().as_ref(),
         "cawg.identity.hard_binding_missing"
@@ -410,6 +386,7 @@ mod invalid_sig_type {
     #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
     use wasm_bindgen_test::wasm_bindgen_test;
 
+    use super::*;
     use crate::{
         identity::{
             claim_aggregation::IcaSignatureVerifier, x509::X509SignatureVerifier, IdentityAssertion,
@@ -418,19 +395,12 @@ mod invalid_sig_type {
         Reader,
     };
 
-    #[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
-    #[cfg_attr(
-        all(target_arch = "wasm32", not(target_os = "wasi")),
-        wasm_bindgen_test
-    )]
-    #[cfg_attr(target_os = "wasi", wstd::test)]
+    #[c2pa_test_async]
     async fn x509_signature_verifier() {
         // The test asset `invalid_sig_type.jpg` was written using a temporarily
         // modified version of this SDK that added a proof-of-concept signature type
         // that's not intended for general consumption. The validator in this test case
         // is not configured to read that signature type.
-        const IDENTITY_URI: &str = "self#jumbf=c2pa.assertions/cawg.identity";
-
         let format = "image/jpeg";
         let test_image = include_bytes!("../fixtures/validation_method/invalid_sig_type.jpg");
 
@@ -442,7 +412,6 @@ mod invalid_sig_type {
 
         // Re-parse with identity assertion code should find extra assertion error.
         let mut status_tracker = StatusTracker::default();
-        status_tracker.push_current_uri(IDENTITY_URI);
 
         let active_manifest = reader.active_manifest().unwrap();
         let ia_results: Vec<Result<IdentityAssertion, crate::Error>> =
@@ -485,20 +454,21 @@ mod invalid_sig_type {
 
         let log = &status_tracker.logged_items()[0];
         assert_eq!(log.kind, LogKind::Failure);
-        assert_eq!(log.label, IDENTITY_URI);
+
+        assert_eq!(
+            log.label,
+            "self#jumbf=/c2pa/test:urn:uuid:0f746efd-5e87-43d9-9032-bfc0e2b0e98f/c2pa.assertions/cawg.identity"
+        );
+
         assert_eq!(log.description, "unsupported signature type");
+
         assert_eq!(
             log.validation_status.as_ref().unwrap().as_ref(),
             "cawg.identity.sig_type.unknown"
         );
     }
 
-    #[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
-    #[cfg_attr(
-        all(target_arch = "wasm32", not(target_os = "wasi")),
-        wasm_bindgen_test
-    )]
-    #[cfg_attr(target_os = "wasi", wstd::test)]
+    #[c2pa_test_async]
     async fn ica_verifier() {
         // The test asset `invalid_sig_type.jpg` was written using a temporarily
         // modified version of this SDK that added a proof-of-concept signature type
@@ -507,7 +477,6 @@ mod invalid_sig_type {
 
         let format = "image/jpeg";
         let test_image = include_bytes!("../fixtures/validation_method/invalid_sig_type.jpg");
-        const IDENTITY_URI: &str = "self#jumbf=c2pa.assertions/cawg.identity";
 
         let mut test_image = Cursor::new(test_image);
 
@@ -517,7 +486,6 @@ mod invalid_sig_type {
 
         // Re-parse with identity assertion code should find extra assertion error.
         let mut status_tracker = StatusTracker::default();
-        status_tracker.push_current_uri(IDENTITY_URI);
         let active_manifest = reader.active_manifest().unwrap();
         let ia_results: Vec<Result<IdentityAssertion, crate::Error>> =
             IdentityAssertion::from_manifest(active_manifest, &mut status_tracker).collect();
@@ -559,8 +527,14 @@ mod invalid_sig_type {
 
         let log = &status_tracker.logged_items()[0];
         assert_eq!(log.kind, LogKind::Failure);
-        assert_eq!(log.label, IDENTITY_URI);
+
+        assert_eq!(
+            log.label,
+            "self#jumbf=/c2pa/test:urn:uuid:0f746efd-5e87-43d9-9032-bfc0e2b0e98f/c2pa.assertions/cawg.identity"
+        );
+
         assert_eq!(log.description, "unsupported signature type");
+
         assert_eq!(
             log.validation_status.as_ref().unwrap().as_ref(),
             "cawg.identity.sig_type.unknown"
@@ -571,12 +545,7 @@ mod invalid_sig_type {
 /// The `pad1` and `pad2` fields of an identity assertion MUST contain only
 /// zero-value (`0x00`) bytes. The `cawg.identity.pad.invalid` error code SHALL
 /// be used to report assertions that contain other values in these fields.
-#[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
-#[cfg_attr(
-    all(target_arch = "wasm32", not(target_os = "wasi")),
-    wasm_bindgen_test
-)]
-#[cfg_attr(target_os = "wasi", wstd::test)]
+#[c2pa_test_async]
 async fn pad1_invalid() {
     // The test asset `pad1_invalid.jpg` was written using a temporarily
     // modified version of this SDK that incorrectly placed a non-zero value in the
@@ -584,7 +553,6 @@ async fn pad1_invalid() {
 
     let format = "image/jpeg";
     let test_image = include_bytes!("../fixtures/validation_method/pad1_invalid.jpg");
-    const IDENTITY_URI: &str = "self#jumbf=c2pa.assertions/cawg.identity";
     let mut test_image = Cursor::new(test_image);
 
     // Initial read with default `Reader` should pass without issues.
@@ -593,8 +561,6 @@ async fn pad1_invalid() {
 
     // Re-parse with identity assertion code should find invalid pad error.
     let mut status_tracker = StatusTracker::default();
-    status_tracker.push_current_uri(IDENTITY_URI);
-
     let active_manifest = reader.active_manifest().unwrap();
     let ia_results: Vec<Result<IdentityAssertion, crate::Error>> =
         IdentityAssertion::from_manifest(active_manifest, &mut status_tracker).collect();
@@ -629,7 +595,12 @@ async fn pad1_invalid() {
 
     let log = &status_tracker.logged_items()[0];
     assert_eq!(log.kind, LogKind::Failure);
-    assert_eq!(log.label, IDENTITY_URI);
+
+    assert_eq!(
+        log.label,
+        "self#jumbf=/c2pa/test:urn:uuid:8d938dd8-d194-4d24-a0bf-55aae143b692/c2pa.assertions/cawg.identity"
+    );
+
     assert_eq!(log.description, "invalid value in pad fields");
     assert_eq!(
         log.validation_status.as_ref().unwrap().as_ref(),
@@ -644,12 +615,7 @@ async fn pad1_invalid() {
     );
 }
 
-#[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
-#[cfg_attr(
-    all(target_arch = "wasm32", not(target_os = "wasi")),
-    wasm_bindgen_test
-)]
-#[cfg_attr(target_os = "wasi", wstd::test)]
+#[c2pa_test_async]
 async fn pad2_invalid() {
     // The test asset `pad1_invalid.jpg` was written using a temporarily
     // modified version of this SDK that incorrectly placed a non-zero value in the
@@ -657,7 +623,6 @@ async fn pad2_invalid() {
 
     let format = "image/jpeg";
     let test_image = include_bytes!("../fixtures/validation_method/pad2_invalid.jpg");
-    const IDENTITY_URI: &str = "self#jumbf=c2pa.assertions/cawg.identity";
 
     let mut test_image = Cursor::new(test_image);
 
@@ -667,7 +632,6 @@ async fn pad2_invalid() {
 
     // Re-parse with identity assertion code should find invalid pad error.
     let mut status_tracker = StatusTracker::default();
-    status_tracker.push_current_uri(IDENTITY_URI);
 
     let active_manifest = reader.active_manifest().unwrap();
     let ia_results: Vec<Result<IdentityAssertion, crate::Error>> =
@@ -703,8 +667,14 @@ async fn pad2_invalid() {
 
     let log = &status_tracker.logged_items()[0];
     assert_eq!(log.kind, LogKind::Failure);
-    assert_eq!(log.label, IDENTITY_URI);
+
+    assert_eq!(
+        log.label,
+        "self#jumbf=/c2pa/test:urn:uuid:d686f86c-63d9-43e9-822c-7789acefe102/c2pa.assertions/cawg.identity"
+    );
+
     assert_eq!(log.description, "invalid value in pad fields");
+
     assert_eq!(
         log.validation_status.as_ref().unwrap().as_ref(),
         "cawg.identity.pad.invalid"

@@ -20,7 +20,7 @@ pub use certificate_info::CertificateInfo;
 
 mod certificate_trust_policy;
 pub use certificate_trust_policy::{
-    CertificateTrustError, CertificateTrustPolicy, InvalidCertificateError,
+    CertificateTrustError, CertificateTrustPolicy, InvalidCertificateError, TrustAnchorType,
 };
 
 mod certificate_profile;
@@ -32,7 +32,8 @@ mod error;
 pub use error::CoseError;
 
 mod ocsp;
-pub use ocsp::{check_ocsp_status, check_ocsp_status_async, OcspFetchPolicy};
+pub(crate) use ocsp::fetch_and_check_ocsp_response;
+pub use ocsp::{check_ocsp_status, check_ocsp_status_async, get_ocsp_der, OcspFetchPolicy};
 
 mod sign;
 pub use sign::{sign, sign_async, sign_v2_embedded, sign_v2_embedded_async, CosePayload};

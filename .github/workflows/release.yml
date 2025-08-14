@@ -34,6 +34,58 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
           CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_IO_SECRET }}
 
+      - name: Debug release-plz outputs
+        env:
+          PR: ${{ steps.release-plz.outputs.pr }}
+        run: |
+          echo "=== Release-plz outputs ==="
+          echo "RP output: $PR"
+          echo "========================="
+
+      - name: Force update of c2pa_c_ffi if only c2pa-rs is updated
+        if: ${{ contains(steps.release-plz.outputs.pr, '"c2pa"') && !contains(steps.release-plz.outputs.pr, 'c2pa-c-ffi') }}
+        env:
+          PR: ${{ steps.release-plz.outputs.pr }}
+        run: |
+          # Ensure we're on a clean main branch
+          git checkout main
+          git pull origin main
+          
+          # Extract the new version of c2pa from the release PR output JSON
+          NEW_VERSION=$(echo "$PR" | jq -r '.releases[] | select(.package_name == "c2pa") | .version')
+          
+          # Add a comment to the lib.rs file to trigger a change
+          echo "// Updated to use c2pa crate version $NEW_VERSION" >> c2pa_c_ffi/src/lib.rs
+          
+          # Configure git and commit the changes
+          git config user.name "CAI Open Source Builds"
+          git config user.email "caiopensrc@adobe.com"
+          git add c2pa_c_ffi/src/lib.rs
+          git commit -m "fix: Pick up latest c2pa-rs build"
+          git push origin main
+
+      - name: Force update of c2patool if only c2pa-rs is updated
+        if: ${{ contains(steps.release-plz.outputs.pr, '"c2pa"') && !contains(steps.release-plz.outputs.pr, 'c2patool') }}
+        env:
+          PR: ${{ steps.release-plz.outputs.pr }}
+        run: |
+          # Ensure we're on a clean main branch
+          git checkout main
+          git pull origin main
+          
+          # Extract the new version of c2pa from the release PR output JSON
+          NEW_VERSION=$(echo "$PR" | jq -r '.releases[] | select(.package_name == "c2pa") | .version')
+          
+          # Add a comment to the lib.rs file to trigger a change
+          echo "// Updated to use c2pa crate version $NEW_VERSION" >> cli/src/lib.rs
+          
+          # Configure git and commit the changes
+          git config user.name "CAI Open Source Builds"
+          git config user.email "caiopensrc@adobe.com"
+          git add cli/src/lib.rs
+          git commit -m "fix: Pick up latest c2pa-rs build"
+          git push origin main
+
       - name: Clean up stale release-plz branches
         run: |
           git --no-pager branch --remote |\

@@ -35,14 +35,15 @@ use crate::crypto::{
 use crate::signer::RemoteSigner;
 use crate::{
     assertions::{
-        labels, Action, Actions, Ingredient, Relationship, ReviewRating, SchemaDotOrg, Thumbnail,
-        User,
+        labels, Action, Actions, DigitalSourceType, EmbeddedData, Ingredient, Relationship,
+        ReviewRating, SchemaDotOrg, Thumbnail, User,
     },
     asset_io::CAIReadWrite,
     claim::Claim,
     crypto::{cose::CertificateTrustPolicy, raw_signature::SigningAlg},
     hash_utils::Hasher,
     jumbf_io::get_assetio_handler,
+    resource_store::UriOrResource,
     salt::DefaultSalt,
     store::Store,
     AsyncSigner, ClaimGeneratorInfo, Result,
@@ -102,28 +103,32 @@ pub(crate) fn static_test_v1_uuid() -> &'static str {
 /// Creates a claim for testing (v2)
 pub fn create_test_claim() -> Result<Claim> {
     // First create and add a claim thumbnail (we don't need to reference this anywhere)
-    let mut claim = Claim::new("adobe unit test", Some("adobe"), 2);
+    let mut claim = Claim::new("contentauth unit test", Some("contentauth"), 2);
+
+    // Add an icon for the claim_generator
+    let icon = EmbeddedData::new(labels::ICON, "image/jpeg", vec![0xde, 0xad, 0xbe, 0xef]);
+    let icon_ref = claim.add_assertion_with_salt(&icon, &DefaultSalt::default())?;
 
     let mut cg_info = ClaimGeneratorInfo::new("test app");
     cg_info.version = Some("2.3.4".to_string());
-    // cg_info.icon = Some(UriOrResource::HashedUri(HashedUri::new(
-    //     "self#jumbf=c2pa.databoxes.data_box".to_string(),
-    //     None,
-    //     b"hashed",
-    // )));
+    cg_info.icon = Some(UriOrResource::HashedUri(icon_ref));
     cg_info.insert("something", "else");
 
     claim.add_claim_generator_info(cg_info);
 
     // Create a thumbnail for the claim
-    let claim_thumbnail =
-        Thumbnail::new(labels::JPEG_CLAIM_THUMBNAIL, vec![0xde, 0xad, 0xbe, 0xef]);
+    let claim_thumbnail = EmbeddedData::new(
+        labels::CLAIM_THUMBNAIL,
+        "image/jpeg",
+        vec![0xde, 0xad, 0xbe, 0xef],
+    );
     let _claim_thumbnail_ref =
         claim.add_assertion_with_salt(&claim_thumbnail, &DefaultSalt::default())?;
 
     // Create and add a thumbnail for an ingredient
-    let ingredient_thumbnail = Thumbnail::new(
-        labels::JPEG_INGREDIENT_THUMBNAIL,
+    let ingredient_thumbnail = EmbeddedData::new(
+        labels::INGREDIENT_THUMBNAIL,
+        "image/jpeg",
         vec![0xde, 0xad, 0xbe, 0xef],
     );
     let ingredient_thumbnail_ref =
@@ -143,8 +148,7 @@ pub fn create_test_claim() -> Result<Claim> {
         .set_thumbnail(Some(&ingredient_thumbnail_ref));
     let ingredient_ref2 = claim.add_assertion_with_salt(&ingredient2, &DefaultSalt::default())?;
 
-    let created_action =
-        Action::new("c2pa.created").set_source_type("http://c2pa.org/digitalsourcetype/empty");
+    let created_action = Action::new("c2pa.created").set_source_type(DigitalSourceType::Empty);
 
     let placed_action = Action::new("c2pa.placed")
         .set_parameter("ingredients", vec![ingredient_ref, ingredient_ref2])?;
@@ -372,7 +376,8 @@ where
     input.rewind().unwrap();
 
     // write before
-    let mut before = vec![0u8; sof.range_start];
+    let box_len: usize = sof.range_start.try_into()?;
+    let mut before = vec![0u8; box_len];
     input.read_exact(before.as_mut_slice()).unwrap();
     if let Some(hasher) = hasher.as_deref_mut() {
         hasher.update(&before);
@@ -393,7 +398,7 @@ where
     // save to output file
     output_file.write_all(&out_stream.into_inner()).unwrap();
 
-    Ok(sof.range_start)
+    Ok(box_len)
 }
 
 pub(crate) struct TestGoodSigner {}
