@@ -14,7 +14,8 @@
 #[cfg(feature = "file_io")]
 use std::path::{Path, PathBuf};
 use std::{
-    collections::HashMap, hint::black_box, io::{Read, Seek, Write}
+    collections::HashMap,
+    io::{Read, Seek, Write},
 };
 
 use async_generic::async_generic;
