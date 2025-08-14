@@ -688,7 +688,6 @@ impl Reader {
                 }
                 Err(e) => {
                     validation_results.add_status(ValidationStatus::from_error(&e));
-                    return Err(e);
                 }
             };
         }

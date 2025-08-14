@@ -1582,7 +1582,7 @@ mod tests {
 
         let format = CString::new("image/jpeg").unwrap();
         let result: *mut C2paReader = unsafe { c2pa_reader_from_stream(format.as_ptr(), &mut stream) };
-        println!("## Returned C2paReader: {:?}", result);
+        assert!(!result.is_null());
         TestC2paStream::drop_c_stream(stream);
     }
 
