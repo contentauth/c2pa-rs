@@ -48,7 +48,7 @@
 //!
 //! ## Example: Adding a Manifest to a file
 //!
-//! ```
+//! ```ignore-wasm32
 //! # use c2pa::Result;
 //! use std::path::PathBuf;
 //!
@@ -136,11 +136,12 @@ pub mod validation_status;
 pub mod soft_binding;
 
 // Public exports
+pub use assertions::DigitalSourceType;
 #[doc(inline)]
 pub use assertions::Relationship;
 #[cfg(feature = "v1_api")]
 pub use asset_io::{CAIRead, CAIReadWrite};
-pub use builder::{Builder, DigitalSourceType, ManifestDefinition};
+pub use builder::{Builder, ManifestDefinition};
 pub use callback_signer::{CallbackFunc, CallbackSigner};
 pub use claim_generator_info::ClaimGeneratorInfo;
 // pub use dynamic_assertion::{

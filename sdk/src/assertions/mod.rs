@@ -14,10 +14,8 @@
 //! Assertion helpers to build, validate, and parse assertions.
 
 mod actions;
-#[allow(unused)]
-pub(crate) use actions::source_type;
 pub(crate) use actions::V2_DEPRECATED_ACTIONS;
-pub use actions::{c2pa_action, Action, ActionTemplate, Actions, SoftwareAgent};
+pub use actions::{c2pa_action, Action, ActionTemplate, Actions, DigitalSourceType, SoftwareAgent};
 
 mod asset_reference;
 pub use asset_reference::AssetReference;
@@ -36,7 +34,11 @@ pub use box_hash::{BoxHash, BoxMap, C2PA_BOXHASH};
 mod data_hash;
 pub use data_hash::DataHash;
 
+mod certificate_status;
+pub(crate) use certificate_status::CertificateStatus;
+
 mod creative_work;
+#[allow(deprecated)]
 pub use creative_work::CreativeWork;
 
 mod exif;
@@ -58,6 +60,7 @@ pub use assertion_metadata::{
 };
 
 mod schema_org;
+#[allow(deprecated)]
 pub use schema_org::{SchemaDotOrg, SchemaDotOrgPerson};
 
 mod thumbnail;
