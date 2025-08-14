@@ -272,6 +272,15 @@ hex-literal = "0.4.1"
 jumbf = "0.4.0"
 c2pa_macros = { path = "../macros" }
 mockall = "0.13.1"
+criterion = { package = "codspeed-criterion-compat", version = "*" }
+
+[[bench]]
+name = "signing"
+harness = false
+
+[[bench]]
+name = "reading"
+harness = false
 
 [target.'cfg(all(target_arch = "wasm32", not(target_os = "wasi")))'.dev-dependencies]
 wasm-bindgen-test = "0.3.45"
