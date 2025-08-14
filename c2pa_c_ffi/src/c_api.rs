@@ -509,6 +509,9 @@ pub unsafe extern "C" fn c2pa_reader_from_stream(
     let format = from_cstr_or_return_null!(format);
 
     let result = C2paReader::from_stream(&format, &mut (*stream));
+
+    println!("c2pa_reader_from_stream: result: {:?}", result);
+    //return_boxed!(result)
     return_boxed!(post_validate(result))
 }
 
@@ -1564,6 +1567,18 @@ mod tests {
         assert!(!remote_url.is_null());
         let remote_url = unsafe { std::ffi::CStr::from_ptr(remote_url) };
         assert_eq!(remote_url, c"https://cai-manifests.adobe.com/manifests/adobe-urn-uuid-5f37e182-3687-462e-a7fb-573462780391");
+        TestC2paStream::drop_c_stream(stream);
+    }
+
+    // cargo test test_reader_file_with_wrong_label -- --nocapture
+    #[test]
+    fn test_reader_file_with_wrong_label() {
+        let mut stream = TestC2paStream::new(include_bytes!(fixture_path!("adobe-20220124-E-clm-CAICAI.jpg")).to_vec())
+            .into_c_stream();
+
+        let format = CString::new("image/jpeg").unwrap();
+        let result: *mut C2paReader = unsafe { c2pa_reader_from_stream(format.as_ptr(), &mut stream) };
+        println!("## Returned C2paReader: {:?}", result);
         TestC2paStream::drop_c_stream(stream);
     }
 

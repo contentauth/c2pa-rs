@@ -130,13 +130,13 @@ impl Reader {
     pub fn from_stream(format: &str, mut stream: impl Read + Seek + Send) -> Result<Reader> {
         let verify = get_settings_value::<bool>("verify.verify_after_reading")?; // defaults to true
         let mut validation_log = StatusTracker::default();
-
         let store = if _sync {
             Store::from_stream(format, &mut stream, verify, &mut validation_log)
         } else {
             Store::from_stream_async(format, &mut stream, verify, &mut validation_log).await
         }?;
 
+        println!("reader, from_store: ok!");
         Self::from_store(store, &validation_log)
     }
 
