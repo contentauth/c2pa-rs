@@ -339,7 +339,7 @@ impl IngredientDeltaValidationResult {
 ///
 /// See [§15.2.1, “Standard Status Codes.”]
 ///
-/// [§15.2.1, “Standard Status Codes.”]: https://c2pa.org/specifications/specifications/2.1/specs/C2PA_Specification.html#_standard_status_codes
+/// [§15.2.1, “Standard Status Codes.”]: https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_standard_status_codes
 pub mod validation_codes {
     use crate::status_tracker::LogKind;
 

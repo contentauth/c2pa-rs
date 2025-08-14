@@ -34,6 +34,9 @@ pub use box_hash::{BoxHash, BoxMap, C2PA_BOXHASH};
 mod data_hash;
 pub use data_hash::DataHash;
 
+mod certificate_status;
+pub(crate) use certificate_status::CertificateStatus;
+
 mod creative_work;
 #[allow(deprecated)]
 pub use creative_work::CreativeWork;
