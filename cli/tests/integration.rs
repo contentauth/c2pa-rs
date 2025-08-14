@@ -585,17 +585,12 @@ fn tool_tree() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-// DO NOT MERGE with this test disabled. The problem is that the
-// underlying CAWG code now enforces trust list checks on any X.509
-// certificate used in an identity assertion. I _think_ this test
-// asset uses a test-quality cert and that isn't enabled by default.
-// Will need to consult with Gavin on a new fix approach before
-// merging.
-#[ignore]
 #[test]
-// c2patool C_with_CAWG_data.jpg
+// c2patool --settings .../trust/cawg_test_settings.toml C_with_CAWG_data.jpg
 fn tool_read_image_with_cawg_data() -> Result<(), Box<dyn Error>> {
     Command::cargo_bin("c2patool")?
+        .arg("--settings")
+        .arg(fixture_path("trust/cawg_test_settings.toml"))
         .arg(fixture_path("C_with_CAWG_data.jpg"))
         .assert()
         .success()
@@ -605,17 +600,12 @@ fn tool_read_image_with_cawg_data() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-// DO NOT MERGE with this test disabled. The problem is that the
-// underlying CAWG code now enforces trust list checks on any X.509
-// certificate used in an identity assertion. I _think_ this test
-// asset uses a test-quality cert and that isn't enabled by default.
-// Will need to consult with Gavin on a new fix approach before
-// merging.
-#[ignore]
 #[test]
-// c2patool --detailed C_with_CAWG_data.jpg
+// c2patool --settings .../trust/cawg_test_settings.toml --detailed C_with_CAWG_data.jpg
 fn tool_read_image_with_details_with_cawg_data() -> Result<(), Box<dyn Error>> {
     Command::cargo_bin("c2patool")?
+        .arg("--settings")
+        .arg(fixture_path("trust/cawg_test_settings.toml"))
         .arg(fixture_path("C_with_CAWG_data.jpg"))
         .arg("--detailed")
         .assert()
