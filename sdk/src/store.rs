@@ -4789,7 +4789,7 @@ pub mod tests {
     #![allow(clippy::panic)]
     #![allow(clippy::unwrap_used)]
 
-    use std::{fs, io::Write};
+    use std::{fs, io::Write, str::FromStr};
 
     use memchr::memmem;
     use serde::Serialize;
@@ -6981,7 +6981,8 @@ pub mod tests {
 
     #[test]
     fn test_display() {
-        let ap = fixture_path("CA.jpg");
+        //let ap = fixture_path("CA.jpg");
+        let ap = PathBuf::from_str("/Users/mfisher/Downloads/Screenshot 2025-07-15 at 3.49.35 PM 2025-08-08 - 14.05.35 - Cr.png").unwrap();
 
         let mut report = StatusTracker::default();
         let store = Store::load_from_asset(&ap, true, &mut report).expect("load_from_asset");

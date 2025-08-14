@@ -194,6 +194,7 @@ pub const ASSET_REFERENCE: &str = "c2pa.asset-ref";
 ///
 /// See <https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_multi_asset_hash>.
 pub const PART: &str = ".part";
+
 /// Label prefix for a metadata assertion.
 ///
 /// See <https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_metadata>.
