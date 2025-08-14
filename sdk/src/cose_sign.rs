@@ -150,7 +150,9 @@ fn signing_cert_valid(signing_cert: &[u8]) -> Result<()> {
     let mut cose_log = StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
     let mut passthrough_cap = CertificateTrustPolicy::default();
 
-    // allow user EKUs through this check if configured
+    // Allow user EKUs through this check if configured.
+    // TODO (https://github.com/contentauth/c2pa-rs/issues/1313):
+    // Need to determine if we're using C2PA or CAWG trust config here.
     if let Ok(Some(trust_config)) = get_settings_value::<Option<String>>("trust.trust_config") {
         passthrough_cap.add_valid_ekus(trust_config.as_bytes());
     }

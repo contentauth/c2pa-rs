@@ -109,7 +109,7 @@ mod tests {
     use wasm_bindgen_test::wasm_bindgen_test;
 
     use crate::{
-        crypto::raw_signature,
+        crypto::{cose::Verifier, raw_signature},
         identity::{
             builder::{AsyncIdentityAssertionBuilder, AsyncIdentityAssertionSigner},
             tests::fixtures::{cert_chain_and_private_key_for_alg, manifest_json, parent_json},
@@ -177,7 +177,10 @@ mod tests {
         drop(ia_iter);
 
         // And that identity assertion should be valid for this manifest.
-        let x509_verifier = X509SignatureVerifier {};
+        let x509_verifier = X509SignatureVerifier {
+            cose_verifier: Verifier::IgnoreProfileAndTrustPolicy,
+        };
+
         let sig_info = ia
             .validate(manifest, &mut st, &x509_verifier)
             .await

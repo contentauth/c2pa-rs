@@ -12,6 +12,7 @@
 // each license.
 
 use std::{
+    borrow::Cow,
     collections::BTreeMap,
     fmt::{Debug, Formatter},
 };
@@ -20,6 +21,7 @@ use serde::{Deserialize, Serialize};
 use serde_bytes::ByteBuf;
 
 use crate::{
+    crypto::cose::{CertificateTrustPolicy, Verifier},
     dynamic_assertion::PartialClaim,
     identity::{
         claim_aggregation::IcaSignatureVerifier,
@@ -36,6 +38,7 @@ use crate::{
     },
     jumbf::labels::to_assertion_uri,
     log_current_item, log_item,
+    settings::get_settings_value,
     status_tracker::StatusTracker,
     Manifest, Reader,
 };
@@ -325,7 +328,30 @@ impl IdentityAssertion {
         let sig_type = self.signer_payload.sig_type.as_str();
 
         if sig_type == "cawg.x509.cose" {
-            let verifier = X509SignatureVerifier {};
+            let mut ctp = CertificateTrustPolicy::default();
+
+            // Load the trust handler settings. Don't worry about status as these
+            // are checked during setting generation.
+
+            if let Ok(Some(ta)) = get_settings_value::<Option<String>>("cawg_trust.trust_anchors") {
+                let _ = ctp.add_trust_anchors(ta.as_bytes());
+            }
+
+            if let Ok(Some(pa)) = get_settings_value::<Option<String>>("cawg_trust.user_anchors") {
+                let _ = ctp.add_user_trust_anchors(pa.as_bytes());
+            }
+
+            if let Ok(Some(tc)) = get_settings_value::<Option<String>>("cawg_trust.trust_config") {
+                ctp.add_valid_ekus(tc.as_bytes());
+            }
+
+            if let Ok(Some(al)) = get_settings_value::<Option<String>>("cawg_trust.allowed_list") {
+                let _ = ctp.add_end_entity_credentials(al.as_bytes());
+            }
+
+            let verifier = X509SignatureVerifier {
+                cose_verifier: Verifier::VerifyTrustPolicy(Cow::Owned(ctp)),
+            };
 
             let result = verifier
                 .check_signature(&self.signer_payload, &self.signature, status_tracker)
