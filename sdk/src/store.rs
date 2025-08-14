@@ -1632,10 +1632,11 @@ impl Store {
                         )?;
                 }
             } else {
-                let descrip = ingredient_assertion.title.unwrap_or("".into());
+                let title = ingredient_assertion.title.unwrap_or("no title".into());
+                let description = format!("{title}: ingredient does not have provenance");
                 log_item!(
-                    format!("{}: ingredient does not have provenance", descrip),
-                    "ingredient had no manifest",
+                    jumbf::labels::to_assertion_uri(claim.label(), &i.label()),
+                    description,
                     "ingredient_checks"
                 )
                 .validation_status(validation_status::INGREDIENT_PROVENANCE_UNKNOWN)
