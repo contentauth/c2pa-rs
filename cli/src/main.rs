@@ -28,8 +28,8 @@ use std::{
 
 use anyhow::{anyhow, bail, Context, Result};
 use c2pa::{
-    format_from_path, identity::validator::CawgValidator, settings::Settings, Builder, ClaimGeneratorInfo, Error,
-    Ingredient, ManifestDefinition, Reader, Signer,
+    format_from_path, identity::validator::CawgValidator, settings::Settings, Builder,
+    ClaimGeneratorInfo, Error, Ingredient, ManifestDefinition, Reader, Signer,
 };
 use clap::{Parser, Subcommand};
 use etcetera::BaseStrategy;
