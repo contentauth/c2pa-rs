@@ -1822,6 +1822,14 @@ mod tests {
     #[test]
     #[cfg(feature = "file_io")]
     fn test_reader_from_file_cawg_identity() {
+        let settings = CString::new(include_bytes!(
+            "../../cli/tests/fixtures/trust/cawg_test_settings.toml"
+        ))
+        .unwrap();
+        let format = CString::new("toml").unwrap();
+        let result = unsafe { c2pa_load_settings(settings.as_ptr(), format.as_ptr()) };
+        assert_eq!(result, 0);
+
         let base = env!("CARGO_MANIFEST_DIR");
         let path =
             CString::new(format!("{base}/../sdk/tests/fixtures/C_with_CAWG_data.jpg")).unwrap();
