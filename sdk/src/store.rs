@@ -69,8 +69,8 @@ use crate::{
         self,
         boxes::*,
         labels::{
-            manifest_label_from_uri, manifest_label_to_parts, to_absolute_uri, to_assertion_uri,
-            to_manifest_uri, ASSERTIONS, CREDENTIALS, DATABOXES, SIGNATURE,
+            manifest_label_from_uri, manifest_label_to_parts, to_assertion_uri, to_manifest_uri,
+            ASSERTIONS, CREDENTIALS, DATABOXES, SIGNATURE,
         },
     },
     jumbf_io::{
@@ -1851,8 +1851,8 @@ impl Store {
             }
         }
 
-        // get the timestamp assertions
         for found_claim in svi.manifest_map.values() {
+            // get the timestamp assertions
             let timestamp_assertions = found_claim.timestamp_assertions();
             for ta in timestamp_assertions {
                 let timestamp_assertion =
