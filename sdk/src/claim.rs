@@ -31,9 +31,12 @@ use crate::{
     },
     assertions::{
         self, c2pa_action,
-        labels::{self, ACTIONS, ASSERTION_STORE, BMFF_HASH, CLAIM_THUMBNAIL, DATABOX_STORE},
+        labels::{
+            self, ACTIONS, ASSERTION_STORE, BMFF_HASH, CLAIM_THUMBNAIL, DATABOX_STORE,
+            METADATA_LABEL_REGEX,
+        },
         Actions, AssertionMetadata, AssetType, BmffHash, BoxHash, DataBox, DataHash, Ingredient,
-        Relationship, V2_DEPRECATED_ACTIONS,
+        Metadata, Relationship, V2_DEPRECATED_ACTIONS,
     },
     asset_io::CAIRead,
     cbor_types::{map_cbor_to_type, value_cbor_to_type},
@@ -2500,7 +2503,7 @@ impl Claim {
                 // 2.d if redacted actions contains a redacted parameter if must be a resolvable reference
                 if action.action() == c2pa_action::REDACTED {
                     if let Some(params) = action.parameters() {
-                        let mut parent_tested = None; // on exists if action actually pointed to an ingredient
+                        let mut parent_tested = None; // only exists if action actually pointed to an ingredient
                         if let Some(v) = params.get("redacted") {
                             let redacted_uri =
                                 value_cbor_to_type::<String>(v).ok_or_else(|| {
@@ -2522,41 +2525,63 @@ impl Claim {
 
                             if let Some(ingredient_label) = manifest_label_from_uri(&redacted_uri) {
                                 // can we find a reference in the ingredient list
-                                if let Some(ingredient) = svi.manifest_map.get(&ingredient_label) {
-                                    // does the assertion exist
-                                    if let Some(readaction_label) =
+                                if let Some(ingredient_claim) =
+                                    svi.manifest_map.get(&ingredient_label)
+                                {
+                                    // The referenced manifest exists, so far so good.
+                                    // now get the assertion label and try to resolve it.
+                                    if let Some(redaction_label) =
                                         assertion_label_from_uri(&redacted_uri)
                                     {
-                                        let (label, instance) =
-                                            Claim::assertion_label_from_link(&readaction_label);
-                                        parent_tested = Some(
-                                            ingredient.get_assertion(&label, instance).is_some(),
-                                        );
-                                    } else {
-                                        parent_tested = Some(false);
+                                        if ingredient_claim
+                                            .assertion_hashed_uri_from_label(&redaction_label)
+                                            .is_some()
+                                        {
+                                            // The url reference is valid, now check if it was actually redacted
+                                            parent_tested = Some(false);
+                                            // Now if the assertion is not in the assertion store we are ok.
+                                            // Todo: would a zeroed out assertion show up here? if so we need to do a zero check
+                                            if ingredient_claim
+                                                .get_claim_assertion(&redaction_label, 0)
+                                                .is_none()
+                                            {
+                                                parent_tested = Some(true); // it was redacted - all good!
+                                            }
+                                        }
                                     }
                                 }
                             }
-                            match parent_tested {
-                                Some(v) => parent_tested = Some(v),
-                                None => parent_tested = Some(false), // if test fail early this is a tested failure
-                            }
                         }
-
-                        // will only exist if we actual tested for an ingredient
-                        if let Some(false) = parent_tested {
-                            log_item!(
-                                label.clone(),
-                                "action must have valid ingredient",
-                                "verify_actions"
-                            )
-                            .validation_status(
-                                validation_status::ASSERTION_ACTION_REDACTION_MISMATCH,
-                            )
-                            .failure(
-                                validation_log,
-                                Error::ValidationRule("action must have valid ingredient".into()),
-                            )?;
+                        match parent_tested {
+                            None => {
+                                log_item!(
+                                    label.clone(),
+                                    "redaction uri must be a valid reference",
+                                    "verify_actions"
+                                )
+                                .validation_status(
+                                    validation_status::ASSERTION_ACTION_REDACTION_MISMATCH,
+                                )
+                                .failure(
+                                    validation_log,
+                                    Error::ValidationRule(
+                                        "redaction action must have valid ingredient".into(),
+                                    ),
+                                )?;
+                            }
+                            Some(false) => {
+                                log_item!(
+                                    label.clone(),
+                                    "The assertion was not redacted",
+                                    "verify_actions"
+                                )
+                                .validation_status(validation_status::ASSERTION_NOT_REDACTED)
+                                .failure(
+                                    validation_log,
+                                    Error::ValidationRule("the assertion was not redacted".into()),
+                                )?;
+                            }
+                            Some(true) => {}
                         }
                     }
                 }
@@ -2615,342 +2640,14 @@ impl Claim {
         Ok(())
     }
 
-    fn verify_internal(
+    pub(crate) fn verify_hash_binding(
         claim: &Claim,
         asset_data: &mut ClaimAssetData<'_>,
         svi: &StoreValidationInfo,
-        verified: Result<CertificateInfo>,
         validation_log: &mut StatusTracker,
     ) -> Result<()> {
         const UNNAMED: &str = "unnamed";
         let default_str = |s: &String| s.clone();
-
-        // signature check
-        match verified {
-            Ok(vi) => {
-                if !vi.validated {
-                    log_item!(
-                        to_signature_uri(claim.label()),
-                        "claim signature is not valid",
-                        "verify_internal"
-                    )
-                    .validation_status(validation_status::CLAIM_SIGNATURE_MISMATCH)
-                    .failure(validation_log, Error::CoseSignature)?;
-                } else {
-                    // signing cert has not expired
-                    log_item!(
-                        to_signature_uri(claim.label()),
-                        "claim signature valid",
-                        "verify_internal"
-                    )
-                    .validation_status(validation_status::CLAIM_SIGNATURE_INSIDE_VALIDITY)
-                    .success(validation_log);
-
-                    // add signature validated status
-                    log_item!(
-                        to_signature_uri(claim.label()),
-                        "claim signature valid",
-                        "verify_internal"
-                    )
-                    .validation_status(validation_status::CLAIM_SIGNATURE_VALIDATED)
-                    .success(validation_log);
-                }
-            }
-            Err(parse_err) => {
-                // handle case where lower level failed to log
-                log_item!(
-                    to_signature_uri(claim.label()),
-                    "claim signature is not valid",
-                    "verify_internal"
-                )
-                .validation_status(validation_status::CLAIM_SIGNATURE_MISMATCH)
-                .failure_no_throw(validation_log, parse_err);
-            }
-        };
-
-        // if claim make sure we have a valid claim_generator_info
-        // note that for 2.x claims this is a mandatory fields its presence
-        // is checked during Claim cbor deserialization
-        if let Some(cgi_vec) = claim.claim_generator_info() {
-            let mut icons = Vec::new();
-            for cgi in cgi_vec {
-                if let Some(UriOrResource::HashedUri(icon)) = cgi.icon() {
-                    icons.push(icon);
-                }
-            }
-            if !icons.is_empty() {
-                Claim::verify_icons(claim, &icons, validation_log)?;
-            }
-        }
-
-        // check for self redacted assertions and illegal redactions
-        if let Some(redactions) = claim.redactions() {
-            for r in redactions {
-                if r.contains(claim.label()) {
-                    log_item!(
-                        r.to_owned(),
-                        "claim contains self redaction",
-                        "verify_internal"
-                    )
-                    .validation_status(validation_status::ASSERTION_SELF_REDACTED)
-                    .failure(validation_log, Error::ClaimSelfRedact)?;
-                }
-
-                if r.contains(labels::ACTIONS) {
-                    log_item!(
-                        r.to_owned(),
-                        "redaction of action assertions disallowed",
-                        "verify_internal"
-                    )
-                    .validation_status(validation_status::ASSERTION_ACTION_REDACTED)
-                    .failure(validation_log, Error::ClaimDisallowedRedaction)?;
-                }
-
-                const DISALLOWED_HASH_REDACTIONS: [&str; 4] = [
-                    labels::DATA_HASH,
-                    labels::BOX_HASH,
-                    labels::BMFF_HASH,
-                    labels::COLLECTION_HASH,
-                ];
-
-                if DISALLOWED_HASH_REDACTIONS
-                    .iter()
-                    .any(|label| r.contains(label))
-                {
-                    log_item!(
-                        r.to_owned(),
-                        "redaction of disallowed hash assertion",
-                        "verify_internal"
-                    )
-                    .validation_status(validation_status::ASSERTION_DATAHASH_REDACTED)
-                    .failure(validation_log, Error::ClaimDisallowedRedaction)?;
-                }
-            }
-        }
-
-        // get the parent count
-        let parent_count = claim
-            .ingredient_assertions()
-            .iter()
-            .filter(|a| {
-                if let Ok(ingredient) = Ingredient::from_assertion(a.assertion()) {
-                    return ingredient.relationship == Relationship::ParentOf;
-                }
-                false
-            })
-            .count();
-
-        // check update manifest rules
-        if claim.update_manifest() {
-            // must be one of the allowed actions
-            for aa in claim.action_assertions() {
-                let actions = Actions::from_assertion(aa.assertion())?;
-                for action in actions.actions() {
-                    if !ALLOWED_UPDATE_MANIFEST_ACTIONS
-                        .iter()
-                        .any(|a| *a == action.action())
-                    {
-                        log_item!(
-                            claim.uri(),
-                            "update manifests contains disallowed actions assertion",
-                            "verify_internal"
-                        )
-                        .validation_status(validation_status::MANIFEST_UPDATE_INVALID)
-                        .failure(validation_log, Error::UpdateManifestInvalid)?;
-                    }
-                }
-            }
-
-            // make sure there are no thumbnail assertions
-            if claim
-                .claim_assertion_store()
-                .iter()
-                .filter(|ca| ca.label_raw().contains(CLAIM_THUMBNAIL))
-                .count()
-                > 1
-            {
-                log_item!(
-                    claim.uri(),
-                    "update manifests cannot contain thumbnail assertions",
-                    "verify_internal"
-                )
-                .validation_status(validation_status::MANIFEST_UPDATE_INVALID)
-                .failure(validation_log, Error::UpdateManifestInvalid)?;
-            }
-
-            // make sure one ingredient parent
-            match parent_count {
-                0 => {
-                    log_item!(
-                        claim.uri(),
-                        "update manifest must have ingredient with parentOf relationship",
-                        "verify_internal"
-                    )
-                    .validation_status(validation_status::MANIFEST_UPDATE_WRONG_PARENTS)
-                    .failure(validation_log, Error::UpdateManifestInvalid)?;
-                }
-                1 => (),
-                _ => {
-                    log_item!(
-                        claim.uri(),
-                        "update manifests can have one 1 ingredient ",
-                        "verify_internal"
-                    )
-                    .validation_status(validation_status::MANIFEST_UPDATE_INVALID)
-                    .failure(validation_log, Error::UpdateManifestInvalid)?;
-                }
-            }
-        } else {
-            // can only have zero or one parentOf
-            if parent_count > 1 {
-                log_item!(
-                    claim.uri(),
-                    "too many ingredient parentsf",
-                    "ingredient_checks"
-                )
-                .validation_status(validation_status::MANIFEST_MULTIPLE_PARENTS)
-                .failure(
-                    validation_log,
-                    Error::ClaimVerification("ingredient has more than one parent".to_string()),
-                )?;
-            }
-        }
-
-        // track list to make sure there are no extra assertions found in assertion store
-        let mut ca_tracking_list = claim.claim_assertion_store().clone();
-
-        // verify assertion structure comparing hashes from assertion list to contents of assertion store
-        for assertion in claim.assertions() {
-            let (label, instance) = Claim::assertion_label_from_link(&assertion.url());
-            let assertion_absolute_uri = if assertion.is_relative_url() {
-                to_absolute_uri(claim.label(), &assertion.url())
-            } else {
-                // match sure the assertion points to this assertion store
-                let assertion_manifest =
-                    manifest_label_from_uri(&assertion.url()).ok_or_else(|| {
-                        log_item!(
-                            assertion.url(),
-                            format!("assertion URI malformed: {}", assertion.url()),
-                            "verify_internal"
-                        )
-                        .validation_status(validation_status::ASSERTION_HASHEDURI_MISMATCH)
-                        .failure_as_err(
-                            validation_log,
-                            Error::AssertionMissing {
-                                url: assertion.url(),
-                            },
-                        )
-                    })?;
-
-                if assertion_manifest != claim.label() {
-                    log_item!(
-                        assertion.url(),
-                        format!(
-                            "assertion reference to external assertion store: {}",
-                            assertion.url()
-                        ),
-                        "verify_internal"
-                    )
-                    .validation_status(validation_status::ASSERTION_OUTSIDE_MANIFEST)
-                    .failure(
-                        validation_log,
-                        Error::AssertionMissing {
-                            url: assertion.url(),
-                        },
-                    )?;
-                }
-
-                assertion.url()
-            };
-
-            // remove from tracking list
-            if let Some(index) = ca_tracking_list
-                .iter()
-                .position(|v| v.label_raw().as_str() == label && v.instance() == instance)
-            {
-                ca_tracking_list.swap_remove(index);
-            }
-
-            // we can skip if this is a redacted assertion
-            if svi.redactions.iter().any(|r| {
-                let r_manifest = manifest_label_from_uri(r).unwrap_or_default();
-                if r_manifest == claim.label() {
-                    let (r_label, r_instance) = Claim::assertion_label_from_link(r);
-                    r_label == label && r_instance == instance
-                } else {
-                    false
-                }
-            }) {
-                continue;
-            }
-
-            // make sure assertion data has not changed
-            match claim.get_claim_assertion(&label, instance) {
-                // get the assertion if label and hash match
-                Some(ca) => {
-                    // if not a redaction then we must check the hash
-                    if !vec_compare(ca.hash(), &assertion.hash()) {
-                        log_item!(
-                            assertion_absolute_uri.clone(),
-                            format!("hash does not match assertion data: {}", assertion.url()),
-                            "verify_internal"
-                        )
-                        .validation_status(validation_status::ASSERTION_HASHEDURI_MISMATCH)
-                        .failure(
-                            validation_log,
-                            Error::HashMismatch(format!(
-                                "Assertion hash failure: {}",
-                                assertion_absolute_uri.clone(),
-                            )),
-                        )?;
-                    } else {
-                        log_item!(
-                            assertion_absolute_uri,
-                            format!("hashed uri matched: {}", assertion.url()),
-                            "verify_internal"
-                        )
-                        .validation_status(validation_status::ASSERTION_HASHEDURI_MATCH)
-                        .success(validation_log);
-                    }
-                }
-                None => {
-                    log_item!(
-                        assertion_absolute_uri.clone(),
-                        format!("cannot find matching assertion: {}", assertion.url()),
-                        "verify_internal"
-                    )
-                    .validation_status(validation_status::ASSERTION_MISSING)
-                    .failure(
-                        validation_log,
-                        Error::AssertionMissing {
-                            url: assertion_absolute_uri.clone(),
-                        },
-                    )?;
-                }
-            }
-        }
-
-        // we should have accounted for all assertions in the store
-        if !ca_tracking_list.is_empty() {
-            // log all unaccessed assertions and return err
-            for undeclared in &ca_tracking_list {
-                log_item!(
-                    undeclared.label().clone(),
-                    "assertion is not referenced by the claim",
-                    "verify_internal"
-                )
-                .validation_status(validation_status::ASSERTION_UNDECLARED)
-                .failure_no_throw(
-                    validation_log,
-                    Error::AssertionMissing {
-                        url: undeclared.label(),
-                    },
-                );
-            }
-            return Err(Error::AssertionMissing {
-                url: ca_tracking_list[0].label(),
-            });
-        }
 
         // verify data hashes for provenance claims
         if claim.label() == svi.binding_claim {
@@ -3241,10 +2938,381 @@ impl Claim {
             }
         }
 
+        Ok(())
+    }
+
+    fn verify_internal(
+        claim: &Claim,
+        asset_data: &mut ClaimAssetData<'_>,
+        svi: &StoreValidationInfo,
+        verified: Result<CertificateInfo>,
+        validation_log: &mut StatusTracker,
+    ) -> Result<()> {
+        // signature check
+        match verified {
+            Ok(vi) => {
+                if !vi.validated {
+                    log_item!(
+                        to_signature_uri(claim.label()),
+                        "claim signature is not valid",
+                        "verify_internal"
+                    )
+                    .validation_status(validation_status::CLAIM_SIGNATURE_MISMATCH)
+                    .failure(validation_log, Error::CoseSignature)?;
+                } else {
+                    // signing cert has not expired
+                    log_item!(
+                        to_signature_uri(claim.label()),
+                        "claim signature valid",
+                        "verify_internal"
+                    )
+                    .validation_status(validation_status::CLAIM_SIGNATURE_INSIDE_VALIDITY)
+                    .success(validation_log);
+
+                    // add signature validated status
+                    log_item!(
+                        to_signature_uri(claim.label()),
+                        "claim signature valid",
+                        "verify_internal"
+                    )
+                    .validation_status(validation_status::CLAIM_SIGNATURE_VALIDATED)
+                    .success(validation_log);
+                }
+            }
+            Err(parse_err) => {
+                // handle case where lower level failed to log
+                log_item!(
+                    to_signature_uri(claim.label()),
+                    "claim signature is not valid",
+                    "verify_internal"
+                )
+                .validation_status(validation_status::CLAIM_SIGNATURE_MISMATCH)
+                .failure_no_throw(validation_log, parse_err);
+            }
+        };
+
+        // if claim make sure we have a valid claim_generator_info
+        // note that for 2.x claims this is a mandatory fields its presence
+        // is checked during Claim cbor deserialization
+        if let Some(cgi_vec) = claim.claim_generator_info() {
+            let mut icons = Vec::new();
+            for cgi in cgi_vec {
+                if let Some(UriOrResource::HashedUri(icon)) = cgi.icon() {
+                    icons.push(icon);
+                }
+            }
+            if !icons.is_empty() {
+                Claim::verify_icons(claim, &icons, validation_log)?;
+            }
+        }
+
+        // check for self redacted assertions and illegal redactions
+        if let Some(redactions) = claim.redactions() {
+            for r in redactions {
+                if r.contains(claim.label()) {
+                    log_item!(
+                        r.to_owned(),
+                        "claim contains self redaction",
+                        "verify_internal"
+                    )
+                    .validation_status(validation_status::ASSERTION_SELF_REDACTED)
+                    .failure(validation_log, Error::ClaimSelfRedact)?;
+                }
+
+                if r.contains(labels::ACTIONS) {
+                    log_item!(
+                        r.to_owned(),
+                        "redaction of action assertions disallowed",
+                        "verify_internal"
+                    )
+                    .validation_status(validation_status::ASSERTION_ACTION_REDACTED)
+                    .failure(validation_log, Error::ClaimDisallowedRedaction)?;
+                }
+
+                const DISALLOWED_HASH_REDACTIONS: [&str; 4] = [
+                    labels::DATA_HASH,
+                    labels::BOX_HASH,
+                    labels::BMFF_HASH,
+                    labels::COLLECTION_HASH,
+                ];
+
+                if DISALLOWED_HASH_REDACTIONS
+                    .iter()
+                    .any(|label| r.contains(label))
+                {
+                    log_item!(
+                        r.to_owned(),
+                        "redaction of disallowed hash assertion",
+                        "verify_internal"
+                    )
+                    .validation_status(validation_status::ASSERTION_DATAHASH_REDACTED)
+                    .failure(validation_log, Error::ClaimDisallowedRedaction)?;
+                }
+            }
+        }
+
+        // get the parent count
+        let parent_count = claim
+            .ingredient_assertions()
+            .iter()
+            .filter(|a| {
+                if let Ok(ingredient) = Ingredient::from_assertion(a.assertion()) {
+                    return ingredient.relationship == Relationship::ParentOf;
+                }
+                false
+            })
+            .count();
+
+        // check update manifest rules
+        if claim.update_manifest() {
+            // must be one of the allowed actions
+            for aa in claim.action_assertions() {
+                let actions = Actions::from_assertion(aa.assertion())?;
+                for action in actions.actions() {
+                    if !ALLOWED_UPDATE_MANIFEST_ACTIONS
+                        .iter()
+                        .any(|a| *a == action.action())
+                    {
+                        log_item!(
+                            claim.uri(),
+                            "update manifests contains disallowed actions assertion",
+                            "verify_internal"
+                        )
+                        .validation_status(validation_status::MANIFEST_UPDATE_INVALID)
+                        .failure(validation_log, Error::UpdateManifestInvalid)?;
+                    }
+                }
+            }
+
+            // make sure there are no thumbnail assertions
+            if claim
+                .claim_assertion_store()
+                .iter()
+                .filter(|ca| ca.label_raw().contains(CLAIM_THUMBNAIL))
+                .count()
+                > 1
+            {
+                log_item!(
+                    claim.uri(),
+                    "update manifests cannot contain thumbnail assertions",
+                    "verify_internal"
+                )
+                .validation_status(validation_status::MANIFEST_UPDATE_INVALID)
+                .failure(validation_log, Error::UpdateManifestInvalid)?;
+            }
+
+            // make sure one ingredient parent
+            match parent_count {
+                0 => {
+                    log_item!(
+                        claim.uri(),
+                        "update manifest must have ingredient with parentOf relationship",
+                        "verify_internal"
+                    )
+                    .validation_status(validation_status::MANIFEST_UPDATE_WRONG_PARENTS)
+                    .failure(validation_log, Error::UpdateManifestInvalid)?;
+                }
+                1 => (),
+                _ => {
+                    log_item!(
+                        claim.uri(),
+                        "update manifests can have one 1 ingredient ",
+                        "verify_internal"
+                    )
+                    .validation_status(validation_status::MANIFEST_UPDATE_INVALID)
+                    .failure(validation_log, Error::UpdateManifestInvalid)?;
+                }
+            }
+        } else {
+            // can only have zero or one parentOf
+            if parent_count > 1 {
+                log_item!(
+                    claim.uri(),
+                    "too many ingredient parents",
+                    "ingredient_checks"
+                )
+                .validation_status(validation_status::MANIFEST_MULTIPLE_PARENTS)
+                .failure(
+                    validation_log,
+                    Error::ClaimVerification("ingredient has more than one parent".to_string()),
+                )?;
+            }
+        }
+
+        // track list to make sure there are no extra assertions found in assertion store
+        let mut ca_tracking_list = claim.claim_assertion_store().clone();
+
+        // verify assertion structure comparing hashes from assertion list to contents of assertion store
+        for assertion in claim.assertions() {
+            let (label, instance) = Claim::assertion_label_from_link(&assertion.url());
+            let assertion_absolute_uri = if assertion.is_relative_url() {
+                to_absolute_uri(claim.label(), &assertion.url())
+            } else {
+                // match sure the assertion points to this assertion store
+                let assertion_manifest =
+                    manifest_label_from_uri(&assertion.url()).ok_or_else(|| {
+                        log_item!(
+                            assertion.url(),
+                            format!("assertion URI malformed: {}", assertion.url()),
+                            "verify_internal"
+                        )
+                        .validation_status(validation_status::ASSERTION_HASHEDURI_MISMATCH)
+                        .failure_as_err(
+                            validation_log,
+                            Error::AssertionMissing {
+                                url: assertion.url(),
+                            },
+                        )
+                    })?;
+
+                if assertion_manifest != claim.label() {
+                    log_item!(
+                        assertion.url(),
+                        format!(
+                            "assertion reference to external assertion store: {}",
+                            assertion.url()
+                        ),
+                        "verify_internal"
+                    )
+                    .validation_status(validation_status::ASSERTION_OUTSIDE_MANIFEST)
+                    .failure(
+                        validation_log,
+                        Error::AssertionMissing {
+                            url: assertion.url(),
+                        },
+                    )?;
+                }
+
+                assertion.url()
+            };
+
+            // remove from tracking list
+            if let Some(index) = ca_tracking_list
+                .iter()
+                .position(|v| v.label_raw().as_str() == label && v.instance() == instance)
+            {
+                ca_tracking_list.swap_remove(index);
+            }
+
+            // we can skip if this is a redacted assertion
+            if svi.redactions.iter().any(|r| {
+                let r_manifest = manifest_label_from_uri(r).unwrap_or_default();
+                if r_manifest == claim.label() {
+                    let (r_label, r_instance) = Claim::assertion_label_from_link(r);
+                    r_label == label && r_instance == instance
+                } else {
+                    false
+                }
+            }) {
+                continue;
+            }
+
+            // make sure assertion data has not changed
+            match claim.get_claim_assertion(&label, instance) {
+                // get the assertion if label and hash match
+                Some(ca) => {
+                    // if not a redaction then we must check the hash
+                    if !vec_compare(ca.hash(), &assertion.hash()) {
+                        log_item!(
+                            assertion_absolute_uri.clone(),
+                            format!("hash does not match assertion data: {}", assertion.url()),
+                            "verify_internal"
+                        )
+                        .validation_status(validation_status::ASSERTION_HASHEDURI_MISMATCH)
+                        .failure(
+                            validation_log,
+                            Error::HashMismatch(format!(
+                                "Assertion hash failure: {}",
+                                assertion_absolute_uri.clone(),
+                            )),
+                        )?;
+                    } else {
+                        log_item!(
+                            assertion_absolute_uri,
+                            format!("hashed uri matched: {}", assertion.url()),
+                            "verify_internal"
+                        )
+                        .validation_status(validation_status::ASSERTION_HASHEDURI_MATCH)
+                        .success(validation_log);
+                    }
+                }
+                None => {
+                    log_item!(
+                        assertion_absolute_uri.clone(),
+                        format!("cannot find matching assertion: {}", assertion.url()),
+                        "verify_internal"
+                    )
+                    .validation_status(validation_status::ASSERTION_MISSING)
+                    .failure(
+                        validation_log,
+                        Error::AssertionMissing {
+                            url: assertion_absolute_uri.clone(),
+                        },
+                    )?;
+                }
+            }
+        }
+
+        // we should have accounted for all assertions in the store
+        if !ca_tracking_list.is_empty() {
+            // log all unaccessed assertions and return err
+            for undeclared in &ca_tracking_list {
+                log_item!(
+                    undeclared.label().clone(),
+                    "assertion is not referenced by the claim",
+                    "verify_internal"
+                )
+                .validation_status(validation_status::ASSERTION_UNDECLARED)
+                .failure_no_throw(
+                    validation_log,
+                    Error::AssertionMissing {
+                        url: undeclared.label(),
+                    },
+                );
+            }
+            return Err(Error::AssertionMissing {
+                url: ca_tracking_list[0].label(),
+            });
+        }
+
+        // verify data hashes for provenance claims
+        Claim::verify_hash_binding(claim, asset_data, svi, validation_log)?;
+
         // check action rules
         Claim::verify_actions(claim, svi, validation_log)?;
 
+        // check metadata rules
+        Claim::verify_metadata(claim, validation_log)?;
         Ok(())
+    }
+
+    // Perform metadata validation check
+    fn verify_metadata(claim: &Claim, validation_log: &mut StatusTracker) -> Result<()> {
+        for metadata_assertion in claim.metadata_assertions() {
+            let metadata_assertion = Metadata::from_assertion(metadata_assertion.assertion())?;
+            if !metadata_assertion.is_valid() {
+                let label = to_assertion_uri(claim.label(), metadata_assertion.label());
+                log_item!(
+                    label,
+                    "metadata assertion contains disallowed field",
+                    "verify_internal"
+                )
+                .validation_status(validation_status::ASSERTION_METADATA_DISALLOWED)
+                .failure(
+                    validation_log,
+                    Error::ValidationRule("fields must be in allowed list".into()),
+                )?;
+            }
+        }
+        Ok(())
+    }
+
+    ///Returns list of metadata assertions
+    pub fn metadata_assertions(&self) -> Vec<&ClaimAssertion> {
+        self.assertion_store
+            .iter()
+            .filter(|x| METADATA_LABEL_REGEX.is_match(&x.label_raw()))
+            .collect()
     }
 
     /// Return list of data hash assertions

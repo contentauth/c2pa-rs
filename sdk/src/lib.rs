@@ -62,24 +62,27 @@
 //! }
 //!
 //! # fn main() -> Result<()> {
-//! let mut builder = Builder::from_json(r#"{"title": "Test"}"#)?;
-//! builder.add_assertion("org.contentauth.test", &Test { my_tag: 42 })?;
+//! #[cfg(feature = "file_io")]
+//! {
+//!     let mut builder = Builder::from_json(r#"{"title": "Test"}"#)?;
+//!     builder.add_assertion("org.contentauth.test", &Test { my_tag: 42 })?;
 //!
-//! // Create a ps256 signer using certs and key files
-//! let signer = create_signer::from_files(
-//!     "tests/fixtures/certs/ps256.pub",
-//!     "tests/fixtures/certs/ps256.pem",
-//!     SigningAlg::Ps256,
-//!     None,
-//! )?;
+//!     // Create a ps256 signer using certs and key files
+//!     let signer = create_signer::from_files(
+//!         "tests/fixtures/certs/ps256.pub",
+//!         "tests/fixtures/certs/ps256.pem",
+//!         SigningAlg::Ps256,
+//!         None,
+//!     )?;
 //!
-//! // embed a manifest using the signer
-//! std::fs::remove_file("../target/tmp/lib_sign.jpg"); // ensure the file does not exist
-//! builder.sign_file(
-//!     &*signer,
-//!     "tests/fixtures/C.jpg",
-//!     "../target/tmp/lib_sign.jpg",
-//! )?;
+//!     // embed a manifest using the signer
+//!     std::fs::remove_file("../target/tmp/lib_sign.jpg"); // ensure the file does not exist
+//!     builder.sign_file(
+//!         &*signer,
+//!         "tests/fixtures/C.jpg",
+//!         "../target/tmp/lib_sign.jpg",
+//!     )?;
+//! }
 //! # Ok(())
 //! # }
 //! ```
@@ -199,11 +202,11 @@ pub(crate) mod store;
 pub(crate) mod utils;
 pub(crate) use utils::{cbor_types, hash_utils};
 
-#[cfg(all(feature = "openssl", feature = "rust_native_crypto"))]
-compile_error!("Features 'openssl' and 'rust_native_crypto' cannot be enabled at the same time.");
+//#[cfg(all(feature = "openssl", feature = "rust_native_crypto"))]
+//compile_error!("Features 'openssl' and 'rust_native_crypto' cannot be enabled at the same time.");
 
-#[cfg(not(any(feature = "openssl", feature = "rust_native_crypto")))]
-compile_error!("Either 'openssl' or 'rust_native_crypto' feature must be enabled.");
+//#[cfg(not(any(feature = "openssl", feature = "rust_native_crypto")))]
+//compile_error!("Either 'openssl' or 'rust_native_crypto' feature must be enabled.");
 
 #[cfg(all(feature = "openssl", target_arch = "wasm32"))]
 compile_error!("Feature 'openssl' is not available for wasm32.");
