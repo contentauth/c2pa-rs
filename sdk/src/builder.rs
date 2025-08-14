@@ -1045,15 +1045,6 @@ impl Builder {
         R: Read + Seek + Send,
         W: Write + Read + Seek + Send,
     {
-
-        let mut count = 0;
-        loop {
-            black_box(count += 1);
-            if count >= 20000000 {
-                break;
-            }
-        }
-
         let format = format_to_mime(format);
         self.definition.format.clone_from(&format);
         // todo:: read instance_id from xmp from stream ?
