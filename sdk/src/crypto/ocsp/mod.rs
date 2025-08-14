@@ -144,7 +144,7 @@ impl OcspResponse {
                         // If no signing time was provided, use current system time.
                         let now = time::utc_now().timestamp();
 
-                        now >= this_update && now <= next_update
+                        now >= this_update
                     };
 
                     if let Some(nu) = &single_response.next_update {
