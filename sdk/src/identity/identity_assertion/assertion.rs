@@ -343,7 +343,7 @@ impl IdentityAssertion {
             }
 
             if let Ok(Some(tc)) = get_settings_value::<Option<String>>("cawg_trust.trust_config") {
-                let _ = ctp.add_valid_ekus(tc.as_bytes());
+                ctp.add_valid_ekus(tc.as_bytes());
             }
 
             if let Ok(Some(al)) = get_settings_value::<Option<String>>("cawg_trust.allowed_list") {
