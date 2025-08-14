@@ -67,7 +67,7 @@ pub struct Ingredient {
     pub claim_signature: Option<HashedUri>,
 
     pub soft_bindings_matched: Option<bool>,
-    pub soft_bindings_algorithms_matched: Option<Vec<String>>,
+    pub soft_binding_algorithms_matched: Option<Vec<String>>,
     pub version: usize,
 }
 
@@ -411,6 +411,8 @@ impl Ingredient {
             ? "thumbnail": $hashed-uri-map, ; hashed_uri reference to a thumbnail in a data box
             ? "description": tstr .size (1..max-tstr-length), ; Additional description of the ingredient
             ? "informationalURI": tstr .size (1..max-tstr-length), ; URI to an informational page about the ingredient or its data
+            ? "softBindingsMatched": bool, ; Whether soft bindings were matched
+            ? "softBindingAlgorithmsMatched": [1* tstr] ; Array of algorithm names used for discovering the active manifest
             ? "metadata": $assertion-metadata-map ; additional information about the assertion
         */
 
@@ -457,6 +459,12 @@ impl Ingredient {
         if self.informational_uri.is_some() {
             ingredient_map_len += 1
         }
+        if self.soft_bindings_matched.is_some() {
+            ingredient_map_len += 1
+        }
+        if self.soft_binding_algorithms_matched.is_some() {
+            ingredient_map_len += 1
+        }
         if self.metadata.is_some() {
             ingredient_map_len += 1
         }
@@ -499,6 +507,12 @@ impl Ingredient {
         }
         if let Some(info) = &self.informational_uri {
             ingredient_map.serialize_field("informationalURI", info)?;
+        }
+        if let Some(sbm) = &self.soft_bindings_matched {
+            ingredient_map.serialize_field("softBindingsMatched", sbm)?;
+        }
+        if let Some(sba) = &self.soft_binding_algorithms_matched {
+            ingredient_map.serialize_field("softBindingAlgorithmsMatched", sba)?;
         }
         if let Some(md) = &self.metadata {
             ingredient_map.serialize_field("metadata", md)?;
@@ -580,7 +594,7 @@ impl AssertionBase for Ingredient {
             "metadata",
         ];
 
-        static V3_FIELDS: [&str; 13] = [
+        static V3_FIELDS: [&str; 15] = [
             "dc:title",
             "dc:format",
             "relationship",
@@ -593,6 +607,8 @@ impl AssertionBase for Ingredient {
             "thumbnail",
             "description",
             "informationalURI",
+            "softBindingsMatched",
+            "softBindingAlgorithmsMatched",
             "metadata",
         ];
 
@@ -778,6 +794,10 @@ impl AssertionBase for Ingredient {
                     map_cbor_to_type("description", &ingredient_value);
                 let informational_uri: Option<String> =
                     map_cbor_to_type("informationalURI", &ingredient_value);
+                let soft_bindings_matched: Option<bool> =
+                    map_cbor_to_type("softBindingsMatched", &ingredient_value);
+                let soft_binding_algorithms_matched: Option<Vec<String>> =
+                    map_cbor_to_type("softBindingAlgorithmsMatched", &ingredient_value);
                 let metadata: Option<AssertionMetadata> =
                     map_cbor_to_type("metadata", &ingredient_value);
 
@@ -795,6 +815,8 @@ impl AssertionBase for Ingredient {
                     data_types,
                     active_manifest,
                     claim_signature,
+                    soft_bindings_matched,
+                    soft_binding_algorithms_matched,
                     version,
                     ..Default::default()
                 }
@@ -1004,7 +1026,7 @@ pub mod tests {
             active_manifest: Some(HashedUri::new("self#jumbf=c2pa/urn:c2pa:5E7B01FC-4932-4BAB-AB32-D4F12A8AA322".to_owned(), Some("sha256".to_owned()), &[1,2,3,4,5,6,7,8,9,0])),
             claim_signature: Some(HashedUri::new("self#jumbf=c2pa/urn:c2pa:5E7B01FC-4932-4BAB-AB32-D4F12A8AA322/c2pa.signature".to_owned(), Some("sha256".to_owned()), &[1,2,3,4,5,6,7,8,9,0])),
             soft_bindings_matched: Some(true),
-            soft_bindings_algorithms_matched: Some(vec!["alg1".to_owned(), "alg2".to_owned()]),
+            soft_binding_algorithms_matched: Some(vec!["alg1".to_owned(), "alg2".to_owned()]),
             version: 1,
         };
 
@@ -1079,6 +1101,8 @@ pub mod tests {
             validation_results: Some(validation_results),
             active_manifest: Some(HashedUri::new("self#jumbf=c2pa/urn:c2pa:5E7B01FC-4932-4BAB-AB32-D4F12A8AA322".to_owned(), Some("sha256".to_owned()), &[1,2,3,4,5,6,7,8,9,0])),
             claim_signature: Some(HashedUri::new("self#jumbf=c2pa/urn:c2pa:5E7B01FC-4932-4BAB-AB32-D4F12A8AA322/c2pa.signature".to_owned(), Some("sha256".to_owned()), &[1,2,3,4,5,6,7,8,9,0])),
+            soft_bindings_matched: Some(true),
+            soft_binding_algorithms_matched: Some(vec!["alg1".to_owned(), "alg2".to_owned()]),
             version: 3,
             ..Default::default()
         };
