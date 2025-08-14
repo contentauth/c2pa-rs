@@ -451,6 +451,8 @@ mod integration_1 {
         let reader = Reader::from_file(&output_path)?;
         let reader_json = reader.json();
         // ensure certificate status assertion was created
+        // TODO: wasm32 does not yet support OCSP fetching
+        #[cfg(not(target_arch = "wasm32"))]
         assert!(reader_json.contains(r#"label": "c2pa.certificate-status"#));
         assert_eq!(reader.validation_status(), None);
         assert_eq!(reader.validation_state(), ValidationState::Valid);
