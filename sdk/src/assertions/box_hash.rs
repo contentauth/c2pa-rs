@@ -37,7 +37,10 @@ pub struct BoxMap {
     pub alg: Option<String>,
 
     pub hash: ByteBuf,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub excluded: Option<bool>,
+
     pub pad: ByteBuf,
 
     #[serde(skip)]
