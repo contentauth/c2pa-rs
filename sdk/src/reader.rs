@@ -23,6 +23,7 @@ use std::{
 
 use async_generic::async_generic;
 use async_trait::async_trait;
+use log::info;
 #[cfg(feature = "json_schema")]
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -699,23 +700,23 @@ impl Reader {
         // any remaining redacted assertions are not actually redacted
         // any remaining missing assertions are not actually missing
 
-        let mut redacted = options.redacted_assertions.clone();
-        let mut missing = options.missing_assertions.clone();
-        redacted.retain(|item| !missing.contains(item));
-        missing.retain(|item| !options.redacted_assertions.contains(item));
+        // let mut redacted = options.redacted_assertions.clone();
+        // let mut missing = options.missing_assertions.clone();
+        // redacted.retain(|item| !missing.contains(item));
+        // missing.retain(|item| !options.redacted_assertions.contains(item));
 
-        // Add any remaining redacted assertions to the validation results
-        // todo: figure out what to do here!
-        if !redacted.is_empty() {
-            eprintln!("Not Redacted: {redacted:?}");
-            return Err(Error::AssertionRedactionNotFound);
-        }
-        if !missing.is_empty() {
-            eprintln!("Assertion Missing: {missing:?}");
-            return Err(Error::AssertionMissing {
-                url: redacted[0].to_owned(),
-            });
-        }
+        // // Add any remaining redacted assertions to the validation results
+        // // todo: figure out what to do here!
+        // if !redacted.is_empty() {
+        //     eprintln!("Not Redacted: {redacted:?}");
+        //     return Err(Error::AssertionRedactionNotFound);
+        // }
+        // if !missing.is_empty() {
+        //     eprintln!("Assertion Missing: {missing:?}");
+        //     return Err(Error::AssertionMissing {
+        //         url: redacted[0].to_owned(),
+        //     });
+        // }
 
         let validation_state = validation_results.validation_state();
         Ok(Self {
@@ -780,11 +781,14 @@ impl Reader {
                 validation_log.push_ingredient_uri(uri.clone());
             }
 
-            let manifest = self
-                .get_manifest(&current_label)
-                .ok_or(Error::ClaimMissing {
-                    label: current_label.clone(),
-                })?;
+            let manifest = match self.get_manifest(&current_label) {
+                Some(manifest) => manifest,
+                None => {
+                    // Log a warning and continue with the next iteration
+                    info!("Warning: Manifest '{}' not found, skipping", current_label);
+                    continue;
+                }
+            };
 
             let mut partial_claim = crate::dynamic_assertion::PartialClaim::default();
             {

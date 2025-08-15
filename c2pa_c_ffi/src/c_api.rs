@@ -467,15 +467,11 @@ fn post_validate(result: Result<C2paReader, c2pa::Error>) -> Result<C2paReader, 
         Ok(mut reader) => {
             let runtime = match Runtime::new() {
                 Ok(runtime) => runtime,
-                Err(err) => {
-                  return Err(c2pa::Error::OtherError(Box::new(err)))
-                },
+                Err(err) => return Err(c2pa::Error::OtherError(Box::new(err))),
             };
             match runtime.block_on(reader.post_validate_async(&CawgValidator {})) {
                 Ok(_) => Ok(reader),
-                Err(err) => {
-                  return Err(err)
-                },
+                Err(err) => Err(err),
             }
         }
         Err(err) => Err(err),
@@ -514,8 +510,6 @@ pub unsafe extern "C" fn c2pa_reader_from_stream(
 
     let result = C2paReader::from_stream(&format, &mut (*stream));
 
-    println!("c2pa_reader_from_stream: result: {:?}", result);
-    //return_boxed!(result)
     return_boxed!(post_validate(result))
 }
 
@@ -1577,11 +1571,14 @@ mod tests {
     // cargo test test_reader_file_with_wrong_label -- --nocapture
     #[test]
     fn test_reader_file_with_wrong_label() {
-        let mut stream = TestC2paStream::new(include_bytes!(fixture_path!("adobe-20220124-E-clm-CAICAI.jpg")).to_vec())
-            .into_c_stream();
+        let mut stream = TestC2paStream::new(
+            include_bytes!(fixture_path!("adobe-20220124-E-clm-CAICAI.jpg")).to_vec(),
+        )
+        .into_c_stream();
 
         let format = CString::new("image/jpeg").unwrap();
-        let result: *mut C2paReader = unsafe { c2pa_reader_from_stream(format.as_ptr(), &mut stream) };
+        let result: *mut C2paReader =
+            unsafe { c2pa_reader_from_stream(format.as_ptr(), &mut stream) };
         assert!(!result.is_null());
         TestC2paStream::drop_c_stream(stream);
     }
