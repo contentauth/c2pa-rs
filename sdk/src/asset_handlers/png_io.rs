@@ -722,6 +722,7 @@ impl AssetBoxHash for PngIO {
             names: vec!["PNGh".to_string()],
             alg: None,
             hash: ByteBuf::from(Vec::new()),
+            excluded: None,
             pad: ByteBuf::from(Vec::new()),
             range_start: 0,
             range_len: 8,
@@ -736,6 +737,7 @@ impl AssetBoxHash for PngIO {
                     names: vec![C2PA_BOXHASH.to_string()],
                     alg: None,
                     hash: ByteBuf::from(Vec::new()),
+                    excluded: None,
                     pad: ByteBuf::from(Vec::new()),
                     range_start: pc.start,
                     range_len: pc.length as u64 + 12, // length(4) + name(4) + crc(4)
@@ -749,6 +751,7 @@ impl AssetBoxHash for PngIO {
                 names: vec![pc.name_str],
                 alg: None,
                 hash: ByteBuf::from(Vec::new()),
+                excluded: None,
                 pad: ByteBuf::from(Vec::new()),
                 range_start: pc.start,
                 range_len: pc.length as u64 + 12, // length(4) + name(4) + crc(4)
