@@ -37,6 +37,7 @@ pub struct BoxMap {
     pub alg: Option<String>,
 
     pub hash: ByteBuf,
+    pub excluded: Option<bool>,
     pub pad: ByteBuf,
 
     #[serde(skip)]
@@ -88,7 +89,8 @@ impl BoxHash {
             return Err(Error::HashMismatch("No box hash found".to_string()));
         }
 
-        // get source box list
+        // get source box list, the source list is returned expanded
+        // to show each box as an individual entry
         let source_bms = bhp.get_box_map(reader)?;
         let mut source_index = 0;
 
@@ -148,7 +150,9 @@ impl BoxHash {
             }
 
             // C2PA chunks are skipped for hashing purposes
-            if skip_c2pa {
+            // or if the box is explicitly excluded
+            let exclude = bm.excluded.unwrap_or(false);
+            if skip_c2pa || exclude {
                 continue;
             }
 
@@ -186,6 +190,7 @@ impl BoxHash {
                 names: Vec::new(),
                 alg: Some(alg.to_string()),
                 hash: ByteBuf::from(vec![]),
+                excluded: None,
                 pad: ByteBuf::from(vec![]),
                 range_start: 0,
                 range_len: 0,
@@ -195,6 +200,7 @@ impl BoxHash {
                 names: Vec::new(),
                 alg: Some(alg.to_string()),
                 hash: ByteBuf::from(vec![]),
+                excluded: None,
                 pad: ByteBuf::from(vec![]),
                 range_start: 0,
                 range_len: 0,
@@ -204,6 +210,7 @@ impl BoxHash {
                 names: Vec::new(),
                 alg: Some(alg.to_string()),
                 hash: ByteBuf::from(vec![]),
+                excluded: None,
                 pad: ByteBuf::from(vec![]),
                 range_start: 0,
                 range_len: 0,
@@ -501,6 +508,7 @@ mod tests {
                     names: vec!["C2PA".to_string()],
                     alg: Some(alg.to_string()),
                     hash: ByteBuf::from(vec![0]),
+                    excluded: None,
                     pad: ByteBuf::from(vec![]),
                     range_start: 0,
                     range_len: 10,
@@ -510,6 +518,7 @@ mod tests {
                     names: vec!["test".to_string()],
                     alg: Some(alg.to_string()),
                     hash: ByteBuf::from(vec![0]),
+                    excluded: None,
                     pad: ByteBuf::from(vec![]),
                     range_start: 10,
                     range_len: 10,
@@ -546,6 +555,7 @@ mod tests {
                     names: vec!["test".to_string()],
                     alg: Some(alg.to_string()),
                     hash: ByteBuf::from(vec![0]),
+                    excluded: None,
                     pad: ByteBuf::from(vec![]),
                     range_start: 0,
                     range_len: 10,
@@ -555,6 +565,7 @@ mod tests {
                     names: vec!["C2PA".to_string()],
                     alg: Some(alg.to_string()),
                     hash: ByteBuf::from(vec![0]),
+                    excluded: None,
                     pad: ByteBuf::from(vec![]),
                     range_start: 10,
                     range_len: 10,
@@ -591,6 +602,7 @@ mod tests {
                     names: vec!["test".to_string()],
                     alg: Some(alg.to_string()),
                     hash: ByteBuf::from(vec![0]),
+                    excluded: None,
                     pad: ByteBuf::from(vec![]),
                     range_start: 0,
                     range_len: 10,
@@ -600,6 +612,7 @@ mod tests {
                     names: vec!["C2PA".to_string()],
                     alg: Some(alg.to_string()),
                     hash: ByteBuf::from(vec![0]),
+                    excluded: None,
                     pad: ByteBuf::from(vec![]),
                     range_start: 10,
                     range_len: 10,
@@ -608,6 +621,7 @@ mod tests {
                     names: vec!["test1".to_string()],
                     alg: Some(alg.to_string()),
                     hash: ByteBuf::from(vec![0]),
+                    excluded: None,
                     pad: ByteBuf::from(vec![]),
                     range_start: 20,
                     range_len: 10,
