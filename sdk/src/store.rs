@@ -52,8 +52,8 @@ use crate::{
     crypto::{
         asn1::rfc3161::TstInfo,
         cose::{
-            fetch_and_check_ocsp_response, parse_cose_sign1, CertificateTrustPolicy,
-            TimeStampStorage,
+            fetch_and_check_ocsp_response, fetch_and_check_ocsp_response_async, parse_cose_sign1,
+            CertificateTrustPolicy, TimeStampStorage,
         },
         hash::sha256,
         ocsp::OcspResponse,
@@ -4005,7 +4005,7 @@ impl Store {
                             return Ok((Store::handle_remote_manifest(&ext_ref)?, Some(ext_ref)));
                         } else {
                             // No async version exists, fallback to sync
-                            return Ok((Store::handle_remote_manifest(&ext_ref)?, Some(ext_ref)));
+                            return Ok((Store::handle_remote_manifest_async(&ext_ref).await?, Some(ext_ref)));
                         }
                     }
                 } else {
@@ -4818,6 +4818,7 @@ impl Store {
     ///
     /// # Returns
     /// A `Result` containing tuples of manifest labels and their associated ocsp response
+    #[async_generic()]
     pub fn get_ocsp_response_ders(
         &self,
         manifest_labels: Vec<String>,
@@ -4831,9 +4832,21 @@ impl Store {
                 let data = claim.data()?;
 
                 let sign1 = parse_cose_sign1(&sig, &data, validation_log)?;
-                let ocsp_response_der =
+                let ocsp_response_der = if _sync {
                     fetch_and_check_ocsp_response(&sign1, &data, &self.ctp, None, validation_log)?
-                        .ocsp_der;
+                        .ocsp_der
+                } else {
+                    fetch_and_check_ocsp_response_async(
+                        &sign1,
+                        &data,
+                        &self.ctp,
+                        None,
+                        validation_log,
+                    )
+                    .await?
+                    .ocsp_der
+                };
+
                 if !ocsp_response_der.is_empty() {
                     oscp_response_ders.push((manifest_label, ocsp_response_der));
                 }

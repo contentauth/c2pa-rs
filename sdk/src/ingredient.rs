@@ -905,7 +905,14 @@ impl Ingredient {
         if let Ok(ref mut store) = result {
             let labels = store.get_manifest_labels_for_ocsp();
 
-            let ocsp_response_ders = store.get_ocsp_response_ders(labels, &mut validation_log)?;
+            let ocsp_response_ders = if _sync {
+                store.get_ocsp_response_ders(labels, &mut validation_log)?
+            } else {
+                store
+                    .get_ocsp_response_ders_async(labels, &mut validation_log)
+                    .await?
+            };
+
             let resource_refs: Vec<ResourceRef> = ocsp_response_ders
                 .into_iter()
                 .filter_map(|o| self.resources.add_with(&o.0, "ocsp", o.1).ok())

@@ -11,8 +11,8 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use std::io::Read;
-
+#[cfg(not(target_arch = "wasm32"))]
+use async_generic::async_generic;
 use rasn::prelude::*;
 use rasn_pkix::Certificate;
 use x509_parser::{
@@ -29,7 +29,11 @@ use crate::crypto::base64;
 /// will attempt to retrieve the raw DER-encoded OCSP response.
 ///
 /// Not available on WASM builds.
+
+#[cfg(not(target_arch = "wasm32"))]
+#[async_generic()]
 pub(crate) fn fetch_ocsp_response(certs: &[Vec<u8>]) -> Option<Vec<u8>> {
+    use std::io::Read;
     // There must be at least one cert that isn't an end-entity cert.
     if certs.len() < 2 {
         return None;
@@ -122,6 +126,195 @@ pub(crate) fn fetch_ocsp_response(certs: &[Vec<u8>]) -> Option<Vec<u8>> {
 
                 return Some(ocsp_rsp);
             }
+        }
+    }
+    None
+}
+
+#[cfg(target_os = "wasi")]
+pub(crate) fn fetch_ocsp_response(certs: &[Vec<u8>]) -> Option<Vec<u8>> {
+    use wstd::runtime::block_on;
+
+    block_on(fetch_ocsp_response_async(certs))
+}
+
+//TODO: should this behind a feature flag for wasm-bindgen?
+//TODO: more DRY
+#[cfg(target_os = "wasi")]
+pub(crate) async fn fetch_ocsp_response_async(certs: &[Vec<u8>]) -> Option<Vec<u8>> {
+    use wstd::{
+        http::{Client, Request},
+        io::{empty, AsyncRead},
+    };
+
+    // There must be at least one cert that isn't an end-entity cert.
+    if certs.len() < 2 {
+        return None;
+    }
+
+    let (_rem, cert) = X509Certificate::from_der(&certs[0]).ok()?;
+
+    if let Some(responders) = extract_aia_responders(&cert) {
+        let sha1_oid = rasn::types::Oid::new(&[1, 3, 14, 3, 2, 26])?;
+        let alg = rasn::types::ObjectIdentifier::from(sha1_oid);
+
+        let sha1_ai = rasn_pkix::AlgorithmIdentifier {
+            algorithm: alg,
+            parameters: Some(Any::new(rasn::der::encode(&()).ok()?)),
+        };
+
+        for r in responders {
+            let url = url::Url::parse(&r).ok()?;
+            let subject: Certificate = rasn::der::decode(&certs[0]).ok()?;
+            let issuer: Certificate = rasn::der::decode(&certs[1]).ok()?;
+
+            let issuer_name_raw = rasn::der::encode(&issuer.tbs_certificate.subject).ok()?;
+
+            let issuer_key_raw = &issuer
+                .tbs_certificate
+                .subject_public_key_info
+                .subject_public_key
+                .as_raw_slice();
+
+            let issuer_name_hash = OctetString::from(crate::crypto::hash::sha1(&issuer_name_raw));
+            let issuer_key_hash = OctetString::from(crate::crypto::hash::sha1(issuer_key_raw));
+            let serial_number = subject.tbs_certificate.serial_number;
+
+            let req_cert = rasn_ocsp::CertId {
+                hash_algorithm: sha1_ai.clone(),
+                issuer_name_hash,
+                issuer_key_hash,
+                serial_number,
+            };
+
+            let ocsp_req = rasn_ocsp::Request {
+                req_cert,
+                single_request_extensions: None,
+            };
+
+            let request_list = vec![ocsp_req];
+
+            let tbs_request = rasn_ocsp::TbsRequest {
+                version: rasn_ocsp::Version::from(0u8),
+                requestor_name: None,
+                request_list,
+                request_extensions: None,
+            };
+
+            let ocsp_request = rasn_ocsp::OcspRequest {
+                tbs_request,
+                optional_signature: None,
+            };
+
+            let request_der = rasn::der::encode(&ocsp_request).ok()?;
+            let request_str = base64::encode(&request_der);
+
+            let req_url = url.join(&request_str).ok()?;
+
+            // WASI async HTTP fetch
+            let request = Request::get(req_url.as_str()).body(empty()).ok()?;
+
+            let mut response = Client::new().send(request).await.ok()?;
+
+            let status = response.status().as_u16();
+            if status != 200 {
+                continue;
+            }
+
+            let content_length = response
+                .headers()
+                .get("Content-Length")
+                .and_then(|val| val.to_str().ok())
+                .and_then(|s| s.parse::<usize>().ok())
+                .unwrap_or(10000);
+
+            let body = response.body_mut();
+            let mut ocsp_rsp = Vec::with_capacity(content_length);
+            body.read_to_end(&mut ocsp_rsp).await.ok()?;
+
+            return Some(ocsp_rsp);
+        }
+    }
+    None
+}
+
+#[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
+pub(crate) async fn fetch_ocsp_response_async(certs: &[Vec<u8>]) -> Option<Vec<u8>> {
+    use reqwest::Client;
+
+    // There must be at least one cert that isn't an end-entity cert.
+    if certs.len() < 2 {
+        return None;
+    }
+
+    let (_rem, cert) = X509Certificate::from_der(&certs[0]).ok()?;
+
+    if let Some(responders) = extract_aia_responders(&cert) {
+        let sha1_oid = rasn::types::Oid::new(&[1, 3, 14, 3, 2, 26])?;
+        let alg = rasn::types::ObjectIdentifier::from(sha1_oid);
+
+        let sha1_ai = rasn_pkix::AlgorithmIdentifier {
+            algorithm: alg,
+            parameters: Some(Any::new(rasn::der::encode(&()).ok()?)),
+        };
+
+        for r in responders {
+            let url = url::Url::parse(&r).ok()?;
+            let subject: Certificate = rasn::der::decode(&certs[0]).ok()?;
+            let issuer: Certificate = rasn::der::decode(&certs[1]).ok()?;
+
+            let issuer_name_raw = rasn::der::encode(&issuer.tbs_certificate.subject).ok()?;
+
+            let issuer_key_raw = &issuer
+                .tbs_certificate
+                .subject_public_key_info
+                .subject_public_key
+                .as_raw_slice();
+
+            let issuer_name_hash = OctetString::from(crate::crypto::hash::sha1(&issuer_name_raw));
+            let issuer_key_hash = OctetString::from(crate::crypto::hash::sha1(issuer_key_raw));
+            let serial_number = subject.tbs_certificate.serial_number;
+
+            let req_cert = rasn_ocsp::CertId {
+                hash_algorithm: sha1_ai.clone(),
+                issuer_name_hash,
+                issuer_key_hash,
+                serial_number,
+            };
+
+            let ocsp_req = rasn_ocsp::Request {
+                req_cert,
+                single_request_extensions: None,
+            };
+
+            let request_list = vec![ocsp_req];
+
+            let tbs_request = rasn_ocsp::TbsRequest {
+                version: rasn_ocsp::Version::from(0u8),
+                requestor_name: None,
+                request_list,
+                request_extensions: None,
+            };
+
+            let ocsp_request = rasn_ocsp::OcspRequest {
+                tbs_request,
+                optional_signature: None,
+            };
+
+            let request_der = rasn::der::encode(&ocsp_request).ok()?;
+            let request_str = base64::encode(&request_der);
+
+            let req_url = url.join(&request_str).ok()?;
+
+            // WASM async HTTP fetch with reqwest
+            let client = Client::new();
+            let response = client.get(req_url.as_str()).send().await.ok()?;
+            if !response.status().is_success() {
+                continue;
+            }
+            let ocsp_rsp = response.bytes().await.ok()?.to_vec();
+
+            return Some(ocsp_rsp);
         }
     }
     None
