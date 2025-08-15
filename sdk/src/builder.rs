@@ -2506,6 +2506,72 @@ mod tests {
         assert_eq!(_reader.validation_status(), None);
     }
 
+    #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
+    #[cfg_attr(
+        all(target_arch = "wasm32", not(target_os = "wasi")),
+        wasm_bindgen_test
+    )]
+    #[cfg_attr(target_os = "wasi", wstd::test)]
+    #[cfg(any(target_arch = "wasm32", feature = "file_io"))]
+    async fn test_builder_box_hashed_embeddable_with_exclusions() {
+        use crate::asset_io::{CAIWriter, HashBlockObjectType};
+        const BOX_HASH_IMAGE: &[u8] = include_bytes!("../tests/fixtures/boxhash.jpg");
+        const BOX_HASH: &[u8] = include_bytes!("../tests/fixtures/boxhash_with_exclusion.json");
+
+        let mut input_stream = Cursor::new(BOX_HASH_IMAGE);
+
+        // get saved box hash settings
+        let box_hash: BoxHash = serde_json::from_slice(BOX_HASH).unwrap();
+
+        let mut builder = Builder::from_json(&simple_manifest_json()).unwrap();
+
+        builder.add_assertion(labels::BOX_HASH, &box_hash).unwrap();
+
+        let signer = crate::utils::test_signer::async_test_signer(SigningAlg::Ed25519);
+
+        let manifest_bytes = builder
+            .sign_box_hashed_embeddable_async(signer.as_ref(), "image/jpeg")
+            .await
+            .unwrap();
+
+        // insert manifest into output asset
+        let jpeg_io = JpegIO {};
+        let ol = jpeg_io
+            .get_object_locations_from_stream(&mut input_stream)
+            .unwrap();
+        input_stream.rewind().unwrap();
+
+        let cai_loc = ol
+            .iter()
+            .find(|o| o.htype == HashBlockObjectType::Cai)
+            .unwrap();
+
+        // build new asset in memory inserting new manifest
+        let outbuf = Vec::new();
+        let mut out_stream = Cursor::new(outbuf);
+
+        // write before
+        let mut before = vec![0u8; cai_loc.offset];
+        input_stream.read_exact(before.as_mut_slice()).unwrap();
+        out_stream.write_all(&before).unwrap();
+
+        // write composed bytes
+        out_stream.write_all(&manifest_bytes).unwrap();
+
+        // write bytes after
+        let mut after_buf = Vec::new();
+        input_stream.read_to_end(&mut after_buf).unwrap();
+        out_stream.write_all(&after_buf).unwrap();
+
+        out_stream.rewind().unwrap();
+
+        let _reader = crate::Reader::from_stream_async("image/jpeg", out_stream)
+            .await
+            .unwrap();
+        //println!("{reader}");
+        assert_eq!(_reader.validation_status(), None);
+    }
+
     #[cfg(feature = "file_io")]
     #[test]
     fn test_builder_base_path() {

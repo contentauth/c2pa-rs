@@ -299,7 +299,7 @@ jobs:
         id: setup-chrome
         uses: browser-actions/setup-chrome@v2
         with:
-          chrome-version: 137
+          chrome-version: 138
           install-chromedriver: true
 
       - name: Install wasm-pack
