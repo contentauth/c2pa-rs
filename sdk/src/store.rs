@@ -99,6 +99,7 @@ use crate::{external_manifest::ManifestPatchCallback, RemoteSigner};
 
 const MANIFEST_STORE_EXT: &str = "c2pa"; // file extension for external manifests
 const MANIFEST_RESERVE_SIZE: usize = 10 * 1024 * 1024; // 10MB reserve size for manifest
+const DEFAULT_MANIFEST_RESPONSE_SIZE: usize = 10 * 1024 * 1024; // 10 MB
 
 pub(crate) struct ManifestHashes {
     pub manifest_box_hash: Vec<u8>,
@@ -3806,7 +3807,6 @@ impl Store {
         use conv::ValueFrom;
 
         //const MANIFEST_CONTENT_TYPE: &str = "application/x-c2pa-manifest-store"; // todo verify once these are served
-        const DEFAULT_MANIFEST_RESPONSE_SIZE: usize = 10 * 1024 * 1024; // 10 MB
 
         match ureq::get(url).call() {
             Ok(response) => {
@@ -3842,86 +3842,57 @@ impl Store {
         }
     }
 
+    #[cfg(all(feature = "fetch_remote_manifests", target_os = "wasi"))]
+    fn fetch_remote_manifest(url: &str) -> Result<Vec<u8>> {
+        use wstd::runtime::block_on;
+
+        block_on(Store::fetch_remote_manifest_async(url))
+    }
+
     // fetch remote manifest if possible
     // TODO: Switch to reqwest once it supports WASI https://github.com/seanmonstar/reqwest/issues/2294
     #[cfg(all(feature = "fetch_remote_manifests", target_os = "wasi"))]
-    fn fetch_remote_manifest(url: &str) -> Result<Vec<u8>> {
-        use url::Url;
-        use wasi::http::{
-            outgoing_handler,
-            types::{Fields, OutgoingRequest, Scheme},
+    async fn fetch_remote_manifest_async(url: &str) -> Result<Vec<u8>> {
+        use wstd::{
+            http::{Client, Request},
+            io::{empty, AsyncRead},
         };
 
-        //const MANIFEST_CONTENT_TYPE: &str = "application/x-c2pa-manifest-store"; // todo verify once these are served
-        const DEFAULT_MANIFEST_RESPONSE_SIZE: usize = 10 * 1024 * 1024; // 10 MB
-        let parsed_url = Url::parse(url)
-            .map_err(|e| Error::RemoteManifestFetch(format!("invalid URL: {}", e)))?;
-        let authority = parsed_url.authority();
-        let path_with_query = parsed_url[url::Position::AfterPort..].to_string();
-        let scheme = match parsed_url.scheme() {
-            "http" => Scheme::Http,
-            "https" => Scheme::Https,
-            _ => {
-                return Err(Error::RemoteManifestFetch(
-                    "unsupported URL scheme".to_string(),
-                ))
-            }
-        };
+        let request = Request::get(url)
+            .body(empty())
+            .map_err(|e| Error::RemoteManifestFetch(format!("failed to build request: {e}")))?;
 
-        let request = OutgoingRequest::new(Fields::new());
-        request.set_path_with_query(Some(&path_with_query)).unwrap();
-        request.set_authority(Some(&authority)).unwrap();
-        request.set_scheme(Some(&scheme)).unwrap();
-        match outgoing_handler::handle(request, None) {
-            Ok(resp) => {
-                resp.subscribe().block();
-                let response = resp
-                    .get()
-                    .ok_or(Error::RemoteManifestFetch(
-                        "HTTP request response missing".to_string(),
-                    ))?
-                    .map_err(|_| {
-                        Error::RemoteManifestFetch(
-                            "HTTP request response requested more than once".to_string(),
-                        )
-                    })?
-                    .map_err(|_| Error::RemoteManifestFetch("HTTP request failed".to_string()))?;
-                if response.status() == 200 {
-                    let content_length: usize = response
-                        .headers()
-                        .get("Content-Length")
-                        .first()
-                        .and_then(|val| if val.is_empty() { None } else { Some(val) })
-                        .and_then(|val| std::str::from_utf8(val).ok())
-                        .and_then(|str_parsed_header| str_parsed_header.parse().ok())
-                        .unwrap_or(DEFAULT_MANIFEST_RESPONSE_SIZE);
-                    let body = {
-                        let mut buf = Vec::with_capacity(content_length);
-                        let response_body = response
-                            .consume()
-                            .expect("failed to get incoming request body");
-                        let mut stream = response_body
-                            .stream()
-                            .expect("failed to get response body stream");
-                        stream
-                            .read_to_end(&mut buf)
-                            .expect("failed to read response body");
-                        buf
-                    };
-                    Ok(body)
-                } else {
-                    Err(Error::RemoteManifestFetch(format!(
-                        "fetch failed: code: {}",
-                        response.status(),
-                    )))
-                }
-            }
-            Err(e) => Err(Error::RemoteManifestFetch(e.to_string())),
+        let mut response = Client::new()
+            .send(request)
+            .await
+            .map_err(|e| Error::RemoteManifestFetch(format!("request failed: {e}")))?;
+
+        let status = response.status().as_u16();
+        if status != 200 {
+            return Err(Error::RemoteManifestFetch(format!(
+                "fetch failed: code: {}",
+                status
+            )));
         }
+
+        let content_length = response
+            .headers()
+            .get("Content-Length")
+            .and_then(|val| val.to_str().ok())
+            .and_then(|s| s.parse::<usize>().ok())
+            .unwrap_or(DEFAULT_MANIFEST_RESPONSE_SIZE);
+
+        let body = response.body_mut();
+        let mut body_buf = Vec::with_capacity(content_length);
+        body.read_to_end(&mut body_buf).await.map_err(|e| {
+            Error::RemoteManifestFetch(format!("failed to read response body: {e}"))
+        })?;
+
+        Ok(body_buf)
     }
 
     #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
-    pub async fn fetch_remote_manifest(url: &str) -> Result<Vec<u8>> {
+    pub async fn fetch_remote_manifest_async(url: &str) -> Result<Vec<u8>> {
         let resp = reqwest::get(url)
             .await
             .map_err(|e| Error::RemoteManifestFetch(format!("{e:?}")))?;
@@ -3965,7 +3936,9 @@ impl Store {
             {
                 // For wasm-bindgen, we can't use the async function in sync context
                 // This will be handled by the async versions of the functions
-                Err(Error::RemoteManifestUrl(ext_ref.to_owned()))
+                Err(Error::RemoteManifestUrl(format!(
+                    "Remote manifest cannot be fetched synchronously in Wasm: {ext_ref}"
+                )))
             }
             #[cfg(not(feature = "fetch_remote_manifests"))]
             Err(Error::RemoteManifestUrl(ext_ref.to_owned()))
@@ -3988,12 +3961,12 @@ impl Store {
 
     /// Handles remote manifests asynchronously when fetch_remote_manifests feature is enabled
     /// Required because wasm-bindgen cannot use async functions in a sync context.
-    #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
+    #[cfg(target_arch = "wasm32")]
     async fn handle_remote_manifest_async(ext_ref: &str) -> Result<Vec<u8>> {
         // verify provenance path is remote url
         if Store::is_valid_remote_url(ext_ref) {
             if get_settings_value::<bool>("verify.remote_manifest_fetch").unwrap_or(true) {
-                Store::fetch_remote_manifest(ext_ref).await
+                Store::fetch_remote_manifest_async(ext_ref).await
             } else {
                 Err(Error::RemoteManifestUrl(ext_ref.to_owned()))
             }
@@ -4011,6 +3984,7 @@ impl Store {
     ///
     /// Returns a tuple (jumbf_bytes, remote_url), returning a remote_url only
     /// if it was used to fetch the jumbf_bytes.
+    #[async_generic()]
     pub fn load_jumbf_from_stream(
         asset_type: &str,
         stream: &mut dyn CAIRead,
@@ -4023,44 +3997,19 @@ impl Store {
                     crate::utils::xmp_inmemory_utils::XmpInfo::from_source(stream, asset_type)
                         .provenance
                 {
-                    Ok((Store::handle_remote_manifest(&ext_ref)?, Some(ext_ref)))
+                    #[cfg(not(target_arch = "wasm32"))]
+                    return Ok((Store::handle_remote_manifest(&ext_ref)?, Some(ext_ref)));
+                    #[cfg(target_arch = "wasm32")]
+                    {
+                        if _sync {
+                            return Ok((Store::handle_remote_manifest(&ext_ref)?, Some(ext_ref)));
+                        } else {
+                            // No async version exists, fallback to sync
+                            return Ok((Store::handle_remote_manifest(&ext_ref)?, Some(ext_ref)));
+                        }
+                    }
                 } else {
-                    Err(Error::JumbfNotFound)
-                }
-            }
-            Err(e) => Err(e),
-        }
-    }
-
-    /// load jumbf given a stream asynchronously
-    ///
-    /// This handles, embedded and remote manifests
-    ///
-    /// asset_type -  mime type of the stream
-    /// stream - a readable stream of an asset
-    ///
-    /// Returns a tuple (jumbf_bytes, remote_url), returning a remote_url only
-    /// if it was used to fetch the jumbf_bytes.
-    /// Required because wasm-bindgen cannot use async functions in a sync context.
-    #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
-    pub async fn load_jumbf_from_stream_async(
-        asset_type: &str,
-        stream: &mut dyn CAIRead,
-    ) -> Result<(Vec<u8>, Option<String>)> {
-        match load_jumbf_from_stream(asset_type, stream) {
-            Ok(manifest_bytes) => Ok((manifest_bytes, None)),
-            Err(Error::JumbfNotFound) => {
-                stream.rewind()?;
-                if let Some(ext_ref) =
-                    crate::utils::xmp_inmemory_utils::XmpInfo::from_source(stream, asset_type)
-                        .provenance
-                {
-                    Ok((
-                        Store::handle_remote_manifest_async(&ext_ref).await?,
-                        Some(ext_ref),
-                    ))
-                } else {
-                    Err(Error::JumbfNotFound)
+                    return Err(Error::JumbfNotFound);
                 }
             }
             Err(e) => Err(e),
@@ -4240,15 +4189,11 @@ impl Store {
         verify: bool,
         validation_log: &mut StatusTracker,
     ) -> Result<Self> {
-        #[cfg(not(target_os = "wasi"))]
         let (manifest_bytes, remote_url) = if _sync {
             Store::load_jumbf_from_stream(format, &mut stream)?
         } else {
             Store::load_jumbf_from_stream_async(format, &mut stream).await?
         };
-
-        #[cfg(target_os = "wasi")]
-        let (manifest_bytes, remote_url) = Store::load_jumbf_from_stream(format, &mut stream)?;
 
         let store = if _sync {
             Self::from_manifest_data_and_stream(

@@ -955,37 +955,38 @@ impl Ingredient {
         let mut validation_log = StatusTracker::default();
 
         // retrieve the manifest bytes from embedded, sidecar or remote and convert to store if found
-        let (result, manifest_bytes) = match Store::load_jumbf_from_stream(format, stream) {
-            Ok((manifest_bytes, _)) => {
-                (
-                    // generate a store from the buffer and then validate from the asset path
-                    match Store::from_jumbf(&manifest_bytes, &mut validation_log) {
-                        Ok(store) => {
-                            // verify the store
-                            Store::verify_store_async(
-                                &store,
-                                &mut ClaimAssetData::Stream(stream, format),
-                                &mut validation_log,
-                            )
-                            .await
-                            .map(|_| store)
-                        }
-                        Err(e) => {
-                            log_item!(
-                                "asset",
-                                "error loading asset",
-                                "Ingredient::from_stream_async"
-                            )
-                            .failure_no_throw(&mut validation_log, &e);
+        let (result, manifest_bytes) =
+            match Store::load_jumbf_from_stream_async(format, stream).await {
+                Ok((manifest_bytes, _)) => {
+                    (
+                        // generate a store from the buffer and then validate from the asset path
+                        match Store::from_jumbf(&manifest_bytes, &mut validation_log) {
+                            Ok(store) => {
+                                // verify the store
+                                Store::verify_store_async(
+                                    &store,
+                                    &mut ClaimAssetData::Stream(stream, format),
+                                    &mut validation_log,
+                                )
+                                .await
+                                .map(|_| store)
+                            }
+                            Err(e) => {
+                                log_item!(
+                                    "asset",
+                                    "error loading asset",
+                                    "Ingredient::from_stream_async"
+                                )
+                                .failure_no_throw(&mut validation_log, &e);
 
-                            Err(e)
-                        }
-                    },
-                    Some(manifest_bytes),
-                )
-            }
-            Err(err) => (Err(err), None),
-        };
+                                Err(e)
+                            }
+                        },
+                        Some(manifest_bytes),
+                    )
+                }
+                Err(err) => (Err(err), None),
+            };
 
         // set validation status from result and log
         ingredient.update_validation_status(result, manifest_bytes, &validation_log)?;
