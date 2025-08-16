@@ -78,9 +78,10 @@ pub fn sign_file(
 
 #[cfg(test)]
 mod tests {
-    use std::{fs::remove_dir_all, path::PathBuf};
+    use std::{ffi::CString, fs::remove_dir_all, path::PathBuf};
 
     use super::*;
+    use crate::c_api::c2pa_load_settings;
 
     /// returns a path to a file in the fixtures folder
     pub fn test_path(path: &str) -> String {
@@ -117,6 +118,14 @@ mod tests {
 
     #[test]
     fn test_verify_from_file_cawg_identity() {
+        let settings = CString::new(include_bytes!(
+            "../../cli/tests/fixtures/trust/cawg_test_settings.toml"
+        ))
+        .unwrap();
+        let format = CString::new("toml").unwrap();
+        let result = unsafe { c2pa_load_settings(settings.as_ptr(), format.as_ptr()) };
+        assert_eq!(result, 0);
+
         let path = test_path("tests/fixtures/C_with_CAWG_data.jpg");
         let result = read_file(&path, None);
         dbg!(&result);

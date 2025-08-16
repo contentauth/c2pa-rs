@@ -63,8 +63,10 @@
 //!
 //! ## Example: Adding a Manifest to a file
 //!
-//! ```
+//! ```ignore-wasm32
+//! # use c2pa::Result;
 //! use std::io::Cursor;
+//! use std::path::PathBuf;
 //!
 //! use c2pa::{Builder, Result, Settings};
 //! use serde::Serialize;
@@ -75,7 +77,7 @@
 //! }
 //! # fn main() -> Result<()> {
 //!
-//! // read from a file and write to a vector
+//! //read from a file and write to a vector
 //! let format = "image/jpeg";
 //! let source = std::fs::File::open("tests/fixtures/C.jpg")?;
 //! let mut dest = Cursor::new(Vec::new());
@@ -141,11 +143,12 @@ pub mod validation_results;
 pub mod validation_status;
 
 // Public exports
+pub use assertions::DigitalSourceType;
 #[doc(inline)]
 pub use assertions::Relationship;
 #[cfg(feature = "v1_api")]
 pub use asset_io::{CAIRead, CAIReadWrite};
-pub use builder::{Builder, DigitalSourceType, ManifestDefinition};
+pub use builder::{Builder, ManifestDefinition};
 pub use callback_signer::{CallbackFunc, CallbackSigner};
 pub use claim_generator_info::ClaimGeneratorInfo;
 // pub use dynamic_assertion::{

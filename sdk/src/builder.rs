@@ -26,11 +26,14 @@ use serde_with::skip_serializing_none;
 use uuid::Uuid;
 use zip::{write::SimpleFileOptions, ZipArchive, ZipWriter};
 
+#[allow(deprecated)]
 use crate::{
     assertion::AssertionDecodeError,
     assertions::{
-        c2pa_action, labels, Action, ActionTemplate, Actions, BmffHash, BoxHash, CreativeWork,
-        DataHash, EmbeddedData, Exif, SoftwareAgent, Thumbnail, User, UserCbor,
+        c2pa_action,
+        labels::{self, METADATA_LABEL_REGEX},
+        Action, ActionTemplate, Actions, BmffHash, BoxHash, CreativeWork, DataHash,
+        DigitalSourceType, EmbeddedData, Exif, Metadata, SoftwareAgent, Thumbnail, User, UserCbor,
     },
     cbor_types::value_cbor_to_type,
     claim::Claim,
@@ -162,29 +165,6 @@ impl AssertionDefinition {
     }
 }
 
-#[derive(Debug, Default, Deserialize, Serialize, Clone, PartialEq)]
-#[cfg_attr(feature = "json_schema", derive(JsonSchema))]
-pub enum DigitalSourceType {
-    /// Media whose digital content is effectively empty, such as a blank canvas or zero-length video.
-    #[default]
-    Empty,
-    /// Data that is the result of algorithmically using a model derived from sampled content and data.
-    /// Differs from <http://cv.iptc.org/newscodes/digitalsourcetype/>trainedAlgorithmicMedia in that
-    /// the result isn’t a media type (e.g., image or video) but is a data format (e.g., CSV, pickle).
-    TrainedAlgorithmicData,
-}
-
-impl DigitalSourceType {
-    pub fn as_url(&self) -> &'static str {
-        match self {
-            Self::Empty => "http://c2pa.org/digitalsourcetype/empty",
-            Self::TrainedAlgorithmicData => {
-                "http://c2pa.org/digitalsourcetype/trainedAlgorithmicData"
-            }
-        }
-    }
-}
-
 /// Represents the type of builder flow being used.
 ///
 /// This determines how the builder will be used, such as creating a new asset, opening an existing asset,
@@ -199,7 +179,7 @@ enum BuilderIntent {
     #[serde(rename = "create")]
     Create(DigitalSourceType),
 
-    /// This is the result of editing an pre-existing parent asset.
+    /// This is an edit of a pre-existing parent asset.
     ///
     /// The Manifest must have a parent ingredient.
     /// A parent ingredient will be generated from the source stream if not otherwise provided.
@@ -211,14 +191,26 @@ enum BuilderIntent {
     ///
     /// There must be only one ingredient, as a parent.
     /// No changes can be made to the hashed content of the parent.
+    /// There are additional restrictions on the types of changes that can be made.
     #[serde(rename = "update")]
     Update,
+}
+
+#[allow(unused)] // TEMPORARY: @gpeacock please investigate
+#[derive(Serialize, Deserialize)]
+struct StructuredAction {
+    action: String,
+    #[serde(flatten)]
+    data: serde_json::Value,
 }
 
 /// Use a Builder to add a signed manifest to an asset.
 ///
 /// # Example: Building and signing a manifest
-/// ```
+///
+/// ```ignore-wasm32
+/// use c2pa::Result;
+/// use std::path::PathBuf;
 /// use std::io::Cursor;
 ///
 /// use c2pa::{Builder, Result, Settings};
@@ -229,23 +221,36 @@ enum BuilderIntent {
 ///     my_tag: usize,
 /// }
 /// # fn main() -> Result<()> {
+/// #[cfg(feature = "file_io")]
+/// {
+///     let manifest_json = json!({
+///        "claim_generator_info": [
+///           {
+///               "name": "c2pa_test",
+///               "version": "1.0.0"
+///           }
+///        ],
+///        "title": "Test_Manifest"
+///     }).to_string();
 ///
-/// // read from a file and write to a vector
-/// let format = "image/jpeg";
-/// let source = std::fs::File::open("tests/fixtures/C.jpg")?;
-/// let mut dest = Cursor::new(Vec::new());
+///     let mut builder = Builder::from_json(&manifest_json)?;
+///     builder.add_assertion("org.contentauth.test", &Test { my_tag: 42 })?;
 ///
-/// let mut builder = Builder::open()?;
+///     let source = PathBuf::from("tests/fixtures/C.jpg");
+///     let dir = tempdir()?;
+///     let dest = dir.path().join("test_file.jpg");
 ///
-/// builder.add_assertion("org.contentauth.test", &MyAssertion { my_tag: 42 })?;
+///     // Create a ps256 signer using certs and key files. TO DO: Update example.
+///     let signcert_path = "tests/fixtures/certs/ps256.pub";
+///     let pkey_path = "tests/fixtures/certs/ps256.pem";
+///     let signer = create_signer::from_files(signcert_path, pkey_path, SigningAlg::Ps256, None)?;
 ///
-/// // embed a manifest using our configured signer
-/// builder.sign(&Settings::signer()?, format, source, &mut dest)?;
-///
-/// // now read and validate the signed asset
-/// dest.set_position(0)?;
-/// let reader = Reader::from_stream(format, &mut dest)?;
-/// println!("{reader:?}");
+///     // embed a manifest using the signer
+///     builder.sign_file(
+///         signer.as_ref(),
+///         &source,
+///         &dest)?;
+///     }
 /// # Ok(())
 /// # }
 /// ```
@@ -309,6 +314,7 @@ impl Builder {
     }
 
     /// Creates a new [`Builder`] for for editing an existing asset.
+    /// This is experimental and will likely change in the future.
     ///
     /// If a parent ingredient is not provided, it will be generated from the source stream.
     /// and an associated `c2pa.opened` action will be added.
@@ -320,20 +326,22 @@ impl Builder {
         builder
     }
 
-    /// Creates a new [`Builder`] for updating an existing asset.
-    ///
-    /// This creates an Update manifest, which is a restricted version of an Open manifest.
-    /// The benefit is a smaller manifest with only non-editorial changes.
-    /// It must have a parent and no other ingredients.
-    /// It cannot modify the hashed content of the parent.
-    /// Only a very limited set of actions can be performed.
-    pub fn update() -> Self {
-        let mut builder = Self::new();
-        builder.intent = Some(BuilderIntent::Update);
-        builder
-    }
+    // /// Creates a new [`Builder`] for updating an existing asset.
+    // /// This is experimental and not fully implemented yet.
+    // ///
+    // /// This creates an Update manifest, which is a restricted version of an Open manifest.
+    // /// The benefit is a smaller manifest with only non-editorial changes.
+    // /// It must have a parent and no other ingredients.
+    // /// It cannot modify the hashed content of the parent.
+    // /// Only a very limited set of actions can be performed.
+    // pub fn update() -> Self {
+    //     let mut builder = Self::new();
+    //     builder.intent = Some(BuilderIntent::Update);
+    //     builder
+    // }
 
     /// Creates a new [`Builder`] from a JSON [`ManifestDefinition`] string.
+    /// This is experimental and may change in the future.
     ///
     /// # Arguments
     /// * `json` - A JSON string representing the [`ManifestDefinition`].
@@ -518,7 +526,7 @@ impl Builder {
     ///
     /// let mut builder = Builder::new();
     /// builder.add_action(created_action);
-    /// ```     
+    /// ```
     pub fn add_action<T>(&mut self, action: T) -> Result<&mut Self>
     where
         T: Serialize,
@@ -1030,9 +1038,9 @@ impl Builder {
 
                     claim.add_assertion(&actions)
                 }
+                #[allow(deprecated)]
                 CreativeWork::LABEL => {
                     let cw: CreativeWork = manifest_assertion.to_assertion()?;
-
                     claim.add_gathered_assertion_with_salt(&cw, &salt)
                 }
                 Exif::LABEL => {
@@ -1050,6 +1058,10 @@ impl Builder {
                 BmffHash::LABEL => {
                     let bmff_hash: BmffHash = manifest_assertion.to_assertion()?;
                     claim.add_assertion_with_salt(&bmff_hash, &salt)
+                }
+                l if METADATA_LABEL_REGEX.is_match(l) => {
+                    let metadata: Metadata = manifest_assertion.to_assertion()?;
+                    claim.add_gathered_assertion_with_salt(&metadata, &salt)
                 }
                 _ => match &manifest_assertion.data {
                     AssertionData::Json(value) => claim.add_gathered_assertion_with_salt(
@@ -1160,7 +1172,7 @@ impl Builder {
                     let action =
                         action.set_parameter("ingredients", vec![parent_ingredient_uri])?;
 
-                    let source_type = settings::get_settings_value::<Option<String>>(
+                    let source_type = settings::get_settings_value::<Option<DigitalSourceType>>(
                         "builder.auto_opened_action.source_type",
                     );
                     match source_type {
@@ -1170,7 +1182,7 @@ impl Builder {
                 }
                 (None, true, _) => {
                     // The settings ensures this field always exists for the "c2pa.created" action.
-                    let source_type = settings::get_settings_value::<Option<String>>(
+                    let source_type = settings::get_settings_value::<Option<DigitalSourceType>>(
                         "builder.actions.auto_created_action.source_type",
                     );
                     match source_type {
@@ -1231,7 +1243,7 @@ impl Builder {
 
                     let action = action.set_parameter("ingredients", vec![uri])?;
 
-                    let source_type = settings::get_settings_value::<Option<String>>(
+                    let source_type = settings::get_settings_value::<Option<DigitalSourceType>>(
                         "builder.auto_placed_action.source_type",
                     );
                     let action = match source_type {
@@ -1642,7 +1654,7 @@ mod tests {
     #[cfg(feature = "file_io")]
     use crate::utils::test::fixture_path;
     use crate::{
-        assertions::{c2pa_action, source_type, BoxHash},
+        assertions::{c2pa_action, BoxHash, DigitalSourceType},
         asset_handlers::jpeg_io::JpegIO,
         cbor_types::value_cbor_to_type,
         crypto::raw_signature::SigningAlg,
@@ -1697,13 +1709,13 @@ mod tests {
                             {
                                 "action": "c2pa.opened",
                                 "parameters": {
-                                    "org.cai.ingredientIds": ["CA.jpg"]
+                                    "ingredientIds": ["CA.jpg"]
                                 },
                             },
                             {
                                 "action": "c2pa.placed",
                                 "parameters": {
-                                    "org.cai.ingredientIds": ["INGREDIENT_2"]
+                                    "ingredientIds": ["INGREDIENT_2"]
                                 },
                             }
 
@@ -1909,7 +1921,7 @@ mod tests {
             &toml::toml! {
                 [builder.actions.auto_created_action]
                 enabled = true
-                source_type = (source_type::EMPTY)
+                source_type = (DigitalSourceType::Empty.to_string())
             }
             .to_string(),
         )
@@ -2007,7 +2019,7 @@ mod tests {
             &toml::toml! {
                 [builder.actions.auto_created_action]
                 enabled = true
-                source_type = (source_type::EMPTY)
+                source_type = (DigitalSourceType::Empty.to_string())
 
                 [builder.actions.auto_placed_action]
                 enabled = true
@@ -2101,7 +2113,7 @@ mod tests {
 
                 [builder.actions.auto_created_action]
                 enabled = true
-                source_type = (source_type::EMPTY)
+                source_type = (DigitalSourceType::Empty.to_string())
             }
             .to_string(),
         )
@@ -2138,15 +2150,15 @@ mod tests {
             &toml::toml! {
                 [builder.actions.auto_created_action]
                 enabled = true
-                source_type = (source_type::EMPTY)
+                source_type = (DigitalSourceType::Empty.to_string())
 
                 [[builder.actions.templates]]
                 action = (c2pa_action::EDITED)
-                source_type = (source_type::EMPTY)
+                source_type = (DigitalSourceType::Empty.to_string())
 
                 [[builder.actions.templates]]
                 action = (c2pa_action::COLOR_ADJUSTMENTS)
-                source_type = (source_type::TRAINED_ALGORITHMIC_DATA)
+                source_type = (DigitalSourceType::TrainedAlgorithmicData.to_string())
             }
             .to_string(),
         )
@@ -2177,12 +2189,12 @@ mod tests {
         for template in templates {
             match template.action.as_str() {
                 c2pa_action::EDITED => {
-                    assert_eq!(template.source_type.as_deref(), Some(source_type::EMPTY));
+                    assert_eq!(template.source_type, Some(DigitalSourceType::Empty));
                 }
                 c2pa_action::COLOR_ADJUSTMENTS => {
                     assert_eq!(
-                        template.source_type.as_deref(),
-                        Some(source_type::TRAINED_ALGORITHMIC_DATA)
+                        template.source_type,
+                        Some(DigitalSourceType::TrainedAlgorithmicData)
                     );
                 }
                 _ => {}
@@ -2199,15 +2211,15 @@ mod tests {
             &toml::toml! {
                 [builder.actions.auto_created_action]
                 enabled = true
-                source_type = (source_type::EMPTY)
+                source_type = (DigitalSourceType::Empty.to_string())
 
                 [[builder.actions.actions]]
                 action = (c2pa_action::EDITED)
-                source_type = (source_type::EMPTY)
+                source_type = (DigitalSourceType::Empty.to_string())
 
                 [[builder.actions.actions]]
                 action = (c2pa_action::COLOR_ADJUSTMENTS)
-                source_type = (source_type::TRAINED_ALGORITHMIC_DATA)
+                source_type = (DigitalSourceType::TrainedAlgorithmicData.to_string())
             }
             .to_string(),
         )
@@ -2237,12 +2249,12 @@ mod tests {
         for action in actions.actions {
             match action.action() {
                 c2pa_action::EDITED => {
-                    assert_eq!(action.source_type(), Some(source_type::EMPTY));
+                    assert_eq!(action.source_type(), Some(&DigitalSourceType::Empty));
                 }
                 c2pa_action::COLOR_ADJUSTMENTS => {
                     assert_eq!(
                         action.source_type(),
-                        Some(source_type::TRAINED_ALGORITHMIC_DATA)
+                        Some(&DigitalSourceType::TrainedAlgorithmicData)
                     );
                 }
                 _ => {}
@@ -2616,7 +2628,7 @@ mod tests {
                             "action": "c2pa.opened",
                             "parameters": {
                                 "description": "import",
-                                "org.cai.ingredientIds": [
+                                "ingredientIds": [
                                     "xmp.iid:7b57930e-2f23-47fc-affe-0400d70b738d"
                                 ]
                             },
@@ -2892,8 +2904,8 @@ mod tests {
 
     #[test]
     fn test_redaction() {
-        // We use this to associate the parent ingredient with c2pa.opened action
-        const PARENT_LABEL: &str = "parent_ingredient";
+        Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml")).unwrap();
+        //crate::utils::test::setup_logger();
 
         // the label of the assertion we are going to redact
         const ASSERTION_LABEL: &str = "stds.schema-org.CreativeWork";
@@ -2901,67 +2913,32 @@ mod tests {
         let mut input = Cursor::new(TEST_IMAGE);
 
         let parent = Reader::from_stream("image/jpeg", &mut input).expect("from_stream");
-        input.rewind().unwrap(); // we will use this again to add the parent ingredient
-        print!("{parent}");
         let parent_manifest_label = parent.active_label().unwrap();
-        // you can extract a references any manifest and any assertion label here.
-
+        // Create a redacted uri for the assertion we are going to redact.
         let redacted_uri =
             crate::jumbf::labels::to_assertion_uri(parent_manifest_label, ASSERTION_LABEL);
 
-        //let parent_manifest_label = parent_manifest_label.to_owned();
-
-        // Create a parent with a c2pa_action type assertion.
-        let opened_action = crate::assertions::Action::new(c2pa_action::OPENED)
-            .set_parameter("org.cai.ingredientIds", [PARENT_LABEL.to_string()].to_vec())
-            .unwrap();
+        let mut builder = Builder::edit();
+        builder.definition.redactions = Some(vec![redacted_uri.clone()]);
 
         let redacted_action = crate::assertions::Action::new("c2pa.redacted")
             .set_reason("testing".to_owned())
             .set_parameter("redacted".to_owned(), redacted_uri.clone())
             .unwrap();
 
-        let actions = crate::assertions::Actions::new()
-            .add_action(opened_action)
-            .add_action(redacted_action);
-
-        let definition = ManifestDefinition {
-            claim_version: Some(1),
-            claim_generator_info: [ClaimGeneratorInfo::default()].to_vec(),
-            title: Some("Redaction Test".to_string()),
-            redactions: Some(vec![redacted_uri]), // add the redaction
-            ..Default::default()
-        };
-
-        let mut builder = Builder {
-            definition,
-            ..Default::default()
-        };
-
-        let parent_json = json!({
-            "relationship": "parentOf",
-            "label": PARENT_LABEL,
-        })
-        .to_string();
-
-        // add the parent ingredient from the asset here
-        builder
-            .add_ingredient_from_stream(parent_json, "image/jpeg", &mut input)
-            .expect("add ingredient");
-
-        builder.add_assertion(Actions::LABEL, &actions).unwrap();
+        builder.add_action(redacted_action).unwrap();
 
         let signer = test_signer(SigningAlg::Ps256);
         // Embed a manifest using the signer.
         let mut output = Cursor::new(Vec::new());
         builder
-            .sign(signer.as_ref(), "jpeg", &mut input, &mut output)
+            .sign(signer.as_ref(), "image/jpeg", &mut input, &mut output)
             .expect("builder sign");
 
         output.set_position(0);
 
-        let reader = Reader::from_stream("jpeg", &mut output).expect("from_bytes");
-        println!("{reader}");
+        let reader = Reader::from_stream("image/jpeg", &mut output).expect("from_bytes");
+        //println!("{reader}");
         let m = reader.active_manifest().unwrap();
         assert_eq!(m.ingredients().len(), 1);
         let parent = reader.get_manifest(parent_manifest_label).unwrap();

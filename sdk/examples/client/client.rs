@@ -16,6 +16,7 @@
 use std::path::PathBuf;
 
 use anyhow::Result;
+#[allow(deprecated)]
 use c2pa::{
     assertions::{labels, Actions, CreativeWork, Exif, SchemaDotOrgPerson},
     Builder, ClaimGeneratorInfo, Reader, Settings,
@@ -46,6 +47,7 @@ fn show_manifest(reader: &Reader, manifest_label: &str, level: usize) -> Result<
                         println!("{}{}", indent, action.action());
                     }
                 }
+                #[allow(deprecated)]
                 labels::CREATIVE_WORK => {
                     let creative_work: CreativeWork = assertion.to_assertion()?;
                     if let Some(authors) = creative_work.author() {
@@ -107,6 +109,8 @@ pub fn main() -> Result<()> {
         std::fs::remove_file(&dest_path)?;
     }
     // build a creative work assertion
+    // TO DO: Replace this example.
+    #[allow(deprecated)]
     let creative_work =
         CreativeWork::new().add_author(SchemaDotOrgPerson::new().set_name("me")?)?;
 
@@ -128,6 +132,7 @@ pub fn main() -> Result<()> {
     let mut builder = Builder::edit();
     let mut generator = ClaimGeneratorInfo::new("c2pa-rs client example");
     generator.set_version("0.1");
+    #[allow(deprecated)]
     builder
         .set_claim_generator_info(generator)
         .add_assertion(CreativeWork::LABEL, &creative_work)?

@@ -27,7 +27,9 @@ use uuid::Uuid;
 use crate::Manifest;
 use crate::{
     assertion::{Assertion, AssertionBase},
-    assertions::{self, labels, AssertionMetadata, AssetType, EmbeddedData, Relationship},
+    assertions::{
+        self, labels, AssertionMetadata, AssetType, CertificateStatus, EmbeddedData, Relationship,
+    },
     asset_io::CAIRead,
     claim::{Claim, ClaimAssetData},
     crypto::base64,
@@ -145,6 +147,9 @@ pub struct Ingredient {
     #[serde(skip_deserializing)]
     #[serde(skip_serializing_if = "skip_serializing_resources")]
     resources: ResourceStore,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    ocsp_responses: Option<Vec<ResourceRef>>,
 }
 
 fn default_instance_id() -> String {
@@ -326,6 +331,11 @@ impl Ingredient {
     /// Returns a reference to ingredient data if it exists.
     pub fn data_ref(&self) -> Option<&ResourceRef> {
         self.data.as_ref()
+    }
+
+    /// Returns a reference to the ocsp responses if it exists.
+    pub(crate) fn ocsp_responses_ref(&self) -> Option<&Vec<ResourceRef>> {
+        self.ocsp_responses.as_ref()
     }
 
     /// Returns the detailed description of the ingredient if it exists.
@@ -877,7 +887,7 @@ impl Ingredient {
         };
 
         // We can't use functional combinators since we can't use async callbacks (https://github.com/rust-lang/rust/issues/62290)
-        let (result, manifest_bytes) = match jumbf_result {
+        let (mut result, manifest_bytes) = match jumbf_result {
             Ok(manifest_bytes) => {
                 let result = Store::from_manifest_data_and_stream(
                     &manifest_bytes,
@@ -890,6 +900,19 @@ impl Ingredient {
             }
             Err(err) => (Err(err), None),
         };
+
+        // Fetch ocsp responses and store it with the ingredient
+        if let Ok(ref mut store) = result {
+            let labels = store.get_manifest_labels_for_ocsp();
+
+            let ocsp_response_ders = store.get_ocsp_response_ders(labels, &mut validation_log)?;
+            let resource_refs: Vec<ResourceRef> = ocsp_response_ders
+                .into_iter()
+                .filter_map(|o| self.resources.add_with(&o.0, "ocsp", o.1).ok())
+                .collect();
+
+            self.ocsp_responses = Some(resource_refs);
+        }
 
         // set validation status from result and log
         self.update_validation_status(result, manifest_bytes, &validation_log)?;
@@ -1269,6 +1292,25 @@ impl Ingredient {
 
             data = Some(hash_uri);
         };
+
+        // if the ingredient has ocsp responses, resolve and add it to the claim as a certificate status assertion
+        if let Some(ocsp_responses_ref) = self.ocsp_responses_ref() {
+            let ocsp_responses: Vec<Vec<u8>> = ocsp_responses_ref
+                .iter()
+                .filter_map(|i| get_resource(&i.identifier).ok())
+                .map(|cow| cow.into_owned())
+                .collect();
+            if !ocsp_responses.is_empty() {
+                let certificate_status =
+                    if let Some(assertion) = claim.get_assertion(CertificateStatus::LABEL, 0) {
+                        let certificate_status = CertificateStatus::from_assertion(assertion)?;
+                        certificate_status.add_ocsp_vals(ocsp_responses)
+                    } else {
+                        CertificateStatus::new(ocsp_responses)
+                    };
+                claim.add_assertion_with_salt(&certificate_status, &DefaultSalt::default())?;
+            }
+        }
 
         let mut ingredient_assertion = match claim.version() {
             1 => {
