@@ -703,6 +703,7 @@ dependencies = [
  "c2pa_macros",
  "chrono",
  "ciborium",
+ "clap",
  "config",
  "console_log",
  "const-hex",

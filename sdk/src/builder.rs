@@ -32,9 +32,8 @@ use crate::{
     assertions::{
         c2pa_action,
         labels::{self, METADATA_LABEL_REGEX},
-        Action, ActionTemplate, Actions, AssertionMetadata, BmffHash, BoxHash, CreativeWork,
-        DataHash, DigitalSourceType, EmbeddedData, Exif, Metadata, SoftwareAgent, Thumbnail, User,
-        UserCbor,
+        Action, ActionTemplate, Actions, BmffHash, BoxHash, CreativeWork, DataHash,
+        DigitalSourceType, EmbeddedData, Exif, Metadata, SoftwareAgent, Thumbnail, User, UserCbor,
     },
     cbor_types::value_cbor_to_type,
     claim::Claim,
@@ -54,7 +53,8 @@ use crate::{
 /// Version of the Builder Archive file
 const ARCHIVE_VERSION: &str = "1";
 
-/// Use a ManifestDefinition to define a manifest and to build a `ManifestStore`.
+/// Contains the pre-defined elements of a manifest to be used in a [Builder].
+///
 /// A manifest is a collection of ingredients and assertions
 /// used to define a claim that can be signed and embedded into a file.
 #[skip_serializing_none]
@@ -72,9 +72,6 @@ pub struct ManifestDefinition {
     /// Claim Generator Info is always required with at least one entry
     #[serde(default = "default_claim_generator_info")]
     pub claim_generator_info: Vec<ClaimGeneratorInfo>,
-
-    /// Optional manifest metadata. This will be deprecated in the future; not recommended to use.
-    pub metadata: Option<Vec<AssertionMetadata>>,
 
     /// A human-readable title, generally source filename.
     pub title: Option<String>,
@@ -171,7 +168,7 @@ impl AssertionDefinition {
 /// Represents the type of builder flow being used.
 ///
 /// This determines how the builder will be used, such as creating a new asset, opening an existing asset,
-/// or updating an existing asset.
+/// or making limited updates to an existing asset.
 #[derive(Debug, Deserialize, Serialize, PartialEq, Clone)]
 #[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 enum BuilderIntent {
@@ -214,17 +211,15 @@ struct StructuredAction {
 /// ```ignore-wasm32
 /// use c2pa::Result;
 /// use std::path::PathBuf;
+/// use std::io::Cursor;
 ///
-/// use c2pa::{create_signer, Builder, SigningAlg};
+/// use c2pa::{Builder, Result, Settings};
 /// use serde::Serialize;
-/// use serde_json::json;
-/// use tempfile::tempdir;
 ///
 /// #[derive(Serialize)]
-/// struct Test {
+/// struct MyAssertion {
 ///     my_tag: usize,
 /// }
-///
 /// # fn main() -> Result<()> {
 /// #[cfg(feature = "file_io")]
 /// {
@@ -264,7 +259,8 @@ struct StructuredAction {
 #[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 pub struct Builder {
     #[serde(flatten)]
-    /// A collection of ingredients and assertions used to define a claim that can be signed and embedded into a file.
+    /// Declaratively define a manifest.
+    ///
     /// In most cases, you create this from a JSON manifest definition.
     pub definition: ManifestDefinition,
 
@@ -561,16 +557,35 @@ impl Builder {
     }
 
     /// Adds an [`Ingredient`] to the manifest with JSON and a stream.
-    // TODO: Add example.
     ///
     /// # Arguments
-    /// * `ingredient_json` - A JSON string representing the [`Ingredient`].  This ingredient is merged  with the ingredient specified in the `stream` argument, and these values take precedence.
+    /// * `ingredient_json` - JSON data representing the [`Ingredient`]. Can be a JSON string, `serde_json::Value`, or any type that converts to an [`Ingredient`]. This ingredient is merged with the ingredient specified in the `stream` argument, and these values take precedence.
     /// * `format` - The format of the [`Ingredient`].
-    /// * `stream` - A stream from which to read the [`Ingredient`].  This ingredient is merged  with the ingredient specified in the `ingredient_json` argument, whose values take precedence.  You can specify values here that are not specified in `ingredient_json`.
+    /// * `stream` - A stream from which to read the [`Ingredient`]. This ingredient is merged with the ingredient specified in the `ingredient_json` argument, whose values take precedence. You can specify values here that are not specified in `ingredient_json`.
     /// # Returns
     /// * A mutable reference to the [`Ingredient`].
     /// # Errors
     /// * Returns an [`Error`] if the [`Ingredient`] is not valid
+    /// # Examples
+    /// ```rust
+    /// use c2pa::Builder;
+    /// use serde_json::json;
+    /// use std::io::Cursor;
+    ///
+    /// let mut builder = Builder::new();
+    /// let mut stream = Cursor::new(b"some image data");
+    ///
+    /// // From JSON value
+    /// let ingredient_json = json!({
+    ///     "title": "My Ingredient",
+    ///     "relationship": "parentOf"
+    /// });
+    /// builder.add_ingredient_from_stream(ingredient_json, "image/jpeg", &mut stream)?;
+    ///
+    /// // From JSON string
+    /// builder.add_ingredient_from_stream(r#"{"title": "Another", "relationship": "componentOf"}"#, "image/jpeg", &mut stream)?;
+    /// # Ok::<(), c2pa::Error>(())
+    /// ```
     #[async_generic()]
     pub fn add_ingredient_from_stream<'a, T, R>(
         &'a mut self,
@@ -579,10 +594,13 @@ impl Builder {
         stream: &mut R,
     ) -> Result<&'a mut Ingredient>
     where
-        T: Into<String>,
+        T: TryInto<Ingredient>,
+        T::Error: std::fmt::Display,
         R: Read + Seek + Send,
     {
-        let ingredient: Ingredient = Ingredient::from_json(&ingredient_json.into())?;
+        let ingredient = ingredient_json
+            .try_into()
+            .map_err(|e| Error::BadParam(format!("Invalid ingredient JSON: {e}")))?;
         let ingredient = if _sync {
             ingredient.with_stream(format, stream)?
         } else {
@@ -593,13 +611,48 @@ impl Builder {
         Ok(self.definition.ingredients.last_mut().unwrap()) // ok since we just added it
     }
 
-    /// Adds an [`Ingredient`] to the manifest from an existing Ingredient.
-    pub fn add_ingredient<I>(&mut self, ingredient: I) -> &mut Self
+    /// Adds an [`Ingredient`] to the manifest from an existing Ingredient or JSON value.
+    ///
+    /// This method accepts any type that can be converted into an [`Ingredient`], including:
+    /// - An existing [`Ingredient`] instance
+    /// - A `serde_json::Value` containing ingredient data
+    /// - A JSON string (`&str` or `String`)
+    /// - Any other type that implements `TryInto<Ingredient>`
+    ///
+    /// # Arguments
+    /// * `ingredient` - The ingredient to add, either as an Ingredient or convertible type
+    /// # Returns
+    /// * A mutable reference to the [`Builder`].
+    /// # Errors
+    /// * Returns an [`Error`] if the ingredient cannot be converted or is invalid.
+    /// # Examples
+    /// ```rust
+    /// use c2pa::Builder;
+    /// use serde_json::json;
+    ///
+    /// let mut builder = Builder::new();
+    ///
+    /// // Add from JSON value
+    /// let ingredient_json = json!({
+    ///     "title": "My Ingredient",
+    ///     "relationship": "parentOf"
+    /// });
+    /// builder.add_ingredient(ingredient_json)?;
+    ///
+    /// // Add from JSON string
+    /// builder.add_ingredient(r#"{"title": "Another", "relationship": "componentOf"}"#)?;
+    /// # Ok::<(), c2pa::Error>(())
+    /// ```
+    pub fn add_ingredient<I>(&mut self, ingredient: I) -> Result<&mut Self>
     where
-        I: Into<Ingredient>,
+        I: TryInto<Ingredient>,
+        I::Error: std::fmt::Display,
     {
-        self.definition.ingredients.push(ingredient.into());
-        self
+        let ingredient = ingredient
+            .try_into()
+            .map_err(|e| Error::BadParam(format!("Invalid ingredient: {e}")))?;
+        self.definition.ingredients.push(ingredient);
+        Ok(self)
     }
 
     /// Adds a resource to the manifest.
@@ -3046,7 +3099,7 @@ mod tests {
             std::fs::read_to_string(ingredient_folder.join("ingredient.json")).unwrap();
 
         let ingredient = Ingredient::from_json(&ingredient_json).unwrap();
-        builder.add_ingredient(ingredient);
+        builder.add_ingredient(ingredient).unwrap();
 
         let signer = test_signer(SigningAlg::Ps256);
 
