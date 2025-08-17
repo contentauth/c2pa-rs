@@ -3844,9 +3844,78 @@ impl Store {
 
     #[cfg(all(feature = "fetch_remote_manifests", target_os = "wasi"))]
     fn fetch_remote_manifest(url: &str) -> Result<Vec<u8>> {
-        use wstd::runtime::block_on;
+        use url::Url;
+        use wasi::http::{
+            outgoing_handler,
+            types::{Fields, OutgoingRequest, Scheme},
+        };
 
-        block_on(Store::fetch_remote_manifest_async(url))
+        //const MANIFEST_CONTENT_TYPE: &str = "application/x-c2pa-manifest-store"; // todo verify once these are served
+        const DEFAULT_MANIFEST_RESPONSE_SIZE: usize = 10 * 1024 * 1024; // 10 MB
+        let parsed_url = Url::parse(url)
+            .map_err(|e| Error::RemoteManifestFetch(format!("invalid URL: {}", e)))?;
+        let authority = parsed_url.authority();
+        let path_with_query = parsed_url[url::Position::AfterPort..].to_string();
+        let scheme = match parsed_url.scheme() {
+            "http" => Scheme::Http,
+            "https" => Scheme::Https,
+            _ => {
+                return Err(Error::RemoteManifestFetch(
+                    "unsupported URL scheme".to_string(),
+                ))
+            }
+        };
+
+        let request = OutgoingRequest::new(Fields::new());
+        request.set_path_with_query(Some(&path_with_query)).unwrap();
+        request.set_authority(Some(&authority)).unwrap();
+        request.set_scheme(Some(&scheme)).unwrap();
+        match outgoing_handler::handle(request, None) {
+            Ok(resp) => {
+                resp.subscribe().block();
+                let response = resp
+                    .get()
+                    .ok_or(Error::RemoteManifestFetch(
+                        "HTTP request response missing".to_string(),
+                    ))?
+                    .map_err(|_| {
+                        Error::RemoteManifestFetch(
+                            "HTTP request response requested more than once".to_string(),
+                        )
+                    })?
+                    .map_err(|_| Error::RemoteManifestFetch("HTTP request failed".to_string()))?;
+                if response.status() == 200 {
+                    let content_length: usize = response
+                        .headers()
+                        .get("Content-Length")
+                        .first()
+                        .and_then(|val| if val.is_empty() { None } else { Some(val) })
+                        .and_then(|val| std::str::from_utf8(val).ok())
+                        .and_then(|str_parsed_header| str_parsed_header.parse().ok())
+                        .unwrap_or(DEFAULT_MANIFEST_RESPONSE_SIZE);
+                    let body = {
+                        let mut buf = Vec::with_capacity(content_length);
+                        let response_body = response
+                            .consume()
+                            .expect("failed to get incoming request body");
+                        let mut stream = response_body
+                            .stream()
+                            .expect("failed to get response body stream");
+                        stream
+                            .read_to_end(&mut buf)
+                            .expect("failed to read response body");
+                        buf
+                    };
+                    Ok(body)
+                } else {
+                    Err(Error::RemoteManifestFetch(format!(
+                        "fetch failed: code: {}",
+                        response.status(),
+                    )))
+                }
+            }
+            Err(e) => Err(Error::RemoteManifestFetch(e.to_string())),
+        }
     }
 
     // fetch remote manifest if possible
@@ -3963,15 +4032,20 @@ impl Store {
     /// Required because wasm-bindgen cannot use async functions in a sync context.
     #[cfg(target_arch = "wasm32")]
     async fn handle_remote_manifest_async(ext_ref: &str) -> Result<Vec<u8>> {
-        // verify provenance path is remote url
-        if Store::is_valid_remote_url(ext_ref) {
-            if get_settings_value::<bool>("verify.remote_manifest_fetch").unwrap_or(true) {
-                Store::fetch_remote_manifest_async(ext_ref).await
+        #[cfg(not(feature = "fetch_remote_manifests"))]
+        return Err(Error::RemoteManifestUrl(ext_ref.to_owned()));
+
+        #[cfg(feature = "fetch_remote_manifests")]
+        {
+            if Store::is_valid_remote_url(ext_ref) {
+                if get_settings_value::<bool>("verify.remote_manifest_fetch").unwrap_or(true) {
+                    Store::fetch_remote_manifest_async(ext_ref).await
+                } else {
+                    Err(Error::RemoteManifestUrl(ext_ref.to_owned()))
+                }
             } else {
-                Err(Error::RemoteManifestUrl(ext_ref.to_owned()))
+                Err(Error::JumbfNotFound)
             }
-        } else {
-            Err(Error::JumbfNotFound)
         }
     }
 
@@ -4004,8 +4078,10 @@ impl Store {
                         if _sync {
                             return Ok((Store::handle_remote_manifest(&ext_ref)?, Some(ext_ref)));
                         } else {
-                            // No async version exists, fallback to sync
-                            return Ok((Store::handle_remote_manifest_async(&ext_ref).await?, Some(ext_ref)));
+                            return Ok((
+                                Store::handle_remote_manifest_async(&ext_ref).await?,
+                                Some(ext_ref),
+                            ));
                         }
                     }
                 } else {

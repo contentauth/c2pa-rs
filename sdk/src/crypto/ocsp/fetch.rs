@@ -11,6 +11,10 @@
 // specific language governing permissions and limitations under
 // each license.
 
+// Add these imports and static variables for WASI debugging
+#[cfg(target_os = "wasi")]
+use std::io::Read;
+
 #[cfg(not(target_arch = "wasm32"))]
 use async_generic::async_generic;
 use rasn::prelude::*;
@@ -133,9 +137,110 @@ pub(crate) fn fetch_ocsp_response(certs: &[Vec<u8>]) -> Option<Vec<u8>> {
 
 #[cfg(target_os = "wasi")]
 pub(crate) fn fetch_ocsp_response(certs: &[Vec<u8>]) -> Option<Vec<u8>> {
-    use wstd::runtime::block_on;
+    use url::Url;
+    use wasi::http::{
+        outgoing_handler,
+        types::{Fields, OutgoingRequest, Scheme},
+    };
 
-    block_on(fetch_ocsp_response_async(certs))
+    // There must be at least one cert that isn't an end-entity cert.
+    if certs.len() < 2 {
+        return None;
+    }
+
+    let (_rem, cert) = X509Certificate::from_der(&certs[0]).ok()?;
+
+    if let Some(responders) = extract_aia_responders(&cert) {
+        let sha1_oid = rasn::types::Oid::new(&[1, 3, 14, 3, 2, 26])?;
+        let alg = rasn::types::ObjectIdentifier::from(sha1_oid);
+
+        let sha1_ai = rasn_pkix::AlgorithmIdentifier {
+            algorithm: alg,
+            parameters: Some(Any::new(rasn::der::encode(&()).ok()?)),
+        };
+
+        for r in responders {
+            let url = Url::parse(&r).ok()?;
+            let subject: Certificate = rasn::der::decode(&certs[0]).ok()?;
+            let issuer: Certificate = rasn::der::decode(&certs[1]).ok()?;
+
+            let issuer_name_raw = rasn::der::encode(&issuer.tbs_certificate.subject).ok()?;
+
+            let issuer_key_raw = &issuer
+                .tbs_certificate
+                .subject_public_key_info
+                .subject_public_key
+                .as_raw_slice();
+
+            let issuer_name_hash = OctetString::from(crate::crypto::hash::sha1(&issuer_name_raw));
+            let issuer_key_hash = OctetString::from(crate::crypto::hash::sha1(issuer_key_raw));
+            let serial_number = subject.tbs_certificate.serial_number;
+
+            let req_cert = rasn_ocsp::CertId {
+                hash_algorithm: sha1_ai.clone(),
+                issuer_name_hash,
+                issuer_key_hash,
+                serial_number,
+            };
+
+            let ocsp_req = rasn_ocsp::Request {
+                req_cert,
+                single_request_extensions: None,
+            };
+
+            let request_list = vec![ocsp_req];
+
+            let tbs_request = rasn_ocsp::TbsRequest {
+                version: rasn_ocsp::Version::from(0u8),
+                requestor_name: None,
+                request_list,
+                request_extensions: None,
+            };
+
+            let ocsp_request = rasn_ocsp::OcspRequest {
+                tbs_request,
+                optional_signature: None,
+            };
+
+            let request_der = rasn::der::encode(&ocsp_request).ok()?;
+            let request_str = crate::crypto::base64::encode(&request_der);
+
+            let req_url = url.join(&request_str).ok()?;
+
+            // WASI HTTP fetch
+            let authority = req_url.authority();
+            let path_with_query = req_url[url::Position::AfterPort..].to_string();
+            let scheme = match req_url.scheme() {
+                "http" => Scheme::Http,
+                "https" => Scheme::Https,
+                _ => continue,
+            };
+
+            let request = OutgoingRequest::new(Fields::new());
+            request.set_path_with_query(Some(&path_with_query)).ok()?;
+            request.set_authority(Some(&authority)).ok()?;
+            request.set_scheme(Some(&scheme)).ok()?;
+            let resp = outgoing_handler::handle(request, None).ok()?;
+            resp.subscribe().block();
+            let response = resp.get()?.ok()?.ok()?;
+            if response.status() == 200 {
+                let content_length: usize = response
+                    .headers()
+                    .get("Content-Length")
+                    .first()
+                    .and_then(|val| if val.is_empty() { None } else { Some(val) })
+                    .and_then(|val| std::str::from_utf8(val).ok())
+                    .and_then(|str_parsed_header| str_parsed_header.parse().ok())
+                    .unwrap_or(10000);
+                let response_body = response.consume().ok()?;
+                let mut stream = response_body.stream().ok()?;
+                let mut buf = Vec::with_capacity(content_length);
+                stream.read_to_end(&mut buf).ok()?;
+                return Some(buf);
+            }
+        }
+    }
+    None
 }
 
 //TODO: should this behind a feature flag for wasm-bindgen?
