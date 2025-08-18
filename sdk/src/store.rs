@@ -4086,7 +4086,7 @@ impl Store {
                         }
                     }
                 } else {
-                    return Err(Error::JumbfNotFound);
+                    Err(Error::JumbfNotFound)
                 }
             }
             Err(e) => Err(e),
