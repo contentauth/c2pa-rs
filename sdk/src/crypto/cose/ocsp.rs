@@ -278,6 +278,8 @@ fn check_stapled_ocsp_response(
 
 /// Fetches and validates an OCSP response for the given COSE signature.
 #[async_generic()]
+#[allow(unreachable_code)] // wasm-bindgen will immediately return error for synchronous use.
+#[allow(unused_variables)]
 pub(crate) fn fetch_and_check_ocsp_response(
     sign1: &CoseSign1,
     data: &[u8],
