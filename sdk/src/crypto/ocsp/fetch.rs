@@ -184,7 +184,6 @@ pub(crate) fn fetch_ocsp_response(certs: &[Vec<u8>]) -> Option<Vec<u8>> {
 
 #[cfg(target_os = "wasi")]
 pub(crate) fn fetch_ocsp_response(certs: &[Vec<u8>]) -> Option<Vec<u8>> {
-    use url::Url;
     use wasi::http::{
         outgoing_handler,
         types::{Fields, OutgoingRequest, Scheme},
