@@ -97,6 +97,8 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 /// The assertions module contains the definitions for the assertions that are part of the C2PA specification.
 pub mod assertions;
 
+pub mod content_credential;
+pub use content_credential::ContentCredential;
 /// The cose_sign module contains the definitions for the COSE signing algorithms.
 pub mod cose_sign;
 
