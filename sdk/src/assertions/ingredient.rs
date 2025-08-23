@@ -11,6 +11,8 @@
 // specific language governing permissions and limitations under
 // each license.
 
+use std::io::{Read, Seek};
+
 #[cfg(feature = "json_schema")]
 use schemars::JsonSchema;
 use serde::{ser::SerializeStruct, Deserialize, Serialize, Serializer};
@@ -519,6 +521,58 @@ impl Ingredient {
         }
 
         ingredient_map.end()
+    }
+
+    /// Create a new Ingredient assertion from a stream
+    /// You must specify the relationship and format.
+    /// This will return both the new Ingredient and the associated Store.
+    pub(crate) fn from_stream(
+        relationship: Relationship,
+        format: &str,
+        mut stream: impl Read + Seek + Send,
+    ) -> Result<(Self, crate::store::Store)> {
+        use crate::{
+            jumbf::labels::{to_manifest_uri, to_signature_uri},
+            status_tracker::StatusTracker,
+            store::Store,
+        };
+        let mut validation_log = StatusTracker::default();
+        let store = Store::from_stream(format, &mut stream, true, &mut validation_log)?;
+
+        if let Some(claim) = store.provenance_claim() {
+            let mut ingredient = Self::new_v3(relationship);
+
+            ingredient.title = claim.title().cloned();
+            ingredient.format = claim.format().map(|f| f.to_string());
+            ingredient.instance_id = Some(claim.instance_id().to_string());
+
+            let hashes = store.get_manifest_box_hashes(claim);
+
+            ingredient.active_manifest = Some(HashedUri::new(
+                to_manifest_uri(claim.label()),
+                Some(claim.alg().to_owned()),
+                hashes.manifest_box_hash.as_ref(),
+            ));
+            ingredient.claim_signature = Some(HashedUri::new(
+                to_signature_uri(claim.label()),
+                Some(claim.alg().to_owned()),
+                hashes.signature_box_hash.as_ref(),
+            ));
+
+            ingredient.validation_results =
+                Some(ValidationResults::from_store(&store, &mut validation_log));
+
+            if ingredient
+                .validation_results
+                .as_ref()
+                .map(|r| r.validation_state())
+                == Some(crate::ValidationState::Valid)
+            {
+                ingredient.thumbnail = claim.thumbnail();
+            }
+            return Ok((ingredient, store));
+        }
+        Ok((Self::new_v3(relationship), store))
     }
 }
 

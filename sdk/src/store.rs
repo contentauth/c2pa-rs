@@ -6388,9 +6388,9 @@ pub mod tests {
         #[cfg(feature = "v1_api")]
         fn test_update_manifest_v2() {
             use crate::{
-                hashed_uri::HashedUri, jumbf::labels::to_signature_uri,
-                jumbf_io::load_jumbf_from_memory, utils::test::create_test_store_v1,
-                ClaimGeneratorInfo, ValidationResults,
+                assertions::{Action, Actions, Ingredient, Relationship},
+                utils::test::create_test_store_v1,
+                ClaimGeneratorInfo,
             };
 
             let signer = test_signer(SigningAlg::Ps256);
@@ -6408,60 +6408,19 @@ pub mod tests {
                 .save_to_asset(ap.as_path(), signer.as_ref(), op.as_path())
                 .unwrap();
 
-            let mut report = StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
-            // read back in
-            let ingredient_vec = std::fs::read(op.as_path()).unwrap();
-            let restored_store =
-                Store::load_from_memory("jpg", &ingredient_vec, true, &mut report).unwrap();
-            let pc = restored_store.provenance_claim().unwrap();
+            // now read back as a stream and create an ingredient assertion
+            let mut stream = std::fs::File::open(op.as_path()).expect("could not open output file");
 
-            // should be a regular manifest
-            assert!(!pc.update_manifest());
+            let (ingredient_assertion, mut new_store) =
+                Ingredient::from_stream(Relationship::ParentOf, "image/jpeg", &mut stream).unwrap();
 
-            // create a new update manifest
+           // create a new update manifest
             let mut claim = Claim::new("adobe unit test", Some("update_manifest_vendor"), 2);
             // ClaimGeneratorInfo is mandatory in Claim V2
             let cgi = ClaimGeneratorInfo::new("claim_v2_unit_test");
             claim.add_claim_generator_info(cgi);
 
-            let mut new_store = Store::load_ingredient_to_claim(
-                &mut claim,
-                &load_jumbf_from_memory("jpg", &ingredient_vec).unwrap(),
-                None,
-            )
-            .unwrap();
-
-            let ingredient_hashes = new_store.get_manifest_box_hashes(pc);
-            let parent_hashed_uri = HashedUri::new(
-                restored_store.provenance_path().unwrap(),
-                Some(pc.alg().to_string()),
-                &ingredient_hashes.manifest_box_hash,
-            );
-            let signature_hashed_uri = HashedUri::new(
-                to_signature_uri(pc.label()),
-                Some(pc.alg().to_string()),
-                &ingredient_hashes.signature_box_hash,
-            );
-
-            let validation_results = ValidationResults::from_store(&restored_store, &report);
-
-            let ingredient = Ingredient::new_v3(Relationship::ParentOf)
-                .set_active_manifests_and_signature_from_hashed_uri(
-                    Some(parent_hashed_uri),
-                    Some(signature_hashed_uri),
-                ) // mandatory for v3
-                .set_validation_results(Some(validation_results)); // mandatory for v3
-
-            claim.add_assertion(&ingredient).unwrap();
-
-            // create mandatory opened action (optional for update manifest)
-            let ingredient = claim.ingredient_assertions()[0];
-            let ingregient_uri = to_assertion_uri(claim.label(), &ingredient.label());
-            let ingredient_hashed_uri = HashedUri::new(
-                ingregient_uri,
-                Some(claim.alg().to_owned()),
-                ingredient.hash(),
-            );
+            let ingredient_hashed_uri = claim.add_assertion(&ingredient_assertion).unwrap();
 
             let opened = Action::new("c2pa.opened")
                 .set_parameter("ingredients", vec![ingredient_hashed_uri])

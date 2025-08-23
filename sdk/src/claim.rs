@@ -3953,6 +3953,18 @@ impl Claim {
         }
     }
 
+    // Returns a HashedUri to the claim thumbnail assertion, if it exists.
+    pub fn thumbnail(&self) -> Option<HashedUri> {
+        self.assertions()
+            .iter()
+            .find(|hashed_uri| hashed_uri.url().contains(CLAIM_THUMBNAIL))
+            .map(|t| {
+                // convert to absolute
+                let url = crate::jumbf::labels::to_absolute_uri(self.label(), &t.url());
+                HashedUri::new(url, t.alg(), &t.hash())
+            })
+    }
+
     /// Checks whether or not ocsp values are present in claim
     pub fn has_ocsp_vals(&self) -> bool {
         if !self.certificate_status_assertions().is_empty() {
