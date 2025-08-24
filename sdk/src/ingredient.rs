@@ -1523,6 +1523,7 @@ mod tests {
     #![allow(clippy::expect_used)]
     #![allow(clippy::unwrap_used)]
 
+    use c2pa_macros::c2pa_test_async;
     #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
     use wasm_bindgen_test::*;
 
@@ -1589,12 +1590,7 @@ mod tests {
         );
     }
 
-    #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
-    #[cfg_attr(
-        all(target_arch = "wasm32", not(target_os = "wasi")),
-        wasm_bindgen_test
-    )]
-    #[cfg_attr(target_os = "wasi", wstd::test)]
+    #[c2pa_test_async]
     async fn test_stream_async_jpg() {
         let image_bytes = include_bytes!("../tests/fixtures/CA.jpg");
         let title = "Test Image";
@@ -1633,12 +1629,7 @@ mod tests {
         assert_eq!(ingredient.validation_status(), None);
     }
 
-    #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
-    #[cfg_attr(
-        all(target_arch = "wasm32", not(target_os = "wasi")),
-        wasm_bindgen_test
-    )]
-    #[cfg_attr(target_os = "wasi", wstd::test)]
+    #[c2pa_test_async]
     async fn test_stream_ogp() {
         let image_bytes = include_bytes!("../tests/fixtures/XCA.jpg");
         let title = "XCA.jpg";
@@ -1662,10 +1653,8 @@ mod tests {
         );
     }
 
-    #[allow(dead_code)]
-    #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
-    #[cfg_attr(target_os = "wasi", wstd::test)]
     #[cfg(feature = "fetch_remote_manifests")]
+    #[c2pa_test_async]
     async fn test_jpg_cloud_from_memory() {
         // Save original settings
         let original_verify_trust =
@@ -1696,13 +1685,8 @@ mod tests {
             .unwrap();
     }
 
-    #[allow(dead_code)]
-    #[cfg_attr(not(any(target_arch = "wasm32", feature = "file_io")), actix::test)]
-    #[cfg_attr(
-        all(target_arch = "wasm32", not(target_os = "wasi")),
-        wasm_bindgen_test
-    )]
-    #[cfg_attr(all(target_os = "wasi", not(feature = "file_io")), wstd::test)]
+    #[cfg(not(any(feature = "fetch_remote_manifests", feature = "file_io")))]
+    #[c2pa_test_async]
     async fn test_jpg_cloud_from_memory_no_file_io() {
         crate::settings::set_settings_value("verify.verify_trust", false).unwrap();
 
@@ -1723,12 +1707,7 @@ mod tests {
         assert_eq!(ingredient.manifest_data(), None);
     }
 
-    #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
-    #[cfg_attr(
-        all(target_arch = "wasm32", not(target_os = "wasi")),
-        wasm_bindgen_test
-    )]
-    #[cfg_attr(target_os = "wasi", wstd::test)]
+    #[c2pa_test_async]
     async fn test_jpg_cloud_from_memory_and_manifest() {
         crate::settings::set_settings_value("verify.verify_trust", false).unwrap();
 
@@ -1759,13 +1738,8 @@ mod tests_file_io {
     #![allow(clippy::expect_used)]
     #![allow(clippy::unwrap_used)]
 
-    #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
-    use wasm_bindgen_test::*;
-
     use super::*;
     use crate::{assertion::AssertionData, utils::test::fixture_path};
-    #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
-    wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
 
     const NO_MANIFEST_JPEG: &str = "earth_apollo17.jpg";
     const MANIFEST_JPEG: &str = "C.jpg";
