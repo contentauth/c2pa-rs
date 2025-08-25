@@ -58,22 +58,18 @@ mod integration_1 {
         let parent_path = fixture_path("earth_apollo17.jpg");
         let ingredient_path = fixture_path("libpng-test.png");
 
-        // let generator = ClaimGeneratorInfo::new("app");
         // create a new Manifest
-        let mut builder = Builder::new();
+        let mut builder = Builder::edit();
 
         // allocate actions so we can add them
         let mut actions = Actions::new();
 
-        // add a parent ingredient
-        // let mut parent = Ingredient::from_file(&parent_path)?;
-        // parent.set_is_parent();
         // add an action assertion stating that we imported this file
         actions = actions.add_action(
             Action::new(c2pa_action::OPENED)
                 .set_when("2015-06-26T16:43:23+0200")
                 .set_parameter("name".to_owned(), "import")?
-                .set_parameter("org.cai.ingredientIds", ["apollo17"])?,
+                .set_parameter("ingredientIds", ["apollo17"])?,
         );
 
         let ingredient_json = serde_json::json!({
@@ -101,10 +97,10 @@ mod integration_1 {
         actions = actions.add_action(
             Action::new(c2pa_action::EDITED)
                 .set_parameter("name".to_owned(), "import")?
-                .set_parameter("org.cai.ingredientIds", ["apollo17"])?,
+                .set_parameter("ingredientIds", ["apollo17"])?,
         );
 
-        builder.add_ingredient(ingredient);
+        builder.add_ingredient(ingredient)?;
 
         builder.add_assertion(Actions::LABEL, &actions)?;
 

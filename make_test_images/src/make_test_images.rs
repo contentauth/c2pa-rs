@@ -236,7 +236,7 @@ impl MakeTestImages {
             parent.set_thumbnail(format, thumbnail)?;
         }
 
-        builder.add_ingredient(parent);
+        builder.add_ingredient(parent)?;
 
         Ok(
             builder.definition.ingredients[builder.definition.ingredients.len() - 1]
