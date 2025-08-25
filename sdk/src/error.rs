@@ -17,7 +17,7 @@ use thiserror::Error;
 
 use crate::{
     crypto::{cose::CoseError, raw_signature::RawSignerError, time_stamp::TimeStampError},
-    soft_binding::resolution_api::SoftBindingResolutionApiError,
+    soft_binding::{resolution_api::SoftBindingResolutionApiError, SoftBindingClientError},
 };
 
 /// `Error` enumerates errors returned by most C2PA toolkit operations.
@@ -299,33 +299,15 @@ pub enum Error {
     #[error("invalid signing key")]
     InvalidSigningKey,
 
-    #[error("missing bearer token for url `{0}`")]
-    MissingBearerToken(String),
-
-    #[error("soft binding api is not supported for non-http/s uris, given `{0}`")]
-    NotHttpOrHttps(String),
-
-    #[error("unknown soft binding algorithm `{0}`")]
-    UnknownSoftBindingAlgorithm(String),
-
-    #[error("no soft binding resolution APIs for `{0}` were found")]
-    NoSoftBindingResolutionApisFound(String),
+    #[error(transparent)]
+    SoftBindingResolutionApi(#[from] SoftBindingResolutionApiError),
 
     #[error(transparent)]
-    SoftBinding(#[from] SoftBindingResolutionApiError),
+    SoftBindingClient(#[from] SoftBindingClientError),
 
     // --- third-party errors ---
     #[error(transparent)]
     Utf8Error(#[from] std::str::Utf8Error),
-
-    #[error(transparent)]
-    UreqError(#[from] ureq::Error),
-
-    #[error(transparent)]
-    UrlError(#[from] url::ParseError),
-
-    #[error(transparent)]
-    UriError(#[from] http::uri::InvalidUri),
 
     #[error(transparent)]
     TryFromIntError(#[from] std::num::TryFromIntError),

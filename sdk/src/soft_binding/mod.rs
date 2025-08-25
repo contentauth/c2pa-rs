@@ -18,6 +18,6 @@ pub mod algorithm_list;
 pub mod resolution_api;
 
 pub use crate::assertions::{SoftBinding, SoftBindingBlock, SoftBindingScope, SoftBindingTimespan};
-pub use client::{SoftBindingClient, SoftBindingMatch};
+pub use client::{SoftBindingClient, SoftBindingClientError, SoftBindingMatch};
 
 mod client;

@@ -14,19 +14,17 @@
 use std::{
     cell::RefCell,
     cmp::Ordering,
-    io::{Read, Seek},
+    io::{self, Read, Seek},
 };
 
 use http::Uri;
 
-use crate::{
-    soft_binding::{
-        algorithm_list::SoftBindingAlgorithmEntry,
-        resolution_api::{
-            SoftBindingQueryResult, SoftBindingQueryResultMatch, SoftBindingResolutionApi,
-        },
+use crate::soft_binding::{
+    algorithm_list::SoftBindingAlgorithmEntry,
+    resolution_api::{
+        SoftBindingQueryResult, SoftBindingQueryResultMatch, SoftBindingResolutionApi,
+        SoftBindingResolutionApiError,
     },
-    Error, Result,
 };
 
 /// A soft binding match contaning information about the match.
@@ -117,7 +115,7 @@ where
         entry: &SoftBindingAlgorithmEntry,
         mime_type: &str,
         asset_stream: &mut U,
-    ) -> Result<Option<SoftBindingMatch>> {
+    ) -> Result<Option<SoftBindingMatch>, SoftBindingClientError> {
         let matches = self.fetch_matches_by_stream(
             entry,
             mime_type,
@@ -143,7 +141,7 @@ where
         entry: &SoftBindingAlgorithmEntry,
         mime_type: &str,
         asset_stream: &mut U,
-    ) -> Result<Option<SoftBindingMatch>> {
+    ) -> Result<Option<SoftBindingMatch>, SoftBindingClientError> {
         let matches = self.fetch_matches_by_stream(
             entry,
             mime_type,
@@ -168,16 +166,16 @@ where
         value: &str,
         max_results_per_api: Option<u32>,
         prefer_max_results: Option<u32>,
-    ) -> Result<Vec<Result<SoftBindingMatch>>> {
+    ) -> Result<Vec<Result<SoftBindingMatch, SoftBindingClientError>>, SoftBindingClientError> {
         self.fetch_matches_impl(entry, prefer_max_results, |url: &str, token: &str| {
             // TODO: should we always use large binding API or set a cutoff?
-            SoftBindingResolutionApi::query_by_large_binding(
+            Ok(SoftBindingResolutionApi::query_by_large_binding(
                 url,
                 token,
                 &entry.alg,
                 value,
                 max_results_per_api,
-            )
+            )?)
         })
     }
 
@@ -194,15 +192,17 @@ where
         hint_value: Option<&str>,
         max_results_per_api: Option<u32>,
         prefer_max_results: Option<u32>,
-    ) -> Result<Vec<Result<SoftBindingMatch>>> {
+    ) -> Result<Vec<Result<SoftBindingMatch, SoftBindingClientError>>, SoftBindingClientError> {
         // TODO: not a great solution but allows us to mutate the asset stream from the closure multiple times
         let cell = RefCell::new(asset_stream);
         self.fetch_matches_impl(entry, prefer_max_results, |url: &str, token: &str| {
             let mut asset_stream = cell.borrow_mut();
-            asset_stream.rewind()?;
+            asset_stream
+                .rewind()
+                .map_err(SoftBindingClientError::FailedStreamRewind)?;
 
             // TODO: how is hint_value used? if we have that can we call the byBinding APIs?
-            SoftBindingResolutionApi::upload_file(
+            Ok(SoftBindingResolutionApi::upload_file(
                 url,
                 token,
                 &entry.alg,
@@ -211,14 +211,17 @@ where
                 max_results_per_api,
                 Some(&entry.alg),
                 hint_value,
-            )
+            )?)
         })
     }
 
     /// Fetch the manifest bytes for a [`SoftBindingMatch`], querying the soft binding resolution API
     /// defined in [`SoftBindingMatch::url`].
     #[inline]
-    pub fn fetch_manifest_bytes(&self, manifest_match: &SoftBindingMatch) -> Result<Vec<u8>> {
+    pub fn fetch_manifest_bytes(
+        &self,
+        manifest_match: &SoftBindingMatch,
+    ) -> Result<Vec<u8>, SoftBindingClientError> {
         self.fetch_manifest_bytes_impl(manifest_match, false)
     }
 
@@ -228,7 +231,7 @@ where
     pub fn fetch_active_manifest_bytes(
         &self,
         manifest_match: &SoftBindingMatch,
-    ) -> Result<Vec<u8>> {
+    ) -> Result<Vec<u8>, SoftBindingClientError> {
         self.fetch_manifest_bytes_impl(manifest_match, true)
     }
 
@@ -238,16 +241,18 @@ where
         &self,
         manifest_match: &SoftBindingMatch,
         only_active: bool,
-    ) -> Result<Vec<u8>> {
+    ) -> Result<Vec<u8>, SoftBindingClientError> {
         if let Some(token) = (self.oauth_resolver)(&manifest_match.url) {
-            SoftBindingResolutionApi::get_manifest_by_id(
+            Ok(SoftBindingResolutionApi::get_manifest_by_id(
                 &manifest_match.url,
                 token,
                 &manifest_match.manifest_id,
                 Some(only_active),
-            )
+            )?)
         } else {
-            Err(Error::MissingBearerToken(manifest_match.url.to_owned()))
+            Err(SoftBindingClientError::MissingBearerToken(
+                manifest_match.url.to_owned(),
+            ))
         }
     }
 
@@ -260,9 +265,9 @@ where
         entry: &SoftBindingAlgorithmEntry,
         prefer_max_results: Option<u32>,
         callback: F,
-    ) -> Result<Vec<Result<SoftBindingMatch>>>
+    ) -> Result<Vec<Result<SoftBindingMatch, SoftBindingClientError>>, SoftBindingClientError>
     where
-        F: Fn(&str, &str) -> Result<SoftBindingQueryResult>,
+        F: Fn(&str, &str) -> Result<SoftBindingQueryResult, SoftBindingClientError>,
     {
         if entry.deprecated.unwrap_or(false) {
             log::warn!(
@@ -276,7 +281,12 @@ where
                 let mut matches = Vec::new();
 
                 for url in urls {
-                    let uri = url.parse::<Uri>()?;
+                    let uri = url.parse::<Uri>().map_err(|err| {
+                        SoftBindingClientError::InvalidHttpUrl {
+                            url: url.to_owned(),
+                            source: err,
+                        }
+                    })?;
                     match uri.scheme_str() {
                         // TODO: match on http/s struct when https://doc.rust-lang.org/stable/std/marker/trait.StructuralPartialEq.html is stablized
                         Some("http" | "https") => {
@@ -296,20 +306,58 @@ where
                                     }
                                 }
                             } else {
-                                matches.push(Err(Error::MissingBearerToken(url.to_owned())));
+                                matches.push(Err(SoftBindingClientError::MissingBearerToken(
+                                    url.to_owned(),
+                                )));
                             }
                         }
-                        _ => matches.push(Err(Error::NotHttpOrHttps(url.to_owned()))),
+                        _ => matches
+                            .push(Err(SoftBindingClientError::NotHttpOrHttps(url.to_owned()))),
                     }
                 }
 
                 Ok(matches)
             }
-            None => Err(Error::NoSoftBindingResolutionApisFound(
+            None => Err(SoftBindingClientError::NoResolutionApiFound(
                 entry.alg.to_owned(),
             )),
         }
     }
+}
+
+/// An error from the soft binding client.
+#[non_exhaustive]
+#[derive(Debug, thiserror::Error)]
+pub enum SoftBindingClientError {
+    /// An error from the underlying soft binding resolution API.
+    #[error(transparent)]
+    ResolutionApi(#[from] SoftBindingResolutionApiError),
+    /// The OAuth2 bearer token is missing for the specified URL.
+    #[error("missing bearer token for url `{0}`")]
+    MissingBearerToken(String),
+    /// Only HTTP or HTTPS URLs are supported.
+    ///
+    /// Note that the spec defines smart contract addresses that aren't currently suppported
+    /// in c2pa-rs.
+    #[error("soft binding api is not supported for non-http/s uris, given `{0}`")]
+    NotHttpOrHttps(String),
+    /// Could not find a soft binding resolution API for the specified algorithm.
+    ///
+    /// Note that oftentimes an algorithm is defined in the algorithm list but is not associated
+    /// with an API URL.
+    #[error("no soft binding resolution APIs for `{0}` were found")]
+    NoResolutionApiFound(String),
+    /// Failed to parse invalid HTTP URL.
+    #[error("invalid url {url}")]
+    InvalidHttpUrl {
+        url: String,
+        #[source]
+        source: http::uri::InvalidUri,
+    },
+    /// Failed to rewind stream when fetching matches from one or more soft binding
+    /// resolution APIs.
+    #[error("failed to rewind stream when fetching matches for one or more soft binding resolution APIs")]
+    FailedStreamRewind(#[source] io::Error),
 }
 
 #[cfg(test)]
@@ -447,7 +495,7 @@ pub mod tests {
             .fetch_matches_by_algorithm_value(entry, &query.value, query.max_results, None)
             .unwrap()
             .into_iter()
-            .collect::<Result<_>>()
+            .collect::<Result<_, _>>()
             .unwrap();
 
         let correct_match = SoftBindingMatch::from_query(
