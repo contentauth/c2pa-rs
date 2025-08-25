@@ -277,7 +277,6 @@ mockall = "0.13.1"
 wasm-bindgen-test = "0.3.45"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
-actix = "0.13.1"
 httpmock = "0.7.0"
 tokio = { version = "1.44.2", features = ["full"] }
 
