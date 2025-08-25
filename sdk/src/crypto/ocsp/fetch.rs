@@ -12,7 +12,7 @@
 // each license.
 
 // Add these imports and static variables for WASI debugging
-#[cfg(target_os = "wasi")]
+#[cfg(any(not(target_arch = "wasm32"), target_os = "wasi"))]
 use std::io::Read;
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -120,37 +120,34 @@ fn build_ocsp_request(certs: &[Vec<u8>], responder_url: &str) -> Option<OcspRequ
     Some(OcspRequestData { request_str, url })
 }
 
-// Common function to process OCSP responders
-#[cfg(any(not(target_arch = "wasm32"), target_os = "wasi"))]
-fn process_ocsp_responders<F>(certs: &[Vec<u8>], mut fetch_fn: F) -> Option<Vec<u8>>
-where
-    F: FnMut(&OcspRequestData) -> Option<Vec<u8>>,
-{
-    // There must be at least one cert that isn't an end-entity cert.
+fn process_ocsp_responders(certs: &[Vec<u8>]) -> Option<Vec<OcspRequestData>> {
     if certs.len() < 2 {
         return None;
     }
 
     let (_rem, cert) = X509Certificate::from_der(&certs[0]).ok()?;
 
-    if let Some(responders) = extract_aia_responders(&cert) {
-        for responder in responders {
-            if let Some(request_data) = build_ocsp_request(certs, &responder) {
-                if let Some(response) = fetch_fn(&request_data) {
-                    return Some(response);
-                }
-            }
-        }
+    let requests: Vec<_> = extract_aia_responders(&cert)
+        .into_iter()
+        .flat_map(|responders| {
+            responders
+                .into_iter()
+                .filter_map(|responder| build_ocsp_request(certs, &responder))
+        })
+        .collect();
+
+    if requests.is_empty() {
+        None
+    } else {
+        Some(requests)
     }
-    None
 }
 
 #[cfg(not(target_arch = "wasm32"))]
 #[async_generic()]
 pub(crate) fn fetch_ocsp_response(certs: &[Vec<u8>]) -> Option<Vec<u8>> {
-    use std::io::Read;
-
-    process_ocsp_responders(certs, |request_data| {
+    let requests = process_ocsp_responders(certs)?;
+    for request_data in requests {
         let req_url = request_data.url.join(&request_data.request_str).ok()?;
 
         // fetch OCSP response
@@ -175,11 +172,10 @@ pub(crate) fn fetch_ocsp_response(certs: &[Vec<u8>]) -> Option<Vec<u8>> {
                 .read_to_end(&mut ocsp_rsp)
                 .ok()?;
 
-            Some(ocsp_rsp)
-        } else {
-            None
+            return Some(ocsp_rsp);
         }
-    })
+    }
+    None
 }
 
 #[cfg(target_os = "wasi")]
@@ -189,7 +185,8 @@ pub(crate) fn fetch_ocsp_response(certs: &[Vec<u8>]) -> Option<Vec<u8>> {
         types::{Fields, OutgoingRequest, Scheme},
     };
 
-    process_ocsp_responders(certs, |request_data| {
+    let requests = process_ocsp_responders(certs)?;
+    for request_data in requests {
         let req_url = request_data.url.join(&request_data.request_str).ok()?;
 
         // WASI HTTP fetch
@@ -198,7 +195,7 @@ pub(crate) fn fetch_ocsp_response(certs: &[Vec<u8>]) -> Option<Vec<u8>> {
         let scheme = match req_url.scheme() {
             "http" => Scheme::Http,
             "https" => Scheme::Https,
-            _ => return None,
+            _ => continue,
         };
 
         let request = OutgoingRequest::new(Fields::new());
@@ -221,11 +218,10 @@ pub(crate) fn fetch_ocsp_response(certs: &[Vec<u8>]) -> Option<Vec<u8>> {
             let mut stream = response_body.stream().ok()?;
             let mut buf = Vec::with_capacity(content_length);
             stream.read_to_end(&mut buf).ok()?;
-            Some(buf)
-        } else {
-            None
+            return Some(buf);
         }
-    })
+    }
+    None
 }
 
 #[cfg(target_os = "wasi")]
@@ -235,43 +231,32 @@ pub(crate) async fn fetch_ocsp_response_async(certs: &[Vec<u8>]) -> Option<Vec<u
         io::{empty, AsyncRead},
     };
 
-    // For async functions, we need to handle the responder processing differently
-    // since we can't easily make the closure async
-    if certs.len() < 2 {
-        return None;
-    }
+    let requests = process_ocsp_responders(certs)?;
+    for request_data in requests {
+        let req_url = request_data.url.join(&request_data.request_str).ok()?;
 
-    let (_rem, cert) = X509Certificate::from_der(&certs[0]).ok()?;
+        // WASI async HTTP fetch
+        let request = Request::get(req_url.as_str()).body(empty()).ok()?;
 
-    if let Some(responders) = extract_aia_responders(&cert) {
-        for responder in responders {
-            if let Some(request_data) = build_ocsp_request(certs, &responder) {
-                let req_url = request_data.url.join(&request_data.request_str).ok()?;
+        let mut response = Client::new().send(request).await.ok()?;
 
-                // WASI async HTTP fetch
-                let request = Request::get(req_url.as_str()).body(empty()).ok()?;
-
-                let mut response = Client::new().send(request).await.ok()?;
-
-                let status = response.status().as_u16();
-                if status != 200 {
-                    continue;
-                }
-
-                let content_length = response
-                    .headers()
-                    .get("Content-Length")
-                    .and_then(|val| val.to_str().ok())
-                    .and_then(|s| s.parse::<usize>().ok())
-                    .unwrap_or(10000);
-
-                let body = response.body_mut();
-                let mut ocsp_rsp = Vec::with_capacity(content_length);
-                body.read_to_end(&mut ocsp_rsp).await.ok()?;
-
-                return Some(ocsp_rsp);
-            }
+        let status = response.status().as_u16();
+        if status != 200 {
+            continue;
         }
+
+        let content_length = response
+            .headers()
+            .get("Content-Length")
+            .and_then(|val| val.to_str().ok())
+            .and_then(|s| s.parse::<usize>().ok())
+            .unwrap_or(10000);
+
+        let body = response.body_mut();
+        let mut ocsp_rsp = Vec::with_capacity(content_length);
+        body.read_to_end(&mut ocsp_rsp).await.ok()?;
+
+        return Some(ocsp_rsp);
     }
     None
 }
@@ -280,30 +265,19 @@ pub(crate) async fn fetch_ocsp_response_async(certs: &[Vec<u8>]) -> Option<Vec<u
 pub(crate) async fn fetch_ocsp_response_async(certs: &[Vec<u8>]) -> Option<Vec<u8>> {
     use reqwest::Client;
 
-    // For async functions, we need to handle the responder processing differently
-    // since we can't easily make the closure async
-    if certs.len() < 2 {
-        return None;
-    }
+    let requests = process_ocsp_responders(certs)?;
+    for request_data in requests {
+        let req_url = request_data.url.join(&request_data.request_str).ok()?;
 
-    let (_rem, cert) = X509Certificate::from_der(&certs[0]).ok()?;
-
-    if let Some(responders) = extract_aia_responders(&cert) {
-        for responder in responders {
-            if let Some(request_data) = build_ocsp_request(certs, &responder) {
-                let req_url = request_data.url.join(&request_data.request_str).ok()?;
-
-                // WASM async HTTP fetch with reqwest
-                let client = Client::new();
-                let response = client.get(req_url.as_str()).send().await.ok()?;
-                if !response.status().is_success() {
-                    continue;
-                }
-                let ocsp_rsp = response.bytes().await.ok()?.to_vec();
-
-                return Some(ocsp_rsp);
-            }
+        // WASM async HTTP fetch with reqwest
+        let client = Client::new();
+        let response = client.get(req_url.as_str()).send().await.ok()?;
+        if !response.status().is_success() {
+            continue;
         }
+        let ocsp_rsp = response.bytes().await.ok()?.to_vec();
+
+        return Some(ocsp_rsp);
     }
     None
 }
