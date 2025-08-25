@@ -40,4 +40,4 @@ zip = { version = "3.0.0", default-features = false, features = ["deflate"] }
 tempfile = "3.7.0"
 
 [build-dependencies]
-cbindgen = "0.28"
+cbindgen = "0.29"
