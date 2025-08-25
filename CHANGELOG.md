@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.59.2](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.59.1...c2pa-v0.59.2)
+_25 August 2025_
+
+### Fixed
+
+* Fix a regression for invalid manifest handling and reader creation ([#1312](https://github.com/contentauth/c2pa-rs/pull/1312))
+* Fix test
+
 ## [0.59.1](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.59.0...c2pa-v0.59.1)
 _15 August 2025_
 
