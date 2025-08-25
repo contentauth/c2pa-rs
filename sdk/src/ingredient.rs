@@ -796,6 +796,14 @@ impl Ingredient {
         if ingredient.thumbnail.is_none() {
             if let Some((format, image)) = options.thumbnail(path) {
                 ingredient.set_thumbnail(format, image)?;
+            } else {
+                #[cfg(feature = "add_thumbnails")]
+                if let Some(format) = crate::format_from_path(path) {
+                    ingredient.maybe_add_thumbnail(
+                        &format,
+                        &mut std::io::BufReader::new(std::fs::File::open(path)?),
+                    )?;
+                }
             }
         }
         Ok(ingredient)
@@ -919,18 +927,7 @@ impl Ingredient {
 
         // create a thumbnail if we don't already have a manifest with a thumb we can use
         #[cfg(feature = "add_thumbnails")]
-        if self.thumbnail.is_none() {
-            stream.rewind()?;
-
-            if let Some((output_format, image)) =
-                crate::utils::thumbnail::make_thumbnail_bytes_from_stream(
-                    format,
-                    std::io::BufReader::new(stream),
-                )?
-            {
-                self.set_thumbnail(output_format.to_string(), image)?;
-            }
-        }
+        self.maybe_add_thumbnail(format, &mut std::io::BufReader::new(stream))?;
 
         Ok(self)
     }
@@ -992,18 +989,7 @@ impl Ingredient {
 
         // create a thumbnail if we don't already have a manifest with a thumb we can use
         #[cfg(feature = "add_thumbnails")]
-        if ingredient.thumbnail.is_none() {
-            stream.rewind()?;
-
-            if let Some((output_format, image)) =
-                crate::utils::thumbnail::make_thumbnail_bytes_from_stream(
-                    format,
-                    std::io::BufReader::new(stream),
-                )?
-            {
-                ingredient.set_thumbnail(output_format.to_string(), image)?;
-            }
-        }
+        ingredient.maybe_add_thumbnail(format, &mut std::io::BufReader::new(stream))?;
 
         Ok(ingredient)
     }
@@ -1436,19 +1422,33 @@ impl Ingredient {
 
         // create a thumbnail if we don't already have a manifest with a thumb we can use
         #[cfg(feature = "add_thumbnails")]
-        if ingredient.thumbnail.is_none() {
+        ingredient.maybe_add_thumbnail(format, &mut std::io::BufReader::new(stream))?;
+
+        Ok(ingredient)
+    }
+
+    /// Automatically generate a thumbnail for the ingredient if missing and enabled in settings.
+    ///
+    /// This function takes into account the [Settings][crate::Settings]:
+    /// * `builder.thumbnail.enabled`
+    #[cfg(feature = "add_thumbnails")]
+    pub fn maybe_add_thumbnail<R>(&mut self, format: &str, stream: &mut R) -> Result<()>
+    where
+        R: std::io::BufRead + std::io::Seek,
+    {
+        let auto_thumbnail =
+            crate::settings::get_settings_value::<bool>("builder.thumbnail.enabled")?;
+        if self.thumbnail.is_none() && auto_thumbnail {
             stream.rewind()?;
 
             if let Some((output_format, image)) =
-                crate::utils::thumbnail::make_thumbnail_bytes_from_stream(
-                    format,
-                    std::io::BufReader::new(stream),
-                )?
+                crate::utils::thumbnail::make_thumbnail_bytes_from_stream(format, stream)?
             {
-                ingredient.set_thumbnail(output_format.to_string(), image)?;
+                self.set_thumbnail(output_format.to_string(), image)?;
             }
         }
-        Ok(ingredient)
+
+        Ok(())
     }
 }
 
@@ -1483,12 +1483,6 @@ pub trait IngredientOptions {
     /// The second value is bytes of the thumbnail image.
     /// The default is no thumbnail, so you must provide an override to have a thumbnail image.
     fn thumbnail(&self, _path: &Path) -> Option<(String, Vec<u8>)> {
-        #[cfg(feature = "add_thumbnails")]
-        return crate::utils::thumbnail::make_thumbnail_bytes_from_path(_path)
-            .ok()
-            .flatten()
-            .map(|(format, image)| (format.to_string(), image));
-        #[cfg(not(feature = "add_thumbnails"))]
         None
     }
 
@@ -1627,6 +1621,40 @@ mod tests {
         assert!(ingredient.manifest_data().is_some());
         assert_eq!(ingredient.metadata(), None);
         assert_eq!(ingredient.validation_status(), None);
+    }
+
+    #[cfg(feature = "add_thumbnails")]
+    #[test]
+    fn test_stream_thumbnail() {
+        use crate::settings::Settings;
+
+        #[cfg(target_os = "wasi")]
+        Settings::reset().unwrap();
+
+        Settings::from_toml(
+            &toml::toml! {
+                [builder.thumbnail]
+                enabled = true
+            }
+            .to_string(),
+        )
+        .unwrap();
+
+        let image_bytes = include_bytes!("../tests/fixtures/sample1.png");
+        let ingredient = Ingredient::from_memory("image/png", image_bytes).unwrap();
+        assert!(ingredient.thumbnail().is_some());
+
+        Settings::from_toml(
+            &toml::toml! {
+                [builder.thumbnail]
+                enabled = false
+            }
+            .to_string(),
+        )
+        .unwrap();
+
+        let ingredient = Ingredient::from_memory("image/png", image_bytes).unwrap();
+        assert!(ingredient.thumbnail().is_none());
     }
 
     #[c2pa_test_async]
