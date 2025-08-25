@@ -118,7 +118,8 @@ impl ValidationResults {
                 uri.is_some_and(|uri| manifest_label_from_uri(uri) == active_manifest)
             };
 
-            let make_absolute = |i: Ingredient| {
+            // Returns a flat list of validation statuses from the ingredient with absolute URIs.
+            let get_statuses = |i: Ingredient| {
                 // Get a flat list of validation statuses from the ingredient.
                 // If validation_results are present, use them, otherwise use the ingredient's validation_status.
                 let validation_status = match i.validation_results {
@@ -162,7 +163,7 @@ impl ValidationResults {
                     .iter()
                     .flat_map(|c| c.ingredient_assertions())
                     .filter_map(|a| Ingredient::from_assertion(a.assertion()).ok())
-                    .filter_map(make_absolute)
+                    .filter_map(get_statuses)
                     .flatten()
                     .collect();
 
@@ -338,7 +339,7 @@ impl IngredientDeltaValidationResult {
 ///
 /// See [§15.2.1, “Standard Status Codes.”]
 ///
-/// [§15.2.1, “Standard Status Codes.”]: https://c2pa.org/specifications/specifications/2.1/specs/C2PA_Specification.html#_standard_status_codes
+/// [§15.2.1, “Standard Status Codes.”]: https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_standard_status_codes
 pub mod validation_codes {
     use crate::status_tracker::LogKind;
 
@@ -423,6 +424,11 @@ pub mod validation_codes {
     /// Any corresponding URL should point to a C2PA assertion.
     pub const INGREDIENT_MANIFEST_VALIDATED: &str = "ingredient.manifest.validated";
 
+    /// Ingredient had no manifest.
+    ///
+    /// Any corresponding URL should point to a C2PA assertion.
+    pub const INGREDIENT_PROVENANCE_UNKNOWN: &str = "ingredient.unknownProvenance";
+
     /// Hash of the ingredient’s C2PA Claim Signature box was successfully validated
     ///
     /// Any corresponding URL should point to a C2PA assertion.
@@ -471,12 +477,6 @@ pub mod validation_codes {
     ///
     /// Any corresponding URL should point to a C2PA assertion.
     pub const MANIFEST_UNREFERENCED: &str = "manifest.unreferenced";
-
-    /// The ingredient does not contain a manifest or cannot be interpreted
-    /// by this version of the SDK.
-    ///
-    /// Any corresponding URL should point to a C2PA assertion.
-    pub const INGREDIENT_UNKNOWN_PROVENANCE: &str = "ingredient.unknownProvenance";
 
     /// The algorithm has been deprecated.
     ///
@@ -771,7 +771,12 @@ pub mod validation_codes {
     /// A BMFF hash assertion is malformed.
     ///
     /// Any corresponding URL should point to a C2PA assertion box.
-    pub const ASSERTION_BOXHASH_MALFORMED: &str = "assertion.bmffHash.malformed";
+    pub const ASSERTION_BMFFHASH_MALFORMED: &str = "assertion.bmffHash.malformed";
+
+    /// A Box hash assertion is malformed.
+    ///
+    /// Any corresponding URL should point to a C2PA assertion box.
+    pub const ASSERTION_BOXESHASH_MALFORMED: &str = "assertion.boxesHash.malformed";
 
     /// The cloud-data assertion was incomplete.
     ///
@@ -887,6 +892,7 @@ pub mod validation_codes {
             | ASSERTION_BOXHASH_MATCH
             | ASSERTION_COLLECTIONHASH_MATCH
             | INGREDIENT_MANIFEST_VALIDATED
+            | INGREDIENT_MANIFEST_MISSING
             | INGREDIENT_CLAIM_SIGNATURE_VALIDATED => LogKind::Success,
             SIGNING_CREDENTIAL_OCSP_SKIPPED
             | SIGNING_CREDENTIAL_OCSP_INACCESSIBLE
@@ -895,9 +901,10 @@ pub mod validation_codes {
             | TIMESTAMP_MISMATCH
             | TIMESTAMP_MALFORMED
             | MANIFEST_UNKNOWN_PROVENANCE
-            | INGREDIENT_UNKNOWN_PROVENANCE
             | ALGORITHM_DEPRECATED
-            | TIME_OF_SIGNING_INSIDE_VALIDITY => LogKind::Informational,
+            | TIME_OF_SIGNING_INSIDE_VALIDITY
+            | INGREDIENT_PROVENANCE_UNKNOWN
+            | ASSERTION_DATAHASH_ADDITIONAL_EXCLUSIONS => LogKind::Informational,
             _ => LogKind::Failure,
         }
     }

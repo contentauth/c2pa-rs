@@ -68,7 +68,7 @@ pub enum Error {
 
     /// The attempt to deserialize the claim from CBOR failed.
     #[error("claim could not be converted from CBOR")]
-    ClaimDecoding,
+    ClaimDecoding(String),
 
     #[error("claim already signed, no further changes allowed")]
     ClaimAlreadySigned,
@@ -356,6 +356,11 @@ pub enum Error {
     /// response.
     #[error("internal error ({0})")]
     InternalError(String),
+
+    // A C2PA specific error that needs to propagate up to the caller.
+    // The string should be one of the C2PA validation codes
+    #[error("C2PA Validation Error: {0}")]
+    C2PAValidation(String),
 }
 
 /// A specialized `Result` type for C2PA toolkit operations.

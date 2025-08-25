@@ -279,7 +279,7 @@ impl AssetBoxHash for GifIO {
                         Block::LocalColorTable(_) | Block::GlobalColorTable(_) => {
                             match box_maps.last_mut() {
                                 Some(last_box_map) => {
-                                    last_box_map.range_len += usize::try_from(marker.len())?
+                                    last_box_map.range_len += marker.len();
                                 }
                                 // Realistically, this case is unreachable, but to play it safe, we error.
                                 None => return Err(Error::NotFound),
@@ -287,7 +287,7 @@ impl AssetBoxHash for GifIO {
                         }
                         _ => {
                             let mut box_map = marker.to_box_map()?;
-                            box_map.range_start += offset;
+                            box_map.range_start += offset as u64;
                             box_maps.push(box_map);
                         }
                     }
@@ -487,6 +487,7 @@ impl GifIO {
         Ok(())
     }
 
+    #[allow(dead_code)] // this here for wasm builds to pass clippy  (todo: remove)
     fn replace_block_in_place(
         &self,
         stream: &mut dyn CAIReadWrite,
@@ -631,9 +632,10 @@ impl BlockMarker<Block> {
             names,
             alg: None,
             hash: ByteBuf::from(Vec::new()),
+            excluded: None,
             pad: ByteBuf::from(Vec::new()),
-            range_start: usize::try_from(self.start())?,
-            range_len: usize::try_from(self.len())?,
+            range_start: self.start(),
+            range_len: self.len(),
         })
     }
 }
@@ -1417,6 +1419,7 @@ mod tests {
                 names: vec!["GIF89a".to_owned()],
                 alg: None,
                 hash: ByteBuf::from(Vec::new()),
+                excluded: None,
                 pad: ByteBuf::from(Vec::new()),
                 range_start: 0,
                 range_len: 6
@@ -1428,6 +1431,7 @@ mod tests {
                 names: vec!["2C".to_owned()],
                 alg: None,
                 hash: ByteBuf::from(Vec::new()),
+                excluded: None,
                 pad: ByteBuf::from(Vec::new()),
                 range_start: 368495,
                 range_len: 778
@@ -1439,8 +1443,9 @@ mod tests {
                 names: vec!["3B".to_owned()],
                 alg: None,
                 hash: ByteBuf::from(Vec::new()),
+                excluded: None,
                 pad: ByteBuf::from(Vec::new()),
-                range_start: SAMPLE1.len(),
+                range_start: SAMPLE1.len() as u64,
                 range_len: 1
             })
         );

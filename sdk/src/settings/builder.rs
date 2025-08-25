@@ -17,7 +17,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     assertions::{
-        region_of_interest::RegionOfInterest, Action, ActionTemplate, Actor, SoftwareAgent,
+        region_of_interest::RegionOfInterest, Action, ActionTemplate, DigitalSourceType,
+        SoftwareAgent,
     },
     cbor_types::DateT,
     resource_store::UriOrResource,
@@ -122,10 +123,9 @@ impl SettingsValidate for ThumbnailSettings {
 pub(crate) struct AutoActionSettings {
     /// Whether to enable this auto action or not.
     pub enabled: bool,
-    // TODO: enum
     /// The default source type for the auto action.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub source_type: Option<String>,
+    pub source_type: Option<DigitalSourceType>,
 }
 
 /// Settings for how to specify the claim generator info's operating system.
@@ -211,7 +211,7 @@ pub(crate) struct ActionTemplateSettings {
     pub software_agent_index: Option<usize>,
     /// One of the defined URI values at `<https://cv.iptc.org/newscodes/digitalsourcetype/>`
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub source_type: Option<String>,
+    pub source_type: Option<DigitalSourceType>,
     // TODO: handle paths/urls and document in the sample c2pa.toml
     /// Reference to an icon.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -270,9 +270,6 @@ pub(crate) struct ActionSettings {
     /// 0-based index into the softwareAgents array.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub software_agent_index: Option<usize>,
-    /// A semicolon-delimited list of the parts of the resource that were changed since the previous event history.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub changed: Option<String>,
     /// A list of the regions of interest of the resource that were changed.
     ///
     /// If not present, presumed to be undefined.
@@ -280,20 +277,13 @@ pub(crate) struct ActionSettings {
     /// it should be assumed that anything might have changed.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub changes: Option<Vec<RegionOfInterest>>,
-    // TODO: is deprecated, do we still read it? validate it?
-    /// This is NOT the instanceID in the spec.
-    /// It is now deprecated but was previously used to map the action to an ingredient.
-    #[serde(skip_serializing)]
-    pub instance_id: Option<String>,
+
     /// Additional parameters of the action. These vary by the type of action.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub parameters: Option<HashMap<String, toml::Value>>,
-    /// An array of the creators that undertook this action.
+
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub actors: Option<Vec<Actor>>,
-    /// One of the defined URI values at `<https://cv.iptc.org/newscodes/digitalsourcetype/>`.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub source_type: Option<String>,
+    pub source_type: Option<DigitalSourceType>,
     /// List of related actions.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub related: Option<Vec<Action>>,
@@ -318,10 +308,7 @@ impl TryFrom<ActionSettings> for Action {
                 .transpose()?
                 .map(SoftwareAgent::ClaimGeneratorInfo),
             software_agent_index: value.software_agent_index,
-            changed: value.changed,
             changes: value.changes,
-            #[allow(deprecated)]
-            instance_id: value.instance_id,
             parameters: value
                 .parameters
                 .map(|template_parameters| {
@@ -335,11 +322,11 @@ impl TryFrom<ActionSettings> for Action {
                         .collect::<Result<HashMap<String, serde_cbor::Value>>>()
                 })
                 .transpose()?,
-            actors: value.actors,
             source_type: value.source_type,
             related: value.related,
             reason: value.reason,
             description: value.description,
+            ..Default::default()
         })
     }
 }
@@ -388,8 +375,8 @@ impl Default for ActionsSettings {
             templates: None,
             actions: None,
             auto_created_action: AutoActionSettings {
-                enabled: false,
-                source_type: None,
+                enabled: true,
+                source_type: Some(DigitalSourceType::Empty),
             },
             auto_opened_action: AutoActionSettings {
                 enabled: true,
@@ -429,6 +416,19 @@ pub(crate) struct BuilderSettings {
     ///
     /// For more information on the reasoning behind this field see [ActionsSettings].
     pub actions: ActionsSettings,
+
+    // Certificate statuses will be fetched for either all the manifest labels, or just the active manifest.
+    pub certificate_status_fetch: Option<OcspFetch>,
+
+    // Whether or not existing OCSP responses should be overridden by new values.
+    pub certificate_status_should_override: Option<bool>,
+}
+
+#[derive(Copy, Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub(crate) enum OcspFetch {
+    All,
+    Active,
 }
 
 impl SettingsValidate for BuilderSettings {
@@ -443,7 +443,7 @@ pub mod tests {
     #![allow(clippy::unwrap_used)]
 
     use super::*;
-    use crate::assertions::source_type;
+    use crate::assertions::DigitalSourceType;
 
     #[test]
     fn test_auto_created_action_without_source_type() {
@@ -463,7 +463,7 @@ pub mod tests {
         let actions_settings = ActionsSettings {
             auto_created_action: AutoActionSettings {
                 enabled: true,
-                source_type: Some(source_type::EMPTY.to_owned()),
+                source_type: Some(DigitalSourceType::Empty),
             },
             ..Default::default()
         };

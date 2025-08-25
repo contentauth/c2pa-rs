@@ -29,7 +29,7 @@ use uuid::Uuid;
 
 use crate::{
     assertion::{AssertionBase, AssertionData},
-    assertions::{labels, Actions, EmbeddedData, Metadata, SoftwareAgent},
+    assertions::{labels, Actions, AssertionMetadata, EmbeddedData, SoftwareAgent},
     claim::RemoteManifest,
     crypto::raw_signature::SigningAlg,
     error::{Error, Result},
@@ -42,6 +42,7 @@ use crate::{
     ClaimGeneratorInfo, ManifestAssertionKind,
 };
 #[cfg(feature = "v1_api")]
+#[allow(deprecated)]
 use crate::{
     assertions::{CreativeWork, DataHash, Exif, User, UserCbor},
     asset_io::{CAIRead, CAIReadWrite},
@@ -82,7 +83,7 @@ pub struct Manifest {
 
     /// A list of user metadata for this claim.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub metadata: Option<Vec<Metadata>>,
+    pub metadata: Option<Vec<AssertionMetadata>>,
 
     /// A human-readable title, generally source filename.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -441,11 +442,14 @@ impl Manifest {
     /// # use c2pa::Result;
     /// use c2pa::{assertions::Actions, Manifest, Reader};
     /// # fn main() -> Result<()> {
-    /// let reader = Reader::from_file("tests/fixtures/CA.jpg")?;
-    /// let manifest = reader.active_manifest().unwrap();
-    /// let actions: Actions = manifest.find_assertion(Actions::LABEL)?;
-    /// for action in actions.actions {
-    ///     println!("{}", action.action());
+    /// #[cfg(feature = "file_io")]
+    /// {
+    ///     let reader = Reader::from_file("tests/fixtures/CA.jpg")?;
+    ///     let manifest = reader.active_manifest().unwrap();
+    ///     let actions: Actions = manifest.find_assertion(Actions::LABEL)?;
+    ///     for action in actions.actions {
+    ///         println!("{}", action.action());
+    ///     }
     /// }
     /// # Ok(())
     /// # }
@@ -506,6 +510,13 @@ impl Manifest {
     /// Returns the name of the signature issuer
     pub fn issuer(&self) -> Option<String> {
         self.signature_info.to_owned().and_then(|sig| sig.issuer)
+    }
+
+    /// Returns the common name of the certificate
+    pub fn common_name(&self) -> Option<String> {
+        self.signature_info
+            .to_owned()
+            .and_then(|sig| sig.common_name)
     }
 
     /// Returns the time that the manifest was signed
@@ -769,6 +780,7 @@ impl Manifest {
             Some(signature_info) => Some(SignatureInfo {
                 alg: signature_info.alg,
                 issuer: signature_info.issuer_org,
+                common_name: signature_info.common_name,
                 time: signature_info.date.map(|d| d.to_rfc3339()),
                 cert_serial_number: signature_info.cert_serial_number.map(|s| s.to_string()),
                 cert_chain: String::from_utf8(signature_info.cert_chain)
@@ -991,6 +1003,7 @@ impl Manifest {
 
                     claim.add_assertion(&actions)
                 }
+                #[allow(deprecated)]
                 CreativeWork::LABEL => {
                     let mut cw: CreativeWork = manifest_assertion.to_assertion()?;
                     // insert a credentials field if we have a vc that matches the identifier
@@ -1352,7 +1365,7 @@ impl Manifest {
         if dh.is_err() {
             let mut ph = DataHash::new("jumbf manifest", "sha256");
             for _ in 0..10 {
-                ph.add_exclusion(HashRange::new(0, 2));
+                ph.add_exclusion(HashRange::new(0u64, 2u64));
             }
             self.add_assertion(&ph)?;
         }
@@ -1531,6 +1544,10 @@ pub struct SignatureInfo {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub issuer: Option<String>,
 
+    /// Human-readable for common name of this certificate.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub common_name: Option<String>,
+
     /// The serial number of the certificate.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cert_serial_number: Option<String>,
@@ -1563,6 +1580,7 @@ pub(crate) mod tests {
 
     use std::io::Cursor;
 
+    use c2pa_macros::c2pa_test_async;
     #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
     use wasm_bindgen_test::*;
 
@@ -1965,8 +1983,7 @@ pub(crate) mod tests {
     }
 
     #[cfg(feature = "file_io")]
-    #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
-    #[cfg_attr(target_os = "wasi", wstd::test)]
+    #[c2pa_test_async]
     #[allow(deprecated)]
     async fn test_embed_async_sign() {
         let temp_dir = tempdirectory().expect("temp dir");
@@ -1987,8 +2004,7 @@ pub(crate) mod tests {
     }
 
     #[cfg(feature = "file_io")]
-    #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
-    #[cfg_attr(target_os = "wasi", wstd::test)]
+    #[c2pa_test_async]
     #[allow(deprecated)]
     async fn test_embed_remote_sign() {
         let temp_dir = tempdirectory().expect("temp dir");
@@ -2057,13 +2073,8 @@ pub(crate) mod tests {
         );
     }
 
-    #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
-    #[cfg_attr(
-        all(target_arch = "wasm32", not(target_os = "wasi")),
-        wasm_bindgen_test
-    )]
+    #[c2pa_test_async]
     #[allow(deprecated)]
-    #[cfg_attr(target_os = "wasi", wstd::test)]
     async fn test_embed_jpeg_stream_wasm() {
         use crate::assertions::User;
         let image = include_bytes!("../tests/fixtures/earth_apollo17.jpg");
@@ -2101,13 +2112,8 @@ pub(crate) mod tests {
         println!("It worked: {manifest_store}\n");
     }
 
-    #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
-    #[cfg_attr(
-        all(target_arch = "wasm32", not(target_os = "wasi")),
-        wasm_bindgen_test
-    )]
+    #[c2pa_test_async]
     #[allow(deprecated)]
-    #[cfg_attr(target_os = "wasi", wstd::test)]
     async fn test_embed_png_stream_wasm() {
         use crate::assertions::User;
         let image = include_bytes!("../tests/fixtures/libpng-test.png");
@@ -2138,13 +2144,8 @@ pub(crate) mod tests {
         println!("It worked: {manifest_store}\n");
     }
 
-    #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
-    #[cfg_attr(
-        all(target_arch = "wasm32", not(target_os = "wasi")),
-        wasm_bindgen_test
-    )]
+    #[c2pa_test_async]
     #[allow(deprecated)]
-    #[cfg_attr(target_os = "wasi", wstd::test)]
     async fn test_embed_webp_stream_wasm() {
         use crate::assertions::User;
         let image = include_bytes!("../tests/fixtures/mars.webp");
@@ -2212,13 +2213,8 @@ pub(crate) mod tests {
         //println!("{manifest_store}");main
     }
 
-    #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
-    #[cfg_attr(
-        all(target_arch = "wasm32", not(target_os = "wasi")),
-        wasm_bindgen_test
-    )]
-    #[cfg_attr(target_os = "wasi", wstd::test)]
-    #[cfg(any(target_arch = "wasm32", feature = "file_io"))]
+    #[cfg(feature = "file_io")]
+    #[c2pa_test_async]
     async fn test_embed_from_memory_async() {
         use crate::assertions::User;
         let image = include_bytes!("../tests/fixtures/earth_apollo17.jpg");
@@ -2259,8 +2255,7 @@ pub(crate) mod tests {
     }
 
     #[cfg(feature = "file_io")]
-    #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
-    #[cfg_attr(target_os = "wasi", wstd::test)]
+    #[c2pa_test_async]
     #[allow(deprecated)]
     /// Verify that an ingredient with error is reported on the ingredient and not on the manifest_store
     async fn test_embed_with_ingredient_error() {
@@ -2348,7 +2343,10 @@ pub(crate) mod tests {
         assert_eq!(image.into_owned(), thumb_data);
     }
 
+    // This is only used for testing obsolete v1 manifest creation code
     const MANIFEST_JSON: &str = r#"{
+        
+        "claim_version": 1,
         "claim_generator": "test",
         "claim_generator_info": [
             {
@@ -2699,7 +2697,7 @@ pub(crate) mod tests {
         manifest.with_base_path(fixtures).expect("with_base");
         // verify we can't set a references that don't exist
         assert!(manifest
-            .set_thumbnail_ref(ResourceRef::new("image/jpg", "foo"))
+            .set_thumbnail_ref(ResourceRef::new("image/jpeg", "foo"))
             .is_err());
         assert_eq!(manifest.thumbnail_ref(), None);
         // verify we can set a references that do exist
@@ -2808,7 +2806,7 @@ pub(crate) mod tests {
         // build manifest to insert in the hole
 
         // create an hash exclusion for the manifest
-        let exclusion = HashRange::new(offset, placeholder.len());
+        let exclusion = HashRange::new(offset as u64, placeholder.len() as u64);
         let exclusions = vec![exclusion];
 
         let mut dh = DataHash::new("source_hash", "sha256");
@@ -2835,8 +2833,7 @@ pub(crate) mod tests {
     }
 
     #[cfg(feature = "file_io")]
-    #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
-    #[cfg_attr(target_os = "wasi", wstd::test)]
+    #[c2pa_test_async]
     #[allow(deprecated)]
     async fn test_data_hash_embeddable_manifest_remote_signed() {
         let ap = fixture_path("cloud.jpg");
@@ -2867,7 +2864,7 @@ pub(crate) mod tests {
         // build manifest to insert in the hole
 
         // create an hash exclusion for the manifest
-        let exclusion = HashRange::new(offset, placeholder.len());
+        let exclusion = HashRange::new(offset as u64, placeholder.len() as u64);
         let exclusions = vec![exclusion];
 
         let mut dh = DataHash::new("source_hash", "sha256");

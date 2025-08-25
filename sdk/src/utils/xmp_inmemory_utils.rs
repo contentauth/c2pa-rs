@@ -258,6 +258,7 @@ mod tests {
     #![allow(clippy::unwrap_used)]
 
     //use env_logger;
+    use c2pa_macros::c2pa_test_async;
     #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
     use wasm_bindgen_test::wasm_bindgen_test;
 
@@ -319,12 +320,7 @@ mod tests {
         assert_eq!(unicorn, Some(PROVENANCE.to_string()));
     }
 
-    #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
-    #[cfg_attr(
-        all(target_arch = "wasm32", not(target_os = "wasi")),
-        wasm_bindgen_test
-    )]
-    #[cfg_attr(target_os = "wasi", wstd::test)]
+    #[c2pa_test_async]
     async fn test_broken_xmp_read_write_stream() {
         let source_bytes = include_bytes!("../../tests/fixtures/IMG_0003.jpg");
         let test_msg = "https://cai-manifests-stage.adobe.com/manifests/urn-c2pa-0ab6e8b8-5c28-4ef1-8f58-86c21f0349bf-adobe";

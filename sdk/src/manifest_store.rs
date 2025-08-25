@@ -429,7 +429,7 @@ impl ManifestStore {
     ///         let asset_bytes = include_bytes!("../tests/fixtures/cloud.jpg");
     ///         let manifest_bytes = include_bytes!("../tests/fixtures/cloud_manifest.c2pa");
     ///
-    ///         let manifest_store = ManifestStore::from_manifest_and_asset_bytes_async(manifest_bytes, "image/jpg", asset_bytes)
+    ///         let manifest_store = ManifestStore::from_manifest_and_asset_bytes_async(manifest_bytes, "image/jpeg", asset_bytes)
     ///             .await
     ///             .unwrap();
     ///
@@ -474,7 +474,7 @@ impl ManifestStore {
     ///         let asset_bytes = include_bytes!("../tests/fixtures/cloud.jpg");
     ///         let manifest_bytes = include_bytes!("../tests/fixtures/cloud_manifest.c2pa");
     ///
-    ///         let manifest_store = ManifestStore::from_manifest_and_asset_bytes(manifest_bytes, "image/jpg", asset_bytes)
+    ///         let manifest_store = ManifestStore::from_manifest_and_asset_bytes(manifest_bytes, "image/jpeg", asset_bytes)
     ///             .unwrap();
     ///
     ///         println!("{}", manifest_store);
@@ -565,6 +565,7 @@ mod tests {
     #![allow(clippy::expect_used)]
     #![allow(clippy::unwrap_used)]
 
+    use c2pa_macros::c2pa_test_async;
     #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
     use wasm_bindgen_test::*;
 
@@ -621,12 +622,7 @@ mod tests {
         assert!(manifest.time().is_some());
     }
 
-    #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
-    #[cfg_attr(
-        all(target_arch = "wasm32", not(target_os = "wasi")),
-        wasm_bindgen_test
-    )]
-    #[cfg_attr(target_os = "wasi", wstd::test)]
+    #[c2pa_test_async]
     #[cfg(feature = "v1_api")]
     #[allow(deprecated)]
     async fn manifest_report_image_async() {
@@ -665,12 +661,7 @@ mod tests {
         assert!(manifest.time().is_some());
     }
 
-    #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
-    #[cfg_attr(
-        all(target_arch = "wasm32", not(target_os = "wasi")),
-        wasm_bindgen_test
-    )]
-    #[cfg_attr(target_os = "wasi", wstd::test)]
+    #[c2pa_test_async]
     #[allow(deprecated)]
     #[cfg(feature = "v1_api")]
     async fn manifest_report_from_manifest_and_asset_bytes_async() {
@@ -681,7 +672,7 @@ mod tests {
 
         let manifest_store = ManifestStore::from_manifest_and_asset_bytes_async(
             manifest_bytes,
-            "image/jpg",
+            "image/jpeg",
             asset_bytes,
         )
         .await

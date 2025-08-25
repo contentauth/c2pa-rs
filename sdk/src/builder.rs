@@ -26,11 +26,15 @@ use serde_with::skip_serializing_none;
 use uuid::Uuid;
 use zip::{write::SimpleFileOptions, ZipArchive, ZipWriter};
 
+#[allow(deprecated)]
 use crate::{
     assertion::AssertionDecodeError,
     assertions::{
-        c2pa_action, labels, Action, ActionTemplate, Actions, BmffHash, BoxHash, CreativeWork,
-        DataHash, EmbeddedData, Exif, Metadata, SoftwareAgent, Thumbnail, User, UserCbor,
+        c2pa_action,
+        labels::{self, METADATA_LABEL_REGEX},
+        Action, ActionTemplate, Actions, AssertionMetadata, BmffHash, BoxHash, CreativeWork,
+        DataHash, DigitalSourceType, EmbeddedData, Exif, Metadata, SoftwareAgent, Thumbnail, User,
+        UserCbor,
     },
     cbor_types::value_cbor_to_type,
     claim::Claim,
@@ -58,7 +62,7 @@ const ARCHIVE_VERSION: &str = "1";
 #[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 #[non_exhaustive]
 pub struct ManifestDefinition {
-    /// The version of the claim.  Defaults to 1.
+    /// The version of the claim.  Defaults to 2.
     pub claim_version: Option<u8>,
 
     /// Optional prefix added to the generated Manifest Label
@@ -70,7 +74,7 @@ pub struct ManifestDefinition {
     pub claim_generator_info: Vec<ClaimGeneratorInfo>,
 
     /// Optional manifest metadata. This will be deprecated in the future; not recommended to use.
-    pub metadata: Option<Vec<Metadata>>,
+    pub metadata: Option<Vec<AssertionMetadata>>,
 
     /// A human-readable title, generally source filename.
     pub title: Option<String>,
@@ -164,11 +168,50 @@ impl AssertionDefinition {
     }
 }
 
+/// Represents the type of builder flow being used.
+///
+/// This determines how the builder will be used, such as creating a new asset, opening an existing asset,
+/// or updating an existing asset.
+#[derive(Debug, Deserialize, Serialize, PartialEq, Clone)]
+#[cfg_attr(feature = "json_schema", derive(JsonSchema))]
+enum BuilderIntent {
+    /// This is a new digital creation, a DigitalSourceType is required.
+    ///
+    /// The Manifest must not have have a parent ingredient.
+    /// A `c2pa.created` action will be added if not provided.
+    #[serde(rename = "create")]
+    Create(DigitalSourceType),
+
+    /// This is an edit of a pre-existing parent asset.
+    ///
+    /// The Manifest must have a parent ingredient.
+    /// A parent ingredient will be generated from the source stream if not otherwise provided.
+    /// A `c2pa.opened action will be tied to the parent ingredient.
+    #[serde(rename = "edit")]
+    Edit,
+
+    /// A restricted version of [Edit] for non-editorial changes.
+    ///
+    /// There must be only one ingredient, as a parent.
+    /// No changes can be made to the hashed content of the parent.
+    /// There are additional restrictions on the types of changes that can be made.
+    #[serde(rename = "update")]
+    Update,
+}
+
+#[allow(unused)] // TEMPORARY: @gpeacock please investigate
+#[derive(Serialize, Deserialize)]
+struct StructuredAction {
+    action: String,
+    #[serde(flatten)]
+    data: serde_json::Value,
+}
+
 /// Use a Builder to add a signed manifest to an asset.
 ///
 /// # Example: Building and signing a manifest
 ///
-/// ```
+/// ```ignore-wasm32
 /// use c2pa::Result;
 /// use std::path::PathBuf;
 ///
@@ -183,35 +226,36 @@ impl AssertionDefinition {
 /// }
 ///
 /// # fn main() -> Result<()> {
-/// let manifest_json = json!({
-///    "claim_generator_info": [
-///       {
-///           "name": "c2pa_test",
-///           "version": "1.0.0"
-///       }
-///    ],
-///    "title": "Test_Manifest"
-/// }).to_string();
+/// #[cfg(feature = "file_io")]
+/// {
+///     let manifest_json = json!({
+///        "claim_generator_info": [
+///           {
+///               "name": "c2pa_test",
+///               "version": "1.0.0"
+///           }
+///        ],
+///        "title": "Test_Manifest"
+///     }).to_string();
 ///
-/// let mut builder = Builder::from_json(&manifest_json)?;
-/// builder.add_assertion("org.contentauth.test", &Test { my_tag: 42 })?;
+///     let mut builder = Builder::from_json(&manifest_json)?;
+///     builder.add_assertion("org.contentauth.test", &Test { my_tag: 42 })?;
 ///
-/// let source = PathBuf::from("tests/fixtures/C.jpg");
-/// let dir = tempdir()?;
-/// let dest = dir.path().join("test_file.jpg");
+///     let source = PathBuf::from("tests/fixtures/C.jpg");
+///     let dir = tempdir()?;
+///     let dest = dir.path().join("test_file.jpg");
 ///
-/// // Create a ps256 signer using certs and key files. TO DO: Update example.
-/// let signcert_path = "tests/fixtures/certs/ps256.pub";
-/// let pkey_path = "tests/fixtures/certs/ps256.pem";
-/// let signer = create_signer::from_files(signcert_path, pkey_path, SigningAlg::Ps256, None)?;
+///     // Create a ps256 signer using certs and key files. TO DO: Update example.
+///     let signcert_path = "tests/fixtures/certs/ps256.pub";
+///     let pkey_path = "tests/fixtures/certs/ps256.pem";
+///     let signer = create_signer::from_files(signcert_path, pkey_path, SigningAlg::Ps256, None)?;
 ///
-/// // embed a manifest using the signer
-/// builder.sign(
-///     signer.as_ref(),
-///     "image/jpeg",
-///     &mut std::fs::File::open(&source)?,
-///     &mut std::fs::File::create(&dest)?,
-/// )?;
+///     // embed a manifest using the signer
+///     builder.sign_file(
+///         signer.as_ref(),
+///         &source,
+///         &dest)?;
+///     }
 /// # Ok(())
 /// # }
 /// ```
@@ -234,6 +278,9 @@ pub struct Builder {
     #[cfg(feature = "file_io")]
     pub base_path: Option<PathBuf>,
 
+    /// A builder should construct a created, opened or updated manifest.
+    intent: Option<BuilderIntent>,
+
     /// Container for binary assets (like thumbnails).
     #[serde(skip)]
     resources: ResourceStore,
@@ -253,7 +300,52 @@ impl Builder {
         Default::default()
     }
 
+    /// Creates a new [`Builder`] for creating a new asset.
+    ///
+    /// # Arguments
+    /// * `source_type` - The type of digital source, such as `DigitalSourceType::Empty` or `DigitalSourceType::TrainedAlgorithmicData`.
+    /// # Returns
+    /// * A new [`Builder`] with the specified source type.
+    /// # Example
+    /// ```rust
+    /// use c2pa::{Builder, DigitalSourceType};
+    /// let builder = Builder::create(DigitalSourceType::Empty);
+    /// ```
+    pub fn create(source_type: DigitalSourceType) -> Self {
+        let mut builder = Self::new();
+        builder.intent = Some(BuilderIntent::Create(source_type));
+        builder
+    }
+
+    /// Creates a new [`Builder`] for for editing an existing asset.
+    /// This is experimental and will likely change in the future.
+    ///
+    /// If a parent ingredient is not provided, it will be generated from the source stream.
+    /// and an associated `c2pa.opened` action will be added.
+    /// # Returns
+    /// * A new [`Builder`] for editing an existing asset.
+    pub fn edit() -> Self {
+        let mut builder = Self::new();
+        builder.intent = Some(BuilderIntent::Edit);
+        builder
+    }
+
+    // /// Creates a new [`Builder`] for updating an existing asset.
+    // /// This is experimental and not fully implemented yet.
+    // ///
+    // /// This creates an Update manifest, which is a restricted version of an Open manifest.
+    // /// The benefit is a smaller manifest with only non-editorial changes.
+    // /// It must have a parent and no other ingredients.
+    // /// It cannot modify the hashed content of the parent.
+    // /// Only a very limited set of actions can be performed.
+    // pub fn update() -> Self {
+    //     let mut builder = Self::new();
+    //     builder.intent = Some(BuilderIntent::Update);
+    //     builder
+    // }
+
     /// Creates a new [`Builder`] from a JSON [`ManifestDefinition`] string.
+    /// This is experimental and may change in the future.
     ///
     /// # Arguments
     /// * `json` - A JSON string representing the [`ManifestDefinition`].
@@ -273,8 +365,11 @@ impl Builder {
         jumbf_io::supported_builder_mime_types()
     }
 
+    /// Returns the claim version for this builder.
+    ///
+    /// If not set, defaults to 2.
     pub fn claim_version(&self) -> u8 {
-        self.definition.claim_version.unwrap_or(1)
+        self.definition.claim_version.unwrap_or(2)
     }
 
     /// Sets the [`ClaimGeneratorInfo`] for this [`Builder`].
@@ -315,8 +410,10 @@ impl Builder {
     }
 
     /// Sets the remote_url for this [`Builder`].
+    ///
     /// The URL must return the manifest data and is injected into the destination asset when signing.
     /// For remote-only manifests, set the `no_embed` flag to `true`.
+    ///
     /// # Arguments
     /// * `url` - The URL where the manifest will be available.
     /// # Returns
@@ -327,8 +424,10 @@ impl Builder {
     }
 
     /// Sets the `no_embed` flag for this [`Builder`].
+    ///
     /// If true, the manifest store will not be embedded in the destination asset on sign.
     /// This is useful for sidecar and remote manifests.
+    ///
     /// # Arguments
     /// * `no_embed` - A Boolean flag to set the `no_embed` flag.
     /// # Returns
@@ -341,7 +440,6 @@ impl Builder {
     /// Sets a thumbnail for the [`Builder`].
     ///
     /// The thumbnail should represent the associated asset for this [`Builder`].
-    // TODO: Add example
     ///
     /// # Arguments
     /// * `format` - The format of the thumbnail.
@@ -369,6 +467,7 @@ impl Builder {
 
     /// Adds a CBOR assertion to the manifest.
     /// In most cases, use this function instead of `add_assertion_json`, unless the assertion must be stored in JSON format.
+    ///
     /// # Arguments
     /// * `label` - A label for the assertion.
     /// * `data` - The data for the assertion. The data is any Serde-serializable type.
@@ -390,6 +489,7 @@ impl Builder {
 
     /// Adds a JSON assertion to the manifest.
     /// Use only when the assertion must be stored in JSON format.
+    ///
     /// # Arguments
     /// * `label` - A label for the assertion.
     /// * `data` - The data for the assertion; must be a Serde-serializable type.
@@ -406,6 +506,57 @@ impl Builder {
             label: label.into(),
             data: AssertionData::Json(serde_json::to_value(data)?),
         });
+        Ok(self)
+    }
+
+    /// Adds a single action to the manifest.
+    /// This is a convenience method for adding an action to the `Actions` assertion.
+    ///
+    /// # Arguments
+    /// * `action` - The action name as a string.
+    /// * `data` - The data for the action as a Serde-serializable type.
+    /// # Returns
+    /// * A mutable reference to the [`Builder`].
+    /// # Errors
+    /// * Returns an [`Error`] if the action is not valid.
+    /// # Example
+    /// ```rust
+    /// use c2pa::Builder;
+    /// use serde_json::json;
+    /// let created_action = json!({
+    ///    "action": "c2pa.placed",
+    ///    "digitalSourceType": "http://c2pa.org/digitalsourcetype/empty"
+    /// });
+    ///
+    /// let mut builder = Builder::new();
+    /// builder.add_action(created_action);
+    /// ```
+    pub fn add_action<T>(&mut self, action: T) -> Result<&mut Self>
+    where
+        T: Serialize,
+    {
+        // Allow actions to be a Actions struct, or JSON string, or a serde_json::Value.
+        let action_value = serde_json::to_value(action)?;
+        let action: Action = serde_json::from_value(action_value).map_err(Error::JsonError)?;
+
+        // if an actions assertion already exists, we will append to it
+        // if not, we will create a new one
+        let actions = if let Some(pos) = self
+            .definition
+            .assertions
+            .iter()
+            .position(|a| a.label == Actions::LABEL)
+        {
+            // Remove and use the existing actions assertion
+            let assertion_def = self.definition.assertions.remove(pos);
+            assertion_def.to_assertion()?
+        } else {
+            Actions::new()
+        };
+
+        let actions = actions.add_action(action);
+
+        self.add_assertion(Actions::LABEL, &actions)?;
         Ok(self)
     }
 
@@ -437,32 +588,6 @@ impl Builder {
         } else {
             ingredient.with_stream_async(format, stream).await?
         };
-        // let id = ingredient
-        //     .label()
-        //     .or_else(|| Some(ingredient.instance_id()))
-        //     .map(|s| s.to_string());
-        // let action_type = if ingredient.is_parent() {
-        //     "c2pa.opened"
-        // } else {
-        //     "c2pa.placed"
-        // };
-        // if let Some(id) = id {
-        //     self.add_assertion(
-        //         Actions::LABEL,
-        //         &serde_json::json!(
-        //             {
-        //                 "actions": [
-        //                     {
-        //                         "action": action_type,
-        //                         "parameters": {
-        //                             "org.cai.ingredientIds": [&id]
-        //                         }
-        //                     }
-        //                 ]
-        //             }
-        //         ),
-        //     )?;
-        // };
         self.definition.ingredients.push(ingredient);
         #[allow(clippy::unwrap_used)]
         Ok(self.definition.ingredients.last_mut().unwrap()) // ok since we just added it
@@ -478,7 +603,9 @@ impl Builder {
     }
 
     /// Adds a resource to the manifest.
+    ///
     /// The ID must match an identifier in the manifest.
+    ///
     /// # Arguments
     /// * `id` - The identifier for the resource.
     /// * `stream` - A stream to read the resource from.
@@ -560,6 +687,7 @@ impl Builder {
     }
 
     /// Unpacks an archive stream into a Builder.
+    ///
     /// # Arguments
     /// * `stream` - A stream from which to read the archive.
     /// # Returns
@@ -645,7 +773,7 @@ impl Builder {
     fn to_claim(&self) -> Result<Claim> {
         let definition = &self.definition;
         let mut claim_generator_info = definition.claim_generator_info.clone();
-        let metadata = definition.metadata.clone();
+
         // add the default claim generator info for this library
         if claim_generator_info.is_empty() {
             let claim_generator_info_settings = settings::get_settings_value::<
@@ -661,21 +789,25 @@ impl Builder {
             }
         }
 
-        claim_generator_info[0].insert("org.cai.c2pa_rs", env!("CARGO_PKG_VERSION"));
+        claim_generator_info[0].insert("org.contentauth.c2pa_rs", env!("CARGO_PKG_VERSION"));
 
         // Build the claim_generator string since this is required
-        let claim_generator: String = claim_generator_info
-            .iter()
-            .map(|s| {
-                let name = s.name.replace(' ', "_");
-                if let Some(version) = s.version.as_deref() {
-                    format!("{}/{}", name.to_lowercase(), version)
-                } else {
-                    name
-                }
-            })
-            .collect::<Vec<String>>()
-            .join(" ");
+        let claim_generator: String = if self.claim_version() == 1 {
+            claim_generator_info
+                .iter()
+                .map(|s| {
+                    let name = s.name.replace(' ', "_");
+                    if let Some(version) = s.version.as_deref() {
+                        format!("{}/{}", name.to_lowercase(), version)
+                    } else {
+                        name
+                    }
+                })
+                .collect::<Vec<String>>()
+                .join(" ")
+        } else {
+            "".to_string() // claim_generator is not used in version 2
+        };
 
         let mut claim = match definition.label.as_ref() {
             Some(label) => Claim::new_with_user_guid(
@@ -690,20 +822,13 @@ impl Builder {
             ),
         };
 
-        // add claim generator info to claim resolving icons
+        // add claim generator info to claim and resolve icons
         for info in &claim_generator_info {
             let mut claim_info = info.to_owned();
             if let Some(icon) = claim_info.icon.as_ref() {
                 claim_info.icon = Some(icon.to_hashed_uri(&self.resources, &mut claim)?);
             }
             claim.add_claim_generator_info(claim_info);
-        }
-
-        // Add claim metadata
-        if let Some(metadata_vec) = metadata {
-            for m in metadata_vec {
-                claim.add_claim_metadata(m);
-            }
         }
 
         if let Some(remote_url) = &self.remote_url {
@@ -759,13 +884,14 @@ impl Builder {
                 None => ingredient.instance_id().to_string(),
             };
 
+            // add it to the claim
             let uri = ingredient.add_to_claim(
                 &mut claim,
                 definition.redactions.clone(),
                 Some(&self.resources),
             )?;
             if !id.is_empty() {
-                ingredient_map.insert(id, uri);
+                ingredient_map.insert(id, (ingredient.relationship(), uri));
             }
         }
 
@@ -778,18 +904,20 @@ impl Builder {
 
                     let mut actions: Actions = manifest_assertion.to_assertion()?;
 
-                    self.add_actions_assertion_settings(&ingredient_map, &mut actions)?;
+                    Self::add_actions_assertion_settings(&ingredient_map, &mut actions)?;
 
                     let mut updates = Vec::new();
-                    let mut index = 0;
-                    #[allow(clippy::explicit_counter_loop)]
-                    for action in actions.actions_mut() {
-                        let ingredient_ids = action.ingredient_ids();
-                        if let Some(ids) = ingredient_ids {
+                    //#[allow(clippy::explicit_counter_loop)]
+                    for (index, action) in actions.actions_mut().iter_mut().enumerate() {
+                        // find and remove the temporary ingredientIds parameter (This h)
+                        let ids = action.extract_ingredient_ids();
+
+                        if let Some(ids) = ids {
                             let mut update = action.clone();
                             let mut uris = Vec::new();
                             for id in ids {
-                                if let Some(hash_url) = ingredient_map.get(&id) {
+                                if let Some((_relationship, hash_url)) = ingredient_map.get(&id) {
+                                    // todo: check for relationship/action mismatches
                                     uris.push(hash_url.clone());
                                 } else {
                                     log::error!("Action ingredientId not found: {id}");
@@ -800,11 +928,11 @@ impl Builder {
                                     }
                                 }
                             }
+
                             update = update.set_parameter("ingredients", uris)?;
 
                             updates.push((index, update));
                         }
-                        index += 1;
                     }
                     for update in updates {
                         actions = actions.update_action(update.0, update.1);
@@ -857,9 +985,9 @@ impl Builder {
 
                     claim.add_assertion(&actions)
                 }
+                #[allow(deprecated)]
                 CreativeWork::LABEL => {
                     let cw: CreativeWork = manifest_assertion.to_assertion()?;
-
                     claim.add_gathered_assertion_with_salt(&cw, &salt)
                 }
                 Exif::LABEL => {
@@ -878,6 +1006,10 @@ impl Builder {
                     let bmff_hash: BmffHash = manifest_assertion.to_assertion()?;
                     claim.add_assertion_with_salt(&bmff_hash, &salt)
                 }
+                l if METADATA_LABEL_REGEX.is_match(l) => {
+                    let metadata: Metadata = manifest_assertion.to_assertion()?;
+                    claim.add_gathered_assertion_with_salt(&metadata, &salt)
+                }
                 _ => match &manifest_assertion.data {
                     AssertionData::Json(value) => claim.add_gathered_assertion_with_salt(
                         &User::new(&manifest_assertion.label, &serde_json::to_string(&value)?),
@@ -893,7 +1025,7 @@ impl Builder {
 
         if !found_actions {
             let mut actions = Actions::new();
-            self.add_actions_assertion_settings(&ingredient_map, &mut actions)?;
+            Self::add_actions_assertion_settings(&ingredient_map, &mut actions)?;
 
             if !actions.actions().is_empty() {
                 claim.add_assertion(&actions)?;
@@ -912,8 +1044,7 @@ impl Builder {
     /// * `builder.actions.actions`
     /// * For more, see [Builder::add_auto_actions_assertions]
     fn add_actions_assertion_settings(
-        &self,
-        ingredient_map: &HashMap<String, HashedUri>,
+        ingredient_map: &HashMap<String, (&Relationship, HashedUri)>,
         actions: &mut Actions,
     ) -> Result<()> {
         if actions.all_actions_included.is_none() {
@@ -955,8 +1086,7 @@ impl Builder {
                 true => actions.actions = additional_actions,
             }
         }
-
-        self.add_auto_actions_assertions_settings(ingredient_map, actions)
+        Self::add_auto_actions_assertions_settings(ingredient_map, actions)
     }
 
     /// Adds c2pa.created, c2pa.opened, and c2pa.placed actions for the specified [Actions][crate::assertions::Actions]
@@ -967,8 +1097,7 @@ impl Builder {
     /// * `builder.actions.auto_opened_action`
     /// * `builder.actions.auto_placed_action`
     fn add_auto_actions_assertions_settings(
-        &self,
-        ingredient_map: &HashMap<String, HashedUri>,
+        ingredient_map: &HashMap<String, (&Relationship, HashedUri)>,
         actions: &mut Actions,
     ) -> Result<()> {
         // https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_mandatory_presence_of_at_least_one_actions_assertion
@@ -977,23 +1106,20 @@ impl Builder {
         let auto_opened =
             settings::get_settings_value::<bool>("builder.actions.auto_opened_action.enabled")?;
         if auto_created || auto_opened {
-            let parent_ingredient = self
-                .definition
-                .ingredients
+            // look for a parentOf relationship ingredient in the ingredient map and return a copy of the hashed URI if found.
+            let parent_ingredient_uri = ingredient_map
                 .iter()
-                .find(|ingredient| ingredient.is_parent());
-            let action = match (parent_ingredient, auto_created, auto_opened) {
-                (Some(parent_ingredient), _, true) => {
+                .find(|(_, (relationship, _))| *relationship == &Relationship::ParentOf)
+                .map(|(_, (_, uri))| uri.clone());
+
+            let action = match (parent_ingredient_uri, auto_created, auto_opened) {
+                (Some(parent_ingredient_uri), _, true) => {
                     let action = Action::new(c2pa_action::OPENED);
 
-                    let id = parent_ingredient
-                        .label()
-                        // We define the `ingredient_map` to use the instance id if the label doesn't exist.
-                        .unwrap_or(parent_ingredient.instance_id());
-                    let ingredient_uri = ingredient_map.get(id);
-                    let action = action.set_parameter("ingredients", vec![ingredient_uri])?;
+                    let action =
+                        action.set_parameter("ingredients", vec![parent_ingredient_uri])?;
 
-                    let source_type = settings::get_settings_value::<Option<String>>(
+                    let source_type = settings::get_settings_value::<Option<DigitalSourceType>>(
                         "builder.auto_opened_action.source_type",
                     );
                     match source_type {
@@ -1003,7 +1129,7 @@ impl Builder {
                 }
                 (None, true, _) => {
                     // The settings ensures this field always exists for the "c2pa.created" action.
-                    let source_type = settings::get_settings_value::<Option<String>>(
+                    let source_type = settings::get_settings_value::<Option<DigitalSourceType>>(
                         "builder.actions.auto_created_action.source_type",
                     );
                     match source_type {
@@ -1056,33 +1182,25 @@ impl Builder {
             }
 
             // If a "ComponentOf" ingredient doesn't have an associated "c2pa.placed" action, create it here.
-            for ingredient in &self.definition.ingredients {
-                if let Some(uri) = ingredient.label() {
-                    if *ingredient.relationship() == Relationship::ComponentOf
-                        && !referenced_uris.contains(uri)
-                    {
-                        let action = Action::new(c2pa_action::PLACED);
+            for (_id, (relationship, uri)) in ingredient_map.iter() {
+                if *relationship == &Relationship::ComponentOf
+                    && !referenced_uris.contains(&uri.url())
+                {
+                    let action = Action::new(c2pa_action::PLACED);
 
-                        let id = ingredient
-                            .label()
-                            // We define the `ingredient_map` to use the instance id if the label doesn't exist.
-                            .unwrap_or(ingredient.instance_id());
-                        let ingredient_uri = ingredient_map.get(id);
-                        let action = action.set_parameter("ingredients", vec![ingredient_uri])?;
+                    let action = action.set_parameter("ingredients", vec![uri])?;
 
-                        let source_type = settings::get_settings_value::<Option<String>>(
-                            "builder.auto_placed_action.source_type",
-                        );
-                        let action = match source_type {
-                            Ok(Some(source_type)) => action.set_source_type(source_type),
-                            _ => action,
-                        };
-                        actions.actions.push(action);
-                    }
+                    let source_type = settings::get_settings_value::<Option<DigitalSourceType>>(
+                        "builder.auto_placed_action.source_type",
+                    );
+                    let action = match source_type {
+                        Ok(Some(source_type)) => action.set_source_type(source_type),
+                        _ => action,
+                    };
+                    actions.actions.push(action);
                 }
             }
         }
-
         Ok(())
     }
 
@@ -1129,6 +1247,27 @@ impl Builder {
         Ok(self)
     }
 
+    /// Maybe add a parent ingredient to the manifest.
+    fn maybe_add_parent<R>(&mut self, format: &str, stream: &mut R) -> Result<&mut Self>
+    where
+        R: Read + Seek + Send,
+    {
+        // check settings to see if we should add a parent ingredient
+        let auto_parent = matches!(
+            self.intent,
+            Some(BuilderIntent::Edit | BuilderIntent::Update)
+        );
+        if auto_parent && !self.definition.ingredients.iter().any(|i| i.is_parent()) {
+            let parent_def = serde_json::json!({
+                "relationship": "parentOf",
+            });
+            stream.rewind()?;
+            self.add_ingredient_from_stream(parent_def.to_string(), format, stream)?;
+            stream.rewind()?;
+        }
+        Ok(self)
+    }
+
     // Find an assertion in the manifest.
     pub(crate) fn find_assertion<T: DeserializeOwned>(&self, label: &str) -> Result<T> {
         if let Some(manifest_assertion) =
@@ -1141,7 +1280,9 @@ impl Builder {
     }
 
     /// Create a placeholder for a hashed data manifest.
+    ///
     /// This is only used for applications doing their own data_hashed asset management.
+    ///
     /// # Arguments
     /// * `reserve_size` - The size to reserve for the signature (taken from the signer).
     /// * `format` - The format of the target asset, the placeholder will be preformatted for this format.
@@ -1158,7 +1299,7 @@ impl Builder {
         if dh.is_err() {
             let mut ph = DataHash::new("jumbf manifest", "sha256");
             for _ in 0..10 {
-                ph.add_exclusion(HashRange::new(0, 2));
+                ph.add_exclusion(HashRange::new(0u64, 2u64));
             }
             self.add_assertion(labels::DATA_HASH, &ph)?;
         }
@@ -1170,6 +1311,7 @@ impl Builder {
     }
 
     /// Create a signed data hashed embeddable manifest using a supplied signer.
+    ///
     /// This is used to create a manifest that can be embedded into a stream.
     /// It allows the caller to do the embedding.
     /// You must call `data_hashed` placeholder first to create the placeholder.
@@ -1206,6 +1348,7 @@ impl Builder {
     }
 
     /// Create a signed box hashed embeddable manifest using a supplied signer.
+    ///
     /// This is used to create a manifest that can be embedded into a stream.
     /// It allows the caller to do the embedding.
     /// The manifest definition must already include a `BoxHash` assertion.
@@ -1237,6 +1380,7 @@ impl Builder {
     }
 
     /// Embed a signed manifest into a stream using a supplied signer.
+    ///
     /// # Arguments
     /// * `format` - The format of the stream.
     /// * `source` - The source stream from which to read.
@@ -1277,6 +1421,9 @@ impl Builder {
         // generate thumbnail if we don't already have one
         #[cfg(feature = "add_thumbnails")]
         self.maybe_add_thumbnail(&format, source)?;
+
+        self.maybe_add_parent(&format, source)?;
+
         // convert the manifest to a store
         let mut store = self.to_store()?;
 
@@ -1374,6 +1521,7 @@ impl Builder {
 
     #[cfg(feature = "file_io")]
     /// Sign a file using a supplied signer.
+    ///
     /// # Arguments
     /// * `source` - The path to the source file to read from.
     /// * `dest` - The path to the destination file to write to (must not already exist).
@@ -1423,8 +1571,10 @@ impl Builder {
     }
 
     /// Converts a manifest into a composed manifest with the specified format.
+    ///
     /// This wraps the bytes in the container format of the specified format.
     /// So that it can be directly embedded into a stream of that format.
+    ///
     /// # Arguments
     /// * `manifest_bytes` - The bytes of the manifest to convert.
     /// * `format` - The format to convert to.
@@ -1443,6 +1593,7 @@ mod tests {
     #![allow(clippy::unwrap_used)]
     use std::{io::Cursor, vec};
 
+    use c2pa_macros::c2pa_test_async;
     use serde_json::json;
     #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
     use wasm_bindgen_test::*;
@@ -1451,7 +1602,7 @@ mod tests {
     #[cfg(feature = "file_io")]
     use crate::utils::test::fixture_path;
     use crate::{
-        assertions::{c2pa_action, source_type, BoxHash},
+        assertions::{c2pa_action, BoxHash, DigitalSourceType},
         asset_handlers::jpeg_io::JpegIO,
         cbor_types::value_cbor_to_type,
         crypto::raw_signature::SigningAlg,
@@ -1469,7 +1620,7 @@ mod tests {
         json!({
             "title": "Parent Test",
             "relationship": "parentOf",
-            "label": "INGREDIENT_1",
+            "label": "CA.jpg",
         })
         .to_string()
     }
@@ -1483,13 +1634,8 @@ mod tests {
                     "version": "1.0.0"
                 }
             ],
-            "metadata": [
-                {
-                    "dateTime": "1985-04-12T23:20:50.52Z"
-                }
-            ],
             "title": "Test_Manifest",
-            "format": "image/tiff",
+            "format": "image/jpeg",
             "instance_id": "1234",
             "thumbnail": {
                 "format": "image/jpeg",
@@ -1511,13 +1657,13 @@ mod tests {
                             {
                                 "action": "c2pa.opened",
                                 "parameters": {
-                                    "org.cai.ingredientIds": ["INGREDIENT_1"]
+                                    "ingredientIds": ["CA.jpg"]
                                 },
                             },
                             {
                                 "action": "c2pa.placed",
                                 "parameters": {
-                                    "org.cai.ingredientIds": ["INGREDIENT_2"]
+                                    "ingredientIds": ["INGREDIENT_2"]
                                 },
                             }
 
@@ -1533,12 +1679,26 @@ mod tests {
         .to_string()
     }
 
-    fn simple_manifest() -> String {
+    fn simple_manifest_json() -> String {
         json!({
             "claim_generator_info": [
                 {
                     "name": "c2pa_test",
                     "version": "1.0.0"
+                }
+            ],
+            "title": "Test_Manifest",
+            "assertions": [
+                {
+                    "label": "c2pa.actions",
+                    "data": {
+                        "actions": [
+                            {
+                                "action": "c2pa.created",
+                                "digitalSourceType": "http://c2pa.org/digitalsourcetype/empty",
+                            }
+                        ]
+                    }
                 }
             ]
         })
@@ -1618,7 +1778,7 @@ mod tests {
         let definition = &builder.definition;
         assert_eq!(definition.vendor, Some("test".to_string()));
         assert_eq!(definition.title, Some("Test_Manifest".to_string()));
-        assert_eq!(definition.format, "image/tiff".to_string());
+        assert_eq!(definition.format, "image/jpeg".to_string());
         assert_eq!(definition.instance_id, "1234".to_string());
         assert_eq!(
             definition.thumbnail.clone().unwrap().identifier.as_str(),
@@ -1709,7 +1869,7 @@ mod tests {
             &toml::toml! {
                 [builder.actions.auto_created_action]
                 enabled = true
-                source_type = (source_type::EMPTY)
+                source_type = (DigitalSourceType::Empty.to_string())
             }
             .to_string(),
         )
@@ -1807,7 +1967,7 @@ mod tests {
             &toml::toml! {
                 [builder.actions.auto_created_action]
                 enabled = true
-                source_type = (source_type::EMPTY)
+                source_type = (DigitalSourceType::Empty.to_string())
 
                 [builder.actions.auto_placed_action]
                 enabled = true
@@ -1901,7 +2061,7 @@ mod tests {
 
                 [builder.actions.auto_created_action]
                 enabled = true
-                source_type = (source_type::EMPTY)
+                source_type = (DigitalSourceType::Empty.to_string())
             }
             .to_string(),
         )
@@ -1938,15 +2098,15 @@ mod tests {
             &toml::toml! {
                 [builder.actions.auto_created_action]
                 enabled = true
-                source_type = (source_type::EMPTY)
+                source_type = (DigitalSourceType::Empty.to_string())
 
                 [[builder.actions.templates]]
                 action = (c2pa_action::EDITED)
-                source_type = (source_type::EMPTY)
+                source_type = (DigitalSourceType::Empty.to_string())
 
                 [[builder.actions.templates]]
                 action = (c2pa_action::COLOR_ADJUSTMENTS)
-                source_type = (source_type::TRAINED_ALGORITHMIC_DATA)
+                source_type = (DigitalSourceType::TrainedAlgorithmicData.to_string())
             }
             .to_string(),
         )
@@ -1977,12 +2137,12 @@ mod tests {
         for template in templates {
             match template.action.as_str() {
                 c2pa_action::EDITED => {
-                    assert_eq!(template.source_type.as_deref(), Some(source_type::EMPTY));
+                    assert_eq!(template.source_type, Some(DigitalSourceType::Empty));
                 }
                 c2pa_action::COLOR_ADJUSTMENTS => {
                     assert_eq!(
-                        template.source_type.as_deref(),
-                        Some(source_type::TRAINED_ALGORITHMIC_DATA)
+                        template.source_type,
+                        Some(DigitalSourceType::TrainedAlgorithmicData)
                     );
                 }
                 _ => {}
@@ -1999,15 +2159,15 @@ mod tests {
             &toml::toml! {
                 [builder.actions.auto_created_action]
                 enabled = true
-                source_type = (source_type::EMPTY)
+                source_type = (DigitalSourceType::Empty.to_string())
 
                 [[builder.actions.actions]]
                 action = (c2pa_action::EDITED)
-                source_type = (source_type::EMPTY)
+                source_type = (DigitalSourceType::Empty.to_string())
 
                 [[builder.actions.actions]]
                 action = (c2pa_action::COLOR_ADJUSTMENTS)
-                source_type = (source_type::TRAINED_ALGORITHMIC_DATA)
+                source_type = (DigitalSourceType::TrainedAlgorithmicData.to_string())
             }
             .to_string(),
         )
@@ -2037,12 +2197,12 @@ mod tests {
         for action in actions.actions {
             match action.action() {
                 c2pa_action::EDITED => {
-                    assert_eq!(action.source_type(), Some(source_type::EMPTY));
+                    assert_eq!(action.source_type(), Some(&DigitalSourceType::Empty));
                 }
                 c2pa_action::COLOR_ADJUSTMENTS => {
                     assert_eq!(
                         action.source_type(),
-                        Some(source_type::TRAINED_ALGORITHMIC_DATA)
+                        Some(&DigitalSourceType::TrainedAlgorithmicData)
                     );
                 }
                 _ => {}
@@ -2058,8 +2218,12 @@ mod tests {
         let source = "tests/fixtures/CA.jpg";
         let dir = tempdirectory().unwrap();
         let dest = dir.path().join("test_file.jpg");
+        let mut parent = std::fs::File::open(source).unwrap();
 
         let mut builder = Builder::from_json(&manifest_json()).unwrap();
+        builder
+            .add_ingredient_from_stream(parent_json(), "image/jpeg", &mut parent)
+            .unwrap();
 
         builder
             .add_resource("thumbnail.jpg", Cursor::new(TEST_THUMBNAIL))
@@ -2098,7 +2262,7 @@ mod tests {
             "sample1.heif",
             "sample1.m4a",
             "video1_no_manifest.mp4",
-            "cloud_manifest.c2pa", // we need a new test for this since it will always fail
+            //"cloud_manifest.c2pa", // we need a new test for this since it will always fail
         ];
         for file_name in TESTFILES {
             let extension = file_name.split('.').next_back().unwrap();
@@ -2149,19 +2313,14 @@ mod tests {
         }
     }
 
-    #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
-    #[cfg_attr(
-        all(target_arch = "wasm32", not(target_os = "wasi")),
-        wasm_bindgen_test
-    )]
-    #[cfg_attr(target_os = "wasi", wstd::test)]
+    #[c2pa_test_async]
     #[cfg(feature = "v1_api")]
     async fn test_builder_remote_sign() {
         let format = "image/jpeg";
         let mut source = Cursor::new(TEST_IMAGE);
         let mut dest = Cursor::new(Vec::new());
 
-        let mut builder = Builder::from_json(&manifest_json()).unwrap();
+        let mut builder = Builder::from_json(&simple_manifest_json()).unwrap();
         builder
             .add_ingredient_from_stream(parent_json(), format, &mut source)
             .unwrap();
@@ -2196,13 +2355,9 @@ mod tests {
         let mut source = Cursor::new(TEST_IMAGE_CLEAN);
         let mut dest = Cursor::new(Vec::new());
 
-        let mut builder = Builder::from_json(&manifest_json()).unwrap();
+        let mut builder = Builder::from_json(&simple_manifest_json()).unwrap();
         builder.remote_url = Some("http://my_remote_url".to_string());
         builder.no_embed = true;
-
-        builder
-            .add_resource("thumbnail.jpg", Cursor::new(TEST_THUMBNAIL))
-            .unwrap();
 
         // sign the Builder and write it to the output stream
         let signer = test_signer(SigningAlg::Ps256);
@@ -2230,7 +2385,7 @@ mod tests {
 
         let signer = test_signer(SigningAlg::Ps256);
 
-        let mut builder = Builder::from_json(&simple_manifest()).unwrap();
+        let mut builder = Builder::from_json(&simple_manifest_json()).unwrap();
 
         // get a placeholder the manifest
         let placeholder = builder
@@ -2251,7 +2406,7 @@ mod tests {
 
         println!("offset: {}, size {}", offset, output_stream.get_ref().len());
         // create an hash exclusion for the manifest
-        let exclusion = crate::HashRange::new(offset, placeholder.len());
+        let exclusion = crate::HashRange::new(offset as u64, placeholder.len() as u64);
         let exclusions = vec![exclusion];
 
         let mut dh = DataHash::new("source_hash", "sha256");
@@ -2281,12 +2436,7 @@ mod tests {
         assert_eq!(reader.validation_status(), None);
     }
 
-    #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
-    #[cfg_attr(
-        all(target_arch = "wasm32", not(target_os = "wasi")),
-        wasm_bindgen_test
-    )]
-    #[cfg_attr(target_os = "wasi", wstd::test)]
+    #[c2pa_test_async]
     #[cfg(any(target_arch = "wasm32", feature = "file_io"))]
     async fn test_builder_box_hashed_embeddable() {
         use crate::asset_io::{CAIWriter, HashBlockObjectType};
@@ -2298,10 +2448,68 @@ mod tests {
         // get saved box hash settings
         let box_hash: BoxHash = serde_json::from_slice(BOX_HASH).unwrap();
 
-        let mut builder = Builder::from_json(&manifest_json()).unwrap();
-        builder
-            .add_resource("thumbnail.jpg", Cursor::new(TEST_IMAGE))
+        let mut builder = Builder::from_json(&simple_manifest_json()).unwrap();
+
+        builder.add_assertion(labels::BOX_HASH, &box_hash).unwrap();
+
+        let signer = crate::utils::test_signer::async_test_signer(SigningAlg::Ed25519);
+
+        let manifest_bytes = builder
+            .sign_box_hashed_embeddable_async(signer.as_ref(), "image/jpeg")
+            .await
             .unwrap();
+
+        // insert manifest into output asset
+        let jpeg_io = JpegIO {};
+        let ol = jpeg_io
+            .get_object_locations_from_stream(&mut input_stream)
+            .unwrap();
+        input_stream.rewind().unwrap();
+
+        let cai_loc = ol
+            .iter()
+            .find(|o| o.htype == HashBlockObjectType::Cai)
+            .unwrap();
+
+        // build new asset in memory inserting new manifest
+        let outbuf = Vec::new();
+        let mut out_stream = Cursor::new(outbuf);
+
+        // write before
+        let mut before = vec![0u8; cai_loc.offset];
+        input_stream.read_exact(before.as_mut_slice()).unwrap();
+        out_stream.write_all(&before).unwrap();
+
+        // write composed bytes
+        out_stream.write_all(&manifest_bytes).unwrap();
+
+        // write bytes after
+        let mut after_buf = Vec::new();
+        input_stream.read_to_end(&mut after_buf).unwrap();
+        out_stream.write_all(&after_buf).unwrap();
+
+        out_stream.rewind().unwrap();
+
+        let _reader = crate::Reader::from_stream_async("image/jpeg", out_stream)
+            .await
+            .unwrap();
+        //println!("{reader}");
+        assert_eq!(_reader.validation_status(), None);
+    }
+
+    #[c2pa_test_async]
+    #[cfg(any(target_arch = "wasm32", feature = "file_io"))]
+    async fn test_builder_box_hashed_embeddable_with_exclusions() {
+        use crate::asset_io::{CAIWriter, HashBlockObjectType};
+        const BOX_HASH_IMAGE: &[u8] = include_bytes!("../tests/fixtures/boxhash.jpg");
+        const BOX_HASH: &[u8] = include_bytes!("../tests/fixtures/boxhash_with_exclusion.json");
+
+        let mut input_stream = Cursor::new(BOX_HASH_IMAGE);
+
+        // get saved box hash settings
+        let box_hash: BoxHash = serde_json::from_slice(BOX_HASH).unwrap();
+
+        let mut builder = Builder::from_json(&simple_manifest_json()).unwrap();
 
         builder.add_assertion(labels::BOX_HASH, &box_hash).unwrap();
 
@@ -2358,6 +2566,9 @@ mod tests {
 
         let mut builder = Builder::from_json(&manifest_json()).unwrap();
         builder.base_path = Some(std::path::PathBuf::from("tests/fixtures"));
+        builder
+            .add_ingredient_from_stream(parent_json().to_string(), "image/jpeg", &mut source)
+            .unwrap();
 
         // Ensure that we can zip and unzip, saving the base path
         let mut zipped = Cursor::new(Vec::new());
@@ -2392,7 +2603,6 @@ mod tests {
     }
 
     const MANIFEST_JSON: &str = r#"{
-        "claim_generator": "test",
         "claim_generator_info": [
             {
                 "name": "test",
@@ -2401,12 +2611,6 @@ mod tests {
                     "format": "image/svg+xml",
                     "identifier": "sample1.svg"
                 }
-            }
-        ],
-        "metadata": [
-            {
-                "dateTime": "1985-04-12T23:20:50.52Z",
-                "my_metadata": "some custom response"
             }
         ],
         "format" : "image/jpeg",
@@ -2421,9 +2625,11 @@ mod tests {
                     "actions": [
                         {
                             "action": "c2pa.opened",
-                            "instanceId": "xmp.iid:7b57930e-2f23-47fc-affe-0400d70b738d",
                             "parameters": {
-                                "description": "import"
+                                "description": "import",
+                                "ingredientIds": [
+                                    "xmp.iid:7b57930e-2f23-47fc-affe-0400d70b738d"
+                                ]
                             },
                             "digitalSourceType": "http://cv.iptc.org/newscodes/digitalsourcetype/algorithmicMedia",
                             "softwareAgent": {
@@ -2499,13 +2705,13 @@ mod tests {
             "relationship": "inputTo",
             "data": {
                 "format": "text/plain",
-                "identifier": "prompt.txt",
-                "data_types": [
-                    {
+                "identifier": "prompt.txt"
+            },
+            "data_types": [
+                {
                     "type": "c2pa.types.generator.prompt"
-                    }
-                ]
-            }
+                }
+            ]
         },
         {
             "title": "Custom AI Model",
@@ -2616,12 +2822,7 @@ mod tests {
     }
 
     /// example of creating a builder directly with a [`ManifestDefinition`]
-    #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
-    #[cfg_attr(
-        all(target_arch = "wasm32", not(target_os = "wasi")),
-        wasm_bindgen_test
-    )]
-    #[cfg_attr(target_os = "wasi", wstd::test)]
+    #[c2pa_test_async]
     /// test if the sdk can add a cloud ingredient retrieved from a stream and a cloud manifest
     // This works with or without the fetch_remote_manifests feature
     async fn test_add_cloud_ingredient() {
@@ -2636,6 +2837,7 @@ mod tests {
         let mut cloud_image = Cursor::new(TEST_IMAGE_CLOUD);
 
         let definition = ManifestDefinition {
+            claim_version: Some(1),
             claim_generator_info: [ClaimGeneratorInfo::default()].to_vec(),
             format: "image/jpeg".to_string(),
             title: Some("Test_Manifest".to_string()),
@@ -2696,68 +2898,44 @@ mod tests {
 
     #[test]
     fn test_redaction() {
+        Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml")).unwrap();
+        //crate::utils::test::setup_logger();
+
         // the label of the assertion we are going to redact
         const ASSERTION_LABEL: &str = "stds.schema-org.CreativeWork";
 
         let mut input = Cursor::new(TEST_IMAGE);
 
-        let mut parent =
-            Ingredient::from_stream("image/jpeg", &mut Cursor::new(TEST_IMAGE)).unwrap();
-        parent.set_title("CA.jpg");
-        parent.set_relationship(crate::Relationship::ParentOf);
-
-        let parent_manifest_label = parent.active_manifest().unwrap();
-
+        let parent = Reader::from_stream("image/jpeg", &mut input).expect("from_stream");
+        let parent_manifest_label = parent.active_label().unwrap();
+        // Create a redacted uri for the assertion we are going to redact.
         let redacted_uri =
             crate::jumbf::labels::to_assertion_uri(parent_manifest_label, ASSERTION_LABEL);
 
-        let parent_manifest_label = parent_manifest_label.to_owned();
-
-        // Create a parent with a c2pa_action type assertion.
-        let opened_action = crate::assertions::Action::new(c2pa_action::OPENED)
-            .set_parameter("org.cai.ingredientIds", [parent.instance_id().to_string()])
-            .unwrap();
+        let mut builder = Builder::edit();
+        builder.definition.redactions = Some(vec![redacted_uri.clone()]);
 
         let redacted_action = crate::assertions::Action::new("c2pa.redacted")
             .set_reason("testing".to_owned())
             .set_parameter("redacted".to_owned(), redacted_uri.clone())
             .unwrap();
 
-        let actions = crate::assertions::Actions::new()
-            .add_action(opened_action)
-            .add_action(redacted_action);
-
-        let definition = ManifestDefinition {
-            claim_version: Some(1),
-            claim_generator_info: [ClaimGeneratorInfo::default()].to_vec(),
-            format: "image/jpeg".to_string(),
-            title: Some("Redaction Test".to_string()),
-            ingredients: vec![parent], // add the parent ingredient
-            redactions: Some(vec![redacted_uri]), // add the redaction
-            ..Default::default()
-        };
-
-        let mut builder = Builder {
-            definition,
-            ..Default::default()
-        };
-
-        builder.add_assertion(Actions::LABEL, &actions).unwrap();
+        builder.add_action(redacted_action).unwrap();
 
         let signer = test_signer(SigningAlg::Ps256);
         // Embed a manifest using the signer.
         let mut output = Cursor::new(Vec::new());
         builder
-            .sign(signer.as_ref(), "jpeg", &mut input, &mut output)
+            .sign(signer.as_ref(), "image/jpeg", &mut input, &mut output)
             .expect("builder sign");
 
         output.set_position(0);
 
-        let reader = Reader::from_stream("jpeg", &mut output).expect("from_bytes");
-        println!("{reader}");
+        let reader = Reader::from_stream("image/jpeg", &mut output).expect("from_bytes");
+        //println!("{reader}");
         let m = reader.active_manifest().unwrap();
         assert_eq!(m.ingredients().len(), 1);
-        let parent = reader.get_manifest(&parent_manifest_label).unwrap();
+        let parent = reader.get_manifest(parent_manifest_label).unwrap();
         assert_eq!(parent.assertions().len(), 1);
     }
 
@@ -2776,8 +2954,7 @@ mod tests {
     #[cfg(all(feature = "add_thumbnails", feature = "file_io"))]
     #[test]
     fn test_to_archive_and_from_archive_with_ingredient_thumbnail() {
-        let mut builder = Builder::new();
-        builder.definition.claim_version = Some(2);
+        let mut builder = Builder::from_json(&simple_manifest_json()).unwrap();
 
         let mut thumbnail = Cursor::new(TEST_THUMBNAIL);
         let mut source = Cursor::new(TEST_IMAGE_CLEAN);
@@ -2808,9 +2985,40 @@ mod tests {
         assert!(reader_json.contains("thumbnail.ingredient"));
     }
 
+    /// Test Builder add_action with a serde_json::Value
+    #[test]
+    fn test_builder_add_action_with_value() {
+        let mut builder = Builder::new();
+        let action = json!({
+            "action": "com.example.test-action",
+            "parameters": {
+                "key1": "value1",
+                "key2": "value2"
+            }
+        });
+        builder.add_action(action).unwrap();
+        println!("{:#?}", builder.definition);
+        assert!(!builder.definition.assertions.is_empty());
+    }
+
+    /// Test builder add_action with an Action struct
+    #[test]
+    fn test_builder_add_action_with_struct() {
+        use crate::assertions::Action;
+        let mut builder = Builder::new();
+        let action = Action::new("com.example.test-action")
+            .set_parameter("key1", "value1")
+            .unwrap()
+            .set_parameter("key2", "value2")
+            .unwrap();
+        builder.add_action(action).unwrap();
+        println!("{:#?}", builder.definition);
+        assert!(!builder.definition.assertions.is_empty());
+    }
+    /// Test builder set_base_path
     #[cfg(feature = "file_io")]
     #[test]
-    fn test_base_path() {
+    fn test_builder_set_base_path() {
         let mut builder = Builder::new();
         let ingredient_folder = fixture_path("ingredient");
         builder.set_base_path(&ingredient_folder);

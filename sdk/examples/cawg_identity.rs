@@ -87,7 +87,7 @@ mod cawg {
             CERTS,
             PRIVATE_KEY,
             SigningAlg::Es256,
-            None,
+            Some("http://timestamp.digicert.com".to_string()),
         )?;
 
         let cawg_raw_signer = raw_signature::async_signer_from_cert_chain_and_private_key(
