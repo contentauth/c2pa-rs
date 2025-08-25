@@ -16,6 +16,7 @@
 
 use std::io::Cursor;
 
+use c2pa_macros::c2pa_test_async;
 #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
 use wasm_bindgen_test::wasm_bindgen_test;
 
@@ -31,12 +32,7 @@ use crate::{
 /// report assertions that do not follow this rule.
 ///
 /// [Section 5.2, “CBOR schema”]: https://cawg.io/identity/1.1-draft/#_cbor_schema
-#[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
-#[cfg_attr(
-    all(target_arch = "wasm32", not(target_os = "wasi")),
-    wasm_bindgen_test
-)]
-#[cfg_attr(target_os = "wasi", wstd::test)]
+#[c2pa_test_async]
 async fn malformed_cbor() {
     let format = "image/jpeg";
     let test_image = include_bytes!("../fixtures/validation_method/malformed_cbor.jpg");
@@ -72,12 +68,7 @@ async fn malformed_cbor() {
 
 /// A validator SHALL NOT consider any extra fields not documented in the
 /// `identity` rule during the validation process.
-#[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
-#[cfg_attr(
-    all(target_arch = "wasm32", not(target_os = "wasi")),
-    wasm_bindgen_test
-)]
-#[cfg_attr(target_os = "wasi", wstd::test)]
+#[c2pa_test_async]
 async fn extra_fields() {
     // The test asset `extra_field.jpg` was written using a temporarily modified
     // version of this SDK that generated an `other_stuff` string value at the top
@@ -132,12 +123,7 @@ async fn extra_fields() {
 /// entry must appear in the `assertions` entry.) The
 /// `cawg.identity.assertion.mismatch` error code SHALL be used to report
 /// violations of this rule.
-#[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
-#[cfg_attr(
-    all(target_arch = "wasm32", not(target_os = "wasi")),
-    wasm_bindgen_test
-)]
-#[cfg_attr(target_os = "wasi", wstd::test)]
+#[c2pa_test_async]
 async fn assertion_not_in_claim_v1() {
     // The test asset `extra_assertion_claim_v1.jpg` was written using a temporarily
     // modified version of this SDK that incorrectly added an extra hashed URI to
@@ -179,7 +165,7 @@ async fn assertion_not_in_claim_v1() {
 
     assert_eq!(sp.sig_type, "cawg.x509.cose".to_owned());
 
-    let x509_verifier = X509SignatureVerifier {};
+    let x509_verifier = X509SignatureVerifier::default();
     let err = ia
         .validate(
             reader.active_manifest().unwrap(),
@@ -212,12 +198,7 @@ async fn assertion_not_in_claim_v1() {
 // entry must appear in the `assertions` entry.) The
 // `cawg.identity.assertion.mismatch` error code SHALL be used to report
 // violations of this rule.
-// #[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
-// #[cfg_attr(
-//     all(target_arch = "wasm32", not(target_os = "wasi")),
-//     wasm_bindgen_test
-// )]
-// // #[cfg_attr(target_os = "wasi", wstd::test)] #[ignore] is ignored on WASI
+// #[c2pa_test_async]
 // #[ignore]
 // async fn assertion_not_in_claim_v2() {
 //     todo!("Generate a suitable V2 asset with an extra assertion");
@@ -227,12 +208,7 @@ async fn assertion_not_in_claim_v1() {
 /// `signer_payload.referenced_assertions` is duplicated. The
 /// `cawg.identity.assertion.duplicate` error code SHALL be used to report
 /// violations of this rule.
-#[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
-#[cfg_attr(
-    all(target_arch = "wasm32", not(target_os = "wasi")),
-    wasm_bindgen_test
-)]
-#[cfg_attr(target_os = "wasi", wstd::test)]
+#[c2pa_test_async]
 async fn duplicate_assertion_reference() {
     // The test asset `duplicate_assertion_reference.jpg` was written using a
     // temporarily modified version of this SDK that incorrectly added a
@@ -275,7 +251,7 @@ async fn duplicate_assertion_reference() {
 
     assert_eq!(sp.sig_type, "cawg.x509.cose".to_owned());
 
-    let x509_verifier = X509SignatureVerifier {};
+    let x509_verifier = X509SignatureVerifier::default();
     let err = ia
         .validate(
             reader.active_manifest().unwrap(),
@@ -309,12 +285,7 @@ async fn duplicate_assertion_reference() {
 /// missing hard binding assertion.
 ///
 /// [Section 9.2, “Hard bindings”]: https://c2pa.org/specifications/specifications/2.1/specs/C2PA_Specification.html#_hard_bindings
-#[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
-#[cfg_attr(
-    all(target_arch = "wasm32", not(target_os = "wasi")),
-    wasm_bindgen_test
-)]
-#[cfg_attr(target_os = "wasi", wstd::test)]
+#[c2pa_test_async]
 async fn no_hard_binding() {
     // The test asset `duplicate_assertion.jpg` was written using a temporarily
     // modified version of this SDK that incorrectly added a duplicate hashed URI to
@@ -345,7 +316,7 @@ async fn no_hard_binding() {
     assert!(sp.referenced_assertions.is_empty());
     assert_eq!(sp.sig_type, "cawg.x509.cose".to_owned());
 
-    let x509_verifier = X509SignatureVerifier {};
+    let x509_verifier = X509SignatureVerifier::default();
     let err = ia
         .validate(
             reader.active_manifest().unwrap(),
@@ -388,6 +359,7 @@ async fn no_hard_binding() {
 mod invalid_sig_type {
     use std::io::Cursor;
 
+    use c2pa_macros::c2pa_test_async;
     #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
     use wasm_bindgen_test::wasm_bindgen_test;
 
@@ -399,12 +371,7 @@ mod invalid_sig_type {
         Reader,
     };
 
-    #[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
-    #[cfg_attr(
-        all(target_arch = "wasm32", not(target_os = "wasi")),
-        wasm_bindgen_test
-    )]
-    #[cfg_attr(target_os = "wasi", wstd::test)]
+    #[c2pa_test_async]
     async fn x509_signature_verifier() {
         // The test asset `invalid_sig_type.jpg` was written using a temporarily
         // modified version of this SDK that added a proof-of-concept signature type
@@ -445,7 +412,7 @@ mod invalid_sig_type {
         assert_eq!(sp.sig_type, "INVALID.identity.naive_credential".to_owned());
 
         // Intentionally not using NaiveSignatureVerifier here.
-        let x509_verifier = X509SignatureVerifier {};
+        let x509_verifier = X509SignatureVerifier::default();
         let err = ia
             .validate(
                 reader.active_manifest().unwrap(),
@@ -479,12 +446,7 @@ mod invalid_sig_type {
         );
     }
 
-    #[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
-    #[cfg_attr(
-        all(target_arch = "wasm32", not(target_os = "wasi")),
-        wasm_bindgen_test
-    )]
-    #[cfg_attr(target_os = "wasi", wstd::test)]
+    #[c2pa_test_async]
     async fn ica_verifier() {
         // The test asset `invalid_sig_type.jpg` was written using a temporarily
         // modified version of this SDK that added a proof-of-concept signature type
@@ -563,12 +525,7 @@ mod invalid_sig_type {
 /// The `pad1` and `pad2` fields of an identity assertion MUST contain only
 /// zero-value (`0x00`) bytes. The `cawg.identity.pad.invalid` error code SHALL
 /// be used to report assertions that contain other values in these fields.
-#[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
-#[cfg_attr(
-    all(target_arch = "wasm32", not(target_os = "wasi")),
-    wasm_bindgen_test
-)]
-#[cfg_attr(target_os = "wasi", wstd::test)]
+#[c2pa_test_async]
 async fn pad1_invalid() {
     // The test asset `pad1_invalid.jpg` was written using a temporarily
     // modified version of this SDK that incorrectly placed a non-zero value in the
@@ -606,7 +563,7 @@ async fn pad1_invalid() {
 
     assert_eq!(sp.sig_type, "cawg.x509.cose".to_owned());
 
-    let x509_verifier = X509SignatureVerifier {};
+    let x509_verifier = X509SignatureVerifier::default();
     let err = ia
         .validate(
             reader.active_manifest().unwrap(),
@@ -632,12 +589,7 @@ async fn pad1_invalid() {
     assert_eq!(err.to_string(), "invalid padding");
 }
 
-#[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
-#[cfg_attr(
-    all(target_arch = "wasm32", not(target_os = "wasi")),
-    wasm_bindgen_test
-)]
-#[cfg_attr(target_os = "wasi", wstd::test)]
+#[c2pa_test_async]
 async fn pad2_invalid() {
     // The test asset `pad1_invalid.jpg` was written using a temporarily
     // modified version of this SDK that incorrectly placed a non-zero value in the
@@ -675,7 +627,7 @@ async fn pad2_invalid() {
 
     assert_eq!(sp.sig_type, "cawg.x509.cose".to_owned());
 
-    let x509_verifier = X509SignatureVerifier {};
+    let x509_verifier = X509SignatureVerifier::default();
     let err = ia
         .validate(
             reader.active_manifest().unwrap(),

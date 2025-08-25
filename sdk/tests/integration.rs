@@ -18,7 +18,7 @@ mod integration_1 {
     use std::{io, path::PathBuf};
 
     use c2pa::{
-        assertions::{c2pa_action, Action, Actions, AssetReference},
+        assertions::{c2pa_action, Action, Actions, AssetReference, Metadata},
         settings::Settings,
         Builder, Ingredient, Reader, Result,
     };
@@ -240,6 +240,60 @@ mod integration_1 {
         Ok(())
     }
 
+    #[test]
+    #[cfg(feature = "file_io")]
+    fn test_metadata_assertion() -> Result<()> {
+        Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml"))?;
+        // set up parent and destination paths
+        let temp_dir = tempdirectory()?;
+        let output_path = temp_dir.path().join("test_file.jpg");
+        let parent_path = fixture_path("earth_apollo17.jpg");
+
+        // create a new Manifest
+        let mut builder = Builder::new();
+
+        // allocate references
+        const C2PA_METADATA: &str = r#"{
+         "@context" : {
+            "exif": "http://ns.adobe.com/exif/1.0/",
+            "Iptc4xmpExt": "http://iptc.org/std/Iptc4xmpExt/2008-02-29/",
+            "photoshop" : "http://ns.adobe.com/photoshop/1.0/"
+        },
+        "photoshop:DateCreated": "Aug 31, 2022",
+        "Iptc4xmpExt:DigitalSourceType": "http://cv.iptc.org/newscodes/digitalsourcetype/digitalCapture",
+        "exif:GPSVersionID": "2.2.0.0",
+        "exif:GPSLatitude": "39,21.102N"
+        }
+        "#;
+
+        const CUSTOM_METADATA: &str = r#" {
+        "@context" : {
+            "bar": "http://foo.com/bar/1.0/"
+        },
+        "bar:baz" : "foo"
+        }
+        "#;
+
+        // allocate metadata
+        let c2pa_metadata_assertion = Metadata::new("c2pa.metadata", C2PA_METADATA)?;
+        let custom_metadata_assertion = Metadata::new("custom.foo.metadata", CUSTOM_METADATA)?;
+
+        // add metadata assertions
+        builder.add_assertion_json(&c2pa_metadata_assertion.label, &c2pa_metadata_assertion)?;
+        builder.add_assertion_json(&custom_metadata_assertion.label, &custom_metadata_assertion)?;
+
+        // sign and embed into the target file
+        let signer = Settings::signer()?;
+        builder.sign_file(signer.as_ref(), &parent_path, &output_path)?;
+
+        // read our new file with embedded manifest
+        let reader = Reader::from_file(&output_path)?;
+
+        println!("{reader}");
+
+        Ok(())
+    }
+
     #[cfg(feature = "v1_api")]
     struct PlacedCallback {
         path: String,
@@ -360,6 +414,49 @@ mod integration_1 {
             &callbacks,
         )
         .unwrap();
+
+        Ok(())
+    }
+
+    #[test]
+    #[cfg(feature = "file_io")]
+    fn test_certificate_status() -> Result<()> {
+        use std::io::Cursor;
+
+        use c2pa::ValidationState;
+        use serde_json::json;
+        let parent_json = json!({
+            "title": "Parent Test",
+            "relationship": "parentOf",
+            "label": "CA.jpg",
+        })
+        .to_string();
+        Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml"))?;
+
+        // set up parent and destination paths
+        let temp_dir = tempdirectory()?;
+        let output_path = temp_dir.path().join("test_file.jpg");
+        let parent_path = fixture_path("earth_apollo17.jpg");
+
+        // create a new Manifest
+        let mut builder = Builder::new();
+
+        // sign and embed into the target file
+        let signer = Settings::signer()?;
+        let mut source = Cursor::new(include_bytes!("fixtures/ocsp.jpg"));
+        builder.add_ingredient_from_stream(parent_json, "image/jpeg", &mut source)?;
+        builder.sign_file(signer.as_ref(), &parent_path, &output_path)?;
+
+        // read our new file with embedded manifest
+        let reader = Reader::from_file(&output_path)?;
+        let reader_json = reader.json();
+        // ensure certificate status assertion was created
+        // TODO: wasm32 does not yet support OCSP fetching
+        #[cfg(not(target_arch = "wasm32"))]
+        assert!(reader_json.contains(r#"label": "c2pa.certificate-status"#));
+        assert_eq!(reader.validation_status(), None);
+        assert_eq!(reader.validation_state(), ValidationState::Valid);
+        assert!(reader_json.contains("signingCredential.ocsp.notRevoked"));
 
         Ok(())
     }
