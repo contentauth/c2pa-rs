@@ -404,6 +404,19 @@ pub(crate) struct BuilderSettings {
     ///
     /// For more information on the reasoning behind this field see [ActionsSettings].
     pub actions: ActionsSettings,
+
+    // Certificate statuses will be fetched for either all the manifest labels, or just the active manifest.
+    pub certificate_status_fetch: Option<OcspFetch>,
+
+    // Whether or not existing OCSP responses should be overridden by new values.
+    pub certificate_status_should_override: Option<bool>,
+}
+
+#[derive(Copy, Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub(crate) enum OcspFetch {
+    All,
+    Active,
 }
 
 impl SettingsValidate for BuilderSettings {

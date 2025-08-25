@@ -40,11 +40,17 @@ use crate::{
     },
     asset_io::CAIRead,
     cbor_types::map_cbor_to_type,
-    cose_validator::{get_signing_info, get_signing_info_async, verify_cose, verify_cose_async},
+    cose_validator::{
+        get_signing_cert_serial_num, get_signing_info, get_signing_info_async, verify_cose,
+        verify_cose_async,
+    },
     crypto::{
         asn1::rfc3161::TstInfo,
         base64,
-        cose::{parse_cose_sign1, CertificateInfo, CertificateTrustPolicy, OcspFetchPolicy},
+        cose::{
+            get_ocsp_der, parse_cose_sign1, CertificateInfo, CertificateTrustPolicy,
+            OcspFetchPolicy,
+        },
         ocsp::OcspResponse,
     },
     error::{Error, Result},
@@ -69,7 +75,7 @@ use crate::{
     status_tracker::{ErrorBehavior, StatusTracker},
     store::StoreValidationInfo,
     utils::hash_utils::{hash_by_alg, vec_compare},
-    validation_status, ClaimGeneratorInfo, HashRange,
+    validation_status, ClaimGeneratorInfo,
 };
 
 const BUILD_HASH_ALG: &str = "sha256";
@@ -1844,12 +1850,14 @@ impl Claim {
         }
 
         let sign1 = parse_cose_sign1(&sig, &data, validation_log)?;
+        let certificate_serial_num = get_signing_cert_serial_num(&sign1)?.to_string();
 
         // check certificate revocation
         check_ocsp_status(
             &sign1,
             &data,
             ctp,
+            svi.certificate_statuses.get(&certificate_serial_num),
             svi.timestamps.get(claim.label()),
             validation_log,
         )?;
@@ -1921,11 +1929,13 @@ impl Claim {
 
         let sign1 = parse_cose_sign1(sig, data, validation_log)?;
 
+        let certificate_serial_num = get_signing_cert_serial_num(&sign1)?.to_string();
         // check certificate revocation
         check_ocsp_status(
             &sign1,
             data,
             ctp,
+            svi.certificate_statuses.get(&certificate_serial_num),
             svi.timestamps.get(claim.label()),
             validation_log,
         )?;
@@ -2512,6 +2522,307 @@ impl Claim {
         Ok(())
     }
 
+    pub(crate) fn verify_hash_binding(
+        claim: &Claim,
+        asset_data: &mut ClaimAssetData<'_>,
+        svi: &StoreValidationInfo,
+        validation_log: &mut StatusTracker,
+    ) -> Result<()> {
+        const UNNAMED: &str = "unnamed";
+        let default_str = |s: &String| s.clone();
+
+        // verify data hashes for provenance claims
+        if claim.label() == svi.binding_claim {
+            let hash_assertions = claim.hash_assertions();
+            // must have at least one hard binding for normal manifests
+            if hash_assertions.is_empty() && !claim.update_manifest() {
+                log_item!(claim.uri(), "claim missing data binding", "verify_internal")
+                    .validation_status(validation_status::HARD_BINDINGS_MISSING)
+                    .failure(validation_log, Error::ClaimMissingHardBinding)?;
+            }
+
+            // must have exactly one hard binding for normal manifests
+            if hash_assertions.len() != 1 && !claim.update_manifest() {
+                log_item!(
+                    claim.uri(),
+                    "claim has multiple data bindings",
+                    "verify_internal"
+                )
+                .validation_status(validation_status::HARD_BINDINGS_MULTIPLE)
+                .failure(validation_log, Error::ClaimMultipleHardBinding)?;
+            }
+
+            // update manifests cannot have data hashes
+            if !hash_assertions.is_empty() && claim.update_manifest() {
+                log_item!(
+                    claim.uri(),
+                    "update manifests cannot contain data hash assertions",
+                    "verify_internal"
+                )
+                .validation_status(validation_status::MANIFEST_UPDATE_INVALID)
+                .failure(validation_log, Error::UpdateManifestInvalid)?;
+            }
+
+            // while this is a vec the spec only expects one at the moment and is checked above
+            for hash_binding_assertion in hash_assertions {
+                if hash_binding_assertion
+                    .label_raw()
+                    .starts_with(DataHash::LABEL)
+                {
+                    let mut dh = DataHash::from_assertion(hash_binding_assertion.assertion())?;
+                    let name = dh.name.as_ref().map_or(UNNAMED.to_string(), default_str);
+
+                    // update with any needed update hash adjustments
+                    if svi.update_manifest_label.is_some() {
+                        if let Some(exclusions) = &mut dh.exclusions {
+                            if let Some(range) = &svi.manifest_store_range {
+                                // find the range that starts at the same position as the manifest store range
+                                if let Some(pos) =
+                                    exclusions.iter().position(|r| r.start() == range.start())
+                                {
+                                    // replace range using the size that covers entire manifest (including update manifests)
+                                    exclusions.insert(pos, range.clone());
+                                }
+                            }
+                        }
+                    }
+
+                    if !dh.is_remote_hash() {
+                        // there are extra exclusion then log the information code about extra exclusion
+                        if let Some(exclusions) = &dh.exclusions {
+                            if exclusions.len() > 1 {
+                                log_item!(
+                                    claim.assertion_uri(&hash_binding_assertion.label()),
+                                    "extra data hash exclusions found",
+                                    "verify_internal"
+                                )
+                                .validation_status(
+                                    validation_status::ASSERTION_DATAHASH_ADDITIONAL_EXCLUSIONS,
+                                )
+                                .informational(validation_log);
+                            }
+                        }
+
+                        // only verify local hashes here
+                        let hash_result = match asset_data {
+                            #[cfg(feature = "file_io")]
+                            ClaimAssetData::Path(asset_path) => {
+                                dh.verify_hash(asset_path, Some(claim.alg()))
+                            }
+                            ClaimAssetData::Bytes(asset_bytes, _) => {
+                                dh.verify_in_memory_hash(asset_bytes, Some(claim.alg()))
+                            }
+                            ClaimAssetData::Stream(stream_data, _) => {
+                                dh.verify_stream_hash(*stream_data, Some(claim.alg()))
+                            }
+                            _ => return Err(Error::UnsupportedType), /* this should never happen (coding error) */
+                        };
+
+                        match hash_result {
+                            Ok(_a) => {
+                                log_item!(
+                                    claim.assertion_uri(&hash_binding_assertion.label()),
+                                    "data hash valid",
+                                    "verify_internal"
+                                )
+                                .validation_status(validation_status::ASSERTION_DATAHASH_MATCH)
+                                .success(validation_log);
+
+                                continue;
+                            }
+                            Err(e) => {
+                                log_item!(
+                                    claim.assertion_uri(&hash_binding_assertion.label()),
+                                    format!("asset hash error, name: {name}, error: {e}"),
+                                    "verify_internal"
+                                )
+                                .validation_status(validation_status::ASSERTION_DATAHASH_MISMATCH)
+                                .failure(
+                                    validation_log,
+                                    Error::HashMismatch(format!("Asset hash failure: {e}")),
+                                )?;
+                            }
+                        }
+                    } else {
+                        log_item!(
+                            hash_binding_assertion.label(),
+                            "remote data hash URIs are not supported",
+                            "verify_internal"
+                        )
+                        .validation_status(validation_status::ASSERTION_DATAHASH_MISMATCH)
+                        .failure(
+                            validation_log,
+                            Error::HashMismatch(
+                                "remote data hash URIs are not supported".to_string(),
+                            ),
+                        )?;
+                    }
+                } else if hash_binding_assertion
+                    .label_raw()
+                    .starts_with(BmffHash::LABEL)
+                {
+                    // handle BMFF data hashes
+                    let dh = BmffHash::from_assertion(hash_binding_assertion.assertion())?;
+
+                    let name = dh.name().map_or("unnamed".to_string(), default_str);
+
+                    let hash_result = match asset_data {
+                        #[cfg(feature = "file_io")]
+                        ClaimAssetData::Path(asset_path) => {
+                            dh.verify_hash(asset_path, Some(claim.alg()))
+                        }
+                        ClaimAssetData::Bytes(asset_bytes, _) => {
+                            dh.verify_in_memory_hash(asset_bytes, Some(claim.alg()))
+                        }
+                        ClaimAssetData::Stream(stream_data, _) => {
+                            dh.verify_stream_hash(*stream_data, Some(claim.alg()))
+                        }
+                        ClaimAssetData::StreamFragment(initseg_data, fragment_data, _) => dh
+                            .verify_stream_segment(
+                                *initseg_data,
+                                *fragment_data,
+                                Some(claim.alg()),
+                            ),
+                        #[cfg(feature = "file_io")]
+                        ClaimAssetData::StreamFragments(initseg_data, fragment_paths, _) => dh
+                            .verify_stream_segments(
+                                *initseg_data,
+                                fragment_paths,
+                                Some(claim.alg()),
+                            ),
+                    };
+
+                    match hash_result {
+                        Ok(_a) => {
+                            log_item!(
+                                claim.assertion_uri(&hash_binding_assertion.label()),
+                                "data hash valid",
+                                "verify_internal"
+                            )
+                            .validation_status(validation_status::ASSERTION_BMFFHASH_MATCH)
+                            .success(validation_log);
+
+                            continue;
+                        }
+                        Err(e) => {
+                            let err_str = match e {
+                                Error::C2PAValidation(es) => {
+                                    if es == validation_status::ASSERTION_BMFFHASH_MALFORMED {
+                                        validation_status::ASSERTION_BMFFHASH_MALFORMED
+                                    } else {
+                                        validation_status::ASSERTION_BMFFHASH_MISMATCH
+                                    }
+                                }
+                                _ => validation_status::ASSERTION_BMFFHASH_MISMATCH,
+                            };
+
+                            log_item!(
+                                claim.assertion_uri(&hash_binding_assertion.label()),
+                                format!("asset hash error, name: {name}, error: {}", err_str),
+                                "verify_internal"
+                            )
+                            .validation_status(err_str)
+                            .failure(
+                                validation_log,
+                                Error::HashMismatch(format!("Asset hash failure: {err_str}")),
+                            )?;
+                        }
+                    }
+                } else if hash_binding_assertion
+                    .label_raw()
+                    .starts_with(BoxHash::LABEL)
+                {
+                    // box hash case
+                    // handle BMFF data hashes
+                    let bh = BoxHash::from_assertion(hash_binding_assertion.assertion())?;
+
+                    let hash_result = match asset_data {
+                        #[cfg(feature = "file_io")]
+                        ClaimAssetData::Path(asset_path) => {
+                            let box_hash_processor =
+                                crate::jumbf_io::get_assetio_handler_from_path(asset_path)
+                                    .ok_or(Error::UnsupportedType)?
+                                    .asset_box_hash_ref()
+                                    .ok_or(Error::HashMismatch(
+                                        "Box hash not supported".to_string(),
+                                    ))?;
+
+                            bh.verify_hash(asset_path, Some(claim.alg()), box_hash_processor)
+                        }
+                        ClaimAssetData::Bytes(asset_bytes, asset_type) => {
+                            let box_hash_processor = get_assetio_handler(asset_type)
+                                .ok_or(Error::UnsupportedType)?
+                                .asset_box_hash_ref()
+                                .ok_or(Error::HashMismatch(format!(
+                                    "Box hash not supported for: {asset_type}"
+                                )))?;
+
+                            bh.verify_in_memory_hash(
+                                asset_bytes,
+                                Some(claim.alg()),
+                                box_hash_processor,
+                            )
+                        }
+                        ClaimAssetData::Stream(stream_data, asset_type) => {
+                            let box_hash_processor = get_assetio_handler(asset_type)
+                                .ok_or(Error::UnsupportedType)?
+                                .asset_box_hash_ref()
+                                .ok_or(Error::HashMismatch(format!(
+                                    "Box hash not supported for: {asset_type}"
+                                )))?;
+
+                            bh.verify_stream_hash(
+                                *stream_data,
+                                Some(claim.alg()),
+                                box_hash_processor,
+                            )
+                        }
+                        _ => return Err(Error::UnsupportedType),
+                    };
+
+                    match hash_result {
+                        Ok(_a) => {
+                            log_item!(
+                                claim.assertion_uri(&hash_binding_assertion.label()),
+                                "data hash valid",
+                                "verify_internal"
+                            )
+                            .validation_status(validation_status::ASSERTION_BOXHASH_MATCH)
+                            .success(validation_log);
+
+                            continue;
+                        }
+                        Err(e) => {
+                            log_item!(
+                                claim.assertion_uri(&hash_binding_assertion.label()),
+                                format!("asset hash error: {e}"),
+                                "verify_internal"
+                            )
+                            .validation_status(validation_status::ASSERTION_BOXHASH_MISMATCH)
+                            .failure(
+                                validation_log,
+                                Error::HashMismatch(format!("Asset hash failure: {e}")),
+                            )?;
+                        }
+                    }
+                } else {
+                    log_item!(
+                        claim.assertion_uri(&hash_binding_assertion.label()),
+                        "hash binding unknown or not found",
+                        "verify_internal"
+                    )
+                    .validation_status(validation_status::HARD_BINDINGS_MISSING)
+                    .failure(
+                        validation_log,
+                        Error::HashMismatch("hash binding unknown format".into()),
+                    )?;
+                }
+            }
+        }
+
+        Ok(())
+    }
+
     fn verify_internal(
         claim: &Claim,
         asset_data: &mut ClaimAssetData<'_>,
@@ -2519,9 +2830,6 @@ impl Claim {
         verified: Result<CertificateInfo>,
         validation_log: &mut StatusTracker,
     ) -> Result<()> {
-        const UNNAMED: &str = "unnamed";
-        let default_str = |s: &String| s.clone();
-
         // signature check
         match verified {
             Ok(vi) => {
@@ -2850,281 +3158,7 @@ impl Claim {
         }
 
         // verify data hashes for provenance claims
-        if claim.label() == svi.binding_claim {
-            let hash_assertions = claim.hash_assertions();
-            // must have at least one hard binding for normal manifests
-            if hash_assertions.is_empty() && !claim.update_manifest() {
-                log_item!(claim.uri(), "claim missing data binding", "verify_internal")
-                    .validation_status(validation_status::HARD_BINDINGS_MISSING)
-                    .failure(validation_log, Error::ClaimMissingHardBinding)?;
-            }
-
-            // must have exactly one hard binding for normal manifests
-            if hash_assertions.len() != 1 && !claim.update_manifest() {
-                log_item!(
-                    claim.uri(),
-                    "claim has multiple data bindings",
-                    "verify_internal"
-                )
-                .validation_status(validation_status::HARD_BINDINGS_MULTIPLE)
-                .failure(validation_log, Error::ClaimMultipleHardBinding)?;
-            }
-
-            // update manifests cannot have data hashes
-            if !hash_assertions.is_empty() && claim.update_manifest() {
-                log_item!(
-                    claim.uri(),
-                    "update manifests cannot contain data hash assertions",
-                    "verify_internal"
-                )
-                .validation_status(validation_status::MANIFEST_UPDATE_INVALID)
-                .failure(validation_log, Error::UpdateManifestInvalid)?;
-            }
-
-            // while this is a vec the spec only expects one at the moment and is checked above
-            for hash_binding_assertion in hash_assertions {
-                if hash_binding_assertion
-                    .label_raw()
-                    .starts_with(DataHash::LABEL)
-                {
-                    let mut dh = DataHash::from_assertion(hash_binding_assertion.assertion())?;
-                    let name = dh.name.as_ref().map_or(UNNAMED.to_string(), default_str);
-
-                    // update with any needed update hash adjustments
-                    if svi.update_manifest_size != 0 {
-                        if let Some(exclusions) = &mut dh.exclusions {
-                            if !exclusions.is_empty() {
-                                exclusions.sort_by_key(|a| a.start());
-
-                                // new range using the size that covers entire manifest (includin update manifests)
-                                let new_range = HashRange::new(
-                                    exclusions[0].start(),
-                                    svi.update_manifest_size as u64,
-                                );
-
-                                exclusions.clear();
-                                exclusions.push(new_range);
-                            }
-                        }
-                    }
-
-                    if !dh.is_remote_hash() {
-                        // only verify local hashes here
-                        let hash_result = match asset_data {
-                            #[cfg(feature = "file_io")]
-                            ClaimAssetData::Path(asset_path) => {
-                                dh.verify_hash(asset_path, Some(claim.alg()))
-                            }
-                            ClaimAssetData::Bytes(asset_bytes, _) => {
-                                dh.verify_in_memory_hash(asset_bytes, Some(claim.alg()))
-                            }
-                            ClaimAssetData::Stream(stream_data, _) => {
-                                dh.verify_stream_hash(*stream_data, Some(claim.alg()))
-                            }
-                            _ => return Err(Error::UnsupportedType), /* this should never happen (coding error) */
-                        };
-
-                        match hash_result {
-                            Ok(_a) => {
-                                log_item!(
-                                    claim.assertion_uri(&hash_binding_assertion.label()),
-                                    "data hash valid",
-                                    "verify_internal"
-                                )
-                                .validation_status(validation_status::ASSERTION_DATAHASH_MATCH)
-                                .success(validation_log);
-
-                                continue;
-                            }
-                            Err(e) => {
-                                log_item!(
-                                    claim.assertion_uri(&hash_binding_assertion.label()),
-                                    format!("asset hash error, name: {name}, error: {e}"),
-                                    "verify_internal"
-                                )
-                                .validation_status(validation_status::ASSERTION_DATAHASH_MISMATCH)
-                                .failure(
-                                    validation_log,
-                                    Error::HashMismatch(format!("Asset hash failure: {e}")),
-                                )?;
-                            }
-                        }
-                    } else {
-                        log_item!(
-                            hash_binding_assertion.label(),
-                            "remote data hash URIs are not supported",
-                            "verify_internal"
-                        )
-                        .validation_status(validation_status::ASSERTION_DATAHASH_MISMATCH)
-                        .failure(
-                            validation_log,
-                            Error::HashMismatch(
-                                "remote data hash URIs are not supported".to_string(),
-                            ),
-                        )?;
-                    }
-                } else if hash_binding_assertion
-                    .label_raw()
-                    .starts_with(BmffHash::LABEL)
-                {
-                    // handle BMFF data hashes
-                    let dh = BmffHash::from_assertion(hash_binding_assertion.assertion())?;
-
-                    let name = dh.name().map_or("unnamed".to_string(), default_str);
-
-                    let hash_result = match asset_data {
-                        #[cfg(feature = "file_io")]
-                        ClaimAssetData::Path(asset_path) => {
-                            dh.verify_hash(asset_path, Some(claim.alg()))
-                        }
-                        ClaimAssetData::Bytes(asset_bytes, _) => {
-                            dh.verify_in_memory_hash(asset_bytes, Some(claim.alg()))
-                        }
-                        ClaimAssetData::Stream(stream_data, _) => {
-                            dh.verify_stream_hash(*stream_data, Some(claim.alg()))
-                        }
-                        ClaimAssetData::StreamFragment(initseg_data, fragment_data, _) => dh
-                            .verify_stream_segment(
-                                *initseg_data,
-                                *fragment_data,
-                                Some(claim.alg()),
-                            ),
-                        #[cfg(feature = "file_io")]
-                        ClaimAssetData::StreamFragments(initseg_data, fragment_paths, _) => dh
-                            .verify_stream_segments(
-                                *initseg_data,
-                                fragment_paths,
-                                Some(claim.alg()),
-                            ),
-                    };
-
-                    match hash_result {
-                        Ok(_a) => {
-                            log_item!(
-                                claim.assertion_uri(&hash_binding_assertion.label()),
-                                "data hash valid",
-                                "verify_internal"
-                            )
-                            .validation_status(validation_status::ASSERTION_BMFFHASH_MATCH)
-                            .success(validation_log);
-
-                            continue;
-                        }
-                        Err(e) => {
-                            let err_str = match e {
-                                Error::C2PAValidation(es) => {
-                                    if es == validation_status::ASSERTION_BMFFHASH_MALFORMED {
-                                        validation_status::ASSERTION_BMFFHASH_MALFORMED
-                                    } else {
-                                        validation_status::ASSERTION_BMFFHASH_MISMATCH
-                                    }
-                                }
-                                _ => validation_status::ASSERTION_BMFFHASH_MISMATCH,
-                            };
-
-                            log_item!(
-                                claim.assertion_uri(&hash_binding_assertion.label()),
-                                format!("asset hash error, name: {name}, error: {}", err_str),
-                                "verify_internal"
-                            )
-                            .validation_status(err_str)
-                            .failure(
-                                validation_log,
-                                Error::HashMismatch(format!("Asset hash failure: {err_str}")),
-                            )?;
-                        }
-                    }
-                } else if hash_binding_assertion
-                    .label_raw()
-                    .starts_with(BoxHash::LABEL)
-                {
-                    // box hash case
-                    // handle BMFF data hashes
-                    let bh = BoxHash::from_assertion(hash_binding_assertion.assertion())?;
-
-                    let hash_result = match asset_data {
-                        #[cfg(feature = "file_io")]
-                        ClaimAssetData::Path(asset_path) => {
-                            let box_hash_processor =
-                                crate::jumbf_io::get_assetio_handler_from_path(asset_path)
-                                    .ok_or(Error::UnsupportedType)?
-                                    .asset_box_hash_ref()
-                                    .ok_or(Error::HashMismatch(
-                                        "Box hash not supported".to_string(),
-                                    ))?;
-
-                            bh.verify_hash(asset_path, Some(claim.alg()), box_hash_processor)
-                        }
-                        ClaimAssetData::Bytes(asset_bytes, asset_type) => {
-                            let box_hash_processor = get_assetio_handler(asset_type)
-                                .ok_or(Error::UnsupportedType)?
-                                .asset_box_hash_ref()
-                                .ok_or(Error::HashMismatch(format!(
-                                    "Box hash not supported for: {asset_type}"
-                                )))?;
-
-                            bh.verify_in_memory_hash(
-                                asset_bytes,
-                                Some(claim.alg()),
-                                box_hash_processor,
-                            )
-                        }
-                        ClaimAssetData::Stream(stream_data, asset_type) => {
-                            let box_hash_processor = get_assetio_handler(asset_type)
-                                .ok_or(Error::UnsupportedType)?
-                                .asset_box_hash_ref()
-                                .ok_or(Error::HashMismatch(format!(
-                                    "Box hash not supported for: {asset_type}"
-                                )))?;
-
-                            bh.verify_stream_hash(
-                                *stream_data,
-                                Some(claim.alg()),
-                                box_hash_processor,
-                            )
-                        }
-                        _ => return Err(Error::UnsupportedType),
-                    };
-
-                    match hash_result {
-                        Ok(_a) => {
-                            log_item!(
-                                claim.assertion_uri(&hash_binding_assertion.label()),
-                                "data hash valid",
-                                "verify_internal"
-                            )
-                            .validation_status(validation_status::ASSERTION_BOXHASH_MATCH)
-                            .success(validation_log);
-
-                            continue;
-                        }
-                        Err(e) => {
-                            log_item!(
-                                claim.assertion_uri(&hash_binding_assertion.label()),
-                                format!("asset hash error: {e}"),
-                                "verify_internal"
-                            )
-                            .validation_status(validation_status::ASSERTION_BOXHASH_MISMATCH)
-                            .failure(
-                                validation_log,
-                                Error::HashMismatch(format!("Asset hash failure: {e}")),
-                            )?;
-                        }
-                    }
-                } else {
-                    log_item!(
-                        claim.assertion_uri(&hash_binding_assertion.label()),
-                        "hash binding unknown or not found",
-                        "verify_internal"
-                    )
-                    .validation_status(validation_status::HARD_BINDINGS_MISSING)
-                    .failure(
-                        validation_log,
-                        Error::HashMismatch("hash binding unknown format".into()),
-                    )?;
-                }
-            }
-        }
+        Claim::verify_hash_binding(claim, asset_data, svi, validation_log)?;
 
         // check action rules
         Claim::verify_actions(claim, svi, validation_log)?;
@@ -3179,6 +3213,9 @@ impl Claim {
         let dummy_box_hash = Assertion::new(assertions::labels::BOX_HASH, None, dummy_box_data);
         data_hashes.append(&mut self.assertions_by_type(&dummy_box_hash, None));
 
+        // remove any multipart hashes, those are handled elsewhere
+        data_hashes.retain(|x| !x.label_raw().ends_with(assertions::labels::PART));
+
         data_hashes
     }
 
@@ -3210,6 +3247,14 @@ impl Claim {
         let dummy_data = AssertionData::Cbor(Vec::new());
         let dummy_timestamp = Assertion::new(assertions::labels::TIMESTAMP, None, dummy_data);
         self.assertions_by_type(&dummy_timestamp, None)
+    }
+
+    /// Returns list of certificate status assertions.
+    pub fn certificate_status_assertions(&self) -> Vec<&ClaimAssertion> {
+        let dummy_data = AssertionData::Cbor(Vec::new());
+        let dummy_certificate_status =
+            Assertion::new(assertions::labels::CERTIFICATE_STATUS, None, dummy_data);
+        self.assertions_by_type(&dummy_certificate_status, None)
     }
 
     /// Return list of action assertions.
@@ -3779,14 +3824,36 @@ impl Claim {
             uri
         }
     }
-}
 
+    /// Checks whether or not ocsp values are present in claim
+    pub fn has_ocsp_vals(&self) -> bool {
+        if !self.certificate_status_assertions().is_empty() {
+            return false;
+        }
+
+        let data = match self.data() {
+            Ok(data) => data,
+            Err(_) => return false,
+        };
+
+        let sig = self.signature_val().clone();
+        let mut validation_log = StatusTracker::default();
+
+        let sign1 = match parse_cose_sign1(&sig, &data, &mut validation_log) {
+            Ok(sign1) => sign1,
+            Err(_) => return false,
+        };
+
+        get_ocsp_der(&sign1).is_some()
+    }
+}
 #[allow(dead_code)]
 #[async_generic]
 pub(crate) fn check_ocsp_status(
     sign1: &coset::CoseSign1,
     data: &[u8],
     ctp: &CertificateTrustPolicy,
+    ocsp_responses: Option<&Vec<Vec<u8>>>,
     tst_info: Option<&TstInfo>,
     validation_log: &mut StatusTracker,
 ) -> Result<OcspResponse> {
@@ -3803,6 +3870,7 @@ pub(crate) fn check_ocsp_status(
             data,
             fetch_policy,
             ctp,
+            ocsp_responses,
             tst_info,
             validation_log,
         )?)
@@ -3812,6 +3880,7 @@ pub(crate) fn check_ocsp_status(
             data,
             fetch_policy,
             ctp,
+            ocsp_responses,
             tst_info,
             validation_log,
         )

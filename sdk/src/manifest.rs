@@ -42,6 +42,7 @@ use crate::{
     ClaimGeneratorInfo, ManifestAssertionKind,
 };
 #[cfg(feature = "v1_api")]
+#[allow(deprecated)]
 use crate::{
     assertions::{CreativeWork, DataHash, Exif, User, UserCbor},
     asset_io::{CAIRead, CAIReadWrite},
@@ -511,6 +512,13 @@ impl Manifest {
         self.signature_info.to_owned().and_then(|sig| sig.issuer)
     }
 
+    /// Returns the common name of the certificate
+    pub fn common_name(&self) -> Option<String> {
+        self.signature_info
+            .to_owned()
+            .and_then(|sig| sig.common_name)
+    }
+
     /// Returns the time that the manifest was signed
     pub fn time(&self) -> Option<String> {
         self.signature_info.to_owned().and_then(|sig| sig.time)
@@ -772,6 +780,7 @@ impl Manifest {
             Some(signature_info) => Some(SignatureInfo {
                 alg: signature_info.alg,
                 issuer: signature_info.issuer_org,
+                common_name: signature_info.common_name,
                 time: signature_info.date.map(|d| d.to_rfc3339()),
                 cert_serial_number: signature_info.cert_serial_number.map(|s| s.to_string()),
                 cert_chain: String::from_utf8(signature_info.cert_chain)
@@ -994,6 +1003,7 @@ impl Manifest {
 
                     claim.add_assertion(&actions)
                 }
+                #[allow(deprecated)]
                 CreativeWork::LABEL => {
                     let mut cw: CreativeWork = manifest_assertion.to_assertion()?;
                     // insert a credentials field if we have a vc that matches the identifier
@@ -1533,6 +1543,10 @@ pub struct SignatureInfo {
     /// Human-readable issuing authority for this signature.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub issuer: Option<String>,
+
+    /// Human-readable for common name of this certificate.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub common_name: Option<String>,
 
     /// The serial number of the certificate.
     #[serde(skip_serializing_if = "Option::is_none")]

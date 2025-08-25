@@ -39,8 +39,8 @@ use crate::{
     assertion::{Assertion, AssertionBase, AssertionData, AssertionDecodeError},
     assertions::{
         labels::{self, CLAIM},
-        BmffHash, DataBox, DataHash, DataMap, ExclusionsMap, Ingredient, MerkleMap, Relationship,
-        SubsetMap, TimeStamp, User, UserCbor, VecByteBuf,
+        BmffHash, CertificateStatus, DataBox, DataHash, DataMap, ExclusionsMap, Ingredient,
+        MerkleMap, Relationship, SubsetMap, TimeStamp, User, UserCbor, VecByteBuf,
     },
     asset_handlers::bmff_io::read_bmff_c2pa_boxes,
     asset_io::{
@@ -51,8 +51,12 @@ use crate::{
     cose_validator::{verify_cose, verify_cose_async},
     crypto::{
         asn1::rfc3161::TstInfo,
-        cose::{parse_cose_sign1, CertificateTrustPolicy, TimeStampStorage},
+        cose::{
+            fetch_and_check_ocsp_response, parse_cose_sign1, CertificateTrustPolicy,
+            TimeStampStorage,
+        },
         hash::sha256,
+        ocsp::OcspResponse,
         time_stamp::verify_time_stamp,
     },
     dynamic_assertion::{
@@ -76,7 +80,7 @@ use crate::{
     log_item,
     manifest_store_report::ManifestStoreReport,
     salt::DefaultSalt,
-    settings::get_settings_value,
+    settings::{builder::OcspFetch, get_settings_value},
     status_tracker::{ErrorBehavior, StatusTracker},
     utils::{
         hash_utils::HashRange,
@@ -109,7 +113,9 @@ pub(crate) struct StoreValidationInfo<'a> {
     pub manifest_map: HashMap<String, &'a Claim>, // list of the addressable items in ingredient, saves re-parsing the items during validation
     pub binding_claim: String,                    // name of the claim that has the hash binding
     pub timestamps: HashMap<String, TstInfo>,     // list of timestamp assertions for each claim
-    pub update_manifest_size: usize,              // offset needed to correct for update manifests
+    pub update_manifest_label: Option<String>,    // label of the update manifest if it exists
+    pub manifest_store_range: Option<HashRange>, // range of the manifest store in the asset for data hash exclusions
+    pub certificate_statuses: HashMap<String, Vec<Vec<u8>>>, // list of certificate status assertions for each serial
 }
 
 /// A `Store` maintains a list of `Claim` structs.
@@ -508,7 +514,9 @@ impl Store {
             StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
 
         let sign1 = parse_cose_sign1(sig, &data, &mut validation_log).ok()?;
-        if let Ok(info) = check_ocsp_status(&sign1, &data, &self.ctp, None, &mut validation_log) {
+        if let Ok(info) =
+            check_ocsp_status(&sign1, &data, &self.ctp, None, None, &mut validation_log)
+        {
             if let Some(revoked_at) = &info.revoked_at {
                 Some(format!(
                     "Certificate Status: Revoked, revoked at: {revoked_at}"
@@ -602,6 +610,45 @@ impl Store {
                 Ok(sig)
             }
             Err(e) => Err(e),
+        }
+    }
+
+    /// Retrieves all manifest labels that need to fetch ocsp responses.
+    pub fn get_manifest_labels_for_ocsp(&self) -> Vec<String> {
+        let labels = match crate::settings::get_settings_value::<OcspFetch>(
+            "builder.certificate_status_fetch",
+        ) {
+            Ok(ocsp_fetch) => match ocsp_fetch {
+                OcspFetch::All => self.claims.clone(),
+                OcspFetch::Active => {
+                    if let Some(active_label) = self.provenance_label() {
+                        vec![active_label]
+                    } else {
+                        Vec::new()
+                    }
+                }
+            },
+            _ => Vec::new(),
+        };
+
+        match crate::settings::get_settings_value::<bool>(
+            "builder.certificate_status_should_override",
+        ) {
+            Ok(should_override) => {
+                if !should_override {
+                    labels
+                        .into_iter()
+                        .filter(|label| {
+                            self.claims_map
+                                .get(label)
+                                .is_some_and(|claim| !claim.has_ocsp_vals())
+                        })
+                        .collect()
+                } else {
+                    labels
+                }
+            }
+            _ => Vec::new(),
         }
     }
 
@@ -1434,6 +1481,11 @@ impl Store {
     ) -> Result<()> {
         // walk the ingredients
         for i in claim.ingredient_assertions() {
+            // allow for zero out ingredient assertions
+            if is_zero(i.assertion().data()) {
+                continue;
+            }
+
             let ingredient_assertion = Ingredient::from_assertion(i.assertion()).map_err(|e| {
                 log_item!(
                     i.label().clone(),
@@ -1454,6 +1506,25 @@ impl Store {
 
             // is this an ingredient
             if let Some(c2pa_manifest) = ingredient_assertion.c2pa_manifest() {
+                // if this is a v3 ingredient then it must have validation report indicating it was validated
+                if let Some(ingredient_version) = ingredient_assertion.version() {
+                    if ingredient_version >= 3 && ingredient_assertion.validation_results.is_none()
+                    {
+                        log_item!(
+                            jumbf::labels::to_assertion_uri(claim.label(), &i.label()),
+                            "ingredient V3 must have validation results",
+                            "ingredient_checks"
+                        )
+                        .validation_status(validation_status::ASSERTION_INGREDIENT_MALFORMED)
+                        .failure(
+                            validation_log,
+                            Error::HashMismatch(
+                                "ingredient V3 missing validation status".to_string(),
+                            ),
+                        )?;
+                    }
+                }
+
                 let label = Store::manifest_label_from_path(&c2pa_manifest.url());
 
                 if let Some(ingredient) = store.get_claim(&label) {
@@ -1490,7 +1561,7 @@ impl Store {
                         false
                     };
 
-                    // since the manifest hashes are equal we can short circuit the reset of the validation
+                    // since the manifest hashes are equal we can short circuit the rest of the validation
                     // we can only do this for post 1.3 Claims since manfiest box hashing was not available
                     if manifests_match && !pre_v1_3_hash {
                         log_item!(
@@ -1500,11 +1571,6 @@ impl Store {
                         )
                         .validation_status(validation_status::INGREDIENT_MANIFEST_VALIDATED)
                         .success(validation_log);
-
-                        // if we are not checking ingredient trust then we can continue
-                        if !check_ingredient_trust {
-                            continue;
-                        }
                     }
 
                     // if mismatch is not because of a redaction this is a hard error
@@ -1514,7 +1580,7 @@ impl Store {
                             "ingredient hash incorrect",
                             "ingredient_checks"
                         )
-                        .validation_status(validation_status::INGREDIENT_HASHEDURI_MISMATCH)
+                        .validation_status(validation_status::INGREDIENT_MANIFEST_MISMATCH)
                         .failure(
                             validation_log,
                             Error::HashMismatch(
@@ -1526,8 +1592,9 @@ impl Store {
                         )); // hard stop regardless of StatusTracker mode
                     }
 
-                    // if this is a V2 or greater claim then we must try the signature validation method before proceeding
-                    if ingredient_version > 1 {
+                    // if manifest hash did not match and this is a V2 or greater claim then we
+                    // must try the signature validation method before proceeding
+                    if !manifests_match && ingredient_version > 1 {
                         let claim_signature =
                             ingredient_assertion.signature().ok_or_else(|| {
                                 log_item!(
@@ -1582,15 +1649,23 @@ impl Store {
                         }
                     }
 
-                    // verify the ingredient claim
-                    Claim::verify_claim(
-                        ingredient,
-                        asset_data,
-                        svi,
-                        check_ingredient_trust,
-                        &store.ctp,
-                        validation_log,
-                    )?;
+                    // if this ingredient is the hash binding claim (update manifest)
+                    // then we have to check the binding here
+                    if ingredient.label() == svi.binding_claim {
+                        Claim::verify_hash_binding(ingredient, asset_data, svi, validation_log)?;
+                    }
+
+                    // if manifest hash did not match we continue on to do a full claim validation
+                    if !manifests_match {
+                        Claim::verify_claim(
+                            ingredient,
+                            asset_data,
+                            svi,
+                            check_ingredient_trust,
+                            &store.ctp,
+                            validation_log,
+                        )?;
+                    }
 
                     // recurse nested ingredients
                     Store::ingredient_checks(store, ingredient, svi, asset_data, validation_log)?;
@@ -1602,6 +1677,16 @@ impl Store {
                             Error::ClaimVerification(format!("ingredient: {label} is missing")),
                         )?;
                 }
+            } else {
+                let title = ingredient_assertion.title.unwrap_or("no title".into());
+                let description = format!("{title}: ingredient does not have provenance");
+                log_item!(
+                    jumbf::labels::to_assertion_uri(claim.label(), &i.label()),
+                    description,
+                    "ingredient_checks"
+                )
+                .validation_status(validation_status::INGREDIENT_PROVENANCE_UNKNOWN)
+                .informational(validation_log);
             }
             validation_log.pop_ingredient_uri();
         }
@@ -1709,81 +1794,65 @@ impl Store {
         Store::get_claim_referenced_manifests(claim, self, &mut svi, true, validation_log)?;
 
         // find the manifest with the hash binding
-        let is_bmff;
-        svi.binding_claim = match self.get_hash_binding_manifest(claim) {
-            Some(label) => {
-                is_bmff = self
-                    .get_claim(&label)
-                    .ok_or(Error::ClaimMissingHardBinding)?
-                    .hash_assertions()
-                    .iter()
-                    .any(|a| a.label_raw().starts_with(labels::BMFF_HASH));
-                label
+        svi.binding_claim = self.get_hash_binding_manifest(claim).ok_or_else(|| {
+            log_item!(
+                to_manifest_uri(claim.label()),
+                "could not find manifest with hard binding",
+                "get_store_validation_info"
+            )
+            .validation_status(validation_status::HARD_BINDINGS_MISSING)
+            .failure_as_err(validation_log, Error::ClaimMissingHardBinding)
+        })?;
+
+        // save the update manifest label if it exists
+        if claim.update_manifest() {
+            svi.update_manifest_label = Some(claim.label().to_owned());
+        }
+
+        // get the manifest offset position
+        let locations = match asset_data {
+            #[cfg(feature = "file_io")]
+            ClaimAssetData::Path(path) => {
+                let format = get_supported_file_extension(path).ok_or(Error::UnsupportedType)?;
+                let mut reader = std::fs::File::open(path)?;
+
+                object_locations_from_stream(&format, &mut reader)
             }
-            None => {
-                log_item!(
-                    claim.label().to_owned(),
-                    "could not find manifest with hard binding",
-                    "get_store_validation_info"
-                )
-                .validation_status(validation_status::HARD_BINDINGS_MISSING)
-                .failure(validation_log, Error::ClaimMissingHardBinding)?;
-                return Err(Error::ClaimMissingHardBinding);
+            ClaimAssetData::Bytes(items, typ) => {
+                let format = typ.to_owned();
+                let mut reader = Cursor::new(items);
+
+                object_locations_from_stream(&format, &mut reader)
+            }
+            ClaimAssetData::Stream(reader, typ) => {
+                let format = typ.to_owned();
+                object_locations_from_stream(&format, reader)
+            }
+            ClaimAssetData::StreamFragment(reader, _read1, typ) => {
+                let format = typ.to_owned();
+                object_locations_from_stream(&format, reader)
+            }
+            #[cfg(feature = "file_io")]
+            ClaimAssetData::StreamFragments(reader, _path_bufs, typ) => {
+                let format = typ.to_owned();
+                object_locations_from_stream(&format, reader)
             }
         };
 
-        // get the manifest offset size if needed
-        // it is not needed for BMFF hash bindings since update manifests always appear
-        // in last BMFF box
-        if claim.update_manifest() && !is_bmff {
-            let locations = match asset_data {
-                #[cfg(feature = "file_io")]
-                ClaimAssetData::Path(path) => {
-                    let format =
-                        get_supported_file_extension(path).ok_or(Error::UnsupportedType)?;
-                    let mut reader = std::fs::File::open(path)?;
-
-                    object_locations_from_stream(&format, &mut reader)?
-                }
-                ClaimAssetData::Bytes(items, typ) => {
-                    let format = typ.to_owned();
-                    let mut reader = Cursor::new(items);
-
-                    object_locations_from_stream(&format, &mut reader)?
-                }
-                ClaimAssetData::Stream(reader, typ) => {
-                    let format = typ.to_owned();
-                    object_locations_from_stream(&format, reader)?
-                }
-                ClaimAssetData::StreamFragment(reader, _read1, typ) => {
-                    let format = typ.to_owned();
-                    object_locations_from_stream(&format, reader)?
-                }
-                #[cfg(feature = "file_io")]
-                ClaimAssetData::StreamFragments(reader, _path_bufs, typ) => {
-                    let format = typ.to_owned();
-                    object_locations_from_stream(&format, reader)?
-                }
-            };
-
+        if let Ok(locations) = locations {
             if let Some(manifest_loc) = locations
                 .iter()
                 .find(|o| o.htype == HashBlockObjectType::Cai)
             {
-                svi.update_manifest_size = manifest_loc.length;
-            } else {
-                log_item!(
-                    claim.label().to_owned(),
-                    "there were unreference manifests in the ",
-                    "get_store_validation_info"
-                )
-                .validation_status(validation_status::HARD_BINDINGS_MISSING)
-                .failure(validation_log, Error::ClaimMissingHardBinding)?;
+                svi.manifest_store_range = Some(HashRange::new(
+                    manifest_loc.offset as u64,
+                    manifest_loc.length as u64,
+                ));
             }
         }
 
-        // get the timestamp assertions
         for found_claim in svi.manifest_map.values() {
+            // get the timestamp assertions
             let timestamp_assertions = found_claim.timestamp_assertions();
             for ta in timestamp_assertions {
                 let timestamp_assertion =
@@ -1825,21 +1894,26 @@ impl Store {
                     )?;
                 }
             }
-        }
 
-        // make sure there are not unreferenced manifests
-        if self
-            .claims()
-            .iter()
-            .any(|c| !svi.manifest_map.contains_key(c.label()))
-        {
-            log_item!(
-                claim.label().to_owned(),
-                "found unreference manifest in the store",
-                "get_store_validation_info"
-            )
-            .validation_status(validation_status::MANIFEST_UNREFERENCED)
-            .failure(validation_log, Error::UnreferencedManifest)?;
+            // get the certificate status assertions
+            let certificate_status_assertions = found_claim.certificate_status_assertions();
+            for csa in certificate_status_assertions {
+                let certificate_status_assertion =
+                    CertificateStatus::from_assertion(csa.assertion())?;
+
+                // save the ocsp_ders stored in the StoreValidationInfo
+                for ocsp_der in certificate_status_assertion.as_ref() {
+                    if let Ok(response) =
+                        OcspResponse::from_der_checked(ocsp_der, None, validation_log)
+                    {
+                        let ocsp_ders = svi
+                            .certificate_statuses
+                            .entry(response.certificate_serial_num)
+                            .or_insert(Vec::new());
+                        ocsp_ders.push(response.ocsp_der);
+                    }
+                }
+            }
         }
 
         Ok(svi)
@@ -4556,23 +4630,7 @@ impl Store {
             // get correct hashed URI
             let c2pa_manifest = match ingredient_assertion.c2pa_manifest() {
                 Some(m) => m, // > v2 ingredient assertion
-                None => {
-                    if ingredient_assertion.relationship != Relationship::InputTo {
-                        let description = if let Some(title) = &ingredient_assertion.title {
-                            format!("{title}: ingredient does not have provenance")
-                        } else {
-                            "ingredient does not have provenance".to_owned()
-                        };
-                        log_item!(
-                            to_assertion_uri(&claim_label, &i.label()),
-                            description,
-                            "get_claim_referenced_manifests"
-                        )
-                        .validation_status(validation_status::INGREDIENT_UNKNOWN_PROVENANCE)
-                        .informational(validation_log);
-                    }
-                    continue;
-                }
+                None => continue,
             };
 
             // is this an ingredient
@@ -4805,6 +4863,40 @@ impl Store {
         )?;
         Ok(i_store)
     }
+
+    #[allow(dead_code)]
+    /// Fetches ocsp response ders from the specified manifests.
+    ///
+    /// # Arguments
+    /// * `manifest_labels` - Vector of manifest labels to check for ocsp responses
+    /// * `validation_log` - Status tracker for logging validation events
+    ///
+    /// # Returns
+    /// A `Result` containing tuples of manifest labels and their associated ocsp response
+    pub fn get_ocsp_response_ders(
+        &self,
+        manifest_labels: Vec<String>,
+        validation_log: &mut StatusTracker,
+    ) -> Result<Vec<(String, Vec<u8>)>> {
+        let mut oscp_response_ders = Vec::new();
+
+        for manifest_label in manifest_labels {
+            if let Some(claim) = self.claims_map.get(&manifest_label) {
+                let sig = claim.signature_val().clone();
+                let data = claim.data()?;
+
+                let sign1 = parse_cose_sign1(&sig, &data, validation_log)?;
+                let ocsp_response_der =
+                    fetch_and_check_ocsp_response(&sign1, &data, &self.ctp, None, validation_log)?
+                        .ocsp_der;
+                if !ocsp_response_der.is_empty() {
+                    oscp_response_ders.push((manifest_label, ocsp_response_der));
+                }
+            }
+        }
+
+        Ok(oscp_response_ders)
+    }
 }
 
 impl std::fmt::Display for Store {
@@ -4950,6 +5042,35 @@ pub mod tests {
             claim.add_assertion(&actions)?;
 
             Ok(claim)
+        }
+
+        #[test]
+        #[cfg(feature = "file_io")]
+        fn test_certificate_map() {
+            let ap = fixture_path("ocsp_with_assertion.jpg");
+            let mut report = StatusTracker::default();
+            let source = Cursor::new(include_bytes!("../tests/fixtures/ocsp_with_assertion.jpg"));
+            let store = Store::from_stream("image/jpeg", source, true, &mut report).unwrap();
+
+            let svi = store
+                .get_store_validation_info(
+                    store.claims()[0],
+                    &mut ClaimAssetData::Path(&ap),
+                    &mut report,
+                )
+                .unwrap();
+            assert!(svi
+                .certificate_statuses
+                .contains_key("310665949469838386185380984752231266212090716844"));
+            assert!(svi
+                .certificate_statuses
+                .contains_key("28651076926158642445677524766118780318"));
+
+            let stored_ocsp_vals: Vec<Vec<u8>> =
+                svi.certificate_statuses.into_values().flatten().collect();
+            assert_eq!(stored_ocsp_vals.len(), 2);
+
+            assert!(stored_ocsp_vals.iter().all(|v| !v.is_empty()))
         }
 
         #[test]
@@ -5113,6 +5234,7 @@ pub mod tests {
             let ap = fixture_path("unsupported_type.txt");
             let temp_dir = tempdirectory().expect("temp dir");
             let op = temp_dir_path(&temp_dir, "unsupported_type.txt");
+            let actual = temp_dir_path(&temp_dir, "unsupported_type.c2pa");
 
             // Create claims store.
             let mut store = Store::new();
@@ -5136,8 +5258,12 @@ pub mod tests {
             store.save_to_asset(&ap, signer.as_ref(), &op).unwrap();
 
             // read from new file
-            let new_store = Store::load_from_asset(
-                &op,
+            let c2pa_bytes = std::fs::read(&actual).unwrap();
+            let mut data = std::fs::File::open(&op).unwrap();
+            let new_store = Store::from_manifest_data_and_stream(
+                &c2pa_bytes,
+                "txt",
+                &mut data,
                 true,
                 &mut StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError),
             )
@@ -5342,9 +5468,6 @@ pub mod tests {
             )
             .await
             .unwrap();
-
-            // should have error for unreference manifests
-            assert!(report.has_error(Error::UnreferencedManifest));
         }
 
         #[cfg(feature = "v1_api")]
