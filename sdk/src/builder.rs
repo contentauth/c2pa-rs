@@ -1590,6 +1590,7 @@ mod tests {
     #![allow(clippy::unwrap_used)]
     use std::{io::Cursor, vec};
 
+    use c2pa_macros::c2pa_test_async;
     use serde_json::json;
     #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
     use wasm_bindgen_test::*;
@@ -2318,12 +2319,7 @@ mod tests {
         }
     }
 
-    #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
-    #[cfg_attr(
-        all(target_arch = "wasm32", not(target_os = "wasi")),
-        wasm_bindgen_test
-    )]
-    #[cfg_attr(target_os = "wasi", wstd::test)]
+    #[c2pa_test_async]
     #[cfg(feature = "v1_api")]
     async fn test_builder_remote_sign() {
         let format = "image/jpeg";
@@ -2446,12 +2442,7 @@ mod tests {
         assert_eq!(reader.validation_status(), None);
     }
 
-    #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
-    #[cfg_attr(
-        all(target_arch = "wasm32", not(target_os = "wasi")),
-        wasm_bindgen_test
-    )]
-    #[cfg_attr(target_os = "wasi", wstd::test)]
+    #[c2pa_test_async]
     #[cfg(any(target_arch = "wasm32", feature = "file_io"))]
     async fn test_builder_box_hashed_embeddable() {
         use crate::asset_io::{CAIWriter, HashBlockObjectType};
@@ -2512,12 +2503,7 @@ mod tests {
         assert_eq!(_reader.validation_status(), None);
     }
 
-    #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
-    #[cfg_attr(
-        all(target_arch = "wasm32", not(target_os = "wasi")),
-        wasm_bindgen_test
-    )]
-    #[cfg_attr(target_os = "wasi", wstd::test)]
+    #[c2pa_test_async]
     #[cfg(any(target_arch = "wasm32", feature = "file_io"))]
     async fn test_builder_box_hashed_embeddable_with_exclusions() {
         use crate::asset_io::{CAIWriter, HashBlockObjectType};
@@ -2842,12 +2828,7 @@ mod tests {
     }
 
     /// example of creating a builder directly with a [`ManifestDefinition`]
-    #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
-    #[cfg_attr(
-        all(target_arch = "wasm32", not(target_os = "wasi")),
-        wasm_bindgen_test
-    )]
-    #[cfg_attr(target_os = "wasi", wstd::test)]
+    #[c2pa_test_async]
     /// test if the sdk can add a cloud ingredient retrieved from a stream and a cloud manifest
     // This works with or without the fetch_remote_manifests feature
     async fn test_add_cloud_ingredient() {
