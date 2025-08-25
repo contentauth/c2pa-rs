@@ -796,6 +796,14 @@ impl Ingredient {
         if ingredient.thumbnail.is_none() {
             if let Some((format, image)) = options.thumbnail(path) {
                 ingredient.set_thumbnail(format, image)?;
+            } else {
+                #[cfg(feature = "add_thumbnails")]
+                if let Some(format) = crate::format_from_path(path) {
+                    ingredient.maybe_add_thumbnail(
+                        &format,
+                        &mut std::io::BufReader::new(std::fs::File::open(path)?),
+                    )?;
+                }
             }
         }
         Ok(ingredient)
@@ -919,18 +927,7 @@ impl Ingredient {
 
         // create a thumbnail if we don't already have a manifest with a thumb we can use
         #[cfg(feature = "add_thumbnails")]
-        if self.thumbnail.is_none() {
-            stream.rewind()?;
-
-            if let Some((output_format, image)) =
-                crate::utils::thumbnail::make_thumbnail_bytes_from_stream(
-                    format,
-                    std::io::BufReader::new(stream),
-                )?
-            {
-                self.set_thumbnail(output_format.to_string(), image)?;
-            }
-        }
+        self.maybe_add_thumbnail(format, &mut std::io::BufReader::new(stream))?;
 
         Ok(self)
     }
@@ -992,18 +989,7 @@ impl Ingredient {
 
         // create a thumbnail if we don't already have a manifest with a thumb we can use
         #[cfg(feature = "add_thumbnails")]
-        if ingredient.thumbnail.is_none() {
-            stream.rewind()?;
-
-            if let Some((output_format, image)) =
-                crate::utils::thumbnail::make_thumbnail_bytes_from_stream(
-                    format,
-                    std::io::BufReader::new(stream),
-                )?
-            {
-                ingredient.set_thumbnail(output_format.to_string(), image)?;
-            }
-        }
+        ingredient.maybe_add_thumbnail(format, &mut std::io::BufReader::new(stream))?;
 
         Ok(ingredient)
     }
@@ -1436,19 +1422,33 @@ impl Ingredient {
 
         // create a thumbnail if we don't already have a manifest with a thumb we can use
         #[cfg(feature = "add_thumbnails")]
-        if ingredient.thumbnail.is_none() {
+        ingredient.maybe_add_thumbnail(format, &mut std::io::BufReader::new(stream))?;
+
+        Ok(ingredient)
+    }
+
+    /// Automatically generate a thumbnail for the ingredient if missing and enabled in settings.
+    ///
+    /// This function takes into account the [Settings][crate::Settings]:
+    /// * `builder.thumbnail.enabled`
+    #[cfg(feature = "add_thumbnails")]
+    pub fn maybe_add_thumbnail<R>(&mut self, format: &str, stream: &mut R) -> Result<()>
+    where
+        R: std::io::BufRead + std::io::Seek,
+    {
+        let auto_thumbnail =
+            crate::settings::get_settings_value::<bool>("builder.thumbnail.enabled")?;
+        if self.thumbnail.is_none() && auto_thumbnail {
             stream.rewind()?;
 
             if let Some((output_format, image)) =
-                crate::utils::thumbnail::make_thumbnail_bytes_from_stream(
-                    format,
-                    std::io::BufReader::new(stream),
-                )?
+                crate::utils::thumbnail::make_thumbnail_bytes_from_stream(format, stream)?
             {
-                ingredient.set_thumbnail(output_format.to_string(), image)?;
+                self.set_thumbnail(output_format.to_string(), image)?;
             }
         }
-        Ok(ingredient)
+
+        Ok(())
     }
 }
 
@@ -1483,12 +1483,6 @@ pub trait IngredientOptions {
     /// The second value is bytes of the thumbnail image.
     /// The default is no thumbnail, so you must provide an override to have a thumbnail image.
     fn thumbnail(&self, _path: &Path) -> Option<(String, Vec<u8>)> {
-        #[cfg(feature = "add_thumbnails")]
-        return crate::utils::thumbnail::make_thumbnail_bytes_from_path(_path)
-            .ok()
-            .flatten()
-            .map(|(format, image)| (format.to_string(), image));
-        #[cfg(not(feature = "add_thumbnails"))]
         None
     }
 
@@ -1523,6 +1517,7 @@ mod tests {
     #![allow(clippy::expect_used)]
     #![allow(clippy::unwrap_used)]
 
+    use c2pa_macros::c2pa_test_async;
     #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
     use wasm_bindgen_test::*;
 
@@ -1589,12 +1584,7 @@ mod tests {
         );
     }
 
-    #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
-    #[cfg_attr(
-        all(target_arch = "wasm32", not(target_os = "wasi")),
-        wasm_bindgen_test
-    )]
-    #[cfg_attr(target_os = "wasi", wstd::test)]
+    #[c2pa_test_async]
     async fn test_stream_async_jpg() {
         let image_bytes = include_bytes!("../tests/fixtures/CA.jpg");
         let title = "Test Image";
@@ -1633,12 +1623,41 @@ mod tests {
         assert_eq!(ingredient.validation_status(), None);
     }
 
-    #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
-    #[cfg_attr(
-        all(target_arch = "wasm32", not(target_os = "wasi")),
-        wasm_bindgen_test
-    )]
-    #[cfg_attr(target_os = "wasi", wstd::test)]
+    #[cfg(feature = "add_thumbnails")]
+    #[test]
+    fn test_stream_thumbnail() {
+        use crate::settings::Settings;
+
+        #[cfg(target_os = "wasi")]
+        Settings::reset().unwrap();
+
+        Settings::from_toml(
+            &toml::toml! {
+                [builder.thumbnail]
+                enabled = true
+            }
+            .to_string(),
+        )
+        .unwrap();
+
+        let image_bytes = include_bytes!("../tests/fixtures/sample1.png");
+        let ingredient = Ingredient::from_memory("image/png", image_bytes).unwrap();
+        assert!(ingredient.thumbnail().is_some());
+
+        Settings::from_toml(
+            &toml::toml! {
+                [builder.thumbnail]
+                enabled = false
+            }
+            .to_string(),
+        )
+        .unwrap();
+
+        let ingredient = Ingredient::from_memory("image/png", image_bytes).unwrap();
+        assert!(ingredient.thumbnail().is_none());
+    }
+
+    #[c2pa_test_async]
     async fn test_stream_ogp() {
         let image_bytes = include_bytes!("../tests/fixtures/XCA.jpg");
         let title = "XCA.jpg";
@@ -1662,10 +1681,10 @@ mod tests {
         );
     }
 
-    #[allow(dead_code)]
-    #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
-    #[cfg_attr(target_os = "wasi", wstd::test)]
+    // Temporarily unavailable for wasm-bindgen until https://github.com/contentauth/c2pa-rs/pull/1325 lands
+    #[cfg(any(not(target_arch = "wasm32"), target_os = "wasi"))]
     #[cfg(feature = "fetch_remote_manifests")]
+    #[c2pa_test_async]
     async fn test_jpg_cloud_from_memory() {
         // Save original settings
         let original_verify_trust =
@@ -1696,13 +1715,8 @@ mod tests {
             .unwrap();
     }
 
-    #[allow(dead_code)]
-    #[cfg_attr(not(any(target_arch = "wasm32", feature = "file_io")), actix::test)]
-    #[cfg_attr(
-        all(target_arch = "wasm32", not(target_os = "wasi")),
-        wasm_bindgen_test
-    )]
-    #[cfg_attr(all(target_os = "wasi", not(feature = "file_io")), wstd::test)]
+    #[cfg(not(any(feature = "fetch_remote_manifests", feature = "file_io")))]
+    #[c2pa_test_async]
     async fn test_jpg_cloud_from_memory_no_file_io() {
         crate::settings::set_settings_value("verify.verify_trust", false).unwrap();
 
@@ -1723,12 +1737,7 @@ mod tests {
         assert_eq!(ingredient.manifest_data(), None);
     }
 
-    #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
-    #[cfg_attr(
-        all(target_arch = "wasm32", not(target_os = "wasi")),
-        wasm_bindgen_test
-    )]
-    #[cfg_attr(target_os = "wasi", wstd::test)]
+    #[c2pa_test_async]
     async fn test_jpg_cloud_from_memory_and_manifest() {
         crate::settings::set_settings_value("verify.verify_trust", false).unwrap();
 
@@ -1759,13 +1768,8 @@ mod tests_file_io {
     #![allow(clippy::expect_used)]
     #![allow(clippy::unwrap_used)]
 
-    #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
-    use wasm_bindgen_test::*;
-
     use super::*;
     use crate::{assertion::AssertionData, utils::test::fixture_path};
-    #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
-    wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
 
     const NO_MANIFEST_JPEG: &str = "earth_apollo17.jpg";
     const MANIFEST_JPEG: &str = "C.jpg";

@@ -130,7 +130,6 @@ impl Reader {
     pub fn from_stream(format: &str, mut stream: impl Read + Seek + Send) -> Result<Reader> {
         let verify = get_settings_value::<bool>("verify.verify_after_reading")?; // defaults to true
         let mut validation_log = StatusTracker::default();
-
         let store = if _sync {
             Store::from_stream(format, &mut stream, verify, &mut validation_log)
         } else {
@@ -689,7 +688,6 @@ impl Reader {
                 }
                 Err(e) => {
                     validation_results.add_status(ValidationStatus::from_error(&e));
-                    return Err(e);
                 }
             };
         }
@@ -782,20 +780,20 @@ impl Reader {
                 validation_log.push_ingredient_uri(uri.clone());
             }
 
-            let manifest = self
-                .get_manifest(&current_label)
-                .ok_or(Error::ClaimMissing {
-                    label: current_label.clone(),
-                })?;
+            let manifest = match self.get_manifest(&current_label) {
+                Some(m) => m,
+                None => {
+                    // skip this manifest if not found
+                    continue;
+                }
+            };
 
             let mut partial_claim = crate::dynamic_assertion::PartialClaim::default();
             {
-                let claim = self
-                    .store
-                    .get_claim(&current_label)
-                    .ok_or(Error::ClaimEncoding)?;
-                for assertion in claim.assertions() {
-                    partial_claim.add_assertion(assertion);
+                if let Some(claim) = self.store.get_claim(&current_label) {
+                    for assertion in claim.assertions() {
+                        partial_claim.add_assertion(assertion);
+                    }
                 }
             }
 

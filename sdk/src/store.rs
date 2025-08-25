@@ -4986,6 +4986,7 @@ pub mod tests {
 
         use std::{fs, io::Write};
 
+        use c2pa_macros::c2pa_test_async;
         use memchr::memmem;
         use serde::Serialize;
         #[cfg(all(feature = "file_io", feature = "v1_api"))]
@@ -5406,8 +5407,7 @@ pub mod tests {
             assert_eq!(memmem::find(&buf, &original_jumbf[0..1024]), None);
         }
 
-        #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
-        #[cfg_attr(target_os = "wasi", wstd::test)]
+        #[c2pa_test_async]
         async fn test_jumbf_generation_async() {
             let signer = async_test_signer(SigningAlg::Ps256);
 
@@ -5471,8 +5471,7 @@ pub mod tests {
         }
 
         #[cfg(feature = "v1_api")]
-        #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
-        #[cfg_attr(target_os = "wasi", wstd::test)]
+        #[c2pa_test_async]
         async fn test_jumbf_generation_remote() {
             // test adding to actual image
             let ap = fixture_path("earth_apollo17.jpg");
@@ -7731,10 +7730,9 @@ pub mod tests {
             }
         }
 
-        #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
-        #[cfg_attr(target_os = "wasi", wstd::test)]
         #[cfg(feature = "file_io")]
         #[cfg(feature = "v1_api")]
+        #[c2pa_test_async]
         async fn test_jumbf_generation_stream() {
             let file_buffer = include_bytes!("../tests/fixtures/earth_apollo17.jpg").to_vec();
             // convert buffer to cursor with Read/Write/Seek capability
@@ -7835,10 +7833,9 @@ pub mod tests {
             }
         }
 
-        #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
-        #[cfg_attr(target_os = "wasi", wstd::test)]
         #[cfg(feature = "file_io")]
         #[cfg(feature = "v1_api")]
+        #[c2pa_test_async]
         async fn test_boxhash_embeddable_manifest_async() {
             // test adding to actual image
             let ap = fixture_path("boxhash.jpg");
@@ -8003,10 +8000,9 @@ pub mod tests {
             assert!(!report.has_any_error());
         }
 
-        #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
-        #[cfg_attr(target_os = "wasi", wstd::test)]
         #[cfg(feature = "file_io")]
         #[cfg(feature = "v1_api")]
+        #[c2pa_test_async]
         async fn test_datahash_embeddable_manifest_async() {
             // test adding to actual image
             use std::io::SeekFrom;
@@ -8468,9 +8464,8 @@ pub mod tests {
             // std::fs::write("target/test.jpg", result).unwrap();
         }
 
-        #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
-        #[cfg_attr(target_os = "wasi", wstd::test)]
         #[cfg(feature = "v1_api")]
+        #[c2pa_test_async]
         async fn test_async_dynamic_assertions() {
             use async_trait::async_trait;
 
@@ -8756,18 +8751,14 @@ pub mod tests {
         #![allow(clippy::panic)]
         use std::io::Cursor;
 
+        use c2pa_macros::c2pa_test_async;
         #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
         use wasm_bindgen_test::wasm_bindgen_test;
 
         use super::super::*;
         use crate::status_tracker::StatusTracker;
 
-        #[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
-        #[cfg_attr(
-            all(target_arch = "wasm32", not(target_os = "wasi")),
-            wasm_bindgen_test
-        )]
-        #[cfg_attr(target_os = "wasi", wstd::test)]
+        #[c2pa_test_async]
         async fn test_store_load_fragment_from_stream_async() {
             // Use the dash fixtures that are known to work with fragment loading
             // These are the same files used in test_bmff_fragments
