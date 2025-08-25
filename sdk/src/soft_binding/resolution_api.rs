@@ -18,8 +18,6 @@ use serde::{Deserialize, Serialize};
 use ureq::SendBody;
 use url::Url;
 
-use crate::{Error, Result};
-
 /// Information on the algorithm used for the sot binding.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct SoftBindingAlg {
@@ -86,13 +84,19 @@ impl SoftBindingResolutionApi {
         alg: &str,
         value: &str,
         max_results: Option<u32>,
-    ) -> Result<SoftBindingQueryResult> {
-        let mut url = Url::parse_with_params(base_url, &[("value", value), ("alg", alg)])?;
+    ) -> Result<SoftBindingQueryResult, SoftBindingResolutionApiError> {
+        let mut url =
+            Url::parse_with_params(base_url, &[("value", value), ("alg", alg)]).map_err(|err| {
+                SoftBindingResolutionApiError::InvalidUrl {
+                    url: base_url.to_owned(),
+                    source: err,
+                }
+            })?;
         url.set_path("matches/byBinding");
 
         if let Some(max_results) = max_results {
             if max_results < 1 {
-                return Err(Error::MaxResultsTooSmall);
+                return Err(SoftBindingResolutionApiError::MaxResultsTooSmall);
             }
 
             url.query_pairs_mut()
@@ -101,9 +105,18 @@ impl SoftBindingResolutionApi {
 
         let response = ureq::get(url.as_str())
             .header(header::AUTHORIZATION, &format!("Bearer {bearer_token}"))
-            .call()?;
+            .call()
+            .map_err(|err| SoftBindingResolutionApiError::InvalidServerResponse {
+                url: url.to_string(),
+                source: err,
+            })?;
 
-        Ok(response.into_body().read_json()?)
+        Ok(response.into_body().read_json().map_err(|err| {
+            SoftBindingResolutionApiError::InvalidServerResponse {
+                url: url.to_string(),
+                source: err,
+            }
+        })?)
     }
 
     /// Given a large soft binding value, find zero or more matching manifest identifiers.
@@ -115,13 +128,17 @@ impl SoftBindingResolutionApi {
         alg: &str,
         value: &str,
         max_results: Option<u32>,
-    ) -> Result<SoftBindingQueryResult> {
-        let mut url = Url::parse(base_url)?;
+    ) -> Result<SoftBindingQueryResult, SoftBindingResolutionApiError> {
+        let mut url =
+            Url::parse(base_url).map_err(|err| SoftBindingResolutionApiError::InvalidUrl {
+                url: base_url.to_owned(),
+                source: err,
+            })?;
         url.set_path("matches/byBinding");
 
         if let Some(max_results) = max_results {
             if max_results < 1 {
-                return Err(Error::MaxResultsTooSmall);
+                return Err(SoftBindingResolutionApiError::MaxResultsTooSmall);
             }
 
             url.query_pairs_mut()
@@ -130,9 +147,18 @@ impl SoftBindingResolutionApi {
 
         let response = ureq::post(url.as_str())
             .header(header::AUTHORIZATION, &format!("Bearer {bearer_token}"))
-            .send_json(SoftBindingQuery { alg, value })?;
+            .send_json(SoftBindingQuery { alg, value })
+            .map_err(|err| SoftBindingResolutionApiError::InvalidServerResponse {
+                url: url.to_string(),
+                source: err,
+            })?;
 
-        Ok(response.into_body().read_json()?)
+        Ok(response.into_body().read_json().map_err(|err| {
+            SoftBindingResolutionApiError::InvalidServerResponse {
+                url: url.to_string(),
+                source: err,
+            }
+        })?)
     }
 
     /// Find zero or more C2PA Manifest identifiers within the manifest store using an
@@ -147,8 +173,13 @@ impl SoftBindingResolutionApi {
         max_results: Option<u32>,
         hint_alg: Option<&str>,
         hint_value: Option<&str>,
-    ) -> Result<SoftBindingQueryResult> {
-        let mut url = Url::parse_with_params(base_url, &[("alg", alg)])?;
+    ) -> Result<SoftBindingQueryResult, SoftBindingResolutionApiError> {
+        let mut url = Url::parse_with_params(base_url, &[("alg", alg)]).map_err(|err| {
+            SoftBindingResolutionApiError::InvalidUrl {
+                url: base_url.to_owned(),
+                source: err,
+            }
+        })?;
         url.set_path("matches/byContent");
 
         if let Some(hint_alg) = hint_alg {
@@ -159,7 +190,7 @@ impl SoftBindingResolutionApi {
         }
         if let Some(max_results) = max_results {
             if max_results < 1 {
-                return Err(Error::MaxResultsTooSmall);
+                return Err(SoftBindingResolutionApiError::MaxResultsTooSmall);
             }
 
             url.query_pairs_mut()
@@ -169,9 +200,18 @@ impl SoftBindingResolutionApi {
         let response = ureq::post(url.as_str())
             .header(header::AUTHORIZATION, &format!("Bearer {bearer_token}"))
             .header(header::CONTENT_TYPE, mime_type)
-            .send(SendBody::from_reader(asset_stream))?;
+            .send(SendBody::from_reader(asset_stream))
+            .map_err(|err| SoftBindingResolutionApiError::InvalidServerResponse {
+                url: url.to_string(),
+                source: err,
+            })?;
 
-        Ok(response.into_body().read_json()?)
+        Ok(response.into_body().read_json().map_err(|err| {
+            SoftBindingResolutionApiError::InvalidServerResponse {
+                url: url.to_string(),
+                source: err,
+            }
+        })?)
     }
 
     /// Retrieve a C2PA Manifest by manifest identifier. This either returns the active
@@ -183,8 +223,12 @@ impl SoftBindingResolutionApi {
         bearer_token: &str,
         manifest_id: &str,
         return_active_manifest: Option<bool>,
-    ) -> Result<Vec<u8>> {
-        let mut url = Url::parse(base_url)?;
+    ) -> Result<Vec<u8>, SoftBindingResolutionApiError> {
+        let mut url =
+            Url::parse(base_url).map_err(|err| SoftBindingResolutionApiError::InvalidUrl {
+                url: base_url.to_owned(),
+                source: err,
+            })?;
         url.set_path(&format!("manifests/{manifest_id}"));
 
         if let Some(return_active_manifest) = return_active_manifest {
@@ -194,21 +238,69 @@ impl SoftBindingResolutionApi {
 
         let response = ureq::get(url.as_str())
             .header(header::AUTHORIZATION, &format!("Bearer {bearer_token}"))
-            .call()?;
+            .call()
+            .map_err(|err| SoftBindingResolutionApiError::InvalidServerResponse {
+                url: url.to_string(),
+                source: err,
+            })?;
 
-        Ok(response.into_body().read_to_vec()?)
+        Ok(response.into_body().read_to_vec().map_err(|err| {
+            SoftBindingResolutionApiError::InvalidServerResponse {
+                url: url.to_string(),
+                source: err,
+            }
+        })?)
     }
 
     /// Enumerate the names of soft binding algorithms supported as queries by the service.
     /// See <https://github.com/c2pa-org/softbinding-algorithm-list> for an authoritative
     /// list of C2PA soft binding algorithm names.
-    pub fn get_supported_bindings(base_url: &str) -> Result<SoftBindingAlgList> {
-        let mut url = Url::parse(base_url)?;
+    pub fn get_supported_bindings(
+        base_url: &str,
+    ) -> Result<SoftBindingAlgList, SoftBindingResolutionApiError> {
+        let mut url =
+            Url::parse(base_url).map_err(|err| SoftBindingResolutionApiError::InvalidUrl {
+                url: base_url.to_owned(),
+                source: err,
+            })?;
         url.set_path("services/supportedAlgorithms");
 
-        let response = ureq::get(url.as_str()).call()?;
-        Ok(response.into_body().read_json()?)
+        let response = ureq::get(url.as_str()).call().map_err(|err| {
+            SoftBindingResolutionApiError::InvalidServerResponse {
+                url: url.to_string(),
+                source: err,
+            }
+        })?;
+        Ok(response.into_body().read_json().map_err(|err| {
+            SoftBindingResolutionApiError::InvalidServerResponse {
+                url: url.to_string(),
+                source: err,
+            }
+        })?)
     }
+}
+
+/// An error from the soft binding resolution API.
+#[non_exhaustive]
+#[derive(Debug, thiserror::Error)]
+pub enum SoftBindingResolutionApiError {
+    /// Failed to parse invalid URL.
+    #[error("invalid url {url}")]
+    InvalidUrl {
+        url: String,
+        #[source]
+        source: url::ParseError,
+    },
+    /// Invalid response from soft binding resolution API server.
+    #[error("invalid server response from {url}")]
+    InvalidServerResponse {
+        url: String,
+        #[source]
+        source: ureq::Error,
+    },
+    /// Max results for this API request must be greater than 1.
+    #[error("max results must be >1")]
+    MaxResultsTooSmall,
 }
 
 #[cfg(test)]

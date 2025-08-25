@@ -15,7 +15,10 @@
 
 use thiserror::Error;
 
-use crate::crypto::{cose::CoseError, raw_signature::RawSignerError, time_stamp::TimeStampError};
+use crate::{
+    crypto::{cose::CoseError, raw_signature::RawSignerError, time_stamp::TimeStampError},
+    soft_binding::resolution_api::SoftBindingResolutionApiError,
+};
 
 /// `Error` enumerates errors returned by most C2PA toolkit operations.
 #[derive(Debug, Error)]
@@ -302,14 +305,14 @@ pub enum Error {
     #[error("soft binding api is not supported for non-http/s uris, given `{0}`")]
     NotHttpOrHttps(String),
 
-    #[error("max results must be >1")]
-    MaxResultsTooSmall,
-
     #[error("unknown soft binding algorithm `{0}`")]
     UnknownSoftBindingAlgorithm(String),
 
     #[error("no soft binding resolution APIs for `{0}` were found")]
     NoSoftBindingResolutionApisFound(String),
+
+    #[error(transparent)]
+    SoftBinding(#[from] SoftBindingResolutionApiError),
 
     // --- third-party errors ---
     #[error(transparent)]
