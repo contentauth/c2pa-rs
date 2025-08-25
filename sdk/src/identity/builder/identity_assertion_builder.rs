@@ -381,7 +381,8 @@ mod tests {
 
         let mut builder = Builder::from_json(&manifest_json()).unwrap();
         builder
-            .add_ingredient_from_stream(parent_json(), format, &mut source)
+            .add_ingredient_from_stream_async(parent_json(), format, &mut source)
+            .await
             .unwrap();
 
         builder

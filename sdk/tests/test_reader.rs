@@ -13,6 +13,7 @@
 
 mod common;
 use c2pa::{validation_status, Error, Reader, Result};
+use c2pa_macros::c2pa_test_async;
 use common::{assert_err, compare_to_known_good, fixture_stream};
 #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
 use wasm_bindgen_test::wasm_bindgen_test;
@@ -68,12 +69,7 @@ fn test_reader_xca_jpg() -> Result<()> {
 }
 
 #[cfg(feature = "fetch_remote_manifests")]
-#[cfg(not(target_os = "wasi"))]
-#[cfg_attr(not(target_arch = "wasm32"), actix::test)]
-#[cfg_attr(
-    all(target_arch = "wasm32", not(target_os = "wasi")),
-    wasm_bindgen_test
-)]
+#[c2pa_test_async]
 async fn test_reader_remote_url_async() -> Result<()> {
     let reader = Reader::from_stream_async(
         "image/jpeg",
