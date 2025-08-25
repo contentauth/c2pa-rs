@@ -780,20 +780,20 @@ impl Reader {
                 validation_log.push_ingredient_uri(uri.clone());
             }
 
-            let manifest = self
-                .get_manifest(&current_label)
-                .ok_or(Error::ClaimMissing {
-                    label: current_label.clone(),
-                })?;
+            let manifest = match self.get_manifest(&current_label) {
+                Some(m) => m,
+                None => {
+                    // skip this manifest if not found
+                    continue;
+                }
+            };
 
             let mut partial_claim = crate::dynamic_assertion::PartialClaim::default();
             {
-                let claim = self
-                    .store
-                    .get_claim(&current_label)
-                    .ok_or(Error::ClaimEncoding)?;
-                for assertion in claim.assertions() {
-                    partial_claim.add_assertion(assertion);
+                if let Some(claim) = self.store.get_claim(&current_label) {
+                    for assertion in claim.assertions() {
+                        partial_claim.add_assertion(assertion);
+                    }
                 }
             }
 
