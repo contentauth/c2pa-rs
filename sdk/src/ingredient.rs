@@ -1653,6 +1653,8 @@ mod tests {
         );
     }
 
+    // Temporarily unavailable for wasm-bindgen until https://github.com/contentauth/c2pa-rs/pull/1325 lands
+    #[cfg(any(not(target_arch = "wasm32"), target_os = "wasi"))]
     #[cfg(feature = "fetch_remote_manifests")]
     #[c2pa_test_async]
     async fn test_jpg_cloud_from_memory() {

@@ -1608,10 +1608,7 @@ mod tests {
         crypto::raw_signature::SigningAlg,
         hash_stream_by_alg,
         settings::Settings,
-        utils::{
-            test::write_jpeg_placeholder_stream,
-            test_signer::{async_test_signer, test_signer},
-        },
+        utils::{test::write_jpeg_placeholder_stream, test_signer::test_signer},
         validation_results::ValidationState,
         HashedUri, Reader,
     };
