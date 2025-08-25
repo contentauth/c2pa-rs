@@ -264,6 +264,12 @@ impl Verifier<'_> {
     }
 }
 
+impl Default for Verifier<'_> {
+    fn default() -> Self {
+        Self::VerifyTrustPolicy(Cow::Owned(CertificateTrustPolicy::default()))
+    }
+}
+
 fn dump_cert_chain(certs: &[Vec<u8>]) -> Result<Vec<u8>, CoseError> {
     let mut writer = Vec::new();
 

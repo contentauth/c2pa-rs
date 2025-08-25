@@ -586,9 +586,11 @@ fn tool_tree() -> Result<(), Box<dyn Error>> {
 }
 
 #[test]
-// c2patool C_with_CAWG_data.jpg
+// c2patool --settings .../trust/cawg_test_settings.toml C_with_CAWG_data.jpg
 fn tool_read_image_with_cawg_data() -> Result<(), Box<dyn Error>> {
     Command::cargo_bin("c2patool")?
+        .arg("--settings")
+        .arg(fixture_path("trust/cawg_test_settings.toml"))
         .arg(fixture_path("C_with_CAWG_data.jpg"))
         .assert()
         .success()
@@ -599,9 +601,11 @@ fn tool_read_image_with_cawg_data() -> Result<(), Box<dyn Error>> {
 }
 
 #[test]
-// c2patool --detailed C_with_CAWG_data.jpg
+// c2patool --settings .../trust/cawg_test_settings.toml --detailed C_with_CAWG_data.jpg
 fn tool_read_image_with_details_with_cawg_data() -> Result<(), Box<dyn Error>> {
     Command::cargo_bin("c2patool")?
+        .arg("--settings")
+        .arg(fixture_path("trust/cawg_test_settings.toml"))
         .arg(fixture_path("C_with_CAWG_data.jpg"))
         .arg("--detailed")
         .assert()
