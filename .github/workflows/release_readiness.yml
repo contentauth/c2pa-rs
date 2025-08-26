@@ -151,9 +151,7 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: nightly-2025-05-14
-          # Pinning to specific nightly build for now. More recent versions seem
-          # be running doc tests that aren't intended for WASI.
+          toolchain: nightly-2025-08-25
 
       - name: Install wasmtime
         run: |
@@ -172,7 +170,7 @@ jobs:
           mv $(echo wasi-sdk-25.0-${ARCH}-${RUNNER_OS} | tr '[:upper:]' '[:lower:]') /opt/wasi-sdk
 
       - name: Add wasm32-wasip2 target
-        run: rustup target add --toolchain nightly-2025-05-14 wasm32-wasip2
+        run: rustup target add --toolchain nightly-2025-08-25 wasm32-wasip2
 
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
@@ -185,7 +183,7 @@ jobs:
           RUST_MIN_STACK: 16777216
           FEATURES: ${{needs.get-features.outputs.rust-native-features}}
         run: |
-          cargo +nightly-2025-05-14 test --target wasm32-wasip2 -p c2pa --features "$FEATURES" --no-default-features -- --no-capture
+          cargo +nightly-2025-08-25 test --target wasm32-wasip2 -p c2pa --features "$FEATURES" --no-default-features -- --no-capture
 
       # - name: Run WASI tests (c2patool)
       #   env:
@@ -195,7 +193,7 @@ jobs:
       #     RUST_MIN_STACK: 16777216
       #     FEATURES: ${{needs.get-features.outputs.rust-native-features}}
       #   run: |
-      #     cargo +nightly-2025-05-14 test --target wasm32-wasip2 -p c2patool --features "$FEATURES" --no-default-features -- --no-capture
+      #     cargo +nightly-2025-08-25 test --target wasm32-wasip2 -p c2patool --features "$FEATURES" --no-default-features -- --no-capture
 
   test-direct-minimal-versions:
     name: Unit tests with minimum versions of direct dependencies

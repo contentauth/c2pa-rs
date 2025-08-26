@@ -1655,6 +1655,8 @@ mod tests {
 
         let ingredient = Ingredient::from_memory("image/png", image_bytes).unwrap();
         assert!(ingredient.thumbnail().is_none());
+        #[cfg(target_os = "wasi")]
+        Settings::reset().unwrap();
     }
 
     #[c2pa_test_async]
