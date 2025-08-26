@@ -364,6 +364,7 @@ impl ManifestReport {
             Some(info) => SignatureReport {
                 alg: info.alg.map_or_else(String::new, |a| a.to_string()),
                 issuer: info.issuer_org,
+                common_name: info.common_name,
                 time: info.date.map(|d| d.to_rfc3339()),
             },
             None => SignatureReport::default(),
@@ -404,6 +405,11 @@ struct SignatureReport {
     // human readable issuing authority for this signature
     #[serde(skip_serializing_if = "Option::is_none")]
     issuer: Option<String>,
+
+    // human readable common name for this signature
+    #[serde(skip_serializing_if = "Option::is_none")]
+    common_name: Option<String>,
+
     // the time the signature was created
     #[serde(skip_serializing_if = "Option::is_none")]
     time: Option<String>,

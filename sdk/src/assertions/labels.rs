@@ -18,6 +18,9 @@
 //! These constants do not include version suffixes.
 //!
 //! See <https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_c2pa_standard_assertions>.
+use std::sync::LazyLock;
+
+use regex::Regex;
 
 /// Label prefix for a claim assertion.
 ///
@@ -176,6 +179,11 @@ pub const CREATIVE_WORK: &str = "stds.schema-org.CreativeWork";
 /// See <https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#timestamp_assertion>.
 pub const TIMESTAMP: &str = "c2pa.time-stamp";
 
+/// Label prefix for a certificate status assertion.
+///
+/// See <https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#certificate_status_assertion>.
+pub const CERTIFICATE_STATUS: &str = "c2pa.certificate-status";
+
 // Assertion store label
 pub(crate) const ASSERTION_STORE: &str = "c2pa.assertions";
 
@@ -184,8 +192,42 @@ pub(crate) const DATABOX_STORE: &str = "c2pa.databoxes";
 
 /// Label prefix for asset reference assertion.
 ///
-/// See <https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_asset_reference>
+/// See <https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_asset_reference>.
 pub const ASSET_REFERENCE: &str = "c2pa.asset-ref";
+
+/// extension to indicate a multipart hash
+///
+/// See <https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_multi_asset_hash>.
+pub const PART: &str = ".part";
+
+/// Label prefix for a C2PA metadata assertion.
+///
+/// A C2PA metadata assertion can only be used for [specific metadata fields]
+/// as described in the C2PA Technical Specification and only if those fields
+/// are generated from a hardware or software source.
+///
+/// See <https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_metadata>.
+///
+/// [specific metadata fields]: https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#metadata_annex
+pub const METADATA: &str = "c2pa.metadata";
+
+/// Label prefix for a [CAWG metadata assertion].
+///
+/// The CAWG metadata assertion is intended for human-generated metadata
+/// and may contain metadata from any documented schema.
+///
+/// [CAWG metadata assertion]: https://cawg.io/metadata/
+pub const CAWG_METADATA: &str = "cawg.metadata";
+
+/// Must have a label that ends in '.metadata' and is preceded by an entity-specific namespace.
+/// For example, a 'com.litware.metadata' assertion would be valid.
+pub static METADATA_LABEL_REGEX: LazyLock<Regex> = LazyLock::new(|| {
+    #[allow(clippy::unwrap_used)]
+    {
+        Regex::new(r"^(?:[a-zA-Z0-9][a-zA-Z0-9_-]*)(?:\.(?:[a-zA-Z0-9][a-zA-Z0-9_-]*))*\.metadata$")
+            .unwrap()
+    }
+});
 
 /// Return the version suffix from an assertion label if it exists.
 ///

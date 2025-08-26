@@ -13,7 +13,12 @@
 
 mod common;
 use c2pa::{validation_status, Error, Reader, Result};
+use c2pa_macros::c2pa_test_async;
 use common::{assert_err, compare_to_known_good, fixture_stream};
+#[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
+use wasm_bindgen_test::wasm_bindgen_test;
+#[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
+wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
 
 #[test]
 #[cfg(feature = "file_io")]
@@ -61,6 +66,21 @@ fn test_reader_xca_jpg() -> Result<()> {
         validation_status::ASSERTION_DATAHASH_MISMATCH
     );
     compare_to_known_good(&reader, "XCA.json")
+}
+
+#[cfg(feature = "fetch_remote_manifests")]
+#[c2pa_test_async]
+async fn test_reader_remote_url_async() -> Result<()> {
+    let reader = Reader::from_stream_async(
+        "image/jpeg",
+        std::io::Cursor::new(include_bytes!("./fixtures/cloud.jpg")),
+    )
+    .await?;
+    let remote_url = reader.remote_url();
+    assert_eq!(remote_url, Some("https://cai-manifests.adobe.com/manifests/adobe-urn-uuid-5f37e182-3687-462e-a7fb-573462780391"));
+    assert!(!reader.is_embedded());
+
+    Ok(())
 }
 
 #[test]

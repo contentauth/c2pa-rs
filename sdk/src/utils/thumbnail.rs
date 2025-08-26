@@ -99,6 +99,7 @@ impl fmt::Display for ThumbnailFormat {
 /// * `builder.thumbnail.ignore_errors`
 ///
 /// Read [make_thumbnail_from_stream] for more information.
+#[cfg_attr(feature = "v1_api", allow(dead_code))]
 #[cfg(feature = "file_io")]
 pub fn make_thumbnail_bytes_from_path(
     path: &std::path::Path,
