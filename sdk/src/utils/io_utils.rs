@@ -19,9 +19,8 @@ use std::{
     path::Path,
 };
 
-use tempfile::SpooledTempFile;
 #[allow(unused)] // different code path for WASI
-use tempfile::{tempdir, Builder, NamedTempFile, TempDir};
+use tempfile::{tempdir, Builder, NamedTempFile, SpooledTempFile, TempDir};
 
 use crate::{asset_io::rename_or_move, settings::get_settings_value, Error, Result};
 // Replace data at arbitrary location and len in a file.
@@ -119,6 +118,22 @@ pub(crate) fn stream_len<R: Read + Seek + ?Sized>(reader: &mut R) -> Result<u64>
     Ok(len)
 }
 
+#[cfg(target_arch = "wasm32")]
+fn stream_with_fs_fallback_wasm(
+    _threshold_override: Option<usize>,
+) -> Result<std::io::Cursor<Vec<u8>>> {
+    Ok(std::io::Cursor::new(Vec::new()))
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn stream_with_fs_fallback_file_io(threshold_override: Option<usize>) -> Result<SpooledTempFile> {
+    let threshold = threshold_override.unwrap_or(get_settings_value::<usize>(
+        "core.backing_store_memory_threshold_in_mb",
+    )?);
+
+    Ok(SpooledTempFile::new(threshold))
+}
+
 /// Will create a [Read], [Write], and [Seek] capable stream that will stay in memory
 /// as long as the threshold is not exceeded. The threshold is specified in MB in the
 /// settings under ""core.backing_store_memory_threshold_in_mb"
@@ -129,14 +144,16 @@ pub(crate) fn stream_len<R: Read + Seek + ?Sized>(reader: &mut R) -> Result<u64>
 ///
 /// # Errors
 /// - Returns an error if the threshold value from settings is not valid.
+///
+/// # Note
+/// This will return a an in-memory stream when the compilation target doesn't support file I/O.
 pub(crate) fn stream_with_fs_fallback(
     threshold_override: Option<usize>,
-) -> Result<SpooledTempFile> {
-    let threshold = threshold_override.unwrap_or(get_settings_value::<usize>(
-        "core.backing_store_memory_threshold_in_mb",
-    )?);
-
-    Ok(SpooledTempFile::new(threshold))
+) -> Result<impl Read + Write + Seek> {
+    #[cfg(target_arch = "wasm32")]
+    return stream_with_fs_fallback_wasm(threshold_override);
+    #[cfg(not(target_arch = "wasm32"))]
+    return stream_with_fs_fallback_file_io(threshold_override);
 }
 
 // Returns a new Vec first making sure it can hold the desired capacity.  Fill
@@ -408,9 +425,10 @@ mod tests {
         .is_err());
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn test_safe_stream_threshold_behavior() {
-        let mut stream = stream_with_fs_fallback(Some(10)).unwrap();
+        let mut stream = stream_with_fs_fallback_file_io(Some(10)).unwrap();
 
         // Less data written than required to write to the FS.
         let small_data = b"small"; // 5 bytes
@@ -423,9 +441,10 @@ mod tests {
         assert!(stream.is_rolled(), "data moved to disk");
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn test_safe_stream_no_threshold_behavior() {
-        let mut stream = stream_with_fs_fallback(None).unwrap();
+        let mut stream = stream_with_fs_fallback_file_io(None).unwrap();
 
         // Less data written than required to write to the FS.
         let small_data = b"small"; // 5 bytes
