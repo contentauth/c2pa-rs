@@ -1,10 +1,12 @@
 #[cfg(feature = "json_schema")]
 use schemars::JsonSchema;
 use serde::{de::DeserializeOwned, Deserialize, Serialize}; //,  Deserializer, Serializer};
+use serde_cbor::Value as CborValue;
 use serde_json::Value;
 
 use crate::{
     assertion::{AssertionBase, AssertionDecodeError},
+    assertions::labels,
     error::{Error, Result},
 };
 
@@ -21,8 +23,10 @@ pub enum ManifestAssertionKind {
 #[derive(Debug, Deserialize, Serialize, Clone)]
 #[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 #[serde(untagged)]
-enum ManifestData {
-    Json(Value),     // { label: String, instance: usize, data: Value },
+pub(crate) enum ManifestData {
+    Json(Value), // { label: String, instance: usize, data: Value },
+    #[cfg_attr(feature = "json_schema", schemars(skip))]
+    Cbor(CborValue),
     Binary(Vec<u8>), // ) { label: String, instance: usize, data: Value },
 }
 
@@ -33,13 +37,17 @@ pub struct ManifestAssertion {
     /// An assertion label in reverse domain format
     label: String,
     /// The data of the assertion as Value
-    data: ManifestData,
+    pub(crate) data: ManifestData,
     /// There can be more than one assertion for any label
     #[serde(skip_serializing_if = "Option::is_none")]
     instance: Option<usize>,
     /// The [ManifestAssertionKind] for this assertion (as stored in c2pa content)
     #[serde(skip_serializing_if = "Option::is_none")]
     kind: Option<ManifestAssertionKind>,
+    /// True if this assertion is attributed to the signer
+    /// This maps to a created vs a gathered assertion. (defaults to false)
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    created: bool,
 }
 
 impl ManifestAssertion {
@@ -50,6 +58,7 @@ impl ManifestAssertion {
             data: ManifestData::Json(data),
             instance: None,
             kind: None,
+            created: false,
         }
     }
 
@@ -68,12 +77,17 @@ impl ManifestAssertion {
         }
     }
 
+    /// Returns true if this assertion is created (as opposed to gathered)
+    pub fn created(&self) -> bool {
+        self.created
+    }
+
     /// The data of the assertion as a serde_Json::Value
     /// This will return UnsupportedType if the assertion data is binary
     pub fn value(&self) -> Result<&Value> {
         match &self.data {
             ManifestData::Json(d) => Ok(d),
-            ManifestData::Binary(_) => Err(Error::UnsupportedType),
+            _ => Err(Error::UnsupportedType),
         }
     }
 
@@ -81,8 +95,8 @@ impl ManifestAssertion {
     /// This will return UnsupportedType if the assertion data is Json/String
     pub fn binary(&self) -> Result<&[u8]> {
         match &self.data {
-            ManifestData::Json(_) => Err(Error::UnsupportedType),
             ManifestData::Binary(b) => Ok(b),
+            _ => Err(Error::UnsupportedType),
         }
     }
 
@@ -90,7 +104,7 @@ impl ManifestAssertion {
     /// If the same label is used for multiple assertions, incremental instances are added
     /// The first instance is always 1 and increased by 1 per duplicated label
     pub fn instance(&self) -> usize {
-        self.instance.unwrap_or(1)
+        self.instance.unwrap_or(labels::instance(&self.label))
     }
 
     /// The ManifestAssertionKind for this assertion
@@ -114,6 +128,12 @@ impl ManifestAssertion {
     /// For assertions like Schema.org that require being stored in Json format
     pub fn set_kind(mut self, kind: ManifestAssertionKind) -> Self {
         self.kind = Some(kind);
+        self
+    }
+
+    /// Allows setting whether this assertion is created (as opposed to gathered)
+    pub fn set_created(mut self, created: bool) -> Self {
+        self.created = created;
         self
     }
 
@@ -151,6 +171,7 @@ impl ManifestAssertion {
             ),
             instance: None,
             kind: Some(ManifestAssertionKind::Cbor),
+            created: false,
         })
     }
 

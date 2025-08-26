@@ -320,6 +320,7 @@ impl AssertionCbor for BoxHash {}
 impl AssertionJson for BoxHash {}
 
 impl AssertionBase for BoxHash {
+    const CREATED: bool = true;
     const LABEL: &'static str = Self::LABEL;
     const VERSION: Option<usize> = Some(ASSERTION_CREATION_VERSION);
 

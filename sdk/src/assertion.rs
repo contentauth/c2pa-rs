@@ -103,9 +103,15 @@ pub trait AssertionBase
 where
     Self: Sized,
 {
+    /// The label for this assertion (reverse domain format)
     const LABEL: &'static str = "unknown";
 
+    /// The version for this assertion (if any) Defaults to None/1
     const VERSION: Option<usize> = None;
+
+    /// Whether this assertion was created (as opposed to being a gathered)
+    /// This can be used when creating an assertion to tell where to add it.
+    const CREATED: bool = false;
 
     /// Returns a label for this assertion.
     fn label(&self) -> &str {
@@ -115,6 +121,11 @@ where
     /// Returns a version for this assertion.
     fn version(&self) -> Option<usize> {
         Self::VERSION
+    }
+
+    /// Returns true if this assertion was created (as opposed to gathered)
+    fn created(&self) -> bool {
+        Self::CREATED
     }
 
     /// Returns an Assertion upon success or Error otherwise.

@@ -267,6 +267,38 @@ pub fn version(label: &str) -> Option<usize> {
     None
 }
 
+/// Extract the instance number from a label (return 0 if none)
+///
+/// This function looks for a double underscore followed by a number
+/// in the label and returns that number as the instance. If no such
+/// pattern is found, it returns zero.
+/// "__0" is default and never part of a label.
+/// Invalid instances are also treated as zero.
+///
+/// # Examples
+/// ```
+/// use c2pa::assertions::labels;
+///
+/// assert_eq!(labels::instance("c2pa.ingredient"), 0);
+/// assert_eq!(labels::instance("c2pa.actions__1"), 1);
+/// assert_eq!(labels::instance("c2pa.ingredient.v3__2"), 2);
+/// assert_eq!(labels::instance("c2pa.ingredient__2"), 2);
+/// assert_eq!(labels::instance("c2pa.ingredient__x"), 0);
+/// assert_eq!(labels::instance("c2pa.ingredient__"), 0);
+/// ```
+pub fn instance(label: &str) -> usize {
+    let label_parts: Vec<&str> = label.split("__").collect();
+    let mut instance: usize = 0;
+
+    if label_parts.len() == 2 {
+        match label_parts[1].parse::<usize>() {
+            Ok(i) => instance = i,
+            _ => instance = 0,
+        }
+    }
+    instance
+}
+
 /// Set the version of a label.
 /// If the version is 1, the original label is returned.
 /// Otherwise, the label is suffixed with the version number.

@@ -30,7 +30,7 @@ use uuid::Uuid;
 use crate::{
     assertion::{AssertionBase, AssertionData},
     assertions::{labels, Actions, AssertionMetadata, EmbeddedData, SoftwareAgent},
-    claim::RemoteManifest,
+    claim::{ClaimAssertionType, RemoteManifest},
     crypto::raw_signature::SigningAlg,
     error::{Error, Result},
     hashed_uri::HashedUri,
@@ -672,6 +672,7 @@ impl Manifest {
             let assertion = claim_assertion.assertion();
             let label = claim_assertion.label();
             let base_label = assertion.label();
+            let created = claim_assertion.assertion_type() == ClaimAssertionType::Created;
             debug!("assertion = {}", &label);
             match base_label.as_ref() {
                 base if base.starts_with(labels::ACTIONS) => {
@@ -714,7 +715,8 @@ impl Manifest {
                         }
                     }
                     let manifest_assertion = ManifestAssertion::from_assertion(&actions)?
-                        .set_instance(claim_assertion.instance());
+                        .set_instance(claim_assertion.instance())
+                        .set_created(created);
                     manifest.assertions.push(manifest_assertion);
                 }
                 base if base.starts_with(labels::INGREDIENT) => {
@@ -748,7 +750,8 @@ impl Manifest {
                         AssertionData::Cbor(_) => {
                             let value = assertion.as_json_object()?;
                             let ma = ManifestAssertion::new(label, value)
-                                .set_instance(claim_assertion.instance());
+                                .set_instance(claim_assertion.instance())
+                                .set_created(created);
 
                             manifest.assertions.push(ma);
                         }
@@ -756,7 +759,8 @@ impl Manifest {
                             let value = assertion.as_json_object()?;
                             let ma = ManifestAssertion::new(label, value)
                                 .set_instance(claim_assertion.instance())
-                                .set_kind(ManifestAssertionKind::Json);
+                                .set_kind(ManifestAssertionKind::Json)
+                                .set_created(created);
 
                             manifest.assertions.push(ma);
                         }

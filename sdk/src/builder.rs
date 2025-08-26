@@ -28,7 +28,7 @@ use zip::{write::SimpleFileOptions, ZipArchive, ZipWriter};
 
 #[allow(deprecated)]
 use crate::{
-    assertion::AssertionDecodeError,
+    assertion::AssertionBase,
     assertions::{
         c2pa_action,
         labels::{self, METADATA_LABEL_REGEX},
@@ -40,6 +40,7 @@ use crate::{
     claim::Claim,
     error::{Error, Result},
     jumbf_io,
+    manifest_assertion::ManifestData,
     resource_store::{ResourceRef, ResourceResolver, ResourceStore},
     salt::DefaultSalt,
     settings::{
@@ -48,7 +49,8 @@ use crate::{
     },
     store::Store,
     utils::mime::format_to_mime,
-    AsyncSigner, ClaimGeneratorInfo, HashRange, HashedUri, Ingredient, Relationship, Signer,
+    AsyncSigner, ClaimGeneratorInfo, HashRange, HashedUri, Ingredient, ManifestAssertion,
+    ManifestAssertionKind, Relationship, Signer,
 };
 
 /// Version of the Builder Archive file
@@ -96,8 +98,8 @@ pub struct ManifestDefinition {
     pub ingredients: Vec<Ingredient>,
 
     /// A list of assertions
-    #[serde(default = "default_vec::<AssertionDefinition>")]
-    pub assertions: Vec<AssertionDefinition>,
+    #[serde(default = "default_vec::<ManifestAssertion>")]
+    pub assertions: Vec<ManifestAssertion>,
 
     /// A list of redactions - URIs to redacted assertions.
     pub redactions: Option<Vec<String>>,
@@ -134,39 +136,46 @@ pub enum AssertionData {
     Json(serde_json::Value),
 }
 
-/// Defines an assertion that consists of a label that can be either
-/// a C2PA-defined assertion label or a custom label in reverse domain format.
-#[derive(Debug, Deserialize, Serialize, Clone)]
-#[cfg_attr(feature = "json_schema", derive(JsonSchema))]
-#[non_exhaustive]
-pub struct AssertionDefinition {
-    pub label: String,
-    pub data: AssertionData,
-}
-impl AssertionDefinition {
-    pub(crate) fn to_assertion<T: DeserializeOwned>(&self) -> Result<T> {
-        match &self.data {
-            AssertionData::Json(value) => serde_json::from_value(value.clone()).map_err(|e| {
-                Error::AssertionDecoding(AssertionDecodeError::from_err(
-                    self.label.to_owned(),
-                    None,
-                    "application/json".to_owned(),
-                    e,
-                ))
-            }),
-            AssertionData::Cbor(value) => {
-                serde_cbor::value::from_value(value.clone()).map_err(|e| {
-                    Error::AssertionDecoding(AssertionDecodeError::from_err(
-                        self.label.to_owned(),
-                        None,
-                        "application/cbor".to_owned(),
-                        e,
-                    ))
-                })
-            }
-        }
-    }
-}
+// /// Defines an assertion that consists of a label that can be either
+// /// a C2PA-defined assertion label or a custom label in reverse domain format.
+// #[derive(Debug, Deserialize, Serialize, Clone)]
+// #[cfg_attr(feature = "json_schema", derive(JsonSchema))]
+// #[non_exhaustive]
+// pub struct AssertionDefinition {
+//     /// An assertion label in reverse domain format
+//     pub label: String,
+//     /// The assertion data
+//     pub data: ManifestData,
+//     /// True if this assertion is attributed to the signer (defaults to false)
+//     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+//     pub created: bool,
+// }
+
+// impl AssertionDefinition {
+//     pub(crate) fn to_assertion<T: DeserializeOwned>(&self) -> Result<T> {
+//         match &self.data {
+//             ManifestData::Json(value) => serde_json::from_value(value.clone()).map_err(|e| {
+//                 Error::AssertionDecoding(AssertionDecodeError::from_err(
+//                     self.label.to_owned(),
+//                     None,
+//                     "application/json".to_owned(),
+//                     e,
+//                 ))
+//             }),
+//             ManifestData::Cbor(value) => {
+//                 serde_cbor::value::from_value(value.clone()).map_err(|e| {
+//                     Error::AssertionDecoding(AssertionDecodeError::from_err(
+//                         self.label.to_owned(),
+//                         None,
+//                         "application/cbor".to_owned(),
+//                         e,
+//                     ))
+//                 })
+//             }
+//             _ => Err(Error::UnsupportedType),
+//         }
+//     }
+// }
 
 /// Represents the type of builder flow being used.
 ///
@@ -470,7 +479,7 @@ impl Builder {
     ///
     /// # Arguments
     /// * `label` - A label for the assertion.
-    /// * `data` - The data for the assertion. The data is any Serde-serializable type.
+    /// * `data` - The data for the assertion. The data can be any Serde-serializable type or an AssertionDefinition.
     /// # Returns
     /// * A mutable reference to the [`Builder`].
     /// # Errors
@@ -480,10 +489,10 @@ impl Builder {
         S: Into<String>,
         T: Serialize,
     {
-        self.definition.assertions.push(AssertionDefinition {
-            label: label.into(),
-            data: AssertionData::Cbor(serde_cbor::value::to_value(data)?),
-        });
+        self.definition
+            .assertions
+            .push(ManifestAssertion::from_labeled_assertion(label, data)?);
+
         Ok(self)
     }
 
@@ -502,10 +511,21 @@ impl Builder {
         S: Into<String>,
         T: Serialize,
     {
-        self.definition.assertions.push(AssertionDefinition {
-            label: label.into(),
-            data: AssertionData::Json(serde_json::to_value(data)?),
-        });
+        let m_assertion = ManifestAssertion::from_labeled_assertion(label, data)?
+            .set_kind(ManifestAssertionKind::Json);
+        self.definition.assertions.push(m_assertion);
+        Ok(self)
+    }
+
+    /// Adds an AssertionDefinition directly to the manifest.
+    /// This allows full control over the assertion including the created field.
+    ///
+    /// # Arguments
+    /// * `assertion_def` - The AssertionDefinition to add.
+    /// # Returns
+    /// * A mutable reference to the [`Builder`].
+    pub fn add_manifest_assertion(&mut self, assertion: ManifestAssertion) -> Result<&mut Self> {
+        self.definition.assertions.push(assertion);
         Ok(self)
     }
 
@@ -545,7 +565,7 @@ impl Builder {
             .definition
             .assertions
             .iter()
-            .position(|a| a.label == Actions::LABEL)
+            .position(|a| a.label() == Actions::LABEL)
         {
             // Remove and use the existing actions assertion
             let assertion_def = self.definition.assertions.remove(pos);
@@ -771,6 +791,19 @@ impl Builder {
 
     // Convert a Manifest into a Claim
     fn to_claim(&self) -> Result<Claim> {
+        // utility function to add created or gathered assertions
+        fn add_assertion(
+            claim: &mut Claim,
+            assertion: &impl AssertionBase,
+            created: bool,
+        ) -> Result<HashedUri> {
+            if created {
+                claim.add_assertion_with_salt(assertion, &DefaultSalt::default())
+            } else {
+                claim.add_gathered_assertion_with_salt(assertion, &DefaultSalt::default())
+            }
+        }
+
         let definition = &self.definition;
         let mut claim_generator_info = definition.claim_generator_info.clone();
 
@@ -869,7 +902,8 @@ impl Builder {
                     )
                     .into()
                 };
-                claim.add_assertion_with_salt(&thumbnail, &salt)?;
+                // todo: add setting for created added thumbnails
+                add_assertion(&mut claim, &thumbnail, false)?;
             }
         }
 
@@ -898,7 +932,7 @@ impl Builder {
         let mut found_actions = false;
         // add any additional assertions
         for manifest_assertion in &definition.assertions {
-            match manifest_assertion.label.as_str() {
+            match manifest_assertion.label() {
                 l if l.starts_with(Actions::LABEL) => {
                     found_actions = true;
 
@@ -982,8 +1016,7 @@ impl Builder {
                             }
                         }
                     }
-
-                    claim.add_assertion(&actions)
+                    add_assertion(&mut claim, &actions, manifest_assertion.created())
                 }
                 #[allow(deprecated)]
                 CreativeWork::LABEL => {
@@ -992,7 +1025,7 @@ impl Builder {
                 }
                 Exif::LABEL => {
                     let exif: Exif = manifest_assertion.to_assertion()?;
-                    claim.add_gathered_assertion_with_salt(&exif, &salt)
+                    add_assertion(&mut claim, &exif, manifest_assertion.created())
                 }
                 BoxHash::LABEL => {
                     let box_hash: BoxHash = manifest_assertion.to_assertion()?;
@@ -1008,17 +1041,20 @@ impl Builder {
                 }
                 l if METADATA_LABEL_REGEX.is_match(l) => {
                     let metadata: Metadata = manifest_assertion.to_assertion()?;
-                    claim.add_gathered_assertion_with_salt(&metadata, &salt)
+                    add_assertion(&mut claim, &metadata, manifest_assertion.created())
                 }
                 _ => match &manifest_assertion.data {
-                    AssertionData::Json(value) => claim.add_gathered_assertion_with_salt(
-                        &User::new(&manifest_assertion.label, &serde_json::to_string(&value)?),
-                        &salt,
+                    ManifestData::Json(value) => add_assertion(
+                        &mut claim,
+                        &User::new(manifest_assertion.label(), &serde_json::to_string(&value)?),
+                        manifest_assertion.created(),
                     ),
-                    AssertionData::Cbor(value) => claim.add_gathered_assertion_with_salt(
-                        &UserCbor::new(&manifest_assertion.label, serde_cbor::to_vec(value)?),
-                        &salt,
+                    ManifestData::Cbor(value) => add_assertion(
+                        &mut claim,
+                        &UserCbor::new(manifest_assertion.label(), serde_cbor::to_vec(value)?),
+                        manifest_assertion.created(),
                     ),
+                    _ => Err(Error::UnsupportedType),
                 },
             }?;
         }
@@ -1028,7 +1064,8 @@ impl Builder {
             Self::add_actions_assertion_settings(&ingredient_map, &mut actions)?;
 
             if !actions.actions().is_empty() {
-                claim.add_assertion(&actions)?;
+                // todo: add setting for created added actions
+                add_assertion(&mut claim, &actions, false)?;
             }
         }
 
@@ -1270,8 +1307,11 @@ impl Builder {
 
     // Find an assertion in the manifest.
     pub(crate) fn find_assertion<T: DeserializeOwned>(&self, label: &str) -> Result<T> {
-        if let Some(manifest_assertion) =
-            self.definition.assertions.iter().find(|a| a.label == label)
+        if let Some(manifest_assertion) = self
+            .definition
+            .assertions
+            .iter()
+            .find(|a| a.label() == label)
         {
             manifest_assertion.to_assertion()
         } else {
@@ -1754,7 +1794,7 @@ mod tests {
         assert_eq!(definition.thumbnail, Some(thumbnail_ref));
         assert_eq!(definition.ingredients[0].title(), Some("Parent Test"));
         assert_eq!(
-            definition.assertions[0].label,
+            definition.assertions[0].label(),
             "org.test.assertion".to_string()
         );
         assert_eq!(definition.label, Some("ABCDE".to_string()));
@@ -1785,9 +1825,9 @@ mod tests {
             "thumbnail.jpg"
         );
         assert_eq!(definition.ingredients[0].title(), Some("Test"));
-        assert_eq!(definition.assertions[0].label, "c2pa.actions".to_string());
+        assert_eq!(definition.assertions[0].label(), "c2pa.actions".to_string());
         assert_eq!(
-            definition.assertions[1].label,
+            definition.assertions[1].label(),
             "org.test.assertion".to_string()
         );
 
@@ -2759,9 +2799,7 @@ mod tests {
             .expect("builder sign");
 
         output.set_position(0);
-        println!("output len: {}", output.get_ref().len());
         let reader = Reader::from_stream("jpeg", &mut output).expect("from_bytes");
-        println!("reader = {reader}");
         let m = reader.active_manifest().unwrap();
 
         //println!("after = {m}");
