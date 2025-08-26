@@ -290,10 +290,6 @@ pub(crate) fn fetch_and_check_ocsp_response(
     let certs = cert_chain_from_sign1(sign1)?;
 
     let ocsp_der: Vec<u8> = if _sync {
-        // No sync version of fetch_ocsp_response for wasm-bindgen
-        #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
-        return Ok(OcspResponse::default());
-        #[cfg(any(not(target_arch = "wasm32"), target_os = "wasi"))]
         match crate::crypto::ocsp::fetch_ocsp_response(&certs) {
             Some(der) => der,
             None => return Ok(OcspResponse::default()),

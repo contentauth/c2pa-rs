@@ -318,9 +318,6 @@ const DATE_FMT: &str = "%Y-%m-%d %H:%M:%S %Z";
 
 mod fetch;
 
-#[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
-pub(crate) use fetch::fetch_ocsp_response_async;
-#[cfg(any(not(target_arch = "wasm32"), target_os = "wasi"))]
 pub(crate) use fetch::{fetch_ocsp_response, fetch_ocsp_response_async};
 
 #[cfg(test)]

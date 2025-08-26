@@ -261,6 +261,12 @@ pub(crate) async fn fetch_ocsp_response_async(certs: &[Vec<u8>]) -> Option<Vec<u
     None
 }
 
+// No sync version of fetch_ocsp_response for wasm-bindgen
+#[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
+pub(crate) fn fetch_ocsp_response(_certs: &[Vec<u8>]) -> Option<Vec<u8>> {
+    None
+}
+
 #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
 pub(crate) async fn fetch_ocsp_response_async(certs: &[Vec<u8>]) -> Option<Vec<u8>> {
     use reqwest::Client;
