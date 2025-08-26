@@ -100,6 +100,7 @@ impl fmt::Display for ThumbnailFormat {
 ///
 /// Read [make_thumbnail_from_stream] for more information.
 #[cfg(feature = "file_io")]
+#[cfg(feature = "v1_api")]
 pub fn make_thumbnail_bytes_from_path(
     path: &std::path::Path,
 ) -> Result<Option<(ThumbnailFormat, Vec<u8>)>> {
@@ -487,6 +488,7 @@ pub mod tests {
     }
 
     #[test]
+    #[cfg(feature = "v1_api")]
     #[cfg(feature = "file_io")]
     fn test_make_thumbnail_bytes_from_path() {
         use std::path::Path;
