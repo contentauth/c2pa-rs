@@ -158,16 +158,9 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-// use openssl::{error::ErrorStack, pkey::PKey};
-// #[cfg(feature = "openssl")]
-// fn ed_sign(data: &[u8], pkey: &[u8]) -> std::result::Result<Vec<u8>, ErrorStack> {
-//     let pkey = PKey::private_key_from_pem(pkey)?;
-//     let mut signer = openssl::sign::Signer::new_without_digest(&pkey)?;
-//     signer.sign_oneshot_to_vec(data)
-// }
-
 #[cfg(test)]
 mod tests {
+    use c2pa_macros::c2pa_test_async;
     #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
     use wasm_bindgen_test::*;
 
