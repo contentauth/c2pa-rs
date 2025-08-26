@@ -408,6 +408,13 @@ impl Action {
         self.changes.as_deref()
     }
 
+    /// Returns the description of the action.
+    ///
+    /// This field is only applicable to the v2 assertion.
+    pub fn description(&self) -> Option<&str> {
+        self.description.as_deref()
+    }
+
     /// Returns the additional parameters for this action.
     ///
     /// These vary by the type of action.
@@ -541,6 +548,15 @@ impl Action {
     /// Sets the array of [`Actor`]s that undertook this action.
     pub fn set_actors(mut self, actors: Option<&Vec<Actor>>) -> Self {
         self.actors = actors.cloned();
+        self
+    }
+
+    /// Sets the description of the action.
+    ///
+    /// This is only present in the v2 actions assertion.
+    /// See <https://spec.c2pa.org/specifications/specifications/1.4/specs/C2PA_Specification.html#_actions>
+    pub fn set_description<S: Into<String>>(mut self, description: S) -> Self {
+        self.description = Some(description.into());
         self
     }
 
@@ -895,7 +911,8 @@ pub mod tests {
                             ..Default::default()
                         }],
                         ..Default::default()
-                    }),
+                    })
+                    .set_description("Apply a gaussian blur to the image"),
             )
             .add_metadata(
                 AssertionMetadata::new()
@@ -930,6 +947,11 @@ pub mod tests {
         assert_eq!(
             result.metadata.unwrap().date_time(),
             original.metadata.unwrap().date_time()
+        );
+        assert!(result.actions[0].description().is_none());
+        assert_eq!(
+            result.actions[1].description(),
+            Some("Apply a gaussian blur to the image")
         );
     }
 
