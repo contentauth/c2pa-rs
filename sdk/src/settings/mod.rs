@@ -173,6 +173,7 @@ pub(crate) struct Core {
     compress_manifests: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     max_memory_usage: Option<u64>,
+    backing_store_memory_threshold_in_mb: usize,
     // TODO: pending https://github.com/contentauth/c2pa-rs/pull/1180
     // prefer_update_manifests: bool,
 }
@@ -189,6 +190,7 @@ impl Default for Core {
             merkle_tree_max_proofs: 5,
             compress_manifests: true,
             max_memory_usage: None,
+            backing_store_memory_threshold_in_mb: 128,
             // prefer_update_manifests: true,
         }
     }

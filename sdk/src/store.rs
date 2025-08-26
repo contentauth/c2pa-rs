@@ -80,7 +80,8 @@ use crate::{
     status_tracker::{ErrorBehavior, StatusTracker},
     utils::{
         hash_utils::HashRange,
-        io_utils::{insert_data_at, safe_vec, stream_len},
+        io_utils,
+        io_utils::{insert_data_at, stream_len},
         is_zero,
         patch::patch_bytes,
     },
@@ -94,7 +95,6 @@ use crate::{
 use crate::{external_manifest::ManifestPatchCallback, RemoteSigner};
 
 const MANIFEST_STORE_EXT: &str = "c2pa"; // file extension for external manifests
-const MANIFEST_RESERVE_SIZE: usize = 10 * 1024 * 1024; // 10MB reserve size for manifest
 
 pub(crate) struct ManifestHashes {
     pub manifest_box_hash: Vec<u8>,
@@ -2710,11 +2710,7 @@ impl Store {
                 .await?
         };
 
-        let intermediate_output: Vec<u8> = safe_vec(
-            stream_len(input_stream)? + MANIFEST_RESERVE_SIZE as u64,
-            None,
-        )?;
-        let mut intermediate_stream = Cursor::new(intermediate_output);
+        let mut intermediate_stream = io_utils::stream_with_fs_fallback(None)?;
 
         #[allow(unused_mut)] // Not mutable in the non-async case.
         let mut jumbf_bytes = self.start_save_stream(
@@ -3236,12 +3232,7 @@ impl Store {
         output_stream: &mut dyn CAIReadWrite,
         reserve_size: usize,
     ) -> Result<Vec<u8>> {
-        // make sure we can hold the intermediate stream before attempting
-        let intermediate_output: Vec<u8> = safe_vec(
-            stream_len(input_stream)? + MANIFEST_RESERVE_SIZE as u64,
-            None,
-        )?;
-        let mut intermediate_stream = Cursor::new(intermediate_output);
+        let mut intermediate_stream = io_utils::stream_with_fs_fallback(None)?;
 
         let pc = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
 
@@ -3267,11 +3258,7 @@ impl Store {
                     .get_writer(format)
                     .ok_or(Error::UnsupportedType)?;
 
-                let tmp_output: Vec<u8> = safe_vec(
-                    stream_len(input_stream)? + MANIFEST_RESERVE_SIZE as u64,
-                    None,
-                )?;
-                let mut tmp_stream = Cursor::new(tmp_output);
+                let mut tmp_stream = io_utils::stream_with_fs_fallback(None)?;
                 manifest_writer.remove_cai_store_from_stream(input_stream, &mut tmp_stream)?;
 
                 // add external ref if possible
@@ -3315,11 +3302,7 @@ impl Store {
 
                 // insert UUID boxes at the correct location if required
                 if let Some(merkle_uuid_boxes) = &bmff_hash.merkle_uuid_boxes {
-                    let temp_data: Vec<u8> = safe_vec(
-                        stream_len(&mut intermediate_stream)? + MANIFEST_RESERVE_SIZE as u64,
-                        None,
-                    )?;
-                    let mut temp_stream = Cursor::new(temp_data);
+                    let mut temp_stream = io_utils::stream_with_fs_fallback(None)?;
 
                     insert_data_at(
                         &mut intermediate_stream,

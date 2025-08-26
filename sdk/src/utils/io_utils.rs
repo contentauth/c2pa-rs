@@ -19,10 +19,11 @@ use std::{
     path::Path,
 };
 
+use tempfile::SpooledTempFile;
 #[allow(unused)] // different code path for WASI
 use tempfile::{tempdir, Builder, NamedTempFile, TempDir};
 
-use crate::{asset_io::rename_or_move, Error, Result};
+use crate::{asset_io::rename_or_move, settings::get_settings_value, Error, Result};
 // Replace data at arbitrary location and len in a file.
 // start_location is where the replacement data will start
 // replace_len is how many bytes from source to replaced starting a start_location
@@ -116,6 +117,26 @@ pub(crate) fn stream_len<R: Read + Seek + ?Sized>(reader: &mut R) -> Result<u64>
     }
 
     Ok(len)
+}
+
+/// Will create a [Read], [Write], and [Seek] capable stream that will stay in memory
+/// as long as the threshold is not exceeded. The threshold is specified in MB in the
+/// settings under ""core.backing_store_memory_threshold_in_mb"
+///
+/// # Parameters
+/// - `threshold_override`: Optional override for the threshold value in MB. If provided, this
+///   value will be used instead of the one from settings.
+///
+/// # Errors
+/// - Returns an error if the threshold value from settings is not valid.
+pub(crate) fn stream_with_fs_fallback(
+    threshold_override: Option<usize>,
+) -> Result<SpooledTempFile> {
+    let threshold = threshold_override.unwrap_or(get_settings_value::<usize>(
+        "core.backing_store_memory_threshold_in_mb",
+    )?);
+
+    Ok(SpooledTempFile::new(threshold))
 }
 
 // Returns a new Vec first making sure it can hold the desired capacity.  Fill
@@ -385,5 +406,40 @@ mod tests {
             &[],
         )
         .is_err());
+    }
+
+    #[test]
+    fn test_safe_stream_threshold_behavior() {
+        let mut stream = stream_with_fs_fallback(Some(10)).unwrap();
+
+        // Less data written than required to write to the FS.
+        let small_data = b"small"; // 5 bytes
+        stream.write_all(small_data).unwrap();
+        assert!(!stream.is_rolled(), "data still in memory");
+
+        // Adds more data to exceed the threshold.
+        let large_data = b"this is larger than 10 bytes total";
+        stream.write_all(large_data).unwrap();
+        assert!(stream.is_rolled(), "data moved to disk");
+    }
+
+    #[test]
+    fn test_safe_stream_no_threshold_behavior() {
+        let mut stream = stream_with_fs_fallback(None).unwrap();
+
+        // Less data written than required to write to the FS.
+        let small_data = b"small"; // 5 bytes
+        stream.write_all(small_data).unwrap();
+        assert!(!stream.is_rolled(), "data still in memory");
+
+        let large_data = vec![0; 1024 * 1024]; // 1MB.
+        let threshold =
+            get_settings_value::<usize>("core.backing_store_memory_threshold_in_mb").unwrap();
+
+        for _ in 0..threshold {
+            stream.write_all(&large_data).unwrap();
+        }
+
+        assert!(stream.is_rolled(), "data moved to disk");
     }
 }
