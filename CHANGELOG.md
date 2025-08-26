@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.60.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.59.1...c2pa-v0.60.0)
+_26 August 2025_
+
+### Added
+
+* *(sdk)* Falls back to fs for large intermediate streams ([#1341](https://github.com/contentauth/c2pa-rs/pull/1341))
+* Add ability to set/get the description for an action. ([#1276](https://github.com/contentauth/c2pa-rs/pull/1276))
+
+### Fixed
+
+* Ingredient thumbnail generation respect settings ([#1332](https://github.com/contentauth/c2pa-rs/pull/1332))
+* Fix a regression for invalid manifest handling and reader creation ([#1312](https://github.com/contentauth/c2pa-rs/pull/1312))
+* Fix test
+
+### Other
+
+* Fix docs and dead code lint ([#1340](https://github.com/contentauth/c2pa-rs/pull/1340))
+
 ## [0.59.1](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.59.0...c2pa-v0.59.1)
 _15 August 2025_
 
