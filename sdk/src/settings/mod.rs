@@ -190,7 +190,7 @@ impl Default for Core {
             merkle_tree_max_proofs: 5,
             compress_manifests: true,
             max_memory_usage: None,
-            backing_store_memory_threshold_in_mb: 128,
+            backing_store_memory_threshold_in_mb: 512,
             // prefer_update_manifests: true,
         }
     }
