@@ -318,7 +318,7 @@ jobs:
       github.event.pull_request.author_association == 'COLLABORATOR' ||
       github.event.pull_request.author_association == 'MEMBER' ||
       github.event.pull_request.user.login == 'dependabot[bot]' ||
-      contains(github.event.pull_request.labels.*.name, 'benchmark')
+      contains(github.event.pull_request.labels.*.name, 'safe to test')
 
     runs-on: ubuntu-latest
 
