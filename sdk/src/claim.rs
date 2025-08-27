@@ -3325,7 +3325,7 @@ impl Claim {
             .filter(|x| METADATA_LABEL_REGEX.is_match(&x.label_raw()))
             .collect();
 
-        // we don't include c2pa.assertions.metadata
+        // we don't include c2pa.assertion.metadata
         mda.retain(|a| a.label() != ASSERTION_METADATA);
 
         mda
