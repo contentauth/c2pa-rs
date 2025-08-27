@@ -173,6 +173,7 @@ pub(crate) struct Core {
     compress_manifests: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     max_memory_usage: Option<u64>,
+    backing_store_memory_threshold_in_mb: usize,
     // TODO: pending https://github.com/contentauth/c2pa-rs/pull/1180
     // prefer_update_manifests: bool,
 }
@@ -189,6 +190,7 @@ impl Default for Core {
             merkle_tree_max_proofs: 5,
             compress_manifests: true,
             max_memory_usage: None,
+            backing_store_memory_threshold_in_mb: 512,
             // prefer_update_manifests: true,
         }
     }
@@ -248,7 +250,10 @@ const MINOR_VERSION: usize = 0;
 pub struct Settings {
     version_major: usize,
     version_minor: usize,
+    // TODO (https://github.com/contentauth/c2pa-rs/issues/1314):
+    // Rename to c2pa_trust? Discuss possibly breaking change.
     trust: Trust,
+    cawg_trust: Trust,
     core: Core,
     verify: Verify,
     builder: BuilderSettings,
@@ -422,6 +427,7 @@ impl Default for Settings {
             version_major: MAJOR_VERSION,
             version_minor: MINOR_VERSION,
             trust: Default::default(),
+            cawg_trust: Default::default(),
             core: Default::default(),
             verify: Default::default(),
             builder: Default::default(),
@@ -441,8 +447,8 @@ impl SettingsValidate for Settings {
             signer.validate()?;
         }
         self.trust.validate()?;
+        self.cawg_trust.validate()?;
         self.core.validate()?;
-        self.trust.validate()?;
         self.builder.validate()
     }
 }
@@ -519,6 +525,7 @@ pub mod tests {
 
         assert_eq!(settings.core, Core::default());
         assert_eq!(settings.trust, Trust::default());
+        assert_eq!(settings.cawg_trust, Trust::default());
         assert_eq!(settings.verify, Verify::default());
         assert_eq!(settings.builder, BuilderSettings::default());
 

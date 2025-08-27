@@ -84,7 +84,8 @@ use crate::{
     status_tracker::{ErrorBehavior, StatusTracker},
     utils::{
         hash_utils::HashRange,
-        io_utils::{insert_data_at, safe_vec, stream_len},
+        io_utils,
+        io_utils::{insert_data_at, stream_len},
         is_zero,
         patch::patch_bytes,
     },
@@ -98,7 +99,6 @@ use crate::{
 use crate::{external_manifest::ManifestPatchCallback, RemoteSigner};
 
 const MANIFEST_STORE_EXT: &str = "c2pa"; // file extension for external manifests
-const MANIFEST_RESERVE_SIZE: usize = 10 * 1024 * 1024; // 10MB reserve size for manifest
 
 pub(crate) struct ManifestHashes {
     pub manifest_box_hash: Vec<u8>,
@@ -2788,11 +2788,7 @@ impl Store {
                 .await?
         };
 
-        let intermediate_output: Vec<u8> = safe_vec(
-            stream_len(input_stream)? + MANIFEST_RESERVE_SIZE as u64,
-            None,
-        )?;
-        let mut intermediate_stream = Cursor::new(intermediate_output);
+        let mut intermediate_stream = io_utils::stream_with_fs_fallback(None)?;
 
         #[allow(unused_mut)] // Not mutable in the non-async case.
         let mut jumbf_bytes = self.start_save_stream(
@@ -3314,12 +3310,7 @@ impl Store {
         output_stream: &mut dyn CAIReadWrite,
         reserve_size: usize,
     ) -> Result<Vec<u8>> {
-        // make sure we can hold the intermediate stream before attempting
-        let intermediate_output: Vec<u8> = safe_vec(
-            stream_len(input_stream)? + MANIFEST_RESERVE_SIZE as u64,
-            None,
-        )?;
-        let mut intermediate_stream = Cursor::new(intermediate_output);
+        let mut intermediate_stream = io_utils::stream_with_fs_fallback(None)?;
 
         let pc = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
 
@@ -3345,11 +3336,7 @@ impl Store {
                     .get_writer(format)
                     .ok_or(Error::UnsupportedType)?;
 
-                let tmp_output: Vec<u8> = safe_vec(
-                    stream_len(input_stream)? + MANIFEST_RESERVE_SIZE as u64,
-                    None,
-                )?;
-                let mut tmp_stream = Cursor::new(tmp_output);
+                let mut tmp_stream = io_utils::stream_with_fs_fallback(None)?;
                 manifest_writer.remove_cai_store_from_stream(input_stream, &mut tmp_stream)?;
 
                 // add external ref if possible
@@ -3393,11 +3380,7 @@ impl Store {
 
                 // insert UUID boxes at the correct location if required
                 if let Some(merkle_uuid_boxes) = &bmff_hash.merkle_uuid_boxes {
-                    let temp_data: Vec<u8> = safe_vec(
-                        stream_len(&mut intermediate_stream)? + MANIFEST_RESERVE_SIZE as u64,
-                        None,
-                    )?;
-                    let mut temp_stream = Cursor::new(temp_data);
+                    let mut temp_stream = io_utils::stream_with_fs_fallback(None)?;
 
                     insert_data_at(
                         &mut intermediate_stream,
@@ -4986,6 +4969,7 @@ pub mod tests {
 
         use std::{fs, io::Write};
 
+        use c2pa_macros::c2pa_test_async;
         use memchr::memmem;
         use serde::Serialize;
         #[cfg(all(feature = "file_io", feature = "v1_api"))]
@@ -5406,8 +5390,7 @@ pub mod tests {
             assert_eq!(memmem::find(&buf, &original_jumbf[0..1024]), None);
         }
 
-        #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
-        #[cfg_attr(target_os = "wasi", wstd::test)]
+        #[c2pa_test_async]
         async fn test_jumbf_generation_async() {
             let signer = async_test_signer(SigningAlg::Ps256);
 
@@ -5471,8 +5454,7 @@ pub mod tests {
         }
 
         #[cfg(feature = "v1_api")]
-        #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
-        #[cfg_attr(target_os = "wasi", wstd::test)]
+        #[c2pa_test_async]
         async fn test_jumbf_generation_remote() {
             // test adding to actual image
             let ap = fixture_path("earth_apollo17.jpg");
@@ -7731,10 +7713,9 @@ pub mod tests {
             }
         }
 
-        #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
-        #[cfg_attr(target_os = "wasi", wstd::test)]
         #[cfg(feature = "file_io")]
         #[cfg(feature = "v1_api")]
+        #[c2pa_test_async]
         async fn test_jumbf_generation_stream() {
             let file_buffer = include_bytes!("../tests/fixtures/earth_apollo17.jpg").to_vec();
             // convert buffer to cursor with Read/Write/Seek capability
@@ -7835,10 +7816,9 @@ pub mod tests {
             }
         }
 
-        #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
-        #[cfg_attr(target_os = "wasi", wstd::test)]
         #[cfg(feature = "file_io")]
         #[cfg(feature = "v1_api")]
+        #[c2pa_test_async]
         async fn test_boxhash_embeddable_manifest_async() {
             // test adding to actual image
             let ap = fixture_path("boxhash.jpg");
@@ -8003,10 +7983,9 @@ pub mod tests {
             assert!(!report.has_any_error());
         }
 
-        #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
-        #[cfg_attr(target_os = "wasi", wstd::test)]
         #[cfg(feature = "file_io")]
         #[cfg(feature = "v1_api")]
+        #[c2pa_test_async]
         async fn test_datahash_embeddable_manifest_async() {
             // test adding to actual image
             use std::io::SeekFrom;
@@ -8468,9 +8447,8 @@ pub mod tests {
             // std::fs::write("target/test.jpg", result).unwrap();
         }
 
-        #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
-        #[cfg_attr(target_os = "wasi", wstd::test)]
         #[cfg(feature = "v1_api")]
+        #[c2pa_test_async]
         async fn test_async_dynamic_assertions() {
             use async_trait::async_trait;
 
@@ -8756,18 +8734,14 @@ pub mod tests {
         #![allow(clippy::panic)]
         use std::io::Cursor;
 
+        use c2pa_macros::c2pa_test_async;
         #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
         use wasm_bindgen_test::wasm_bindgen_test;
 
         use super::super::*;
         use crate::status_tracker::StatusTracker;
 
-        #[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
-        #[cfg_attr(
-            all(target_arch = "wasm32", not(target_os = "wasi")),
-            wasm_bindgen_test
-        )]
-        #[cfg_attr(target_os = "wasi", wstd::test)]
+        #[c2pa_test_async]
         async fn test_store_load_fragment_from_stream_async() {
             // Use the dash fixtures that are known to work with fragment loading
             // These are the same files used in test_bmff_fragments

@@ -294,6 +294,11 @@ impl CertificateTrustPolicy {
         Ok(())
     }
 
+    /// Add default extended key usage (EKU) values.
+    pub fn add_default_valid_ekus(&mut self) {
+        self.add_valid_ekus(include_bytes!("./valid_eku_oids.cfg"));
+    }
+
     /// Add extended key usage (EKU) values that shall be accepted when
     /// verifying COSE signatures.
     ///
@@ -463,8 +468,8 @@ mod tests {
     #![allow(clippy::expect_used)]
     #![allow(clippy::panic)]
     #![allow(clippy::unwrap_used)]
-
     use asn1_rs::{oid, Oid};
+    use c2pa_macros::c2pa_test_async;
     #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
     use wasm_bindgen_test::wasm_bindgen_test;
     use x509_parser::{extensions::ExtendedKeyUsage, pem::Pem};
@@ -830,12 +835,7 @@ zGxQnM2hCA==
         );
     }
 
-    #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
-    #[cfg_attr(
-        all(target_arch = "wasm32", not(target_os = "wasi")),
-        wasm_bindgen_test
-    )]
-    #[cfg_attr(target_os = "wasi", wstd::test)]
+    #[c2pa_test_async]
     async fn test_trust_store_async() {
         let ctp = CertificateTrustPolicy::default();
 
@@ -954,12 +954,7 @@ zGxQnM2hCA==
         );
     }
 
-    #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
-    #[cfg_attr(
-        all(target_arch = "wasm32", not(target_os = "wasi")),
-        wasm_bindgen_test
-    )]
-    #[cfg_attr(target_os = "wasi", wstd::test)]
+    #[c2pa_test_async]
     async fn test_broken_trust_chain_async() {
         let ctp = CertificateTrustPolicy::default();
 
@@ -1116,12 +1111,7 @@ zGxQnM2hCA==
             .unwrap();
     }
 
-    #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
-    #[cfg_attr(
-        all(target_arch = "wasm32", not(target_os = "wasi")),
-        wasm_bindgen_test
-    )]
-    #[cfg_attr(target_os = "wasi", wstd::test)]
+    #[c2pa_test_async]
     async fn test_allowed_list_async() {
         let mut ctp = CertificateTrustPolicy::new();
 
@@ -1246,12 +1236,7 @@ zGxQnM2hCA==
             .unwrap();
     }
 
-    #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
-    #[cfg_attr(
-        all(target_arch = "wasm32", not(target_os = "wasi")),
-        wasm_bindgen_test
-    )]
-    #[cfg_attr(target_os = "wasi", wstd::test)]
+    #[c2pa_test_async]
     async fn test_allowed_list_hashes_async() {
         let mut ctp = CertificateTrustPolicy::new();
 

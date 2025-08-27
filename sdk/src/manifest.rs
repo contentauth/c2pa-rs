@@ -512,6 +512,13 @@ impl Manifest {
         self.signature_info.to_owned().and_then(|sig| sig.issuer)
     }
 
+    /// Returns the common name of the certificate
+    pub fn common_name(&self) -> Option<String> {
+        self.signature_info
+            .to_owned()
+            .and_then(|sig| sig.common_name)
+    }
+
     /// Returns the time that the manifest was signed
     pub fn time(&self) -> Option<String> {
         self.signature_info.to_owned().and_then(|sig| sig.time)
@@ -773,6 +780,7 @@ impl Manifest {
             Some(signature_info) => Some(SignatureInfo {
                 alg: signature_info.alg,
                 issuer: signature_info.issuer_org,
+                common_name: signature_info.common_name,
                 time: signature_info.date.map(|d| d.to_rfc3339()),
                 cert_serial_number: signature_info.cert_serial_number.map(|s| s.to_string()),
                 cert_chain: String::from_utf8(signature_info.cert_chain)
@@ -1536,6 +1544,10 @@ pub struct SignatureInfo {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub issuer: Option<String>,
 
+    /// Human-readable for common name of this certificate.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub common_name: Option<String>,
+
     /// The serial number of the certificate.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cert_serial_number: Option<String>,
@@ -1568,6 +1580,7 @@ pub(crate) mod tests {
 
     use std::io::Cursor;
 
+    use c2pa_macros::c2pa_test_async;
     #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
     use wasm_bindgen_test::*;
 
@@ -1970,8 +1983,7 @@ pub(crate) mod tests {
     }
 
     #[cfg(feature = "file_io")]
-    #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
-    #[cfg_attr(target_os = "wasi", wstd::test)]
+    #[c2pa_test_async]
     #[allow(deprecated)]
     async fn test_embed_async_sign() {
         let temp_dir = tempdirectory().expect("temp dir");
@@ -1992,8 +2004,7 @@ pub(crate) mod tests {
     }
 
     #[cfg(feature = "file_io")]
-    #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
-    #[cfg_attr(target_os = "wasi", wstd::test)]
+    #[c2pa_test_async]
     #[allow(deprecated)]
     async fn test_embed_remote_sign() {
         let temp_dir = tempdirectory().expect("temp dir");
@@ -2062,13 +2073,8 @@ pub(crate) mod tests {
         );
     }
 
-    #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
-    #[cfg_attr(
-        all(target_arch = "wasm32", not(target_os = "wasi")),
-        wasm_bindgen_test
-    )]
+    #[c2pa_test_async]
     #[allow(deprecated)]
-    #[cfg_attr(target_os = "wasi", wstd::test)]
     async fn test_embed_jpeg_stream_wasm() {
         use crate::assertions::User;
         let image = include_bytes!("../tests/fixtures/earth_apollo17.jpg");
@@ -2106,13 +2112,8 @@ pub(crate) mod tests {
         println!("It worked: {manifest_store}\n");
     }
 
-    #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
-    #[cfg_attr(
-        all(target_arch = "wasm32", not(target_os = "wasi")),
-        wasm_bindgen_test
-    )]
+    #[c2pa_test_async]
     #[allow(deprecated)]
-    #[cfg_attr(target_os = "wasi", wstd::test)]
     async fn test_embed_png_stream_wasm() {
         use crate::assertions::User;
         let image = include_bytes!("../tests/fixtures/libpng-test.png");
@@ -2143,13 +2144,8 @@ pub(crate) mod tests {
         println!("It worked: {manifest_store}\n");
     }
 
-    #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
-    #[cfg_attr(
-        all(target_arch = "wasm32", not(target_os = "wasi")),
-        wasm_bindgen_test
-    )]
+    #[c2pa_test_async]
     #[allow(deprecated)]
-    #[cfg_attr(target_os = "wasi", wstd::test)]
     async fn test_embed_webp_stream_wasm() {
         use crate::assertions::User;
         let image = include_bytes!("../tests/fixtures/mars.webp");
@@ -2217,13 +2213,8 @@ pub(crate) mod tests {
         //println!("{manifest_store}");main
     }
 
-    #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
-    #[cfg_attr(
-        all(target_arch = "wasm32", not(target_os = "wasi")),
-        wasm_bindgen_test
-    )]
-    #[cfg_attr(target_os = "wasi", wstd::test)]
-    #[cfg(any(target_arch = "wasm32", feature = "file_io"))]
+    #[cfg(feature = "file_io")]
+    #[c2pa_test_async]
     async fn test_embed_from_memory_async() {
         use crate::assertions::User;
         let image = include_bytes!("../tests/fixtures/earth_apollo17.jpg");
@@ -2264,8 +2255,7 @@ pub(crate) mod tests {
     }
 
     #[cfg(feature = "file_io")]
-    #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
-    #[cfg_attr(target_os = "wasi", wstd::test)]
+    #[c2pa_test_async]
     #[allow(deprecated)]
     /// Verify that an ingredient with error is reported on the ingredient and not on the manifest_store
     async fn test_embed_with_ingredient_error() {
@@ -2843,8 +2833,7 @@ pub(crate) mod tests {
     }
 
     #[cfg(feature = "file_io")]
-    #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
-    #[cfg_attr(target_os = "wasi", wstd::test)]
+    #[c2pa_test_async]
     #[allow(deprecated)]
     async fn test_data_hash_embeddable_manifest_remote_signed() {
         let ap = fixture_path("cloud.jpg");
