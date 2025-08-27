@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.60.1](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.60.0...c2pa-v0.60.1)
+_27 August 2025_
+
+### Fixed
+
+* Removes asm feature for sha2 ([#1343](https://github.com/contentauth/c2pa-rs/pull/1343))
+* Reset settings after test_stream_thumbnail ([#1339](https://github.com/contentauth/c2pa-rs/pull/1339))
+
 ## [0.60.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.59.1...c2pa-v0.60.0)
 _26 August 2025_
 
