@@ -3326,7 +3326,7 @@ impl Claim {
             .collect();
 
         // we don't include c2pa.assertions.metadata
-        mda.retain(|a| &a.label() != ASSERTION_METADATA);
+        mda.retain(|a| a.label() != ASSERTION_METADATA);
 
         mda
     }
