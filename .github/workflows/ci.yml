@@ -319,7 +319,9 @@ jobs:
       github.event.pull_request.author_association == 'MEMBER' ||
       github.event.pull_request.user.login == 'dependabot[bot]' ||
       contains(github.event.pull_request.labels.*.name, 'benchmark')
+
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -332,7 +334,7 @@ jobs:
           bins: cargo-codspeed
 
       - name: Build the benchmark target(s)
-        run: cargo codspeed build
+        run: cargo codspeed build -p c2pa --no-default-features --features rust_native_crypto
 
       - name: Run the benchmarks
         uses: CodSpeedHQ/action@v3
