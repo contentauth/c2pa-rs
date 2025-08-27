@@ -277,7 +277,7 @@ mockall = "0.13.1"
 wasm-bindgen-test = "0.3.45"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
-httpmock = "0.7.0"
+httpmock = { git = "https://github.com/alexliesenfeld/httpmock.git" }
 tokio = { version = "1.44.2", features = ["full"] }
 
 [package.metadata.cargo-udeps.ignore]
