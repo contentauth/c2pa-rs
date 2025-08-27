@@ -330,7 +330,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Install cargo-binstall
-        uses: cargo-bins/cargo-binstall@v1
+        uses: cargo-bins/cargo-binstall@main
 
       - name: Install cargo-codspeed
         run: cargo binstall --no-confirm cargo-codspeed
