@@ -40,6 +40,7 @@ use crate::{
         labels::{assertion_label_from_uri, manifest_label_from_uri},
     },
     log_item,
+    resolver::{AsyncGenericResolver, AsyncHttpResolver, SyncHttpResolver, SyncGenericResolver},
     resource_store::{skip_serializing_resources, ResourceRef, ResourceStore},
     salt::DefaultSalt,
     status_tracker::StatusTracker,
@@ -825,7 +826,7 @@ impl Ingredient {
     pub fn from_stream(format: &str, stream: &mut dyn CAIRead) -> Result<Self> {
         let ingredient = Self::from_stream_info(stream, format, "untitled");
         stream.rewind()?;
-        ingredient.add_stream_internal(format, stream)
+        ingredient.add_stream_internal(format, stream, &SyncGenericResolver::new())
     }
 
     /// Create an Ingredient from JSON.
@@ -840,11 +841,17 @@ impl Ingredient {
     /// Sets thumbnail if not defined and a valid claim thumbnail is found or add_thumbnails is enabled.
     /// Instance_id, document_id, and provenance will be overridden if found in the stream.
     /// Format will be overridden only if it is the default (application/octet-stream).
-    #[async_generic()]
+    #[async_generic(async_signature(
+        mut self,
+        format: S,
+        stream: &mut dyn CAIRead,
+        http_resolver: &impl AsyncHttpResolver,
+    ))]
     pub(crate) fn with_stream<S: Into<String>>(
         mut self,
         format: S,
         stream: &mut dyn CAIRead,
+        http_resolver: &impl SyncHttpResolver,
     ) -> Result<Self> {
         let format = format.into();
 
@@ -876,22 +883,37 @@ impl Ingredient {
         stream.rewind()?;
 
         if _sync {
-            self.add_stream_internal(&format, stream)
+            self.add_stream_internal(&format, stream, http_resolver)
         } else {
-            self.add_stream_internal_async(&format, stream).await
+            self.add_stream_internal_async(&format, stream, http_resolver)
+                .await
         }
     }
 
     // Internal implementation to avoid code bloat.
-    #[async_generic()]
-    fn add_stream_internal(mut self, format: &str, stream: &mut dyn CAIRead) -> Result<Self> {
+    #[async_generic(async_signature(
+        mut self,
+        format: &str,
+        stream: &mut dyn CAIRead,
+        http_resolver: &impl AsyncHttpResolver,
+    ))]
+    fn add_stream_internal(
+        mut self,
+        format: &str,
+        stream: &mut dyn CAIRead,
+        http_resolver: &impl SyncHttpResolver,
+    ) -> Result<Self> {
         let mut validation_log = StatusTracker::default();
 
         // retrieve the manifest bytes from embedded or remote and convert to store if found
         let jumbf_result = match self.manifest_data() {
             Some(data) => Ok(data.into_owned()),
-            None => Store::load_jumbf_from_stream(format, stream)
-                .map(|(manifest_bytes, _)| manifest_bytes),
+            None => if _sync {
+                Store::load_jumbf_from_stream(format, stream, http_resolver)
+            } else {
+                Store::load_jumbf_from_stream_async(format, stream, http_resolver).await
+            }
+            .map(|(manifest_bytes, _)| manifest_bytes),
         };
 
         // We can't use functional combinators since we can't use async callbacks (https://github.com/rust-lang/rust/issues/62290)
@@ -913,7 +935,13 @@ impl Ingredient {
         if let Ok(ref mut store) = result {
             let labels = store.get_manifest_labels_for_ocsp();
 
-            let ocsp_response_ders = store.get_ocsp_response_ders(labels, &mut validation_log)?;
+            let ocsp_response_ders = if _sync {
+                store.get_ocsp_response_ders(labels, &mut validation_log)?
+            } else {
+                store
+                    .get_ocsp_response_ders_async(labels, &mut validation_log)
+                    .await?
+            };
             let resource_refs: Vec<ResourceRef> = ocsp_response_ders
                 .into_iter()
                 .filter_map(|o| self.resources.add_with(&o.0, "ocsp", o.1).ok())
@@ -938,51 +966,56 @@ impl Ingredient {
     /// Thumbnail will be set only if one can be retrieved from a previous valid manifest.
     pub async fn from_memory_async(format: &str, buffer: &[u8]) -> Result<Self> {
         let mut stream = Cursor::new(buffer);
-        Self::from_stream_async(format, &mut stream).await
+        Self::from_stream_async(format, &mut stream, &AsyncGenericResolver::new()).await
     }
 
     /// Creates an `Ingredient` from a stream (async version).
     ///
     /// This does not set title or hash.
     /// Thumbnail will be set only if one can be retrieved from a previous valid manifest.
-    pub async fn from_stream_async(format: &str, stream: &mut dyn CAIRead) -> Result<Self> {
+    pub async fn from_stream_async(
+        format: &str,
+        stream: &mut dyn CAIRead,
+        http_resolver: &impl AsyncHttpResolver,
+    ) -> Result<Self> {
         let mut ingredient = Self::from_stream_info(stream, format, "untitled");
         stream.rewind()?;
 
         let mut validation_log = StatusTracker::default();
 
         // retrieve the manifest bytes from embedded, sidecar or remote and convert to store if found
-        let (result, manifest_bytes) = match Store::load_jumbf_from_stream(format, stream) {
-            Ok((manifest_bytes, _)) => {
-                (
-                    // generate a store from the buffer and then validate from the asset path
-                    match Store::from_jumbf(&manifest_bytes, &mut validation_log) {
-                        Ok(store) => {
-                            // verify the store
-                            Store::verify_store_async(
-                                &store,
-                                &mut ClaimAssetData::Stream(stream, format),
-                                &mut validation_log,
-                            )
-                            .await
-                            .map(|_| store)
-                        }
-                        Err(e) => {
-                            log_item!(
-                                "asset",
-                                "error loading asset",
-                                "Ingredient::from_stream_async"
-                            )
-                            .failure_no_throw(&mut validation_log, &e);
+        let (result, manifest_bytes) =
+            match Store::load_jumbf_from_stream_async(format, stream, http_resolver).await {
+                Ok((manifest_bytes, _)) => {
+                    (
+                        // generate a store from the buffer and then validate from the asset path
+                        match Store::from_jumbf(&manifest_bytes, &mut validation_log) {
+                            Ok(store) => {
+                                // verify the store
+                                Store::verify_store_async(
+                                    &store,
+                                    &mut ClaimAssetData::Stream(stream, format),
+                                    &mut validation_log,
+                                )
+                                .await
+                                .map(|_| store)
+                            }
+                            Err(e) => {
+                                log_item!(
+                                    "asset",
+                                    "error loading asset",
+                                    "Ingredient::from_stream_async"
+                                )
+                                .failure_no_throw(&mut validation_log, &e);
 
-                            Err(e)
-                        }
-                    },
-                    Some(manifest_bytes),
-                )
-            }
-            Err(err) => (Err(err), None),
-        };
+                                Err(e)
+                            }
+                        },
+                        Some(manifest_bytes),
+                    )
+                }
+                Err(err) => (Err(err), None),
+            };
 
         // set validation status from result and log
         ingredient.update_validation_status(result, manifest_bytes, &validation_log)?;

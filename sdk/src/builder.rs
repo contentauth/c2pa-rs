@@ -26,6 +26,7 @@ use serde_with::skip_serializing_none;
 use uuid::Uuid;
 use zip::{write::SimpleFileOptions, ZipArchive, ZipWriter};
 
+use crate::resolver::{AsyncGenericResolver, SyncGenericResolver};
 #[allow(deprecated)]
 use crate::{
     assertion::AssertionDecodeError,
@@ -308,7 +309,7 @@ impl Builder {
     /// * A new [`Builder`] with the specified source type.
     /// # Example
     /// ```rust
-    /// use c2pa::{Builder, DigitalSourceType};
+    /// use c2pa::{Builder, assertions::DigitalSourceType};
     /// let builder = Builder::create(DigitalSourceType::Empty);
     /// ```
     pub fn create(source_type: DigitalSourceType) -> Self {
@@ -584,9 +585,11 @@ impl Builder {
     {
         let ingredient: Ingredient = Ingredient::from_json(&ingredient_json.into())?;
         let ingredient = if _sync {
-            ingredient.with_stream(format, stream)?
+            ingredient.with_stream(format, stream, &SyncGenericResolver::new())?
         } else {
-            ingredient.with_stream_async(format, stream).await?
+            ingredient
+                .with_stream_async(format, stream, &AsyncGenericResolver::new())
+                .await?
         };
         self.definition.ingredients.push(ingredient);
         #[allow(clippy::unwrap_used)]
@@ -2870,7 +2873,8 @@ mod tests {
             .unwrap();
 
         builder
-            .add_ingredient_from_stream(parent_json, "image/jpeg", &mut cloud_image)
+            .add_ingredient_from_stream_async(parent_json, "image/jpeg", &mut cloud_image)
+            .await
             .unwrap();
 
         builder
@@ -2886,7 +2890,9 @@ mod tests {
 
         output.set_position(0);
 
-        let reader = Reader::from_stream("jpeg", &mut output).expect("from_bytes");
+        let reader = Reader::from_stream_async("jpeg", &mut output)
+            .await
+            .expect("from_bytes");
         let m = reader.active_manifest().unwrap();
         assert_eq!(m.ingredients().len(), 1);
         assert!(m.ingredients()[0].active_manifest().is_some());

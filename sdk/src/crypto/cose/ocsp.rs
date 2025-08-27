@@ -101,7 +101,12 @@ pub fn check_ocsp_status(
 
         None => match fetch_policy {
             OcspFetchPolicy::FetchAllowed => {
-                fetch_and_check_ocsp_response(sign1, data, ctp, tst_info, validation_log)
+                if _sync {
+                    fetch_and_check_ocsp_response(sign1, data, ctp, tst_info, validation_log)
+                } else {
+                    fetch_and_check_ocsp_response_async(sign1, data, ctp, tst_info, validation_log)
+                        .await
+                }
             }
             OcspFetchPolicy::DoNotFetch => {
                 if let Some(ocsp_response_ders) = ocsp_responses {
@@ -276,7 +281,7 @@ fn check_stapled_ocsp_response(
 }
 
 /// Fetches and validates an OCSP response for the given COSE signature.
-// TO DO: Add async version of this?
+#[async_generic()]
 pub(crate) fn fetch_and_check_ocsp_response(
     sign1: &CoseSign1,
     data: &[u8],
@@ -294,7 +299,13 @@ pub(crate) fn fetch_and_check_ocsp_response(
     {
         let certs = cert_chain_from_sign1(sign1)?;
 
-        let Some(ocsp_der) = crate::crypto::ocsp::fetch_ocsp_response(&certs) else {
+        let ocsp_der = if _sync {
+            crate::crypto::ocsp::fetch_ocsp_response(&certs)
+        } else {
+            crate::crypto::ocsp::fetch_ocsp_response_async(&certs).await
+        };
+
+        let Some(ocsp_der) = ocsp_der else {
             return Ok(OcspResponse::default());
         };
 

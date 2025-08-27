@@ -36,11 +36,19 @@ features = [
     "pdf",
     "v1_api",
     "diagnostics",
+    "ureq",
+    "reqwest",
 ]
 rustdoc-args = ["--cfg", "docsrs"]
 
 [features]
-default = ["openssl"]
+# The reason we use `ureq` instead of `reqwest_blocking` is because the blocking version
+# of reqwest creates a new tokio runtime. A lot of our tests create their own tokio runtime
+# but do not call the async versions of our API. Thus, we use ureq, which has a complete
+# blocking implementation, no runtimes included.
+# TODO: make our async tests always use the async API
+#       also need to ensure ureq isn't enabled when the OS is WASI
+default = ["openssl", "reqwest", "ureq"]
 add_thumbnails = ["image"]
 file_io = []
 serialize_thumbnails = []
@@ -62,6 +70,10 @@ rust_native_crypto = [
     "dep:spki",
 ]
 v1_api = []
+reqwest = []
+reqwest_blocking = []
+ureq = []
+curl = []
 
 # The diagnostics feature is unsupported and might be removed.
 # It enables some low-overhead timing features used in our development cycle.
@@ -189,6 +201,7 @@ x509-certificate = "0.24.0"
 x509-parser = "0.16.0"
 zeroize = { version = "1.8", features = ["zeroize_derive"] }
 zip = { version = "3.0.0", default-features = false }
+http = "1.3.1"
 
 # Use the asm feature of sha2 on aarch64 for better performance. This nearly
 # halves hashing time for large assets (> 50gb mp4, for example).
@@ -273,8 +286,10 @@ web-sys = { version = "0.3.58", features = [
 windows-core = "0.61.2" # Override yanked version used in chrono and other crates.
 
 [target.'cfg(not(target_os = "wasi"))'.dependencies]
-reqwest = { version = "0.12.8", default-features = false, features = [
+reqwest = { version = "0.12.22", default-features = false, features = [
     "rustls-tls",
+    "blocking",
+    "stream",
 ] }
 
 [dev-dependencies]

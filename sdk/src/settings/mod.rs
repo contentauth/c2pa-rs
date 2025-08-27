@@ -443,9 +443,6 @@ impl SettingsValidate for Settings {
                 "settings version too new".into(),
             ));
         }
-        if let Some(signer) = &self.signer {
-            signer.validate()?;
-        }
         self.trust.validate()?;
         self.cawg_trust.validate()?;
         self.core.validate()?;

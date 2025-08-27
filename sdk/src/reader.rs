@@ -39,6 +39,7 @@ use crate::{
     jumbf_io,
     manifest::StoreOptions,
     manifest_store_report::ManifestStoreReport,
+    resolver::{AsyncGenericResolver, SyncGenericResolver},
     settings::get_settings_value,
     status_tracker::StatusTracker,
     store::Store,
@@ -127,13 +128,26 @@ impl Reader {
     /// ```
     #[async_generic()]
     #[cfg(not(target_arch = "wasm32"))]
-    pub fn from_stream(format: &str, mut stream: impl Read + Seek + Send) -> Result<Reader> {
+    pub fn from_stream(format: &str, stream: impl Read + Seek + Send) -> Result<Reader> {
         let verify = get_settings_value::<bool>("verify.verify_after_reading")?; // defaults to true
         let mut validation_log = StatusTracker::default();
         let store = if _sync {
-            Store::from_stream(format, &mut stream, verify, &mut validation_log)
+            Store::from_stream(
+                format,
+                stream,
+                &SyncGenericResolver::new(),
+                verify,
+                &mut validation_log,
+            )
         } else {
-            Store::from_stream_async(format, &mut stream, verify, &mut validation_log).await
+            Store::from_stream_async(
+                format,
+                stream,
+                &AsyncGenericResolver::new(),
+                verify,
+                &mut validation_log,
+            )
+            .await
         }?;
 
         Self::from_store(store, &validation_log)
@@ -146,9 +160,22 @@ impl Reader {
         let mut validation_log = StatusTracker::default();
 
         let store = if _sync {
-            Store::from_stream(format, &mut stream, verify, &mut validation_log)
+            Store::from_stream(
+                format,
+                &mut stream,
+                &SyncGenericResolver::new(),
+                verify,
+                &mut validation_log,
+            )
         } else {
-            Store::from_stream_async(format, &mut stream, verify, &mut validation_log).await
+            Store::from_stream_async(
+                format,
+                &mut stream,
+                &AsyncGenericResolver::new(),
+                verify,
+                &mut validation_log,
+            )
+            .await
         }?;
 
         Self::from_store(store, &validation_log)

@@ -296,9 +296,26 @@ pub enum Error {
     #[error("invalid signing key")]
     InvalidSigningKey,
 
+    #[error("async is not implemented for this http resolver")]
+    AsyncHttpResolverNotImplemented,
+
+    #[error("sync is not implemented for this http resolver")]
+    SyncHttpResolverNotImplemented,
+
     // --- third-party errors ---
     #[error(transparent)]
     Utf8Error(#[from] std::str::Utf8Error),
+
+    // TODO: look into removing
+    #[error(transparent)]
+    ReqwestError(#[from] reqwest::Error),
+
+    // TODO: look into removing
+    #[error(transparent)]
+    UreqError(#[from] ureq::Error),
+
+    #[error(transparent)]
+    HttpError(#[from] http::Error),
 
     #[error(transparent)]
     TryFromIntError(#[from] std::num::TryFromIntError),
@@ -364,7 +381,7 @@ pub enum Error {
 }
 
 /// A specialized `Result` type for C2PA toolkit operations.
-pub type Result<T> = std::result::Result<T, Error>;
+pub type Result<T, E = Error> = std::result::Result<T, E>;
 
 impl From<CoseError> for Error {
     fn from(err: CoseError) -> Self {

@@ -13,6 +13,8 @@
 
 use std::io::Read;
 
+use async_generic::async_generic;
+use http::header;
 use rasn::prelude::*;
 use rasn_pkix::Certificate;
 use x509_parser::{
@@ -21,7 +23,10 @@ use x509_parser::{
     prelude::*,
 };
 
-use crate::crypto::base64;
+use crate::{
+    crypto::base64,
+    resolver::{AsyncGenericResolver, AsyncHttpResolver, SyncHttpResolver, SyncGenericResolver},
+};
 
 /// Retrieve an OCSP response if available.
 ///
@@ -29,6 +34,7 @@ use crate::crypto::base64;
 /// will attempt to retrieve the raw DER-encoded OCSP response.
 ///
 /// Not available on WASM builds.
+#[async_generic]
 pub(crate) fn fetch_ocsp_response(certs: &[Vec<u8>]) -> Option<Vec<u8>> {
     // There must be at least one cert that isn't an end-entity cert.
     if certs.len() < 2 {
@@ -99,23 +105,36 @@ pub(crate) fn fetch_ocsp_response(certs: &[Vec<u8>]) -> Option<Vec<u8>> {
             let req_url = url.join(&request_str).ok()?;
 
             // fetch OCSP response
-            let request = ureq::get(req_url.as_str());
-            let response = if let Some(host) = url.host() {
-                request.header("Host", &host.to_string()).call().ok()? // for responders that don't support http 1.0
+
+            let mut request = http::Request::get(req_url.to_string());
+            if let Some(host) = url.host() {
+                // for responders that don't support http 1.0
+                request = request.header(header::HOST, host.to_string());
+            }
+
+            let request = request.body(Vec::new()).ok()?;
+            // TODO: we should boil these resolvers down from the store
+            let response = if _sync {
+                SyncGenericResolver::new().http_resolve(request).ok()?
             } else {
-                request.call().ok()?
+                AsyncGenericResolver::new()
+                    .http_resolve_async(request)
+                    .await
+                    .ok()?
             };
 
             if response.status() == 200 {
-                let body = response.into_body();
-                let len = body
-                    .content_length()
-                    .and_then(|s| s.try_into().ok())
+                let len = response
+                    .headers()
+                    .get(header::CONTENT_LENGTH)
+                    .and_then(|content_length| content_length.to_str().ok())
+                    .and_then(|content_length| content_length.parse().ok())
                     .unwrap_or(10000);
 
                 let mut ocsp_rsp: Vec<u8> = Vec::with_capacity(len);
 
-                body.into_reader()
+                response
+                    .into_body()
                     .take(1000000)
                     .read_to_end(&mut ocsp_rsp)
                     .ok()?;

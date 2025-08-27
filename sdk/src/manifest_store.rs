@@ -28,6 +28,7 @@ use crate::{
     crypto::base64,
     jumbf::labels::{manifest_label_from_uri, to_absolute_uri, to_relative_uri},
     manifest::StoreOptions,
+    resolver::SyncGenericResolver,
     status_tracker::StatusTracker,
     store::Store,
     validation_results::ValidationResults,
@@ -290,7 +291,13 @@ impl ManifestStore {
     ) -> Result<ManifestStore> {
         let mut validation_log = StatusTracker::default();
 
-        let store = Store::from_stream(format, &mut stream, verify, &mut validation_log)?;
+        let store = Store::from_stream(
+            format,
+            &mut stream,
+            &SyncGenericResolver::new(),
+            verify,
+            &mut validation_log,
+        )?;
 
         Ok(Self::from_store(store, &validation_log))
     }

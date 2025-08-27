@@ -25,6 +25,7 @@ use crate::{
             TimeStampError,
         },
     },
+    resolver::{AsyncGenericResolver, AsyncHttpResolver, SyncHttpResolver, SyncGenericResolver},
     status_tracker::StatusTracker,
 };
 
@@ -50,7 +51,11 @@ pub fn default_rfc3161_request(
         TimeStampError::InternalError("failure to decode Constructed TimeStampReq".to_string())
     })?;
 
-    let ts = time_stamp_request_http(url, headers, &request)?;
+    let ts = if _sync {
+        time_stamp_request_http(url, headers, &request)?
+    } else {
+        time_stamp_request_http_async(url, headers, &request).await?
+    };
 
     let mut local_log = StatusTracker::default();
     let ctp = CertificateTrustPolicy::passthrough();
@@ -65,10 +70,11 @@ pub fn default_rfc3161_request(
     Ok(ts)
 }
 
+#[async_generic]
 fn time_stamp_request_http(
     url: &str,
     headers: Option<Vec<(String, String)>>,
-    request: &TimeStampReq,
+    timestamp_request: &TimeStampReq,
 ) -> Result<Vec<u8>, TimeStampError> {
     // This function exists to work around a bug in serialization of
     // TimeStampResp so we just return the data directly.
@@ -78,35 +84,47 @@ fn time_stamp_request_http(
     const HTTP_CONTENT_TYPE_RESPONSE: &str = "application/timestamp-reply";
 
     let mut body = Vec::<u8>::new();
-    request
+    timestamp_request
         .encode_ref()
         .write_encoded(bcder::Mode::Der, &mut body)?;
 
-    let mut req = ureq::post(url);
+    let mut request = http::Request::post(url);
 
     if let Some(headers) = headers {
         for (ref name, ref value) in headers {
-            req = req.header(name.as_str(), value.as_str());
+            request = request.header(name.as_str(), value.as_str());
         }
     }
 
-    let response = req
-        .header(header::CONTENT_TYPE, HTTP_CONTENT_TYPE_REQUEST)
-        .send(&body)?;
+    let request = request.header(header::CONTENT_TYPE, HTTP_CONTENT_TYPE_REQUEST);
 
+    // TODO: VERY IMPORTANT TO FIX need a better error mechanism for resolvers
+    #[allow(clippy::unwrap_used)]
+    let response = if _sync {
+        SyncGenericResolver::new()
+            .http_resolve(request.body(body).unwrap())
+            .unwrap()
+    } else {
+        AsyncGenericResolver::new()
+            .http_resolve_async(request.body(body).unwrap())
+            .await
+            .unwrap()
+    };
     let content_type = response
         .headers()
         .get(header::CONTENT_TYPE)
         .and_then(|header| header.to_str().ok());
     if response.status() == 200 && content_type == Some(HTTP_CONTENT_TYPE_RESPONSE) {
-        let body = response.into_body();
-        let len = body
-            .content_length()
-            .and_then(|content_length| content_length.try_into().ok())
+        let len = response
+            .headers()
+            .get(header::CONTENT_LENGTH)
+            .and_then(|content_length| content_length.to_str().ok())
+            .and_then(|content_length| content_length.parse().ok())
             .unwrap_or(20000);
         let mut response_bytes: Vec<u8> = Vec::with_capacity(len);
 
-        body.into_reader()
+        response
+            .into_body()
             .take(1000000)
             .read_to_end(&mut response_bytes)?;
 
@@ -120,7 +138,7 @@ fn time_stamp_request_http(
         // Verify nonce was reflected, if present.
         if res.is_success() {
             if let Some(tst_info) = res.tst_info()? {
-                if tst_info.nonce != request.nonce {
+                if tst_info.nonce != timestamp_request.nonce {
                     return Err(TimeStampError::NonceMismatch);
                 }
             }
