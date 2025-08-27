@@ -36,7 +36,6 @@ use crate::{
         DataHash, DigitalSourceType, EmbeddedData, Exif, Metadata, SoftwareAgent, Thumbnail, User,
         UserCbor,
     },
-    cbor_types::value_cbor_to_type,
     claim::Claim,
     error::{Error, Result},
     jumbf_io,
@@ -1169,10 +1168,8 @@ impl Builder {
             let mut referenced_uris = HashSet::new();
             for action in &actions.actions {
                 if action.action() == c2pa_action::PLACED {
-                    if let Some(ingredient_uris) = action.get_parameter("ingredients") {
-                        if let Some(ingredient_uris) =
-                            value_cbor_to_type::<Vec<HashedUri>>(ingredient_uris)
-                        {
+                    if let Some(parameters) = &action.parameters {
+                        if let Some(ingredient_uris) = &parameters.ingredients {
                             for uri in ingredient_uris {
                                 referenced_uris.insert(uri.url());
                             }
@@ -1604,13 +1601,12 @@ mod tests {
     use crate::{
         assertions::{c2pa_action, BoxHash, DigitalSourceType},
         asset_handlers::jpeg_io::JpegIO,
-        cbor_types::value_cbor_to_type,
         crypto::raw_signature::SigningAlg,
         hash_stream_by_alg,
         settings::Settings,
         utils::{test::write_jpeg_placeholder_stream, test_signer::test_signer},
         validation_results::ValidationState,
-        HashedUri, Reader,
+        Reader,
     };
 
     #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
@@ -1939,8 +1935,13 @@ mod tests {
         let action = actions.actions().first().unwrap();
         assert_eq!(action.action(), c2pa_action::OPENED);
 
-        let ingredient_uris = action.get_parameter("ingredients").unwrap();
-        let ingredient_uris = value_cbor_to_type::<Vec<HashedUri>>(ingredient_uris).unwrap();
+        let ingredient_uris = action
+            .parameters
+            .as_ref()
+            .unwrap()
+            .ingredients
+            .as_ref()
+            .unwrap();
 
         // TODO: need API to get uri from ingredient
         // let target_uri = reader
@@ -2030,8 +2031,13 @@ mod tests {
         let reader_json = reader.json();
 
         for action in [action1, action2] {
-            let ingredient_uris = action.get_parameter("ingredients").unwrap();
-            let ingredient_uris = value_cbor_to_type::<Vec<HashedUri>>(ingredient_uris).unwrap();
+            let ingredient_uris = action
+                .parameters
+                .as_ref()
+                .unwrap()
+                .ingredients
+                .as_ref()
+                .unwrap();
 
             // TODO: need API to get uri from ingredient
             // let target_uri = reader
