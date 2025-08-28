@@ -1429,7 +1429,7 @@ impl Ingredient {
 
     /// Automatically generate a thumbnail for the ingredient if missing and enabled in settings.
     ///
-    /// This function takes into account the [Settings][crate::Settings]:
+    /// This function takes into account the [Settings][crate::settings::Settings]:
     /// * `builder.thumbnail.enabled`
     #[cfg(feature = "add_thumbnails")]
     pub fn maybe_add_thumbnail<R>(&mut self, format: &str, stream: &mut R) -> Result<()>
@@ -1655,6 +1655,8 @@ mod tests {
 
         let ingredient = Ingredient::from_memory("image/png", image_bytes).unwrap();
         assert!(ingredient.thumbnail().is_none());
+        #[cfg(target_os = "wasi")]
+        Settings::reset().unwrap();
     }
 
     #[c2pa_test_async]

@@ -32,8 +32,8 @@ use crate::{
     assertions::{
         self, c2pa_action,
         labels::{
-            self, ACTIONS, ASSERTION_STORE, BMFF_HASH, CLAIM_THUMBNAIL, DATABOX_STORE,
-            METADATA_LABEL_REGEX,
+            self, ACTIONS, ASSERTION_METADATA, ASSERTION_STORE, BMFF_HASH, CLAIM_THUMBNAIL,
+            DATABOX_STORE, METADATA_LABEL_REGEX,
         },
         Actions, AssertionMetadata, AssetType, BmffHash, BoxHash, DataBox, DataHash, Ingredient,
         Metadata, Relationship, V2_DEPRECATED_ACTIONS,
@@ -3319,10 +3319,16 @@ impl Claim {
 
     ///Returns list of metadata assertions
     pub fn metadata_assertions(&self) -> Vec<&ClaimAssertion> {
-        self.assertion_store
+        let mut mda: Vec<&ClaimAssertion> = self
+            .assertion_store
             .iter()
             .filter(|x| METADATA_LABEL_REGEX.is_match(&x.label_raw()))
-            .collect()
+            .collect();
+
+        // we don't include c2pa.assertion.metadata
+        mda.retain(|a| a.label() != ASSERTION_METADATA);
+
+        mda
     }
 
     /// Return list of data hash assertions
