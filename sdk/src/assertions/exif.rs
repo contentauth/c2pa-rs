@@ -44,7 +44,7 @@ impl Exif {
         Self {
             object_context: Some(json!({
               "dc": "http://purl.org/dc/elements/1.1/",
-              "exifEX": "http://cipa.jp/exif/2.32/",
+              "exifEX": "http://cipa.jp/exif/1.0/",
               "exif": "http://ns.adobe.com/exif/1.0/",
               "tiff": "http://ns.adobe.com/tiff/1.0/",
               "xmp": "http://ns.adobe.com/xap/1.0/",
@@ -138,7 +138,7 @@ pub mod tests {
     const SPEC_EXAMPLE: &str = r#"{
         "@context" : {
           "dc": "http://purl.org/dc/elements/1.1/",
-          "exifEX": "http://cipa.jp/exif/2.32/",
+          "exifEX": "http://cipa.jp/exif/1.0/",
           "exif": "http://ns.adobe.com/exif/1.0/",
           "tiff": "http://ns.adobe.com/tiff/1.0/",
           "xmp": "http://ns.adobe.com/xap/1.0/",
