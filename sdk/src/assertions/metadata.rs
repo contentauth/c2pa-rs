@@ -81,7 +81,14 @@ impl Metadata {
             for (namespace, uri) in &self.context {
                 if let Some(expected_uri) = ALLOWED_SCHEMAS.get(namespace.as_str()) {
                     if uri != expected_uri {
-                        return false;
+                        // check the backcompat list
+                        if let Some(bcl) = BACKCOMPAT_LIST.get(namespace.as_str()) {
+                            if !bcl.iter().any(|v| v == uri) {
+                                return false;
+                            }
+                        } else {
+                            return false;
+                        }
                     }
                 }
             }
@@ -151,6 +158,13 @@ lazy_static! {
         ("tiff", "http://ns.adobe.com/tiff/1.0/"),
         ("xmpDM", "http://ns.adobe.com/xmp/1.0/DynamicMedia/"),
         ("plus", "http://ns.useplus.org/ldf/xmp/1.0/"),
+    ]
+    .into_iter()
+    .collect();
+
+    // list is to support versions that have changed since the current spec
+    static ref BACKCOMPAT_LIST: HashMap<&'static str, Vec<&'static str>> = vec![
+        ("exifEX", vec!["http://cipa.jp/exif/1.0/exifEX", "http://cipa.jp/exif/2.32/"])
     ]
     .into_iter()
     .collect();
@@ -561,6 +575,25 @@ pub mod tests {
         }
         "#;
 
+    const BACKCOMPAT: &str = r#" {
+        "@context" : {
+            "exif": "http://ns.adobe.com/exif/1.0/",
+            "exifEX": "http://cipa.jp/exif/2.32/",
+            "tiff": "http://ns.adobe.com/tiff/1.0/",
+            "Iptc4xmpExt": "http://iptc.org/std/Iptc4xmpExt/2008-02-29/",
+            "photoshop" : "http://ns.adobe.com/photoshop/1.0/"
+        },
+        "photoshop:DateCreated": "Aug 31, 2022",
+        "Iptc4xmpExt:DigitalSourceType": "https://cv.iptc.org/newscodes/digitalsourcetype/digitalCapture",
+        "exif:GPSVersionID": "2.2.0.0",
+        "exif:GPSLatitude": "39,21.102N",
+        "exif:GPSLongitude": "74,26.5737W",
+        "exif:GPSAltitudeRef": 0,
+        "exif:GPSAltitude": "100963/29890",
+        "exifEX:LensSpecification": { "@list": [ 1.55, 4.2, 1.6, 2.4 ] }
+    }
+    "#;
+
     #[test]
     fn metadata_from_json() {
         let metadata = Metadata::new(METADATA, SPEC_EXAMPLE).unwrap();
@@ -573,6 +606,12 @@ pub mod tests {
         let assertion = metadata.to_assertion().unwrap();
         let result = Metadata::from_assertion(&assertion).unwrap();
         assert_eq!(metadata, result);
+    }
+
+    #[test]
+    fn backcompat() {
+        let metadata = Metadata::new(METADATA, BACKCOMPAT).unwrap();
+        assert!(metadata.is_valid());
     }
 
     #[test]
