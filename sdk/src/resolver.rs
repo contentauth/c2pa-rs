@@ -11,19 +11,21 @@
 // specific language governing permissions and limitations under
 // each license.
 
+use std::io::Read;
+
 use async_trait::async_trait;
 use http::{Request, Response};
 
-use crate::{asset_io::CAIRead, Error, Result};
+use crate::Result;
 
 /// A resolver for sync (blocking) HTTP requests.
 pub trait SyncHttpResolver {
     /// Resolve a [`http::Request`] into a [`http::Response`] with a streaming body.
-    fn http_resolve(&self, request: Request<Vec<u8>>) -> Result<Response<Box<dyn CAIRead>>>;
+    fn http_resolve(&self, request: Request<Vec<u8>>) -> Result<Response<Box<dyn Read>>>;
 }
 
 impl<T: SyncHttpResolver + ?Sized> SyncHttpResolver for Box<T> {
-    fn http_resolve(&self, request: Request<Vec<u8>>) -> Result<Response<Box<dyn CAIRead>>> {
+    fn http_resolve(&self, request: Request<Vec<u8>>) -> Result<Response<Box<dyn Read>>> {
         (**self).http_resolve(request)
     }
 }
@@ -35,7 +37,7 @@ pub trait AsyncHttpResolver {
     async fn http_resolve_async(
         &self,
         request: Request<Vec<u8>>,
-    ) -> Result<Response<Box<dyn CAIRead>>>;
+    ) -> Result<Response<Box<dyn Read>>>;
 }
 
 #[async_trait]
@@ -43,7 +45,7 @@ impl<T: AsyncHttpResolver + ?Sized + Sync> AsyncHttpResolver for Box<T> {
     async fn http_resolve_async(
         &self,
         request: Request<Vec<u8>>,
-    ) -> Result<Response<Box<dyn CAIRead>>> {
+    ) -> Result<Response<Box<dyn Read>>> {
         (**self).http_resolve_async(request).await
     }
 }
@@ -54,7 +56,9 @@ impl<T: AsyncHttpResolver + ?Sized + Sync> AsyncHttpResolver for Box<T> {
 /// enabled features:
 /// * `ureq` - use [`ureq::Agent`].
 /// * `reqwest_blocking` - use [`reqwest::blocking::Client`].
-/// * For WASI - use [`wasi::http::handle`].
+/// * `wasi` (WASI-only) - use [`wasi::http::outgoing_handler::handle`].
+///
+/// Note that WASM (non-WASI) does not have a built-in [`SyncHttpResolver`].
 pub struct SyncGenericResolver {
     http_resolver: Box<dyn SyncHttpResolver>,
 }
@@ -62,17 +66,20 @@ pub struct SyncGenericResolver {
 impl SyncGenericResolver {
     /// Create a new [`SyncGenericResolver`] with an auto-specified [`SyncHttpResolver`].
     #[cfg(all(
-        any(feature = "ureq", feature = "reqwest_blocking"),
-        // `wasm32` doesn't support sync http resolvers, but `wasi` does.
-        any(not(target_arch = "wasm32"), target_os = "wasi")
+        // 1. If `http_ureq` or `http_reqwest_blocking` is enabled.
+        any(feature = "http_ureq", feature = "http_reqwest_blocking"),
+        // 2. It's not `wasm32` without `wasi`.
+        any(not(target_arch = "wasm32"), target_os = "wasi"),
+        // 3. It's `wasi` and `http_wasi` is enabled.
+        any(not(target_os = "wasi"), feature = "http_wasi")
     ))]
     pub fn new() -> Self {
         Self {
-            #[cfg(all(feature = "ureq", not(target_os = "wasi")))]
+            #[cfg(all(feature = "http_ureq", not(target_os = "wasi")))]
             http_resolver: Box::new(ureq::agent()),
-            #[cfg(all(feature = "reqwest_blocking", not(target_os = "wasi")))]
+            #[cfg(all(feature = "http_reqwest_blocking", not(target_os = "wasi")))]
             http_resolver: Box::new(reqwest::blocking::Client::new()),
-            #[cfg(target_os = "wasi")]
+            #[cfg(all(target_os = "wasi", feature = "http_wasi"))]
             http_resolver: Box::new(wasi_resolver::SyncWasiResolver::new()),
         }
     }
@@ -80,19 +87,16 @@ impl SyncGenericResolver {
     /// The `ureq` nor `reqwest_blocking` features are enabled! This function will
     /// construct a [`SyncGenericResolver`] that always returns
     /// [`Error::SyncHttpResolverNotImplemented`].
-    #[cfg(any(
-        not(any(feature = "ureq", feature = "reqwest_blocking")),
-        // `wasm32` doesn't support sync http resolvers, but `wasi` does.
-        all(target_arch = "wasm32", not(target_os = "wasi"))
-    ))]
+    #[cfg(not(all(
+        any(feature = "http_ureq", feature = "http_reqwest_blocking"),
+        any(not(target_arch = "wasm32"), target_os = "wasi"),
+        any(not(target_os = "wasi"), feature = "http_wasi")
+    )))]
     pub fn new() -> Self {
         struct NoopSyncResolver;
 
         impl SyncHttpResolver for NoopSyncResolver {
-            fn http_resolve(
-                &self,
-                request: Request<Vec<u8>>,
-            ) -> Result<Response<Box<dyn CAIRead>>> {
+            fn http_resolve(&self, request: Request<Vec<u8>>) -> Result<Response<Box<dyn Read>>> {
                 Err(Error::SyncHttpResolverNotImplemented)
             }
         }
@@ -103,8 +107,14 @@ impl SyncGenericResolver {
     }
 }
 
+impl Default for SyncGenericResolver {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SyncHttpResolver for SyncGenericResolver {
-    fn http_resolve(&self, request: Request<Vec<u8>>) -> Result<Response<Box<dyn CAIRead>>> {
+    fn http_resolve(&self, request: Request<Vec<u8>>) -> Result<Response<Box<dyn Read>>> {
         self.http_resolver.http_resolve(request)
     }
 }
@@ -114,7 +124,7 @@ impl SyncHttpResolver for SyncGenericResolver {
 /// This implementation will automatically choose a [`AsyncHttpResolver`] based on the
 /// enabled features:
 /// * `reqwest` - use [`reqwest::Client`].
-/// * For WASI - use [`wstd::http::Client`].
+/// * `wstd` (WASI-only) - use [`wstd::http::Client`].
 pub struct AsyncGenericResolver {
     http_resolver: Box<dyn AsyncHttpResolver + Send + Sync>,
 }
@@ -122,15 +132,17 @@ pub struct AsyncGenericResolver {
 impl AsyncGenericResolver {
     /// Create a new [`AsyncGenericResolver`] with an auto-specified [`AsyncHttpResolver`].
     #[cfg(any(
-        // `wasi` uses wstd for async http resolvers.
-        feature = "reqwest", target_os = "wasi"
+        // 1. `http_reqwest` is enabled.
+        feature = "http_reqwest",
+        // 2. It's `wasi` and `http_wstd` is enabled.
+        all(target_os = "wasi", feature = "http_wstd")
     ))]
     pub fn new() -> Self {
         Self {
-            #[cfg(all(feature = "reqwest", not(target_os = "wasi")))]
+            #[cfg(all(feature = "http_reqwest", not(target_os = "wasi")))]
             http_resolver: Box::new(reqwest::Client::new()),
-            #[cfg(target_os = "wasi")]
-            http_resolver: Box::new(wasi_resolver::AsyncWasiResolver::new()),
+            #[cfg(all(target_os = "wasi", feature = "http_wstd"))]
+            http_resolver: Box::new(wstd::http::Client::new()),
         }
     }
 
@@ -138,8 +150,8 @@ impl AsyncGenericResolver {
     /// construct a [`AsyncGenericResolver`] that always returns
     /// [`Error::AsyncHttpResolverNotImplemented`].
     #[cfg(not(any(
-        // `wasi` uses wstd for async http resolvers.
-        feature = "reqwest", target_os = "wasi"
+        feature = "http_reqwest",
+        all(target_os = "wasi", feature = "http_wstd")
     )))]
     pub fn new() -> Self {
         struct NoopAsyncResolver;
@@ -149,7 +161,7 @@ impl AsyncGenericResolver {
             async fn http_resolve_async(
                 &self,
                 request: Request<Vec<u8>>,
-            ) -> Result<Response<Box<dyn CAIRead>>> {
+            ) -> Result<Response<Box<dyn Read>>> {
                 Err(Error::AsyncHttpResolverNotImplemented)
             }
         }
@@ -160,25 +172,30 @@ impl AsyncGenericResolver {
     }
 }
 
+impl Default for AsyncGenericResolver {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[async_trait]
 impl AsyncHttpResolver for AsyncGenericResolver {
     async fn http_resolve_async(
         &self,
         request: Request<Vec<u8>>,
-    ) -> Result<Response<Box<dyn CAIRead>>> {
+    ) -> Result<Response<Box<dyn Read>>> {
         self.http_resolver.http_resolve_async(request).await
     }
 }
 
-#[cfg(any(feature = "reqwest", feature = "reqwest_blocking"))]
-mod reqwest_resolver {
+#[cfg(feature = "http_reqwest_blocking")]
+mod sync_reqwest_resolver {
     use std::io::Cursor;
 
     use super::*;
 
-    #[cfg(feature = "reqwest_blocking")]
     impl SyncHttpResolver for reqwest::blocking::Client {
-        fn http_resolve(&self, request: Request<Vec<u8>>) -> Result<Response<Box<dyn CAIRead>>> {
+        fn http_resolve(&self, request: Request<Vec<u8>>) -> Result<Response<Box<dyn Read>>> {
             let response = self.execute(request.try_into()?)?;
 
             let mut builder = http::Response::builder()
@@ -189,17 +206,23 @@ mod reqwest_resolver {
                 builder = builder.header(name, value);
             }
 
-            Ok(builder.body(Box::new(Cursor::new(response.bytes()?)) as Box<dyn CAIRead>)?)
+            Ok(builder.body(Box::new(Cursor::new(response.bytes()?)) as Box<dyn Read>)?)
         }
     }
+}
 
-    #[cfg(feature = "reqwest")]
+#[cfg(feature = "http_reqwest")]
+mod async_reqwest_resolver {
+    use std::io::Cursor;
+
+    use super::*;
+
     #[async_trait]
     impl AsyncHttpResolver for reqwest::Client {
         async fn http_resolve_async(
             &self,
             request: Request<Vec<u8>>,
-        ) -> Result<Response<Box<dyn CAIRead>>> {
+        ) -> Result<Response<Box<dyn Read>>> {
             let response = self.execute(request.try_into()?).await?;
 
             let mut builder = Response::builder()
@@ -211,22 +234,20 @@ mod reqwest_resolver {
             }
 
             // TODO: in the future we can add HTTP range request support via something like https://github.com/sam0x17/rseek
-            // Ok(builder.body(Box::new(response.bytes_stream()) as Box<dyn CAIRead>)?)
-            Ok(builder.body(Box::new(Cursor::new(response.bytes().await?)) as Box<dyn CAIRead>)?)
+            // Ok(builder.body(Box::new(response.bytes_stream()) as Box<dyn Read>)?)
+            Ok(builder.body(Box::new(Cursor::new(response.bytes().await?)) as Box<dyn Read>)?)
         }
     }
 }
 
-#[cfg(feature = "ureq")]
-mod ureq_resolver {
-    use std::io::Cursor;
-
+#[cfg(feature = "http_ureq")]
+mod sync_ureq_resolver {
     use http::header;
 
     use super::*;
 
     impl SyncHttpResolver for ureq::Agent {
-        fn http_resolve(&self, request: Request<Vec<u8>>) -> Result<Response<Box<dyn CAIRead>>> {
+        fn http_resolve(&self, request: Request<Vec<u8>>) -> Result<Response<Box<dyn Read>>> {
             let response = self.run(request)?;
 
             let mut builder = http::Response::builder()
@@ -237,28 +258,25 @@ mod ureq_resolver {
                 builder = builder.header(header::CONTENT_TYPE, content_type);
             }
 
-            let body = Cursor::new(response.into_body().read_to_vec()?);
-            Ok(builder.body(Box::new(body) as Box<dyn CAIRead>)?)
-        }
-    }
-
-    #[async_trait]
-    impl AsyncHttpResolver for ureq::Agent {
-        async fn http_resolve_async(
-            &self,
-            _request: Request<Vec<u8>>,
-        ) -> Result<Response<Box<dyn CAIRead>>> {
-            Err(Error::AsyncHttpResolverNotImplemented)
+            let body = response.into_body().into_reader();
+            Ok(builder.body(Box::new(body) as Box<dyn Read>)?)
         }
     }
 }
 
-#[cfg(feature = "curl")]
-mod curl_resolver {}
+#[cfg(feature = "http_curl")]
+mod sync_curl_resolver {}
 
-// TODO: Switch to reqwest once it supports WASI https://github.com/seanmonstar/reqwest/issues/2294
-#[cfg(all(target_arch = "wasm32", target_os = "wasi"))]
-mod wasi_resolver {
+// TODO: Switch to reqwest_blockking once it supports WASI https://github.com/seanmonstar/reqwest/issues/2294
+#[cfg(all(target_arch = "wasm32", target_os = "wasi", feature = "http_wasi"))]
+mod sync_wasi_resolver {
+    use std::io::Read;
+
+    use wasi::http::{
+        outgoing_handler::{self, OutgoingRequest},
+        types::Fields,
+    };
+
     use super::*;
 
     /// A resolver for sync WASI network requests.
@@ -272,103 +290,72 @@ mod wasi_resolver {
     }
 
     impl SyncHttpResolver for SyncWasiResolver {
-        fn http_resolve(&self, request: Request<Vec<u8>>) -> Result<Response<Box<dyn CAIRead>>> {
-            // https://docs.rs/wasi/latest/wasi/http/outgoing_handler/fn.handle.html
-            todo!()
+        // TODO: handle
+        #[allow(clippy::unwrap_used)]
+        fn http_resolve(&self, request: Request<Vec<u8>>) -> Result<Response<Box<dyn Read>>> {
+            let wasi_request = OutgoingRequest::new(Fields::new());
 
-            // TODO: inspiration
+            let path_with_query = request
+                .uri()
+                .path_and_query()
+                .map(|path_and_query| path_and_query.as_str());
+            wasi_request.set_path_with_query(path_with_query).unwrap();
 
-            // use url::Url;
-            // use wasi::http::{
-            //     outgoing_handler,
-            //     types::{Fields, OutgoingRequest, Scheme},
-            // };
+            let authority = request
+                .uri()
+                .authority()
+                .map(|authority| authority.as_str());
+            wasi_request.set_authority(authority).unwrap();
 
-            // let parsed_url = Url::parse(url)
-            //     .map_err(|e| Error::RemoteManifestFetch(format!("invalid URL: {}", e)))?;
-            // let authority = parsed_url.authority();
-            // let path_with_query = parsed_url[url::Position::AfterPort..].to_string();
-            // let scheme = match parsed_url.scheme() {
-            //     "http" => Scheme::Http,
-            //     "https" => Scheme::Https,
-            //     _ => {
-            //         return Err(Error::RemoteManifestFetch(
-            //             "unsupported URL scheme".to_string(),
-            //         ))
-            //     }
-            // };
+            let scheme = match request.uri().scheme_str() {
+                Some(scheme) => match scheme {
+                    "http" => Some(wasi::http::types::Scheme::Http),
+                    "https" => Some(wasi::http::types::Scheme::Https),
+                    scheme => Some(wasi::http::types::Scheme::Other(scheme.to_owned())),
+                },
+                None => None,
+            };
+            wasi_request.set_scheme(scheme.as_ref()).unwrap();
 
-            // let request = OutgoingRequest::new(Fields::new());
-            // request.set_path_with_query(Some(&path_with_query)).unwrap();
-            // request.set_authority(Some(&authority)).unwrap();
-            // request.set_scheme(Some(&scheme)).unwrap();
-            // match outgoing_handler::handle(request, None) {
-            //     Ok(resp) => {
-            //         resp.subscribe().block();
-            //         let response = resp
-            //             .get()
-            //             .ok_or(Error::RemoteManifestFetch(
-            //                 "HTTP request response missing".to_string(),
-            //             ))?
-            //             .map_err(|_| {
-            //                 Error::RemoteManifestFetch(
-            //                     "HTTP request response requested more than once".to_string(),
-            //                 )
-            //             })?
-            //             .map_err(|_| Error::RemoteManifestFetch("HTTP request failed".to_string()))?;
-            //     }
-            // }
+            let wasi_response = outgoing_handler::handle(wasi_request, None).unwrap();
+            wasi_response.subscribe().block();
+            let wasi_response = wasi_response.get().unwrap().unwrap().unwrap();
+
+            let mut response = Response::builder().status(wasi_response.status());
+            for (name, value) in wasi_response.headers().entries() {
+                response = response.header(name, value);
+            }
+
+            let stream = wasi_response.consume().unwrap().stream().unwrap();
+            Ok(response.body(Box::new(stream) as Box<dyn Read>)?)
         }
     }
+}
 
-    /// A resolver for async WASI network requests.
-    pub struct AsyncWasiResolver {}
+// TODO: Switch to reqwest once it supports WASI https://github.com/seanmonstar/reqwest/issues/2294
+#[cfg(all(target_arch = "wasm32", target_os = "wasi", feature = "http_wstd"))]
+mod async_wasi_resolver {
+    use std::io::Cursor;
 
-    impl AsyncWasiResolver {
-        /// Create a new [`AsyncWasiResolver`].
-        pub fn new() -> Self {
-            Self {}
-        }
-    }
+    use wstd::http::body::StreamedBody;
 
+    use super::*;
+
+    // TODO: handle
+    #[allow(clippy::unwrap_used)]
     #[async_trait]
-    impl AsyncHttpResolver for AsyncWasiResolver {
+    impl AsyncHttpResolver for wstd::http::Client {
         async fn http_resolve_async(
             &self,
-            _request: Request<Vec<u8>>,
-        ) -> Result<Response<Box<dyn CAIRead>>> {
-            // https://docs.rs/wstd/latest/wstd/http/struct.Request.html
+            request: Request<Vec<u8>>,
+        ) -> Result<Response<Box<dyn Read>>> {
+            // TODO: not too happy with this implementation, it also causes a very obscure async error
+            // let request = request.map(|body| StreamedBody::new(wstd::io::Cursor::new(body)));
+            // let mut response = self.send(request).await.unwrap();
+
+            // let bytes = response.body_mut().bytes().await.unwrap();
+            // Ok(response.map(|_| Box::new(Cursor::new(bytes)) as Box<dyn Read>))
             todo!()
-
-            // TODO: inspiration:
-
-            // use wstd::{http, io, io::AsyncRead};
-
-            // let request = http::Request::get(url)
-            //     .header("User-Agent", http::HeaderValue::from_static(USER_AGENT))
-            //     .header(
-            //         "Accept",
-            //         http::HeaderValue::from_static("application/did+json"),
-            //     )
-            //     .body(io::empty())
-            //     .map_err(|e| DidWebError::Request(url.to_owned(), e.to_string()))?;
-            // let resp = http::Client::new()
-            //     .send(request)
-            //     .await
-            //     .map_err(|e| DidWebError::Request(url.to_owned(), e.to_string()))?;
-
-            // let (parts, mut body) = resp.into_parts();
-            // match parts.status {
-            //     http::StatusCode::OK => (),
-            //     http::StatusCode::NOT_FOUND => return Err(DidWebError::NotFound(url.to_string())),
-            //     _ => return Err(DidWebError::Server(parts.status.to_string())),
-            // };
-
-            // let mut document = Vec::new();
-            // body.read_to_end(&mut document)
-            //     .await
-            //     .map_err(|e| DidWebError::Response(e.to_string()))?;
-            // Ok(document)
         }
     }
 }

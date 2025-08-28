@@ -48,7 +48,7 @@ rustdoc-args = ["--cfg", "docsrs"]
 # blocking implementation, no runtimes included.
 # TODO: make our async tests always use the async API
 #       also need to ensure ureq isn't enabled when the OS is WASI
-default = ["openssl", "reqwest", "ureq"]
+default = ["openssl", "http_reqwest", "http_ureq"]
 add_thumbnails = ["image"]
 file_io = []
 serialize_thumbnails = []
@@ -70,10 +70,14 @@ rust_native_crypto = [
     "dep:spki",
 ]
 v1_api = []
-reqwest = []
-reqwest_blocking = []
-ureq = []
-curl = []
+# TODO: document and add dep: in features
+http_reqwest_blocking = []
+http_ureq = []
+http_curl = []
+http_wasi = []
+
+http_wstd = []
+http_reqwest = []
 
 # The diagnostics feature is unsupported and might be removed.
 # It enables some low-overhead timing features used in our development cycle.

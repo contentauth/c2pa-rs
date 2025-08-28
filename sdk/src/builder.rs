@@ -309,7 +309,7 @@ impl Builder {
     /// * A new [`Builder`] with the specified source type.
     /// # Example
     /// ```rust
-    /// use c2pa::{Builder, assertions::DigitalSourceType};
+    /// use c2pa::{Builder, DigitalSourceType};
     /// let builder = Builder::create(DigitalSourceType::Empty);
     /// ```
     pub fn create(source_type: DigitalSourceType) -> Self {
