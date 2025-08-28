@@ -92,8 +92,9 @@ mod tests {
         Builder, Reader, SigningAlg,
     };
 
-    const TEST_IMAGE: &[u8] = include_bytes!("../../../tests/fixtures/CA.jpg");
-    const TEST_THUMBNAIL: &[u8] = include_bytes!("../../../tests/fixtures/thumbnail.jpg");
+    const TEST_IMAGE: &[u8] = include_bytes!("/Users/scouten/Downloads/R-es-0087-001.jpg");
+    const TEST_THUMBNAIL: &[u8] =
+        include_bytes!("/Users/scouten/Downloads/R-es-0087-001-thumbnail.jpg");
 
     #[c2pa_test_async]
     async fn simple_case() {
@@ -130,6 +131,12 @@ mod tests {
         builder
             .sign(&c2pa_signer, format, &mut source, &mut dest)
             .unwrap();
+
+        std::fs::write(
+            "/Users/scouten/Downloads/Cr-es-0087-001.jpg",
+            dest.get_ref(),
+        )
+        .unwrap();
 
         // Read back the Manifest that was generated.
         dest.rewind().unwrap();
