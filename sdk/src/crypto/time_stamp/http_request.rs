@@ -25,7 +25,7 @@ use crate::{
             TimeStampError,
         },
     },
-    resolver::{AsyncGenericResolver, AsyncHttpResolver, SyncHttpResolver, SyncGenericResolver},
+    resolver::{AsyncGenericResolver, AsyncHttpResolver, SyncGenericResolver, SyncHttpResolver},
     status_tracker::StatusTracker,
 };
 
@@ -150,14 +150,5 @@ fn time_stamp_request_http(
             response.status().as_u16(),
             content_type.map(|content_type| content_type.to_owned()),
         ))
-    }
-}
-
-impl From<ureq::Error> for TimeStampError {
-    fn from(err: ureq::Error) -> Self {
-        // The `ureq::Error` type is very large (272 bytes on aarch64), which makes
-        // Clippy complain. Rather than carrying that forward, we capture the
-        // description from the error in the otherwise smaller `TimeStampError` type.
-        Self::HttpConnectionError(err.to_string())
     }
 }
