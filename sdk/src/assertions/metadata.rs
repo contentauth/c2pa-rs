@@ -483,7 +483,7 @@ pub mod tests {
     const SPEC_EXAMPLE: &str = r#"{
         "@context" : {
             "exif": "http://ns.adobe.com/exif/1.0/",
-            "exifEX": "http://cipa.jp/exif/1.0/exifEX",
+            "exifEX": "http://cipa.jp/exif/1.0/",
             "tiff": "http://ns.adobe.com/tiff/1.0/",
             "Iptc4xmpExt": "http://iptc.org/std/Iptc4xmpExt/2008-02-29/",
             "photoshop" : "http://ns.adobe.com/photoshop/1.0/"
