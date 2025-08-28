@@ -17,7 +17,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::{
-    assertion::{Assertion, AssertionBase, AssertionData, AssertionDecodeError, AssertionJson},
+    assertion::{Assertion, AssertionBase, AssertionJson},
     assertions::labels,
     Error,
 };
@@ -124,22 +124,12 @@ impl AssertionBase for Metadata {
     }
 
     fn from_assertion(assertion: &Assertion) -> Result<Self, Error> {
-        match assertion.decode_data() {
-            AssertionData::Json(data) => {
-                // validate that the data is valid json, but do not modify it if valid
-                let _value: serde_json::Value = serde_json::from_str(data).map_err(|e| {
-                    Error::AssertionDecoding(AssertionDecodeError::from_assertion_and_json_err(
-                        assertion, e,
-                    ))
-                })?;
+        let mut metadata = Self::from_json_assertion(assertion)?;
 
-                Ok(Metadata::new(&assertion.label(), data)?)
-            }
-            ad => Err(AssertionDecodeError::from_assertion_unexpected_data_type(
-                assertion, ad, "json",
-            )
-            .into()),
-        }
+        metadata.custom_metadata_label =
+            (assertion.label() != labels::METADATA).then(|| assertion.label().to_owned());
+
+        Ok(metadata)
     }
 }
 
