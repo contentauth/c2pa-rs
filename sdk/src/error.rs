@@ -15,7 +15,10 @@
 
 use thiserror::Error;
 
-use crate::crypto::{cose::CoseError, raw_signature::RawSignerError, time_stamp::TimeStampError};
+use crate::{
+    crypto::{cose::CoseError, raw_signature::RawSignerError, time_stamp::TimeStampError},
+    soft_binding::{resolution_api::SoftBindingResolutionApiError, SoftBindingClientError},
+};
 
 /// `Error` enumerates errors returned by most C2PA toolkit operations.
 #[derive(Debug, Error)]
@@ -295,6 +298,12 @@ pub enum Error {
 
     #[error("invalid signing key")]
     InvalidSigningKey,
+
+    #[error(transparent)]
+    SoftBindingResolutionApi(#[from] SoftBindingResolutionApiError),
+
+    #[error(transparent)]
+    SoftBindingClient(#[from] SoftBindingClientError),
 
     // --- third-party errors ---
     #[error(transparent)]

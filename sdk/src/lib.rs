@@ -132,6 +132,9 @@ pub mod validation_results;
 #[doc(hidden)]
 pub mod validation_status;
 
+/// The soft_binding module contains foundational structs for using the C2PA soft binding resolution API.
+pub mod soft_binding;
+
 // Public exports
 pub use assertions::DigitalSourceType;
 #[doc(inline)]
