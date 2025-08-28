@@ -17,10 +17,12 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::{
-    assertion::{Assertion, AssertionBase, AssertionJson},
+    assertion::{Assertion, AssertionBase, AssertionData, AssertionDecodeError, AssertionJson},
     assertions::labels,
     Error,
 };
+
+const ASSERTION_CREATION_VERSION: usize = 1;
 
 /// A `Metadata` assertion provides structured metadata using JSON-LD format for
 /// both standardized C2PA metadata and custom metadata schemas.
@@ -38,21 +40,29 @@ pub struct Metadata {
     /// Metadata fields with namespace prefixes.
     #[serde(flatten)]
     pub value: HashMap<String, Value>,
-    /// Assertion label (not serialized).
+
+    /// Custom assertion label (not serialized into content).
     #[serde(skip)]
-    pub label: String,
+    pub custom_metadata_label: Option<String>,
 }
 
 impl Metadata {
     /// Creates a new metadata assertion from a JSON-LD string.
-    pub fn new(label: &str, jsonld: &str) -> Result<Self, Error> {
+    pub fn new(metadata_label: &str, jsonld: &str) -> Result<Self, Error> {
         let metadata = serde_json::from_slice::<Metadata>(jsonld.as_bytes())
             .map_err(|e| Error::BadParam(format!("Invalid JSON format: {e}")))?;
+
+        // is this a standard c2pa.metadata assertion or a custom field
+        let custom_metadata_label = if metadata_label != labels::METADATA {
+            Some(metadata_label.to_owned())
+        } else {
+            None
+        };
 
         Ok(Self {
             context: metadata.context,
             value: metadata.value,
-            label: label.to_owned(),
+            custom_metadata_label,
         })
     }
 
@@ -67,7 +77,7 @@ impl Metadata {
             return false;
         }
 
-        if self.label == labels::METADATA {
+        if self.label() == labels::METADATA {
             for (namespace, uri) in &self.context {
                 if let Some(expected_uri) = ALLOWED_SCHEMAS.get(namespace.as_str()) {
                     if uri != expected_uri {
@@ -83,7 +93,7 @@ impl Metadata {
                     return false;
                 }
             }
-            if self.label == labels::METADATA && !ALLOWED_FIELDS.contains(&label.as_str()) {
+            if self.label() == labels::METADATA && !ALLOWED_FIELDS.contains(&label.as_str()) {
                 return false;
             }
         }
@@ -94,8 +104,14 @@ impl Metadata {
 impl AssertionJson for Metadata {}
 
 impl AssertionBase for Metadata {
+    const LABEL: &'static str = labels::METADATA;
+    const VERSION: Option<usize> = Some(ASSERTION_CREATION_VERSION);
+
     fn label(&self) -> &str {
-        &self.label
+        match &self.custom_metadata_label {
+            Some(cm) => cm,
+            None => Self::LABEL,
+        }
     }
 
     fn to_assertion(&self) -> Result<Assertion, Error> {
@@ -103,9 +119,22 @@ impl AssertionBase for Metadata {
     }
 
     fn from_assertion(assertion: &Assertion) -> Result<Self, Error> {
-        let mut metadata = Self::from_json_assertion(assertion)?;
-        metadata.label = assertion.label().to_owned();
-        Ok(metadata)
+        match assertion.decode_data() {
+            AssertionData::Json(data) => {
+                // validate that the data is valid json, but do not modify it if valid
+                let _value: serde_json::Value = serde_json::from_str(data).map_err(|e| {
+                    Error::AssertionDecoding(AssertionDecodeError::from_assertion_and_json_err(
+                        assertion, e,
+                    ))
+                })?;
+
+                Ok(Metadata::new(&assertion.label(), data)?)
+            }
+            ad => Err(AssertionDecodeError::from_assertion_unexpected_data_type(
+                assertion, ad, "json",
+            )
+            .into()),
+        }
     }
 }
 
@@ -552,11 +581,19 @@ pub mod tests {
     }
 
     #[test]
+    fn assertion_custom_round_trip() {
+        let metadata = Metadata::new("custom.metadata", CUSTOM_METADATA).unwrap();
+        let assertion = metadata.to_assertion().unwrap();
+        let result = Metadata::from_assertion(&assertion).unwrap();
+        assert_eq!(metadata, result);
+    }
+
+    #[test]
     fn test_custom_validation() {
         let mut metadata = Metadata::new("custom.metadata", CUSTOM_METADATA).unwrap();
         assert!(metadata.is_valid());
         // c2pa.metadata has restrictions on fields
-        metadata.label = METADATA.to_owned();
+        metadata.custom_metadata_label = Some(METADATA.to_owned());
         assert!(!metadata.is_valid());
     }
 
@@ -570,7 +607,7 @@ pub mod tests {
     fn test_field_not_in_context() {
         let mut metadata = Metadata::new("custom.metadata", MISSING_CONTEXT).unwrap();
         assert!(!metadata.is_valid());
-        metadata.label = METADATA.to_owned();
+        metadata.custom_metadata_label = Some(METADATA.to_owned());
         assert!(!metadata.is_valid());
     }
 
@@ -579,7 +616,7 @@ pub mod tests {
         let mut metadata = Metadata::new(METADATA, MISMATCH_URI).unwrap();
         assert!(!metadata.is_valid());
         // custom metadata does not have restriction on uris
-        metadata.label = "custom.metadata".to_owned();
+        metadata.custom_metadata_label = Some("custom.metadata".to_owned());
         assert!(metadata.is_valid());
     }
 
