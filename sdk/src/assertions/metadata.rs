@@ -43,7 +43,7 @@ pub struct Metadata {
 
     /// Custom assertion label (not serialized into content).
     #[serde(skip)]
-    pub custom_metadata_label: Option<String>,
+    custom_metadata_label: Option<String>,
 }
 
 impl Metadata {
@@ -98,6 +98,11 @@ impl Metadata {
             }
         }
         true
+    }
+
+    /// Get the label for the metadata
+    pub fn get_label(&self) -> &str {
+        self.label()
     }
 }
 
