@@ -146,7 +146,7 @@ lazy_static! {
         ("dc", "http://purl.org/dc/elements/1.1/"),
         ("Iptc4xmpExt", "http://iptc.org/std/Iptc4xmpExt/2008-02-29/"),
         ("exif", "http://ns.adobe.com/exif/1.0/"),
-        ("exifEX", "http://cipa.jp/exif/1.0/exifEX"),
+        ("exifEX", "http://cipa.jp/exif/1.0/"),
         ("photoshop", "http://ns.adobe.com/photoshop/1.0/"),
         ("tiff", "http://ns.adobe.com/tiff/1.0/"),
         ("xmpDM", "http://ns.adobe.com/xmp/1.0/DynamicMedia/"),
