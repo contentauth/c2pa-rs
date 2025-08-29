@@ -26,6 +26,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     claim::ClaimAssetData,
     crypto::base64,
+    http::SyncGenericResolver,
     jumbf::labels::{manifest_label_from_uri, to_absolute_uri, to_relative_uri},
     manifest::StoreOptions,
     status_tracker::StatusTracker,
@@ -290,7 +291,13 @@ impl ManifestStore {
     ) -> Result<ManifestStore> {
         let mut validation_log = StatusTracker::default();
 
-        let store = Store::from_stream(format, &mut stream, verify, &mut validation_log)?;
+        let store = Store::from_stream(
+            format,
+            &mut stream,
+            &SyncGenericResolver::new(),
+            verify,
+            &mut validation_log,
+        )?;
 
         Ok(Self::from_store(store, &validation_log))
     }

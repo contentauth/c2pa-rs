@@ -15,7 +15,10 @@
 
 use thiserror::Error;
 
-use crate::crypto::{cose::CoseError, raw_signature::RawSignerError, time_stamp::TimeStampError};
+use crate::{
+    crypto::{cose::CoseError, raw_signature::RawSignerError, time_stamp::TimeStampError},
+    http::HttpResolverError,
+};
 
 /// `Error` enumerates errors returned by most C2PA toolkit operations.
 #[derive(Debug, Error)]
@@ -296,9 +299,21 @@ pub enum Error {
     #[error("invalid signing key")]
     InvalidSigningKey,
 
+    #[error("async is not implemented for this http resolver")]
+    AsyncHttpResolverNotImplemented,
+
+    #[error("sync is not implemented for this http resolver")]
+    SyncHttpResolverNotImplemented,
+
     // --- third-party errors ---
     #[error(transparent)]
     Utf8Error(#[from] std::str::Utf8Error),
+
+    #[error(transparent)]
+    HttpError(#[from] http::Error),
+
+    #[error(transparent)]
+    HttpResolverError(#[from] HttpResolverError),
 
     #[error(transparent)]
     TryFromIntError(#[from] std::num::TryFromIntError),
@@ -364,7 +379,7 @@ pub enum Error {
 }
 
 /// A specialized `Result` type for C2PA toolkit operations.
-pub type Result<T> = std::result::Result<T, Error>;
+pub type Result<T, E = Error> = std::result::Result<T, E>;
 
 impl From<CoseError> for Error {
     fn from(err: CoseError) -> Self {

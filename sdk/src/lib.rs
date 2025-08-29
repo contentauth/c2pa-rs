@@ -48,7 +48,7 @@
 //!
 //! ## Example: Adding a Manifest to a file
 //!
-//! ```ignore-wasm32
+//! ```
 //! # use c2pa::Result;
 //! use std::path::PathBuf;
 //!
@@ -62,27 +62,24 @@
 //! }
 //!
 //! # fn main() -> Result<()> {
-//! #[cfg(feature = "file_io")]
-//! {
-//!     let mut builder = Builder::from_json(r#"{"title": "Test"}"#)?;
-//!     builder.add_assertion("org.contentauth.test", &Test { my_tag: 42 })?;
+//! let mut builder = Builder::from_json(r#"{"title": "Test"}"#)?;
+//! builder.add_assertion("org.contentauth.test", &Test { my_tag: 42 })?;
 //!
-//!     // Create a ps256 signer using certs and key files
-//!     let signer = create_signer::from_files(
-//!         "tests/fixtures/certs/ps256.pub",
-//!         "tests/fixtures/certs/ps256.pem",
-//!         SigningAlg::Ps256,
-//!         None,
-//!     )?;
+//! // Create a ps256 signer using certs and key files
+//! let signer = create_signer::from_files(
+//!     "tests/fixtures/certs/ps256.pub",
+//!     "tests/fixtures/certs/ps256.pem",
+//!     SigningAlg::Ps256,
+//!     None,
+//! )?;
 //!
-//!     // embed a manifest using the signer
-//!     std::fs::remove_file("../target/tmp/lib_sign.jpg"); // ensure the file does not exist
-//!     builder.sign_file(
-//!         &*signer,
-//!         "tests/fixtures/C.jpg",
-//!         "../target/tmp/lib_sign.jpg",
-//!     )?;
-//! }
+//! // embed a manifest using the signer
+//! std::fs::remove_file("../target/tmp/lib_sign.jpg"); // ensure the file does not exist
+//! builder.sign_file(
+//!     &*signer,
+//!     "tests/fixtures/C.jpg",
+//!     "../target/tmp/lib_sign.jpg",
+//! )?;
 //! # Ok(())
 //! # }
 //! ```
@@ -131,6 +128,10 @@ pub mod validation_results;
 /// The validation_status module contains the definitions for the validation status that are part of the C2PA specification.
 #[doc(hidden)]
 pub mod validation_status;
+
+// TODO: pub it when we expose in high-level API
+/// The http module contains generic traits for configuring sync and async http resolvers.
+pub(crate) mod http;
 
 // Public exports
 pub use assertions::DigitalSourceType;
