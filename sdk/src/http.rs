@@ -11,10 +11,7 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use std::{
-    error::Error,
-    io::{self, Read},
-};
+use std::io::{self, Read};
 
 use async_trait::async_trait;
 use http::{Request, Response};
@@ -30,33 +27,15 @@ pub trait SyncHttpResolver {
     ) -> Result<Response<Box<dyn Read>>, HttpResolverError>;
 }
 
-impl<T: SyncHttpResolver + ?Sized> SyncHttpResolver for Box<T> {
-    fn http_resolve(
-        &self,
-        request: Request<Vec<u8>>,
-    ) -> Result<Response<Box<dyn Read>>, HttpResolverError> {
-        (**self).http_resolve(request)
-    }
-}
-
 /// A resolver for non-blocking (async) HTTP requests.
-#[async_trait]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 pub trait AsyncHttpResolver {
     /// Resolve a [`http::Request`] into a [`http::Response`] with a streaming body.
     async fn http_resolve_async(
         &self,
         request: Request<Vec<u8>>,
     ) -> Result<Response<Box<dyn Read>>, HttpResolverError>;
-}
-
-#[async_trait]
-impl<T: AsyncHttpResolver + ?Sized + Sync> AsyncHttpResolver for Box<T> {
-    async fn http_resolve_async(
-        &self,
-        request: Request<Vec<u8>>,
-    ) -> Result<Response<Box<dyn Read>>, HttpResolverError> {
-        (**self).http_resolve_async(request).await
-    }
 }
 
 /// A generic resolver for [`SyncHttpResolver`].
@@ -77,13 +56,14 @@ impl SyncGenericResolver {
     ///
     /// Note that if `http_ureq` and `http_reqwest_blocking` are enabled at the same time, this
     /// function will panic.
-    #[cfg(all(
-        // 1. If `http_ureq` or `http_reqwest_blocking` is enabled.
-        any(feature = "http_ureq", feature = "http_reqwest_blocking"),
-        // 2. It's not `wasm32` without `wasi`.
-        any(not(target_arch = "wasm32"), target_os = "wasi"),
-        // 3. It's `wasi` and `http_wasi` is enabled.
-        any(not(target_os = "wasi"), feature = "http_wasi")
+    #[cfg(any(
+        // 1. It's `wasi` and `http_wasi` is enabled.
+        all(target_os = "wasi", feature = "http_wasi"),
+        // 2. It's not `wasm32` and either `http_ureq` or `http_reqwest_blocking` are enabled.
+        all(
+            not(target_arch = "wasm32"),
+            any(feature = "http_ureq", feature = "http_reqwest_blocking")
+        )
     ))]
     pub fn new() -> Self {
         #[cfg(all(feature = "http_ureq", feature = "http_reqwest_blocking"))]
@@ -95,17 +75,19 @@ impl SyncGenericResolver {
             #[cfg(all(feature = "http_reqwest_blocking", not(target_os = "wasi")))]
             http_resolver: Box::new(reqwest::blocking::Client::new()),
             #[cfg(all(target_os = "wasi", feature = "http_wasi"))]
-            http_resolver: Box::new(wasi_resolver::SyncWasiResolver::new()),
+            http_resolver: Box::new(sync_wasi_resolver::SyncWasiResolver::new()),
         }
     }
 
     /// The `http_ureq`, `http_reqwest_blocking`, nor `http_wasi` features are enabled! Ensure only
     /// one feature is enabled otherwise this function will construct a [`SyncGenericResolver`] that
     /// always returns [`Error::SyncHttpResolverNotImplemented`].
-    #[cfg(not(all(
-        any(feature = "http_ureq", feature = "http_reqwest_blocking"),
-        any(not(target_arch = "wasm32"), target_os = "wasi"),
-        any(not(target_os = "wasi"), feature = "http_wasi")
+    #[cfg(not(any(
+        all(target_os = "wasi", feature = "http_wasi"),
+        all(
+            not(target_arch = "wasm32"),
+            any(feature = "http_ureq", feature = "http_reqwest_blocking")
+        )
     )))]
     pub fn new() -> Self {
         struct NoopSyncResolver;
@@ -147,7 +129,10 @@ impl SyncHttpResolver for SyncGenericResolver {
 /// * `reqwest` - use [`reqwest::Client`].
 /// * `wstd` (WASI-only) - use [`wstd::http::Client`].
 pub struct AsyncGenericResolver {
+    #[cfg(not(target_os = "wasi"))]
     http_resolver: Box<dyn AsyncHttpResolver + Send + Sync>,
+    #[cfg(target_os = "wasi")]
+    http_resolver: Box<dyn AsyncHttpResolver>,
 }
 
 impl AsyncGenericResolver {
@@ -177,7 +162,7 @@ impl AsyncGenericResolver {
     pub fn new() -> Self {
         struct NoopAsyncResolver;
 
-        #[async_trait]
+        #[async_trait(?Send)]
         impl AsyncHttpResolver for NoopAsyncResolver {
             async fn http_resolve_async(
                 &self,
@@ -199,7 +184,8 @@ impl Default for AsyncGenericResolver {
     }
 }
 
-#[async_trait]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl AsyncHttpResolver for AsyncGenericResolver {
     async fn http_resolve_async(
         &self,
@@ -234,7 +220,7 @@ pub enum HttpResolverError {
 
     /// An error occured from the underlying http resolver.
     #[error("an error occurred from the underlying http resolver")]
-    Other(Box<dyn Error + Send + Sync>),
+    Other(Box<dyn std::error::Error + Send + Sync>),
 }
 
 #[cfg(all(feature = "http_reqwest_blocking", not(target_os = "wasi")))]
@@ -346,10 +332,22 @@ mod sync_wasi_resolver {
 
     use wasi::http::{
         outgoing_handler::{self, OutgoingRequest},
-        types::Fields,
+        types::{Fields, IncomingBody, InputStream},
     };
 
     use super::*;
+
+    struct WasiStream {
+        // Important that `stream` is above `body` so that it's dropped first.
+        stream: InputStream,
+        _body: IncomingBody,
+    }
+
+    impl Read for WasiStream {
+        fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+            Read::read(&mut self.stream, buf)
+        }
+    }
 
     /// A resolver for sync WASI network requests.
     pub struct SyncWasiResolver {}
@@ -408,18 +406,23 @@ mod sync_wasi_resolver {
                 response = response.header(name, value);
             }
 
-            let stream = wasi_response
-                .consume()
-                .map_err(|_| WasiError)?
-                .stream()
-                .map_err(|_| WasiError)?;
+            let body = wasi_response.consume().map_err(|_| WasiError)?;
+            let stream = body.stream().map_err(|_| WasiError)?;
+
+            // The reason we make this struct is because `body` must live for as long as `stream`
+            // or else `wasi` will panic.
+            let stream = WasiStream {
+                stream,
+                _body: body,
+            };
+
             Ok(response.body(Box::new(stream) as Box<dyn Read>)?)
         }
     }
 
     #[derive(Debug, thiserror::Error)]
     #[error("an unknown error occurred in `wasi`")]
-    pub struct WasiError;
+    struct WasiError;
 
     // WASI returns `()` as their error type, sometimes..
     impl From<()> for WasiError {
@@ -450,25 +453,30 @@ mod async_wasi_resolver {
 
     use super::*;
 
-    #[async_trait]
+    #[async_trait(?Send)]
     impl AsyncHttpResolver for wstd::http::Client {
         async fn http_resolve_async(
             &self,
             request: Request<Vec<u8>>,
         ) -> Result<Response<Box<dyn Read>>, HttpResolverError> {
-            // TODO: not too happy with this implementation, it also causes a very obscure async error
-            // let request = request.map(|body| StreamedBody::new(wstd::io::Cursor::new(body)));
-            // let mut response = self.send(request).await?;
+            let request = request.map(|body| StreamedBody::new(wstd::io::Cursor::new(body)));
+            let mut response = self.send(request).await?;
 
-            // let bytes = response.body_mut().bytes().await?;
-            // Ok(response.map(|_| Box::new(Cursor::new(bytes)) as Box<dyn Read>))
-            todo!()
+            let bytes = response.body_mut().bytes().await?;
+            Ok(response.map(|_| Box::new(Cursor::new(bytes)) as Box<dyn Read>))
         }
     }
 
+    // `wstd` errors are converted to a string because they do not implement `Send` nor `Sync`.
+    // An alternative is to have a WASM-specific error that implements `Box<dyn Error>`, although
+    // parts of our library depend on the error type being `Send + Sync`.
+    #[derive(Debug, thiserror::Error)]
+    #[error("{0}")]
+    struct WstdError(String);
+
     impl From<wstd::http::error::Error> for HttpResolverError {
         fn from(value: wstd::http::error::Error) -> Self {
-            Self::Other(Box::new(value))
+            Self::Other(Box::new(WstdError(value.to_string())))
         }
     }
 }

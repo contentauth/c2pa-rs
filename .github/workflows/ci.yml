@@ -40,7 +40,7 @@ jobs:
           FEATURES=$(cargo metadata --format-version=1 | jq -r '[.packages[] | select(.name=="c2pa") | .features | keys | map(select(. != "default" and (test("^http_")|not))) | .[]] | unique | join(" ")' )
 
           # TODO: remove http_ureq when we remove it from defaults
-          FEATURES+=" http_ureq http_reqwest"
+          FEATURES+=" http_ureq http_reqwest http_wasi http_wstd"
 
           RUST_NATIVE_FEATURES=$(echo $FEATURES | sed 's/openssl//g')
           OPENSSL_FEATURES=$(echo $FEATURES | sed 's/rust_native_crypto//g')
