@@ -2834,6 +2834,7 @@ impl Store {
                 }
                 _ => (),
             };
+            output_stream.rewind()?;
         }
 
         let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
