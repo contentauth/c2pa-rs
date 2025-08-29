@@ -12,19 +12,15 @@
 // each license.
 
 use async_generic::async_generic;
+use chrono::{DateTime, Utc};
 use ciborium::value::Value;
 use coset::{CoseSign1, Label};
-#[cfg(not(target_arch = "wasm32"))]
-use {
-    crate::crypto::cose::cert_chain_from_sign1,
-    chrono::{DateTime, Utc},
-};
 
 use crate::{
     crypto::{
         asn1::rfc3161::TstInfo,
         cose::{
-            check_end_entity_certificate_profile, validate_cose_tst_info,
+            cert_chain_from_sign1, check_end_entity_certificate_profile, validate_cose_tst_info,
             validate_cose_tst_info_async, CertificateTrustError, CertificateTrustPolicy, CoseError,
         },
         ocsp::OcspResponse,
@@ -281,7 +277,7 @@ fn check_stapled_ocsp_response(
 }
 
 /// Fetches and validates an OCSP response for the given COSE signature.
-#[async_generic()]
+#[async_generic]
 pub(crate) fn fetch_and_check_ocsp_response(
     sign1: &CoseSign1,
     data: &[u8],
@@ -289,52 +285,43 @@ pub(crate) fn fetch_and_check_ocsp_response(
     _tst_info: Option<&TstInfo>,
     validation_log: &mut StatusTracker,
 ) -> Result<OcspResponse, CoseError> {
-    #[cfg(target_arch = "wasm32")]
-    {
-        let _ = (sign1, data, ctp, validation_log);
-        Ok(OcspResponse::default())
-    }
+    let certs = cert_chain_from_sign1(sign1)?;
 
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        let certs = cert_chain_from_sign1(sign1)?;
+    let ocsp_der = if _sync {
+        crate::crypto::ocsp::fetch_ocsp_response(&certs)
+    } else {
+        crate::crypto::ocsp::fetch_ocsp_response_async(&certs).await
+    };
 
-        let ocsp_der = if _sync {
-            crate::crypto::ocsp::fetch_ocsp_response(&certs)
-        } else {
-            crate::crypto::ocsp::fetch_ocsp_response_async(&certs).await
-        };
+    let Some(ocsp_der) = ocsp_der else {
+        return Ok(OcspResponse::default());
+    };
 
-        let Some(ocsp_der) = ocsp_der else {
-            return Ok(OcspResponse::default());
-        };
+    let ocsp_response_der = ocsp_der;
 
-        let ocsp_response_der = ocsp_der;
+    let signing_time: Option<DateTime<Utc>> =
+        validate_cose_tst_info(sign1, data, ctp, validation_log)
+            .ok()
+            .map(|tst_info| tst_info.gen_time.clone().into());
 
-        let signing_time: Option<DateTime<Utc>> =
-            validate_cose_tst_info(sign1, data, ctp, validation_log)
-                .ok()
-                .map(|tst_info| tst_info.gen_time.clone().into());
+    // Check the OCSP response, but only if it is well-formed.
+    // Revocation errors are reported in the validation log.
+    let Ok(ocsp_data) =
+        OcspResponse::from_der_checked(&ocsp_response_der, signing_time, validation_log)
+    else {
+        // TO REVIEW: This is how the old code worked, but is it correct to ignore a
+        // malformed OCSP response?
+        return Ok(OcspResponse::default());
+    };
 
-        // Check the OCSP response, but only if it is well-formed.
-        // Revocation errors are reported in the validation log.
-        let Ok(ocsp_data) =
-            OcspResponse::from_der_checked(&ocsp_response_der, signing_time, validation_log)
-        else {
-            // TO REVIEW: This is how the old code worked, but is it correct to ignore a
-            // malformed OCSP response?
-            return Ok(OcspResponse::default());
-        };
-
-        // If we get a valid response validate the certs.
-        if ocsp_data.revoked_at.is_none() {
-            if let Some(ocsp_certs) = &ocsp_data.ocsp_certs {
-                check_end_entity_certificate_profile(&ocsp_certs[0], ctp, validation_log, None)?;
-            }
+    // If we get a valid response validate the certs.
+    if ocsp_data.revoked_at.is_none() {
+        if let Some(ocsp_certs) = &ocsp_data.ocsp_certs {
+            check_end_entity_certificate_profile(&ocsp_certs[0], ctp, validation_log, None)?;
         }
-
-        Ok(ocsp_data)
     }
+
+    Ok(ocsp_data)
 }
 
 /// Returns the DER-encoded OCSP response from the "rVals" unprotected header in a COSE_Sign1 message.

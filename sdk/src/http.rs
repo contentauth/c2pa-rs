@@ -11,7 +11,10 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use std::io::Read;
+use std::{
+    error::Error,
+    io::{self, Read},
+};
 
 use async_trait::async_trait;
 use http::{Request, Response};
@@ -21,11 +24,17 @@ use crate::Result;
 /// A resolver for sync (blocking) HTTP requests.
 pub trait SyncHttpResolver {
     /// Resolve a [`http::Request`] into a [`http::Response`] with a streaming body.
-    fn http_resolve(&self, request: Request<Vec<u8>>) -> Result<Response<Box<dyn Read>>>;
+    fn http_resolve(
+        &self,
+        request: Request<Vec<u8>>,
+    ) -> Result<Response<Box<dyn Read>>, HttpResolverError>;
 }
 
 impl<T: SyncHttpResolver + ?Sized> SyncHttpResolver for Box<T> {
-    fn http_resolve(&self, request: Request<Vec<u8>>) -> Result<Response<Box<dyn Read>>> {
+    fn http_resolve(
+        &self,
+        request: Request<Vec<u8>>,
+    ) -> Result<Response<Box<dyn Read>>, HttpResolverError> {
         (**self).http_resolve(request)
     }
 }
@@ -37,7 +46,7 @@ pub trait AsyncHttpResolver {
     async fn http_resolve_async(
         &self,
         request: Request<Vec<u8>>,
-    ) -> Result<Response<Box<dyn Read>>>;
+    ) -> Result<Response<Box<dyn Read>>, HttpResolverError>;
 }
 
 #[async_trait]
@@ -45,7 +54,7 @@ impl<T: AsyncHttpResolver + ?Sized + Sync> AsyncHttpResolver for Box<T> {
     async fn http_resolve_async(
         &self,
         request: Request<Vec<u8>>,
-    ) -> Result<Response<Box<dyn Read>>> {
+    ) -> Result<Response<Box<dyn Read>>, HttpResolverError> {
         (**self).http_resolve_async(request).await
     }
 }
@@ -84,8 +93,8 @@ impl SyncGenericResolver {
         }
     }
 
-    /// The `ureq` nor `reqwest_blocking` features are enabled! This function will
-    /// construct a [`SyncGenericResolver`] that always returns
+    /// The `http_ureq`, `http_reqwest_blocking`, nor `http_wasi` features are enabled!
+    /// This function will construct a [`SyncGenericResolver`] that always returns
     /// [`Error::SyncHttpResolverNotImplemented`].
     #[cfg(not(all(
         any(feature = "http_ureq", feature = "http_reqwest_blocking"),
@@ -96,8 +105,11 @@ impl SyncGenericResolver {
         struct NoopSyncResolver;
 
         impl SyncHttpResolver for NoopSyncResolver {
-            fn http_resolve(&self, request: Request<Vec<u8>>) -> Result<Response<Box<dyn Read>>> {
-                Err(Error::SyncHttpResolverNotImplemented)
+            fn http_resolve(
+                &self,
+                request: Request<Vec<u8>>,
+            ) -> Result<Response<Box<dyn Read>>, HttpResolverError> {
+                Err(HttpResolverError::SyncHttpResolverNotImplemented)
             }
         }
 
@@ -114,7 +126,10 @@ impl Default for SyncGenericResolver {
 }
 
 impl SyncHttpResolver for SyncGenericResolver {
-    fn http_resolve(&self, request: Request<Vec<u8>>) -> Result<Response<Box<dyn Read>>> {
+    fn http_resolve(
+        &self,
+        request: Request<Vec<u8>>,
+    ) -> Result<Response<Box<dyn Read>>, HttpResolverError> {
         self.http_resolver.http_resolve(request)
     }
 }
@@ -146,7 +161,7 @@ impl AsyncGenericResolver {
         }
     }
 
-    /// The `reqwest` feature is not enabled! This function will
+    /// The `http_reqwest` nor `http_wstd` features are enabled! This function will
     /// construct a [`AsyncGenericResolver`] that always returns
     /// [`Error::AsyncHttpResolverNotImplemented`].
     #[cfg(not(any(
@@ -161,8 +176,8 @@ impl AsyncGenericResolver {
             async fn http_resolve_async(
                 &self,
                 request: Request<Vec<u8>>,
-            ) -> Result<Response<Box<dyn Read>>> {
-                Err(Error::AsyncHttpResolverNotImplemented)
+            ) -> Result<Response<Box<dyn Read>>, HttpResolverError> {
+                Err(HttpResolverError::AsyncHttpResolverNotImplemented)
             }
         }
 
@@ -183,9 +198,37 @@ impl AsyncHttpResolver for AsyncGenericResolver {
     async fn http_resolve_async(
         &self,
         request: Request<Vec<u8>>,
-    ) -> Result<Response<Box<dyn Read>>> {
+    ) -> Result<Response<Box<dyn Read>>, HttpResolverError> {
         self.http_resolver.http_resolve_async(request).await
     }
+}
+
+/// An error that occurs during sync/async http resolver resolution.
+#[derive(Debug, thiserror::Error)]
+pub enum HttpResolverError {
+    /// An error occured in the [`http`] crate.
+    #[error(transparent)]
+    Http(#[from] http::Error),
+
+    /// An error occured in during I/O.
+    #[error(transparent)]
+    Io(#[from] io::Error),
+
+    /// The sync http resolver is not implemented.
+    ///
+    /// Note this often occurs when the http-related features are improperly enabled.
+    #[error("the sync http resolver is not implemented")]
+    SyncHttpResolverNotImplemented,
+
+    /// The async http resolver is not implemented.
+    ///
+    /// Note this often occurs when the http-related features are improperly enabled.
+    #[error("the async http resolver is not implemented")]
+    AsyncHttpResolverNotImplemented,
+
+    /// An error occured from the underlying http resolver.
+    #[error("an error occurred from the underlying http resolver")]
+    Other(Box<dyn Error + Send + Sync>),
 }
 
 #[cfg(feature = "http_reqwest_blocking")]
@@ -195,7 +238,10 @@ mod sync_reqwest_resolver {
     use super::*;
 
     impl SyncHttpResolver for reqwest::blocking::Client {
-        fn http_resolve(&self, request: Request<Vec<u8>>) -> Result<Response<Box<dyn Read>>> {
+        fn http_resolve(
+            &self,
+            request: Request<Vec<u8>>,
+        ) -> Result<Response<Box<dyn Read>>, HttpResolverError> {
             let response = self.execute(request.try_into()?)?;
 
             let mut builder = http::Response::builder()
@@ -211,6 +257,39 @@ mod sync_reqwest_resolver {
     }
 }
 
+#[cfg(feature = "http_ureq")]
+mod sync_ureq_resolver {
+    use http::header;
+
+    use super::*;
+
+    impl SyncHttpResolver for ureq::Agent {
+        fn http_resolve(
+            &self,
+            request: Request<Vec<u8>>,
+        ) -> Result<Response<Box<dyn Read>>, HttpResolverError> {
+            let response = self.run(request)?;
+
+            let mut builder = http::Response::builder()
+                .status(response.status())
+                .version(response.version());
+
+            if let Some(content_type) = response.headers().get(header::CONTENT_TYPE) {
+                builder = builder.header(header::CONTENT_TYPE, content_type);
+            }
+
+            let body = response.into_body().into_reader();
+            Ok(builder.body(Box::new(body) as Box<dyn Read>)?)
+        }
+    }
+
+    impl From<ureq::Error> for HttpResolverError {
+        fn from(value: ureq::Error) -> Self {
+            Self::Other(Box::new(value))
+        }
+    }
+}
+
 #[cfg(feature = "http_reqwest")]
 mod async_reqwest_resolver {
     use std::io::Cursor;
@@ -222,7 +301,7 @@ mod async_reqwest_resolver {
         async fn http_resolve_async(
             &self,
             request: Request<Vec<u8>>,
-        ) -> Result<Response<Box<dyn Read>>> {
+        ) -> Result<Response<Box<dyn Read>>, HttpResolverError> {
             let response = self.execute(request.try_into()?).await?;
 
             let mut builder = Response::builder()
@@ -240,26 +319,13 @@ mod async_reqwest_resolver {
     }
 }
 
-#[cfg(feature = "http_ureq")]
-mod sync_ureq_resolver {
-    use http::header;
-
+#[cfg(any(feature = "http_reqwest", feature = "http_reqwest_blocking"))]
+mod reqwest_resolver {
     use super::*;
 
-    impl SyncHttpResolver for ureq::Agent {
-        fn http_resolve(&self, request: Request<Vec<u8>>) -> Result<Response<Box<dyn Read>>> {
-            let response = self.run(request)?;
-
-            let mut builder = http::Response::builder()
-                .status(response.status())
-                .version(response.version());
-
-            if let Some(content_type) = response.headers().get(header::CONTENT_TYPE) {
-                builder = builder.header(header::CONTENT_TYPE, content_type);
-            }
-
-            let body = response.into_body().into_reader();
-            Ok(builder.body(Box::new(body) as Box<dyn Read>)?)
+    impl From<reqwest::Error> for HttpResolverError {
+        fn from(value: reqwest::Error) -> Self {
+            Self::Other(Box::new(value))
         }
     }
 }
@@ -267,7 +333,7 @@ mod sync_ureq_resolver {
 #[cfg(feature = "http_curl")]
 mod sync_curl_resolver {}
 
-// TODO: Switch to reqwest_blockking once it supports WASI https://github.com/seanmonstar/reqwest/issues/2294
+// TODO: Switch to reqwest_blocking once it supports WASI https://github.com/seanmonstar/reqwest/issues/2294
 #[cfg(all(target_arch = "wasm32", target_os = "wasi", feature = "http_wasi"))]
 mod sync_wasi_resolver {
     use std::io::Read;
@@ -290,22 +356,27 @@ mod sync_wasi_resolver {
     }
 
     impl SyncHttpResolver for SyncWasiResolver {
-        // TODO: handle
-        #[allow(clippy::unwrap_used)]
-        fn http_resolve(&self, request: Request<Vec<u8>>) -> Result<Response<Box<dyn Read>>> {
+        fn http_resolve(
+            &self,
+            request: Request<Vec<u8>>,
+        ) -> Result<Response<Box<dyn Read>>, HttpResolverError> {
             let wasi_request = OutgoingRequest::new(Fields::new());
 
             let path_with_query = request
                 .uri()
                 .path_and_query()
                 .map(|path_and_query| path_and_query.as_str());
-            wasi_request.set_path_with_query(path_with_query).unwrap();
+            wasi_request
+                .set_path_with_query(path_with_query)
+                .map_err(|_| WasiError)?;
 
             let authority = request
                 .uri()
                 .authority()
                 .map(|authority| authority.as_str());
-            wasi_request.set_authority(authority).unwrap();
+            wasi_request
+                .set_authority(authority)
+                .map_err(|_| WasiError)?;
 
             let scheme = match request.uri().scheme_str() {
                 Some(scheme) => match scheme {
@@ -315,19 +386,51 @@ mod sync_wasi_resolver {
                 },
                 None => None,
             };
-            wasi_request.set_scheme(scheme.as_ref()).unwrap();
+            wasi_request
+                .set_scheme(scheme.as_ref())
+                .map_err(|_| WasiError)?;
 
-            let wasi_response = outgoing_handler::handle(wasi_request, None).unwrap();
+            let wasi_response = outgoing_handler::handle(wasi_request, None)?;
             wasi_response.subscribe().block();
-            let wasi_response = wasi_response.get().unwrap().unwrap().unwrap();
+            let wasi_response = wasi_response
+                .get()
+                .ok_or(WasiError)?
+                .map_err(|_| WasiError)??;
 
             let mut response = Response::builder().status(wasi_response.status());
             for (name, value) in wasi_response.headers().entries() {
                 response = response.header(name, value);
             }
 
-            let stream = wasi_response.consume().unwrap().stream().unwrap();
+            let stream = wasi_response
+                .consume()
+                .map_err(|_| WasiError)?
+                .stream()
+                .map_err(|_| WasiError)?;
             Ok(response.body(Box::new(stream) as Box<dyn Read>)?)
+        }
+    }
+
+    #[derive(Debug, thiserror::Error)]
+    #[error("an unknown error occurred in `wasi`")]
+    pub struct WasiError;
+
+    // WASI returns `()` as their error type, sometimes..
+    impl From<()> for WasiError {
+        fn from(_: ()) -> Self {
+            Self
+        }
+    }
+
+    impl From<WasiError> for HttpResolverError {
+        fn from(value: WasiError) -> Self {
+            HttpResolverError::Other(Box::new(value))
+        }
+    }
+
+    impl From<outgoing_handler::ErrorCode> for HttpResolverError {
+        fn from(value: outgoing_handler::ErrorCode) -> Self {
+            Self::Other(Box::new(value))
         }
     }
 }
@@ -341,21 +444,25 @@ mod async_wasi_resolver {
 
     use super::*;
 
-    // TODO: handle
-    #[allow(clippy::unwrap_used)]
     #[async_trait]
     impl AsyncHttpResolver for wstd::http::Client {
         async fn http_resolve_async(
             &self,
             request: Request<Vec<u8>>,
-        ) -> Result<Response<Box<dyn Read>>> {
+        ) -> Result<Response<Box<dyn Read>>, HttpResolverError> {
             // TODO: not too happy with this implementation, it also causes a very obscure async error
             // let request = request.map(|body| StreamedBody::new(wstd::io::Cursor::new(body)));
-            // let mut response = self.send(request).await.unwrap();
+            // let mut response = self.send(request).await?;
 
-            // let bytes = response.body_mut().bytes().await.unwrap();
+            // let bytes = response.body_mut().bytes().await?;
             // Ok(response.map(|_| Box::new(Cursor::new(bytes)) as Box<dyn Read>))
             todo!()
+        }
+    }
+
+    impl From<wstd::http::error::Error> for HttpResolverError {
+        fn from(value: wstd::http::error::Error) -> Self {
+            Self::Other(Box::new(value))
         }
     }
 }

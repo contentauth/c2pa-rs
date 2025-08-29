@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     create_signer,
-    resolver::{SyncGenericResolver, SyncHttpResolver},
+    http::{SyncGenericResolver, SyncHttpResolver},
     settings::Settings,
     Error, Result, Signer, SigningAlg,
 };

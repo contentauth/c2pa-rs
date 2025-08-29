@@ -26,9 +26,9 @@ use serde::{Deserialize, Serialize};
 use crate::{
     claim::ClaimAssetData,
     crypto::base64,
+    http::SyncGenericResolver,
     jumbf::labels::{manifest_label_from_uri, to_absolute_uri, to_relative_uri},
     manifest::StoreOptions,
-    resolver::SyncGenericResolver,
     status_tracker::StatusTracker,
     store::Store,
     validation_results::ValidationResults,

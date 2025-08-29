@@ -25,7 +25,10 @@ use crate::{
             TimeStampError,
         },
     },
-    resolver::{AsyncGenericResolver, AsyncHttpResolver, SyncGenericResolver, SyncHttpResolver},
+    http::{
+        AsyncGenericResolver, AsyncHttpResolver, HttpResolverError, SyncGenericResolver,
+        SyncHttpResolver,
+    },
     status_tracker::StatusTracker,
 };
 
@@ -98,17 +101,13 @@ fn time_stamp_request_http(
 
     let request = request.header(header::CONTENT_TYPE, HTTP_CONTENT_TYPE_REQUEST);
 
-    // TODO: VERY IMPORTANT TO FIX need a better error mechanism for resolvers
-    #[allow(clippy::unwrap_used)]
     let response = if _sync {
         SyncGenericResolver::new()
-            .http_resolve(request.body(body).unwrap())
-            .unwrap()
+            .http_resolve(request.body(body).map_err(HttpResolverError::Http)?)?
     } else {
         AsyncGenericResolver::new()
-            .http_resolve_async(request.body(body).unwrap())
-            .await
-            .unwrap()
+            .http_resolve_async(request.body(body).map_err(HttpResolverError::Http)?)
+            .await?
     };
     let content_type = response
         .headers()

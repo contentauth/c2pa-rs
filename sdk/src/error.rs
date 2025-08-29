@@ -15,7 +15,10 @@
 
 use thiserror::Error;
 
-use crate::crypto::{cose::CoseError, raw_signature::RawSignerError, time_stamp::TimeStampError};
+use crate::{
+    crypto::{cose::CoseError, raw_signature::RawSignerError, time_stamp::TimeStampError},
+    http::HttpResolverError,
+};
 
 /// `Error` enumerates errors returned by most C2PA toolkit operations.
 #[derive(Debug, Error)]
@@ -310,12 +313,11 @@ pub enum Error {
     #[error(transparent)]
     ReqwestError(#[from] reqwest::Error),
 
-    // TODO: look into removing
-    #[error(transparent)]
-    UreqError(#[from] ureq::Error),
-
     #[error(transparent)]
     HttpError(#[from] http::Error),
+
+    #[error(transparent)]
+    HttpResolverError(#[from] HttpResolverError),
 
     #[error(transparent)]
     TryFromIntError(#[from] std::num::TryFromIntError),

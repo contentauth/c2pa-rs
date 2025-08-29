@@ -35,11 +35,11 @@ use crate::{
     crypto::base64,
     dynamic_assertion::PartialClaim,
     error::{Error, Result},
+    http::{AsyncGenericResolver, SyncGenericResolver},
     jumbf::labels::{manifest_label_from_uri, to_absolute_uri, to_relative_uri},
     jumbf_io,
     manifest::StoreOptions,
     manifest_store_report::ManifestStoreReport,
-    resolver::{AsyncGenericResolver, SyncGenericResolver},
     settings::get_settings_value,
     status_tracker::StatusTracker,
     store::Store,
@@ -126,7 +126,7 @@ impl Reader {
     /// let reader = Reader::from_stream("image/jpeg", stream).unwrap();
     /// println!("{}", reader.json());
     /// ```
-    #[async_generic()]
+    #[async_generic]
     #[cfg(not(target_arch = "wasm32"))]
     pub fn from_stream(format: &str, stream: impl Read + Seek + Send) -> Result<Reader> {
         let verify = get_settings_value::<bool>("verify.verify_after_reading")?; // defaults to true

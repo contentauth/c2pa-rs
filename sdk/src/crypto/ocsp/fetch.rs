@@ -25,15 +25,13 @@ use x509_parser::{
 
 use crate::{
     crypto::base64,
-    resolver::{AsyncGenericResolver, AsyncHttpResolver, SyncHttpResolver, SyncGenericResolver},
+    http::{AsyncGenericResolver, AsyncHttpResolver, SyncGenericResolver, SyncHttpResolver},
 };
 
 /// Retrieve an OCSP response if available.
 ///
 /// Checks for an OCSP responder in the end-entity certifricate. If found, it
 /// will attempt to retrieve the raw DER-encoded OCSP response.
-///
-/// Not available on WASM builds.
 #[async_generic]
 pub(crate) fn fetch_ocsp_response(certs: &[Vec<u8>]) -> Option<Vec<u8>> {
     // There must be at least one cert that isn't an end-entity cert.

@@ -52,8 +52,8 @@ use crate::{
     crypto::{
         asn1::rfc3161::TstInfo,
         cose::{
-            fetch_and_check_ocsp_response, parse_cose_sign1, CertificateTrustPolicy,
-            TimeStampStorage,
+            fetch_and_check_ocsp_response, fetch_and_check_ocsp_response_async, parse_cose_sign1,
+            CertificateTrustPolicy, TimeStampStorage,
         },
         hash::sha256,
         ocsp::OcspResponse,
@@ -65,6 +65,7 @@ use crate::{
     error::{Error, Result},
     hash_utils::{hash_by_alg, vec_compare, verify_by_alg},
     hashed_uri::HashedUri,
+    http::{AsyncGenericResolver, AsyncHttpResolver, SyncGenericResolver, SyncHttpResolver},
     jumbf::{
         self,
         boxes::*,
@@ -79,7 +80,6 @@ use crate::{
     },
     log_item,
     manifest_store_report::ManifestStoreReport,
-    resolver::AsyncHttpResolver,
     salt::DefaultSalt,
     settings::{builder::OcspFetch, get_settings_value},
     status_tracker::{ErrorBehavior, StatusTracker},
@@ -95,10 +95,6 @@ use crate::{
     },
     validation_status::{self, ALGORITHM_UNSUPPORTED},
     AsyncSigner, Signer,
-};
-use crate::{
-    crypto::cose::fetch_and_check_ocsp_response_async,
-    resolver::{AsyncGenericResolver, SyncHttpResolver, SyncGenericResolver},
 };
 #[cfg(feature = "v1_api")]
 use crate::{external_manifest::ManifestPatchCallback, RemoteSigner};
@@ -3847,7 +3843,10 @@ impl Store {
         ext_ref: &str,
         http_resolver: &impl AsyncHttpResolver
     ))]
-    fn handle_remote_manifest(ext_ref: &str, http_resolver: &impl SyncHttpResolver) -> Result<Vec<u8>> {
+    fn handle_remote_manifest(
+        ext_ref: &str,
+        http_resolver: &impl SyncHttpResolver,
+    ) -> Result<Vec<u8>> {
         // verify provenance path is remote url
         if Store::is_valid_remote_url(ext_ref) {
             #[cfg(feature = "fetch_remote_manifests")]

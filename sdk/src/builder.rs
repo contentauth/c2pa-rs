@@ -26,7 +26,7 @@ use serde_with::skip_serializing_none;
 use uuid::Uuid;
 use zip::{write::SimpleFileOptions, ZipArchive, ZipWriter};
 
-use crate::resolver::{AsyncGenericResolver, SyncGenericResolver};
+use crate::http::{AsyncGenericResolver, SyncGenericResolver};
 #[allow(deprecated)]
 use crate::{
     assertion::AssertionDecodeError,
