@@ -44,6 +44,7 @@ pub(crate) trait SettingsValidate {
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[allow(unused)]
 pub(crate) struct Trust {
+    bypass_trust: bool,
     user_anchors: Option<String>,
     trust_anchors: Option<String>,
     trust_config: Option<String>,
@@ -106,6 +107,7 @@ impl Default for Trust {
         #[cfg(test)]
         {
             let mut trust = Self {
+                bypass_trust: false,
                 user_anchors: None,
                 trust_anchors: None,
                 trust_config: None,
@@ -130,6 +132,7 @@ impl Default for Trust {
         #[cfg(not(test))]
         {
             Self {
+                bypass_trust: false,
                 user_anchors: None,
                 trust_anchors: None,
                 trust_config: None,

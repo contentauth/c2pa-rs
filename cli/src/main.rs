@@ -105,6 +105,10 @@ struct CliArgs {
     #[clap(long = "certs")]
     cert_chain: bool,
 
+    /// Do not enforce trust lists. (CAWG-only at the moment.)
+    #[clap(long)]
+    disable_cawg_trust: bool,
+
     /// Do not perform validation of signature after signing.
     #[clap(long = "no_signing_verify")]
     no_signing_verify: bool,
@@ -645,6 +649,16 @@ fn main() -> Result<()> {
     //     }
     //     return Ok(());
     // }
+
+    if args.disable_cawg_trust {
+        Settings::from_toml(
+            &toml::toml! {
+                [cawg_trust]
+                bypass_trust = true
+            }
+            .to_string(),
+        )?;
+    }
 
     // if we have a manifest config, process it
     if args.manifest.is_some() || args.config.is_some() {

@@ -333,25 +333,38 @@ impl IdentityAssertion {
             // Load the trust handler settings. Don't worry about status as these
             // are checked during setting generation.
 
-            if let Ok(Some(ta)) = get_settings_value::<Option<String>>("cawg_trust.trust_anchors") {
-                let _ = ctp.add_trust_anchors(ta.as_bytes());
-            }
+            let cose_verifier =
+                if let Ok(true) = get_settings_value::<bool>("cawg_trust.bypass_trust") {
+                    Verifier::IgnoreProfileAndTrustPolicy
+                } else {
+                    if let Ok(Some(ta)) =
+                        get_settings_value::<Option<String>>("cawg_trust.trust_anchors")
+                    {
+                        let _ = ctp.add_trust_anchors(ta.as_bytes());
+                    }
 
-            if let Ok(Some(pa)) = get_settings_value::<Option<String>>("cawg_trust.user_anchors") {
-                let _ = ctp.add_user_trust_anchors(pa.as_bytes());
-            }
+                    if let Ok(Some(pa)) =
+                        get_settings_value::<Option<String>>("cawg_trust.user_anchors")
+                    {
+                        let _ = ctp.add_user_trust_anchors(pa.as_bytes());
+                    }
 
-            if let Ok(Some(tc)) = get_settings_value::<Option<String>>("cawg_trust.trust_config") {
-                ctp.add_valid_ekus(tc.as_bytes());
-            }
+                    if let Ok(Some(tc)) =
+                        get_settings_value::<Option<String>>("cawg_trust.trust_config")
+                    {
+                        ctp.add_valid_ekus(tc.as_bytes());
+                    }
 
-            if let Ok(Some(al)) = get_settings_value::<Option<String>>("cawg_trust.allowed_list") {
-                let _ = ctp.add_end_entity_credentials(al.as_bytes());
-            }
+                    if let Ok(Some(al)) =
+                        get_settings_value::<Option<String>>("cawg_trust.allowed_list")
+                    {
+                        let _ = ctp.add_end_entity_credentials(al.as_bytes());
+                    }
 
-            let verifier = X509SignatureVerifier {
-                cose_verifier: Verifier::VerifyTrustPolicy(Cow::Owned(ctp)),
-            };
+                    Verifier::VerifyTrustPolicy(Cow::Owned(ctp))
+                };
+
+            let verifier = X509SignatureVerifier { cose_verifier };
 
             let result = verifier
                 .check_signature(&self.signer_payload, &self.signature, status_tracker)
