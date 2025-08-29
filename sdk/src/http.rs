@@ -74,6 +74,9 @@ pub struct SyncGenericResolver {
 
 impl SyncGenericResolver {
     /// Create a new [`SyncGenericResolver`] with an auto-specified [`SyncHttpResolver`].
+    ///
+    /// Note that if `http_ureq` and `http_reqwest_blocking` are enabled at the same time, this
+    /// function will panic.
     #[cfg(all(
         // 1. If `http_ureq` or `http_reqwest_blocking` is enabled.
         any(feature = "http_ureq", feature = "http_reqwest_blocking"),
@@ -83,6 +86,9 @@ impl SyncGenericResolver {
         any(not(target_os = "wasi"), feature = "http_wasi")
     ))]
     pub fn new() -> Self {
+        #[cfg(all(feature = "http_ureq", feature = "http_reqwest_blocking"))]
+        panic!("cannot auto-specify a `SyncHttpResolver` if `http_req` and `http_reqwest_blocking` are enabled simultaneously");
+
         Self {
             #[cfg(all(feature = "http_ureq", not(target_os = "wasi")))]
             http_resolver: Box::new(ureq::agent()),
@@ -93,9 +99,9 @@ impl SyncGenericResolver {
         }
     }
 
-    /// The `http_ureq`, `http_reqwest_blocking`, nor `http_wasi` features are enabled!
-    /// This function will construct a [`SyncGenericResolver`] that always returns
-    /// [`Error::SyncHttpResolverNotImplemented`].
+    /// The `http_ureq`, `http_reqwest_blocking`, nor `http_wasi` features are enabled! Ensure only
+    /// one feature is enabled otherwise this function will construct a [`SyncGenericResolver`] that
+    /// always returns [`Error::SyncHttpResolverNotImplemented`].
     #[cfg(not(all(
         any(feature = "http_ureq", feature = "http_reqwest_blocking"),
         any(not(target_arch = "wasm32"), target_os = "wasi"),
@@ -231,7 +237,7 @@ pub enum HttpResolverError {
     Other(Box<dyn Error + Send + Sync>),
 }
 
-#[cfg(feature = "http_reqwest_blocking")]
+#[cfg(all(feature = "http_reqwest_blocking", not(target_os = "wasi")))]
 mod sync_reqwest_resolver {
     use std::io::Cursor;
 
@@ -257,7 +263,7 @@ mod sync_reqwest_resolver {
     }
 }
 
-#[cfg(feature = "http_ureq")]
+#[cfg(all(feature = "http_ureq", not(target_os = "wasi")))]
 mod sync_ureq_resolver {
     use http::header;
 
@@ -290,7 +296,7 @@ mod sync_ureq_resolver {
     }
 }
 
-#[cfg(feature = "http_reqwest")]
+#[cfg(all(feature = "http_reqwest", not(target_os = "wasi")))]
 mod async_reqwest_resolver {
     use std::io::Cursor;
 
@@ -319,7 +325,10 @@ mod async_reqwest_resolver {
     }
 }
 
-#[cfg(any(feature = "http_reqwest", feature = "http_reqwest_blocking"))]
+#[cfg(all(
+    any(feature = "http_reqwest", feature = "http_reqwest_blocking"),
+    not(target_os = "wasi")
+))]
 mod reqwest_resolver {
     use super::*;
 
@@ -331,7 +340,7 @@ mod reqwest_resolver {
 }
 
 // TODO: Switch to reqwest_blocking once it supports WASI https://github.com/seanmonstar/reqwest/issues/2294
-#[cfg(all(target_arch = "wasm32", target_os = "wasi", feature = "http_wasi"))]
+#[cfg(all(target_os = "wasi", feature = "http_wasi"))]
 mod sync_wasi_resolver {
     use std::io::Read;
 
@@ -433,7 +442,7 @@ mod sync_wasi_resolver {
 }
 
 // TODO: Switch to reqwest once it supports WASI https://github.com/seanmonstar/reqwest/issues/2294
-#[cfg(all(target_arch = "wasm32", target_os = "wasi", feature = "http_wstd"))]
+#[cfg(all(target_os = "wasi", feature = "http_wstd"))]
 mod async_wasi_resolver {
     use std::io::Cursor;
 

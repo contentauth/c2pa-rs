@@ -36,8 +36,8 @@ features = [
     "pdf",
     "v1_api",
     "diagnostics",
-    "ureq",
-    "reqwest",
+    "http_ureq",
+    "http_reqwest",
 ]
 rustdoc-args = ["--cfg", "docsrs"]
 

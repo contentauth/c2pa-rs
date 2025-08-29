@@ -22,8 +22,6 @@ use std::{
 #[allow(unused)] // different code path for WASI
 use tempfile::{tempdir, Builder, NamedTempFile, SpooledTempFile, TempDir};
 
-#[cfg(not(target_arch = "wasm32"))]
-use crate::settings::get_settings_value;
 use crate::{asset_io::rename_or_move, Error, Result};
 
 // Replace data at arbitrary location and len in a file.
