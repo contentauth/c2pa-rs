@@ -153,7 +153,7 @@ impl Reader {
         Self::from_store(store, &validation_log)
     }
 
-    #[async_generic()]
+    #[async_generic]
     #[cfg(target_arch = "wasm32")]
     pub fn from_stream(format: &str, mut stream: impl Read + Seek) -> Result<Reader> {
         let verify = get_settings_value::<bool>("verify.verify_after_reading")?; // defaults to true

@@ -144,6 +144,7 @@ pub mod tests {
 
     use crate::{settings::Settings, utils::test_signer, SigningAlg};
 
+    #[cfg(not(target_arch = "wasm32"))]
     fn remote_signer_mock_server<'a>(
         server: &'a httpmock::MockServer,
         signed_bytes: &[u8],
@@ -185,6 +186,7 @@ pub mod tests {
         assert!(signer.sign(&[1, 2, 3]).is_ok());
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn test_make_remote_signer() {
         use httpmock::MockServer;

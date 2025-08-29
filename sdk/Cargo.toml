@@ -227,6 +227,10 @@ curl = { version = "0.4.49", optional = true }
 wasi = { version = "0.14.3", optional = true }
 wstd = { version = "0.5.4", optional = true }
 
+# `wstd` is required for testing, but optional as a normal dependency.
+[target.'cfg(target_os = "wasi")'.dev-dependencies]
+wstd = "0.5.4"
+
 # Use the asm feature of sha2 on aarch64 for better performance. This nearly
 # halves hashing time for large assets (> 50gb mp4, for example).
 #

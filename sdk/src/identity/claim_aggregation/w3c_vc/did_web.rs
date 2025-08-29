@@ -18,9 +18,8 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use crate::http::{AsyncGenericResolver, AsyncHttpResolver, HttpResolverError};
-
 use super::{did::Did, did_doc::DidDocument};
+use crate::http::{AsyncGenericResolver, AsyncHttpResolver, HttpResolverError};
 
 const USER_AGENT: &str = concat!(env!("CARGO_PKG_NAME"), "/", env!("CARGO_PKG_VERSION"));
 
@@ -79,10 +78,7 @@ pub(crate) async fn resolve(did: &Did<'_>) -> Result<DidDocument, DidWebError> {
 
 async fn get_did_doc(url: &str) -> Result<Vec<u8>, DidWebError> {
     let request = http::Request::get(url)
-        .header(
-            header::USER_AGENT,
-            http::HeaderValue::from_static(USER_AGENT),
-        )
+        .header(header::USER_AGENT, USER_AGENT)
         .header(header::ACCEPT, "application/did+json")
         .body(Vec::new())
         .map_err(|e| DidWebError::Request(url.to_owned(), e.into()))?;

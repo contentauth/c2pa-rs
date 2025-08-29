@@ -309,10 +309,6 @@ pub enum Error {
     #[error(transparent)]
     Utf8Error(#[from] std::str::Utf8Error),
 
-    // TODO: look into removing
-    #[error(transparent)]
-    ReqwestError(#[from] reqwest::Error),
-
     #[error(transparent)]
     HttpError(#[from] http::Error),
 

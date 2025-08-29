@@ -107,7 +107,7 @@ impl SyncGenericResolver {
         impl SyncHttpResolver for NoopSyncResolver {
             fn http_resolve(
                 &self,
-                request: Request<Vec<u8>>,
+                _request: Request<Vec<u8>>,
             ) -> Result<Response<Box<dyn Read>>, HttpResolverError> {
                 Err(HttpResolverError::SyncHttpResolverNotImplemented)
             }
@@ -175,7 +175,7 @@ impl AsyncGenericResolver {
         impl AsyncHttpResolver for NoopAsyncResolver {
             async fn http_resolve_async(
                 &self,
-                request: Request<Vec<u8>>,
+                _request: Request<Vec<u8>>,
             ) -> Result<Response<Box<dyn Read>>, HttpResolverError> {
                 Err(HttpResolverError::AsyncHttpResolverNotImplemented)
             }

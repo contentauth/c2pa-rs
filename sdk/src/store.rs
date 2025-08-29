@@ -4054,6 +4054,7 @@ impl Store {
         verify: bool,
         validation_log: &mut StatusTracker,
     ))]
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn from_stream(
         format: &str,
         mut stream: impl Read + Seek + Send,
@@ -4096,12 +4097,90 @@ impl Store {
         Ok(store)
     }
 
+    /// Load store from a stream
+    #[async_generic(async_signature(
+        format: &str,
+        mut stream: impl Read + Seek,
+        http_resolver: &impl AsyncHttpResolver,
+        verify: bool,
+        validation_log: &mut StatusTracker,
+    ))]
+    #[cfg(target_arch = "wasm32")]
+    pub fn from_stream(
+        format: &str,
+        mut stream: impl Read + Seek,
+        http_resolver: &impl SyncHttpResolver,
+        verify: bool,
+        validation_log: &mut StatusTracker,
+    ) -> Result<Self> {
+        let (manifest_bytes, remote_url) = if _sync {
+            Store::load_jumbf_from_stream(format, &mut stream, http_resolver)?
+        } else {
+            Store::load_jumbf_from_stream_async(format, &mut stream, http_resolver).await?
+        };
+
+        let store = if _sync {
+            Self::from_manifest_data_and_stream(
+                &manifest_bytes,
+                format,
+                &mut stream,
+                verify,
+                validation_log,
+            )
+        } else {
+            Self::from_manifest_data_and_stream_async(
+                &manifest_bytes,
+                format,
+                &mut stream,
+                verify,
+                validation_log,
+            )
+            .await
+        };
+
+        let mut store = store?;
+        if remote_url.is_none() {
+            store.embedded = true;
+        } else {
+            store.remote_url = remote_url;
+        }
+
+        Ok(store)
+    }
+
     /// Load store from a manifest data and stream
-    #[async_generic()]
+    #[async_generic]
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn from_manifest_data_and_stream(
         c2pa_data: &[u8],
         format: &str,
         mut stream: impl Read + Seek + Send,
+        verify: bool,
+        validation_log: &mut StatusTracker,
+    ) -> Result<Self> {
+        // first we convert the JUMBF into a usable store
+        let store = Store::from_jumbf(c2pa_data, validation_log)?;
+
+        //let verify = get_settings_value::<bool>("verify.verify_after_reading")?; // defaults to true
+
+        if verify {
+            let mut asset_data = ClaimAssetData::Stream(&mut stream, format);
+            if _sync {
+                Store::verify_store(&store, &mut asset_data, validation_log)
+            } else {
+                Store::verify_store_async(&store, &mut asset_data, validation_log).await
+            }?;
+        }
+        Ok(store)
+    }
+
+    /// Load store from a manifest data and stream
+    #[async_generic]
+    #[cfg(target_arch = "wasm32")]
+    pub fn from_manifest_data_and_stream(
+        c2pa_data: &[u8],
+        format: &str,
+        mut stream: impl Read + Seek,
         verify: bool,
         validation_log: &mut StatusTracker,
     ) -> Result<Self> {
