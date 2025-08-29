@@ -330,9 +330,6 @@ mod reqwest_resolver {
     }
 }
 
-#[cfg(feature = "http_curl")]
-mod sync_curl_resolver {}
-
 // TODO: Switch to reqwest_blocking once it supports WASI https://github.com/seanmonstar/reqwest/issues/2294
 #[cfg(all(target_arch = "wasm32", target_os = "wasi", feature = "http_wasi"))]
 mod sync_wasi_resolver {

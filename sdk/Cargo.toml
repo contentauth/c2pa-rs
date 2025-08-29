@@ -73,8 +73,6 @@ v1_api = []
 http_reqwest_blocking = ["dep:reqwest", "reqwest/blocking"]
 # Enable `ureq` sync http resolver, not supported on WASM/WASI.
 http_ureq = ["dep:ureq"]
-# Enable `curl` sync http resolver, not supported on WASM/WASI.
-http_curl = ["dep:curl"]
 # Enable `wasi` sync http resolver, only supported on WASI.
 http_wasi = ["dep:wasi"]
 # Enable `wstd` async http resolver, only supported on WASI.
@@ -221,7 +219,6 @@ reqwest = { version = "0.12.23", default-features = false, features = [
 openssl = { version = "0.10.72", features = ["vendored"], optional = true }
 # TODO: same here with reqwest, do we want to match rust_native_crypto with rustls
 ureq = { version = "3.1.0", optional = true }
-curl = { version = "0.4.49", optional = true }
 
 [target.'cfg(target_os = "wasi")'.dependencies]
 wasi = { version = "0.14.3", optional = true }
