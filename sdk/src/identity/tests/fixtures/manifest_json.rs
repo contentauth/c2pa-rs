@@ -62,7 +62,7 @@ pub(crate) fn manifest_json() -> String {
 pub(crate) fn parent_json() -> String {
     json!({
         "title": "Parent Test",
-        "format": "image/jpeg",
+        "format": "video/mp4",
         "instance_id": "12345",
         "relationship": "parentOf"
     })

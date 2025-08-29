@@ -92,13 +92,13 @@ mod tests {
         Builder, Reader, SigningAlg,
     };
 
-    const TEST_IMAGE: &[u8] = include_bytes!("/Users/scouten/Downloads/R-es-0087-001.jpg");
+    const TEST_IMAGE: &[u8] = include_bytes!("/Users/scouten/Downloads/R-es-4642-097.mp4");
     const TEST_THUMBNAIL: &[u8] =
-        include_bytes!("/Users/scouten/Downloads/R-es-0087-001-thumbnail.jpg");
+        include_bytes!("/Users/scouten/Downloads/R-es-4642-097-thumb.jpg");
 
     #[c2pa_test_async]
     async fn simple_case() {
-        let format = "image/jpeg";
+        let format = "video/mp4";
         let mut source = Cursor::new(TEST_IMAGE);
         let mut dest = Cursor::new(Vec::new());
 
@@ -133,7 +133,7 @@ mod tests {
             .unwrap();
 
         std::fs::write(
-            "/Users/scouten/Downloads/Cr-es-0087-001.jpg",
+            "/Users/scouten/Downloads/Cr-es-4642-097.mov",
             dest.get_ref(),
         )
         .unwrap();
