@@ -18,6 +18,8 @@
 // specific language governing permissions and limitations under
 // each license.
 
+use crate::http::{AsyncGenericResolver, AsyncHttpResolver, HttpResolverError};
+
 use super::{did::Did, did_doc::DidDocument};
 
 const USER_AGENT: &str = concat!(env!("CARGO_PKG_NAME"), "/", env!("CARGO_PKG_VERSION"));
@@ -30,24 +32,21 @@ thread_local! {
     pub(crate) static PROXY: RefCell<Option<String>> = const { RefCell::new(None) };
 }
 
-#[cfg(not(target_os = "wasi"))]
-use reqwest::Error as HttpError;
-#[cfg(target_os = "wasi")]
-use String as HttpError;
+use http::header;
 
 #[derive(Debug, thiserror::Error)]
 pub enum DidWebError {
     #[error("error building HTTP client: {0}")]
-    Client(HttpError),
+    Client(HttpResolverError),
 
     #[error("error sending HTTP request ({0}): {1}")]
-    Request(String, HttpError),
+    Request(String, HttpResolverError),
 
     #[error("server error: {0}")]
     Server(String),
 
     #[error("error reading HTTP response: {0}")]
-    Response(HttpError),
+    Response(HttpResolverError),
 
     #[error("the document was not found: {0}")]
     NotFound(String),
@@ -79,71 +78,31 @@ pub(crate) async fn resolve(did: &Did<'_>) -> Result<DidDocument, DidWebError> {
 }
 
 async fn get_did_doc(url: &str) -> Result<Vec<u8>, DidWebError> {
-    #[cfg(not(target_os = "wasi"))]
-    {
-        use reqwest::header;
+    let request = http::Request::get(url)
+        .header(
+            header::USER_AGENT,
+            http::HeaderValue::from_static(USER_AGENT),
+        )
+        .header(header::ACCEPT, "application/did+json")
+        .body(Vec::new())
+        .map_err(|e| DidWebError::Request(url.to_owned(), e.into()))?;
+    let response = AsyncGenericResolver::new()
+        .http_resolve_async(request)
+        .await
+        .map_err(|e| DidWebError::Request(url.to_owned(), e))?;
 
-        let mut headers = reqwest::header::HeaderMap::new();
+    let (parts, mut body) = response.into_parts();
+    match parts.status {
+        http::StatusCode::OK => (),
+        http::StatusCode::NOT_FOUND => return Err(DidWebError::NotFound(url.to_string())),
+        _ => return Err(DidWebError::Server(parts.status.to_string())),
+    };
 
-        headers.insert(
-            "User-Agent",
-            reqwest::header::HeaderValue::from_static(USER_AGENT),
-        );
+    let mut document = Vec::new();
+    body.read_to_end(&mut document)
+        .map_err(|e| DidWebError::Response(e.into()))?;
 
-        let client = reqwest::Client::builder()
-            .default_headers(headers)
-            .build()
-            .map_err(DidWebError::Client)?;
-
-        let resp = client
-            .get(url)
-            .header(header::ACCEPT, "application/did+json")
-            .send()
-            .await
-            .map_err(|e: reqwest::Error| DidWebError::Request(url.to_owned(), e))?;
-
-        resp.error_for_status_ref().map_err(|err| {
-            if err.status() == Some(reqwest::StatusCode::NOT_FOUND) {
-                DidWebError::NotFound(url.to_string())
-            } else {
-                DidWebError::Server(err.to_string())
-            }
-        })?;
-
-        let document = resp.bytes().await.map_err(DidWebError::Response)?;
-        Ok(document.to_vec())
-    }
-
-    #[cfg(target_os = "wasi")]
-    {
-        use wstd::{http, io, io::AsyncRead};
-
-        let request = http::Request::get(url)
-            .header("User-Agent", http::HeaderValue::from_static(USER_AGENT))
-            .header(
-                "Accept",
-                http::HeaderValue::from_static("application/did+json"),
-            )
-            .body(io::empty())
-            .map_err(|e| DidWebError::Request(url.to_owned(), e.to_string()))?;
-        let resp = http::Client::new()
-            .send(request)
-            .await
-            .map_err(|e| DidWebError::Request(url.to_owned(), e.to_string()))?;
-
-        let (parts, mut body) = resp.into_parts();
-        match parts.status {
-            http::StatusCode::OK => (),
-            http::StatusCode::NOT_FOUND => return Err(DidWebError::NotFound(url.to_string())),
-            _ => return Err(DidWebError::Server(parts.status.to_string())),
-        };
-
-        let mut document = Vec::new();
-        body.read_to_end(&mut document)
-            .await
-            .map_err(|e| DidWebError::Response(e.to_string()))?;
-        Ok(document)
-    }
+    Ok(document)
 }
 
 pub(crate) fn to_url(did: &str) -> Result<String, DidWebError> {
