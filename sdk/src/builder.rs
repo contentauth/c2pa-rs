@@ -28,7 +28,7 @@ use zip::{write::SimpleFileOptions, ZipArchive, ZipWriter};
 
 #[allow(deprecated)]
 use crate::{
-    assertion::AssertionBase,
+    assertion::{AssertionBase, AssertionDecodeError},
     assertions::{
         c2pa_action,
         labels::{self, METADATA_LABEL_REGEX},
@@ -40,7 +40,6 @@ use crate::{
     claim::Claim,
     error::{Error, Result},
     jumbf_io,
-    manifest_assertion::ManifestData,
     resource_store::{ResourceRef, ResourceResolver, ResourceStore},
     salt::DefaultSalt,
     settings::{
@@ -49,8 +48,7 @@ use crate::{
     },
     store::Store,
     utils::mime::format_to_mime,
-    AsyncSigner, ClaimGeneratorInfo, HashRange, HashedUri, Ingredient, ManifestAssertion,
-    ManifestAssertionKind, Relationship, Signer,
+    AsyncSigner, ClaimGeneratorInfo, HashRange, HashedUri, Ingredient, Relationship, Signer,
 };
 
 /// Version of the Builder Archive file
@@ -98,8 +96,8 @@ pub struct ManifestDefinition {
     pub ingredients: Vec<Ingredient>,
 
     /// A list of assertions
-    #[serde(default = "default_vec::<ManifestAssertion>")]
-    pub assertions: Vec<ManifestAssertion>,
+    #[serde(default = "default_vec::<AssertionDefinition>")]
+    pub assertions: Vec<AssertionDefinition>,
 
     /// A list of redactions - URIs to redacted assertions.
     pub redactions: Option<Vec<String>>,
@@ -136,46 +134,53 @@ pub enum AssertionData {
     Json(serde_json::Value),
 }
 
-// /// Defines an assertion that consists of a label that can be either
-// /// a C2PA-defined assertion label or a custom label in reverse domain format.
-// #[derive(Debug, Deserialize, Serialize, Clone)]
-// #[cfg_attr(feature = "json_schema", derive(JsonSchema))]
-// #[non_exhaustive]
-// pub struct AssertionDefinition {
-//     /// An assertion label in reverse domain format
-//     pub label: String,
-//     /// The assertion data
-//     pub data: ManifestData,
-//     /// True if this assertion is attributed to the signer (defaults to false)
-//     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-//     pub created: bool,
-// }
+/// Defines an assertion that consists of a label that can be either
+/// a C2PA-defined assertion label or a custom label in reverse domain format.
+#[derive(Debug, Deserialize, Serialize, Clone)]
+#[cfg_attr(feature = "json_schema", derive(JsonSchema))]
+#[non_exhaustive]
+pub struct AssertionDefinition {
+    /// An assertion label in reverse domain format
+    pub label: String,
+    /// The assertion data
+    pub data: AssertionData,
+    /// True if this assertion is attributed to the signer (defaults to false)
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub created: bool,
+}
 
-// impl AssertionDefinition {
-//     pub(crate) fn to_assertion<T: DeserializeOwned>(&self) -> Result<T> {
-//         match &self.data {
-//             ManifestData::Json(value) => serde_json::from_value(value.clone()).map_err(|e| {
-//                 Error::AssertionDecoding(AssertionDecodeError::from_err(
-//                     self.label.to_owned(),
-//                     None,
-//                     "application/json".to_owned(),
-//                     e,
-//                 ))
-//             }),
-//             ManifestData::Cbor(value) => {
-//                 serde_cbor::value::from_value(value.clone()).map_err(|e| {
-//                     Error::AssertionDecoding(AssertionDecodeError::from_err(
-//                         self.label.to_owned(),
-//                         None,
-//                         "application/cbor".to_owned(),
-//                         e,
-//                     ))
-//                 })
-//             }
-//             _ => Err(Error::UnsupportedType),
-//         }
-//     }
-// }
+impl AssertionDefinition {
+    pub(crate) fn label(&self) -> &str {
+        self.label.as_str()
+    }
+
+    pub(crate) fn created(&self) -> bool {
+        self.created
+    }
+
+    pub(crate) fn to_assertion<T: DeserializeOwned>(&self) -> Result<T> {
+        match &self.data {
+            AssertionData::Json(value) => serde_json::from_value(value.clone()).map_err(|e| {
+                Error::AssertionDecoding(AssertionDecodeError::from_err(
+                    self.label.to_owned(),
+                    None,
+                    "application/json".to_owned(),
+                    e,
+                ))
+            }),
+            AssertionData::Cbor(value) => {
+                serde_cbor::value::from_value(value.clone()).map_err(|e| {
+                    Error::AssertionDecoding(AssertionDecodeError::from_err(
+                        self.label.to_owned(),
+                        None,
+                        "application/cbor".to_owned(),
+                        e,
+                    ))
+                })
+            }
+        }
+    }
+}
 
 /// Represents the type of builder flow being used.
 ///
@@ -206,14 +211,6 @@ enum BuilderIntent {
     /// There are additional restrictions on the types of changes that can be made.
     #[serde(rename = "update")]
     Update,
-}
-
-#[allow(unused)] // TEMPORARY: @gpeacock please investigate
-#[derive(Serialize, Deserialize)]
-struct StructuredAction {
-    action: String,
-    #[serde(flatten)]
-    data: serde_json::Value,
 }
 
 /// Use a Builder to add a signed manifest to an asset.
@@ -489,10 +486,12 @@ impl Builder {
         S: Into<String>,
         T: Serialize,
     {
-        self.definition
-            .assertions
-            .push(ManifestAssertion::from_labeled_assertion(label, data)?);
-
+        let created = false;
+        self.definition.assertions.push(AssertionDefinition {
+            label: label.into(),
+            data: AssertionData::Cbor(serde_cbor::value::to_value(data)?),
+            created,
+        });
         Ok(self)
     }
 
@@ -511,21 +510,12 @@ impl Builder {
         S: Into<String>,
         T: Serialize,
     {
-        let m_assertion = ManifestAssertion::from_labeled_assertion(label, data)?
-            .set_kind(ManifestAssertionKind::Json);
-        self.definition.assertions.push(m_assertion);
-        Ok(self)
-    }
-
-    /// Adds an AssertionDefinition directly to the manifest.
-    /// This allows full control over the assertion including the created field.
-    ///
-    /// # Arguments
-    /// * `assertion_def` - The AssertionDefinition to add.
-    /// # Returns
-    /// * A mutable reference to the [`Builder`].
-    pub fn add_manifest_assertion(&mut self, assertion: ManifestAssertion) -> Result<&mut Self> {
-        self.definition.assertions.push(assertion);
+        let created = false;
+        self.definition.assertions.push(AssertionDefinition {
+            label: label.into(),
+            data: AssertionData::Json(serde_json::to_value(data)?),
+            created,
+        });
         Ok(self)
     }
 
@@ -1044,17 +1034,16 @@ impl Builder {
                     add_assertion(&mut claim, &metadata, manifest_assertion.created())
                 }
                 _ => match &manifest_assertion.data {
-                    ManifestData::Json(value) => add_assertion(
+                    AssertionData::Json(value) => add_assertion(
                         &mut claim,
                         &User::new(manifest_assertion.label(), &serde_json::to_string(&value)?),
                         manifest_assertion.created(),
                     ),
-                    ManifestData::Cbor(value) => add_assertion(
+                    AssertionData::Cbor(value) => add_assertion(
                         &mut claim,
                         &UserCbor::new(manifest_assertion.label(), serde_cbor::to_vec(value)?),
                         manifest_assertion.created(),
                     ),
-                    _ => Err(Error::UnsupportedType),
                 },
             }?;
         }

@@ -14,7 +14,7 @@
 use serde::Serialize;
 
 use crate::{
-    assertion::{Assertion, AssertionBase, AssertionData},
+    assertion::{Assertion, AssertionBase, AssertionData, AssertionKind},
     assertions::labels,
     error::Result,
 };
@@ -53,6 +53,8 @@ impl EmbeddedData {
 }
 
 impl AssertionBase for EmbeddedData {
+    const KIND: AssertionKind = AssertionKind::Binary;
+
     fn label(&self) -> &str {
         self.label.as_str()
     }
@@ -68,6 +70,16 @@ impl AssertionBase for EmbeddedData {
         assertion.try_into()
     }
 }
+
+// impl AssertionBinary for EmbeddedData {
+//     fn binary_data(&self) -> &[u8] {
+//         self.data.as_slice()
+//     }
+
+//     fn from_binary_data(label: String, content_type: String, data: Vec<u8>) -> Self {
+//         Self { label, content_type, data }
+//     }
+// }
 
 impl TryFrom<Assertion> for EmbeddedData {
     type Error = crate::Error;
