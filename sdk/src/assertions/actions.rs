@@ -812,7 +812,7 @@ impl Actions {
 impl AssertionCbor for Actions {}
 
 impl AssertionBase for Actions {
-    const LABEL: &'static str = labels::ACTIONS;
+    const LABEL: &'static str = Self::LABEL;
     const VERSION: Option<usize> = Some(ASSERTION_CREATION_VERSION);
 
     fn version(&self) -> Option<usize> {
