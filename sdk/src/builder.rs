@@ -26,15 +26,14 @@ use serde_with::skip_serializing_none;
 use uuid::Uuid;
 use zip::{write::SimpleFileOptions, ZipArchive, ZipWriter};
 
+use crate::assertion::AssertionBase;
 #[allow(deprecated)]
 use crate::{
     assertion::AssertionDecodeError,
     assertions::{
-        c2pa_action,
-        labels::{self, METADATA_LABEL_REGEX},
-        Action, ActionTemplate, Actions, AssertionMetadata, BmffHash, BoxHash, CreativeWork,
-        DataHash, DigitalSourceType, EmbeddedData, Exif, Metadata, SoftwareAgent, Thumbnail, User,
-        UserCbor,
+        c2pa_action, labels, Action, ActionTemplate, Actions, AssertionMetadata, BmffHash, BoxHash,
+        CreativeWork, DataHash, DigitalSourceType, EmbeddedData, Exif, Metadata, SoftwareAgent,
+        Thumbnail, User, UserCbor,
     },
     cbor_types::value_cbor_to_type,
     claim::Claim,
@@ -1006,7 +1005,8 @@ impl Builder {
                     let bmff_hash: BmffHash = manifest_assertion.to_assertion()?;
                     claim.add_assertion_with_salt(&bmff_hash, &salt)
                 }
-                l if METADATA_LABEL_REGEX.is_match(l) => {
+                Metadata::LABEL => {
+                    // user metadata will go through the fallback path
                     let metadata: Metadata = manifest_assertion.to_assertion()?;
                     claim.add_gathered_assertion_with_salt(&metadata, &salt)
                 }
@@ -1593,6 +1593,7 @@ mod tests {
     #![allow(clippy::unwrap_used)]
     use std::{io::Cursor, vec};
 
+    use c2pa_macros::c2pa_test_async;
     use serde_json::json;
     #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
     use wasm_bindgen_test::*;
@@ -2312,12 +2313,7 @@ mod tests {
         }
     }
 
-    #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
-    #[cfg_attr(
-        all(target_arch = "wasm32", not(target_os = "wasi")),
-        wasm_bindgen_test
-    )]
-    #[cfg_attr(target_os = "wasi", wstd::test)]
+    #[c2pa_test_async]
     #[cfg(feature = "v1_api")]
     async fn test_builder_remote_sign() {
         let format = "image/jpeg";
@@ -2440,12 +2436,7 @@ mod tests {
         assert_eq!(reader.validation_status(), None);
     }
 
-    #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
-    #[cfg_attr(
-        all(target_arch = "wasm32", not(target_os = "wasi")),
-        wasm_bindgen_test
-    )]
-    #[cfg_attr(target_os = "wasi", wstd::test)]
+    #[c2pa_test_async]
     #[cfg(any(target_arch = "wasm32", feature = "file_io"))]
     async fn test_builder_box_hashed_embeddable() {
         use crate::asset_io::{CAIWriter, HashBlockObjectType};
@@ -2506,12 +2497,7 @@ mod tests {
         assert_eq!(_reader.validation_status(), None);
     }
 
-    #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
-    #[cfg_attr(
-        all(target_arch = "wasm32", not(target_os = "wasi")),
-        wasm_bindgen_test
-    )]
-    #[cfg_attr(target_os = "wasi", wstd::test)]
+    #[c2pa_test_async]
     #[cfg(any(target_arch = "wasm32", feature = "file_io"))]
     async fn test_builder_box_hashed_embeddable_with_exclusions() {
         use crate::asset_io::{CAIWriter, HashBlockObjectType};
@@ -2836,12 +2822,7 @@ mod tests {
     }
 
     /// example of creating a builder directly with a [`ManifestDefinition`]
-    #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
-    #[cfg_attr(
-        all(target_arch = "wasm32", not(target_os = "wasi")),
-        wasm_bindgen_test
-    )]
-    #[cfg_attr(target_os = "wasi", wstd::test)]
+    #[c2pa_test_async]
     /// test if the sdk can add a cloud ingredient retrieved from a stream and a cloud manifest
     // This works with or without the fetch_remote_manifests feature
     async fn test_add_cloud_ingredient() {
