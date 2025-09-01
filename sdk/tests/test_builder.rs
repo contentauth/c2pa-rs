@@ -317,7 +317,6 @@ fn test_dynamic_assertions_builder() -> Result<()> {
 
 #[test]
 fn test_assertion_created_field() -> Result<()> {
-    use c2pa::ManifestAssertion;
     use serde_json::json;
 
     Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml"))?;
@@ -331,19 +330,15 @@ fn test_assertion_created_field() -> Result<()> {
     // Add a regular assertion (should default to created = false)
     builder.add_assertion("org.test.regular", &json!({"value": "regular"}))?;
 
-    let created = ManifestAssertion::from_labeled_assertion(
-        "org.test.created",
-        &json!({"value": "created"}),
-    )?
-    .set_kind(c2pa::ManifestAssertionKind::Json)
-    .set_created(true);
-    builder.add_manifest_assertion(created)?;
+    let created = json!({
+        "value": "created"
+    });
+    builder.add_assertion("org.test.created", &created)?;
 
-    let gathered = ManifestAssertion::from_labeled_assertion(
-        "org.test.gathered",
-        &json!({"value": "gathered"}),
-    )?;
-    builder.add_manifest_assertion(gathered)?;
+    let gathered = json!({
+        "value": "gathered"
+    });
+    builder.add_assertion("org.test.gathered", &gathered)?;
 
     let mut dest = Cursor::new(Vec::new());
     builder.sign(&Settings::signer()?, format, &mut source, &mut dest)?;
