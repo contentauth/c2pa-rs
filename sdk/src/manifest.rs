@@ -407,7 +407,7 @@ impl Manifest {
         data: &T,
     ) -> Result<&mut Self> {
         self.assertions
-            .push(ManifestAssertion::from_cbor_assertion(label, data)?);
+            .push(ManifestAssertion::from_labeled_assertion(label, data)?);
         Ok(self)
     }
 
@@ -423,6 +423,7 @@ impl Manifest {
     ///     Manifest,
     /// };
     /// # fn main() -> Result<()> {
+    ///
     /// let mut manifest = Manifest::new("my_app");
     /// let actions = Actions::new().add_action(Action::new(c2pa_action::EDITED));
     /// manifest.add_assertion(&actions)?;

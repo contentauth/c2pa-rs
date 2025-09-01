@@ -199,10 +199,7 @@ pub trait AssertionJson: Serialize + DeserializeOwned + AssertionBase {
         let data = AssertionData::Json(
             serde_json::to_string(self).map_err(|err| Error::AssertionEncoding(err.to_string()))?,
         );
-        Ok(
-            Assertion::new(self.label(), self.version(), data)
-                .set_content_type("application/json"),
-        )
+        Ok(Assertion::new(self.label(), self.version(), data).set_content_type("application/json"))
     }
 
     fn from_json_assertion(assertion: &Assertion) -> Result<Self> {
