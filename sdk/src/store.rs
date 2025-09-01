@@ -1113,14 +1113,7 @@ impl Store {
     // desired_version_label - is the label to compare to the base
     // returns true if desired version is <= base version
     fn check_label_version(base_version_label: &str, desired_version_label: &str) -> bool {
-        if let Some(desired_version) = labels::version(desired_version_label) {
-            if let Some(base_version) = labels::version(base_version_label) {
-                if desired_version > base_version {
-                    return false;
-                }
-            }
-        }
-        true
+        labels::version(desired_version_label) <= labels::version(base_version_label)
     }
 
     pub fn from_jumbf(buffer: &[u8], validation_log: &mut StatusTracker) -> Result<Store> {
@@ -1333,7 +1326,7 @@ impl Store {
             // make sure box version label match the read Claim
             if claim.version() > 1 {
                 match labels::version(&claim_box_ver) {
-                    Some(v) if claim.version() >= v => (),
+                    v if claim.version() >= v => (),
                     _ => return Err(Error::InvalidClaim(InvalidClaimError::ClaimBoxVersion)),
                 }
             }
@@ -2585,7 +2578,7 @@ impl Store {
                     final_assertions.push(User::new(&label, &data).to_assertion()?);
                 }
                 DynamicAssertionContent::Binary(format, data) => {
-                    todo!("Binary dynamic assertions not yet supported");
+                    //final_assertions.push(EmbeddedData::to_binary_assertion(&EmbeddedData::new(&label, format, data))?);
                 }
             }
         }

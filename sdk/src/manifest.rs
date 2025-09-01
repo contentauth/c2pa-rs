@@ -920,8 +920,8 @@ impl Manifest {
                     let mut actions: Actions = manifest_assertion.to_assertion()?;
 
                     let ingredients_key = match version {
-                        None | Some(1) => "ingredient",
-                        Some(2) => "ingredients",
+                        1 => "ingredient",
+                        2 => "ingredients",
                         _ => return Err(Error::AssertionUnsupportedVersion),
                     };
 
