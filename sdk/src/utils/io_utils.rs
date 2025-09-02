@@ -22,7 +22,7 @@ use std::{
 #[allow(unused)] // different code path for WASI
 use tempfile::{tempdir, Builder, NamedTempFile, SpooledTempFile, TempDir};
 
-use crate::{asset_io::rename_or_move, settings::get_settings_value, Error, Result};
+use crate::{asset_io::rename_or_move, Error, Result};
 // Replace data at arbitrary location and len in a file.
 // start_location is where the replacement data will start
 // replace_len is how many bytes from source to replaced starting a start_location
@@ -127,7 +127,7 @@ fn stream_with_fs_fallback_wasm(
 
 #[cfg(not(target_arch = "wasm32"))]
 fn stream_with_fs_fallback_file_io(threshold_override: Option<usize>) -> Result<SpooledTempFile> {
-    let threshold = threshold_override.unwrap_or(get_settings_value::<usize>(
+    let threshold = threshold_override.unwrap_or(crate::settings::get_settings_value::<usize>(
         "core.backing_store_memory_threshold_in_mb",
     )?);
 
@@ -452,8 +452,10 @@ mod tests {
         assert!(!stream.is_rolled(), "data still in memory");
 
         let large_data = vec![0; 1024 * 1024]; // 1MB.
-        let threshold =
-            get_settings_value::<usize>("core.backing_store_memory_threshold_in_mb").unwrap();
+        let threshold = crate::settings::get_settings_value::<usize>(
+            "core.backing_store_memory_threshold_in_mb",
+        )
+        .unwrap();
 
         for _ in 0..threshold {
             stream.write_all(&large_data).unwrap();
