@@ -310,11 +310,10 @@ jobs:
         run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
 
       - name: Run Wasm tests
-        run: wasm-pack test --chrome --chromedriver ${{ steps.setup-chrome.outputs.chromedriver-path }} --headless --no-default-features --features "$FEATURES"
+        run: wasm-pack test --chrome --chromedriver ${{ steps.setup-chrome.outputs.chromedriver-path }} --headless --no-default-features --features rust_native_crypto,fetch_remote_manifests,http_reqwest
         working-directory: ./sdk
         env:
           WASM_BINDGEN_TEST_TIMEOUT: 60
-          FEATURES: ${{needs.get-features.outputs.rust-native-features}}
 
   tests-wasi:
     name: Unit tests (WASI)

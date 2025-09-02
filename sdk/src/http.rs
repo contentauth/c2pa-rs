@@ -249,7 +249,7 @@ mod sync_reqwest_resolver {
     }
 }
 
-#[cfg(all(feature = "http_ureq", not(target_os = "wasi")))]
+#[cfg(all(feature = "http_ureq", not(target_arch = "wasm32")))]
 mod sync_ureq_resolver {
     use http::header;
 
