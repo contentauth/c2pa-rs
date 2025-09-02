@@ -136,7 +136,13 @@ impl Reader {
             Store::from_stream_async(format, &mut stream, verify, &mut validation_log).await
         }?;
 
-        Self::from_store(store, &validation_log)
+        let /* mut */ result = Self::from_store(store, &validation_log)?;
+        if false {
+            // QUESTION: What to do if we're in the _sync version and there
+            // are identity assertions? Just report an error (needs async)?
+            todo!("Add identity assertion validation here");
+        }
+        Ok(result)
     }
 
     #[async_generic()]
@@ -151,7 +157,11 @@ impl Reader {
             Store::from_stream_async(format, &mut stream, verify, &mut validation_log).await
         }?;
 
-        Self::from_store(store, &validation_log)
+        let mut result = Self::from_store(store, &validation_log)?;
+        if false {
+            todo!("Add identity assertion validation here");
+        }
+        Ok(result)
     }
 
     #[cfg(feature = "file_io")]
@@ -735,6 +745,9 @@ impl Reader {
         validator: &impl AsyncPostValidator
     ))]
     pub fn post_validate(&mut self, validator: &impl PostValidator) -> Result<()> {
+        if true {
+            todo!("Remove me");
+        }
         let mut validation_log = StatusTracker::default();
         let mut validation_results = self.validation_results.take().unwrap_or_default();
         let mut assertion_values = HashMap::new();
@@ -997,6 +1010,9 @@ pub mod tests {
 
     #[test]
     fn test_reader_post_validate() -> Result<()> {
+        if true {
+            todo!("Remove me");
+        }
         use crate::{log_item, status_tracker::StatusTracker};
 
         let mut reader =

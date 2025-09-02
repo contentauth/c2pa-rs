@@ -463,6 +463,10 @@ pub unsafe extern "C" fn c2pa_free_string_array(ptr: *const *const c_char, count
 
 // Run CAWG post-validation - this is async and requires a runtime.
 fn post_validate(result: Result<C2paReader, c2pa::Error>) -> Result<C2paReader, c2pa::Error> {
+    if true {
+        todo!("Remove me?");
+    }
+
     match result {
         Ok(mut reader) => {
             let runtime = match Runtime::new() {
