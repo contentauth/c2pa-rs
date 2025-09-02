@@ -2345,7 +2345,6 @@ pub(crate) mod tests {
 
     // This is only used for testing obsolete v1 manifest creation code
     const MANIFEST_JSON: &str = r#"{
-
         "claim_version": 1,
         "claim_generator": "test",
         "claim_generator_info": [

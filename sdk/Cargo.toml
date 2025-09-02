@@ -56,8 +56,6 @@ fetch_remote_manifests = ["dep:wasi"]
 json_schema = ["dep:schemars"]
 openssl = [
     "dep:openssl",
-    "reqwest?/native-tls",
-    "ureq?/native-tls",
 ]
 pdf = ["dep:lopdf"]
 rust_native_crypto = [
@@ -71,8 +69,6 @@ rust_native_crypto = [
     "dep:pkcs1",
     "dep:rsa",
     "dep:spki",
-    "reqwest?/rustls-tls",
-    "ureq?/rustls",
 ]
 v1_api = []
 # Enable `reqwest` sync http resolver, not supported on WASM/WASI.

@@ -299,12 +299,6 @@ pub enum Error {
     #[error("invalid signing key")]
     InvalidSigningKey,
 
-    #[error("async is not implemented for this http resolver")]
-    AsyncHttpResolverNotImplemented,
-
-    #[error("sync is not implemented for this http resolver")]
-    SyncHttpResolverNotImplemented,
-
     // --- third-party errors ---
     #[error(transparent)]
     Utf8Error(#[from] std::str::Utf8Error),
