@@ -47,6 +47,7 @@ rustdoc-args = ["--cfg", "docsrs"]
 # but do not call the async versions of our API. Thus, we use ureq, which has a complete
 # blocking implementation, no runtimes included.
 # TODO: make our async tests always use the async API so we don't need ureq + reqwest
+#       https://github.com/contentauth/c2pa-rs/issues/1364
 default = ["openssl", "http_reqwest", "http_ureq", "http_wasi", "http_wstd"]
 add_thumbnails = ["image"]
 file_io = []
