@@ -57,9 +57,9 @@ impl SyncGenericResolver {
     /// Note that if `http_ureq` and `http_reqwest_blocking` are enabled at the same time, this
     /// function will panic.
     #[cfg(any(
-        // 1. It's `wasi` and `http_wasi` is enabled.
+        // 1. It's WASI and `http_wasi` is enabled.
         all(target_os = "wasi", feature = "http_wasi"),
-        // 2. It's not `wasm32` and either `http_ureq` or `http_reqwest_blocking` are enabled.
+        // 2. It's not WASM` and either `http_ureq` or `http_reqwest_blocking` are enabled.
         all(
             not(target_arch = "wasm32"),
             any(feature = "http_ureq", feature = "http_reqwest_blocking")
@@ -140,7 +140,7 @@ impl AsyncGenericResolver {
     #[cfg(any(
         // 1. `http_reqwest` is enabled.
         feature = "http_reqwest",
-        // 2. It's `wasi` and `http_wstd` is enabled.
+        // 2. It's WASI and `http_wstd` is enabled.
         all(target_os = "wasi", feature = "http_wstd")
     ))]
     pub fn new() -> Self {
@@ -479,5 +479,67 @@ mod async_wasi_resolver {
         fn from(value: wstd::http::error::Error) -> Self {
             Self::Other(Box::new(WstdError(value.to_string())))
         }
+    }
+}
+
+// WASM doesn't support `httpmock`.
+#[cfg(not(target_arch = "wasm32"))]
+#[cfg(test)]
+pub mod tests {
+    #![allow(clippy::unwrap_used)]
+
+    use super::*;
+
+    fn remote_mock_server<'a>(server: &'a httpmock::MockServer) -> httpmock::Mock<'a> {
+        server.mock(|when, then| {
+            when.method(httpmock::Method::GET);
+            then.status(200).body([1, 2, 3]);
+        })
+    }
+
+    #[cfg(any(feature = "http_ureq", feature = "http_reqwest_blocking"))]
+    #[test]
+    fn test_http_sync_generic_resolver() {
+        use httpmock::MockServer;
+
+        let server = MockServer::start();
+        let mock = remote_mock_server(&server);
+
+        let request = Request::get(server.base_url()).body(vec![1, 2, 3]).unwrap();
+
+        let resolver = SyncGenericResolver::new();
+        let response = resolver.http_resolve(request).unwrap();
+
+        let mut response_body = Vec::new();
+        response
+            .into_body()
+            .read_to_end(&mut response_body)
+            .unwrap();
+        assert_eq!(&response_body, &[1, 2, 3]);
+
+        mock.assert();
+    }
+
+    #[cfg(feature = "http_reqwest")]
+    #[tokio::test]
+    async fn test_http_async_generic_resolver() {
+        use httpmock::MockServer;
+
+        let server = MockServer::start();
+        let mock = remote_mock_server(&server);
+
+        let request = Request::get(server.base_url()).body(vec![1, 2, 3]).unwrap();
+
+        let resolver = AsyncGenericResolver::new();
+        let response = resolver.http_resolve_async(request).await.unwrap();
+
+        let mut response_body = Vec::new();
+        response
+            .into_body()
+            .read_to_end(&mut response_body)
+            .unwrap();
+        assert_eq!(&response_body, &[1, 2, 3]);
+
+        mock.assert();
     }
 }
