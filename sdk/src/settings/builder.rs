@@ -14,6 +14,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::{
+    assertions::DigitalSourceType,
     definitions::{ActionDefinition, ActionTemplateDefinition, ClaimGeneratorInfoDefinition},
     settings::SettingsValidate,
     Error, Result,
@@ -206,10 +207,9 @@ impl SettingsValidate for ThumbnailSettings {
 pub(crate) struct AutoActionSettings {
     /// Whether to enable this auto action or not.
     pub enabled: bool,
-    // TODO: enum
     /// The default source type for the auto action.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub source_type: Option<String>,
+    pub source_type: Option<DigitalSourceType>,
 }
 
 /// Settings for configuring the "base" [Actions][crate::assertions::Actions] assertion.
@@ -255,8 +255,8 @@ impl Default for ActionsSettings {
             templates: None,
             actions: None,
             auto_created_action: AutoActionSettings {
-                enabled: false,
-                source_type: None,
+                enabled: true,
+                source_type: Some(DigitalSourceType::Empty),
             },
             auto_opened_action: AutoActionSettings {
                 enabled: true,
@@ -296,6 +296,19 @@ pub(crate) struct BuilderSettings {
     ///
     /// For more information on the reasoning behind this field see [ActionsSettings].
     pub actions: ActionsSettings,
+
+    // Certificate statuses will be fetched for either all the manifest labels, or just the active manifest.
+    pub certificate_status_fetch: Option<OcspFetch>,
+
+    // Whether or not existing OCSP responses should be overridden by new values.
+    pub certificate_status_should_override: Option<bool>,
+}
+
+#[derive(Copy, Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub(crate) enum OcspFetch {
+    All,
+    Active,
 }
 
 impl SettingsValidate for BuilderSettings {
@@ -310,7 +323,7 @@ pub mod tests {
     #![allow(clippy::unwrap_used)]
 
     use super::*;
-    use crate::assertions::source_type;
+    use crate::assertions::DigitalSourceType;
 
     #[test]
     fn test_auto_created_action_without_source_type() {
@@ -330,7 +343,7 @@ pub mod tests {
         let actions_settings = ActionsSettings {
             auto_created_action: AutoActionSettings {
                 enabled: true,
-                source_type: Some(source_type::EMPTY.to_owned()),
+                source_type: Some(DigitalSourceType::Empty),
             },
             ..Default::default()
         };

@@ -233,8 +233,9 @@ pub enum Role {
 
 /// A region of interest within an asset describing the change.
 ///
-/// This struct can be used from [`Action::changes`][crate::assertions::Action::changes] or
-/// [`AssertionMetadata::region_of_interest`][crate::assertions::AssertionMetadata::region_of_interest].
+/// This struct can be used from [`Action::changes`][crate::assertions::Action::changes],
+/// [`AssertionMetadata::region_of_interest`][crate::assertions::AssertionMetadata::region_of_interest], or
+/// [`SoftBindingScope::region`][crate::assertions::soft_binding::SoftBindingScope::region].
 #[skip_serializing_none]
 #[derive(Debug, Default, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "json_schema", derive(JsonSchema))]

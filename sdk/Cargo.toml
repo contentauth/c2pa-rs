@@ -36,18 +36,27 @@ features = [
     "pdf",
     "v1_api",
     "diagnostics",
+    "http_ureq",
+    "http_reqwest",
 ]
 rustdoc-args = ["--cfg", "docsrs"]
 
 [features]
-default = ["openssl"]
+# The reason we use `ureq` instead of `reqwest_blocking` is because the blocking version
+# of reqwest creates a new tokio runtime. A lot of our tests create their own tokio runtime
+# but do not call the async versions of our API. Thus, we use ureq, which has a complete
+# blocking implementation, no runtimes included.
+# TODO: make our async tests always use the async API so we don't need ureq + reqwest
+default = ["openssl", "http_reqwest", "http_ureq", "http_wasi", "http_wstd"]
 add_thumbnails = ["image"]
 file_io = []
 serialize_thumbnails = []
 no_interleaved_io = ["file_io"]
 fetch_remote_manifests = ["dep:wasi"]
 json_schema = ["dep:schemars"]
-openssl = ["dep:openssl"]
+openssl = [
+    "dep:openssl",
+]
 pdf = ["dep:lopdf"]
 rust_native_crypto = [
     "dep:const-oid",
@@ -62,6 +71,16 @@ rust_native_crypto = [
     "dep:spki",
 ]
 v1_api = []
+# Enable `reqwest` sync http resolver, not supported on WASM/WASI.
+http_reqwest_blocking = ["dep:reqwest", "reqwest/blocking"]
+# Enable `ureq` sync http resolver, not supported on WASM/WASI.
+http_ureq = ["dep:ureq"]
+# Enable `wasi` sync http resolver, only supported on WASI.
+http_wasi = ["dep:wasi"]
+# Enable `wstd` async http resolver, only supported on WASI.
+http_wstd = ["dep:wstd"]
+# Enable `reqwest` async http resolver, not supported on WASI.
+http_reqwest = ["dep:reqwest"]
 
 # TODO: feature flag http resolvers depending on features implemented
 #       (not expecting to plumb through everything in this change)
@@ -184,7 +203,6 @@ serde_json = { version = "1.0.117", features = ["preserve_order"] }
 serde_with = "3.11.0"
 serde-transcode = "1.1.1"
 sha1 = "0.10.6"
-sha2 = "0.10.6"
 spki = { version = "0.7.3", optional = true }
 static-iref = "3.0"
 tempfile = "=3.15.0"
@@ -197,7 +215,43 @@ x509-certificate = "0.24.0"
 x509-parser = "0.16.0"
 zeroize = { version = "1.8", features = ["zeroize_derive"] }
 zip = { version = "3.0.0", default-features = false }
+# TODO: this can eventually be optional
 http = "1.3.1"
+
+[target.'cfg(not(target_os = "wasi"))'.dependencies]
+reqwest = { version = "0.12.23", default-features = false, features = [
+    # These are some of the defaults in `reqwest`.
+    "http2",
+    "system-proxy",
+    "rustls-tls"
+], optional = true }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+openssl = { version = "0.10.72", features = ["vendored"], optional = true }
+ureq = { version = "3.1.0", default-features = false, features = [
+    "rustls"
+], optional = true }
+
+[target.'cfg(target_os = "wasi")'.dependencies]
+wasi = { version = "0.14.3", optional = true }
+wstd = { version = "0.5.4", optional = true }
+
+# `wstd` is required for testing, but optional as a normal dependency.
+[target.'cfg(target_os = "wasi")'.dev-dependencies]
+wstd = "0.5.4"
+
+# Use the asm feature of sha2 on aarch64 for better performance. This nearly
+# halves hashing time for large assets (> 50gb mp4, for example).
+#
+# Note: This feature has been removed in later versions of sha2.
+# If upgrading, ensure sha2 has implemented equivalent optimizations for aarch64.
+#
+# See: https://github.com/RustCrypto/hashes/pull/542 and
+# https://github.com/RustCrypto/hashes/tree/master/sha2#backends (which hasn't been released yet).
+[target.'cfg(target_arch = "aarch64")'.dependencies]
+sha2 = { version = "0.10.6", features = ["asm"] }
+[target.'cfg(not(target_arch = "aarch64"))'.dependencies]
+sha2 = "0.10.6"
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 const-oid = "0.9.6"
@@ -209,12 +263,6 @@ spki = "0.7.3"
 
 [target.'cfg(target_env = "p2")'.dependencies]
 tempfile = { version = "3.15", features = ["nightly"] }
-
-[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-openssl = { version = "0.10.72", features = ["vendored"], optional = true }
-ureq = "3.0.12"
-http = "1.3.1"
-url = "2.5.3"
 
 [target.'cfg(any(target_os = "wasi", not(target_arch = "wasm32")))'.dependencies]
 image = { version = "0.25.6", default-features = false, features = [
@@ -232,11 +280,6 @@ image = { version = "0.25.6", default-features = false, features = [
     # "avif-native"
 ], optional = true }
 
-[target.'cfg(target_os = "wasi")'.dependencies]
-getrandom = "0.2.7"
-wasi = { version = "0.14", optional = true }
-wstd = "0.5"
-
 [target.'cfg(any(not(target_arch = "wasm32"), target_os = "wasi"))'.dependencies.chrono]
 version = "0.4.39"
 default-features = false
@@ -248,7 +291,6 @@ chrono = { version = "0.4.39", default-features = false, features = [
     "wasmbind",
 ] }
 console_log = { version = "1.0.0", features = ["color"] }
-getrandom = { version = "0.2.7", features = ["js"] }
 js-sys = "0.3.58"
 rand_core = "0.9.0-alpha.2"
 ring = { version = "0.17.13", features = ["wasm32_unknown_unknown_js"] }
@@ -268,13 +310,6 @@ web-sys = { version = "0.3.58", features = [
 [target.'cfg(target_os = "windows")'.dependencies]
 windows-core = "0.61.2" # Override yanked version used in chrono and other crates.
 
-[target.'cfg(not(target_os = "wasi"))'.dependencies]
-reqwest = { version = "0.12.22", default-features = false, features = [
-    "rustls-tls",
-    "stream",
-    "blocking",
-] }
-
 [dev-dependencies]
 anyhow = "1.0.97"
 glob = "0.3.1"
@@ -287,7 +322,6 @@ mockall = "0.13.1"
 wasm-bindgen-test = "0.3.45"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
-actix = "0.13.1"
 httpmock = "0.7.0"
 tokio = { version = "1.44.2", features = ["full"] }
 

@@ -27,12 +27,15 @@ use uuid::Uuid;
 use crate::Manifest;
 use crate::{
     assertion::{Assertion, AssertionBase},
-    assertions::{self, labels, AssertionMetadata, AssetType, EmbeddedData, Relationship},
+    assertions::{
+        self, labels, AssertionMetadata, AssetType, CertificateStatus, EmbeddedData, Relationship,
+    },
     asset_io::CAIRead,
     claim::{Claim, ClaimAssetData},
     crypto::base64,
     error::{Error, Result},
     hashed_uri::HashedUri,
+    http::{AsyncGenericResolver, AsyncHttpResolver, SyncGenericResolver, SyncHttpResolver},
     jumbf::{
         self,
         labels::{assertion_label_from_uri, manifest_label_from_uri},
@@ -145,6 +148,9 @@ pub struct Ingredient {
     #[serde(skip_deserializing)]
     #[serde(skip_serializing_if = "skip_serializing_resources")]
     resources: ResourceStore,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    ocsp_responses: Option<Vec<ResourceRef>>,
 }
 
 fn default_instance_id() -> String {
@@ -326,6 +332,11 @@ impl Ingredient {
     /// Returns a reference to ingredient data if it exists.
     pub fn data_ref(&self) -> Option<&ResourceRef> {
         self.data.as_ref()
+    }
+
+    /// Returns a reference to the ocsp responses if it exists.
+    pub(crate) fn ocsp_responses_ref(&self) -> Option<&Vec<ResourceRef>> {
+        self.ocsp_responses.as_ref()
     }
 
     /// Returns the detailed description of the ingredient if it exists.
@@ -786,6 +797,14 @@ impl Ingredient {
         if ingredient.thumbnail.is_none() {
             if let Some((format, image)) = options.thumbnail(path) {
                 ingredient.set_thumbnail(format, image)?;
+            } else {
+                #[cfg(feature = "add_thumbnails")]
+                if let Some(format) = crate::format_from_path(path) {
+                    ingredient.maybe_add_thumbnail(
+                        &format,
+                        &mut std::io::BufReader::new(std::fs::File::open(path)?),
+                    )?;
+                }
             }
         }
         Ok(ingredient)
@@ -807,7 +826,7 @@ impl Ingredient {
     pub fn from_stream(format: &str, stream: &mut dyn CAIRead) -> Result<Self> {
         let ingredient = Self::from_stream_info(stream, format, "untitled");
         stream.rewind()?;
-        ingredient.add_stream_internal(format, stream)
+        ingredient.add_stream_internal(format, stream, &SyncGenericResolver::new())
     }
 
     /// Create an Ingredient from JSON.
@@ -822,11 +841,17 @@ impl Ingredient {
     /// Sets thumbnail if not defined and a valid claim thumbnail is found or add_thumbnails is enabled.
     /// Instance_id, document_id, and provenance will be overridden if found in the stream.
     /// Format will be overridden only if it is the default (application/octet-stream).
-    #[async_generic()]
+    #[async_generic(async_signature(
+        mut self,
+        format: S,
+        stream: &mut dyn CAIRead,
+        http_resolver: &impl AsyncHttpResolver,
+    ))]
     pub(crate) fn with_stream<S: Into<String>>(
         mut self,
         format: S,
         stream: &mut dyn CAIRead,
+        http_resolver: &impl SyncHttpResolver,
     ) -> Result<Self> {
         let format = format.into();
 
@@ -858,26 +883,41 @@ impl Ingredient {
         stream.rewind()?;
 
         if _sync {
-            self.add_stream_internal(&format, stream)
+            self.add_stream_internal(&format, stream, http_resolver)
         } else {
-            self.add_stream_internal_async(&format, stream).await
+            self.add_stream_internal_async(&format, stream, http_resolver)
+                .await
         }
     }
 
     // Internal implementation to avoid code bloat.
-    #[async_generic()]
-    fn add_stream_internal(mut self, format: &str, stream: &mut dyn CAIRead) -> Result<Self> {
+    #[async_generic(async_signature(
+        mut self,
+        format: &str,
+        stream: &mut dyn CAIRead,
+        http_resolver: &impl AsyncHttpResolver,
+    ))]
+    fn add_stream_internal(
+        mut self,
+        format: &str,
+        stream: &mut dyn CAIRead,
+        http_resolver: &impl SyncHttpResolver,
+    ) -> Result<Self> {
         let mut validation_log = StatusTracker::default();
 
-        // retrieve the manifest bytes from embedded, sidecar or remote and convert to store if found
+        // retrieve the manifest bytes from embedded or remote and convert to store if found
         let jumbf_result = match self.manifest_data() {
             Some(data) => Ok(data.into_owned()),
-            None => Store::load_jumbf_from_stream(format, stream)
-                .map(|(manifest_bytes, _)| manifest_bytes),
+            None => if _sync {
+                Store::load_jumbf_from_stream(format, stream, http_resolver)
+            } else {
+                Store::load_jumbf_from_stream_async(format, stream, http_resolver).await
+            }
+            .map(|(manifest_bytes, _)| manifest_bytes),
         };
 
         // We can't use functional combinators since we can't use async callbacks (https://github.com/rust-lang/rust/issues/62290)
-        let (result, manifest_bytes) = match jumbf_result {
+        let (mut result, manifest_bytes) = match jumbf_result {
             Ok(manifest_bytes) => {
                 let result = Store::from_manifest_data_and_stream(
                     &manifest_bytes,
@@ -891,23 +931,31 @@ impl Ingredient {
             Err(err) => (Err(err), None),
         };
 
+        // Fetch ocsp responses and store it with the ingredient
+        if let Ok(ref mut store) = result {
+            let labels = store.get_manifest_labels_for_ocsp();
+
+            let ocsp_response_ders = if _sync {
+                store.get_ocsp_response_ders(labels, &mut validation_log)?
+            } else {
+                store
+                    .get_ocsp_response_ders_async(labels, &mut validation_log)
+                    .await?
+            };
+            let resource_refs: Vec<ResourceRef> = ocsp_response_ders
+                .into_iter()
+                .filter_map(|o| self.resources.add_with(&o.0, "ocsp", o.1).ok())
+                .collect();
+
+            self.ocsp_responses = Some(resource_refs);
+        }
+
         // set validation status from result and log
         self.update_validation_status(result, manifest_bytes, &validation_log)?;
 
         // create a thumbnail if we don't already have a manifest with a thumb we can use
         #[cfg(feature = "add_thumbnails")]
-        if self.thumbnail.is_none() {
-            stream.rewind()?;
-
-            if let Some((output_format, image)) =
-                crate::utils::thumbnail::make_thumbnail_bytes_from_stream(
-                    format,
-                    std::io::BufReader::new(stream),
-                )?
-            {
-                self.set_thumbnail(output_format.to_string(), image)?;
-            }
-        }
+        self.maybe_add_thumbnail(format, &mut std::io::BufReader::new(stream))?;
 
         Ok(self)
     }
@@ -918,69 +966,63 @@ impl Ingredient {
     /// Thumbnail will be set only if one can be retrieved from a previous valid manifest.
     pub async fn from_memory_async(format: &str, buffer: &[u8]) -> Result<Self> {
         let mut stream = Cursor::new(buffer);
-        Self::from_stream_async(format, &mut stream).await
+        Self::from_stream_async(format, &mut stream, &AsyncGenericResolver::new()).await
     }
 
     /// Creates an `Ingredient` from a stream (async version).
     ///
     /// This does not set title or hash.
     /// Thumbnail will be set only if one can be retrieved from a previous valid manifest.
-    pub async fn from_stream_async(format: &str, stream: &mut dyn CAIRead) -> Result<Self> {
+    pub async fn from_stream_async(
+        format: &str,
+        stream: &mut dyn CAIRead,
+        http_resolver: &impl AsyncHttpResolver,
+    ) -> Result<Self> {
         let mut ingredient = Self::from_stream_info(stream, format, "untitled");
         stream.rewind()?;
 
         let mut validation_log = StatusTracker::default();
 
         // retrieve the manifest bytes from embedded, sidecar or remote and convert to store if found
-        let (result, manifest_bytes) = match Store::load_jumbf_from_stream(format, stream) {
-            Ok((manifest_bytes, _)) => {
-                (
-                    // generate a store from the buffer and then validate from the asset path
-                    match Store::from_jumbf(&manifest_bytes, &mut validation_log) {
-                        Ok(store) => {
-                            // verify the store
-                            Store::verify_store_async(
-                                &store,
-                                &mut ClaimAssetData::Stream(stream, format),
-                                &mut validation_log,
-                            )
-                            .await
-                            .map(|_| store)
-                        }
-                        Err(e) => {
-                            log_item!(
-                                "asset",
-                                "error loading asset",
-                                "Ingredient::from_stream_async"
-                            )
-                            .failure_no_throw(&mut validation_log, &e);
+        let (result, manifest_bytes) =
+            match Store::load_jumbf_from_stream_async(format, stream, http_resolver).await {
+                Ok((manifest_bytes, _)) => {
+                    (
+                        // generate a store from the buffer and then validate from the asset path
+                        match Store::from_jumbf(&manifest_bytes, &mut validation_log) {
+                            Ok(store) => {
+                                // verify the store
+                                Store::verify_store_async(
+                                    &store,
+                                    &mut ClaimAssetData::Stream(stream, format),
+                                    &mut validation_log,
+                                )
+                                .await
+                                .map(|_| store)
+                            }
+                            Err(e) => {
+                                log_item!(
+                                    "asset",
+                                    "error loading asset",
+                                    "Ingredient::from_stream_async"
+                                )
+                                .failure_no_throw(&mut validation_log, &e);
 
-                            Err(e)
-                        }
-                    },
-                    Some(manifest_bytes),
-                )
-            }
-            Err(err) => (Err(err), None),
-        };
+                                Err(e)
+                            }
+                        },
+                        Some(manifest_bytes),
+                    )
+                }
+                Err(err) => (Err(err), None),
+            };
 
         // set validation status from result and log
         ingredient.update_validation_status(result, manifest_bytes, &validation_log)?;
 
         // create a thumbnail if we don't already have a manifest with a thumb we can use
         #[cfg(feature = "add_thumbnails")]
-        if ingredient.thumbnail.is_none() {
-            stream.rewind()?;
-
-            if let Some((output_format, image)) =
-                crate::utils::thumbnail::make_thumbnail_bytes_from_stream(
-                    format,
-                    std::io::BufReader::new(stream),
-                )?
-            {
-                ingredient.set_thumbnail(output_format.to_string(), image)?;
-            }
-        }
+        ingredient.maybe_add_thumbnail(format, &mut std::io::BufReader::new(stream))?;
 
         Ok(ingredient)
     }
@@ -1040,6 +1082,7 @@ impl Ingredient {
             ingredient.resources_mut().set_base_path(base_path)
         }
 
+        // Find the thumbnail and add as a ResourceRef.
         if let Some(hashed_uri) = ingredient_assertion.thumbnail.as_ref() {
             // This could be a relative or absolute thumbnail reference to another manifest
             let target_claim_label = match manifest_label_from_uri(&hashed_uri.url()) {
@@ -1048,7 +1091,8 @@ impl Ingredient {
             };
             let maybe_resource_ref = match hashed_uri.url() {
                 uri if uri.contains(jumbf::labels::ASSERTIONS) => {
-                    // if this is a claim thumbnail, then use the label from the thumbnail uri
+                    // Get the bits of the thumbnail and convert it to a resource
+                    // it may be in an assertion or a data box
                     store
                         .get_assertion_from_uri_and_claim(&hashed_uri.url(), &target_claim_label)
                         .map(|assertion| {
@@ -1085,24 +1129,46 @@ impl Ingredient {
             }
         };
 
+        // if the ingredient as a data field, we need to resolve that as well
         if let Some(data_uri) = ingredient_assertion.data.as_ref() {
-            let data_box = store
-                .get_data_box_from_uri_and_claim(data_uri, claim_label)
-                .ok_or_else(|| {
+            let maybe_data_ref = match data_uri.url() {
+                uri if uri.contains(jumbf::labels::ASSERTIONS) => {
+                    // if this is a claim data box, then use the label from the data uri
+                    store
+                        .get_assertion_from_uri_and_claim(&uri, claim_label)
+                        .map(|assertion| {
+                            let embedded_data = EmbeddedData::from_assertion(assertion)?;
+                            ingredient.resources.add_uri(
+                                &data_uri.url(),
+                                &embedded_data.content_type,
+                                embedded_data.data,
+                            )
+                        })
+                }
+                uri if uri.contains(jumbf::labels::DATABOXES) => store
+                    .get_data_box_from_uri_and_claim(data_uri, claim_label)
+                    .map(|data_box| {
+                        ingredient
+                            .resources
+                            .add_uri(&uri, &data_box.format, data_box.data.clone())
+                    }),
+                _ => None,
+            };
+            match maybe_data_ref {
+                Some(data_ref) => {
+                    ingredient.data = Some(data_ref?);
+                }
+                None => {
                     error!("failed to get {} from {}", data_uri.url(), ingredient_uri);
-                    Error::AssertionMissing {
-                        url: data_uri.url(),
-                    }
-                })?;
-
-            let mut data_ref = ingredient.resources_mut().add_uri(
-                &data_uri.url(),
-                &data_box.format,
-                data_box.data.clone(),
-            )?;
-            data_ref.data_types.clone_from(&data_box.data_types);
-            ingredient.set_data_ref(data_ref)?;
-        }
+                    validation_status.push(
+                        ValidationStatus::new_failure(
+                            validation_status::ASSERTION_MISSING.to_string(),
+                        )
+                        .set_url(data_uri.url()),
+                    );
+                }
+            }
+        };
 
         if !validation_status.is_empty() {
             ingredient.validation_status = Some(validation_status)
@@ -1246,6 +1312,25 @@ impl Ingredient {
             data = Some(hash_uri);
         };
 
+        // if the ingredient has ocsp responses, resolve and add it to the claim as a certificate status assertion
+        if let Some(ocsp_responses_ref) = self.ocsp_responses_ref() {
+            let ocsp_responses: Vec<Vec<u8>> = ocsp_responses_ref
+                .iter()
+                .filter_map(|i| get_resource(&i.identifier).ok())
+                .map(|cow| cow.into_owned())
+                .collect();
+            if !ocsp_responses.is_empty() {
+                let certificate_status =
+                    if let Some(assertion) = claim.get_assertion(CertificateStatus::LABEL, 0) {
+                        let certificate_status = CertificateStatus::from_assertion(assertion)?;
+                        certificate_status.add_ocsp_vals(ocsp_responses)
+                    } else {
+                        CertificateStatus::new(ocsp_responses)
+                    };
+                claim.add_assertion_with_salt(&certificate_status, &DefaultSalt::default())?;
+            }
+        }
+
         let mut ingredient_assertion = match claim.version() {
             1 => {
                 // don't make v1 ingredients anymore, they will always be at least v2
@@ -1370,19 +1455,33 @@ impl Ingredient {
 
         // create a thumbnail if we don't already have a manifest with a thumb we can use
         #[cfg(feature = "add_thumbnails")]
-        if ingredient.thumbnail.is_none() {
+        ingredient.maybe_add_thumbnail(format, &mut std::io::BufReader::new(stream))?;
+
+        Ok(ingredient)
+    }
+
+    /// Automatically generate a thumbnail for the ingredient if missing and enabled in settings.
+    ///
+    /// This function takes into account the [Settings][crate::settings::Settings]:
+    /// * `builder.thumbnail.enabled`
+    #[cfg(feature = "add_thumbnails")]
+    pub fn maybe_add_thumbnail<R>(&mut self, format: &str, stream: &mut R) -> Result<()>
+    where
+        R: std::io::BufRead + std::io::Seek,
+    {
+        let auto_thumbnail =
+            crate::settings::get_settings_value::<bool>("builder.thumbnail.enabled")?;
+        if self.thumbnail.is_none() && auto_thumbnail {
             stream.rewind()?;
 
             if let Some((output_format, image)) =
-                crate::utils::thumbnail::make_thumbnail_bytes_from_stream(
-                    format,
-                    std::io::BufReader::new(stream),
-                )?
+                crate::utils::thumbnail::make_thumbnail_bytes_from_stream(format, stream)?
             {
-                ingredient.set_thumbnail(output_format.to_string(), image)?;
+                self.set_thumbnail(output_format.to_string(), image)?;
             }
         }
-        Ok(ingredient)
+
+        Ok(())
     }
 }
 
@@ -1417,12 +1516,6 @@ pub trait IngredientOptions {
     /// The second value is bytes of the thumbnail image.
     /// The default is no thumbnail, so you must provide an override to have a thumbnail image.
     fn thumbnail(&self, _path: &Path) -> Option<(String, Vec<u8>)> {
-        #[cfg(feature = "add_thumbnails")]
-        return crate::utils::thumbnail::make_thumbnail_bytes_from_path(_path)
-            .ok()
-            .flatten()
-            .map(|(format, image)| (format.to_string(), image));
-        #[cfg(not(feature = "add_thumbnails"))]
         None
     }
 
@@ -1457,6 +1550,7 @@ mod tests {
     #![allow(clippy::expect_used)]
     #![allow(clippy::unwrap_used)]
 
+    use c2pa_macros::c2pa_test_async;
     #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
     use wasm_bindgen_test::*;
 
@@ -1523,12 +1617,7 @@ mod tests {
         );
     }
 
-    #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
-    #[cfg_attr(
-        all(target_arch = "wasm32", not(target_os = "wasi")),
-        wasm_bindgen_test
-    )]
-    #[cfg_attr(target_os = "wasi", wstd::test)]
+    #[c2pa_test_async]
     async fn test_stream_async_jpg() {
         let image_bytes = include_bytes!("../tests/fixtures/CA.jpg");
         let title = "Test Image";
@@ -1567,12 +1656,43 @@ mod tests {
         assert_eq!(ingredient.validation_status(), None);
     }
 
-    #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
-    #[cfg_attr(
-        all(target_arch = "wasm32", not(target_os = "wasi")),
-        wasm_bindgen_test
-    )]
-    #[cfg_attr(target_os = "wasi", wstd::test)]
+    #[cfg(feature = "add_thumbnails")]
+    #[test]
+    fn test_stream_thumbnail() {
+        use crate::settings::Settings;
+
+        #[cfg(target_os = "wasi")]
+        Settings::reset().unwrap();
+
+        Settings::from_toml(
+            &toml::toml! {
+                [builder.thumbnail]
+                enabled = true
+            }
+            .to_string(),
+        )
+        .unwrap();
+
+        let image_bytes = include_bytes!("../tests/fixtures/sample1.png");
+        let ingredient = Ingredient::from_memory("image/png", image_bytes).unwrap();
+        assert!(ingredient.thumbnail().is_some());
+
+        Settings::from_toml(
+            &toml::toml! {
+                [builder.thumbnail]
+                enabled = false
+            }
+            .to_string(),
+        )
+        .unwrap();
+
+        let ingredient = Ingredient::from_memory("image/png", image_bytes).unwrap();
+        assert!(ingredient.thumbnail().is_none());
+        #[cfg(target_os = "wasi")]
+        Settings::reset().unwrap();
+    }
+
+    #[c2pa_test_async]
     async fn test_stream_ogp() {
         let image_bytes = include_bytes!("../tests/fixtures/XCA.jpg");
         let title = "XCA.jpg";
@@ -1596,10 +1716,10 @@ mod tests {
         );
     }
 
-    #[allow(dead_code)]
-    #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
-    #[cfg_attr(target_os = "wasi", wstd::test)]
+    // Temporarily unavailable for wasm-bindgen until https://github.com/contentauth/c2pa-rs/pull/1325 lands
+    #[cfg(any(not(target_arch = "wasm32"), target_os = "wasi"))]
     #[cfg(feature = "fetch_remote_manifests")]
+    #[c2pa_test_async]
     async fn test_jpg_cloud_from_memory() {
         // Save original settings
         let original_verify_trust =
@@ -1630,13 +1750,8 @@ mod tests {
             .unwrap();
     }
 
-    #[allow(dead_code)]
-    #[cfg_attr(not(any(target_arch = "wasm32", feature = "file_io")), actix::test)]
-    #[cfg_attr(
-        all(target_arch = "wasm32", not(target_os = "wasi")),
-        wasm_bindgen_test
-    )]
-    #[cfg_attr(all(target_os = "wasi", not(feature = "file_io")), wstd::test)]
+    #[cfg(not(any(feature = "fetch_remote_manifests", feature = "file_io")))]
+    #[c2pa_test_async]
     async fn test_jpg_cloud_from_memory_no_file_io() {
         crate::settings::set_settings_value("verify.verify_trust", false).unwrap();
 
@@ -1657,12 +1772,7 @@ mod tests {
         assert_eq!(ingredient.manifest_data(), None);
     }
 
-    #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
-    #[cfg_attr(
-        all(target_arch = "wasm32", not(target_os = "wasi")),
-        wasm_bindgen_test
-    )]
-    #[cfg_attr(target_os = "wasi", wstd::test)]
+    #[c2pa_test_async]
     async fn test_jpg_cloud_from_memory_and_manifest() {
         crate::settings::set_settings_value("verify.verify_trust", false).unwrap();
 
@@ -1693,13 +1803,8 @@ mod tests_file_io {
     #![allow(clippy::expect_used)]
     #![allow(clippy::unwrap_used)]
 
-    #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
-    use wasm_bindgen_test::*;
-
     use super::*;
     use crate::{assertion::AssertionData, utils::test::fixture_path};
-    #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
-    wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
 
     const NO_MANIFEST_JPEG: &str = "earth_apollo17.jpg";
     const MANIFEST_JPEG: &str = "C.jpg";
@@ -1945,12 +2050,12 @@ mod tests_file_io {
 
         assert_eq!(ingredient.thumbnail_ref(), None);
         // assert!(ingredient
-        //     .set_manifest_data_ref(ResourceRef::new("image/jpg", "foo"))
+        //     .set_manifest_data_ref(ResourceRef::new("image/jpeg", "foo"))
         //     .is_err());
         assert_eq!(ingredient.manifest_data_ref(), None);
         // verify we can set a reference
         assert!(ingredient
-            .set_thumbnail_ref(ResourceRef::new("image/jpg", "C.jpg"))
+            .set_thumbnail_ref(ResourceRef::new("image/jpeg", "C.jpg"))
             .is_ok());
         assert!(ingredient.thumbnail_ref().is_some());
         assert!(ingredient
@@ -2003,7 +2108,7 @@ mod tests_file_io {
         folder.push("tests/fixtures");
         let mut ingredient = Ingredient::new_v2("title", "format");
         ingredient.resources.set_base_path(folder);
-        //let mut _data_ref = ResourceRef::new("image/jpg", "foo");
+        //let mut _data_ref = ResourceRef::new("image/jpeg", "foo");
         //data_ref.data_types = vec!["c2pa.types.dataset.pytorch".to_string()];
     }
 

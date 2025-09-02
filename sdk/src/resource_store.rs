@@ -34,8 +34,9 @@ use crate::{
     asset_io::CAIRead,
     claim::Claim,
     hashed_uri::HashedUri,
+    http::SyncHttpResolver,
     jumbf::labels::{assertion_label_from_uri, to_absolute_uri, DATABOXES},
-    resolver::{HttpResolver, PathResolver},
+    resolver::PathResolver,
     salt::DefaultSalt,
     utils::mime::{self, format_to_mime},
     Error, Result,
@@ -103,7 +104,10 @@ impl UriOrResource {
                             .ok_or(Error::AssertionMissing {
                                 url: h.url().to_string(),
                             })?;
-                    (assertion.label(), assertion.data().to_vec())
+                    (
+                        assertion.content_type().to_string(),
+                        assertion.data().to_vec(),
+                    )
                 };
                 let url = to_absolute_uri(claim.label(), &h.url());
                 let resource_ref = resources.add_with(&url, &format, data)?;
@@ -165,7 +169,7 @@ impl ResourceRef {
         }
     }
 
-    pub fn to_hashed_uri<T: HttpResolver + PathResolver>(
+    pub fn to_hashed_uri<T: SyncHttpResolver + PathResolver>(
         &self,
         resolver: &T,
         claim: &mut Claim,
@@ -241,6 +245,7 @@ impl ResourceStore {
             "png" | "image/png" => ".png",
             //make "svg" | "image/svg+xml" => ".svg",
             "c2pa" | "application/x-c2pa-manifest-store" | "application/c2pa" => ".c2pa",
+            "ocsp" => ".ocsp",
             _ => "",
         };
         // clean string for possible filesystem use
@@ -463,11 +468,23 @@ mod tests {
             "claim_generator": "test",
             "format" : "image/jpeg",
             "instance_id": "12345",
-            "assertions": [],
             "thumbnail": {
                 "format": "image/jpeg",
                 "identifier": "abc123"
             },
+            "assertions": [
+                {
+                    "label": "c2pa.actions",
+                    "data": {
+                        "actions": [
+                            {
+                                "action": "c2pa.created",
+                                "digitalSourceType": "http://c2pa.org/digitalsourcetype/empty"
+                            }
+                        ]
+                    }
+                }
+            ],
             "ingredients": [{
                 "title": "A.jpg",
                 "format": "image/jpeg",

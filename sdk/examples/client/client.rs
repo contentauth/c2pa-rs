@@ -16,6 +16,7 @@
 use std::path::PathBuf;
 
 use anyhow::Result;
+#[allow(deprecated)]
 use c2pa::{
     assertions::{c2pa_action, labels, Action, Actions, CreativeWork, Exif, SchemaDotOrgPerson},
     create_signer,
@@ -50,6 +51,7 @@ fn show_manifest(reader: &Reader, manifest_label: &str, level: usize) -> Result<
                         println!("{}{}", indent, action.action());
                     }
                 }
+                #[allow(deprecated)]
                 labels::CREATIVE_WORK => {
                     let creative_work: CreativeWork = assertion.to_assertion()?;
                     if let Some(authors) = creative_work.author() {
@@ -119,6 +121,8 @@ pub fn main() -> Result<()> {
     );
 
     // build a creative work assertion
+    // TO DO: Replace this example.
+    #[allow(deprecated)]
     let creative_work =
         CreativeWork::new().add_author(SchemaDotOrgPerson::new().set_name("me")?)?;
 
@@ -144,6 +148,7 @@ pub fn main() -> Result<()> {
         version: Some("0.1".to_owned()),
         ..Default::default()
     };
+    #[allow(deprecated)]
     builder
         .set_claim_generator_info(generator)
         .add_ingredient(parent)

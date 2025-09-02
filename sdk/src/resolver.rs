@@ -12,20 +12,20 @@
 // each license.
 
 use std::{
-    collections::HashMap,
     error,
     fs::File,
-    io::{Read, Seek},
+    io::{Cursor, Read, Seek},
     path::{Path, PathBuf},
 };
 
-use http::{header, Request, Response};
+use http::{header, Request};
 
 use crate::{
     assertions::{labels, AssetType, EmbeddedData},
     asset_io::CAIRead,
     claim::Claim,
     definitions::ResourceDefinition,
+    http::SyncHttpResolver,
     salt::DefaultSalt,
     utils::mime,
     HashedUri, Result, SigningAlg,
@@ -41,54 +41,6 @@ pub trait Resolver {
         &self,
         resource_definition: ResourceDefinition,
     ) -> Result<Resource<Self::Stream>, Self::Error>;
-}
-
-// TODO: this
-pub trait AsyncHttpResolver {
-    type Error: error::Error;
-    type Stream: Read + Seek + Send;
-
-    async fn async_http_resolve(
-        &self,
-        request: Request<Vec<u8>>,
-    ) -> Result<Response<Self::Stream>, Self::Error>;
-}
-
-// SOME BACKGROUND:
-// The general "Resolver" trait is just like the "ResourceResolver" trait we have in the SDK already.
-// This change breaks it down into HttpResolvers/Async and PathResolvers. This enables us to use the same
-// user-provided resolver struct as a way to resolve http requests, given the function constrains T: HttpResolver.
-// The http implementation is feature-based #[cfg(feature="")], but also has the capability to be user defined. So,
-// a resolver that implements the "Resolver" trait can propagate its identifiers to any of the underlying resolvers.
-//
-// Users have the ability to resolve general ids to something such as a database, something in the cloud,
-// filesystem, in memory, etc. They also have the ability to define how to and how long to cache resolved ids.
-pub trait HttpResolver {
-    type Error: error::Error;
-    type Stream: Read + Seek + Send;
-
-    fn http_resolve_raw(
-        &self,
-        request: Request<Vec<u8>>,
-    ) -> Result<Response<Self::Stream>, Self::Error>;
-
-    fn http_resolve(
-        &self,
-        request: Request<Vec<u8>>,
-    ) -> Result<Resource<Self::Stream>, Self::Error> {
-        let response = self.http_resolve_raw(request)?;
-        // TODO: handle
-        #[allow(clippy::unwrap_used)]
-        let format = response
-            .headers()
-            .get(header::CONTENT_TYPE)
-            .unwrap()
-            .to_str()
-            .unwrap()
-            .to_owned();
-
-        Ok(Resource::new(format, response.into_body()))
-    }
 }
 
 pub trait PathResolver {
@@ -203,9 +155,6 @@ pub struct GenericResolver {
     // http_resolver: reqwest::blocking::Client,
     http_resolver: ureq::Agent,
     base_path: Option<PathBuf>,
-
-    cache: HashMap<String, Vec<u8>>,
-    cache_enabled: bool,
 }
 
 impl GenericResolver {
@@ -214,22 +163,11 @@ impl GenericResolver {
             // http_resolver: reqwest::blocking::Client::new(),
             http_resolver: ureq::agent(),
             base_path: None,
-
-            cache: HashMap::new(),
-            cache_enabled: true,
         }
     }
 
     pub fn set_base_path(&mut self, base_path: PathBuf) {
         self.base_path = Some(base_path);
-    }
-
-    pub fn set_cache_enabled(&mut self, enabled: bool) {
-        self.cache_enabled = enabled;
-    }
-
-    pub fn clear_cache(&mut self) {
-        self.cache.clear()
     }
 }
 
@@ -239,16 +177,12 @@ impl Default for GenericResolver {
     }
 }
 
-impl HttpResolver for GenericResolver {
-    type Error = crate::Error;
-    // type Stream = <reqwest::blocking::Client as HttpResolver>::Stream;
-    type Stream = <ureq::Agent as HttpResolver>::Stream;
-
-    fn http_resolve_raw(
+impl SyncHttpResolver for GenericResolver {
+    fn http_resolve(
         &self,
         request: Request<Vec<u8>>,
-    ) -> Result<Response<Self::Stream>, Self::Error> {
-        self.http_resolver.http_resolve_raw(request)
+    ) -> Result<http::Response<Box<dyn Read>>, crate::http::HttpResolverError> {
+        self.http_resolver.http_resolve(request)
     }
 }
 
@@ -276,6 +210,8 @@ impl Resolver for GenericResolver {
     // TODO: we don't have to box this, we can make an enum
     type Stream = Box<dyn CAIRead>;
 
+    // TODO: remove this allow
+    #[allow(clippy::unwrap_used)]
     fn resolve(
         &self,
         definition: ResourceDefinition,
@@ -284,20 +220,37 @@ impl Resolver for GenericResolver {
             // Only if it's an absolute HTTP/S URI.
             if uri.scheme().is_some() {
                 let host = uri.host().map(|host| host.to_owned());
-                // TODO: handle
-                #[allow(clippy::unwrap_used)]
-                let stream = self
+                let response = self
                     .http_resolve(Request::builder().uri(uri).body(Vec::new()).unwrap())
                     .unwrap();
 
+                let format = response
+                    .headers()
+                    .get(header::CONTENT_TYPE)
+                    .unwrap()
+                    .to_str()
+                    .unwrap()
+                    .to_owned();
+
+                let len = response
+                    .headers()
+                    .get(header::CONTENT_LENGTH)
+                    .and_then(|content_length| content_length.to_str().ok())
+                    .and_then(|content_length| content_length.parse().ok())
+                    .unwrap_or(10000);
+
+                let mut bytes = Vec::with_capacity(len);
+                response
+                    .into_body()
+                    .take(1000000)
+                    .read_to_end(&mut bytes)
+                    .ok()
+                    .unwrap();
+
                 let mut resource: Resource<Box<dyn CAIRead>> =
-                    Resource::from_definition(definition, stream.format, Box::new(stream.stream));
+                    Resource::from_definition(definition, format, Box::new(Cursor::new(bytes)));
                 if resource.name.is_none() {
                     resource.name = host;
-                }
-
-                if self.cache_enabled {
-                    // TODO: read and store
                 }
 
                 return Ok(resource);
@@ -324,68 +277,3 @@ impl Resolver for GenericResolver {
         todo!()
     }
 }
-
-// #[cfg(any(feature="reqwest", feature="reqwest_blocking"))]
-mod reqwest_resolver {
-    use std::io::Cursor;
-
-    use super::*;
-
-    use bytes::Bytes;
-
-    // #[cfg(feature="reqwest_blocking")]
-    impl HttpResolver for reqwest::blocking::Client {
-        type Error = crate::Error;
-        type Stream = Cursor<Bytes>;
-
-        fn http_resolve_raw(&self, request: Request<Vec<u8>>) -> Result<Response<Self::Stream>> {
-            let response = self.execute(request.try_into()?)?;
-
-            let mut builder = http::Response::builder()
-                .status(response.status())
-                .version(response.version());
-
-            for (name, value) in response.headers().iter() {
-                builder = builder.header(name, value);
-            }
-
-            Ok(builder.body(Cursor::new(response.bytes()?))?)
-        }
-    }
-
-    // #[cfg(feature="reqwest")]
-    impl AsyncHttpResolver for reqwest::Client {
-        type Error = crate::Error;
-        type Stream = Cursor<Bytes>;
-
-        async fn async_http_resolve(
-            &self,
-            request: Request<Vec<u8>>,
-        ) -> Result<Response<Self::Stream>, Self::Error> {
-            // TODO: reqwest has a Response::bytes_stream method
-            todo!()
-        }
-    }
-}
-
-// #[cfg(feature = "ureq")]
-mod ureq_resolver {
-    use std::io::Cursor;
-
-    use super::*;
-
-    impl HttpResolver for ureq::Agent {
-        type Error = crate::Error;
-        type Stream = Cursor<Vec<u8>>;
-
-        fn http_resolve_raw(&self, request: Request<Vec<u8>>) -> Result<Response<Self::Stream>> {
-            let response = self.run(request)?;
-            let data = Cursor::new(response.into_body().read_to_vec()?);
-            // TODO: needs to inherit other stuff from original response
-            Ok(Response::new(data))
-        }
-    }
-}
-
-// #[cfg(feature = "curl")]
-mod curl_resolver {}

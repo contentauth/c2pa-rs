@@ -11,11 +11,13 @@
 // specific language governing permissions and limitations under
 // each license.
 
+use http::Request;
 use serde::{Deserialize, Serialize};
 
 use crate::{
     create_signer,
-    settings::{Settings, SettingsValidate},
+    http::{SyncGenericResolver, SyncHttpResolver},
+    settings::Settings,
     Error, Result, Signer, SigningAlg,
 };
 
@@ -72,7 +74,6 @@ impl SignerSettings {
                     alg,
                     tsa_url.to_owned(),
                 ),
-                #[cfg(not(target_arch = "wasm32"))]
                 SignerSettings::Remote {
                     url,
                     alg,
@@ -85,8 +86,6 @@ impl SignerSettings {
                     certs: vec![sign_cert.into_bytes()],
                     tsa_url,
                 })),
-                #[cfg(target_arch = "wasm32")]
-                SignerSettings::Remote { .. } => Err(Error::WasmNoRemoteSigner),
             },
             #[cfg(test)]
             _ => Ok(crate::utils::test_signer::test_signer(SigningAlg::Ps256)),
@@ -96,18 +95,6 @@ impl SignerSettings {
     }
 }
 
-impl SettingsValidate for SignerSettings {
-    fn validate(&self) -> Result<()> {
-        #[cfg(target_arch = "wasm32")]
-        if matches!(self, SignerSettings::Remote { .. }) {
-            return Err(Error::WasmNoRemoteSigner);
-        }
-
-        Ok(())
-    }
-}
-
-#[cfg(not(target_arch = "wasm32"))]
 #[derive(Debug)]
 pub(crate) struct RemoteSigner {
     url: String,
@@ -117,18 +104,17 @@ pub(crate) struct RemoteSigner {
     tsa_url: Option<String>,
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 impl Signer for RemoteSigner {
     fn sign(&self, data: &[u8]) -> Result<Vec<u8>> {
         use std::io::Read;
 
-        let response = ureq::post(&self.url)
-            .send(data)
+        let request = Request::post(&self.url).body(data.to_vec())?;
+        let response = SyncGenericResolver::new()
+            .http_resolve(request)
             .map_err(|_| Error::FailedToRemoteSign)?;
         let mut bytes: Vec<u8> = Vec::with_capacity(self.reserve_size);
         response
             .into_body()
-            .into_reader()
             .take(self.reserve_size as u64)
             .read_to_end(&mut bytes)?;
         Ok(bytes)

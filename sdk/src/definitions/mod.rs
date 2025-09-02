@@ -27,7 +27,7 @@ use crate::{
     cbor_types::DateT,
     claim::Claim,
     resolver::{Resolver, ResourceResolver},
-    ClaimGeneratorInfo, HashedUri, Ingredient, ResourceRef, Result, SigningAlg,
+    ClaimGeneratorInfo, DigitalSourceType, HashedUri, Ingredient, ResourceRef, Result, SigningAlg,
 };
 
 // TODO: does these fields (besides id) need to be specified at the manifest level or the resolver level?
@@ -154,7 +154,7 @@ pub struct ActionTemplateDefinition {
     /// One of the defined URI values at `<https://cv.iptc.org/newscodes/digitalsourcetype/>`
     #[serde(alias = "digitalSourceType")]
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub source_type: Option<String>,
+    pub source_type: Option<DigitalSourceType>,
     /// Reference to an icon.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub icon: Option<ResourceDefinition>,
@@ -230,8 +230,9 @@ pub struct ActionDefinition {
     // TODO: is deprecated, do we still read it? validate it?
     /// This is NOT the instanceID in the spec.
     /// It is now deprecated but was previously used to map the action to an ingredient.
-    #[serde(alias = "instanceID")]
+    #[deprecated(since = "0.37.0", note = "Use `parameters.ingredientIds[]` instead")]
     #[serde(skip_serializing)]
+    #[serde(alias = "instanceId", alias = "instanceID")]
     pub instance_id: Option<String>,
     /// Additional parameters of the action. These vary by the type of action.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -242,7 +243,7 @@ pub struct ActionDefinition {
     /// One of the defined URI values at `<https://cv.iptc.org/newscodes/digitalsourcetype/>`.
     #[serde(alias = "digitalSourceType")]
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub source_type: Option<String>,
+    pub source_type: Option<DigitalSourceType>,
     /// List of related actions.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub related: Option<Vec<ActionDefinition>>,
@@ -358,7 +359,7 @@ impl ActionsDefinition {
 #[derive(Debug, Default, Deserialize, Serialize)]
 #[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 pub struct ManifestDefinition {
-    /// The version of the claim.  Defaults to 1.
+    /// The version of the claim. Defaults to 2.
     #[serde(alias = "claimVersion")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub claim_version: Option<u8>,
