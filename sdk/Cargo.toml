@@ -54,7 +54,11 @@ serialize_thumbnails = []
 no_interleaved_io = ["file_io"]
 fetch_remote_manifests = ["dep:wasi"]
 json_schema = ["dep:schemars"]
-openssl = ["dep:openssl"]
+openssl = [
+    "dep:openssl",
+    "reqwest?/native-tls",
+    "ureq?/native-tls",
+]
 pdf = ["dep:lopdf"]
 rust_native_crypto = [
     "dep:const-oid",
@@ -67,6 +71,8 @@ rust_native_crypto = [
     "dep:pkcs1",
     "dep:rsa",
     "dep:spki",
+    "reqwest?/rustls-tls",
+    "ureq?/rustls",
 ]
 v1_api = []
 # Enable `reqwest` sync http resolver, not supported on WASM/WASI.
@@ -78,7 +84,7 @@ http_wasi = ["dep:wasi"]
 # Enable `wstd` async http resolver, only supported on WASI.
 http_wstd = ["dep:wstd"]
 # Enable `reqwest` async http resolver, not supported on WASI.
-http_reqwest = ["dep:reqwest", "reqwest/stream"]
+http_reqwest = ["dep:reqwest"]
 
 # The diagnostics feature is unsupported and might be removed.
 # It enables some low-overhead timing features used in our development cycle.
@@ -206,19 +212,22 @@ x509-certificate = "0.24.0"
 x509-parser = "0.16.0"
 zeroize = { version = "1.8", features = ["zeroize_derive"] }
 zip = { version = "3.0.0", default-features = false }
-# TODO: make http optional?
+# TODO: this can eventually be optional
 http = "1.3.1"
 
 [target.'cfg(not(target_os = "wasi"))'.dependencies]
 reqwest = { version = "0.12.23", default-features = false, features = [
-    # TODO: do we want to match rust_native_crypto w/ rustls-tls?
-    "rustls-tls",
+    # These are some of the defaults in `reqwest`.
+    "http2",
+    "system-proxy",
+    "rustls-tls"
 ], optional = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 openssl = { version = "0.10.72", features = ["vendored"], optional = true }
-# TODO: same here with reqwest, do we want to match rust_native_crypto with rustls
-ureq = { version = "3.1.0", optional = true }
+ureq = { version = "3.1.0", default-features = false, features = [
+    "rustls"
+], optional = true }
 
 [target.'cfg(target_os = "wasi")'.dependencies]
 wasi = { version = "0.14.3", optional = true }

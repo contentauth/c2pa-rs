@@ -288,7 +288,8 @@ mod async_reqwest_resolver {
 
     use super::*;
 
-    #[async_trait]
+    #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+    #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
     impl AsyncHttpResolver for reqwest::Client {
         async fn http_resolve_async(
             &self,
@@ -296,9 +297,11 @@ mod async_reqwest_resolver {
         ) -> Result<Response<Box<dyn Read>>, HttpResolverError> {
             let response = self.execute(request.try_into()?).await?;
 
-            let mut builder = Response::builder()
-                .status(response.status())
-                .version(response.version());
+            let mut builder = Response::builder().status(response.status());
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                builder = builder.version(response.version());
+            }
 
             for (name, value) in response.headers().iter() {
                 builder = builder.header(name, value);
