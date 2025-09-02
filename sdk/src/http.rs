@@ -304,8 +304,6 @@ mod async_reqwest_resolver {
                 builder = builder.header(name, value);
             }
 
-            // TODO: in the future we can add HTTP range request support via something like https://github.com/sam0x17/rseek
-            // Ok(builder.body(Box::new(response.bytes_stream()) as Box<dyn Read>)?)
             Ok(builder.body(Box::new(Cursor::new(response.bytes().await?)) as Box<dyn Read>)?)
         }
     }

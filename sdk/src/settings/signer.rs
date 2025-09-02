@@ -108,7 +108,6 @@ impl Signer for RemoteSigner {
     fn sign(&self, data: &[u8]) -> Result<Vec<u8>> {
         use std::io::Read;
 
-        // TODO: avoid allocation here, maybe http_resolve can take &[u8]
         let request = Request::post(&self.url).body(data.to_vec())?;
         let response = SyncGenericResolver::new()
             .http_resolve(request)
