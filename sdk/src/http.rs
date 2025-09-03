@@ -54,17 +54,11 @@ pub struct SyncGenericResolver {
 impl SyncGenericResolver {
     /// Create a new [`SyncGenericResolver`] with an auto-specified [`SyncHttpResolver`].
     ///
-    /// Note that if `http_ureq` and `http_reqwest_blocking` are enabled at the same time, this
-    /// function will panic.
-    #[cfg(any(
-        // 1. It's WASI and `http_wasi` is enabled.
-        all(target_os = "wasi", feature = "http_wasi"),
-        // 2. It's not WASM` and either `http_ureq` or `http_reqwest_blocking` are enabled.
-        all(
-            not(target_arch = "wasm32"),
-            any(feature = "http_ureq", feature = "http_reqwest_blocking")
-        )
-    ))]
+    /// This function will create a [`SyncHttpResolver`] that returns [`Error::SyncHttpResolverNotImplemented`]
+    /// under any of the following conditions:
+    /// * If both `http_reqwest_blocking` and `http_ureq` aren't enabled.
+    /// * If the platform is WASM.
+    /// * If the platform is WASI and `http_wasi` isn't enabled.
     pub fn new() -> Self {
         Self {
             #[cfg(all(not(target_os = "wasi"), feature = "http_reqwest_blocking"))]
@@ -77,33 +71,29 @@ impl SyncGenericResolver {
             http_resolver: Box::new(ureq::agent()),
             #[cfg(all(target_os = "wasi", feature = "http_wasi"))]
             http_resolver: Box::new(sync_wasi_resolver::SyncWasiResolver::new()),
-        }
-    }
+            #[cfg(not(any(
+                // 1. It's WASI and `http_wasi` is enabled.
+                all(target_os = "wasi", feature = "http_wasi"),
+                // 2. It's not WASM` and either `http_ureq` or `http_reqwest_blocking` are enabled.
+                all(
+                    not(target_arch = "wasm32"),
+                    any(feature = "http_ureq", feature = "http_reqwest_blocking")
+                )
+            )))]
+            http_resolver: {
+                struct NoopSyncResolver;
 
-    /// The `http_ureq`, `http_reqwest_blocking`, nor `http_wasi` features are enabled! Ensure only
-    /// one feature is enabled otherwise this function will construct a [`SyncGenericResolver`] that
-    /// always returns [`Error::SyncHttpResolverNotImplemented`].
-    #[cfg(not(any(
-        all(target_os = "wasi", feature = "http_wasi"),
-        all(
-            not(target_arch = "wasm32"),
-            any(feature = "http_ureq", feature = "http_reqwest_blocking")
-        )
-    )))]
-    pub fn new() -> Self {
-        struct NoopSyncResolver;
+                impl SyncHttpResolver for NoopSyncResolver {
+                    fn http_resolve(
+                        &self,
+                        _request: Request<Vec<u8>>,
+                    ) -> Result<Response<Box<dyn Read>>, HttpResolverError> {
+                        Err(HttpResolverError::SyncHttpResolverNotImplemented)
+                    }
+                }
 
-        impl SyncHttpResolver for NoopSyncResolver {
-            fn http_resolve(
-                &self,
-                _request: Request<Vec<u8>>,
-            ) -> Result<Response<Box<dyn Read>>, HttpResolverError> {
-                Err(HttpResolverError::SyncHttpResolverNotImplemented)
-            }
-        }
-
-        Self {
-            http_resolver: Box::new(NoopSyncResolver),
+                Box::new(NoopSyncResolver)
+            },
         }
     }
 }
@@ -138,43 +128,37 @@ pub struct AsyncGenericResolver {
 
 impl AsyncGenericResolver {
     /// Create a new [`AsyncGenericResolver`] with an auto-specified [`AsyncHttpResolver`].
-    #[cfg(any(
-        // 1. `http_reqwest` is enabled.
-        feature = "http_reqwest",
-        // 2. It's WASI and `http_wstd` is enabled.
-        all(target_os = "wasi", feature = "http_wstd")
-    ))]
+    ///
+    /// This function will create a [`AsyncHttpResolver`] that returns [`Error::AsyncHttpResolverNotImplemented`]
+    /// under any of the following conditions:
+    /// * If `http_reqwest` isn't enabled.
+    /// * If the platform is WASI and `http_wstd` isn't enabled.
     pub fn new() -> Self {
         Self {
             #[cfg(all(not(target_os = "wasi"), feature = "http_reqwest"))]
             http_resolver: Box::new(reqwest::Client::new()),
             #[cfg(all(target_os = "wasi", feature = "http_wstd"))]
             http_resolver: Box::new(wstd::http::Client::new()),
-        }
-    }
+            #[cfg(not(any(
+                feature = "http_reqwest",
+                all(target_os = "wasi", feature = "http_wstd")
+            )))]
+            http_resolver: {
+                struct NoopAsyncResolver;
 
-    /// The `http_reqwest` nor `http_wstd` features are enabled! This function will
-    /// construct a [`AsyncGenericResolver`] that always returns
-    /// [`Error::AsyncHttpResolverNotImplemented`].
-    #[cfg(not(any(
-        feature = "http_reqwest",
-        all(target_os = "wasi", feature = "http_wstd")
-    )))]
-    pub fn new() -> Self {
-        struct NoopAsyncResolver;
+                #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+                #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+                impl AsyncHttpResolver for NoopAsyncResolver {
+                    async fn http_resolve_async(
+                        &self,
+                        _request: Request<Vec<u8>>,
+                    ) -> Result<Response<Box<dyn Read>>, HttpResolverError> {
+                        Err(HttpResolverError::AsyncHttpResolverNotImplemented)
+                    }
+                }
 
-        #[async_trait(?Send)]
-        impl AsyncHttpResolver for NoopAsyncResolver {
-            async fn http_resolve_async(
-                &self,
-                _request: Request<Vec<u8>>,
-            ) -> Result<Response<Box<dyn Read>>, HttpResolverError> {
-                Err(HttpResolverError::AsyncHttpResolverNotImplemented)
-            }
-        }
-
-        Self {
-            http_resolver: Box::new(NoopAsyncResolver),
+                Box::new(NoopAsyncResolver)
+            },
         }
     }
 }

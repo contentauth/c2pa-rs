@@ -108,7 +108,6 @@
 //! - **http_reqwest_blocking**: Enables the `blocking` feature of `reqwest` for sync HTTP requests.
 //! - **http_wasi** *(enabled by default)*: Enables `wasi` for sync HTTP requests on WASI.
 //! - **http_wstd** *(enabled by default)*: Enables `wstd` for async HTTP requests on WASI.
-//!
 // TODO: document other features...
 
 /// The internal name of the C2PA SDK
