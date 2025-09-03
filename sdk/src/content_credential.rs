@@ -39,7 +39,7 @@ impl StandardStoreReport {
 
         for claim in store.claims() {
             let manifest_label = claim.label();
-            let result = Manifest::from_store(&store, manifest_label, &mut options);
+            let result = Manifest::from_store(store, manifest_label, &mut options);
 
             match result {
                 Ok(manifest) => {
@@ -123,9 +123,7 @@ impl ContentCredential {
         let signer = Settings::signer()?;
         self.set_claim_generator_info()?;
         self.store.commit_claim(self.claim.clone())?;
-        self.store
-            .save_to_stream(format, source, dest, &signer)
-            .map_err(|e| e.into())
+        self.store.save_to_stream(format, source, dest, &signer)
     }
 
     /// replace byte arrays with base64 encoded strings
@@ -208,7 +206,7 @@ fn test_content_credential_new() -> Result<()> {
     //let settings = Settings::default();
     let mut cursor = std::io::Cursor::new(IMAGE_WITH_MANIFEST);
     let mut cr = ContentCredential::new(Settings::default());
-    cr.with_stream("image/jpeg", &mut cursor).unwrap();
+    cr.with_stream("image/jpeg", &mut cursor)?;
     println!("{}", cr);
 
     cursor.set_position(0);

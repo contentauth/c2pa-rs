@@ -560,7 +560,7 @@ impl Ingredient {
             ));
 
             ingredient.validation_results =
-                Some(ValidationResults::from_store(&store, &mut validation_log));
+                Some(ValidationResults::from_store(&store, &validation_log));
 
             if ingredient
                 .validation_results

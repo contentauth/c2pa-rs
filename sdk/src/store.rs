@@ -6397,7 +6397,7 @@ pub mod tests {
             let (ingredient_assertion, mut new_store) =
                 Ingredient::from_stream(Relationship::ParentOf, "image/jpeg", &mut stream).unwrap();
 
-           // create a new update manifest
+            // create a new update manifest
             let mut claim = Claim::new("adobe unit test", Some("update_manifest_vendor"), 2);
             // ClaimGeneratorInfo is mandatory in Claim V2
             let cgi = ClaimGeneratorInfo::new("claim_v2_unit_test");
