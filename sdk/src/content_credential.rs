@@ -7,6 +7,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::{
+    assertion::AssertionBase,
+    assertions::{Ingredient, Relationship},
     claim::Claim,
     crypto::base64,
     manifest::{Manifest, StoreOptions},
@@ -25,9 +27,6 @@ pub struct StandardStoreReport {
 
     /// A HashMap of Manifests
     manifests: HashMap<String, Manifest>,
-
-    /// ValidationStatus generated when loading the ManifestStore from an asset
-    validation_results: ValidationResults,
 }
 
 impl StandardStoreReport {
@@ -54,7 +53,6 @@ impl StandardStoreReport {
         Ok(Self {
             active_manifest,
             manifests,
-            validation_results,
         })
     }
 }
@@ -73,6 +71,17 @@ impl ContentCredential {
             store: Store::new(),
             validation_results: ValidationResults::default(),
         }
+    }
+
+    fn parent_ingredient(&self) -> Option<Ingredient> {
+        for i in self.claim.ingredient_assertions() {
+            if let Ok(ingredient) = Ingredient::from_assertion(i.assertion()) {
+                if ingredient.relationship == Relationship::ParentOf {
+                    return Some(ingredient);
+                }
+            }
+        }
+        None
     }
 
     pub fn with_stream(
@@ -165,14 +174,15 @@ impl ContentCredential {
     }
 
     pub fn value(&self) -> Result<Value> {
-        let report = StandardStoreReport::from_store(&self.store, &self.validation_results)?;
+        let results = self.parent_ingredient().and_then(|i| i.validation_results);
+        let report = StandardStoreReport::from_store(&self.store, &results.unwrap())?;
         let json = serde_json::to_value(report).map_err(Error::JsonError)?;
         Ok(Self::hash_to_b64(json))
     }
 
     pub fn detailed_value(&self) -> Result<Value> {
-        let report =
-            ManifestStoreReport::from_store_with_results(&self.store, &self.validation_results)?;
+        let results = self.parent_ingredient().and_then(|i| i.validation_results);
+        let report = ManifestStoreReport::from_store_with_results(&self.store, &results.unwrap())?;
         let json = serde_json::to_value(report).map_err(Error::JsonError)?;
         Ok(Self::hash_to_b64(json))
     }
@@ -180,7 +190,7 @@ impl ContentCredential {
 
 impl std::fmt::Display for ContentCredential {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let value = self.detailed_value().map_err(|_| std::fmt::Error)?;
+        let value = self.value().map_err(|_| std::fmt::Error)?;
         f.write_str(
             serde_json::to_string_pretty(&value)
                 .map_err(|_| std::fmt::Error)?
