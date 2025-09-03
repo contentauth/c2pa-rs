@@ -282,28 +282,27 @@ jumbf = "0.4.0"
 c2pa_macros = { path = "../macros" }
 mockall = "0.13.1"
 
-[target.'cfg(not(any(target_arch = "wasm32", target_os = "wasi")))'.dev-dependencies]
-criterion = { package = "codspeed-criterion-compat", version = "3.0.5" }
-
-# WASM/WASI doesn't support default criterion features.
-# https://github.com/bheisler/criterion.rs/blob/4c19e913b84e6a7e4a8470cb0f766796886ed891/book/src/user_guide/wasi.md
-[target.'cfg(any(target_arch = "wasm32", target_os = "wasi"))'.dev-dependencies]
-criterion = { package = "codspeed-criterion-compat", version = "3.0.5", default-features = false }
-
-[[bench]]
-name = "signing"
-harness = false
-
-[[bench]]
-name = "reading"
-harness = false
-
 [target.'cfg(all(target_arch = "wasm32", not(target_os = "wasi")))'.dev-dependencies]
 wasm-bindgen-test = "0.3.45"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 httpmock = "0.7.0"
 tokio = { version = "1.44.2", features = ["full"] }
+criterion = { package = "codspeed-criterion-compat", version = "3.0.5" }
+#
+# WASM/WASI doesn't support default criterion features.
+# https://github.com/bheisler/criterion.rs/blob/4c19e913b84e6a7e4a8470cb0f766796886ed891/book/src/user_guide/wasi.md
+[target.'cfg(target_arch = "wasm32")'.dev-dependencies]
+criterion = { package = "codspeed-criterion-compat", version = "3.0.5", default-features = false }
+
+[[bench]]
+name = "sign"
+harness = false
+
+[[bench]]
+name = "read"
+harness = false
+
 
 [package.metadata.cargo-udeps.ignore]
 normal = ["windows-core"]
