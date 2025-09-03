@@ -497,6 +497,7 @@ impl Store {
         }
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     fn send_timestamp_token_request(&self, tsa_url: &str, message: &[u8]) -> Result<Vec<u8>> {
         let body = crate::crypto::time_stamp::default_rfc3161_message(message)?;
         let headers = None;
@@ -531,6 +532,7 @@ impl Store {
 
     /// Creates a TimeStamp (c2p.time-stamp) assertion containing the TimeStampTokens for each
     /// specified manifest_id.  If any time stamp request fails the assertion is not created.
+    #[cfg(not(target_arch = "wasm32"))]
     #[allow(dead_code)]
     pub fn get_timestamp_assertion(
         &self,
