@@ -66,14 +66,15 @@ impl SyncGenericResolver {
         )
     ))]
     pub fn new() -> Self {
-        #[cfg(all(feature = "http_ureq", feature = "http_reqwest_blocking"))]
-        panic!("cannot auto-specify a `SyncHttpResolver` if `http_req` and `http_reqwest_blocking` are enabled simultaneously");
-
         Self {
-            #[cfg(all(feature = "http_ureq", not(target_os = "wasi")))]
-            http_resolver: Box::new(ureq::agent()),
-            #[cfg(all(feature = "http_reqwest_blocking", not(target_os = "wasi")))]
+            #[cfg(all(not(target_os = "wasi"), feature = "http_reqwest_blocking"))]
             http_resolver: Box::new(reqwest::blocking::Client::new()),
+            #[cfg(all(
+                not(target_os = "wasi"),
+                feature = "http_ureq",
+                not(feature = "http_reqwest_blocking")
+            ))]
+            http_resolver: Box::new(ureq::agent()),
             #[cfg(all(target_os = "wasi", feature = "http_wasi"))]
             http_resolver: Box::new(sync_wasi_resolver::SyncWasiResolver::new()),
         }
@@ -145,7 +146,7 @@ impl AsyncGenericResolver {
     ))]
     pub fn new() -> Self {
         Self {
-            #[cfg(all(feature = "http_reqwest", not(target_os = "wasi")))]
+            #[cfg(all(not(target_os = "wasi"), feature = "http_reqwest"))]
             http_resolver: Box::new(reqwest::Client::new()),
             #[cfg(all(target_os = "wasi", feature = "http_wstd"))]
             http_resolver: Box::new(wstd::http::Client::new()),
