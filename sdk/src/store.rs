@@ -52,8 +52,8 @@ use crate::{
     crypto::{
         asn1::rfc3161::TstInfo,
         cose::{
-            fetch_and_check_ocsp_response, parse_cose_sign1, CertificateTrustPolicy,
-            TimeStampStorage,
+            fetch_and_check_ocsp_response, parse_cose_sign1, timestamptoken_from_timestamprsp,
+            CertificateTrustPolicy, TimeStampStorage,
         },
         hash::sha256,
         ocsp::OcspResponse,
@@ -84,8 +84,7 @@ use crate::{
     status_tracker::{ErrorBehavior, StatusTracker},
     utils::{
         hash_utils::HashRange,
-        io_utils,
-        io_utils::{insert_data_at, stream_len},
+        io_utils::{self, insert_data_at, stream_len},
         is_zero,
         patch::patch_bytes,
     },
@@ -498,11 +497,70 @@ impl Store {
         }
     }
 
+    fn send_timestamp_token_request(&self, tsa_url: &str, message: &[u8]) -> Result<Vec<u8>> {
+        let body = crate::crypto::time_stamp::default_rfc3161_message(message)?;
+        let headers = None;
+
+        let bytes =
+            crate::crypto::time_stamp::default_rfc3161_request(tsa_url, headers, &body, message)
+                .map_err(|_e| Error::OtherError("timestamp token not found".into()))?;
+
+        // make sure it is a good response
+        let ctp = CertificateTrustPolicy::passthrough();
+        let mut tracker = StatusTracker::default();
+        crate::crypto::time_stamp::verify_time_stamp(
+            &bytes,
+            message,
+            &ctp,
+            &mut tracker,
+        )?;
+
+        let token = crate::crypto::cose::timestamptoken_from_timestamprsp(&bytes)
+            .ok_or(Error::OtherError("timestamp token not found".into()))?;
+
+        Ok(token)
+    }
+
+    fn get_cose_sign1_signature(&self, manifest_id: &str) -> Option<Vec<u8>> {
+        let manifest = self.get_claim(&manifest_id)?;
+
+        let sig = manifest.signature_val();
+        let data = manifest.data().ok()?;
+        let mut validation_log =
+            StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
+
+        let sign1 = parse_cose_sign1(sig, &data, &mut validation_log).ok()?;
+
+        Some(sign1.signature)
+    }
+
+    /// Creates a TimeStamp (c2p.time-stamp) assertion containing the TimeStampTokens for each
+    /// specified manifest_id.  If any time stamp request fails the assertion is not created.
+    #[allow(dead_code)]
+    pub fn get_timestamp_assertion(
+        &self,
+        manifest_ids: &[&str],
+        tsa_url: &str,
+    ) -> Result<TimeStamp> {
+        let mut timestamp_assertion = TimeStamp::new();
+        for manifest_id in manifest_ids {
+            // lets add a timestamp for old manifest
+            let signature = self
+                .get_cose_sign1_signature(manifest_id)
+                .ok_or(Error::ClaimMissingSignatureBox)?;
+
+            let timestamp_token = self.send_timestamp_token_request(tsa_url, &signature)?;
+            
+            timestamp_assertion.add_timestamp(manifest_id, &timestamp_token);
+        }
+        Ok(timestamp_assertion)
+    }
+
     /// Return OCSP info if available
     // Currently only called from manifest_store behind a feature flag but this is allowable
     // anywhere so allow dead code here for future uses to compile
     #[allow(dead_code)]
-    pub(crate) fn get_ocsp_status(&self) -> Option<String> {
+    pub fn get_ocsp_status(&self) -> Option<String> {
         let claim = self
             .provenance_claim()
             .ok_or(Error::ProvenanceMissing)
@@ -1870,28 +1928,21 @@ impl Store {
                     })?;
 
                 // save the valid timestamps stored in the StoreValidationInfo
+                // we only use valid timestamps, otherwise just ignore
                 for (referenced_claim, time_stamp_token) in timestamp_assertion.as_ref() {
                     if let Some(rc) = svi.manifest_map.get(referenced_claim) {
-                        if let Ok(tst_info) = verify_time_stamp(
-                            time_stamp_token,
-                            rc.signature_val(),
-                            &self.ctp,
-                            validation_log,
-                        ) {
-                            svi.timestamps.insert(rc.label().to_owned(), tst_info);
-                            continue;
+                        if let Some(signature) = self.get_cose_sign1_signature(&referenced_claim) {
+                            if let Ok(tst_info) = verify_time_stamp(
+                                time_stamp_token,
+                                &signature,
+                                &self.ctp,
+                                validation_log,
+                            ) {
+                                svi.timestamps.insert(rc.label().to_owned(), tst_info);
+                                continue;
+                            }
                         }
                     }
-                    log_item!(
-                        to_manifest_uri(referenced_claim),
-                        "could not validate timestamp assertion",
-                        "get_claim_referenced_manifests"
-                    )
-                    .validation_status(validation_status::ASSERTION_TIMESTAMP_MALFORMED)
-                    .failure(
-                        validation_log,
-                        Error::OtherError("timestamp assertion malformed".into()),
-                    )?;
                 }
             }
 
@@ -6454,12 +6505,10 @@ pub mod tests {
             // add action (this is optional for update manifest)
             claim.add_assertion(&actions).unwrap();
 
-            /* sample of adding timestamp assertion
-
+            /*
+            // sample of adding timestamp assertion
             // lets add a timestamp for old manifest
-            let timestamp = send_timestamp_request(pc.signature_val()).unwrap();
-            crate::crypto::time_stamp::verify_time_stamp(&timestamp, pc.signature_val()).unwrap();
-            let timestamp_assertion = crate::assertions::TimeStamp::new(pc.label(), &timestamp);
+            let timestamp_assertion = store.get_timestamp_assertion(&[pc.label()], "http://timestamp.digicert.com").unwrap();
             claim.add_assertion(&timestamp_assertion).unwrap();
             */
 
@@ -7206,24 +7255,6 @@ pub mod tests {
 
             assert!(report.has_status(ALGORITHM_UNSUPPORTED));
         }
-
-        /* sample of adding timestamp assertion
-        fn send_timestamp_request(message: &[u8]) -> Result<Vec<u8>> {
-            let url = "http://timestamp.digicert.com";
-
-            let body = crate::crypto::time_stamp::default_rfc3161_message(message)?;
-            let headers = None;
-
-            let bytes =
-                crate::crypto::time_stamp::default_rfc3161_request(url, headers, &body, message)
-                    .map_err(|_e| Error::OtherError("timestamp token not found".into()))?;
-
-            let token = crate::crypto::cose::timestamptoken_from_timestamprsp(&bytes)
-                .ok_or(Error::OtherError("timestamp token not found".into()))?;
-
-            Ok(token)
-        }
-        */
 
         #[test]
         fn test_legacy_ingredient_hash() {

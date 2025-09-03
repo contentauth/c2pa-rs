@@ -33,10 +33,8 @@ impl TimeStamp {
     /// See <https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_actions>.
     pub const LABEL: &'static str = labels::TIMESTAMP;
 
-    pub fn new(label: &str, timestamp: &[u8]) -> Self {
-        let mut ts = TimeStamp(HashMap::new());
-        ts.0.insert(label.to_string(), ByteBuf::from(timestamp.to_vec()));
-        ts
+    pub fn new() -> Self {
+        TimeStamp(HashMap::new())
     }
 
     //
