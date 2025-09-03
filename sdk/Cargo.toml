@@ -153,6 +153,7 @@ ed25519-dalek = { version = "2.1.1", features = [
 env_logger = "0.10.0"
 hex = "0.4.3"
 hex-literal = "0.4.1" # Might be only a dev dependency
+http = "1.3.1" # TODO: this can eventually be optional
 id3 = "=1.16.1"
 img-parts = "0.3.2"
 iref = { version = "3.2.2", features = ["serde"] }
@@ -209,8 +210,6 @@ x509-certificate = "0.24.0"
 x509-parser = "0.16.0"
 zeroize = { version = "1.8", features = ["zeroize_derive"] }
 zip = { version = "3.0.0", default-features = false }
-# TODO: this can eventually be optional
-http = "1.3.1"
 
 [target.'cfg(not(target_os = "wasi"))'.dependencies]
 reqwest = { version = "0.12.23", default-features = false, features = [
