@@ -52,8 +52,8 @@ use crate::{
     crypto::{
         asn1::rfc3161::TstInfo,
         cose::{
-            fetch_and_check_ocsp_response, parse_cose_sign1, timestamptoken_from_timestamprsp,
-            CertificateTrustPolicy, TimeStampStorage,
+            fetch_and_check_ocsp_response, parse_cose_sign1, CertificateTrustPolicy,
+            TimeStampStorage,
         },
         hash::sha256,
         ocsp::OcspResponse,
@@ -508,12 +508,7 @@ impl Store {
         // make sure it is a good response
         let ctp = CertificateTrustPolicy::passthrough();
         let mut tracker = StatusTracker::default();
-        crate::crypto::time_stamp::verify_time_stamp(
-            &bytes,
-            message,
-            &ctp,
-            &mut tracker,
-        )?;
+        crate::crypto::time_stamp::verify_time_stamp(&bytes, message, &ctp, &mut tracker)?;
 
         let token = crate::crypto::cose::timestamptoken_from_timestamprsp(&bytes)
             .ok_or(Error::OtherError("timestamp token not found".into()))?;
@@ -522,7 +517,7 @@ impl Store {
     }
 
     fn get_cose_sign1_signature(&self, manifest_id: &str) -> Option<Vec<u8>> {
-        let manifest = self.get_claim(&manifest_id)?;
+        let manifest = self.get_claim(manifest_id)?;
 
         let sig = manifest.signature_val();
         let data = manifest.data().ok()?;
@@ -550,7 +545,7 @@ impl Store {
                 .ok_or(Error::ClaimMissingSignatureBox)?;
 
             let timestamp_token = self.send_timestamp_token_request(tsa_url, &signature)?;
-            
+
             timestamp_assertion.add_timestamp(manifest_id, &timestamp_token);
         }
         Ok(timestamp_assertion)
@@ -1931,7 +1926,7 @@ impl Store {
                 // we only use valid timestamps, otherwise just ignore
                 for (referenced_claim, time_stamp_token) in timestamp_assertion.as_ref() {
                     if let Some(rc) = svi.manifest_map.get(referenced_claim) {
-                        if let Some(signature) = self.get_cose_sign1_signature(&referenced_claim) {
+                        if let Some(signature) = self.get_cose_sign1_signature(referenced_claim) {
                             if let Ok(tst_info) = verify_time_stamp(
                                 time_stamp_token,
                                 &signature,
