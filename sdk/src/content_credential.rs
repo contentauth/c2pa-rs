@@ -61,7 +61,6 @@ impl StandardStoreReport {
 pub struct ContentCredential {
     claim: Claim,
     store: Store,
-    validation_results: ValidationResults,
 }
 
 impl ContentCredential {
@@ -69,7 +68,6 @@ impl ContentCredential {
         ContentCredential {
             claim: Claim::new("", None, 2),
             store: Store::new(),
-            validation_results: ValidationResults::default(),
         }
     }
 
@@ -107,9 +105,6 @@ impl ContentCredential {
 
         // capture the store and validation results from the assertion
         self.store = store;
-        if let Some(results) = ingredient_assertion.validation_results {
-            self.validation_results = results;
-        }
         Ok(self)
     }
 
@@ -174,15 +169,25 @@ impl ContentCredential {
     }
 
     pub fn value(&self) -> Result<Value> {
-        let results = self.parent_ingredient().and_then(|i| i.validation_results);
-        let report = StandardStoreReport::from_store(&self.store, &results.unwrap())?;
+        let results = self
+            .parent_ingredient()
+            .and_then(|i| i.validation_results)
+            .ok_or(Error::ClaimMissing {
+                label: "Parent Ingredient missing".to_string(),
+            })?;
+        let report = StandardStoreReport::from_store(&self.store, &results)?;
         let json = serde_json::to_value(report).map_err(Error::JsonError)?;
         Ok(Self::hash_to_b64(json))
     }
 
     pub fn detailed_value(&self) -> Result<Value> {
-        let results = self.parent_ingredient().and_then(|i| i.validation_results);
-        let report = ManifestStoreReport::from_store_with_results(&self.store, &results.unwrap())?;
+        let results = self
+            .parent_ingredient()
+            .and_then(|i| i.validation_results)
+            .ok_or(Error::ClaimMissing {
+                label: "Parent Ingredient missing".to_string(),
+            })?;
+        let report = ManifestStoreReport::from_store_with_results(&self.store, &results)?;
         let json = serde_json::to_value(report).map_err(Error::JsonError)?;
         Ok(Self::hash_to_b64(json))
     }
