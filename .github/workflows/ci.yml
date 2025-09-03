@@ -126,7 +126,7 @@ jobs:
       - name: Generate code coverage for rust_native_crypto
         env:
           RUST_BACKTRACE: "1"
-          FEATURES: ${{needs.get-features.outputs.rust_native_crypto-features}}
+          FEATURES: ${{needs.get-features.outputs.rust-native-features}}
         run: |
           cargo llvm-cov --lib --features "$FEATURES" --lcov --output-path lcov-rust_native_crypto.info
 
@@ -317,6 +317,7 @@ jobs:
 
   benchmarks:
     name: Run benchmarks on signing and reading
+    needs: get-features
     if: |
       github.event_name != 'pull_request' ||
       github.event.pull_request.author_association == 'COLLABORATOR' ||
