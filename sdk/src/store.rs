@@ -1936,7 +1936,6 @@ impl Store {
                                 validation_log,
                             ) {
                                 svi.timestamps.insert(rc.label().to_owned(), tst_info);
-                                continue;
                             }
                         }
                     }
