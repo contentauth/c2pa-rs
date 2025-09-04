@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.61.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.60.1...c2pa-v0.61.0)
+_03 September 2025_
+
+### Added
+
+* Add benchmarking ([#1311](https://github.com/contentauth/c2pa-rs/pull/1311))
+
+### Fixed
+
+* Rewind output  stream after adding dynamic assertions ([#1358](https://github.com/contentauth/c2pa-rs/pull/1358))
+* Fix label handling for custom metadata ([#1354](https://github.com/contentauth/c2pa-rs/pull/1354))
+* Gif global color table size ([#1348](https://github.com/contentauth/c2pa-rs/pull/1348))
+* Fix overly agressive metata collection ([#1345](https://github.com/contentauth/c2pa-rs/pull/1345))
+
 ## [0.60.1](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.60.0...c2pa-v0.60.1)
 _27 August 2025_
 
