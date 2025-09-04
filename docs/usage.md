@@ -46,7 +46,7 @@ The Rust library crate provides the following capabilities:
 * `pdf` - Enable support for reading claims on PDF files.
 
 > [!NOTE]
-> If both `rust_native_crypto` and `openssl` are enabled, it will default to `rust_native_crypto.`
+> If both `rust_native_crypto` and `openssl` are enabled, it will default to `rust_native_crypto`.
 > It is recommended to disable default features when using `rust_native_crypto` as to avoid including `openssl` as a dependency.
 
 ### New API
