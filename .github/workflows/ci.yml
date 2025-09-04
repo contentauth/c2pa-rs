@@ -126,7 +126,7 @@ jobs:
       - name: Generate code coverage for rust_native_crypto
         env:
           RUST_BACKTRACE: "1"
-          FEATURES: ${{needs.get-features.outputs.rust-native-features}}
+          FEATURES: ${{needs.get-features.outputs.rust_native_crypto-features}}
         run: |
           cargo llvm-cov --lib --features "$FEATURES" --lcov --output-path lcov-rust_native_crypto.info
 
