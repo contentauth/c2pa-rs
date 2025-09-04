@@ -316,11 +316,9 @@ pub(crate) enum OcspError {
 
 const DATE_FMT: &str = "%Y-%m-%d %H:%M:%S %Z";
 
-#[cfg(not(target_arch = "wasm32"))]
 mod fetch;
 
-#[cfg(not(target_arch = "wasm32"))]
-pub(crate) use fetch::fetch_ocsp_response;
+pub(crate) use fetch::{fetch_ocsp_response, fetch_ocsp_response_async};
 
 #[cfg(test)]
 mod tests {

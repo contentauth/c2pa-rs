@@ -42,6 +42,12 @@ The Rust library crate provides the following capabilities:
 * `serialize_thumbnails` includes binary thumbnail data in the [Serde](https://serde.rs/) serialization output.
 * `v1_api` - Use the old API (which will soon be deprecated) instead of the [new API](release-notes.md#new-api).
 * `pdf` - Enable support for reading claims on PDF files.
+* `http_ureq` *(enabled by default)* - Enables `ureq` for sync HTTP requests.
+* `http_reqwest` *(enabled by default)* - Enables `reqwest` for async HTTP requests.
+* `http_reqwest_blocking` - Enables the `blocking` feature of `reqwest` for sync HTTP requests.
+* `http_wasi` *(enabled by default)* - Enables `wasi` for sync HTTP requests on WASI.
+* `http_wstd` *(enabled by default)* - Enables `wstd` for async HTTP requests on WASI.
+
 
 ### New API
 
@@ -78,7 +84,7 @@ When `file_io` is enabled, the lack of a scheme will be interpreted as a `file:/
 
 ### Source asset vs parent asset
 
-The source asset isn't always the parent asset: The source asset is the asset that is hashed and signed. It can be the output from an editing application that has not preserved the manifest store from the parent. In that case, the application should have extracted a parent ingredient from the parent asset and added that to the manifest definition. 
+The source asset isn't always the parent asset: The source asset is the asset that is hashed and signed. It can be the output from an editing application that has not preserved the manifest store from the parent. In that case, the application should have extracted a parent ingredient from the parent asset and added that to the manifest definition.
 
 - Parent asset: with a manifest store.
 - Parent ingredient: generated from that parent asset (hashed and validated)
@@ -90,7 +96,7 @@ If there is no parent ingredient defined, and the source has a manifest store, t
 ### Remote URLs and embedding
 
 The default operation of C2PA signing is to embed a C2PA manifest store into an asset. The library also returns the C2PA manifest store so that it can be written to a sidecar or uploaded to a remote service.
-- The API supports embedding a remote URL reference into the asset. 
+- The API supports embedding a remote URL reference into the asset.
 - The remote URL is stored in different ways depending on the asset, but is often stored in XMP data.
 - The remote URL must be added to the asset before signing so that it can be hashed along with the asset.
 - Not all file formats support embedding remote URLs or embedding manifests stores.

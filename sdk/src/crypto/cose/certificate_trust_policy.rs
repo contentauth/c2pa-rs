@@ -214,7 +214,7 @@ impl CertificateTrustPolicy {
 
     /// Add user provided trust anchors that shall be accepted when verifying COSE signatures.
     /// These anchors are distinct from the C2PA trust anchors and are used to validate certificates
-    /// that are not part of the C2PA trust anchors.  
+    /// that are not part of the C2PA trust anchors.
     pub fn add_user_trust_anchors(
         &mut self,
         trust_anchor_pems: &[u8],
