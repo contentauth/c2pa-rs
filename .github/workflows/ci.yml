@@ -315,6 +315,45 @@ jobs:
         env:
           WASM_BINDGEN_TEST_TIMEOUT: 60
 
+  benchmarks:
+    name: Run benchmarks on signing and reading
+    needs: get-features
+    if: |
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.author_association == 'COLLABORATOR' ||
+      github.event.pull_request.author_association == 'MEMBER' ||
+      github.event.pull_request.user.login == 'dependabot[bot]' ||
+      contains(github.event.pull_request.labels.*.name, 'safe to test')
+
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install cargo-binstall
+        uses: cargo-bins/cargo-binstall@main
+
+      - name: Install cargo-codspeed
+        run: cargo binstall --no-confirm cargo-codspeed
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build the benchmark target(s)
+        env:
+          FEATURES: ${{needs.get-features.outputs.rust-native-features}}
+        run: cargo codspeed build -p c2pa --no-default-features --features "$FEATURES"
+
+      - name: Run the benchmarks
+        uses: CodSpeedHQ/action@v3
+        with:
+          run: cargo codspeed run
+          token: ${{ secrets.CODSPEED_TOKEN }}
+
   tests-wasi:
     name: Unit tests (WASI)
     needs: get-features

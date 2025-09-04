@@ -966,18 +966,14 @@ impl Ingredient {
     /// Thumbnail will be set only if one can be retrieved from a previous valid manifest.
     pub async fn from_memory_async(format: &str, buffer: &[u8]) -> Result<Self> {
         let mut stream = Cursor::new(buffer);
-        Self::from_stream_async(format, &mut stream, &AsyncGenericResolver::new()).await
+        Self::from_stream_async(format, &mut stream).await
     }
 
     /// Creates an `Ingredient` from a stream (async version).
     ///
     /// This does not set title or hash.
     /// Thumbnail will be set only if one can be retrieved from a previous valid manifest.
-    pub async fn from_stream_async(
-        format: &str,
-        stream: &mut dyn CAIRead,
-        http_resolver: &impl AsyncHttpResolver,
-    ) -> Result<Self> {
+    pub async fn from_stream_async(format: &str, stream: &mut dyn CAIRead) -> Result<Self> {
         let mut ingredient = Self::from_stream_info(stream, format, "untitled");
         stream.rewind()?;
 
@@ -985,7 +981,9 @@ impl Ingredient {
 
         // retrieve the manifest bytes from embedded, sidecar or remote and convert to store if found
         let (result, manifest_bytes) =
-            match Store::load_jumbf_from_stream_async(format, stream, http_resolver).await {
+            match Store::load_jumbf_from_stream_async(format, stream, &AsyncGenericResolver::new())
+                .await
+            {
                 Ok((manifest_bytes, _)) => {
                     (
                         // generate a store from the buffer and then validate from the asset path

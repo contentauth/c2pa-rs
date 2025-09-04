@@ -21,6 +21,7 @@ fn main() -> Result<()> {
 }
 
 // TODO: use SyncGenericResolver when we export public API for it to support wasi
+//       https://github.com/contentauth/c2pa-rs/issues/1366
 #[cfg(all(not(target_arch = "wasm32"), feature = "http_ureq"))]
 fn main() -> Result<()> {
     use std::io::Read;

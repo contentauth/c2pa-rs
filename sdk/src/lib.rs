@@ -86,6 +86,30 @@
 //! # Ok(())
 //! # }
 //! ```
+//!
+//! ## WASM
+//!
+//! The only supported HTTP features for WASM (not WASI) are `http_reqwest`. This means WASM
+//! only supports the async API for network requests.
+//!
+//! ### WASI
+//!
+//! The only supported HTTP features for WASI are `http_wasi` and `http_wstd`. The former
+//! enables sync network requests, while the latter enables async network requests.
+//!
+//! ## Features
+//!
+//! The following are a list of features that can be enabled or disabled:
+//!
+//! - **openssl** *(enabled by default)*: Enables the system `openssl` implementation for cryptography.
+//! - **rust_native_crypto**: Enables the Rust native implementation for cryptography.
+//! - **http_ureq** *(enabled by default)*: Enables `ureq` for sync HTTP requests.
+//! - **http_reqwest** *(enabled by default)*: Enables `reqwest` for async HTTP requests.
+//! - **http_reqwest_blocking**: Enables the `blocking` feature of `reqwest` for sync HTTP requests.
+//! - **http_wasi** *(enabled by default)*: Enables `wasi` for sync HTTP requests on WASI.
+//! - **http_wstd** *(enabled by default)*: Enables `wstd` for async HTTP requests on WASI.
+// TODO: document other features...
+
 /// The internal name of the C2PA SDK
 pub const NAME: &str = "c2pa-rs";
 

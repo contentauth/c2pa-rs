@@ -3840,6 +3840,7 @@ impl Store {
     }
 
     /// Handles remote manifests when file_io/fetch_remote_manifests feature is enabled
+    #[allow(unused_variables)]
     #[async_generic(async_signature(
         ext_ref: &str,
         http_resolver: &impl AsyncHttpResolver
