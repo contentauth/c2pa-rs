@@ -102,7 +102,7 @@
 //! The following are a list of features that can be enabled or disabled:
 //!
 //! - **openssl** *(enabled by default)*: Enables the system `openssl` implementation for cryptography.
-//! - **rust_native_crypto** *(enabled by default)*: Enables the Rust native implementation for cryptography.
+//! - **rust_native_crypto**: Enables the Rust native implementation for cryptography.
 //! - **http_ureq** *(enabled by default)*: Enables `ureq` for sync HTTP requests.
 //! - **http_reqwest** *(enabled by default)*: Enables `reqwest` for async HTTP requests.
 //! - **http_reqwest_blocking**: Enables the `blocking` feature of `reqwest` for sync HTTP requests.
