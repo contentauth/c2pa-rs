@@ -334,7 +334,7 @@ impl IdentityAssertion {
             // are checked during setting generation.
 
             let cose_verifier =
-                if let Ok(true) = get_settings_value::<bool>("cawg_trust.bypass_trust") {
+                if let Ok(true) = get_settings_value::<bool>("cawg_trust.verify_trust_list") {
                     Verifier::IgnoreProfileAndTrustPolicy
                 } else {
                     if let Ok(Some(ta)) =
