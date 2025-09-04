@@ -40,7 +40,7 @@ pub mod sync_impl {
     #[cfg(not(target_arch = "wasm32"))]
     #[cfg(test)]
     pub mod tests {
-        use crate::http::tests::assert_http_resolver;
+        use crate::resolver::http::tests::assert_http_resolver;
 
         #[test]
         fn test_http_reqwest() {
@@ -56,7 +56,7 @@ pub mod async_impl {
     use async_trait::async_trait;
     use http::{Request, Response};
 
-    use crate::http::{AsyncHttpResolver, HttpResolverError};
+    use crate::resolver::http::{AsyncHttpResolver, HttpResolverError};
 
     #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
     #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
@@ -85,7 +85,7 @@ pub mod async_impl {
     #[cfg(not(target_arch = "wasm32"))]
     #[cfg(test)]
     pub mod tests {
-        use crate::http::tests::assert_http_resolver_async;
+        use crate::resolver::http::tests::assert_http_resolver_async;
 
         #[tokio::test]
         async fn test_http_reqwest() {
@@ -99,7 +99,7 @@ pub mod async_impl {
     not(target_os = "wasi")
 ))]
 mod reqwest_resolver {
-    use crate::http::HttpResolverError;
+    use crate::resolver::http::HttpResolverError;
 
     impl From<reqwest::Error> for HttpResolverError {
         fn from(value: reqwest::Error) -> Self {

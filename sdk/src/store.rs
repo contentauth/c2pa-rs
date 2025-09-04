@@ -65,7 +65,6 @@ use crate::{
     error::{Error, Result},
     hash_utils::{hash_by_alg, vec_compare, verify_by_alg},
     hashed_uri::HashedUri,
-    http::{AsyncGenericResolver, AsyncHttpResolver, SyncGenericResolver, SyncHttpResolver},
     jumbf::{
         self,
         boxes::*,
@@ -80,6 +79,9 @@ use crate::{
     },
     log_item,
     manifest_store_report::ManifestStoreReport,
+    resolver::http::{
+        AsyncGenericResolver, AsyncHttpResolver, SyncGenericResolver, SyncHttpResolver,
+    },
     salt::DefaultSalt,
     settings::{builder::OcspFetch, get_settings_value},
     status_tracker::{ErrorBehavior, StatusTracker},

@@ -35,12 +35,14 @@ use crate::{
     crypto::base64,
     error::{Error, Result},
     hashed_uri::HashedUri,
-    http::{AsyncGenericResolver, AsyncHttpResolver, SyncGenericResolver, SyncHttpResolver},
     jumbf::{
         self,
         labels::{assertion_label_from_uri, manifest_label_from_uri},
     },
     log_item,
+    resolver::http::{
+        AsyncGenericResolver, AsyncHttpResolver, SyncGenericResolver, SyncHttpResolver,
+    },
     resource_store::{skip_serializing_resources, ResourceRef, ResourceStore},
     salt::DefaultSalt,
     status_tracker::StatusTracker,

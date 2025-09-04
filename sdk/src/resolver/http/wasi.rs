@@ -22,7 +22,7 @@ pub mod sync_impl {
         types::{Fields, IncomingBody, InputStream},
     };
 
-    use crate::http::{HttpResolverError, SyncHttpResolver};
+    use crate::resolver::http::{HttpResolverError, SyncHttpResolver};
 
     struct WasiStream {
         // Important that `stream` is above `body` so that it's dropped first.
@@ -140,7 +140,7 @@ mod async_impl {
     use http::{Request, Response};
     use wstd::http::body::StreamedBody;
 
-    use crate::http::{AsyncHttpResolver, HttpResolverError};
+    use crate::resolver::http::{AsyncHttpResolver, HttpResolverError};
 
     #[async_trait(?Send)]
     impl AsyncHttpResolver for wstd::http::Client {

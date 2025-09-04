@@ -27,12 +27,12 @@ use uuid::Uuid;
 use zip::{write::SimpleFileOptions, ZipArchive, ZipWriter};
 
 #[allow(deprecated)]
+use crate::assertions::CreativeWork;
 use crate::{
     assertion::{AssertionBase, AssertionDecodeError},
     assertions::{
-        c2pa_action, labels, Action, ActionTemplate, Actions, BmffHash, BoxHash, CreativeWork,
-        DataHash, DigitalSourceType, EmbeddedData, Exif, Metadata, SoftwareAgent, Thumbnail, User,
-        UserCbor,
+        c2pa_action, labels, Action, ActionTemplate, Actions, BmffHash, BoxHash, DataHash,
+        DigitalSourceType, EmbeddedData, Exif, Metadata, SoftwareAgent, Thumbnail, User, UserCbor,
     },
     cbor_types::value_cbor_to_type,
     claim::Claim,
@@ -41,9 +41,11 @@ use crate::{
         ClaimGeneratorInfoDefinition, ManifestDefinition,
     },
     error::{Error, Result},
-    http::{AsyncGenericResolver, SyncGenericResolver},
     jumbf_io,
-    resolver::GenericResolver,
+    resolver::{
+        http::{AsyncGenericResolver, SyncGenericResolver},
+        resources::{GenericResolver, Resolver},
+    },
     resource_store::{ResourceRef, ResourceResolver, ResourceStore},
     salt::DefaultSalt,
     settings::{self},
@@ -326,25 +328,6 @@ impl Builder {
     /// * A mutable reference to the [`Builder`].
     pub fn set_format<S: Into<String>>(&mut self, format: S) -> &mut Self {
         self.definition.format = format.into();
-        self
-    }
-
-    /// ⚠️ **Deprecated Soon**
-    /// This method is planned to be deprecated in a future release.
-    /// Usage should be limited and temporary.
-    ///
-    /// Sets the resource directory for this [`Builder`]
-    ///
-    /// # Arguments
-    /// * `base_path` - The directory to search in to find the resources.
-    /// # Returns
-    /// * A mutable reference to the [`Builder`].
-    #[cfg(feature = "file_io")]
-    pub fn set_base_path<P: Into<PathBuf>>(&mut self, base_path: P) -> &mut Self {
-        let base_path = base_path.into();
-        self.base_path = Some(base_path.clone());
-        // TODO: temp
-        self.resolver.set_base_path(base_path);
         self
     }
 
@@ -711,7 +694,7 @@ impl Builder {
     }
 
     // Convert a Manifest into a Claim
-    fn to_claim(&self) -> Result<Claim> {
+    fn to_claim<T: Resolver>(&self, resolver: &T) -> Result<Claim> {
         let definition = &self.definition;
         let mut claim_generator_info = definition.claim_generator_info.clone();
 
@@ -768,7 +751,7 @@ impl Builder {
 
         // add claim generator info to claim and resolve icons
         for info in &claim_generator_info {
-            let claim_info = info.to_owned().resolve(&self.resolver, &mut claim)?;
+            let claim_info = info.to_owned().resolve(resolver, &mut claim)?;
             claim.add_claim_generator_info(claim_info);
         }
 
@@ -844,9 +827,14 @@ impl Builder {
                     found_actions = true;
 
                     let actions: ActionsDefinition = manifest_assertion.to_assertion()?;
-                    let mut actions = actions.resolve(&self.resolver, &mut claim)?;
+                    let mut actions = actions.resolve(resolver, &mut claim)?;
 
-                    self.add_actions_assertion_settings(&ingredient_map, &mut actions, &mut claim)?;
+                    self.add_actions_assertion_settings(
+                        resolver,
+                        &ingredient_map,
+                        &mut actions,
+                        &mut claim,
+                    )?;
 
                     let mut updates = Vec::new();
                     //#[allow(clippy::explicit_counter_loop)]
@@ -942,7 +930,12 @@ impl Builder {
 
         if !found_actions {
             let mut actions = Actions::new();
-            self.add_actions_assertion_settings(&ingredient_map, &mut actions, &mut claim)?;
+            self.add_actions_assertion_settings(
+                resolver,
+                &ingredient_map,
+                &mut actions,
+                &mut claim,
+            )?;
 
             if !actions.actions().is_empty() {
                 claim.add_assertion(&actions)?;
@@ -960,8 +953,9 @@ impl Builder {
     /// * `builder.actions.templates`
     /// * `builder.actions.actions`
     /// * For more, see [Builder::add_auto_actions_assertions]
-    fn add_actions_assertion_settings(
+    fn add_actions_assertion_settings<T: Resolver>(
         &self,
+        resolver: &T,
         ingredient_map: &HashMap<String, (&Relationship, HashedUri)>,
         actions: &mut Actions,
         claim: &mut Claim,
@@ -980,7 +974,7 @@ impl Builder {
         if let Ok(Some(action_templates)) = action_templates {
             let action_templates = action_templates
                 .into_iter()
-                .map(|template| template.resolve(&self.resolver, claim))
+                .map(|template| template.resolve(resolver, claim))
                 .collect::<Result<Vec<ActionTemplate>>>()?;
             match actions.templates {
                 Some(ref mut templates) => {
@@ -996,7 +990,7 @@ impl Builder {
         if let Ok(Some(additional_actions)) = additional_actions {
             let additional_actions = additional_actions
                 .into_iter()
-                .map(|action| action.resolve(&self.resolver, claim))
+                .map(|action| action.resolve(resolver, claim))
                 .collect::<Result<Vec<Action>>>()?;
 
             match actions.actions.is_empty() {
@@ -1126,7 +1120,10 @@ impl Builder {
 
     // Convert a Manifest into a Store
     fn to_store(&self) -> Result<Store> {
-        let claim = self.to_claim()?;
+        // TODO: this should be passed in by the user
+        let resolver = GenericResolver::new();
+
+        let claim = self.to_claim(&resolver)?;
         // commit the claim
         let mut store = Store::new();
         let _provenance = store.commit_claim(claim)?;
@@ -2657,7 +2654,7 @@ mod tests {
 
         let mut builder = Builder::from_json(MANIFEST_JSON).unwrap();
         // TODO: don't use base paths and set a custom resolver that resoles the name->custom data
-        builder.set_base_path("./tests/fixtures");
+        // builder.set_base_path("./tests/fixtures");
         // add binary resources to manifest and ingredients giving matching the identifiers given in JSON
         // builder
         //     .add_resource("IMG_0003.jpg", Cursor::new(b"jpeg data"))
@@ -2953,7 +2950,8 @@ mod tests {
     fn test_builder_set_base_path() {
         let mut builder = Builder::new();
         let ingredient_folder = fixture_path("ingredient");
-        builder.set_base_path(&ingredient_folder);
+        // TODO: remove use of base path
+        // builder.set_base_path(&ingredient_folder);
         assert_eq!(builder.base_path.as_ref(), Some(&ingredient_folder));
         let ingredient_json =
             std::fs::read_to_string(ingredient_folder.join("ingredient.json")).unwrap();

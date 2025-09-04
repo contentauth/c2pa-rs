@@ -12,42 +12,39 @@
 // each license.
 
 use std::{
-    error,
+    error, fmt,
     fs::File,
     io::{Cursor, Read, Seek},
-    path::{Path, PathBuf},
+    path::PathBuf,
 };
 
-use http::{header, Request};
+use async_trait::async_trait;
+
+use http::{header, Request, Response};
 
 use crate::{
     assertions::{labels, AssetType, EmbeddedData},
     asset_io::CAIRead,
     claim::Claim,
     definitions::ResourceDefinition,
-    http::SyncHttpResolver,
+    resolver::http::{
+        AsyncGenericResolver, AsyncHttpResolver, HttpResolverError, SyncGenericResolver,
+        SyncHttpResolver,
+    },
     salt::DefaultSalt,
     utils::mime,
     HashedUri, Result, SigningAlg,
 };
 
-// TODO: also AsyncResolver
+// TODO: also need AsyncResolver
 pub trait Resolver {
     type Error: error::Error;
     type Stream: Read + Seek + Send;
 
-    // TODO: id can be absolutely anything, a URL, a path, a relative path, an internal proprietary identifier, etc.
     fn resolve(
         &self,
         resource_definition: ResourceDefinition,
     ) -> Result<Resource<Self::Stream>, Self::Error>;
-}
-
-pub trait PathResolver {
-    type Error: error::Error;
-    type Stream: Read + Seek + Send;
-
-    fn path_resolve(&self, path: &Path) -> Result<Resource<Self::Stream>, Self::Error>;
 }
 
 // This is used internally for resolving resources in a claim to a hashed uri.
@@ -150,18 +147,17 @@ impl<T: Seek> Seek for Resource<T> {
     }
 }
 
-#[derive(Debug)]
 pub struct GenericResolver {
-    // http_resolver: reqwest::blocking::Client,
-    http_resolver: ureq::Agent,
+    sync_http_resolver: SyncGenericResolver,
+    async_http_resolver: AsyncGenericResolver,
     base_path: Option<PathBuf>,
 }
 
 impl GenericResolver {
     pub fn new() -> Self {
         GenericResolver {
-            // http_resolver: reqwest::blocking::Client::new(),
-            http_resolver: ureq::agent(),
+            sync_http_resolver: SyncGenericResolver::new(),
+            async_http_resolver: AsyncGenericResolver::new(),
             base_path: None,
         }
     }
@@ -181,27 +177,19 @@ impl SyncHttpResolver for GenericResolver {
     fn http_resolve(
         &self,
         request: Request<Vec<u8>>,
-    ) -> Result<http::Response<Box<dyn Read>>, crate::http::HttpResolverError> {
-        self.http_resolver.http_resolve(request)
+    ) -> Result<Response<Box<dyn Read>>, HttpResolverError> {
+        self.sync_http_resolver.http_resolve(request)
     }
 }
 
-impl PathResolver for GenericResolver {
-    type Error = crate::Error;
-    type Stream = File;
-
-    fn path_resolve(&self, path: &Path) -> Result<Resource<Self::Stream>, Self::Error> {
-        let path = match &self.base_path {
-            Some(base_path) => &base_path.join(path),
-            None => path,
-        };
-
-        // TODO: handle unwrap
-        #[allow(clippy::unwrap_used)]
-        Ok(Resource::new(
-            crate::format_from_path(path).unwrap(),
-            File::open(path)?,
-        ))
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+impl AsyncHttpResolver for GenericResolver {
+    async fn http_resolve_async(
+        &self,
+        request: Request<Vec<u8>>,
+    ) -> Result<Response<Box<dyn Read>>, HttpResolverError> {
+        self.async_http_resolver.http_resolve_async(request).await
     }
 }
 
@@ -210,7 +198,7 @@ impl Resolver for GenericResolver {
     // TODO: we don't have to box this, we can make an enum
     type Stream = Box<dyn CAIRead>;
 
-    // TODO: remove this allow
+    // TODO: temp
     #[allow(clippy::unwrap_used)]
     fn resolve(
         &self,
@@ -220,9 +208,7 @@ impl Resolver for GenericResolver {
             // Only if it's an absolute HTTP/S URI.
             if uri.scheme().is_some() {
                 let host = uri.host().map(|host| host.to_owned());
-                let response = self
-                    .http_resolve(Request::builder().uri(uri).body(Vec::new()).unwrap())
-                    .unwrap();
+                let response = self.http_resolve(Request::builder().uri(uri).body(Vec::new())?)?;
 
                 let format = response
                     .headers()
@@ -240,12 +226,7 @@ impl Resolver for GenericResolver {
                     .unwrap_or(10000);
 
                 let mut bytes = Vec::with_capacity(len);
-                response
-                    .into_body()
-                    .take(1000000)
-                    .read_to_end(&mut bytes)
-                    .ok()
-                    .unwrap();
+                response.into_body().take(1000000).read_to_end(&mut bytes)?;
 
                 let mut resource: Resource<Box<dyn CAIRead>> =
                     Resource::from_definition(definition, format, Box::new(Cursor::new(bytes)));
@@ -258,12 +239,16 @@ impl Resolver for GenericResolver {
         }
 
         if let Ok(path) = definition.identifier.parse::<PathBuf>() {
-            // TODO: handle
-            #[allow(clippy::unwrap_used)]
-            let stream = self.path_resolve(&path).unwrap();
+            let path = match &self.base_path {
+                Some(base_path) => base_path.join(path),
+                None => path,
+            };
+
+            let stream = File::open(&path)?;
+            let format = crate::format_from_path(&path).unwrap();
 
             let mut resource: Resource<Box<dyn CAIRead>> =
-                Resource::from_definition(definition, stream.format, Box::new(stream.stream));
+                Resource::from_definition(definition, format, Box::new(stream));
             if resource.name.is_none() {
                 resource.name = path
                     .file_name()
@@ -276,4 +261,15 @@ impl Resolver for GenericResolver {
         // TODO: error, unknown identifier
         todo!()
     }
+}
+
+impl fmt::Debug for GenericResolver {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        todo!()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    // TODO: tests
 }

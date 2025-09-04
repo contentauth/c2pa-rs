@@ -34,9 +34,8 @@ use crate::{
     asset_io::CAIRead,
     claim::Claim,
     hashed_uri::HashedUri,
-    http::SyncHttpResolver,
     jumbf::labels::{assertion_label_from_uri, to_absolute_uri, DATABOXES},
-    resolver::PathResolver,
+    resolver::http::SyncHttpResolver,
     salt::DefaultSalt,
     utils::mime::{self, format_to_mime},
     Error, Result,
@@ -169,7 +168,7 @@ impl ResourceRef {
         }
     }
 
-    pub fn to_hashed_uri<T: SyncHttpResolver + PathResolver>(
+    pub fn to_hashed_uri<T: SyncHttpResolver>(
         &self,
         resolver: &T,
         claim: &mut Claim,

@@ -17,7 +17,7 @@ pub mod sync_impl {
 
     use http::{header, Request, Response};
 
-    use crate::http::{HttpResolverError, SyncHttpResolver};
+    use crate::resolver::http::{HttpResolverError, SyncHttpResolver};
 
     impl SyncHttpResolver for ureq::Agent {
         fn http_resolve(
@@ -47,7 +47,7 @@ pub mod sync_impl {
 
     #[cfg(test)]
     pub mod tests {
-        use crate::http::tests::assert_http_resolver;
+        use crate::resolver::http::tests::assert_http_resolver;
 
         #[test]
         fn test_http_ureq() {

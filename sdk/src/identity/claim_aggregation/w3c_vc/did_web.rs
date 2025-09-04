@@ -19,7 +19,7 @@
 // each license.
 
 use super::{did::Did, did_doc::DidDocument};
-use crate::http::{AsyncGenericResolver, AsyncHttpResolver, HttpResolverError};
+use crate::resolver::http::{AsyncGenericResolver, AsyncHttpResolver, HttpResolverError};
 
 const USER_AGENT: &str = concat!(env!("CARGO_PKG_NAME"), "/", env!("CARGO_PKG_VERSION"));
 

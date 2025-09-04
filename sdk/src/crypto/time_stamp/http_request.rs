@@ -25,7 +25,7 @@ use crate::{
             TimeStampError,
         },
     },
-    http::{
+    resolver::http::{
         AsyncGenericResolver, AsyncHttpResolver, HttpResolverError, SyncGenericResolver,
         SyncHttpResolver,
     },

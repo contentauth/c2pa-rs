@@ -26,7 +26,7 @@ use crate::{
     builder::AssertionDefinition,
     cbor_types::DateT,
     claim::Claim,
-    resolver::{Resolver, ResourceResolver},
+    resolver::resources::{Resolver, ResourceResolver},
     ClaimGeneratorInfo, DigitalSourceType, HashedUri, Ingredient, ResourceRef, Result, SigningAlg,
 };
 

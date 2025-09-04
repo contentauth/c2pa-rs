@@ -17,7 +17,7 @@ use thiserror::Error;
 
 use crate::{
     crypto::{cose::CoseError, raw_signature::RawSignerError, time_stamp::TimeStampError},
-    http::HttpResolverError,
+    resolver::http::HttpResolverError,
 };
 
 /// `Error` enumerates errors returned by most C2PA toolkit operations.

@@ -25,7 +25,9 @@ use x509_parser::{
 
 use crate::{
     crypto::base64,
-    http::{AsyncGenericResolver, AsyncHttpResolver, SyncGenericResolver, SyncHttpResolver},
+    resolver::http::{
+        AsyncGenericResolver, AsyncHttpResolver, SyncGenericResolver, SyncHttpResolver,
+    },
 };
 
 /// Retrieve an OCSP response if available.

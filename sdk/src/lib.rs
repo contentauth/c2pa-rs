@@ -155,11 +155,10 @@ pub mod validation_results;
 #[doc(hidden)]
 pub mod validation_status;
 
+// TODO: docs
 pub mod definitions;
-
 // TODO: pub it when we expose in high-level API
-/// The http module contains generic traits for configuring sync and async http resolvers.
-pub(crate) mod http;
+pub(crate) mod resolver;
 
 // Public exports
 pub use assertions::DigitalSourceType;
@@ -225,7 +224,6 @@ pub(crate) mod manifest_store_report;
 #[allow(dead_code)]
 // TODO: Remove this when the feature is released (used in tests only for some builds now)
 pub(crate) mod reader;
-pub(crate) mod resolver;
 pub(crate) mod resource_store;
 pub(crate) mod salt;
 pub(crate) mod signer;

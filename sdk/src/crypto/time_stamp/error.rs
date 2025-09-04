@@ -13,7 +13,7 @@
 
 use thiserror::Error;
 
-use crate::http::HttpResolverError;
+use crate::resolver::http::HttpResolverError;
 
 /// Describes errors that can occur when requesting or verifying an [RFC 3161]
 /// time stamp.
