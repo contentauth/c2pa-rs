@@ -214,32 +214,6 @@ pub enum HttpResolverError {
     Other(Box<dyn std::error::Error + Send + Sync>),
 }
 
-#[cfg(all(feature = "http_reqwest_blocking", not(target_os = "wasi")))]
-mod sync_reqwest_resolver {
-    use std::io::Cursor;
-
-    use super::*;
-
-    impl SyncHttpResolver for reqwest::blocking::Client {
-        fn http_resolve(
-            &self,
-            request: Request<Vec<u8>>,
-        ) -> Result<Response<Box<dyn Read>>, HttpResolverError> {
-            let response = self.execute(request.try_into()?)?;
-
-            let mut builder = http::Response::builder()
-                .status(response.status())
-                .version(response.version());
-
-            for (name, value) in response.headers().iter() {
-                builder = builder.header(name, value);
-            }
-
-            Ok(builder.body(Box::new(Cursor::new(response.bytes()?)) as Box<dyn Read>)?)
-        }
-    }
-}
-
 #[cfg(all(feature = "http_ureq", not(target_arch = "wasm32")))]
 mod sync_ureq_resolver {
     use http::header;
@@ -269,6 +243,54 @@ mod sync_ureq_resolver {
     impl From<ureq::Error> for HttpResolverError {
         fn from(value: ureq::Error) -> Self {
             Self::Other(Box::new(value))
+        }
+    }
+
+    #[cfg(test)]
+    pub mod tests {
+        use crate::http::tests::assert_http_resolver;
+
+        #[test]
+        fn test_http_ureq() {
+            assert_http_resolver(ureq::agent());
+        }
+    }
+}
+
+#[cfg(all(feature = "http_reqwest_blocking", not(target_os = "wasi")))]
+mod sync_reqwest_resolver {
+    use std::io::Cursor;
+
+    use super::*;
+
+    impl SyncHttpResolver for reqwest::blocking::Client {
+        fn http_resolve(
+            &self,
+            request: Request<Vec<u8>>,
+        ) -> Result<Response<Box<dyn Read>>, HttpResolverError> {
+            let response = self.execute(request.try_into()?)?;
+
+            let mut builder = http::Response::builder()
+                .status(response.status())
+                .version(response.version());
+
+            for (name, value) in response.headers().iter() {
+                builder = builder.header(name, value);
+            }
+
+            Ok(builder.body(Box::new(Cursor::new(response.bytes()?)) as Box<dyn Read>)?)
+        }
+    }
+
+    // TODO WASM doesn't support `httpmock` https://github.com/alexliesenfeld/httpmock/issues/121
+    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(test)]
+    pub mod tests {
+        use crate::http::tests::assert_http_resolver;
+
+        #[test]
+        fn test_http_reqwest() {
+            assert_http_resolver(reqwest::blocking::Client::new());
         }
     }
 }
@@ -301,6 +323,18 @@ mod async_reqwest_resolver {
             Ok(builder.body(Box::new(Cursor::new(response.bytes().await?)) as Box<dyn Read>)?)
         }
     }
+
+    // TODO: Use `httpmock` when it's supported for WASM https://github.com/contentauth/c2pa-rs/issues/1378
+    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(test)]
+    pub mod tests {
+        use crate::http::tests::assert_http_resolver_async;
+
+        #[tokio::test]
+        async fn test_http_reqwest() {
+            assert_http_resolver_async(reqwest::Client::new()).await;
+        }
+    }
 }
 
 #[cfg(all(
@@ -317,7 +351,7 @@ mod reqwest_resolver {
     }
 }
 
-// TODO: Switch to reqwest_blocking once it supports WASI https://github.com/seanmonstar/reqwest/issues/2294
+// TODO: Switch to reqwest_blocking once it supports WASI https://github.com/contentauth/c2pa-rs/issues/1377
 #[cfg(all(target_os = "wasi", feature = "http_wasi"))]
 mod sync_wasi_resolver {
     use std::io::Read;
@@ -436,7 +470,7 @@ mod sync_wasi_resolver {
     }
 }
 
-// TODO: Switch to reqwest once it supports WASI https://github.com/seanmonstar/reqwest/issues/2294
+// TODO: Switch to reqwest once it supports WASI https://github.com/contentauth/c2pa-rs/issues/1377
 #[cfg(all(target_os = "wasi", feature = "http_wstd"))]
 mod async_wasi_resolver {
     use std::io::Cursor;
@@ -473,11 +507,14 @@ mod async_wasi_resolver {
     }
 }
 
-// WASM doesn't support `httpmock`.
+// TODO: Use `httpmock` when it's supported for WASM https://github.com/contentauth/c2pa-rs/issues/1378
+//       And then also implement `wasi`/`wstd` networking tests.
 #[cfg(not(target_arch = "wasm32"))]
 #[cfg(test)]
 pub mod tests {
     #![allow(clippy::unwrap_used)]
+
+    use async_generic::async_generic;
 
     use super::*;
 
@@ -488,9 +525,8 @@ pub mod tests {
         })
     }
 
-    #[cfg(any(feature = "http_ureq", feature = "http_reqwest_blocking"))]
-    #[test]
-    fn test_http_sync_generic_resolver() {
+    #[async_generic(async_signature(resolver: impl AsyncHttpResolver))]
+    pub fn assert_http_resolver(resolver: impl SyncHttpResolver) {
         use httpmock::MockServer;
 
         let server = MockServer::start();
@@ -498,31 +534,11 @@ pub mod tests {
 
         let request = Request::get(server.base_url()).body(vec![1, 2, 3]).unwrap();
 
-        let resolver = SyncGenericResolver::new();
-        let response = resolver.http_resolve(request).unwrap();
-
-        let mut response_body = Vec::new();
-        response
-            .into_body()
-            .read_to_end(&mut response_body)
-            .unwrap();
-        assert_eq!(&response_body, &[1, 2, 3]);
-
-        mock.assert();
-    }
-
-    #[cfg(feature = "http_reqwest")]
-    #[tokio::test]
-    async fn test_http_async_generic_resolver() {
-        use httpmock::MockServer;
-
-        let server = MockServer::start();
-        let mock = remote_mock_server(&server);
-
-        let request = Request::get(server.base_url()).body(vec![1, 2, 3]).unwrap();
-
-        let resolver = AsyncGenericResolver::new();
-        let response = resolver.http_resolve_async(request).await.unwrap();
+        let response = if _sync {
+            resolver.http_resolve(request).unwrap()
+        } else {
+            resolver.http_resolve_async(request).await.unwrap()
+        };
 
         let mut response_body = Vec::new();
         response
