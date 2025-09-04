@@ -335,8 +335,6 @@ impl IdentityAssertion {
 
             let cose_verifier =
                 if let Ok(true) = get_settings_value::<bool>("cawg_trust.verify_trust_list") {
-                    Verifier::IgnoreProfileAndTrustPolicy
-                } else {
                     if let Ok(Some(ta)) =
                         get_settings_value::<Option<String>>("cawg_trust.trust_anchors")
                     {
@@ -362,6 +360,8 @@ impl IdentityAssertion {
                     }
 
                     Verifier::VerifyTrustPolicy(Cow::Owned(ctp))
+                } else {
+                    Verifier::IgnoreProfileAndTrustPolicy
                 };
 
             let verifier = X509SignatureVerifier { cose_verifier };
