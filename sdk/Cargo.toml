@@ -35,8 +35,8 @@ serialize_thumbnails = []
 no_interleaved_io = ["file_io"]
 fetch_remote_manifests = ["dep:wasi"]
 json_schema = ["dep:schemars"]
-pdf = ["dep:lopdf"]
 openssl = ["dep:openssl"]
+pdf = ["dep:lopdf"]
 rust_native_crypto = [
     "dep:const-oid",
     "dep:ecdsa",
