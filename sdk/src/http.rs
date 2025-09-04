@@ -20,7 +20,10 @@ use crate::Result;
 
 /// A resolver for sync (blocking) HTTP requests.
 pub trait SyncHttpResolver {
-    /// Resolve a [`http::Request`] into a [`http::Response`] with a streaming body.
+    /// Resolve a [`Request`] into a [`Response`] with a streaming body.
+    ///
+    /// [`Request`]: http::Request
+    /// [`Response`]: http::Response
     fn http_resolve(
         &self,
         request: Request<Vec<u8>>,
@@ -31,7 +34,10 @@ pub trait SyncHttpResolver {
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 pub trait AsyncHttpResolver {
-    /// Resolve a [`http::Request`] into a [`http::Response`] with a streaming body.
+    /// Resolve a [`Request`] into a [`Response`] with a streaming body.
+    ///
+    /// [`Request`]: http::Request
+    /// [`Response`]: http::Response
     async fn http_resolve_async(
         &self,
         request: Request<Vec<u8>>,
