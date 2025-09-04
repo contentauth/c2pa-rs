@@ -12,7 +12,7 @@
 // each license.
 
 #[cfg(all(feature = "http_reqwest_blocking", not(target_os = "wasi")))]
-mod sync_impl {
+pub mod sync_impl {
     use std::io::Cursor;
 
     use super::*;
@@ -50,7 +50,7 @@ mod sync_impl {
 }
 
 #[cfg(all(feature = "http_reqwest", not(target_os = "wasi")))]
-mod async_impl {
+pub mod async_impl {
     use std::io::{Cursor, Read};
 
     use async_trait::async_trait;

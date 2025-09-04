@@ -175,9 +175,9 @@ mod sync_resolver {
 }
 #[cfg(all(target_os = "wasi", feature = "http_wasi"))]
 mod sync_resolver {
-    pub type Impl = super::sync_wasi_resolver::SyncWasiResolver;
+    pub type Impl = super::wasi::sync_impl::SyncWasiResolver;
     pub fn new() -> Impl {
-        super::sync_wasi_resolver::SyncWasiResolver::new()
+        super::wasi::sync_impl::SyncWasiResolver::new()
     }
 }
 #[cfg(not(any(

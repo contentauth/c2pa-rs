@@ -13,7 +13,7 @@
 
 // TODO: Switch to reqwest_blocking once it supports WASI https://github.com/contentauth/c2pa-rs/issues/1377
 #[cfg(all(target_os = "wasi", feature = "http_wasi"))]
-mod sync_impl {
+pub mod sync_impl {
     use std::io::{self, Read};
 
     use http::{Request, Response};

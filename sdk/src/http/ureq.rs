@@ -12,7 +12,7 @@
 // each license.
 
 #[cfg(all(feature = "http_ureq", not(target_arch = "wasm32")))]
-mod sync_impl {
+pub mod sync_impl {
     use std::io::Read;
 
     use http::{header, Request, Response};
