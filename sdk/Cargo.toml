@@ -53,7 +53,7 @@ add_thumbnails = ["image"]
 file_io = []
 serialize_thumbnails = []
 no_interleaved_io = ["file_io"]
-fetch_remote_manifests = ["dep:wasi"]
+fetch_remote_manifests = []
 json_schema = ["dep:schemars"]
 openssl = [
     "dep:openssl",
