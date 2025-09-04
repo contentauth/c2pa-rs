@@ -58,7 +58,25 @@ impl SignerSettings {
     ///
     /// If the signer settings aren't specified, this function will return [Error::MissingSignerSettings][crate::Error::MissingSignerSettings].
     pub fn signer() -> Result<Box<dyn Signer>> {
+        let c2pa_signer = Self::c2pa_signer()?;
+
+        // TO DISCUSS: What if get_value returns an Err(...)?
+        if let Ok(Some(cawg_x509_signer_info)) = Settings::get_value::<Option<SignerSettings>>("cawg_x509_signer") {
+            let _cawg_x509_credential_holder = Self::cawg_x509_credential_holder(&cawg_x509_signer_info)?;
+
+            todo!();
+            // TODO: If CAWG X.509 signer settings are detected, wrap the
+            // result of `c2pa_signer` in another signer that also holds the
+            // X509CredentialHolder.
+        } else {
+            Ok(c2pa_signer)
+        }
+    }
+
+    /// Returns a C2PA-only signer from the [`BuilderSettings::signer`] field.
+    fn c2pa_signer() -> Result<Box<dyn Signer>> {
         let signer_info = Settings::get_value::<Option<SignerSettings>>("signer");
+
         match signer_info {
             Ok(Some(signer_info)) => match signer_info {
                 SignerSettings::Local {
@@ -92,6 +110,33 @@ impl SignerSettings {
             _ => Ok(crate::utils::test_signer::test_signer(SigningAlg::Ps256)),
             #[cfg(not(test))]
             _ => Err(Error::MissingSignerSettings),
+        }
+    }
+
+    /// Returns a CAWG X.509 credential holder from the [`BuilderSettings::signer`] field.
+    #[allow(unused)]
+    fn cawg_x509_credential_holder(signer_info: &SignerSettings) -> Result<Box<dyn Signer>> {
+        match signer_info {
+                SignerSettings::Local {
+                    alg: _,
+                    sign_cert: _,
+                    private_key: _,
+                    tsa_url: _,
+                } => {
+                    todo!("Rewrite to use CAWG X509");
+                    // create_signer::from_keys(
+                    // sign_cert.as_bytes(),
+                    // private_key.as_bytes(),
+                    // alg,
+                    // tsa_url.to_owned())
+                }
+
+                SignerSettings::Remote {
+                    url: _url,
+                    alg: _alg,
+                    sign_cert: _sign_cert,
+                    tsa_url: _tsa_url,
+                } => todo!("Remote signing not yet supported"),
         }
     }
 }
