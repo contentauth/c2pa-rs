@@ -241,7 +241,10 @@ const SHA384_OID: Oid = bcder::Oid(OctetString::from_static(&[96, 134, 72, 1, 10
 
 const SHA512_OID: Oid = bcder::Oid(OctetString::from_static(&[96, 134, 72, 1, 101, 3, 4, 2, 3]));
 
-#[cfg_attr(feature = "rust_native_crypto", allow(unused))]
+#[cfg_attr(
+    any(feature = "rust_native_crypto", target_arch = "wasm32"),
+    allow(unused)
+)]
 const SHA1_OID: Oid = bcder::Oid(OctetString::from_static(&[43, 14, 3, 2, 26]));
 
 #[test]
@@ -340,7 +343,10 @@ fn rs512() {
 }
 
 #[test]
-#[cfg(feature = "openssl")]
+#[cfg(all(
+    feature = "openssl",
+    not(all(feature = "rust_native_crypto", target_arch = "wasm32"))
+))]
 fn sha1() {
     let signature =
         include_bytes!("../../../../tests/fixtures/crypto/raw_signature/legacy/sha1.raw_sig");

@@ -141,7 +141,7 @@ impl CertificateTrustPolicy {
             return Ok(TrustAnchorType::EndEntity);
         }
 
-        #[cfg(feature = "rust_native_crypto")]
+        #[cfg(any(feature = "rust_native_crypto", target_arch = "wasm32"))]
         {
             return crate::crypto::raw_signature::rust_native::check_certificate_trust::check_certificate_trust(
                 self,
@@ -151,7 +151,10 @@ impl CertificateTrustPolicy {
             );
         }
 
-        #[cfg(feature = "openssl")]
+        #[cfg(all(
+            feature = "openssl",
+            not(all(feature = "rust_native_crypto", target_arch = "wasm32"))
+        ))]
         {
             return crate::crypto::raw_signature::openssl::check_certificate_trust::check_certificate_trust(
                 self,
@@ -214,7 +217,7 @@ impl CertificateTrustPolicy {
 
     /// Add user provided trust anchors that shall be accepted when verifying COSE signatures.
     /// These anchors are distinct from the C2PA trust anchors and are used to validate certificates
-    /// that are not part of the C2PA trust anchors.  
+    /// that are not part of the C2PA trust anchors.
     pub fn add_user_trust_anchors(
         &mut self,
         trust_anchor_pems: &[u8],
@@ -430,14 +433,20 @@ pub enum CertificateTrustError {
     InternalError(String),
 }
 
-#[cfg(feature = "openssl")]
+#[cfg(all(
+    feature = "openssl",
+    not(all(feature = "rust_native_crypto", target_arch = "wasm32"))
+))]
 impl From<openssl::error::ErrorStack> for CertificateTrustError {
     fn from(err: openssl::error::ErrorStack) -> Self {
         Self::CryptoLibraryError(err.to_string())
     }
 }
 
-#[cfg(feature = "openssl")]
+#[cfg(all(
+    feature = "openssl",
+    not(all(feature = "rust_native_crypto", target_arch = "wasm32"))
+))]
 impl From<crate::crypto::raw_signature::openssl::OpenSslMutexUnavailable>
     for CertificateTrustError
 {
