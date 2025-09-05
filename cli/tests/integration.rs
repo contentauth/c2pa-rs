@@ -633,7 +633,7 @@ fn tool_sign_image_with_cawg_data() -> Result<(), Box<dyn Error>> {
         .arg("-m")
         .arg(fixture_path("ingredient_test.json"))
         .arg("-o")
-        .arg(output_path)
+        .arg(&output_path)
         .arg("-f")
         .assert()
         .success();
@@ -641,7 +641,7 @@ fn tool_sign_image_with_cawg_data() -> Result<(), Box<dyn Error>> {
     Command::cargo_bin("c2patool")?
         .arg("--settings")
         .arg(fixture_path("trust/cawg_sign_settings.toml"))
-        .arg(output_path)
+        .arg(&output_path)
         .assert()
         .success()
         .stdout(str::contains("cawg.identity"))
