@@ -2313,10 +2313,9 @@ mod tests {
         }
     }
 
-
     #[test]
     #[cfg(feature = "file_io")]
-    async fn test_builder_remote_url() {
+    fn test_builder_remote_url() {
         let mut source = Cursor::new(TEST_IMAGE_CLEAN);
         let mut dest = Cursor::new(Vec::new());
 
