@@ -186,7 +186,7 @@ struct CawgX509IdentitySigner {
     cawg_private_key: String,
     cawg_tsa_url: Option<String>,
     // NOTE: The CAWG signing settings are stored here because
-    // we can't clone or transfer ownership of a X509CredentialHolder
+    // we can't clone or transfer ownership of an `X509CredentialHolder`
     // inside the dynamic_assertions callback.
 }
 
