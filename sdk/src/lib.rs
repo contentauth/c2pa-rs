@@ -48,7 +48,7 @@
 //!
 //! ## Example: Adding a Manifest to a file
 //!
-//! ```
+//! ```ignore-wasm32
 //! # use c2pa::Result;
 //! use std::path::PathBuf;
 //!
@@ -133,6 +133,7 @@ pub mod validation_results;
 pub mod validation_status;
 
 // Public exports
+pub use assertions::DigitalSourceType;
 #[doc(inline)]
 pub use assertions::Relationship;
 pub use builder::{Builder, DigitalSourceType, ManifestDefinition};

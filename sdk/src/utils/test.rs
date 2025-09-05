@@ -25,8 +25,8 @@ use tempfile::TempDir;
 
 use crate::{
     assertions::{
-        labels, Action, Actions, EmbeddedData, Ingredient, Relationship, ReviewRating,
-        SchemaDotOrg, Thumbnail, User,
+        labels, Action, Actions, DigitalSourceType, EmbeddedData, Ingredient, Relationship,
+        ReviewRating, SchemaDotOrg, Thumbnail, User,
     },
     asset_io::CAIReadWrite,
     claim::Claim,
@@ -142,8 +142,7 @@ pub fn create_test_claim() -> Result<Claim> {
         .set_thumbnail(Some(&ingredient_thumbnail_ref));
     let ingredient_ref2 = claim.add_assertion_with_salt(&ingredient2, &DefaultSalt::default())?;
 
-    let created_action =
-        Action::new("c2pa.created").set_source_type("http://c2pa.org/digitalsourcetype/empty");
+    let created_action = Action::new("c2pa.created").set_source_type(DigitalSourceType::Empty);
 
     let placed_action = Action::new("c2pa.placed")
         .set_parameter("ingredients", vec![ingredient_ref, ingredient_ref2])?;

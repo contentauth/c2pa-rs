@@ -12,7 +12,12 @@
 // each license.
 
 #![cfg(not(target_os = "wasi"))]
-use std::{error::Error, fs, fs::create_dir_all, path::PathBuf, process::Command};
+use std::{
+    error::Error,
+    fs::{self, create_dir_all},
+    path::PathBuf,
+    process::Command,
+};
 
 // Add methods on commands
 use assert_cmd::prelude::*;
@@ -20,6 +25,7 @@ use httpmock::{prelude::*, Mock};
 use predicate::str;
 use predicates::prelude::*;
 use serde_json::Value;
+use tempfile::tempdir;
 
 const TEST_IMAGE: &str = "earth_apollo17.jpg";
 //const TEST_IMAGE: &str = "libpng-test.png"; // save for png testing
@@ -232,7 +238,7 @@ fn tool_test_manifest_ingredient_json() -> Result<(), Box<dyn std::error::Error>
     Ok(())
 }
 #[test]
-// c2patool tests/fixtures/earth_apollo17.jpg -m tests/fixtures/ingredient_test.json -fo target/tmp/ingredients.jpg
+// c2patool tests/fixtures/earth_apollo17.jpg -m tests/fixtures/ingredient_test.json -o target/tmp/ingredients.jpg -f
 fn tool_embed_jpeg_with_ingredients_report() -> Result<(), Box<dyn Error>> {
     Command::cargo_bin("c2patool")?
         .arg(fixture_path(TEST_IMAGE))
@@ -290,6 +296,49 @@ fn tool_fail_if_thumbnail_missing() -> Result<(), Box<dyn Error>> {
         .assert()
         .failure()
         .stderr(str::contains("resource not found"));
+    Ok(())
+}
+
+#[test]
+fn tool_sign_to_same_file_with_force() -> Result<(), Box<dyn Error>> {
+    let tmp_dir = tempdir()?;
+    let file_path = tmp_dir.path().join("same_image.jpg");
+    fs::copy(fixture_path(TEST_IMAGE), &file_path)?;
+
+    Command::cargo_bin("c2patool")?
+        .arg(&file_path)
+        .arg("-m")
+        .arg(fixture_path("ingredient_test.json"))
+        .arg("-o")
+        .arg(&file_path)
+        .arg("-f")
+        .assert()
+        .success()
+        .stdout(str::contains("same_image.jpg"))
+        .stdout(str::contains("test ingredient"))
+        .stdout(str::contains("temporal"))
+        .stdout(str::contains("earth_apollo17.jpg"));
+    Ok(())
+}
+
+#[test]
+fn tool_sign_to_same_file_no_force() -> Result<(), Box<dyn Error>> {
+    let tmp_dir = tempdir()?;
+    let file_path = tmp_dir.path().join("same_image.jpg");
+    fs::copy(fixture_path(TEST_IMAGE), &file_path)?;
+
+    Command::cargo_bin("c2patool")?
+        .arg(&file_path)
+        .arg("-m")
+        .arg(fixture_path("ingredient_test.json"))
+        .arg("-o")
+        .arg(&file_path)
+        .assert()
+        .failure()
+        .stderr(str::contains(
+            "Error: Output already exists; use -f/force to force write",
+        ));
+
     Ok(())
 }
 // #[test]
@@ -537,9 +586,11 @@ fn tool_tree() -> Result<(), Box<dyn Error>> {
 }
 
 #[test]
-// c2patool C_with_CAWG_data.jpg
+// c2patool --settings .../trust/cawg_test_settings.toml C_with_CAWG_data.jpg
 fn tool_read_image_with_cawg_data() -> Result<(), Box<dyn Error>> {
     Command::cargo_bin("c2patool")?
+        .arg("--settings")
+        .arg(fixture_path("trust/cawg_test_settings.toml"))
         .arg(fixture_path("C_with_CAWG_data.jpg"))
         .assert()
         .success()
@@ -550,9 +601,11 @@ fn tool_read_image_with_cawg_data() -> Result<(), Box<dyn Error>> {
 }
 
 #[test]
-// c2patool --detailed C_with_CAWG_data.jpg
+// c2patool --settings .../trust/cawg_test_settings.toml --detailed C_with_CAWG_data.jpg
 fn tool_read_image_with_details_with_cawg_data() -> Result<(), Box<dyn Error>> {
     Command::cargo_bin("c2patool")?
+        .arg("--settings")
+        .arg(fixture_path("trust/cawg_test_settings.toml"))
         .arg(fixture_path("C_with_CAWG_data.jpg"))
         .arg("--detailed")
         .assert()

@@ -279,8 +279,14 @@ mod integration_1 {
         let custom_metadata_assertion = Metadata::new("custom.foo.metadata", CUSTOM_METADATA)?;
 
         // add metadata assertions
-        builder.add_assertion_json(&c2pa_metadata_assertion.label, &c2pa_metadata_assertion)?;
-        builder.add_assertion_json(&custom_metadata_assertion.label, &custom_metadata_assertion)?;
+        builder.add_assertion_json(
+            c2pa_metadata_assertion.get_label(),
+            &c2pa_metadata_assertion,
+        )?;
+        builder.add_assertion_json(
+            custom_metadata_assertion.get_label(),
+            &custom_metadata_assertion,
+        )?;
 
         // sign and embed into the target file
         let signer = Settings::signer()?;
