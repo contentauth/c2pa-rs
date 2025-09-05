@@ -151,7 +151,7 @@ impl SignerSettings {
                     crate::crypto::raw_signature::signer_from_cert_chain_and_private_key(
                         sign_cert.as_bytes(),
                         private_key.as_bytes(),
-                        alg.clone(),
+                        *alg,
                         tsa_url.clone(),
                     )?;
 
@@ -235,7 +235,7 @@ impl Signer for CawgX509IdentitySigner {
         let Ok(raw_signer) = crate::crypto::raw_signature::signer_from_cert_chain_and_private_key(
             self.cawg_sign_cert.as_bytes(),
             self.cawg_private_key.as_bytes(),
-            self.cawg_alg.clone(),
+            self.cawg_alg,
             self.cawg_tsa_url.clone(),
         ) else {
             // dynamic_assertions() API doesn't let us fail.
