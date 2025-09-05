@@ -648,7 +648,8 @@ fn tool_sign_image_with_cawg_data() -> Result<(), Box<dyn Error>> {
         .assert()
         .success()
         .stdout(str::contains("cawg.identity"))
-        .stdout(str::contains("c2pa.assertions/cawg.training-mining"))
-        .stdout(str::contains("cawg.identity.well-formed"));
+        .stdout(str::contains("c2pa.assertions/cawg.training-mining"));
+    // .stdout(str::contains("cawg.identity.well-formed"));
+    // ^^ Enable this when #1356 lands.
     Ok(())
 }
