@@ -740,9 +740,10 @@ fn main() -> Result<()> {
 
             Box::new(signer)
         } else {
-            match sign_config.signer() {
+            match Settings::signer() {
                 Ok(signer) => signer,
-                Err(err) => Settings::signer().context(err)?,
+                Err(Error::MissingSignerSettings) => sign_config.signer()?,
+                Err(err) => Err(err)?,
             }
         };
 
