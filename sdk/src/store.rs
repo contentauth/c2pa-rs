@@ -3425,13 +3425,21 @@ impl Store {
     ) -> Result<Self> {
         #[cfg(not(target_os = "wasi"))]
         let (manifest_bytes, remote_url) = if _sync {
-            Store::load_jumbf_from_stream(format, &mut stream)?
+            Store::load_jumbf_from_stream(format, &mut stream)
         } else {
-            Store::load_jumbf_from_stream_async(format, &mut stream).await?
-        };
+            Store::load_jumbf_from_stream_async(format, &mut stream).await
+        }
+        .inspect_err(|e| {
+            log_item!("asset", "error loading file", "load_from_asset")
+                .failure_no_throw(validation_log, e);
+        })?;
 
         #[cfg(target_os = "wasi")]
-        let (manifest_bytes, remote_url) = Store::load_jumbf_from_stream(format, &mut stream)?;
+        let (manifest_bytes, remote_url) = Store::load_jumbf_from_stream(format, &mut stream)
+            .inspect_err(|e| {
+                log_item!("asset", "error loading file", "load_from_asset")
+                    .failure_no_throw(validation_log, e);
+            })?;
 
         let store = if _sync {
             Self::from_manifest_data_and_stream(
