@@ -60,6 +60,7 @@ unexpected_cfgs = { level = "warn", check-cfg = ['cfg(test)'] }
 
 [[example]]
 name = "cawg_identity"
+required-features = ["file_io"]
 
 [[example]]
 name = "client"

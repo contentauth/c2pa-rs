@@ -3219,6 +3219,22 @@ impl Store {
         }
     }
 
+       /// Handles remote manifests asynchronously when fetch_remote_manifests feature is enabled
+    /// Required because wasm-bindgen cannot use async functions in a sync context.
+    #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
+    async fn handle_remote_manifest_async(ext_ref: &str) -> Result<Vec<u8>> {
+        // verify provenance path is remote url
+        if Store::is_valid_remote_url(ext_ref) {
+            if get_settings_value::<bool>("verify.remote_manifest_fetch").unwrap_or(true) {
+                Store::fetch_remote_manifest(ext_ref).await
+            } else {
+                Err(Error::RemoteManifestUrl(ext_ref.to_owned()))
+            }
+        } else {
+            Err(Error::JumbfNotFound)
+        }
+    }
+    
     /// load jumbf given a stream
     ///
     /// This handles, embedded and remote manifests
@@ -4033,16 +4049,16 @@ pub mod tests {
     use serde::Serialize;
     #[cfg(feature = "file_io")]
     use sha2::Sha256;
+    #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
+    use wasm_bindgen_test::wasm_bindgen_test;
 
     use super::*;
-    #[cfg(feature = "file_io")]
     use crate::{
         assertion::AssertionJson,
         assertions::{labels::BOX_HASH, Action, Actions, BoxHash, Uuid},
         claim::AssertionStoreJsonFormat,
         crypto::raw_signature::SigningAlg,
         hashed_uri::HashedUri,
-        jumbf_io::get_assetio_handler_from_path,
         settings::Settings,
         status_tracker::{LogItem, StatusTracker},
         utils::{
@@ -4051,11 +4067,15 @@ pub mod tests {
             patch::patch_bytes,
             test::{
                 create_test_claim, create_test_streams, fixture_path, temp_dir_path,
-                write_jpeg_placeholder_file, TEST_USER_ASSERTION,
+                TEST_USER_ASSERTION,
             },
             test_signer::{async_test_signer, test_cawg_signer, test_signer},
         },
         ClaimGeneratorInfo, DigitalSourceType,
+    };
+    #[cfg(feature = "file_io")]
+    use crate::{
+        jumbf_io::get_assetio_handler_from_path, utils::test::write_jpeg_placeholder_file,
     };
 
     fn create_editing_claim(claim: &mut Claim) -> Result<&mut Claim> {
@@ -6696,8 +6716,7 @@ pub mod tests {
     //     Store::load_from_asset(&op, true, &mut validation_log).unwrap();
     // }
 
-    // // generalize test for multipe file types
-    #[cfg(feature = "file_io")]
+    // generalize test for multipe file types
     fn external_manifest_test(file_name: &str) {
         use crate::utils::test::{run_file_test, TestFileSetup};
 

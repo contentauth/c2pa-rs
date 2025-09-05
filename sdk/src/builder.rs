@@ -2401,7 +2401,7 @@ mod tests {
     }
 
     #[c2pa_test_async]
-    #[cfg(any(target_arch = "wasm32", feature = "file_io"))]
+    #[cfg(target_arch = "wasm32")]
     async fn test_builder_box_hashed_embeddable() {
         use crate::asset_io::{CAIWriter, HashBlockObjectType};
         const BOX_HASH_IMAGE: &[u8] = include_bytes!("../tests/fixtures/boxhash.jpg");
