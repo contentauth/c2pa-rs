@@ -1,9 +1,8 @@
-#![allow(unused)] // TEMPORARY while building
-                  // Copyright 2024 Adobe. All rights reserved.
-                  // This file is licensed to you under the Apache License,
-                  // Version 2.0 (http://www.apache.org/licenses/LICENSE-2.0)
-                  // or the MIT license (http://opensource.org/licenses/MIT),
-                  // at your option.
+// Copyright 2024 Adobe. All rights reserved.
+// This file is licensed to you under the Apache License,
+// Version 2.0 (http://www.apache.org/licenses/LICENSE-2.0)
+// or the MIT license (http://opensource.org/licenses/MIT),
+// at your option.
 
 // Unless required by applicable law or agreed to in writing,
 // this software is distributed on an "AS IS" BASIS, WITHOUT
@@ -23,9 +22,12 @@ use crate::{
     Error, Result, Signer, SigningAlg,
 };
 
-/// Settings for configuring a local or remote [Signer][crate::Signer].
+/// Settings for configuring a local or remote [`Signer`].
 ///
-/// A [Signer][crate::Signer] can be obtained by calling [BuilderSettings::signer].
+/// A [`Signer`] can be obtained by calling the [`signer()`] function.
+///
+/// [`Signer`]: crate::Signer
+/// [`signer()`]: Builder::signer
 #[allow(unused)]
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -135,35 +137,6 @@ impl SignerSettings {
             _ => Ok(crate::utils::test_signer::test_signer(SigningAlg::Ps256)),
             #[cfg(not(test))]
             _ => Err(Error::MissingSignerSettings),
-        }
-    }
-
-    /// Returns a CAWG X.509 credential holder from the [`BuilderSettings::signer`] field.
-    fn cawg_x509_credential_holder(signer_info: &SignerSettings) -> Result<X509CredentialHolder> {
-        match signer_info {
-            SignerSettings::Local {
-                alg,
-                sign_cert,
-                private_key,
-                tsa_url,
-            } => {
-                let raw_signer =
-                    crate::crypto::raw_signature::signer_from_cert_chain_and_private_key(
-                        sign_cert.as_bytes(),
-                        private_key.as_bytes(),
-                        *alg,
-                        tsa_url.clone(),
-                    )?;
-
-                Ok(X509CredentialHolder::from_raw_signer(raw_signer))
-            }
-
-            SignerSettings::Remote {
-                url: _url,
-                alg: _alg,
-                sign_cert: _sign_cert,
-                tsa_url: _tsa_url,
-            } => todo!("Remote signing not yet supported"),
         }
     }
 }
