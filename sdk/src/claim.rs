@@ -76,7 +76,7 @@ use crate::{
     store::StoreValidationInfo,
     utils::hash_utils::{hash_by_alg, vec_compare},
     validation_status::{self, ASSERTION_MULTI_ASSET_HASH_MALFORMED},
-    ClaimGeneratorInfo, HashRange,
+    ClaimGeneratorInfo,
 };
 
 const BUILD_HASH_ALG: &str = "sha256";
@@ -2844,7 +2844,7 @@ impl Claim {
                                 }
                                 _ => validation_status::ASSERTION_BMFFHASH_MISMATCH,
                             };
-                          
+
                             Claim::verify_multi_asset_hash(
                                 claim,
                                 asset_data,
@@ -3253,7 +3253,6 @@ impl Claim {
                         .validation_status(validation_status::ASSERTION_HASHEDURI_MATCH)
                         .success(validation_log);
                     }
-
                 }
                 None => {
                     log_item!(
