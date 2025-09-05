@@ -6662,7 +6662,8 @@ pub mod tests {
     }
 
     #[test]
-
+    #[cfg(not(target_arch = "wasm32"))]
+    // TODO: Can run on Wasm once https://github.com/contentauth/c2pa-rs/pull/1325 lands
     fn test_removed_jumbf() {
         let (format, mut input_stream, _output_stream) = create_test_streams("no_manifest.jpg");
 
@@ -6756,7 +6757,8 @@ pub mod tests {
             .provenance
             .unwrap();
 
-            assert_eq!(ext_ref, setup.sidecar_url());
+            // cases might be different on different filesystems
+            assert_eq!(ext_ref.to_lowercase(), setup.sidecar_url().to_lowercase());
 
             // make sure it validates using streams with external manifest data
             let mut validation_log =
