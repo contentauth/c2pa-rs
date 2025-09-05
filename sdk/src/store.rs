@@ -5247,7 +5247,7 @@ pub mod tests {
 
     #[test]
     fn test_unsupported_type_without_external_manifest() {
-        let (format, mut input_stream, _output_stream) = create_test_streams("Purple Square.psd");
+        let (format, mut input_stream, _output_stream) = create_test_streams("unsupported_type.txt");
         let mut report = StatusTracker::default();
         let result = Store::from_stream(format, &mut input_stream, true, &mut report);
         assert!(matches!(result, Err(Error::UnsupportedType)));
