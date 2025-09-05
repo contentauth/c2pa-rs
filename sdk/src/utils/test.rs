@@ -36,7 +36,7 @@ use crate::{
     resource_store::UriOrResource,
     salt::DefaultSalt,
     store::Store,
-    utils::mime::extension_to_mime,
+    utils::{io_utils::tempdirectory, mime::extension_to_mime},
     AsyncSigner, ClaimGeneratorInfo, Result,
 };
 
@@ -329,7 +329,7 @@ impl TestFileSetup {
         let format = extension_to_mime(extension)
             .unwrap_or("application/octet-stream")
             .to_string();
-        let temp_dir = tempfile::tempdir().expect("create temp dir");
+        let temp_dir = tempdirectory().expect("create temp dir");
 
         // Create output path with same extension as input
         let mut output_path = temp_dir.path().join(fixture_name);
