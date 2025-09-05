@@ -639,8 +639,6 @@ fn tool_sign_image_with_cawg_data() -> Result<(), Box<dyn Error>> {
         .assert()
         .success();
 
-    eprintln!("\n\n\n\n------- SIGNED --------\n\n\n\n\n");
-
     Command::cargo_bin("c2patool")?
         .arg("--settings")
         .arg(fixture_path("trust/cawg_sign_settings.toml"))
