@@ -624,8 +624,7 @@ fn tool_sign_image_with_cawg_data() -> Result<(), Box<dyn Error>> {
     let file_path = tmp_dir.path().join("same_image.jpg");
     fs::copy(fixture_path(TEST_IMAGE), &file_path)?;
 
-    let output_path = "/Users/scouten/Desktop/same_image_cawg_signed.jpg";
-    // let output_path = tmp_dir.path().join("same_image_cawg_signed.jpg");
+    let output_path = tmp_dir.path().join("same_image_cawg_signed.jpg");
 
     Command::cargo_bin("c2patool")?
         .arg("--settings")
