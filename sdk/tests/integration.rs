@@ -300,8 +300,9 @@ mod integration_1 {
         Ok(())
     }
 
-    #[tokio::test]
+    #[cfg(not(target_arch = "wasm32"))]
     #[cfg(feature = "file_io")]
+    #[tokio::test]
     async fn test_cawg_signing_via_settings() -> Result<()> {
         Settings::from_toml(include_str!(
             "../tests/fixtures/test_settings_with_cawg_signing.toml"
