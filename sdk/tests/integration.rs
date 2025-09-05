@@ -300,6 +300,55 @@ mod integration_1 {
         Ok(())
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(feature = "file_io")]
+    #[tokio::test]
+    async fn test_cawg_signing_via_settings() -> Result<()> {
+        Settings::from_toml(include_str!(
+            "../tests/fixtures/test_settings_with_cawg_signing.toml"
+        ))?;
+
+        // Set up parent and destination paths.
+        let temp_dir = tempdirectory()?;
+        let output_path = temp_dir.path().join("test_file.jpg");
+        let parent_path = fixture_path("earth_apollo17.jpg");
+
+        // Create a new Manifest.
+        let mut builder = Builder::new();
+
+        // Sign and embed into the target file.
+        let signer = Settings::signer()?;
+        builder.sign_file(signer.as_ref(), &parent_path, &output_path)?;
+
+        // Read back the new file with embedded manifest.
+        let mut reader = Reader::from_file(&output_path)?;
+
+        reader
+            .post_validate_async(&c2pa::identity::validator::CawgValidator {})
+            .await
+            .unwrap();
+
+        dbg!(&reader);
+
+        // The test credentials are currently flagged as untrusted.
+        // This will be fixed when https://github.com/contentauth/c2pa-rs/pull/1356
+        // is merged.
+        assert_eq!(
+            reader
+                .validation_results()
+                .unwrap()
+                .active_manifest()
+                .unwrap()
+                .failure()
+                .last()
+                .unwrap()
+                .code(),
+            "signingCredential.untrusted"
+        );
+
+        Ok(())
+    }
+
     #[cfg(feature = "v1_api")]
     struct PlacedCallback {
         path: String,
