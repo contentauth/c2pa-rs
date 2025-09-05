@@ -3219,7 +3219,7 @@ impl Store {
         }
     }
 
-       /// Handles remote manifests asynchronously when fetch_remote_manifests feature is enabled
+    /// Handles remote manifests asynchronously when fetch_remote_manifests feature is enabled
     /// Required because wasm-bindgen cannot use async functions in a sync context.
     #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
     async fn handle_remote_manifest_async(ext_ref: &str) -> Result<Vec<u8>> {
@@ -3234,7 +3234,7 @@ impl Store {
             Err(Error::JumbfNotFound)
         }
     }
-    
+
     /// load jumbf given a stream
     ///
     /// This handles, embedded and remote manifests

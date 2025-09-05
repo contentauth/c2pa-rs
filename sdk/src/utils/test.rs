@@ -16,11 +16,13 @@
 #[cfg(feature = "file_io")]
 use std::path::Path;
 use std::{
+    collections::HashMap,
     io::{Cursor, Read, Write},
     path::PathBuf,
 };
 
 use env_logger;
+use once_cell::sync::Lazy;
 use tempfile::TempDir;
 
 use crate::{
@@ -73,6 +75,58 @@ pub const TEST_VC: &str = r#"{
         "jws": "eyJhbGciOiJQUzI1NiIsImI2NCI6ZmFsc2UsImNyaXQiOlsiYjY0Il19DJBMvvFAIC00nSGB6Tn0XKbbF9XrsaJZREWvR2aONYTQQxnyXirtXnlewJMBBn2h9hfcGZrvnC1b6PgWmukzFJ1IiH1dWgnDIS81BH-IxXnPkbuYDeySorc4QU9MJxdVkY5EL4HYbcIfwKj6X4LBQ2_ZHZIu1jdqLcRZqHcsDF5KKylKc1THn5VRWy5WhYg_gBnyWny8E6Qkrze53MR7OuAmmNJ1m1nN8SxDrG6a08L78J0-Fbas5OjAQz3c17GY8mVuDPOBIOVjMEghBlgl3nOi1ysxbRGhHLEK4s0KKbeRogZdgt1DkQxDFxxn41QWDw_mmMCjs9qxg0zcZzqEJw"
     }
 }"#;
+
+// Macro that both defines constants and registers fixtures
+macro_rules! define_fixtures {
+    ($base_path:expr, $($name:ident => ($file:expr, $format:expr)),* $(,)?) => {
+        // Define the constants
+        $(
+            pub const $name: &str = $file;
+        )*
+
+        // Create the registry mapping filenames to data and format
+        static EMBEDDED_FIXTURES: Lazy<HashMap<&'static str, (&'static [u8], &'static str)>> = Lazy::new(|| {
+            let mut map = HashMap::new();
+            $(
+                // Convert to &[u8] slice to avoid fixed-size array type issues
+                let bytes: &'static [u8] = include_bytes!(concat!("../../tests/fixtures/", $file));
+                map.insert($file, (bytes, $format));
+            )*
+            map
+        });
+
+        // Add a registry access function
+        pub fn get_registry() -> &'static HashMap<&'static str, (&'static [u8], &'static str)> {
+            &EMBEDDED_FIXTURES
+        }
+    };
+}
+
+// Register your fixtures with the macro
+// Use with base path parameter
+define_fixtures!(
+    "../../tests/fixtures/",
+    SMALL_JPEG => ("earth_apollo17.jpg", "image/jpeg"),
+    CA_JPEG => ("CA.jpg", "image/jpeg"),
+    XCA_JPEG => ("XCA.jpg", "image/jpeg"),
+    SAMPLE_PNG => ("libpng-test.png", "image/png"),
+    SAMPLE_WAV => ("sample1.wav", "audio/wav"),
+    SAMPLE_WEBP => ("sample1.webp", "image/webp"),
+    SAMPLE_TIFF => ("TUSCANY.TIF", "image/tiff"),
+    SAMPLE_AVI => ("test.avi", "video/avi"),
+    SAMPLE_HEIC => ("sample1.heic", "image/heic"),
+    SAMPLE_HEIF => ("sample1.heif", "image/heif"),
+    SAMPLE_MP4 => ("video1.mp4", "video/mp4"),
+    LEGACY_MP4 => ("legacy.mp4", "video/mp4"),
+    LEGACY_INGREDIENT_HASH => ("legacy_ingredient_hash.jpg", "image/jpeg"),
+    NO_MANIFEST => ("no_manifest.jpg", "image/jpeg"),
+    SAMPLE_BAD_SIGNATURE => ("CIE-sig-CA.jpg", "image/jpeg"),
+    SAMPLE_PSD => ("Purple Square.psd", "image/vnd.adobe.photoshop"),
+    TEST_TEXT_PLAIN => ("unsupported_type.txt", "text/plain"),
+    PRE_RELEASE => ("prerelease.jpg", "image/jpeg"),
+
+    // Add more as needed
+);
 
 pub fn setup_logger() {
     static INIT: std::sync::Once = std::sync::Once::new();
@@ -292,20 +346,43 @@ pub fn create_test_streams(
     std::io::Cursor<Vec<u8>>,
     std::io::Cursor<Vec<u8>>,
 ) {
-    let input_path = fixture_path(fixture_name);
-    let input_data = std::fs::read(&input_path).expect("could not read input file");
+    // Try to use embedded fixture first
+    if let Some(fixture) = get_registry().get(fixture_name) {
+        // Access tuple elements directly by position
+        let data = fixture.0;
+        let format = fixture.1;
 
-    // Determine format from input file extension
-    let format = input_path
-        .extension()
-        .and_then(|ext| ext.to_str())
-        .and_then(extension_to_mime)
-        .unwrap_or("application/octet-stream");
+        let input_cursor = std::io::Cursor::new(data.to_vec());
+        let output_cursor = std::io::Cursor::new(Vec::new());
 
-    let input_cursor = std::io::Cursor::new(input_data);
-    let output_cursor = std::io::Cursor::new(Vec::new());
+        return (format, input_cursor, output_cursor);
+    }
 
-    (format, input_cursor, output_cursor)
+    #[cfg(feature = "file_io")]
+    {
+        // Fallback to file-based fixture if not embedded
+        let input_path = fixture_path(fixture_name);
+        let input_data = std::fs::read(&input_path).expect("could not read input file");
+
+        // Determine format from input file extension
+        let format = input_path
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .and_then(extension_to_mime)
+            .unwrap_or("application/octet-stream");
+
+        let input_cursor = std::io::Cursor::new(input_data);
+        let output_cursor = std::io::Cursor::new(Vec::new());
+
+        (format, input_cursor, output_cursor)
+    }
+    #[cfg(not(feature = "file_io"))]
+    {
+        panic!(
+            "Fixture '{}' not found in embedded registry and file I/O is disabled",
+            fixture_name
+        );
+    }
 }
 
 /// Setup for file-based tests that need actual file I/O operations
@@ -334,30 +411,6 @@ impl TestFileSetup {
         // Create output path with same extension as input
         let mut output_path = temp_dir.path().join(fixture_name);
         output_path.set_extension(extension);
-
-        Self {
-            temp_dir,
-            input_path,
-            output_path,
-            format,
-        }
-    }
-
-    /// Create a new test file setup with a custom output filename
-    #[allow(clippy::expect_used)]
-    pub fn new_with_output_name(fixture_name: &str, output_name: &str) -> Self {
-        let input_path = fixture_path(fixture_name);
-        let extension = input_path
-            .extension()
-            .and_then(|ext| ext.to_str())
-            .unwrap_or("bin");
-
-        let format = extension_to_mime(extension)
-            .unwrap_or("application/octet-stream")
-            .to_string();
-        let temp_dir = tempfile::tempdir().expect("create temp dir");
-
-        let output_path = temp_dir.path().join(output_name);
 
         Self {
             temp_dir,
@@ -429,16 +482,6 @@ where
     F: FnOnce(&TestFileSetup),
 {
     let setup = TestFileSetup::new(fixture_name);
-    test_fn(&setup);
-    // TestFileSetup automatically cleans up temp_dir when dropped
-}
-
-/// Run a test that requires file I/O operations with custom output name
-pub fn run_file_test_with_output<F>(fixture_name: &str, output_name: &str, test_fn: F)
-where
-    F: FnOnce(&TestFileSetup),
-{
-    let setup = TestFileSetup::new_with_output_name(fixture_name, output_name);
     test_fn(&setup);
     // TestFileSetup automatically cleans up temp_dir when dropped
 }
