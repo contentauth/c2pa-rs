@@ -15,6 +15,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     create_signer,
+    identity::x509::X509CredentialHolder,
     settings::{Settings, SettingsValidate},
     Error, Result, Signer, SigningAlg,
 };
@@ -61,8 +62,11 @@ impl SignerSettings {
         let c2pa_signer = Self::c2pa_signer()?;
 
         // TO DISCUSS: What if get_value returns an Err(...)?
-        if let Ok(Some(cawg_x509_signer_info)) = Settings::get_value::<Option<SignerSettings>>("cawg_x509_signer") {
-            let _cawg_x509_credential_holder = Self::cawg_x509_credential_holder(&cawg_x509_signer_info)?;
+        if let Ok(Some(cawg_x509_signer_info)) =
+            Settings::get_value::<Option<SignerSettings>>("cawg_x509_signer")
+        {
+            let _cawg_x509_credential_holder =
+                Self::cawg_x509_credential_holder(&cawg_x509_signer_info)?;
 
             todo!();
             // TODO: If CAWG X.509 signer settings are detected, wrap the
@@ -114,29 +118,31 @@ impl SignerSettings {
     }
 
     /// Returns a CAWG X.509 credential holder from the [`BuilderSettings::signer`] field.
-    #[allow(unused)]
-    fn cawg_x509_credential_holder(signer_info: &SignerSettings) -> Result<Box<dyn Signer>> {
+    fn cawg_x509_credential_holder(signer_info: &SignerSettings) -> Result<X509CredentialHolder> {
         match signer_info {
-                SignerSettings::Local {
-                    alg: _,
-                    sign_cert: _,
-                    private_key: _,
-                    tsa_url: _,
-                } => {
-                    todo!("Rewrite to use CAWG X509");
-                    // create_signer::from_keys(
-                    // sign_cert.as_bytes(),
-                    // private_key.as_bytes(),
-                    // alg,
-                    // tsa_url.to_owned())
-                }
+            SignerSettings::Local {
+                alg,
+                sign_cert,
+                private_key,
+                tsa_url,
+            } => {
+                let raw_signer =
+                    crate::crypto::raw_signature::signer_from_cert_chain_and_private_key(
+                        sign_cert.as_bytes(),
+                        private_key.as_bytes(),
+                        alg.clone(),
+                        tsa_url.clone(),
+                    )?;
 
-                SignerSettings::Remote {
-                    url: _url,
-                    alg: _alg,
-                    sign_cert: _sign_cert,
-                    tsa_url: _tsa_url,
-                } => todo!("Remote signing not yet supported"),
+                Ok(X509CredentialHolder::from_raw_signer(raw_signer))
+            }
+
+            SignerSettings::Remote {
+                url: _url,
+                alg: _alg,
+                sign_cert: _sign_cert,
+                tsa_url: _tsa_url,
+            } => todo!("Remote signing not yet supported"),
         }
     }
 }
