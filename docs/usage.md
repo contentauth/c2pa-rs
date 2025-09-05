@@ -34,6 +34,8 @@ c2pa = { version = "0.45.2", features = ["file_io", "add_thumbnails"] }
 
 The Rust library crate provides the following capabilities:
 
+* `openssl` *(enabled by default)* - Enables the system `openssl` implementation for cryptography.
+* `rust_native_crypto` - Enables the Rust native implementation for cryptography.
 * `add_thumbnails` generates thumbnails automatically for JPEG and PNG files. (no longer included with `file_io`)
 * `fetch_remote_manifests` enables the verification step to retrieve externally referenced manifest stores.  External manifests are only fetched if there is no embedded manifest store and no locally adjacent .c2pa manifest store file of the same name.
 * `file_io` enables manifest generation, signing via OpenSSL, and embedding manifests in [supported file formats](supported-formats.md).
@@ -48,6 +50,10 @@ The Rust library crate provides the following capabilities:
 * `http_wasi` *(enabled by default)* - Enables `wasi` for sync HTTP requests on WASI.
 * `http_wstd` *(enabled by default)* - Enables `wstd` for async HTTP requests on WASI.
 
+
+> [!NOTE]
+> If both `rust_native_crypto` and `openssl` are enabled, it will default to `rust_native_crypto`.
+> It is recommended to disable default features when using `rust_native_crypto` as to avoid including `openssl` as a dependency.
 
 ### New API
 
