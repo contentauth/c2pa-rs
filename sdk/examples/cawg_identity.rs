@@ -125,9 +125,7 @@ mod cawg {
 
         builder.sign_file_async(&signer, source, &dest).await?;
 
-        let mut reader = Reader::from_file(dest)?;
-
-        reader.post_validate_async(&CawgValidator {}).await?;
+        let reader = Reader::from_file_async(dest).await?;
 
         println!("{reader}");
         Ok(())

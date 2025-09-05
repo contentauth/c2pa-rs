@@ -574,6 +574,9 @@ fn verify_fragmented(init_pattern: &Path, frag_pattern: &Path) -> Result<Vec<Rea
 
 // run cawg validation if supported
 fn validate_cawg(reader: &mut Reader) -> Result<()> {
+    if true {
+        todo!("Remove me?");
+    }
     #[cfg(not(target_os = "wasi"))]
     {
         Runtime::new()?

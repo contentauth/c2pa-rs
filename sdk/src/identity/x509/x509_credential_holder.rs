@@ -137,6 +137,26 @@ mod tests {
         let manifest_store = Reader::from_stream(format, &mut dest).unwrap();
         assert_eq!(manifest_store.validation_status(), None);
 
+        let validation_results = manifest_store.validation_results().unwrap();
+        let active_manifest_results = validation_results.active_manifest().unwrap();
+        let active_manifest_success_codes = active_manifest_results.success();
+
+        dbg!(&active_manifest_success_codes);
+
+        let mut ia_success_codes = active_manifest_success_codes.iter().filter(|s| {
+            s.url()
+                .map(|url| url.ends_with("cawg.identity"))
+                .unwrap_or(false)
+                && !s.code().starts_with("assertion.")
+        });
+
+        let ia_success = ia_success_codes.next().unwrap();
+        dbg!(&ia_success);
+
+        if true {
+            panic!("Look for identity assertion success codes");
+        }
+
         let manifest = manifest_store.active_manifest().unwrap();
         let mut st = StatusTracker::default();
         let mut ia_iter = IdentityAssertion::from_manifest(manifest, &mut st);
