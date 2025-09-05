@@ -616,3 +616,39 @@ fn tool_read_image_with_details_with_cawg_data() -> Result<(), Box<dyn Error>> {
         .stdout(str::contains("cawg.identity.well-formed"));
     Ok(())
 }
+
+#[test]
+// c2patool --settings .../trust/cawg_test_settings.toml C_with_CAWG_data.jpg
+fn tool_sign_image_with_cawg_data() -> Result<(), Box<dyn Error>> {
+    let tmp_dir = tempdir()?;
+    let file_path = tmp_dir.path().join("same_image.jpg");
+    fs::copy(fixture_path(TEST_IMAGE), &file_path)?;
+
+    let output_path = "/Users/scouten/Desktop/same_image_cawg_signed.jpg";
+    // let output_path = tmp_dir.path().join("same_image_cawg_signed.jpg");
+
+    Command::cargo_bin("c2patool")?
+        .arg("--settings")
+        .arg(fixture_path("trust/cawg_sign_settings.toml"))
+        .arg(&file_path)
+        .arg("-m")
+        .arg(fixture_path("ingredient_test.json"))
+        .arg("-o")
+        .arg(&output_path)
+        .arg("-f")
+        .assert()
+        .success();
+
+    eprintln!("\n\n\n\n------- SIGNED --------\n\n\n\n\n");
+
+    Command::cargo_bin("c2patool")?
+        .arg("--settings")
+        .arg(fixture_path("trust/cawg_sign_settings.toml"))
+        .arg(&output_path)
+        .assert()
+        .success()
+        .stdout(str::contains("cawg.identity"))
+        .stdout(str::contains("c2pa.assertions/cawg.training-mining"))
+        .stdout(str::contains("cawg.identity.well-formed"));
+    Ok(())
+}
