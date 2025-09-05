@@ -13,7 +13,6 @@
 
 use std::{collections::HashMap, fmt};
 
-use log::error;
 use serde::{Deserialize, Serialize};
 use serde_cbor::Value;
 
@@ -27,7 +26,7 @@ use crate::{
 };
 
 const ASSERTION_CREATION_VERSION: usize = 2;
-pub const CAI_INGREDIENT_IDS: &str = "org.cai.ingredientIds";
+pub const INGREDIENT_IDS: &str = "ingredientIds";
 
 // TODO: this is needed to supress clippy deprecated field warning:  https://github.com/serde-rs/serde/pull/2879
 pub use digital_source_type::DigitalSourceType;
@@ -330,7 +329,7 @@ pub struct Action {
 
     /// This is NOT the instanceID in the spec
     /// It is now deprecated but was previously used to map the action to an ingredient
-    #[deprecated(since = "0.37.0", note = "Use `org.cai.ingredientIds` instead")]
+    #[deprecated(since = "0.37.0", note = "Use `parameters.ingredientIds[]` instead")]
     #[serde(skip_serializing)]
     #[serde(alias = "instanceId", alias = "instanceID")]
     pub(crate) instance_id: Option<String>,
@@ -398,7 +397,7 @@ impl Action {
 
     /// Returns the value of the `xmpMM:InstanceID` property for the modified
     /// (output) resource.
-    #[deprecated(since = "0.37.0", note = "Use `org.cai.ingredientIds` instead")]
+    #[deprecated(since = "0.37.0", note = "Use `ingredient_ids()` instead")]
     pub fn instance_id(&self) -> Option<&str> {
         #[allow(deprecated)]
         self.instance_id.as_deref()
@@ -407,6 +406,13 @@ impl Action {
     /// Returns the regions of interest that changed].
     pub fn changes(&self) -> Option<&[RegionOfInterest]> {
         self.changes.as_deref()
+    }
+
+    /// Returns the description of the action.
+    ///
+    /// This field is only applicable to the v2 assertion.
+    pub fn description(&self) -> Option<&str> {
+        self.description.as_deref()
     }
 
     /// Returns the additional parameters for this action.
@@ -488,35 +494,6 @@ impl Action {
         self
     }
 
-    // Internal function to return any ingredients referenced by this action.
-    #[allow(dead_code)] // not used in some scenarios
-    pub(crate) fn ingredient_ids(&mut self, claim_version: u8) -> Option<Vec<String>> {
-        match self.get_parameter(CAI_INGREDIENT_IDS) {
-            Some(Value::Array(ids)) => {
-                let mut result = Vec::new();
-                for id in ids {
-                    if let Value::Text(s) = id {
-                        result.push(s.clone());
-                    }
-                }
-                Some(result)
-            }
-            Some(_) => {
-                error!("Invalid format for org.cai.ingredientIds parameter, expected an array of strings.");
-                None // Invalid format, so ignore it.
-            }
-            // If there is no CAI_INGREDIENT_IDS parameter, check for the deprecated instance_id
-            #[allow(deprecated)]
-            None => {
-                if claim_version == 1 && self.instance_id.is_some() {
-                    self.instance_id.as_ref().map(|id| vec![id.to_string()])
-                } else {
-                    None
-                }
-            }
-        }
-    }
-
     /// Sets the additional parameters for this action.
     ///
     /// These vary by the type of action.
@@ -574,6 +551,15 @@ impl Action {
         self
     }
 
+    /// Sets the description of the action.
+    ///
+    /// This is only present in the v2 actions assertion.
+    /// See <https://spec.c2pa.org/specifications/specifications/1.4/specs/C2PA_Specification.html#_actions>
+    pub fn set_description<S: Into<String>>(mut self, description: S) -> Self {
+        self.description = Some(description.into());
+        self
+    }
+
     /// Set a digitalSourceType URI as defined at <https://cv.iptc.org/newscodes/digitalsourcetype/>.
     pub fn set_source_type<T: Into<DigitalSourceType>>(mut self, source_type: T) -> Self {
         self.source_type = Some(source_type.into());
@@ -613,12 +599,12 @@ impl Action {
 
     /// Adds an ingredient id to the action.
     pub fn add_ingredient_id(&mut self, ingredient_id: &str) -> Result<&mut Self> {
-        if let Some(Value::Array(ids)) = self.get_parameter_mut("ingredientIds") {
+        if let Some(Value::Array(ids)) = self.get_parameter_mut(INGREDIENT_IDS) {
             ids.push(Value::Text(ingredient_id.to_string()));
             return Ok(self);
         }
         let ids = vec![Value::Text(ingredient_id.to_string())];
-        self.set_parameter_ref("ingredientIds", ids)?;
+        self.set_parameter_ref(INGREDIENT_IDS, ids)?;
         Ok(self)
     }
 
@@ -626,7 +612,7 @@ impl Action {
     /// This is used to map actions to their associated ingredients.
     /// We don't want any of these fields in the final CBOR, so we remove them after extracting.
     pub(crate) fn extract_ingredient_ids(&mut self) -> Option<Vec<String>> {
-        let ingredient_ids = self.remove_parameter("ingredientIds");
+        let ingredient_ids = self.remove_parameter(INGREDIENT_IDS);
         let cai_ingredient_ids = self.remove_parameter("org.cai.ingredientIds");
         #[allow(deprecated)]
         let instance_id = self.instance_id.take();
@@ -925,7 +911,8 @@ pub mod tests {
                             ..Default::default()
                         }],
                         ..Default::default()
-                    }),
+                    })
+                    .set_description("Apply a gaussian blur to the image"),
             )
             .add_metadata(
                 AssertionMetadata::new()
@@ -960,6 +947,11 @@ pub mod tests {
         assert_eq!(
             result.metadata.unwrap().date_time(),
             original.metadata.unwrap().date_time()
+        );
+        assert!(result.actions[0].description().is_none());
+        assert_eq!(
+            result.actions[1].description(),
+            Some("Apply a gaussian blur to the image")
         );
     }
 
@@ -1067,7 +1059,7 @@ pub mod tests {
                     "action": "c2pa.opened",
                     "parameters": {
                       "description": "import",
-                      CAI_INGREDIENT_IDS: ["xmp.iid:7b57930e-2f23-47fc-affe-0400d70b738d"],
+                      INGREDIENT_IDS: ["xmp.iid:7b57930e-2f23-47fc-affe-0400d70b738d"],
                     },
                     "digitalSourceType": "http://cv.iptc.org/newscodes/digitalsourcetype/algorithmicMedia",
                     "softwareAgent": "TestApp 1.0",
@@ -1096,7 +1088,7 @@ pub mod tests {
                     "action": "c2pa.opened",
                     "parameters": {
                         "description": "import",
-                        "org.cai.ingredientIds": ["xmp.iid:7b57930e-2f23-47fc-affe-0400d70b738d"]
+                        "ingredientIds": ["xmp.iid:7b57930e-2f23-47fc-affe-0400d70b738d"]
                     },
                     "digitalSourceType": "http://cv.iptc.org/newscodes/digitalsourcetype/algorithmicMedia",
                     "softwareAgent": {

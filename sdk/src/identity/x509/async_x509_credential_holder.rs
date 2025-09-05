@@ -104,11 +104,12 @@ mod tests {
 
     use std::io::{Cursor, Seek};
 
+    use c2pa_macros::c2pa_test_async;
     #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
     use wasm_bindgen_test::wasm_bindgen_test;
 
     use crate::{
-        crypto::raw_signature,
+        crypto::{cose::Verifier, raw_signature},
         identity::{
             builder::{AsyncIdentityAssertionBuilder, AsyncIdentityAssertionSigner},
             tests::fixtures::{cert_chain_and_private_key_for_alg, manifest_json, parent_json},
@@ -122,12 +123,7 @@ mod tests {
     const TEST_IMAGE: &[u8] = include_bytes!("../../../tests/fixtures/CA.jpg");
     const TEST_THUMBNAIL: &[u8] = include_bytes!("../../../tests/fixtures/thumbnail.jpg");
 
-    #[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
-    #[cfg_attr(
-        all(target_arch = "wasm32", not(target_os = "wasi")),
-        wasm_bindgen_test
-    )]
-    #[cfg_attr(target_os = "wasi", wstd::test)]
+    #[c2pa_test_async]
     async fn simple_case_async() {
         let format = "image/jpeg";
         let mut source = Cursor::new(TEST_IMAGE);
@@ -181,7 +177,10 @@ mod tests {
         drop(ia_iter);
 
         // And that identity assertion should be valid for this manifest.
-        let x509_verifier = X509SignatureVerifier {};
+        let x509_verifier = X509SignatureVerifier {
+            cose_verifier: Verifier::IgnoreProfileAndTrustPolicy,
+        };
+
         let sig_info = ia
             .validate(manifest, &mut st, &x509_verifier)
             .await

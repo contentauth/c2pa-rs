@@ -22,6 +22,8 @@ use crate::{
     Error,
 };
 
+const ASSERTION_CREATION_VERSION: usize = 1;
+
 /// A `Metadata` assertion provides structured metadata using JSON-LD format for
 /// both standardized C2PA metadata and custom metadata schemas.
 ///
@@ -38,21 +40,29 @@ pub struct Metadata {
     /// Metadata fields with namespace prefixes.
     #[serde(flatten)]
     pub value: HashMap<String, Value>,
-    /// Assertion label (not serialized).
+
+    /// Custom assertion label (not serialized into content).
     #[serde(skip)]
-    pub label: String,
+    custom_metadata_label: Option<String>,
 }
 
 impl Metadata {
     /// Creates a new metadata assertion from a JSON-LD string.
-    pub fn new(label: &str, jsonld: &str) -> Result<Self, Error> {
+    pub fn new(metadata_label: &str, jsonld: &str) -> Result<Self, Error> {
         let metadata = serde_json::from_slice::<Metadata>(jsonld.as_bytes())
             .map_err(|e| Error::BadParam(format!("Invalid JSON format: {e}")))?;
+
+        // is this a standard c2pa.metadata assertion or a custom field
+        let custom_metadata_label = if metadata_label != labels::METADATA {
+            Some(metadata_label.to_owned())
+        } else {
+            None
+        };
 
         Ok(Self {
             context: metadata.context,
             value: metadata.value,
-            label: label.to_owned(),
+            custom_metadata_label,
         })
     }
 
@@ -67,11 +77,18 @@ impl Metadata {
             return false;
         }
 
-        if self.label == labels::METADATA {
+        if self.label() == labels::METADATA {
             for (namespace, uri) in &self.context {
                 if let Some(expected_uri) = ALLOWED_SCHEMAS.get(namespace.as_str()) {
                     if uri != expected_uri {
-                        return false;
+                        // check the backcompat list
+                        if let Some(bcl) = BACKCOMPAT_LIST.get(namespace.as_str()) {
+                            if !bcl.iter().any(|v| v == uri) {
+                                return false;
+                            }
+                        } else {
+                            return false;
+                        }
                     }
                 }
             }
@@ -83,19 +100,30 @@ impl Metadata {
                     return false;
                 }
             }
-            if self.label == labels::METADATA && !ALLOWED_FIELDS.contains(&label.as_str()) {
+            if self.label() == labels::METADATA && !ALLOWED_FIELDS.contains(&label.as_str()) {
                 return false;
             }
         }
         true
+    }
+
+    /// Get the label for the metadata
+    pub fn get_label(&self) -> &str {
+        self.label()
     }
 }
 
 impl AssertionJson for Metadata {}
 
 impl AssertionBase for Metadata {
+    const LABEL: &'static str = labels::METADATA;
+    const VERSION: Option<usize> = Some(ASSERTION_CREATION_VERSION);
+
     fn label(&self) -> &str {
-        &self.label
+        match &self.custom_metadata_label {
+            Some(cm) => cm,
+            None => Self::LABEL,
+        }
     }
 
     fn to_assertion(&self) -> Result<Assertion, Error> {
@@ -104,7 +132,10 @@ impl AssertionBase for Metadata {
 
     fn from_assertion(assertion: &Assertion) -> Result<Self, Error> {
         let mut metadata = Self::from_json_assertion(assertion)?;
-        metadata.label = assertion.label().to_owned();
+
+        metadata.custom_metadata_label =
+            (assertion.label() != labels::METADATA).then(|| assertion.label().to_owned());
+
         Ok(metadata)
     }
 }
@@ -122,11 +153,18 @@ lazy_static! {
         ("dc", "http://purl.org/dc/elements/1.1/"),
         ("Iptc4xmpExt", "http://iptc.org/std/Iptc4xmpExt/2008-02-29/"),
         ("exif", "http://ns.adobe.com/exif/1.0/"),
-        ("exifEX", "http://cipa.jp/exif/1.0/exifEX"),
+        ("exifEX", "http://cipa.jp/exif/1.0/"),
         ("photoshop", "http://ns.adobe.com/photoshop/1.0/"),
         ("tiff", "http://ns.adobe.com/tiff/1.0/"),
         ("xmpDM", "http://ns.adobe.com/xmp/1.0/DynamicMedia/"),
         ("plus", "http://ns.useplus.org/ldf/xmp/1.0/"),
+    ]
+    .into_iter()
+    .collect();
+
+    // list is to support versions that have changed since the current spec
+    static ref BACKCOMPAT_LIST: HashMap<&'static str, Vec<&'static str>> = vec![
+        ("exifEX", vec!["http://cipa.jp/exif/1.0/exifEX", "http://cipa.jp/exif/2.32/"])
     ]
     .into_iter()
     .collect();
@@ -448,12 +486,18 @@ pub mod tests {
     #![allow(clippy::expect_used)]
     #![allow(clippy::unwrap_used)]
 
-    use crate::{assertion::AssertionBase, assertions::metadata::Metadata};
+    use crate::{
+        assertion::AssertionBase,
+        assertions::{
+            labels::{CAWG_METADATA, METADATA},
+            metadata::Metadata,
+        },
+    };
 
     const SPEC_EXAMPLE: &str = r#"{
         "@context" : {
             "exif": "http://ns.adobe.com/exif/1.0/",
-            "exifEX": "http://cipa.jp/exif/1.0/exifEX",
+            "exifEX": "http://cipa.jp/exif/1.0/",
             "tiff": "http://ns.adobe.com/tiff/1.0/",
             "Iptc4xmpExt": "http://iptc.org/std/Iptc4xmpExt/2008-02-29/",
             "photoshop" : "http://ns.adobe.com/photoshop/1.0/"
@@ -484,6 +528,17 @@ pub mod tests {
         "exifEX:LensModel": "17.0-35.0 mm",
         "exifEX:LensSpecification": { "@list": [ 1.55, 4.2, 1.6, 2.4 ] }
     }"#;
+
+    const CAWG_METADATA_EXAMPLE: &str = r#" {
+        "@context" : {
+            "dc" : "http://purl.org/dc/elements/1.1/"
+        },
+        "dc:created": "2025 August 13", 
+        "dc:creator": [
+             "John Doe"
+        ]
+        }
+        "#;
 
     const CUSTOM_METADATA: &str = r#" {
         "@context" : {
@@ -520,15 +575,48 @@ pub mod tests {
         }
         "#;
 
+    const BACKCOMPAT: &str = r#" {
+        "@context" : {
+            "exif": "http://ns.adobe.com/exif/1.0/",
+            "exifEX": "http://cipa.jp/exif/2.32/",
+            "tiff": "http://ns.adobe.com/tiff/1.0/",
+            "Iptc4xmpExt": "http://iptc.org/std/Iptc4xmpExt/2008-02-29/",
+            "photoshop" : "http://ns.adobe.com/photoshop/1.0/"
+        },
+        "photoshop:DateCreated": "Aug 31, 2022",
+        "Iptc4xmpExt:DigitalSourceType": "https://cv.iptc.org/newscodes/digitalsourcetype/digitalCapture",
+        "exif:GPSVersionID": "2.2.0.0",
+        "exif:GPSLatitude": "39,21.102N",
+        "exif:GPSLongitude": "74,26.5737W",
+        "exif:GPSAltitudeRef": 0,
+        "exif:GPSAltitude": "100963/29890",
+        "exifEX:LensSpecification": { "@list": [ 1.55, 4.2, 1.6, 2.4 ] }
+    }
+    "#;
+
     #[test]
     fn metadata_from_json() {
-        let metadata = Metadata::new("c2pa.metadata", SPEC_EXAMPLE).unwrap();
+        let metadata = Metadata::new(METADATA, SPEC_EXAMPLE).unwrap();
         assert!(metadata.is_valid());
     }
 
     #[test]
     fn assertion_round_trip() {
-        let metadata = Metadata::new("c2pa.metadata", SPEC_EXAMPLE).unwrap();
+        let metadata = Metadata::new(METADATA, SPEC_EXAMPLE).unwrap();
+        let assertion = metadata.to_assertion().unwrap();
+        let result = Metadata::from_assertion(&assertion).unwrap();
+        assert_eq!(metadata, result);
+    }
+
+    #[test]
+    fn backcompat() {
+        let metadata = Metadata::new(METADATA, BACKCOMPAT).unwrap();
+        assert!(metadata.is_valid());
+    }
+
+    #[test]
+    fn assertion_custom_round_trip() {
+        let metadata = Metadata::new("custom.metadata", CUSTOM_METADATA).unwrap();
         let assertion = metadata.to_assertion().unwrap();
         let result = Metadata::from_assertion(&assertion).unwrap();
         assert_eq!(metadata, result);
@@ -539,30 +627,36 @@ pub mod tests {
         let mut metadata = Metadata::new("custom.metadata", CUSTOM_METADATA).unwrap();
         assert!(metadata.is_valid());
         // c2pa.metadata has restrictions on fields
-        metadata.label = "c2pa.metadata".to_owned();
+        metadata.custom_metadata_label = Some(METADATA.to_owned());
         assert!(!metadata.is_valid());
+    }
+
+    #[test]
+    fn test_cawg_metadata() {
+        let metadata = Metadata::new(CAWG_METADATA, CAWG_METADATA_EXAMPLE).unwrap();
+        assert!(metadata.is_valid());
     }
 
     #[test]
     fn test_field_not_in_context() {
         let mut metadata = Metadata::new("custom.metadata", MISSING_CONTEXT).unwrap();
         assert!(!metadata.is_valid());
-        metadata.label = "c2pa.metadata".to_owned();
+        metadata.custom_metadata_label = Some(METADATA.to_owned());
         assert!(!metadata.is_valid());
     }
 
     #[test]
     fn test_uri_is_not_allowed() {
-        let mut metadata = Metadata::new("c2pa.metadata", MISMATCH_URI).unwrap();
+        let mut metadata = Metadata::new(METADATA, MISMATCH_URI).unwrap();
         assert!(!metadata.is_valid());
         // custom metadata does not have restriction on uris
-        metadata.label = "custom.metadata".to_owned();
+        metadata.custom_metadata_label = Some("custom.metadata".to_owned());
         assert!(metadata.is_valid());
     }
 
     #[test]
     fn test_empty_context() {
-        let metadata = Metadata::new("c2pa.metadata", EMPTY_CONTEXT).unwrap();
+        let metadata = Metadata::new(METADATA, EMPTY_CONTEXT).unwrap();
         assert!(!metadata.is_valid());
     }
 }

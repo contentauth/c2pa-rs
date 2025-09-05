@@ -509,6 +509,7 @@ pub unsafe extern "C" fn c2pa_reader_from_stream(
     let format = from_cstr_or_return_null!(format);
 
     let result = C2paReader::from_stream(&format, &mut (*stream));
+
     return_boxed!(post_validate(result))
 }
 
@@ -1567,6 +1568,21 @@ mod tests {
         TestC2paStream::drop_c_stream(stream);
     }
 
+    // cargo test test_reader_file_with_wrong_label -- --nocapture
+    #[test]
+    fn test_reader_file_with_wrong_label() {
+        let mut stream = TestC2paStream::new(
+            include_bytes!(fixture_path!("adobe-20220124-E-clm-CAICAI.jpg")).to_vec(),
+        )
+        .into_c_stream();
+
+        let format = CString::new("image/jpeg").unwrap();
+        let result: *mut C2paReader =
+            unsafe { c2pa_reader_from_stream(format.as_ptr(), &mut stream) };
+        assert!(!result.is_null());
+        TestC2paStream::drop_c_stream(stream);
+    }
+
     #[test]
     fn test_c2pa_reader_from_stream_null_format() {
         let mut stream = TestC2paStream::new(Vec::new()).into_c_stream();
@@ -1822,6 +1838,14 @@ mod tests {
     #[test]
     #[cfg(feature = "file_io")]
     fn test_reader_from_file_cawg_identity() {
+        let settings = CString::new(include_bytes!(
+            "../../cli/tests/fixtures/trust/cawg_test_settings.toml"
+        ))
+        .unwrap();
+        let format = CString::new("toml").unwrap();
+        let result = unsafe { c2pa_load_settings(settings.as_ptr(), format.as_ptr()) };
+        assert_eq!(result, 0);
+
         let base = env!("CARGO_MANIFEST_DIR");
         let path =
             CString::new(format!("{base}/../sdk/tests/fixtures/C_with_CAWG_data.jpg")).unwrap();

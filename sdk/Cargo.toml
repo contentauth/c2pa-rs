@@ -177,19 +177,31 @@ serde_json = { version = "1.0.117", features = ["preserve_order"] }
 serde_with = "3.11.0"
 serde-transcode = "1.1.1"
 sha1 = "0.10.6"
-sha2 = "0.10.6"
 spki = { version = "0.7.3", optional = true }
 static-iref = "3.0"
 tempfile = "=3.15.0"
 thiserror = "2.0.8"
 treeline = "0.1.0"
 url = "2.5.3"
-uuid = { version = "=1.12.0", features = ["serde", "v4"] }
+uuid = { version = "1.18.0", features = ["serde", "v4"] }
 web-time = "1.1"
 x509-certificate = "0.24.0"
 x509-parser = "0.16.0"
 zeroize = { version = "1.8", features = ["zeroize_derive"] }
 zip = { version = "3.0.0", default-features = false }
+
+# Use the asm feature of sha2 on aarch64 for better performance. This nearly
+# halves hashing time for large assets (> 50gb mp4, for example).
+#
+# Note: This feature has been removed in later versions of sha2.
+# If upgrading, ensure sha2 has implemented equivalent optimizations for aarch64.
+#
+# See: https://github.com/RustCrypto/hashes/pull/542 and
+# https://github.com/RustCrypto/hashes/tree/master/sha2#backends (which hasn't been released yet).
+[target.'cfg(target_arch = "aarch64")'.dependencies]
+sha2 = { version = "0.10.6", features = ["asm"] }
+[target.'cfg(not(target_arch = "aarch64"))'.dependencies]
+sha2 = "0.10.6"
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 const-oid = "0.9.6"
@@ -225,7 +237,6 @@ image = { version = "0.25.6", default-features = false, features = [
 ], optional = true }
 
 [target.'cfg(target_os = "wasi")'.dependencies]
-getrandom = "0.2.7"
 wasi = { version = "0.14", optional = true }
 wstd = "0.5"
 
@@ -240,12 +251,10 @@ chrono = { version = "0.4.39", default-features = false, features = [
     "wasmbind",
 ] }
 console_log = { version = "1.0.0", features = ["color"] }
-getrandom = { version = "0.2.7", features = ["js"] }
 js-sys = "0.3.58"
-rand_core = "0.9.0-alpha.2"
 ring = { version = "0.17.13", features = ["wasm32_unknown_unknown_js"] }
 serde-wasm-bindgen = "0.6.5"
-uuid = { version = "1.10.0", features = ["serde", "v4", "js"] }
+uuid = { version = "1.18.0", features = ["serde", "v4", "js"] }
 wasm-bindgen = "0.2.95"
 wasm-bindgen-futures = "0.4.31"
 web-sys = { version = "0.3.58", features = [
@@ -277,9 +286,23 @@ mockall = "0.13.1"
 wasm-bindgen-test = "0.3.45"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
-actix = "0.13.1"
 httpmock = "0.7.0"
 tokio = { version = "1.44.2", features = ["full"] }
+criterion = { package = "codspeed-criterion-compat", version = "3.0.5" }
+#
+# WASM/WASI doesn't support default criterion features.
+# https://github.com/bheisler/criterion.rs/blob/4c19e913b84e6a7e4a8470cb0f766796886ed891/book/src/user_guide/wasi.md
+[target.'cfg(target_arch = "wasm32")'.dev-dependencies]
+criterion = { package = "codspeed-criterion-compat", version = "3.0.5", default-features = false }
+
+[[bench]]
+name = "sign"
+harness = false
+
+[[bench]]
+name = "read"
+harness = false
+
 
 [package.metadata.cargo-udeps.ignore]
 normal = ["windows-core"]
