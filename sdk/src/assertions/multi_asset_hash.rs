@@ -123,10 +123,8 @@ impl MultiAssetHash {
         self.verify_self(length)?;
 
         for part in &self.parts {
-            if let Some(optional) = part.optional {
-                if optional {
-                    continue;
-                };
+            if part.optional.unwrap_or(false) {
+                continue;
             }
 
             // Retrieve the assertion linked in the multi-asset assertions.
@@ -193,28 +191,25 @@ impl MultiAssetHash {
 }
 
 #[derive(Deserialize, Serialize, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
 pub struct PartHashMap {
     pub location: LocatorMap,
-    #[serde(rename = "hashAssertion")]
     pub hash_assertion: HashedUri,
-
     #[serde(skip_serializing_if = "Option::is_none")]
     pub optional: Option<bool>,
 }
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(untagged)]
+#[serde(rename_all = "camelCase")]
 pub enum LocatorMap {
     ByteRangeLocator(ByteRangeLocator),
-    BmffBox {
-        #[serde(rename = "bmffBox")]
-        bmff_box: String,
-    },
+    BmffBox { bmff_box: String },
 }
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
 pub struct ByteRangeLocator {
-    #[serde(rename = "byteOffset")]
     pub byte_offset: u64,
     pub length: u64,
 }

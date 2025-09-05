@@ -60,7 +60,7 @@ pub use assertion_metadata::{
 };
 
 mod multi_asset_hash;
-pub use multi_asset_hash::MultiAssetHash;
+pub use multi_asset_hash::{ByteRangeLocator, LocatorMap, MultiAssetHash, PartHashMap};
 
 mod schema_org;
 #[allow(deprecated)]
