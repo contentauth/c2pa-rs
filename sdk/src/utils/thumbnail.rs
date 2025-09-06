@@ -91,40 +91,6 @@ impl fmt::Display for ThumbnailFormat {
     }
 }
 
-/// Make a thumbnail from an input path and return the format and new thumbnail bytes.
-///
-/// If the output format is unsupported, this function will return [Error::UnsupportedThumbnailFormat][crate::Error::UnsupportedThumbnailFormat].
-///
-/// This function takes into account the [Settings][crate::Settings]:
-/// * `builder.thumbnail.ignore_errors`
-///
-/// Read [make_thumbnail_from_stream] for more information.
-#[cfg(all(feature = "file_io", feature = "add_thumbnails", feature = "v1_api"))]
-pub fn make_thumbnail_bytes_from_path(
-    path: &std::path::Path,
-) -> Result<Option<(ThumbnailFormat, Vec<u8>)>> {
-    use std::{fs::File, io::BufReader};
-
-    let result = {
-        match File::open(path) {
-            Ok(file) => match crate::format_from_path(path) {
-                Some(input_format) => {
-                    make_thumbnail_bytes_from_stream(&input_format, BufReader::new(file))
-                }
-                None => Err(Error::UnsupportedType),
-            },
-            Err(err) => Err(err.into()),
-        }
-    };
-
-    let ignore_errors = settings::get_settings_value::<bool>("builder.thumbnail.ignore_errors")?;
-    match result {
-        Ok(result) => Ok(result),
-        Err(_) if ignore_errors => Ok(None),
-        Err(err) => Err(err),
-    }
-}
-
 /// Make a thumbnail from an input stream and format and return the output format and new thumbnail bytes.
 ///
 /// This function takes into account the [Settings][crate::Settings]:
@@ -478,35 +444,6 @@ pub mod tests {
             make_thumbnail_bytes_from_stream("image/jpeg", Cursor::new(TEST_JPEG))
                 .unwrap()
                 .unwrap();
-
-        assert!(matches!(format, ThumbnailFormat::Jpeg));
-
-        ImageReader::with_format(Cursor::new(bytes), format.into())
-            .decode()
-            .unwrap();
-    }
-
-    #[test]
-    #[cfg(all(feature = "file_io", feature = "v1_api", feature = "add_thumbnails"))]
-    fn test_make_thumbnail_bytes_from_path() {
-        use std::path::Path;
-
-        #[cfg(target_os = "wasi")]
-        Settings::reset().unwrap();
-
-        Settings::from_toml(
-            &toml::toml! {
-                [builder.thumbnail]
-                prefer_smallest_format = false
-                ignore_errors = false
-            }
-            .to_string(),
-        )
-        .unwrap();
-
-        let (format, bytes) = make_thumbnail_bytes_from_path(Path::new("tests/fixtures/CA.jpg"))
-            .unwrap()
-            .unwrap();
 
         assert!(matches!(format, ThumbnailFormat::Jpeg));
 
