@@ -440,7 +440,17 @@ impl TestFileSetup {
 
     /// Create a file:// URL for the sidecar file
     pub fn sidecar_url(&self) -> String {
-        format!("file:/{}", self.sidecar_path().to_str().unwrap())
+        let path_buf = self.sidecar_path(); // Store PathBuf in a variable to extend its lifetime
+        let path_str = path_buf.to_str().unwrap();
+        // Convert backslashes to forward slashes on Windows
+        let path_str = path_str.replace('\\', "/");
+
+        // Check if the path already starts with a slash and handle accordingly
+        if path_str.starts_with('/') {
+            format!("file://{}", path_str)
+        } else {
+            format!("file:///{}", path_str)
+        }
     }
 
     /// Get the file extension of the input file

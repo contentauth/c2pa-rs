@@ -4047,12 +4047,12 @@ pub mod tests {
     #![allow(clippy::panic)]
     #![allow(clippy::unwrap_used)]
 
-    use std::{
-        fs,
-        io::{Seek, Write},
-    };
+    use std::io::Seek;
+    #[cfg(feature = "file_io")]
+    use std::{fs, io::Write};
 
     use c2pa_macros::c2pa_test_async;
+    #[cfg(feature = "file_io")]
     use memchr::memmem;
     use serde::Serialize;
     #[cfg(feature = "file_io")]
@@ -4061,29 +4061,32 @@ pub mod tests {
     use wasm_bindgen_test::wasm_bindgen_test;
 
     use super::*;
+    #[cfg(feature = "file_io")]
     use crate::{
         assertion::AssertionJson,
-        assertions::{labels::BOX_HASH, Action, Actions, BoxHash, Uuid},
-        claim::AssertionStoreJsonFormat,
-        crypto::raw_signature::SigningAlg,
+        assertions::{labels::BOX_HASH, BoxHash},
         hashed_uri::HashedUri,
-        settings::Settings,
-        status_tracker::{LogItem, StatusTracker},
+        jumbf_io::get_assetio_handler_from_path,
         utils::{
             hash_utils::Hasher,
             io_utils::tempdirectory,
+            test::write_jpeg_placeholder_file,
+            test::{temp_dir_path, TEST_USER_ASSERTION},
+            test_signer::test_cawg_signer,
+        },
+    };
+    use crate::{
+        assertions::{Action, Actions, Uuid},
+        claim::AssertionStoreJsonFormat,
+        crypto::raw_signature::SigningAlg,
+        settings::Settings,
+        status_tracker::{LogItem, StatusTracker},
+        utils::{
             patch::patch_bytes,
-            test::{
-                create_test_claim, create_test_streams, fixture_path, temp_dir_path,
-                TEST_USER_ASSERTION,
-            },
-            test_signer::{async_test_signer, test_cawg_signer, test_signer},
+            test::{create_test_claim, create_test_streams, fixture_path},
+            test_signer::{async_test_signer, test_signer},
         },
         ClaimGeneratorInfo, DigitalSourceType,
-    };
-    #[cfg(feature = "file_io")]
-    use crate::{
-        jumbf_io::get_assetio_handler_from_path, utils::test::write_jpeg_placeholder_file,
     };
 
     fn create_editing_claim(claim: &mut Claim) -> Result<&mut Claim> {
@@ -4374,29 +4377,29 @@ pub mod tests {
         }
     }
 
-    struct BadSigner {}
-
-    impl Signer for BadSigner {
-        fn sign(&self, _data: &[u8]) -> Result<Vec<u8>> {
-            Ok(b"not a valid signature".to_vec())
-        }
-
-        fn alg(&self) -> SigningAlg {
-            SigningAlg::Ps256
-        }
-
-        fn certs(&self) -> Result<Vec<Vec<u8>>> {
-            Ok(Vec::new())
-        }
-
-        fn reserve_size(&self) -> usize {
-            42
-        }
-    }
-
     #[test]
     #[cfg(feature = "file_io")]
     fn test_detects_unverifiable_signature() {
+        struct BadSigner {}
+
+        impl Signer for BadSigner {
+            fn sign(&self, _data: &[u8]) -> Result<Vec<u8>> {
+                Ok(b"not a valid signature".to_vec())
+            }
+
+            fn alg(&self) -> SigningAlg {
+                SigningAlg::Ps256
+            }
+
+            fn certs(&self) -> Result<Vec<Vec<u8>>> {
+                Ok(Vec::new())
+            }
+
+            fn reserve_size(&self) -> usize {
+                42
+            }
+        }
+
         // test adding to actual image
         let (format, mut input_stream, mut output_stream) =
             create_test_streams("earth_apollo17.jpg");
