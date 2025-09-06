@@ -75,7 +75,7 @@ impl AssertionMetadata {
         self.date_time.as_deref()
     }
 
-    // Returns the localizations map
+    /// Returns the vec of localizations maps if they exist.
     pub fn localizations(&self) -> Option<&Vec<HashMap<String, HashMap<String, String>>>> {
         self.localizations.as_ref()
     }
