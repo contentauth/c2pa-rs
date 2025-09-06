@@ -11,6 +11,8 @@
 // specific language governing permissions and limitations under
 // each license.
 
+use std::collections::HashMap;
+
 use chrono::{SecondsFormat, Utc};
 #[cfg(feature = "json_schema")]
 use schemars::JsonSchema;
@@ -38,6 +40,8 @@ pub struct AssertionMetadata {
     reference: Option<HashedUri>,
     #[serde(rename = "dataSource", skip_serializing_if = "Option::is_none")]
     data_source: Option<DataSource>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    localizations: Option<Vec<HashMap<String, HashMap<String, String>>>>, // not implemented
     #[serde(rename = "regionOfInterest", skip_serializing_if = "Option::is_none")]
     region_of_interest: Option<RegionOfInterest>,
 }
@@ -56,6 +60,7 @@ impl AssertionMetadata {
             )),
             reference: None,
             data_source: None,
+            localizations: None,
             region_of_interest: None,
         }
     }
@@ -68,6 +73,11 @@ impl AssertionMetadata {
     /// Returns the ISO 8601 date-time string when the assertion was created/generated.
     pub fn date_time(&self) -> Option<&str> {
         self.date_time.as_deref()
+    }
+
+    // Returns the localizations map
+    pub fn localizations(&self) -> Option<&Vec<HashMap<String, HashMap<String, String>>>> {
+        self.localizations.as_ref()
     }
 
     /// Returns the [`DataSource`] for this assertion if it exists.
@@ -119,6 +129,15 @@ impl AssertionMetadata {
     /// Sets the region of interest.
     pub fn set_region_of_interest(mut self, region_of_interest: RegionOfInterest) -> Self {
         self.region_of_interest = Some(region_of_interest);
+        self
+    }
+
+    /// Sets all localizations, replacing any existing ones
+    pub fn set_localizations(
+        mut self,
+        localizations: Vec<HashMap<String, HashMap<String, String>>>,
+    ) -> Self {
+        self.localizations = Some(localizations);
         self
     }
 }
@@ -312,8 +331,15 @@ pub mod tests {
     #[test]
     fn assertion_metadata() {
         let review = ReviewRating::new("foo", Some("bar".to_owned()), 3);
+        let mut translations = HashMap::new();
+        translations.insert("en-US".to_owned(), "Kevin's Five Cats".to_owned());
+        translations.insert("es-MX".to_owned(), "Los Cinco Gatos de Kevin".to_owned());
+        let mut localizations = HashMap::new();
+        localizations.insert("dc:title".to_owned(), translations);
+
         let original = AssertionMetadata::new()
             .add_review(review)
+            .set_localizations(vec![localizations])
             .set_region_of_interest(RegionOfInterest {
                 region: vec![Range {
                     range_type: RangeType::Temporal,
@@ -326,6 +352,7 @@ pub mod tests {
                 }],
                 ..Default::default()
             });
+
         println!("{:}", &original);
         let assertion = original.to_assertion().expect("build_assertion");
         assert_eq!(assertion.mime_type(), "application/cbor");
@@ -334,10 +361,25 @@ pub mod tests {
         println!("{:?}", serde_json::to_string(&result));
         assert_eq!(original.date_time, result.date_time);
         assert_eq!(original.reviews, result.reviews);
+        let localizations = result.localizations.as_ref().unwrap();
+        assert_eq!(
+            localizations[0]
+                .get("dc:title")
+                .unwrap()
+                .get("en-US")
+                .unwrap(),
+            "Kevin's Five Cats"
+        );
         assert_eq!(
             original.region_of_interest.as_ref(),
             result.region_of_interest()
-        )
-        //assert_eq!(original.reviews.unwrap().len(), 1);
+        );
+
+        // Test round-trip serialization
+        let assertion = original.to_assertion().expect("build_assertion");
+        let result = AssertionMetadata::from_assertion(&assertion).expect("extract_assertion");
+
+        assert_eq!(original.localizations, result.localizations);
+        assert_eq!(original.reviews.unwrap().len(), 1);
     }
 }
