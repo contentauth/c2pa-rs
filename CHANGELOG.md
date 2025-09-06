@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.62.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.61.0...c2pa-v0.62.0)
+_06 September 2025_
+
+### Added
+
+* Implement CAWG X.509 signing via settings ([#1388](https://github.com/contentauth/c2pa-rs/pull/1388))
+
+### Fixed
+
+* Assertion metadata localizations support was missing. CAI-9444 ([#1390](https://github.com/contentauth/c2pa-rs/pull/1390))
+* Make `openssl` and `rust_native_crypto` features additive ([#1379](https://github.com/contentauth/c2pa-rs/pull/1379))
+* Make OpenSSL code path enforce COSE specified salt length ([#1376](https://github.com/contentauth/c2pa-rs/pull/1376))
+
 ## [0.61.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.60.1...c2pa-v0.61.0)
 _03 September 2025_
 
