@@ -698,6 +698,7 @@ dependencies = [
  "non-empty-string",
  "nonempty-collections",
  "num-bigint-dig",
+ "once_cell",
  "openssl",
  "p256",
  "p384",
@@ -736,7 +737,6 @@ dependencies = [
  "thiserror 2.0.16",
  "tokio",
  "toml",
- "treeline",
  "ureq",
  "url",
  "uuid",
@@ -766,7 +766,6 @@ dependencies = [
  "tempfile",
  "thiserror 1.0.69",
  "tokio",
- "zip",
 ]
 
 [[package]]
@@ -796,7 +795,6 @@ dependencies = [
  "predicates",
  "reqwest",
  "serde",
- "serde_derive",
  "serde_json",
  "tempfile",
  "tokio",
@@ -1684,7 +1682,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4a3d7db9596fecd151c5f638c0ee5d5bd487b6e0ea232e5dc96d5250f6f94b1d"
 dependencies = [
  "crc32fast",
- "libz-rs-sys",
  "miniz_oxide",
 ]
 
@@ -2673,15 +2670,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "libz-rs-sys"
-version = "0.5.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "840db8cf39d9ec4dd794376f38acc40d0fc65eec2a8f484f7fd375b84602becd"
-dependencies = [
- "zlib-rs",
-]
-
-[[package]]
 name = "linked-hash-map"
 version = "0.5.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2758,7 +2746,6 @@ dependencies = [
  "env_logger 0.11.8",
  "image",
  "lazy_static",
- "log",
  "memchr",
  "nom",
  "regex",
@@ -5839,28 +5826,8 @@ checksum = "12598812502ed0105f607f941c386f43d441e00148fce9dec3ca5ffb0bde9308"
 dependencies = [
  "arbitrary",
  "crc32fast",
- "flate2",
  "indexmap 2.11.0",
  "memchr",
- "zopfli",
-]
-
-[[package]]
-name = "zlib-rs"
-version = "0.5.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2f06ae92f42f5e5c42443fd094f245eb656abf56dd7cce9b8b263236565e00f2"
-
-[[package]]
-name = "zopfli"
-version = "0.8.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "edfc5ee405f504cd4984ecc6f14d02d55cfda60fa4b689434ef4102aae150cd7"
-dependencies = [
- "bumpalo",
- "crc32fast",
- "log",
- "simd-adler32",
 ]
 
 [[package]]
