@@ -3048,8 +3048,6 @@ impl Store {
     // fetch remote manifest if possible
     #[cfg(all(feature = "fetch_remote_manifests", not(target_arch = "wasm32")))]
     fn fetch_remote_manifest(url: &str) -> Result<Vec<u8>> {
-        use conv::ValueFrom;
-
         //const MANIFEST_CONTENT_TYPE: &str = "application/x-c2pa-manifest-store"; // todo verify once these are served
         const DEFAULT_MANIFEST_RESPONSE_SIZE: usize = 10 * 1024 * 1024; // 10 MB
 
@@ -3064,7 +3062,7 @@ impl Store {
 
                     let mut response_bytes: Vec<u8> = Vec::with_capacity(len);
 
-                    let len64 = u64::value_from(len)
+                    let len64 = u64::try_from(len)
                         .map_err(|_err| Error::BadParam("value out of range".to_string()))?;
 
                     body.into_reader()

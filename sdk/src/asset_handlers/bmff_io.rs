@@ -21,7 +21,6 @@ use std::{
 
 use atree::{Arena, Token};
 use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
-use conv::ValueFrom;
 
 use crate::{
     assertions::{BmffMerkleMap, ExclusionsMap},
@@ -1591,16 +1590,16 @@ impl CAIWriter for BmffIO {
         let new_c2pa_box_size = new_c2pa_box.len();
 
         let (start, end) = if let Some(c2pa_length) = c2pa_length {
-            let start = usize::value_from(c2pa_start)
+            let start = usize::try_from(c2pa_start)
                 .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?; // get beginning of chunk which starts 4 bytes before label
 
-            let end = usize::value_from(c2pa_start + c2pa_length)
+            let end = usize::try_from(c2pa_start + c2pa_length)
                 .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?;
 
             (start, end)
         } else {
             // insert new c2pa
-            let end = usize::value_from(c2pa_start)
+            let end = usize::try_from(c2pa_start)
                 .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?;
 
             (end, end)
@@ -1733,10 +1732,10 @@ impl CAIWriter for BmffIO {
             };
 
         let (start, end) = if let Some(c2pa_length) = c2pa_length {
-            let start = usize::value_from(c2pa_start)
+            let start = usize::try_from(c2pa_start)
                 .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?; // get beginning of chunk which starts 4 bytes before label
 
-            let end = usize::value_from(c2pa_start + c2pa_length)
+            let end = usize::try_from(c2pa_start + c2pa_length)
                 .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?;
 
             (start, end)
@@ -1969,16 +1968,16 @@ impl RemoteRefEmbed for BmffIO {
                 let new_xmp_box_size = new_xmp_box.len();
 
                 let (start, end) = if let Some(xmp_length) = xmp_length {
-                    let start = usize::value_from(xmp_start)
+                    let start = usize::try_from(xmp_start)
                         .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?; // get beginning of chunk which starts 4 bytes before label
 
-                    let end = usize::value_from(xmp_start + xmp_length)
+                    let end = usize::try_from(xmp_start + xmp_length)
                         .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?;
 
                     (start, end)
                 } else {
                     // insert new c2pa
-                    let end = usize::value_from(xmp_start)
+                    let end = usize::try_from(xmp_start)
                         .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?;
 
                     (end, end)

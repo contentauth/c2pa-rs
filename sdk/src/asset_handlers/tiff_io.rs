@@ -22,7 +22,6 @@ use std::{
 use atree::{Arena, Token};
 use byteorder::{NativeEndian, ReadBytesExt, WriteBytesExt};
 use byteordered::{with_order, ByteOrdered, Endianness};
-use conv::ValueFrom;
 
 use crate::{
     asset_io::{
@@ -404,7 +403,7 @@ where
             let decoded_offset = decode_offset(subifd.value_offset, ts.byte_order, ts.big_tiff)?;
             input.seek(SeekFrom::Start(decoded_offset))?;
 
-            let num_longs_x4 = usize::value_from(
+            let num_longs_x4 = usize::try_from(
                 subifd
                     .value_count
                     .checked_mul(4)
@@ -437,8 +436,7 @@ where
 
             // get all subfiles
             for subfile_offset in subfile_offsets {
-                let u64_offset = u64::value_from(subfile_offset)
-                    .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?;
+                let u64_offset = subfile_offset as u64;
                 input.seek(SeekFrom::Start(u64_offset))?;
 
                 //println!("Reading SubIFD: {}", u64_offset);
@@ -574,12 +572,12 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
 
     fn write_entry_count(&mut self, count: usize) -> Result<()> {
         if self.big_tiff {
-            let cnt = u64::value_from(count)
+            let cnt = u64::try_from(count)
                 .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?; // get beginning of chunk which starts 4 bytes before label
 
             self.writer.write_u64(cnt)?;
         } else {
-            let cnt = u16::value_from(count)
+            let cnt = u16::try_from(count)
                 .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?; // get beginning of chunk which starts 4 bytes before label
 
             self.writer.write_u16(cnt)?;
@@ -611,7 +609,7 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
                     if self.big_tiff {
                         ew.write_u64(offset)?;
                     } else {
-                        let offset_u32 = u32::value_from(offset).map_err(|_err| {
+                        let offset_u32 = u32::try_from(offset).map_err(|_err| {
                             Error::InvalidAsset("value out of range".to_string())
                         })?; // get beginning of chunk which starts 4 bytes before label
 
@@ -645,12 +643,9 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
             self.writer.write_u16(entry.entry_type)?;
 
             if self.big_tiff {
-                let cnt = u64::value_from(entry.value_count)
-                    .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?;
-
-                self.writer.write_u64(cnt)?;
+                self.writer.write_u64(entry.value_count)?;
             } else {
-                let cnt = u32::value_from(entry.value_count)
+                let cnt = u32::try_from(entry.value_count)
                     .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?;
 
                 self.writer.write_u32(cnt)?;
@@ -720,7 +715,7 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
                 // copy the strips
                 with_order!(so_entry.value_bytes.as_slice(), self.endianness, |src| {
                     for c in sbcs.iter() {
-                        let cnt = usize::value_from(*c).map_err(|_err| {
+                        let cnt = usize::try_from(*c).map_err(|_err| {
                             Error::InvalidAsset("value out of range".to_string())
                         })?;
 
@@ -757,13 +752,13 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
                             // get the offset
                             match so_entry.entry_type {
                                 4u16 => {
-                                    let offset = u32::value_from(*o).map_err(|_err| {
+                                    let offset = u32::try_from(*o).map_err(|_err| {
                                         Error::InvalidAsset("value out of range".to_string())
                                     })?;
                                     dest.write_u32(offset)?;
                                 }
                                 3u16 => {
-                                    let offset = u16::value_from(*o).map_err(|_err| {
+                                    let offset = u16::try_from(*o).map_err(|_err| {
                                         Error::InvalidAsset("value out of range".to_string())
                                     })?;
                                     dest.write_u16(offset)?;
@@ -824,7 +819,7 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
                 // copy the tiles
                 with_order!(to_entry.value_bytes.as_slice(), self.endianness, |src| {
                     for c in tbcs.iter() {
-                        let cnt = usize::value_from(*c).map_err(|_err| {
+                        let cnt = usize::try_from(*c).map_err(|_err| {
                             Error::InvalidAsset("value out of range".to_string())
                         })?;
 
@@ -857,13 +852,13 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
                             // get the offset
                             match to_entry.entry_type {
                                 4u16 => {
-                                    let offset = u32::value_from(*v).map_err(|_err| {
+                                    let offset = u32::try_from(*v).map_err(|_err| {
                                         Error::InvalidAsset("value out of range".to_string())
                                     })?;
                                     dest.write_u32(offset)?;
                                 }
                                 3u16 => {
-                                    let offset = u16::value_from(*v).map_err(|_err| {
+                                    let offset = u16::try_from(*v).map_err(|_err| {
                                         Error::InvalidAsset("value out of range".to_string())
                                     })?;
                                     dest.write_u16(offset)?;
@@ -984,7 +979,7 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
                         if self.big_tiff {
                             dest.write_u64(*o)?;
                         } else {
-                            let offset_u32 = u32::value_from(*o).map_err(|_err| {
+                            let offset_u32 = u32::try_from(*o).map_err(|_err| {
                                 Error::InvalidAsset("value out of range".to_string())
                             })?;
 
@@ -1010,7 +1005,7 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
             self.writer.seek(SeekFrom::Start(curr_pos))?;
             self.writer.write_u64(0)?;
         } else {
-            let offset_u32 = u32::value_from(first_ifd_offset)
+            let offset_u32 = u32::try_from(first_ifd_offset)
                 .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?; // get beginning of chunk which starts 4 bytes before label
 
             self.writer.write_u32(offset_u32)?;
@@ -1043,7 +1038,7 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
                 | IFDEntryType::Sbyte
                 | IFDEntryType::Undefined
                 | IFDEntryType::Ascii => {
-                    let num_bytes = usize::value_from(cnt)
+                    let num_bytes = usize::try_from(cnt)
                         .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?;
 
                     let mut data = safe_vec(cnt, Some(0u8))?;
@@ -1067,7 +1062,7 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
                 }
                 IFDEntryType::Short => {
                     let num_shorts_x2 =
-                        usize::value_from(cnt.checked_mul(2).ok_or_else(|| {
+                        usize::try_from(cnt.checked_mul(2).ok_or_else(|| {
                             Error::InvalidAsset("value out of range".to_string())
                         })?)
                         .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?;
@@ -1097,7 +1092,7 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
                 }
                 IFDEntryType::Long | IFDEntryType::Ifd => {
                     let num_longs_x4 =
-                        usize::value_from(cnt.checked_mul(4).ok_or_else(|| {
+                        usize::try_from(cnt.checked_mul(4).ok_or_else(|| {
                             Error::InvalidAsset("value out of range".to_string())
                         })?)
                         .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?;
@@ -1127,7 +1122,7 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
                 }
                 IFDEntryType::Sshort => {
                     let num_sshorts_x2 =
-                        usize::value_from(cnt.checked_mul(2).ok_or_else(|| {
+                        usize::try_from(cnt.checked_mul(2).ok_or_else(|| {
                             Error::InvalidAsset("value out of range".to_string())
                         })?)
                         .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?;
@@ -1157,7 +1152,7 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
                 }
                 IFDEntryType::Slong => {
                     let num_slongs_x4 =
-                        usize::value_from(cnt.checked_mul(4).ok_or_else(|| {
+                        usize::try_from(cnt.checked_mul(4).ok_or_else(|| {
                             Error::InvalidAsset("value out of range".to_string())
                         })?)
                         .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?;
@@ -1187,7 +1182,7 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
                 }
                 IFDEntryType::Float => {
                     let num_floats_x4 =
-                        usize::value_from(cnt.checked_mul(4).ok_or_else(|| {
+                        usize::try_from(cnt.checked_mul(4).ok_or_else(|| {
                             Error::InvalidAsset("value out of range".to_string())
                         })?)
                         .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?;
@@ -1440,7 +1435,7 @@ impl CAIWriter for TiffIO {
         output_stream: &mut dyn CAIReadWrite,
         store_bytes: &[u8],
     ) -> Result<()> {
-        let l = u64::value_from(store_bytes.len())
+        let l = u64::try_from(store_bytes.len())
             .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?;
 
         let entry = IfdClonedEntry {
@@ -1458,7 +1453,7 @@ impl CAIWriter for TiffIO {
         input_stream: &mut dyn CAIRead,
     ) -> Result<Vec<HashObjectPositions>> {
         let len = stream_len(input_stream)?;
-        let vec_cap = usize::value_from(len)
+        let vec_cap = usize::try_from(len)
             .map_err(|_err| Error::InvalidAsset("value out of range".to_owned()))?;
         let output_buf: Vec<u8> = Vec::with_capacity(vec_cap + 100);
 
@@ -1482,9 +1477,9 @@ impl CAIWriter for TiffIO {
         }
 
         let decoded_offset = decode_offset(cai_ifd_entry.value_offset, e, big_tiff)?;
-        let manifest_offset = usize::value_from(decoded_offset)
+        let manifest_offset = usize::try_from(decoded_offset)
             .map_err(|_err| Error::InvalidAsset("TIFF/DNG out of range".to_string()))?;
-        let manifest_len = usize::value_from(cai_ifd_entry.value_count)
+        let manifest_len = usize::try_from(cai_ifd_entry.value_count)
             .map_err(|_err| Error::InvalidAsset("TIFF/DNG out of range".to_string()))?;
 
         Ok(vec![HashObjectPositions {
@@ -1531,7 +1526,7 @@ impl AssetPatch for TiffIO {
             ));
         }
 
-        let manifest_len: usize = usize::value_from(cai_ifd_entry.value_count)
+        let manifest_len: usize = usize::try_from(cai_ifd_entry.value_count)
             .map_err(|_err| Error::InvalidAsset("TIFF/DNG out of range".to_string()))?;
 
         if store_bytes.len() == manifest_len {
@@ -1598,7 +1593,7 @@ impl RemoteRefEmbed for TiffIO {
                     }
                 };
 
-                let l = u64::value_from(xmp.len())
+                let l = u64::try_from(xmp.len())
                     .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?;
 
                 let entry = IfdClonedEntry {
