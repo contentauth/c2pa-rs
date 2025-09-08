@@ -19,21 +19,27 @@ use std::{
 
 use byteorder::{BigEndian, ReadBytesExt};
 use conv::ValueFrom;
+use png_pong::chunk::InternationalText;
 use serde_bytes::ByteBuf;
-use tempfile::Builder;
 
 use crate::{
     assertions::{BoxMap, C2PA_BOXHASH},
     asset_io::{
-        AssetBoxHash, AssetIO, CAIRead, CAIReadWrite, CAIReader, CAIWriter, ComposedManifestRef,
-        HashBlockObjectType, HashObjectPositions, RemoteRefEmbed, RemoteRefEmbedType,
+        rename_or_move, AssetBoxHash, AssetIO, CAIRead, CAIReadWrite, CAIReader, CAIWriter,
+        ComposedManifestRef, HashBlockObjectType, HashObjectPositions, RemoteRefEmbed,
+        RemoteRefEmbedType,
     },
     error::{Error, Result},
+    utils::{
+        io_utils::{tempfile_builder, ReaderUtils},
+        xmp_inmemory_utils::{add_provenance, MIN_XMP},
+    },
 };
 
 const PNG_ID: [u8; 8] = [137, 80, 78, 71, 13, 10, 26, 10];
 const CAI_CHUNK: [u8; 4] = *b"caBX";
 const IMG_HDR: [u8; 4] = *b"IHDR";
+const ITXT_CHUNK: [u8; 4] = *b"iTXt";
 const XMP_KEY: &str = "XML:com.adobe.xmp";
 const PNG_END: [u8; 4] = *b"IEND";
 const PNG_HDR_LEN: u64 = 12;
@@ -115,7 +121,7 @@ fn get_png_chunk_positions<R: Read + Seek + ?Sized>(f: &mut R) -> Result<Vec<Png
     Ok(chunk_positions)
 }
 
-fn get_cai_data<R: Read + Seek + ?Sized>(f: &mut R) -> Result<Vec<u8>> {
+fn get_cai_data<R: Read + Seek + ?Sized>(mut f: &mut R) -> Result<Vec<u8>> {
     let ps = get_png_chunk_positions(f)?;
 
     if ps
@@ -137,11 +143,7 @@ fn get_cai_data<R: Read + Seek + ?Sized>(f: &mut R) -> Result<Vec<u8>> {
 
     f.seek(SeekFrom::Start(pcp.start + 8))?; // skip ahead from chunk start + length(4) + name(4)
 
-    let mut data: Vec<u8> = vec![0; length];
-    f.read_exact(&mut data[..])
-        .map_err(|_err| Error::InvalidAsset("PNG out of range".to_string()))?;
-
-    Ok(data)
+    f.read_to_vec(length as u64)
 }
 
 fn add_required_chunks_to_stream(
@@ -204,9 +206,7 @@ impl CAIReader for PngIO {
     }
 
     // Get XMP block
-    fn read_xmp(&self, asset_reader: &mut dyn CAIRead) -> Option<String> {
-        const ITXT_CHUNK: [u8; 4] = *b"iTXt";
-
+    fn read_xmp(&self, mut asset_reader: &mut dyn CAIRead) -> Option<String> {
         let ps = get_png_chunk_positions(asset_reader).ok()?;
         let mut xmp_str: Option<String> = None;
 
@@ -251,14 +251,14 @@ impl CAIReader for PngIO {
                     };
 
                     // read iTxt data
-                    let mut data = vec![
-                        0u8;
-                        pcp.length as usize
-                            - (key.len() + _langtag.len() + _transkey.len() + 5)
-                    ]; // data len - size of key - size of land - size of transkey - 3 "0" string terminators - compressed u8 - compression method u8
-                    if asset_reader.read_exact(&mut data).is_err() {
-                        return false;
-                    }
+                    let data = match asset_reader.read_to_vec(
+                        pcp.length as u64
+                            - (key.len() + _langtag.len() + _transkey.len() + 5) as u64,
+                    ) {
+                        // data len - size of key - size of land - size of transkey - 3 "0" string terminators - compressed u8 - compression method u8
+                        Ok(v) => v,
+                        Err(_) => return false,
+                    };
 
                     // convert to string, decompress if needed
                     let val = if compressed {
@@ -478,18 +478,12 @@ impl AssetIO for PngIO {
             .open(asset_path)
             .map_err(Error::IoError)?;
 
-        let mut temp_file = Builder::new()
-            .prefix("c2pa_temp")
-            .rand_bytes(5)
-            .tempfile()?;
+        let mut temp_file = tempfile_builder("c2pa_temp")?;
 
         self.write_cai(&mut stream, &mut temp_file, store_bytes)?;
 
         // copy temp file to asset
-        std::fs::rename(temp_file.path(), asset_path)
-            // if rename fails, try to copy in case we are on different volumes
-            .or_else(|_| std::fs::copy(temp_file.path(), asset_path).and(Ok(())))
-            .map_err(Error::IoError)
+        rename_or_move(temp_file, asset_path)
     }
 
     fn get_object_locations(
@@ -578,24 +572,65 @@ impl AssetIO for PngIO {
     }
 }
 
-impl RemoteRefEmbed for PngIO {
-    #[allow(unused_variables)]
-    fn embed_reference(
-        &self,
-        asset_path: &Path,
-        embed_ref: crate::asset_io::RemoteRefEmbedType,
-    ) -> Result<()> {
-        match embed_ref {
-            crate::asset_io::RemoteRefEmbedType::Xmp(manifest_uri) => {
-                #[cfg(feature = "xmp_write")]
-                {
-                    crate::embedded_xmp::add_manifest_uri_to_file(asset_path, &manifest_uri)
+fn get_xmp_insertion_point(asset_reader: &mut dyn CAIRead) -> Option<(u64, u32)> {
+    let ps = get_png_chunk_positions(asset_reader).ok()?;
+
+    let xmp_box = ps.iter().find(|pcp| {
+        if pcp.name == ITXT_CHUNK {
+            // seek to start of chunk
+            if asset_reader.seek(SeekFrom::Start(pcp.start + 8)).is_err() {
+                // move +8 to get past header
+                return false;
+            }
+
+            // parse the iTxt block
+            if let Ok(key) = read_string(asset_reader, pcp.length) {
+                if key.is_empty() || key.len() > 79 {
+                    return false;
                 }
 
-                #[cfg(not(feature = "xmp_write"))]
-                {
-                    Err(crate::error::Error::MissingFeature("xmp_write".to_string()))
+                // is this an XMP key
+                if key == XMP_KEY {
+                    return true;
                 }
+            }
+            false
+        } else {
+            false
+        }
+    });
+
+    if let Some(xmp) = xmp_box {
+        // overwrite existing box
+        Some((xmp.start, xmp.length + PNG_HDR_LEN as u32))
+    } else {
+        // insert after IHDR
+        ps.iter()
+            .find(|png_cp| png_cp.name == IMG_HDR)
+            .map(|img_hdr| (img_hdr.end(), 0))
+    }
+}
+impl RemoteRefEmbed for PngIO {
+    #[allow(unused_variables)]
+    fn embed_reference(&self, asset_path: &Path, embed_ref: RemoteRefEmbedType) -> Result<()> {
+        match embed_ref {
+            crate::asset_io::RemoteRefEmbedType::Xmp(manifest_uri) => {
+                let output_buf = Vec::new();
+                let mut output_stream = Cursor::new(output_buf);
+
+                // do here so source file is closed after update
+                {
+                    let mut source_stream = std::fs::File::open(asset_path)?;
+                    self.embed_reference_to_stream(
+                        &mut source_stream,
+                        &mut output_stream,
+                        RemoteRefEmbedType::Xmp(manifest_uri),
+                    )?;
+                }
+
+                std::fs::write(asset_path, output_stream.into_inner())?;
+
+                Ok(())
             }
             crate::asset_io::RemoteRefEmbedType::StegoS(_) => Err(Error::UnsupportedType),
             crate::asset_io::RemoteRefEmbedType::StegoB(_) => Err(Error::UnsupportedType),
@@ -605,16 +640,79 @@ impl RemoteRefEmbed for PngIO {
 
     fn embed_reference_to_stream(
         &self,
-        _source_stream: &mut dyn CAIRead,
-        _output_stream: &mut dyn CAIReadWrite,
-        _embed_ref: RemoteRefEmbedType,
+        source_stream: &mut dyn CAIRead,
+        output_stream: &mut dyn CAIReadWrite,
+        embed_ref: RemoteRefEmbedType,
     ) -> Result<()> {
-        Err(Error::UnsupportedType)
+        match embed_ref {
+            crate::asset_io::RemoteRefEmbedType::Xmp(manifest_uri) => {
+                source_stream.rewind()?;
+
+                let xmp = match self.read_xmp(source_stream) {
+                    Some(s) => s,
+                    None => MIN_XMP.to_string(),
+                };
+
+                // update XMP
+                let updated_xmp = add_provenance(&xmp, &manifest_uri)?;
+
+                // make XMP chunk
+                let mut xmp_data = Vec::new();
+                let mut xmp_encoder = png_pong::Encoder::new(&mut xmp_data).into_chunk_enc();
+
+                let mut xmp_chunk = png_pong::chunk::Chunk::InternationalText(InternationalText {
+                    key: XMP_KEY.to_string(),
+                    langtag: "".to_string(),
+                    transkey: "".to_string(),
+                    val: updated_xmp,
+                    compressed: false,
+                });
+                xmp_encoder
+                    .encode(&mut xmp_chunk)
+                    .map_err(|_| Error::EmbeddingError)?;
+
+                // patch output stream
+                let mut png_buf = Vec::new();
+                source_stream.rewind()?;
+                source_stream
+                    .read_to_end(&mut png_buf)
+                    .map_err(Error::IoError)?;
+
+                if let Some((start, xmp_len)) = get_xmp_insertion_point(source_stream) {
+                    let mut png_buf = Vec::new();
+                    source_stream.rewind()?;
+                    source_stream
+                        .read_to_end(&mut png_buf)
+                        .map_err(Error::IoError)?;
+
+                    // replace existing XMP
+                    let xmp_start = usize::value_from(start)
+                        .map_err(|_err| Error::InvalidAsset("value out of range".to_owned()))?; // get beginning of chunk which starts 4 bytes before label
+
+                    let xmp_end = usize::value_from(start + xmp_len as u64)
+                        .map_err(|_err| Error::InvalidAsset("value out of range".to_owned()))?;
+
+                    png_buf.splice(xmp_start..xmp_end, xmp_data.iter().cloned());
+
+                    output_stream.rewind()?;
+                    output_stream.write_all(&png_buf)?;
+
+                    Ok(())
+                } else {
+                    Err(Error::EmbeddingError)
+                }
+            }
+            crate::asset_io::RemoteRefEmbedType::StegoS(_) => Err(Error::UnsupportedType),
+            crate::asset_io::RemoteRefEmbedType::StegoB(_) => Err(Error::UnsupportedType),
+            crate::asset_io::RemoteRefEmbedType::Watermark(_) => Err(Error::UnsupportedType),
+        }
     }
 }
 
 impl AssetBoxHash for PngIO {
     fn get_box_map(&self, input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>> {
+        input_stream.rewind()?;
+
         let ps = get_png_chunk_positions(input_stream)?;
 
         let mut box_maps = Vec::new();
@@ -624,6 +722,7 @@ impl AssetBoxHash for PngIO {
             names: vec!["PNGh".to_string()],
             alg: None,
             hash: ByteBuf::from(Vec::new()),
+            excluded: None,
             pad: ByteBuf::from(Vec::new()),
             range_start: 0,
             range_len: 8,
@@ -638,9 +737,10 @@ impl AssetBoxHash for PngIO {
                     names: vec![C2PA_BOXHASH.to_string()],
                     alg: None,
                     hash: ByteBuf::from(Vec::new()),
+                    excluded: None,
                     pad: ByteBuf::from(Vec::new()),
-                    range_start: pc.start as usize,
-                    range_len: (pc.length + 12) as usize, // length(4) + name(4) + crc(4)
+                    range_start: pc.start,
+                    range_len: pc.length as u64 + 12, // length(4) + name(4) + crc(4)
                 };
                 box_maps.push(c2pa_bm);
                 continue;
@@ -651,9 +751,10 @@ impl AssetBoxHash for PngIO {
                 names: vec![pc.name_str],
                 alg: None,
                 hash: ByteBuf::from(Vec::new()),
+                excluded: None,
                 pad: ByteBuf::from(Vec::new()),
-                range_start: pc.start as usize,
-                range_len: (pc.length + 12) as usize, // length(4) + name(4) + crc(4)
+                range_start: pc.start,
+                range_len: pc.length as u64 + 12, // length(4) + name(4) + crc(4)
             };
             box_maps.push(c2pa_bm);
         }
@@ -683,16 +784,18 @@ impl ComposedManifestRef for PngIO {
 }
 
 #[cfg(test)]
+#[allow(clippy::panic)]
+#[allow(clippy::unwrap_used)]
 pub mod tests {
-    #![allow(clippy::panic)]
-    #![allow(clippy::unwrap_used)]
-
     use std::io::Write;
 
-    use twoway::find_bytes;
+    use memchr::memmem;
 
     use super::*;
-    use crate::utils::test;
+    use crate::utils::{
+        io_utils::tempdirectory,
+        test::{self, temp_dir_path},
+    };
 
     #[test]
     fn test_png_xmp() {
@@ -708,6 +811,44 @@ pub mod tests {
 
         assert!(provenance.contains("libpng-test"));
     }
+
+    #[test]
+    fn test_png_xmp_write() {
+        let ap = test::fixture_path("libpng-test.png");
+        let mut source_stream = std::fs::File::open(ap).unwrap();
+
+        let temp_dir = tempdirectory().unwrap();
+        let output = temp_dir_path(&temp_dir, "out.png");
+        let mut output_stream = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(output)
+            .unwrap();
+
+        let png_io = PngIO {};
+        //let _orig_xmp = png_io
+        //    .read_xmp(&mut source_stream )
+        //    .unwrap();
+
+        // change the xmp
+        let eh = png_io.remote_ref_writer_ref().unwrap();
+        eh.embed_reference_to_stream(
+            &mut source_stream,
+            &mut output_stream,
+            RemoteRefEmbedType::Xmp("some test data".to_string()),
+        )
+        .unwrap();
+
+        output_stream.rewind().unwrap();
+        let new_xmp = png_io.read_xmp(&mut output_stream).unwrap();
+        // make sure we can parse it
+        let provenance = crate::utils::xmp_inmemory_utils::extract_provenance(&new_xmp).unwrap();
+
+        assert!(provenance.contains("some test data"));
+    }
+
     #[test]
     fn test_png_parse() {
         let ap = test::fixture_path("libpng-test.png");
@@ -719,7 +860,7 @@ pub mod tests {
         let positions = get_png_chunk_positions(&mut f).unwrap();
 
         for hop in positions {
-            if let Some(start) = find_bytes(&png_bytes, &hop.name) {
+            if let Some(start) = memmem::find(&png_bytes, &hop.name) {
                 if hop.start != (start - 4) as u64 {
                     panic!("find_bytes found the wrong position");
                     // assert!(true);
@@ -842,7 +983,7 @@ pub mod tests {
     #[test]
     fn test_remove_c2pa() {
         let source = test::fixture_path("exp-test1.png");
-        let temp_dir = tempfile::tempdir().unwrap();
+        let temp_dir = tempdirectory().unwrap();
         let output = test::temp_dir_path(&temp_dir, "exp-test1_tmp.png");
         std::fs::copy(source, &output).unwrap();
 
@@ -895,7 +1036,7 @@ pub mod tests {
             .unwrap();
         let curr_manifest = png_io.read_cai_store(&source).unwrap();
 
-        let temp_dir = tempfile::tempdir().unwrap();
+        let temp_dir = tempdirectory().unwrap();
         let output = crate::utils::test::temp_dir_path(&temp_dir, "exp-test1-out.png");
 
         std::fs::copy(source, &output).unwrap();

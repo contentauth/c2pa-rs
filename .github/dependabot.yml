@@ -4,16 +4,15 @@
 version: 2
 updates:
   - package-ecosystem: "cargo"
-    directory: "sdk"
+    directory: "/"
     schedule:
       interval: "daily"
+    commit-message:
+      prefix: "update"
 
-  - package-ecosystem: "cargo"
-    directory: "export_schema"
+  - package-ecosystem: "github-actions"
+    directory: "/"
     schedule:
-      interval: "daily"
-
-  - package-ecosystem: "cargo"
-    directory: "make_test_images"
-    schedule:
-      interval: "daily"
+      interval: "weekly"
+    commit-message:
+      prefix: "chore"

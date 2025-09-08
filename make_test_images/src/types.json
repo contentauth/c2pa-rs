@@ -1,0 +1,18 @@
+{
+    "alg": "ps256",
+    "tsa_url": "http://timestamp.digicert.com",
+    "output_path": "target/alltypes",
+    "default_ext": "jpg",
+    "author": "John Doe",
+    "recipes": [
+        { "op": "sign", "parent": "sdk/tests/fixtures/IMG_0003.jpg", "output": "IMG_0003_c.jpg" },
+        { "op": "sign", "parent": "sdk/tests/fixtures/sample1.png", "output": "sample1_c.png" },
+        { "op": "sign", "parent": "sdk/tests/fixtures/sample1.webp", "output": "sample1_c.webp" },
+        { "op": "sign", "parent": "sdk/tests/fixtures/TUSCANY.TIF", "output": "tuscany_c.tif" },
+        { "op": "sign", "parent": "sdk/tests/fixtures/sample1.svg", "output": "sample1_c.svg" },
+        { "op": "sign", "parent": "sdk/tests/fixtures/sample1.dng", "output": "sample1_c.dng" },
+        { "op": "sign", "parent": "sdk/tests/fixtures/test.avi", "output": "test_c.avi" },
+        { "op": "sign", "parent": "sdk/tests/fixtures/sample1.wav", "output": "sample1_c.wav" }
+
+    ]
+}

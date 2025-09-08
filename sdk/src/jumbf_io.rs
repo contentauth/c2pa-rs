@@ -13,8 +13,11 @@
 
 use std::{
     collections::HashMap,
-    fs::{self, File},
-    io::Cursor,
+    io::{Cursor, Read, Seek},
+};
+#[cfg(feature = "file_io")]
+use std::{
+    fs,
     path::{Path, PathBuf},
 };
 
@@ -24,8 +27,8 @@ use lazy_static::lazy_static;
 use crate::asset_handlers::pdf_io::PdfIO;
 use crate::{
     asset_handlers::{
-        bmff_io::BmffIO, c2pa_io::C2paIO, jpeg_io::JpegIO, mp3_io::Mp3IO, png_io::PngIO,
-        riff_io::RiffIO, svg_io::SvgIO, tiff_io::TiffIO,
+        bmff_io::BmffIO, c2pa_io::C2paIO, gif_io::GifIO, jpeg_io::JpegIO, mp3_io::Mp3IO,
+        png_io::PngIO, riff_io::RiffIO, svg_io::SvgIO, tiff_io::TiffIO,
     },
     asset_io::{AssetIO, CAIRead, CAIReadWrite, CAIReader, CAIWriter, HashObjectPositions},
     error::{Error, Result},
@@ -33,7 +36,7 @@ use crate::{
 
 // initialize asset handlers
 lazy_static! {
-    static ref ASSET_HANDLERS: HashMap<String, Box<dyn AssetIO>> = {
+    static ref CAI_READERS: HashMap<String, Box<dyn AssetIO>> = {
         let handlers: Vec<Box<dyn AssetIO>> = vec![
             #[cfg(feature = "pdf")]
             Box::new(PdfIO::new("")),
@@ -45,6 +48,7 @@ lazy_static! {
             Box::new(SvgIO::new("")),
             Box::new(TiffIO::new("")),
             Box::new(Mp3IO::new("")),
+            Box::new(GifIO::new("")),
         ];
 
         let mut handler_map = HashMap::new();
@@ -73,6 +77,7 @@ lazy_static! {
             Box::new(SvgIO::new("")),
             Box::new(TiffIO::new("")),
             Box::new(Mp3IO::new("")),
+            Box::new(GifIO::new("")),
         ];
         let mut handler_map = HashMap::new();
 
@@ -90,13 +95,13 @@ lazy_static! {
     };
 }
 
-#[cfg(feature = "file_io")]
 pub(crate) fn is_bmff_format(asset_type: &str) -> bool {
     let bmff_io = BmffIO::new("");
     bmff_io.supported_types().contains(&asset_type)
 }
 
 /// Return jumbf block from in memory asset
+#[allow(dead_code)]
 pub fn load_jumbf_from_memory(asset_type: &str, data: &[u8]) -> Result<Vec<u8>> {
     let mut buf_reader = Cursor::new(data);
 
@@ -143,31 +148,33 @@ pub fn save_jumbf_to_memory(asset_type: &str, data: &[u8], store_bytes: &[u8]) -
     Ok(output_stream.into_inner())
 }
 
-pub fn get_assetio_handler_from_path(asset_path: &Path) -> Option<&dyn AssetIO> {
+#[cfg(feature = "file_io")]
+pub(crate) fn get_assetio_handler_from_path(asset_path: &Path) -> Option<&dyn AssetIO> {
     let ext = get_file_extension(asset_path)?;
 
-    ASSET_HANDLERS.get(&ext).map(|h| h.as_ref())
+    CAI_READERS.get(&ext).map(|h| h.as_ref())
 }
 
-pub fn get_assetio_handler(ext: &str) -> Option<&dyn AssetIO> {
+pub(crate) fn get_assetio_handler(ext: &str) -> Option<&dyn AssetIO> {
     let ext = ext.to_lowercase();
 
-    ASSET_HANDLERS.get(&ext).map(|h| h.as_ref())
+    CAI_READERS.get(&ext).map(|h| h.as_ref())
 }
 
-pub fn get_cailoader_handler(asset_type: &str) -> Option<&dyn CAIReader> {
+pub(crate) fn get_cailoader_handler(asset_type: &str) -> Option<&dyn CAIReader> {
     let asset_type = asset_type.to_lowercase();
 
-    ASSET_HANDLERS.get(&asset_type).map(|h| h.get_reader())
+    CAI_READERS.get(&asset_type).map(|h| h.get_reader())
 }
 
-pub fn get_caiwriter_handler(asset_type: &str) -> Option<&dyn CAIWriter> {
+pub(crate) fn get_caiwriter_handler(asset_type: &str) -> Option<&dyn CAIWriter> {
     let asset_type = asset_type.to_lowercase();
 
     CAI_WRITERS.get(&asset_type).map(|h| h.as_ref())
 }
 
-pub fn get_file_extension(path: &Path) -> Option<String> {
+#[cfg(feature = "file_io")]
+pub(crate) fn get_file_extension(path: &Path) -> Option<String> {
     let ext_osstr = path.extension()?;
 
     let ext = ext_osstr.to_str()?;
@@ -175,38 +182,58 @@ pub fn get_file_extension(path: &Path) -> Option<String> {
     Some(ext.to_lowercase())
 }
 
-pub fn get_supported_file_extension(path: &Path) -> Option<String> {
+#[cfg(feature = "file_io")]
+pub(crate) fn get_supported_file_extension(path: &Path) -> Option<String> {
     let ext = get_file_extension(path)?;
 
-    if ASSET_HANDLERS.get(&ext).is_some() {
+    if CAI_READERS.get(&ext).is_some() {
         Some(ext)
     } else {
         None
     }
 }
 
-/// save_jumbf to a file
-/// in_path - path is source file
-/// out_path - path to the output file
+/// Returns a [Vec<String>] of supported mime types for reading manifests.
+pub(crate) fn supported_reader_mime_types() -> Vec<String> {
+    CAI_READERS.keys().map(String::to_owned).collect()
+}
+
+/// Returns a [Vec<String>] of mime types that [c2pa-rs] is able to sign.
+pub(crate) fn supported_builder_mime_types() -> Vec<String> {
+    CAI_WRITERS.keys().map(String::to_owned).collect()
+}
+
+#[cfg(feature = "file_io")]
+/// Save JUMBF data to a file.
+///
+/// Parameters:
+/// * save_jumbf to a file
+/// * in_path - path is source file
+/// * out_path - path to the output file
+///
 /// If no output file is given an new file will be created with "-c2pa" appending to file name e.g. "test.jpg" => "test-c2pa.jpg"
 /// If input == output then the input file will be overwritten.
-pub fn save_jumbf_to_file(data: &[u8], in_path: &Path, out_path: Option<&Path>) -> Result<()> {
-    let ext = get_file_extension(in_path).ok_or(Error::UnsupportedType)?;
+pub fn save_jumbf_to_file<P1: AsRef<Path>, P2: AsRef<Path>>(
+    data: &[u8],
+    in_path: P1,
+    out_path: Option<P2>,
+) -> Result<()> {
+    let ext = get_file_extension(in_path.as_ref()).ok_or(Error::UnsupportedType)?;
 
     // if no output path make a new file based off of source file name
-    let asset_out_path: PathBuf = match out_path {
-        Some(p) => p.to_owned(),
+    let asset_out_path: PathBuf = match out_path.as_ref() {
+        Some(p) => p.as_ref().to_owned(),
         None => {
-            let filename_osstr = in_path.file_stem().ok_or(Error::UnsupportedType)?;
+            let filename_osstr = in_path.as_ref().file_stem().ok_or(Error::UnsupportedType)?;
             let filename = filename_osstr.to_str().ok_or(Error::UnsupportedType)?;
 
             let out_name = format!("{filename}-c2pa.{ext}");
-            in_path.to_owned().with_file_name(out_name)
+            in_path.as_ref().to_owned().with_file_name(out_name)
         }
     };
 
     // clone output to be overwritten
-    if in_path != asset_out_path {
+    if in_path.as_ref() != asset_out_path {
         fs::copy(in_path, &asset_out_path).map_err(Error::IoError)?;
     }
 
@@ -236,8 +263,9 @@ pub fn save_jumbf_to_file(data: &[u8], in_path: &Path, out_path: Option<&Path>) 
 /// search_bytes - bytes to be replaced
 /// replace_bytes - replacement bytes
 /// returns the location where splice occurred
-#[cfg(test)] // this only used in unit tests
-pub fn update_file_jumbf(
+#[allow(dead_code)] // this only used in Store unit tests, update this when those tests are updated
+#[cfg(feature = "file_io")]
+pub(crate) fn update_file_jumbf(
     out_path: &Path,
     search_bytes: &[u8],
     replace_bytes: &[u8],
@@ -253,34 +281,65 @@ pub fn update_file_jumbf(
     Ok(splice_point)
 }
 
+#[cfg(feature = "file_io")]
 /// load the JUMBF block from an asset if available
-pub fn load_jumbf_from_file(in_path: &Path) -> Result<Vec<u8>> {
-    let ext = get_file_extension(in_path).ok_or(Error::UnsupportedType)?;
-
-    match get_cailoader_handler(&ext) {
-        Some(asset_handler) => {
-            let mut f = File::open(in_path)?;
-            asset_handler.read_cai(&mut f)
-        }
-        _ => Err(Error::UnsupportedType),
-    }
-}
-
-pub fn object_locations(in_path: &Path) -> Result<Vec<HashObjectPositions>> {
-    let ext = get_file_extension(in_path).ok_or(Error::UnsupportedType)?;
+pub fn load_jumbf_from_file<P: AsRef<Path>>(in_path: P) -> Result<Vec<u8>> {
+    let ext = get_file_extension(in_path.as_ref()).ok_or(Error::UnsupportedType)?;
 
     match get_assetio_handler(&ext) {
-        Some(asset_handler) => asset_handler.get_object_locations(in_path),
+        Some(asset_handler) => asset_handler.read_cai_store(in_path.as_ref()),
         _ => Err(Error::UnsupportedType),
     }
 }
 
-pub fn object_locations_from_stream(
+struct CAIReadAdapter<R> {
+    pub reader: R,
+}
+
+impl<R> Read for CAIReadAdapter<R>
+where
+    R: Read + Seek,
+{
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        self.reader.read(buf)
+    }
+}
+
+impl<R> Seek for CAIReadAdapter<R>
+where
+    R: Read + Seek,
+{
+    fn seek(&mut self, pos: std::io::SeekFrom) -> std::io::Result<u64> {
+        self.reader.seek(pos)
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn object_locations_from_stream<R>(
     format: &str,
-    stream: &mut dyn CAIRead,
-) -> Result<Vec<HashObjectPositions>> {
+    stream: &mut R,
+) -> Result<Vec<HashObjectPositions>>
+where
+    R: Read + Seek + Send + ?Sized,
+{
+    let mut reader = CAIReadAdapter { reader: stream };
     match get_caiwriter_handler(format) {
-        Some(handler) => handler.get_object_locations_from_stream(stream),
+        Some(handler) => handler.get_object_locations_from_stream(&mut reader),
+        _ => Err(Error::UnsupportedType),
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+pub(crate) fn object_locations_from_stream<R>(
+    format: &str,
+    stream: &mut R,
+) -> Result<Vec<HashObjectPositions>>
+where
+    R: Read + Seek + ?Sized,
+{
+    let mut reader = CAIReadAdapter { reader: stream };
+    match get_caiwriter_handler(format) {
+        Some(handler) => handler.get_object_locations_from_stream(&mut reader),
         _ => Err(Error::UnsupportedType),
     }
 }
@@ -291,17 +350,18 @@ pub fn object_locations_from_stream(
 ///
 /// path - path to file to be updated
 /// returns Unsupported type or errors from remove_cai_store
-pub fn remove_jumbf_from_file(path: &Path) -> Result<()> {
-    let ext = get_file_extension(path).ok_or(Error::UnsupportedType)?;
+#[cfg(feature = "file_io")]
+pub fn remove_jumbf_from_file<P: AsRef<Path>>(path: P) -> Result<()> {
+    let ext = get_file_extension(path.as_ref()).ok_or(Error::UnsupportedType)?;
     match get_assetio_handler(&ext) {
-        Some(asset_handler) => asset_handler.remove_cai_store(path),
+        Some(asset_handler) => asset_handler.remove_cai_store(path.as_ref()),
         _ => Err(Error::UnsupportedType),
     }
 }
 
 /// returns a list of supported file extensions and mime types
 pub fn get_supported_types() -> Vec<String> {
-    ASSET_HANDLERS.keys().map(|k| k.to_owned()).collect()
+    CAI_READERS.keys().map(|k| k.to_owned()).collect()
 }
 
 #[cfg(test)]
@@ -309,7 +369,15 @@ pub mod tests {
     #![allow(clippy::panic)]
     #![allow(clippy::unwrap_used)]
 
+    use std::io::Seek;
+
     use super::*;
+    use crate::{
+        asset_io::RemoteRefEmbedType,
+        crypto::raw_signature::SigningAlg,
+        utils::{test::create_test_store, test_signer::test_signer},
+    };
+
     #[test]
     fn test_get_assetio() {
         let handlers: Vec<Box<dyn AssetIO>> = vec![
@@ -364,6 +432,7 @@ pub mod tests {
             Box::new(Mp3IO::new("")),
             Box::new(SvgIO::new("")),
             Box::new(RiffIO::new("")),
+            Box::new(GifIO::new("")),
         ];
 
         // build handler map
@@ -376,18 +445,23 @@ pub mod tests {
     }
 
     #[test]
-    fn test_no_writer() {
-        let handlers: Vec<Box<dyn AssetIO>> = vec![
-            Box::new(C2paIO::new("")),
-            Box::new(BmffIO::new("")),
-            Box::new(TiffIO::new("")),
+    fn test_get_writer_tiff() {
+        let h = TiffIO::new("");
+        // Writing native formats is beyond the scope of the SDK.
+        // Only the following are supported.
+        let supported_tiff_types: [&str; 6] = [
+            "tif",
+            "tiff",
+            "image/tiff",
+            "dng",
+            "image/dng",
+            "image/x-adobe-dng",
         ];
-
-        // build handler map
-        for h in handlers {
-            // get the supported types add entry for each
-            for supported_type in h.supported_types() {
-                assert!(get_caiwriter_handler(supported_type).is_none());
+        for tiff_type in h.supported_types() {
+            if supported_tiff_types.contains(tiff_type) {
+                assert!(get_caiwriter_handler(tiff_type).is_some());
+            } else {
+                assert!(get_caiwriter_handler(tiff_type).is_none());
             }
         }
     }
@@ -413,5 +487,148 @@ pub mod tests {
         assert!(supported.iter().any(|s| s == "dng"));
         assert!(supported.iter().any(|s| s == "svg"));
         assert!(supported.iter().any(|s| s == "mp3"));
+    }
+
+    fn test_jumbf(asset_type: &str, reader: &mut dyn CAIRead) {
+        let mut writer = Cursor::new(Vec::new());
+        let store = create_test_store().unwrap();
+        let signer = test_signer(SigningAlg::Ps256);
+        let jumbf = store.to_jumbf(&*signer).unwrap();
+        save_jumbf_to_stream(asset_type, reader, &mut writer, &jumbf).unwrap();
+        writer.set_position(0);
+        let jumbf2 = load_jumbf_from_stream(asset_type, &mut writer).unwrap();
+        assert_eq!(jumbf, jumbf2);
+
+        // test removing cai store
+        writer.set_position(0);
+        let handler = get_caiwriter_handler(asset_type).unwrap();
+        let mut removed = Cursor::new(Vec::new());
+        handler
+            .remove_cai_store_from_stream(&mut writer, &mut removed)
+            .unwrap();
+        removed.set_position(0);
+        let result = load_jumbf_from_stream(asset_type, &mut removed);
+        if (asset_type != "wav")
+            && (asset_type != "avi" && asset_type != "mp3" && asset_type != "webp")
+        {
+            assert!(matches!(&result.err().unwrap(), Error::JumbfNotFound));
+        }
+        //assert!(matches!(result.err().unwrap(), Error::JumbfNotFound));
+    }
+
+    fn test_remote_ref(asset_type: &str, reader: &mut dyn CAIRead) {
+        const REMOTE_URL: &str = "https://example.com/remote_manifest";
+        let asset_handler = get_assetio_handler(asset_type).unwrap();
+        let remote_ref_writer = asset_handler.remote_ref_writer_ref().unwrap();
+        let mut writer = Cursor::new(Vec::new());
+        let embed_ref = RemoteRefEmbedType::Xmp(REMOTE_URL.to_string());
+        remote_ref_writer
+            .embed_reference_to_stream(reader, &mut writer, embed_ref)
+            .unwrap();
+        writer.set_position(0);
+        let xmp = asset_handler.get_reader().read_xmp(&mut writer).unwrap();
+        let loaded = crate::utils::xmp_inmemory_utils::extract_provenance(&xmp).unwrap();
+        assert_eq!(loaded, REMOTE_URL.to_string());
+    }
+
+    #[test]
+    fn test_streams_jpeg() {
+        let mut reader = std::fs::File::open("tests/fixtures/IMG_0003.jpg").unwrap();
+        test_jumbf("jpeg", &mut reader);
+        reader.rewind().unwrap();
+        test_remote_ref("jpeg", &mut reader);
+    }
+
+    #[test]
+    fn test_streams_png() {
+        let mut reader = std::fs::File::open("tests/fixtures/sample1.png").unwrap();
+        test_jumbf("png", &mut reader);
+        reader.rewind().unwrap();
+        test_remote_ref("png", &mut reader);
+    }
+
+    #[test]
+    fn test_streams_webp() {
+        let mut reader = std::fs::File::open("tests/fixtures/sample1.webp").unwrap();
+        test_jumbf("webp", &mut reader);
+        reader.rewind().unwrap();
+        test_remote_ref("webp", &mut reader);
+    }
+
+    #[test]
+    fn test_streams_wav() {
+        let mut reader = std::fs::File::open("tests/fixtures/sample1.wav").unwrap();
+        test_jumbf("wav", &mut reader);
+        reader.rewind().unwrap();
+        test_remote_ref("wav", &mut reader);
+    }
+
+    #[test]
+    fn test_streams_avi() {
+        let mut reader = std::fs::File::open("tests/fixtures/test.avi").unwrap();
+        test_jumbf("avi", &mut reader);
+        //reader.rewind().unwrap();
+        //test_remote_ref("avi", &mut reader); // not working
+    }
+
+    #[test]
+    fn test_streams_tiff() {
+        let mut reader = std::fs::File::open("tests/fixtures/TUSCANY.TIF").unwrap();
+        test_jumbf("tiff", &mut reader);
+        reader.rewind().unwrap();
+        test_remote_ref("tiff", &mut reader);
+    }
+
+    #[test]
+    fn test_streams_svg() {
+        let mut reader = std::fs::File::open("tests/fixtures/sample1.svg").unwrap();
+        test_jumbf("svg", &mut reader);
+        //reader.rewind().unwrap();
+        //test_remote_ref("svg", &mut reader); // svg doesn't support remote refs
+    }
+
+    #[test]
+    fn test_streams_mp3() {
+        let mut reader = std::fs::File::open("tests/fixtures/sample1.mp3").unwrap();
+        test_jumbf("mp3", &mut reader);
+        // mp3 doesn't support remote refs
+        //reader.rewind().unwrap();
+        //test_remote_ref("mp3", &mut reader); // not working
+    }
+
+    #[test]
+    fn test_streams_avif() {
+        let mut reader = std::fs::File::open("tests/fixtures/sample1.avif").unwrap();
+        test_jumbf("avif", &mut reader);
+        //reader.rewind().unwrap();
+        //test_remote_ref("avif", &mut reader);  // not working
+    }
+
+    #[test]
+    fn test_streams_heic() {
+        let mut reader = std::fs::File::open("tests/fixtures/sample1.heic").unwrap();
+        test_jumbf("heic", &mut reader);
+    }
+
+    #[test]
+    fn test_streams_heif() {
+        let mut reader = std::fs::File::open("tests/fixtures/sample1.heif").unwrap();
+        test_jumbf("heif", &mut reader);
+        //reader.rewind().unwrap();
+        //test_remote_ref("heif", &mut reader);   // not working
+    }
+
+    #[test]
+    fn test_streams_mp4() {
+        let mut reader = std::fs::File::open("tests/fixtures/video1.mp4").unwrap();
+        test_jumbf("mp4", &mut reader);
+        reader.rewind().unwrap();
+        test_remote_ref("mp4", &mut reader);
+    }
+
+    #[test]
+    fn test_streams_c2pa() {
+        let mut reader = std::fs::File::open("tests/fixtures/cloud_manifest.c2pa").unwrap();
+        test_jumbf("c2pa", &mut reader);
     }
 }

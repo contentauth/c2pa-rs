@@ -1,0 +1,103 @@
+{
+    "$schema": "http://json-schema.org/draft-07/schema",
+    "$id": "http://ns.adobe.com/c2patool/claim-definition/v1",
+    "type": "object",
+    "description": "Definition format for claim created with c2patool",
+    "examples": [
+        {
+            "alg": "es256",
+            "private_key": "es256_private.key",
+            "sign_cert": "es256_certs.pem",
+            "ta_url": "http://timestamp.digicert.com",
+            "vendor": "myvendor",
+            "claim_generator": "MyApp/0.1",
+            "thumbnail": {
+                "identifier": "thumb.jpg",
+                "format": "image/jpeg"
+            },
+            "ingredients": [
+                {
+                    "title": "A.jpg",
+                    "instanceId": "12345",
+                    "thumbnail": {
+                        "identifier": "A_thumb.jpg",
+                        "format": "image/jpeg"
+                    },
+                    "relationship": "parentOf"
+                }
+            ],
+            "ingredient_paths": [
+                "C.jpg"
+            ],
+            "assertions": [
+                {
+                    "label": "my.assertion",
+                    "data": {
+                        "any_tag": "whatever I want"
+                    }
+                }
+            ]
+        }
+    ],
+    "required": [
+        "assertions"
+    ],
+    "properties": {
+        "vendor": {
+            "type": "string",
+            "description": "Typically an Internet domain name (without the TLD) for the vendor (i.e. `adobe`, `nytimes`). If provided this will be used as a prefix on generated manifest labels."
+        },
+        "claim_generator": {
+            "type": "string",
+            "description": "A UserAgent string that will let a user know what software/hardware/system produced this Manifest - names should not contain spaces (defaults to c2patool)."
+        },
+        "title": {
+            "type": "string",
+            "description": "A human-readable string to be displayed as the title for this Manifest (defaults to the name of the file this manifest was embedded in)."
+        },
+        "credentials": {
+            "type": "object",
+            "description": "An array of W3C verifiable credentials objects defined in the c2pa assertion specification. Section 7."
+        },
+        "thumbnail": {
+            "type": "object",
+            "format": "JSON resource definition",
+            "description": "An object with an identifier field with a file path, and a format with the mime type of that file."
+        },
+        "ingredients": {
+            "type": "array",
+            "format": "Array of JSON ingredients, such as those produced with the --ingredient option",
+            "description": "Ingredients that were used to modify the asset referenced by this Manifest (if any)."
+        },
+        "ingredient_paths": {
+            "type": "array",
+            "format": "Array of local file system paths",
+            "description": "File paths to assets that were used to modify the asset referenced by this Manifest (if any). This may be a JSON Ingredient definition file."
+        },
+        "assertions": {
+            "type": "object",
+            "description": "Objects with label, and data - standard c2pa labels must match values as defined in the c2pa assertion specification."
+        },
+        "alg": {
+            "type": "string",
+            "format": "Local file system path",
+            "description": "Signing algorithm: one of [ ps256 | ps384 | ps512 | es256 | es384 | es512 | ed25519]. Defaults to es256."
+        },
+        "ta_url": {
+            "type": "string",
+            "format": "http URL",
+            "description": "A URL to an RFC3161 compliant Time Stamp Authority. If missing there will no secure timestamp."
+        },
+        "private_key": {
+            "type": "string",
+            "format": "Local file system path",
+            "description": "File path to a private key file."
+        },
+        "sign_cert": {
+            "type": "string",
+            "format": "Local file system path",
+            "description": "File path to signing cert file."
+        }
+    },
+    "additionalProperties": false
+}

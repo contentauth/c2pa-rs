@@ -1,154 +1,102 @@
-# C2PA Rust SDK
+# C2PA Rust library
 
 [![CI](https://github.com/contentauth/c2pa-rs/actions/workflows/ci.yml/badge.svg)](https://github.com/contentauth/c2pa-rs/actions/workflows/ci.yml) [![Latest Version](https://img.shields.io/crates/v/c2pa.svg)](https://crates.io/crates/c2pa) [![docs.rs](https://img.shields.io/docsrs/c2pa)](https://docs.rs/c2pa/) [![codecov](https://codecov.io/gh/contentauth/c2pa-rs/branch/main/graph/badge.svg?token=YVHWI19EGN)](https://codecov.io/gh/contentauth/c2pa-rs)
 
-The **[Coalition for Content Provenance and Authenticity](https://c2pa.org)** (C2PA) addresses the prevalence of misleading information online through the development of technical standards for certifying the source and history (or provenance) of media content. Adobe and other contributors created the C2PA Rust SDK as part of the [Content Authenticity Initiative](https://contentauthenticity.org) and [released it to open source](https://contentauthenticity.org/blog/cai-releases-suite-of-open-source-tools-to-advance-digital-content-provenance) in June, 2022.
+<div style={{display: 'none'}}>
+
+The **[Coalition for Content Provenance and Authenticity](https://c2pa.org)** (C2PA) addresses the prevalence of misleading information online through the development of technical standards for certifying the source and history (or provenance) of media content. The C2PA Rust library is part of the [Content Authenticity Initiative](https://contentauthenticity.org) open-source SDK.
+
+For the best experience, read the docs on the [CAI Open Source SDK documentation website](https://opensource.contentauthenticity.org/docs/rust-sdk/).  
+
+You can also read the documentation directly in GitHub:
+
+- [Usage](https://github.com/contentauth/c2pa-rs/blob/main/docs/usage.md)
+- [Supported formats](https://github.com/contentauth/c2pa-rs/blob/main/docs/supported-formats.md)
+- [Using the CAWG identity assertion](https://github.com/contentauth/c2pa-rs/blob/main/docs/cawg-identity.md)
+- [Release notes](https://github.com/contentauth/c2pa-rs/blob/main/docs/release-notes.md)
+- [Contributing to the project](https://github.com/contentauth/c2pa-rs/blob/main/docs/project-contributions.md)
+
+- [C2PA Tool](https://github.com/contentauth/c2pa-rs/blob/main/cli/README.md) documentation:
+  - [Using C2PA Tool](https://github.com/contentauth/c2pa-rs/blob/main/cli/docs/usage.md)
+  - [Manifest definition file](https://github.com/contentauth/c2pa-rs/blob/main/cli/docs/manifest.md)
+  - [Using an X.509 certificate](https://github.com/contentauth/c2pa-rs/blob/main/cli/docs/x_509.md)
+  - [Change log](https://github.com/contentauth/c2pa-rs/blob/main/cli/CHANGELOG.md)
+
+</div>
 
 ## Key features
 
-The C2PA Rust SDK implements a subset of the [C2PA technical specification](https://c2pa.org/specifications/specifications/1.3/specs/C2PA_Specification.html).
+The [`c2pa` crate](https://crates.io/crates/c2pa) implements a subset of the [C2PA technical specification](https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html) and the [CAWG identity assertion specification](https://cawg.io/identity) in the Rust programming language.
 
-The SDK enables a desktop, mobile, or embedded application to:
-* Create and sign C2PA [claims](https://c2pa.org/specifications/specifications/1.3/specs/C2PA_Specification.html#_claims) and [manifests](https://c2pa.org/specifications/specifications/1.3/specs/C2PA_Specification.html#_manifests).
-* Embed manifests in certain file formats.
-* Parse and validate manifests found in certain file formats.
+The library enables a desktop, mobile, or embedded application to:
+* Create and sign C2PA [claims](https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_claims) and [manifests](https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_manifests).
+* Create, sign, and validate [CAWG identity assertions](https://cawg.io/identity) in C2PA manifests.  See [Using the CAWG identity assertion](docs/cawg-identity.md) for more information.
+* Embed manifests in [supported file formats](docs/supported-formats.md).
+* Parse and validate manifests found in [supported file formats](docs/supported-formats.md).
 
-The SDK supports several common C2PA [assertions](https://c2pa.org/specifications/specifications/1.3/specs/C2PA_Specification.html#_c2pa_standard_assertions) and [hard bindings](https://c2pa.org/specifications/specifications/1.3/specs/C2PA_Specification.html#_hard_bindings).
+The library supports several common C2PA [assertions](https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_c2pa_standard_assertions) and [hard bindings](https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_hard_bindings).
+
+For details on what you can do with the library, see [Using the Rust library](https://opensource.contentauthenticity.org/docs/rust-sdk/docs/usage).
 
 ## State of the project
 
 This is a beta release (version 0.x.x) of the project. The minor version number (0.x.0) is incremented when there are breaking API changes, which may happen frequently.
 
-### Contributions and feedback
+**NOTE**: The library now supports [C2PA v2 claims](https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_claims), however development is still in progress and all features are not fully implemented yet. While you can experiment with this functionality, it is not recommended for production use at this time.  For details, see [C2PA v2 claims](https://opensource.contentauthenticity.org/docs/rust-sdk/docs/release-notes#c2pa-v2-claims).
 
-We welcome contributions to this project.  For information on contributing, providing feedback, and about ongoing work, see [Contributing](https://github.com/contentauth/c2pa-js/blob/main/CONTRIBUTING.md).
+### New API
 
-## Requirements
+NOTE: The current release includes a new API that replaces old methods of reading and writing C2PA data, which are deprecated.  See the [release notes](https://opensource.contentauthenticity.org/docs/rust-sdk/docs/release-notes) for more information. 
 
-The SDK requires **Rust version 1.70.0** or newer.
+## Installation
 
-### Supported platforms
+### Prerequisites
 
-The SDK has been tested on the following operating systems:
+**Install Rust and Cargo**
 
-* Windows (Intel only)
-* MacOS (Intel and Apple silicon)
-* Ubuntu Linux (64-bit Intel and ARM v8)
-* WebAssembly (Wasm)
+To use the CAI Rust library, you must install [Rust and Cargo](https://doc.rust-lang.org/cargo/index.html).
 
-## Supported file formats
+Minimal supported Rust version (MSRV): The `c2pa` crate requires Rust version 1.86.0 or newer. When a newer version of Rust becomes required, a new minor (0.x.0) version of this crate will be released.
 
- | Extensions    | MIME type                                           |
- | ------------- | --------------------------------------------------- |
- | `avi`         | `video/msvideo`, `video/avi`, `application-msvideo` |
- | `avif`        | `image/avif`                                        |
- | `c2pa`        | `application/x-c2pa-manifest-store`                 |
- | `dng`         | `image/x-adobe-dng`                                 |
- | `heic`        | `image/heic`                                        |
- | `heif`        | `image/heif`                                        |
- | `jpg`, `jpeg` | `image/jpeg`                                        |
- | `m4a`         | `audio/mp4`                                         |
- | `mp4`         | `video/mp4`, `application/mp4`                      |
- | `mov`         | `video/quicktime`                                   |
- | `png`         | `image/png`                                         |
- | `svg`         | `image/svg+xml`                                     |
- | `tif`,`tiff`  | `image/tiff`                                        |
- | `wav`         | `audio/wav`                                         |
- | `webp`        | `image/webp`                                        |
+**Install C build tools**
 
-## Usage
+Install the C build tools for your development platoform"
 
-Add this to your `Cargo.toml`:
+- macOS: XCode with command-line tools
+- Windows: Microsoft Visual C++ (MSVC)
 
-```toml
-[dependencies]
-c2pa = "0.27.1"
+### Build
+
+The easiest way to build the library is by using the `Makefile`.
+
+To build unit tests, use this command:
+
+```
+make test
 ```
 
-If you want to read or write a manifest file, add the `file_io` dependency to your `Cargo.toml`.
-The `add_thumbnails` feature will generate thumbnails for JPEG and PNG files.
- For example:
+To build the binary libraries, use this command:
+
 ```
-c2pa = { version = "0.25.0", features = ["file_io", "add_thumbnails"] }
+make release
 ```
 
-NOTE: If you are building for WASM, omit the `file_io` dependency.
+### Add dependency
 
-## Crate features
+Add the following line to your `Cargo.toml`:
 
-The Rust SDK crate provides:
+```
+c2pa = "<VERSION_NUMBER>"
+```
 
-* `file_io` enables manifest generation, signing via OpenSSL, and embedding manifests in various file formats.
-* `add_thumbnails` will generate thumbnails automatically for JPEG and PNG files. (no longer included with `file_io`)
-* `serialize_thumbnails` includes binary thumbnail data in the [Serde](https://serde.rs/) serialization output.
-* `xmp_write` enables updating XMP on embed with the `dcterms:provenance` field. (Requires [xmp_toolkit](https://crates.io/crates/xmp_toolkit).)
-* `no_interleaved_io` forces fully-synchronous I/O; otherwise, the SDK uses threaded I/O for some operations to improve performance.
-* `fetch_remote_manifests` enables the verification step to retrieve externally referenced manifest stores.  External manifests are only fetched if there is no embedded manifest store and no locally adjacent .c2pa manifest store file of the same name.
-* `json_schema` is used by `make schema` to produce a JSON schema document that represents the `ManifestStore` data structures.
+Where `<VERSION_NUMBER>` is the [latest version of the crate as shown on crates.io](https://crates.io/crates/c2pa).
+
+## Contributions and feedback
+
+We welcome contributions to this project.  For information on contributing, providing feedback, and about ongoing work, see [Contributing](https://github.com/contentauth/c2pa-rs/blob/main/CONTRIBUTING.md).  For additional information on testing, see [Contributing to the project](https://github.com/contentauth/c2pa-rs/blob/main/docs/project-contributions.md).
 
 ## License
 
 The `c2pa` crate is distributed under the terms of both the [MIT license](https://github.com/contentauth/c2pa-rs/blob/main/LICENSE-MIT) and the [Apache License (Version 2.0)](https://github.com/contentauth/c2pa-rs/blob/main/LICENSE-APACHE).
 
-Note that some components and dependent crates are licensed under different terms; please check the license terms for each crate and component for details.
-
-## Nightly builds
-
-In most cases, you should depend on this crate as published via [crates.io](https://crates.io/crates/c2pa).
-
-The Adobe team produces nightly snapshots of this crate via a `nightly` branch, which we use for testing the impact of pending changes to upstream dependencies.
-
-You may wish to use these builds for your own testing ahead of our releases, you may include the SDK via the following `Cargo.toml` entry:
-
-```toml
-c2pa = { git = "https://github.com/contentauth/c2pa-rs.git", branch = "nightly", features = [...]}
-```
-
-Commits in this branch have a modified `sdk/Cargo.toml` entry which includes a version number similar to the following:
-
-```toml
-version = "0.25.3-nightly+2023-08-28-2f33ab3"
-```
-
-Please note that there is no formal support for code from a nightly release, but if you become aware of any issues, we would appreciate a bug report including this version number.
-
-## Release notes
-
-This section gives a highlight of noteworthy changes.
-
-Refer to the [CHANGELOG](https://github.com/contentauth/c2pa-rs/blob/main/CHANGELOG.md) for detailed changes derived from git commit history.
-
-
-## 0.25.0
-_14 July 2023_
-* (important!) the `add_thumbnails` feature is no longer tied to `file_io`, so you will need to specify it or thumbnails will not be generated.
-* removed `User` and `UserCbor` assertions from public API. They were not generating correct manifest data.
-* use `manifest_add_labeled_assertion` instead - see docs on `manifest.embed` for an example.
-* `DataHash` and `BoxHash` SDK support (generates a signed manifest ready to write into a file without writing to the file)
-* The SDK will no longer remove duplicate ingredients based on hash
-* `make_test_images` updated to fix issue 195, actions without required ingredients
-* updated the test fixtures generated by make_test_images
-* Expose `CAIRead` and `CAIWrite` traits required by some SDK calls.
-* Bug fix for certain BMFF formats (AVIF) that causes images to be unreadable
-
-## 0.24.0
-_21 June 2023_
-* Bump minor version to 0.24.0 to signify change in signature (back to the compatible one)
-* Reverts to 1.2 Cose signatures when signing while still validating 1.3 Cose signatures
-* We want to allow some time for clients to upgrade to validating 1.3 before writing this breaking change.
-* Fix embed_from_memory to correctly return the updated image
-* includes the cert serial number in the ValidationInfo output
-* support adding claim_generator_info field
-* support Actions V2 and Ingredients V2
-* BMFF V2
-* Json Schema generation
-
-## 0.19.0
-_23 March 2023_
-
-* Added support for many new file formats, see Supported File Formats above.
-* New api to return supported formats.
-* Streaming APIs for manifest creation without file_io for some formats.
-* Manifest and Ingredient JSON formats replace the `is_parent` field with `relationship`.
-* ResourceRef replaces `content-type` with `format`.
-* The `bmff` feature no longer required.
+Some components and dependent crates are licensed under different terms; please check their licenses for details.

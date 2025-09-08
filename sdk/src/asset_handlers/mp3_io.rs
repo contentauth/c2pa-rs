@@ -12,23 +12,30 @@
 // each license.
 
 use std::{
-    fs::{File, OpenOptions},
+    fs::{self, File, OpenOptions},
     io::{Cursor, Seek, SeekFrom, Write},
     path::Path,
 };
 
 use byteorder::{BigEndian, ReadBytesExt};
 use conv::ValueFrom;
-use id3::{frame::EncapsulatedObject, *};
-use tempfile::Builder;
-use twoway::find_bytes;
+use id3::{
+    frame::{EncapsulatedObject, Private},
+    *,
+};
+use memchr::memmem;
 
 use crate::{
     asset_io::{
-        AssetIO, AssetPatch, CAIRead, CAIReadWrapper, CAIReadWrite, CAIReadWriteWrapper, CAIReader,
-        CAIWriter, HashBlockObjectType, HashObjectPositions, RemoteRefEmbed,
+        rename_or_move, AssetIO, AssetPatch, CAIRead, CAIReadWrapper, CAIReadWrite,
+        CAIReadWriteWrapper, CAIReader, CAIWriter, HashBlockObjectType, HashObjectPositions,
+        RemoteRefEmbed, RemoteRefEmbedType,
     },
     error::{Error, Result},
+    utils::{
+        io_utils::{stream_len, tempfile_builder, ReaderUtils},
+        xmp_inmemory_utils::{self, MIN_XMP},
+    },
 };
 
 static SUPPORTED_TYPES: [&str; 2] = ["mp3", "audio/mpeg"];
@@ -45,33 +52,40 @@ struct ID3V2Header {
 }
 
 impl ID3V2Header {
-    pub fn read_header(reader: &mut dyn CAIRead) -> Result<ID3V2Header> {
+    pub fn read_header(reader: &mut dyn CAIRead) -> Result<Option<ID3V2Header>> {
         let mut header = [0; 10];
         reader.read_exact(&mut header).map_err(Error::IoError)?;
 
-        if &header[0..3] != b"ID3" {
-            return Err(Error::UnsupportedType);
+        if &header[0..3] == b"ID3" {
+            let (version_major, version_minor) = (header[3], header[4]);
+            if !(2..=4).contains(&version_major) {
+                return Err(Error::UnsupportedType);
+            }
+
+            let flags = header[5];
+
+            let mut size_reader = Cursor::new(&header[6..10]);
+            let encoded_tag_size = size_reader
+                .read_u32::<BigEndian>()
+                .map_err(|_err| Error::InvalidAsset("could not read mp3 tag size".to_string()))?;
+            let tag_size = ID3V2Header::decode_tag_size(encoded_tag_size);
+
+            return Ok(Some(ID3V2Header {
+                _version_major: version_major,
+                _version_minor: version_minor,
+                _flags: flags,
+                tag_size,
+            }));
         }
 
-        let (version_major, version_minor) = (header[3], header[4]);
-        if !(2..=4).contains(&version_major) {
-            return Err(Error::UnsupportedType);
+        // If no ID3 tag is found, check for MP3 frame sync word
+        if ID3V2Header::is_mp3_frame_sync(&header) {
+            // Return None to indicate no ID3 header, but valid MP3
+            return Ok(None);
         }
 
-        let flags = header[5];
-
-        let mut size_reader = Cursor::new(&header[6..10]);
-        let encoded_tag_size = size_reader
-            .read_u32::<BigEndian>()
-            .map_err(|_err| Error::InvalidAsset("could not read mp3 tag size".to_string()))?;
-        let tag_size = ID3V2Header::decode_tag_size(encoded_tag_size);
-
-        Ok(ID3V2Header {
-            _version_major: version_major,
-            _version_minor: version_minor,
-            _flags: flags,
-            tag_size,
-        })
+        // If neither ID3 header nor MP3 frame sync is found, return error
+        Err(Error::UnsupportedType)
     }
 
     pub fn get_size(&self) -> u32 {
@@ -79,11 +93,16 @@ impl ID3V2Header {
     }
 
     fn decode_tag_size(n: u32) -> u32 {
-        n & 0xff | (n & 0xff00) >> 1 | (n & 0xff0000) >> 2 | (n & 0xff000000) >> 3
+        (n & 0xff) | ((n & 0xff00) >> 1) | ((n & 0xff0000) >> 2) | ((n & 0xff000000) >> 3)
+    }
+
+    fn is_mp3_frame_sync(header: &[u8]) -> bool {
+        // Check for MPEG audio frame sync word (first 11 bits 1)
+        header[0] == 0xff && (header[1] & 0xe0 == 0xe0)
     }
 }
 
-fn get_manifest_pos(input_stream: &mut dyn CAIRead) -> Option<(u64, u32)> {
+fn get_manifest_pos(mut input_stream: &mut dyn CAIRead) -> Option<(u64, u32)> {
     input_stream.rewind().ok()?;
     let header = ID3V2Header::read_header(input_stream).ok()?;
     input_stream.rewind().ok()?;
@@ -92,7 +111,7 @@ fn get_manifest_pos(input_stream: &mut dyn CAIRead) -> Option<(u64, u32)> {
         reader: input_stream,
     };
 
-    if let Ok(tag) = Tag::read_from(reader) {
+    if let Ok(tag) = Tag::read_from2(reader) {
         let mut manifests = Vec::new();
 
         for eo in tag.encapsulated_objects() {
@@ -104,10 +123,11 @@ fn get_manifest_pos(input_stream: &mut dyn CAIRead) -> Option<(u64, u32)> {
         if manifests.len() == 1 {
             input_stream.rewind().ok()?;
 
-            let mut tag_bytes = vec![0u8; header.get_size() as usize];
-            input_stream.read_exact(tag_bytes.as_mut_slice()).ok()?;
+            let tag_bytes = input_stream
+                .read_to_vec(header.map_or(0, |h| h.get_size()) as u64)
+                .ok()?;
 
-            let pos = find_bytes(&tag_bytes, &manifests[0])?;
+            let pos = memmem::find(&tag_bytes, &manifests[0])?;
 
             return Some((pos as u64, manifests[0].len() as u32));
         }
@@ -121,9 +141,11 @@ pub struct Mp3IO {
 
 impl CAIReader for Mp3IO {
     fn read_cai(&self, input_stream: &mut dyn CAIRead) -> Result<Vec<u8>> {
+        input_stream.rewind()?;
+
         let mut manifest: Option<Vec<u8>> = None;
 
-        if let Ok(tag) = Tag::read_from(input_stream) {
+        if let Ok(tag) = Tag::read_from2(input_stream) {
             for eo in tag.encapsulated_objects() {
                 if eo.mime_type == GEOB_FRAME_MIME_TYPE {
                     match manifest {
@@ -139,9 +161,100 @@ impl CAIReader for Mp3IO {
         manifest.ok_or(Error::JumbfNotFound)
     }
 
-    // Get XMP block
-    fn read_xmp(&self, _input_stream: &mut dyn CAIRead) -> Option<String> {
+    fn read_xmp(&self, input_stream: &mut dyn CAIRead) -> Option<String> {
+        input_stream.rewind().ok()?;
+
+        if let Ok(tag) = Tag::read_from2(input_stream) {
+            for frame in tag.frames() {
+                if let Content::Private(private) = frame.content() {
+                    if &private.owner_identifier == "XMP" {
+                        return String::from_utf8(private.private_data.clone()).ok();
+                    }
+                }
+            }
+        }
+
         None
+    }
+}
+
+impl RemoteRefEmbed for Mp3IO {
+    fn embed_reference(&self, asset_path: &Path, embed_ref: RemoteRefEmbedType) -> Result<()> {
+        match &embed_ref {
+            RemoteRefEmbedType::Xmp(_) => {
+                let mut input_stream = File::open(asset_path)?;
+                let mut output_stream = Cursor::new(Vec::new());
+                self.embed_reference_to_stream(&mut input_stream, &mut output_stream, embed_ref)?;
+                fs::write(asset_path, output_stream.into_inner())?;
+                Ok(())
+            }
+            _ => Err(Error::UnsupportedType),
+        }
+    }
+
+    fn embed_reference_to_stream(
+        &self,
+        source_stream: &mut dyn CAIRead,
+        output_stream: &mut dyn CAIReadWrite,
+        embed_ref: RemoteRefEmbedType,
+    ) -> Result<()> {
+        match embed_ref {
+            RemoteRefEmbedType::Xmp(url) => {
+                source_stream.rewind()?;
+
+                let header = ID3V2Header::read_header(source_stream)?;
+                source_stream.rewind()?;
+
+                let mut out_tag = Tag::new();
+
+                let reader = CAIReadWrapper {
+                    reader: source_stream,
+                };
+                if let Ok(tag) = Tag::read_from2(reader) {
+                    for f in tag.frames() {
+                        match f.content() {
+                            Content::Private(private) => {
+                                if &private.owner_identifier != "XMP" {
+                                    out_tag.add_frame(f.clone());
+                                }
+                            }
+                            _ => {
+                                out_tag.add_frame(f.clone());
+                            }
+                        }
+                    }
+                }
+
+                let xmp = xmp_inmemory_utils::add_provenance(
+                    &self
+                        .read_xmp(source_stream)
+                        .unwrap_or_else(|| MIN_XMP.to_string()),
+                    &url,
+                )?;
+                let frame = Frame::with_content(
+                    "PRIV",
+                    Content::Private(Private {
+                        owner_identifier: "XMP".to_owned(),
+                        private_data: xmp.into_bytes(),
+                    }),
+                );
+
+                out_tag.add_frame(frame);
+
+                let writer = CAIReadWriteWrapper {
+                    reader_writer: output_stream,
+                };
+                out_tag
+                    .write_to(writer, Version::Id3v24)
+                    .map_err(|_e| Error::EmbeddingError)?;
+
+                source_stream.seek(SeekFrom::Start(header.map_or(0, |h| h.get_size()) as u64))?;
+                std::io::copy(source_stream, output_stream)?;
+
+                Ok(())
+            }
+            _ => Err(Error::UnsupportedType),
+        }
     }
 }
 
@@ -204,18 +317,12 @@ impl AssetIO for Mp3IO {
             .open(asset_path)
             .map_err(Error::IoError)?;
 
-        let mut temp_file = Builder::new()
-            .prefix("c2pa_temp")
-            .rand_bytes(5)
-            .tempfile()?;
+        let mut temp_file = tempfile_builder("c2pa_temp")?;
 
         self.write_cai(&mut input_stream, &mut temp_file, store_bytes)?;
 
         // copy temp file to asset
-        std::fs::rename(temp_file.path(), asset_path)
-            // if rename fails, try to copy in case we are on different volumes
-            .or_else(|_| std::fs::copy(temp_file.path(), asset_path).and(Ok(())))
-            .map_err(Error::IoError)
+        rename_or_move(temp_file, asset_path)
     }
 
     fn get_object_locations(
@@ -232,7 +339,7 @@ impl AssetIO for Mp3IO {
     }
 
     fn remote_ref_writer_ref(&self) -> Option<&dyn RemoteRefEmbed> {
-        None
+        Some(self)
     }
 
     fn supported_types(&self) -> &[&str] {
@@ -247,17 +354,19 @@ impl CAIWriter for Mp3IO {
         output_stream: &mut dyn CAIReadWrite,
         store_bytes: &[u8],
     ) -> Result<()> {
+        input_stream.rewind()?;
+
         let header = ID3V2Header::read_header(input_stream)?;
         input_stream.rewind()?;
 
         let mut out_tag = Tag::new();
 
-        // wrapper to protect imput stream from being gobbled
+        // wrapper to protect input stream from being gobbled
         let reader = CAIReadWrapper {
             reader: input_stream,
         };
 
-        if let Ok(tag) = Tag::read_from(reader) {
+        if let Ok(tag) = Tag::read_from2(reader) {
             for f in tag.frames() {
                 match f.content() {
                     // remove existing manifest keeping existing frames
@@ -300,7 +409,7 @@ impl CAIWriter for Mp3IO {
             .map_err(|_e| Error::EmbeddingError)?;
 
         // skip past old ID3V2
-        input_stream.seek(SeekFrom::Start(header.get_size() as u64))?;
+        input_stream.seek(SeekFrom::Start(header.map_or(0, |h| h.get_size()) as u64))?;
 
         // copy source data to output
         std::io::copy(input_stream, output_stream)?;
@@ -343,7 +452,7 @@ impl CAIWriter for Mp3IO {
             .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?
             + u64::value_from(manifest_len)
                 .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?;
-        let file_end = output_stream.seek(SeekFrom::End(0))?;
+        let file_end = stream_len(&mut output_stream)?;
         positions.push(HashObjectPositions {
             offset: usize::value_from(end)
                 .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?, // len of cai
@@ -393,11 +502,12 @@ pub mod tests {
     #![allow(clippy::panic)]
     #![allow(clippy::unwrap_used)]
 
-    use tempfile::tempdir;
+    use xmp_inmemory_utils::extract_provenance;
 
     use super::*;
     use crate::utils::{
         hash_utils::vec_compare,
+        io_utils::tempdirectory,
         test::{fixture_path, temp_dir_path},
     };
 
@@ -407,7 +517,7 @@ pub mod tests {
         let source = fixture_path("sample1.mp3");
 
         let mut success = false;
-        if let Ok(temp_dir) = tempdir() {
+        if let Ok(temp_dir) = tempdirectory() {
             let output = temp_dir_path(&temp_dir, "sample1-mp3.mp3");
 
             if let Ok(_size) = std::fs::copy(source, &output) {
@@ -430,7 +540,7 @@ pub mod tests {
         let source = fixture_path("sample1.mp3");
 
         let mut success = false;
-        if let Ok(temp_dir) = tempdir() {
+        if let Ok(temp_dir) = tempdirectory() {
             let output = temp_dir_path(&temp_dir, "sample1-mp3.mp3");
 
             if let Ok(_size) = std::fs::copy(source, &output) {
@@ -459,7 +569,7 @@ pub mod tests {
     fn test_remove_c2pa() {
         let source = fixture_path("sample1.mp3");
 
-        let temp_dir = tempdir().unwrap();
+        let temp_dir = tempdirectory().unwrap();
         let output = temp_dir_path(&temp_dir, "sample1-mp3.mp3");
 
         std::fs::copy(source, &output).unwrap();
@@ -472,5 +582,29 @@ pub mod tests {
             Err(Error::JumbfNotFound) => (),
             _ => unreachable!(),
         }
+    }
+
+    #[test]
+    fn test_remote_ref() -> Result<()> {
+        let mp3_io = Mp3IO::new("mp3");
+
+        let mut stream = File::open(fixture_path("sample1.mp3"))?;
+        assert_eq!(mp3_io.read_xmp(&mut stream), None);
+        stream.rewind()?;
+
+        let mut output_stream1 = Cursor::new(Vec::new());
+        mp3_io.embed_reference_to_stream(
+            &mut stream,
+            &mut output_stream1,
+            RemoteRefEmbedType::Xmp("Test".to_owned()),
+        )?;
+        output_stream1.rewind()?;
+
+        let xmp = mp3_io.read_xmp(&mut output_stream1).unwrap();
+
+        let p = extract_provenance(&xmp).unwrap();
+        assert_eq!(&p, "Test");
+
+        Ok(())
     }
 }

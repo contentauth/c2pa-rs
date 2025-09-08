@@ -19,10 +19,10 @@
 use std::path::Path;
 
 use crate::{
+    crypto::raw_signature::{signer_from_cert_chain_and_private_key, SigningAlg},
     error::Result,
-    openssl::{EcSigner, EdSigner, RsaSigner},
-    signer::ConfigurableSigner,
-    Signer, SigningAlg,
+    signer::RawSignerWrapper,
+    Signer,
 };
 
 /// Creates a [`Signer`] instance using signing certificate and private key
@@ -43,17 +43,9 @@ pub fn from_keys(
     alg: SigningAlg,
     tsa_url: Option<String>,
 ) -> Result<Box<dyn Signer>> {
-    Ok(match alg {
-        SigningAlg::Ps256 | SigningAlg::Ps384 | SigningAlg::Ps512 => Box::new(
-            RsaSigner::from_signcert_and_pkey(signcert, pkey, alg, tsa_url)?,
-        ),
-        SigningAlg::Es256 | SigningAlg::Es384 | SigningAlg::Es512 => Box::new(
-            EcSigner::from_signcert_and_pkey(signcert, pkey, alg, tsa_url)?,
-        ),
-        SigningAlg::Ed25519 => Box::new(EdSigner::from_signcert_and_pkey(
-            signcert, pkey, alg, tsa_url,
-        )?),
-    })
+    Ok(Box::new(RawSignerWrapper(
+        signer_from_cert_chain_and_private_key(signcert, pkey, alg, tsa_url)?,
+    )))
 }
 
 /// Creates a [`Signer`] instance using signing certificate and
@@ -72,18 +64,8 @@ pub fn from_files<P: AsRef<Path>>(
     alg: SigningAlg,
     tsa_url: Option<String>,
 ) -> Result<Box<dyn Signer>> {
-    Ok(match alg {
-        SigningAlg::Ps256 | SigningAlg::Ps384 | SigningAlg::Ps512 => Box::new(
-            RsaSigner::from_files(&signcert_path, &pkey_path, alg, tsa_url)?,
-        ),
-        SigningAlg::Es256 | SigningAlg::Es384 | SigningAlg::Es512 => Box::new(
-            EcSigner::from_files(&signcert_path, &pkey_path, alg, tsa_url)?,
-        ),
-        SigningAlg::Ed25519 => Box::new(EdSigner::from_files(
-            &signcert_path,
-            &pkey_path,
-            alg,
-            tsa_url,
-        )?),
-    })
+    let cert_chain = std::fs::read(signcert_path)?;
+    let private_key = std::fs::read(pkey_path)?;
+
+    from_keys(&cert_chain, &private_key, alg, tsa_url)
 }

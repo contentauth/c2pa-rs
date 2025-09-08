@@ -1,5 +1,4 @@
 {
-    "claim_generator": "test",
     "claim_generator_info": [
         {
             "name": "test",
@@ -8,6 +7,11 @@
                 "format": "image/svg+xml",
                 "identifier": "sample1.svg"
             }
+        }
+    ],
+    "metadata": [
+        {
+            "dateTime": "1985-04-12T23:20:50.52Z"
         }
     ],
     "format" : "image/jpeg",
@@ -57,16 +61,22 @@
                     }
                 ]
             }
+        },
+        {
+            "kind": "Json",
+            "label": "com.mycompany.myassertion",
+            "data": {"some_tag": "here is my custom value"}
         }
     ],
     "ingredients": [{
         "title": "A.jpg",
         "format": "image/jpeg",
+        "instance_id": "xmp.iid:7b57930e-2f23-47fc-affe-0400d70b738d",
         "document_id": "xmp.did:813ee422-9736-4cdc-9be6-4e35ed8e41cb",
         "relationship": "parentOf",
         "thumbnail": {
             "format": "image/png",
-            "identifier": "exp-test1.png"
+            "identifier": "sample1.png"
         }
     },
     {

@@ -11,19 +11,19 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use twoway::find_bytes;
+use memchr::memmem;
 
 use crate::error::{Error, Result};
 
 /**
 Patch a sequence bytes with a new set of bytes - the search_bytes are erased and replaced with replace_bytes
-This function only patches the first occurance
+This function only patches the first occurrence
 returns the location where splice occurred
 */
 pub fn patch_bytes(data: &mut Vec<u8>, search_bytes: &[u8], replace_bytes: &[u8]) -> Result<usize> {
     // patch data bytes in memory
 
-    if let Some(splice_start) = find_bytes(data, search_bytes) {
+    if let Some(splice_start) = memmem::find(data, search_bytes) {
         data.splice(
             splice_start..splice_start + search_bytes.len(),
             replace_bytes.iter().cloned(),

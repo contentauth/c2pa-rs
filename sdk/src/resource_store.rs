@@ -11,24 +11,43 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use std::{borrow::Cow, collections::HashMap};
-#[cfg(feature = "file_io")]
 use std::{
-    fs::{create_dir_all, read, write},
-    path::{Path, PathBuf},
+    borrow::Cow,
+    collections::HashMap,
+    io::{Read, Seek, Write},
 };
 
 #[cfg(feature = "json_schema")]
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+#[cfg(feature = "file_io")]
+use {
+    crate::utils::io_utils::uri_to_path,
+    std::{
+        fs::{create_dir_all, read, write},
+        path::{Path, PathBuf},
+    },
+};
 
-use crate::{assertions::AssetType, claim::Claim, hashed_uri::HashedUri, Error, Result};
+use crate::{
+    assertions::{labels, AssetType, EmbeddedData},
+    asset_io::CAIRead,
+    claim::Claim,
+    hashed_uri::HashedUri,
+    jumbf::labels::{assertion_label_from_uri, to_absolute_uri, DATABOXES},
+    salt::DefaultSalt,
+    utils::mime::format_to_mime,
+    Error, Result,
+};
 
 /// Function that is used by serde to determine whether or not we should serialize
 /// resources based on the `serialize_resources` flag.
 /// (Serialization is disabled by default.)
 pub(crate) fn skip_serializing_resources(_: &ResourceStore) -> bool {
-    !cfg!(feature = "serialize_thumbnails") || cfg!(test)
+    //TODO: Why is this disabled for wasm32?
+    !cfg!(feature = "serialize_thumbnails")
+        || cfg!(test)
+        || cfg!(not(all(target_arch = "wasm32", not(target_os = "wasi"))))
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
@@ -47,7 +66,17 @@ impl UriOrResource {
         match self {
             UriOrResource::ResourceRef(r) => {
                 let data = resources.get(&r.identifier)?;
-                let hash_uri = claim.add_databox(&r.format, data.to_vec(), None)?;
+                let hash_uri = match claim.version() {
+                    1 => claim.add_databox(&r.format, data.to_vec(), None)?,
+                    _ => {
+                        let icon_assertion = EmbeddedData::new(
+                            labels::ICON,
+                            format_to_mime(&r.format),
+                            data.to_vec(),
+                        );
+                        claim.add_assertion_with_salt(&icon_assertion, &DefaultSalt::default())?
+                    }
+                };
                 Ok(UriOrResource::HashedUri(hash_uri))
             }
             UriOrResource::HashedUri(h) => Ok(UriOrResource::HashedUri(h.clone())),
@@ -62,10 +91,24 @@ impl UriOrResource {
         match self {
             UriOrResource::ResourceRef(r) => Ok(UriOrResource::ResourceRef(r.clone())),
             UriOrResource::HashedUri(h) => {
-                let uri = crate::jumbf::labels::to_absolute_uri(claim.label(), &h.url());
-                let data_box = claim.find_databox(&uri).ok_or(Error::MissingDataBox)?;
-                let resource_ref =
-                    resources.add_with(&h.url(), &data_box.format, data_box.data.clone())?;
+                let (format, data) = if h.url().contains(DATABOXES) {
+                    let data_box = claim.get_databox(h).ok_or(Error::MissingDataBox)?;
+                    (data_box.format.to_owned(), data_box.data.clone())
+                } else {
+                    let (label, instance) = Claim::assertion_label_from_link(&h.url());
+                    let assertion =
+                        claim
+                            .get_assertion(&label, instance)
+                            .ok_or(Error::AssertionMissing {
+                                url: h.url().to_string(),
+                            })?;
+                    (
+                        assertion.content_type().to_string(),
+                        assertion.data().to_vec(),
+                    )
+                };
+                let url = to_absolute_uri(claim.label(), &h.url());
+                let resource_ref = resources.add_with(&url, &format, data)?;
                 Ok(UriOrResource::ResourceRef(resource_ref))
             }
         }
@@ -87,6 +130,8 @@ impl From<HashedUri> for UriOrResource {
 #[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
 #[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 /// A reference to a resource to be used in JSON serialization.
+///
+/// The underlying data can be read as a stream via [`Reader::resource_to_stream`][crate::Reader::resource_to_stream].
 pub struct ResourceRef {
     /// The mime type of the referenced resource.
     pub format: String,
@@ -97,17 +142,17 @@ pub struct ResourceRef {
     /// Relative JUMBF URIs will be resolved with the manifest label.
     /// Relative file paths will be resolved with the base path if provided.
     pub identifier: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
 
     /// More detailed data types as defined in the C2PA spec.
-    pub data_types: Option<Vec<AssetType>>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub data_types: Option<Vec<AssetType>>,
 
     /// The algorithm used to hash the resource (if applicable).
-    pub alg: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub alg: Option<String>,
 
     /// The hash of the resource (if applicable).
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub hash: Option<String>,
 }
 
@@ -126,6 +171,7 @@ impl ResourceRef {
 /// Resource store to contain binary objects referenced from JSON serializable structures
 #[derive(Debug, Serialize)]
 #[cfg_attr(feature = "json_schema", derive(JsonSchema))]
+#[doc(hidden)]
 pub struct ResourceStore {
     resources: HashMap<String, Vec<u8>>,
     #[cfg(feature = "file_io")]
@@ -179,6 +225,7 @@ impl ResourceStore {
             "png" | "image/png" => ".png",
             //make "svg" | "image/svg+xml" => ".svg",
             "c2pa" | "application/x-c2pa-manifest-store" | "application/c2pa" => ".c2pa",
+            "ocsp" => ".ocsp",
             _ => "",
         };
         // clean string for possible filesystem use
@@ -227,20 +274,14 @@ impl ResourceStore {
         if id.starts_with("self#jumbf=") {
             #[cfg(feature = "file_io")]
             if self.base_path.is_some() {
-                // convert to a file path always including the manifest label
-                id = id.replace("self#jumbf=", "");
-                if id.starts_with("/c2pa/") {
-                    id = id.replacen("/c2pa/", "", 1);
-                } else if let Some(label) = self.label.as_ref() {
-                    id = format!("{}/{id}", label);
-                }
-                id = id.replace([':'], "_");
+                let mut path = uri_to_path(&id, self.label.as_deref());
                 // add a file extension if it doesn't have one
                 if !(id.ends_with(".jpeg") || id.ends_with(".png")) {
                     if let Some(ext) = crate::utils::mime::format_to_extension(format) {
-                        id = format!("{}.{}", id, ext);
+                        path.set_extension(ext);
                     }
                 }
+                id = path.display().to_string()
             }
             if !self.exists(&id) {
                 self.add(&id, value)?;
@@ -274,7 +315,7 @@ impl ResourceStore {
     /// Returns a copy on write reference to the resource if found.
     ///
     /// Returns [`Error::ResourceNotFound`] if it cannot find a resource matching that ID.
-    pub fn get(&self, id: &str) -> Result<Cow<Vec<u8>>> {
+    pub fn get(&self, id: &str) -> Result<Cow<'_, Vec<u8>>> {
         #[cfg(feature = "file_io")]
         if !self.resources.contains_key(id) {
             match self.base_path.as_ref() {
@@ -294,6 +335,32 @@ impl ResourceStore {
             || Err(Error::ResourceNotFound(id.to_string())),
             |v| Ok(Cow::Borrowed(v)),
         )
+    }
+
+    pub fn write_stream(
+        &self,
+        id: &str,
+        mut stream: impl Write + Read + Seek + Send,
+    ) -> Result<u64> {
+        #[cfg(feature = "file_io")]
+        if !self.resources.contains_key(id) {
+            match self.base_path.as_ref() {
+                Some(base) => {
+                    // read from, the file to stream
+                    let path = base.join(id);
+                    let mut file = std::fs::File::open(path)?;
+                    return std::io::copy(&mut file, &mut stream).map_err(Error::IoError);
+                }
+                None => return Err(Error::ResourceNotFound(id.to_string())),
+            }
+        }
+        match self.resources().get(id) {
+            Some(data) => {
+                stream.write_all(data).map_err(Error::IoError)?;
+                Ok(data.len() as u64)
+            }
+            None => Err(Error::ResourceNotFound(id.to_string())),
+        }
     }
 
     /// Returns `true` if the resource has been added or exists as file.
@@ -327,16 +394,46 @@ impl Default for ResourceStore {
     }
 }
 
+pub trait ResourceResolver {
+    /// Read the data in a [`ResourceRef`][ResourceRef] via a stream.
+    fn open(&self, reference: &ResourceRef) -> Result<Box<dyn CAIRead>>;
+}
+
+impl ResourceResolver for ResourceStore {
+    fn open(&self, reference: &ResourceRef) -> Result<Box<dyn CAIRead>> {
+        let data = self.get(&reference.identifier)?.into_owned();
+        let cursor = std::io::Cursor::new(data);
+        Ok(Box::new(cursor))
+    }
+}
+
+pub fn mime_from_uri(uri: &str) -> String {
+    if let Some(label) = assertion_label_from_uri(uri) {
+        if label.starts_with(labels::THUMBNAIL) {
+            // https://c2pa.org/specifications/specifications/1.0/specs/C2PA_Specification.html#_thumbnail
+            if let Some(ext) = label.rsplit('.').next() {
+                return format!("image/{ext}");
+            }
+        }
+    }
+
+    // Unknown binary data.
+    String::from("application/octet-stream")
+}
+
 #[cfg(test)]
-#[cfg(feature = "openssl_sign")]
 mod tests {
     #![allow(clippy::expect_used)]
     #![allow(clippy::unwrap_used)]
+
+    use std::io::Cursor;
+
     use super::*;
-    use crate::{utils::test::temp_signer, Manifest};
+    use crate::{
+        crypto::raw_signature::SigningAlg, utils::test_signer::test_signer, Builder, Reader,
+    };
 
     #[test]
-    #[cfg(feature = "openssl_sign")]
     fn resource_store() {
         let mut c = ResourceStore::new();
         let value = b"my value";
@@ -351,11 +448,23 @@ mod tests {
             "claim_generator": "test",
             "format" : "image/jpeg",
             "instance_id": "12345",
-            "assertions": [],
             "thumbnail": {
                 "format": "image/jpeg",
                 "identifier": "abc123"
             },
+            "assertions": [
+                {
+                    "label": "c2pa.actions",
+                    "data": {
+                        "actions": [
+                            {
+                                "action": "c2pa.created",
+                                "digitalSourceType": "http://c2pa.org/digitalsourcetype/empty"
+                            }
+                        ]
+                    }
+                }
+            ],
             "ingredients": [{
                 "title": "A.jpg",
                 "format": "image/jpeg",
@@ -369,28 +478,32 @@ mod tests {
             }]
         }"#;
 
-        let mut manifest = Manifest::from_json(json).expect("from json");
-        manifest
-            .resources_mut()
-            .add("abc123", *value)
+        let mut builder = Builder::from_json(json).expect("from json");
+        builder
+            .add_resource("abc123", Cursor::new(value))
             .expect("add_resource");
-        let ingredient = &mut manifest.ingredients_mut()[0];
-        ingredient
-            .resources_mut()
-            .add("cba321", *value)
+        builder
+            .add_resource("cba321", Cursor::new(value))
             .expect("add_resource");
-        println!("{manifest}");
 
         let image = include_bytes!("../tests/fixtures/earth_apollo17.jpg");
 
-        let signer = temp_signer();
-        // Embed a manifest using the signer.
-        let output_image = manifest
-            .embed_from_memory("jpeg", image, signer.as_ref())
-            .expect("embed_stream");
+        let signer = test_signer(SigningAlg::Ps256);
 
-        let _manifest_store =
-            crate::ManifestStore::from_bytes("jpeg", &output_image, true).expect("from_bytes");
-        // println!("{manifest_store}");
+        // Embed a manifest using the signer.
+        let mut output_image = Cursor::new(Vec::new());
+        builder
+            .sign(
+                &*signer,
+                "image/jpeg",
+                &mut Cursor::new(image),
+                &mut output_image,
+            )
+            .expect("sign");
+
+        output_image.set_position(0);
+        let reader = Reader::from_stream("jpeg", &mut output_image).expect("from_bytes");
+        let _json = reader.json();
+        println!("{_json}");
     }
 }

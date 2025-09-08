@@ -43,8 +43,8 @@ impl AssertionBase for UserCbor {
 
     fn to_assertion(&self) -> Result<Assertion> {
         // validate cbor
-        let _value: serde_cbor::Value =
-            serde_cbor::from_slice(&self.cbor_data).map_err(|_err| Error::AssertionEncoding)?;
+        let _value: serde_cbor::Value = serde_cbor::from_slice(&self.cbor_data)
+            .map_err(|err| Error::AssertionEncoding(err.to_string()))?;
         let data = AssertionData::Cbor(self.cbor_data.clone());
         Ok(Assertion::new(&self.label, None, data))
     }
@@ -75,8 +75,6 @@ pub mod tests {
     #![allow(clippy::unwrap_used)]
 
     use super::*;
-    use crate::assertion::Assertion;
-
     const LABEL: &str = "user_test_assertion";
     const DATA: &str = r#"{ "l1":"some data", "l2":"some other data" }"#;
 
