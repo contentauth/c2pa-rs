@@ -461,10 +461,10 @@ impl CAIWriter for RiffIO {
         });
 
         // add position from cai to end
-        let end = u64::try_from(manifest_pos)
-            .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?
-            + u64::try_from(manifest_len)
-                .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?;
+        let Some(end) = u64::checked_add(manifest_pos, manifest_len as u64) else {
+            return Err(Error::InvalidAsset("value out of range".to_string()));
+        };
+
         let file_end = stream_len(&mut output_stream)?;
         positions.push(HashObjectPositions {
             offset: usize::try_from(end)

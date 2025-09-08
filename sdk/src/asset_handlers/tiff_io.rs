@@ -436,8 +436,7 @@ where
 
             // get all subfiles
             for subfile_offset in subfile_offsets {
-                let u64_offset = u64::try_from(subfile_offset)
-                    .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?;
+                let u64_offset = subfile_offset as u64;
                 input.seek(SeekFrom::Start(u64_offset))?;
 
                 //println!("Reading SubIFD: {}", u64_offset);
@@ -644,10 +643,7 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
             self.writer.write_u16(entry.entry_type)?;
 
             if self.big_tiff {
-                let cnt = u64::try_from(entry.value_count)
-                    .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?;
-
-                self.writer.write_u64(cnt)?;
+                self.writer.write_u64(entry.value_count)?;
             } else {
                 let cnt = u32::try_from(entry.value_count)
                     .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?;
