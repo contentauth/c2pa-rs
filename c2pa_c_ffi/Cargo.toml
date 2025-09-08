@@ -20,19 +20,20 @@ crate-type = ["cdylib", "staticlib", "rlib"]
 [features]
 file_io = ["c2pa/file_io"]
 rust_native_crypto = ["c2pa/rust_native_crypto"]
+pdf = ["c2pa/pdf"]
 
 [dependencies]
-c2pa = { path = "../sdk", version = "0.58.0", default-features = false, features = [
+c2pa = { path = "../sdk", version = "0.62.0", default-features = false, features = [
     "add_thumbnails",
     "fetch_remote_manifests",
     "file_io",
+    "pdf"
 ] }
 scopeguard = "1.2.0"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 thiserror = "1.0.64"
 tokio = { version = "1.36", features = ["rt-multi-thread", "rt"] }
-zip = { version = "3.0.0", default-features = false, features = ["deflate"] }
 
 [dev-dependencies]
 tempfile = "3.7.0"

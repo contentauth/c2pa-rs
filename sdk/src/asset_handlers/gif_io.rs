@@ -387,8 +387,11 @@ impl GifIO {
 
         Header::from_stream(stream)?;
         let logical_screen_descriptor = LogicalScreenDescriptor::from_stream(stream)?;
-        if logical_screen_descriptor.color_table_flag {
-            GlobalColorTable::from_stream(stream, logical_screen_descriptor.color_resolution)?;
+        if logical_screen_descriptor.global_color_table_flag {
+            GlobalColorTable::from_stream(
+                stream,
+                logical_screen_descriptor.global_color_table_size,
+            )?;
         }
 
         Ok(())
@@ -487,6 +490,7 @@ impl GifIO {
         Ok(())
     }
 
+    #[allow(dead_code)] // this here for wasm builds to pass clippy  (todo: remove)
     fn replace_block_in_place(
         &self,
         stream: &mut dyn CAIReadWrite,
@@ -631,6 +635,7 @@ impl BlockMarker<Block> {
             names,
             alg: None,
             hash: ByteBuf::from(Vec::new()),
+            excluded: None,
             pad: ByteBuf::from(Vec::new()),
             range_start: self.start(),
             range_len: self.len(),
@@ -714,10 +719,10 @@ impl Block {
                 LogicalScreenDescriptor::from_stream(stream)?,
             )),
             Block::LogicalScreenDescriptor(logical_screen_descriptor) => {
-                match logical_screen_descriptor.color_table_flag {
+                match logical_screen_descriptor.global_color_table_flag {
                     true => Some(Block::GlobalColorTable(GlobalColorTable::from_stream(
                         stream,
-                        logical_screen_descriptor.color_resolution,
+                        logical_screen_descriptor.global_color_table_size,
                     )?)),
                     false => None,
                 }
@@ -826,8 +831,8 @@ impl Header {
 
 #[derive(Debug, Clone, PartialEq)]
 struct LogicalScreenDescriptor {
-    color_table_flag: bool,
-    color_resolution: u8,
+    global_color_table_flag: bool,
+    global_color_table_size: u8,
 }
 
 impl LogicalScreenDescriptor {
@@ -835,14 +840,14 @@ impl LogicalScreenDescriptor {
         stream.seek(SeekFrom::Current(4))?;
 
         let packed = stream.read_u8()?;
-        let color_table_flag = (packed >> 7) & 1;
-        let color_resolution = (packed >> 4) & 0b111;
+        let global_color_table_flag = (packed >> 7) & 1;
+        let global_color_table_size = packed & 0b111;
 
         stream.seek(SeekFrom::Current(2))?;
 
         Ok(LogicalScreenDescriptor {
-            color_table_flag: color_table_flag != 0,
-            color_resolution,
+            global_color_table_flag: global_color_table_flag != 0,
+            global_color_table_size,
         })
     }
 }
@@ -851,10 +856,8 @@ impl LogicalScreenDescriptor {
 struct GlobalColorTable {}
 
 impl GlobalColorTable {
-    fn from_stream(stream: &mut dyn CAIRead, color_resolution: u8) -> Result<GlobalColorTable> {
-        stream.seek(SeekFrom::Current(
-            3 * (2_i64.pow(color_resolution as u32 + 1)),
-        ))?;
+    fn from_stream(stream: &mut dyn CAIRead, size: u8) -> Result<GlobalColorTable> {
+        stream.seek(SeekFrom::Current(3 * (2_i64.pow(size as u32 + 1))))?;
 
         Ok(GlobalColorTable {})
     }
@@ -1166,8 +1169,8 @@ mod tests {
                 start: 6,
                 len: 7,
                 block: Block::LogicalScreenDescriptor(LogicalScreenDescriptor {
-                    color_table_flag: true,
-                    color_resolution: 7
+                    global_color_table_flag: true,
+                    global_color_table_size: 7
                 })
             })
         );
@@ -1417,6 +1420,7 @@ mod tests {
                 names: vec!["GIF89a".to_owned()],
                 alg: None,
                 hash: ByteBuf::from(Vec::new()),
+                excluded: None,
                 pad: ByteBuf::from(Vec::new()),
                 range_start: 0,
                 range_len: 6
@@ -1428,6 +1432,7 @@ mod tests {
                 names: vec!["2C".to_owned()],
                 alg: None,
                 hash: ByteBuf::from(Vec::new()),
+                excluded: None,
                 pad: ByteBuf::from(Vec::new()),
                 range_start: 368495,
                 range_len: 778
@@ -1439,6 +1444,7 @@ mod tests {
                 names: vec!["3B".to_owned()],
                 alg: None,
                 hash: ByteBuf::from(Vec::new()),
+                excluded: None,
                 pad: ByteBuf::from(Vec::new()),
                 range_start: SAMPLE1.len() as u64,
                 range_len: 1

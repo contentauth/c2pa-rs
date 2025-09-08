@@ -126,7 +126,22 @@ impl Reader {
     /// println!("{}", reader.json());
     /// ```
     #[async_generic()]
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn from_stream(format: &str, mut stream: impl Read + Seek + Send) -> Result<Reader> {
+        let verify = get_settings_value::<bool>("verify.verify_after_reading")?; // defaults to true
+        let mut validation_log = StatusTracker::default();
+        let store = if _sync {
+            Store::from_stream(format, &mut stream, verify, &mut validation_log)
+        } else {
+            Store::from_stream_async(format, &mut stream, verify, &mut validation_log).await
+        }?;
+
+        Self::from_store(store, &validation_log)
+    }
+
+    #[async_generic()]
+    #[cfg(target_arch = "wasm32")]
+    pub fn from_stream(format: &str, mut stream: impl Read + Seek) -> Result<Reader> {
         let verify = get_settings_value::<bool>("verify.verify_after_reading")?; // defaults to true
         let mut validation_log = StatusTracker::default();
 
@@ -559,11 +574,14 @@ impl Reader {
     /// # Example
     /// ```no_run
     /// use c2pa::Reader;
-    /// let stream = std::io::Cursor::new(Vec::new());
-    /// let reader = Reader::from_file("path/to/file.jpg").unwrap();
-    /// let manifest = reader.active_manifest().unwrap();
-    /// let uri = &manifest.thumbnail_ref().unwrap().identifier;
-    /// let bytes_written = reader.resource_to_stream(uri, stream).unwrap();
+    /// #[cfg(feature = "file_io")]
+    /// {
+    ///     let stream = std::io::Cursor::new(Vec::new());
+    ///     let reader = Reader::from_file("path/to/file.jpg").unwrap();
+    ///     let manifest = reader.active_manifest().unwrap();
+    ///     let uri = &manifest.thumbnail_ref().unwrap().identifier;
+    ///     let bytes_written = reader.resource_to_stream(uri, stream).unwrap();
+    /// }
     /// ```
     /// TODO: Fix the example to not read from a file.
     pub fn resource_to_stream(
@@ -670,7 +688,6 @@ impl Reader {
                 }
                 Err(e) => {
                     validation_results.add_status(ValidationStatus::from_error(&e));
-                    return Err(e);
                 }
             };
         }
@@ -763,20 +780,20 @@ impl Reader {
                 validation_log.push_ingredient_uri(uri.clone());
             }
 
-            let manifest = self
-                .get_manifest(&current_label)
-                .ok_or(Error::ClaimMissing {
-                    label: current_label.clone(),
-                })?;
+            let manifest = match self.get_manifest(&current_label) {
+                Some(m) => m,
+                None => {
+                    // skip this manifest if not found
+                    continue;
+                }
+            };
 
             let mut partial_claim = crate::dynamic_assertion::PartialClaim::default();
             {
-                let claim = self
-                    .store
-                    .get_claim(&current_label)
-                    .ok_or(Error::ClaimEncoding)?;
-                for assertion in claim.assertions() {
-                    partial_claim.add_assertion(assertion);
+                if let Some(claim) = self.store.get_claim(&current_label) {
+                    for assertion in claim.assertions() {
+                        partial_claim.add_assertion(assertion);
+                    }
                 }
             }
 

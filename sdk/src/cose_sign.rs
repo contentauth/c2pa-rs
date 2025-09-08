@@ -150,7 +150,9 @@ fn signing_cert_valid(signing_cert: &[u8]) -> Result<()> {
     let mut cose_log = StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
     let mut passthrough_cap = CertificateTrustPolicy::default();
 
-    // allow user EKUs through this check if configured
+    // Allow user EKUs through this check if configured.
+    // TODO (https://github.com/contentauth/c2pa-rs/issues/1313):
+    // Need to determine if we're using C2PA or CAWG trust config here.
     if let Ok(Some(trust_config)) = get_settings_value::<Option<String>>("trust.trust_config") {
         passthrough_cap.add_valid_ekus(trust_config.as_bytes());
     }
@@ -271,12 +273,18 @@ impl AsyncTimeStampProvider for AsyncSignerWrapper<'_> {
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used)]
+
+    // Only used for test with file_io
+    use c2pa_macros::c2pa_test_async;
+    #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
+    use wasm_bindgen_test::wasm_bindgen_test;
+
     use super::sign_claim;
-    #[cfg(feature = "file_io")]
-    use crate::utils::test_signer::async_test_signer;
     use crate::{
-        claim::Claim, crypto::raw_signature::SigningAlg, utils::test_signer::test_signer, Result,
-        Signer,
+        claim::Claim,
+        crypto::raw_signature::SigningAlg,
+        utils::test_signer::{async_test_signer, test_signer},
+        Result, Signer,
     };
 
     #[test]
@@ -301,9 +309,7 @@ mod tests {
         assert_eq!(cose_sign1.len(), box_size);
     }
 
-    #[cfg(feature = "file_io")]
-    #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
-    #[cfg_attr(target_os = "wasi", wstd::test)]
+    #[c2pa_test_async]
     async fn test_sign_claim_async() {
         // todo: we have to disable trust checks here for now because these
         // tests use the passthrough mode:

@@ -769,6 +769,7 @@ fn make_box_maps(input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>> {
                     names: vec!["EOI".to_string()],
                     alg: None,
                     hash: ByteBuf::from(Vec::new()),
+                    excluded: None,
                     pad: ByteBuf::from(Vec::new()),
                     range_start: seg.position as u64,
                     range_len: 0,
@@ -781,6 +782,7 @@ fn make_box_maps(input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>> {
                     names: vec!["SOI".to_string()],
                     alg: None,
                     hash: ByteBuf::from(Vec::new()),
+                    excluded: None,
                     pad: ByteBuf::from(Vec::new()),
                     range_start: seg.position as u64,
                     range_len: 0,
@@ -830,6 +832,7 @@ fn make_box_maps(input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>> {
                                 names: vec![C2PA_BOXHASH.to_string()],
                                 alg: None,
                                 hash: ByteBuf::from(Vec::new()),
+                                excluded: None,
                                 pad: ByteBuf::from(Vec::new()),
                                 range_start: seg.position as u64,
                                 range_len: (raw_bytes.len() + 4) as u64,
@@ -846,6 +849,7 @@ fn make_box_maps(input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>> {
                                 names: vec![name.to_string()],
                                 alg: None,
                                 hash: ByteBuf::from(Vec::new()),
+                                excluded: None,
                                 pad: ByteBuf::from(Vec::new()),
                                 range_start: seg.position as u64,
                                 range_len: 0,
@@ -868,6 +872,7 @@ fn make_box_maps(input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>> {
                     names: vec![name.to_string()],
                     alg: None,
                     hash: ByteBuf::from(Vec::new()),
+                    excluded: None,
                     pad: ByteBuf::from(Vec::new()),
                     range_start: seg.position as u64,
                     range_len: 0,
@@ -880,6 +885,7 @@ fn make_box_maps(input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>> {
                     names: vec!["APP0".to_string()],
                     alg: None,
                     hash: ByteBuf::from(Vec::new()),
+                    excluded: None,
                     pad: ByteBuf::from(Vec::new()),
                     range_start: seg.position as u64,
                     range_len: 0,
@@ -892,6 +898,7 @@ fn make_box_maps(input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>> {
                     names: vec!["DQT".to_string()],
                     alg: None,
                     hash: ByteBuf::from(Vec::new()),
+                    excluded: None,
                     pad: ByteBuf::from(Vec::new()),
                     range_start: seg.position as u64,
                     range_len: 0,
@@ -904,6 +911,7 @@ fn make_box_maps(input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>> {
                     names: vec!["DHT".to_string()],
                     alg: None,
                     hash: ByteBuf::from(Vec::new()),
+                    excluded: None,
                     pad: ByteBuf::from(Vec::new()),
                     range_start: seg.position as u64,
                     range_len: 0,
@@ -916,6 +924,7 @@ fn make_box_maps(input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>> {
                     names: vec!["DAC".to_string()],
                     alg: None,
                     hash: ByteBuf::from(Vec::new()),
+                    excluded: None,
                     pad: ByteBuf::from(Vec::new()),
                     range_start: seg.position as u64,
                     range_len: 0,
@@ -932,6 +941,7 @@ fn make_box_maps(input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>> {
                     names: vec![name.to_string()],
                     alg: None,
                     hash: ByteBuf::from(Vec::new()),
+                    excluded: None,
                     pad: ByteBuf::from(Vec::new()),
                     range_start: seg.position as u64,
                     range_len: 0,
@@ -944,6 +954,7 @@ fn make_box_maps(input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>> {
                     names: vec!["SOS".to_string()],
                     alg: None,
                     hash: ByteBuf::from(Vec::new()),
+                    excluded: None,
                     pad: ByteBuf::from(Vec::new()),
                     range_start: seg.position as u64,
                     range_len: 0,
@@ -956,6 +967,7 @@ fn make_box_maps(input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>> {
                     names: vec!["DRI".to_string()],
                     alg: None,
                     hash: ByteBuf::from(Vec::new()),
+                    excluded: None,
                     pad: ByteBuf::from(Vec::new()),
                     range_start: seg.position as u64,
                     range_len: 0,
@@ -968,6 +980,7 @@ fn make_box_maps(input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>> {
                     names: vec![format!("RST{}", r.nr)],
                     alg: None,
                     hash: ByteBuf::from(Vec::new()),
+                    excluded: None,
                     pad: ByteBuf::from(Vec::new()),
                     range_start: seg.position as u64,
                     range_len: 0,
@@ -980,6 +993,7 @@ fn make_box_maps(input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>> {
                     names: vec!["COM".to_string()],
                     alg: None,
                     hash: ByteBuf::from(Vec::new()),
+                    excluded: None,
                     pad: ByteBuf::from(Vec::new()),
                     range_start: seg.position as u64,
                     range_len: 0,
@@ -996,6 +1010,7 @@ fn make_box_maps(input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>> {
                     names: vec![name.to_string()],
                     alg: None,
                     hash: ByteBuf::from(Vec::new()),
+                    excluded: None,
                     pad: ByteBuf::from(Vec::new()),
                     range_start: seg.position as u64,
                     range_len: 0,
@@ -1119,6 +1134,7 @@ pub mod tests {
 
     use std::io::{Read, Seek};
 
+    use c2pa_macros::c2pa_test_async;
     #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
     use wasm_bindgen_test::*;
 
@@ -1222,12 +1238,7 @@ pub mod tests {
         assert!(read_xmp.contains(test_msg));
     }
 
-    #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
-    #[cfg_attr(
-        all(target_arch = "wasm32", not(target_os = "wasi")),
-        wasm_bindgen_test
-    )]
-    #[allow(unused)] // not run for WASI
+    #[c2pa_test_async]
     async fn test_xmp_read_write_stream() {
         let source_bytes = include_bytes!("../../tests/fixtures/CA.jpg");
 
