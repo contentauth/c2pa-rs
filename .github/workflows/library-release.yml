@@ -76,7 +76,7 @@ jobs:
         with:
           pattern: release-artifacts-*
           path: .
-          merge-multiple: true
+          merge-multiple: false
 
       - name: List downloaded artifacts
         run: ls -lh
