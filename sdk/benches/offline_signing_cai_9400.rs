@@ -31,7 +31,7 @@ fn sign_jpeg_in_memory(c: &mut Criterion) {
     let mut dest = Cursor::new(Vec::new());
     let format = "image/jpeg";
 
-    c.bench_function("Sign 100K JPEG in memory", |b| {
+    c.bench_function("Sign 100K JPEG in memory (Ed25519)", |b| {
         b.iter(|| {
             source.set_position(0);
             dest.set_position(0);
@@ -46,9 +46,39 @@ fn sign_jpeg_on_disk(c: &mut Criterion) {
     let signer = create_signer();
     let format = "image/jpeg";
 
-    c.bench_function("Sign 100K JPEG to/from disk", |b| {
+    c.bench_function("Sign 100K JPEG to/from disk (Ed25519)", |b| {
         b.iter(|| {
             let mut source = File::open("/Users/scouten/Adobe/c2pa-rs/sdk/benches/fixtures/100kb.jpg").expect("Failed to open source file");
+            let mut dest = File::create("/Users/scouten/Desktop/output.jpg").expect("Failed to create output file");
+            builder.sign(&signer, format, &mut source, &mut dest)
+        })
+    });
+}
+
+fn sign_17mb_jpeg_in_memory(c: &mut Criterion) {
+    let mut builder = create_builder();
+    let signer = create_signer();
+    let mut source = Cursor::new(include_bytes!("/Users/scouten/Adobe/cai-9400-benchmark-files/R-es-253-3578.jpg"));
+    let mut dest = Cursor::new(Vec::new());
+    let format = "image/jpeg";
+
+    c.bench_function("Sign 17MB JPEG in memory (Ed25519)", |b| {
+        b.iter(|| {
+            source.set_position(0);
+            dest.set_position(0);
+            dest.get_mut().clear();
+            builder.sign(&signer, format, &mut source, &mut dest)
+        })
+    });
+}
+fn sign_17mb_jpeg_on_disk(c: &mut Criterion) {
+    let mut builder = create_builder();
+    let signer = create_signer();
+    let format = "image/jpeg";
+
+    c.bench_function("Sign 17MB JPEG to/from disk (Ed25519)", |b| {
+        b.iter(|| {
+            let mut source = File::open("/Users/scouten/Adobe/cai-9400-benchmark-files/R-es-253-3578.jpg").expect("Failed to open source file");
             let mut dest = File::create("/Users/scouten/Desktop/output.jpg").expect("Failed to create output file");
             builder.sign(&signer, format, &mut source, &mut dest)
         })
@@ -75,6 +105,12 @@ fn sign_mp4(c: &mut Criterion) {
 */
 
 criterion_group!(
-    benches, sign_jpeg_in_memory, sign_jpeg_on_disk, /* sign_mp4, */
+    benches,
+    sign_jpeg_in_memory,
+    sign_jpeg_on_disk,
+    sign_17mb_jpeg_in_memory,
+    sign_17mb_jpeg_on_disk,
+    /* sign_mp4, */
 );
+
 criterion_main!(benches);
