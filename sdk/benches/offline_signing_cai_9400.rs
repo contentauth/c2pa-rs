@@ -4,11 +4,11 @@
 // Invoke with:
 //      cargo bench -p c2pa --bench offline_signing_cai_9400 -- --nocapture
 
-use std::io::Cursor;
 use std::fs::File;
 
 use c2pa::{Builder, CallbackSigner, SigningAlg};
 use criterion::{criterion_group, criterion_main, Criterion};
+use std::time::Duration;
 
 const CERTS: &[u8] = include_bytes!("../tests/fixtures/certs/ed25519.pub");
 const PRIVATE_KEY: &[u8] = include_bytes!("../tests/fixtures/certs/ed25519.pem");
@@ -24,29 +24,12 @@ fn create_builder() -> Builder {
     Builder::from_json(MANIFEST_JSON).expect("failed to create builder from manifest JSON")
 }
 
-fn sign_jpeg_in_memory(c: &mut Criterion) {
-    let mut builder = create_builder();
-    let signer = create_signer();
-    let mut source = Cursor::new(include_bytes!("fixtures/100kb.jpg"));
-    let mut dest = Cursor::new(Vec::new());
-    let format = "image/jpeg";
-
-    c.bench_function("Sign 100K JPEG in memory (Ed25519)", |b| {
-        b.iter(|| {
-            source.set_position(0);
-            dest.set_position(0);
-            dest.get_mut().clear();
-            builder.sign(&signer, format, &mut source, &mut dest)
-        })
-    });
-}
-
-fn sign_jpeg_on_disk(c: &mut Criterion) {
+fn sign_jpeg(c: &mut Criterion) {
     let mut builder = create_builder();
     let signer = create_signer();
     let format = "image/jpeg";
 
-    c.bench_function("Sign 100K JPEG to/from disk (Ed25519)", |b| {
+    c.bench_function("Sign 100K JPEG (Ed25519)", |b| {
         b.iter(|| {
             let mut source = File::open("/Users/scouten/Adobe/c2pa-rs/sdk/benches/fixtures/100kb.jpg").expect("Failed to open source file");
             let mut dest = File::create("/Users/scouten/Desktop/output.jpg").expect("Failed to create output file");
@@ -55,62 +38,59 @@ fn sign_jpeg_on_disk(c: &mut Criterion) {
     });
 }
 
-fn sign_17mb_jpeg_in_memory(c: &mut Criterion) {
-    let mut builder = create_builder();
-    let signer = create_signer();
-    let mut source = Cursor::new(include_bytes!("/Users/scouten/Adobe/cai-9400-benchmark-files/R-es-253-3578.jpg"));
-    let mut dest = Cursor::new(Vec::new());
-    let format = "image/jpeg";
-
-    c.bench_function("Sign 17MB JPEG in memory (Ed25519)", |b| {
-        b.iter(|| {
-            source.set_position(0);
-            dest.set_position(0);
-            dest.get_mut().clear();
-            builder.sign(&signer, format, &mut source, &mut dest)
-        })
-    });
-}
-fn sign_17mb_jpeg_on_disk(c: &mut Criterion) {
+fn sign_17mb_jpeg(c: &mut Criterion) {
     let mut builder = create_builder();
     let signer = create_signer();
     let format = "image/jpeg";
 
-    c.bench_function("Sign 17MB JPEG to/from disk (Ed25519)", |b| {
+    c.bench_function("Sign 17MB JPEG (Ed25519)", |b| {
         b.iter(|| {
-            let mut source = File::open("/Users/scouten/Adobe/cai-9400-benchmark-files/R-es-253-3578.jpg").expect("Failed to open source file");
+            let mut source = File::open("/Users/scouten/Library/CloudStorage/OneDrive-Adobe/CAI-9400-assets/R-es-253-3578.jpg").expect("Failed to open source file");
             let mut dest = File::create("/Users/scouten/Desktop/output.jpg").expect("Failed to create output file");
             builder.sign(&signer, format, &mut source, &mut dest)
         })
     });
 }
 
-/*
-fn sign_mp4(c: &mut Criterion) {
+fn sign_148mb_mp4(c: &mut Criterion) {
     let mut builder = create_builder();
     let signer = create_signer();
-    let mut source = Cursor::new(include_bytes!("fixtures/100kb.mp4"));
-    let mut dest = Cursor::new(Vec::new());
     let format = "video/mp4";
 
-    c.bench_function("sign 100kb mp4", |b| {
+    c.bench_function("Sign 148MB MP4 (Ed25519)", |b| {
         b.iter(|| {
-            source.set_position(0);
-            dest.set_position(0);
-            dest.get_mut().clear();
+            let mut source = File::open("/Users/scouten/Library/CloudStorage/OneDrive-Adobe/CAI-9400-assets/R-es-4642-097.mp4").expect("Failed to open source file");
+            let mut dest = File::create("/Users/scouten/Desktop/output.jpg").expect("Failed to create output file");
             builder.sign(&signer, format, &mut source, &mut dest)
         })
     });
 }
-*/
 
-criterion_group!(
-    benches,
-    sign_jpeg_in_memory,
-    sign_jpeg_on_disk,
-    sign_17mb_jpeg_in_memory,
-    sign_17mb_jpeg_on_disk,
-    /* sign_mp4, */
-);
+fn sign_683mb_mp4(c: &mut Criterion) {
+    let mut builder = create_builder();
+    let signer = create_signer();
+    let format = "video/mp4";
+
+    c.bench_function("Sign 683MB MP4 (Ed25519)", |b| {
+        b.iter(|| {
+            let mut source = File::open("/Users/scouten/Library/CloudStorage/OneDrive-Adobe/CAI-9400-assets/R-es-4428-055.mp4").expect("Failed to open source file");
+            let mut dest = File::create("/Users/scouten/Desktop/output.jpg").expect("Failed to create output file");
+            builder.sign(&signer, format, &mut source, &mut dest)
+        })
+    });
+}
+
+fn custom_criterion() -> Criterion {
+    Criterion::default().measurement_time(Duration::from_secs(30))
+}
+
+criterion_group! {
+    name = benches;
+    config = custom_criterion();
+    targets = sign_jpeg,
+    sign_17mb_jpeg,
+    sign_148mb_mp4,
+    sign_683mb_mp4,
+}
 
 criterion_main!(benches);
