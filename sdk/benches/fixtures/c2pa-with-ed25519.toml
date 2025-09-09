@@ -3,7 +3,7 @@ version_major = 1
 version_minor = 0
 
 [verify]
-verify_after_sign = true
+verify_after_sign = false
 
 # Sign via local test-quality Ed25519
 [signer.local]
@@ -46,7 +46,7 @@ MC4CAQAwBQYDK2VwBCIEIL2+9INLPNSLH3STzKQJ3Wen9R6uPbIYOIKA2574YQ4O
 """
 
 # Time stamp authority URL for signing.
-tsa_url = "http://timestamp.digicert.com"
+# tsa_url = "http://timestamp.digicert.com"
 
 
 # Trust settings for certificate validation.
