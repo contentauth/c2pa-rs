@@ -111,8 +111,8 @@ New-Item -ItemType Directory -Force -Path $libDir | Out-Null
 Copy-Item "$ReleaseDir\c2pa.h" $includeDir -Force
 Copy-Item "$ReleaseDir\c2pa_c.*" $libDir -Force
 
-$zipPath = "$artifactsDir\c2pa-v$version-$Platform.zip"
-Compress-Archive -Path "$includeDir", "$libDir" -DestinationPath $zipPath -Force    
+$zipPath = "$artifactsDir\c2pa-v$version-$platform.zip"
+Compress-Archive -Path "$includeDir", "$libDir" -DestinationPath $zipPath -Force
 
 Write-Host "Zip file created: $zipPath"
 Write-Host "Setup completed successfully!"
