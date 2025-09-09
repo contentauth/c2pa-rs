@@ -6,18 +6,18 @@
 
 use std::fs::File;
 
-use c2pa::{Builder, CallbackSigner, SigningAlg};
+use c2pa::{settings::Settings, Builder, Signer};
 use criterion::{criterion_group, criterion_main, Criterion};
 use std::time::Duration;
 
-const CERTS: &[u8] = include_bytes!("../tests/fixtures/certs/ed25519.pub");
-const PRIVATE_KEY: &[u8] = include_bytes!("../tests/fixtures/certs/ed25519.pem");
+// IMPORTANT: Choose a different settings file to configure different experiment variables.
+const TEST_SETTINGS: &str = include_str!("fixtures/c2pa-with-ed25519.toml");
+
 const MANIFEST_JSON: &str = include_str!("../tests/fixtures/simple_manifest.json");
 
-fn create_signer() -> CallbackSigner {
-    let ed_signer =
-        |_context: *const (), data: &[u8]| CallbackSigner::ed25519_sign(data, PRIVATE_KEY);
-    CallbackSigner::new(ed_signer, SigningAlg::Ed25519, CERTS)
+fn create_signer() -> Box<dyn Signer> {
+    Settings::from_toml(TEST_SETTINGS).unwrap();
+    Settings::signer().unwrap()
 }
 
 fn create_builder() -> Builder {
