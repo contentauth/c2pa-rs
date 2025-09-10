@@ -15,7 +15,7 @@ use openssl::{
     hash::MessageDigest,
     pkey::PKey,
     rsa::{Padding, Rsa},
-    sign::Verifier,
+    sign::{RsaPssSaltlen, Verifier},
 };
 
 use crate::crypto::raw_signature::{
@@ -58,6 +58,7 @@ impl RawSignatureValidator for RsaValidator {
                 let mut verifier = Verifier::new(MessageDigest::sha256(), &public_key)?;
                 verifier.set_rsa_padding(Padding::PKCS1_PSS)?;
                 verifier.set_rsa_mgf1_md(MessageDigest::sha256())?;
+                verifier.set_rsa_pss_saltlen(RsaPssSaltlen::DIGEST_LENGTH)?;
                 verifier
             }
 
@@ -65,7 +66,7 @@ impl RawSignatureValidator for RsaValidator {
                 let mut verifier = Verifier::new(MessageDigest::sha384(), &public_key)?;
                 verifier.set_rsa_padding(Padding::PKCS1_PSS)?;
                 verifier.set_rsa_mgf1_md(MessageDigest::sha384())?;
-
+                verifier.set_rsa_pss_saltlen(RsaPssSaltlen::DIGEST_LENGTH)?;
                 verifier
             }
 
@@ -73,6 +74,7 @@ impl RawSignatureValidator for RsaValidator {
                 let mut verifier = Verifier::new(MessageDigest::sha512(), &public_key)?;
                 verifier.set_rsa_padding(Padding::PKCS1_PSS)?;
                 verifier.set_rsa_mgf1_md(MessageDigest::sha512())?;
+                verifier.set_rsa_pss_saltlen(RsaPssSaltlen::DIGEST_LENGTH)?;
                 verifier
             }
         };

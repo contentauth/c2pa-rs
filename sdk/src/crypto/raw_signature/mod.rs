@@ -15,10 +15,13 @@
 
 pub(crate) mod oids;
 
-#[cfg(feature = "openssl")]
+#[cfg(all(
+    feature = "openssl",
+    not(all(feature = "rust_native_crypto", target_arch = "wasm32"))
+))]
 pub(crate) mod openssl;
 
-#[cfg(feature = "rust_native_crypto")]
+#[cfg(any(feature = "rust_native_crypto", target_arch = "wasm32"))]
 pub(crate) mod rust_native;
 
 pub(crate) mod signer;

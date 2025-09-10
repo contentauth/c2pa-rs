@@ -44,6 +44,7 @@ pub(crate) trait SettingsValidate {
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[allow(unused)]
 pub(crate) struct Trust {
+    verify_trust_list: bool,
     user_anchors: Option<String>,
     trust_anchors: Option<String>,
     trust_config: Option<String>,
@@ -106,6 +107,7 @@ impl Default for Trust {
         #[cfg(test)]
         {
             let mut trust = Self {
+                verify_trust_list: true,
                 user_anchors: None,
                 trust_anchors: None,
                 trust_config: None,
@@ -130,6 +132,7 @@ impl Default for Trust {
         #[cfg(not(test))]
         {
             Self {
+                verify_trust_list: true,
                 user_anchors: None,
                 trust_anchors: None,
                 trust_config: None,
@@ -259,6 +262,8 @@ pub struct Settings {
     builder: BuilderSettings,
     #[serde(skip_serializing_if = "Option::is_none")]
     signer: Option<SignerSettings>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    cawg_x509_signer: Option<SignerSettings>,
 }
 
 impl Settings {
@@ -412,7 +417,7 @@ impl Settings {
         Ok(toml::to_string_pretty(&settings)?)
     }
 
-    /// Returns the construct signer from the `signer` field.
+    /// Returns the constructed signer from the `signer` field.
     ///
     /// If the signer settings aren't specified, this function will return [Error::MissingSignerSettings].
     #[inline]
@@ -432,6 +437,7 @@ impl Default for Settings {
             verify: Default::default(),
             builder: Default::default(),
             signer: None,
+            cawg_x509_signer: None,
         }
     }
 }
@@ -445,6 +451,9 @@ impl SettingsValidate for Settings {
         }
         if let Some(signer) = &self.signer {
             signer.validate()?;
+        }
+        if let Some(cawg_x509_signer) = &self.cawg_x509_signer {
+            cawg_x509_signer.validate()?;
         }
         self.trust.validate()?;
         self.cawg_trust.validate()?;
