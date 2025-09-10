@@ -913,7 +913,14 @@ impl Ingredient {
         if let Ok(ref mut store) = result {
             let labels = store.get_manifest_labels_for_ocsp();
 
-            let ocsp_response_ders = store.get_ocsp_response_ders(labels, &mut validation_log)?;
+            let ocsp_response_ders = if _sync {
+                store.get_ocsp_response_ders(labels, &mut validation_log)?
+            } else {
+                store
+                    .get_ocsp_response_ders_async(labels, &mut validation_log)
+                    .await?
+            };
+
             let resource_refs: Vec<ResourceRef> = ocsp_response_ders
                 .into_iter()
                 .filter_map(|o| self.resources.add_with(&o.0, "ocsp", o.1).ok())
@@ -952,37 +959,38 @@ impl Ingredient {
         let mut validation_log = StatusTracker::default();
 
         // retrieve the manifest bytes from embedded, sidecar or remote and convert to store if found
-        let (result, manifest_bytes) = match Store::load_jumbf_from_stream(format, stream) {
-            Ok((manifest_bytes, _)) => {
-                (
-                    // generate a store from the buffer and then validate from the asset path
-                    match Store::from_jumbf(&manifest_bytes, &mut validation_log) {
-                        Ok(store) => {
-                            // verify the store
-                            Store::verify_store_async(
-                                &store,
-                                &mut ClaimAssetData::Stream(stream, format),
-                                &mut validation_log,
-                            )
-                            .await
-                            .map(|_| store)
-                        }
-                        Err(e) => {
-                            log_item!(
-                                "asset",
-                                "error loading asset",
-                                "Ingredient::from_stream_async"
-                            )
-                            .failure_no_throw(&mut validation_log, &e);
+        let (result, manifest_bytes) =
+            match Store::load_jumbf_from_stream_async(format, stream).await {
+                Ok((manifest_bytes, _)) => {
+                    (
+                        // generate a store from the buffer and then validate from the asset path
+                        match Store::from_jumbf(&manifest_bytes, &mut validation_log) {
+                            Ok(store) => {
+                                // verify the store
+                                Store::verify_store_async(
+                                    &store,
+                                    &mut ClaimAssetData::Stream(stream, format),
+                                    &mut validation_log,
+                                )
+                                .await
+                                .map(|_| store)
+                            }
+                            Err(e) => {
+                                log_item!(
+                                    "asset",
+                                    "error loading asset",
+                                    "Ingredient::from_stream_async"
+                                )
+                                .failure_no_throw(&mut validation_log, &e);
 
-                            Err(e)
-                        }
-                    },
-                    Some(manifest_bytes),
-                )
-            }
-            Err(err) => (Err(err), None),
-        };
+                                Err(e)
+                            }
+                        },
+                        Some(manifest_bytes),
+                    )
+                }
+                Err(err) => (Err(err), None),
+            };
 
         // set validation status from result and log
         ingredient.update_validation_status(result, manifest_bytes, &validation_log)?;
@@ -1683,8 +1691,6 @@ mod tests {
         );
     }
 
-    // Temporarily unavailable for wasm-bindgen until https://github.com/contentauth/c2pa-rs/pull/1325 lands
-    #[cfg(any(not(target_arch = "wasm32"), target_os = "wasi"))]
     #[cfg(feature = "fetch_remote_manifests")]
     #[c2pa_test_async]
     async fn test_jpg_cloud_from_memory() {
