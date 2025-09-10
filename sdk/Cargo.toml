@@ -24,19 +24,7 @@ rust-version = "1.86.0"
 exclude = ["tests/fixtures"]
 
 [package.metadata.docs.rs]
-# Build with all features, but not with openssl and rust_native_crypto simulatenously.
-features = [
-    "openssl",
-    "add_thumbnails",
-    "file_io",
-    "serialize_thumbnails",
-    "no_interleaved_io",
-    "fetch_remote_manifests",
-    "json_schema",
-    "pdf",
-    "v1_api",
-    "diagnostics",
-]
+all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
 [features]
@@ -61,7 +49,6 @@ rust_native_crypto = [
     "dep:rsa",
     "dep:spki",
 ]
-v1_api = []
 
 # The diagnostics feature is unsupported and might be removed.
 # It enables some low-overhead timing features used in our development cycle.
@@ -73,6 +60,7 @@ unexpected_cfgs = { level = "warn", check-cfg = ['cfg(test)'] }
 
 [[example]]
 name = "cawg_identity"
+required-features = ["file_io"]
 
 [[example]]
 name = "client"
@@ -118,7 +106,6 @@ config = { version = "0.14.0", default-features = false, features = [
 ] }
 const-hex = "1.14"
 const-oid = { version = "0.9.6", optional = true }
-conv = "0.3.3"
 coset = "0.3.8"
 extfmt = "0.1.1"
 der = { version = "0.7.9", optional = true }
@@ -181,7 +168,6 @@ spki = { version = "0.7.3", optional = true }
 static-iref = "3.0"
 tempfile = "=3.15.0"
 thiserror = "2.0.8"
-treeline = "0.1.0"
 url = "2.5.3"
 uuid = { version = "1.18.0", features = ["serde", "v4"] }
 web-time = "1.1"
@@ -203,10 +189,19 @@ sha2 = { version = "0.10.6", features = ["asm"] }
 [target.'cfg(not(target_arch = "aarch64"))'.dependencies]
 sha2 = "0.10.6"
 
+# This list matches the `rust_native_crypto` feature since they are not optional on WASM.
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 const-oid = "0.9.6"
 der = "0.7.9"
+ecdsa = { version = "0.16.9", features = ["digest", "sha2"] }
 num-bigint-dig = "0.8.4"
+p256 = "0.13.2"
+p384 = "0.13.0"
+p521 = { version = "0.13.3", features = [
+    "pkcs8",
+    "digest",
+    "ecdsa",
+] }
 pkcs1 = "0.7.5"
 rsa = { version = "0.9.6", features = ["sha2"] }
 spki = "0.7.3"
@@ -281,6 +276,7 @@ hex-literal = "0.4.1"
 jumbf = "0.4.0"
 c2pa_macros = { path = "../macros" }
 mockall = "0.13.1"
+once_cell = "1.17.2"
 
 [target.'cfg(all(target_arch = "wasm32", not(target_os = "wasi")))'.dev-dependencies]
 wasm-bindgen-test = "0.3.45"
@@ -289,7 +285,7 @@ wasm-bindgen-test = "0.3.45"
 httpmock = "0.7.0"
 tokio = { version = "1.44.2", features = ["full"] }
 criterion = { package = "codspeed-criterion-compat", version = "3.0.5" }
-#
+
 # WASM/WASI doesn't support default criterion features.
 # https://github.com/bheisler/criterion.rs/blob/4c19e913b84e6a7e4a8470cb0f766796886ed891/book/src/user_guide/wasi.md
 [target.'cfg(target_arch = "wasm32")'.dev-dependencies]
