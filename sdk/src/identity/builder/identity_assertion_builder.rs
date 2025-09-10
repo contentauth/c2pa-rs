@@ -291,7 +291,6 @@ fn finalize_identity_assertion(
 mod tests {
     #![allow(clippy::panic)]
     #![allow(clippy::unwrap_used)]
-    #![allow(unused)] // TODO: remove from PR
 
     use std::io::{Cursor, Seek};
 

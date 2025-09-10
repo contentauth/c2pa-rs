@@ -3457,13 +3457,6 @@ impl Store {
                 .failure_no_throw(validation_log, e);
         })?;
 
-        #[cfg(target_os = "wasi")]
-        let (manifest_bytes, remote_url) = Store::load_jumbf_from_stream(format, &mut stream)
-            .inspect_err(|e| {
-                log_item!("asset", "error loading file", "load_from_asset")
-                    .failure_no_throw(validation_log, e);
-            })?;
-
         let store = if _sync {
             Self::from_manifest_data_and_stream(
                 &manifest_bytes,
@@ -7009,6 +7002,9 @@ pub mod tests {
         // test adding to actual image
         let ap = fixture_path("boxhash.jpg");
         let box_hash_path = fixture_path("boxhash.json");
+
+        // Create claims store.
+        let mut store = Store::new();
 
         // Create a new claim.
         let mut claim = create_test_claim().unwrap();
