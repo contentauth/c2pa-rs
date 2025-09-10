@@ -125,7 +125,7 @@ pub(crate) fn check_certificate_trust(
                 let data = chain_cert.tbs_certificate.as_ref();
                 let sig = chain_cert.signature_value.as_ref();
 
-                let sig_alg = cert_signing_alg(anchor_cert);
+                let sig_alg = cert_signing_alg(&chain_cert);
 
                 let result = verify_data(anchor_der, sig_alg, sig, data);
 
