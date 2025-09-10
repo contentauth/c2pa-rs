@@ -4,14 +4,13 @@
 // Invoke with:
 //      cargo bench -p c2pa --bench offline_signing_cai_9400 -- --nocapture
 
-use std::fs::File;
+use std::{fs::File, time::Duration};
 
 use c2pa::{settings::Settings, Builder, Signer};
 use criterion::{criterion_group, criterion_main, Criterion};
-use std::time::Duration;
 
 // IMPORTANT: Choose a different settings file to configure different experiment variables.
-const TEST_SETTINGS: &str = include_str!("fixtures/c2pa-with-ed25519.toml");
+const TEST_SETTINGS: &str = include_str!("fixtures/c2pa-with-ed25519+cawg.toml");
 
 const MANIFEST_JSON: &str = include_str!("../tests/fixtures/simple_manifest.json");
 
@@ -31,8 +30,11 @@ fn sign_jpeg(c: &mut Criterion) {
 
     c.bench_function("Sign 100K JPEG (Ed25519)", |b| {
         b.iter(|| {
-            let mut source = File::open("/Users/scouten/Adobe/c2pa-rs/sdk/benches/fixtures/100kb.jpg").expect("Failed to open source file");
-            let mut dest = File::create("/Users/scouten/Desktop/output.jpg").expect("Failed to create output file");
+            let mut source =
+                File::open("/Users/scouten/Adobe/c2pa-rs/sdk/benches/fixtures/100kb.jpg")
+                    .expect("Failed to open source file");
+            let mut dest = File::create("/Users/scouten/Desktop/output.jpg")
+                .expect("Failed to create output file");
             builder.sign(&signer, format, &mut source, &mut dest)
         })
     });
