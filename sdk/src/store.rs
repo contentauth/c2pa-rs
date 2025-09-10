@@ -47,7 +47,7 @@ use crate::{
             fetch_and_check_ocsp_response, parse_cose_sign1, CertificateTrustPolicy,
             TimeStampStorage,
         },
-        hash::sha256,
+        hash::{blake3, sha256},
         ocsp::OcspResponse,
         time_stamp::verify_time_stamp,
     },
@@ -76,8 +76,7 @@ use crate::{
     status_tracker::{ErrorBehavior, StatusTracker},
     utils::{
         hash_utils::HashRange,
-        io_utils,
-        io_utils::{insert_data_at, stream_len},
+        io_utils::{self, insert_data_at, stream_len},
         is_zero,
         patch::patch_bytes,
     },
@@ -463,7 +462,7 @@ impl Store {
     // with actual signature data.
     fn sign_claim_placeholder(claim: &Claim, min_reserve_size: usize) -> Vec<u8> {
         let placeholder_str = format!("signature placeholder:{}", claim.label());
-        let mut placeholder = sha256(placeholder_str.as_bytes());
+        let mut placeholder = blake3(placeholder_str.as_bytes());
 
         use std::cmp::max;
         placeholder.resize(max(placeholder.len(), min_reserve_size), 0);

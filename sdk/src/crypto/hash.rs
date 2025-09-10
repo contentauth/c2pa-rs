@@ -27,9 +27,23 @@ pub(crate) fn sha1(data: &[u8]) -> Vec<u8> {
 pub fn sha256(data: &[u8]) -> Vec<u8> {
     use sha2::{Digest, Sha256};
 
+    if true {
+        panic!("Who calls sha256?");
+    }
+
     let mut hasher = Sha256::new();
     hasher.update(data);
     hasher.finalize().to_vec()
+}
+
+/// Given a byte slice, return the Blake3 hash of that content.
+#[allow(unused)]
+pub fn blake3(data: &[u8]) -> Vec<u8> {
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(data);
+    
+    let hash = hasher.finalize();
+    hash.as_bytes().to_vec()
 }
 
 #[cfg(test)]
