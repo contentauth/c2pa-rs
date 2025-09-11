@@ -137,11 +137,18 @@ impl Reader {
         }?;
 
         let /* mut */ result = Self::from_store(store, &validation_log)?;
-        if false {
-            // QUESTION: What to do if we're in the _sync version and there
-            // are identity assertions? Just report an error (needs async)?
-            todo!("Add identity assertion validation here");
+        if _sync {
+            // TO DO: Figure out how to handle synchronous validation with
+            // identity assertions? Just report an error (needs async)?
+            if false {
+                todo!("Add identity assertion validation here");
+            }
+        } else {
+            if true {
+                todo!("Add identity assertion validation here");
+            }
         }
+
         Ok(result)
     }
 
