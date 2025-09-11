@@ -44,8 +44,8 @@ use crate::{
     crypto::{
         asn1::rfc3161::TstInfo,
         cose::{
-            fetch_and_check_ocsp_response, parse_cose_sign1, CertificateTrustPolicy,
-            TimeStampStorage,
+            fetch_and_check_ocsp_response, fetch_and_check_ocsp_response_async, parse_cose_sign1,
+            CertificateTrustPolicy, TimeStampStorage,
         },
         hash::sha256,
         ocsp::OcspResponse,
@@ -89,6 +89,8 @@ use crate::{
 };
 
 const MANIFEST_STORE_EXT: &str = "c2pa"; // file extension for external manifests
+#[cfg(any(not(target_arch = "wasm32"), target_os = "wasi"))] // Browser manages fetch & memory
+const DEFAULT_MANIFEST_RESPONSE_SIZE: usize = 10 * 1024 * 1024; // 10 MB
 
 pub(crate) struct ManifestHashes {
     pub manifest_box_hash: Vec<u8>,
@@ -3062,10 +3064,7 @@ impl Store {
     // fetch remote manifest if possible
     #[cfg(all(feature = "fetch_remote_manifests", not(target_arch = "wasm32")))]
     fn fetch_remote_manifest(url: &str) -> Result<Vec<u8>> {
-        use conv::ValueFrom;
-
         //const MANIFEST_CONTENT_TYPE: &str = "application/x-c2pa-manifest-store"; // todo verify once these are served
-        const DEFAULT_MANIFEST_RESPONSE_SIZE: usize = 10 * 1024 * 1024; // 10 MB
 
         match ureq::get(url).call() {
             Ok(response) => {
@@ -3078,7 +3077,7 @@ impl Store {
 
                     let mut response_bytes: Vec<u8> = Vec::with_capacity(len);
 
-                    let len64 = u64::value_from(len)
+                    let len64 = u64::try_from(len)
                         .map_err(|_err| Error::BadParam("value out of range".to_string()))?;
 
                     body.into_reader()
@@ -3101,8 +3100,6 @@ impl Store {
         }
     }
 
-    // fetch remote manifest if possible
-    // TODO: Switch to reqwest once it supports WASI https://github.com/seanmonstar/reqwest/issues/2294
     #[cfg(all(feature = "fetch_remote_manifests", target_os = "wasi"))]
     fn fetch_remote_manifest(url: &str) -> Result<Vec<u8>> {
         use url::Url;
@@ -3179,8 +3176,50 @@ impl Store {
         }
     }
 
+    // fetch remote manifest if possible
+    // TODO: Switch to reqwest once it supports WASI https://github.com/seanmonstar/reqwest/issues/2294
+    #[cfg(all(feature = "fetch_remote_manifests", target_os = "wasi"))]
+    async fn fetch_remote_manifest_async(url: &str) -> Result<Vec<u8>> {
+        use wstd::{
+            http::{Client, Request},
+            io::{empty, AsyncRead},
+        };
+
+        let request = Request::get(url)
+            .body(empty())
+            .map_err(|e| Error::RemoteManifestFetch(format!("failed to build request: {e}")))?;
+
+        let mut response = Client::new()
+            .send(request)
+            .await
+            .map_err(|e| Error::RemoteManifestFetch(format!("request failed: {e}")))?;
+
+        let status = response.status().as_u16();
+        if status != 200 {
+            return Err(Error::RemoteManifestFetch(format!(
+                "fetch failed: code: {}",
+                status
+            )));
+        }
+
+        let content_length = response
+            .headers()
+            .get("Content-Length")
+            .and_then(|val| val.to_str().ok())
+            .and_then(|s| s.parse::<usize>().ok())
+            .unwrap_or(DEFAULT_MANIFEST_RESPONSE_SIZE);
+
+        let body = response.body_mut();
+        let mut body_buf = Vec::with_capacity(content_length);
+        body.read_to_end(&mut body_buf).await.map_err(|e| {
+            Error::RemoteManifestFetch(format!("failed to read response body: {e}"))
+        })?;
+
+        Ok(body_buf)
+    }
+
     #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
-    pub async fn fetch_remote_manifest(url: &str) -> Result<Vec<u8>> {
+    pub async fn fetch_remote_manifest_async(url: &str) -> Result<Vec<u8>> {
         let resp = reqwest::get(url)
             .await
             .map_err(|e| Error::RemoteManifestFetch(format!("{e:?}")))?;
@@ -3224,7 +3263,9 @@ impl Store {
             {
                 // For wasm-bindgen, we can't use the async function in sync context
                 // This will be handled by the async versions of the functions
-                Err(Error::RemoteManifestUrl(ext_ref.to_owned()))
+                Err(Error::RemoteManifestUrl(format!(
+                    "Remote manifest cannot be fetched synchronously in Wasm: {ext_ref}"
+                )))
             }
             #[cfg(not(feature = "fetch_remote_manifests"))]
             Err(Error::RemoteManifestUrl(ext_ref.to_owned()))
@@ -3235,17 +3276,22 @@ impl Store {
 
     /// Handles remote manifests asynchronously when fetch_remote_manifests feature is enabled
     /// Required because wasm-bindgen cannot use async functions in a sync context.
-    #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
+    #[cfg(target_arch = "wasm32")]
     async fn handle_remote_manifest_async(ext_ref: &str) -> Result<Vec<u8>> {
-        // verify provenance path is remote url
-        if Store::is_valid_remote_url(ext_ref) {
-            if get_settings_value::<bool>("verify.remote_manifest_fetch").unwrap_or(true) {
-                Store::fetch_remote_manifest(ext_ref).await
+        #[cfg(not(feature = "fetch_remote_manifests"))]
+        return Err(Error::RemoteManifestUrl(ext_ref.to_owned()));
+
+        #[cfg(feature = "fetch_remote_manifests")]
+        {
+            if Store::is_valid_remote_url(ext_ref) {
+                if get_settings_value::<bool>("verify.remote_manifest_fetch").unwrap_or(true) {
+                    Store::fetch_remote_manifest_async(ext_ref).await
+                } else {
+                    Err(Error::RemoteManifestUrl(ext_ref.to_owned()))
+                }
             } else {
-                Err(Error::RemoteManifestUrl(ext_ref.to_owned()))
+                Err(Error::JumbfNotFound)
             }
-        } else {
-            Err(Error::JumbfNotFound)
         }
     }
 
@@ -3258,6 +3304,7 @@ impl Store {
     ///
     /// Returns a tuple (jumbf_bytes, remote_url), returning a remote_url only
     /// if it was used to fetch the jumbf_bytes.
+    #[async_generic()]
     pub fn load_jumbf_from_stream(
         asset_type: &str,
         stream: &mut dyn CAIRead,
@@ -3270,42 +3317,19 @@ impl Store {
                     crate::utils::xmp_inmemory_utils::XmpInfo::from_source(stream, asset_type)
                         .provenance
                 {
-                    Ok((Store::handle_remote_manifest(&ext_ref)?, Some(ext_ref)))
-                } else {
-                    Err(Error::JumbfNotFound)
-                }
-            }
-            Err(e) => Err(e),
-        }
-    }
-
-    /// load jumbf given a stream asynchronously
-    ///
-    /// This handles, embedded and remote manifests
-    ///
-    /// asset_type -  mime type of the stream
-    /// stream - a readable stream of an asset
-    ///
-    /// Returns a tuple (jumbf_bytes, remote_url), returning a remote_url only
-    /// if it was used to fetch the jumbf_bytes.
-    /// Required because wasm-bindgen cannot use async functions in a sync context.
-    #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
-    pub async fn load_jumbf_from_stream_async(
-        asset_type: &str,
-        stream: &mut dyn CAIRead,
-    ) -> Result<(Vec<u8>, Option<String>)> {
-        match load_jumbf_from_stream(asset_type, stream) {
-            Ok(manifest_bytes) => Ok((manifest_bytes, None)),
-            Err(Error::JumbfNotFound) => {
-                stream.rewind()?;
-                if let Some(ext_ref) =
-                    crate::utils::xmp_inmemory_utils::XmpInfo::from_source(stream, asset_type)
-                        .provenance
-                {
-                    Ok((
-                        Store::handle_remote_manifest_async(&ext_ref).await?,
-                        Some(ext_ref),
-                    ))
+                    #[cfg(not(target_arch = "wasm32"))]
+                    return Ok((Store::handle_remote_manifest(&ext_ref)?, Some(ext_ref)));
+                    #[cfg(target_arch = "wasm32")]
+                    {
+                        if _sync {
+                            return Ok((Store::handle_remote_manifest(&ext_ref)?, Some(ext_ref)));
+                        } else {
+                            return Ok((
+                                Store::handle_remote_manifest_async(&ext_ref).await?,
+                                Some(ext_ref),
+                            ));
+                        }
+                    }
                 } else {
                     Err(Error::JumbfNotFound)
                 }
@@ -3437,7 +3461,6 @@ impl Store {
         verify: bool,
         validation_log: &mut StatusTracker,
     ) -> Result<Self> {
-        #[cfg(not(target_os = "wasi"))]
         let (manifest_bytes, remote_url) = if _sync {
             Store::load_jumbf_from_stream(format, &mut stream)
         } else {
@@ -3447,13 +3470,6 @@ impl Store {
             log_item!("asset", "error loading file", "load_from_asset")
                 .failure_no_throw(validation_log, e);
         })?;
-
-        #[cfg(target_os = "wasi")]
-        let (manifest_bytes, remote_url) = Store::load_jumbf_from_stream(format, &mut stream)
-            .inspect_err(|e| {
-                log_item!("asset", "error loading file", "load_from_asset")
-                    .failure_no_throw(validation_log, e);
-            })?;
 
         let store = if _sync {
             Self::from_manifest_data_and_stream(
@@ -3953,6 +3969,7 @@ impl Store {
     ///
     /// # Returns
     /// A `Result` containing tuples of manifest labels and their associated ocsp response
+    #[async_generic()]
     pub fn get_ocsp_response_ders(
         &self,
         manifest_labels: Vec<String>,
@@ -3966,9 +3983,21 @@ impl Store {
                 let data = claim.data()?;
 
                 let sign1 = parse_cose_sign1(&sig, &data, validation_log)?;
-                let ocsp_response_der =
+                let ocsp_response_der = if _sync {
                     fetch_and_check_ocsp_response(&sign1, &data, &self.ctp, None, validation_log)?
-                        .ocsp_der;
+                        .ocsp_der
+                } else {
+                    fetch_and_check_ocsp_response_async(
+                        &sign1,
+                        &data,
+                        &self.ctp,
+                        None,
+                        validation_log,
+                    )
+                    .await?
+                    .ocsp_der
+                };
+
                 if !ocsp_response_der.is_empty() {
                     oscp_response_ders.push((manifest_label, ocsp_response_der));
                 }

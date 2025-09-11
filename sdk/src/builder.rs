@@ -1662,7 +1662,10 @@ mod tests {
         crypto::raw_signature::SigningAlg,
         hash_stream_by_alg,
         settings::Settings,
-        utils::{test::write_jpeg_placeholder_stream, test_signer::test_signer},
+        utils::{
+            test::write_jpeg_placeholder_stream,
+            test_signer::{async_test_signer, test_signer},
+        },
         validation_results::ValidationState,
         HashedUri, Reader,
     };
@@ -2941,6 +2944,53 @@ mod tests {
         output.set_position(0);
 
         let reader = Reader::from_stream("image/jpeg", &mut output).expect("from_bytes");
+        //println!("{reader}");
+        let m = reader.active_manifest().unwrap();
+        assert_eq!(m.ingredients().len(), 1);
+        let parent = reader.get_manifest(parent_manifest_label).unwrap();
+        assert_eq!(parent.assertions().len(), 1);
+    }
+
+    #[c2pa_test_async]
+    async fn test_redaction_async() {
+        Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml")).unwrap();
+
+        // the label of the assertion we are going to redact
+        const ASSERTION_LABEL: &str = "stds.schema-org.CreativeWork";
+
+        let mut input = Cursor::new(TEST_IMAGE);
+
+        let parent = Reader::from_stream_async("image/jpeg", &mut input)
+            .await
+            .expect("from_stream");
+        let parent_manifest_label = parent.active_label().unwrap();
+        // Create a redacted uri for the assertion we are going to redact.
+        let redacted_uri =
+            crate::jumbf::labels::to_assertion_uri(parent_manifest_label, ASSERTION_LABEL);
+
+        let mut builder = Builder::edit();
+        builder.definition.redactions = Some(vec![redacted_uri.clone()]);
+
+        let redacted_action = crate::assertions::Action::new("c2pa.redacted")
+            .set_reason("testing".to_owned())
+            .set_parameter("redacted".to_owned(), redacted_uri.clone())
+            .unwrap();
+
+        builder.add_action(redacted_action).unwrap();
+
+        let signer = async_test_signer(SigningAlg::Ps256);
+        // Embed a manifest using the signer.
+        let mut output = Cursor::new(Vec::new());
+        builder
+            .sign_async(signer.as_ref(), "image/jpeg", &mut input, &mut output)
+            .await
+            .expect("builder sign");
+
+        output.set_position(0);
+
+        let reader = Reader::from_stream_async("image/jpeg", &mut output)
+            .await
+            .expect("from_bytes");
         //println!("{reader}");
         let m = reader.active_manifest().unwrap();
         assert_eq!(m.ingredients().len(), 1);
