@@ -307,13 +307,11 @@ impl Store {
     /// if there are conflicting label names.  The function
     /// will return the label of the claim used
     #[allow(unused)]
-    pub fn commit_update_manifest(&mut self, mut claim: Claim) -> Result<String> {
+    pub fn update_manifest_test(&mut self, claim: &Claim) -> Result<()> {
         use crate::{
             assertions::{labels::CLAIM_THUMBNAIL, Actions},
             claim::ALLOWED_UPDATE_MANIFEST_ACTIONS,
         };
-
-        claim.set_update_manifest(true);
 
         // check for disallowed assertions
         if claim.has_assertion_type(labels::DATA_HASH)
@@ -345,7 +343,9 @@ impl Store {
                     return Err(Error::IngredientNotFound);
                 }
             } else {
-                return Err(Error::IngredientNotFound);
+                // when called from builder, there will be no provenance claim yet
+                // so we cannot verify the manifest url, but we just created it.
+                // return Err(Error::IngredientNotFound);
             }
         } else {
             return Err(Error::IngredientNotFound);
@@ -374,6 +374,19 @@ impl Store {
                 "only one claim thumbnail assertion allowed".into(),
             ));
         }
+
+        Ok(())
+    }
+
+    /// Add a new update manifest to this Store. The manifest label
+    /// may be updated to reflect is position in the manifest Store
+    /// if there are conflicting label names.  The function
+    /// will return the label of the claim used
+    #[allow(unused)]
+    pub fn commit_update_manifest(&mut self, mut claim: Claim) -> Result<String> {
+        self.update_manifest_test(&claim)?;
+
+        claim.set_update_manifest(true);
 
         self.commit_claim(claim)
     }
@@ -1801,7 +1814,9 @@ impl Store {
             }
             ClaimAssetData::Stream(reader, typ) => {
                 let format = typ.to_owned();
-                object_locations_from_stream(&format, reader)
+                let positions = object_locations_from_stream(&format, reader);
+                reader.rewind()?;
+                positions
             }
             ClaimAssetData::StreamFragment(reader, _read1, typ) => {
                 let format = typ.to_owned();
@@ -2764,6 +2779,7 @@ impl Store {
                 if let Ok(verify_after_sign) =
                     get_settings_value::<bool>("verify.verify_after_sign")
                 {
+                    output_stream.rewind()?;
                     // Also catch the case where we may have written to io::empty() or similar
                     if verify_after_sign && output_stream.stream_position()? > 0 {
                         // verify the store
@@ -3496,6 +3512,7 @@ impl Store {
         verify: bool,
         validation_log: &mut StatusTracker,
     ) -> Result<Self> {
+        stream.rewind()?;
         // first we convert the JUMBF into a usable store
         let store = Store::from_jumbf(c2pa_data, validation_log).inspect_err(|e| {
             log_item!("asset", "error loading file", "load_from_asset")
@@ -3503,6 +3520,7 @@ impl Store {
         })?;
 
         if verify {
+            stream.rewind()?;
             let mut asset_data = ClaimAssetData::Stream(&mut stream, format);
             if _sync {
                 Store::verify_store(&store, &mut asset_data, validation_log)

@@ -2543,21 +2543,18 @@ impl Claim {
                                     if let Some(redaction_label) =
                                         assertion_label_from_uri(&redacted_uri)
                                     {
-                                        if ingredient_claim
-                                            .assertion_hashed_uri_from_label(&redaction_label)
-                                            .is_some()
-                                        {
-                                            // The url reference is valid, now check if it was actually redacted
-                                            parent_tested = Some(false);
-                                            // Now if the assertion is not in the assertion store we are ok.
-                                            // Todo: would a zeroed out assertion show up here? if so we need to do a zero check
-                                            if ingredient_claim
-                                                .get_claim_assertion(&redaction_label, 0)
-                                                .is_none()
-                                            {
-                                                parent_tested = Some(true); // it was redacted - all good!
-                                            }
-                                        }
+                                        // The assertion may or may not be in the assertion store.
+                                        // It can exist and be zeroed or be removed entirely
+                                        // but it must be in the claim's assertions HashUri list
+                                        parent_tested = Some(
+                                            ingredient_claim
+                                                .assertions()
+                                                .iter()
+                                                .any(|a| a.url().contains(&redaction_label)),
+                                        );
+                                    } else {
+                                        dbg!("failed here");
+                                        parent_tested = Some(false);
                                     }
                                 }
                             }

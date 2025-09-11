@@ -381,6 +381,7 @@ mod integration_1 {
         // read our new file with embedded manifest
         let reader = Reader::from_file(&output_path)?;
         let reader_json = reader.json();
+        println!("{reader}");
         // ensure certificate status assertion was created
         assert!(reader_json.contains(r#"label": "c2pa.certificate-status"#));
         assert_eq!(reader.validation_status(), None);

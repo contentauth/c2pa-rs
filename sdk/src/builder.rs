@@ -36,7 +36,7 @@ use crate::{
         Thumbnail, User, UserCbor,
     },
     cbor_types::value_cbor_to_type,
-    claim::Claim,
+    claim::{Claim, ALLOWED_UPDATE_MANIFEST_ACTIONS},
     error::{Error, Result},
     jumbf_io,
     resource_store::{ResourceRef, ResourceResolver, ResourceStore},
@@ -768,8 +768,52 @@ impl Builder {
         Ok(builder)
     }
 
+    /// Determines if this manifest can be used as an update manifest.
+    fn is_update_manifest(&self) -> bool {
+        // cannot contain hard binding assertions (e.g. with labels DataHash, BoxHash, BmffHash, CollectionHash)
+        if self.definition.assertions.iter().any(|a| {
+            matches!(
+                a.label.as_str(),
+                DataHash::LABEL | BoxHash::LABEL | BmffHash::LABEL
+            )
+        }) {
+            return false;
+        }
+        // must contain only one v3 ingredient with relationship ParentOf and an active manifest
+        if self.definition.ingredients.len() != 1
+            || *self.definition.ingredients[0].relationship() != Relationship::ParentOf
+            || self.definition.ingredients[0].active_manifest().is_none()
+        {
+            return false;
+        }
+        // cannot have a thumbnail
+        if self.definition.thumbnail.is_some() {
+            return false;
+        }
+        // The actions assertion must only have the allowed update manifest actions
+        if let Some(actions_assertion) = self
+            .definition
+            .assertions
+            .iter()
+            .find(|a| a.label == Actions::LABEL)
+        {
+            if let Ok(actions) = actions_assertion.to_assertion::<Actions>() {
+                // Check if any action is not allowed in an update manifest
+                if actions
+                    .actions()
+                    .iter()
+                    .any(|action| !ALLOWED_UPDATE_MANIFEST_ACTIONS.contains(&action.action()))
+                {
+                    return false;
+                }
+            }
+        }
+
+        true
+    }
+
     // Convert a Manifest into a Claim
-    fn to_claim(&self) -> Result<Claim> {
+    fn to_claim(&self, _is_update: bool) -> Result<Claim> {
         let definition = &self.definition;
         let mut claim_generator_info = definition.claim_generator_info.clone();
 
@@ -871,17 +915,17 @@ impl Builder {
                 claim.add_assertion_with_salt(&thumbnail, &salt)?;
             }
         }
-
         // add all ingredients to the claim
         // We use a map to track the ingredient IDs and their hashed URIs
         let mut ingredient_map = HashMap::new();
 
         for ingredient in &definition.ingredients {
-            // use the label if it exists, otherwise use the instance_id
-            let id = match ingredient.label() {
-                Some(label) => label.to_string(),
-                None => ingredient.instance_id().to_string(),
-            };
+            // use the label if it exists and is not empty, otherwise use the instance_id
+            let id = ingredient
+                .label()
+                .filter(|label| !label.is_empty())
+                .map(|label| label.to_string())
+                .unwrap_or_else(|| ingredient.instance_id().to_string());
 
             // add it to the claim
             let uri = ingredient.add_to_claim(
@@ -1205,10 +1249,16 @@ impl Builder {
     }
 
     // Convert a Manifest into a Store
-    fn to_store(&self) -> Result<Store> {
-        let claim = self.to_claim()?;
-        // commit the claim
+    fn to_store(&self, is_update: bool) -> Result<Store> {
+        let mut claim = self.to_claim(is_update)?;
+
         let mut store = Store::new();
+
+        // if this can be an update manifest, then set the update_manifest flag
+        if is_update {
+            claim.set_update_manifest(true);
+        }
+        // commit the claim to the store
         let _provenance = store.commit_claim(claim)?;
         Ok(store)
     }
@@ -1305,7 +1355,8 @@ impl Builder {
         }
         self.definition.format = format.to_string();
         self.definition.instance_id = format!("xmp:iid:{}", Uuid::new_v4());
-        let mut store = self.to_store()?;
+        let is_update = self.is_update_manifest();
+        let mut store = self.to_store(is_update)?;
         let placeholder = store.get_data_hashed_manifest_placeholder(reserve_size, format)?;
         Ok(placeholder)
     }
@@ -1337,7 +1388,7 @@ impl Builder {
         data_hash: &DataHash,
         format: &str,
     ) -> Result<Vec<u8>> {
-        let mut store = self.to_store()?;
+        let mut store = self.to_store(self.is_update_manifest())?;
         if _sync {
             store.get_data_hashed_embeddable_manifest(data_hash, signer, format, None)
         } else {
@@ -1369,7 +1420,7 @@ impl Builder {
     ) -> Result<Vec<u8>> {
         self.definition.instance_id = format!("xmp:iid:{}", Uuid::new_v4());
 
-        let mut store = self.to_store()?;
+        let mut store = self.to_store(self.is_update_manifest())?;
         let bytes = if _sync {
             store.get_box_hashed_embeddable_manifest(signer)
         } else {
@@ -1417,15 +1468,18 @@ impl Builder {
         if let Some(base_path) = &self.base_path {
             self.resources.set_base_path(base_path);
         }
+        let is_update = self.is_update_manifest();
 
         // generate thumbnail if we don't already have one
         #[cfg(feature = "add_thumbnails")]
-        self.maybe_add_thumbnail(&format, source)?;
+        if !is_update {
+            self.maybe_add_thumbnail(&format, source)?;
+        }
 
         self.maybe_add_parent(&format, source)?;
 
         // convert the manifest to a store
-        let mut store = self.to_store()?;
+        let mut store = self.to_store(is_update)?;
 
         // sign and write our store to to the output image file
         if _sync {
@@ -1508,7 +1562,7 @@ impl Builder {
         }
 
         // convert the manifest to a store
-        let mut store = self.to_store()?;
+        let mut store = self.to_store(self.is_update_manifest())?;
 
         // sign and write our store to DASH content
         store.save_to_bmff_fragmented(
@@ -1905,15 +1959,6 @@ mod tests {
     fn test_builder_settings_auto_opened() {
         #[cfg(target_os = "wasi")]
         Settings::reset().unwrap();
-
-        Settings::from_toml(
-            &toml::toml! {
-                [builder.actions.auto_opened_action]
-                enabled = true
-            }
-            .to_string(),
-        )
-        .unwrap();
 
         let mut builder = Builder::new();
         builder
@@ -2950,6 +2995,129 @@ mod tests {
         let m = reader.active_manifest().unwrap();
         assert_eq!(m.ingredients().len(), 1);
         let parent = reader.get_manifest(parent_manifest_label).unwrap();
+        assert_eq!(parent.assertions().len(), 1);
+    }
+
+    #[test]
+    fn test_redaction2() {
+        use crate::{assertions::Action, utils::test::setup_logger};
+
+        setup_logger();
+        // the label of the assertion we are going to redact
+        const ASSERTION_LABEL: &str = "stds.schema-org.CreativeWork";
+
+        let mut source = Cursor::new(TEST_IMAGE_CLEAN);
+        let mut dest1 = Cursor::new(Vec::new());
+
+        let definition = ManifestDefinition {
+            claim_version: Some(2),
+            title: Some("Redacted claim".to_string()),
+            ..Default::default()
+        };
+        let mut builder = Builder {
+            definition,
+            ..Default::default()
+        };
+
+        // Create a parent with a c2pa_action type assertion.
+        let created_action = crate::assertions::Action::new(c2pa_action::CREATED)
+            .set_source_type(DigitalSourceType::Empty);
+
+        let actions = crate::assertions::Actions::new().add_action(created_action);
+        builder.add_assertion(Actions::LABEL, &actions).unwrap();
+
+        builder
+            .add_assertion(
+                ASSERTION_LABEL,
+                &json!({
+                    "@context": "https://schema.org",
+                    "@type": "CreativeWork",
+                    "author": [
+                        {
+                            "@type": "Person",
+                            "name": "Joe Bloggs"
+                        }
+                    ]
+                }),
+            )
+            .unwrap();
+
+        // sign the Builder and write it to the output stream
+        let signer = test_signer(SigningAlg::Ps256);
+        let _manifest_data = builder
+            .sign(signer.as_ref(), "image/jpeg", &mut source, &mut dest1)
+            .unwrap();
+
+        dest1.set_position(0);
+        let reader = Reader::from_stream("jpeg", &mut dest1).expect("from_bytes");
+        println!("{reader}");
+
+        let definition = ManifestDefinition {
+            claim_version: Some(2),
+            title: Some("Redacting claim".to_string()),
+            ..Default::default()
+        };
+
+        let mut builder2 = Builder {
+            definition,
+            ..Default::default()
+        };
+
+        // rewind our new asset stream so we can add it as an ingredient
+        dest1.set_position(0);
+
+        let parent_json = json!({
+            "title": "Parent Test",
+            "label": "INGREDIENT_1",
+            "relationship": "parentOf",
+        });
+
+        // add the parent ingredient
+        let parent = builder2
+            .add_ingredient_from_stream(parent_json.to_string(), "image/jpeg", &mut dest1)
+            .unwrap();
+
+        let parent_manifest_label = parent.active_manifest().unwrap().to_owned();
+
+        let redacted_uri =
+            crate::jumbf::labels::to_assertion_uri(&parent_manifest_label, ASSERTION_LABEL);
+
+        // Create a parent with a c2pa_action type assertion.
+        let opened_action = Action::new(c2pa_action::OPENED)
+            .set_parameter("ingredientIds", [parent.label().unwrap().to_string()])
+            .unwrap();
+
+        let redacted_action = Action::new("c2pa.redacted")
+            .set_reason("testing".to_owned())
+            .set_parameter("redacted".to_owned(), redacted_uri.clone())
+            .unwrap();
+
+        let actions = Actions::new()
+            .add_action(opened_action)
+            .add_action(redacted_action);
+
+        builder2.definition.redactions = Some(vec![redacted_uri]);
+
+        builder2.add_assertion(Actions::LABEL, &actions).unwrap();
+
+        let signer = test_signer(SigningAlg::Ps256);
+
+        // rewind our first asset stream again
+        dest1.set_position(0);
+
+        // Embed a manifest using the signer.
+        let mut output = Cursor::new(Vec::new());
+        builder2
+            .sign(signer.as_ref(), "jpeg", &mut dest1, &mut output)
+            .expect("builder sign");
+
+        output.set_position(0);
+
+        let reader = Reader::from_stream("jpeg", &mut output).expect("from_bytes");
+        println!("{reader}");
+        let m = reader.active_manifest().unwrap();
+        assert_eq!(m.ingredients().len(), 1);
+        let parent = reader.get_manifest(&parent_manifest_label).unwrap();
         assert_eq!(parent.assertions().len(), 1);
     }
 
