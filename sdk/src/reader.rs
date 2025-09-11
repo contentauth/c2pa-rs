@@ -1012,8 +1012,6 @@ pub mod tests {
         let json_length = reader.json().len();
         let detailed_json_length = reader.detailed_json().len();
         assert!(json_length < detailed_json_length); // Detailed JSON should contain more information
-        #[cfg(target_os = "wasi")]
-        crate::utils::io_utils::wasm_remove_dir_all(temp_dir)?;
         Ok(())
     }
 
