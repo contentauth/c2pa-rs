@@ -1814,7 +1814,9 @@ impl Store {
             }
             ClaimAssetData::Stream(reader, typ) => {
                 let format = typ.to_owned();
-                object_locations_from_stream(&format, reader)
+                let positions = object_locations_from_stream(&format, reader);
+                reader.rewind()?;
+                positions
             }
             ClaimAssetData::StreamFragment(reader, _read1, typ) => {
                 let format = typ.to_owned();
@@ -3510,6 +3512,7 @@ impl Store {
         verify: bool,
         validation_log: &mut StatusTracker,
     ) -> Result<Self> {
+        stream.rewind()?;
         // first we convert the JUMBF into a usable store
         let store = Store::from_jumbf(c2pa_data, validation_log).inspect_err(|e| {
             log_item!("asset", "error loading file", "load_from_asset")
@@ -3517,6 +3520,7 @@ impl Store {
         })?;
 
         if verify {
+            stream.rewind()?;
             let mut asset_data = ClaimAssetData::Stream(&mut stream, format);
             if _sync {
                 Store::verify_store(&store, &mut asset_data, validation_log)
