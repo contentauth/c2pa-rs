@@ -441,7 +441,7 @@ impl Reader {
     }
 
     /// Get the Reader as a JSON string
-    /// This just calls to_
+    /// This just calls to_json_formatted
     pub fn json(&self) -> String {
         match self.to_json_formatted() {
             Ok(value) => serde_json::to_string_pretty(&value).unwrap_or_default(),
@@ -450,7 +450,7 @@ impl Reader {
     }
 
     /// Get the Reader as a detailed JSON string
-    /// This just calls to_
+    /// This just calls to_json_detailed_formatted
     pub fn detailed_json(&self) -> String {
         match self.to_json_detailed_formatted() {
             Ok(value) => serde_json::to_string_pretty(&value).unwrap_or_default(),
