@@ -449,6 +449,14 @@ impl Reader {
         }
     }
 
+    /// Get the Reader as a detailed JSON string
+    pub fn detailed_json(&self) -> String {
+        match self.to_json_detailed_formatted() {
+            Ok(value) => serde_json::to_string_pretty(&value).unwrap_or_default(),
+            Err(_) => "{}".to_string(),
+        }
+    }
+
     /// Returns the remote url of the manifest if this [`Reader`] obtained the manifest remotely.
     pub fn remote_url(&self) -> Option<&str> {
         self.store.remote_url()

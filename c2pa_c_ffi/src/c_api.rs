@@ -600,6 +600,14 @@ pub unsafe extern "C" fn c2pa_reader_json(reader_ptr: *mut C2paReader) -> *mut c
     to_c_string(c2pa_reader.json())
 }
 
+#[no_mangle]
+pub unsafe extern "C" fn c2pa_reader_detailed_json(reader_ptr: *mut C2paReader) -> *mut c_char {
+    check_or_return_null!(reader_ptr);
+    let c2pa_reader = guard_boxed!(reader_ptr);
+
+    to_c_string(c2pa_reader.detailed_json())
+}
+
 /// Returns the remote url of the manifest if it was obtained remotely.
 ///
 /// # Parameters
@@ -1613,6 +1621,11 @@ mod tests {
             .to_str()
             .unwrap()
             .contains("cawg.ica.credential_valid"));
+
+        let json = unsafe { c2pa_reader_detailed_json(reader) };
+        assert!(!json.is_null());
+        let json_str = unsafe { CString::from_raw(json) };
+        println!("json: {}", json_str.to_str().unwrap());
         TestC2paStream::drop_c_stream(stream);
     }
 
