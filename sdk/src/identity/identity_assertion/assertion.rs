@@ -209,36 +209,6 @@ impl IdentityAssertion {
         }
     }
 
-    /// Summarize all of the identity assertions found for a [`ManifestStore`].
-    ///
-    /// [`ManifestStore`]: crate::ManifestStore
-    #[cfg(feature = "v1_api")]
-    pub async fn summarize_manifest_store<SV: SignatureVerifier>(
-        store: &crate::ManifestStore,
-        status_tracker: &mut StatusTracker,
-        verifier: &SV,
-    ) -> impl Serialize {
-        // NOTE: We can't write this using .map(...).collect() because there are async
-        // calls.
-        let mut reports: BTreeMap<
-            String,
-            IdentityAssertionsForManifest<
-                <<SV as SignatureVerifier>::Output as ToCredentialSummary>::CredentialSummary,
-            >,
-        > = BTreeMap::new();
-
-        for (id, manifest) in store.manifests() {
-            let report = Self::summarize_all_impl(manifest, status_tracker, verifier).await;
-            reports.insert(id.clone(), report);
-        }
-
-        IdentityAssertionsForManifestStore::<
-            <<SV as SignatureVerifier>::Output as ToCredentialSummary>::CredentialSummary,
-        > {
-            assertions_for_manifest: reports,
-        }
-    }
-
     /// Summarize all of the identity assertions found for a [`Reader`].
     pub async fn summarize_from_reader<SV: SignatureVerifier>(
         reader: &Reader,
@@ -333,25 +303,38 @@ impl IdentityAssertion {
             // Load the trust handler settings. Don't worry about status as these
             // are checked during setting generation.
 
-            if let Ok(Some(ta)) = get_settings_value::<Option<String>>("cawg_trust.trust_anchors") {
-                let _ = ctp.add_trust_anchors(ta.as_bytes());
-            }
+            let cose_verifier =
+                if let Ok(true) = get_settings_value::<bool>("cawg_trust.verify_trust_list") {
+                    if let Ok(Some(ta)) =
+                        get_settings_value::<Option<String>>("cawg_trust.trust_anchors")
+                    {
+                        let _ = ctp.add_trust_anchors(ta.as_bytes());
+                    }
 
-            if let Ok(Some(pa)) = get_settings_value::<Option<String>>("cawg_trust.user_anchors") {
-                let _ = ctp.add_user_trust_anchors(pa.as_bytes());
-            }
+                    if let Ok(Some(pa)) =
+                        get_settings_value::<Option<String>>("cawg_trust.user_anchors")
+                    {
+                        let _ = ctp.add_user_trust_anchors(pa.as_bytes());
+                    }
 
-            if let Ok(Some(tc)) = get_settings_value::<Option<String>>("cawg_trust.trust_config") {
-                ctp.add_valid_ekus(tc.as_bytes());
-            }
+                    if let Ok(Some(tc)) =
+                        get_settings_value::<Option<String>>("cawg_trust.trust_config")
+                    {
+                        ctp.add_valid_ekus(tc.as_bytes());
+                    }
 
-            if let Ok(Some(al)) = get_settings_value::<Option<String>>("cawg_trust.allowed_list") {
-                let _ = ctp.add_end_entity_credentials(al.as_bytes());
-            }
+                    if let Ok(Some(al)) =
+                        get_settings_value::<Option<String>>("cawg_trust.allowed_list")
+                    {
+                        let _ = ctp.add_end_entity_credentials(al.as_bytes());
+                    }
 
-            let verifier = X509SignatureVerifier {
-                cose_verifier: Verifier::VerifyTrustPolicy(Cow::Owned(ctp)),
-            };
+                    Verifier::VerifyTrustPolicy(Cow::Owned(ctp))
+                } else {
+                    Verifier::IgnoreProfileAndTrustPolicy
+                };
+
+            let verifier = X509SignatureVerifier { cose_verifier };
 
             let result = verifier
                 .check_signature(&self.signer_payload, &self.signature, status_tracker)

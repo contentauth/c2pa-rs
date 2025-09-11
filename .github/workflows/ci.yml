@@ -122,9 +122,9 @@ jobs:
       - name: Generate code coverage for rust_native_crypto
         env:
           RUST_BACKTRACE: "1"
-          FEATURES: ${{needs.get-features.outputs.rust_native_crypto-features}}
+          FEATURES: ${{needs.get-features.outputs.rust-native-features}}
         run: |
-          cargo llvm-cov --lib --features "$FEATURES" --lcov --output-path lcov-rust_native_crypto.info
+          cargo llvm-cov -p c2pa --no-default-features --features "$FEATURES" --lcov --output-path lcov-rust_native_crypto.info
 
       # Tokens aren't available for PRs originating from forks,
       # so we don't attempt to upload code coverage in that case.
@@ -299,7 +299,7 @@ jobs:
         id: setup-chrome
         uses: browser-actions/setup-chrome@v2
         with:
-          chrome-version: 138
+          chrome-version: 140
           install-chromedriver: true
 
       - name: Install wasm-pack

@@ -55,7 +55,7 @@ jobs:
         shell: pwsh
         run: |
           ./make_release.ps1
-          
+
       - name: Build release
         if: matrix.os != 'windows-latest'
         run: make release TARGET=${{ matrix.target }}
@@ -84,10 +84,15 @@ jobs:
       - name: Extract tag_name from zip file
         id: extract_tag
         run: |
-          ZIP=$(ls c2pa-v*-*.zip | head -n1)
-          TAG_NAME=$(echo "$ZIP" | sed -E 's/^(c2pa-v[0-9]+\.[0-9]+\.[0-9]+)-.*\.zip/\1/')
-          echo "Found tag: $TAG_NAME"
-          echo "tag_name=$TAG_NAME" >> $GITHUB_OUTPUT
+          ZIP=$(find . -name "c2pa-v*-*.zip" | head -n1)
+          if [ -n "$ZIP" ]; then
+            TAG_NAME=$(echo "$ZIP" | sed -E 's/.*\/(c2pa-v[0-9]+\.[0-9]+\.[0-9]+)-.*\.zip/\1/')
+            echo "Found tag: $TAG_NAME"
+            echo "tag_name=$TAG_NAME" >> $GITHUB_OUTPUT
+          else
+            echo "No zip files found"
+            exit 1
+          fi
 
       - name: Create Release
         id: create_release

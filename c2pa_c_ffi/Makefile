@@ -37,7 +37,7 @@ define make_zip
 	fi; \
 	mkdir -p $(TARGET_DIR)/artifacts $(1)/include $(1)/lib; \
 	cp $(1)/c2pa.h $(1)/include/; \
-	if [[ "$(2)" == *"ios"* ]]; then \
+	if echo "$(2)" | grep -q "ios"; then \
 		cp $(1)/libc2pa_c.a $(1)/lib/; \
 	else \
 		find $(1) -name "libc2pa_c.*" ! -name "*.a" ! -path "*/deps/*" -exec cp {} $(1)/lib/ \;; \
