@@ -8,6 +8,7 @@ on:
   push:
     branches:
       - main
+      - v1_api
 
 jobs:
   release-plz:
