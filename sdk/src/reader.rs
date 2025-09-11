@@ -449,6 +449,15 @@ impl Reader {
         }
     }
 
+    /// Get the Reader as a detailed JSON string
+    /// This just calls to_
+    pub fn detailed_json(&self) -> String {
+        match self.to_json_detailed_formatted() {
+            Ok(value) => serde_json::to_string_pretty(&value).unwrap_or_default(),
+            Err(_) => "{}".to_string(),
+        }
+    }
+
     /// Returns the remote url of the manifest if this [`Reader`] obtained the manifest remotely.
     pub fn remote_url(&self) -> Option<&str> {
         self.store.remote_url()
@@ -990,6 +999,19 @@ pub mod tests {
         reader.to_folder(temp_dir.path())?;
         let path = temp_dir_path(&temp_dir, "manifest.json");
         assert!(path.exists());
+        #[cfg(target_os = "wasi")]
+        crate::utils::io_utils::wasm_remove_dir_all(temp_dir)?;
+        Ok(())
+    }
+
+    #[test]
+    #[cfg(feature = "file_io")]
+    /// Test that the reader can validate a file with nested assertion errors
+    fn test_reader_detailed_json() -> Result<()> {
+        let reader = Reader::from_file("tests/fixtures/CACAE-uri-CA.jpg")?;
+        let json_length = reader.json().len();
+        let detailed_json_length = reader.detailed_json().len();
+        assert!(json_length < detailed_json_length); // Detailed JSON should contain more information
         #[cfg(target_os = "wasi")]
         crate::utils::io_utils::wasm_remove_dir_all(temp_dir)?;
         Ok(())
