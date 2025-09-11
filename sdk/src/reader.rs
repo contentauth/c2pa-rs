@@ -136,7 +136,8 @@ impl Reader {
             Store::from_stream_async(format, &mut stream, verify, &mut validation_log).await
         }?;
 
-        let /* mut */ result = Self::from_store(store, &validation_log)?;
+        #[allow(unused_mut)] // TEMPORARY until I figure out the synchronous path.
+        let mut result = Self::from_store(store, &validation_log)?;
         if _sync {
             // TO DO: Figure out how to handle synchronous validation with
             // identity assertions? Just report an error (needs async)?
@@ -144,9 +145,10 @@ impl Reader {
                 todo!("Add identity assertion validation here");
             }
         } else {
-            if true {
-                todo!("Add identity assertion validation here");
-            }
+            use crate::identity::validator::CawgValidator;
+            result
+                .post_validate_internal_async(&CawgValidator {})
+                .await?;
         }
 
         Ok(result)
@@ -752,9 +754,24 @@ impl Reader {
         validator: &impl AsyncPostValidator
     ))]
     pub fn post_validate(&mut self, validator: &impl PostValidator) -> Result<()> {
-        if true {
-            todo!("Remove me");
+        if false {
+            // CONSIDER BEFORE MERGING ...
+            todo!("Remove me?");
         }
+
+        if _sync {
+            self.post_validate_internal(validator)
+        } else {
+            self.post_validate_internal_async(validator).await
+        }
+    }
+
+    #[async_generic(async_signature(
+        &mut self,
+        validator: &impl AsyncPostValidator
+    ))]
+    fn post_validate_internal(&mut self, validator: &impl PostValidator) -> Result<()> {
+        // TEMPORARY: Make this available while I sort out new code path.
         let mut validation_log = StatusTracker::default();
         let mut validation_results = self.validation_results.take().unwrap_or_default();
         let mut assertion_values = HashMap::new();
@@ -1017,8 +1034,9 @@ pub mod tests {
 
     #[test]
     fn test_reader_post_validate() -> Result<()> {
-        if true {
-            todo!("Remove me");
+        if false {
+            // CONSIDER BEFORE MERGING ...
+            todo!("Remove me?");
         }
         use crate::{log_item, status_tracker::StatusTracker};
 

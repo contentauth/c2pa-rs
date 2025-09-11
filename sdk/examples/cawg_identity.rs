@@ -29,7 +29,6 @@ mod cawg {
         crypto::raw_signature,
         identity::{
             builder::{AsyncIdentityAssertionBuilder, AsyncIdentityAssertionSigner},
-            validator::CawgValidator,
             x509::AsyncX509CredentialHolder,
         },
         AsyncSigner, Builder, Reader, SigningAlg,
