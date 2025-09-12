@@ -26,7 +26,6 @@ use serde_with::skip_serializing_none;
 use uuid::Uuid;
 use zip::{write::SimpleFileOptions, ZipArchive, ZipWriter};
 
-use crate::assertion::AssertionBase;
 #[allow(deprecated)]
 use crate::{
     assertion::{AssertionBase, AssertionDecodeError},

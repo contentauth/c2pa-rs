@@ -137,31 +137,6 @@ impl ManifestAssertion {
         self
     }
 
-    /// Creates a ManifestAssertion with the given label and any serde serializable object
-    ///
-    /// # Example: Creating a custom assertion from a serde_json object.
-    ///
-    /// ```
-    /// # use c2pa::Result;    
-    /// use c2pa::ManifestAssertion;
-    /// use serde_json::json;
-    /// # fn main() -> Result<()> {
-    /// let value = json!({"my_tag": "Anything I want"});
-    /// let _ma = ManifestAssertion::from_labeled_assertion("org.contentauth.foo", &value)?;
-    /// # Ok(())
-    /// # }
-    /// ```
-    #[cfg(feature = "v1_api")]
-    pub fn from_labeled_assertion<S: Into<String>, T: Serialize>(
-        label: S,
-        data: &T,
-    ) -> Result<Self> {
-        Ok(Self::new(
-            label.into(),
-            serde_json::to_value(data).map_err(|err| Error::AssertionEncoding(err.to_string()))?,
-        ))
-    }
-
     /// Creates a ManifestAssertion from an AssertionBase object
     ///
     /// # Example: Creating a custom assertion an Action assertion
@@ -226,16 +201,6 @@ pub(crate) mod tests {
     use crate::assertions::{c2pa_action, Action, Actions};
 
     #[test]
-    #[cfg(feature = "v1_api")]
-    fn test_from_labeled() {
-        let data = serde_json::json!({"mytag": "mydata"});
-        let ma = ManifestAssertion::from_labeled_assertion("org.contentauth.foo", &data)
-            .expect("from_labeled_assertion");
-        assert_eq!(ma.label(), "org.contentauth.foo");
-        assert!(ma.value().is_ok());
-    }
-
-    #[test]
     fn test_manifest_assertion() {
         let actions = Actions::new().add_action(Action::new(c2pa_action::EDITED));
         let value = serde_json::to_value(actions).unwrap();
@@ -255,10 +220,5 @@ pub(crate) mod tests {
         let actions = Actions::new().add_action(Action::new(c2pa_action::EDITED));
         let ma2 = ManifestAssertion::from_assertion(&actions).expect("from_assertion");
         let _actions2: Actions = ma2.to_assertion().expect("to_assertion");
-        #[cfg(feature = "v1_api")]
-        let actions3 = ManifestAssertion::from_labeled_assertion("foo".to_owned(), &_actions2)
-            .expect("from_labeled_assertion");
-        #[cfg(feature = "v1_api")]
-        assert_eq!(actions3.label(), "foo");
     }
 }
