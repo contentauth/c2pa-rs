@@ -5250,7 +5250,7 @@ pub mod tests {
         let tracker = &mut StatusTracker::default();
         let result = Store::from_stream(format, &mut input_stream, true, tracker);
         assert!(result.is_ok());
-        println!("Error report: {:?}", tracker);
+        println!("Error report: {tracker:?}");
         assert!(tracker.has_error(Error::AssertionInvalidRedaction));
     }
 
@@ -5261,7 +5261,7 @@ pub mod tests {
         let mut report = StatusTracker::default();
         let result = Store::from_stream(format, &mut input_stream, true, &mut report);
         assert!(matches!(result, Err(Error::UnsupportedType)));
-        println!("Error report: {:?}", report);
+        println!("Error report: {report:?}");
         assert!(!report.logged_items().is_empty());
 
         assert!(report.has_error(Error::UnsupportedType));
@@ -5275,7 +5275,7 @@ pub mod tests {
         let _r = Store::from_stream(format, &mut input_stream, true, &mut report);
 
         // error report
-        println!("Error report: {:?}", report);
+        println!("Error report: {report:?}");
         assert!(!report.logged_items().is_empty());
 
         assert!(report.has_error(Error::PrereleaseError));
@@ -5289,7 +5289,7 @@ pub mod tests {
         Store::from_stream(format, &mut input_stream, true, &mut report).unwrap();
 
         // error report
-        println!("Error report: {:?}", report);
+        println!("Error report: {report:?}");
         assert!(!report.logged_items().is_empty());
 
         assert!(report.has_status(validation_status::ASSERTION_DATAHASH_MISMATCH));
@@ -5320,7 +5320,7 @@ pub mod tests {
         let mut report = StatusTracker::default();
         let _r = Store::from_stream(format, &mut input_stream, true, &mut report);
 
-        println!("Error report: {:?}", report);
+        println!("Error report: {report:?}");
 
         assert!(!report.logged_items().is_empty());
 
