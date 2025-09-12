@@ -342,7 +342,7 @@ jobs:
         run: cargo codspeed build -p c2pa --no-default-features --features rust_native_crypto
 
       - name: Run the benchmarks
-        uses: CodSpeedHQ/action@v3
+        uses: CodSpeedHQ/action@v4
         with:
           run: cargo codspeed run
           token: ${{ secrets.CODSPEED_TOKEN }}
