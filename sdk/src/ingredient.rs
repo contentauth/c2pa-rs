@@ -942,6 +942,7 @@ impl Ingredient {
                     .get_ocsp_response_ders_async(labels, &mut validation_log)
                     .await?
             };
+
             let resource_refs: Vec<ResourceRef> = ocsp_response_ders
                 .into_iter()
                 .filter_map(|o| self.resources.add_with(&o.0, "ocsp", o.1).ok())
@@ -1714,8 +1715,6 @@ mod tests {
         );
     }
 
-    // Temporarily unavailable for wasm-bindgen until https://github.com/contentauth/c2pa-rs/pull/1325 lands
-    #[cfg(any(not(target_arch = "wasm32"), target_os = "wasi"))]
     #[cfg(feature = "fetch_remote_manifests")]
     #[c2pa_test_async]
     async fn test_jpg_cloud_from_memory() {

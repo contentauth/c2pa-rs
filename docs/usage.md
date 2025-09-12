@@ -34,13 +34,14 @@ c2pa = { version = "0.45.2", features = ["file_io", "add_thumbnails"] }
 
 The Rust library crate provides the following capabilities:
 
+* `openssl` *(enabled by default)* - Enables the system `openssl` implementation for cryptography.
+* `rust_native_crypto` - Enables the Rust native implementation for cryptography.
 * `add_thumbnails` generates thumbnails automatically for JPEG and PNG files. (no longer included with `file_io`)
 * `fetch_remote_manifests` enables the verification step to retrieve externally referenced manifest stores.  External manifests are only fetched if there is no embedded manifest store and no locally adjacent .c2pa manifest store file of the same name.
 * `file_io` enables manifest generation, signing via OpenSSL, and embedding manifests in [supported file formats](supported-formats.md).
 * `json_schema` is used by `make schema` to produce a JSON schema document that represents the `ManifestStore` data structures.
 * `no_interleaved_io` forces fully-synchronous I/O; otherwise, the library uses threaded I/O for some operations to improve performance.
 * `serialize_thumbnails` includes binary thumbnail data in the [Serde](https://serde.rs/) serialization output.
-* `v1_api` - Use the old API (which will soon be deprecated) instead of the [new API](release-notes.md#new-api).
 * `pdf` - Enable support for reading claims on PDF files.
 * `http_ureq` *(enabled by default)* - Enables `ureq` for sync HTTP requests.
 * `http_reqwest` *(enabled by default)* - Enables `reqwest` for async HTTP requests.
@@ -49,15 +50,12 @@ The Rust library crate provides the following capabilities:
 * `http_wstd` *(enabled by default)* - Enables `wstd` for async HTTP requests on WASI.
 
 
-### New API
+* the `v1_api` feature is no longer supported.
 
-The new API is now enabled by default. The `unstable_api` feature is no longer available.
+[!NOTE]
+If both `rust_native_crypto` and `openssl` are enabled, it will default to `rust_native_crypto`.
+It is recommended to disable default features when using `rust_native_crypto` as to avoid including `openssl` as a dependency.
 
-To use the deprecated v1 API, enable the v1_api feature; for example:
-
-```
-c2pa = {version="0.43.0", features=["v1_api"]}
-```
 
 ### Resource references
 

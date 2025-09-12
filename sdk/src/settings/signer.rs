@@ -16,14 +16,20 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     create_signer,
+    crypto::raw_signature::RawSigner,
+    dynamic_assertion::DynamicAssertion,
     http::{SyncGenericResolver, SyncHttpResolver},
-    settings::Settings,
+    identity::{builder::IdentityAssertionBuilder, x509::X509CredentialHolder},
+    settings::{Settings, SettingsValidate},
     Error, Result, Signer, SigningAlg,
 };
 
-/// Settings for configuring a local or remote [Signer][crate::Signer].
+/// Settings for configuring a local or remote [`Signer`].
 ///
-/// A [Signer][crate::Signer] can be obtained by calling [BuilderSettings::signer].
+/// A [`Signer`] can be obtained by calling the [`signer()`] function.
+///
+/// [`Signer`]: crate::Signer
+/// [`signer()`]: Builder::signer
 #[allow(unused)]
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -60,7 +66,46 @@ impl SignerSettings {
     ///
     /// If the signer settings aren't specified, this function will return [Error::MissingSignerSettings][crate::Error::MissingSignerSettings].
     pub fn signer() -> Result<Box<dyn Signer>> {
+        let c2pa_signer = Self::c2pa_signer()?;
+
+        // TO DISCUSS: What if get_value returns an Err(...)?
+        if let Ok(Some(cawg_x509_settings)) =
+            Settings::get_value::<Option<SignerSettings>>("cawg_x509_signer")
+        {
+            match cawg_x509_settings {
+                SignerSettings::Local {
+                    alg: cawg_alg,
+                    sign_cert: cawg_sign_cert,
+                    private_key: cawg_private_key,
+                    tsa_url: cawg_tsa_url,
+                } => {
+                    let cawg_dual_signer = CawgX509IdentitySigner {
+                        c2pa_signer,
+                        cawg_alg,
+                        cawg_sign_cert,
+                        cawg_private_key,
+                        cawg_tsa_url,
+                    };
+
+                    Ok(Box::new(cawg_dual_signer))
+                }
+
+                SignerSettings::Remote {
+                    url: _url,
+                    alg: _alg,
+                    sign_cert: _sign_cert,
+                    tsa_url: _tsa_url,
+                } => todo!("Remote CAWG X.509 signing not yet supported"),
+            }
+        } else {
+            Ok(c2pa_signer)
+        }
+    }
+
+    /// Returns a C2PA-only signer from the [`BuilderSettings::signer`] field.
+    fn c2pa_signer() -> Result<Box<dyn Signer>> {
         let signer_info = Settings::get_value::<Option<SignerSettings>>("signer");
+
         match signer_info {
             Ok(Some(signer_info)) => match signer_info {
                 SignerSettings::Local {
@@ -92,6 +137,91 @@ impl SignerSettings {
             #[cfg(not(test))]
             _ => Err(Error::MissingSignerSettings),
         }
+    }
+}
+
+impl SettingsValidate for SignerSettings {
+    fn validate(&self) -> Result<()> {
+        Ok(())
+    }
+}
+
+struct CawgX509IdentitySigner {
+    c2pa_signer: Box<dyn Signer>,
+    cawg_alg: SigningAlg,
+    cawg_sign_cert: String,
+    cawg_private_key: String,
+    cawg_tsa_url: Option<String>,
+    // NOTE: The CAWG signing settings are stored here because
+    // we can't clone or transfer ownership of an `X509CredentialHolder`
+    // inside the dynamic_assertions callback.
+}
+
+impl Signer for CawgX509IdentitySigner {
+    fn sign(&self, data: &[u8]) -> Result<Vec<u8>> {
+        Signer::sign(&self.c2pa_signer, data)
+    }
+
+    fn alg(&self) -> SigningAlg {
+        Signer::alg(&self.c2pa_signer)
+    }
+
+    fn certs(&self) -> Result<Vec<Vec<u8>>> {
+        self.c2pa_signer.certs()
+    }
+
+    fn reserve_size(&self) -> usize {
+        Signer::reserve_size(&self.c2pa_signer)
+    }
+
+    fn time_authority_url(&self) -> Option<String> {
+        self.c2pa_signer.time_authority_url()
+    }
+
+    fn timestamp_request_headers(&self) -> Option<Vec<(String, String)>> {
+        self.c2pa_signer.timestamp_request_headers()
+    }
+
+    fn timestamp_request_body(&self, message: &[u8]) -> Result<Vec<u8>> {
+        self.c2pa_signer.timestamp_request_body(message)
+    }
+
+    fn send_timestamp_request(&self, message: &[u8]) -> Option<Result<Vec<u8>>> {
+        self.c2pa_signer.send_timestamp_request(message)
+    }
+
+    fn ocsp_val(&self) -> Option<Vec<u8>> {
+        self.c2pa_signer.ocsp_val()
+    }
+
+    fn direct_cose_handling(&self) -> bool {
+        self.c2pa_signer.direct_cose_handling()
+    }
+
+    fn dynamic_assertions(&self) -> Vec<Box<dyn DynamicAssertion>> {
+        let Ok(raw_signer) = crate::crypto::raw_signature::signer_from_cert_chain_and_private_key(
+            self.cawg_sign_cert.as_bytes(),
+            self.cawg_private_key.as_bytes(),
+            self.cawg_alg,
+            self.cawg_tsa_url.clone(),
+        ) else {
+            // dynamic_assertions() API doesn't let us fail.
+            // signer_from_cert_chain_and_private_key rarely fails,
+            // so when it does, we do so silently.
+            return vec![];
+        };
+
+        let x509_credential_holder = X509CredentialHolder::from_raw_signer(raw_signer);
+
+        let iab = IdentityAssertionBuilder::for_credential_holder(x509_credential_holder);
+
+        // TODO: Configure referenced assertions and role.
+
+        vec![Box::new(iab)]
+    }
+
+    fn raw_signer(&self) -> Option<Box<&dyn RawSigner>> {
+        self.c2pa_signer.raw_signer()
     }
 }
 

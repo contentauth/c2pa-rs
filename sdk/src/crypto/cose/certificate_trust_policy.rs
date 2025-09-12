@@ -141,7 +141,7 @@ impl CertificateTrustPolicy {
             return Ok(TrustAnchorType::EndEntity);
         }
 
-        #[cfg(feature = "rust_native_crypto")]
+        #[cfg(any(feature = "rust_native_crypto", target_arch = "wasm32"))]
         {
             return crate::crypto::raw_signature::rust_native::check_certificate_trust::check_certificate_trust(
                 self,
@@ -151,7 +151,10 @@ impl CertificateTrustPolicy {
             );
         }
 
-        #[cfg(feature = "openssl")]
+        #[cfg(all(
+            feature = "openssl",
+            not(all(feature = "rust_native_crypto", target_arch = "wasm32"))
+        ))]
         {
             return crate::crypto::raw_signature::openssl::check_certificate_trust::check_certificate_trust(
                 self,
@@ -430,14 +433,20 @@ pub enum CertificateTrustError {
     InternalError(String),
 }
 
-#[cfg(feature = "openssl")]
+#[cfg(all(
+    feature = "openssl",
+    not(all(feature = "rust_native_crypto", target_arch = "wasm32"))
+))]
 impl From<openssl::error::ErrorStack> for CertificateTrustError {
     fn from(err: openssl::error::ErrorStack) -> Self {
         Self::CryptoLibraryError(err.to_string())
     }
 }
 
-#[cfg(feature = "openssl")]
+#[cfg(all(
+    feature = "openssl",
+    not(all(feature = "rust_native_crypto", target_arch = "wasm32"))
+))]
 impl From<crate::crypto::raw_signature::openssl::OpenSslMutexUnavailable>
     for CertificateTrustError
 {

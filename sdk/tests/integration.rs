@@ -300,126 +300,51 @@ mod integration_1 {
         Ok(())
     }
 
-    #[cfg(feature = "v1_api")]
-    struct PlacedCallback {
-        path: String,
-    }
+    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(feature = "file_io")]
+    #[tokio::test]
+    async fn test_cawg_signing_via_settings() -> Result<()> {
+        Settings::from_toml(include_str!(
+            "../tests/fixtures/test_settings_with_cawg_signing.toml"
+        ))?;
 
-    #[cfg(feature = "v1_api")]
-    use c2pa::{Error, Manifest, ManifestPatchCallback};
+        // Set up parent and destination paths.
+        let temp_dir = tempdirectory()?;
+        let output_path = temp_dir.path().join("test_file.jpg");
+        let parent_path = fixture_path("earth_apollo17.jpg");
 
-    #[cfg(feature = "v1_api")]
-    impl ManifestPatchCallback for PlacedCallback {
-        fn patch_manifest(&self, manifest_store: &[u8]) -> Result<Vec<u8>> {
-            use ::jumbf::parser::SuperBox;
+        // Create a new Manifest.
+        let mut builder = Builder::new();
 
-            if let Ok((_raw, sb)) = SuperBox::from_slice(manifest_store) {
-                if let Some(my_box) = sb.find_by_label(&self.path) {
-                    // find box I am looking for
-                    if let Some(db) = my_box.data_box() {
-                        let data_offset = db.offset_within_superbox(&sb).unwrap();
-                        let replace_bytes = r#"{"some_tag": "some value is replaced"}"#;
-
-                        if db.data.len() != replace_bytes.len() {
-                            return Err(Error::OtherError("replacement data size mismatch".into()));
-                        }
-
-                        // sanity check to make sure offset code is working
-                        let offset = memchr::memmem::find(manifest_store, db.data).unwrap();
-                        if offset != data_offset {
-                            return Err(Error::OtherError("data box offset incorrect".into()));
-                        }
-
-                        let mut new_manifest_store = manifest_store.to_vec();
-                        new_manifest_store.splice(
-                            data_offset..data_offset + replace_bytes.len(),
-                            replace_bytes.as_bytes().iter().cloned(),
-                        );
-
-                        return Ok(new_manifest_store);
-                    }
-                }
-
-                Err(Error::NotFound)
-            } else {
-                Err(Error::OtherError("could not parse JUMBF".into()))
-            }
-        }
-    }
-    #[test]
-    #[cfg(all(feature = "file_io", feature = "v1_api"))]
-    fn test_placed_manifest() -> Result<()> {
-        Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml"))?;
-
-        // set up parent and destination paths
-        Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml"))?;
-        use std::io::Seek;
-        let dir = tempdirectory()?;
-        let output_path = dir.path().join("test_file.jpg");
-
-        #[cfg(target_os = "wasi")]
-        let mut fixture_path = PathBuf::from("/");
-        #[cfg(not(target_os = "wasi"))]
-        let mut fixture_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        fixture_path.push("tests/fixtures");
-        let mut manifest_path = fixture_path.clone();
-        manifest_path.push("manifest.json");
-        let mut parent_path = fixture_path.clone();
-        parent_path.push("earth_apollo17.jpg");
-
-        let json = std::fs::read_to_string(manifest_path)?;
-
-        let mut manifest = Manifest::from_json(&json)?;
-        // WASI does not support canonicalize(), but the path is canonical to begin with
-        #[cfg(target_os = "wasi")]
-        let base_path = fixture_path;
-        #[cfg(not(target_os = "wasi"))]
-        let base_path = fixture_path.canonicalize()?;
-        manifest.with_base_path(base_path)?;
-
-        // sign and embed into the target file
+        // Sign and embed into the target file.
         let signer = Settings::signer()?;
+        builder.sign_file(signer.as_ref(), &parent_path, &output_path)?;
 
-        let mut input_stream = std::fs::File::open(&parent_path).unwrap();
-        let mut output_stream = std::fs::OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .open(output_path)
+        // Read back the new file with embedded manifest.
+        let mut reader = Reader::from_file(&output_path)?;
+
+        reader
+            .post_validate_async(&c2pa::identity::validator::CawgValidator {})
+            .await
             .unwrap();
 
-        // get placed manifest
-        #[allow(deprecated)]
-        let (placed_manifest, label) = manifest
-            .get_placed_manifest(signer.reserve_size(), "jpg", &mut input_stream)
-            .unwrap();
+        dbg!(&reader);
 
-        // my manifest callback handler
-        // set some data needed by callback to do what it needs to
-        // for this example let's tell it which jumbf box we can to change
-        // There is currently no way to get this directly from Manifest so I am using a hack
-        // to get_placed_manifest to return the manifest UUID.
-        let path = format!("{}/c2pa.assertions/{}", label, "com.mycompany.myassertion");
-
-        let my_callback = PlacedCallback {
-            path: path.to_string(),
-        };
-
-        let callbacks: Vec<Box<dyn ManifestPatchCallback>> = vec![Box::new(my_callback)];
-
-        // add manifest back into data
-        input_stream.rewind().unwrap();
-        #[allow(deprecated)]
-        Manifest::embed_placed_manifest(
-            &placed_manifest,
-            "jpg",
-            &mut input_stream,
-            &mut output_stream,
-            signer.as_ref(),
-            &callbacks,
-        )
-        .unwrap();
+        // The test credentials are currently flagged as untrusted.
+        // This will be fixed when https://github.com/contentauth/c2pa-rs/pull/1356
+        // is merged.
+        assert_eq!(
+            reader
+                .validation_results()
+                .unwrap()
+                .active_manifest()
+                .unwrap()
+                .failure()
+                .last()
+                .unwrap()
+                .code(),
+            "signingCredential.untrusted"
+        );
 
         Ok(())
     }
@@ -461,83 +386,6 @@ mod integration_1 {
         assert_eq!(reader.validation_status(), None);
         assert_eq!(reader.validation_state(), ValidationState::Valid);
         assert!(reader_json.contains("signingCredential.ocsp.notRevoked"));
-
-        Ok(())
-    }
-
-    #[test]
-    #[cfg(all(feature = "file_io", feature = "v1_api"))]
-    fn test_placed_manifest_bmff() -> Result<()> {
-        Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml"))?;
-
-        // set up parent and destination paths
-        use std::io::Seek;
-        let dir = tempdirectory()?;
-        let output_path = dir.path().join("video1.mp4");
-
-        #[cfg(target_os = "wasi")]
-        let mut fixture_path = PathBuf::from("/");
-        #[cfg(not(target_os = "wasi"))]
-        let mut fixture_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        fixture_path.push("tests/fixtures");
-        let mut manifest_path = fixture_path.clone();
-        manifest_path.push("manifest.json");
-        let mut parent_path = fixture_path.clone();
-        parent_path.push("video1.mp4");
-
-        let json = std::fs::read_to_string(manifest_path)?;
-
-        let mut manifest = Manifest::from_json(&json)?;
-        // WASI does not support canonicalize(), but the path is canonical to begin with
-        #[cfg(target_os = "wasi")]
-        let base_path = fixture_path;
-        #[cfg(not(target_os = "wasi"))]
-        let base_path = fixture_path.canonicalize()?;
-        manifest.with_base_path(base_path)?;
-
-        // sign and embed into the target file
-        let signer = Settings::signer()?;
-
-        let mut input_stream = std::fs::File::open(&parent_path).unwrap();
-        let mut output_stream = std::fs::OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .open(output_path)
-            .unwrap();
-
-        // get placed manifest
-        #[allow(deprecated)]
-        let (placed_manifest, label) = manifest
-            .get_placed_manifest(signer.reserve_size(), "mp4", &mut input_stream)
-            .unwrap();
-
-        // my manifest callback handler
-        // set some data needed by callback to do what it needs to
-        // for this example let's tell it which jumbf box we can to change
-        // There is currently no way to get this directly from Manifest so I am using a hack
-        // to get_placed_manifest to return the manifest UUID.
-        let path = format!("{}/c2pa.assertions/{}", label, "com.mycompany.myassertion");
-
-        let my_callback = PlacedCallback {
-            path: path.to_string(),
-        };
-
-        let callbacks: Vec<Box<dyn ManifestPatchCallback>> = vec![Box::new(my_callback)];
-
-        // add manifest back into data
-        input_stream.rewind().unwrap();
-        #[allow(deprecated)]
-        Manifest::embed_placed_manifest(
-            &placed_manifest,
-            "mp4",
-            &mut input_stream,
-            &mut output_stream,
-            signer.as_ref(),
-            &callbacks,
-        )
-        .unwrap();
 
         Ok(())
     }

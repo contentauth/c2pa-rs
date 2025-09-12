@@ -163,8 +163,6 @@ pub(crate) mod http;
 pub use assertions::DigitalSourceType;
 #[doc(inline)]
 pub use assertions::Relationship;
-#[cfg(feature = "v1_api")]
-pub use asset_io::{CAIRead, CAIReadWrite};
 pub use builder::{Builder, ManifestDefinition};
 pub use callback_signer::{CallbackFunc, CallbackSigner};
 pub use claim_generator_info::ClaimGeneratorInfo;
@@ -182,15 +180,9 @@ pub use ingredient::Ingredient;
 pub use ingredient::{DefaultOptions, IngredientOptions};
 pub use manifest::{Manifest, SignatureInfo};
 pub use manifest_assertion::{ManifestAssertion, ManifestAssertionKind};
-#[cfg(feature = "v1_api")]
-pub use manifest_store::ManifestStore;
-#[cfg(feature = "v1_api")]
-pub use manifest_store_report::ManifestStoreReport;
 pub use reader::Reader;
 #[doc(inline)]
 pub use resource_store::{ResourceRef, ResourceStore};
-#[cfg(feature = "v1_api")]
-pub use signer::RemoteSigner;
 pub use signer::{AsyncSigner, Signer};
 pub use utils::mime::format_from_path;
 #[doc(inline)]
@@ -215,8 +207,6 @@ pub(crate) mod jumbf;
 
 pub(crate) mod manifest;
 pub(crate) mod manifest_assertion;
-#[cfg(feature = "v1_api")]
-pub(crate) mod manifest_store;
 pub(crate) mod manifest_store_report;
 
 #[allow(dead_code)]
@@ -230,11 +220,5 @@ pub(crate) mod store;
 pub(crate) mod utils;
 pub(crate) use utils::{cbor_types, hash_utils};
 
-#[cfg(all(feature = "openssl", feature = "rust_native_crypto"))]
-compile_error!("Features 'openssl' and 'rust_native_crypto' cannot be enabled at the same time.");
-
 #[cfg(not(any(feature = "openssl", feature = "rust_native_crypto")))]
 compile_error!("Either 'openssl' or 'rust_native_crypto' feature must be enabled.");
-
-#[cfg(all(feature = "openssl", target_arch = "wasm32"))]
-compile_error!("Feature 'openssl' is not available for wasm32.");

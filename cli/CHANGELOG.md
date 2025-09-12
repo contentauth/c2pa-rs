@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.22.0](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.21.0...c2patool-v0.22.0)
+_10 September 2025_
+
+### Added
+
+* Remove the v1_api feature and all associated code ([#1387](https://github.com/contentauth/c2pa-rs/pull/1387))
+
+## [0.21.0](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.20.4...c2patool-v0.21.0)
+_06 September 2025_
+
+### Added
+
+* Implement CAWG X.509 signing via settings ([#1388](https://github.com/contentauth/c2pa-rs/pull/1388))
+
 ## [0.20.4](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.20.3...c2patool-v0.20.4)
 _03 September 2025_
 

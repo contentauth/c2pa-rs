@@ -23,7 +23,7 @@ clippy:
 	cargo clippy --features="file_io" --all-targets -- -D warnings
 
 test-local:
-	cargo test --features="file_io, fetch_remote_manifests, add_thumbnails, v1_api" --all-targets
+	cargo test --features="file_io, fetch_remote_manifests, add_thumbnails" --all-targets
 
 test-wasm:
 	cd sdk && wasm-pack test --node -- --no-default-features --features="rust_native_crypto, fetch_remote_manifests, http_reqwest"
@@ -36,7 +36,7 @@ test-wasi:
 ifeq ($(PLATFORM),mac)
 	$(eval CC := /opt/homebrew/opt/llvm/bin/clang)
 endif
-	CC=$(CC) CARGO_TARGET_WASM32_WASIP2_RUNNER="wasmtime -S cli -S http --dir ." cargo +nightly test --target wasm32-wasip2 -p c2pa --no-default-features --features="rust_native_crypto, file_io, fetch_remote_manifests, add_thumbnails, v1_api, http_wasi, http_wstd"
+	CC=$(CC) CARGO_TARGET_WASM32_WASIP2_RUNNER="wasmtime -S cli -S http --dir ." cargo +nightly test --target wasm32-wasip2 -p c2pa --no-default-features --features="rust_native_crypto, file_io, fetch_remote_manifests, add_thumbnails, http_wasi, http_wstd"
 	rm -r sdk/Users
 
 # Full local validation, build and test all features including wasm
