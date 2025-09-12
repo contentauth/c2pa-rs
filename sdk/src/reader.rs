@@ -272,7 +272,7 @@ impl Reader {
     /// on your own and perform the CAWG validation separately as shown in the
     /// following example:
     ///
-    /// ```no_run
+    /// ```ignore
     /// use c2pa::{identity::validator::CawgValidator, Reader};
     ///
     /// let mut reader = Reader::from_file("path/to/file.jpg").unwrap();
@@ -348,7 +348,7 @@ impl Reader {
     /// on your own and perform the CAWG validation separately as shown in the
     /// following example:
     ///
-    /// ```no_run
+    /// ```ignore
     /// use c2pa::{identity::validator::CawgValidator, Reader};
     ///
     /// let mut reader = Reader::from_file("path/to/file.jpg").unwrap();
