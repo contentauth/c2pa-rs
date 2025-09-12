@@ -35,6 +35,7 @@ use crate::{
     crypto::base64,
     dynamic_assertion::PartialClaim,
     error::{Error, Result},
+    identity::validator::CawgValidator,
     jumbf::labels::{manifest_label_from_uri, to_absolute_uri, to_relative_uri},
     jumbf_io,
     manifest::StoreOptions,
@@ -108,13 +109,17 @@ type ValidationFn =
 
 impl Reader {
     /// Create a manifest store [`Reader`] from a stream.  A Reader is used to validate C2PA data from an asset.
+    ///
     /// # Arguments
     /// * `format` - The format of the stream.  MIME type or extension that maps to a MIME type.
     /// * `stream` - The stream to read from.  Must implement the Read and Seek traits. (NOTE: Explain Send trait, required for both sync & async?).
+    ///
     /// # Returns
     /// A [`Reader`] for the manifest store.
+    ///
     /// # Errors
     /// Returns an [`Error`] when the manifest data cannot be read.  If there's no error upon reading, you must still check validation status to ensure that the manifest data is validated.  That is, even if there are no errors, the data still might not be valid.
+    ///
     /// # Example
     /// This example reads from a memory buffer and prints out the JSON manifest data.
     /// ```no_run
@@ -125,36 +130,45 @@ impl Reader {
     /// let reader = Reader::from_stream("image/jpeg", stream).unwrap();
     /// println!("{}", reader.json());
     /// ```
-    #[async_generic()]
+    ///
+    /// # Note
+    /// This function does not validate [CAWG identity] assertions that may be
+    /// contained within any C2PA Manifests. If an async call is feasible, use
+    /// [from_stream_with_cawg_async()]; if not, you can construct an async runtime
+    /// on your own and perform the CAWG validation separately as shown in the
+    /// following example:
+    ///
+    /// ```no_run
+    /// use std::io::Cursor;
+    ///
+    /// use c2pa::{identity::validator::CawgValidator, Reader};
+    /// let mut stream = Cursor::new(include_bytes!("../tests/fixtures/CA.jpg"));
+    /// let mut reader = Reader::from_stream("image/jpeg", stream).unwrap();
+    /// let runtime = tokio::runtime::Runtime::new().unwrap();
+    /// runtime
+    ///     .block_on(reader.post_validate_async(&CawgValidator {}))
+    ///     .unwrap();
+    /// println!("{}", reader.json());
+    /// ```
+    ///
+    /// [CAWG identity]: https://cawg.io/identity
+    /// [from_stream_with_cawg_async()]: Self::from_stream_with_cawg_async
+    #[async_generic]
     #[cfg(not(target_arch = "wasm32"))]
     pub fn from_stream(format: &str, mut stream: impl Read + Seek + Send) -> Result<Reader> {
         let verify = get_settings_value::<bool>("verify.verify_after_reading")?; // defaults to true
         let mut validation_log = StatusTracker::default();
+
         let store = if _sync {
             Store::from_stream(format, &mut stream, verify, &mut validation_log)
         } else {
             Store::from_stream_async(format, &mut stream, verify, &mut validation_log).await
         }?;
 
-        #[allow(unused_mut)] // TEMPORARY until I figure out the synchronous path.
-        let mut result = Self::from_store(store, &validation_log)?;
-        if _sync {
-            // TO DO: Figure out how to handle synchronous validation with
-            // identity assertions? Just report an error (needs async)?
-            if false {
-                todo!("Add identity assertion validation here");
-            }
-        } else {
-            use crate::identity::validator::CawgValidator;
-            result
-                .post_validate_internal_async(&CawgValidator {})
-                .await?;
-        }
-
-        Ok(result)
+        Self::from_store(store, &validation_log)
     }
 
-    #[async_generic()]
+    #[async_generic]
     #[cfg(target_arch = "wasm32")]
     pub fn from_stream(format: &str, mut stream: impl Read + Seek) -> Result<Reader> {
         let verify = get_settings_value::<bool>("verify.verify_after_reading")?; // defaults to true
@@ -166,30 +180,112 @@ impl Reader {
             Store::from_stream_async(format, &mut stream, verify, &mut validation_log).await
         }?;
 
-        let mut result = Self::from_store(store, &validation_log)?;
-        if false {
-            todo!("Add identity assertion validation here");
+        Self::from_store(store, &validation_log)
+    }
+
+    /// Create a manifest store [`Reader`] from a stream. A `Reader` is used to
+    /// validate C2PA data from an asset. This variation also validates
+    /// [CAWG identity] assertions within the C2PA data.
+    ///
+    /// # Arguments
+    /// * `format` - The format of the stream. MIME type or extension that maps to a MIME type.
+    /// * `stream` - The stream to read from. Must implement the Read and Seek traits. (NOTE: Explain Send trait, required for both sync & async?).
+    ///
+    /// # Returns
+    /// A [`Reader`] for the manifest store.
+    ///
+    /// # Errors
+    /// Returns an [`Error`] when the manifest data cannot be read. If there's no error upon reading, you must still check validation status to ensure that the manifest data is validated. That is, even if there are no errors, the data still might not be valid.
+    ///
+    /// # Example
+    /// This example reads from a memory buffer and prints out the JSON manifest data.
+    /// ```ignore
+    /// # async fn main() {
+    /// use std::io::Cursor;
+    ///
+    /// use c2pa::{identity::validator::CawgValidator, Reader};
+    ///
+    /// let mut stream = Cursor::new(include_bytes!("../tests/fixtures/CA.jpg"));
+    /// let reader = Reader::from_stream_with_cawg_async("image/jpeg", stream)
+    ///     .await
+    ///     .unwrap();
+    /// println!("{}", reader.json());
+    /// # }
+    /// ```
+    ///
+    /// [CAWG identity]: https://cawg.io/identity
+    /// [from_stream_with_cawg_async()]: Self::from_stream_with_cawg_async
+    #[cfg(not(target_arch = "wasm32"))]
+    pub async fn from_stream_with_cawg_async(
+        format: &str,
+        stream: impl Read + Seek + Send,
+    ) -> Result<Reader> {
+        let mut reader = Self::from_stream_async(format, stream).await?;
+
+        if get_settings_value::<bool>("verify.verify_after_reading")? {
+            reader.post_validate_async(&CawgValidator {}).await?;
         }
-        Ok(result)
+
+        Ok(reader)
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    pub async fn from_stream_with_cawg_async(
+        format: &str,
+        stream: impl Read + Seek,
+    ) -> Result<Reader> {
+        let mut reader = Self::from_stream_async(format, stream).await?;
+
+        if get_settings_value::<bool>("verify.verify_after_reading")? {
+            reader.post_validate_async(&CawgValidator {}).await?;
+        }
+
+        Ok(reader)
     }
 
     #[cfg(feature = "file_io")]
     /// Create a manifest store [`Reader`] from a file.
     /// If the `fetch_remote_manifests` feature is enabled, and the asset refers to a remote manifest, the function fetches a remote manifest.
+    ///
     /// NOTE: If the file does not have a manifest store, the function will check for a sidecar manifest with the same base file name and a .c2pa extension.
+    ///
     /// # Arguments
     /// * `path` - The path to the file.
+    ///
     /// # Returns
     /// A [`Reader`] for the manifest store.
+    ///
     /// # Errors
     /// Returns an [`Error`] when the manifest data cannot be read from the specified file.  If there's no error upon reading, you must still check validation status to ensure that the manifest data is validated.  That is, even if there are no errors, the data still might not be valid.
+    ///
     /// # Example
-    /// This example
+    ///
     /// ```no_run
     /// use c2pa::Reader;
     /// let reader = Reader::from_file("path/to/file.jpg").unwrap();
     /// ```
-    #[async_generic()]
+    ///
+    /// # Note
+    /// This function does not validate [CAWG identity] assertions that may be
+    /// contained within any C2PA Manifests. If an async call is feasible, use
+    /// [from_file_with_cawg_async()]; if not, you can construct an async runtime
+    /// on your own and perform the CAWG validation separately as shown in the
+    /// following example:
+    ///
+    /// ```no_run
+    /// use c2pa::{identity::validator::CawgValidator, Reader};
+    ///
+    /// let mut reader = Reader::from_file("path/to/file.jpg").unwrap();
+    /// let runtime = tokio::runtime::Runtime::new().unwrap();
+    /// runtime
+    ///     .block_on(reader.post_validate_async(&CawgValidator {}))
+    ///     .unwrap();
+    /// println!("{}", reader.json());
+    /// ```
+    ///
+    /// [CAWG identity]: https://cawg.io/identity
+    /// [from_file_with_cawg_async()]: Self::from_file_with_cawg_async
+    #[async_generic]
     pub fn from_file<P: AsRef<std::path::Path>>(path: P) -> Result<Reader> {
         let path = path.as_ref();
         let format = crate::format_from_path(path).ok_or(crate::Error::UnsupportedType)?;
@@ -221,6 +317,58 @@ impl Reader {
             }
             _ => result,
         }
+    }
+
+    #[cfg(feature = "file_io")]
+    /// Create a manifest store [`Reader`] from a file.
+    /// If the `fetch_remote_manifests` feature is enabled, and the asset refers to a remote manifest, the function fetches a remote manifest.
+    ///
+    /// NOTE: If the file does not have a manifest store, the function will check for a sidecar manifest with the same base file name and a .c2pa extension.
+    ///
+    /// # Arguments
+    /// * `path` - The path to the file.
+    ///
+    /// # Returns
+    /// A [`Reader`] for the manifest store.
+    ///
+    /// # Errors
+    /// Returns an [`Error`] when the manifest data cannot be read from the specified file.  If there's no error upon reading, you must still check validation status to ensure that the manifest data is validated.  That is, even if there are no errors, the data still might not be valid.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use c2pa::Reader;
+    /// let reader = Reader::from_file("path/to/file.jpg").unwrap();
+    /// ```
+    ///
+    /// # Note
+    /// This function does not validate [CAWG identity] assertions that may be
+    /// contained within any C2PA Manifests. If an async call is feasible, use
+    /// [from_file_with_cawg_async()]; if not, you can construct an async runtime
+    /// on your own and perform the CAWG validation separately as shown in the
+    /// following example:
+    ///
+    /// ```no_run
+    /// use c2pa::{identity::validator::CawgValidator, Reader};
+    ///
+    /// let mut reader = Reader::from_file("path/to/file.jpg").unwrap();
+    /// let runtime = tokio::runtime::Runtime::new().unwrap();
+    /// runtime
+    ///     .block_on(reader.post_validate_async(&CawgValidator {}))
+    ///     .unwrap();
+    /// println!("{}", reader.json());
+    /// ```
+    ///
+    /// [CAWG identity]: https://cawg.io/identity
+    /// [from_file_with_cawg_async()]: Self::from_file_with_cawg_async
+    pub async fn from_file_with_cawg_async<P: AsRef<std::path::Path>>(path: P) -> Result<Reader> {
+        let mut reader = Self::from_file_async(path).await?;
+
+        if get_settings_value::<bool>("verify.verify_after_reading")? {
+            reader.post_validate_async(&CawgValidator {}).await?;
+        }
+
+        Ok(reader)
     }
 
     /// Create a manifest store [`Reader`] from a JSON string.
@@ -754,24 +902,6 @@ impl Reader {
         validator: &impl AsyncPostValidator
     ))]
     pub fn post_validate(&mut self, validator: &impl PostValidator) -> Result<()> {
-        if false {
-            // CONSIDER BEFORE MERGING ...
-            todo!("Remove me?");
-        }
-
-        if _sync {
-            self.post_validate_internal(validator)
-        } else {
-            self.post_validate_internal_async(validator).await
-        }
-    }
-
-    #[async_generic(async_signature(
-        &mut self,
-        validator: &impl AsyncPostValidator
-    ))]
-    fn post_validate_internal(&mut self, validator: &impl PostValidator) -> Result<()> {
-        // TEMPORARY: Make this available while I sort out new code path.
         let mut validation_log = StatusTracker::default();
         let mut validation_results = self.validation_results.take().unwrap_or_default();
         let mut assertion_values = HashMap::new();
@@ -1034,10 +1164,6 @@ pub mod tests {
 
     #[test]
     fn test_reader_post_validate() -> Result<()> {
-        if false {
-            // CONSIDER BEFORE MERGING ...
-            todo!("Remove me?");
-        }
         use crate::{log_item, status_tracker::StatusTracker};
 
         let mut reader =

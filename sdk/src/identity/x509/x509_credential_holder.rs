@@ -134,14 +134,15 @@ mod tests {
         // Read back the Manifest that was generated.
         dest.rewind().unwrap();
 
-        let manifest_store = Reader::from_stream_async(format, &mut dest).await.unwrap();
+        let manifest_store = Reader::from_stream_with_cawg_async(format, &mut dest)
+            .await
+            .unwrap();
+
         assert_eq!(manifest_store.validation_status(), None);
 
         let validation_results = manifest_store.validation_results().unwrap();
         let active_manifest_results = validation_results.active_manifest().unwrap();
         let active_manifest_success_codes = active_manifest_results.success();
-
-        dbg!(&active_manifest_success_codes);
 
         let mut ia_success_codes = active_manifest_success_codes.iter().filter(|s| {
             s.url()
@@ -151,8 +152,6 @@ mod tests {
         });
 
         let ia_success = ia_success_codes.next().unwrap();
-        dbg!(&ia_success);
-
         assert_eq!(ia_success.code(), "signingCredential.trusted");
         assert!(ia_success.url().unwrap().ends_with("cawg.identity"));
         assert_eq!(ia_success.kind(), &LogKind::Success);

@@ -24,10 +24,6 @@ use crate::{Error, Result, SignerInfo};
 pub fn read_file(path: &str, data_dir: Option<String>) -> Result<String> {
     let mut reader = Reader::from_file(path).map_err(Error::from_c2pa_error)?;
     let runtime = Runtime::new().map_err(|e| Error::Other(e.to_string()))?;
-    if false {
-        // CONSIDER BEFORE MERGING ...
-        todo!("Remove post_validate_async here?");
-    }
     runtime
         .block_on(reader.post_validate_async(&CawgValidator {}))
         .map_err(Error::from_c2pa_error)?;

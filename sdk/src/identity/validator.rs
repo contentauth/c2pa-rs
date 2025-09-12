@@ -77,10 +77,13 @@ mod tests {
         crate::settings::set_settings_value("verify.verify_trust", false).unwrap();
 
         let mut stream = Cursor::new(CONNECTED_IDENTITIES_VALID);
-        let reader = Reader::from_stream_async("image/jpeg", &mut stream)
+
+        let reader = Reader::from_stream_with_cawg_async("image/jpeg", &mut stream)
             .await
             .unwrap();
+
         //println!("validation results: {}", reader);
+
         assert_eq!(
             reader
                 .validation_results()
@@ -100,10 +103,13 @@ mod tests {
         crate::settings::set_settings_value("verify.verify_trust", false).unwrap();
 
         let mut stream = Cursor::new(MULTIPLE_IDENTITIES_VALID);
-        let reader = Reader::from_stream_async("image/jpeg", &mut stream)
+
+        let reader = Reader::from_stream_with_cawg_async("image/jpeg", &mut stream)
             .await
             .unwrap();
+
         println!("validation results: {reader}");
+
         assert_eq!(
             reader
                 .validation_results()
@@ -119,9 +125,11 @@ mod tests {
     #[c2pa_test_async]
     async fn test_cawg_validate_with_hard_binding_missing() {
         let mut stream = Cursor::new(NO_HARD_BINDING);
-        let reader = Reader::from_stream_async("image/jpeg", &mut stream)
+
+        let reader = Reader::from_stream_with_cawg_async("image/jpeg", &mut stream)
             .await
             .unwrap();
+
         assert_eq!(
             reader
                 .validation_results()
