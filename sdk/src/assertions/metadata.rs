@@ -17,7 +17,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::{
-    assertion::{Assertion, AssertionBase, AssertionJson},
+    assertion::{Assertion, AssertionBase, AssertionCbor, AssertionJson},
     assertions::labels,
     Error,
 };
@@ -114,6 +114,7 @@ impl Metadata {
 }
 
 impl AssertionJson for Metadata {}
+impl AssertionCbor for Metadata {}
 
 impl AssertionBase for Metadata {
     const LABEL: &'static str = labels::METADATA;
@@ -131,7 +132,10 @@ impl AssertionBase for Metadata {
     }
 
     fn from_assertion(assertion: &Assertion) -> Result<Self, Error> {
-        let mut metadata = Self::from_json_assertion(assertion)?;
+        let mut metadata = Self::from_json_assertion(assertion).or_else(|_e| {
+            // some older files may have stored this in error as cbor
+            Self::from_cbor_assertion(assertion)
+        })?;
 
         metadata.custom_metadata_label =
             (assertion.label() != labels::METADATA).then(|| assertion.label().to_owned());
