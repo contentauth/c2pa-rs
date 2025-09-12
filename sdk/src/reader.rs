@@ -1009,9 +1009,28 @@ pub mod tests {
     /// Test that the reader can validate a file with nested assertion errors
     fn test_reader_detailed_json() -> Result<()> {
         let reader = Reader::from_file("tests/fixtures/CACAE-uri-CA.jpg")?;
-        let json_length = reader.json().len();
-        let detailed_json_length = reader.detailed_json().len();
-        assert!(json_length < detailed_json_length); // Detailed JSON should contain more information
+        let json = reader.json();
+        let detailed_json = reader.detailed_json();
+        let parsed_json: Value = serde_json::from_str(json.as_str())?;
+        let parsed_detailed_json: Value = serde_json::from_str(detailed_json.as_str())?;
+        let mut json_validated = false;
+        let mut json_detailed_validated = false;
+
+        // Undetailed JSON doesn't include "claim" object as child of active manifest object
+        // Detailed JSON does include the "claim" object.
+        if let Some(active_manifest) = parsed_json["active_manifest"].as_str() {
+            json_validated = parsed_json["manifests"]
+                .get(active_manifest)
+                .and_then(|m| m.get("claim"))
+                .is_none();
+            json_detailed_validated = parsed_detailed_json["manifests"]
+                .get(active_manifest)
+                .and_then(|m| m.get("claim"))
+                .is_some();
+        }
+
+        assert!(json.len() < detailed_json.len()); // Detailed JSON should contain more information
+        assert!(json_validated && json_detailed_validated); // Detailed JSON should contain more information
         Ok(())
     }
 
