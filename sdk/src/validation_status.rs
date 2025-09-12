@@ -22,10 +22,6 @@ use log::debug;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-#[cfg(feature = "v1_api")]
-use crate::status_tracker::StatusTracker;
-#[cfg(feature = "v1_api")]
-use crate::store::Store;
 pub use crate::validation_results::validation_codes::*;
 use crate::{
     error::Error,
@@ -213,20 +209,6 @@ impl PartialEq for ValidationStatus {
     fn eq(&self, other: &Self) -> bool {
         self.code == other.code && self.url == other.url && self.kind == other.kind
     }
-}
-
-// TODO: Does this still need to be public? (I do see one reference in the JS SDK.)
-
-/// Get the validation status for a store.
-///
-/// Given a `Store` and a `StatusTracker`, return `ValidationStatus` items for each
-/// item in the tracker which reflect errors in the active manifest or which would not
-/// be reported as a validation error for any ingredient.
-#[cfg(feature = "v1_api")]
-pub fn status_for_store(store: &Store, validation_log: &StatusTracker) -> Vec<ValidationStatus> {
-    let validation_results =
-        crate::validation_results::ValidationResults::from_store(store, validation_log);
-    validation_results.validation_errors().unwrap_or_default()
 }
 
 // -- unofficial status code --

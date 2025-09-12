@@ -273,16 +273,17 @@ impl AsyncTimeStampProvider for AsyncSignerWrapper<'_> {
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used)]
-    #[cfg(any(not(target_arch = "wasm32"), target_os = "wasi"))]
-    // Only used for test with file_io
+
     use c2pa_macros::c2pa_test_async;
+    #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
+    use wasm_bindgen_test::wasm_bindgen_test;
 
     use super::sign_claim;
-    #[cfg(feature = "file_io")]
-    use crate::utils::test_signer::async_test_signer;
     use crate::{
-        claim::Claim, crypto::raw_signature::SigningAlg, utils::test_signer::test_signer, Result,
-        Signer,
+        claim::Claim,
+        crypto::raw_signature::SigningAlg,
+        utils::test_signer::{async_test_signer, test_signer},
+        Result, Signer,
     };
 
     #[test]
@@ -307,7 +308,6 @@ mod tests {
         assert_eq!(cose_sign1.len(), box_size);
     }
 
-    #[cfg(feature = "file_io")]
     #[c2pa_test_async]
     async fn test_sign_claim_async() {
         // todo: we have to disable trust checks here for now because these
