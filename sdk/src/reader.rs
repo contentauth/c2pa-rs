@@ -1013,24 +1013,25 @@ pub mod tests {
         let detailed_json = reader.detailed_json();
         let parsed_json: Value = serde_json::from_str(json.as_str())?;
         let parsed_detailed_json: Value = serde_json::from_str(detailed_json.as_str())?;
-        let mut json_validated = false;
-        let mut json_detailed_validated = false;
 
         // Undetailed JSON doesn't include "claim" object as child of active manifest object
         // Detailed JSON does include the "claim" object.
-        if let Some(active_manifest) = parsed_json["active_manifest"].as_str() {
-            json_validated = parsed_json["manifests"]
-                .get(active_manifest)
-                .and_then(|m| m.get("claim"))
-                .is_none();
-            json_detailed_validated = parsed_detailed_json["manifests"]
-                .get(active_manifest)
-                .and_then(|m| m.get("claim"))
-                .is_some();
-        }
-
+        assert!(
+            if let Some(active_manifest) = parsed_json["active_manifest"].as_str() {
+                let mut is_valid = parsed_json["manifests"]
+                    .get(active_manifest)
+                    .and_then(|m| m.get("claim"))
+                    .is_none();
+                is_valid &= parsed_detailed_json["manifests"]
+                    .get(active_manifest)
+                    .and_then(|m| m.get("claim"))
+                    .is_some();
+                is_valid
+            } else {
+                false
+            }
+        );
         assert!(json.len() < detailed_json.len()); // Detailed JSON should contain more information
-        assert!(json_validated && json_detailed_validated); // Detailed JSON should contain more information
         Ok(())
     }
 
