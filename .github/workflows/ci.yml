@@ -37,7 +37,11 @@ jobs:
       - name: Get all features
         id: get-features
         run: |
-          FEATURES=$(cargo metadata --format-version=1 | jq -r '[.packages[] | select(.name=="c2pa") | .features | keys | map(select(. != "default")) | .[]] | unique | join(" ")')
+          FEATURES=$(cargo metadata --format-version=1 | jq -r '[.packages[] | select(.name=="c2pa") | .features | keys | map(select(. != "default" and (test("^http_")|not))) | .[]] | unique | join(" ")' )
+
+          # TODO: remove http_ureq when we remove it from defaults
+          FEATURES+=" http_ureq http_reqwest http_wasi http_wstd"
+
           RUST_NATIVE_FEATURES=$(echo $FEATURES | sed 's/openssl//g')
           OPENSSL_FEATURES=$(echo $FEATURES | sed 's/rust_native_crypto//g')
           echo "rust-native-features=$RUST_NATIVE_FEATURES" >> "$GITHUB_OUTPUT"
@@ -306,13 +310,14 @@ jobs:
         run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
 
       - name: Run Wasm tests
-        run: wasm-pack test --chrome --chromedriver ${{ steps.setup-chrome.outputs.chromedriver-path }} --headless --no-default-features --features rust_native_crypto,fetch_remote_manifests
+        run: wasm-pack test --chrome --chromedriver ${{ steps.setup-chrome.outputs.chromedriver-path }} --headless --no-default-features --features rust_native_crypto,fetch_remote_manifests,http_reqwest
         working-directory: ./sdk
         env:
           WASM_BINDGEN_TEST_TIMEOUT: 60
 
   benchmarks:
     name: Run benchmarks on signing and reading
+    needs: get-features
     if: |
       github.event_name != 'pull_request' ||
       github.event.pull_request.author_association == 'COLLABORATOR' ||
@@ -339,7 +344,9 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Build the benchmark target(s)
-        run: cargo codspeed build -p c2pa --no-default-features --features rust_native_crypto
+        env:
+          FEATURES: ${{needs.get-features.outputs.rust-native-features}}
+        run: cargo codspeed build -p c2pa --no-default-features --features "$FEATURES"
 
       - name: Run the benchmarks
         uses: CodSpeedHQ/action@v3
