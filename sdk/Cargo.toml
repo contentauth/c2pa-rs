@@ -291,6 +291,12 @@ criterion = { package = "codspeed-criterion-compat", version = "3.0.5" }
 [target.'cfg(target_arch = "wasm32")'.dev-dependencies]
 criterion = { package = "codspeed-criterion-compat", version = "3.0.5", default-features = false }
 
+# Probably not meant for mainline. Additional benchmarks for offline signing.
+# (See CAI-9400.)
+[[bench]]
+name = "offline_signing_cai_9400"
+harness = false
+
 [[bench]]
 name = "sign"
 harness = false
