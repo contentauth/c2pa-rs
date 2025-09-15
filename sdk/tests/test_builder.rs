@@ -13,7 +13,10 @@
 
 use std::io::{self, Cursor};
 
-use c2pa::{settings::Settings, validation_status, Builder, Reader, Result, ValidationState};
+use c2pa::{
+    settings::Settings, validation_status, Builder, ManifestAssertionKind, Reader, Result,
+    ValidationState,
+};
 
 mod common;
 #[cfg(all(feature = "add_thumbnails", feature = "file_io"))]
@@ -312,5 +315,81 @@ fn test_dynamic_assertions_builder() -> Result<()> {
 
     assert_ne!(reader.validation_state(), ValidationState::Invalid);
 
+    Ok(())
+}
+
+#[test]
+fn test_metadata_formats_json_manifest() -> Result<()> {
+    use c2pa::settings::Settings;
+    Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml"))?;
+
+    let manifest_json = r#"
+    {
+        "assertions": [
+            {
+                "label": "c2pa.metadata",
+                "kind": "Json",
+                "data": {
+                    "@context": { "exif": "http://ns.adobe.com/exif/1.0/" },
+                    "exif:GPSLatitude": "39,21.102N"
+                }
+            },
+            {
+                "label": "cawg.metadata",
+                "kind": "Json",
+                "data": {
+                    "@context": { "cawg": "http://cawg.org/ns/1.0/" },
+                    "cawg:SomeField": "SomeValue"
+                }
+            },
+            {
+                "label": "c2pa.assertion.metadata",
+                "data": {
+                    "@context": { "custom": "http://custom.org/ns/1.0/" },
+                    "custom:Field": "CustomValue"
+                }
+            },
+            {
+                "label": "org.myorg.metadata",
+                "data": {
+                    "@context": { "myorg": "http://myorg.org/ns/1.0/" },
+                    "myorg:Field": "MyOrgValue"
+                }
+            }
+        ]
+    }
+    "#;
+
+    let mut builder = Builder::from_json(manifest_json)?;
+    const TEST_IMAGE: &[u8] = include_bytes!("fixtures/CA.jpg");
+    let format = "image/jpeg";
+    let mut source = Cursor::new(TEST_IMAGE);
+    let mut dest = Cursor::new(Vec::new());
+
+    builder.sign(&Settings::signer()?, format, &mut source, &mut dest)?;
+
+    dest.set_position(0);
+    let reader = Reader::from_stream(format, &mut dest)?;
+
+    for assertion in reader.active_manifest().unwrap().assertions() {
+        match assertion.label() {
+            "c2pa.assertion.metadata" => {
+                assert_eq!(
+                    assertion.kind(),
+                    &ManifestAssertionKind::Cbor,
+                    "c2pa.assertion.metadata should be CBOR"
+                );
+            }
+            "c2pa.metadata" | "cawg.metadata" | "org.myorg.metadata" => {
+                assert_eq!(
+                    assertion.kind(),
+                    &ManifestAssertionKind::Json,
+                    "{} should be JSON",
+                    assertion.label()
+                );
+            }
+            _ => {}
+        }
+    }
     Ok(())
 }
