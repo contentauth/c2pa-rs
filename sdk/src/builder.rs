@@ -47,7 +47,8 @@ use crate::{
     },
     store::Store,
     utils::mime::format_to_mime,
-    AsyncSigner, ClaimGeneratorInfo, HashRange, HashedUri, Ingredient, Relationship, Signer,
+    AsyncSigner, ClaimGeneratorInfo, HashRange, HashedUri, Ingredient, ManifestAssertionKind,
+    Relationship, Signer,
 };
 
 /// Version of the Builder Archive file
@@ -135,13 +136,54 @@ pub enum AssertionData {
 
 /// Defines an assertion that consists of a label that can be either
 /// a C2PA-defined assertion label or a custom label in reverse domain format.
-#[derive(Debug, Deserialize, Serialize, Clone)]
+#[derive(Debug, Serialize, Clone)]
 #[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 #[non_exhaustive]
 pub struct AssertionDefinition {
     pub label: String,
     pub data: AssertionData,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub kind: Option<ManifestAssertionKind>,
 }
+
+impl<'de> Deserialize<'de> for AssertionDefinition {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct Helper {
+            label: String,
+            data: serde_json::Value,
+            #[serde(default)]
+            kind: Option<ManifestAssertionKind>,
+        }
+
+        let helper = Helper::deserialize(deserializer)?;
+
+        let data = match helper.kind {
+            Some(ManifestAssertionKind::Json) => AssertionData::Json(helper.data),
+            Some(ManifestAssertionKind::Cbor) | None => {
+                let cbor_val =
+                    serde_cbor::value::to_value(helper.data).map_err(serde::de::Error::custom)?;
+                AssertionData::Cbor(cbor_val)
+            }
+            _ => {
+                return Err(serde::de::Error::custom(format!(
+                    "Unsupported assertion kind for label {}",
+                    helper.label
+                )));
+            }
+        };
+
+        Ok(AssertionDefinition {
+            label: helper.label,
+            data,
+            kind: helper.kind,
+        })
+    }
+}
+
 impl AssertionDefinition {
     pub(crate) fn to_assertion<T: DeserializeOwned>(&self) -> Result<T> {
         match &self.data {
@@ -482,6 +524,7 @@ impl Builder {
         self.definition.assertions.push(AssertionDefinition {
             label: label.into(),
             data: AssertionData::Cbor(serde_cbor::value::to_value(data)?),
+            kind: None, // defaults to cbor
         });
         Ok(self)
     }
@@ -504,6 +547,7 @@ impl Builder {
         self.definition.assertions.push(AssertionDefinition {
             label: label.into(),
             data: AssertionData::Json(serde_json::to_value(data)?),
+            kind: Some(ManifestAssertionKind::Json),
         });
         Ok(self)
     }
