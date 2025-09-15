@@ -39,7 +39,8 @@ jobs:
         run: |
           FEATURES=$(cargo metadata --format-version=1 | jq -r '[.packages[] | select(.name=="c2pa") | .features | keys | map(select(. != "default" and (test("^http_")|not))) | .[]] | unique | join(" ")' )
 
-          # TODO: remove http_ureq when we remove it from defaults
+          # TODO: we should be testing all http libraries but when we do we default to `http_reqwest_blocking`
+          #       which causes issues with https://github.com/contentauth/c2pa-rs/issues/1364
           FEATURES+=" http_ureq http_reqwest http_wasi http_wstd"
 
           RUST_NATIVE_FEATURES=$(echo $FEATURES | sed 's/openssl//g')
