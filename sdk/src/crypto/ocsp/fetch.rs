@@ -11,8 +11,6 @@
 // specific language governing permissions and limitations under
 // each license.
 
-// Add these imports and static variables for WASI debugging
-#[cfg(any(not(target_arch = "wasm32"), target_os = "wasi"))]
 use std::io::Read;
 
 use async_generic::async_generic;
