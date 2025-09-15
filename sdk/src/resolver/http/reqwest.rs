@@ -13,9 +13,11 @@
 
 #[cfg(all(feature = "http_reqwest_blocking", not(target_os = "wasi")))]
 pub mod sync_impl {
-    use std::io::Cursor;
+    use std::io::{Cursor, Read};
 
-    use super::*;
+    use http::{Request, Response};
+
+    use crate::http::{HttpResolverError, SyncHttpResolver};
 
     impl SyncHttpResolver for reqwest::blocking::Client {
         fn http_resolve(

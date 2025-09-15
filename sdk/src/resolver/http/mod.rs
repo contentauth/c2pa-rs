@@ -159,7 +159,7 @@ pub enum HttpResolverError {
 mod sync_resolver {
     pub type Impl = reqwest::blocking::Client;
     pub fn new() -> Impl {
-        reqwest::blocking::Client::new();
+        reqwest::blocking::Client::new()
     }
 }
 #[cfg(all(

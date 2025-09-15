@@ -293,11 +293,9 @@ pub(crate) fn fetch_and_check_ocsp_response(
         crate::crypto::ocsp::fetch_ocsp_response_async(&certs).await
     };
 
-    let Some(ocsp_der) = ocsp_der else {
+    let Some(ocsp_response_der) = ocsp_der else {
         return Ok(OcspResponse::default());
     };
-
-    let ocsp_response_der = ocsp_der;
 
     let signing_time: Option<DateTime<Utc>> =
         validate_cose_tst_info(sign1, data, ctp, validation_log)
@@ -306,13 +304,11 @@ pub(crate) fn fetch_and_check_ocsp_response(
 
     // Check the OCSP response, but only if it is well-formed.
     // Revocation errors are reported in the validation log.
-    let Ok(ocsp_data) =
-        OcspResponse::from_der_checked(&ocsp_response_der, signing_time, validation_log)
-    else {
-        // TO REVIEW: This is how the old code worked, but is it correct to ignore a
-        // malformed OCSP response?
-        return Ok(OcspResponse::default());
-    };
+    let ocsp_data =
+        match OcspResponse::from_der_checked(&ocsp_response_der, signing_time, validation_log) {
+            Ok(data) => data,
+            Err(_) => return Ok(OcspResponse::default()),
+        };
 
     // If we get a valid response validate the certs.
     if ocsp_data.revoked_at.is_none() {
