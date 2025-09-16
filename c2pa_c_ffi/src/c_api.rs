@@ -909,7 +909,7 @@ pub unsafe extern "C" fn c2pa_builder_add_ingredient_from_stream(
 /// Reads from NULL-terminated C strings.
 ///
 /// # Example
-/// ```c
+/// ```C
 /// const char* manifest_def = "{}";
 /// C2paBuilder* builder = c2pa_builder_from_json(manifest_def);
 ///
@@ -924,7 +924,8 @@ pub unsafe extern "C" fn c2pa_builder_add_ingredient_from_stream(
 /// int result = c2pa_builder_add_action(builder, action_json);
 /// ```
 ///
-/// This creates a manifest with an actions assertion containing the added action:
+/// This creates a manifest with an actions assertion
+/// ontaining the added action (excerpt of the full manifest):
 /// ```json
 /// "assertions": [
 ///   {
@@ -943,7 +944,6 @@ pub unsafe extern "C" fn c2pa_builder_add_ingredient_from_stream(
 ///           }
 ///         }
 ///       ],
-///       "allActionsIncluded": true
 ///     }
 ///   }
 /// ]
