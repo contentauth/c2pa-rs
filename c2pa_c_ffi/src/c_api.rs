@@ -895,7 +895,7 @@ pub unsafe extern "C" fn c2pa_builder_add_ingredient_from_stream(
     ok_or_return_int!(result, |_| 0) // returns 0 on success
 }
 
-/// Adds an action to the C2paBuilder.
+/// Adds an action to the manifest the Builder is constructing.
 ///
 /// # Parameters
 /// * builder_ptr: pointer to a Builder.
@@ -907,6 +907,47 @@ pub unsafe extern "C" fn c2pa_builder_add_ingredient_from_stream(
 ///
 /// # Safety
 /// Reads from NULL-terminated C strings.
+///
+/// # Example
+/// ```c
+/// const char* manifest_def = "{}";
+/// C2paBuilder* builder = c2pa_builder_from_json(manifest_def);
+///
+/// const char* action_json = "{\n"
+///     "    \"action\": \"com.example.test-action\",\n"
+///     "    \"parameters\": {\n"
+///     "        \"key1\": \"value1\",\n"
+///     "        \"key2\": \"value2\"\n"
+///     "    }\n"
+/// "}";
+///
+/// int result = c2pa_builder_add_action(builder, action_json);
+/// ```
+///
+/// This creates a manifest with an actions assertion containing the added action:
+/// ```json
+/// "assertions": [
+///   {
+///     "label": "c2pa.actions.v2",
+///     "data": {
+///       "actions": [
+///         {
+///           "action": "c2pa.created",
+///           "digitalSourceType": "http://c2pa.org/digitalsourcetype/empty"
+///         },
+///         {
+///           "action": "com.example.test-action",
+///           "parameters": {
+///             "key2": "value2",
+///             "key1": "value1"
+///           }
+///         }
+///       ],
+///       "allActionsIncluded": true
+///     }
+///   }
+/// ]
+/// ```
 #[no_mangle]
 pub unsafe extern "C" fn c2pa_builder_add_action(
     builder_ptr: *mut C2paBuilder,
@@ -1555,32 +1596,6 @@ mod tests {
                 &mut manifest_bytes_ptr,
             )
         };
-
-        /*
-        Sign JSON like this:
-        "assertions":
-          [
-            {
-              "label": "c2pa.actions.v2",
-              "data": {
-                "actions": [
-                  {
-                    "action": "c2pa.created",
-                    "digitalSourceType": "http://c2pa.org/digitalsourcetype/empty"
-                  },
-                  {
-                    "action": "com.example.test-action",
-                    "parameters": {
-                      "key2": "value2",
-                      "key1": "value1"
-                    }
-                  }
-                ],
-                "allActionsIncluded": true
-              }
-            }
-          ]
-         */
 
         // Verify we can read the signed data back
         let dest_test_stream = TestC2paStream::from_c_stream(dest_stream);
