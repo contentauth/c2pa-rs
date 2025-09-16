@@ -362,20 +362,30 @@ mod integration_1 {
             "label": "CA.jpg",
         })
         .to_string();
+
+        let ingredient_json = json!({
+            "title": "Parent Test",
+            "relationship": "componentOf",
+            "label": "earth.jpg",
+        })
+        .to_string();
+
         Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml"))?;
 
         // set up parent and destination paths
         let temp_dir = tempdirectory()?;
         let output_path = temp_dir.path().join("test_file.jpg");
-        let parent_path = fixture_path("earth_apollo17.jpg");
+        let parent_path = fixture_path("ocsp.jpg");
 
         // create a new Manifest
         let mut builder = Builder::new();
 
         // sign and embed into the target file
         let signer = Settings::signer()?;
-        let mut source = Cursor::new(include_bytes!("fixtures/ocsp.jpg"));
-        builder.add_ingredient_from_stream(parent_json, "image/jpeg", &mut source)?;
+        let mut source = Cursor::new(include_bytes!("fixtures/earth_apollo17.jpg"));
+        let mut parent_source = std::fs::File::open(&parent_path)?;
+        builder.add_ingredient_from_stream(parent_json, "image/jpeg", &mut parent_source)?;
+        builder.add_ingredient_from_stream(ingredient_json, "image/jpeg", &mut source)?;
         builder.sign_file(signer.as_ref(), &parent_path, &output_path)?;
 
         // read our new file with embedded manifest

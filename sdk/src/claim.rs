@@ -274,6 +274,9 @@ pub struct Claim {
     // Internal list of ingredients
     ingredients_store: HashMap<String, Claim>,
 
+    // Internal ingredients order
+    ingredients_list: Vec<String>,
+
     signature_val: Vec<u8>, // the signature of the loaded/saved claim
 
     // root of CAI store
@@ -419,6 +422,7 @@ impl Claim {
             root: jumbf::labels::MANIFEST_STORE.to_string(),
             signature_val: Vec::new(),
             ingredients_store: HashMap::new(),
+            ingredients_list: Vec::new(),
             label: l,
             conflict_label: None,
             signature: "".to_string(),
@@ -516,6 +520,7 @@ impl Claim {
             root: jumbf::labels::MANIFEST_STORE.to_string(),
             signature_val: Vec::new(),
             ingredients_store: HashMap::new(),
+            ingredients_list: Vec::new(),
             label,
             conflict_label: None,
             signature: "".to_string(),
@@ -648,6 +653,7 @@ impl Claim {
                 format: Some(format),
                 instance_id,
                 ingredients_store: HashMap::new(),
+                ingredients_list: Vec::new(),
                 signature_val: Vec::new(),
                 root: jumbf::labels::MANIFEST_STORE.to_string(),
                 label: label.to_string(),
@@ -754,6 +760,7 @@ impl Claim {
                 format: None,
                 instance_id,
                 ingredients_store: HashMap::new(),
+                ingredients_list: Vec::new(),
                 signature_val: Vec::new(),
                 root: jumbf::labels::MANIFEST_STORE.to_string(),
                 label: label.to_string(),
@@ -3430,7 +3437,10 @@ impl Claim {
     /// Return reference to the internal claim ingredients.
     /// Used during generation
     pub fn claim_ingredients(&self) -> Vec<&Claim> {
-        self.ingredients_store.values().collect()
+        self.ingredients_list
+            .iter()
+            .filter_map(|l| self.ingredients_store.get(l))
+            .collect()
     }
 
     /// Return reference to the internal claim ingredient store matching this guid.
@@ -3482,10 +3492,25 @@ impl Claim {
 
         // just replace the ingredients with new once since conflicts are resolved by the caller
         for i in ingredient {
-            self.ingredients_store.insert(i.label().into(), i);
+            self.replace_ingredient_or_insert(i.label().into(), i);
         }
 
         Ok(())
+    }
+
+    // insert new ingredient
+    fn insert_ingredient(&mut self, label: String, claim: Claim) {
+        self.ingredients_store.insert(label.clone(), claim);
+        self.ingredients_list.push(label);
+    }
+
+    // insert an ingredient or replace if it already exists
+    pub(crate) fn replace_ingredient_or_insert(&mut self, label: String, claim: Claim) {
+        if self.ingredients_store.get(&label).is_some() {
+            self.ingredients_store.insert(label.clone(), claim);
+        } else {
+            self.insert_ingredient(label, claim);
+        }
     }
 
     /// List of redactions

@@ -159,15 +159,22 @@ fn get_cai_segments(jpeg: &img_parts::jpeg::Jpeg) -> Result<Vec<usize>> {
 }
 
 // delete cai segments
-fn delete_cai_segments(jpeg: &mut img_parts::jpeg::Jpeg) -> Result<()> {
+fn delete_cai_segments(jpeg: &mut img_parts::jpeg::Jpeg) -> Result<Option<usize>> {
     let cai_segs = get_cai_segments(jpeg)?;
     let jpeg_segs = jpeg.segments_mut();
+
+    let insertion_point = if !cai_segs.is_empty() {
+        Some(cai_segs[0])
+    } else {
+        None
+    };
 
     // remove cai segments
     for seg in cai_segs.iter().rev() {
         jpeg_segs.remove(*seg);
     }
-    Ok(())
+
+    Ok(insertion_point)
 }
 
 pub struct JpegIO {}
@@ -276,7 +283,10 @@ impl CAIWriter for JpegIO {
         let mut jpeg = Jpeg::from_bytes(buf.into()).map_err(|_err| Error::EmbeddingError)?;
 
         // remove existing CAI segments
-        delete_cai_segments(&mut jpeg)?;
+        let insertion_point = match delete_cai_segments(&mut jpeg)? {
+            Some(i) if i > 0 => i - 1,
+            _ => 0,
+        };
 
         let jumbf_len = store_bytes.len();
         let num_segments = (jumbf_len / MAX_JPEG_MARKER_SIZE) + 1;
@@ -323,8 +333,9 @@ impl CAIWriter for JpegIO {
 
             let seg_bytes = Bytes::from(seg_data);
             let app11_segment = JpegSegment::new_with_contents(markers::APP11, seg_bytes);
-            if seg <= jpeg.segments().len() {
-                jpeg.segments_mut().insert(seg, app11_segment); // we put this in the beginning...
+            if seg + insertion_point <= jpeg.segments().len() {
+                jpeg.segments_mut()
+                    .insert(seg + insertion_point, app11_segment); // we put this in the beginning...
             } else {
                 return Err(Error::InvalidAsset("JPEG JUMBF segment error".to_owned()));
             }
