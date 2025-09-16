@@ -1696,7 +1696,8 @@ mod tests {
 
         let label = CString::new("com.example.json-assertion").unwrap();
         let data_json = CString::new("{\"value\": \"assertion\"}").unwrap();
-        let result = unsafe { c2pa_builder_add_assertion_json(builder, label.as_ptr(), data_json.as_ptr()) };
+        let result =
+            unsafe { c2pa_builder_add_assertion_json(builder, label.as_ptr(), data_json.as_ptr()) };
         assert_eq!(result, 0);
 
         let format = CString::new("image/jpeg").unwrap();
