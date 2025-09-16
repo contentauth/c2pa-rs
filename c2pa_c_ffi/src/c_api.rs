@@ -1617,11 +1617,13 @@ mod tests {
         assert!(json_content.contains("manifest"));
 
         TestC2paStream::drop_c_stream(source_stream);
+        TestC2paStream::drop_c_stream(read_stream);
         unsafe {
             c2pa_manifest_bytes_free(manifest_bytes_ptr);
         }
         unsafe { c2pa_builder_free(builder) };
         unsafe { c2pa_signer_free(signer) };
+        unsafe { c2pa_reader_free(reader) };
     }
 
     #[test]
