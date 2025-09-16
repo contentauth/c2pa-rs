@@ -28,7 +28,7 @@ pub struct TimeStamp(HashMap<String, ByteBuf>);
 
 #[allow(dead_code)]
 impl TimeStamp {
-    /// Label prefix for an [`Actions`] assertion.
+    /// Label prefix for an [`Timestamp`] assertion.
     ///
     /// See <https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_actions>.
     pub const LABEL: &'static str = labels::TIMESTAMP;
