@@ -1612,7 +1612,6 @@ mod tests {
         assert!(!json.is_null());
         let json_str = unsafe { CString::from_raw(json) };
         let json_content = json_str.to_str().unwrap();
-        println!("json_content: {}", json_content);
 
         assert!(json_content.contains("manifest"));
 
