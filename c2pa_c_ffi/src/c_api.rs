@@ -895,6 +895,54 @@ pub unsafe extern "C" fn c2pa_builder_add_ingredient_from_stream(
     ok_or_return_int!(result, |_| 0) // returns 0 on success
 }
 
+/// Adds an action to the C2paBuilder.
+///
+/// # Parameters
+/// * builder_ptr: pointer to a Builder.
+/// * action_json: JSON string containing the action data.
+///
+/// # Errors
+/// Returns -1 if there were errors, otherwise returns 0.
+/// The error string can be retrieved by calling c2pa_error.
+///
+/// # Safety
+/// Reads from NULL-terminated C strings.
+///
+/// # Example
+/// ```c
+/// const char* action_json = "{\"action\": \"c2pa.placed\", \"digitalSourceType\": \"http://c2pa.org/digitalsourcetype/empty\"}";
+/// int result = c2pa_builder_add_action(builder, action_json);
+/// if (result == 0) {
+///     // Action added successfully
+/// }
+/// ```
+#[no_mangle]
+pub unsafe extern "C" fn c2pa_builder_add_action(
+    builder_ptr: *mut C2paBuilder,
+    action_json: *const c_char,
+) -> c_int {
+    check_or_return_int!(builder_ptr);
+    let mut builder = guard_boxed_int!(builder_ptr);
+    let action_json = from_cstr_or_return_int!(action_json);
+
+    // Parse the JSON into a serde Value to use with the Builder
+    let action_value: serde_json::Value = match serde_json::from_str(&action_json) {
+        Ok(value) => value,
+        Err(err) => {
+            Error::from_c2pa_error(c2pa::Error::JsonError(err)).set_last();
+            return -1;
+        }
+    };
+
+    match builder.add_action(action_value) {
+        Ok(_) => 0, // returns 0 on success
+        Err(err) => {
+            Error::from_c2pa_error(err).set_last();
+            -1
+        }
+    }
+}
+
 /// Writes an Archive of the Builder to the destination stream.
 ///
 /// # Parameters
@@ -1461,6 +1509,101 @@ mod tests {
         // assert_eq!(result, 65485);
         TestC2paStream::drop_c_stream(source_stream);
         TestC2paStream::drop_c_stream(dest_stream);
+        unsafe {
+            c2pa_manifest_bytes_free(manifest_bytes_ptr);
+        }
+        unsafe { c2pa_builder_free(builder) };
+        unsafe { c2pa_signer_free(signer) };
+    }
+
+    #[test]
+    fn builder_add_actions_and_sign() {
+        let source_image = include_bytes!(fixture_path!("IMG_0003.jpg"));
+        let mut source_stream = TestC2paStream::from_bytes(source_image.to_vec());
+        let dest_vec = Vec::new();
+        let mut dest_stream = TestC2paStream::new(dest_vec).into_c_stream();
+        let certs = include_str!(fixture_path!("certs/ed25519.pub"));
+        let private_key = include_bytes!(fixture_path!("certs/ed25519.pem"));
+        let alg = CString::new("Ed25519").unwrap();
+        let sign_cert = CString::new(certs).unwrap();
+        let private_key = CString::new(private_key).unwrap();
+        let signer_info = C2paSignerInfo {
+            alg: alg.as_ptr(),
+            sign_cert: sign_cert.as_ptr(),
+            private_key: private_key.as_ptr(),
+            ta_url: std::ptr::null(),
+        };
+        let signer = unsafe { c2pa_signer_from_info(&signer_info) };
+
+        assert!(!signer.is_null());
+        let manifest_def = CString::new("{}").unwrap();
+        let builder = unsafe { c2pa_builder_from_json(manifest_def.as_ptr()) };
+        assert!(!builder.is_null());
+
+        let action_json = CString::new(r#"{
+            "action": "com.example.test-action",
+            "parameters": {
+                "key1": "value1",
+                "key2": "value2"
+            }
+        }"#).unwrap();
+        let result = unsafe { c2pa_builder_add_action(builder, action_json.as_ptr()) };
+        assert_eq!(result, 0);
+        let format = CString::new("image/jpeg").unwrap();
+        let mut manifest_bytes_ptr = std::ptr::null();
+        let result = unsafe {
+            c2pa_builder_sign(
+                builder,
+                format.as_ptr(),
+                &mut source_stream,
+                &mut dest_stream,
+                signer,
+                &mut manifest_bytes_ptr,
+            )
+        };
+
+        /*
+        Sign JSON like this:
+        "assertions":
+          [
+            {
+              "label": "c2pa.actions.v2",
+              "data": {
+                "actions": [
+                  {
+                    "action": "c2pa.created",
+                    "digitalSourceType": "http://c2pa.org/digitalsourcetype/empty"
+                  },
+                  {
+                    "action": "com.example.test-action",
+                    "parameters": {
+                      "key2": "value2",
+                      "key1": "value1"
+                    }
+                  }
+                ],
+                "allActionsIncluded": true
+              }
+            }
+          ]
+         */
+
+        // Verify we can read the signed data back
+        let dest_test_stream = TestC2paStream::from_c_stream(dest_stream);
+        let mut read_stream = dest_test_stream.into_c_stream();
+        let format = CString::new("image/jpeg").unwrap();
+
+        let reader = unsafe { c2pa_reader_from_stream(format.as_ptr(), &mut read_stream) };
+        assert!(!reader.is_null());
+
+        let json = unsafe { c2pa_reader_json(reader) };
+        assert!(!json.is_null());
+        let json_str = unsafe { CString::from_raw(json) };
+        let json_content = json_str.to_str().unwrap();
+
+        assert!(json_content.contains("manifest"));
+
+        TestC2paStream::drop_c_stream(source_stream);
         unsafe {
             c2pa_manifest_bytes_free(manifest_bytes_ptr);
         }
