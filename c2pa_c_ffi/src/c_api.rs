@@ -907,15 +907,6 @@ pub unsafe extern "C" fn c2pa_builder_add_ingredient_from_stream(
 ///
 /// # Safety
 /// Reads from NULL-terminated C strings.
-///
-/// # Example
-/// ```c
-/// const char* action_json = "{\"action\": \"c2pa.placed\", \"digitalSourceType\": \"http://c2pa.org/digitalsourcetype/empty\"}";
-/// int result = c2pa_builder_add_action(builder, action_json);
-/// if (result == 0) {
-///     // Action added successfully
-/// }
-/// ```
 #[no_mangle]
 pub unsafe extern "C" fn c2pa_builder_add_action(
     builder_ptr: *mut C2paBuilder,
@@ -1547,11 +1538,14 @@ mod tests {
                 "key2": "value2"
             }
         }"#).unwrap();
+
+        // multiple calls add multiple actions
         let result = unsafe { c2pa_builder_add_action(builder, action_json.as_ptr()) };
         assert_eq!(result, 0);
+
         let format = CString::new("image/jpeg").unwrap();
         let mut manifest_bytes_ptr = std::ptr::null();
-        let result = unsafe {
+        let _ = unsafe {
             c2pa_builder_sign(
                 builder,
                 format.as_ptr(),
@@ -1600,6 +1594,7 @@ mod tests {
         assert!(!json.is_null());
         let json_str = unsafe { CString::from_raw(json) };
         let json_content = json_str.to_str().unwrap();
+        println!("json_content: {}", json_content);
 
         assert!(json_content.contains("manifest"));
 
