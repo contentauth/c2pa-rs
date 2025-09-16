@@ -1620,10 +1620,10 @@ mod tests {
         TestC2paStream::drop_c_stream(read_stream);
         unsafe {
             c2pa_manifest_bytes_free(manifest_bytes_ptr);
+            c2pa_builder_free(builder);
+            c2pa_signer_free(signer);
+            c2pa_reader_free(reader);
         }
-        unsafe { c2pa_builder_free(builder) };
-        unsafe { c2pa_signer_free(signer) };
-        unsafe { c2pa_reader_free(reader) };
     }
 
     #[test]
