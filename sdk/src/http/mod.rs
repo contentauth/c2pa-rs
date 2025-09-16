@@ -127,7 +127,7 @@ impl AsyncHttpResolver for AsyncGenericResolver {
     }
 }
 
-/// An error that occurs during sync/async http resolver resolution.
+/// An error that occurs during sync/async HTTP resolver resolution.
 #[derive(Debug, thiserror::Error)]
 pub enum HttpResolverError {
     /// An error occured in the [`http`] crate.
@@ -138,19 +138,19 @@ pub enum HttpResolverError {
     #[error(transparent)]
     Io(#[from] io::Error),
 
-    /// The sync http resolver is not implemented.
+    /// The sync HTTP resolver is not implemented.
     ///
     /// Note this often occurs when the http-related features are improperly enabled.
     #[error("the sync http resolver is not implemented")]
     SyncHttpResolverNotImplemented,
 
-    /// The async http resolver is not implemented.
+    /// The async HTTP resolver is not implemented.
     ///
     /// Note this often occurs when the http-related features are improperly enabled.
     #[error("the async http resolver is not implemented")]
     AsyncHttpResolverNotImplemented,
 
-    /// An error occured from the underlying http resolver.
+    /// An error occured from the underlying HTTP resolver.
     #[error("an error occurred from the underlying http resolver")]
     Other(Box<dyn std::error::Error + Send + Sync>),
 }

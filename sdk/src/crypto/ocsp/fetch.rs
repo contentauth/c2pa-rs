@@ -143,7 +143,7 @@ fn process_ocsp_responders(certs: &[Vec<u8>]) -> Option<Vec<OcspRequestData>> {
 
 /// Retrieve an OCSP response if available.
 ///
-/// Checks for an OCSP responder in the end-entity certifricate. If found, it
+/// Checks for an OCSP responder in the end-entity certificate. If found, it
 /// will attempt to retrieve the raw DER-encoded OCSP response.
 #[async_generic]
 pub(crate) fn fetch_ocsp_response(certs: &[Vec<u8>]) -> Option<Vec<u8>> {
