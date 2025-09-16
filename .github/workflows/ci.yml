@@ -37,11 +37,8 @@ jobs:
       - name: Get all features
         id: get-features
         run: |
-          FEATURES=$(cargo metadata --format-version=1 | jq -r '[.packages[] | select(.name=="c2pa") | .features | keys | map(select(. != "default" and (test("^http_")|not))) | .[]] | unique | join(" ")' )
-
-          # TODO: we should be testing all http libraries but when we do we default to `http_reqwest_blocking`
-          #       which causes issues with https://github.com/contentauth/c2pa-rs/issues/1364
-          FEATURES+=" http_ureq http_reqwest http_wasi http_wstd"
+          # TODO: `http_reqwest_blocking` is disabled due to  https://github.com/contentauth/c2pa-rs/issues/1364
+          FEATURES=$(cargo metadata --format-version=1 | jq -r '[.packages[] | select(.name=="c2pa") | .features | keys | map(select(. != "default" and . != "http_reqwest_blocking")) | .[]] | unique | join(" ")')
 
           RUST_NATIVE_FEATURES=$(echo $FEATURES | sed 's/openssl//g')
           OPENSSL_FEATURES=$(echo $FEATURES | sed 's/rust_native_crypto//g')
