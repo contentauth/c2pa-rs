@@ -3510,7 +3510,7 @@ impl Claim {
 
     // insert an ingredient or replace if it already exists
     pub(crate) fn replace_ingredient_or_insert(&mut self, label: String, claim: Claim) {
-        if self.ingredients_store.get(&label).is_some() {
+        if self.ingredients_store.contains_key(&label) {
             self.ingredients_store.insert(label.clone(), claim);
         } else {
             self.insert_ingredient(label, claim);
