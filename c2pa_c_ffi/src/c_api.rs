@@ -1572,13 +1572,16 @@ mod tests {
         let builder = unsafe { c2pa_builder_from_json(manifest_def.as_ptr()) };
         assert!(!builder.is_null());
 
-        let action_json = CString::new(r#"{
+        let action_json = CString::new(
+            r#"{
             "action": "com.example.test-action",
             "parameters": {
                 "key1": "value1",
                 "key2": "value2"
             }
-        }"#).unwrap();
+        }"#,
+        )
+        .unwrap();
 
         // multiple calls add multiple actions
         let result = unsafe { c2pa_builder_add_action(builder, action_json.as_ptr()) };
