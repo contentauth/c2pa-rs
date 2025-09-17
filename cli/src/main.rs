@@ -89,9 +89,9 @@ struct CliArgs {
     #[clap(short, long)]
     remote: Option<String>,
 
-    /// Path to the binary .c2pa manifest used for validation.
+    /// Path to a binary .c2pa manifest to use for validation against the input asset.
     ///
-    /// This field will override if the input asset already has an emebdded or remote asset.
+    /// This field will override the input asset's embedded or remote manifest.
     #[clap(long)]
     external_manifest: Option<PathBuf>,
 
