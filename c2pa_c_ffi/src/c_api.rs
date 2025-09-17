@@ -144,6 +144,25 @@ macro_rules! from_cstr_option {
     };
 }
 
+// Helper function to parse JSON string into serde_json::Value
+unsafe fn parse_json_from_cstr(data_json: *const c_char) -> Result<serde_json::Value, c_int> {
+    if data_json.is_null() {
+        Error::set_last(Error::NullParameter("data_json".to_string()));
+        return Err(-1);
+    }
+
+    let data_json = std::ffi::CStr::from_ptr(data_json)
+        .to_string_lossy()
+        .into_owned();
+    match serde_json::from_str(&data_json) {
+        Ok(value) => Ok(value),
+        Err(err) => {
+            Error::from_c2pa_error(c2pa::Error::JsonError(err)).set_last();
+            Err(-1)
+        }
+    }
+}
+
 // Internal routine to handle Result types, set errors on Err, and return default values
 #[macro_export]
 macro_rules! result_check {
@@ -955,15 +974,11 @@ pub unsafe extern "C" fn c2pa_builder_add_action(
 ) -> c_int {
     check_or_return_int!(builder_ptr);
     let mut builder = guard_boxed_int!(builder_ptr);
-    let action_json = from_cstr_or_return_int!(action_json);
 
     // Parse the JSON into a serde Value to use with the Builder
-    let action_value: serde_json::Value = match serde_json::from_str(&action_json) {
+    let action_value = match parse_json_from_cstr(action_json) {
         Ok(value) => value,
-        Err(err) => {
-            Error::from_c2pa_error(c2pa::Error::JsonError(err)).set_last();
-            return -1;
-        }
+        Err(err) => return err,
     };
 
     match builder.add_action(action_value) {
@@ -975,9 +990,51 @@ pub unsafe extern "C" fn c2pa_builder_add_action(
     }
 }
 
+/// Adds an assertion to the manifest.
+/// At the C-level of the interface, we will only get JSON as data,
+/// and layers above will handle the conversion to the appropriate
+/// JSON structure.
+///
+/// # Parameters
+/// * builder_ptr: pointer to a Builder.
+/// * label: A label for the assertion (null-terminated C string).
+/// * data_json: The data for the assertion as a JSON string (null-terminated C string).
+///
+/// # Errors
+/// Returns -1 if there were errors, otherwise returns 0.
+/// The error string can be retrieved by calling c2pa_error.
+///
+/// # Safety
+/// Reads from NULL-terminated C strings.
+#[no_mangle]
+pub unsafe extern "C" fn c2pa_builder_add_assertion(
+    builder_ptr: *mut C2paBuilder,
+    label: *const c_char,
+    data_json: *const c_char,
+) -> c_int {
+    check_or_return_int!(builder_ptr);
+    let mut builder = guard_boxed_int!(builder_ptr);
+    let label = from_cstr_or_return_int!(label);
+
+    // Parse the JSON into a serde Value to use with the Builder
+    let data_value = match parse_json_from_cstr(data_json) {
+        Ok(value) => value,
+        Err(err) => return err,
+    };
+
+    match builder.add_assertion(&label, &data_value) {
+        Ok(_) => 0, // returns 0 on success
+        Err(err) => {
+            Error::from_c2pa_error(err).set_last();
+            -1
+        }
+    }
+}
+
 /// Adds a JSON assertion to the manifest.
 ///
 /// Use only when the assertion must be stored in JSON format.
+/// Usually, c2pa_builder_add_assertion should be used instead.
 ///
 /// # Parameters
 /// * builder_ptr: pointer to a Builder.
@@ -999,15 +1056,11 @@ pub unsafe extern "C" fn c2pa_builder_add_assertion_json(
     check_or_return_int!(builder_ptr);
     let mut builder = guard_boxed_int!(builder_ptr);
     let label = from_cstr_or_return_int!(label);
-    let data_json = from_cstr_or_return_int!(data_json);
 
     // Parse the JSON into a serde Value to use with the Builder
-    let data_value: serde_json::Value = match serde_json::from_str(&data_json) {
+    let data_value = match parse_json_from_cstr(data_json) {
         Ok(value) => value,
-        Err(err) => {
-            Error::from_c2pa_error(c2pa::Error::JsonError(err)).set_last();
-            return -1;
-        }
+        Err(err) => return err,
     };
 
     match builder.add_assertion_json(&label, &data_value) {
@@ -1657,6 +1710,74 @@ mod tests {
         let json_str = unsafe { CString::from_raw(json) };
         let json_content = json_str.to_str().unwrap();
         println!("json_content: {}", json_content);
+
+        assert!(json_content.contains("manifest"));
+
+        TestC2paStream::drop_c_stream(source_stream);
+        TestC2paStream::drop_c_stream(read_stream);
+        unsafe {
+            c2pa_manifest_bytes_free(manifest_bytes_ptr);
+            c2pa_builder_free(builder);
+            c2pa_signer_free(signer);
+            c2pa_reader_free(reader);
+        }
+    }
+
+    #[test]
+    fn builder_add_assertion_and_sign() {
+        let source_image = include_bytes!(fixture_path!("IMG_0003.jpg"));
+        let mut source_stream = TestC2paStream::from_bytes(source_image.to_vec());
+        let dest_vec = Vec::new();
+        let mut dest_stream = TestC2paStream::new(dest_vec).into_c_stream();
+        let certs = include_str!(fixture_path!("certs/ed25519.pub"));
+        let private_key = include_bytes!(fixture_path!("certs/ed25519.pem"));
+        let alg = CString::new("Ed25519").unwrap();
+        let sign_cert = CString::new(certs).unwrap();
+        let private_key = CString::new(private_key).unwrap();
+        let signer_info = C2paSignerInfo {
+            alg: alg.as_ptr(),
+            sign_cert: sign_cert.as_ptr(),
+            private_key: private_key.as_ptr(),
+            ta_url: std::ptr::null(),
+        };
+        let signer = unsafe { c2pa_signer_from_info(&signer_info) };
+
+        assert!(!signer.is_null());
+        let manifest_def = CString::new("{}").unwrap();
+        let builder = unsafe { c2pa_builder_from_json(manifest_def.as_ptr()) };
+        assert!(!builder.is_null());
+
+        let label = CString::new("com.example.assertion").unwrap();
+        let data_json = CString::new("{\"value\": \"an assertion\"}").unwrap();
+        let result =
+            unsafe { c2pa_builder_add_assertion(builder, label.as_ptr(), data_json.as_ptr()) };
+        assert_eq!(result, 0);
+
+        let format = CString::new("image/jpeg").unwrap();
+        let mut manifest_bytes_ptr = std::ptr::null();
+        let _ = unsafe {
+            c2pa_builder_sign(
+                builder,
+                format.as_ptr(),
+                &mut source_stream,
+                &mut dest_stream,
+                signer,
+                &mut manifest_bytes_ptr,
+            )
+        };
+
+        // Verify we can read the signed data back
+        let dest_test_stream = TestC2paStream::from_c_stream(dest_stream);
+        let mut read_stream = dest_test_stream.into_c_stream();
+        let format = CString::new("image/jpeg").unwrap();
+
+        let reader = unsafe { c2pa_reader_from_stream(format.as_ptr(), &mut read_stream) };
+        assert!(!reader.is_null());
+
+        let json = unsafe { c2pa_reader_json(reader) };
+        assert!(!json.is_null());
+        let json_str = unsafe { CString::from_raw(json) };
+        let json_content = json_str.to_str().unwrap();
 
         assert!(json_content.contains("manifest"));
 
