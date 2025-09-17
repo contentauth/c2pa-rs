@@ -829,7 +829,6 @@ impl Builder {
         Ok(builder)
     }
 
-
     // Convert a Manifest into a Claim
     fn to_claim(&self) -> Result<Claim> {
         let definition = &self.definition;
@@ -3073,7 +3072,7 @@ mod tests {
 
         dest1.set_position(0);
         let reader = Reader::from_stream("jpeg", &mut dest1).expect("from_bytes");
-        println!("{reader}");
+        //println!("{reader}");
         assert_eq!(reader.validation_state(), ValidationState::Trusted);
         let parent_manifest_label = reader.active_label().unwrap();
 
@@ -3122,7 +3121,8 @@ mod tests {
         //std::fs::write("redaction2.jpg", output.get_ref()).unwrap();
 
         let reader = Reader::from_stream("jpeg", &mut output).expect("from_bytes");
-        println!("{reader}");
+        //println!("{reader}");
+        assert_eq!(reader.validation_state(), ValidationState::Trusted);
         let m = reader.active_manifest().unwrap();
         assert_eq!(m.ingredients().len(), 1);
         let parent = reader.get_manifest(parent_manifest_label).unwrap();

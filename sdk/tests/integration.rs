@@ -352,7 +352,6 @@ mod integration_1 {
     #[test]
     #[cfg(feature = "file_io")]
     fn test_certificate_status() -> Result<()> {
-
         use c2pa::ValidationState;
         use serde_json::json;
         let parent_json = json!({
