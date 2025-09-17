@@ -25,7 +25,7 @@ use uuid::Uuid;
 
 use crate::{
     assertion::{AssertionBase, AssertionData},
-    assertions::{labels, Actions, AssertionMetadata, EmbeddedData, SoftwareAgent},
+    assertions::{labels, Actions, AssertionMetadata, EmbeddedData, Metadata, SoftwareAgent},
     claim::RemoteManifest,
     crypto::raw_signature::SigningAlg,
     error::{Error, Result},
@@ -520,6 +520,20 @@ impl Manifest {
                         &thumbnail.content_type,
                         thumbnail.data,
                     )?);
+                } // handle special case for AssertionMetadata
+                labels::ASSERTION_METADATA => {
+                    let assertion_metadata = AssertionMetadata::from_assertion(assertion)?;
+                    let manifest_assertion =
+                        ManifestAssertion::from_assertion(&assertion_metadata)?
+                            .set_instance(claim_assertion.instance());
+                    manifest.assertions.push(manifest_assertion);
+                } // all other labels that end in .metadata are Metadata assertions
+                label if label.ends_with(".metadata") => {
+                    let metadata = Metadata::from_assertion(assertion)?;
+                    let manifest_assertion = ManifestAssertion::from_assertion(&metadata)?
+                        .set_kind(ManifestAssertionKind::Json)
+                        .set_instance(claim_assertion.instance());
+                    manifest.assertions.push(manifest_assertion);
                 }
                 _ => {
                     // inject assertions for all other assertions
