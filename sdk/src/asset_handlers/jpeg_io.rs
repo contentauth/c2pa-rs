@@ -370,6 +370,12 @@ impl CAIWriter for JpegIO {
             .map_err(|e| Error::OtherError(Box::new(e)))?
             .ok_or(Error::UnsupportedType)?;
 
+        let mut cai_loc = HashObjectPositions {
+            offset: 0,
+            length: 0,
+            htype: HashBlockObjectType::Cai,
+        };
+
         match dimg {
             DynImage::Jpeg(jpeg) => {
                 for seg in jpeg.segments() {
@@ -388,13 +394,7 @@ impl CAIWriter for JpegIO {
 
                                 if cai_seg_cnt > 0 && is_cai_continuation {
                                     cai_seg_cnt += 1;
-
-                                    let v = HashObjectPositions {
-                                        offset: curr_offset,
-                                        length: seg.len_with_entropy(),
-                                        htype: HashBlockObjectType::Cai,
-                                    };
-                                    positions.push(v);
+                                    cai_loc.length += seg.len_with_entropy();
                                 } else {
                                     // check if this is a CAI JUMBF block
                                     let jumb_type = raw_vec
@@ -408,13 +408,8 @@ impl CAIWriter for JpegIO {
                                         cai_seg_cnt = 1;
                                         cai_en.clone_from(&en); // store the identifier
 
-                                        let v = HashObjectPositions {
-                                            offset: curr_offset,
-                                            length: seg.len_with_entropy(),
-                                            htype: HashBlockObjectType::Cai,
-                                        };
-
-                                        positions.push(v);
+                                        cai_loc.offset = curr_offset;
+                                        cai_loc.length += seg.len_with_entropy();
                                     } else {
                                         // save other for completeness sake
                                         let v = HashObjectPositions {
@@ -452,6 +447,10 @@ impl CAIWriter for JpegIO {
                 }
             }
             _ => return Err(Error::InvalidAsset("Unknown image format".to_owned())),
+        }
+
+        if cai_loc.length > 0 {
+            positions.push(cai_loc);
         }
 
         Ok(positions)

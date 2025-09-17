@@ -2538,6 +2538,9 @@ impl Store {
         let mut asset_stream = std::fs::File::open(asset_path)?;
         let mut bmff_hash = Store::generate_bmff_data_hash_for_stream(&mut asset_stream, pc.alg())?;
         bmff_hash.clear_hash();
+        if pc.version() < 2 {
+            bmff_hash.set_bmff_version(2); // backcompat support
+        }
 
         // generate fragments and produce Merkle tree
         bmff_hash.add_merkle_for_fragmented(
@@ -2872,8 +2875,12 @@ impl Store {
             // 2) Get hash ranges if needed, do not generate for update manifests
             if !pc.update_manifest() {
                 intermediate_stream.rewind()?;
-                let bmff_hash =
+                let mut bmff_hash =
                     Store::generate_bmff_data_hash_for_stream(&mut intermediate_stream, pc.alg())?;
+
+                if pc.version() < 2 {
+                    bmff_hash.set_bmff_version(2); // backcompat support
+                }
 
                 // insert UUID boxes at the correct location if required
                 if let Some(merkle_uuid_boxes) = &bmff_hash.merkle_uuid_boxes {
@@ -6536,6 +6543,41 @@ pub mod tests {
 
         // Create a new claim.
         let claim1 = create_test_claim().unwrap();
+
+        let signer = test_signer(SigningAlg::Ps256);
+
+        // Move the claim to claims list.
+        store.commit_claim(claim1).unwrap();
+        store
+            .save_to_stream(
+                format,
+                &mut input_stream,
+                &mut output_stream,
+                signer.as_ref(),
+            )
+            .unwrap();
+
+        let mut report = StatusTracker::default();
+
+        // can we read back in
+        output_stream.set_position(0);
+        let new_store = Store::from_stream(format, &mut output_stream, true, &mut report).unwrap();
+
+        assert!(!report.has_any_error());
+
+        println!("store = {new_store}");
+    }
+
+    #[test]
+    fn test_bmff_jumbf_generation_claim_v1() {
+        // test adding to actual image
+        let (format, mut input_stream, mut output_stream) = create_test_streams("video1.mp4");
+
+        // Create claims store.
+        let mut store = Store::new();
+
+        // Create a new claim.
+        let claim1 = crate::utils::test::create_test_claim_v1().unwrap();
 
         let signer = test_signer(SigningAlg::Ps256);
 

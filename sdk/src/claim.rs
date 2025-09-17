@@ -2713,7 +2713,7 @@ impl Claim {
                                     exclusions.iter().position(|r| r.start() == range.start())
                                 {
                                     // replace range using the size that covers entire manifest (including update manifests)
-                                    exclusions.insert(pos, range.clone());
+                                    exclusions[pos] = range.clone();
                                 }
                             }
                         }
