@@ -144,25 +144,6 @@ macro_rules! from_cstr_option {
     };
 }
 
-// Helper function to parse JSON string into serde_json::Value
-unsafe fn parse_json_from_cstr(data_json: *const c_char) -> Result<serde_json::Value, c_int> {
-    if data_json.is_null() {
-        Error::set_last(Error::NullParameter("data_json".to_string()));
-        return Err(-1);
-    }
-
-    let data_json = std::ffi::CStr::from_ptr(data_json)
-        .to_string_lossy()
-        .into_owned();
-    match serde_json::from_str(&data_json) {
-        Ok(value) => Ok(value),
-        Err(err) => {
-            Error::from_c2pa_error(c2pa::Error::JsonError(err)).set_last();
-            Err(-1)
-        }
-    }
-}
-
 // Internal routine to handle Result types, set errors on Err, and return default values
 #[macro_export]
 macro_rules! result_check {
@@ -220,6 +201,25 @@ macro_rules! guard_boxed_int {
             -1
         )
     };
+}
+
+// Helper function to parse JSON string into serde_json::Value
+unsafe fn parse_json_from_cstr(data_json: *const c_char) -> Result<serde_json::Value, c_int> {
+  if data_json.is_null() {
+      Error::set_last(Error::NullParameter("data_json".to_string()));
+      return Err(-1);
+  }
+
+  let data_json = std::ffi::CStr::from_ptr(data_json)
+      .to_string_lossy()
+      .into_owned();
+  match serde_json::from_str(&data_json) {
+      Ok(value) => Ok(value),
+      Err(err) => {
+          Error::from_c2pa_error(c2pa::Error::JsonError(err)).set_last();
+          Err(-1)
+      }
+  }
 }
 
 /// Defines a callback to read from a stream.
@@ -993,7 +993,7 @@ pub unsafe extern "C" fn c2pa_builder_add_action(
 /// Adds an assertion to the manifest.
 /// At the C-level of the interface, we will only get JSON as data,
 /// and layers above will handle the conversion to the appropriate
-/// JSON structure.
+/// JSON structure that we will then re-serialize to CBOR.
 ///
 /// # Parameters
 /// * builder_ptr: pointer to a Builder.
@@ -1034,7 +1034,6 @@ pub unsafe extern "C" fn c2pa_builder_add_assertion(
 /// Adds a JSON assertion to the manifest.
 ///
 /// Use only when the assertion must be stored in JSON format.
-/// Usually, c2pa_builder_add_assertion should be used instead.
 ///
 /// # Parameters
 /// * builder_ptr: pointer to a Builder.
