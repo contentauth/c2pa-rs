@@ -315,7 +315,6 @@ jobs:
 
   benchmarks:
     name: Run benchmarks on signing and reading
-    needs: get-features
     if: |
       github.event_name != 'pull_request' ||
       github.event.pull_request.author_association == 'COLLABORATOR' ||
@@ -342,9 +341,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Build the benchmark target(s)
-        env:
-          FEATURES: ${{needs.get-features.outputs.rust-native-features}}
-        run: cargo codspeed build -p c2pa --no-default-features --features "$FEATURES"
+        run: cargo codspeed build -p c2pa --no-default-features --features rust_native_crypto
 
       - name: Run the benchmarks
         uses: CodSpeedHQ/action@v3
