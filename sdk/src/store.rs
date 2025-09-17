@@ -7726,11 +7726,13 @@ pub mod tests {
     #[test]
     #[cfg(feature = "file_io")]
     fn test_bogus_cert() {
-        use crate::builder::Builder;
+        use crate::builder::{Builder, BuilderIntent};
         let png = include_bytes!("../tests/fixtures/libpng-test.png"); // Randomly generated local Ed25519
         let ed25519 = include_bytes!("../tests/fixtures/certs/ed25519.pem");
         let certs = include_bytes!("../tests/fixtures/certs/es256.pub");
-        let mut builder = Builder::create(DigitalSourceType::Empty);
+        let mut builder = Builder::new();
+        builder.set_intent(BuilderIntent::Create(DigitalSourceType::Empty));
+
         let signer =
             crate::create_signer::from_keys(certs, ed25519, SigningAlg::Ed25519, None).unwrap();
         let mut dst = Cursor::new(Vec::new());
