@@ -3164,7 +3164,11 @@ impl Claim {
         Claim::verify_actions(claim, svi, validation_log)?;
 
         // check metadata rules
-        Claim::verify_metadata(claim, validation_log)?;
+        if claim.version() >= 2 {
+            // only for claim version 2 or greater
+            Claim::verify_metadata(claim, validation_log)?;
+        }
+
         Ok(())
     }
 

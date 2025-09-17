@@ -46,7 +46,8 @@ use crate::{
     },
     store::Store,
     utils::mime::format_to_mime,
-    AsyncSigner, ClaimGeneratorInfo, HashRange, HashedUri, Ingredient, Relationship, Signer,
+    AsyncSigner, ClaimGeneratorInfo, HashRange, HashedUri, Ingredient, ManifestAssertionKind,
+    Relationship, Signer,
 };
 
 /// Version of the Builder Archive file
@@ -134,13 +135,54 @@ pub enum AssertionData {
 
 /// Defines an assertion that consists of a label that can be either
 /// a C2PA-defined assertion label or a custom label in reverse domain format.
-#[derive(Debug, Deserialize, Serialize, Clone)]
+#[derive(Debug, Serialize, Clone)]
 #[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 #[non_exhaustive]
 pub struct AssertionDefinition {
     pub label: String,
     pub data: AssertionData,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub kind: Option<ManifestAssertionKind>,
 }
+
+impl<'de> Deserialize<'de> for AssertionDefinition {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct Helper {
+            label: String,
+            data: serde_json::Value,
+            #[serde(default)]
+            kind: Option<ManifestAssertionKind>,
+        }
+
+        let helper = Helper::deserialize(deserializer)?;
+
+        let data = match helper.kind {
+            Some(ManifestAssertionKind::Json) => AssertionData::Json(helper.data),
+            Some(ManifestAssertionKind::Cbor) | None => {
+                let cbor_val =
+                    serde_cbor::value::to_value(helper.data).map_err(serde::de::Error::custom)?;
+                AssertionData::Cbor(cbor_val)
+            }
+            _ => {
+                return Err(serde::de::Error::custom(format!(
+                    "Unsupported assertion kind for label {}",
+                    helper.label
+                )));
+            }
+        };
+
+        Ok(AssertionDefinition {
+            label: helper.label,
+            data,
+            kind: helper.kind,
+        })
+    }
+}
+
 impl AssertionDefinition {
     pub(crate) fn to_assertion<T: DeserializeOwned>(&self) -> Result<T> {
         match &self.data {
@@ -481,6 +523,7 @@ impl Builder {
         self.definition.assertions.push(AssertionDefinition {
             label: label.into(),
             data: AssertionData::Cbor(serde_cbor::value::to_value(data)?),
+            kind: None, // defaults to cbor
         });
         Ok(self)
     }
@@ -503,6 +546,7 @@ impl Builder {
         self.definition.assertions.push(AssertionDefinition {
             label: label.into(),
             data: AssertionData::Json(serde_json::to_value(data)?),
+            kind: Some(ManifestAssertionKind::Json),
         });
         Ok(self)
     }
@@ -1604,7 +1648,10 @@ mod tests {
         crypto::raw_signature::SigningAlg,
         hash_stream_by_alg,
         settings::Settings,
-        utils::{test::write_jpeg_placeholder_stream, test_signer::test_signer},
+        utils::{
+            test::write_jpeg_placeholder_stream,
+            test_signer::{async_test_signer, test_signer},
+        },
         validation_results::ValidationState,
         Reader,
     };
@@ -2319,42 +2366,6 @@ mod tests {
         }
     }
 
-    #[c2pa_test_async]
-    #[cfg(feature = "v1_api")]
-    async fn test_builder_remote_sign() {
-        let format = "image/jpeg";
-        let mut source = Cursor::new(TEST_IMAGE);
-        let mut dest = Cursor::new(Vec::new());
-
-        let mut builder = Builder::from_json(&simple_manifest_json()).unwrap();
-        builder
-            .add_ingredient_from_stream(parent_json(), format, &mut source)
-            .unwrap();
-
-        builder
-            .resources
-            .add("thumbnail.jpg", TEST_THUMBNAIL.to_vec())
-            .unwrap();
-
-        // sign the Builder and write it to the output stream
-        let signer = crate::utils::test::temp_async_remote_signer();
-        builder
-            .sign_async(signer.as_ref(), format, &mut source, &mut dest)
-            .await
-            .unwrap();
-
-        // read and validate the signed manifest store
-        dest.rewind().unwrap();
-        let manifest_store = Reader::from_stream(format, &mut dest).expect("from_bytes");
-
-        assert_eq!(manifest_store.validation_status(), None);
-
-        assert_eq!(
-            manifest_store.active_manifest().unwrap().title().unwrap(),
-            "Test_Manifest"
-        );
-    }
-
     #[test]
     #[cfg(feature = "file_io")]
     fn test_builder_remote_url() {
@@ -2443,7 +2454,7 @@ mod tests {
     }
 
     #[c2pa_test_async]
-    #[cfg(any(target_arch = "wasm32", feature = "file_io"))]
+    #[cfg(target_arch = "wasm32")]
     async fn test_builder_box_hashed_embeddable() {
         use crate::asset_io::{CAIWriter, HashBlockObjectType};
         const BOX_HASH_IMAGE: &[u8] = include_bytes!("../tests/fixtures/boxhash.jpg");
@@ -2938,6 +2949,53 @@ mod tests {
         output.set_position(0);
 
         let reader = Reader::from_stream("image/jpeg", &mut output).expect("from_bytes");
+        //println!("{reader}");
+        let m = reader.active_manifest().unwrap();
+        assert_eq!(m.ingredients().len(), 1);
+        let parent = reader.get_manifest(parent_manifest_label).unwrap();
+        assert_eq!(parent.assertions().len(), 1);
+    }
+
+    #[c2pa_test_async]
+    async fn test_redaction_async() {
+        Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml")).unwrap();
+
+        // the label of the assertion we are going to redact
+        const ASSERTION_LABEL: &str = "stds.schema-org.CreativeWork";
+
+        let mut input = Cursor::new(TEST_IMAGE);
+
+        let parent = Reader::from_stream_async("image/jpeg", &mut input)
+            .await
+            .expect("from_stream");
+        let parent_manifest_label = parent.active_label().unwrap();
+        // Create a redacted uri for the assertion we are going to redact.
+        let redacted_uri =
+            crate::jumbf::labels::to_assertion_uri(parent_manifest_label, ASSERTION_LABEL);
+
+        let mut builder = Builder::edit();
+        builder.definition.redactions = Some(vec![redacted_uri.clone()]);
+
+        let redacted_action = crate::assertions::Action::new("c2pa.redacted")
+            .set_reason("testing".to_owned())
+            .set_parameter("redacted".to_owned(), redacted_uri.clone())
+            .unwrap();
+
+        builder.add_action(redacted_action).unwrap();
+
+        let signer = async_test_signer(SigningAlg::Ps256);
+        // Embed a manifest using the signer.
+        let mut output = Cursor::new(Vec::new());
+        builder
+            .sign_async(signer.as_ref(), "image/jpeg", &mut input, &mut output)
+            .await
+            .expect("builder sign");
+
+        output.set_position(0);
+
+        let reader = Reader::from_stream_async("image/jpeg", &mut output)
+            .await
+            .expect("from_bytes");
         //println!("{reader}");
         let m = reader.active_manifest().unwrap();
         assert_eq!(m.ingredients().len(), 1);
