@@ -353,13 +353,6 @@ mod integration_1 {
     #[cfg(feature = "file_io")]
     fn test_certificate_status() -> Result<()> {
         use c2pa::ValidationState;
-        use serde_json::json;
-        let parent_json = json!({
-            "title": "Parent Test",
-            "relationship": "parentOf",
-            "label": "CA.jpg",
-        })
-        .to_string();
 
         Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml"))?;
 
@@ -374,19 +367,16 @@ mod integration_1 {
 
         // sign and embed into the target file
         let signer = Settings::signer()?;
-        let mut parent_source = std::fs::File::open(&parent_path)?;
-        builder.add_ingredient_from_stream(parent_json, "image/jpeg", &mut parent_source)?;
         builder.sign_file(signer.as_ref(), &parent_path, &output_path)?;
 
-        //std::fs::copy(&output_path, "cert_status.jpg")?;
+        // std::fs::copy(&output_path, "cert_status.jpg")?;
 
         // read our new file with embedded manifest
         let reader = Reader::from_file(&output_path)?;
         let reader_json = reader.json();
-        println!("{reader}");
+        //println!("{reader}");
         // ensure certificate status assertion was created
         assert!(reader_json.contains(r#"label": "c2pa.certificate-status"#));
-        //assert_eq!(reader.validation_status(), None);
         assert_eq!(reader.validation_state(), ValidationState::Valid);
         assert!(reader_json.contains("signingCredential.ocsp.notRevoked"));
         Ok(())

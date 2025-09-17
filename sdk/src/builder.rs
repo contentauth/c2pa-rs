@@ -238,21 +238,13 @@ pub enum BuilderIntent {
     #[serde(rename = "edit")]
     Edit,
 
-    /// A restricted version of [Edit] for non-editorial changes.
+    /// A restricted version of Edit for non-editorial changes.
     ///
     /// There must be only one ingredient, as a parent.
     /// No changes can be made to the hashed content of the parent.
     /// There are additional restrictions on the types of changes that can be made.
     #[serde(rename = "update")]
     Update,
-}
-
-#[allow(unused)] // TEMPORARY: @gpeacock please investigate
-#[derive(Serialize, Deserialize)]
-struct StructuredAction {
-    action: String,
-    #[serde(flatten)]
-    data: serde_json::Value,
 }
 
 /// Use a Builder to add a signed manifest to an asset.
@@ -3023,6 +3015,7 @@ mod tests {
     // then creates an update manifest that redacts the assertion
     fn test_redaction2() {
         use crate::{assertions::Action, utils::test::setup_logger};
+        Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml")).unwrap();
 
         setup_logger();
         // the label of the assertion we are going to redact
