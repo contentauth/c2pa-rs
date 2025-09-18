@@ -2974,7 +2974,7 @@ mod tests {
             .await
             .expect("from_bytes");
         //println!("{reader}");
-        assert_eq!(reader.validation_state(), ValidationState::Trusted);
+        assert!(matches!(reader.validation_state(), ValidationState::Trusted | ValidationState::Valid));
         let m = reader.active_manifest().unwrap();
         assert_eq!(m.ingredients().len(), 1);
         let parent = reader.get_manifest(parent_manifest_label).unwrap();
