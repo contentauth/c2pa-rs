@@ -238,21 +238,13 @@ pub enum BuilderIntent {
     #[serde(rename = "edit")]
     Edit,
 
-    /// A restricted version of [Edit] for non-editorial changes.
+    /// A restricted version of Edit for non-editorial changes.
     ///
     /// There must be only one ingredient, as a parent.
     /// No changes can be made to the hashed content of the parent.
     /// There are additional restrictions on the types of changes that can be made.
     #[serde(rename = "update")]
     Update,
-}
-
-#[allow(unused)] // TEMPORARY: @gpeacock please investigate
-#[derive(Serialize, Deserialize)]
-struct StructuredAction {
-    action: String,
-    #[serde(flatten)]
-    data: serde_json::Value,
 }
 
 /// Use a Builder to add a signed manifest to an asset.
@@ -828,7 +820,6 @@ impl Builder {
         }
         Ok(builder)
     }
-
 
     // Convert a Manifest into a Claim
     fn to_claim(&self) -> Result<Claim> {
@@ -3024,6 +3015,7 @@ mod tests {
     // then creates an update manifest that redacts the assertion
     fn test_redaction2() {
         use crate::{assertions::Action, utils::test::setup_logger};
+        Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml")).unwrap();
 
         setup_logger();
         // the label of the assertion we are going to redact
@@ -3073,7 +3065,7 @@ mod tests {
 
         dest1.set_position(0);
         let reader = Reader::from_stream("jpeg", &mut dest1).expect("from_bytes");
-        println!("{reader}");
+        //println!("{reader}");
         assert_eq!(reader.validation_state(), ValidationState::Trusted);
         let parent_manifest_label = reader.active_label().unwrap();
 
@@ -3122,7 +3114,8 @@ mod tests {
         //std::fs::write("redaction2.jpg", output.get_ref()).unwrap();
 
         let reader = Reader::from_stream("jpeg", &mut output).expect("from_bytes");
-        println!("{reader}");
+        //println!("{reader}");
+        assert_eq!(reader.validation_state(), ValidationState::Trusted);
         let m = reader.active_manifest().unwrap();
         assert_eq!(m.ingredients().len(), 1);
         let parent = reader.get_manifest(parent_manifest_label).unwrap();
