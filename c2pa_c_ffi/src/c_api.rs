@@ -925,7 +925,7 @@ pub unsafe extern "C" fn c2pa_builder_add_ingredient_from_stream(
 /// ```
 ///
 /// This creates a manifest with an actions assertion
-/// ontaining the added action (excerpt of the full manifest):
+/// containing the added action (excerpt of the full manifest):
 /// ```json
 /// "assertions": [
 ///   {
