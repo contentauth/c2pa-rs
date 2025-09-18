@@ -608,9 +608,18 @@ impl Reader {
     }
 
     /// Get the Reader as a JSON string
-    /// This just calls to_
+    /// This just calls to_json_formatted
     pub fn json(&self) -> String {
         match self.to_json_formatted() {
+            Ok(value) => serde_json::to_string_pretty(&value).unwrap_or_default(),
+            Err(_) => "{}".to_string(),
+        }
+    }
+
+    /// Get the Reader as a detailed JSON string
+    /// This just calls to_json_detailed_formatted
+    pub fn detailed_json(&self) -> String {
+        match self.to_json_detailed_formatted() {
             Ok(value) => serde_json::to_string_pretty(&value).unwrap_or_default(),
             Err(_) => "{}".to_string(),
         }
@@ -1159,6 +1168,37 @@ pub mod tests {
         assert!(path.exists());
         #[cfg(target_os = "wasi")]
         crate::utils::io_utils::wasm_remove_dir_all(temp_dir)?;
+        Ok(())
+    }
+
+    #[test]
+    #[cfg(feature = "file_io")]
+    /// Test that the reader can validate a file with nested assertion errors
+    fn test_reader_detailed_json() -> Result<()> {
+        let reader = Reader::from_file("tests/fixtures/CACAE-uri-CA.jpg")?;
+        let json = reader.json();
+        let detailed_json = reader.detailed_json();
+        let parsed_json: Value = serde_json::from_str(json.as_str())?;
+        let parsed_detailed_json: Value = serde_json::from_str(detailed_json.as_str())?;
+
+        // Undetailed JSON doesn't include "claim" object as child of active manifest object
+        // Detailed JSON does include the "claim" object.
+        assert!(
+            if let Some(active_manifest) = parsed_json["active_manifest"].as_str() {
+                let mut is_valid = parsed_json["manifests"]
+                    .get(active_manifest)
+                    .and_then(|m| m.get("claim"))
+                    .is_none();
+                is_valid &= parsed_detailed_json["manifests"]
+                    .get(active_manifest)
+                    .and_then(|m| m.get("claim"))
+                    .is_some();
+                is_valid
+            } else {
+                false
+            }
+        );
+        assert!(json.len() < detailed_json.len()); // Detailed JSON should contain more information
         Ok(())
     }
 
