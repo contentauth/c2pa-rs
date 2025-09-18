@@ -903,7 +903,7 @@ pub unsafe extern "C" fn c2pa_builder_add_ingredient_from_stream(
 ///
 /// # Errors
 /// Returns -1 if there were errors, otherwise returns 0.
-/// The error string can be retrieved by calling c2pa_error.
+/// The error string can be retrieved by calling [c2pa_error].
 ///
 /// # Safety
 /// Reads from NULL-terminated C strings.
