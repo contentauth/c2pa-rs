@@ -1614,6 +1614,7 @@ mod tests {
         let json_content = json_str.to_str().unwrap();
 
         assert!(json_content.contains("manifest"));
+        assert!(json_content.contains("com.example.test-action"));
 
         TestC2paStream::drop_c_stream(source_stream);
         TestC2paStream::drop_c_stream(read_stream);
