@@ -340,9 +340,18 @@ impl Builder {
         Default::default()
     }
 
-    /// Sets the intent for this [`Builder`].
+    /// Sets the [`BuilderIntent`] for this [`Builder`].
+    ///
+    /// An intent lets the API know what kind of manifest to create.
+    /// Intents are `Create`, `Edit`, or `Update`.
+    /// This allows the API to check that you are doing the right thing.
+    /// It can also do things for you, like add parent ingredients from the source asset
+    /// and automatically add required c2pa.created or c2pa.opened actions.
+    /// Create requires a `DigitalSourceType`. It is used for assets without a parent ingredient.
+    /// Edit requires a parent ingredient and is used for most assets that are being edited.
+    /// Update is a special case with many restrictions but is more compact than Edit.
     /// # Arguments
-    /// * `intent` - The [BuilderIntent] for this [`Builder`].
+    /// * `intent` - The [`BuilderIntent`] for this [`Builder`].
     /// # Returns
     /// * A mutable reference to the [`Builder`].
     pub fn set_intent(&mut self, intent: BuilderIntent) -> &mut Self {
@@ -350,52 +359,7 @@ impl Builder {
         self
     }
 
-    /// Creates a new [`Builder`] for creating a new asset.
-    ///
-    /// # Arguments
-    /// * `source_type` - The type of digital source, such as `DigitalSourceType::Empty` or `DigitalSourceType::TrainedAlgorithmicData`.
-    /// # Returns
-    /// * A new [`Builder`] with the specified source type.
-    /// # Example
-    /// ```rust
-    /// use c2pa::{Builder, DigitalSourceType};
-    /// let builder = Builder::create(DigitalSourceType::Empty);
-    /// ```
-    pub fn create(source_type: DigitalSourceType) -> Self {
-        let mut builder = Self::new();
-        builder.intent = Some(BuilderIntent::Create(source_type));
-        builder
-    }
-
-    /// Creates a new [`Builder`] for for editing an existing asset.
-    /// This is experimental and will likely change in the future.
-    ///
-    /// If a parent ingredient is not provided, it will be generated from the source stream.
-    /// and an associated `c2pa.opened` action will be added.
-    /// # Returns
-    /// * A new [`Builder`] for editing an existing asset.
-    pub fn edit() -> Self {
-        let mut builder = Self::new();
-        builder.intent = Some(BuilderIntent::Edit);
-        builder
-    }
-
-    // /// Creates a new [`Builder`] for updating an existing asset.
-    // /// This is experimental and not fully implemented yet.
-    // ///
-    // /// This creates an Update manifest, which is a restricted version of an Open manifest.
-    // /// The benefit is a smaller manifest with only non-editorial changes.
-    // /// It must have a parent and no other ingredients.
-    // /// It cannot modify the hashed content of the parent.
-    // /// Only a very limited set of actions can be performed.
-    // pub fn update() -> Self {
-    //     let mut builder = Self::new();
-    //     builder.intent = Some(BuilderIntent::Update);
-    //     builder
-    // }
-
     /// Creates a new [`Builder`] from a JSON [`ManifestDefinition`] string.
-    /// This is experimental and may change in the future.
     ///
     /// # Arguments
     /// * `json` - A JSON string representing the [`ManifestDefinition`].
@@ -2979,7 +2943,8 @@ mod tests {
         let redacted_uri =
             crate::jumbf::labels::to_assertion_uri(parent_manifest_label, ASSERTION_LABEL);
 
-        let mut builder = Builder::edit();
+        let mut builder = Builder::new();
+        builder.set_intent(BuilderIntent::Edit);
         builder.definition.redactions = Some(vec![redacted_uri.clone()]);
 
         let redacted_action = crate::assertions::Action::new("c2pa.redacted")
