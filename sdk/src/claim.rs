@@ -274,6 +274,9 @@ pub struct Claim {
     // Internal list of ingredients
     ingredients_store: HashMap<String, Claim>,
 
+    // Internal ingredients order
+    ingredients_list: Vec<String>,
+
     signature_val: Vec<u8>, // the signature of the loaded/saved claim
 
     // root of CAI store
@@ -419,6 +422,7 @@ impl Claim {
             root: jumbf::labels::MANIFEST_STORE.to_string(),
             signature_val: Vec::new(),
             ingredients_store: HashMap::new(),
+            ingredients_list: Vec::new(),
             label: l,
             conflict_label: None,
             signature: "".to_string(),
@@ -516,6 +520,7 @@ impl Claim {
             root: jumbf::labels::MANIFEST_STORE.to_string(),
             signature_val: Vec::new(),
             ingredients_store: HashMap::new(),
+            ingredients_list: Vec::new(),
             label,
             conflict_label: None,
             signature: "".to_string(),
@@ -648,6 +653,7 @@ impl Claim {
                 format: Some(format),
                 instance_id,
                 ingredients_store: HashMap::new(),
+                ingredients_list: Vec::new(),
                 signature_val: Vec::new(),
                 root: jumbf::labels::MANIFEST_STORE.to_string(),
                 label: label.to_string(),
@@ -754,6 +760,7 @@ impl Claim {
                 format: None,
                 instance_id,
                 ingredients_store: HashMap::new(),
+                ingredients_list: Vec::new(),
                 signature_val: Vec::new(),
                 root: jumbf::labels::MANIFEST_STORE.to_string(),
                 label: label.to_string(),
@@ -2415,21 +2422,18 @@ impl Claim {
                                     if let Some(redaction_label) =
                                         assertion_label_from_uri(redacted_uri)
                                     {
-                                        if ingredient_claim
-                                            .assertion_hashed_uri_from_label(&redaction_label)
-                                            .is_some()
-                                        {
-                                            // The url reference is valid, now check if it was actually redacted
-                                            parent_tested = Some(false);
-                                            // Now if the assertion is not in the assertion store we are ok.
-                                            // Todo: would a zeroed out assertion show up here? if so we need to do a zero check
-                                            if ingredient_claim
-                                                .get_claim_assertion(&redaction_label, 0)
-                                                .is_none()
-                                            {
-                                                parent_tested = Some(true); // it was redacted - all good!
-                                            }
-                                        }
+                                        // The assertion may or may not be in the assertion store.
+                                        // It can exist and be zeroed or be removed entirely
+                                        // but it must be in the claim's assertions HashUri list
+                                        parent_tested = Some(
+                                            ingredient_claim
+                                                .assertions()
+                                                .iter()
+                                                .any(|a| a.url().contains(&redaction_label)),
+                                        );
+                                    } else {
+                                        dbg!("failed here");
+                                        parent_tested = Some(false);
                                     }
                                 }
                             }
@@ -2581,7 +2585,7 @@ impl Claim {
                                     exclusions.iter().position(|r| r.start() == range.start())
                                 {
                                     // replace range using the size that covers entire manifest (including update manifests)
-                                    exclusions.insert(pos, range.clone());
+                                    exclusions[pos] = range.clone();
                                 }
                             }
                         }
@@ -3309,7 +3313,10 @@ impl Claim {
     /// Return reference to the internal claim ingredients.
     /// Used during generation
     pub fn claim_ingredients(&self) -> Vec<&Claim> {
-        self.ingredients_store.values().collect()
+        self.ingredients_list
+            .iter()
+            .filter_map(|l| self.ingredients_store.get(l))
+            .collect()
     }
 
     /// Return reference to the internal claim ingredient store matching this guid.
@@ -3361,10 +3368,25 @@ impl Claim {
 
         // just replace the ingredients with new once since conflicts are resolved by the caller
         for i in ingredient {
-            self.ingredients_store.insert(i.label().into(), i);
+            self.replace_ingredient_or_insert(i.label().into(), i);
         }
 
         Ok(())
+    }
+
+    // insert new ingredient
+    fn insert_ingredient(&mut self, label: String, claim: Claim) {
+        self.ingredients_store.insert(label.clone(), claim);
+        self.ingredients_list.push(label);
+    }
+
+    // insert an ingredient or replace if it already exists
+    pub(crate) fn replace_ingredient_or_insert(&mut self, label: String, claim: Claim) {
+        if self.ingredients_store.contains_key(&label) {
+            self.ingredients_store.insert(label.clone(), claim);
+        } else {
+            self.insert_ingredient(label, claim);
+        }
     }
 
     /// List of redactions
