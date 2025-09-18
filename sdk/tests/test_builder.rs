@@ -13,7 +13,10 @@
 
 use std::io::{self, Cursor};
 
-use c2pa::{settings::Settings, validation_status, Builder, Reader, Result, ValidationState};
+use c2pa::{
+    settings::Settings, validation_status, Builder, ManifestAssertionKind, Reader, Result,
+    ValidationState,
+};
 
 mod common;
 #[cfg(all(feature = "add_thumbnails", feature = "file_io"))]
@@ -326,20 +329,41 @@ fn test_assertion_created_field() -> Result<()> {
     let format = "image/jpeg";
     let mut source = Cursor::new(TEST_IMAGE);
 
-    let mut builder = Builder::edit();
+    let definition = json!(
+    {
+        "assertions": [
+        {
+            "label": "org.test.gathered",
+            "data": {
+                "value": "gathered"
+            }
+        },
+        {
+            "label": "org.test.created",
+            "kind": "Json",
+            "data": {
+                "value": "created"
+            },
+            "created": true
+        }]
+    }
+    )
+    .to_string();
+
+    let mut builder = Builder::from_json(&definition)?;
 
     // Add a regular assertion (should default to created = false)
     builder.add_assertion("org.test.regular", &json!({"value": "regular"}))?;
 
-    let created = json!({
-        "value": "created"
-    });
-    builder.add_assertion("org.test.created", &created)?;
+    // let created = json!({
+    //     "value": "created"
+    // });
+    // builder.add_assertion("org.test.created", &created)?;
 
-    let gathered = json!({
-        "value": "gathered"
-    });
-    builder.add_assertion("org.test.gathered", &gathered)?;
+    // let gathered = json!({
+    //     "value": "gathered"
+    // });
+    // builder.add_assertion("org.test.gathered", &gathered)?;
 
     let mut dest = Cursor::new(Vec::new());
     builder.sign(&Settings::signer()?, format, &mut source, &mut dest)?;
@@ -376,10 +400,90 @@ fn test_assertion_created_field() -> Result<()> {
     assert_eq!(created_assertion.value().unwrap()["value"], "created");
     assert_eq!(gathered_assertion.value().unwrap()["value"], "gathered");
 
+    assert_eq!(created_assertion.kind(), &ManifestAssertionKind::Json);
+    assert_eq!(gathered_assertion.kind(), &ManifestAssertionKind::Cbor);
+    assert_eq!(regular_assertion.kind(), &ManifestAssertionKind::Cbor);
+
     // Test the created() method to verify the created field is preserved
     assert!(!regular_assertion.created()); // add_assertion defaults to false
     assert!(created_assertion.created()); // explicitly set to true
     assert!(!gathered_assertion.created()); // explicitly set to false
 
+    Ok(())
+}
+
+#[test]
+fn test_metadata_formats_json_manifest() -> Result<()> {
+    use c2pa::settings::Settings;
+    Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml"))?;
+
+    let manifest_json = r#"
+    {
+        "assertions": [
+            {
+                "label": "c2pa.metadata",
+                "kind": "Json",
+                "data": {
+                    "@context": { "exif": "http://ns.adobe.com/exif/1.0/" },
+                    "exif:GPSLatitude": "39,21.102N"
+                }
+            },
+            {
+                "label": "cawg.metadata",
+                "kind": "Json",
+                "data": {
+                    "@context": { "cawg": "http://cawg.org/ns/1.0/" },
+                    "cawg:SomeField": "SomeValue"
+                }
+            },
+            {
+                "label": "c2pa.assertion.metadata",
+                "data": {
+                    "@context": { "custom": "http://custom.org/ns/1.0/" },
+                    "custom:Field": "CustomValue"
+                }
+            },
+            {
+                "label": "org.myorg.metadata",
+                "data": {
+                    "@context": { "myorg": "http://myorg.org/ns/1.0/" },
+                    "myorg:Field": "MyOrgValue"
+                }
+            }
+        ]
+    }
+    "#;
+
+    let mut builder = Builder::from_json(manifest_json)?;
+    const TEST_IMAGE: &[u8] = include_bytes!("fixtures/CA.jpg");
+    let format = "image/jpeg";
+    let mut source = Cursor::new(TEST_IMAGE);
+    let mut dest = Cursor::new(Vec::new());
+
+    builder.sign(&Settings::signer()?, format, &mut source, &mut dest)?;
+
+    dest.set_position(0);
+    let reader = Reader::from_stream(format, &mut dest)?;
+
+    for assertion in reader.active_manifest().unwrap().assertions() {
+        match assertion.label() {
+            "c2pa.assertion.metadata" => {
+                assert_eq!(
+                    assertion.kind(),
+                    &ManifestAssertionKind::Cbor,
+                    "c2pa.assertion.metadata should be CBOR"
+                );
+            }
+            "c2pa.metadata" | "cawg.metadata" | "org.myorg.metadata" => {
+                assert_eq!(
+                    assertion.kind(),
+                    &ManifestAssertionKind::Json,
+                    "{} should be JSON",
+                    assertion.label()
+                );
+            }
+            _ => {}
+        }
+    }
     Ok(())
 }
