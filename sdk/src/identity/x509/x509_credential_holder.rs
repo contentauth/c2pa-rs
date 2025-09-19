@@ -88,7 +88,7 @@ mod tests {
             x509::{X509CredentialHolder, X509SignatureVerifier},
             IdentityAssertion,
         },
-        status_tracker::StatusTracker,
+        status_tracker::{LogKind, StatusTracker},
         Builder, Reader, SigningAlg,
     };
 
@@ -134,8 +134,27 @@ mod tests {
         // Read back the Manifest that was generated.
         dest.rewind().unwrap();
 
-        let manifest_store = Reader::from_stream(format, &mut dest).unwrap();
+        let manifest_store = Reader::from_stream_async(format, &mut dest).await.unwrap();
+
         assert_eq!(manifest_store.validation_status(), None);
+
+        let validation_results = manifest_store.validation_results().unwrap();
+        let active_manifest_results = validation_results.active_manifest().unwrap();
+        let active_manifest_success_codes = active_manifest_results.success();
+
+        println!("{manifest_store}");
+
+        let mut ia_success_codes = active_manifest_success_codes.iter().filter(|s| {
+            s.url()
+                .map(|url| url.ends_with("cawg.identity"))
+                .unwrap_or(false)
+                && !s.code().starts_with("assertion.")
+        });
+
+        let ia_success = ia_success_codes.next().unwrap();
+        assert_eq!(ia_success.code(), "signingCredential.trusted");
+        assert!(ia_success.url().unwrap().ends_with("cawg.identity"));
+        assert_eq!(ia_success.kind(), &LogKind::Success);
 
         let manifest = manifest_store.active_manifest().unwrap();
         let mut st = StatusTracker::default();
