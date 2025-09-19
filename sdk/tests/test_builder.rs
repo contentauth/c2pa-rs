@@ -14,8 +14,8 @@
 use std::io::{self, Cursor};
 
 use c2pa::{
-    settings::Settings, validation_status, Builder, ManifestAssertionKind, Reader, Result,
-    ValidationState,
+    settings::Settings, validation_status, Builder, BuilderIntent, ManifestAssertionKind, Reader,
+    Result, ValidationState,
 };
 
 mod common;
@@ -32,7 +32,8 @@ fn test_builder_ca_jpg() -> Result<()> {
     let format = "image/jpeg";
     let mut source = Cursor::new(TEST_IMAGE);
 
-    let mut builder = Builder::edit();
+    let mut builder = Builder::new();
+    builder.set_intent(BuilderIntent::Edit);
 
     use c2pa::assertions::Action;
     builder.add_action(Action::new("c2pa.published"))?;
@@ -68,7 +69,8 @@ fn test_builder_riff() -> Result<()> {
     let mut source = Cursor::new(include_bytes!("fixtures/sample1.wav"));
     let format = "audio/wav";
 
-    let mut builder = Builder::edit();
+    let mut builder = Builder::new();
+    builder.set_intent(BuilderIntent::Edit);
     builder.definition.claim_version = Some(1); // use v1 for this test
     builder.no_embed = true;
     builder.sign(&Settings::signer()?, format, &mut source, &mut io::empty())?;
@@ -83,7 +85,8 @@ fn test_builder_fragmented() -> Result<()> {
     use common::tempdirectory;
     Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml"))?;
 
-    let mut builder = Builder::edit();
+    let mut builder = Builder::new();
+    builder.set_intent(BuilderIntent::Edit);
     let tempdir = tempdirectory().expect("temp dir");
     let output_path = tempdir.path();
     let mut init_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -145,7 +148,8 @@ fn test_builder_fragmented() -> Result<()> {
 fn test_builder_remote_url_no_embed() -> Result<()> {
     Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml"))?;
     //let manifest_def = std::fs::read_to_string(fixtures_path("simple_manifest.json"))?;
-    let mut builder = Builder::edit();
+    let mut builder = Builder::new();
+    builder.set_intent(BuilderIntent::Edit);
     // disable remote fetching for this test
     Settings::from_toml(
         &toml::toml! {
@@ -183,7 +187,8 @@ fn test_builder_embedded_v1_otgp() -> Result<()> {
     let mut source = Cursor::new(include_bytes!("fixtures/XCA.jpg"));
     let format = "image/jpeg";
 
-    let mut builder = Builder::edit();
+    let mut builder = Builder::new();
+    builder.set_intent(BuilderIntent::Edit);
     let mut dest = Cursor::new(Vec::new());
     builder.sign(&Settings::signer()?, format, &mut source, &mut dest)?;
     dest.set_position(0);
@@ -297,7 +302,8 @@ fn test_dynamic_assertions_builder() -> Result<()> {
     }
 
     //let manifest_def = std::fs::read_to_string(fixtures_path("simple_manifest.json"))?;
-    let mut builder = Builder::edit();
+    let mut builder = Builder::new();
+    builder.set_intent(BuilderIntent::Edit);
 
     const TEST_IMAGE: &[u8] = include_bytes!("fixtures/CA.jpg");
     let format = "image/jpeg";
