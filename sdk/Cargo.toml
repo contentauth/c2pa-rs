@@ -156,7 +156,7 @@ regex = "1.11"
 riff = "2.0.0"
 rsa = { version = "0.9.7", features = ["pem", "sha2", "std"], optional = true }
 schemars = { version = "0.8.21", optional = true }
-serde = { version = "1.0.197", features = ["derive"] }
+serde = { version = "1.0.225", features = ["derive"] }
 serde_bytes = "0.11.14"
 serde_cbor = "0.11.1"
 serde_derive = "1.0.197"
