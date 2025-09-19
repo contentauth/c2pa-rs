@@ -134,15 +134,15 @@ mod tests {
         // Read back the Manifest that was generated.
         dest.rewind().unwrap();
 
-        let manifest_store = Reader::from_stream_with_cawg_async(format, &mut dest)
-            .await
-            .unwrap();
+        let manifest_store = Reader::from_stream_async(format, &mut dest).await.unwrap();
 
         assert_eq!(manifest_store.validation_status(), None);
 
         let validation_results = manifest_store.validation_results().unwrap();
         let active_manifest_results = validation_results.active_manifest().unwrap();
         let active_manifest_success_codes = active_manifest_results.success();
+
+        println!("{manifest_store}");
 
         let mut ia_success_codes = active_manifest_success_codes.iter().filter(|s| {
             s.url()

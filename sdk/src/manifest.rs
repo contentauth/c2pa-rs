@@ -30,10 +30,12 @@ use crate::{
     crypto::raw_signature::SigningAlg,
     error::{Error, Result},
     hashed_uri::HashedUri,
+    identity::IdentityAssertion,
     ingredient::Ingredient,
     jumbf::labels::{to_absolute_uri, to_assertion_uri},
     manifest_assertion::ManifestAssertion,
     resource_store::{mime_from_uri, skip_serializing_resources, ResourceRef, ResourceStore},
+    status_tracker::StatusTracker,
     store::Store,
     ClaimGeneratorInfo, ManifestAssertionKind,
 };
@@ -350,6 +352,7 @@ impl Manifest {
         store: &Store,
         manifest_label: &str,
         options: &mut StoreOptions,
+        validation_log: &mut StatusTracker,
     ) -> Result<Self> {
         let claim = store
             .get_claim(manifest_label)
@@ -534,6 +537,44 @@ impl Manifest {
                         .set_kind(ManifestAssertionKind::Json)
                         .set_instance(claim_assertion.instance());
                     manifest.assertions.push(manifest_assertion);
+                }
+                label if label == "cawg.identity" || label.starts_with("cawg.identity__") => {
+                    let value = assertion.as_json_object()?;
+                    let mut ma = ManifestAssertion::new(label.to_string(), value)
+                        .set_instance(claim_assertion.instance());
+
+                    //dbg!(&identity_assertion);
+
+                    let mut partial_claim = crate::dynamic_assertion::PartialClaim::default();
+                    for a in claim.assertions() {
+                        partial_claim.add_assertion(a);
+                    }
+
+                    let uri = to_assertion_uri(manifest_label, label);
+                    validation_log.push_current_uri(&uri);
+                    let value: Option<serde_json::Value> = if _sync {
+                        crate::log_item!(
+                            uri,
+                            "formatting not supported in sync",
+                            "from_store - validating cawg.identity"
+                        )
+                        .validation_status("cawg.validation_skipped")
+                        .informational(validation_log);
+                        None
+                    } else {
+                        let identity_assertion: IdentityAssertion = ma.to_assertion()?;
+                        identity_assertion
+                            .validate_partial_claim(&partial_claim, validation_log)
+                            .await
+                            .ok()
+                    };
+                    if let Some(v) = value {
+                        //debug!("cawg.identity validation returned: {v}");
+                        ma = ManifestAssertion::new(label.to_string(), v)
+                            .set_instance(claim_assertion.instance());
+                    }
+                    validation_log.pop_current_uri();
+                    manifest.assertions.push(ma);
                 }
                 _ => {
                     // inject assertions for all other assertions
