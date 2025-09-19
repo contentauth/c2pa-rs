@@ -269,6 +269,7 @@ impl DataHash {
 impl AssertionCbor for DataHash {}
 
 impl AssertionBase for DataHash {
+    const CREATED: bool = true;
     const LABEL: &'static str = Self::LABEL;
     const VERSION: Option<usize> = Some(ASSERTION_CREATION_VERSION);
 
