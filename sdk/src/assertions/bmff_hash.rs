@@ -345,7 +345,7 @@ impl BmffHash {
         self.bmff_version
     }
 
-    fn set_bmff_version(&mut self, version: usize) {
+    pub(crate) fn set_bmff_version(&mut self, version: usize) {
         self.bmff_version = version;
     }
 
@@ -1591,9 +1591,25 @@ impl AssertionBase for BmffHash {
     const LABEL: &'static str = Self::LABEL;
     const VERSION: Option<usize> = Some(ASSERTION_CREATION_VERSION);
 
-    // todo: this mechanism needs to change since a struct could support different versions
+    // adjust write version if this has version
+    fn version(&self) -> Option<usize> {
+        Some(self.bmff_version)
+    }
 
     fn to_assertion(&self) -> crate::error::Result<Assertion> {
+        // make sure there are no incompatible fields
+        if let Some(merkle) = self.merkle() {
+            for mm in merkle {
+                if self.bmff_version < 3
+                    && (mm.variable_block_sizes.is_some() || mm.fixed_block_size.is_some())
+                {
+                    return Err(Error::VersionCompatibility(
+                        "Use feature that is too new for this version of BMFF Hash".to_string(),
+                    ));
+                }
+            }
+        }
+
         Self::to_cbor_assertion(self)
     }
 
