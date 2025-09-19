@@ -43,6 +43,12 @@ The Rust library crate provides the following capabilities:
 * `no_interleaved_io` forces fully-synchronous I/O; otherwise, the library uses threaded I/O for some operations to improve performance.
 * `serialize_thumbnails` includes binary thumbnail data in the [Serde](https://serde.rs/) serialization output.
 * `pdf` - Enable support for reading claims on PDF files.
+* `http_ureq` *(enabled by default)* - Enables `ureq` for sync HTTP requests.
+* `http_reqwest` *(enabled by default)* - Enables `reqwest` for async HTTP requests.
+* `http_reqwest_blocking` - Enables the `blocking` feature of `reqwest` for sync HTTP requests.
+* `http_wasi` *(enabled by default)* - Enables `wasi` for sync HTTP requests on WASI.
+* `http_wstd` *(enabled by default)* - Enables `wstd` for async HTTP requests on WASI.
+
 
 * the `v1_api` feature is no longer supported.
 
