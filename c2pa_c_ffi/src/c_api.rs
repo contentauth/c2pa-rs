@@ -953,7 +953,6 @@ pub unsafe extern "C" fn c2pa_builder_add_action(
     builder_ptr: *mut C2paBuilder,
     action_json: *const c_char,
 ) -> c_int {
-    check_or_return_int!(builder_ptr);
     let mut builder = guard_boxed_int!(builder_ptr);
     let action_json = from_cstr_or_return_int!(action_json);
 
