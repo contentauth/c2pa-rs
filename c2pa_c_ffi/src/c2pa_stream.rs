@@ -60,27 +60,6 @@ type WriteCallback =
 /// The return value is 0 for success, or a negative number for an error.
 type FlushCallback = unsafe extern "C" fn(context: *mut StreamContext) -> isize;
 
-/// Creates a dummy StreamContext for use when the context is not needed.
-/// This is useful for Python bindings where the context is not used by the callbacks.
-///
-/// # Safety
-/// The returned pointer must be freed by calling c2pa_free_dummy_context.
-#[no_mangle]
-pub unsafe extern "C" fn c2pa_create_dummy_context() -> *mut StreamContext {
-    Box::into_raw(Box::new(StreamContext))
-}
-
-/// Frees a dummy StreamContext created by c2pa_create_dummy_context.
-///
-/// # Safety
-/// The context must have been created by c2pa_create_dummy_context.
-#[no_mangle]
-pub unsafe extern "C" fn c2pa_free_dummy_context(context: *mut StreamContext) {
-    if !context.is_null() {
-        drop(Box::from_raw(context));
-    }
-}
-
 #[repr(C)]
 /// A C2paStream is a Rust Read/Write/Seek stream that can be created and used in C.
 #[derive(Debug)]
