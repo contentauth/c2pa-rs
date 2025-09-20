@@ -60,6 +60,27 @@ type WriteCallback =
 /// The return value is 0 for success, or a negative number for an error.
 type FlushCallback = unsafe extern "C" fn(context: *mut StreamContext) -> isize;
 
+/// Creates a dummy StreamContext for use when the context is not needed.
+/// This is useful for Python bindings where the context is not used by the callbacks.
+///
+/// # Safety
+/// The returned pointer must be freed by calling c2pa_free_dummy_context.
+#[no_mangle]
+pub unsafe extern "C" fn c2pa_create_dummy_context() -> *mut StreamContext {
+    Box::into_raw(Box::new(StreamContext))
+}
+
+/// Frees a dummy StreamContext created by c2pa_create_dummy_context.
+///
+/// # Safety
+/// The context must have been created by c2pa_create_dummy_context.
+#[no_mangle]
+pub unsafe extern "C" fn c2pa_free_dummy_context(context: *mut StreamContext) {
+    if !context.is_null() {
+        drop(Box::from_raw(context));
+    }
+}
+
 #[repr(C)]
 /// A C2paStream is a Rust Read/Write/Seek stream that can be created and used in C.
 #[derive(Debug)]
@@ -131,6 +152,14 @@ impl Read for C2paStream {
             ));
         }
 
+        // Check if context is null before dereferencing
+        if self.context.is_null() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "Stream context is null - stream not properly initialized"
+            ));
+        }
+
         let bytes_read =
             unsafe { (self.reader)(&mut (*self.context), buf.as_mut_ptr(), buf.len() as isize) };
 
@@ -165,6 +194,14 @@ impl Seek for C2paStream {
             std::io::SeekFrom::End(pos) => (pos, C2paSeekMode::End),
         };
 
+        // Check if context is null before dereferencing
+        if self.context.is_null() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "Stream context is null - stream not properly initialized"
+            ));
+        }
+
         let new_pos = unsafe { (self.seeker)(&mut (*self.context), pos as isize, mode) };
         if new_pos < 0 {
             return Err(std::io::Error::last_os_error());
@@ -193,6 +230,15 @@ impl Write for C2paStream {
                 "Write buffer is too large",
             ));
         }
+
+        // Check if context is null before dereferencing
+        if self.context.is_null() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "Stream context is null - stream not properly initialized"
+            ));
+        }
+
         let bytes_written =
             unsafe { (self.writer)(&mut (*self.context), buf.as_ptr(), buf.len() as isize) };
         if bytes_written < 0 {
@@ -210,6 +256,14 @@ impl Write for C2paStream {
     /// # Errors
     /// * Returns an error if the underlying C callback returns an error too (negative value)
     fn flush(&mut self) -> std::io::Result<()> {
+        // Check if context is null before dereferencing
+        if self.context.is_null() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "Stream context is null - stream not properly initialized"
+            ));
+        }
+
         let err = unsafe { (self.flusher)(&mut (*self.context)) };
         if err < 0 {
             return Err(std::io::Error::last_os_error());
