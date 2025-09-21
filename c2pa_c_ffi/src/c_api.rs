@@ -21,8 +21,8 @@ use std::{
 /// when used with pointer arithmetic.
 ///
 /// # Arguments
-/// * `size` - The size to validate
-/// * `ptr` - The pointer to validate against (for address space checks)
+/// * `size` - Size to validate
+/// * `ptr` - Pointer to validate against (for address space checks)
 ///
 /// # Returns
 /// * `true` if the size is safe to use
@@ -78,7 +78,8 @@ unsafe fn safe_slice_from_raw_parts(
     Ok(std::slice::from_raw_parts(ptr, len))
 }
 
-/// Validates a format string
+/// Validates a format string, which is either a mimetype,
+/// or an extension (eg `jpg`).
 ///
 /// # Arguments
 /// * `format` - The format string to validate
@@ -93,7 +94,8 @@ fn validate_format_string(format: &str) -> Result<(), Error> {
     }
     
     // Check for ASCII characters (expected for mimetypes/extensions)
-    if !format.chars().all(|c| c.is_ascii() && (c.is_alphanumeric() || c == '/' || c == '-' || c == '+' || c == '.')) {
+    if !format.chars().all(|c| c.is_ascii() && (c.is_alphanumeric() ||
+            matches!(c, '!' | '#' | '$' | '&' | '-' | '^' | '_' | '.' | '+')) {
         return Err(Error::Other("Format string contains invalid characters".to_string()));
     }
     
