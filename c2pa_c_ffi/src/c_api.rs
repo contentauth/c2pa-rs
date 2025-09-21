@@ -38,8 +38,7 @@ unsafe fn is_safe_buffer_size(size: usize, ptr: *const c_uchar) -> bool {
         return false;
     }
     
-    // Check if the buffer would extend beyond reasonable address space
-    // This is a basic check - in practice, the OS would catch this, but we want to fail fast
+    // Check if the buffer would extend beyond address space to fail fast
     if !ptr.is_null() {
         let end_ptr = ptr.add(size);
         if end_ptr < ptr {
@@ -79,7 +78,7 @@ unsafe fn safe_slice_from_raw_parts(
     Ok(std::slice::from_raw_parts(ptr, len))
 }
 
-/// Validates a format string to ensure it's reasonable and safe
+/// Validates a format string
 ///
 /// # Arguments
 /// * `format` - The format string to validate
@@ -88,17 +87,12 @@ unsafe fn safe_slice_from_raw_parts(
 /// * `Ok(())` if the format string is valid
 /// * `Err(Error)` if the format string is invalid
 fn validate_format_string(format: &str) -> Result<(), Error> {
-    // Check for reasonable length (format strings should be short)
-    if format.len() > 100 {
-        return Err(Error::Other("Format string too long".to_string()));
-    }
-    
     // Check for null bytes (should not be present in valid format strings)
     if format.contains('\0') {
         return Err(Error::Other("Format string contains null bytes".to_string()));
     }
     
-    // Check for reasonable characters (basic ASCII printable characters)
+    // Check for ASCII characters (expected for mimetypes/extensions)
     if !format.chars().all(|c| c.is_ascii() && (c.is_alphanumeric() || c == '/' || c == '-' || c == '+' || c == '.')) {
         return Err(Error::Other("Format string contains invalid characters".to_string()));
     }
