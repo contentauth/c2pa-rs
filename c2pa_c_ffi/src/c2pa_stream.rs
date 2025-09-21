@@ -142,7 +142,6 @@ impl Read for C2paStream {
             ));
         }
 
-        // Check if context is null before dereferencing
         self.check_context()?;
 
         let bytes_read =
@@ -179,7 +178,6 @@ impl Seek for C2paStream {
             std::io::SeekFrom::End(pos) => (pos, C2paSeekMode::End),
         };
 
-        // Check if context is null before dereferencing
         self.check_context()?;
 
         let new_pos = unsafe { (self.seeker)(&mut (*self.context), pos as isize, mode) };
@@ -211,7 +209,6 @@ impl Write for C2paStream {
             ));
         }
 
-        // Check if context is null before dereferencing
         self.check_context()?;
 
         let bytes_written =
@@ -231,7 +228,6 @@ impl Write for C2paStream {
     /// # Errors
     /// * Returns an error if the underlying C callback returns an error too (negative value)
     fn flush(&mut self) -> std::io::Result<()> {
-        // Check if context is null before dereferencing
         self.check_context()?;
 
         let err = unsafe { (self.flusher)(&mut (*self.context)) };
