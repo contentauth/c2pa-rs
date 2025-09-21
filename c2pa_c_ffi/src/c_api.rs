@@ -28,13 +28,8 @@ use std::{
 /// * `true` if the size is safe to use
 /// * `false` if the size would cause integer overflow
 unsafe fn is_safe_buffer_size(size: usize, ptr: *const c_uchar) -> bool {
-    // Check for zero size
-    if size == 0 {
-        return false;
-    }
-
-    // Check for integer overflow in pointer arithmetic
-    if size > isize::MAX as usize {
+    // Combined checks for early return - improves branch prediction
+    if size == 0 || size > isize::MAX as usize {
         return false;
     }
 
