@@ -109,7 +109,7 @@ impl C2paStream {
         unsafe { Box::from_raw(context_ptr) }
     }
 
-    /// Checks if the stream context is null and returns an appropriate error if so.
+    /// Checks the stream context.
     fn check_context(&self) -> std::io::Result<()> {
         if self.context.is_null() {
             return Err(std::io::Error::new(

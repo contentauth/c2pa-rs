@@ -83,24 +83,24 @@ unsafe fn safe_slice_from_raw_parts(
 /// * `Ok(())` if the format string is valid
 /// * `Err(Error)` if the format string is invalid
 fn validate_format_string(format: &str) -> Result<(), Error> {
-    // Check for null bytes (should not be present in valid format strings)
-    if format.contains('\0') {
-        return Err(Error::Other(
-            "Format string contains null bytes".to_string(),
-        ));
+    for &byte in format.as_bytes() {
+        if byte == 0 {
+            return Err(Error::Other(
+                "Format string contains null bytes".to_string(),
+            ));
+        }
+        if !byte.is_ascii()
+            || !(byte.is_ascii_alphanumeric()
+                || matches!(
+                    byte,
+                    b'!' | b'#' | b'$' | b'&' | b'-' | b'^' | b'_' | b'.' | b'+' | b'/'
+                ))
+        {
+            return Err(Error::Other(
+                "Format string contains invalid characters".to_string(),
+            ));
+        }
     }
-
-    // Check for ASCII characters (expected for mimetypes/extensions)
-    if !format.chars().all(|c| {
-        c.is_ascii()
-            && (c.is_alphanumeric()
-                || matches!(c, '!' | '#' | '$' | '&' | '-' | '^' | '_' | '.' | '+' | '/'))
-    }) {
-        return Err(Error::Other(
-            "Format string contains invalid characters".to_string(),
-        ));
-    }
-
     Ok(())
 }
 
