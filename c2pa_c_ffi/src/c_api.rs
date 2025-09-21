@@ -82,7 +82,7 @@ unsafe fn safe_slice_from_raw_parts(
 /// or an extension (eg `jpg`).
 ///
 /// # Arguments
-/// * `format` - The format string to validate
+/// * `format` - The format string to validate (mimetype or extension)
 ///
 /// # Returns
 /// * `Ok(())` if the format string is valid
@@ -92,13 +92,13 @@ fn validate_format_string(format: &str) -> Result<(), Error> {
     if format.contains('\0') {
         return Err(Error::Other("Format string contains null bytes".to_string()));
     }
-    
+
     // Check for ASCII characters (expected for mimetypes/extensions)
     if !format.chars().all(|c| c.is_ascii() && (c.is_alphanumeric() ||
-            matches!(c, '!' | '#' | '$' | '&' | '-' | '^' | '_' | '.' | '+')) {
+            matches!(c, '!' | '#' | '$' | '&' | '-' | '^' | '_' | '.' | '+' | '/'))) {
         return Err(Error::Other("Format string contains invalid characters".to_string()));
     }
-    
+
     Ok(())
 }
 
@@ -1322,13 +1322,13 @@ pub unsafe extern "C" fn c2pa_format_embeddable(
     let format = from_cstr_or_return_int!(format);
     check_or_return_int!(manifest_bytes_ptr);
     check_or_return_int!(result_bytes_ptr);
-    
+
     // Validate format string
     if let Err(err) = validate_format_string(&format) {
         err.set_last();
         return -1;
     }
-    
+
     // Safe bounds validation for manifest bytes
     let bytes = match safe_slice_from_raw_parts(manifest_bytes_ptr, manifest_bytes_size, "manifest_bytes_ptr") {
         Ok(bytes) => bytes,
