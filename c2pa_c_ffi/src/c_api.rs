@@ -32,12 +32,12 @@ unsafe fn is_safe_buffer_size(size: usize, ptr: *const c_uchar) -> bool {
     if size == 0 {
         return false;
     }
-    
+
     // Check for integer overflow in pointer arithmetic
     if size > isize::MAX as usize {
         return false;
     }
-    
+
     // Check if the buffer would extend beyond address space to fail fast
     if !ptr.is_null() {
         let end_ptr = ptr.add(size);
@@ -45,7 +45,7 @@ unsafe fn is_safe_buffer_size(size: usize, ptr: *const c_uchar) -> bool {
             return false; // Wrapped around
         }
     }
-    
+
     true
 }
 
@@ -67,14 +67,14 @@ unsafe fn safe_slice_from_raw_parts(
     if ptr.is_null() {
         return Err(Error::NullParameter(param_name.to_string()));
     }
-    
+
     if !is_safe_buffer_size(len, ptr) {
         return Err(Error::Other(format!(
             "Buffer size {} is invalid for parameter '{}'",
             len, param_name
         )));
     }
-    
+
     Ok(std::slice::from_raw_parts(ptr, len))
 }
 
@@ -90,13 +90,20 @@ unsafe fn safe_slice_from_raw_parts(
 fn validate_format_string(format: &str) -> Result<(), Error> {
     // Check for null bytes (should not be present in valid format strings)
     if format.contains('\0') {
-        return Err(Error::Other("Format string contains null bytes".to_string()));
+        return Err(Error::Other(
+            "Format string contains null bytes".to_string(),
+        ));
     }
 
     // Check for ASCII characters (expected for mimetypes/extensions)
-    if !format.chars().all(|c| c.is_ascii() && (c.is_alphanumeric() ||
-            matches!(c, '!' | '#' | '$' | '&' | '-' | '^' | '_' | '.' | '+' | '/'))) {
-        return Err(Error::Other("Format string contains invalid characters".to_string()));
+    if !format.chars().all(|c| {
+        c.is_ascii()
+            && (c.is_alphanumeric()
+                || matches!(c, '!' | '#' | '$' | '&' | '-' | '^' | '_' | '.' | '+' | '/'))
+    }) {
+        return Err(Error::Other(
+            "Format string contains invalid characters".to_string(),
+        ));
     }
 
     Ok(())
@@ -592,7 +599,7 @@ pub unsafe extern "C" fn c2pa_reader_from_stream(
     stream: *mut C2paStream,
 ) -> *mut C2paReader {
     let format = from_cstr_or_return_null!(format);
-    
+
     // Validate format string
     if let Err(err) = validate_format_string(&format) {
         err.set_last();
@@ -661,21 +668,22 @@ pub unsafe extern "C" fn c2pa_reader_from_manifest_data_and_stream(
 ) -> *mut C2paReader {
     check_or_return_null!(manifest_data);
     let format = from_cstr_or_return_null!(format);
-    
+
     // Validate format string
     if let Err(err) = validate_format_string(&format) {
         err.set_last();
         return std::ptr::null_mut();
     }
-    
+
     // Safe bounds validation for manifest data
-    let manifest_bytes = match safe_slice_from_raw_parts(manifest_data, manifest_size, "manifest_data") {
-        Ok(bytes) => bytes,
-        Err(err) => {
-            err.set_last();
-            return std::ptr::null_mut();
-        }
-    };
+    let manifest_bytes =
+        match safe_slice_from_raw_parts(manifest_data, manifest_size, "manifest_data") {
+            Ok(bytes) => bytes,
+            Err(err) => {
+                err.set_last();
+                return std::ptr::null_mut();
+            }
+        };
 
     let result = C2paReader::from_manifest_data_and_stream(manifest_bytes, &format, &mut (*stream));
     return_boxed!(post_validate(result))
@@ -996,13 +1004,13 @@ pub unsafe extern "C" fn c2pa_builder_add_ingredient_from_stream(
     let mut builder = guard_boxed!(builder_ptr);
     let ingredient_json = from_cstr_or_return_int!(ingredient_json);
     let format = from_cstr_or_return_int!(format);
-    
+
     // Validate format string
     if let Err(err) = validate_format_string(&format) {
         err.set_last();
         return -1;
     }
-    
+
     let result = builder.add_ingredient_from_stream(&ingredient_json, &format, &mut (*source));
     ok_or_return_int!(result, |_| 0) // returns 0 on success
 }
@@ -1330,7 +1338,11 @@ pub unsafe extern "C" fn c2pa_format_embeddable(
     }
 
     // Safe bounds validation for manifest bytes
-    let bytes = match safe_slice_from_raw_parts(manifest_bytes_ptr, manifest_bytes_size, "manifest_bytes_ptr") {
+    let bytes = match safe_slice_from_raw_parts(
+        manifest_bytes_ptr,
+        manifest_bytes_size,
+        "manifest_bytes_ptr",
+    ) {
         Ok(bytes) => bytes,
         Err(err) => {
             err.set_last();
@@ -2067,22 +2079,23 @@ mod tests {
             }
 
             // Safe bounds validation for test callback
-            let signature_slice = match unsafe { safe_slice_from_raw_parts(signature, signature_len, "signature") } {
-                Ok(slice) => slice,
-                Err(_) => {
-                    unsafe { c2pa_signature_free(signature) };
-                    return -1;
-                }
-            };
-            
+            let signature_slice =
+                match unsafe { safe_slice_from_raw_parts(signature, signature_len, "signature") } {
+                    Ok(slice) => slice,
+                    Err(_) => {
+                        unsafe { c2pa_signature_free(signature) };
+                        return -1;
+                    }
+                };
+
             // Validate signed_bytes bounds
             if !unsafe { is_safe_buffer_size(signed_len, signed_bytes) } {
                 unsafe { c2pa_signature_free(signature) };
                 return -1;
             }
-            
+
             let signed_slice = unsafe { std::slice::from_raw_parts_mut(signed_bytes, signed_len) };
-            
+
             if signature_len <= signed_slice.len() {
                 signed_slice[..signature_len].copy_from_slice(signature_slice);
             } else {

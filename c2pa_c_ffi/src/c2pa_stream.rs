@@ -135,7 +135,7 @@ impl Read for C2paStream {
         if self.context.is_null() {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidInput,
-                "Stream context is null - stream not properly initialized"
+                "Stream context is null: stream not properly initialized",
             ));
         }
 
@@ -177,7 +177,7 @@ impl Seek for C2paStream {
         if self.context.is_null() {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidInput,
-                "Stream context is null - stream not properly initialized"
+                "Stream context is null: stream not properly initialized",
             ));
         }
 
@@ -214,7 +214,7 @@ impl Write for C2paStream {
         if self.context.is_null() {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidInput,
-                "Stream context is null - stream not properly initialized"
+                "Stream context is null: stream not properly initialized",
             ));
         }
 
@@ -239,7 +239,7 @@ impl Write for C2paStream {
         if self.context.is_null() {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidInput,
-                "Stream context is null - stream not properly initialized"
+                "Stream context is null: stream not properly initialized",
             ));
         }
 
