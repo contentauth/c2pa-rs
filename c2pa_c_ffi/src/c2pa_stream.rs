@@ -108,17 +108,6 @@ impl C2paStream {
         let context_ptr = std::mem::replace(&mut self.context, std::ptr::null_mut());
         unsafe { Box::from_raw(context_ptr) }
     }
-
-    /// Checks the stream context.
-    fn check_context(&self) -> std::io::Result<()> {
-        if self.context.is_null() {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidInput,
-                "Stream context is null: stream not properly initialized",
-            ));
-        }
-        Ok(())
-    }
 }
 
 impl Read for C2paStream {
@@ -141,8 +130,6 @@ impl Read for C2paStream {
                 "Read buffer is too large",
             ));
         }
-
-        self.check_context()?;
 
         let bytes_read =
             unsafe { (self.reader)(&mut (*self.context), buf.as_mut_ptr(), buf.len() as isize) };
@@ -178,8 +165,6 @@ impl Seek for C2paStream {
             std::io::SeekFrom::End(pos) => (pos, C2paSeekMode::End),
         };
 
-        self.check_context()?;
-
         let new_pos = unsafe { (self.seeker)(&mut (*self.context), pos as isize, mode) };
         if new_pos < 0 {
             return Err(std::io::Error::last_os_error());
@@ -209,8 +194,6 @@ impl Write for C2paStream {
             ));
         }
 
-        self.check_context()?;
-
         let bytes_written =
             unsafe { (self.writer)(&mut (*self.context), buf.as_ptr(), buf.len() as isize) };
         if bytes_written < 0 {
@@ -228,8 +211,6 @@ impl Write for C2paStream {
     /// # Errors
     /// * Returns an error if the underlying C callback returns an error too (negative value)
     fn flush(&mut self) -> std::io::Result<()> {
-        self.check_context()?;
-
         let err = unsafe { (self.flusher)(&mut (*self.context)) };
         if err < 0 {
             return Err(std::io::Error::last_os_error());

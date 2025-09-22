@@ -73,37 +73,6 @@ unsafe fn safe_slice_from_raw_parts(
     Ok(std::slice::from_raw_parts(ptr, len))
 }
 
-/// Validates a format string, which is either a mimetype,
-/// or an extension (eg `jpg`).
-///
-/// # Arguments
-/// * `format` - The format string to validate (mimetype or extension)
-///
-/// # Returns
-/// * `Ok(())` if the format string is valid
-/// * `Err(Error)` if the format string is invalid
-fn validate_format_string(format: &str) -> Result<(), Error> {
-    for &byte in format.as_bytes() {
-        if byte == 0 {
-            return Err(Error::Other(
-                "Format string contains null bytes".to_string(),
-            ));
-        }
-        if !byte.is_ascii()
-            || !(byte.is_ascii_alphanumeric()
-                || matches!(
-                    byte,
-                    b'!' | b'#' | b'$' | b'&' | b'-' | b'^' | b'_' | b'.' | b'+' | b'/'
-                ))
-        {
-            return Err(Error::Other(
-                "Format string contains invalid characters".to_string(),
-            ));
-        }
-    }
-    Ok(())
-}
-
 // C has no namespace so we prefix things with C2PA to make them unique
 #[allow(deprecated)]
 use c2pa::settings::load_settings_from_str;
@@ -595,12 +564,6 @@ pub unsafe extern "C" fn c2pa_reader_from_stream(
 ) -> *mut C2paReader {
     let format = from_cstr_or_return_null!(format);
 
-    // Validate format string
-    if let Err(err) = validate_format_string(&format) {
-        err.set_last();
-        return std::ptr::null_mut();
-    }
-
     let result = C2paReader::from_stream(&format, &mut (*stream));
 
     return_boxed!(post_validate(result))
@@ -663,12 +626,6 @@ pub unsafe extern "C" fn c2pa_reader_from_manifest_data_and_stream(
 ) -> *mut C2paReader {
     check_or_return_null!(manifest_data);
     let format = from_cstr_or_return_null!(format);
-
-    // Validate format string
-    if let Err(err) = validate_format_string(&format) {
-        err.set_last();
-        return std::ptr::null_mut();
-    }
 
     // Safe bounds validation for manifest data
     let manifest_bytes =
@@ -1000,12 +957,6 @@ pub unsafe extern "C" fn c2pa_builder_add_ingredient_from_stream(
     let ingredient_json = from_cstr_or_return_int!(ingredient_json);
     let format = from_cstr_or_return_int!(format);
 
-    // Validate format string
-    if let Err(err) = validate_format_string(&format) {
-        err.set_last();
-        return -1;
-    }
-
     let result = builder.add_ingredient_from_stream(&ingredient_json, &format, &mut (*source));
     ok_or_return_int!(result, |_| 0) // returns 0 on success
 }
@@ -1325,12 +1276,6 @@ pub unsafe extern "C" fn c2pa_format_embeddable(
     let format = from_cstr_or_return_int!(format);
     check_or_return_int!(manifest_bytes_ptr);
     check_or_return_int!(result_bytes_ptr);
-
-    // Validate format string
-    if let Err(err) = validate_format_string(&format) {
-        err.set_last();
-        return -1;
-    }
 
     // Safe bounds validation for manifest bytes
     let bytes = match safe_slice_from_raw_parts(
