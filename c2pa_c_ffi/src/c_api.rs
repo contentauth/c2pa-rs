@@ -956,7 +956,6 @@ pub unsafe extern "C" fn c2pa_builder_add_ingredient_from_stream(
     let mut builder = guard_boxed!(builder_ptr);
     let ingredient_json = from_cstr_or_return_int!(ingredient_json);
     let format = from_cstr_or_return_int!(format);
-
     let result = builder.add_ingredient_from_stream(&ingredient_json, &format, &mut (*source));
     ok_or_return_int!(result, |_| 0) // returns 0 on success
 }
