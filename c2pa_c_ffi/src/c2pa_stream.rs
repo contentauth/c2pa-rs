@@ -193,7 +193,6 @@ impl Write for C2paStream {
                 "Write buffer is too large",
             ));
         }
-
         let bytes_written =
             unsafe { (self.writer)(&mut (*self.context), buf.as_ptr(), buf.len() as isize) };
         if bytes_written < 0 {
