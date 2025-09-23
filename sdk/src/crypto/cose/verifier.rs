@@ -104,14 +104,20 @@ impl Verifier<'_> {
         }
 
         if _sync {
-            self.verify_profile(&sign1, tst_info, validation_log)?;
-            self.verify_trust(&sign1, tst_info, validation_log)?;
+            self.verify_profile(&sign1, tst_info, validation_log)
         } else {
             self.verify_profile_async(&sign1, tst_info, validation_log)
-                .await?;
-            self.verify_trust_async(&sign1, tst_info, validation_log)
-                .await?;
+                .await
         }
+        .ok(); // Ignore errors here - they have already been logged.
+
+        if _sync {
+            self.verify_trust(&sign1, tst_info, validation_log)
+        } else {
+            self.verify_trust_async(&sign1, tst_info, validation_log)
+                .await
+        }
+        .ok(); // Ignore errors here - they have already been logged.
 
         // Reconstruct payload and additional data as it should have been at time of
         // signing.
