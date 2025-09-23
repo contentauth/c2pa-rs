@@ -72,7 +72,7 @@ use crate::{
     log_item,
     manifest_store_report::ManifestStoreReport,
     salt::DefaultSalt,
-    settings::{builder::OcspFetch, get_settings_value},
+    settings::{builder::OcspFetch, get_settings_value, Settings},
     status_tracker::{ErrorBehavior, StatusTracker},
     utils::{
         hash_utils::HashRange,
@@ -3409,8 +3409,11 @@ impl Store {
         Ok(bytes.to_vec())
     }
 
-    /// Handles remote manifests when file_io/fetch_remote_manifests feature is enabled
-    fn handle_remote_manifest(ext_ref: &str) -> Result<Vec<u8>> {
+    /// Handles remote manifests when fetch_remote_manifests feature is enabled
+    fn handle_remote_manifest(ext_ref: &str, settings: &Settings) -> Result<Vec<u8>> {
+        #[allow(unused)] // Not used in all configurations.
+        let remote_manifest_fetch_enabled = settings.verify.remote_manifest_fetch;
+
         // verify provenance path is remote url
         if Store::is_valid_remote_url(ext_ref) {
             #[cfg(all(
@@ -3418,8 +3421,8 @@ impl Store {
                 any(not(target_arch = "wasm32"), target_os = "wasi")
             ))]
             {
-                // Everything except browser wasm if fetch_remote_manifests is enabled
-                if get_settings_value::<bool>("verify.remote_manifest_fetch").unwrap_or(true) {
+                // Everything except browser Wasm if fetch_remote_manifests is enabled.
+                if remote_manifest_fetch_enabled {
                     Store::fetch_remote_manifest(ext_ref)
                 } else {
                     Err(Error::RemoteManifestUrl(ext_ref.to_owned()))
@@ -3444,17 +3447,21 @@ impl Store {
         }
     }
 
-    /// Handles remote manifests asynchronously when fetch_remote_manifests feature is enabled
+    /// Handles remote manifests asynchronously when fetch_remote_manifests feature is enabled.
+    ///
     /// Required because wasm-bindgen cannot use async functions in a sync context.
     #[cfg(target_arch = "wasm32")]
-    async fn handle_remote_manifest_async(ext_ref: &str) -> Result<Vec<u8>> {
+    async fn handle_remote_manifest_async(ext_ref: &str, settings: &Settings) -> Result<Vec<u8>> {
+        #[allow(unused)] // Not used in all configurations.
+        let remote_manifest_fetch_enabled = settings.verify.remote_manifest_fetch;
+
         #[cfg(not(feature = "fetch_remote_manifests"))]
         return Err(Error::RemoteManifestUrl(ext_ref.to_owned()));
 
         #[cfg(feature = "fetch_remote_manifests")]
         {
             if Store::is_valid_remote_url(ext_ref) {
-                if get_settings_value::<bool>("verify.remote_manifest_fetch").unwrap_or(true) {
+                if remote_manifest_fetch_enabled {
                     Store::fetch_remote_manifest_async(ext_ref).await
                 } else {
                     Err(Error::RemoteManifestUrl(ext_ref.to_owned()))
@@ -3474,11 +3481,14 @@ impl Store {
     ///
     /// Returns a tuple (jumbf_bytes, remote_url), returning a remote_url only
     /// if it was used to fetch the jumbf_bytes.
-    #[async_generic()]
+    #[async_generic]
     pub fn load_jumbf_from_stream(
         asset_type: &str,
         stream: &mut dyn CAIRead,
     ) -> Result<(Vec<u8>, Option<String>)> {
+        let settings = crate::settings::get_settings().unwrap_or_default();
+        // TO DO BEFORE MERGE? Pass Settings in here?
+
         match load_jumbf_from_stream(asset_type, stream) {
             Ok(manifest_bytes) => Ok((manifest_bytes, None)),
             Err(Error::JumbfNotFound) => {
@@ -3488,14 +3498,20 @@ impl Store {
                         .provenance
                 {
                     #[cfg(not(target_arch = "wasm32"))]
-                    return Ok((Store::handle_remote_manifest(&ext_ref)?, Some(ext_ref)));
+                    return Ok((
+                        Store::handle_remote_manifest(&ext_ref, &settings)?,
+                        Some(ext_ref),
+                    ));
                     #[cfg(target_arch = "wasm32")]
                     {
                         if _sync {
-                            return Ok((Store::handle_remote_manifest(&ext_ref)?, Some(ext_ref)));
+                            return Ok((
+                                Store::handle_remote_manifest(&ext_ref, &settings)?,
+                                Some(ext_ref),
+                            ));
                         } else {
                             return Ok((
-                                Store::handle_remote_manifest_async(&ext_ref).await?,
+                                Store::handle_remote_manifest_async(&ext_ref, &settings).await?,
                                 Some(ext_ref),
                             ));
                         }
@@ -3516,6 +3532,9 @@ impl Store {
     /// validation_log - optional vec to contain addition info about the asset
     #[cfg(feature = "file_io")]
     pub fn load_jumbf_from_path(in_path: &Path) -> Result<Vec<u8>> {
+        let settings = crate::settings::get_settings().unwrap_or_default();
+        // TO DO BEFORE MERGE? Pass Settings in here?
+
         let external_manifest = in_path.with_extension(MANIFEST_STORE_EXT);
         let external_exists = external_manifest.exists();
 
@@ -3541,7 +3560,7 @@ impl Store {
                     )
                     .provenance
                     {
-                        Store::handle_remote_manifest(&ext_ref)
+                        Store::handle_remote_manifest(&ext_ref, &settings)
                     } else {
                         Err(Error::JumbfNotFound)
                     }
