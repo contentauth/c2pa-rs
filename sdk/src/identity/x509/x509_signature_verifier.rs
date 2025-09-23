@@ -162,14 +162,14 @@ mod tests {
 
     use crate::{
         crypto::{
-            cose::{CertificateTrustPolicy, CoseError, Verifier},
+            cose::{CertificateTrustPolicy, Verifier},
             raw_signature,
         },
         identity::{
             builder::{IdentityAssertionBuilder, IdentityAssertionSigner},
             tests::fixtures::{cert_chain_and_private_key_for_alg, manifest_json, parent_json},
             x509::{X509CredentialHolder, X509SignatureVerifier},
-            IdentityAssertion, ValidationError,
+            IdentityAssertion,
         },
         status_tracker::{LogKind, StatusTracker},
         Builder, Reader, SigningAlg,
@@ -244,17 +244,9 @@ mod tests {
 
         let x509_verifier = X509SignatureVerifier { cose_verifier };
 
-        let err = ia
-            .validate(manifest, &mut st, &x509_verifier)
-            .await
-            .unwrap_err();
-
-        match err {
-            ValidationError::SignatureError(CoseError::CertificateTrustError(_)) => {}
-            _ => {
-                panic!("Unexpected error: {err:#?}");
-            }
-        }
+        let result = ia.validate(manifest, &mut st, &x509_verifier).await;
+        // this should log an error but return Ok
+        assert!(result.is_ok());
 
         assert_eq!(st.logged_items().len(), 1);
 
