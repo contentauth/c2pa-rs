@@ -247,13 +247,14 @@ pub mod tests {
 
     use super::*;
     use crate::{
-        crypto::raw_signature::SigningAlg, status_tracker::StatusTracker,
+        crypto::raw_signature::SigningAlg, settings::Settings, status_tracker::StatusTracker,
         utils::test_signer::test_signer, Signer,
     };
 
     #[test]
     fn test_no_timestamp() {
-        crate::settings::set_settings_value("verify.verify_trust", false).unwrap();
+        let mut settings = Settings::default();
+        settings.verify.verify_trust = false;
 
         let mut validation_log = StatusTracker::default();
 
@@ -267,7 +268,8 @@ pub mod tests {
         let signer = test_signer(SigningAlg::Ps256);
 
         let cose_bytes =
-            crate::cose_sign::sign_claim(&claim_bytes, signer.as_ref(), box_size).unwrap();
+            crate::cose_sign::sign_claim(&claim_bytes, signer.as_ref(), box_size, &settings)
+                .unwrap();
 
         let cose_sign1 = parse_cose_sign1(&cose_bytes, &claim_bytes, &mut validation_log).unwrap();
 
@@ -282,7 +284,8 @@ pub mod tests {
             time_stamp::{TimeStampError, TimeStampProvider},
         };
 
-        crate::settings::set_settings_value("verify.verify_trust", false).unwrap();
+        let mut settings = Settings::default();
+        settings.verify.verify_trust = false;
 
         let mut validation_log = StatusTracker::default();
 
@@ -333,9 +336,13 @@ pub mod tests {
         };
 
         // sign and staple
-        let cose_bytes =
-            crate::cose_sign::sign_claim(&claim_bytes, &ocsp_signer, ocsp_signer.reserve_size())
-                .unwrap();
+        let cose_bytes = crate::cose_sign::sign_claim(
+            &claim_bytes,
+            &ocsp_signer,
+            ocsp_signer.reserve_size(),
+            &settings,
+        )
+        .unwrap();
 
         let cose_sign1 = parse_cose_sign1(&cose_bytes, &claim_bytes, &mut validation_log).unwrap();
         let ocsp_stapled = get_ocsp_der(&cose_sign1).unwrap();

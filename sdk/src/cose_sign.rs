@@ -29,7 +29,7 @@ use crate::{
         raw_signature::{AsyncRawSigner, RawSigner, RawSignerError, SigningAlg},
         time_stamp::{AsyncTimeStampProvider, TimeStampError, TimeStampProvider},
     },
-    settings::get_settings_value,
+    settings::{get_settings_value, Settings},
     status_tracker::{ErrorBehavior, StatusTracker},
     AsyncSigner, Error, Result, Signer,
 };
@@ -54,12 +54,15 @@ use crate::{
 #[async_generic(async_signature(
     claim_bytes: &[u8],
     signer: &dyn AsyncSigner,
-    box_size: usize
+    box_size: usize,
+    settings: &Settings,
 ))]
-pub fn sign_claim(claim_bytes: &[u8], signer: &dyn Signer, box_size: usize) -> Result<Vec<u8>> {
-    let settings = crate::settings::get_settings().unwrap_or_default();
-    // TO DO BEFORE MERGE? Pass Settings in here?
-
+pub fn sign_claim(
+    claim_bytes: &[u8],
+    signer: &dyn Signer,
+    box_size: usize,
+    settings: &Settings,
+) -> Result<Vec<u8>> {
     // Must be a valid claim.
     let label = "dummy_label";
     let claim = Claim::from_data(label, claim_bytes)?;
@@ -286,6 +289,7 @@ mod tests {
     use crate::{
         claim::Claim,
         crypto::raw_signature::SigningAlg,
+        settings::Settings,
         utils::test_signer::{async_test_signer, test_signer},
         Result, Signer,
     };
@@ -297,7 +301,8 @@ mod tests {
         // let passthrough_cap = CertificateTrustPolicy::default();
         // mode which does not pass through the top level (c2pa-rs) unit tests
         //configuration so the test trust list is not loaded
-        crate::settings::set_settings_value("verify.verify_trust", false).unwrap();
+        let mut settings = Settings::default();
+        settings.verify.verify_trust = false;
 
         let mut claim = Claim::new("extern_sign_test", Some("contentauth"), 1);
         claim.build().unwrap();
@@ -307,7 +312,7 @@ mod tests {
         let signer = test_signer(SigningAlg::Ps256);
         let box_size = Signer::reserve_size(signer.as_ref());
 
-        let cose_sign1 = sign_claim(&claim_bytes, signer.as_ref(), box_size).unwrap();
+        let cose_sign1 = sign_claim(&claim_bytes, signer.as_ref(), box_size, &settings).unwrap();
 
         assert_eq!(cose_sign1.len(), box_size);
     }
@@ -319,7 +324,8 @@ mod tests {
         // let passthrough_cap = CertificateTrustPolicy::default();
         // mode which does not pass through the top level (c2pa-rs) unit tests
         //configuration so the test trust list is not loaded
-        crate::settings::set_settings_value("verify.verify_trust", false).unwrap();
+        let mut settings = Settings::default();
+        settings.verify.verify_trust = false;
 
         use crate::{cose_sign::sign_claim_async, crypto::raw_signature::SigningAlg, AsyncSigner};
 
@@ -331,7 +337,7 @@ mod tests {
         let signer = async_test_signer(SigningAlg::Ps256);
         let box_size = signer.reserve_size();
 
-        let cose_sign1 = sign_claim_async(&claim_bytes, &signer, box_size)
+        let cose_sign1 = sign_claim_async(&claim_bytes, &signer, box_size, &settings)
             .await
             .unwrap();
 
@@ -373,6 +379,8 @@ mod tests {
 
     #[test]
     fn test_bogus_signer() {
+        let settings = Settings::default();
+
         let mut claim = Claim::new("bogus_sign_test", Some("contentauth"), 1);
         claim.build().unwrap();
 
@@ -382,7 +390,7 @@ mod tests {
 
         let signer = BogusSigner::new();
 
-        let _cose_sign1 = sign_claim(&claim_bytes, &signer, box_size);
+        let _cose_sign1 = sign_claim(&claim_bytes, &signer, box_size, &settings);
 
         assert!(_cose_sign1.is_err());
     }
