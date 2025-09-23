@@ -1013,6 +1013,8 @@ fn adjust_known_offsets<W: Write + CAIRead + ?Sized>(
                 output.seek(SeekFrom::Start(base_data_offset_pos))?;
                 output.write_u64::<BigEndian>(base_data_offset)?;
             }
+
+            // ignore rest of fields
         }
     }
 
