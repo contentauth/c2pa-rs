@@ -176,7 +176,7 @@ pub(crate) struct Core {
     compress_manifests: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     max_memory_usage: Option<u64>,
-    backing_store_memory_threshold_in_mb: usize,
+    pub(crate) backing_store_memory_threshold_in_mb: usize,
     // TODO: pending https://github.com/contentauth/c2pa-rs/pull/1180
     // prefer_update_manifests: bool,
 }
@@ -257,7 +257,7 @@ pub struct Settings {
     // Rename to c2pa_trust? Discuss possibly breaking change.
     trust: Trust,
     cawg_trust: Trust,
-    core: Core,
+    pub(crate) core: Core,
     verify: Verify,
     builder: BuilderSettings,
     #[serde(skip_serializing_if = "Option::is_none")]

@@ -76,8 +76,7 @@ use crate::{
     status_tracker::{ErrorBehavior, StatusTracker},
     utils::{
         hash_utils::HashRange,
-        io_utils,
-        io_utils::{insert_data_at, stream_len},
+        io_utils::{self, insert_data_at, stream_len},
         is_zero,
         patch::patch_bytes,
     },
@@ -2821,11 +2820,16 @@ impl Store {
         }
     }
 
-    /// Embed the claims store as jumbf into a stream. Updates XMP with provenance record.
-    /// When called, the stream should contain an asset matching format.
-    /// on return, the stream will contain the new manifest signed with signer
-    /// This directly modifies the asset in stream, backup stream first if you need to preserve it.
-    /// This can also handle remote signing if direct_cose_handling() is true.
+    /// Embed the claims store as JUMBF into a stream. Updates XMP with provenance
+    /// record.
+    ///
+    /// When called, the stream should contain an asset matching `format`.
+    /// On return, the stream will contain the new manifest signed with `signer`.
+    ///
+    /// This directly modifies the asset in stream. Back up the stream first if
+    /// you need to preserve it.
+    ///
+    /// This can also handle remote signing if `direct_cose_handling()` is `true`.
     #[allow(unused_variables)]
     #[async_generic(async_signature(
         &mut self,
@@ -2834,13 +2838,16 @@ impl Store {
         output_stream: &mut dyn CAIReadWrite,
         signer: &dyn AsyncSigner,
     ))]
-    pub fn save_to_stream(
+    pub(crate) fn save_to_stream(
         &mut self,
         format: &str,
         input_stream: &mut dyn CAIRead,
         output_stream: &mut dyn CAIReadWrite,
         signer: &dyn Signer,
     ) -> Result<Vec<u8>> {
+        let settings = crate::settings::get_settings().unwrap_or_default();
+        // TO DO BEFORE MERGE? Pass Settings in here?
+
         let dynamic_assertions = signer.dynamic_assertions();
 
         let da_uris = if _sync {
@@ -2850,7 +2857,9 @@ impl Store {
                 .await?
         };
 
-        let mut intermediate_stream = io_utils::stream_with_fs_fallback(None)?;
+        let threshold = settings.core.backing_store_memory_threshold_in_mb;
+
+        let mut intermediate_stream = io_utils::stream_with_fs_fallback(threshold);
 
         #[allow(unused_mut)] // Not mutable in the non-async case.
         let mut jumbf_bytes = self.start_save_stream(
@@ -2953,7 +2962,11 @@ impl Store {
         output_stream: &mut dyn CAIReadWrite,
         reserve_size: usize,
     ) -> Result<Vec<u8>> {
-        let mut intermediate_stream = io_utils::stream_with_fs_fallback(None)?;
+        let settings = crate::settings::get_settings().unwrap_or_default();
+
+        let threshold = settings.core.backing_store_memory_threshold_in_mb;
+
+        let mut intermediate_stream = io_utils::stream_with_fs_fallback(threshold);
 
         let pc = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
 
@@ -2979,7 +2992,7 @@ impl Store {
                     .get_writer(format)
                     .ok_or(Error::UnsupportedType)?;
 
-                let mut tmp_stream = io_utils::stream_with_fs_fallback(None)?;
+                let mut tmp_stream = io_utils::stream_with_fs_fallback(threshold);
                 manifest_writer.remove_cai_store_from_stream(input_stream, &mut tmp_stream)?;
 
                 // add external ref if possible
@@ -3027,7 +3040,7 @@ impl Store {
 
                 // insert UUID boxes at the correct location if required
                 if let Some(merkle_uuid_boxes) = &bmff_hash.merkle_uuid_boxes {
-                    let mut temp_stream = io_utils::stream_with_fs_fallback(None)?;
+                    let mut temp_stream = io_utils::stream_with_fs_fallback(threshold);
 
                     insert_data_at(
                         &mut intermediate_stream,
