@@ -3037,7 +3037,7 @@ impl Claim {
             let assertion_absolute_uri = if assertion.is_relative_url() {
                 to_absolute_uri(claim.label(), &assertion.url())
             } else {
-                // match sure the assertion points to this assertion store
+                // make sure the assertion points to this assertion store
                 let Some(assertion_manifest) = manifest_label_from_uri(&assertion.url()) else {
                     log_item!(
                         assertion.url(),
