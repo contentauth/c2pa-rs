@@ -3485,10 +3485,8 @@ impl Store {
     pub fn load_jumbf_from_stream(
         asset_type: &str,
         stream: &mut dyn CAIRead,
+        settings: &Settings,
     ) -> Result<(Vec<u8>, Option<String>)> {
-        let settings = crate::settings::get_settings().unwrap_or_default();
-        // TO DO BEFORE MERGE? Pass Settings in here?
-
         match load_jumbf_from_stream(asset_type, stream) {
             Ok(manifest_bytes) => Ok((manifest_bytes, None)),
             Err(Error::JumbfNotFound) => {
@@ -3531,10 +3529,7 @@ impl Store {
     /// in_path -  path to source file
     /// validation_log - optional vec to contain addition info about the asset
     #[cfg(feature = "file_io")]
-    pub fn load_jumbf_from_path(in_path: &Path) -> Result<Vec<u8>> {
-        let settings = crate::settings::get_settings().unwrap_or_default();
-        // TO DO BEFORE MERGE? Pass Settings in here?
-
+    pub fn load_jumbf_from_path(in_path: &Path, settings: &Settings) -> Result<Vec<u8>> {
         let external_manifest = in_path.with_extension(MANIFEST_STORE_EXT);
         let external_exists = external_manifest.exists();
 
@@ -3605,9 +3600,10 @@ impl Store {
         mut stream: impl Read + Seek + Send,
         verify: bool,
         validation_log: &mut StatusTracker,
+        settings: &Settings,
     ) -> Result<Self> {
-        let (manifest_bytes, remote_url) = Store::load_jumbf_from_stream(format, &mut stream)
-            .inspect_err(|e| {
+        let (manifest_bytes, remote_url) =
+            Store::load_jumbf_from_stream(format, &mut stream, settings).inspect_err(|e| {
                 log_item!("asset", "error loading file", "load_from_asset")
                     .failure_no_throw(validation_log, e);
             })?;
@@ -3761,7 +3757,16 @@ impl Store {
         verify: bool,
         validation_log: &mut StatusTracker,
     ) -> Result<Store> {
-        let store = Self::from_stream(asset_type, &mut *init_segment, verify, validation_log)?;
+        let settings = crate::settings::get_settings().unwrap_or_default();
+        // TO DO BEFORE MERGE? Pass Settings in here?
+
+        let store = Self::from_stream(
+            asset_type,
+            &mut *init_segment,
+            verify,
+            validation_log,
+            &settings,
+        )?;
 
         // verify the store
         if verify {
@@ -3791,7 +3796,9 @@ impl Store {
         mut fragment: impl Read + Seek + Send,
         validation_log: &mut StatusTracker,
     ) -> Result<Store> {
-        let manifest_bytes = Store::load_jumbf_from_stream(format, &mut stream)?.0;
+        let manifest_bytes =
+            Store::load_jumbf_from_stream(format, &mut stream, &Settings::default())?.0;
+
         let store = Store::from_jumbf(&manifest_bytes, validation_log)?;
 
         let verify = get_settings_value::<bool>("verify.verify_after_reading")?; // defaults to true
@@ -4396,7 +4403,14 @@ pub mod tests {
 
         // read from new stream
         output_stream.rewind().unwrap();
-        let new_store = Store::from_stream(format, &mut output_stream, true, &mut report).unwrap();
+        let new_store = Store::from_stream(
+            format,
+            &mut output_stream,
+            true,
+            &mut report,
+            &Settings::default(),
+        )
+        .unwrap();
 
         // should not have any
         assert!(!report.has_any_error());
@@ -4459,7 +4473,14 @@ pub mod tests {
 
         // read from new stream
         output_stream.rewind().unwrap();
-        let new_store = Store::from_stream(format, &mut output_stream, true, &mut report).unwrap();
+        let new_store = Store::from_stream(
+            format,
+            &mut output_stream,
+            true,
+            &mut report,
+            &Settings::default(),
+        )
+        .unwrap();
 
         // should not have any
         assert!(!report.has_any_error());
@@ -4528,7 +4549,13 @@ pub mod tests {
 
         // read from new stream
         output_stream.rewind().unwrap();
-        let _new_store = Store::from_stream(format, &mut output_stream, true, &mut report);
+        let _new_store = Store::from_stream(
+            format,
+            &mut output_stream,
+            true,
+            &mut report,
+            &Settings::default(),
+        );
 
         // should have action errors
         assert!(report.has_any_error());
@@ -4580,6 +4607,7 @@ pub mod tests {
             &mut output_stream,
             true,
             &mut StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError),
+            &Settings::default(),
         )
         .unwrap();
 
@@ -4787,8 +4815,14 @@ pub mod tests {
         let mut report = StatusTracker::default();
 
         output_stream.rewind()?;
-        let _new_store =
-            Store::from_stream_async(format, &mut output_stream, true, &mut report).await?;
+        let _new_store = Store::from_stream_async(
+            format,
+            &mut output_stream,
+            true,
+            &mut report,
+            &Settings::default(),
+        )
+        .await?;
 
         assert!(!report.has_any_error());
         Ok(())
@@ -4849,7 +4883,14 @@ pub mod tests {
 
         // read from new stream
         output_stream.rewind().unwrap();
-        let new_store = Store::from_stream(format, &mut output_stream, true, &mut report).unwrap();
+        let new_store = Store::from_stream(
+            format,
+            &mut output_stream,
+            true,
+            &mut report,
+            &Settings::default(),
+        )
+        .unwrap();
 
         // can  we get by the ingredient data back
         let _some_binary_data: Vec<u8> = vec![
@@ -5120,7 +5161,14 @@ pub mod tests {
 
         // read from new stream
         output_stream.rewind().unwrap();
-        let new_store = Store::from_stream(format, &mut output_stream, true, &mut report).unwrap();
+        let new_store = Store::from_stream(
+            format,
+            &mut output_stream,
+            true,
+            &mut report,
+            &Settings::default(),
+        )
+        .unwrap();
 
         // dump store and compare to original
         for claim in new_store.claims() {
@@ -5207,7 +5255,14 @@ pub mod tests {
 
         // read from new stream
         output_stream.rewind().unwrap();
-        let new_store = Store::from_stream(format, &mut output_stream, true, &mut report).unwrap();
+        let new_store = Store::from_stream(
+            format,
+            &mut output_stream,
+            true,
+            &mut report,
+            &Settings::default(),
+        )
+        .unwrap();
 
         // dump store and compare to original
         for claim in new_store.claims() {
@@ -5294,7 +5349,14 @@ pub mod tests {
 
         // read from new stream
         output_stream.rewind().unwrap();
-        let new_store = Store::from_stream(format, &mut output_stream, true, &mut report).unwrap();
+        let new_store = Store::from_stream(
+            format,
+            &mut output_stream,
+            true,
+            &mut report,
+            &Settings::default(),
+        )
+        .unwrap();
 
         // dump store and compare to original
         for claim in new_store.claims() {
@@ -5352,7 +5414,14 @@ pub mod tests {
 
         // read from new stream
         output_stream.rewind().unwrap();
-        let new_store = Store::from_stream(format, &mut output_stream, true, &mut report).unwrap();
+        let new_store = Store::from_stream(
+            format,
+            &mut output_stream,
+            true,
+            &mut report,
+            &Settings::default(),
+        )
+        .unwrap();
 
         // dump store and compare to original
         for claim in new_store.claims() {
@@ -5401,7 +5470,14 @@ pub mod tests {
 
         // read from new stream
         output_stream.rewind().unwrap();
-        let new_store = Store::from_stream(format, &mut output_stream, true, &mut report).unwrap();
+        let new_store = Store::from_stream(
+            format,
+            &mut output_stream,
+            true,
+            &mut report,
+            &Settings::default(),
+        )
+        .unwrap();
 
         // dump store and compare to original
         for claim in new_store.claims() {
@@ -5450,7 +5526,14 @@ pub mod tests {
 
         // read from new stream
         output_stream.rewind().unwrap();
-        let new_store = Store::from_stream(format, &mut output_stream, true, &mut report).unwrap();
+        let new_store = Store::from_stream(
+            format,
+            &mut output_stream,
+            true,
+            &mut report,
+            &Settings::default(),
+        )
+        .unwrap();
 
         // dump store and compare to original
         for claim in new_store.claims() {
@@ -5484,7 +5567,13 @@ pub mod tests {
     fn test_manifest_bad_sig() {
         let (format, mut input_stream, _output_stream) = create_test_streams("CIE-sig-CA.jpg");
         let tracker = &mut StatusTracker::default();
-        let result = Store::from_stream(format, &mut input_stream, true, tracker);
+        let result = Store::from_stream(
+            format,
+            &mut input_stream,
+            true,
+            tracker,
+            &Settings::default(),
+        );
         assert!(result.is_ok());
         println!("Error report: {tracker:?}");
         assert!(tracker.has_error(Error::AssertionInvalidRedaction));
@@ -5495,7 +5584,13 @@ pub mod tests {
         let (format, mut input_stream, _output_stream) =
             create_test_streams("unsupported_type.txt");
         let mut report = StatusTracker::default();
-        let result = Store::from_stream(format, &mut input_stream, true, &mut report);
+        let result = Store::from_stream(
+            format,
+            &mut input_stream,
+            true,
+            &mut report,
+            &Settings::default(),
+        );
         assert!(matches!(result, Err(Error::UnsupportedType)));
         println!("Error report: {report:?}");
         assert!(!report.logged_items().is_empty());
@@ -5508,7 +5603,13 @@ pub mod tests {
         // test bad jumbf
         let (format, mut input_stream, _output_stream) = create_test_streams("prerelease.jpg");
         let mut report = StatusTracker::default();
-        let _r = Store::from_stream(format, &mut input_stream, true, &mut report);
+        let _r = Store::from_stream(
+            format,
+            &mut input_stream,
+            true,
+            &mut report,
+            &Settings::default(),
+        );
 
         // error report
         println!("Error report: {report:?}");
@@ -5522,7 +5623,14 @@ pub mod tests {
         // test bad jumbf
         let (format, mut input_stream, _output_stream) = create_test_streams("XCA.jpg");
         let mut report = StatusTracker::default();
-        Store::from_stream(format, &mut input_stream, true, &mut report).unwrap();
+        Store::from_stream(
+            format,
+            &mut input_stream,
+            true,
+            &mut report,
+            &Settings::default(),
+        )
+        .unwrap();
 
         // error report
         println!("Error report: {report:?}");
@@ -5554,7 +5662,13 @@ pub mod tests {
     fn test_old_manifest() {
         let (format, mut input_stream, _output_stream) = create_test_streams("prerelease.jpg");
         let mut report = StatusTracker::default();
-        let _r = Store::from_stream(format, &mut input_stream, true, &mut report);
+        let _r = Store::from_stream(
+            format,
+            &mut input_stream,
+            true,
+            &mut report,
+            &Settings::default(),
+        );
 
         println!("Error report: {report:?}");
 
@@ -5596,6 +5710,7 @@ pub mod tests {
             &mut output_stream,
             true,
             &mut StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError),
+            &Settings::default(),
         )
         .unwrap();
 
@@ -5640,6 +5755,7 @@ pub mod tests {
             &mut output_stream,
             true,
             &mut StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError),
+            &Settings::default(),
         )
         .unwrap();
 
@@ -5675,7 +5791,13 @@ pub mod tests {
         let mut patched_stream = std::io::Cursor::new(data);
 
         let mut report = StatusTracker::default();
-        let _r = Store::from_stream(format, &mut patched_stream, true, &mut report); // errs are in report
+        let _r = Store::from_stream(
+            format,
+            &mut patched_stream,
+            true,
+            &mut report,
+            &Settings::default(),
+        ); // errs are in report
         println!("report: {report:?}");
         report
     }
@@ -5703,8 +5825,14 @@ pub mod tests {
         let mut report = StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
         // read back in
         output_stream.rewind().unwrap();
-        let restored_store =
-            Store::from_stream(format, &mut output_stream, true, &mut report).unwrap();
+        let restored_store = Store::from_stream(
+            format,
+            &mut output_stream,
+            true,
+            &mut report,
+            &Settings::default(),
+        )
+        .unwrap();
         let pc = restored_store.provenance_claim().unwrap();
 
         // should be a regular manifest
@@ -5747,7 +5875,14 @@ pub mod tests {
 
         // read back in store with update manifest
         output_stream2.rewind().unwrap();
-        let um_store = Store::from_stream(format, &mut output_stream2, true, &mut report).unwrap();
+        let um_store = Store::from_stream(
+            format,
+            &mut output_stream2,
+            true,
+            &mut report,
+            &Settings::default(),
+        )
+        .unwrap();
 
         let um = um_store.provenance_claim().unwrap();
 
@@ -5790,8 +5925,14 @@ pub mod tests {
         output_stream.rewind().unwrap();
         let ingredient_vec = output_stream.get_ref().clone();
         let mut ingredient_stream = Cursor::new(ingredient_vec);
-        let restored_store =
-            Store::from_stream(format, &mut ingredient_stream, true, &mut report).unwrap();
+        let restored_store = Store::from_stream(
+            format,
+            &mut ingredient_stream,
+            true,
+            &mut report,
+            &Settings::default(),
+        )
+        .unwrap();
         let pc = restored_store.provenance_claim().unwrap();
 
         // should be a regular manifest
@@ -5805,7 +5946,9 @@ pub mod tests {
 
         ingredient_stream.rewind().unwrap();
         let (manifest_bytes, _) =
-            Store::load_jumbf_from_stream(format, &mut ingredient_stream).unwrap();
+            Store::load_jumbf_from_stream(format, &mut ingredient_stream, &Settings::default())
+                .unwrap();
+
         let mut new_store =
             Store::load_ingredient_to_claim(&mut claim, &manifest_bytes, None).unwrap();
 
@@ -5875,8 +6018,14 @@ pub mod tests {
 
         // read back in store with update manifest
         output_stream2.rewind().unwrap();
-        let um_store =
-            Store::from_stream(format, &mut output_stream2, true, &mut um_report).unwrap();
+        let um_store = Store::from_stream(
+            format,
+            &mut output_stream2,
+            true,
+            &mut um_report,
+            &Settings::default(),
+        )
+        .unwrap();
 
         let um = um_store.provenance_claim().unwrap();
 
@@ -5903,7 +6052,14 @@ pub mod tests {
         let mut report = StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
 
         // read in the store
-        let mut store = Store::from_stream(format, &mut input_stream, true, &mut report).unwrap();
+        let mut store = Store::from_stream(
+            format,
+            &mut input_stream,
+            true,
+            &mut report,
+            &Settings::default(),
+        )
+        .unwrap();
         let pc = store.provenance_claim().unwrap();
 
         // create a new update manifest
@@ -5967,8 +6123,14 @@ pub mod tests {
 
         // read back in store with update manifest
         output_stream.rewind().unwrap();
-        let mut um_store =
-            Store::from_stream(format, &mut output_stream, true, &mut um_report).unwrap();
+        let mut um_store = Store::from_stream(
+            format,
+            &mut output_stream,
+            true,
+            &mut um_report,
+            &Settings::default(),
+        )
+        .unwrap();
 
         let um = um_store.provenance_claim().unwrap();
 
@@ -6046,8 +6208,14 @@ pub mod tests {
 
         // read back in store with update manifest
         output_stream2.rewind().unwrap();
-        let collapsed_store =
-            Store::from_stream(format, &mut output_stream2, true, &mut collapsed_report).unwrap();
+        let collapsed_store = Store::from_stream(
+            format,
+            &mut output_stream2,
+            true,
+            &mut collapsed_report,
+            &Settings::default(),
+        )
+        .unwrap();
 
         let cm = collapsed_store.provenance_claim().unwrap();
         assert!(!cm.update_manifest());
@@ -6063,8 +6231,16 @@ pub mod tests {
         let (format, mut input_stream, _output_stream) = create_test_streams("update_manifest.jpg");
 
         let mut report = StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
-        let restored_store =
-            Store::from_stream(format, &mut input_stream, true, &mut report).unwrap();
+
+        let restored_store = Store::from_stream(
+            format,
+            &mut input_stream,
+            true,
+            &mut report,
+            &Settings::default(),
+        )
+        .unwrap();
+
         let pc = restored_store.provenance_claim().unwrap();
 
         // should be an update manifest
@@ -6102,8 +6278,16 @@ pub mod tests {
         output_stream.rewind().unwrap();
         let ingredient_vec = output_stream.get_ref().clone();
         let mut ingredient_stream = Cursor::new(ingredient_vec.clone());
-        let restored_store =
-            Store::from_stream(format, &mut ingredient_stream, true, &mut report).unwrap();
+
+        let restored_store = Store::from_stream(
+            format,
+            &mut ingredient_stream,
+            true,
+            &mut report,
+            &Settings::default(),
+        )
+        .unwrap();
+
         let pc = restored_store.provenance_claim().unwrap();
 
         // should be a regular manifest
@@ -6118,9 +6302,12 @@ pub mod tests {
         // created redacted uri
         let redacted_uri = to_assertion_uri(pc.label(), labels::SCHEMA_ORG);
 
-        let (manifest_bytes, _) =
-            Store::load_jumbf_from_stream(format, &mut Cursor::new(ingredient_vec.clone()))
-                .unwrap();
+        let (manifest_bytes, _) = Store::load_jumbf_from_stream(
+            format,
+            &mut Cursor::new(ingredient_vec.clone()),
+            &Settings::default(),
+        )
+        .unwrap();
         let mut redacted_store =
             Store::load_ingredient_to_claim(&mut claim, &manifest_bytes, Some(vec![redacted_uri]))
                 .unwrap();
@@ -6182,8 +6369,15 @@ pub mod tests {
 
         // read back in store with update manifest
         output_stream2.rewind().unwrap();
-        let um_store =
-            Store::from_stream(format, &mut output_stream2, true, &mut um_report).unwrap();
+
+        let um_store = Store::from_stream(
+            format,
+            &mut output_stream2,
+            true,
+            &mut um_report,
+            &Settings::default(),
+        )
+        .unwrap();
 
         let um = um_store.provenance_claim().unwrap();
 
@@ -6202,12 +6396,19 @@ pub mod tests {
         // load ingredient with redaction
         output_stream2.rewind().unwrap();
         let (redacted_manifest_bytes, _) =
-            Store::load_jumbf_from_stream(format, &mut output_stream2).unwrap();
+            Store::load_jumbf_from_stream(format, &mut output_stream2, &Settings::default())
+                .unwrap();
+
         Store::load_ingredient_to_claim(&mut new_claim, &redacted_manifest_bytes, None).unwrap();
 
         // load original ingredient without redaction
-        let (original_manifest_bytes, _) =
-            Store::load_jumbf_from_stream(format, &mut Cursor::new(ingredient_vec)).unwrap();
+        let (original_manifest_bytes, _) = Store::load_jumbf_from_stream(
+            format,
+            &mut Cursor::new(ingredient_vec),
+            &Settings::default(),
+        )
+        .unwrap();
+
         let _conflict_store =
             Store::load_ingredient_to_claim(&mut new_claim, &original_manifest_bytes, None)
                 .unwrap();
@@ -6250,8 +6451,16 @@ pub mod tests {
         output_stream.rewind().unwrap();
         let ingredient_vec = output_stream.get_ref().clone();
         let mut ingredient_stream = Cursor::new(ingredient_vec.clone());
-        let restored_store =
-            Store::from_stream(format, &mut ingredient_stream, true, &mut report).unwrap();
+
+        let restored_store = Store::from_stream(
+            format,
+            &mut ingredient_stream,
+            true,
+            &mut report,
+            &Settings::default(),
+        )
+        .unwrap();
+
         let pc = restored_store.provenance_claim().unwrap();
 
         // should be a regular manifest
@@ -6266,9 +6475,13 @@ pub mod tests {
         // created redacted uri
         let redacted_uri = to_assertion_uri(pc.label(), labels::SCHEMA_ORG);
 
-        let (manifest_bytes, _) =
-            Store::load_jumbf_from_stream(format, &mut Cursor::new(ingredient_vec.clone()))
-                .unwrap();
+        let (manifest_bytes, _) = Store::load_jumbf_from_stream(
+            format,
+            &mut Cursor::new(ingredient_vec.clone()),
+            &Settings::default(),
+        )
+        .unwrap();
+
         let mut redacted_store =
             Store::load_ingredient_to_claim(&mut claim, &manifest_bytes, Some(vec![redacted_uri]))
                 .unwrap();
@@ -6330,8 +6543,15 @@ pub mod tests {
 
         // read back in store with update manifest
         output_stream2.rewind().unwrap();
-        let um_store =
-            Store::from_stream(format, &mut output_stream2, true, &mut um_report).unwrap();
+
+        let um_store = Store::from_stream(
+            format,
+            &mut output_stream2,
+            true,
+            &mut um_report,
+            &Settings::default(),
+        )
+        .unwrap();
 
         let um = um_store.provenance_claim().unwrap();
 
@@ -6348,8 +6568,13 @@ pub mod tests {
         new_claim.add_claim_generator_info(cgi);
 
         // load original ingredient without redaction
-        let (original_manifest_bytes, _) =
-            Store::load_jumbf_from_stream(format, &mut Cursor::new(ingredient_vec)).unwrap();
+        let (original_manifest_bytes, _) = Store::load_jumbf_from_stream(
+            format,
+            &mut Cursor::new(ingredient_vec),
+            &Settings::default(),
+        )
+        .unwrap();
+
         Store::load_ingredient_to_claim(&mut new_claim, &original_manifest_bytes, None).unwrap();
 
         // the confict_store is adjusted to remove the conflicting claim
@@ -6360,8 +6585,11 @@ pub mod tests {
 
         // load ingredient with redaction
         output_stream2.rewind().unwrap();
+
         let (redacted_manifest_bytes, _) =
-            Store::load_jumbf_from_stream(format, &mut output_stream2).unwrap();
+            Store::load_jumbf_from_stream(format, &mut output_stream2, &Settings::default())
+                .unwrap();
+
         Store::load_ingredient_to_claim(&mut new_claim, &redacted_manifest_bytes, None).unwrap();
 
         // the confict_store is adjusted to remove the conflicting claim
@@ -6401,8 +6629,16 @@ pub mod tests {
         let mut report = StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
         // read back in
         output_stream.rewind().unwrap();
-        let restored_store =
-            Store::from_stream(format, &mut output_stream, true, &mut report).unwrap();
+
+        let restored_store = Store::from_stream(
+            format,
+            &mut output_stream,
+            true,
+            &mut report,
+            &Settings::default(),
+        )
+        .unwrap();
+
         let pc = restored_store.provenance_claim().unwrap();
 
         // should be a regular manifest
@@ -6475,7 +6711,15 @@ pub mod tests {
 
         // read back in store with update manifest
         op_output.rewind().unwrap();
-        let um_store = Store::from_stream(format, &mut op_output, true, &mut um_report).unwrap();
+
+        let um_store = Store::from_stream(
+            format,
+            &mut op_output,
+            true,
+            &mut um_report,
+            &Settings::default(),
+        )
+        .unwrap();
 
         let um = um_store.provenance_claim().unwrap();
 
@@ -6635,8 +6879,15 @@ pub mod tests {
         let (format, mut input_stream, _output_stream) = create_test_streams("CA.jpg");
 
         let mut report = StatusTracker::default();
-        let store =
-            Store::from_stream(format, &mut input_stream, true, &mut report).expect("from_stream");
+
+        let store = Store::from_stream(
+            format,
+            &mut input_stream,
+            true,
+            &mut report,
+            &Settings::default(),
+        )
+        .expect("from_stream");
 
         assert!(!report.has_any_error());
         println!("store = {store}");
@@ -6646,7 +6897,14 @@ pub mod tests {
     fn test_no_alg() {
         let (format, mut input_stream, _output_stream) = create_test_streams("no_alg.jpg");
         let mut report = StatusTracker::default();
-        let _store = Store::from_stream(format, &mut input_stream, true, &mut report);
+
+        let _store = Store::from_stream(
+            format,
+            &mut input_stream,
+            true,
+            &mut report,
+            &Settings::default(),
+        );
 
         assert!(report.has_status(ALGORITHM_UNSUPPORTED));
     }
@@ -6674,8 +6932,15 @@ pub mod tests {
         let (format, mut input_stream, _output_stream) =
             create_test_streams("legacy_ingredient_hash.jpg");
         let mut report = StatusTracker::default();
-        let store =
-            Store::from_stream(format, &mut input_stream, true, &mut report).expect("from_stream");
+
+        let store = Store::from_stream(
+            format,
+            &mut input_stream,
+            true,
+            &mut report,
+            &Settings::default(),
+        )
+        .expect("from_stream");
         println!("store = {store}");
     }
 
@@ -6686,7 +6951,14 @@ pub mod tests {
         let (format, mut input_stream, _output_stream) = create_test_streams("legacy.mp4");
         // test 1.0 bmff hash
         let mut report = StatusTracker::default();
-        let store = Store::from_stream(format, &mut input_stream, true, &mut report);
+
+        let store = Store::from_stream(
+            format,
+            &mut input_stream,
+            true,
+            &mut report,
+            &Settings::default(),
+        );
         println!("store = {report:#?}");
         // expect action error
         assert!(store.is_err());
@@ -6741,7 +7013,15 @@ pub mod tests {
 
         // can we read back in
         output_stream.set_position(0);
-        let new_store = Store::from_stream(format, &mut output_stream, true, &mut report).unwrap();
+
+        let new_store = Store::from_stream(
+            format,
+            &mut output_stream,
+            true,
+            &mut report,
+            &Settings::default(),
+        )
+        .unwrap();
 
         assert!(!report.has_any_error());
 
@@ -6776,7 +7056,15 @@ pub mod tests {
 
         // can we read back in
         output_stream.set_position(0);
-        let new_store = Store::from_stream(format, &mut output_stream, true, &mut report).unwrap();
+
+        let new_store = Store::from_stream(
+            format,
+            &mut output_stream,
+            true,
+            &mut report,
+            &Settings::default(),
+        )
+        .unwrap();
 
         assert!(!report.has_any_error());
 
@@ -6814,7 +7102,15 @@ pub mod tests {
 
         // can we read back in
         output_stream.set_position(0);
-        let new_store = Store::from_stream(format, &mut output_stream, true, &mut report).unwrap();
+
+        let new_store = Store::from_stream(
+            format,
+            &mut output_stream,
+            true,
+            &mut report,
+            &Settings::default(),
+        )
+        .unwrap();
 
         assert!(!report.has_any_error());
 
@@ -6852,7 +7148,15 @@ pub mod tests {
 
         // can we read back in
         output_stream.set_position(0);
-        let new_store = Store::from_stream(format, &mut output_stream, true, &mut report).unwrap();
+
+        let new_store = Store::from_stream(
+            format,
+            &mut output_stream,
+            true,
+            &mut report,
+            &Settings::default(),
+        )
+        .unwrap();
 
         assert!(!report.has_any_error());
 
@@ -6890,7 +7194,15 @@ pub mod tests {
 
         // can we read back in
         output_stream.set_position(0);
-        let new_store = Store::from_stream(format, &mut output_stream, true, &mut report).unwrap();
+
+        let new_store = Store::from_stream(
+            format,
+            &mut output_stream,
+            true,
+            &mut report,
+            &Settings::default(),
+        )
+        .unwrap();
 
         assert!(!report.has_any_error());
 
@@ -6926,7 +7238,8 @@ pub mod tests {
 
         output_stream.set_position(0);
 
-        let (manifest_bytes, _) = Store::load_jumbf_from_stream(format, &mut input_stream).unwrap();
+        let (manifest_bytes, _) =
+            Store::load_jumbf_from_stream(format, &mut input_stream, &Settings::default()).unwrap();
 
         let _new_store = {
             Store::from_manifest_data_and_stream(
@@ -6951,7 +7264,13 @@ pub mod tests {
         let mut report = StatusTracker::default();
 
         // can we read back in
-        let result = Store::from_stream(format, &mut input_stream, true, &mut report);
+        let result = Store::from_stream(
+            format,
+            &mut input_stream,
+            true,
+            &mut report,
+            &Settings::default(),
+        );
 
         assert!(result.is_err());
         assert!(matches!(result, Err(Error::JumbfNotFound)));
@@ -7164,10 +7483,16 @@ pub mod tests {
 
         // make sure we can read from new file
         let mut report = StatusTracker::default();
-        let _new_store =
-            Store::from_stream_async("image/jpeg", &mut result_stream, true, &mut report)
-                .await
-                .unwrap();
+
+        let _new_store = Store::from_stream_async(
+            "image/jpeg",
+            &mut result_stream,
+            true,
+            &mut report,
+            &Settings::default(),
+        )
+        .await
+        .unwrap();
 
         assert!(!report.has_any_error());
         // std::fs::write("target/test.jpg", result).unwrap();
@@ -7204,7 +7529,15 @@ pub mod tests {
 
         // read from new file
         output_stream.rewind().unwrap();
-        let new_store = Store::from_stream(format, &mut output_stream, true, &mut report).unwrap();
+
+        let new_store = Store::from_stream(
+            format,
+            &mut output_stream,
+            true,
+            &mut report,
+            &Settings::default(),
+        )
+        .unwrap();
 
         assert!(!report.has_any_error());
 
@@ -7302,9 +7635,15 @@ pub mod tests {
         out_stream.rewind().unwrap();
 
         let mut report = StatusTracker::default();
-        let _new_store = Store::from_stream_async("image/jpeg", &mut out_stream, true, &mut report)
-            .await
-            .unwrap();
+        let _new_store = Store::from_stream_async(
+            "image/jpeg",
+            &mut out_stream,
+            true,
+            &mut report,
+            &Settings::default(),
+        )
+        .await
+        .unwrap();
 
         assert!(!report.has_any_error());
     }
@@ -7374,8 +7713,15 @@ pub mod tests {
         out_stream.rewind().unwrap();
 
         let mut report = StatusTracker::default();
-        let _new_store =
-            Store::from_stream("image/jpeg", &mut out_stream, true, &mut report).unwrap();
+
+        let _new_store = Store::from_stream(
+            "image/jpeg",
+            &mut out_stream,
+            true,
+            &mut report,
+            &Settings::default(),
+        )
+        .unwrap();
 
         assert!(!report.has_any_error());
     }
@@ -7440,10 +7786,16 @@ pub mod tests {
 
         output_file.rewind().unwrap();
         let mut report = StatusTracker::default();
-        let _new_store =
-            Store::from_stream_async("image/jpeg", &mut output_file, true, &mut report)
-                .await
-                .unwrap();
+
+        let _new_store = Store::from_stream_async(
+            "image/jpeg",
+            &mut output_file,
+            true,
+            &mut report,
+            &Settings::default(),
+        )
+        .await
+        .unwrap();
 
         assert!(!report.has_any_error());
     }
@@ -7512,8 +7864,15 @@ pub mod tests {
 
         output_file.rewind().unwrap();
         let mut report = StatusTracker::default();
-        let _new_store =
-            Store::from_stream("image/jpeg", &mut output_file, true, &mut report).unwrap();
+
+        let _new_store = Store::from_stream(
+            "image/jpeg",
+            &mut output_file,
+            true,
+            &mut report,
+            &Settings::default(),
+        )
+        .unwrap();
 
         assert!(!report.has_any_error());
     }
@@ -7582,8 +7941,15 @@ pub mod tests {
 
         output_file.rewind().unwrap();
         let mut report = StatusTracker::default();
-        let _new_store =
-            Store::from_stream("image/jpeg", &mut output_file, true, &mut report).unwrap();
+
+        let _new_store = Store::from_stream(
+            "image/jpeg",
+            &mut output_file,
+            true,
+            &mut report,
+            &Settings::default(),
+        )
+        .unwrap();
 
         assert!(!report.has_any_error());
     }
@@ -7702,8 +8068,14 @@ pub mod tests {
 
         // make sure we can read from new file
         let mut report = StatusTracker::default();
-        let new_store =
-            Store::from_stream("image/jpeg", &mut result_stream, true, &mut report).unwrap();
+        let new_store = Store::from_stream(
+            "image/jpeg",
+            &mut result_stream,
+            true,
+            &mut report,
+            &Settings::default(),
+        )
+        .unwrap();
 
         println!("new_store: {new_store}");
 
@@ -7831,7 +8203,15 @@ pub mod tests {
 
         // make sure we can read from new file
         let mut report = StatusTracker::default();
-        let new_store = Store::from_stream("jpeg", &mut result_stream, true, &mut report).unwrap();
+
+        let new_store = Store::from_stream(
+            "jpeg",
+            &mut result_stream,
+            true,
+            &mut report,
+            &Settings::default(),
+        )
+        .unwrap();
 
         println!("new_store: {new_store}");
 
@@ -7982,7 +8362,7 @@ pub mod tests {
         let format = "image/jpeg";
 
         let (manifest_bytes, _remote_url) =
-            Store::load_jumbf_from_stream(format, &mut stream).unwrap();
+            Store::load_jumbf_from_stream(format, &mut stream, &Settings::default()).unwrap();
 
         let store = Store::from_jumbf(&manifest_bytes, &mut StatusTracker::default()).unwrap();
 

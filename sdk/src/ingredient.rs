@@ -738,6 +738,9 @@ impl Ingredient {
     // Internal implementation to avoid code bloat.
     #[cfg(feature = "file_io")]
     fn from_file_impl(path: &Path, options: &dyn IngredientOptions) -> Result<Self> {
+        let settings = crate::settings::get_settings().unwrap_or_default();
+        // TO DO BEFORE MERGE? Pass Settings in here?
+
         #[cfg(feature = "diagnostics")]
         let _t = crate::utils::time_it::TimeIt::new("Ingredient:from_file_with_options");
 
@@ -767,7 +770,7 @@ impl Ingredient {
         let mut validation_log = StatusTracker::default();
 
         // retrieve the manifest bytes from embedded, sidecar or remote and convert to store if found
-        let (result, manifest_bytes) = match Store::load_jumbf_from_path(path) {
+        let (result, manifest_bytes) = match Store::load_jumbf_from_path(path, &settings) {
             Ok(manifest_bytes) => {
                 (
                     // generate a store from the buffer and then validate from the asset path
@@ -885,12 +888,15 @@ impl Ingredient {
     // Internal implementation to avoid code bloat.
     #[async_generic()]
     fn add_stream_internal(mut self, format: &str, stream: &mut dyn CAIRead) -> Result<Self> {
+        let settings = crate::settings::get_settings().unwrap_or_default();
+        // TO DO BEFORE MERGE? Pass Settings in here?
+
         let mut validation_log = StatusTracker::default();
 
         // retrieve the manifest bytes from embedded or remote and convert to store if found
         let jumbf_result = match self.manifest_data() {
             Some(data) => Ok(data.into_owned()),
-            None => Store::load_jumbf_from_stream(format, stream)
+            None => Store::load_jumbf_from_stream(format, stream, &settings)
                 .map(|(manifest_bytes, _)| manifest_bytes),
         };
 
@@ -953,6 +959,9 @@ impl Ingredient {
     /// This does not set title or hash.
     /// Thumbnail will be set only if one can be retrieved from a previous valid manifest.
     pub async fn from_stream_async(format: &str, stream: &mut dyn CAIRead) -> Result<Self> {
+        let settings = crate::settings::get_settings().unwrap_or_default();
+        // TO DO BEFORE MERGE? Pass Settings in here?
+
         let mut ingredient = Self::from_stream_info(stream, format, "untitled");
         stream.rewind()?;
 
@@ -960,7 +969,7 @@ impl Ingredient {
 
         // retrieve the manifest bytes from embedded, sidecar or remote and convert to store if found
         let (result, manifest_bytes) =
-            match Store::load_jumbf_from_stream_async(format, stream).await {
+            match Store::load_jumbf_from_stream_async(format, stream, &settings).await {
                 Ok((manifest_bytes, _)) => {
                     (
                         // generate a store from the buffer and then validate from the asset path
