@@ -1829,6 +1829,9 @@ impl Claim {
         ctp: &CertificateTrustPolicy,
         validation_log: &mut StatusTracker,
     ) -> Result<()> {
+        let settings = crate::settings::get_settings().unwrap_or_default();
+        // TO DO BEFORE MERGE? Pass Settings in here?
+
         // Parse COSE signed data (signature) and validate it.
         let sig = claim.signature_val().clone();
         let additional_bytes: Vec<u8> = Vec::new();
@@ -1877,6 +1880,7 @@ impl Claim {
             ctp,
             svi.timestamps.get(claim.label()),
             validation_log,
+            &settings.verify,
         )
         .await;
 
@@ -1896,6 +1900,9 @@ impl Claim {
         ctp: &CertificateTrustPolicy,
         validation_log: &mut StatusTracker,
     ) -> Result<()> {
+        let settings = crate::settings::get_settings().unwrap_or_default();
+        // TO DO BEFORE MERGE? Pass Settings in here?
+
         // Parse COSE signed data (signature) and validate it.
         let sig = claim.signature_val();
         let additional_bytes: Vec<u8> = Vec::new();
@@ -1955,6 +1962,7 @@ impl Claim {
             ctp,
             svi.timestamps.get(claim.label()),
             validation_log,
+            &settings.verify,
         );
 
         let result = Claim::verify_internal(claim, asset_data, svi, verified, validation_log);

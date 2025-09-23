@@ -214,7 +214,7 @@ impl SettingsValidate for Core {
 pub(crate) struct Verify {
     verify_after_reading: bool,
     verify_after_sign: bool,
-    verify_trust: bool,
+    pub(crate) verify_trust: bool,
     verify_timestamp_trust: bool,
     ocsp_fetch: bool,
     remote_manifest_fetch: bool,
@@ -258,7 +258,7 @@ pub struct Settings {
     trust: Trust,
     cawg_trust: Trust,
     pub(crate) core: Core,
-    verify: Verify,
+    pub(crate) verify: Verify,
     builder: BuilderSettings,
     #[serde(skip_serializing_if = "Option::is_none")]
     signer: Option<SignerSettings>,

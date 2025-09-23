@@ -29,7 +29,6 @@ use crate::{
         raw_signature::SigningAlg,
     },
     error::{Error, Result},
-    settings::get_settings_value,
     status_tracker::StatusTracker,
 };
 
@@ -54,11 +53,13 @@ pub(crate) fn verify_cose(
     ctp: &CertificateTrustPolicy,
     tst_info: Option<&TstInfo>,
     validation_log: &mut StatusTracker,
+    verify_settings: &crate::settings::Verify,
 ) -> Result<CertificateInfo> {
     let verifier = if cert_check {
-        match get_settings_value::<bool>("verify.verify_trust") {
-            Ok(true) => Verifier::VerifyTrustPolicy(Cow::Borrowed(ctp)),
-            _ => Verifier::VerifyCertificateProfileOnly(Cow::Borrowed(ctp)),
+        if verify_settings.verify_trust {
+            Verifier::VerifyTrustPolicy(Cow::Borrowed(ctp))
+        } else {
+            Verifier::VerifyCertificateProfileOnly(Cow::Borrowed(ctp))
         }
     } else {
         Verifier::IgnoreProfileAndTrustPolicy

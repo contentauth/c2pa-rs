@@ -57,6 +57,9 @@ use crate::{
     box_size: usize
 ))]
 pub fn sign_claim(claim_bytes: &[u8], signer: &dyn Signer, box_size: usize) -> Result<Vec<u8>> {
+    let settings = crate::settings::get_settings().unwrap_or_default();
+    // TO DO BEFORE MERGE? Pass Settings in here?
+
     // Must be a valid claim.
     let label = "dummy_label";
     let claim = Claim::from_data(label, claim_bytes)?;
@@ -87,6 +90,7 @@ pub fn sign_claim(claim_bytes: &[u8], signer: &dyn Signer, box_size: usize) -> R
                 &passthrough_cap,
                 None,
                 &mut cose_log,
+                &settings.verify,
             ) {
                 Ok(r) => {
                     if !r.validated {

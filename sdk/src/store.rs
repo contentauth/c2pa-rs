@@ -532,6 +532,9 @@ impl Store {
         signer: &dyn Signer,
         box_size: usize,
     ) -> Result<Vec<u8>> {
+        let settings = crate::settings::get_settings().unwrap_or_default();
+        // TO DO BEFORE MERGE? Pass Settings in here?
+
         let claim_bytes = claim.data()?;
 
         let tss = if claim.version() > 1 {
@@ -575,6 +578,7 @@ impl Store {
                                 &self.ctp,
                                 None,
                                 &mut cose_log,
+                                &settings.verify,
                             )
                         } else {
                             verify_cose_async(
@@ -585,6 +589,7 @@ impl Store {
                                 &self.ctp,
                                 None,
                                 &mut cose_log,
+                                &settings.verify,
                             )
                             .await
                         };
