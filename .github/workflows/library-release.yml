@@ -49,6 +49,8 @@ jobs:
 
       - name: Set up Rust
         uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          cache: false
 
       - name: Build Windows release
         if: matrix.os == 'windows-latest'

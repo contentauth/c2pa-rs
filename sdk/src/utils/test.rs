@@ -447,9 +447,9 @@ impl TestFileSetup {
 
         // Check if the path already starts with a slash and handle accordingly
         if path_str.starts_with('/') {
-            format!("file://{}", path_str)
+            format!("file://{path_str}")
         } else {
-            format!("file:///{}", path_str)
+            format!("file:///{path_str}")
         }
     }
 

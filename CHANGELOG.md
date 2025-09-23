@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.65.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.64.0...c2pa-v0.65.0)
+_19 September 2025_
+
+### Added
+
+* Expose add_action from the Builder at the C level ([#1425](https://github.com/contentauth/c2pa-rs/pull/1425))
+* Add Redaction and Update manifest support to Builder ([#1180](https://github.com/contentauth/c2pa-rs/pull/1180))
+* Add `ParametersMap` to `Actions` ([#1274](https://github.com/contentauth/c2pa-rs/pull/1274))
+* *(sdk)* Introduce new API to retrieve detailed manifest JSON ([#1406](https://github.com/contentauth/c2pa-rs/pull/1406))
+
+## [0.64.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.63.0...c2pa-v0.64.0)
+_15 September 2025_
+
+### Added
+
+* Fetch OCSP wasm ([#1402](https://github.com/contentauth/c2pa-rs/pull/1402))
+
+### Fixed
+
+* Allow v1 claim  c2pa.manifest cbor assertions without full valid… ([#1412](https://github.com/contentauth/c2pa-rs/pull/1412))
+
 ## [0.63.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.62.0...c2pa-v0.63.0)
 _10 September 2025_
 
