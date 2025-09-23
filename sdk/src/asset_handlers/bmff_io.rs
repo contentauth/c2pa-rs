@@ -224,11 +224,11 @@ impl BoxHeaderLite {
         } else if size == 0 {
             // special case to indicate the size goes to the end of the file
             let end_of_stream = stream_len(reader)?;
-            let acutal_size = end_of_stream - box_start;
+            let actual_size = end_of_stream - box_start;
 
             Ok(BoxHeaderLite {
                 name: BoxType::from(typ),
-                size: acutal_size,
+                size: actual_size,
                 fourcc,
                 large_size: false,
             })
@@ -1101,7 +1101,7 @@ fn adjust_known_offsets<W: Write + CAIRead + ?Sized>(
             // read header
             let header = BoxHeaderLite::read(output)
                 .map_err(|_err| Error::InvalidAsset("Bad BMFF".to_string()))?;
-            if header.name != BoxType::Co64Box {
+            if header.name != BoxType::SaioBox {
                 return Err(Error::InvalidAsset("Bad BMFF".to_string()));
             }
 
