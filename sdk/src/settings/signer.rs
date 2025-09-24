@@ -28,6 +28,7 @@ use crate::{
 ///
 /// [`Signer`]: crate::Signer
 /// [`signer()`]: Builder::signer
+#[cfg_attr(feature = "json_schema", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum SignerSettings {

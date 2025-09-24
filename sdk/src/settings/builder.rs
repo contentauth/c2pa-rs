@@ -31,6 +31,7 @@ use crate::{
 ///
 /// These formats are a combination of types supported in [image-rs](https://docs.rs/image/latest/image/enum.ImageFormat.html)
 /// and types defined by the [IANA registry media type](https://www.iana.org/assignments/media-types/media-types.xhtml) (as defined in the spec).
+#[cfg_attr(feature = "json_schema", derive(schemars::JsonSchema))]
 #[derive(Copy, Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ThumbnailFormat {
@@ -46,6 +47,7 @@ pub enum ThumbnailFormat {
     Tiff,
 }
 /// Quality of the thumbnail.
+#[cfg_attr(feature = "json_schema", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ThumbnailQuality {
@@ -58,6 +60,7 @@ pub enum ThumbnailQuality {
 }
 
 /// Settings for controlling automatic thumbnail generation.
+#[cfg_attr(feature = "json_schema", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct ThumbnailSettings {
     /// Whether or not to automatically generate thumbnails.
@@ -118,6 +121,7 @@ impl SettingsValidate for ThumbnailSettings {
 }
 
 /// Settings for the auto actions (e.g. created, opened, placed).
+#[cfg_attr(feature = "json_schema", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct AutoActionSettings {
     /// Whether to enable this auto action or not.
@@ -128,6 +132,7 @@ pub struct AutoActionSettings {
 }
 
 /// Settings for how to specify the claim generator info's operating system.
+#[cfg_attr(feature = "json_schema", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct ClaimGeneratorInfoOSSettings {
     /// Whether or not to infer the operating system.
@@ -148,6 +153,7 @@ impl Default for ClaimGeneratorInfoOSSettings {
 }
 
 /// Settings for the claim generator info.
+#[cfg_attr(feature = "json_schema", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct ClaimGeneratorInfoSettings {
     /// A human readable string naming the claim_generator.
@@ -163,7 +169,7 @@ pub struct ClaimGeneratorInfoSettings {
     pub operating_system: Option<ClaimGeneratorInfoOSSettings>,
     /// Any other values that are not part of the standard.
     #[serde(flatten)]
-    pub other: HashMap<String, toml::Value>,
+    pub other: HashMap<String, serde_json::Value>,
 }
 
 impl TryFrom<ClaimGeneratorInfoSettings> for ClaimGeneratorInfo {
@@ -195,6 +201,7 @@ impl TryFrom<ClaimGeneratorInfoSettings> for ClaimGeneratorInfo {
 }
 
 /// Settings for an action template.
+#[cfg_attr(feature = "json_schema", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub(crate) struct ActionTemplateSettings {
     /// The label associated with this action. See ([c2pa_action][crate::assertions::actions::c2pa_action]).
@@ -218,7 +225,7 @@ pub(crate) struct ActionTemplateSettings {
     pub description: Option<String>,
     /// Additional parameters for the template
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub template_parameters: Option<HashMap<String, toml::Value>>,
+    pub template_parameters: Option<HashMap<String, serde_json::Value>>,
 }
 
 impl TryFrom<ActionTemplateSettings> for ActionTemplate {
@@ -319,6 +326,7 @@ impl TryFrom<ActionSettings> for Action {
 ///
 /// The reason this setting exists only for an [Actions][crate::assertions::Actions] assertion
 /// is because of its mandations and reusable fields.
+#[cfg_attr(feature = "json_schema", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct ActionsSettings {
     /// Whether or not to set the [Actions::all_actions_included][crate::assertions::Actions::all_actions_included]
@@ -328,11 +336,15 @@ pub struct ActionsSettings {
     #[doc(hidden)]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) templates: Option<Vec<ActionTemplateSettings>>,
-    // TODO: should we define a new struct for "Action" too, like ActionTemplateSettings?
-    /// Actions to be added to the [Actions::actions][crate::assertions::Actions::actions] field.
-    #[doc(hidden)]
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) actions: Option<Vec<ActionSettings>>,
+    //
+    // REVIEW NOTE: ActionSettings indirectly depends on `ActionParameters` which contains a `serde_cbor::Value`
+    //              and schemars can't generate a schema for cbor values. It also doesn't feel right to change
+    //              our API for the sake of json schemas.
+    // /// Actions to be added to the [Actions::actions][crate::assertions::Actions::actions] field.
+    // #[doc(hidden)]
+    // #[serde(skip_serializing_if = "Option::is_none")]
+    // pub(crate) actions: Option<Vec<ActionSettings>>,
+    //
     /// Whether to automatically generate a c2pa.created [Action][crate::assertions::Action]
     /// assertion or error that it doesn't already exist.
     ///
@@ -358,7 +370,6 @@ impl Default for ActionsSettings {
         ActionsSettings {
             all_actions_included: true,
             templates: None,
-            actions: None,
             auto_created_action: AutoActionSettings {
                 enabled: true,
                 source_type: Some(DigitalSourceType::Empty),
@@ -386,6 +397,7 @@ impl SettingsValidate for ActionsSettings {
 
 // TODO: do more validation on URL fields, cert fields, etc.
 /// Settings for the [Builder][crate::Builder].
+#[cfg_attr(feature = "json_schema", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize, Default)]
 pub struct BuilderSettings {
     /// Claim generator info that is automatically added to the builder.
@@ -407,6 +419,7 @@ pub struct BuilderSettings {
     pub certificate_status_should_override: Option<bool>,
 }
 
+#[cfg_attr(feature = "json_schema", derive(schemars::JsonSchema))]
 #[derive(Copy, Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum OcspFetch {

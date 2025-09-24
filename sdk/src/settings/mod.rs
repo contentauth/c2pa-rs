@@ -41,6 +41,7 @@ pub(crate) trait SettingsValidate {
 }
 
 // Settings for trust list feature
+#[cfg_attr(feature = "json_schema", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct Trust {
     // REVIEW NOTE: move this down to the `Verify` struct?
@@ -161,6 +162,7 @@ impl SettingsValidate for Trust {
 }
 
 // Settings for core C2PA-RS functionality
+#[cfg_attr(feature = "json_schema", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct Core {
     pub merkle_tree_chunk_size_in_kb: Option<usize>,
@@ -185,6 +187,7 @@ impl SettingsValidate for Core {
 }
 
 // Settings for verification options
+#[cfg_attr(feature = "json_schema", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct Verify {
     pub verify_after_reading: bool,
@@ -226,6 +229,7 @@ const MINOR_VERSION: usize = 0;
 ///
 /// [Settings::default] will be set thread-locally by default. Any settings set via
 /// [Settings::from_toml] or [Settings::from_file] will also be thread-local.
+#[cfg_attr(feature = "json_schema", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct Settings {
     // REVIEW NOTE: do we need both a major and minor version?
