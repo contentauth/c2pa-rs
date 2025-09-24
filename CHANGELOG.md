@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.65.1](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.65.0...c2pa-v0.65.1)
+_23 September 2025_
+
+### Fixed
+
+* Add support for iso6 boxes (tfra, tfhd and saio) ([#1442](https://github.com/contentauth/c2pa-rs/pull/1442))
+* [CAI-9586] Some validation errors are thrown as exceptions ([#1441](https://github.com/contentauth/c2pa-rs/pull/1441))
+* Only enable "asm" feature on aarch64 macos ([#1440](https://github.com/contentauth/c2pa-rs/pull/1440))
+
+## [0.65.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.64.0...c2pa-v0.65.0)
+_19 September 2025_
+
+### Added
+
+* Expose add_action from the Builder at the C level ([#1425](https://github.com/contentauth/c2pa-rs/pull/1425))
+* Add Redaction and Update manifest support to Builder ([#1180](https://github.com/contentauth/c2pa-rs/pull/1180))
+* Add `ParametersMap` to `Actions` ([#1274](https://github.com/contentauth/c2pa-rs/pull/1274))
+* *(sdk)* Introduce new API to retrieve detailed manifest JSON ([#1406](https://github.com/contentauth/c2pa-rs/pull/1406))
+
 ## [0.64.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.63.0...c2pa-v0.64.0)
 _15 September 2025_
 

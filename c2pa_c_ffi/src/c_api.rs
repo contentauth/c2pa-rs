@@ -17,6 +17,62 @@ use std::{
     ptr,
 };
 
+/// Validates that a buffer size is within safe bounds and doesn't cause integer overflow
+/// when used with pointer arithmetic.
+///
+/// # Arguments
+/// * `size` - Size to validate
+/// * `ptr` - Pointer to validate against (for address space checks)
+///
+/// # Returns
+/// * `true` if the size is safe to use
+/// * `false` if the size would cause integer overflow
+unsafe fn is_safe_buffer_size(size: usize, ptr: *const c_uchar) -> bool {
+    // Combined checks for early return - improves branch prediction
+    if size == 0 || size > isize::MAX as usize {
+        return false;
+    }
+
+    // Check if the buffer would extend beyond address space to fail fast
+    if !ptr.is_null() {
+        let end_ptr = ptr.add(size);
+        if end_ptr < ptr {
+            return false; // Wrapped around
+        }
+    }
+
+    true
+}
+
+/// Creates a safe slice from raw parts with bounds validation
+///
+/// # Arguments
+/// * `ptr` - Pointer to the data
+/// * `len` - Length of the data
+/// * `param_name` - Name of the parameter for error reporting
+///
+/// # Returns
+/// * `Ok(slice)` if the slice is safe to create
+/// * `Err(Error)` if bounds validation fails
+unsafe fn safe_slice_from_raw_parts(
+    ptr: *const c_uchar,
+    len: usize,
+    param_name: &str,
+) -> Result<&[u8], Error> {
+    if ptr.is_null() {
+        return Err(Error::NullParameter(param_name.to_string()));
+    }
+
+    if !is_safe_buffer_size(len, ptr) {
+        return Err(Error::Other(format!(
+            "Buffer size {} is invalid for parameter '{}'",
+            len, param_name
+        )));
+    }
+
+    Ok(std::slice::from_raw_parts(ptr, len))
+}
+
 // C has no namespace so we prefix things with C2PA to make them unique
 #[allow(deprecated)]
 use c2pa::settings::load_settings_from_str;
@@ -570,7 +626,16 @@ pub unsafe extern "C" fn c2pa_reader_from_manifest_data_and_stream(
 ) -> *mut C2paReader {
     check_or_return_null!(manifest_data);
     let format = from_cstr_or_return_null!(format);
-    let manifest_bytes = std::slice::from_raw_parts(manifest_data, manifest_size);
+
+    // Safe bounds validation for manifest data
+    let manifest_bytes =
+        match safe_slice_from_raw_parts(manifest_data, manifest_size, "manifest_data") {
+            Ok(bytes) => bytes,
+            Err(err) => {
+                err.set_last();
+                return std::ptr::null_mut();
+            }
+        };
 
     let result = C2paReader::from_manifest_data_and_stream(manifest_bytes, &format, &mut (*stream));
     return_boxed!(post_validate(result))
@@ -895,6 +960,85 @@ pub unsafe extern "C" fn c2pa_builder_add_ingredient_from_stream(
     ok_or_return_int!(result, |_| 0) // returns 0 on success
 }
 
+/// Adds an action to the manifest the Builder is constructing.
+///
+/// # Parameters
+/// * builder_ptr: pointer to a Builder.
+/// * action_json: JSON string containing the action data.
+///
+/// # Errors
+/// Returns -1 if there were errors, otherwise returns 0.
+/// The error string can be retrieved by calling [c2pa_error].
+///
+/// # Safety
+/// Reads from NULL-terminated C strings.
+///
+/// # Example
+/// ```C
+/// const char* manifest_def = "{}";
+/// C2paBuilder* builder = c2pa_builder_from_json(manifest_def);
+///
+/// const char* action_json = "{\n"
+///     "    \"action\": \"com.example.test-action\",\n"
+///     "    \"parameters\": {\n"
+///     "        \"key1\": \"value1\",\n"
+///     "        \"key2\": \"value2\"\n"
+///     "    }\n"
+/// "}";
+///
+/// int result = c2pa_builder_add_action(builder, action_json);
+/// ```
+///
+/// This creates a manifest with an actions assertion
+/// containing the added action (excerpt of the full manifest):
+/// ```json
+/// "assertions": [
+///   {
+///     "label": "c2pa.actions.v2",
+///     "data": {
+///       "actions": [
+///         {
+///           "action": "c2pa.created",
+///           "digitalSourceType": "http://c2pa.org/digitalsourcetype/empty"
+///         },
+///         {
+///           "action": "com.example.test-action",
+///           "parameters": {
+///             "key2": "value2",
+///             "key1": "value1"
+///           }
+///         }
+///       ],
+///     }
+///   }
+/// ]
+/// ```
+#[no_mangle]
+pub unsafe extern "C" fn c2pa_builder_add_action(
+    builder_ptr: *mut C2paBuilder,
+    action_json: *const c_char,
+) -> c_int {
+    let mut builder = guard_boxed_int!(builder_ptr);
+    let action_json = from_cstr_or_return_int!(action_json);
+
+    // Parse the JSON into a serde Value to use with the Builder
+    let action_value: serde_json::Value = match serde_json::from_str(&action_json) {
+        Ok(value) => value,
+        Err(err) => {
+            Error::from_c2pa_error(c2pa::Error::JsonError(err)).set_last();
+            return -1;
+        }
+    };
+
+    match builder.add_action(action_value) {
+        Ok(_) => 0, // returns 0 on success
+        Err(err) => {
+            Error::from_c2pa_error(err).set_last();
+            -1
+        }
+    }
+}
+
 /// Writes an Archive of the Builder to the destination stream.
 ///
 /// # Parameters
@@ -1131,7 +1275,19 @@ pub unsafe extern "C" fn c2pa_format_embeddable(
     let format = from_cstr_or_return_int!(format);
     check_or_return_int!(manifest_bytes_ptr);
     check_or_return_int!(result_bytes_ptr);
-    let bytes = std::slice::from_raw_parts(manifest_bytes_ptr, manifest_bytes_size);
+
+    // Safe bounds validation for manifest bytes
+    let bytes = match safe_slice_from_raw_parts(
+        manifest_bytes_ptr,
+        manifest_bytes_size,
+        "manifest_bytes_ptr",
+    ) {
+        Ok(bytes) => bytes,
+        Err(err) => {
+            err.set_last();
+            return -1;
+        }
+    };
 
     let result = c2pa::Builder::composed_manifest(bytes, &format);
     ok_or_return_int!(result, |result_bytes: Vec<u8>| {
@@ -1298,8 +1454,17 @@ pub unsafe extern "C" fn c2pa_ed25519_sign(
     len: usize,
     private_key: *const c_char,
 ) -> *const c_uchar {
-    let bytes = std::slice::from_raw_parts(bytes, len);
+    check_or_return_null!(bytes);
     let private_key = from_cstr_or_return_null!(private_key);
+
+    // Safe bounds validation for input bytes
+    let bytes = match safe_slice_from_raw_parts(bytes, len, "bytes") {
+        Ok(bytes) => bytes,
+        Err(err) => {
+            err.set_last();
+            return std::ptr::null();
+        }
+    };
 
     let result = CallbackSigner::ed25519_sign(bytes, private_key.as_bytes());
     match result {
@@ -1466,6 +1631,84 @@ mod tests {
         }
         unsafe { c2pa_builder_free(builder) };
         unsafe { c2pa_signer_free(signer) };
+    }
+
+    #[test]
+    fn builder_add_actions_and_sign() {
+        let source_image = include_bytes!(fixture_path!("IMG_0003.jpg"));
+        let mut source_stream = TestC2paStream::from_bytes(source_image.to_vec());
+        let dest_vec = Vec::new();
+        let mut dest_stream = TestC2paStream::new(dest_vec).into_c_stream();
+        let certs = include_str!(fixture_path!("certs/ed25519.pub"));
+        let private_key = include_bytes!(fixture_path!("certs/ed25519.pem"));
+        let alg = CString::new("Ed25519").unwrap();
+        let sign_cert = CString::new(certs).unwrap();
+        let private_key = CString::new(private_key).unwrap();
+        let signer_info = C2paSignerInfo {
+            alg: alg.as_ptr(),
+            sign_cert: sign_cert.as_ptr(),
+            private_key: private_key.as_ptr(),
+            ta_url: std::ptr::null(),
+        };
+        let signer = unsafe { c2pa_signer_from_info(&signer_info) };
+
+        assert!(!signer.is_null());
+        let manifest_def = CString::new("{}").unwrap();
+        let builder = unsafe { c2pa_builder_from_json(manifest_def.as_ptr()) };
+        assert!(!builder.is_null());
+
+        let action_json = CString::new(
+            r#"{
+            "action": "com.example.test-action",
+            "parameters": {
+                "key1": "value1",
+                "key2": "value2"
+            }
+        }"#,
+        )
+        .unwrap();
+
+        // multiple calls add multiple actions
+        let result = unsafe { c2pa_builder_add_action(builder, action_json.as_ptr()) };
+        assert_eq!(result, 0);
+
+        let format = CString::new("image/jpeg").unwrap();
+        let mut manifest_bytes_ptr = std::ptr::null();
+        let _ = unsafe {
+            c2pa_builder_sign(
+                builder,
+                format.as_ptr(),
+                &mut source_stream,
+                &mut dest_stream,
+                signer,
+                &mut manifest_bytes_ptr,
+            )
+        };
+
+        // Verify we can read the signed data back
+        let dest_test_stream = TestC2paStream::from_c_stream(dest_stream);
+        let mut read_stream = dest_test_stream.into_c_stream();
+        let format = CString::new("image/jpeg").unwrap();
+
+        let reader = unsafe { c2pa_reader_from_stream(format.as_ptr(), &mut read_stream) };
+        assert!(!reader.is_null());
+
+        let json = unsafe { c2pa_reader_json(reader) };
+        assert!(!json.is_null());
+        let json_str = unsafe { CString::from_raw(json) };
+        let json_content = json_str.to_str().unwrap();
+
+        assert!(json_content.contains("manifest"));
+        assert!(json_content.contains("com.example.test-action"));
+
+        TestC2paStream::drop_c_stream(source_stream);
+        TestC2paStream::drop_c_stream(read_stream);
+        unsafe {
+            c2pa_manifest_bytes_free(manifest_bytes_ptr);
+            c2pa_builder_free(builder);
+            c2pa_signer_free(signer);
+            c2pa_reader_free(reader);
+        }
     }
 
     #[test]
@@ -1774,9 +2017,30 @@ mod tests {
                 return -1;
             }
 
-            let signature_slice = unsafe { std::slice::from_raw_parts(signature, signature_len) };
+            // Safe bounds validation for test callback
+            let signature_slice =
+                match unsafe { safe_slice_from_raw_parts(signature, signature_len, "signature") } {
+                    Ok(slice) => slice,
+                    Err(_) => {
+                        unsafe { c2pa_signature_free(signature) };
+                        return -1;
+                    }
+                };
+
+            // Validate signed_bytes bounds
+            if !unsafe { is_safe_buffer_size(signed_len, signed_bytes) } {
+                unsafe { c2pa_signature_free(signature) };
+                return -1;
+            }
+
             let signed_slice = unsafe { std::slice::from_raw_parts_mut(signed_bytes, signed_len) };
-            signed_slice[..signature_len].copy_from_slice(signature_slice);
+
+            if signature_len <= signed_slice.len() {
+                signed_slice[..signature_len].copy_from_slice(signature_slice);
+            } else {
+                unsafe { c2pa_signature_free(signature) };
+                return -1;
+            }
 
             unsafe { c2pa_signature_free(signature) };
             signature_len as isize

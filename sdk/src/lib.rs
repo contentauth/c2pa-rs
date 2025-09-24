@@ -163,7 +163,7 @@ pub(crate) mod http;
 pub use assertions::DigitalSourceType;
 #[doc(inline)]
 pub use assertions::Relationship;
-pub use builder::{Builder, ManifestDefinition};
+pub use builder::{Builder, BuilderIntent, ManifestDefinition};
 pub use callback_signer::{CallbackFunc, CallbackSigner};
 pub use claim_generator_info::ClaimGeneratorInfo;
 // pub use dynamic_assertion::{
