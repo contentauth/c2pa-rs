@@ -2035,10 +2035,9 @@ impl Claim {
         }
 
         // Skip further checks for v1 claims if not in strict validation mode
-        if claim.version() == 1
-            && !settings.verify.strict_v1_validation {
-                return Ok(()); // no further checks for v1 claims
-            }
+        if claim.version() == 1 && !settings.verify.strict_v1_validation {
+            return Ok(()); // no further checks for v1 claims
+        }
 
         let mut first_actions_assertion = None;
 
