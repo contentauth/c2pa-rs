@@ -962,7 +962,7 @@ impl Builder {
 
                     let mut actions: Actions = manifest_assertion.to_assertion()?;
 
-                    Self::add_actions_assertion_settings(&ingredient_map, &mut actions)?;
+                    Self::add_actions_assertion_settings(&ingredient_map, &mut actions, settings)?;
 
                     let mut updates = Vec::new();
                     //#[allow(clippy::explicit_counter_loop)]
@@ -1084,7 +1084,7 @@ impl Builder {
 
         if !found_actions {
             let mut actions = Actions::new();
-            Self::add_actions_assertion_settings(&ingredient_map, &mut actions)?;
+            Self::add_actions_assertion_settings(&ingredient_map, &mut actions, settings)?;
 
             if !actions.actions().is_empty() {
                 claim.add_assertion(&actions)?;
@@ -1105,20 +1105,18 @@ impl Builder {
     fn add_actions_assertion_settings(
         ingredient_map: &HashMap<String, (&Relationship, HashedUri)>,
         actions: &mut Actions,
+        settings: &Settings,
     ) -> Result<()> {
-        let settings = crate::settings::get_settings().unwrap_or_default();
-        // TO DO BEFORE MERGE? Pass Settings in here?
-
         if actions.all_actions_included.is_none() {
             actions.all_actions_included = Some(settings.builder.actions.all_actions_included);
         }
 
-        let action_templates = settings.builder.actions.templates;
+        let action_templates = &settings.builder.actions.templates;
 
         if let Some(action_templates) = action_templates {
             let action_templates = action_templates
                 .into_iter()
-                .map(|template| template.try_into())
+                .map(|template| template.clone().try_into())
                 .collect::<Result<Vec<ActionTemplate>>>()?;
             match actions.templates {
                 Some(ref mut templates) => {
@@ -1128,12 +1126,12 @@ impl Builder {
             }
         }
 
-        let additional_actions = settings.builder.actions.actions;
+        let additional_actions = &settings.builder.actions.actions;
 
         if let Some(additional_actions) = additional_actions {
             let additional_actions = additional_actions
                 .into_iter()
-                .map(|action| action.try_into())
+                .map(|action| action.clone().try_into())
                 .collect::<Result<Vec<Action>>>()?;
 
             match actions.actions.is_empty() {
