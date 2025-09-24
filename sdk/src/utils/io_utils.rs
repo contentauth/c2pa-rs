@@ -133,7 +133,7 @@ pub(crate) fn stream_len<R: Read + Seek + ?Sized>(reader: &mut R) -> Result<u64>
 /// This will always return an in-memory stream when the compilation target doesn't
 /// support file I/O.
 #[cfg(target_arch = "wasm32")]
-pub(crate) fn stream_with_fs_fallback(threshold: usize) -> impl Read + Write + Seek {
+pub(crate) fn stream_with_fs_fallback(_threshold: usize) -> impl Read + Write + Seek {
     std::io::Cursor::new(Vec::new())
 }
 
