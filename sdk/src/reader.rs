@@ -32,6 +32,7 @@ use serde_with::skip_serializing_none;
 #[cfg(feature = "file_io")]
 use crate::utils::io_utils::uri_to_path;
 use crate::{
+    asset_io::CAIRead,
     crypto::base64,
     dynamic_assertion::PartialClaim,
     error::{Error, Result},
@@ -39,7 +40,7 @@ use crate::{
     jumbf_io,
     manifest::StoreOptions,
     manifest_store_report::ManifestStoreReport,
-    settings::get_settings_value,
+    settings::{get_settings_value, Settings},
     status_tracker::StatusTracker,
     store::Store,
     validation_results::{ValidationResults, ValidationState},
@@ -70,6 +71,77 @@ pub trait AsyncPostValidator {
         preliminary_claim: &PartialClaim,
         tracker: &mut StatusTracker,
     ) -> Result<Option<Value>>;
+}
+
+pub struct ReaderBuilder {
+    settings: Settings,
+    external_manifest: Option<Box<dyn CAIRead>>,
+    fragments: Option<Vec<Box<dyn CAIRead>>>,
+}
+
+impl ReaderBuilder {
+    pub fn new() -> Self {
+        Self {
+            settings: Settings::default(),
+            external_manifest: None,
+            fragments: None,
+        }
+    }
+
+    pub fn with_settings(settings: Settings) -> Self {
+        Self {
+            settings,
+            external_manifest: None,
+            fragments: None,
+        }
+    }
+
+    pub fn external_manifest(
+        mut self,
+        external_manifest: impl Read + Seek + Send + 'static,
+    ) -> Self {
+        self.external_manifest = Some(Box::new(external_manifest));
+        self
+    }
+
+    pub fn add_fragment(mut self, fragment: impl Read + Seek + Send + 'static) -> Self {
+        let fragments = self.fragments.get_or_insert_default();
+        fragments.push(Box::new(fragment));
+        self
+    }
+
+    // pub fn http_resolver(self, resolver: impl SyncHttpResolver) -> Self {
+    //     todo!()
+    // }
+
+    // TODO: impl the async cases
+    // TODO: pass the settings down the stack (waiting on #1444)
+    #[async_generic]
+    pub fn build(self, format: &str, stream: impl Read + Seek + Send) -> Result<Reader> {
+        match self.fragments {
+            Some(mut fragments) => {
+                // TODO: can we pass in an external manifest here?
+                match self.external_manifest {
+                    Some(external_manifest) => {
+                        // TODO: we can add a from_manifest_data_and_fragments function
+                        todo!()
+                    }
+                    None => Reader::from_fragments(format, stream, &mut fragments),
+                }
+            }
+            None => match self.external_manifest {
+                Some(mut external_manifest) => {
+                    // TODO: internally we actually convert c2pa_data to a stream again, we should modify the function
+                    //       signatures to stream by default
+                    let mut c2pa_data = Vec::new();
+                    external_manifest.read_to_end(&mut c2pa_data)?;
+
+                    Reader::from_manifest_data_and_stream(&c2pa_data, format, stream)
+                }
+                None => Reader::from_stream(format, stream),
+            },
+        }
+    }
 }
 
 /// Use a Reader to read and validate a manifest store.
@@ -297,6 +369,29 @@ impl Reader {
         Self::from_store(store, &validation_log)
     }
 
+    // TODO: doc
+    pub fn from_fragments(
+        format: &str,
+        mut init_segment: impl Read + Seek + Send,
+        // TODO: make this take impl Read + Seek + Send
+        fragments: &mut [Box<dyn CAIRead>],
+    ) -> Result<Self> {
+        let verify = get_settings_value::<bool>("verify.verify_after_reading")?; // defaults to true
+
+        let mut validation_log = StatusTracker::default();
+
+        match Store::load_fragments_from_stream(
+            &format,
+            &mut init_segment,
+            fragments,
+            verify,
+            &mut validation_log,
+        ) {
+            Ok(store) => Self::from_store(store, &validation_log),
+            Err(e) => Err(e),
+        }
+    }
+
     #[cfg(feature = "file_io")]
     /// Loads a [`Reader`]` from an initial segment and fragments.  This
     /// would be used to load and validate fragmented MP4 files that span
@@ -314,10 +409,15 @@ impl Reader {
 
         let mut init_segment = std::fs::File::open(path.as_ref())?;
 
-        match Store::load_from_file_and_fragments(
+        let mut fragments: Vec<Box<dyn CAIRead>> = fragments
+            .iter()
+            .map(|path| File::open(path).map(|file| Box::new(file) as Box<dyn CAIRead>))
+            .collect::<Result<_, std::io::Error>>()?;
+
+        match Store::load_fragments_from_stream(
             &asset_type,
             &mut init_segment,
-            fragments,
+            &mut fragments,
             verify,
             &mut validation_log,
         ) {
