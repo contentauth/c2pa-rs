@@ -394,7 +394,7 @@ impl Settings {
 
     /// Set [Settings] back to the default values.
     #[allow(unused)]
-    pub fn reset() -> Result<()> {
+    fn reset() -> Result<()> {
         if let Ok(default_settings) = Config::try_from(&Settings::default()) {
             SETTINGS.set(default_settings);
             Ok(())
