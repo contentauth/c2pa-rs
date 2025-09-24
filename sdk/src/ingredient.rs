@@ -733,15 +733,19 @@ impl Ingredient {
         path: P,
         options: &dyn IngredientOptions,
     ) -> Result<Self> {
-        Self::from_file_impl(path.as_ref(), options)
+        let settings = crate::settings::get_settings().unwrap_or_default();
+        // TO DO BEFORE MERGE? Pass Settings in here?
+
+        Self::from_file_impl(path.as_ref(), options, &settings)
     }
 
     // Internal implementation to avoid code bloat.
     #[cfg(feature = "file_io")]
-    fn from_file_impl(path: &Path, options: &dyn IngredientOptions) -> Result<Self> {
-        let settings = crate::settings::get_settings().unwrap_or_default();
-        // TO DO BEFORE MERGE? Pass Settings in here?
-
+    fn from_file_impl(
+        path: &Path,
+        options: &dyn IngredientOptions,
+        settings: &Settings,
+    ) -> Result<Self> {
         #[cfg(feature = "diagnostics")]
         let _t = crate::utils::time_it::TimeIt::new("Ingredient:from_file_with_options");
 
