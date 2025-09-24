@@ -42,6 +42,7 @@ use crate::{
     log_item,
     resource_store::{skip_serializing_resources, ResourceRef, ResourceStore},
     salt::DefaultSalt,
+    settings::Settings,
     status_tracker::StatusTracker,
     store::Store,
     utils::{
@@ -954,6 +955,20 @@ impl Ingredient {
         Self::from_stream_async(format, &mut stream).await
     }
 
+    /// Creates an `Ingredient` from a memory buffer (async version).
+    ///
+    /// This does not set title or hash.
+    /// Thumbnail will be set only if one can be retrieved from a previous valid manifest.
+    pub async fn from_memory_async_with_settings(
+        format: &str,
+        buffer: &[u8],
+        settings: &Settings,
+    ) -> Result<Self> {
+        // TO DO BEFORE MERGE: Replace `from_memory_async` with this?
+        let mut stream = Cursor::new(buffer);
+        Self::from_stream_async_with_settings(format, &mut stream, settings).await
+    }
+
     /// Creates an `Ingredient` from a stream (async version).
     ///
     /// This does not set title or hash.
@@ -962,6 +977,15 @@ impl Ingredient {
         let settings = crate::settings::get_settings().unwrap_or_default();
         // TO DO BEFORE MERGE? Pass Settings in here?
 
+        Self::from_stream_async_with_settings(format, stream, &settings).await
+    }
+
+    pub(crate) async fn from_stream_async_with_settings(
+        format: &str,
+        stream: &mut dyn CAIRead,
+        settings: &Settings,
+    ) -> Result<Self> {
+        // TO DO BEFORE MERGE: Make this the official signature?
         let mut ingredient = Self::from_stream_info(stream, format, "untitled");
         stream.rewind()?;
 
@@ -980,6 +1004,7 @@ impl Ingredient {
                                     &store,
                                     &mut ClaimAssetData::Stream(stream, format),
                                     &mut validation_log,
+                                    &settings,
                                 )
                                 .await
                                 .map(|_| store)
@@ -1407,6 +1432,9 @@ impl Ingredient {
         format: &str,
         stream: &mut dyn CAIRead,
     ) -> Result<Self> {
+        let settings = crate::settings::get_settings().unwrap_or_default();
+        // TO DO BEFORE MERGE? Pass Settings in here?
+
         let mut ingredient = Self::from_stream_info(stream, format, "untitled");
 
         let mut validation_log = StatusTracker::default();
@@ -1417,10 +1445,12 @@ impl Ingredient {
             Ok(store) => {
                 // verify the store
                 stream.rewind()?;
+
                 Store::verify_store_async(
                     &store,
                     &mut ClaimAssetData::Stream(stream, format),
                     &mut validation_log,
+                    &settings,
                 )
                 .await
                 .map(|_| store)
@@ -1703,21 +1733,18 @@ mod tests {
     #[cfg(feature = "fetch_remote_manifests")]
     #[c2pa_test_async]
     async fn test_jpg_cloud_from_memory() {
-        // Save original settings
-        let original_verify_trust =
-            crate::settings::get_settings_value("verify.verify_trust").unwrap_or(true);
-        let original_remote_fetch =
-            crate::settings::get_settings_value("verify.remote_manifest_fetch").unwrap_or(true);
-
-        // Set our test settings
-        crate::settings::set_settings_value("verify.verify_trust", false).unwrap();
-        crate::settings::set_settings_value("verify.remote_manifest_fetch", true).unwrap();
+        let mut settings = crate::settings::get_settings().unwrap_or_default();
+        settings.verify.verify_trust = false;
+        settings.verify.remote_manifest_fetch = true;
 
         let image_bytes = include_bytes!("../tests/fixtures/cloud.jpg");
         let format = "image/jpeg";
-        let ingredient = Ingredient::from_memory_async(format, image_bytes)
-            .await
-            .expect("from_memory_async");
+
+        let ingredient =
+            Ingredient::from_memory_async_with_settings(format, image_bytes, &settings)
+                .await
+                .expect("from_memory_async");
+
         // println!("ingredient = {ingredient}");
         assert_eq!(ingredient.title(), Some("untitled"));
         assert_eq!(ingredient.format(), Some(format));
@@ -1725,23 +1752,23 @@ mod tests {
         assert!(ingredient.provenance().unwrap().starts_with("https:"));
         assert!(ingredient.manifest_data().is_some());
         assert_eq!(ingredient.validation_status(), None);
-
-        // Restore original settings
-        crate::settings::set_settings_value("verify.verify_trust", original_verify_trust).unwrap();
-        crate::settings::set_settings_value("verify.remote_manifest_fetch", original_remote_fetch)
-            .unwrap();
     }
 
     #[cfg(not(any(feature = "fetch_remote_manifests", feature = "file_io")))]
     #[c2pa_test_async]
     async fn test_jpg_cloud_from_memory_no_file_io() {
-        crate::settings::set_settings_value("verify.verify_trust", false).unwrap();
+        let mut settings = crate::settings::get_settings().unwrap_or_default();
+        settings.verify.verify_trust = false;
+        settings.verify.remote_manifest_fetch = true;
 
         let image_bytes = include_bytes!("../tests/fixtures/cloud.jpg");
         let format = "image/jpeg";
-        let ingredient = Ingredient::from_memory_async(format, image_bytes)
-            .await
-            .expect("from_memory_async");
+
+        let ingredient =
+            Ingredient::from_memory_async_with_settings(format, image_bytes, &settings)
+                .await
+                .expect("from_memory_async");
+
         assert!(ingredient.validation_status().is_some());
         assert_eq!(
             ingredient.validation_status().unwrap()[0].code(),

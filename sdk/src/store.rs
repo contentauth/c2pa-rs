@@ -1471,6 +1471,9 @@ impl Store {
         asset_data: &mut ClaimAssetData<'_>,
         validation_log: &mut StatusTracker,
     ) -> Result<()> {
+        let settings = crate::settings::get_settings().unwrap_or_default();
+        // TO DO BEFORE MERGE? Pass Settings in here?
+
         // walk the ingredients
         for i in claim.ingredient_assertions() {
             // allow for zero out ingredient assertions
@@ -1656,6 +1659,7 @@ impl Store {
                             check_ingredient_trust,
                             &store.ctp,
                             validation_log,
+                            &settings,
                         )?;
                     }
 
@@ -1695,6 +1699,7 @@ impl Store {
         svi: &StoreValidationInfo,
         asset_data: &mut ClaimAssetData<'_>,
         validation_log: &mut StatusTracker,
+        settings: &Settings,
     ) -> Result<()> {
         // walk the ingredients
         for i in claim.ingredient_assertions() {
@@ -1881,6 +1886,7 @@ impl Store {
                             check_ingredient_trust,
                             &store.ctp,
                             validation_log,
+                            &settings,
                         )
                         .await?;
                     }
@@ -1892,6 +1898,7 @@ impl Store {
                         svi,
                         asset_data,
                         validation_log,
+                        &settings,
                     )
                     .await?;
                 } else {
@@ -2066,6 +2073,7 @@ impl Store {
         store: &Store,
         asset_data: &mut ClaimAssetData<'_>,
         validation_log: &mut StatusTracker,
+        settings: &Settings,
     ) -> Result<()> {
         let claim = match store.provenance_claim() {
             Some(c) => c,
@@ -2083,14 +2091,38 @@ impl Store {
 
         if _sync {
             // verify the provenance claim
-            Claim::verify_claim(claim, asset_data, &svi, true, &store.ctp, validation_log)?;
+            Claim::verify_claim(
+                claim,
+                asset_data,
+                &svi,
+                true,
+                &store.ctp,
+                validation_log,
+                &settings,
+            )?;
 
             Store::ingredient_checks(store, claim, &svi, asset_data, validation_log)?;
         } else {
-            Claim::verify_claim_async(claim, asset_data, &svi, true, &store.ctp, validation_log)
-                .await?;
+            Claim::verify_claim_async(
+                claim,
+                asset_data,
+                &svi,
+                true,
+                &store.ctp,
+                validation_log,
+                &settings,
+            )
+            .await?;
 
-            Store::ingredient_checks_async(store, claim, &svi, asset_data, validation_log).await?;
+            Store::ingredient_checks_async(
+                store,
+                claim,
+                &svi,
+                asset_data,
+                validation_log,
+                &settings,
+            )
+            .await?;
         }
 
         Ok(())
@@ -2949,6 +2981,7 @@ impl Store {
                             self,
                             &mut crate::claim::ClaimAssetData::Stream(output_stream, format),
                             &mut validation_log,
+                            &settings,
                         )?;
                     }
                 }
@@ -3228,7 +3261,15 @@ impl Store {
         asset_path: &'_ Path,
         validation_log: &mut StatusTracker,
     ) -> Result<()> {
-        Store::verify_store(self, &mut ClaimAssetData::Path(asset_path), validation_log)
+        let settings = crate::settings::get_settings().unwrap_or_default();
+        // TO DO BEFORE MERGE? Pass Settings in here?
+
+        Store::verify_store(
+            self,
+            &mut ClaimAssetData::Path(asset_path),
+            validation_log,
+            &settings,
+        )
     }
 
     // fetch remote manifest if possible
@@ -3695,8 +3736,12 @@ impl Store {
         verify: bool,
         validation_log: &mut StatusTracker,
     ) -> Result<Self> {
+        let settings = crate::settings::get_settings().unwrap_or_default();
+        // TO DO BEFORE MERGE? Pass Settings in here?
+
         stream.rewind()?;
-        // first we convert the JUMBF into a usable store
+
+        // First we convert the JUMBF into a usable store.
         let store = Store::from_jumbf(c2pa_data, validation_log).inspect_err(|e| {
             log_item!("asset", "error loading file", "load_from_asset")
                 .failure_no_throw(validation_log, e);
@@ -3706,9 +3751,9 @@ impl Store {
             stream.rewind()?;
             let mut asset_data = ClaimAssetData::Stream(&mut stream, format);
             if _sync {
-                Store::verify_store(&store, &mut asset_data, validation_log)
+                Store::verify_store(&store, &mut asset_data, validation_log, &settings)
             } else {
-                Store::verify_store_async(&store, &mut asset_data, validation_log).await
+                Store::verify_store_async(&store, &mut asset_data, validation_log, &settings).await
             }?;
         }
         Ok(store)
@@ -3776,6 +3821,7 @@ impl Store {
                 &store,
                 &mut ClaimAssetData::StreamFragments(init_segment, fragments, asset_type),
                 validation_log,
+                &settings,
             )?;
         }
 
@@ -3796,6 +3842,9 @@ impl Store {
         mut fragment: impl Read + Seek + Send,
         validation_log: &mut StatusTracker,
     ) -> Result<Store> {
+        let settings = crate::settings::get_settings().unwrap_or_default();
+        // TO DO BEFORE MERGE? Pass Settings in here?
+
         let manifest_bytes =
             Store::load_jumbf_from_stream(format, &mut stream, &Settings::default())?.0;
 
@@ -3806,9 +3855,9 @@ impl Store {
         if verify {
             let mut fragment = ClaimAssetData::StreamFragment(&mut stream, &mut fragment, format);
             if _sync {
-                Store::verify_store(&store, &mut fragment, validation_log)
+                Store::verify_store(&store, &mut fragment, validation_log, &settings)
             } else {
-                Store::verify_store_async(&store, &mut fragment, validation_log).await
+                Store::verify_store_async(&store, &mut fragment, validation_log, &settings).await
             }?;
         };
         Ok(store)
@@ -8087,6 +8136,9 @@ pub mod tests {
     async fn test_async_dynamic_assertions() {
         use async_trait::async_trait;
 
+        let settings = crate::settings::get_settings().unwrap_or_default();
+        // TO DO BEFORE MERGE? Pass Settings in here?
+
         #[derive(Serialize)]
         struct TestAssertion {
             my_tag: String,
@@ -8204,14 +8256,8 @@ pub mod tests {
         // make sure we can read from new file
         let mut report = StatusTracker::default();
 
-        let new_store = Store::from_stream(
-            "jpeg",
-            &mut result_stream,
-            true,
-            &mut report,
-            &Settings::default(),
-        )
-        .unwrap();
+        let new_store =
+            Store::from_stream("jpeg", &mut result_stream, true, &mut report, &settings).unwrap();
 
         println!("new_store: {new_store}");
 
@@ -8221,6 +8267,7 @@ pub mod tests {
             &new_store,
             &mut ClaimAssetData::Bytes(&result, "jpg"),
             &mut report,
+            &settings,
         )
         .await
         .unwrap();

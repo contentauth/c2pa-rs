@@ -71,7 +71,7 @@ use crate::{
     log_item,
     resource_store::UriOrResource,
     salt::{DefaultSalt, SaltGenerator, NO_SALT},
-    settings::get_settings_value,
+    settings::{get_settings_value, Settings},
     status_tracker::{ErrorBehavior, StatusTracker},
     store::StoreValidationInfo,
     utils::hash_utils::{hash_by_alg, vec_compare},
@@ -1828,9 +1828,9 @@ impl Claim {
         cert_check: bool,
         ctp: &CertificateTrustPolicy,
         validation_log: &mut StatusTracker,
+        settings: &Settings,
     ) -> Result<()> {
-        let settings = crate::settings::get_settings().unwrap_or_default();
-        // TO DO BEFORE MERGE? Pass Settings in here?
+        // TO DO BEFORE MERGE? Are ctp and cert_check params redundant?
 
         // Parse COSE signed data (signature) and validate it.
         let sig = claim.signature_val().clone();
@@ -1899,9 +1899,9 @@ impl Claim {
         cert_check: bool,
         ctp: &CertificateTrustPolicy,
         validation_log: &mut StatusTracker,
+        settings: &Settings,
     ) -> Result<()> {
-        let settings = crate::settings::get_settings().unwrap_or_default();
-        // TO DO BEFORE MERGE? Pass Settings in here?
+        // TO DO BEFORE MERGE? Are cert_check and ctp redundant?
 
         // Parse COSE signed data (signature) and validate it.
         let sig = claim.signature_val();
