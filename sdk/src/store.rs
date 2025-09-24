@@ -6869,7 +6869,14 @@ pub mod tests {
 
         // can we read back in
         output_stream.set_position(0);
-        let new_store = Store::from_stream(format, &mut output_stream, true, &mut report).unwrap();
+        let new_store = Store::from_stream(
+            format,
+            &mut output_stream,
+            &SyncGenericResolver::new(),
+            true,
+            &mut report,
+        )
+        .unwrap();
 
         assert!(!report.has_any_error());
 
