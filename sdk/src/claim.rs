@@ -2161,20 +2161,21 @@ impl Claim {
                     || action.action() == c2pa_action::REMOVED
                 {
                     // 2.b.i must have parameters
-                    let params = action.parameters().ok_or_else(||
-                        // 2.e.i
+                    let Some(params) = action.parameters() else {
                         log_item!(
                             label.clone(),
                             "opened, placed and removed items must have parameters",
                             "verify_actions"
                         )
                         .validation_status(validation_status::ASSERTION_ACTION_INGREDIENT_MISMATCH)
-                        .failure_as_err(
+                        .failure(
                             validation_log,
                             Error::ValidationRule(
                                 "opened, placed and removed items must have parameters".into(),
                             ),
-                        ))?;
+                        )?;
+                        continue; // Skip the parameter-dependent checks below
+                    };
 
                     // 2.b.ii must have ingredient or ingredients param
                     if params.ingredients.is_none() && params.ingredient.is_none() {
@@ -2184,10 +2185,11 @@ impl Claim {
                             "verify_actions"
                         )
                         .validation_status(validation_status::ASSERTION_ACTION_INGREDIENT_MISMATCH)
-                        .failure(
+                        .failure_no_throw(
                             validation_log,
                             Error::ValidationRule("opened, placed and removed items must have ingredient(s) parameters".into()),
-                        )?;
+                        );
+                        continue;
                     }
 
                     // 2.b.iii if ingredients, must be an array with at least one item
@@ -2199,10 +2201,10 @@ impl Claim {
                                 "verify_actions"
                             )
                             .validation_status(validation_status::ASSERTION_ACTION_INGREDIENT_MISMATCH)
-                            .failure(
+                            .failure_no_throw(
                                 validation_log,
                                 Error::ValidationRule("opened, placed and removed items must have ingredients parameter must be non empty array".into()),
-                            )?;
+                            );
                         }
                     }
 
@@ -2256,13 +2258,13 @@ impl Claim {
                             .validation_status(
                                 validation_status::ASSERTION_ACTION_INGREDIENT_MISMATCH,
                             )
-                            .failure(
+                            .failure_no_throw(
                                 validation_log,
                                 Error::ValidationRule(
                                     "opened must have valid ingredient with ParentOf relationship"
                                         .into(),
                                 ),
-                            )?;
+                            );
                         }
                     }
 
@@ -2319,12 +2321,12 @@ impl Claim {
                             .validation_status(
                                 validation_status::ASSERTION_ACTION_INGREDIENT_MISMATCH,
                             )
-                            .failure(
+                            .failure_no_throw(
                                 validation_log,
                                 Error::ValidationRule(
                                     "action must have valid ingredient with ComponentOf relationship".into(),
                                 ),
-                            )?;
+                            );
                         }
                     }
                 }
@@ -2333,20 +2335,21 @@ impl Claim {
                 if action.action() == c2pa_action::TRANSCODED
                     || action.action() == c2pa_action::REPACKAGED
                 {
-                    let params = action.parameters().ok_or_else(||
-                        // 2.e.i
+                    let Some(params) = action.parameters() else {
                         log_item!(
                             label.clone(),
                             "opened, placed and removed items must have parameters",
                             "verify_actions"
                         )
                         .validation_status(validation_status::ASSERTION_ACTION_INGREDIENT_MISMATCH)
-                        .failure_as_err(
+                        .failure(
                             validation_log,
                             Error::ValidationRule(
                                 "opened, placed and removed items must have parameters".into(),
                             ),
-                        ))?;
+                        )?;
+                        continue; // Skip the parameter-dependent checks below
+                    };
 
                     let mut parent_tested = None; // on exists if action actually pointed to an ingredient
                     if let Some(h) = &params.ingredient {
@@ -2397,13 +2400,13 @@ impl Claim {
                             "verify_actions"
                         )
                         .validation_status(validation_status::ASSERTION_ACTION_INGREDIENT_MISMATCH)
-                        .failure(
+                        .failure_no_throw(
                             validation_log,
                             Error::ValidationRule(
                                 "action must have valid ingredient with ParentOf relationship"
                                     .into(),
                             ),
-                        )?;
+                        );
                     }
                 }
 
@@ -2448,12 +2451,12 @@ impl Claim {
                                 .validation_status(
                                     validation_status::ASSERTION_ACTION_REDACTION_MISMATCH,
                                 )
-                                .failure(
+                                .failure_no_throw(
                                     validation_log,
                                     Error::ValidationRule(
                                         "redaction action must have valid ingredient".into(),
                                     ),
-                                )?;
+                                );
                             }
                             Some(false) => {
                                 log_item!(
@@ -2462,10 +2465,10 @@ impl Claim {
                                     "verify_actions"
                                 )
                                 .validation_status(validation_status::ASSERTION_NOT_REDACTED)
-                                .failure(
+                                .failure_no_throw(
                                     validation_log,
                                     Error::ValidationRule("the assertion was not redacted".into()),
-                                )?;
+                                );
                             }
                             Some(true) => {}
                         }
@@ -3034,22 +3037,22 @@ impl Claim {
             let assertion_absolute_uri = if assertion.is_relative_url() {
                 to_absolute_uri(claim.label(), &assertion.url())
             } else {
-                // match sure the assertion points to this assertion store
-                let assertion_manifest =
-                    manifest_label_from_uri(&assertion.url()).ok_or_else(|| {
-                        log_item!(
-                            assertion.url(),
-                            format!("assertion URI malformed: {}", assertion.url()),
-                            "verify_internal"
-                        )
-                        .validation_status(validation_status::ASSERTION_HASHEDURI_MISMATCH)
-                        .failure_as_err(
-                            validation_log,
-                            Error::AssertionMissing {
-                                url: assertion.url(),
-                            },
-                        )
-                    })?;
+                // make sure the assertion points to this assertion store
+                let Some(assertion_manifest) = manifest_label_from_uri(&assertion.url()) else {
+                    log_item!(
+                        assertion.url(),
+                        format!("assertion URI malformed: {}", assertion.url()),
+                        "verify_internal"
+                    )
+                    .validation_status(validation_status::ASSERTION_HASHEDURI_MISMATCH)
+                    .failure_no_throw(
+                        validation_log,
+                        Error::AssertionMissing {
+                            url: assertion.url(),
+                        },
+                    );
+                    continue;
+                };
 
                 if assertion_manifest != claim.label() {
                     log_item!(
@@ -3067,7 +3070,7 @@ impl Claim {
                             url: assertion.url(),
                         },
                     )?;
-                }
+                };
 
                 assertion.url()
             };
