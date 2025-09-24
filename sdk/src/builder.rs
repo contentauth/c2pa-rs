@@ -41,10 +41,6 @@ use crate::{
     jumbf_io,
     resource_store::{ResourceRef, ResourceResolver, ResourceStore},
     salt::DefaultSalt,
-    settings::{
-        self,
-        builder::{ActionSettings, ActionTemplateSettings, ClaimGeneratorInfoSettings},
-    },
     store::Store,
     utils::mime::format_to_mime,
     AsyncSigner,
@@ -835,16 +831,17 @@ impl Builder {
 
     // Convert a Manifest into a Claim
     fn to_claim(&self) -> Result<Claim> {
+        let settings = crate::settings::get_settings().unwrap_or_default();
+        // TO DO BEFORE MERGE? Pass Settings in here?
+
         let definition = &self.definition;
         let mut claim_generator_info = definition.claim_generator_info.clone();
 
         // add the default claim generator info for this library
         if claim_generator_info.is_empty() {
-            let claim_generator_info_settings = settings::get_settings_value::<
-                Option<ClaimGeneratorInfoSettings>,
-            >("builder.claim_generator_info");
+            let claim_generator_info_settings = settings.builder.claim_generator_info;
             match claim_generator_info_settings {
-                Ok(Some(claim_generator_info_settings)) => {
+                Some(claim_generator_info_settings) => {
                     claim_generator_info.push(claim_generator_info_settings.try_into()?);
                 }
                 _ => {
@@ -1112,18 +1109,16 @@ impl Builder {
         ingredient_map: &HashMap<String, (&Relationship, HashedUri)>,
         actions: &mut Actions,
     ) -> Result<()> {
+        let settings = crate::settings::get_settings().unwrap_or_default();
+        // TO DO BEFORE MERGE? Pass Settings in here?
+
         if actions.all_actions_included.is_none() {
-            let all_actions_included =
-                settings::get_settings_value::<bool>("builder.actions.all_actions_included");
-            if let Ok(all_actions_included) = all_actions_included {
-                actions.all_actions_included = Some(all_actions_included);
-            }
+            actions.all_actions_included = Some(settings.builder.actions.all_actions_included);
         }
 
-        let action_templates = settings::get_settings_value::<Option<Vec<ActionTemplateSettings>>>(
-            "builder.actions.templates",
-        );
-        if let Ok(Some(action_templates)) = action_templates {
+        let action_templates = settings.builder.actions.templates;
+
+        if let Some(action_templates) = action_templates {
             let action_templates = action_templates
                 .into_iter()
                 .map(|template| template.try_into())
@@ -1136,9 +1131,9 @@ impl Builder {
             }
         }
 
-        let additional_actions =
-            settings::get_settings_value::<Option<Vec<ActionSettings>>>("builder.actions.actions");
-        if let Ok(Some(additional_actions)) = additional_actions {
+        let additional_actions = settings.builder.actions.actions;
+
+        if let Some(additional_actions) = additional_actions {
             let additional_actions = additional_actions
                 .into_iter()
                 .map(|action| action.try_into())
