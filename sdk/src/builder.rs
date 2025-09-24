@@ -1141,7 +1141,7 @@ impl Builder {
                 true => actions.actions = additional_actions,
             }
         }
-        Self::add_auto_actions_assertions_settings(ingredient_map, actions)
+        Self::add_auto_actions_assertions_settings(ingredient_map, actions, settings)
     }
 
     /// Adds c2pa.created, c2pa.opened, and c2pa.placed actions for the specified [Actions][crate::assertions::Actions]
@@ -1154,10 +1154,8 @@ impl Builder {
     fn add_auto_actions_assertions_settings(
         ingredient_map: &HashMap<String, (&Relationship, HashedUri)>,
         actions: &mut Actions,
+        settings: &Settings,
     ) -> Result<()> {
-        let settings = crate::settings::get_settings().unwrap_or_default();
-        // TO DO BEFORE MERGE? Pass Settings in here?
-
         // https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_mandatory_presence_of_at_least_one_actions_assertion
         let auto_created = settings.builder.actions.auto_created_action.enabled;
         let auto_opened = settings.builder.actions.auto_opened_action.enabled;
@@ -1176,7 +1174,7 @@ impl Builder {
                     let action =
                         action.set_parameter("ingredients", vec![parent_ingredient_uri])?;
 
-                    let source_type = settings.builder.actions.auto_opened_action.source_type;
+                    let source_type = &settings.builder.actions.auto_opened_action.source_type;
                     // TO DISCUSS BEFORE MERGE: Previous code was this:
                     // let source_type =
                     //      settings::get_settings_value::<Option<DigitalSourceType>>(
@@ -1193,19 +1191,19 @@ impl Builder {
                     // seems to be expecting this (wrong?) result. Looking for guidance
                     // on how to repair that test.
                     match source_type {
-                        Some(source_type) => Some(action.set_source_type(source_type)),
+                        Some(source_type) => Some(action.set_source_type(source_type.clone())),
                         _ => Some(action),
                     }
                 }
                 (None, true, _) => {
                     // The settings ensures this field always exists for the "c2pa.created" action.
-                    let source_type = settings.builder.actions.auto_created_action.source_type;
+                    let source_type = &settings.builder.actions.auto_created_action.source_type;
 
                     match source_type {
                         Some(source_type) => {
                             let action = {
                                 let action = Action::new(c2pa_action::CREATED);
-                                action.set_source_type(source_type)
+                                action.set_source_type(source_type.clone())
                             };
                             Some(action)
                         }
