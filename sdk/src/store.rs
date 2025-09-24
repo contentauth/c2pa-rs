@@ -3834,23 +3834,19 @@ impl Store {
     /// stream: reference to initial segment asset
     /// fragment: reference to fragment asset
     /// validation_log: If present all found errors are logged and returned, otherwise first error causes exit and is returned
-    #[allow(unused)] // todo: we don't use this anywhere now, but we should!
-    #[async_generic()]
+    #[async_generic]
     pub fn load_fragment_from_stream(
         format: &str,
         mut stream: impl Read + Seek + Send,
         mut fragment: impl Read + Seek + Send,
         validation_log: &mut StatusTracker,
+        settings: &Settings,
     ) -> Result<Store> {
-        let settings = crate::settings::get_settings().unwrap_or_default();
-        // TO DO BEFORE MERGE? Pass Settings in here?
-
         let manifest_bytes =
             Store::load_jumbf_from_stream(format, &mut stream, &Settings::default())?.0;
 
         let store = Store::from_jumbf(&manifest_bytes, validation_log)?;
-
-        let verify = get_settings_value::<bool>("verify.verify_after_reading")?; // defaults to true
+        let verify = settings.verify.verify_after_reading;
 
         if verify {
             let mut fragment = ClaimAssetData::StreamFragment(&mut stream, &mut fragment, format);
@@ -7028,9 +7024,14 @@ pub mod tests {
         let segment_stream = std::io::BufReader::new(segment_stream);
 
         let mut report = StatusTracker::default();
-        let store =
-            Store::load_fragment_from_stream("mp4", init_stream, segment_stream, &mut report)
-                .expect("load_from_asset");
+        let store = Store::load_fragment_from_stream(
+            "mp4",
+            init_stream,
+            segment_stream,
+            &mut report,
+            &Settings::default(),
+        )
+        .expect("load_from_asset");
         println!("store = {store}");
     }
 
@@ -8342,6 +8343,7 @@ pub mod tests {
                             &mut init_stream,
                             &mut fragment_stream,
                             &mut validation_log,
+                            &Settings::default(),
                         )
                         .unwrap();
                         init_stream.seek(std::io::SeekFrom::Start(0)).unwrap();
@@ -8439,6 +8441,7 @@ pub mod tests {
             &mut init_stream,
             &mut fragment_stream,
             &mut validation_log,
+            &Settings::default(),
         )
         .await;
 

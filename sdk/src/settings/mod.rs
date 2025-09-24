@@ -212,7 +212,7 @@ impl SettingsValidate for Core {
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[allow(unused)]
 pub(crate) struct Verify {
-    verify_after_reading: bool,
+    pub(crate) verify_after_reading: bool,
     verify_after_sign: bool,
     pub(crate) verify_trust: bool,
     verify_timestamp_trust: bool,

@@ -39,7 +39,7 @@ use crate::{
     jumbf_io,
     manifest::StoreOptions,
     manifest_store_report::ManifestStoreReport,
-    settings::get_settings_value,
+    settings::{get_settings_value, Settings},
     status_tracker::StatusTracker,
     store::Store,
     validation_results::{ValidationResults, ValidationState},
@@ -125,13 +125,44 @@ impl Reader {
     /// let reader = Reader::from_stream("image/jpeg", stream).unwrap();
     /// println!("{}", reader.json());
     /// ```
-    #[async_generic()]
-    #[cfg(not(target_arch = "wasm32"))]
-    pub fn from_stream(format: &str, mut stream: impl Read + Seek + Send) -> Result<Reader> {
+    #[async_generic]
+    pub fn from_stream(format: &str, stream: impl Read + Seek + Send) -> Result<Reader> {
         let settings = crate::settings::get_settings().unwrap_or_default();
         // TO DO BEFORE MERGE? Pass Settings in here?
 
-        let verify = get_settings_value::<bool>("verify.verify_after_reading")?; // defaults to true
+        Self::from_stream_with_settings(format, stream, &settings)
+    }
+
+    /// Create a manifest store [`Reader`] from a stream.  A Reader is used to validate C2PA data from an asset.
+    /// # Arguments
+    /// * `format` - The format of the stream.  MIME type or extension that maps to a MIME type.
+    /// * `stream` - The stream to read from.  Must implement the Read and Seek traits. (NOTE: Explain Send trait, required for both sync & async?).
+    /// # Returns
+    /// A [`Reader`] for the manifest store.
+    /// # Errors
+    /// Returns an [`Error`] when the manifest data cannot be read.  If there's no error upon reading, you must still check validation status to ensure that the manifest data is validated.  That is, even if there are no errors, the data still might not be valid.
+    /// # Example
+    /// This example reads from a memory buffer and prints out the JSON manifest data.
+    /// ```no_run
+    /// use std::io::Cursor;
+    ///
+    /// use c2pa::Reader;
+    /// let mut stream = Cursor::new(include_bytes!("../tests/fixtures/CA.jpg"));
+    /// let reader = Reader::from_stream("image/jpeg", stream).unwrap();
+    /// println!("{}", reader.json());
+    /// ```
+    #[async_generic]
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn from_stream_with_settings(
+        format: &str,
+        mut stream: impl Read + Seek + Send,
+        settings: &Settings,
+    ) -> Result<Reader> {
+        // TO DO BEFORE MERGE: Make this the official API?
+
+        // TO DO BEFORE MERGE: Passing `verify` may be redundant now that we're
+        // passing settings.
+        let verify = settings.verify.verify_after_reading;
         let mut validation_log = StatusTracker::default();
         let store = if _sync {
             Store::from_stream(format, &mut stream, verify, &mut validation_log, &settings)
@@ -145,8 +176,16 @@ impl Reader {
 
     #[async_generic()]
     #[cfg(target_arch = "wasm32")]
-    pub fn from_stream(format: &str, mut stream: impl Read + Seek) -> Result<Reader> {
-        let verify = get_settings_value::<bool>("verify.verify_after_reading")?; // defaults to true
+    pub fn from_stream_with_settings(
+        format: &str,
+        mut stream: impl Read + Seek,
+        settings: &Settings,
+    ) -> Result<Reader> {
+        // TO DO BEFORE MERGE: Make this the official API?
+
+        // TO DO BEFORE MERGE: Passing `verify` may be redundant now that we're
+        // passing settings.
+        let verify = settings.verify.verify_after_reading;
         let mut validation_log = StatusTracker::default();
 
         let store = if _sync {
@@ -273,12 +312,15 @@ impl Reader {
     /// # Errors
     /// This function returns an [`Error`] if the streams are not valid, or severe errors occur in validation.
     /// You must check validation status for non-severe errors.
-    #[async_generic()]
+    #[async_generic]
     pub fn from_fragment(
         format: &str,
         mut stream: impl Read + Seek + Send,
         mut fragment: impl Read + Seek + Send,
     ) -> Result<Self> {
+        let settings = crate::settings::get_settings().unwrap_or_default();
+        // TO DO BEFORE MERGE? Pass Settings in here?
+
         let mut validation_log = StatusTracker::default();
 
         let store = if _sync {
@@ -287,6 +329,7 @@ impl Reader {
                 &mut stream,
                 &mut fragment,
                 &mut validation_log,
+                &settings,
             )
         } else {
             Store::load_fragment_from_stream_async(
@@ -294,6 +337,7 @@ impl Reader {
                 &mut stream,
                 &mut fragment,
                 &mut validation_log,
+                &settings,
             )
             .await
         }?;
