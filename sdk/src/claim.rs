@@ -1885,7 +1885,8 @@ impl Claim {
         )
         .await;
 
-        let result = Claim::verify_internal(claim, asset_data, svi, verified, validation_log);
+        let result =
+            Claim::verify_internal(claim, asset_data, svi, verified, validation_log, settings);
         validation_log.pop_current_uri();
         result
     }
@@ -1967,7 +1968,8 @@ impl Claim {
             &settings.verify,
         );
 
-        let result = Claim::verify_internal(claim, asset_data, svi, verified, validation_log);
+        let result =
+            Claim::verify_internal(claim, asset_data, svi, verified, validation_log, settings);
         validation_log.pop_current_uri();
         result
     }
@@ -2845,10 +2847,8 @@ impl Claim {
         svi: &StoreValidationInfo,
         verified: Result<CertificateInfo>,
         validation_log: &mut StatusTracker,
+        settings: &Settings,
     ) -> Result<()> {
-        let settings = crate::settings::get_settings().unwrap_or_default();
-        // TO DO BEFORE MERGE? Pass Settings in here?
-
         // signature check
         match verified {
             Ok(vi) => {
