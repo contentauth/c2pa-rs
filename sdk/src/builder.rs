@@ -1266,10 +1266,7 @@ impl Builder {
     }
 
     // Convert a Manifest into a Store
-    fn to_store(&self) -> Result<Store> {
-        let settings = crate::settings::get_settings().unwrap_or_default();
-        // TO DO BEFORE MERGE? Pass Settings in here?
-
+    fn to_store(&self, settings: &Settings) -> Result<Store> {
         let claim = self.to_claim(&settings)?;
 
         let mut store = Store::new();
@@ -1280,6 +1277,7 @@ impl Builder {
         } else {
             store.commit_claim(claim)
         }?;
+
         Ok(store)
     }
 
@@ -1376,6 +1374,9 @@ impl Builder {
         reserve_size: usize,
         format: &str,
     ) -> Result<Vec<u8>> {
+        let settings = crate::settings::get_settings().unwrap_or_default();
+        // TO DO BEFORE MERGE? Pass Settings in here?
+
         let dh: Result<DataHash> = self.find_assertion(DataHash::LABEL);
         if dh.is_err() {
             let mut ph = DataHash::new("jumbf manifest", "sha256");
@@ -1386,7 +1387,7 @@ impl Builder {
         }
         self.definition.format = format.to_string();
         self.definition.instance_id = format!("xmp:iid:{}", Uuid::new_v4());
-        let mut store = self.to_store()?;
+        let mut store = self.to_store(&settings)?;
         let placeholder = store.get_data_hashed_manifest_placeholder(reserve_size, format)?;
         Ok(placeholder)
     }
@@ -1418,7 +1419,10 @@ impl Builder {
         data_hash: &DataHash,
         format: &str,
     ) -> Result<Vec<u8>> {
-        let mut store = self.to_store()?;
+        let settings = crate::settings::get_settings().unwrap_or_default();
+        // TO DO BEFORE MERGE? Pass Settings in here?
+
+        let mut store = self.to_store(&settings)?;
         if _sync {
             store.get_data_hashed_embeddable_manifest(data_hash, signer, format, None)
         } else {
@@ -1448,9 +1452,12 @@ impl Builder {
         signer: &dyn Signer,
         format: &str,
     ) -> Result<Vec<u8>> {
+        let settings = crate::settings::get_settings().unwrap_or_default();
+        // TO DO BEFORE MERGE? Pass Settings in here?
+
         self.definition.instance_id = format!("xmp:iid:{}", Uuid::new_v4());
 
-        let mut store = self.to_store()?;
+        let mut store = self.to_store(&settings)?;
         let bytes = if _sync {
             store.get_box_hashed_embeddable_manifest(signer)
         } else {
@@ -1489,6 +1496,9 @@ impl Builder {
         R: Read + Seek + Send,
         W: Write + Read + Seek + Send,
     {
+        let settings = crate::settings::get_settings().unwrap_or_default();
+        // TO DO BEFORE MERGE? Pass Settings in here?
+
         let format = format_to_mime(format);
         self.definition.format.clone_from(&format);
         // todo:: read instance_id from xmp from stream ?
@@ -1506,7 +1516,7 @@ impl Builder {
         self.maybe_add_thumbnail(&format, source)?;
 
         // convert the manifest to a store
-        let mut store = self.to_store()?;
+        let mut store = self.to_store(&settings)?;
 
         // sign and write our store to to the output image file
         if _sync {
@@ -1567,6 +1577,9 @@ impl Builder {
         fragment_paths: &Vec<std::path::PathBuf>,
         output_path: P,
     ) -> Result<()> {
+        let settings = crate::settings::get_settings().unwrap_or_default();
+        // TO DO BEFORE MERGE? Pass Settings in here?
+
         if !output_path.as_ref().exists() {
             // ensure the path exists
             std::fs::create_dir_all(output_path.as_ref())?;
@@ -1589,7 +1602,7 @@ impl Builder {
         }
 
         // convert the manifest to a store
-        let mut store = self.to_store()?;
+        let mut store = self.to_store(&settings)?;
 
         // sign and write our store to DASH content
         store.save_to_bmff_fragmented(
