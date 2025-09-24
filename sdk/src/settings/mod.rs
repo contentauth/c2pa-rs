@@ -172,7 +172,7 @@ pub(crate) struct Core {
     salt_jumbf_boxes: bool,
     prefer_box_hash: bool,
     pub(crate) merkle_tree_chunk_size_in_kb: Option<usize>,
-    merkle_tree_max_proofs: usize,
+    pub(crate) merkle_tree_max_proofs: usize,
     compress_manifests: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     max_memory_usage: Option<u64>,
@@ -506,9 +506,7 @@ pub(crate) fn set_settings_value<T: Into<config::Value>>(value_path: &str, value
 
 /// See [Settings::get_value] for more information.
 #[allow(unused)]
-pub(crate) fn get_settings_value<'de, T: serde::de::Deserialize<'de>>(
-    value_path: &str,
-) -> Result<T> {
+fn get_settings_value<'de, T: serde::de::Deserialize<'de>>(value_path: &str) -> Result<T> {
     Settings::get_value(value_path)
 }
 

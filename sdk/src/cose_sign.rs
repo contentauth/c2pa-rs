@@ -29,7 +29,7 @@ use crate::{
         raw_signature::{AsyncRawSigner, RawSigner, RawSignerError, SigningAlg},
         time_stamp::{AsyncTimeStampProvider, TimeStampError, TimeStampProvider},
     },
-    settings::{get_settings_value, Settings},
+    settings::Settings,
     status_tracker::{ErrorBehavior, StatusTracker},
     AsyncSigner, Error, Result, Signer,
 };
@@ -153,6 +153,9 @@ pub(crate) fn cose_sign(
 }
 
 fn signing_cert_valid(signing_cert: &[u8]) -> Result<()> {
+    let settings = crate::settings::get_settings().unwrap_or_default();
+    // TO DO BEFORE MERGE? Pass Settings in here?
+
     // make sure signer certs are valid
     let mut cose_log = StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
     let mut passthrough_cap = CertificateTrustPolicy::default();
@@ -160,7 +163,7 @@ fn signing_cert_valid(signing_cert: &[u8]) -> Result<()> {
     // Allow user EKUs through this check if configured.
     // TODO (https://github.com/contentauth/c2pa-rs/issues/1313):
     // Need to determine if we're using C2PA or CAWG trust config here.
-    if let Ok(Some(trust_config)) = get_settings_value::<Option<String>>("trust.trust_config") {
+    if let Some(trust_config) = settings.trust.trust_config {
         passthrough_cap.add_valid_ekus(trust_config.as_bytes());
     }
 
