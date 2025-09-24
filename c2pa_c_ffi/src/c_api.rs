@@ -65,7 +65,7 @@ unsafe fn safe_slice_from_raw_parts(
 
     if !is_safe_buffer_size(len, ptr) {
         return Err(Error::Other(format!(
-            "Buffer size {len} is invalid for parameter '{param_name}'"
+            "Buffer size {len} is invalid for parameter '{param_name}'",
         )));
     }
 

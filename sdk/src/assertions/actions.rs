@@ -664,15 +664,17 @@ impl Action {
         Ok(self)
     }
 
-    /// Extracts ingredient IDs from the action, prioritizing ingredientIds, then org.cai.ingredientIds, then instanceId.
+    /// Extracts ingredient IDs from the action
+    /// There are many deprecated ways to specify ingredient IDs
+    /// priority: parameters.ingredientIds, parameters.org.cai.ingredientIds, parameters.instanceId, instanceId.
     /// This is used to map actions to their associated ingredients.
     /// We don't want any of these fields in the final CBOR, so we remove them after extracting.
     pub(crate) fn extract_ingredient_ids(&mut self) -> Option<Vec<String>> {
         let ingredient_ids = self.remove_parameter(INGREDIENT_IDS);
         let cai_ingredient_ids = self.remove_parameter("org.cai.ingredientIds");
+        let param_instance_id = self.remove_parameter("instanceId");
         #[allow(deprecated)]
         let instance_id = self.instance_id.take();
-
         let mut ids: Vec<String> = Vec::new();
 
         let mut convert_ids = |val: Option<serde_cbor::Value>| {
@@ -693,6 +695,7 @@ impl Action {
 
         convert_ids(ingredient_ids);
         convert_ids(cai_ingredient_ids);
+        convert_ids(param_instance_id);
 
         if !ids.is_empty() {
             Some(ids)
@@ -1264,5 +1267,63 @@ pub mod tests {
                 ..Default::default()
             }]
         );
+    }
+
+    #[test]
+    #[allow(deprecated)]
+    fn test_extract_ingredient_ids() {
+        // Test extracting from ingredientIds parameter
+        let mut action1 = Action::new("c2pa.opened")
+            .set_parameter("ingredientIds", vec!["id1", "id2"])
+            .unwrap();
+        assert_eq!(
+            action1.extract_ingredient_ids(),
+            Some(vec!["id1".to_string(), "id2".to_string()])
+        );
+        assert!(action1
+            .get_parameter::<Vec<String>>("ingredientIds")
+            .is_none());
+
+        // Test extracting from deprecated org.cai.ingredientIds parameter
+        let mut action2 = Action::new("c2pa.opened")
+            .set_parameter("org.cai.ingredientIds", vec!["cai_id1", "cai_id2"])
+            .unwrap();
+        assert_eq!(
+            action2.extract_ingredient_ids(),
+            Some(vec!["cai_id1".to_string(), "cai_id2".to_string()])
+        );
+        assert!(action2
+            .get_parameter::<Vec<String>>("org.cai.ingredientIds")
+            .is_none());
+
+        // Test extracting from deprecated instanceId parameter
+        let mut action3 = Action::new("c2pa.opened")
+            .set_parameter("instanceId", "param_instance_id")
+            .unwrap();
+        assert_eq!(
+            action3.extract_ingredient_ids(),
+            Some(vec!["param_instance_id".to_string()])
+        );
+        assert!(action3.get_parameter::<String>("instanceId").is_none());
+
+        // Test extracting from deprecated instance_id field
+        let mut action4 = Action::new("c2pa.opened");
+
+        action4.instance_id = Some("action_instanceId".to_string());
+        assert_eq!(
+            action4.extract_ingredient_ids(),
+            Some(vec!["action_instanceId".to_string()])
+        );
+        assert!(action4.instance_id.is_none());
+
+        // Test no ingredient IDs present
+        let mut action5 = Action::new("c2pa.opened");
+        assert_eq!(action5.extract_ingredient_ids(), None);
+
+        // Test empty arrays
+        let mut action6 = Action::new("c2pa.opened")
+            .set_parameter("ingredientIds", Vec::<String>::new())
+            .unwrap();
+        assert_eq!(action6.extract_ingredient_ids(), None);
     }
 }
