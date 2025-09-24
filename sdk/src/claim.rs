@@ -1870,6 +1870,7 @@ impl Claim {
             svi.certificate_statuses.get(&certificate_serial_num),
             svi.timestamps.get(claim.label()),
             validation_log,
+            settings,
         )?;
 
         let verified = verify_cose_async(
@@ -1952,6 +1953,7 @@ impl Claim {
             svi.certificate_statuses.get(&certificate_serial_num),
             svi.timestamps.get(claim.label()),
             validation_log,
+            settings,
         )?;
 
         let verified = verify_cose(
@@ -3896,12 +3898,14 @@ pub(crate) fn check_ocsp_status(
     ocsp_responses: Option<&Vec<Vec<u8>>>,
     tst_info: Option<&TstInfo>,
     validation_log: &mut StatusTracker,
+    settings: &Settings,
 ) -> Result<OcspResponse> {
     // Moved here instead of c2pa-crypto because of the dependency on settings.
 
-    let fetch_policy = match get_settings_value::<bool>("verify.ocsp_fetch") {
-        Ok(true) => OcspFetchPolicy::FetchAllowed,
-        _ => OcspFetchPolicy::DoNotFetch,
+    let fetch_policy = if settings.verify.ocsp_fetch {
+        OcspFetchPolicy::FetchAllowed
+    } else {
+        OcspFetchPolicy::DoNotFetch
     };
 
     if _sync {
@@ -3913,6 +3917,7 @@ pub(crate) fn check_ocsp_status(
             ocsp_responses,
             tst_info,
             validation_log,
+            settings,
         )?)
     } else {
         Ok(crate::crypto::cose::check_ocsp_status_async(
@@ -3923,6 +3928,7 @@ pub(crate) fn check_ocsp_status(
             ocsp_responses,
             tst_info,
             validation_log,
+            settings,
         )
         .await?)
     }

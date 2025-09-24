@@ -490,6 +490,9 @@ impl Store {
     // anywhere so allow dead code here for future uses to compile
     #[allow(dead_code)]
     pub(crate) fn get_ocsp_status(&self) -> Option<String> {
+        let settings = crate::settings::get_settings().unwrap_or_default();
+        // TO DO BEFORE MERGE? Pass Settings in here?
+
         let claim = self
             .provenance_claim()
             .ok_or(Error::ProvenanceMissing)
@@ -501,9 +504,15 @@ impl Store {
             StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
 
         let sign1 = parse_cose_sign1(sig, &data, &mut validation_log).ok()?;
-        if let Ok(info) =
-            check_ocsp_status(&sign1, &data, &self.ctp, None, None, &mut validation_log)
-        {
+        if let Ok(info) = check_ocsp_status(
+            &sign1,
+            &data,
+            &self.ctp,
+            None,
+            None,
+            &mut validation_log,
+            &settings,
+        ) {
             if let Some(revoked_at) = &info.revoked_at {
                 Some(format!(
                     "Certificate Status: Revoked, revoked at: {revoked_at}"
