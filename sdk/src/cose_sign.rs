@@ -74,9 +74,9 @@ pub fn sign_claim(
     };
 
     let signed_bytes = if _sync {
-        cose_sign(signer, claim_bytes, box_size, tss)
+        cose_sign(signer, claim_bytes, box_size, tss, settings)
     } else {
-        cose_sign_async(signer, claim_bytes, box_size, tss).await
+        cose_sign_async(signer, claim_bytes, box_size, tss, settings).await
     };
 
     match signed_bytes {
@@ -116,16 +116,15 @@ pub fn sign_claim(
     data: &[u8],
     box_size: usize,
     time_stamp_storage: TimeStampStorage,
+    settings: &Settings,
 ))]
 pub(crate) fn cose_sign(
     signer: &dyn Signer,
     data: &[u8],
     box_size: usize,
     time_stamp_storage: TimeStampStorage,
+    settings: &Settings,
 ) -> Result<Vec<u8>> {
-    let settings = crate::settings::get_settings().unwrap_or_default();
-    // TO DO BEFORE MERGE? Pass Settings in here?
-
     // Make sure the signing cert is valid.
     let certs = signer.certs()?;
     if let Some(signing_cert) = certs.first() {
