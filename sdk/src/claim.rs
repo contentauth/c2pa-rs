@@ -1991,10 +1991,8 @@ impl Claim {
         claim: &Claim,
         svi: &StoreValidationInfo<'_>,
         validation_log: &mut StatusTracker,
+        settings: &Settings,
     ) -> Result<()> {
-        let settings = crate::settings::get_settings().unwrap_or_default();
-        // TO DO BEFORE MERGE? Pass Settings in here?
-
         let all_actions = claim.action_assertions();
         let created_actions = claim.created_action_assertions();
         let gathered_actions = claim.gathered_action_assertions();
@@ -2848,6 +2846,9 @@ impl Claim {
         verified: Result<CertificateInfo>,
         validation_log: &mut StatusTracker,
     ) -> Result<()> {
+        let settings = crate::settings::get_settings().unwrap_or_default();
+        // TO DO BEFORE MERGE? Pass Settings in here?
+
         // signature check
         match verified {
             Ok(vi) => {
@@ -3179,7 +3180,7 @@ impl Claim {
         Claim::verify_hash_binding(claim, asset_data, svi, validation_log)?;
 
         // check action rules
-        Claim::verify_actions(claim, svi, validation_log)?;
+        Claim::verify_actions(claim, svi, validation_log, &settings)?;
 
         // check metadata rules
         if claim.version() >= 2 {
