@@ -39,7 +39,7 @@ use crate::{
     jumbf_io,
     manifest::StoreOptions,
     manifest_store_report::ManifestStoreReport,
-    settings::{get_settings_value, Settings},
+    settings::Settings,
     status_tracker::StatusTracker,
     store::Store,
     validation_results::{ValidationResults, ValidationState},
@@ -269,15 +269,18 @@ impl Reader {
     /// # Errors
     /// This function returns an [`Error`] ef the c2pa_data is not valid, or severe errors occur in validation.
     /// You must check validation status for non-severe errors.
-    #[async_generic()]
+    #[async_generic]
     pub fn from_manifest_data_and_stream(
         c2pa_data: &[u8],
         format: &str,
         stream: impl Read + Seek + Send,
     ) -> Result<Reader> {
+        let settings = crate::settings::get_settings().unwrap_or_default();
+        // TO DO BEFORE MERGE? Pass Settings in here?
+
         let mut validation_log = StatusTracker::default();
 
-        let verify = get_settings_value::<bool>("verify.verify_after_reading")?; // defaults to true
+        let verify = settings.verify.verify_after_reading;
 
         let store = if _sync {
             Store::from_manifest_data_and_stream(
@@ -353,8 +356,10 @@ impl Reader {
         path: P,
         fragments: &Vec<std::path::PathBuf>,
     ) -> Result<Reader> {
-        let verify = get_settings_value::<bool>("verify.verify_after_reading")?; // defaults to true
+        let settings = crate::settings::get_settings().unwrap_or_default();
+        // TO DO BEFORE MERGE? Pass Settings in here?
 
+        let verify = settings.verify.verify_after_reading;
         let mut validation_log = StatusTracker::default();
 
         let asset_type = jumbf_io::get_supported_file_extension(path.as_ref())
@@ -556,11 +561,14 @@ impl Reader {
 
     /// Get the [`ValidationState`] of the manifest store.
     pub fn validation_state(&self) -> ValidationState {
+        let settings = crate::settings::get_settings().unwrap_or_default();
+        // TO DO BEFORE MERGE? Pass Settings in here?
+
         if let Some(validation_results) = self.validation_results() {
             return validation_results.validation_state();
         }
 
-        let verify_trust = get_settings_value("verify.verify_trust").unwrap_or(false);
+        let verify_trust = settings.verify.verify_trust;
         match self.validation_status() {
             Some(status) => {
                 // if there are any errors, the state is invalid unless the only error is an untrusted credential
