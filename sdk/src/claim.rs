@@ -71,7 +71,7 @@ use crate::{
     log_item,
     resource_store::UriOrResource,
     salt::{DefaultSalt, SaltGenerator, NO_SALT},
-    settings::{get_settings_value, Settings},
+    settings::Settings,
     status_tracker::{ErrorBehavior, StatusTracker},
     store::StoreValidationInfo,
     utils::hash_utils::{hash_by_alg, vec_compare},
@@ -1992,6 +1992,9 @@ impl Claim {
         svi: &StoreValidationInfo<'_>,
         validation_log: &mut StatusTracker,
     ) -> Result<()> {
+        let settings = crate::settings::get_settings().unwrap_or_default();
+        // TO DO BEFORE MERGE? Pass Settings in here?
+
         let all_actions = claim.action_assertions();
         let created_actions = claim.created_action_assertions();
         let gathered_actions = claim.gathered_action_assertions();
@@ -2033,7 +2036,7 @@ impl Claim {
 
         // Skip further checks for v1 claims if not in strict validation mode
         if claim.version() == 1 {
-            if let Ok(false) = get_settings_value::<bool>("verify.strict_v1_validation") {
+            if !settings.verify.strict_v1_validation {
                 return Ok(()); // no further checks for v1 claims
             }
         }

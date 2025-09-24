@@ -220,7 +220,7 @@ pub(crate) struct Verify {
     pub(crate) remote_manifest_fetch: bool,
     pub(crate) check_ingredient_trust: bool,
     pub(crate) skip_ingredient_conflict_resolution: bool,
-    strict_v1_validation: bool,
+    pub(crate) strict_v1_validation: bool,
 }
 
 impl Default for Verify {
