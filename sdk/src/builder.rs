@@ -26,7 +26,7 @@ use serde_with::skip_serializing_none;
 use uuid::Uuid;
 use zip::{write::SimpleFileOptions, ZipArchive, ZipWriter};
 
-use crate::assertion::AssertionBase;
+use crate::{assertion::AssertionBase, settings::Settings};
 #[allow(deprecated)]
 use crate::{
     assertion::AssertionDecodeError,
@@ -586,7 +586,7 @@ impl Builder {
     /// * A mutable reference to the [`Ingredient`].
     /// # Errors
     /// * Returns an [`Error`] if the [`Ingredient`] is not valid
-    #[async_generic()]
+    #[async_generic]
     pub fn add_ingredient_from_stream<'a, T, R>(
         &'a mut self,
         ingredient_json: T,
@@ -597,13 +597,62 @@ impl Builder {
         T: Into<String>,
         R: Read + Seek + Send,
     {
+        let settings = crate::settings::get_settings().unwrap_or_default();
+        // TO DO BEFORE MERGE? Pass Settings in here?
+
+        if _sync {
+            self.add_ingredient_from_stream_with_settings(
+                ingredient_json,
+                format,
+                stream,
+                &settings,
+            )
+        } else {
+            self.add_ingredient_from_stream_with_settings_async(
+                ingredient_json,
+                format,
+                stream,
+                &settings,
+            )
+            .await
+        }
+    }
+
+    /// Adds an [`Ingredient`] to the manifest with JSON and a stream.
+    // TODO: Add example.
+    ///
+    /// # Arguments
+    /// * `ingredient_json` - A JSON string representing the [`Ingredient`].  This ingredient is merged  with the ingredient specified in the `stream` argument, and these values take precedence.
+    /// * `format` - The format of the [`Ingredient`].
+    /// * `stream` - A stream from which to read the [`Ingredient`].  This ingredient is merged  with the ingredient specified in the `ingredient_json` argument, whose values take precedence.  You can specify values here that are not specified in `ingredient_json`.
+    /// # Returns
+    /// * A mutable reference to the [`Ingredient`].
+    /// # Errors
+    /// * Returns an [`Error`] if the [`Ingredient`] is not valid
+    #[async_generic]
+    pub fn add_ingredient_from_stream_with_settings<'a, T, R>(
+        &'a mut self,
+        ingredient_json: T,
+        format: &str,
+        stream: &mut R,
+        settings: &Settings,
+    ) -> Result<&'a mut Ingredient>
+    where
+        T: Into<String>,
+        R: Read + Seek + Send,
+    {
+        // TO DO BEFORE MERGE: Make this the official API?s
         let ingredient: Ingredient = Ingredient::from_json(&ingredient_json.into())?;
         let ingredient = if _sync {
-            ingredient.with_stream(format, stream)?
+            ingredient.with_stream(format, stream, settings)?
         } else {
-            ingredient.with_stream_async(format, stream).await?
+            ingredient
+                .with_stream_async(format, stream, settings)
+                .await?
         };
+
         self.definition.ingredients.push(ingredient);
+
         #[allow(clippy::unwrap_used)]
         Ok(self.definition.ingredients.last_mut().unwrap()) // ok since we just added it
     }
@@ -2817,12 +2866,8 @@ mod tests {
     /// test if the sdk can add a cloud ingredient retrieved from a stream and a cloud manifest
     // This works with or without the fetch_remote_manifests feature
     async fn test_add_cloud_ingredient() {
-        // Save original settings
-        let original_remote_fetch =
-            crate::settings::get_settings_value("verify.remote_manifest_fetch").unwrap_or(true);
-
-        // Set our test settings
-        crate::settings::set_settings_value("verify.remote_manifest_fetch", false).unwrap();
+        let mut settings = crate::settings::get_settings().unwrap();
+        settings.verify.remote_manifest_fetch = false;
 
         let mut input = Cursor::new(TEST_IMAGE_CLEAN);
         let mut cloud_image = Cursor::new(TEST_IMAGE_CLOUD);
@@ -2861,7 +2906,12 @@ mod tests {
             .unwrap();
 
         builder
-            .add_ingredient_from_stream(parent_json, "image/jpeg", &mut cloud_image)
+            .add_ingredient_from_stream_with_settings(
+                parent_json,
+                "image/jpeg",
+                &mut cloud_image,
+                &settings,
+            )
             .unwrap();
 
         builder
@@ -2881,10 +2931,6 @@ mod tests {
         let m = reader.active_manifest().unwrap();
         assert_eq!(m.ingredients().len(), 1);
         assert!(m.ingredients()[0].active_manifest().is_some());
-
-        // Restore original settings
-        crate::settings::set_settings_value("verify.remote_manifest_fetch", original_remote_fetch)
-            .unwrap();
     }
 
     #[test]
