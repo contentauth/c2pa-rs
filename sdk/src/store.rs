@@ -1534,8 +1534,7 @@ impl Store {
 
                     // allow the extra ingredient trust checks
                     // these checks are to prevent the trust spoofing
-                    let check_ingredient_trust: bool =
-                        crate::settings::get_settings_value("verify.check_ingredient_trust")?;
+                    let check_ingredient_trust: bool = settings.verify.check_ingredient_trust;
 
                     // get the 1.1-1.2 box hash
                     let ingredient_hashes = store.get_manifest_box_hashes(ingredient);
@@ -1761,8 +1760,7 @@ impl Store {
 
                     // allow the extra ingredient trust checks
                     // these checks are to prevent the trust spoofing
-                    let check_ingredient_trust: bool =
-                        crate::settings::get_settings_value("verify.check_ingredient_trust")?;
+                    let check_ingredient_trust = settings.verify.check_ingredient_trust;
 
                     // get the 1.1-1.2 box hash
                     let ingredient_hashes = store.get_manifest_box_hashes(ingredient);

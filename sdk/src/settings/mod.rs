@@ -218,7 +218,7 @@ pub(crate) struct Verify {
     verify_timestamp_trust: bool,
     ocsp_fetch: bool,
     pub(crate) remote_manifest_fetch: bool,
-    check_ingredient_trust: bool,
+    pub(crate) check_ingredient_trust: bool,
     skip_ingredient_conflict_resolution: bool,
     strict_v1_validation: bool,
 }
