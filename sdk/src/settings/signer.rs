@@ -28,10 +28,9 @@ use crate::{
 ///
 /// [`Signer`]: crate::Signer
 /// [`signer()`]: Builder::signer
-#[allow(unused)]
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "lowercase")]
-pub(crate) enum SignerSettings {
+pub enum SignerSettings {
     /// A signer configured locally.
     Local {
         // Algorithm to use for signing.

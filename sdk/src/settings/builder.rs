@@ -33,7 +33,7 @@ use crate::{
 /// and types defined by the [IANA registry media type](https://www.iana.org/assignments/media-types/media-types.xhtml) (as defined in the spec).
 #[derive(Copy, Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "lowercase")]
-pub(crate) enum ThumbnailFormat {
+pub enum ThumbnailFormat {
     /// An image in PNG format.
     Png,
     /// An image in JPEG format.
@@ -48,7 +48,7 @@ pub(crate) enum ThumbnailFormat {
 /// Quality of the thumbnail.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "lowercase")]
-pub(crate) enum ThumbnailQuality {
+pub enum ThumbnailQuality {
     /// Low quality.
     Low,
     /// Medium quality.
@@ -59,7 +59,7 @@ pub(crate) enum ThumbnailQuality {
 
 /// Settings for controlling automatic thumbnail generation.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-pub(crate) struct ThumbnailSettings {
+pub struct ThumbnailSettings {
     /// Whether or not to automatically generate thumbnails.
     pub enabled: bool,
     /// Whether to ignore thumbnail generation errors.
@@ -118,9 +118,8 @@ impl SettingsValidate for ThumbnailSettings {
 }
 
 /// Settings for the auto actions (e.g. created, opened, placed).
-#[allow(unused)]
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-pub(crate) struct AutoActionSettings {
+pub struct AutoActionSettings {
     /// Whether to enable this auto action or not.
     pub enabled: bool,
     /// The default source type for the auto action.
@@ -129,9 +128,8 @@ pub(crate) struct AutoActionSettings {
 }
 
 /// Settings for how to specify the claim generator info's operating system.
-#[allow(unused)]
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-pub(crate) struct ClaimGeneratorInfoOSSettings {
+pub struct ClaimGeneratorInfoOSSettings {
     /// Whether or not to infer the operating system.
     pub infer: bool,
     /// The name of the operating system.
@@ -150,9 +148,8 @@ impl Default for ClaimGeneratorInfoOSSettings {
 }
 
 /// Settings for the claim generator info.
-#[allow(unused)]
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-pub(crate) struct ClaimGeneratorInfoSettings {
+pub struct ClaimGeneratorInfoSettings {
     /// A human readable string naming the claim_generator.
     pub name: String,
     /// A human readable string of the product's version.
@@ -256,7 +253,6 @@ impl TryFrom<ActionTemplateSettings> for ActionTemplate {
 }
 
 /// Settings for an action.
-#[allow(unused)]
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub(crate) struct ActionSettings {
     /// The label associated with this action. See ([`c2pa_action`]).
@@ -323,19 +319,20 @@ impl TryFrom<ActionSettings> for Action {
 ///
 /// The reason this setting exists only for an [Actions][crate::assertions::Actions] assertion
 /// is because of its mandations and reusable fields.
-#[allow(unused)]
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-pub(crate) struct ActionsSettings {
+pub struct ActionsSettings {
     /// Whether or not to set the [Actions::all_actions_included][crate::assertions::Actions::all_actions_included]
     /// field.
     pub all_actions_included: bool,
     /// Templates to be added to the [Actions::templates][crate::assertions::Actions::templates] field.
+    #[doc(hidden)]
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub templates: Option<Vec<ActionTemplateSettings>>,
+    pub(crate) templates: Option<Vec<ActionTemplateSettings>>,
     // TODO: should we define a new struct for "Action" too, like ActionTemplateSettings?
     /// Actions to be added to the [Actions::actions][crate::assertions::Actions::actions] field.
+    #[doc(hidden)]
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub actions: Option<Vec<ActionSettings>>,
+    pub(crate) actions: Option<Vec<ActionSettings>>,
     /// Whether to automatically generate a c2pa.created [Action][crate::assertions::Action]
     /// assertion or error that it doesn't already exist.
     ///
@@ -389,9 +386,8 @@ impl SettingsValidate for ActionsSettings {
 
 // TODO: do more validation on URL fields, cert fields, etc.
 /// Settings for the [Builder][crate::Builder].
-#[allow(unused)]
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize, Default)]
-pub(crate) struct BuilderSettings {
+pub struct BuilderSettings {
     /// Claim generator info that is automatically added to the builder.
     ///
     /// Note that this information will prepend any claim generator info
@@ -404,17 +400,16 @@ pub(crate) struct BuilderSettings {
     ///
     /// For more information on the reasoning behind this field see [ActionsSettings].
     pub actions: ActionsSettings,
-
-    // Certificate statuses will be fetched for either all the manifest labels, or just the active manifest.
+    // REVIEW NOTE: should this be in builder settings or core?
+    /// Certificate statuses will be fetched for either all the manifest labels, or just the active manifest.
     pub certificate_status_fetch: Option<OcspFetch>,
-
-    // Whether or not existing OCSP responses should be overridden by new values.
+    /// Whether or not existing OCSP responses should be overridden by new values.
     pub certificate_status_should_override: Option<bool>,
 }
 
 #[derive(Copy, Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "lowercase")]
-pub(crate) enum OcspFetch {
+pub enum OcspFetch {
     All,
     Active,
 }

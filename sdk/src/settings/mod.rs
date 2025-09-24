@@ -11,8 +11,8 @@
 // specific language governing permissions and limitations under
 // each license.
 
-pub(crate) mod builder;
-pub(crate) mod signer;
+pub mod builder;
+pub mod signer;
 
 #[cfg(feature = "file_io")]
 use std::path::Path;
@@ -42,13 +42,13 @@ pub(crate) trait SettingsValidate {
 
 // Settings for trust list feature
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[allow(unused)]
-pub(crate) struct Trust {
-    verify_trust_list: bool,
-    user_anchors: Option<String>,
-    trust_anchors: Option<String>,
-    trust_config: Option<String>,
-    allowed_list: Option<String>,
+pub struct Trust {
+    // REVIEW NOTE: move this down to the `Verify` struct?
+    pub verify_trust_list: bool,
+    pub user_anchors: Option<String>,
+    pub trust_anchors: Option<String>,
+    pub trust_config: Option<String>,
+    pub allowed_list: Option<String>,
 }
 
 impl Trust {
@@ -160,67 +160,45 @@ impl SettingsValidate for Trust {
     }
 }
 
-// TODO: all of these settings aren't implemented
 // Settings for core C2PA-RS functionality
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[allow(unused)]
-pub(crate) struct Core {
-    debug: bool,
-    hash_alg: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    soft_hash_alg: Option<String>,
-    salt_jumbf_boxes: bool,
-    prefer_box_hash: bool,
-    merkle_tree_chunk_size_in_kb: Option<usize>,
-    merkle_tree_max_proofs: usize,
-    compress_manifests: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    max_memory_usage: Option<u64>,
-    backing_store_memory_threshold_in_mb: usize,
-    // TODO: pending https://github.com/contentauth/c2pa-rs/pull/1180
-    // prefer_update_manifests: bool,
+pub struct Core {
+    pub merkle_tree_chunk_size_in_kb: Option<usize>,
+    pub merkle_tree_max_proofs: usize,
+    pub backing_store_memory_threshold_in_mb: usize,
 }
 
 impl Default for Core {
     fn default() -> Self {
         Self {
-            debug: false,
-            hash_alg: "sha256".into(),
-            soft_hash_alg: None,
-            salt_jumbf_boxes: true,
-            prefer_box_hash: false,
             merkle_tree_chunk_size_in_kb: None,
             merkle_tree_max_proofs: 5,
-            compress_manifests: true,
-            max_memory_usage: None,
             backing_store_memory_threshold_in_mb: 512,
-            // prefer_update_manifests: true,
         }
     }
 }
 
 impl SettingsValidate for Core {
     fn validate(&self) -> Result<()> {
-        match self.hash_alg.as_str() {
-            "sha256" | "sha384" | "sha512" => Ok(()),
-            _ => Err(Error::UnsupportedType),
-        }
+        Ok(())
     }
 }
 
 // Settings for verification options
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[allow(unused)]
-pub(crate) struct Verify {
-    verify_after_reading: bool,
-    verify_after_sign: bool,
-    verify_trust: bool,
-    verify_timestamp_trust: bool,
-    ocsp_fetch: bool,
-    remote_manifest_fetch: bool,
-    check_ingredient_trust: bool,
-    skip_ingredient_conflict_resolution: bool,
-    strict_v1_validation: bool,
+pub struct Verify {
+    pub verify_after_reading: bool,
+    pub verify_after_sign: bool,
+    pub verify_trust: bool,
+    pub verify_timestamp_trust: bool,
+    // REVIEW NOTE: what's the difference between this and builder.certificate_status_fetch?
+    pub ocsp_fetch: bool,
+    pub remote_manifest_fetch: bool,
+    #[doc(hidden)]
+    pub(crate) check_ingredient_trust: bool,
+    #[doc(hidden)]
+    pub(crate) skip_ingredient_conflict_resolution: bool,
+    pub strict_v1_validation: bool,
 }
 
 impl Default for Verify {
@@ -249,21 +227,21 @@ const MINOR_VERSION: usize = 0;
 /// [Settings::default] will be set thread-locally by default. Any settings set via
 /// [Settings::from_toml] or [Settings::from_file] will also be thread-local.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
-#[allow(unused)]
 pub struct Settings {
-    version_major: usize,
-    version_minor: usize,
+    // REVIEW NOTE: do we need both a major and minor version?
+    pub version_major: usize,
+    pub version_minor: usize,
     // TODO (https://github.com/contentauth/c2pa-rs/issues/1314):
     // Rename to c2pa_trust? Discuss possibly breaking change.
-    trust: Trust,
-    cawg_trust: Trust,
-    core: Core,
-    verify: Verify,
-    builder: BuilderSettings,
+    pub trust: Trust,
+    pub cawg_trust: Trust,
+    pub core: Core,
+    pub verify: Verify,
+    pub builder: BuilderSettings,
     #[serde(skip_serializing_if = "Option::is_none")]
-    signer: Option<SignerSettings>,
+    pub signer: Option<SignerSettings>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    cawg_x509_signer: Option<SignerSettings>,
+    pub cawg_x509_signer: Option<SignerSettings>,
 }
 
 impl Settings {
@@ -545,10 +523,6 @@ pub mod tests {
     fn test_get_val_by_direct_path() {
         // you can do this for all values but if these sanity checks pass they all should if the path is correct
         assert_eq!(
-            get_settings_value::<String>("core.hash_alg").unwrap(),
-            Core::default().hash_alg
-        );
-        assert_eq!(
             get_settings_value::<bool>("builder.thumbnail.enabled").unwrap(),
             BuilderSettings::default().thumbnail.enabled
         );
@@ -573,13 +547,11 @@ pub mod tests {
         );
 
         // test implicit deserialization
-        let hash_alg: String = get_settings_value("core.hash_alg").unwrap();
         let remote_manifest_fetch: bool =
             get_settings_value("verify.remote_manifest_fetch").unwrap();
         let auto_thumbnail: bool = get_settings_value("builder.thumbnail.enabled").unwrap();
         let user_anchors: Option<String> = get_settings_value("trust.user_anchors").unwrap();
 
-        assert_eq!(hash_alg, Core::default().hash_alg);
         assert_eq!(
             remote_manifest_fetch,
             Verify::default().remote_manifest_fetch
@@ -711,11 +683,6 @@ pub mod tests {
         assert_eq!(
             get_settings_value::<bool>("builder.thumbnail.enabled").unwrap(),
             BuilderSettings::default().thumbnail.enabled
-        );
-
-        assert_eq!(
-            get_settings_value::<bool>("core.salt_jumbf_boxes").unwrap(),
-            Core::default().salt_jumbf_boxes
         );
 
         reset_default_settings().unwrap();
