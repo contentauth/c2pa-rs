@@ -38,7 +38,6 @@ use crate::{
     },
     jumbf::labels::to_assertion_uri,
     log_current_item, log_item,
-    settings::get_settings_value,
     status_tracker::StatusTracker,
     Manifest, Reader,
 };
@@ -290,6 +289,9 @@ impl IdentityAssertion {
         partial_claim: &PartialClaim,
         status_tracker: &mut StatusTracker,
     ) -> Result<serde_json::Value, ValidationError<String>> {
+        let settings = crate::settings::get_settings().unwrap_or_default();
+        // TO DO BEFORE MERGE? Pass Settings in here?
+
         self.check_padding(status_tracker)?;
 
         self.signer_payload
@@ -303,36 +305,27 @@ impl IdentityAssertion {
             // Load the trust handler settings. Don't worry about status as these
             // are checked during setting generation.
 
-            let cose_verifier =
-                if let Ok(true) = get_settings_value::<bool>("cawg_trust.verify_trust_list") {
-                    if let Ok(Some(ta)) =
-                        get_settings_value::<Option<String>>("cawg_trust.trust_anchors")
-                    {
-                        let _ = ctp.add_trust_anchors(ta.as_bytes());
-                    }
+            let cose_verifier = if settings.cawg_trust.verify_trust_list {
+                if let Some(ta) = settings.cawg_trust.trust_anchors {
+                    let _ = ctp.add_trust_anchors(ta.as_bytes());
+                }
 
-                    if let Ok(Some(pa)) =
-                        get_settings_value::<Option<String>>("cawg_trust.user_anchors")
-                    {
-                        let _ = ctp.add_user_trust_anchors(pa.as_bytes());
-                    }
+                if let Some(pa) = settings.cawg_trust.user_anchors {
+                    let _ = ctp.add_user_trust_anchors(pa.as_bytes());
+                }
 
-                    if let Ok(Some(tc)) =
-                        get_settings_value::<Option<String>>("cawg_trust.trust_config")
-                    {
-                        ctp.add_valid_ekus(tc.as_bytes());
-                    }
+                if let Some(tc) = settings.cawg_trust.trust_config {
+                    ctp.add_valid_ekus(tc.as_bytes());
+                }
 
-                    if let Ok(Some(al)) =
-                        get_settings_value::<Option<String>>("cawg_trust.allowed_list")
-                    {
-                        let _ = ctp.add_end_entity_credentials(al.as_bytes());
-                    }
+                if let Some(al) = settings.cawg_trust.allowed_list {
+                    let _ = ctp.add_end_entity_credentials(al.as_bytes());
+                }
 
-                    Verifier::VerifyTrustPolicy(Cow::Owned(ctp))
-                } else {
-                    Verifier::IgnoreProfileAndTrustPolicy
-                };
+                Verifier::VerifyTrustPolicy(Cow::Owned(ctp))
+            } else {
+                Verifier::IgnoreProfileAndTrustPolicy
+            };
 
             let verifier = X509SignatureVerifier { cose_verifier };
 

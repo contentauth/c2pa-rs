@@ -256,7 +256,7 @@ pub struct Settings {
     // TODO (https://github.com/contentauth/c2pa-rs/issues/1314):
     // Rename to c2pa_trust? Discuss possibly breaking change.
     pub(crate) trust: Trust,
-    cawg_trust: Trust,
+    pub(crate) cawg_trust: Trust,
     pub(crate) core: Core,
     pub(crate) verify: Verify,
     pub(crate) builder: BuilderSettings,
