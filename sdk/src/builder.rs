@@ -1266,11 +1266,8 @@ impl Builder {
 
                     let action = action.set_parameter("ingredients", vec![uri])?;
 
-                    let source_type = settings::get_settings_value::<Option<DigitalSourceType>>(
-                        "builder.auto_placed_action.source_type",
-                    );
-                    let action = match source_type {
-                        Ok(Some(source_type)) => action.set_source_type(source_type),
+                    let action = match settings.builder.actions.auto_placed_action.source_type {
+                        Some(ref source_type) => action.set_source_type(source_type.clone()),
                         _ => action,
                     };
                     actions.actions.push(action);
