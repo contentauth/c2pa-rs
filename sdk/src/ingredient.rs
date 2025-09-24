@@ -1493,8 +1493,8 @@ impl Ingredient {
         let settings = crate::settings::get_settings().unwrap_or_default();
         // TO DO BEFORE MERGE? Pass Settings in here?
 
-        let auto_thumbnail =
-            crate::settings::get_settings_value::<bool>("builder.thumbnail.enabled")?;
+        let auto_thumbnail = settings.builder.thumbnail.enabled;
+
         if self.thumbnail.is_none() && auto_thumbnail {
             stream.rewind()?;
 
