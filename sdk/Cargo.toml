@@ -38,7 +38,6 @@ default = ["openssl", "http_reqwest", "http_ureq", "http_wasi", "http_wstd"]
 add_thumbnails = ["image"]
 file_io = []
 serialize_thumbnails = []
-no_interleaved_io = ["file_io"]
 fetch_remote_manifests = []
 json_schema = ["dep:schemars"]
 openssl = [
