@@ -38,6 +38,7 @@ The following options are available with any (or no) subcommand.  Additional opt
 | `--no_signing_verify` | None | N/A |  Do not validate the signature after signing an asset, which speeds up signing. See [Speeding up signing](#speeding-up-signing) |
 | `--parent` | `-p` | `<parent_file>` | Path to parent file. See [Specifying a parent file](#specifying-a-parent-file). |
 | `--remote` | `-r` | `<manifest_url>` | URL for remote manifest available over HTTP. See [Generating a remote manifest](#generating-a-remote-manifest)| N/A? |
+| `--external-manifest` | N/A | `<c2pa_file>` | Path to the binary .c2pa manifest to use for validation against the input asset. |
 | `--reserve-size` | N/A | Only valid with `--signer-path` argument. The amount of memory to reserve for signing. Default: 20000. For more information, see CLI help. |
 | `--sidecar` | `-s` | N/A | Put manifest in external "sidecar" file with `.c2pa` extension. See [Generating an external manifest](#generating-an-external-manifest). |
 | `--signer-path` | N/A | Specify path to command-line executable for signing.  See [Signing claim bytes with your own signer](#signing-claim-bytes-with-your-own-signer). |
