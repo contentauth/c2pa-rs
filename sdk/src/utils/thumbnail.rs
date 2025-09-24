@@ -109,7 +109,7 @@ where
         match ThumbnailFormat::new(format) {
             Some(input_format) => {
                 let mut output = Cursor::new(Vec::new());
-                make_thumbnail_from_stream(input_format, None, input, &mut output, &settings)
+                make_thumbnail_from_stream(input_format, None, input, &mut output, settings)
                     .map(|output_format| (output_format, output.into_inner()))
             }
             None => Err(Error::UnsupportedThumbnailFormat(format.to_owned())),

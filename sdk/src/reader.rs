@@ -165,9 +165,9 @@ impl Reader {
         let verify = settings.verify.verify_after_reading;
         let mut validation_log = StatusTracker::default();
         let store = if _sync {
-            Store::from_stream(format, &mut stream, verify, &mut validation_log, &settings)
+            Store::from_stream(format, &mut stream, verify, &mut validation_log, settings)
         } else {
-            Store::from_stream_async(format, &mut stream, verify, &mut validation_log, &settings)
+            Store::from_stream_async(format, &mut stream, verify, &mut validation_log, settings)
                 .await
         }?;
 

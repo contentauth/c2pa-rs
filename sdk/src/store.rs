@@ -1894,7 +1894,7 @@ impl Store {
                             check_ingredient_trust,
                             &store.ctp,
                             validation_log,
-                            &settings,
+                            settings,
                         )
                         .await?;
                     }
@@ -1906,7 +1906,7 @@ impl Store {
                         svi,
                         asset_data,
                         validation_log,
-                        &settings,
+                        settings,
                     )
                     .await?;
                 } else {
@@ -2106,7 +2106,7 @@ impl Store {
                 true,
                 &store.ctp,
                 validation_log,
-                &settings,
+                settings,
             )?;
 
             Store::ingredient_checks(store, claim, &svi, asset_data, validation_log)?;
@@ -2118,7 +2118,7 @@ impl Store {
                 true,
                 &store.ctp,
                 validation_log,
-                &settings,
+                settings,
             )
             .await?;
 
@@ -2128,7 +2128,7 @@ impl Store {
                 &svi,
                 asset_data,
                 validation_log,
-                &settings,
+                settings,
             )
             .await?;
         }
@@ -3545,7 +3545,7 @@ impl Store {
                 {
                     #[cfg(not(target_arch = "wasm32"))]
                     return Ok((
-                        Store::handle_remote_manifest(&ext_ref, &settings)?,
+                        Store::handle_remote_manifest(&ext_ref, settings)?,
                         Some(ext_ref),
                     ));
                     #[cfg(target_arch = "wasm32")]
@@ -3603,7 +3603,7 @@ impl Store {
                     )
                     .provenance
                     {
-                        Store::handle_remote_manifest(&ext_ref, &settings)
+                        Store::handle_remote_manifest(&ext_ref, settings)
                     } else {
                         Err(Error::JumbfNotFound)
                     }
@@ -3858,9 +3858,9 @@ impl Store {
         if verify {
             let mut fragment = ClaimAssetData::StreamFragment(&mut stream, &mut fragment, format);
             if _sync {
-                Store::verify_store(&store, &mut fragment, validation_log, &settings)
+                Store::verify_store(&store, &mut fragment, validation_log, settings)
             } else {
-                Store::verify_store_async(&store, &mut fragment, validation_log, &settings).await
+                Store::verify_store_async(&store, &mut fragment, validation_log, settings).await
             }?;
         };
         Ok(store)

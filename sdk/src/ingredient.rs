@@ -904,7 +904,7 @@ impl Ingredient {
         // retrieve the manifest bytes from embedded or remote and convert to store if found
         let jumbf_result = match self.manifest_data() {
             Some(data) => Ok(data.into_owned()),
-            None => Store::load_jumbf_from_stream(format, stream, &settings)
+            None => Store::load_jumbf_from_stream(format, stream, settings)
                 .map(|(manifest_bytes, _)| manifest_bytes),
         };
 
@@ -1000,7 +1000,7 @@ impl Ingredient {
 
         // retrieve the manifest bytes from embedded, sidecar or remote and convert to store if found
         let (result, manifest_bytes) =
-            match Store::load_jumbf_from_stream_async(format, stream, &settings).await {
+            match Store::load_jumbf_from_stream_async(format, stream, settings).await {
                 Ok((manifest_bytes, _)) => {
                     (
                         // generate a store from the buffer and then validate from the asset path
@@ -1011,7 +1011,7 @@ impl Ingredient {
                                     &store,
                                     &mut ClaimAssetData::Stream(stream, format),
                                     &mut validation_log,
-                                    &settings,
+                                    settings,
                                 )
                                 .await
                                 .map(|_| store)
