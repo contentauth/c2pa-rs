@@ -830,19 +830,16 @@ impl Builder {
     }
 
     // Convert a Manifest into a Claim
-    fn to_claim(&self) -> Result<Claim> {
-        let settings = crate::settings::get_settings().unwrap_or_default();
-        // TO DO BEFORE MERGE? Pass Settings in here?
-
+    fn to_claim(&self, settings: &Settings) -> Result<Claim> {
         let definition = &self.definition;
         let mut claim_generator_info = definition.claim_generator_info.clone();
 
         // add the default claim generator info for this library
         if claim_generator_info.is_empty() {
-            let claim_generator_info_settings = settings.builder.claim_generator_info;
+            let claim_generator_info_settings = &settings.builder.claim_generator_info;
             match claim_generator_info_settings {
                 Some(claim_generator_info_settings) => {
-                    claim_generator_info.push(claim_generator_info_settings.try_into()?);
+                    claim_generator_info.push(claim_generator_info_settings.clone().try_into()?);
                 }
                 _ => {
                     claim_generator_info.push(ClaimGeneratorInfo::default());
@@ -1274,7 +1271,10 @@ impl Builder {
 
     // Convert a Manifest into a Store
     fn to_store(&self) -> Result<Store> {
-        let claim = self.to_claim()?;
+        let settings = crate::settings::get_settings().unwrap_or_default();
+        // TO DO BEFORE MERGE? Pass Settings in here?
+
+        let claim = self.to_claim(&settings)?;
 
         let mut store = Store::new();
 
