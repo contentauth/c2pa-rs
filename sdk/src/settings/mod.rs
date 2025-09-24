@@ -44,11 +44,11 @@ pub(crate) trait SettingsValidate {
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[allow(unused)]
 pub(crate) struct Trust {
-    verify_trust_list: bool,
-    user_anchors: Option<String>,
-    trust_anchors: Option<String>,
-    trust_config: Option<String>,
-    allowed_list: Option<String>,
+    pub(crate) verify_trust_list: bool,
+    pub(crate) user_anchors: Option<String>,
+    pub(crate) trust_anchors: Option<String>,
+    pub(crate) trust_config: Option<String>,
+    pub(crate) allowed_list: Option<String>,
 }
 
 impl Trust {
@@ -171,7 +171,7 @@ pub(crate) struct Core {
     soft_hash_alg: Option<String>,
     salt_jumbf_boxes: bool,
     prefer_box_hash: bool,
-    merkle_tree_chunk_size_in_kb: Option<usize>,
+    pub(crate) merkle_tree_chunk_size_in_kb: Option<usize>,
     merkle_tree_max_proofs: usize,
     compress_manifests: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -213,13 +213,13 @@ impl SettingsValidate for Core {
 #[allow(unused)]
 pub(crate) struct Verify {
     pub(crate) verify_after_reading: bool,
-    verify_after_sign: bool,
+    pub(crate) verify_after_sign: bool,
     pub(crate) verify_trust: bool,
     verify_timestamp_trust: bool,
     pub(crate) ocsp_fetch: bool,
     pub(crate) remote_manifest_fetch: bool,
     pub(crate) check_ingredient_trust: bool,
-    skip_ingredient_conflict_resolution: bool,
+    pub(crate) skip_ingredient_conflict_resolution: bool,
     strict_v1_validation: bool,
 }
 
@@ -255,7 +255,7 @@ pub struct Settings {
     version_minor: usize,
     // TODO (https://github.com/contentauth/c2pa-rs/issues/1314):
     // Rename to c2pa_trust? Discuss possibly breaking change.
-    trust: Trust,
+    pub(crate) trust: Trust,
     cawg_trust: Trust,
     pub(crate) core: Core,
     pub(crate) verify: Verify,

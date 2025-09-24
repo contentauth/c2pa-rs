@@ -72,7 +72,7 @@ use crate::{
     log_item,
     manifest_store_report::ManifestStoreReport,
     salt::DefaultSalt,
-    settings::{builder::OcspFetch, get_settings_value, Settings},
+    settings::{builder::OcspFetch, Settings},
     status_tracker::{ErrorBehavior, StatusTracker},
     utils::{
         hash_utils::HashRange,
@@ -145,6 +145,9 @@ impl Store {
     ///
     /// In most cases, calling [`Store::new()`] is preferred.
     pub fn new_with_label(label: &str) -> Self {
+        let settings = crate::settings::get_settings().unwrap_or_default();
+        // TO DO BEFORE MERGE? Pass Settings in here?
+
         let mut store = Store {
             claims_map: HashMap::new(),
             manifest_box_hash_cache: HashMap::new(),
@@ -157,19 +160,19 @@ impl Store {
         };
 
         // load the trust handler settings, don't worry about status as these are checked during setting generation
-        if let Ok(Some(ta)) = get_settings_value::<Option<String>>("trust.trust_anchors") {
+        if let Some(ta) = settings.trust.trust_anchors {
             let _v = store.add_trust(ta.as_bytes());
         }
 
-        if let Ok(Some(pa)) = get_settings_value::<Option<String>>("trust.user_anchors") {
+        if let Some(pa) = settings.trust.user_anchors {
             let _v = store.add_user_trust_anchors(pa.as_bytes());
         }
 
-        if let Ok(Some(tc)) = get_settings_value::<Option<String>>("trust.trust_config") {
+        if let Some(tc) = settings.trust.trust_config {
             let _v = store.add_trust_config(tc.as_bytes());
         }
 
-        if let Ok(Some(al)) = get_settings_value::<Option<String>>("trust.allowed_list") {
+        if let Some(al) = settings.trust.allowed_list {
             let _v = store.add_trust_allowed_list(al.as_bytes());
         }
 
@@ -571,43 +574,42 @@ impl Store {
         match result {
             Ok(sig) => {
                 // Sanity check: Ensure that this signature is valid.
-                if let Ok(verify_after_sign) =
-                    get_settings_value::<bool>("verify.verify_after_sign")
-                {
-                    if verify_after_sign {
-                        let mut cose_log =
-                            StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
+                let verify_after_sign = settings.verify.verify_after_sign;
 
-                        let result = if _sync {
-                            verify_cose(
-                                &sig,
-                                &claim_bytes,
-                                b"",
-                                false,
-                                &self.ctp,
-                                None,
-                                &mut cose_log,
-                                &settings.verify,
-                            )
-                        } else {
-                            verify_cose_async(
-                                &sig,
-                                &claim_bytes,
-                                b"",
-                                false,
-                                &self.ctp,
-                                None,
-                                &mut cose_log,
-                                &settings.verify,
-                            )
-                            .await
-                        };
-                        if let Err(err) = result {
-                            error!("Signature that was just generated does not validate: {err:#?}");
-                            return Err(err);
-                        }
+                if verify_after_sign {
+                    let mut cose_log =
+                        StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
+
+                    let result = if _sync {
+                        verify_cose(
+                            &sig,
+                            &claim_bytes,
+                            b"",
+                            false,
+                            &self.ctp,
+                            None,
+                            &mut cose_log,
+                            &settings.verify,
+                        )
+                    } else {
+                        verify_cose_async(
+                            &sig,
+                            &claim_bytes,
+                            b"",
+                            false,
+                            &self.ctp,
+                            None,
+                            &mut cose_log,
+                            &settings.verify,
+                        )
+                        .await
+                    };
+                    if let Err(err) = result {
+                        error!("Signature that was just generated does not validate: {err:#?}");
+                        return Err(err);
                     }
                 }
+
                 Ok(sig)
             }
             Err(e) => Err(e),
@@ -2224,6 +2226,9 @@ impl Store {
         asset_stream: &mut dyn CAIRead,
         alg: &str,
     ) -> Result<BmffHash> {
+        let settings = crate::settings::get_settings().unwrap_or_default();
+        // TO DO BEFORE MERGE? Pass Settings in here?
+
         // The spec has mandatory BMFF exclusion ranges for certain atoms.
         // The function makes sure those are included.
 
@@ -2305,9 +2310,7 @@ impl Store {
         // enable flat flat files with Merkle trees if desired
         // we do this here because the UUID boxes must be in place
         // for the later hash generation
-        if let Ok(Some(merkle_chunk_size)) =
-            get_settings_value::<Option<usize>>("core.merkle_tree_chunk_size_in_kb")
-        {
+        if let Some(merkle_chunk_size) = settings.core.merkle_tree_chunk_size_in_kb {
             // mdat boxes are excluded when using Merkle hashing
             let mut mdat = ExclusionsMap::new("/mdat".to_owned());
             let subset_mdat = SubsetMap {
@@ -2974,22 +2977,20 @@ impl Store {
                 let pc_mut = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
                 pc_mut.set_signature_val(s);
 
-                if let Ok(verify_after_sign) =
-                    get_settings_value::<bool>("verify.verify_after_sign")
-                {
-                    output_stream.rewind()?;
-                    // Also catch the case where we may have written to io::empty() or similar
-                    if verify_after_sign && output_stream.stream_position()? > 0 {
-                        // verify the store
-                        let mut validation_log =
-                            StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
-                        Store::verify_store(
-                            self,
-                            &mut crate::claim::ClaimAssetData::Stream(output_stream, format),
-                            &mut validation_log,
-                            &settings,
-                        )?;
-                    }
+                output_stream.rewind()?;
+
+                let verify_after_sign = settings.verify.verify_after_sign;
+                // Also catch the case where we may have written to io::empty() or similar
+                if verify_after_sign && output_stream.stream_position()? > 0 {
+                    // verify the store
+                    let mut validation_log =
+                        StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
+                    Store::verify_store(
+                        self,
+                        &mut crate::claim::ClaimAssetData::Stream(output_stream, format),
+                        &mut validation_log,
+                        &settings,
+                    )?;
                 }
                 Ok(m)
             }
@@ -4028,6 +4029,9 @@ impl Store {
         data: &[u8],
         redactions: Option<Vec<String>>,
     ) -> Result<Store> {
+        let settings = crate::settings::get_settings().unwrap_or_default();
+        // TO DO BEFORE MERGE? Pass Settings in here?
+
         // constants for ingredient conflict reasons
         const CONFLICTING_MANIFEST: usize = 1; // Conflicts with another C2PA Manifest
 
@@ -4060,9 +4064,8 @@ impl Store {
 
         // resolve conflicts
         // for 2.x perform ingredients conflict handling by making new label if needed
-        let skip_resolution =
-            get_settings_value::<bool>("verify.skip_ingredient_conflict_resolution")
-                .unwrap_or(false);
+        let skip_resolution = settings.verify.skip_ingredient_conflict_resolution;
+
         if claim.version() > 1 && !skip_resolution {
             // if the hashes match then the values are OK to add so remove form conflict list
             // matching manifests are automatically deduped in a later step
