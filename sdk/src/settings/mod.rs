@@ -259,7 +259,7 @@ pub struct Settings {
     cawg_trust: Trust,
     pub(crate) core: Core,
     pub(crate) verify: Verify,
-    builder: BuilderSettings,
+    pub(crate) builder: BuilderSettings,
     #[serde(skip_serializing_if = "Option::is_none")]
     signer: Option<SignerSettings>,
     #[serde(skip_serializing_if = "Option::is_none")]

@@ -26,8 +26,8 @@ use image::{
 
 use crate::{
     settings::{
-        self,
         builder::{ThumbnailFormat, ThumbnailQuality},
+        Settings,
     },
     Error, Result,
 };
@@ -100,6 +100,7 @@ impl fmt::Display for ThumbnailFormat {
 pub fn make_thumbnail_bytes_from_stream<R>(
     format: &str,
     input: R,
+    settings: &Settings,
 ) -> Result<Option<(ThumbnailFormat, Vec<u8>)>>
 where
     R: BufRead + Seek,
@@ -108,14 +109,14 @@ where
         match ThumbnailFormat::new(format) {
             Some(input_format) => {
                 let mut output = Cursor::new(Vec::new());
-                make_thumbnail_from_stream(input_format, None, input, &mut output)
+                make_thumbnail_from_stream(input_format, None, input, &mut output, &settings)
                     .map(|output_format| (output_format, output.into_inner()))
             }
             None => Err(Error::UnsupportedThumbnailFormat(format.to_owned())),
         }
     };
 
-    let ignore_errors = settings::get_settings_value::<bool>("builder.thumbnail.ignore_errors")?;
+    let ignore_errors = settings.builder.thumbnail.ignore_errors;
     match result {
         Ok(result) => Ok(Some(result)),
         Err(_) if ignore_errors => Ok(None),
@@ -135,6 +136,7 @@ pub fn make_thumbnail_from_stream<R, W>(
     output_format: Option<ThumbnailFormat>,
     input: R,
     output: &mut W,
+    settings: &Settings,
 ) -> Result<ThumbnailFormat>
 where
     R: BufRead + Seek,
@@ -149,14 +151,10 @@ where
     let output_format = match output_format {
         Some(output_format) => output_format,
         None => {
-            let global_format =
-                settings::get_settings_value::<Option<ThumbnailFormat>>("builder.thumbnail.format");
-            match global_format {
-                Ok(Some(global_format)) => global_format,
-                _ => {
-                    let prefer_smallest_format = settings::get_settings_value::<bool>(
-                        "builder.thumbnail.prefer_smallest_format",
-                    )?;
+            match settings.builder.thumbnail.format {
+                Some(global_format) => global_format,
+                None => {
+                    let prefer_smallest_format = settings.builder.thumbnail.prefer_smallest_format;
                     match prefer_smallest_format {
                         true => match input_format {
                             // TODO: investigate more formats
@@ -174,10 +172,10 @@ where
         }
     };
 
-    let long_edge = settings::get_settings_value::<u32>("builder.thumbnail.long_edge")?;
+    let long_edge = settings.builder.thumbnail.long_edge;
     image = image.thumbnail(long_edge, long_edge);
 
-    let quality = settings::get_settings_value::<ThumbnailQuality>("builder.thumbnail.quality")?;
+    let quality = settings.builder.thumbnail.quality;
     // TODO: investigate more formats
     match output_format {
         ThumbnailFormat::Jpeg => match quality {
@@ -306,7 +304,7 @@ pub mod tests {
 
             // Generate thumbnail from stream
             let mut cursor = std::io::Cursor::new(&jpeg_data);
-            let result = make_thumbnail_bytes_from_stream("jpg", &mut cursor);
+            let result = make_thumbnail_bytes_from_stream("jpg", &mut cursor, &Settings::default());
             assert!(
                 result.is_ok(),
                 "Thumbnail should be generated for orientation {orientation}"
@@ -361,21 +359,10 @@ pub mod tests {
 
     #[test]
     fn test_make_thumbnail_from_stream() {
-        #[cfg(target_os = "wasi")]
-        Settings::reset().unwrap();
-
-        Settings::from_toml(
-            &toml::toml! {
-                [builder.thumbnail]
-                prefer_smallest_format = false
-                ignore_errors = false
-                // TODO: problem, how would I remove a field?
-                // format = null
-            }
-            .to_string(),
-        )
-        .unwrap();
-        settings::set_settings_value::<Option<ThumbnailFormat>>("format", None).unwrap();
+        let mut settings = Settings::default();
+        settings.builder.thumbnail.prefer_smallest_format = false;
+        settings.builder.thumbnail.ignore_errors = false;
+        settings.builder.thumbnail.format = None;
 
         let mut output = Cursor::new(Vec::new());
         let format = make_thumbnail_from_stream(
@@ -383,6 +370,7 @@ pub mod tests {
             None,
             Cursor::new(TEST_JPEG),
             &mut output,
+            &settings,
         )
         .unwrap();
 
@@ -396,17 +384,8 @@ pub mod tests {
 
     #[test]
     fn test_make_thumbnail_from_stream_with_output() {
-        #[cfg(target_os = "wasi")]
-        Settings::reset().unwrap();
-
-        Settings::from_toml(
-            &toml::toml! {
-                [builder.thumbnail]
-                ignore_errors = false
-            }
-            .to_string(),
-        )
-        .unwrap();
+        let mut settings = Settings::default();
+        settings.builder.thumbnail.ignore_errors = false;
 
         let mut output = Cursor::new(Vec::new());
         let format = make_thumbnail_from_stream(
@@ -414,6 +393,7 @@ pub mod tests {
             Some(ThumbnailFormat::Png),
             Cursor::new(TEST_JPEG),
             &mut output,
+            &settings,
         )
         .unwrap();
 
@@ -440,10 +420,13 @@ pub mod tests {
         )
         .unwrap();
 
-        let (format, bytes) =
-            make_thumbnail_bytes_from_stream("image/jpeg", Cursor::new(TEST_JPEG))
-                .unwrap()
-                .unwrap();
+        let (format, bytes) = make_thumbnail_bytes_from_stream(
+            "image/jpeg",
+            Cursor::new(TEST_JPEG),
+            &Settings::default(),
+        )
+        .unwrap()
+        .unwrap();
 
         assert!(matches!(format, ThumbnailFormat::Jpeg));
 
@@ -467,9 +450,13 @@ pub mod tests {
         )
         .unwrap();
 
-        let (format, bytes) = make_thumbnail_bytes_from_stream("image/png", Cursor::new(TEST_PNG))
-            .unwrap()
-            .unwrap();
+        let (format, bytes) = make_thumbnail_bytes_from_stream(
+            "image/png",
+            Cursor::new(TEST_PNG),
+            &Settings::default(),
+        )
+        .unwrap()
+        .unwrap();
 
         assert!(matches!(format, ThumbnailFormat::Jpeg));
 
@@ -480,21 +467,12 @@ pub mod tests {
 
     #[test]
     fn test_make_thumbnail_with_forced_format() {
-        #[cfg(target_os = "wasi")]
-        Settings::reset().unwrap();
-
-        Settings::from_toml(
-            &toml::toml! {
-                [builder.thumbnail]
-                format = "png"
-                ignore_errors = false
-            }
-            .to_string(),
-        )
-        .unwrap();
+        let mut settings = Settings::default();
+        settings.builder.thumbnail.format = Some(ThumbnailFormat::Png);
+        settings.builder.thumbnail.ignore_errors = false;
 
         let (format, bytes) =
-            make_thumbnail_bytes_from_stream("image/jpeg", Cursor::new(TEST_JPEG))
+            make_thumbnail_bytes_from_stream("image/jpeg", Cursor::new(TEST_JPEG), &settings)
                 .unwrap()
                 .unwrap();
 
@@ -507,21 +485,12 @@ pub mod tests {
 
     #[test]
     fn test_make_thumbnail_with_long_edge() {
-        #[cfg(target_os = "wasi")]
-        Settings::reset().unwrap();
-
-        Settings::from_toml(
-            &toml::toml! {
-                [builder.thumbnail]
-                ignore_errors = false
-                long_edge = 100
-            }
-            .to_string(),
-        )
-        .unwrap();
+        let mut settings = Settings::default();
+        settings.builder.thumbnail.ignore_errors = false;
+        settings.builder.thumbnail.long_edge = 100;
 
         let (format, bytes) =
-            make_thumbnail_bytes_from_stream("image/jpeg", Cursor::new(TEST_JPEG))
+            make_thumbnail_bytes_from_stream("image/jpeg", Cursor::new(TEST_JPEG), &settings)
                 .unwrap()
                 .unwrap();
 
@@ -547,8 +516,12 @@ pub mod tests {
         )
         .unwrap();
 
-        let thumbnail =
-            make_thumbnail_bytes_from_stream("image/png", Cursor::new(Vec::new())).unwrap();
+        let thumbnail = make_thumbnail_bytes_from_stream(
+            "image/png",
+            Cursor::new(Vec::new()),
+            &Settings::default(),
+        )
+        .unwrap();
         assert!(thumbnail.is_none());
     }
 }

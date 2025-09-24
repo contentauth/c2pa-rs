@@ -1287,6 +1287,9 @@ impl Builder {
     where
         R: Read + Seek + ?Sized,
     {
+        let settings = crate::settings::get_settings().unwrap_or_default();
+        // TO DO BEFORE MERGE? Pass Settings in here?
+
         if self.intent == Some(BuilderIntent::Update) {
             // do not auto add a thumbnail to an update manifest
             return Ok(self);
@@ -1300,7 +1303,11 @@ impl Builder {
 
             let mut stream = std::io::BufReader::new(stream);
             if let Some((output_format, image)) =
-                crate::utils::thumbnail::make_thumbnail_bytes_from_stream(format, &mut stream)?
+                crate::utils::thumbnail::make_thumbnail_bytes_from_stream(
+                    format,
+                    &mut stream,
+                    &settings,
+                )?
             {
                 stream.rewind()?;
 

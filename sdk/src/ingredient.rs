@@ -1490,13 +1490,18 @@ impl Ingredient {
     where
         R: std::io::BufRead + std::io::Seek,
     {
+        let settings = crate::settings::get_settings().unwrap_or_default();
+        // TO DO BEFORE MERGE? Pass Settings in here?
+
         let auto_thumbnail =
             crate::settings::get_settings_value::<bool>("builder.thumbnail.enabled")?;
         if self.thumbnail.is_none() && auto_thumbnail {
             stream.rewind()?;
 
             if let Some((output_format, image)) =
-                crate::utils::thumbnail::make_thumbnail_bytes_from_stream(format, stream)?
+                crate::utils::thumbnail::make_thumbnail_bytes_from_stream(
+                    format, stream, &settings,
+                )?
             {
                 self.set_thumbnail(output_format.to_string(), image)?;
             }
