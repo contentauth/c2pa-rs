@@ -374,6 +374,17 @@ impl Builder {
         self
     }
 
+    /// Returns the current [`BuilderIntent`] for this [`Builder`], if set.
+    /// If not set, it will use the Settings default intent.
+    pub(crate) fn intent(&self) -> Option<BuilderIntent> {
+        let mut intent = self.intent.clone();
+        if intent.is_none() {
+            intent =
+                settings::get_settings_value::<Option<BuilderIntent>>("builder.intent").ok()?;
+        }
+        intent
+    }
+
     /// Creates a new [`Builder`] from a JSON [`ManifestDefinition`] string.
     ///
     /// # Arguments
@@ -1261,7 +1272,7 @@ impl Builder {
         let mut store = Store::new();
 
         // if this can be an update manifest, then set the update_manifest flag
-        if self.intent == Some(BuilderIntent::Update) {
+        if self.intent() == Some(BuilderIntent::Update) {
             store.commit_update_manifest(claim)
         } else {
             store.commit_claim(claim)
@@ -1274,7 +1285,7 @@ impl Builder {
     where
         R: Read + Seek + ?Sized,
     {
-        if self.intent == Some(BuilderIntent::Update) {
+        if self.intent() == Some(BuilderIntent::Update) {
             // do not auto add a thumbnail to an update manifest
             return Ok(self);
         }
@@ -1314,7 +1325,7 @@ impl Builder {
     {
         // check settings to see if we should add a parent ingredient
         let auto_parent = matches!(
-            self.intent,
+            self.intent(),
             Some(BuilderIntent::Edit | BuilderIntent::Update)
         );
         if auto_parent && !self.definition.ingredients.iter().any(|i| i.is_parent()) {
@@ -3089,10 +3100,10 @@ mod tests {
 
         let mut builder2 = Builder {
             definition,
-            intent: Some(BuilderIntent::Update),
             ..Default::default()
         };
 
+        builder.set_intent(BuilderIntent::Update);
         // rewind our new asset stream so we can add it as an ingredient
         dest1.set_position(0);
 

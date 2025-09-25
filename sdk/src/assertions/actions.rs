@@ -842,8 +842,14 @@ impl Actions {
     }
 
     /// Adds an [`Action`] to this assertion's list of actions.
+    /// OPENED and CREATED actions are inserted at the beginning of the list.
+    /// Note, this does not check for duplicates since it does not return errors.
     pub fn add_action(mut self, action: Action) -> Self {
-        self.actions.push(action);
+        if action.action() == c2pa_action::OPENED || action.action() == c2pa_action::CREATED {
+            self.actions.insert(0, action);
+        } else {
+            self.actions.push(action);
+        }
         self
     }
 
