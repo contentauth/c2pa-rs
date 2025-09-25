@@ -131,9 +131,16 @@ fn stream_with_fs_fallback_file_io(threshold_override: Option<usize>) -> Result<
         "core.backing_store_memory_threshold_in_mb",
     )?);
 
-    Ok(SpooledTempFile::new(threshold * 1024 * 1024))
+    let mut result = SpooledTempFile::new(threshold * 1024 * 1024);
     // IMPORTANT: SpooledTempFile API is in bytes; the backing store threshold
     // setting is in MB.
+
+    // Try pre-allocating 1MB to avoid possibly re-allocating the
+    // in-memory vector many times.
+    result.set_len(1024 * 1024)?;
+    result.set_len(0)?;
+
+    Ok(result)
 }
 
 /// Will create a [Read], [Write], and [Seek] capable stream that will stay in memory
