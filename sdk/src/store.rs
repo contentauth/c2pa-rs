@@ -138,16 +138,16 @@ impl Default for Store {
 impl Store {
     /// Create a new, empty claims store.
     pub fn new() -> Self {
-        Self::new_with_label(MANIFEST_STORE_EXT)
+        let settings = crate::settings::get_settings().unwrap_or_default();
+        // TO DO BEFORE MERGE? Pass Settings in here?
+
+        Self::new_with_label(MANIFEST_STORE_EXT, &settings)
     }
 
     /// Create a new, empty claims store with a custom label.
     ///
     /// In most cases, calling [`Store::new()`] is preferred.
-    pub fn new_with_label(label: &str) -> Self {
-        let settings = crate::settings::get_settings().unwrap_or_default();
-        // TO DO BEFORE MERGE? Pass Settings in here?
-
+    pub fn new_with_label(label: &str, settings: &Settings) -> Self {
         let mut store = Store {
             claims_map: HashMap::new(),
             manifest_box_hash_cache: HashMap::new(),
@@ -160,19 +160,19 @@ impl Store {
         };
 
         // load the trust handler settings, don't worry about status as these are checked during setting generation
-        if let Some(ta) = settings.trust.trust_anchors {
+        if let Some(ta) = &settings.trust.trust_anchors {
             let _v = store.add_trust(ta.as_bytes());
         }
 
-        if let Some(pa) = settings.trust.user_anchors {
+        if let Some(pa) = &settings.trust.user_anchors {
             let _v = store.add_user_trust_anchors(pa.as_bytes());
         }
 
-        if let Some(tc) = settings.trust.trust_config {
+        if let Some(tc) = &settings.trust.trust_config {
             let _v = store.add_trust_config(tc.as_bytes());
         }
 
-        if let Some(al) = settings.trust.allowed_list {
+        if let Some(al) = &settings.trust.allowed_list {
             let _v = store.add_trust_allowed_list(al.as_bytes());
         }
 
