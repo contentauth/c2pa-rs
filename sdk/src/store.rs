@@ -1116,10 +1116,11 @@ impl Store {
         true
     }
 
-    pub fn from_jumbf(buffer: &[u8], validation_log: &mut StatusTracker) -> Result<Store> {
-        let settings = crate::settings::get_settings().unwrap_or_default();
-        // TO DO BEFORE MERGE? Pass Settings in here?
-
+    pub fn from_jumbf(
+        buffer: &[u8],
+        validation_log: &mut StatusTracker,
+        settings: &Settings,
+    ) -> Result<Store> {
         if buffer.is_empty() {
             return Err(Error::JumbfNotFound);
         }
@@ -2811,7 +2812,7 @@ impl Store {
         let jumbf = self.to_jumbf(signer)?;
 
         // use temp store so mulitple calls across renditions will work (the Store is not finalized this way)
-        let mut temp_store = Store::from_jumbf(&jumbf, &mut validation_log)?;
+        let mut temp_store = Store::from_jumbf(&jumbf, &mut validation_log, &settings)?;
 
         let mut jumbf_bytes = temp_store.start_save_bmff_fragmented(
             asset_path,
@@ -3759,7 +3760,7 @@ impl Store {
         stream.rewind()?;
 
         // First we convert the JUMBF into a usable store.
-        let store = Store::from_jumbf(c2pa_data, validation_log).inspect_err(|e| {
+        let store = Store::from_jumbf(c2pa_data, validation_log, &settings).inspect_err(|e| {
             log_item!("asset", "error loading file", "load_from_asset")
                 .failure_no_throw(validation_log, e);
         })?;
@@ -3865,7 +3866,7 @@ impl Store {
         let manifest_bytes =
             Store::load_jumbf_from_stream(format, &mut stream, &Settings::default())?.0;
 
-        let store = Store::from_jumbf(&manifest_bytes, validation_log)?;
+        let store = Store::from_jumbf(&manifest_bytes, validation_log, settings)?;
         let verify = settings.verify.verify_after_reading;
 
         if verify {
@@ -4052,7 +4053,7 @@ impl Store {
         let mut to_remove_from_incoming = Vec::new();
 
         let mut report = StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
-        let i_store = Store::from_jumbf(data, &mut report)?;
+        let i_store = Store::from_jumbf(data, &mut report, &settings)?;
 
         let empty_store = Store::default();
 
@@ -4199,7 +4200,7 @@ impl Store {
         }
 
         // make necessary changes to the incoming store
-        let mut i_store_mut = Store::from_jumbf(data, &mut report)?;
+        let mut i_store_mut = Store::from_jumbf(data, &mut report, &settings)?;
         let mut final_redactions = Vec::new();
         if let Some(mut redactions) = redactions {
             final_redactions.append(&mut redactions);
@@ -8426,6 +8427,8 @@ pub mod tests {
     #[test]
     /// Test that we can we load a store from JUMBF and then convert it back to the identical JUMBF.
     fn test_from_and_to_jumbf() {
+        let settings = Settings::default();
+
         // test adding to actual image
         let ap = fixture_path("C.jpg");
 
@@ -8433,9 +8436,10 @@ pub mod tests {
         let format = "image/jpeg";
 
         let (manifest_bytes, _remote_url) =
-            Store::load_jumbf_from_stream(format, &mut stream, &Settings::default()).unwrap();
+            Store::load_jumbf_from_stream(format, &mut stream, &settings).unwrap();
 
-        let store = Store::from_jumbf(&manifest_bytes, &mut StatusTracker::default()).unwrap();
+        let store =
+            Store::from_jumbf(&manifest_bytes, &mut StatusTracker::default(), &settings).unwrap();
 
         let jumbf = store
             .to_jumbf_internal(0)
