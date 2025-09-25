@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.66.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.65.1...c2pa-v0.66.0)
+_24 September 2025_
+
+### Fixed
+
+* We lost the ability to read the deprecated instanceId actions parameters field. ([#1443](https://github.com/contentauth/c2pa-rs/pull/1443))
+* Remove `no_interleaved_io` feature ([#1437](https://github.com/contentauth/c2pa-rs/pull/1437))
+
+## [0.65.1](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.65.0...c2pa-v0.65.1)
+_23 September 2025_
+
+### Fixed
+
+* Add support for iso6 boxes (tfra, tfhd and saio) ([#1442](https://github.com/contentauth/c2pa-rs/pull/1442))
+* [CAI-9586] Some validation errors are thrown as exceptions ([#1441](https://github.com/contentauth/c2pa-rs/pull/1441))
+* Only enable "asm" feature on aarch64 macos ([#1440](https://github.com/contentauth/c2pa-rs/pull/1440))
+
 ## [0.65.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.64.0...c2pa-v0.65.0)
 _19 September 2025_
 
