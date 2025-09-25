@@ -929,7 +929,7 @@ impl Ingredient {
 
         // Fetch ocsp responses and store it with the ingredient
         if let Ok(ref mut store) = result {
-            let labels = store.get_manifest_labels_for_ocsp();
+            let labels = store.get_manifest_labels_for_ocsp(settings);
 
             let ocsp_response_ders = if _sync {
                 store.get_ocsp_response_ders(labels, &mut validation_log)?

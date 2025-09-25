@@ -612,10 +612,7 @@ impl Store {
     }
 
     /// Retrieves all manifest labels that need to fetch ocsp responses.
-    pub fn get_manifest_labels_for_ocsp(&self) -> Vec<String> {
-        let settings = crate::settings::get_settings().unwrap_or_default();
-        // TO DO BEFORE MERGE? Pass Settings in here?
-
+    pub fn get_manifest_labels_for_ocsp(&self, settings: &Settings) -> Vec<String> {
         let labels = match settings.builder.certificate_status_fetch {
             Some(ocsp_fetch) => match ocsp_fetch {
                 OcspFetch::All => self.claims.clone(),
