@@ -72,7 +72,7 @@ use crate::{
     log_item,
     manifest_store_report::ManifestStoreReport,
     salt::DefaultSalt,
-    settings::{builder::OcspFetch, get_settings_value},
+    settings::{builder::OcspFetchScope, get_settings_value},
     status_tracker::{ErrorBehavior, StatusTracker},
     utils::{
         hash_utils::HashRange,
@@ -603,12 +603,12 @@ impl Store {
 
     /// Retrieves all manifest labels that need to fetch ocsp responses.
     pub fn get_manifest_labels_for_ocsp(&self) -> Vec<String> {
-        let labels = match crate::settings::get_settings_value::<OcspFetch>(
+        let labels = match crate::settings::get_settings_value::<OcspFetchScope>(
             "builder.certificate_status_fetch",
         ) {
             Ok(ocsp_fetch) => match ocsp_fetch {
-                OcspFetch::All => self.claims.clone(),
-                OcspFetch::Active => {
+                OcspFetchScope::All => self.claims.clone(),
+                OcspFetchScope::Active => {
                     if let Some(active_label) = self.provenance_label() {
                         vec![active_label]
                     } else {
