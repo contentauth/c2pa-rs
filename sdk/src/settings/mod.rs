@@ -657,7 +657,7 @@ pub mod tests {
         let ts = include_bytes!("../../tests/fixtures/certs/trust/test_cert_root_bundle.pem");
 
         // test updating values
-        Settings::set_value("core.hash_alg", "sha512").unwrap();
+        Settings::set_value("core.merkle_tree_chunk_size_in_kb", 10).unwrap();
         Settings::set_value("verify.remote_manifest_fetch", false).unwrap();
         Settings::set_value("builder.thumbnail.enabled", false).unwrap();
         Settings::set_value(
@@ -667,8 +667,8 @@ pub mod tests {
         .unwrap();
 
         assert_eq!(
-            get_settings_value::<String>("core.hash_alg").unwrap(),
-            "sha512"
+            get_settings_value::<usize>("core.merkle_tree_chunk_size_in_kb").unwrap(),
+            10
         );
         assert!(!get_settings_value::<bool>("verify.remote_manifest_fetch").unwrap());
         assert!(!get_settings_value::<bool>("builder.thumbnail.enabled").unwrap());
@@ -771,9 +771,9 @@ pub mod tests {
     fn test_bad_setting() {
         let modified_core = toml::toml! {
             [core]
-            debug = true
-            hash_alg = "sha1000000"
-            max_memory_usage = 123456
+            merkle_tree_chunk_size_in_kb = true
+            merkle_tree_max_proofs = "sha1000000"
+            backing_store_memory_threshold_in_mb = -123456
         }
         .to_string();
 
