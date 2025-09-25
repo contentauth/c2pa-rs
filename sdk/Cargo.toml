@@ -96,7 +96,7 @@ byteordered = "0.6.0"
 chrono = { version = "0.4.39", default-features = false, features = ["serde"] }
 ciborium = "0.2.2"
 toml = "0.8.23"
-config = { version = "0.14.0", default-features = false, features = [
+config = { version = "0.15.17", default-features = false, features = [
     "json",
     "json5",
     "toml",
