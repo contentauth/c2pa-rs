@@ -2489,16 +2489,14 @@ impl Store {
         signer: &dyn Signer,
         format: &str,
         asset_reader: Option<&mut dyn CAIRead>,
+        settings: &Settings,
     ) -> Result<Vec<u8>> {
-        let settings = crate::settings::get_settings().unwrap_or_default();
-        // TO DO BEFORE MERGE? Pass Settings in here?
-
         let mut jumbf_bytes =
             self.prep_embeddable_store(signer.reserve_size(), dh, asset_reader)?;
 
         // sign contents
         let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
-        let sig = self.sign_claim(pc, signer, signer.reserve_size(), &settings)?;
+        let sig = self.sign_claim(pc, signer, signer.reserve_size(), settings)?;
 
         let sig_placeholder = Store::sign_claim_placeholder(pc, signer.reserve_size());
 
@@ -7887,6 +7885,8 @@ pub mod tests {
     #[test]
     #[cfg(feature = "file_io")]
     fn test_datahash_embeddable_manifest() {
+        let settings = Settings::default();
+
         // test adding to actual image
 
         use std::io::SeekFrom;
@@ -7939,6 +7939,7 @@ pub mod tests {
                 signer.as_ref(),
                 "jpeg",
                 Some(&mut output_file),
+                &settings,
             )
             .unwrap();
 
@@ -7964,6 +7965,8 @@ pub mod tests {
     #[test]
     #[cfg(feature = "file_io")]
     fn test_datahash_embeddable_manifest_user_hashed() {
+        let settings = Settings::default();
+
         use std::io::SeekFrom;
 
         use sha2::Digest;
@@ -8016,7 +8019,7 @@ pub mod tests {
 
         // get the embeddable manifest, using user hashing
         let cm = store
-            .get_data_hashed_embeddable_manifest(&dh, signer.as_ref(), "jpeg", None)
+            .get_data_hashed_embeddable_manifest(&dh, signer.as_ref(), "jpeg", None, &settings)
             .unwrap();
 
         // path in new composed manifest

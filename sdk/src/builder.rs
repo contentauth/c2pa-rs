@@ -1430,7 +1430,7 @@ impl Builder {
 
         let mut store = self.to_store(&settings)?;
         if _sync {
-            store.get_data_hashed_embeddable_manifest(data_hash, signer, format, None)
+            store.get_data_hashed_embeddable_manifest(data_hash, signer, format, None, &settings)
         } else {
             store
                 .get_data_hashed_embeddable_manifest_async(data_hash, signer, format, None)
