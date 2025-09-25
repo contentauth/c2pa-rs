@@ -1039,8 +1039,24 @@ pub unsafe extern "C" fn c2pa_builder_add_action(
     }
 }
 
-
 #[no_mangle]
+/// Sets the manifest label on the Builder.
+///
+/// The manifest label is a unique identifier for a manifest.
+/// This label is used to create the JUMBF (JSON Universal Media Binary Format) URI for the manifest,
+///
+/// # Parameters
+/// * `builder_ptr` - A pointer to a valid `C2paBuilder` instance. Must not be null.
+/// * `label` - A null-terminated C string containing the manifest label. Must not be null.
+///
+/// # Errors
+/// Returns -1 if there were errors, otherwise returns 0.
+/// The error string can be retrieved by calling c2pa_error.
+///
+/// # Safety
+/// - The `builder_ptr` points to a valid `C2paBuilder`
+/// - The `label` is a valid null-terminated C string
+///
 pub unsafe extern "C" fn c2pa_builder_set_label(
     builder_ptr: *mut C2paBuilder,
     label: *const c_char,
@@ -1051,7 +1067,6 @@ pub unsafe extern "C" fn c2pa_builder_set_label(
     builder.set_label(parsed_label);
     0 as c_int
 }
-
 
 /// Writes an Archive of the Builder to the destination stream.
 ///
@@ -1761,7 +1776,7 @@ mod tests {
 
         let format = CString::new("image/jpeg").unwrap();
         let mut manifest_bytes_ptr = std::ptr::null();
-        let manifest_bytes = unsafe {
+        let _ = unsafe {
             c2pa_builder_sign(
                 builder,
                 format.as_ptr(),

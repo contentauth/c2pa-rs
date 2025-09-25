@@ -386,7 +386,7 @@ impl Builder {
     }
 
     /// Sets a manifest label on the Builder.
-    pub fn set_label(&mut self, label: String) -> () {
+    pub fn set_label(&mut self, label: String) {
         self.definition.label = Some(label);
     }
 
