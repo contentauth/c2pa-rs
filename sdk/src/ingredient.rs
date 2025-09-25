@@ -775,7 +775,7 @@ impl Ingredient {
         let mut validation_log = StatusTracker::default();
 
         // retrieve the manifest bytes from embedded, sidecar or remote and convert to store if found
-        let (result, manifest_bytes) = match Store::load_jumbf_from_path(path, &settings) {
+        let (result, manifest_bytes) = match Store::load_jumbf_from_path(path, settings) {
             Ok(manifest_bytes) => {
                 (
                     // generate a store from the buffer and then validate from the asset path

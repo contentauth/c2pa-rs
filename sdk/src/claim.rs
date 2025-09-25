@@ -3180,7 +3180,7 @@ impl Claim {
         Claim::verify_hash_binding(claim, asset_data, svi, validation_log)?;
 
         // check action rules
-        Claim::verify_actions(claim, svi, validation_log, &settings)?;
+        Claim::verify_actions(claim, svi, validation_log, settings)?;
 
         // check metadata rules
         if claim.version() >= 2 {

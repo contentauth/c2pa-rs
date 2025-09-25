@@ -128,7 +128,7 @@ pub(crate) fn cose_sign(
     // Make sure the signing cert is valid.
     let certs = signer.certs()?;
     if let Some(signing_cert) = certs.first() {
-        signing_cert_valid(signing_cert, &settings)?;
+        signing_cert_valid(signing_cert, settings)?;
     } else {
         return Err(Error::CoseNoCerts);
     }

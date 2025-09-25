@@ -1115,7 +1115,7 @@ impl Builder {
 
         if let Some(action_templates) = action_templates {
             let action_templates = action_templates
-                .into_iter()
+                .iter()
                 .map(|template| template.clone().try_into())
                 .collect::<Result<Vec<ActionTemplate>>>()?;
             match actions.templates {
@@ -1130,7 +1130,7 @@ impl Builder {
 
         if let Some(additional_actions) = additional_actions {
             let additional_actions = additional_actions
-                .into_iter()
+                .iter()
                 .map(|action| action.clone().try_into())
                 .collect::<Result<Vec<Action>>>()?;
 
@@ -1267,7 +1267,7 @@ impl Builder {
 
     // Convert a Manifest into a Store
     fn to_store(&self, settings: &Settings) -> Result<Store> {
-        let claim = self.to_claim(&settings)?;
+        let claim = self.to_claim(settings)?;
 
         let mut store = Store::new();
 
