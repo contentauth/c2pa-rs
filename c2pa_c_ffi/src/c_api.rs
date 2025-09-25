@@ -1056,7 +1056,6 @@ pub unsafe extern "C" fn c2pa_builder_add_action(
 /// # Safety
 /// - The `builder_ptr` points to a valid `C2paBuilder`
 /// - The `label` is a valid null-terminated C string
-///
 pub unsafe extern "C" fn c2pa_builder_set_label(
     builder_ptr: *mut C2paBuilder,
     label: *const c_char,
