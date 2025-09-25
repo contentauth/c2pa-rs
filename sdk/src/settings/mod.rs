@@ -40,15 +40,21 @@ pub(crate) trait SettingsValidate {
     }
 }
 
-// Settings for trust list feature
+/// Settings to configure the trust list.
 #[cfg_attr(feature = "json_schema", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct Trust {
-    // REVIEW NOTE: move this down to the `Verify` struct?
-    pub verify_trust_list: bool,
+    /// List of additional user-provided trust anchor root certificates as a PEM bundle.
     pub user_anchors: Option<String>,
+    /// List of default trust anchor root certificates as a PEM bundle.
+    ///
+    /// Normally this option contains the official C2PA-recognized trust anchors found here:
+    /// <https://github.com/c2pa-org/conformance-public/tree/main/trust-list>
     pub trust_anchors: Option<String>,
+    /// List of allowed extended key usage (EKU) object identifiers (OID) that
+    /// certificates must have.
     pub trust_config: Option<String>,
+    /// List of explicitly allowed certificates as a PEM bundle.
     pub allowed_list: Option<String>,
 }
 
@@ -108,7 +114,6 @@ impl Default for Trust {
         #[cfg(test)]
         {
             let mut trust = Self {
-                verify_trust_list: true,
                 user_anchors: None,
                 trust_anchors: None,
                 trust_config: None,
@@ -133,7 +138,6 @@ impl Default for Trust {
         #[cfg(not(test))]
         {
             Self {
-                verify_trust_list: true,
                 user_anchors: None,
                 trust_anchors: None,
                 trust_config: None,
@@ -161,12 +165,33 @@ impl SettingsValidate for Trust {
     }
 }
 
-// Settings for core C2PA-RS functionality
+/// Settings to configure core features.
 #[cfg_attr(feature = "json_schema", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct Core {
+    /// Size of the [`BmffHash`] merkle tree chunks in kilobytes.
+    ///
+    /// This option is associated with the [`MerkleMap::fixed_block_size`] field.
+    ///
+    /// See more information in the spec here:
+    /// <https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_bmff_based_hash>
+    ///
+    /// [`MerkleMap::fixed_block_size`]: crate::assertions::MerkleMap::fixed_block_size
+    /// [`BmffHash`]: crate::assertions::BmffHash
     pub merkle_tree_chunk_size_in_kb: Option<usize>,
+    /// Maximum number of proofs when validating or writing a [`BmffHash`] merkle tree.
+    ///
+    /// This option defaults to 5.
+    ///
+    /// See more information in the spec here:
+    /// <https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_bmff_based_hash>
+    ///
+    /// [`BmffHash`]: crate::assertions::BmffHash
     pub merkle_tree_max_proofs: usize,
+    /// Maximum amount of data in megabytes that will be loaded into memory before
+    /// it's stored in temporary files on the disk.
+    ///
+    /// This option defaults to 512MB and can result in noticeable performance improvements.
     pub backing_store_memory_threshold_in_mb: usize,
 }
 
@@ -186,21 +211,56 @@ impl SettingsValidate for Core {
     }
 }
 
-// Settings for verification options
+/// Settings to configure the verification process.
 #[cfg_attr(feature = "json_schema", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct Verify {
+    /// Whether to verify the manifest after reading in the [`Reader`].
+    ///
+    /// The default value is true.
+    ///
+    /// [`Reader`]: crate::Reader
     pub verify_after_reading: bool,
+    /// Whether to verify the manifest after signing in the [`Builder`].
+    ///
+    /// The default value is true.
+    ///
+    /// [`Builer`]: crate::Builer
     pub verify_after_sign: bool,
+    /// Whether to verify certificates against the trust lists specified in [`Trust`].
+    ///
+    /// The default value is true.
     pub verify_trust: bool,
+    /// Whether to verify the timestamp certificates against the trust lists specified in [`Trust`].
+    ///
+    /// The default value is true.
     pub verify_timestamp_trust: bool,
-    // REVIEW NOTE: what's the difference between this and builder.certificate_status_fetch?
+    // REVIEW NOTE: what's the difference between this and builder.certificate_status_fetch? does it have to do with checking staples?
+    /// Whether to fetch the certificates OCSP status during validation.
+    ///
+    /// The default value is false.
     pub ocsp_fetch: bool,
+    /// Whether to fetch remote manifests during reading in the [`Reader`].
+    ///
+    /// The default value is true.
     pub remote_manifest_fetch: bool,
+    /// Whether to verify ingredient certificates against the trust lists specific in [`Trust`].
+    ///
+    /// The default value is true.
     #[doc(hidden)]
     pub(crate) check_ingredient_trust: bool,
+    /// Whether to skip ingredient conflict resolution when multiple ingredients have the same
+    /// manifest identifier. This settings is only applicable for C2PA v2 validation.
+    ///
+    /// The default value is false.
+    ///
+    /// See more information in the spec here:
+    /// <https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_versioning_manifests_due_to_conflicts>
     #[doc(hidden)]
     pub(crate) skip_ingredient_conflict_resolution: bool,
+    /// Whether to do strictly C2PA v1 validation or otherwise the latest validation.
+    ///
+    /// The default value is false.
     pub strict_v1_validation: bool,
 }
 
