@@ -437,9 +437,17 @@ mod tests {
         stream.write_all(small_data).unwrap();
         assert!(!stream.is_rolled(), "data still in memory");
 
-        // Adds more data to exceed the threshold.
-        let large_data = b"this is larger than 10 bytes total";
-        stream.write_all(large_data).unwrap();
+        // Add more data to exceed the threshold.
+        let large_data = vec![0; 1024 * 1024]; // 1MB.
+        let threshold = crate::settings::get_settings_value::<usize>(
+            "core.backing_store_memory_threshold_in_mb",
+        )
+        .unwrap();
+
+        for _ in 0..threshold {
+            stream.write_all(&large_data).unwrap();
+        }
+
         assert!(stream.is_rolled(), "data moved to disk");
     }
 
