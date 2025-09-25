@@ -3211,7 +3211,7 @@ mod tests {
     fn test_builder_set_label() {
         let mut builder = Builder::new();
 
-        // Start with default to None
+        // Default is none
         assert_eq!(builder.definition.label, None);
 
         // Set once
