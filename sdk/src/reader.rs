@@ -128,7 +128,8 @@ impl Reader {
     #[async_generic]
     pub fn from_stream(format: &str, stream: impl Read + Seek + Send) -> Result<Reader> {
         let settings = crate::settings::get_settings().unwrap_or_default();
-        // TO DO BEFORE MERGE? Pass Settings in here?
+        // TO DO (https://github.com/contentauth/c2pa-rs/issues/1454):
+        // Add a Settings argument here?
 
         Self::from_stream_with_settings(format, stream, &settings)
     }
@@ -158,7 +159,8 @@ impl Reader {
         mut stream: impl Read + Seek + Send,
         settings: &Settings,
     ) -> Result<Reader> {
-        // TO DO BEFORE MERGE: Make this the official API?
+        // TO DO (https://github.com/contentauth/c2pa-rs/issues/1454):
+        // Make this the official API?
 
         // TO DO BEFORE MERGE: Passing `verify` may be redundant now that we're
         // passing settings.
@@ -181,7 +183,8 @@ impl Reader {
         mut stream: impl Read + Seek,
         settings: &Settings,
     ) -> Result<Reader> {
-        // TO DO BEFORE MERGE: Make this the official API?
+        // TO DO (https://github.com/contentauth/c2pa-rs/issues/1454):
+        // Make this the official API?
 
         // TO DO BEFORE MERGE: Passing `verify` may be redundant now that we're
         // passing settings.
@@ -277,7 +280,8 @@ impl Reader {
         stream: impl Read + Seek + Send,
     ) -> Result<Reader> {
         let settings = crate::settings::get_settings().unwrap_or_default();
-        // TO DO BEFORE MERGE? Pass Settings in here?
+        // TO DO (https://github.com/contentauth/c2pa-rs/issues/1454):
+        // Add a Settings argument here?
 
         let mut validation_log = StatusTracker::default();
 
@@ -323,7 +327,8 @@ impl Reader {
         mut fragment: impl Read + Seek + Send,
     ) -> Result<Self> {
         let settings = crate::settings::get_settings().unwrap_or_default();
-        // TO DO BEFORE MERGE? Pass Settings in here?
+        // TO DO (https://github.com/contentauth/c2pa-rs/issues/1454):
+        // Add a Settings argument here?
 
         let mut validation_log = StatusTracker::default();
 
@@ -358,7 +363,8 @@ impl Reader {
         fragments: &Vec<std::path::PathBuf>,
     ) -> Result<Reader> {
         let settings = crate::settings::get_settings().unwrap_or_default();
-        // TO DO BEFORE MERGE? Pass Settings in here?
+        // TO DO (https://github.com/contentauth/c2pa-rs/issues/1454):
+        // Add a Settings argument here?
 
         let verify = settings.verify.verify_after_reading;
         let mut validation_log = StatusTracker::default();
@@ -563,7 +569,8 @@ impl Reader {
     /// Get the [`ValidationState`] of the manifest store.
     pub fn validation_state(&self) -> ValidationState {
         let settings = crate::settings::get_settings().unwrap_or_default();
-        // TO DO BEFORE MERGE? Pass Settings in here?
+        // TO DO (https://github.com/contentauth/c2pa-rs/issues/1454):
+        // Add a Settings argument here?
 
         if let Some(validation_results) = self.validation_results() {
             return validation_results.validation_state();

@@ -1044,7 +1044,8 @@ impl BmffHash {
         unique_id: Option<usize>,
     ) -> crate::Result<()> {
         let settings = crate::settings::get_settings().unwrap_or_default();
-        // TO DO BEFORE MERGE? Pass Settings in here?
+        // TO DO (https://github.com/contentauth/c2pa-rs/issues/1454):
+        // Add a Settings argument here?
 
         let max_proofs = settings.core.merkle_tree_max_proofs;
 

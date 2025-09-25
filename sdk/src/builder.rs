@@ -594,7 +594,8 @@ impl Builder {
         R: Read + Seek + Send,
     {
         let settings = crate::settings::get_settings().unwrap_or_default();
-        // TO DO BEFORE MERGE? Pass Settings in here?
+        // TO DO (https://github.com/contentauth/c2pa-rs/issues/1454):
+        // Add a Settings argument here?
 
         if _sync {
             self.add_ingredient_from_stream_with_settings(
@@ -637,7 +638,8 @@ impl Builder {
         T: Into<String>,
         R: Read + Seek + Send,
     {
-        // TO DO BEFORE MERGE: Make this the official API?s
+        // TO DO (https://github.com/contentauth/c2pa-rs/issues/1454):
+        // Make this the official API?
         let ingredient: Ingredient = Ingredient::from_json(&ingredient_json.into())?;
         let ingredient = if _sync {
             ingredient.with_stream(format, stream, settings)?
@@ -1375,7 +1377,8 @@ impl Builder {
         format: &str,
     ) -> Result<Vec<u8>> {
         let settings = crate::settings::get_settings().unwrap_or_default();
-        // TO DO BEFORE MERGE? Pass Settings in here?
+        // TO DO (https://github.com/contentauth/c2pa-rs/issues/1454):
+        // Add a Settings argument here?
 
         let dh: Result<DataHash> = self.find_assertion(DataHash::LABEL);
         if dh.is_err() {
@@ -1420,7 +1423,8 @@ impl Builder {
         format: &str,
     ) -> Result<Vec<u8>> {
         let settings = crate::settings::get_settings().unwrap_or_default();
-        // TO DO BEFORE MERGE? Pass Settings in here?
+        // TO DO (https://github.com/contentauth/c2pa-rs/issues/1454):
+        // Add a Settings argument here?
 
         let mut store = self.to_store(&settings)?;
         if _sync {
@@ -1453,7 +1457,8 @@ impl Builder {
         format: &str,
     ) -> Result<Vec<u8>> {
         let settings = crate::settings::get_settings().unwrap_or_default();
-        // TO DO BEFORE MERGE? Pass Settings in here?
+        // TO DO (https://github.com/contentauth/c2pa-rs/issues/1454):
+        // Add a Settings argument here?
 
         self.definition.instance_id = format!("xmp:iid:{}", Uuid::new_v4());
 
@@ -1497,7 +1502,8 @@ impl Builder {
         W: Write + Read + Seek + Send,
     {
         let settings = crate::settings::get_settings().unwrap_or_default();
-        // TO DO BEFORE MERGE? Pass Settings in here?
+        // TO DO (https://github.com/contentauth/c2pa-rs/issues/1454):
+        // Add a Settings argument here?
 
         let format = format_to_mime(format);
         self.definition.format.clone_from(&format);
@@ -1578,7 +1584,8 @@ impl Builder {
         output_path: P,
     ) -> Result<()> {
         let settings = crate::settings::get_settings().unwrap_or_default();
-        // TO DO BEFORE MERGE? Pass Settings in here?
+        // TO DO (https://github.com/contentauth/c2pa-rs/issues/1454):
+        // Add a Settings argument here?
 
         if !output_path.as_ref().exists() {
             // ensure the path exists
