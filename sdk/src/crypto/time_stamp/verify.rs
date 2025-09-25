@@ -35,7 +35,6 @@ use crate::{
         },
     },
     log_item,
-    settings::get_settings_value,
     status_tracker::StatusTracker,
     validation_status::{
         TIMESTAMP_MALFORMED, TIMESTAMP_MISMATCH, TIMESTAMP_OUTSIDE_VALIDITY, TIMESTAMP_TRUSTED,
@@ -66,6 +65,9 @@ pub fn verify_time_stamp(
     ctp: &CertificateTrustPolicy,
     validation_log: &mut StatusTracker,
 ) -> Result<TstInfo, TimeStampError> {
+    let settings = crate::settings::get_settings().unwrap_or_default();
+    // TO DO BEFORE MERGE? Pass Settings in here?
+
     // Get the signed data frorm the timestamp data
     let Ok(Some(sd)) = signed_data_from_time_stamp_response(ts) else {
         log_item!("", "could not parse timestamp data", "verify_time_stamp")
@@ -530,7 +532,7 @@ pub fn verify_time_stamp(
         }
 
         // the certificate must be on the trust list to be considered valid
-        let verify_trust = get_settings_value("verify.verify_timestamp_trust").unwrap_or(true);
+        let verify_trust = settings.verify.verify_timestamp_trust;
 
         if verify_trust
             && ctp

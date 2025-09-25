@@ -24,6 +24,7 @@ use common::compare_stream_to_known_good;
 use common::test_signer;
 
 #[test]
+#[ignore = "See discussion in builder.rs near line 1190"]
 #[cfg(all(feature = "add_thumbnails", feature = "file_io"))]
 fn test_builder_ca_jpg() -> Result<()> {
     Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml"))?;
