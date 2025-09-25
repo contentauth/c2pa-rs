@@ -125,6 +125,7 @@ fn stream_with_fs_fallback_wasm(
     Ok(std::io::Cursor::new(Vec::new()))
 }
 
+#[allow(unused)]
 #[cfg(not(target_arch = "wasm32"))]
 fn stream_with_fs_fallback_file_io(threshold_override: Option<usize>) -> Result<SpooledTempFile> {
     let threshold = threshold_override.unwrap_or(crate::settings::get_settings_value::<usize>(
@@ -150,12 +151,17 @@ fn stream_with_fs_fallback_file_io(threshold_override: Option<usize>) -> Result<
 /// # Note
 /// This will return a an in-memory stream when the compilation target doesn't support file I/O.
 pub(crate) fn stream_with_fs_fallback(
-    threshold_override: Option<usize>,
+    _threshold_override: Option<usize>,
 ) -> Result<impl Read + Write + Seek> {
     #[cfg(target_arch = "wasm32")]
     return stream_with_fs_fallback_wasm(threshold_override);
     #[cfg(not(target_arch = "wasm32"))]
-    return stream_with_fs_fallback_file_io(threshold_override);
+    {
+        let mut result = Vec::new();
+        result.reserve(1024 * 1024);
+        Ok(std::io::Cursor::new(result))
+    }
+    // return stream_with_fs_fallback_file_io(threshold_override);
 }
 
 // Returns a new Vec first making sure it can hold the desired capacity.  Fill
