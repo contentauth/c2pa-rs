@@ -2520,17 +2520,15 @@ impl Store {
         signer: &dyn AsyncSigner,
         format: &str,
         asset_reader: Option<&mut dyn CAIRead>,
+        settings: &Settings,
     ) -> Result<Vec<u8>> {
-        let settings = crate::settings::get_settings().unwrap_or_default();
-        // TO DO BEFORE MERGE? Pass Settings in here?
-
         let mut jumbf_bytes =
             self.prep_embeddable_store(signer.reserve_size(), dh, asset_reader)?;
 
         // sign contents
         let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
         let sig = self
-            .sign_claim_async(pc, signer, signer.reserve_size(), &settings)
+            .sign_claim_async(pc, signer, signer.reserve_size(), settings)
             .await?;
 
         let sig_placeholder = Store::sign_claim_placeholder(pc, signer.reserve_size());
@@ -7811,6 +7809,8 @@ pub mod tests {
     #[c2pa_test_async]
     #[cfg(feature = "file_io")]
     async fn test_datahash_embeddable_manifest_async() {
+        let settings = Settings::default();
+
         // test adding to actual image
         use std::io::SeekFrom;
 
@@ -7858,7 +7858,13 @@ pub mod tests {
         // get the embeddable manifest, letting API do the hashing
         output_file.rewind().unwrap();
         let cm = store
-            .get_data_hashed_embeddable_manifest_async(&dh, &signer, "jpeg", Some(&mut output_file))
+            .get_data_hashed_embeddable_manifest_async(
+                &dh,
+                &signer,
+                "jpeg",
+                Some(&mut output_file),
+                &settings,
+            )
             .await
             .unwrap();
 

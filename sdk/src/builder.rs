@@ -1433,7 +1433,9 @@ impl Builder {
             store.get_data_hashed_embeddable_manifest(data_hash, signer, format, None, &settings)
         } else {
             store
-                .get_data_hashed_embeddable_manifest_async(data_hash, signer, format, None)
+                .get_data_hashed_embeddable_manifest_async(
+                    data_hash, signer, format, None, &settings,
+                )
                 .await
         }
     }
