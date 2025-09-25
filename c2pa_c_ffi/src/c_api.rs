@@ -1727,8 +1727,11 @@ mod tests {
 
     #[test]
     fn builder_set_label_and_sign() {
-        // test label that passes SDK placeholder validation
-        let test_label: &str = "urn:c2pa:aaaaaaaa-abab-4de1-aaaa-abababababab:contentauth";
+        // uuid4 test label that passes SDK placeholder validation.
+        // The 4 in the 3rd segment indicates the uuid version (not a typo),
+        // the 9 in the 4th segment indicates the uuid variant (not a typo),
+        // and they are necessary so that the test label validates.
+        let test_label: &str = "urn:c2pa:aaaaaaaa-aaaa-4aaa-9aaa-aaaaaaaaaaaa:contentauth";
 
         let source_image = include_bytes!(fixture_path!("IMG_0003.jpg"));
         let mut source_stream = TestC2paStream::from_bytes(source_image.to_vec());
