@@ -46,6 +46,11 @@ pub(crate) trait SettingsValidate {
 #[cfg_attr(feature = "json_schema", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct Trust {
+    // REVIEW NOTE: should we remove this field in favor of `verify.verify_trust`, only CAWG is using it.
+    /// Whether to verify certificates against the trust lists specified in [`Trust`], only applicable to CAWG.
+    ///
+    /// The default value is true.
+    pub verify_trust_list: bool,
     /// List of additional user-provided trust anchor root certificates as a PEM bundle.
     pub user_anchors: Option<String>,
     /// List of default trust anchor root certificates as a PEM bundle.
@@ -116,6 +121,7 @@ impl Default for Trust {
         #[cfg(test)]
         {
             let mut trust = Self {
+                verify_trust_list: true,
                 user_anchors: None,
                 trust_anchors: None,
                 trust_config: None,
@@ -140,6 +146,7 @@ impl Default for Trust {
         #[cfg(not(test))]
         {
             Self {
+                verify_trust_list: true,
                 user_anchors: None,
                 trust_anchors: None,
                 trust_config: None,
