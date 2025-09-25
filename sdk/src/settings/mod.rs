@@ -11,7 +11,7 @@
 // specific language governing permissions and limitations under
 // each license.
 
-/// Settings for configuring the [`Builder`].
+/// Settings for configuring the [`Builder`][crate::Builder].
 pub mod builder;
 /// Settings for configuring the [`Settings::signer`].
 pub mod signer;
@@ -227,7 +227,7 @@ pub struct Verify {
     ///
     /// The default value is true.
     ///
-    /// [`Builer`]: crate::Builer
+    /// [`Builder`]: crate::Builder
     pub verify_after_sign: bool,
     /// Whether to verify certificates against the trust lists specified in [`Trust`].
     ///
@@ -245,6 +245,8 @@ pub struct Verify {
     /// Whether to fetch remote manifests during reading in the [`Reader`].
     ///
     /// The default value is true.
+    ///
+    /// [`Reader`]: crate::Reader
     pub remote_manifest_fetch: bool,
     /// Whether to verify ingredient certificates against the trust lists specific in [`Trust`].
     ///

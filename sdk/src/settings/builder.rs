@@ -345,20 +345,17 @@ pub struct ActionsSettings {
     // #[serde(skip_serializing_if = "Option::is_none")]
     // pub(crate) actions: Option<Vec<ActionSettings>>,
     //
-    /// Whether to automatically generate a c2pa.created [Action][crate::assertions::Action]
-    /// assertion or error that it doesn't already exist.
+    /// Whether to automatically generate a c2pa.created [Action] assertion or error that it doesn't already exist.
     ///
     /// For more information about the mandatory conditions for a c2pa.created action assertion, see here:
     /// <https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_mandatory_presence_of_at_least_one_actions_assertion>
     pub auto_created_action: AutoActionSettings,
-    /// Whether to automatically generate a c2pa.opened [Action][crate::assertions::Action]
-    /// assertion or error that it doesn't already exist.
+    /// Whether to automatically generate a c2pa.opened [Action] assertion or error that it doesn't already exist.
     ///
     /// For more information about the mandatory conditions for a c2pa.opened action assertion, see here:
     /// <https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_mandatory_presence_of_at_least_one_actions_assertion>
     pub auto_opened_action: AutoActionSettings,
-    /// Whether to automatically generate a c2pa.placed [Action][crate::assertions::Action]
-    /// assertion or error that it doesn't already exist.
+    /// Whether to automatically generate a c2pa.placed [Action] assertion or error that it doesn't already exist.
     ///
     /// For more information about the mandatory conditions for a c2pa.placed action assertion, see:
     /// <https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_relationship>
@@ -414,16 +411,19 @@ pub struct BuilderSettings {
     pub actions: ActionsSettings,
     // REVIEW NOTE: should this be in builder settings or core?
     /// Certificate statuses will be fetched for either all the manifest labels, or just the active manifest.
-    pub certificate_status_fetch: Option<OcspFetch>,
+    pub certificate_status_fetch: Option<OcspFetchScope>,
     /// Whether or not existing OCSP responses should be overridden by new values.
     pub certificate_status_should_override: Option<bool>,
 }
 
+/// The scope of which manifests to fetch for OCSP.
 #[cfg_attr(feature = "json_schema", derive(schemars::JsonSchema))]
 #[derive(Copy, Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "lowercase")]
-pub enum OcspFetch {
+pub enum OcspFetchScope {
+    /// Fetch OCSP for all manifests.
     All,
+    /// Fetch OCSP for the active manifest only.
     Active,
 }
 
