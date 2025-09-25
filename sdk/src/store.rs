@@ -490,10 +490,7 @@ impl Store {
     // Currently only called from manifest_store behind a feature flag but this is allowable
     // anywhere so allow dead code here for future uses to compile
     #[allow(dead_code)]
-    pub(crate) fn get_ocsp_status(&self) -> Option<String> {
-        let settings = crate::settings::get_settings().unwrap_or_default();
-        // TO DO BEFORE MERGE? Pass Settings in here?
-
+    pub(crate) fn get_ocsp_status(&self, settings: &Settings) -> Option<String> {
         let claim = self
             .provenance_claim()
             .ok_or(Error::ProvenanceMissing)
@@ -512,7 +509,7 @@ impl Store {
             None,
             None,
             &mut validation_log,
-            &settings,
+            settings,
         ) {
             if let Some(revoked_at) = &info.revoked_at {
                 Some(format!(
