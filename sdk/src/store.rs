@@ -1475,10 +1475,8 @@ impl Store {
         svi: &StoreValidationInfo,
         asset_data: &mut ClaimAssetData<'_>,
         validation_log: &mut StatusTracker,
+        settings: &Settings,
     ) -> Result<()> {
-        let settings = crate::settings::get_settings().unwrap_or_default();
-        // TO DO BEFORE MERGE? Pass Settings in here?
-
         // walk the ingredients
         for i in claim.ingredient_assertions() {
             // allow for zero out ingredient assertions
@@ -1668,7 +1666,14 @@ impl Store {
                     }
 
                     // recurse nested ingredients
-                    Store::ingredient_checks(store, ingredient, svi, asset_data, validation_log)?;
+                    Store::ingredient_checks(
+                        store,
+                        ingredient,
+                        svi,
+                        asset_data,
+                        validation_log,
+                        settings,
+                    )?;
                 } else {
                     log_item!(label.clone(), "ingredient not found", "ingredient_checks")
                         .validation_status(validation_status::INGREDIENT_MANIFEST_MISSING)
@@ -2104,7 +2109,7 @@ impl Store {
                 settings,
             )?;
 
-            Store::ingredient_checks(store, claim, &svi, asset_data, validation_log)?;
+            Store::ingredient_checks(store, claim, &svi, asset_data, validation_log, settings)?;
         } else {
             Claim::verify_claim_async(
                 claim,
