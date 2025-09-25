@@ -11,7 +11,9 @@
 // specific language governing permissions and limitations under
 // each license.
 
+/// Settings for configuring the [`Builder`].
 pub mod builder;
+/// Settings for configuring the [`Settings::signer`].
 pub mod signer;
 
 #[cfg(feature = "file_io")]
