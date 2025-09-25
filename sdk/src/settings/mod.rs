@@ -297,17 +297,28 @@ const MINOR_VERSION: usize = 0;
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct Settings {
     // REVIEW NOTE: do we need both a major and minor version?
+    /// Major version of the configuration.
     pub version_major: usize,
+    /// Minor version of the configuration.
     pub version_minor: usize,
     // TODO (https://github.com/contentauth/c2pa-rs/issues/1314):
     // Rename to c2pa_trust? Discuss possibly breaking change.
+    /// Settings for configuring the C2PA trust lists.
     pub trust: Trust,
+    /// Settings for configuring the CAWG trust lists.
     pub cawg_trust: Trust,
+    /// Settings for configuring core features.
     pub core: Core,
+    /// Settings for configuring verification.
     pub verify: Verify,
+    /// Settings for configuring the [`Builder`].
+    ///
+    /// [`Builder`]: crate::Builder
     pub builder: BuilderSettings,
+    /// Settings for configuring the base C2PA signer, accessible via [`Settings::signer`].
     #[serde(skip_serializing_if = "Option::is_none")]
     pub signer: Option<SignerSettings>,
+    /// Settings for configuring the CAWG x509 signer, accessible via [`Settings::signer`].
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cawg_x509_signer: Option<SignerSettings>,
 }
