@@ -1649,6 +1649,9 @@ impl CAIWriter for BmffIO {
         output_stream: &mut dyn CAIReadWrite,
         store_bytes: &[u8],
     ) -> Result<()> {
+        let settings = crate::settings::get_settings().unwrap_or_default();
+        // TO DO BEFORE MERGE? Pass Settings in here?
+
         let size = stream_len(input_stream)?;
         input_stream.rewind()?;
 
@@ -1749,7 +1752,7 @@ impl CAIWriter for BmffIO {
         if has_manifest && !has_update && is_update {
             let pc = pc.ok_or(Error::BadParam("no provenance manifest".to_string()))?;
 
-            let mut update_store = Store::new();
+            let mut update_store = Store::new(&settings);
             update_store.insert_restored_claim(pc.label().to_string(), pc);
             let new_update_bytes = update_store.to_jumbf_internal(0)?;
 
