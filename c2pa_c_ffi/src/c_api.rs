@@ -1772,14 +1772,6 @@ mod tests {
             )
         };
 
-        if manifest_bytes == -1 {
-            let error_msg = unsafe { c2pa_error() };
-            if !error_msg.is_null() {
-                let error_str = unsafe { CString::from_raw(error_msg) };
-                println!("## Error: {}", error_str.to_str().unwrap_or("Failed to get error message"));
-            }
-        }
-
         // Verify we can read the signed data back
         let dest_test_stream = TestC2paStream::from_c_stream(dest_stream);
         let mut read_stream = dest_test_stream.into_c_stream();
