@@ -2225,10 +2225,8 @@ impl Store {
     fn generate_bmff_data_hash_for_stream(
         asset_stream: &mut dyn CAIRead,
         alg: &str,
+        settings: &Settings,
     ) -> Result<BmffHash> {
-        let settings = crate::settings::get_settings().unwrap_or_default();
-        // TO DO BEFORE MERGE? Pass Settings in here?
-
         // The spec has mandatory BMFF exclusion ranges for certain atoms.
         // The function makes sure those are included.
 
@@ -2725,6 +2723,9 @@ impl Store {
         output_dir: &Path,
         reserve_size: usize,
     ) -> Result<Vec<u8>> {
+        let settings = crate::settings::get_settings().unwrap_or_default();
+        // TO DO BEFORE MERGE? Pass Settings in here?
+
         // get the provenance claim changing mutability
         let pc = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
         pc.clear_data(); // clear since we are reusing an existing claim
@@ -2736,7 +2737,8 @@ impl Store {
 
         // 2) Get hash ranges if needed
         let mut asset_stream = std::fs::File::open(asset_path)?;
-        let mut bmff_hash = Store::generate_bmff_data_hash_for_stream(&mut asset_stream, pc.alg())?;
+        let mut bmff_hash =
+            Store::generate_bmff_data_hash_for_stream(&mut asset_stream, pc.alg(), &settings)?;
         bmff_hash.clear_hash();
         if pc.version() < 2 {
             bmff_hash.set_bmff_version(2); // backcompat support
@@ -3023,6 +3025,7 @@ impl Store {
         reserve_size: usize,
     ) -> Result<Vec<u8>> {
         let settings = crate::settings::get_settings().unwrap_or_default();
+        // TO DO BEFORE MERGE? Pass Settings in here?
 
         let threshold = settings.core.backing_store_memory_threshold_in_mb;
 
@@ -3091,8 +3094,11 @@ impl Store {
             // 2) Get hash ranges if needed, do not generate for update manifests
             if !pc.update_manifest() {
                 intermediate_stream.rewind()?;
-                let mut bmff_hash =
-                    Store::generate_bmff_data_hash_for_stream(&mut intermediate_stream, pc.alg())?;
+                let mut bmff_hash = Store::generate_bmff_data_hash_for_stream(
+                    &mut intermediate_stream,
+                    pc.alg(),
+                    &settings,
+                )?;
 
                 if pc.version() < 2 {
                     bmff_hash.set_bmff_version(2); // backcompat support
