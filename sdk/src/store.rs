@@ -532,16 +532,15 @@ impl Store {
         claim: &Claim,
         signer: &dyn AsyncSigner,
         box_size: usize,
+        settings: &Settings,
     ))]
     pub fn sign_claim(
         &self,
         claim: &Claim,
         signer: &dyn Signer,
         box_size: usize,
+        settings: &Settings,
     ) -> Result<Vec<u8>> {
-        let settings = crate::settings::get_settings().unwrap_or_default();
-        // TO DO BEFORE MERGE? Pass Settings in here?
-
         let claim_bytes = claim.data()?;
 
         let tss = if claim.version() > 1 {
@@ -555,7 +554,7 @@ impl Store {
                 // Let the signer do all the COSE processing and return the structured COSE data.
                 return signer.sign(&claim_bytes); // do not verify remote signers (we never did)
             } else {
-                cose_sign(signer, &claim_bytes, box_size, tss, &settings)
+                cose_sign(signer, &claim_bytes, box_size, tss, settings)
             }
         } else {
             if signer.direct_cose_handling() {
@@ -563,7 +562,7 @@ impl Store {
                 return signer.sign(claim_bytes.clone()).await;
             // do not verify remote signers (we never did)
             } else {
-                cose_sign_async(signer, &claim_bytes, box_size, tss, &settings).await
+                cose_sign_async(signer, &claim_bytes, box_size, tss, settings).await
             }
         };
         match result {
@@ -2487,12 +2486,15 @@ impl Store {
         format: &str,
         asset_reader: Option<&mut dyn CAIRead>,
     ) -> Result<Vec<u8>> {
+        let settings = crate::settings::get_settings().unwrap_or_default();
+        // TO DO BEFORE MERGE? Pass Settings in here?
+
         let mut jumbf_bytes =
             self.prep_embeddable_store(signer.reserve_size(), dh, asset_reader)?;
 
         // sign contents
         let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
-        let sig = self.sign_claim(pc, signer, signer.reserve_size())?;
+        let sig = self.sign_claim(pc, signer, signer.reserve_size(), &settings)?;
 
         let sig_placeholder = Store::sign_claim_placeholder(pc, signer.reserve_size());
 
@@ -2517,13 +2519,16 @@ impl Store {
         format: &str,
         asset_reader: Option<&mut dyn CAIRead>,
     ) -> Result<Vec<u8>> {
+        let settings = crate::settings::get_settings().unwrap_or_default();
+        // TO DO BEFORE MERGE? Pass Settings in here?
+
         let mut jumbf_bytes =
             self.prep_embeddable_store(signer.reserve_size(), dh, asset_reader)?;
 
         // sign contents
         let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
         let sig = self
-            .sign_claim_async(pc, signer, signer.reserve_size())
+            .sign_claim_async(pc, signer, signer.reserve_size(), &settings)
             .await?;
 
         let sig_placeholder = Store::sign_claim_placeholder(pc, signer.reserve_size());
@@ -2534,6 +2539,9 @@ impl Store {
     /// Returns a finalized, signed manifest.  The client is required to have
     /// included the necessary box hash assertion with the pregenerated hashes.
     pub fn get_box_hashed_embeddable_manifest(&mut self, signer: &dyn Signer) -> Result<Vec<u8>> {
+        let settings = crate::settings::get_settings().unwrap_or_default();
+        // TO DO BEFORE MERGE? Pass Settings in here?
+
         let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
 
         // make sure there is only one
@@ -2551,7 +2559,7 @@ impl Store {
         let mut jumbf_bytes = self.to_jumbf_internal(signer.reserve_size())?;
 
         // sign contents
-        let sig = self.sign_claim(pc, signer, signer.reserve_size())?;
+        let sig = self.sign_claim(pc, signer, signer.reserve_size(), &settings)?;
         let sig_placeholder = Store::sign_claim_placeholder(pc, signer.reserve_size());
 
         if sig_placeholder.len() != sig.len() {
@@ -2570,6 +2578,9 @@ impl Store {
         &mut self,
         signer: &dyn AsyncSigner,
     ) -> Result<Vec<u8>> {
+        let settings = crate::settings::get_settings().unwrap_or_default();
+        // TO DO BEFORE MERGE? Pass Settings in here?
+
         let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
 
         // make sure there is only one
@@ -2588,7 +2599,7 @@ impl Store {
 
         // sign contents
         let sig = self
-            .sign_claim_async(pc, signer, signer.reserve_size())
+            .sign_claim_async(pc, signer, signer.reserve_size(), &settings)
             .await?;
         let sig_placeholder = Store::sign_claim_placeholder(pc, signer.reserve_size());
 
@@ -2774,6 +2785,9 @@ impl Store {
         output_path: &Path,
         signer: &dyn Signer,
     ) -> Result<()> {
+        let settings = crate::settings::get_settings().unwrap_or_default();
+        // TO DO BEFORE MERGE? Pass Settings in here?
+
         match get_supported_file_extension(asset_path) {
             Some(ext) => {
                 if !is_bmff_format(&ext) {
@@ -2852,7 +2866,7 @@ impl Store {
 
         // sign the claim
         let pc = temp_store.provenance_claim().ok_or(Error::ClaimEncoding)?;
-        let sig = temp_store.sign_claim(pc, signer, signer.reserve_size())?;
+        let sig = temp_store.sign_claim(pc, signer, signer.reserve_size(), &settings)?;
         let sig_placeholder = Store::sign_claim_placeholder(pc, signer.reserve_size());
 
         match temp_store.finish_save(jumbf_bytes, &dest_path, sig, &sig_placeholder) {
@@ -2951,9 +2965,9 @@ impl Store {
 
         let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
         let sig = if _sync {
-            self.sign_claim(pc, signer, signer.reserve_size())
+            self.sign_claim(pc, signer, signer.reserve_size(), &settings)
         } else {
-            self.sign_claim_async(pc, signer, signer.reserve_size())
+            self.sign_claim_async(pc, signer, signer.reserve_size(), &settings)
                 .await
         }?;
         let sig_placeholder = Store::sign_claim_placeholder(pc, signer.reserve_size());
