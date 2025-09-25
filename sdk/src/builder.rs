@@ -1284,13 +1284,15 @@ impl Builder {
     }
 
     #[cfg(feature = "add_thumbnails")]
-    fn maybe_add_thumbnail<R>(&mut self, format: &str, stream: &mut R) -> Result<&mut Self>
+    fn maybe_add_thumbnail<R>(
+        &mut self,
+        format: &str,
+        stream: &mut R,
+        settings: &Settings,
+    ) -> Result<&mut Self>
     where
         R: Read + Seek + ?Sized,
     {
-        let settings = crate::settings::get_settings().unwrap_or_default();
-        // TO DO BEFORE MERGE? Pass Settings in here?
-
         if self.intent == Some(BuilderIntent::Update) {
             // do not auto add a thumbnail to an update manifest
             return Ok(self);
@@ -1307,7 +1309,7 @@ impl Builder {
                 crate::utils::thumbnail::make_thumbnail_bytes_from_stream(
                     format,
                     &mut stream,
-                    &settings,
+                    settings,
                 )?
             {
                 stream.rewind()?;
@@ -1519,7 +1521,7 @@ impl Builder {
 
         // generate thumbnail if we don't already have one
         #[cfg(feature = "add_thumbnails")]
-        self.maybe_add_thumbnail(&format, source)?;
+        self.maybe_add_thumbnail(&format, source, &settings)?;
 
         // convert the manifest to a store
         let mut store = self.to_store(&settings)?;
