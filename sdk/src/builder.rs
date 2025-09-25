@@ -385,6 +385,11 @@ impl Builder {
         self.definition.claim_version.unwrap_or(2)
     }
 
+    /// Sets a manifest label on the Builder.
+    pub fn set_label(&mut self, label: String) -> () {
+        self.definition.label = Some(label);
+    }
+
     /// Sets the [`ClaimGeneratorInfo`] for this [`Builder`].
     // TODO: Add example of a good ClaimGeneratorInfo.
     pub fn set_claim_generator_info<I>(&mut self, claim_generator_info: I) -> &mut Self
@@ -3199,5 +3204,24 @@ mod tests {
         let active_manifest = reader.active_manifest().unwrap();
         let ingredient = active_manifest.ingredients().first().unwrap();
         assert_eq!(ingredient.title(), Some("C.jpg"));
+    }
+
+    /// Test builder set_label
+    #[test]
+    fn test_builder_set_label() {
+        let mut builder = Builder::new();
+
+        // Start with default to None
+        assert_eq!(builder.definition.label, None);
+
+        // Set once
+        let test_label = "test_manifest_label".to_string();
+        builder.set_label(test_label.clone());
+        assert_eq!(builder.definition.label, Some(test_label));
+
+        // Set twice
+        let another_label = "another_label".to_string();
+        builder.set_label(another_label.clone());
+        assert_eq!(builder.definition.label, Some(another_label));
     }
 }

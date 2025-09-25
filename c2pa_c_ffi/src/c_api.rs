@@ -1039,6 +1039,20 @@ pub unsafe extern "C" fn c2pa_builder_add_action(
     }
 }
 
+
+#[no_mangle]
+pub unsafe extern "C" fn c2pa_builder_set_label(
+    builder_ptr: *mut C2paBuilder,
+    label: *const c_char,
+) -> c_int {
+    let mut builder = guard_boxed_int!(builder_ptr);
+    let parsed_label = from_cstr_or_return_int!(label);
+
+    builder.set_label(parsed_label);
+    0 as c_int
+}
+
+
 /// Writes an Archive of the Builder to the destination stream.
 ///
 /// # Parameters
@@ -1700,6 +1714,83 @@ mod tests {
 
         assert!(json_content.contains("manifest"));
         assert!(json_content.contains("com.example.test-action"));
+
+        TestC2paStream::drop_c_stream(source_stream);
+        TestC2paStream::drop_c_stream(read_stream);
+        unsafe {
+            c2pa_manifest_bytes_free(manifest_bytes_ptr);
+            c2pa_builder_free(builder);
+            c2pa_signer_free(signer);
+            c2pa_reader_free(reader);
+        }
+    }
+
+    #[test]
+    fn builder_set_label_and_sign() {
+        // test label that passes SDK placeholder validation
+        let test_label: &str = "urn:c2pa:aaaaaaaa-abab-4de1-aaaa-abababababab:contentauth";
+
+        let source_image = include_bytes!(fixture_path!("IMG_0003.jpg"));
+        let mut source_stream = TestC2paStream::from_bytes(source_image.to_vec());
+        let dest_vec = Vec::new();
+        let mut dest_stream = TestC2paStream::new(dest_vec).into_c_stream();
+        let certs = include_str!(fixture_path!("certs/ed25519.pub"));
+        let private_key = include_bytes!(fixture_path!("certs/ed25519.pem"));
+        let alg = CString::new("Ed25519").unwrap();
+        let sign_cert = CString::new(certs).unwrap();
+        let private_key = CString::new(private_key).unwrap();
+        let signer_info = C2paSignerInfo {
+            alg: alg.as_ptr(),
+            sign_cert: sign_cert.as_ptr(),
+            private_key: private_key.as_ptr(),
+            ta_url: std::ptr::null(),
+        };
+        let signer = unsafe { c2pa_signer_from_info(&signer_info) };
+
+        assert!(!signer.is_null());
+        let manifest_def = CString::new("{}").unwrap();
+        let builder = unsafe { c2pa_builder_from_json(manifest_def.as_ptr()) };
+        assert!(!builder.is_null());
+
+        let label_cstr = CString::new(test_label).unwrap();
+        let label_result = unsafe { c2pa_builder_set_label(builder, label_cstr.as_ptr()) };
+        assert_eq!(label_result, 0);
+
+        let format = CString::new("image/jpeg").unwrap();
+        let mut manifest_bytes_ptr = std::ptr::null();
+        let manifest_bytes = unsafe {
+            c2pa_builder_sign(
+                builder,
+                format.as_ptr(),
+                &mut source_stream,
+                &mut dest_stream,
+                signer,
+                &mut manifest_bytes_ptr,
+            )
+        };
+
+        if manifest_bytes == -1 {
+            let error_msg = unsafe { c2pa_error() };
+            if !error_msg.is_null() {
+                let error_str = unsafe { CString::from_raw(error_msg) };
+                println!("## Error: {}", error_str.to_str().unwrap_or("Failed to get error message"));
+            }
+        }
+
+        // Verify we can read the signed data back
+        let dest_test_stream = TestC2paStream::from_c_stream(dest_stream);
+        let mut read_stream = dest_test_stream.into_c_stream();
+        let format = CString::new("image/jpeg").unwrap();
+
+        let reader = unsafe { c2pa_reader_from_stream(format.as_ptr(), &mut read_stream) };
+        assert!(!reader.is_null());
+
+        let json = unsafe { c2pa_reader_json(reader) };
+        assert!(!json.is_null());
+        let json_str = unsafe { CString::from_raw(json) };
+        let json_content = json_str.to_str().unwrap();
+
+        assert!(json_content.contains(&format!("\"label\": \"{}\"", test_label)));
 
         TestC2paStream::drop_c_stream(source_stream);
         TestC2paStream::drop_c_stream(read_stream);
