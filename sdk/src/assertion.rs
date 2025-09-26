@@ -95,6 +95,20 @@ pub fn get_thumbnail_instance(label: &str) -> Option<usize> {
     }
 }
 
+/// The kind of assertion encoding to use
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AssertionKind {
+    Cbor,
+    Json,
+    Binary,
+}
+
+impl Default for AssertionKind {
+    fn default() -> Self {
+        Self::Cbor
+    }
+}
+
 /// The core required trait for all assertions.
 ///
 /// This defines the label and version for the assertion
@@ -103,21 +117,46 @@ pub trait AssertionBase
 where
     Self: Sized,
 {
+    /// The label for this assertion (reverse domain format)
     const LABEL: &'static str = "unknown";
 
+    /// The version for this assertion (if any) Defaults to None/1
     const VERSION: Option<usize> = None;
+
+    /// Indicates if this should be added as a created or gathered assertion
+    const CREATED: bool = false;
+
+    /// The kind of encoding to use for this assertion (defaults to CBOR)
+    const KIND: AssertionKind = AssertionKind::Cbor;
 
     /// Returns a label for this assertion.
     fn label(&self) -> &str {
         Self::LABEL
     }
 
-    /// Returns a version for this assertion.
     fn version(&self) -> Option<usize> {
         Self::VERSION
     }
 
-    /// Returns an Assertion upon success or Error otherwise.
+    /// Returns true if this assertion was created (as opposed to gathered)
+    fn created(&self) -> bool {
+        Self::CREATED
+    }
+
+    /// Returns the assertion kind for this assertion
+    fn kind(&self) -> AssertionKind {
+        Self::KIND
+    }
+
+    /// Returns the content type for this assertion based on its kind
+    fn content_type(&self) -> &str {
+        match self.kind() {
+            AssertionKind::Cbor => "application/cbor",
+            AssertionKind::Json => "application/json",
+            AssertionKind::Binary => "application/octet-stream",
+        }
+    }
+    /// Convert this instance to an Assertion
     fn to_assertion(&self) -> Result<Assertion>;
 
     /// Returns Self or AssertionDecode Result from an assertion
@@ -130,7 +169,10 @@ pub trait AssertionCbor: Serialize + DeserializeOwned + AssertionBase {
         let data = AssertionData::Cbor(
             serde_cbor::to_vec(self).map_err(|err| Error::AssertionEncoding(err.to_string()))?,
         );
-        Ok(Assertion::new(self.label(), self.version(), data))
+        Ok(
+            Assertion::new(self.label(), self.version(), data)
+                .set_content_type(self.content_type()),
+        )
     }
 
     fn from_cbor_assertion(assertion: &Assertion) -> Result<Self> {
@@ -169,6 +211,42 @@ pub trait AssertionJson: Serialize + DeserializeOwned + AssertionBase {
             data => Err(Error::AssertionDecoding(
                 AssertionDecodeError::from_assertion_unexpected_data_type(assertion, data, "json"),
             )),
+        }
+    }
+}
+
+/// Trait to handle default binary encoding/decoding of Assertions
+#[allow(dead_code)]
+pub trait AssertionBinary: AssertionBase {
+    /// Get the binary data for this assertion
+    fn binary_data(&self) -> &[u8];
+
+    /// Create a new instance from binary data and assertion metadata
+    fn from_binary_data(label: String, content_type: String, data: Vec<u8>) -> Self;
+
+    /// Default implementation for binary assertions
+    fn to_binary_assertion(&self) -> Result<Assertion> {
+        let data = AssertionData::Binary(self.binary_data().to_vec());
+        Ok(
+            Assertion::new(self.label(), self.version(), data)
+                .set_content_type(self.content_type()),
+        )
+    }
+
+    /// Default implementation for binary assertions
+    fn from_binary_assertion(assertion: &Assertion) -> Result<Self> {
+        assertion.check_max_version(Self::VERSION)?;
+
+        match assertion.decode_data() {
+            AssertionData::Binary(data) => Ok(Self::from_binary_data(
+                assertion.label().to_string(),
+                assertion.content_type().to_string(),
+                data.to_vec(),
+            )),
+            data => Err(AssertionDecodeError::from_assertion_unexpected_data_type(
+                assertion, data, "binary",
+            )
+            .into()),
         }
     }
 }
@@ -263,6 +341,10 @@ impl Assertion {
         self.version.unwrap_or(1)
     }
 
+    pub fn version(&self) -> usize {
+        self.version.unwrap_or(1)
+    }
+
     // pub fn check_version(&self, max_version: usize) -> AssertionDecodeResult<()> {
     //     match self.version {
     //         Some(version) if version > max_version => Err(AssertionDecodeError {
@@ -284,6 +366,7 @@ impl Assertion {
     }
 
     /// return mimetype for the the data enclosed in the Assertion
+    // Todo: deprecate this in favor of content_type()
     pub(crate) fn mime_type(&self) -> String {
         self.content_type.clone()
     }
@@ -383,7 +466,7 @@ impl Assertion {
 
         Self {
             label,
-            version,
+            version: if version == 1 { None } else { Some(version) },
             data,
             content_type: content_type.to_owned(),
         }
@@ -442,7 +525,7 @@ impl Assertion {
         let json = String::from_utf8(binary_data.to_vec()).map_err(|_| AssertionDecodeError {
             label: label.to_string(),
             version: None, // TODO: Can we get this info?
-            content_type: "json".to_string(),
+            content_type: "application/json".to_string(),
             source: AssertionDecodeErrorCause::BinaryDataNotUtf8,
         })?;
 
@@ -458,18 +541,17 @@ impl Assertion {
         &self,
         desired_version: usize,
     ) -> AssertionDecodeResult<()> {
-        if let Some(base_version) = labels::version(&self.label) {
-            if desired_version > base_version {
-                return Err(AssertionDecodeError {
-                    label: self.label.clone(),
-                    version: self.version,
-                    content_type: self.content_type.clone(),
-                    source: AssertionDecodeErrorCause::AssertionTooNew {
-                        max: desired_version,
-                        found: base_version,
-                    },
-                });
-            }
+        let base_version = labels::version(&self.label);
+        if desired_version > base_version {
+            return Err(AssertionDecodeError {
+                label: self.label.clone(),
+                version: self.version,
+                content_type: self.content_type.clone(),
+                source: AssertionDecodeErrorCause::AssertionTooNew {
+                    max: desired_version,
+                    found: base_version,
+                },
+            });
         }
 
         Ok(())
