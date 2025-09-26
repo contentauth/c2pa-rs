@@ -219,6 +219,13 @@ pub const METADATA: &str = "c2pa.metadata";
 /// [CAWG metadata assertion]: https://cawg.io/metadata/
 pub const CAWG_METADATA: &str = "cawg.metadata";
 
+/// Array of all hash labels because they have special treatment
+pub const HASH_LABELS: [&str; 4] = [DATA_HASH, BOX_HASH, BMFF_HASH, COLLECTION_HASH];
+
+/// Array of all non-redactable labels
+pub const NON_REDACTABLE_LABELS: [&str; 5] =
+    [ACTIONS, DATA_HASH, BOX_HASH, BMFF_HASH, COLLECTION_HASH];
+
 /// Must have a label that ends in '.metadata' and is preceded by an entity-specific namespace.
 /// For example, a 'com.litware.metadata' assertion would be valid.
 pub static METADATA_LABEL_REGEX: LazyLock<Regex> = LazyLock::new(|| {
@@ -229,7 +236,14 @@ pub static METADATA_LABEL_REGEX: LazyLock<Regex> = LazyLock::new(|| {
     }
 });
 
-/// Internal helper to parse a label into its components
+/// Parse a label into its components
+///
+/// This function takes a label string and parses it into its base label,
+/// version number, and instance number. The base label is the part of the
+/// label without any version or instance suffixes. The version number is
+/// extracted from a suffix of the form `.v{number}`, defaulting to 1 if
+/// not present. The instance number is extracted from a suffix of the form
+/// `__{number}`, defaulting to 0 if not present.
 ///
 /// ABNF grammar for labels:
 /// ```abnf
@@ -242,7 +256,7 @@ pub static METADATA_LABEL_REGEX: LazyLock<Regex> = LazyLock::new(|| {
 /// version = ".v" 1*DIGIT
 /// instance = "__" 1*DIGIT
 /// ```
-fn parse_label(label: &str) -> (&str, usize, usize) {
+pub fn parse_label(label: &str) -> (&str, usize, usize) {
     // First, extract instance if present
     let (without_instance, instance) = if let Some(pos) = label.find("__") {
         let instance_str = &label[pos + 2..];
