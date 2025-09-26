@@ -39,7 +39,6 @@ use crate::{
     error::{Error, Result},
     jumbf_io,
     resource_store::{ResourceRef, ResourceResolver, ResourceStore},
-    salt::DefaultSalt,
     settings::{
         self,
         builder::{ActionSettings, ActionTemplateSettings, ClaimGeneratorInfoSettings},
@@ -824,9 +823,9 @@ impl Builder {
             created: bool,
         ) -> Result<HashedUri> {
             if created {
-                claim.add_assertion_with_salt(assertion, &DefaultSalt::default())
+                claim.add_created_assertion(assertion)
             } else {
-                claim.add_gathered_assertion_with_salt(assertion, &DefaultSalt::default())
+                claim.add_assertion(assertion)
             }
         }
 
@@ -905,8 +904,6 @@ impl Builder {
         }
         claim.format = Some(definition.format.clone());
         definition.instance_id.clone_into(&mut claim.instance_id);
-
-        let salt = DefaultSalt::default();
 
         if let Some(thumb_ref) = definition.thumbnail.as_ref() {
             // Setting the format to "none" will ensure that no claim thumbnail is added
@@ -1047,7 +1044,7 @@ impl Builder {
                 #[allow(deprecated)]
                 CreativeWork::LABEL => {
                     let cw: CreativeWork = manifest_assertion.to_assertion()?;
-                    claim.add_gathered_assertion_with_salt(&cw, &salt)
+                    claim.add_assertion(&cw)
                 }
                 Exif::LABEL => {
                     let exif: Exif = manifest_assertion.to_assertion()?;
@@ -1055,15 +1052,15 @@ impl Builder {
                 }
                 BoxHash::LABEL => {
                     let box_hash: BoxHash = manifest_assertion.to_assertion()?;
-                    claim.add_assertion_with_salt(&box_hash, &salt)
+                    claim.add_assertion(&box_hash)
                 }
                 DataHash::LABEL => {
                     let data_hash: DataHash = manifest_assertion.to_assertion()?;
-                    claim.add_assertion_with_salt(&data_hash, &salt)
+                    claim.add_assertion(&data_hash)
                 }
                 BmffHash::LABEL => {
                     let bmff_hash: BmffHash = manifest_assertion.to_assertion()?;
-                    claim.add_assertion_with_salt(&bmff_hash, &salt)
+                    claim.add_assertion(&bmff_hash)
                 }
                 Metadata::LABEL => {
                     // user metadata will go through the fallback path
@@ -2291,6 +2288,7 @@ mod tests {
     #[cfg(feature = "file_io")]
     fn test_builder_sign_file() {
         use crate::utils::io_utils::tempdirectory;
+        crate::utils::test::setup_logger();
 
         let source = "tests/fixtures/CA.jpg";
         let dir = tempdirectory().unwrap();
@@ -3103,7 +3101,7 @@ mod tests {
             ..Default::default()
         };
 
-        builder.set_intent(BuilderIntent::Update);
+        builder2.set_intent(BuilderIntent::Update);
         // rewind our new asset stream so we can add it as an ingredient
         dest1.set_position(0);
 
@@ -3136,7 +3134,7 @@ mod tests {
         //std::fs::write("redaction2.jpg", output.get_ref()).unwrap();
 
         let reader = Reader::from_stream("jpeg", &mut output).expect("from_bytes");
-        //println!("{reader}");
+        println!("{reader}");
         assert_eq!(reader.validation_state(), ValidationState::Trusted);
         let m = reader.active_manifest().unwrap();
         assert_eq!(m.ingredients().len(), 1);

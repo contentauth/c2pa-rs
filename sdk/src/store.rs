@@ -71,7 +71,6 @@ use crate::{
     },
     log_item,
     manifest_store_report::ManifestStoreReport,
-    salt::DefaultSalt,
     settings::{builder::OcspFetch, get_settings_value},
     status_tracker::{ErrorBehavior, StatusTracker},
     utils::{
@@ -2359,7 +2358,7 @@ impl Store {
             let mut stream = Cursor::new(data);
             ph.gen_hash_from_stream(&mut stream)?;
 
-            pc.add_assertion_with_salt(&ph, &DefaultSalt::default())?;
+            pc.add_assertion(&ph)?;
         }
 
         let jumbf_bytes = self.to_jumbf_internal(reserve_size)?;
@@ -2592,10 +2591,7 @@ impl Store {
 
         let pc = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
         // always add dynamic assertions as gathered assertions
-        assertions
-            .iter()
-            .map(|a| pc.add_gathered_assertion_with_salt(a, &DefaultSalt::default()))
-            .collect()
+        assertions.iter().map(|a| pc.add_assertion(a)).collect()
     }
 
     /// Write the dynamic assertions to the manifest.
