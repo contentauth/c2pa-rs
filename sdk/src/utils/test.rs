@@ -36,7 +36,6 @@ use crate::{
     hash_utils::Hasher,
     jumbf_io::get_assetio_handler,
     resource_store::UriOrResource,
-    salt::DefaultSalt,
     store::Store,
     utils::{io_utils::tempdirectory, mime::extension_to_mime},
     AsyncSigner, ClaimGeneratorInfo, Result,
@@ -158,7 +157,7 @@ pub fn create_test_claim() -> Result<Claim> {
 
     // Add an icon for the claim_generator
     let icon = EmbeddedData::new(labels::ICON, "image/jpeg", vec![0xde, 0xad, 0xbe, 0xef]);
-    let icon_ref = claim.add_assertion_with_salt(&icon, &DefaultSalt::default())?;
+    let icon_ref = claim.add_assertion(&icon)?;
 
     let mut cg_info = ClaimGeneratorInfo::new("test app");
     cg_info.version = Some("2.3.4".to_string());
@@ -173,8 +172,7 @@ pub fn create_test_claim() -> Result<Claim> {
         "image/jpeg",
         vec![0xde, 0xad, 0xbe, 0xef],
     );
-    let _claim_thumbnail_ref =
-        claim.add_assertion_with_salt(&claim_thumbnail, &DefaultSalt::default())?;
+    let _claim_thumbnail_ref = claim.add_assertion(&claim_thumbnail)?;
 
     // Create and add a thumbnail for an ingredient
     let ingredient_thumbnail = EmbeddedData::new(
@@ -182,22 +180,21 @@ pub fn create_test_claim() -> Result<Claim> {
         "image/jpeg",
         vec![0xde, 0xad, 0xbe, 0xef],
     );
-    let ingredient_thumbnail_ref =
-        claim.add_assertion_with_salt(&ingredient_thumbnail, &DefaultSalt::default())?;
+    let ingredient_thumbnail_ref = claim.add_assertion(&ingredient_thumbnail)?;
 
     // create a new v3 ingredient and add the thumbnail reference
     let ingredient = Ingredient::new_v3(Relationship::ComponentOf)
         .set_title("image_1.jpg")
         .set_format("image/jpeg")
         .set_thumbnail(Some(&ingredient_thumbnail_ref));
-    let ingredient_ref = claim.add_assertion_with_salt(&ingredient, &DefaultSalt::default())?;
+    let ingredient_ref = claim.add_assertion(&ingredient)?;
 
     // create a second v3 ingredient and add the thumbnail reference
     let ingredient2 = Ingredient::new_v3(Relationship::ComponentOf)
         .set_title("image_2.jpg")
         .set_format("image/png")
         .set_thumbnail(Some(&ingredient_thumbnail_ref));
-    let ingredient_ref2 = claim.add_assertion_with_salt(&ingredient2, &DefaultSalt::default())?;
+    let ingredient_ref2 = claim.add_assertion(&ingredient2)?;
 
     let created_action = Action::new("c2pa.created").set_source_type(DigitalSourceType::Empty);
 
@@ -275,7 +272,7 @@ pub fn create_test_claim_v1() -> Result<Claim> {
     claim.add_assertion(&thumbnail_claim)?;
     claim.add_assertion(&user_assertion)?;
 
-    let thumb_uri = claim.add_assertion_with_salt(&thumbnail_ingred, &DefaultSalt::default())?;
+    let thumb_uri = claim.add_assertion(&thumbnail_ingred)?;
 
     let review = ReviewRating::new(
         "a 3rd party plugin was used",
@@ -301,8 +298,8 @@ pub fn create_test_claim_v1() -> Result<Claim> {
     )
     .set_thumbnail(Some(&thumb_uri));
 
-    claim.add_assertion_with_salt(&ingredient, &DefaultSalt::default())?;
-    claim.add_assertion_with_salt(&ingredient2, &DefaultSalt::default())?;
+    claim.add_assertion(&ingredient)?;
+    claim.add_assertion(&ingredient2)?;
 
     Ok(claim)
 }
