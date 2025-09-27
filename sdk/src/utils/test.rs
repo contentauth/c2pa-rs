@@ -150,9 +150,28 @@ pub(crate) fn static_test_v1_uuid() -> &'static str {
     const TEST_GUID: &str = "urn:uuid:f75ddc48-cdc8-4723-bcfe-77a8d68a5920";
     TEST_GUID
 }
+
+/// Creates a minimal valid claim for testing (v2)
+///
+/// This claim has just enough information to be valid, including a
+/// claim_generator_info and a c2pa.created action assertion.
+pub fn create_min_test_claim() -> Result<Claim> {
+    let mut claim = Claim::new("contentauth unit test", Some("contentauth"), 2);
+
+    let mut cg_info = ClaimGeneratorInfo::new("test app");
+    cg_info.version = Some("2.3.4".to_string());
+    claim.add_claim_generator_info(cg_info);
+
+    let created_action = Action::new("c2pa.created").set_source_type(DigitalSourceType::Empty);
+    let actions = Actions::new().add_action(created_action);
+
+    claim.add_assertion(&actions)?;
+
+    Ok(claim)
+}
+
 /// Creates a claim for testing (v2)
 pub fn create_test_claim() -> Result<Claim> {
-    // First create and add a claim thumbnail (we don't need to reference this anywhere)
     let mut claim = Claim::new("contentauth unit test", Some("contentauth"), 2);
 
     // Add an icon for the claim_generator

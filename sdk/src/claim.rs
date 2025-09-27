@@ -4057,4 +4057,50 @@ pub mod tests {
         );
         assert!(c4.is_err());
     }
+
+    #[test]
+    fn test_add_assertion_variants() -> Result<()> {
+        let mut claim = crate::utils::test::create_min_test_claim()?;
+
+        const MY_METADATA: &str = "my.metadata";
+        let data = json!({
+        "@context" : {
+            "dc" : "http://purl.org/dc/elements/1.1/"
+        },
+        "dc:created": "2025 August 13",
+        "dc:creator": [
+             "John Doe"
+        ]
+        })
+        .to_string();
+
+        let metadata = assertions::Metadata::new(MY_METADATA, &data)?;
+
+        // add first time
+        claim.add_assertion(&metadata)?;
+
+        // add second time should create instance label
+        claim.add_assertion(&metadata)?;
+
+        // add third time should create instance label
+        claim.add_assertion(&metadata)?;
+
+        // check that we have three instances now
+        let instances = claim.count_instances(MY_METADATA);
+        assert_eq!(instances, 3);
+
+        // check that we can retrieve each one
+        for i in 0..instances {
+            let ca = claim
+                .get_claim_assertion(MY_METADATA, i)
+                .expect("should find assertion");
+            assert_eq!(ca.instance(), i);
+            assert_eq!(ca.label_raw(), MY_METADATA);
+            assert_eq!(ca.assertion().label(), MY_METADATA);
+            assert_eq!(ca.assertion_type(), ClaimAssertionType::Gathered);
+            //assert_eq!(ca.assertion().decode_data(), AssertionData::Cbor(vec![1, 2, 3, 4]));
+        }
+
+        Ok(())
+    }
 }
