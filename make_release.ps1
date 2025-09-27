@@ -112,6 +112,9 @@ Copy-Item "$ReleaseDir\c2pa.h" $includeDir -Force
 Copy-Item "$ReleaseDir\c2pa_c.*" $libDir -Force
 
 $zipPath = "$artifactsDir\c2pa-v$version-$platform.zip"
+if (Test-Path $zipPath) {
+    Remove-Item $zipPath -Force
+}
 Compress-Archive -Path "$includeDir", "$libDir" -DestinationPath $zipPath -Force
 
 Write-Host "Zip file created: $zipPath"
