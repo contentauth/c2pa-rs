@@ -21,7 +21,6 @@ use std::{
 
 use atree::{Arena, Token};
 use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
-use conv::ValueFrom;
 
 use crate::{
     assertions::{BmffMerkleMap, ExclusionsMap},
@@ -170,7 +169,10 @@ boxtype! {
     Vp09Box => 0x76703039,
     MetaBox => 0x6D657461,
     SchiBox => 0x73636869,
-    IlocBox => 0x696C6F63
+    IlocBox => 0x696C6F63,
+    MfroBox => 0x6d66726f,
+    TfraBox => 0x74667261,
+    SaioBox => 0x7361696f
 }
 
 struct BoxHeaderLite {
@@ -190,7 +192,9 @@ impl BoxHeaderLite {
         }
     }
 
-    pub fn read<R: Read + ?Sized>(reader: &mut R) -> Result<Self> {
+    pub fn read<R: Read + Seek + ?Sized>(reader: &mut R) -> Result<Self> {
+        let box_start = reader.stream_position()?;
+
         // Create and read to buf.
         let mut buf = [0u8; 8]; // 8 bytes for box header.
         reader.read_exact(&mut buf)?;
@@ -216,6 +220,17 @@ impl BoxHeaderLite {
                 size: largesize,
                 fourcc,
                 large_size: true,
+            })
+        } else if size == 0 {
+            // special case to indicate the size goes to the end of the file
+            let end_of_stream = stream_len(reader)?;
+            let actual_size = end_of_stream - box_start;
+
+            Ok(BoxHeaderLite {
+                name: BoxType::from(typ),
+                size: actual_size,
+                fourcc,
+                large_size: false,
             })
         } else {
             Ok(BoxHeaderLite {
@@ -615,10 +630,9 @@ where
     Ok(exclusions)
 }
 
-// `iloc`, `stco` and `co64` elements contain absolute file offsets so they need to be adjusted based on whether content was added or removed.
-// todo: when fragment support is added adjust these (/moof/iloc, /moof/mfro, /moof/traf/saio, /sidx)
+// `iloc`, `stco`, `co64`, `mfro`, `saio`, `sidx`, `tdhd`, and `tfra` elements contain absolute file offsets so they need to be adjusted based on whether content was added or removed.
 fn adjust_known_offsets<W: Write + CAIRead + ?Sized>(
-    output: &mut W,
+    mut output: &mut W,
     bmff_tree: &Arena<BoxInfo>,
     bmff_path_map: &HashMap<String, Vec<Token>>,
     adjust: i32,
@@ -939,6 +953,213 @@ fn adjust_known_offsets<W: Write + CAIRead + ?Sized>(
                             ))
                         }
                     };
+                }
+            }
+        }
+    }
+
+    // map to store track to moof mapping
+    let mut track_id_to_moof_mapping = HashMap::new();
+
+    // handle moof traf tfhd
+    if let Some(tfhd_list) = bmff_path_map.get("/moof/traf/tfhd") {
+        for tfhd_token in tfhd_list {
+            let tfhd_box_info = &bmff_tree[*tfhd_token].data;
+            if tfhd_box_info.box_type != BoxType::TfhdBox {
+                return Err(Error::InvalidAsset("Bad BMFF".to_string()));
+            }
+
+            // read box and patch
+            output.seek(SeekFrom::Start(tfhd_box_info.offset))?;
+
+            // read header
+            let header = BoxHeaderLite::read(output)
+                .map_err(|_err| Error::InvalidAsset("Bad BMFF".to_string()))?;
+            if header.name != BoxType::TfhdBox {
+                return Err(Error::InvalidAsset("Bad BMFF".to_string()));
+            }
+
+            // read extended header
+            let (_version, tf_flags) = read_box_header_ext(output)?; // box extensions
+
+            // track ID
+            let track_id = output.read_u32::<BigEndian>()?;
+
+            // get to outter moof box
+            let ancestors = tfhd_token.ancestors(bmff_tree);
+            for ancestor in ancestors {
+                if ancestor.data.path == "moof" {
+                    track_id_to_moof_mapping.insert(track_id, ancestor.data.offset);
+                }
+            }
+
+            // fix up base offset and write out if flags indicate to do so
+            if tf_flags & 1 == 1 {
+                let base_data_offset_pos = output.stream_position()?;
+                let mut base_data_offset = output.read_u64::<BigEndian>()?;
+
+                base_data_offset = if adjust < 0 {
+                    base_data_offset
+                        - u64::try_from(adjust.abs()).map_err(|_| {
+                            Error::InvalidAsset("Bad BMFF offset adjustment".to_string())
+                        })?
+                } else {
+                    base_data_offset
+                        + u64::try_from(adjust).map_err(|_| {
+                            Error::InvalidAsset("Bad BMFF offset adjustment".to_string())
+                        })?
+                };
+
+                output.seek(SeekFrom::Start(base_data_offset_pos))?;
+                output.write_u64::<BigEndian>(base_data_offset)?;
+            }
+
+            // ignore rest of fields
+        }
+    }
+
+    // handle mfra tfra
+    if let Some(tfra_list) = bmff_path_map.get("/mfra/tfra") {
+        for tfra_token in tfra_list {
+            let tfra_box_info = &bmff_tree[*tfra_token].data;
+            if tfra_box_info.box_type != BoxType::TfraBox {
+                return Err(Error::InvalidAsset("Bad BMFF".to_string()));
+            }
+
+            // read iloc box and patch
+            output.seek(SeekFrom::Start(tfra_box_info.offset))?;
+
+            // read header
+            let header = BoxHeaderLite::read(output)
+                .map_err(|_err| Error::InvalidAsset("Bad BMFF".to_string()))?;
+            if header.name != BoxType::TfraBox {
+                return Err(Error::InvalidAsset("Bad BMFF".to_string()));
+            }
+
+            // read extended header
+            let (version, _flags) = read_box_header_ext(output)?; // box extensions
+
+            // track ID
+            let track_id = output.read_u32::<BigEndian>()?;
+
+            // tfr flags
+            let tfra_info = output.read_u32::<BigEndian>()?;
+            let length_size_of_traf_num = (tfra_info >> 4) & 0x03;
+            let length_size_of_trun_num = (tfra_info >> 2) & 0x03;
+            let length_size_of_sample_num = tfra_info & 0x03;
+
+            // num entries
+            let num_entries = output.read_u32::<BigEndian>()?;
+
+            // get the moof boxes
+            // fix up the offsets in the entry list
+            for _entries in 0..num_entries {
+                if version == 1 {
+                    let _time = output.read_u64::<BigEndian>()?;
+
+                    // write out mapped value of the moof position for this track
+                    let moof_offset = track_id_to_moof_mapping
+                        .get(&track_id)
+                        .ok_or(Error::InvalidAsset("Bad BMFF".to_string()))?;
+                    output.write_u64::<BigEndian>(*moof_offset)?;
+                } else {
+                    let _time = output.read_u32::<BigEndian>()?;
+
+                    // write out mapped value of the moof position for this track
+                    let moof_offset_u64 = track_id_to_moof_mapping
+                        .get(&track_id)
+                        .ok_or(Error::InvalidAsset("Bad BMFF".to_string()))?;
+
+                    let moof_offset = u32::try_from(*moof_offset_u64).map_err(|_e| {
+                        Error::InvalidAsset("Bad BMFF offset adjustment".to_string())
+                    })?;
+                    output.write_u32::<BigEndian>(moof_offset)?;
+                }
+
+                // read extra stuff to move the position
+                let traf_num_bytes = length_size_of_traf_num + 1;
+                output.read_to_vec(traf_num_bytes as u64)?;
+                let trun_num_bytes = length_size_of_trun_num + 1;
+                output.read_to_vec(trun_num_bytes as u64)?;
+                let sample_num_bytes = length_size_of_sample_num + 1;
+                output.read_to_vec(sample_num_bytes as u64)?;
+            }
+        }
+    }
+
+    // handle moov trak mdia minf stbl saio
+    if let Some(saio_list) = bmff_path_map.get("/moov/trak/mdia/minf/stbl/saio") {
+        for saio_token in saio_list {
+            let saio_box_info = &bmff_tree[*saio_token].data;
+            if saio_box_info.box_type != BoxType::SaioBox {
+                return Err(Error::InvalidAsset("Bad BMFF".to_string()));
+            }
+
+            // read saio box and patch
+            output.seek(SeekFrom::Start(saio_box_info.offset))?;
+
+            // read header
+            let header = BoxHeaderLite::read(output)
+                .map_err(|_err| Error::InvalidAsset("Bad BMFF".to_string()))?;
+            if header.name != BoxType::SaioBox {
+                return Err(Error::InvalidAsset("Bad BMFF".to_string()));
+            }
+
+            // read extended header
+            let (version, flags) = read_box_header_ext(output)?; // box extensions
+            if (flags & 1) == 1 {
+                let _aux_info_type = output.read_u32::<BigEndian>()?;
+                let _aux_info_type_parameter = output.read_u32::<BigEndian>()?;
+            }
+
+            // get count of offsets
+            let entry_count = output.read_u32::<BigEndian>()?;
+
+            // read and patch offsets
+            let entry_start_pos = output.stream_position()?;
+            let mut entries: Vec<u64> = Vec::new();
+            for _e in 0..entry_count {
+                if version == 0 {
+                    let offset = output.read_u32::<BigEndian>()?;
+                    let new_offset = if adjust < 0 {
+                        offset
+                            - u32::try_from(adjust.abs()).map_err(|_| {
+                                Error::InvalidAsset("Bad BMFF offset adjustment".to_string())
+                            })?
+                    } else {
+                        offset
+                            + u32::try_from(adjust).map_err(|_| {
+                                Error::InvalidAsset("Bad BMFF offset adjustment".to_string())
+                            })?
+                    };
+                    entries.push(new_offset as u64);
+                } else {
+                    let offset = output.read_u64::<BigEndian>()?;
+                    let new_offset = if adjust < 0 {
+                        offset
+                            - u64::try_from(adjust.abs()).map_err(|_| {
+                                Error::InvalidAsset("Bad BMFF offset adjustment".to_string())
+                            })?
+                    } else {
+                        offset
+                            + u64::try_from(adjust).map_err(|_| {
+                                Error::InvalidAsset("Bad BMFF offset adjustment".to_string())
+                            })?
+                    };
+                    entries.push(new_offset);
+                }
+            }
+
+            // write updated offsets
+            output.seek(SeekFrom::Start(entry_start_pos))?;
+            for e in entries {
+                if version == 0 {
+                    let e32 = u32::try_from(e).map_err(|_| {
+                        Error::InvalidAsset("Bad BMFF offset adjustment".to_string())
+                    })?;
+                    output.write_u32::<BigEndian>(e32)?;
+                } else {
+                    output.write_u64::<BigEndian>(e)?;
                 }
             }
         }
@@ -1591,16 +1812,16 @@ impl CAIWriter for BmffIO {
         let new_c2pa_box_size = new_c2pa_box.len();
 
         let (start, end) = if let Some(c2pa_length) = c2pa_length {
-            let start = usize::value_from(c2pa_start)
+            let start = usize::try_from(c2pa_start)
                 .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?; // get beginning of chunk which starts 4 bytes before label
 
-            let end = usize::value_from(c2pa_start + c2pa_length)
+            let end = usize::try_from(c2pa_start + c2pa_length)
                 .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?;
 
             (start, end)
         } else {
             // insert new c2pa
-            let end = usize::value_from(c2pa_start)
+            let end = usize::try_from(c2pa_start)
                 .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?;
 
             (end, end)
@@ -1733,10 +1954,10 @@ impl CAIWriter for BmffIO {
             };
 
         let (start, end) = if let Some(c2pa_length) = c2pa_length {
-            let start = usize::value_from(c2pa_start)
+            let start = usize::try_from(c2pa_start)
                 .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?; // get beginning of chunk which starts 4 bytes before label
 
-            let end = usize::value_from(c2pa_start + c2pa_length)
+            let end = usize::try_from(c2pa_start + c2pa_length)
                 .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?;
 
             (start, end)
@@ -1969,16 +2190,16 @@ impl RemoteRefEmbed for BmffIO {
                 let new_xmp_box_size = new_xmp_box.len();
 
                 let (start, end) = if let Some(xmp_length) = xmp_length {
-                    let start = usize::value_from(xmp_start)
+                    let start = usize::try_from(xmp_start)
                         .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?; // get beginning of chunk which starts 4 bytes before label
 
-                    let end = usize::value_from(xmp_start + xmp_length)
+                    let end = usize::try_from(xmp_start + xmp_length)
                         .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?;
 
                     (start, end)
                 } else {
                     // insert new c2pa
-                    let end = usize::value_from(xmp_start)
+                    let end = usize::try_from(xmp_start)
                         .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?;
 
                     (end, end)

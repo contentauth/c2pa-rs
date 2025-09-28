@@ -222,7 +222,7 @@ fn test_content_credential_new() -> Result<()> {
     let mut cursor = std::io::Cursor::new(IMAGE_WITH_MANIFEST);
     let mut cr = ContentCredential::new(Settings::default());
     cr.with_stream("image/jpeg", &mut cursor)?;
-    println!("{}", cr);
+    println!("{cr}");
 
     cursor.set_position(0);
     cr.save_to_stream(

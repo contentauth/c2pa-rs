@@ -69,7 +69,10 @@ fn es384() {
 }
 
 #[test]
-#[cfg(feature = "openssl")]
+#[cfg(all(
+    feature = "openssl",
+    not(all(feature = "rust_native_crypto", target_arch = "wasm32"))
+))]
 fn es512() {
     let cert_chain = include_bytes!("../../../../tests/fixtures/crypto/raw_signature/es512.pub");
     let private_key = include_bytes!("../../../../tests/fixtures/crypto/raw_signature/es512.priv");

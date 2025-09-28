@@ -89,6 +89,12 @@ struct CliArgs {
     #[clap(short, long)]
     remote: Option<String>,
 
+    /// Path to a binary .c2pa manifest to use for validation against the input asset.
+    ///
+    /// This field will override the input asset's embedded or remote manifest.
+    #[clap(long)]
+    external_manifest: Option<PathBuf>,
+
     /// Generate a sidecar (.c2pa) manifest
     #[clap(short, long)]
     sidecar: bool,
@@ -227,7 +233,7 @@ struct ManifestDef {
 fn special_errs(e: c2pa::Error) -> anyhow::Error {
     match e {
         Error::JumbfNotFound => anyhow!("No claim found"),
-        Error::FileNotFound(name) => anyhow!("File not found: {}", name),
+        Error::FileNotFound(name) => anyhow!("File not found: {name}"),
         Error::UnsupportedType => anyhow!("Unsupported file type"),
         Error::PrereleaseError => anyhow!("Prerelease claim found"),
         _ => e.into(),
@@ -586,6 +592,24 @@ fn validate_cawg(reader: &mut Reader) -> Result<()> {
     }
 }
 
+fn reader_from_args(args: &CliArgs) -> Result<Reader> {
+    if let Some(external_manifest) = &args.external_manifest {
+        let c2pa_data = fs::read(external_manifest)?;
+        let format = match c2pa::format_from_path(&args.path) {
+            Some(format) => format,
+            None => {
+                bail!("Format for {:?} is unrecognized", args.path);
+            }
+        };
+        Ok(
+            Reader::from_manifest_data_and_stream(&c2pa_data, &format, File::open(&args.path)?)
+                .map_err(special_errs)?,
+        )
+    } else {
+        Ok(Reader::from_file(&args.path).map_err(special_errs)?)
+    }
+}
+
 fn main() -> Result<()> {
     let args = CliArgs::parse();
 
@@ -740,7 +764,11 @@ fn main() -> Result<()> {
 
             Box::new(signer)
         } else {
-            sign_config.signer()?
+            match Settings::signer() {
+                Ok(signer) => signer,
+                Err(Error::MissingSignerSettings) => sign_config.signer()?,
+                Err(err) => Err(err)?,
+            }
         };
 
         if let Some(output) = args.output {
@@ -865,7 +893,7 @@ fn main() -> Result<()> {
             Ingredient::from_file(&args.path).map_err(special_errs)?
         )
     } else if args.detailed {
-        let mut reader = Reader::from_file(&args.path).map_err(special_errs)?;
+        let mut reader = reader_from_args(&args)?;
         validate_cawg(&mut reader)?;
         println!("{reader:#?}");
     } else if let Some(Commands::Fragment {
@@ -883,7 +911,7 @@ fn main() -> Result<()> {
             println!("{} Init manifests validated", stores.len());
         }
     } else {
-        let mut reader = Reader::from_file(&args.path).map_err(special_errs)?;
+        let mut reader = reader_from_args(&args)?;
         validate_cawg(&mut reader)?;
         println!("{reader}");
     }
