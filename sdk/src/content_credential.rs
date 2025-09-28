@@ -8,12 +8,12 @@ use serde_json::Value;
 
 use crate::{
     assertion::AssertionBase,
-    assertions::{Ingredient, Relationship},
+    assertions::{c2pa_action, Action, Actions, Ingredient, Relationship},
     claim::Claim,
     crypto::base64,
     manifest::{Manifest, StoreOptions},
     manifest_store_report::ManifestStoreReport,
-    settings::Settings,
+    settings::{self, Settings},
     store::Store,
     validation_status::ValidationStatus,
     Error, Result, ValidationResults,
@@ -27,6 +27,8 @@ pub struct StandardStoreReport {
 
     /// A HashMap of Manifests
     manifests: HashMap<String, Manifest>,
+
+    validation_results: ValidationResults,
 }
 
 impl StandardStoreReport {
@@ -53,6 +55,7 @@ impl StandardStoreReport {
         Ok(Self {
             active_manifest,
             manifests,
+            validation_results,
         })
     }
 }
@@ -64,11 +67,25 @@ pub struct ContentCredential {
 }
 
 impl ContentCredential {
-    pub fn new(_settings: Settings) -> Self {
+    pub fn new(_settings: &Settings) -> Self {
+        let vendor =
+            settings::get_settings_value::<Option<String>>("builder.vendor").unwrap_or(None);
+        let claim = Claim::new("", vendor.as_deref(), 2);
         ContentCredential {
-            claim: Claim::new("", None, 2),
+            claim,
             store: Store::new(),
         }
+    }
+
+    pub fn from_stream(
+        settings: &Settings,
+        format: &str,
+        mut stream: impl Read + Seek + Send,
+    ) -> Result<Self> {
+        let mut cc = Self::new(settings);
+        let (_, store) = cc.with_stream_impl(Relationship::ParentOf, format, &mut stream)?;
+        cc.store = store; // replaces the empty store
+        Ok(cc)
     }
 
     fn parent_ingredient(&self) -> Option<Ingredient> {
@@ -82,16 +99,31 @@ impl ContentCredential {
         None
     }
 
-    pub fn with_stream(
+    pub fn add_assertion(&mut self, assertion: &impl AssertionBase) -> Result<&Self> {
+        self.claim.add_assertion(assertion)?;
+        Ok(self)
+    }
+
+    pub fn add_ingredient_from_stream(
         &mut self,
         format: &str,
         mut stream: impl Read + Seek + Send,
     ) -> Result<&Self> {
-        use crate::assertions::{c2pa_action, Action, Actions, Ingredient, Relationship};
+        Ok(self
+            .with_stream_impl(Relationship::ComponentOf, format, &mut stream)?
+            .0)
+    }
+
+    fn with_stream_impl(
+        &mut self,
+        relationship: Relationship,
+        format: &str,
+        mut stream: impl Read + Seek + Send,
+    ) -> Result<(&Self, Store)> {
         //let verify = get_settings_value::<bool>("verify.verify_after_reading")?; // defaults to true
 
         let (ingredient_assertion, store) =
-            Ingredient::from_stream(Relationship::ParentOf, format, &mut stream)?;
+            Ingredient::from_stream(relationship, format, &mut stream)?;
 
         // add the ingredient assertion and get it's uri
         let ingredient_hashed_uri = self.claim.add_assertion(&ingredient_assertion)?;
@@ -104,8 +136,7 @@ impl ContentCredential {
         self.claim.add_assertion(&actions)?;
 
         // capture the store and validation results from the assertion
-        self.store = store;
-        Ok(self)
+        Ok((self, store))
     }
 
     fn set_claim_generator_info(&mut self) -> Result<&Self> {
@@ -216,19 +247,44 @@ impl std::fmt::Debug for ContentCredential {
 }
 
 #[test]
-fn test_content_credential_new() -> Result<()> {
+fn test_content_credential_from_stream() -> Result<()> {
     const IMAGE_WITH_MANIFEST: &[u8] = include_bytes!("../tests/fixtures/CA.jpg");
     //let settings = Settings::default();
-    let mut cursor = std::io::Cursor::new(IMAGE_WITH_MANIFEST);
-    let mut cr = ContentCredential::new(Settings::default());
-    cr.with_stream("image/jpeg", &mut cursor)?;
+    let mut source = std::io::Cursor::new(IMAGE_WITH_MANIFEST);
+    let settings = Settings::default();
+    let mut cr = ContentCredential::from_stream(&settings, "image/jpeg", &mut source)?;
     println!("{cr}");
 
-    cursor.set_position(0);
-    cr.save_to_stream(
-        "image/jpeg",
-        &mut cursor,
-        &mut std::io::Cursor::new(Vec::new()),
-    )?;
+    source.set_position(0);
+    let mut dest = std::io::Cursor::new(Vec::new());
+    cr.save_to_stream("image/jpeg", &mut source, &mut dest)?;
+
+    dest.set_position(0);
+    let cr2 = ContentCredential::from_stream(&settings, "image/jpeg", &mut dest)?;
+    println!("{cr2}");
+    Ok(())
+}
+
+#[test]
+fn test_content_credential_created() -> Result<()> {
+    const IMAGE_WITH_MANIFEST: &[u8] = include_bytes!("../tests/fixtures/CA.jpg");
+    //let settings = Settings::default();
+    let mut source = std::io::Cursor::new(IMAGE_WITH_MANIFEST);
+    let settings = Settings::default();
+    let mut cr = ContentCredential::new(&settings);
+    let action = crate::assertions::Actions::new().add_action(
+        crate::assertions::Action::new(crate::assertions::c2pa_action::CREATED)
+            .set_source_type(crate::DigitalSourceType::Empty)
+            .set_parameter("note", "Created by test_content_credential_created")?,
+    );
+    cr.add_assertion(&action)?;
+
+    source.set_position(0);
+    let mut dest = std::io::Cursor::new(Vec::new());
+    cr.save_to_stream("image/jpeg", &mut source, &mut dest)?;
+
+    dest.set_position(0);
+    let cr = ContentCredential::from_stream(&settings, "image/jpeg", &mut dest)?;
+    println!("{cr}");
     Ok(())
 }

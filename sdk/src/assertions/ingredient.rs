@@ -24,6 +24,9 @@ use crate::{
     cbor_types::map_cbor_to_type,
     error::Result,
     hashed_uri::HashedUri,
+    jumbf::labels::{to_manifest_uri, to_signature_uri},
+    status_tracker::StatusTracker,
+    store::Store,
     validation_results::ValidationResults,
     validation_status::ValidationStatus,
     Error,
@@ -530,15 +533,22 @@ impl Ingredient {
         relationship: Relationship,
         format: &str,
         mut stream: impl Read + Seek + Send,
-    ) -> Result<(Self, crate::store::Store)> {
-        use crate::{
-            jumbf::labels::{to_manifest_uri, to_signature_uri},
-            status_tracker::StatusTracker,
-            store::Store,
-        };
+    ) -> Result<(Self, Store)> {
         let mut validation_log = StatusTracker::default();
-        let store = Store::from_stream(format, &mut stream, true, &mut validation_log)?;
+        let store: Store = Store::from_stream(format, &mut stream, true, &mut validation_log)?;
+        let validation_results = ValidationResults::from_store(&store, &validation_log);
+        let ingredient =
+            Self::from_store_and_validation_results(relationship, &store, &validation_results)?;
+        Ok((ingredient, store))
+    }
 
+    /// Create a new Ingredient assertion from a Store and ValidationResults.
+    /// You must specify the relationship.
+    pub(crate) fn from_store_and_validation_results(
+        relationship: Relationship,
+        store: &Store,
+        validation_results: &ValidationResults,
+    ) -> Result<Self> {
         if let Some(claim) = store.provenance_claim() {
             let mut ingredient = Self::new_v3(relationship);
 
@@ -559,8 +569,7 @@ impl Ingredient {
                 hashes.signature_box_hash.as_ref(),
             ));
 
-            ingredient.validation_results =
-                Some(ValidationResults::from_store(&store, &validation_log));
+            ingredient.validation_results = Some(validation_results.clone());
 
             if ingredient
                 .validation_results
@@ -570,9 +579,9 @@ impl Ingredient {
             {
                 ingredient.thumbnail = claim.thumbnail();
             }
-            return Ok((ingredient, store));
+            return Ok(ingredient);
         }
-        Ok((Self::new_v3(relationship), store))
+        Ok(Self::new_v3(relationship))
     }
 }
 
