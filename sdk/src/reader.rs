@@ -660,7 +660,9 @@ impl Reader {
     #[cfg(feature = "file_io")]
     pub fn to_folder<P: AsRef<std::path::Path>>(&self, path: P) -> Result<()> {
         std::fs::create_dir_all(&path)?;
-        std::fs::write(path.as_ref().join("manifest.json"), self.json())?;
+        std::fs::write(path.as_ref().join("manifest_store.json"), self.json())?;
+        let c2pa_data = self.store.to_jumbf_internal(0)?;
+        std::fs::write(path.as_ref().join("manifest_data.c2pa"), c2pa_data)?;
         for manifest in self.manifests.values() {
             let resources = manifest.resources();
             for (uri, data) in resources.resources() {
@@ -997,7 +999,9 @@ pub mod tests {
         assert_eq!(reader.validation_status(), None);
         let temp_dir = tempdirectory().unwrap();
         reader.to_folder(temp_dir.path())?;
-        let path = temp_dir_path(&temp_dir, "manifest.json");
+        let path = temp_dir_path(&temp_dir, "manifest_store.json");
+        assert!(path.exists());
+        let path = temp_dir_path(&temp_dir, "manifest_data.c2pa");
         assert!(path.exists());
         #[cfg(target_os = "wasi")]
         crate::utils::io_utils::wasm_remove_dir_all(temp_dir)?;
