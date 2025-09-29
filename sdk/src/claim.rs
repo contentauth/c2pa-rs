@@ -35,8 +35,8 @@ use crate::{
             self, ACTIONS, ASSERTION_METADATA, ASSERTION_STORE, BMFF_HASH, CLAIM_THUMBNAIL,
             DATABOX_STORE, METADATA_LABEL_REGEX,
         },
-        Actions, AssertionMetadata, AssetType, BmffHash, BoxHash, DataBox, DataHash, Ingredient,
-        Metadata, Relationship, V2_DEPRECATED_ACTIONS,
+        Action, Actions, AssertionMetadata, AssetType, BmffHash, BoxHash, DataBox, DataHash,
+        Ingredient, Metadata, Relationship, V2_DEPRECATED_ACTIONS,
     },
     asset_io::CAIRead,
     cbor_types::map_cbor_to_type,
@@ -1156,6 +1156,28 @@ impl Claim {
 
     pub(crate) fn set_update_manifest(&mut self, is_update_manifest: bool) {
         self.update_manifest = is_update_manifest;
+    }
+
+    /// Adds an action to the claim.
+    ///
+    /// If an Actions assertion already exists, the action is added to it.
+    /// If not, a new Actions assertion is created and added to the claim.
+    /// If multiple exist, this will update the first one found.
+    pub fn add_action(&mut self, action: Action) -> Result<&mut Self> {
+        match self.get_assertion(labels::ACTIONS, 0) {
+            None => {
+                let actions = Actions::new().add_action_checked(action)?;
+                self.add_assertion(&actions)?;
+            }
+            Some(a) => {
+                let actions = Actions::from_assertion(a)?;
+
+                let actions = actions.add_action_checked(action)?;
+
+                self.replace_assertion(actions.to_assertion()?)?;
+            }
+        };
+        Ok(self)
     }
 
     pub fn add_claim_generator_info(&mut self, info: ClaimGeneratorInfo) -> &mut Self {
@@ -3794,6 +3816,19 @@ impl Claim {
 
         iter.next()
     }
+
+    // /// returns first instance of an assertion whose label and instance match
+    // pub fn get_assertion_mut(&self, assertion_label: &str, instance: usize) -> Option<&Assertion> {
+    //     let mut iter = self.claim_assertion_store().iter().filter_map(|ca| {
+    //         if ca.label_raw() == assertion_label && ca.instance() == instance {
+    //             Some(ca.assertion())
+    //         } else {
+    //             None
+    //         }
+    //     });
+
+    //     iter.next()
+    // }
 
     /// returns instance of an assertion whose label and instance match
     pub fn get_claim_assertion(

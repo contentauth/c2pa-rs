@@ -99,9 +99,8 @@ impl ContentCredential {
         None
     }
 
-    pub fn add_assertion(&mut self, assertion: &impl AssertionBase) -> Result<&Self> {
-        self.claim.add_assertion(assertion)?;
-        Ok(self)
+    pub fn add_assertion(&mut self, assertion: &impl AssertionBase) -> Result<crate::HashedUri> {
+        self.claim.add_assertion(assertion)
     }
 
     pub fn add_ingredient_from_stream(
@@ -120,28 +119,37 @@ impl ContentCredential {
         format: &str,
         mut stream: impl Read + Seek + Send,
     ) -> Result<(&Self, Store)> {
-        //let verify = get_settings_value::<bool>("verify.verify_after_reading")?; // defaults to true
+        // create an action associated with the ingredient
+        let action_label = if relationship == Relationship::ParentOf {
+            c2pa_action::OPENED
+        } else {
+            c2pa_action::PLACED
+        };
 
         let (ingredient_assertion, store) =
             Ingredient::from_stream(relationship, format, &mut stream)?;
 
         // add the ingredient assertion and get it's uri
-        let ingredient_hashed_uri = self.claim.add_assertion(&ingredient_assertion)?;
+        let ingredient_hashed_uri = self.add_assertion(&ingredient_assertion)?;
 
-        // create an action associated with the ingredient
-        let opened = Action::new(c2pa_action::OPENED)
-            .set_parameter("ingredients", vec![ingredient_hashed_uri])?;
-        let actions = Actions::new().add_action(opened);
+        // todo add to exiting actions and check fo
+        let action =
+            Action::new(action_label).set_parameter("ingredients", vec![ingredient_hashed_uri])?;
 
-        self.claim.add_assertion(&actions)?;
+        let actions = Actions::new().add_action_checked(action)?;
+
+        self.add_assertion(&actions)?;
 
         // capture the store and validation results from the assertion
         Ok((self, store))
     }
 
     fn set_claim_generator_info(&mut self) -> Result<&Self> {
-        self.claim
-            .add_claim_generator_info(crate::ClaimGeneratorInfo::default());
+        if self.claim.claim_generator_info().is_none() {
+            // only set if not already set
+            self.claim
+                .add_claim_generator_info(crate::ClaimGeneratorInfo::default());
+        }
         Ok(self)
     }
 
@@ -288,3 +296,16 @@ fn test_content_credential_created() -> Result<()> {
     println!("{cr}");
     Ok(())
 }
+
+// #[test]
+// fn test_from_reader() -> Result<()> {
+//     const IMAGE_WITH_MANIFEST: &[u8] = include_bytes!("../tests/fixtures/CA.jpg");
+//     let mut source = std::io::Cursor::new(IMAGE_WITH_MANIFEST);
+//     let settings = Settings::default();
+//     let reader = crate::Reader::from_stream("image/jpeg", &mut source)?;
+//     let reader_str = reader.to_string();
+//     let cr = ContentCredential::from_reader(&reader)?;
+//     let cr = cr.to_string();
+//     assert_eq!(reader_str, cr);
+//     Ok(())
+// }

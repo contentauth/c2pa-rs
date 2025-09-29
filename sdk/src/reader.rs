@@ -95,7 +95,7 @@ pub struct Reader {
 
     #[serde(skip)]
     /// We keep this around so we can generate a detailed report if needed
-    store: Store,
+    pub(crate) store: Store,
 
     #[serde(skip)]
     /// Map to hold post-validation assertion values for reports

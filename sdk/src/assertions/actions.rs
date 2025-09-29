@@ -19,7 +19,7 @@ use serde_cbor::Value;
 use crate::{
     assertion::{Assertion, AssertionBase, AssertionCbor},
     assertions::{labels, region_of_interest::RegionOfInterest, Actor, AssertionMetadata},
-    error::Result,
+    error::{Error, Result},
     resource_store::UriOrResource,
     utils::cbor_types::DateT,
     ClaimGeneratorInfo, HashedUri,
@@ -845,6 +845,34 @@ impl Actions {
     pub fn add_action(mut self, action: Action) -> Self {
         self.actions.push(action);
         self
+    }
+
+    /// Adds an [`Action`] to this assertion's list of actions.
+    pub fn add_action_checked(mut self, action: Action) -> Result<Self> {
+        let action_name = action.action();
+        if action_name.is_empty() {
+            return Err(Error::AssertionSpecificError(
+                "Action must have a non-empty action label".to_string(),
+            ));
+        }
+        if V2_DEPRECATED_ACTIONS.contains(&action_name) {
+            return Err(Error::VersionCompatibility(format!(
+                "Action '{action_name}' is deprecated in C2PA v2"
+            )));
+        }
+        if action_name == c2pa_action::OPENED || action_name == c2pa_action::CREATED {
+            let existing_action = self.actions.iter().find(|a| a.action() == action_name);
+            if existing_action.is_some() {
+                return Err(Error::AssertionSpecificError(
+                    "Only one 'c2pa.opened' action is allowed".to_string(),
+                ));
+            }
+            // always insert as first action
+            self.actions.insert(0, action);
+            return Ok(self);
+        }
+        self.actions.push(action);
+        Ok(self)
     }
 
     /// Sets [`AssertionMetadata`] for the action.
