@@ -86,6 +86,16 @@ impl AssertionBase for Thumbnail {
     }
 }
 
+// impl AssertionBinary for Thumbnail {
+//     fn binary_data(&self) -> &[u8] {
+//         &self.data
+//     }
+
+//     fn from_binary_data(label: String, content_type: String, data: Vec<u8>) -> Self {
+//         Self(EmbeddedData::new(&label, &content_type, data))
+//     }
+// }
+
 // make it easy to convert from EmbeddedData to Thumbnail and vice versa
 impl From<EmbeddedData> for Thumbnail {
     fn from(embedded_data: EmbeddedData) -> Self {

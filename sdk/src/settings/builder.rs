@@ -20,6 +20,7 @@ use crate::{
         region_of_interest::RegionOfInterest, Action, ActionParameters, ActionTemplate,
         DigitalSourceType, SoftwareAgent,
     },
+    builder::BuilderIntent,
     cbor_types::DateT,
     resource_store::UriOrResource,
     settings::SettingsValidate,
@@ -398,18 +399,26 @@ pub(crate) struct BuilderSettings {
     /// provided explicitly to the builder.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub claim_generator_info: Option<ClaimGeneratorInfoSettings>,
+
     /// Various settings for configuring automatic thumbnail generation.
     pub thumbnail: ThumbnailSettings,
+
     /// Settings for configuring fields in an [Actions][crate::assertions::Actions] assertion.
     ///
     /// For more information on the reasoning behind this field see [ActionsSettings].
     pub actions: ActionsSettings,
 
-    // Certificate statuses will be fetched for either all the manifest labels, or just the active manifest.
+    /// Certificate statuses will be fetched for either all the manifest labels, or just the active manifest.
     pub certificate_status_fetch: Option<OcspFetch>,
 
-    // Whether or not existing OCSP responses should be overridden by new values.
+    /// Whether or not existing OCSP responses should be overridden by new values.
     pub certificate_status_should_override: Option<bool>,
+
+    /// Sets a default intent for builders, can be Create, Edit, or Update.
+    pub intent: Option<BuilderIntent>,
+
+    /// When adding assertions in this list, they will be marked as created. The default is gathered.
+    pub created_assertions: Option<Vec<String>>,
 }
 
 #[derive(Copy, Clone, Debug, Deserialize, PartialEq, Serialize)]
