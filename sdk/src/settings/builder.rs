@@ -163,7 +163,7 @@ pub struct ClaimGeneratorInfoSettings {
     pub version: Option<String>,
     /// Reference to an icon.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub icon: Option<ResourceRef>,
+    pub(crate) icon: Option<ResourceRef>,
     /// Settings for the claim generator info's operating system field.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub operating_system: Option<ClaimGeneratorInfoOSSettings>,

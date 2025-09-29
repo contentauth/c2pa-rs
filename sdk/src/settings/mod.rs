@@ -29,6 +29,8 @@ use signer::SignerSettings;
 
 use crate::{crypto::base64, settings::builder::BuilderSettings, Error, Result, Signer};
 
+const VERSION: u32 = 1;
+
 thread_local!(
     static SETTINGS: RefCell<Config> =
         RefCell::new(Config::try_from(&Settings::default()).unwrap_or_default());
@@ -228,21 +230,39 @@ pub struct Verify {
     ///
     /// The default value is true.
     ///
+    /// <div class="warning">
+    /// Disabling validation can improve reading performance, BUT it carries the risk of reading an invalid
+    /// manifest.
+    /// </div>
+    ///
     /// [`Reader`]: crate::Reader
     pub verify_after_reading: bool,
     /// Whether to verify the manifest after signing in the [`Builder`].
     ///
     /// The default value is true.
     ///
+    /// <div class="warning">
+    /// Disabling validation can improve signing performance, BUT it carries the risk of signing an invalid
+    /// manifest.
+    /// </div>
+    ///
     /// [`Builder`]: crate::Builder
     pub verify_after_sign: bool,
     /// Whether to verify certificates against the trust lists specified in [`Trust`].
     ///
     /// The default value is true.
+    ///
+    /// <div class="warning">
+    /// Verifying trust is REQUIRED by the C2PA spec. This option should only be used for development or testing.
+    /// </div>
     pub verify_trust: bool,
     /// Whether to verify the timestamp certificates against the trust lists specified in [`Trust`].
     ///
     /// The default value is true.
+    ///
+    /// <div class="warning">
+    /// Verifying timestamp trust is REQUIRED by the C2PA spec. This option should only be used for development or testing.
+    /// </div>
     pub verify_timestamp_trust: bool,
     // REVIEW NOTE: what's the difference between this and builder.certificate_status_fetch? does it have to do with checking staples?
     /// Whether to fetch the certificates OCSP status during validation.
@@ -293,9 +313,6 @@ impl Default for Verify {
 
 impl SettingsValidate for Verify {}
 
-const MAJOR_VERSION: usize = 1;
-const MINOR_VERSION: usize = 0;
-
 /// Settings for configuring all aspects of c2pa-rs.
 ///
 /// [Settings::default] will be set thread-locally by default. Any settings set via
@@ -303,11 +320,8 @@ const MINOR_VERSION: usize = 0;
 #[cfg_attr(feature = "json_schema", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct Settings {
-    // REVIEW NOTE: do we need both a major and minor version?
-    /// Major version of the configuration.
-    pub version_major: usize,
-    /// Minor version of the configuration.
-    pub version_minor: usize,
+    /// Version of the configuration.
+    pub version: u32,
     // TODO (https://github.com/contentauth/c2pa-rs/issues/1314):
     // Rename to c2pa_trust? Discuss possibly breaking change.
     /// Settings for configuring the C2PA trust lists.
