@@ -114,7 +114,6 @@ fn read_wav(c: &mut Criterion) {
 }
 
 criterion_group!(
-    benches, read_jpeg, read_png, read_gif, read_tiff, read_svg, read_pdf, read_mp3, read_mp4,
-    read_wav
+    benches, read_jpeg, read_png, read_gif, read_tiff, read_svg, read_mp3, read_mp4, read_wav
 );
 criterion_main!(benches);
