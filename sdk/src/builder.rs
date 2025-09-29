@@ -922,7 +922,7 @@ impl Builder {
                     let mut updates = Vec::new();
                     //#[allow(clippy::explicit_counter_loop)]
                     for (index, action) in actions.actions_mut().iter_mut().enumerate() {
-                        // find and remove the temporary ingredientIds parameter (This h)
+                        // find and remove the temporary ingredientIds parameter
                         let ids = action.extract_ingredient_ids();
 
                         if let Some(ids) = ids {
