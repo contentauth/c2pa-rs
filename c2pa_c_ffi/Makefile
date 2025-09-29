@@ -68,7 +68,6 @@ release-win-x86_64:
 	rustup target add x86_64-pc-windows-msvc
 	cargo build --target=x86_64-pc-windows-msvc $(CARGO_BUILD_FLAGS)
 
-
 release-win-aarch64:
 	rustup update stable-msvc
 	rustup target add aarch64-pc-windows-msvc
@@ -174,7 +173,7 @@ ifdef TARGET
 ifeq ($(TARGET),x86_64-pc-windows-msvc)
 release: release-win-x86_64
 else ifeq ($(TARGET),aarch64-pc-windows-msvc)
-release: echo "No release build for aarch64 on Windows"
+release: release-win-aarch64
 else ifeq ($(TARGET),aarch64-apple-darwin)
 release: release-mac-arm
 else ifeq ($(TARGET),x86_64-apple-darwin)

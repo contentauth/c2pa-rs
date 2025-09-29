@@ -9,12 +9,18 @@ $ErrorActionPreference = "Stop"
 Write-Host "Setting up Rust with OpenSSL (MSVC) environment..."
 
 # Detect hardware architecture and set $arch to "x86_64" or "aarch64"
-switch ($env:PROCESSOR_ARCHITECTURE) {
-    "AMD64" { $arch = "x86_64" }
-    "ARM64" { $arch = "aarch64" }
-    default { $arch = $env:PROCESSOR_ARCHITECTURE }
+# Allow override via TARGET_ARCH environment variable
+if ($env:TARGET_ARCH) {
+    $arch = $env:TARGET_ARCH
+    Write-Host "Using target architecture from environment: $arch"
+} else {
+    switch ($env:PROCESSOR_ARCHITECTURE) {
+        "AMD64" { $arch = "x86_64" }
+        "ARM64" { $arch = "aarch64" }
+        default { $arch = $env:PROCESSOR_ARCHITECTURE }
+    }
+    Write-Host "Detected architecture: $arch"
 }
-Write-Host "Detected architecture: $arch"
 
 # Ensure rustup is in PATH
 $env:PATH = "$env:USERPROFILE\.cargo\bin;" + $env:PATH
