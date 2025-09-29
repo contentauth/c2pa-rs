@@ -102,22 +102,24 @@ fn sign_svg(c: &mut Criterion) {
     });
 }
 
-fn sign_pdf(c: &mut Criterion) {
-    let mut builder = create_builder();
-    let signer = create_signer();
-    let mut source = Cursor::new(include_bytes!("fixtures/100kb.pdf"));
-    let mut dest = Cursor::new(Vec::new());
-    let format = "application/pdf";
+// TODO: Add back when we support pdf signing.
+// https://github.com/contentauth/c2pa-rs/issues/527
+// fn sign_pdf(c: &mut Criterion) {
+//     let mut builder = create_builder();
+//     let signer = create_signer();
+//     let mut source = Cursor::new(include_bytes!("fixtures/100kb.pdf"));
+//     let mut dest = Cursor::new(Vec::new());
+//     let format = "application/pdf";
 
-    c.bench_function("sign 100kb pdf", |b| {
-        b.iter(|| {
-            source.set_position(0);
-            dest.set_position(0);
-            dest.get_mut().clear();
-            builder.sign(&signer, format, &mut source, &mut dest)
-        })
-    });
-}
+//     c.bench_function("sign 100kb pdf", |b| {
+//         b.iter(|| {
+//             source.set_position(0);
+//             dest.set_position(0);
+//             dest.get_mut().clear();
+//             builder.sign(&signer, format, &mut source, &mut dest)
+//         })
+//     });
+// }
 
 fn sign_mp3(c: &mut Criterion) {
     let mut builder = create_builder();
