@@ -919,8 +919,6 @@ impl Builder {
 
                     let mut actions: Actions = manifest_assertion.to_assertion()?;
 
-                    Self::add_actions_assertion_settings(&ingredient_map, &mut actions)?;
-
                     let mut updates = Vec::new();
                     //#[allow(clippy::explicit_counter_loop)]
                     for (index, action) in actions.actions_mut().iter_mut().enumerate() {
@@ -997,6 +995,10 @@ impl Builder {
                             }
                         }
                     }
+
+                    // Do this at the end of the preprocessing step to ensure all ingredient references
+                    // are resolved to their hashed URIs.
+                    Self::add_actions_assertion_settings(&ingredient_map, &mut actions)?;
 
                     claim.add_assertion(&actions)
                 }
