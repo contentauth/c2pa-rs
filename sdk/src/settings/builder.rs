@@ -133,7 +133,7 @@ pub struct AutoActionSettings {
 
 #[cfg_attr(feature = "json_schema", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(rename_all = "lowercase")]
+#[serde(untagged, rename_all = "lowercase")]
 pub enum ClaimGeneratorInfoOperatingSystem {
     /// Whether or not to automatically infer the operating system.
     Auto,

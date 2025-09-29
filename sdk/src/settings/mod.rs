@@ -829,8 +829,7 @@ pub mod tests {
     #[test]
     fn test_all_setting() {
         let all_settings = toml::toml! {
-            version_major = 1
-            version_minor = 0
+            version = 1
 
             [trust]
 
