@@ -507,8 +507,7 @@ impl Settings {
 impl Default for Settings {
     fn default() -> Self {
         Settings {
-            version_major: MAJOR_VERSION,
-            version_minor: MINOR_VERSION,
+            version: VERSION,
             trust: Default::default(),
             cawg_trust: Default::default(),
             core: Default::default(),
@@ -522,7 +521,7 @@ impl Default for Settings {
 
 impl SettingsValidate for Settings {
     fn validate(&self) -> Result<()> {
-        if self.version_major > MAJOR_VERSION {
+        if self.version > VERSION {
             return Err(Error::VersionCompatibility(
                 "settings version too new".into(),
             ));

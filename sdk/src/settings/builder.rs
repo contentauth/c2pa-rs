@@ -131,25 +131,14 @@ pub struct AutoActionSettings {
     pub source_type: Option<DigitalSourceType>,
 }
 
-/// Settings for how to specify the claim generator info's operating system.
 #[cfg_attr(feature = "json_schema", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-pub struct ClaimGeneratorInfoOSSettings {
-    /// Whether or not to infer the operating system.
-    pub infer: bool,
+#[serde(rename_all = "lowercase")]
+pub enum ClaimGeneratorInfoOperatingSystem {
+    /// Whether or not to automatically infer the operating system.
+    Auto,
     /// The name of the operating system.
-    ///
-    /// Note this field overrides [ClaimGeneratorInfoOSSettings::infer].
-    pub name: Option<String>,
-}
-
-impl Default for ClaimGeneratorInfoOSSettings {
-    fn default() -> Self {
-        Self {
-            infer: true,
-            name: None,
-        }
-    }
+    Other(String),
 }
 
 /// Settings for the claim generator info.
@@ -166,7 +155,7 @@ pub struct ClaimGeneratorInfoSettings {
     pub(crate) icon: Option<ResourceRef>,
     /// Settings for the claim generator info's operating system field.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub operating_system: Option<ClaimGeneratorInfoOSSettings>,
+    pub operating_system: Option<ClaimGeneratorInfoOperatingSystem>,
     /// Any other values that are not part of the standard.
     #[serde(flatten)]
     pub other: HashMap<String, serde_json::Value>,
@@ -181,11 +170,10 @@ impl TryFrom<ClaimGeneratorInfoSettings> for ClaimGeneratorInfo {
             version: value.version,
             icon: value.icon.map(UriOrResource::ResourceRef),
             operating_system: {
-                let os = value.operating_system.unwrap_or_default();
-                match os.infer {
-                    true => Some(consts::OS.to_owned()),
-                    false => os.name,
-                }
+                value.operating_system.map(|os| match os {
+                    ClaimGeneratorInfoOperatingSystem::Auto => consts::OS.to_owned(),
+                    ClaimGeneratorInfoOperatingSystem::Other(name) => name,
+                })
             },
             other: value
                 .other
