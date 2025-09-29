@@ -325,9 +325,6 @@ pub struct ActionsSettings {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) templates: Option<Vec<ActionTemplateSettings>>,
     //
-    // REVIEW NOTE: ActionSettings indirectly depends on `ActionParameters` which contains a `serde_cbor::Value`
-    //              and schemars can't generate a schema for cbor values. It also doesn't feel right to change
-    //              our API for the sake of json schemas.
     // /// Actions to be added to the [Actions::actions][crate::assertions::Actions::actions] field.
     // #[doc(hidden)]
     // #[serde(skip_serializing_if = "Option::is_none")]

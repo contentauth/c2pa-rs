@@ -248,7 +248,8 @@ pub struct Verify {
     ///
     /// [`Builder`]: crate::Builder
     pub verify_after_sign: bool,
-    /// Whether to verify certificates against the trust lists specified in [`Trust`].
+    /// Whether to verify certificates against the trust lists specified in [`Trust`]. To configure
+    /// timestamp certificate verification, see [`Verify::verify_timestamp_trust`].
     ///
     /// The default value is true.
     ///
