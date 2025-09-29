@@ -265,10 +265,12 @@ pub struct Verify {
     /// Verifying timestamp trust is REQUIRED by the C2PA spec. This option should only be used for development or testing.
     /// </div>
     pub verify_timestamp_trust: bool,
-    // REVIEW NOTE: what's the difference between this and builder.certificate_status_fetch? does it have to do with checking staples?
-    /// Whether to fetch the certificates OCSP status during validation.
+    /// Whether to fetch the certificates OCSP status during validation. This setting will fetch OCSP for all certificates
+    /// even if they are stapled with a [`CertificateStatus`] assertion.
     ///
     /// The default value is false.
+    ///
+    /// [`CertificateStatus`]: crate::assertions::CertificateStatus
     pub ocsp_fetch: bool,
     /// Whether to fetch remote manifests during reading in the [`Reader`].
     ///

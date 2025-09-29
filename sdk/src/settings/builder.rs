@@ -394,10 +394,20 @@ pub struct BuilderSettings {
     ///
     /// For more information on the reasoning behind this field see [ActionsSettings].
     pub actions: ActionsSettings,
-    // REVIEW NOTE: should this be in builder settings or core?
-    /// Certificate statuses will be fetched for either all the manifest labels, or just the active manifest.
+    /// Whether to create [`CertificateStatus`] assertions for manifests, also known as OCSP stapling. The
+    /// assertion can be fetched for the active manifest or for all manifests (including ingredients).
+    ///
+    /// The default is to not fetch them at all.
+    ///
+    /// See more information in the spec here:
+    /// <https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#certificate_status_assertion>
+    ///
+    /// [`CertificateStatus`]: crate::assertions::CertificateStatus
     pub certificate_status_fetch: Option<OcspFetchScope>,
-    /// Whether or not existing OCSP responses should be overridden by new values.
+    /// Whether existing [`CertificateStatus`] assertions should be refreshed, also known as OCSP stapling. Use
+    /// [`BuilderSettings::certificate_status_fetch`] to configure which certificates are affected.
+    ///
+    /// The default value is false.
     pub certificate_status_should_override: Option<bool>,
 }
 
