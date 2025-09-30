@@ -2717,10 +2717,8 @@ impl Store {
         fragments: &Vec<std::path::PathBuf>,
         output_dir: &Path,
         reserve_size: usize,
+        settings: &Settings,
     ) -> Result<Vec<u8>> {
-        let settings = crate::settings::get_settings().unwrap_or_default();
-        // TO DO BEFORE MERGE? Pass Settings in here?
-
         // get the provenance claim changing mutability
         let pc = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
         pc.clear_data(); // clear since we are reusing an existing claim
@@ -2732,8 +2730,10 @@ impl Store {
 
         // 2) Get hash ranges if needed
         let mut asset_stream = std::fs::File::open(asset_path)?;
+
         let mut bmff_hash =
-            Store::generate_bmff_data_hash_for_stream(&mut asset_stream, pc.alg(), &settings)?;
+            Store::generate_bmff_data_hash_for_stream(&mut asset_stream, pc.alg(), settings)?;
+
         bmff_hash.clear_hash();
         if pc.version() < 2 {
             bmff_hash.set_bmff_version(2); // backcompat support
@@ -2821,6 +2821,7 @@ impl Store {
             fragments,
             output_path,
             signer.reserve_size(),
+            &settings,
         )?;
 
         let mut preliminary_claim = PartialClaim::default();
