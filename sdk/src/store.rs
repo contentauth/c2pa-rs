@@ -2787,10 +2787,8 @@ impl Store {
         fragments: &Vec<std::path::PathBuf>,
         output_path: &Path,
         signer: &dyn Signer,
+        settings: &Settings,
     ) -> Result<()> {
-        let settings = crate::settings::get_settings().unwrap_or_default();
-        // TO DO BEFORE MERGE? Pass Settings in here?
-
         match get_supported_file_extension(asset_path) {
             Some(ext) => {
                 if !is_bmff_format(&ext) {
@@ -2896,6 +2894,7 @@ impl Store {
         input_stream: &mut dyn CAIRead,
         output_stream: &mut dyn CAIReadWrite,
         signer: &dyn AsyncSigner,
+        settings: &Settings,
     ))]
     pub(crate) fn save_to_stream(
         &mut self,
@@ -2903,10 +2902,8 @@ impl Store {
         input_stream: &mut dyn CAIRead,
         output_stream: &mut dyn CAIReadWrite,
         signer: &dyn Signer,
+        settings: &Settings,
     ) -> Result<Vec<u8>> {
-        let settings = crate::settings::get_settings().unwrap_or_default();
-        // TO DO BEFORE MERGE? Pass Settings in here?
-
         let dynamic_assertions = signer.dynamic_assertions();
 
         let da_uris = if _sync {
@@ -4434,20 +4431,10 @@ pub mod tests {
         Ok(claim)
     }
 
-    // temporary fix for tests not designed for v2 claim verification
-    fn no_verify_after_sign() {
-        Settings::from_toml(
-            &toml::toml! {
-                [verify]
-                verify_after_sign = false
-            }
-            .to_string(),
-        )
-        .expect("failed to set verify settings");
-    }
-
     #[test]
     fn test_jumbf_generation() {
+        let settings = Settings::default();
+
         let (format, mut input_stream, mut output_stream) =
             create_test_streams("earth_apollo17.jpg");
 
@@ -4471,6 +4458,7 @@ pub mod tests {
                 &mut input_stream,
                 &mut output_stream,
                 signer.as_ref(),
+                &settings,
             )
             .unwrap();
 
@@ -4518,6 +4506,8 @@ pub mod tests {
 
     #[test]
     fn test_claim_v2_generation() {
+        let settings = Settings::default();
+
         let (format, mut input_stream, mut output_stream) =
             create_test_streams("earth_apollo17.jpg");
 
@@ -4541,6 +4531,7 @@ pub mod tests {
                 &mut input_stream,
                 &mut output_stream,
                 signer.as_ref(),
+                &settings,
             )
             .unwrap();
 
@@ -4588,7 +4579,8 @@ pub mod tests {
 
     #[test]
     fn test_bad_claim_v2_generation() {
-        no_verify_after_sign();
+        let mut settings = Settings::default();
+        settings.verify.verify_after_sign = false;
 
         let (format, mut input_stream, mut output_stream) =
             create_test_streams("earth_apollo17.jpg");
@@ -4617,6 +4609,7 @@ pub mod tests {
                 &mut input_stream,
                 &mut output_stream,
                 signer.as_ref(),
+                &settings,
             )
             .unwrap();
 
@@ -4643,6 +4636,8 @@ pub mod tests {
     #[cfg(feature = "file_io")]
     #[ignore = "we need to make this work again"]
     fn test_unknown_asset_type_generation() {
+        let settings = Settings::default();
+
         // test adding to actual image
         let (_format, mut input_stream, mut output_stream) =
             create_test_streams("unsupported_type.txt");
@@ -4672,6 +4667,7 @@ pub mod tests {
                 &mut input_stream,
                 &mut output_stream,
                 signer.as_ref(),
+                &settings,
             )
             .unwrap();
 
@@ -4717,6 +4713,8 @@ pub mod tests {
     #[test]
     #[cfg(feature = "file_io")]
     fn test_detects_unverifiable_signature() {
+        let settings = Settings::default();
+
         struct BadSigner {}
 
         impl Signer for BadSigner {
@@ -4755,7 +4753,13 @@ pub mod tests {
         // [(date) ERROR c2pa::store] Signature that was just generated does not validate: CoseCbor
 
         store
-            .save_to_stream(format, &mut input_stream, &mut output_stream, &signer)
+            .save_to_stream(
+                format,
+                &mut input_stream,
+                &mut output_stream,
+                &signer,
+                &settings,
+            )
             .unwrap_err();
     }
 
@@ -4763,6 +4767,8 @@ pub mod tests {
     #[cfg(feature = "file_io")]
     fn test_sign_with_expired_cert() {
         use crate::{create_signer, crypto::raw_signature::SigningAlg};
+
+        let settings = Settings::default();
 
         // test adding to actual image
         let (format, mut input_stream, mut output_stream) =
@@ -4779,7 +4785,13 @@ pub mod tests {
 
         store.commit_claim(claim).unwrap();
 
-        let r = store.save_to_stream(format, &mut input_stream, &mut output_stream, &signer);
+        let r = store.save_to_stream(
+            format,
+            &mut input_stream,
+            &mut output_stream,
+            &signer,
+            &settings,
+        );
         assert!(r.is_err());
         assert_eq!(
             r.err().unwrap().to_string(),
@@ -4825,6 +4837,8 @@ pub mod tests {
     #[c2pa_test_async]
     //#[ignore] // this is not generating the expected error. Needs investigation.
     async fn test_jumbf_generation_async() -> Result<()> {
+        let settings = Settings::default();
+
         // Verify after sign is causing UnreferencedManifest errors here, since the manifests don't reference each other.
         //no_verify_after_sign();
 
@@ -4855,19 +4869,37 @@ pub mod tests {
 
         store.commit_claim(claim1)?;
         store
-            .save_to_stream_async(format, &mut input_stream, &mut output_stream, &signer)
+            .save_to_stream_async(
+                format,
+                &mut input_stream,
+                &mut output_stream,
+                &signer,
+                &settings,
+            )
             .await?;
         store.commit_claim(claim_capture)?;
         let mut temp_stream = Cursor::new(Vec::new());
         output_stream.rewind()?;
         store
-            .save_to_stream_async(format, &mut output_stream, &mut temp_stream, &signer)
+            .save_to_stream_async(
+                format,
+                &mut output_stream,
+                &mut temp_stream,
+                &signer,
+                &settings,
+            )
             .await?;
         store.commit_claim(claim2)?;
         temp_stream.rewind()?;
         output_stream.rewind()?;
         store
-            .save_to_stream_async(format, &mut temp_stream, &mut output_stream, &signer)
+            .save_to_stream_async(
+                format,
+                &mut temp_stream,
+                &mut output_stream,
+                &signer,
+                &settings,
+            )
             .await
             .unwrap();
 
@@ -4905,7 +4937,9 @@ pub mod tests {
 
     #[test]
     fn test_png_jumbf_generation() {
-        no_verify_after_sign();
+        let mut settings = Settings::default();
+        settings.verify.verify_after_sign = false;
+
         // test adding to actual image
         let (format, mut input_stream, mut output_stream) = create_test_streams("libpng-test.png");
 
@@ -4929,14 +4963,26 @@ pub mod tests {
         // Move the claim to claims list. Note this is not real, the claims would have to be signed in between commits
         store.commit_claim(claim1).unwrap();
         store
-            .save_to_stream(format, &mut input_stream, &mut output_stream, &signer)
+            .save_to_stream(
+                format,
+                &mut input_stream,
+                &mut output_stream,
+                &signer,
+                &settings,
+            )
             .unwrap();
 
         store.commit_claim(claim_capture).unwrap();
         output_stream.rewind().unwrap();
         let mut temp_stream = Cursor::new(Vec::new());
         store
-            .save_to_stream(format, &mut output_stream, &mut temp_stream, &signer)
+            .save_to_stream(
+                format,
+                &mut output_stream,
+                &mut temp_stream,
+                &signer,
+                &settings,
+            )
             .unwrap();
 
         store.commit_claim(claim2).unwrap();
@@ -4948,6 +4994,7 @@ pub mod tests {
                 &mut temp_stream,
                 &mut output_stream,
                 signer.as_ref(),
+                &settings,
             )
             .unwrap();
 
@@ -5172,6 +5219,8 @@ pub mod tests {
     */
     #[test]
     fn test_wav_jumbf_generation() {
+        let settings = Settings::default();
+
         let (format, mut input_stream, mut output_stream) = create_test_streams("sample1.wav");
 
         // Create claims store.
@@ -5199,6 +5248,7 @@ pub mod tests {
                 &mut input_stream,
                 &mut output_stream,
                 signer.as_ref(),
+                &settings,
             )
             .unwrap();
         store.commit_claim(claim_capture).unwrap();
@@ -5210,6 +5260,7 @@ pub mod tests {
                 &mut output_stream,
                 &mut temp_stream,
                 signer.as_ref(),
+                &settings,
             )
             .unwrap();
         store.commit_claim(claim2).unwrap();
@@ -5220,6 +5271,7 @@ pub mod tests {
                 &mut temp_stream,
                 &mut output_stream,
                 signer.as_ref(),
+                &settings,
             )
             .unwrap();
 
@@ -5236,14 +5288,8 @@ pub mod tests {
 
         // read from new stream
         output_stream.rewind().unwrap();
-        let new_store = Store::from_stream(
-            format,
-            &mut output_stream,
-            true,
-            &mut report,
-            &Settings::default(),
-        )
-        .unwrap();
+        let new_store =
+            Store::from_stream(format, &mut output_stream, true, &mut report, &settings).unwrap();
 
         // dump store and compare to original
         for claim in new_store.claims() {
@@ -5275,6 +5321,8 @@ pub mod tests {
 
     #[test]
     fn test_avi_jumbf_generation() {
+        let settings = Settings::default();
+
         let (format, mut input_stream, mut output_stream) = create_test_streams("test.avi");
 
         // Create claims store.
@@ -5297,13 +5345,25 @@ pub mod tests {
         // Move the claim to claims list. Note this is not real, the claims would have to be signed in between commits
         store.commit_claim(claim1).unwrap();
         store
-            .save_to_stream(format, &mut input_stream, &mut output_stream, &signer)
+            .save_to_stream(
+                format,
+                &mut input_stream,
+                &mut output_stream,
+                &signer,
+                &settings,
+            )
             .unwrap();
         store.commit_claim(claim_capture).unwrap();
         output_stream.rewind().unwrap();
         let mut temp_stream = Cursor::new(Vec::new());
         store
-            .save_to_stream(format, &mut output_stream, &mut temp_stream, &signer)
+            .save_to_stream(
+                format,
+                &mut output_stream,
+                &mut temp_stream,
+                &signer,
+                &settings,
+            )
             .unwrap();
         store.commit_claim(claim2).unwrap();
         temp_stream.rewind().unwrap();
@@ -5314,6 +5374,7 @@ pub mod tests {
                 &mut temp_stream,
                 &mut output_stream,
                 signer.as_ref(),
+                &settings,
             )
             .unwrap();
 
@@ -5369,6 +5430,8 @@ pub mod tests {
 
     #[test]
     fn test_webp_jumbf_generation() {
+        let settings = Settings::default();
+
         let (format, mut input_stream, mut output_stream) = create_test_streams("sample1.webp");
 
         // Create claims store.
@@ -5391,13 +5454,25 @@ pub mod tests {
         // Move the claim to claims list. Note this is not real, the claims would have to be signed in between commits
         store.commit_claim(claim1).unwrap();
         store
-            .save_to_stream(format, &mut input_stream, &mut output_stream, &signer)
+            .save_to_stream(
+                format,
+                &mut input_stream,
+                &mut output_stream,
+                &signer,
+                &settings,
+            )
             .unwrap();
         store.commit_claim(claim_capture).unwrap();
         output_stream.rewind().unwrap();
         let mut temp_stream = Cursor::new(Vec::new());
         store
-            .save_to_stream(format, &mut output_stream, &mut temp_stream, &signer)
+            .save_to_stream(
+                format,
+                &mut output_stream,
+                &mut temp_stream,
+                &signer,
+                &settings,
+            )
             .unwrap();
         store.commit_claim(claim2).unwrap();
         temp_stream.rewind().unwrap();
@@ -5408,6 +5483,7 @@ pub mod tests {
                 &mut temp_stream,
                 &mut output_stream,
                 signer.as_ref(),
+                &settings,
             )
             .unwrap();
 
@@ -5463,6 +5539,8 @@ pub mod tests {
 
     #[test]
     fn test_heic() {
+        let settings = Settings::default();
+
         let (format, mut input_stream, mut output_stream) = create_test_streams("sample1.heic");
 
         // Create claims store.
@@ -5482,6 +5560,7 @@ pub mod tests {
                 &mut input_stream,
                 &mut output_stream,
                 signer.as_ref(),
+                &settings,
             )
             .unwrap();
 
@@ -5519,6 +5598,8 @@ pub mod tests {
 
     #[test]
     fn test_avif() {
+        let settings = Settings::default();
+
         let (format, mut input_stream, mut output_stream) = create_test_streams("sample1.avif");
 
         // Create claims store.
@@ -5538,6 +5619,7 @@ pub mod tests {
                 &mut input_stream,
                 &mut output_stream,
                 signer.as_ref(),
+                &settings,
             )
             .unwrap();
 
@@ -5545,14 +5627,8 @@ pub mod tests {
 
         // read from new stream
         output_stream.rewind().unwrap();
-        let new_store = Store::from_stream(
-            format,
-            &mut output_stream,
-            true,
-            &mut report,
-            &Settings::default(),
-        )
-        .unwrap();
+        let new_store =
+            Store::from_stream(format, &mut output_stream, true, &mut report, &settings).unwrap();
 
         // dump store and compare to original
         for claim in new_store.claims() {
@@ -5575,6 +5651,8 @@ pub mod tests {
 
     #[test]
     fn test_heif() {
+        let settings = Settings::default();
+
         let (format, mut input_stream, mut output_stream) = create_test_streams("sample1.heif");
 
         // Create claims store.
@@ -5594,6 +5672,7 @@ pub mod tests {
                 &mut input_stream,
                 &mut output_stream,
                 signer.as_ref(),
+                &settings,
             )
             .unwrap();
 
@@ -5601,14 +5680,8 @@ pub mod tests {
 
         // read from new stream
         output_stream.rewind().unwrap();
-        let new_store = Store::from_stream(
-            format,
-            &mut output_stream,
-            true,
-            &mut report,
-            &Settings::default(),
-        )
-        .unwrap();
+        let new_store =
+            Store::from_stream(format, &mut output_stream, true, &mut report, &settings).unwrap();
 
         // dump store and compare to original
         for claim in new_store.claims() {
@@ -5760,6 +5833,9 @@ pub mod tests {
     #[test]
     fn test_verifiable_credentials() {
         use crate::utils::test::create_test_store_v1;
+
+        let settings = Settings::default();
+
         let (format, mut input_stream, mut output_stream) =
             create_test_streams("earth_apollo17.jpg");
 
@@ -5775,6 +5851,7 @@ pub mod tests {
                 &mut input_stream,
                 &mut output_stream,
                 signer.as_ref(),
+                &settings,
             )
             .unwrap();
 
@@ -5785,7 +5862,7 @@ pub mod tests {
             &mut output_stream,
             true,
             &mut StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError),
-            &Settings::default(),
+            &settings,
         )
         .unwrap();
 
@@ -5805,6 +5882,9 @@ pub mod tests {
     #[test]
     fn test_data_box_creation() {
         use crate::utils::test::create_test_store_v1;
+
+        let settings = Settings::default();
+
         let (format, mut input_stream, mut output_stream) =
             create_test_streams("earth_apollo17.jpg");
 
@@ -5820,6 +5900,7 @@ pub mod tests {
                 &mut input_stream,
                 &mut output_stream,
                 signer.as_ref(),
+                &settings,
             )
             .unwrap();
 
@@ -5830,7 +5911,7 @@ pub mod tests {
             &mut output_stream,
             true,
             &mut StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError),
-            &Settings::default(),
+            &settings,
         )
         .unwrap();
 
@@ -5880,6 +5961,9 @@ pub mod tests {
     #[test]
     fn test_update_manifest_v1() {
         use crate::{hashed_uri::HashedUri, utils::test::create_test_store_v1};
+
+        let settings = Settings::default();
+
         let (format, mut input_stream, mut output_stream) =
             create_test_streams("earth_apollo17.jpg");
         let signer = test_signer(SigningAlg::Ps256);
@@ -5894,20 +5978,15 @@ pub mod tests {
                 &mut input_stream,
                 &mut output_stream,
                 signer.as_ref(),
+                &settings,
             )
             .unwrap();
 
         let mut report = StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
         // read back in
         output_stream.rewind().unwrap();
-        let restored_store = Store::from_stream(
-            format,
-            &mut output_stream,
-            true,
-            &mut report,
-            &Settings::default(),
-        )
-        .unwrap();
+        let restored_store =
+            Store::from_stream(format, &mut output_stream, true, &mut report, &settings).unwrap();
         let pc = restored_store.provenance_claim().unwrap();
 
         // should be a regular manifest
@@ -5945,19 +6024,14 @@ pub mod tests {
                 &mut output_stream,
                 &mut output_stream2,
                 signer.as_ref(),
+                &settings,
             )
             .unwrap();
 
         // read back in store with update manifest
         output_stream2.rewind().unwrap();
-        let um_store = Store::from_stream(
-            format,
-            &mut output_stream2,
-            true,
-            &mut report,
-            &Settings::default(),
-        )
-        .unwrap();
+        let um_store =
+            Store::from_stream(format, &mut output_stream2, true, &mut report, &settings).unwrap();
 
         let um = um_store.provenance_claim().unwrap();
 
@@ -5976,6 +6050,8 @@ pub mod tests {
             utils::test::create_test_store_v1, ClaimGeneratorInfo, ValidationResults,
         };
 
+        let settings = Settings::default();
+
         let signer = test_signer(SigningAlg::Ps256);
 
         // Create test streams from fixture
@@ -5992,6 +6068,7 @@ pub mod tests {
                 &mut input_stream,
                 &mut output_stream,
                 signer.as_ref(),
+                &settings,
             )
             .unwrap();
 
@@ -6000,14 +6077,9 @@ pub mod tests {
         output_stream.rewind().unwrap();
         let ingredient_vec = output_stream.get_ref().clone();
         let mut ingredient_stream = Cursor::new(ingredient_vec);
-        let restored_store = Store::from_stream(
-            format,
-            &mut ingredient_stream,
-            true,
-            &mut report,
-            &Settings::default(),
-        )
-        .unwrap();
+        let restored_store =
+            Store::from_stream(format, &mut ingredient_stream, true, &mut report, &settings)
+                .unwrap();
         let pc = restored_store.provenance_claim().unwrap();
 
         // should be a regular manifest
@@ -6086,6 +6158,7 @@ pub mod tests {
                 &mut output_stream,
                 &mut output_stream2,
                 signer.as_ref(),
+                &settings,
             )
             .unwrap();
 
@@ -6093,14 +6166,9 @@ pub mod tests {
 
         // read back in store with update manifest
         output_stream2.rewind().unwrap();
-        let um_store = Store::from_stream(
-            format,
-            &mut output_stream2,
-            true,
-            &mut um_report,
-            &Settings::default(),
-        )
-        .unwrap();
+        let um_store =
+            Store::from_stream(format, &mut output_stream2, true, &mut um_report, &settings)
+                .unwrap();
 
         let um = um_store.provenance_claim().unwrap();
 
@@ -6118,6 +6186,8 @@ pub mod tests {
             hashed_uri::HashedUri, jumbf::labels::to_signature_uri, ClaimGeneratorInfo,
             ValidationResults,
         };
+
+        let settings = Settings::default();
 
         let signer = test_signer(SigningAlg::Ps256);
 
@@ -6191,6 +6261,7 @@ pub mod tests {
                 &mut input_stream,
                 &mut output_stream,
                 signer.as_ref(),
+                &settings,
             )
             .unwrap();
 
@@ -6198,14 +6269,9 @@ pub mod tests {
 
         // read back in store with update manifest
         output_stream.rewind().unwrap();
-        let mut um_store = Store::from_stream(
-            format,
-            &mut output_stream,
-            true,
-            &mut um_report,
-            &Settings::default(),
-        )
-        .unwrap();
+        let mut um_store =
+            Store::from_stream(format, &mut output_stream, true, &mut um_report, &settings)
+                .unwrap();
 
         let um = um_store.provenance_claim().unwrap();
 
@@ -6275,6 +6341,7 @@ pub mod tests {
                 &mut output_stream,
                 &mut output_stream2,
                 signer.as_ref(),
+                &settings,
             )
             .unwrap();
 
@@ -6288,7 +6355,7 @@ pub mod tests {
             &mut output_stream2,
             true,
             &mut collapsed_report,
-            &Settings::default(),
+            &settings,
         )
         .unwrap();
 
@@ -6329,6 +6396,8 @@ pub mod tests {
             utils::test::create_test_store_v1, ClaimGeneratorInfo, ValidationResults,
         };
 
+        let settings = Settings::default();
+
         let signer = test_signer(SigningAlg::Ps256);
 
         // Create test streams from fixture
@@ -6345,6 +6414,7 @@ pub mod tests {
                 &mut input_stream,
                 &mut output_stream,
                 signer.as_ref(),
+                &settings,
             )
             .unwrap();
 
@@ -6354,14 +6424,9 @@ pub mod tests {
         let ingredient_vec = output_stream.get_ref().clone();
         let mut ingredient_stream = Cursor::new(ingredient_vec.clone());
 
-        let restored_store = Store::from_stream(
-            format,
-            &mut ingredient_stream,
-            true,
-            &mut report,
-            &Settings::default(),
-        )
-        .unwrap();
+        let restored_store =
+            Store::from_stream(format, &mut ingredient_stream, true, &mut report, &settings)
+                .unwrap();
 
         let pc = restored_store.provenance_claim().unwrap();
 
@@ -6380,7 +6445,7 @@ pub mod tests {
         let (manifest_bytes, _) = Store::load_jumbf_from_stream(
             format,
             &mut Cursor::new(ingredient_vec.clone()),
-            &Settings::default(),
+            &settings,
         )
         .unwrap();
         let mut redacted_store =
@@ -6437,6 +6502,7 @@ pub mod tests {
                 &mut output_stream,
                 &mut output_stream2,
                 signer.as_ref(),
+                &settings,
             )
             .unwrap();
 
@@ -6445,14 +6511,9 @@ pub mod tests {
         // read back in store with update manifest
         output_stream2.rewind().unwrap();
 
-        let um_store = Store::from_stream(
-            format,
-            &mut output_stream2,
-            true,
-            &mut um_report,
-            &Settings::default(),
-        )
-        .unwrap();
+        let um_store =
+            Store::from_stream(format, &mut output_stream2, true, &mut um_report, &settings)
+                .unwrap();
 
         let um = um_store.provenance_claim().unwrap();
 
@@ -6502,6 +6563,8 @@ pub mod tests {
             utils::test::create_test_store_v1, ClaimGeneratorInfo, ValidationResults,
         };
 
+        let settings = Settings::default();
+
         let signer = test_signer(SigningAlg::Ps256);
 
         // Create test streams from fixture
@@ -6518,6 +6581,7 @@ pub mod tests {
                 &mut input_stream,
                 &mut output_stream,
                 signer.as_ref(),
+                &settings,
             )
             .unwrap();
 
@@ -6527,14 +6591,9 @@ pub mod tests {
         let ingredient_vec = output_stream.get_ref().clone();
         let mut ingredient_stream = Cursor::new(ingredient_vec.clone());
 
-        let restored_store = Store::from_stream(
-            format,
-            &mut ingredient_stream,
-            true,
-            &mut report,
-            &Settings::default(),
-        )
-        .unwrap();
+        let restored_store =
+            Store::from_stream(format, &mut ingredient_stream, true, &mut report, &settings)
+                .unwrap();
 
         let pc = restored_store.provenance_claim().unwrap();
 
@@ -6553,7 +6612,7 @@ pub mod tests {
         let (manifest_bytes, _) = Store::load_jumbf_from_stream(
             format,
             &mut Cursor::new(ingredient_vec.clone()),
-            &Settings::default(),
+            &settings,
         )
         .unwrap();
 
@@ -6611,6 +6670,7 @@ pub mod tests {
                 &mut output_stream,
                 &mut output_stream2,
                 signer.as_ref(),
+                &settings,
             )
             .unwrap();
 
@@ -6619,14 +6679,9 @@ pub mod tests {
         // read back in store with update manifest
         output_stream2.rewind().unwrap();
 
-        let um_store = Store::from_stream(
-            format,
-            &mut output_stream2,
-            true,
-            &mut um_report,
-            &Settings::default(),
-        )
-        .unwrap();
+        let um_store =
+            Store::from_stream(format, &mut output_stream2, true, &mut um_report, &settings)
+                .unwrap();
 
         let um = um_store.provenance_claim().unwrap();
 
@@ -6643,12 +6698,9 @@ pub mod tests {
         new_claim.add_claim_generator_info(cgi);
 
         // load original ingredient without redaction
-        let (original_manifest_bytes, _) = Store::load_jumbf_from_stream(
-            format,
-            &mut Cursor::new(ingredient_vec),
-            &Settings::default(),
-        )
-        .unwrap();
+        let (original_manifest_bytes, _) =
+            Store::load_jumbf_from_stream(format, &mut Cursor::new(ingredient_vec), &settings)
+                .unwrap();
 
         Store::load_ingredient_to_claim(&mut new_claim, &original_manifest_bytes, None).unwrap();
 
@@ -6682,6 +6734,8 @@ pub mod tests {
             utils::test::create_test_store_v1, ClaimGeneratorInfo, ValidationResults,
         };
 
+        let settings = Settings::default();
+
         let signer = test_signer(SigningAlg::Ps256);
 
         // Create test streams from fixture
@@ -6698,6 +6752,7 @@ pub mod tests {
                 &mut input_stream,
                 &mut output_stream,
                 signer.as_ref(),
+                &settings,
             )
             .unwrap();
 
@@ -6705,14 +6760,8 @@ pub mod tests {
         // read back in
         output_stream.rewind().unwrap();
 
-        let restored_store = Store::from_stream(
-            format,
-            &mut output_stream,
-            true,
-            &mut report,
-            &Settings::default(),
-        )
-        .unwrap();
+        let restored_store =
+            Store::from_stream(format, &mut output_stream, true, &mut report, &settings).unwrap();
 
         let pc = restored_store.provenance_claim().unwrap();
 
@@ -6779,7 +6828,13 @@ pub mod tests {
         output_stream.rewind().unwrap();
         let mut op_output = std::io::Cursor::new(Vec::new());
         redacted_store
-            .save_to_stream(format, &mut output_stream, &mut op_output, signer.as_ref())
+            .save_to_stream(
+                format,
+                &mut output_stream,
+                &mut op_output,
+                signer.as_ref(),
+                &settings,
+            )
             .unwrap();
 
         let mut um_report = StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
@@ -6787,14 +6842,8 @@ pub mod tests {
         // read back in store with update manifest
         op_output.rewind().unwrap();
 
-        let um_store = Store::from_stream(
-            format,
-            &mut op_output,
-            true,
-            &mut um_report,
-            &Settings::default(),
-        )
-        .unwrap();
+        let um_store =
+            Store::from_stream(format, &mut op_output, true, &mut um_report, &settings).unwrap();
 
         let um = um_store.provenance_claim().unwrap();
 
@@ -6864,7 +6913,13 @@ pub mod tests {
         output_stream.rewind().unwrap();
         let mut op2_output = std::io::Cursor::new(Vec::new());
         redacted_store2
-            .save_to_stream(format, &mut output_stream, &mut op2_output, signer.as_ref())
+            .save_to_stream(
+                format,
+                &mut output_stream,
+                &mut op2_output,
+                signer.as_ref(),
+                &settings,
+            )
             .unwrap();
 
         // add ingredient again without redaction to make sure conflict is resolved with current redaction
@@ -7067,6 +7122,8 @@ pub mod tests {
 
     #[test]
     fn test_bmff_jumbf_generation() {
+        let settings = Settings::default();
+
         // test adding to actual image
         let (format, mut input_stream, mut output_stream) = create_test_streams("video1.mp4");
 
@@ -7086,6 +7143,7 @@ pub mod tests {
                 &mut input_stream,
                 &mut output_stream,
                 signer.as_ref(),
+                &settings,
             )
             .unwrap();
 
@@ -7094,14 +7152,8 @@ pub mod tests {
         // can we read back in
         output_stream.set_position(0);
 
-        let new_store = Store::from_stream(
-            format,
-            &mut output_stream,
-            true,
-            &mut report,
-            &Settings::default(),
-        )
-        .unwrap();
+        let new_store =
+            Store::from_stream(format, &mut output_stream, true, &mut report, &settings).unwrap();
 
         assert!(!report.has_any_error());
 
@@ -7110,6 +7162,8 @@ pub mod tests {
 
     #[test]
     fn test_bmff_jumbf_generation_claim_v1() {
+        let settings = Settings::default();
+
         // test adding to actual image
         let (format, mut input_stream, mut output_stream) = create_test_streams("video1.mp4");
 
@@ -7129,6 +7183,7 @@ pub mod tests {
                 &mut input_stream,
                 &mut output_stream,
                 signer.as_ref(),
+                &settings,
             )
             .unwrap();
 
@@ -7137,14 +7192,8 @@ pub mod tests {
         // can we read back in
         output_stream.set_position(0);
 
-        let new_store = Store::from_stream(
-            format,
-            &mut output_stream,
-            true,
-            &mut report,
-            &Settings::default(),
-        )
-        .unwrap();
+        let new_store =
+            Store::from_stream(format, &mut output_stream, true, &mut report, &settings).unwrap();
 
         assert!(!report.has_any_error());
 
@@ -7153,6 +7202,8 @@ pub mod tests {
 
     #[test]
     fn test_jumbf_generation_with_bmffv3_fixed_block_size() {
+        let settings = Settings::default();
+
         // test adding to actual image
         let (format, mut input_stream, mut output_stream) = create_test_streams("video1.mp4");
 
@@ -7175,6 +7226,7 @@ pub mod tests {
                 &mut input_stream,
                 &mut output_stream,
                 signer.as_ref(),
+                &settings,
             )
             .unwrap();
 
@@ -7183,14 +7235,8 @@ pub mod tests {
         // can we read back in
         output_stream.set_position(0);
 
-        let new_store = Store::from_stream(
-            format,
-            &mut output_stream,
-            true,
-            &mut report,
-            &Settings::default(),
-        )
-        .unwrap();
+        let new_store =
+            Store::from_stream(format, &mut output_stream, true, &mut report, &settings).unwrap();
 
         assert!(!report.has_any_error());
 
@@ -7199,6 +7245,8 @@ pub mod tests {
 
     #[test]
     fn test_jumbf_generation_with_bmffv3_fixed_block_size_no_proof() {
+        let settings = Settings::default();
+
         let (format, mut input_stream, mut output_stream) = create_test_streams("video1.mp4");
 
         // use Merkle tree with 1024 byte chunks an 0 proofs (no UUID boxes)
@@ -7221,6 +7269,7 @@ pub mod tests {
                 &mut input_stream,
                 &mut output_stream,
                 signer.as_ref(),
+                &settings,
             )
             .unwrap();
 
@@ -7229,14 +7278,8 @@ pub mod tests {
         // can we read back in
         output_stream.set_position(0);
 
-        let new_store = Store::from_stream(
-            format,
-            &mut output_stream,
-            true,
-            &mut report,
-            &Settings::default(),
-        )
-        .unwrap();
+        let new_store =
+            Store::from_stream(format, &mut output_stream, true, &mut report, &settings).unwrap();
 
         assert!(!report.has_any_error());
 
@@ -7245,6 +7288,8 @@ pub mod tests {
 
     #[test]
     fn test_jumbf_generation_with_bmffv3_fixed_block_size_stream() {
+        let settings = Settings::default();
+
         // test adding to actual image
         let (format, mut input_stream, mut output_stream) = create_test_streams("video1.mp4");
 
@@ -7267,6 +7312,7 @@ pub mod tests {
                 &mut input_stream,
                 &mut output_stream,
                 signer.as_ref(),
+                &settings,
             )
             .unwrap();
 
@@ -7275,14 +7321,8 @@ pub mod tests {
         // can we read back in
         output_stream.set_position(0);
 
-        let new_store = Store::from_stream(
-            format,
-            &mut output_stream,
-            true,
-            &mut report,
-            &Settings::default(),
-        )
-        .unwrap();
+        let new_store =
+            Store::from_stream(format, &mut output_stream, true, &mut report, &settings).unwrap();
 
         assert!(!report.has_any_error());
 
@@ -7291,6 +7331,8 @@ pub mod tests {
 
     #[test]
     fn test_bmff_jumbf_stream_generation() {
+        let settings = Settings::default();
+
         // test adding to actual image
         let (format, mut input_stream, mut output_stream) = create_test_streams("video1.mp4");
 
@@ -7311,6 +7353,7 @@ pub mod tests {
                 &mut input_stream,
                 &mut output_stream,
                 signer.as_ref(),
+                &settings,
             )
             .unwrap();
 
@@ -7319,7 +7362,7 @@ pub mod tests {
         output_stream.set_position(0);
 
         let (manifest_bytes, _) =
-            Store::load_jumbf_from_stream(format, &mut input_stream, &Settings::default()).unwrap();
+            Store::load_jumbf_from_stream(format, &mut input_stream, &settings).unwrap();
 
         let _new_store = {
             Store::from_manifest_data_and_stream(
@@ -7402,6 +7445,8 @@ pub mod tests {
         use crate::utils::test::{run_file_test, TestFileSetup};
 
         run_file_test(file_name, |setup: &TestFileSetup| {
+            let settings = Settings::default();
+
             // Create claims store.
             let mut store = Store::new(&Settings::default());
 
@@ -7425,6 +7470,7 @@ pub mod tests {
                     &mut input_stream,
                     &mut output_stream,
                     signer.as_ref(),
+                    &settings,
                 )
                 .unwrap();
 
@@ -7472,6 +7518,8 @@ pub mod tests {
 
     #[test]
     fn test_user_guid_external_manifest_embedded() {
+        let settings = Settings::default();
+
         // Create test streams from fixture
         let (format, mut input_stream, mut output_stream) = create_test_streams("libpng-test.png");
 
@@ -7501,6 +7549,7 @@ pub mod tests {
                 &mut input_stream,
                 &mut output_stream,
                 signer.as_ref(),
+                &settings,
             )
             .unwrap();
 
@@ -7532,6 +7581,8 @@ pub mod tests {
 
     #[c2pa_test_async]
     async fn test_jumbf_generation_stream() {
+        let settings = Settings::default();
+
         let file_buffer = include_bytes!("../tests/fixtures/earth_apollo17.jpg").to_vec();
         // convert buffer to cursor with Read/Write/Seek capability
         let mut buf_io = Cursor::new(file_buffer);
@@ -7555,6 +7606,7 @@ pub mod tests {
                 &mut buf_io,
                 &mut result_stream,
                 signer.as_ref(),
+                &settings,
             )
             .unwrap();
 
@@ -7580,6 +7632,8 @@ pub mod tests {
 
     #[test]
     fn test_tiff_jumbf_generation() {
+        let settings = Settings::default();
+
         // Create test streams from fixture
         let (format, mut input_stream, mut output_stream) = create_test_streams("TUSCANY.TIF");
 
@@ -7600,6 +7654,7 @@ pub mod tests {
                 &mut input_stream,
                 &mut output_stream,
                 signer.as_ref(),
+                &settings,
             )
             .unwrap();
 
@@ -8053,6 +8108,8 @@ pub mod tests {
 
     #[test]
     fn test_dynamic_assertions() {
+        let settings = Settings::default();
+
         #[derive(Serialize)]
         struct TestAssertion {
             my_tag: String,
@@ -8157,7 +8214,7 @@ pub mod tests {
         let mut result_stream = Cursor::new(result);
 
         store
-            .save_to_stream("jpeg", &mut buf_io, &mut result_stream, &signer)
+            .save_to_stream("jpeg", &mut buf_io, &mut result_stream, &signer, &settings)
             .unwrap();
 
         // rewind the result stream to read from it
@@ -8295,7 +8352,7 @@ pub mod tests {
         let mut result_stream = Cursor::new(result);
 
         store
-            .save_to_stream_async("jpeg", &mut buf_io, &mut result_stream, &signer)
+            .save_to_stream_async("jpeg", &mut buf_io, &mut result_stream, &signer, &settings)
             .await
             .unwrap();
 
@@ -8327,6 +8384,8 @@ pub mod tests {
     #[test]
     #[cfg(feature = "file_io")]
     fn test_fragmented_jumbf_generation() {
+        let settings = Settings::default();
+
         // test adding to actual image
 
         let tempdir = tempdirectory().expect("temp dir");
@@ -8372,6 +8431,7 @@ pub mod tests {
                             &fragments,
                             new_output_path.as_path(),
                             signer.as_ref(),
+                            &settings,
                         )
                         .unwrap();
 

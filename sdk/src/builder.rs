@@ -1534,10 +1534,10 @@ impl Builder {
 
         // sign and write our store to to the output image file
         if _sync {
-            store.save_to_stream(&format, source, dest, signer)
+            store.save_to_stream(&format, source, dest, signer, &settings)
         } else {
             store
-                .save_to_stream_async(&format, source, dest, signer)
+                .save_to_stream_async(&format, source, dest, signer, &settings)
                 .await
         }
     }
@@ -1625,6 +1625,7 @@ impl Builder {
             fragment_paths,
             output_path.as_ref(),
             signer,
+            &settings,
         )
     }
 
