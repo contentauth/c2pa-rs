@@ -923,6 +923,7 @@ impl Ingredient {
                     &mut *stream,
                     true,
                     &mut validation_log,
+                    settings,
                 );
                 (result, Some(manifest_bytes))
             }

@@ -294,6 +294,7 @@ impl Reader {
                 stream,
                 verify,
                 &mut validation_log,
+                &settings,
             )
         } else {
             Store::from_manifest_data_and_stream_async(
@@ -302,6 +303,7 @@ impl Reader {
                 stream,
                 verify,
                 &mut validation_log,
+                &settings,
             )
             .await
         }?;

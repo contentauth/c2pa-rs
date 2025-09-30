@@ -3674,6 +3674,7 @@ impl Store {
                 &mut stream,
                 verify,
                 validation_log,
+                &settings,
             )
         } else {
             Self::from_manifest_data_and_stream_async(
@@ -3682,6 +3683,7 @@ impl Store {
                 &mut stream,
                 verify,
                 validation_log,
+                &settings,
             )
             .await
         };
@@ -3746,7 +3748,7 @@ impl Store {
     }
 
     /// Load store from a manifest data and stream
-    #[async_generic()]
+    #[async_generic]
     #[cfg(not(target_arch = "wasm32"))]
     pub fn from_manifest_data_and_stream(
         c2pa_data: &[u8],
@@ -3754,10 +3756,8 @@ impl Store {
         mut stream: impl Read + Seek + Send,
         verify: bool,
         validation_log: &mut StatusTracker,
+        settings: &Settings,
     ) -> Result<Self> {
-        let settings = crate::settings::get_settings().unwrap_or_default();
-        // TO DO BEFORE MERGE? Pass Settings in here?
-
         stream.rewind()?;
 
         // First we convert the JUMBF into a usable store.
@@ -3770,16 +3770,16 @@ impl Store {
             stream.rewind()?;
             let mut asset_data = ClaimAssetData::Stream(&mut stream, format);
             if _sync {
-                Store::verify_store(&store, &mut asset_data, validation_log, &settings)
+                Store::verify_store(&store, &mut asset_data, validation_log, settings)
             } else {
-                Store::verify_store_async(&store, &mut asset_data, validation_log, &settings).await
+                Store::verify_store_async(&store, &mut asset_data, validation_log, settings).await
             }?;
         }
         Ok(store)
     }
 
     /// Load store from a manifest data and stream
-    #[async_generic()]
+    #[async_generic]
     #[cfg(target_arch = "wasm32")]
     pub fn from_manifest_data_and_stream(
         c2pa_data: &[u8],
@@ -3787,10 +3787,8 @@ impl Store {
         mut stream: impl Read + Seek,
         verify: bool,
         validation_log: &mut StatusTracker,
+        settings: &Settings,
     ) -> Result<Self> {
-        let settings = crate::settings::get_settings().unwrap_or_default();
-        // TO DO BEFORE MERGE? Pass Settings in here?
-
         // first we convert the JUMBF into a usable store
         let store = Store::from_jumbf(c2pa_data, validation_log).inspect_err(|e| {
             log_item!("asset", "error loading file", "load_from_asset")
@@ -3802,9 +3800,9 @@ impl Store {
         if verify {
             let mut asset_data = ClaimAssetData::Stream(&mut stream, format);
             if _sync {
-                Store::verify_store(&store, &mut asset_data, validation_log, &settings)
+                Store::verify_store(&store, &mut asset_data, validation_log, settings)
             } else {
-                Store::verify_store_async(&store, &mut asset_data, validation_log, &settings).await
+                Store::verify_store_async(&store, &mut asset_data, validation_log, settings).await
             }?;
         }
         Ok(store)
@@ -7368,6 +7366,7 @@ pub mod tests {
                 &mut output_stream,
                 false,
                 &mut report,
+                &settings,
             )
             .unwrap()
         };
@@ -7493,6 +7492,7 @@ pub mod tests {
                 &mut validation_stream,
                 true,
                 &mut validation_log,
+                &settings,
             )
             .unwrap();
         });
@@ -7572,6 +7572,7 @@ pub mod tests {
             &mut output_stream,
             true,
             &mut validation_log,
+            &settings,
         )
         .unwrap();
     }
