@@ -1064,10 +1064,11 @@ impl Builder {
         actions: &mut Actions,
     ) -> Result<()> {
         if actions.all_actions_included.is_none() {
-            let all_actions_included =
-                settings::get_settings_value::<bool>("builder.actions.all_actions_included");
+            let all_actions_included = settings::get_settings_value::<Option<bool>>(
+                "builder.actions.all_actions_included",
+            );
             if let Ok(all_actions_included) = all_actions_included {
-                actions.all_actions_included = Some(all_actions_included);
+                actions.all_actions_included = all_actions_included;
             }
         }
 

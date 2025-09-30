@@ -785,7 +785,7 @@ impl Actions {
     pub fn new() -> Self {
         Self {
             actions: Vec::new(),
-            all_actions_included: Some(true),
+            all_actions_included: None,
             templates: None,
             metadata: None,
             software_agents: None,
