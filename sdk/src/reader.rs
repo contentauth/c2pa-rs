@@ -382,6 +382,7 @@ impl Reader {
             fragments,
             verify,
             &mut validation_log,
+            &settings,
         ) {
             Ok(store) => Self::from_store(store, &validation_log),
             Err(e) => Err(e),

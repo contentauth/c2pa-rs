@@ -3821,16 +3821,14 @@ impl Store {
         fragments: &Vec<PathBuf>,
         verify: bool,
         validation_log: &mut StatusTracker,
+        settings: &Settings,
     ) -> Result<Store> {
-        let settings = crate::settings::get_settings().unwrap_or_default();
-        // TO DO BEFORE MERGE? Pass Settings in here?
-
         let store = Self::from_stream(
             asset_type,
             &mut *init_segment,
             verify,
             validation_log,
-            &settings,
+            settings,
         )?;
 
         // verify the store
@@ -3841,7 +3839,7 @@ impl Store {
                 &store,
                 &mut ClaimAssetData::StreamFragments(init_segment, fragments, asset_type),
                 validation_log,
-                &settings,
+                settings,
             )?;
         }
 
@@ -8469,6 +8467,7 @@ pub mod tests {
                         &output_fragments,
                         false,
                         &mut validation_log,
+                        &settings,
                     )
                     .unwrap();
 
