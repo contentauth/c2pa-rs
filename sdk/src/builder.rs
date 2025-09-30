@@ -964,12 +964,10 @@ impl Builder {
 
                     let mut actions: Actions = manifest_assertion.to_assertion()?;
 
-                    Self::add_actions_assertion_settings(&ingredient_map, &mut actions, settings)?;
-
                     let mut updates = Vec::new();
                     //#[allow(clippy::explicit_counter_loop)]
                     for (index, action) in actions.actions_mut().iter_mut().enumerate() {
-                        // find and remove the temporary ingredientIds parameter (This h)
+                        // find and remove the temporary ingredientIds parameter
                         let ids = action.extract_ingredient_ids();
 
                         if let Some(ids) = ids {
@@ -1043,6 +1041,10 @@ impl Builder {
                         }
                     }
 
+                    // Do this at the end of the preprocessing step to ensure all ingredient references
+                    // are resolved to their hashed URIs.
+                    Self::add_actions_assertion_settings(&ingredient_map, &mut actions, settings)?;
+
                     claim.add_assertion(&actions)
                 }
                 #[allow(deprecated)]
@@ -1110,7 +1112,7 @@ impl Builder {
         settings: &Settings,
     ) -> Result<()> {
         if actions.all_actions_included.is_none() {
-            actions.all_actions_included = Some(settings.builder.actions.all_actions_included);
+            actions.all_actions_included = settings.builder.actions.all_actions_included;
         }
 
         let action_templates = &settings.builder.actions.templates;
@@ -1965,6 +1967,80 @@ mod tests {
         assert_eq!(manifest.title().unwrap(), "Test_Manifest");
         let test_assertion: TestAssertion = manifest.find_assertion("org.life.meaning").unwrap();
         assert_eq!(test_assertion.answer, 42);
+    }
+
+    // Ensure multiple `c2pa.placed` actions aren't created.
+    // Source: https://github.com/contentauth/c2pa-rs/pull/1458
+    #[test]
+    fn test_builder_one_placed_action_via_ingredient_id_ref() {
+        #[cfg(target_os = "wasi")]
+        Settings::reset().unwrap();
+
+        Settings::from_toml(
+            &toml::toml! {
+                [builder.actions.auto_placed_action]
+                enabled = true
+            }
+            .to_string(),
+        )
+        .unwrap();
+
+        let mut output = Cursor::new(Vec::new());
+        let mut builder = Builder::from_json(
+            &json!({
+                "title": "Test Manifest",
+                "format": "image/jpeg",
+                "ingredients": [
+                    {
+                        "title": "Test Ingredient",
+                        "format": "image/jpeg",
+                        "relationship": "componentOf",
+                        "instance_id": "123"
+                    }
+                ],
+                "assertions": [
+                    {
+                        "label": "c2pa.actions",
+                        "data": {
+                            "actions": [
+                                {
+                                    "action": "c2pa.placed",
+                                    "instanceId": "123"
+                                }
+                            ]
+                        }
+                    },
+                ]
+            })
+            .to_string(),
+        )
+        .unwrap();
+        builder
+            .sign(
+                &Settings::signer().unwrap(),
+                "image/jpeg",
+                &mut Cursor::new(TEST_IMAGE),
+                &mut output,
+            )
+            .unwrap();
+
+        output.rewind().unwrap();
+        let reader = Reader::from_stream("image/jpeg", output).unwrap();
+
+        let actions: Actions = reader
+            .active_manifest()
+            .unwrap()
+            .find_assertion(Actions::LABEL)
+            .unwrap();
+
+        assert_eq!(actions.actions.len(), 2);
+
+        let num_placed_actions = actions
+            .actions
+            .iter()
+            .filter(|action| action.action() == c2pa_action::PLACED)
+            .count();
+        assert_eq!(num_placed_actions, 1);
     }
 
     #[test]
