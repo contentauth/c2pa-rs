@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.67.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.66.0...c2pa-v0.67.0)
+_30 September 2025_
+
+### Fixed
+
+* Do not generate multiple `c2pa.placed` actions with settings ([#1458](https://github.com/contentauth/c2pa-rs/pull/1458))
+* AllActionsIncluded defaults to None ([#1459](https://github.com/contentauth/c2pa-rs/pull/1459))
+
+### Other
+
+* Fix pdf benchmarks ([#1452](https://github.com/contentauth/c2pa-rs/pull/1452))
+
 ## [0.66.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.65.1...c2pa-v0.66.0)
 _24 September 2025_
 
