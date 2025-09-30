@@ -2923,6 +2923,7 @@ impl Store {
             input_stream,
             &mut intermediate_stream,
             signer.reserve_size(),
+            &settings,
         )?;
 
         let mut preliminary_claim = PartialClaim::default();
@@ -3016,10 +3017,8 @@ impl Store {
         input_stream: &mut dyn CAIRead,
         output_stream: &mut dyn CAIReadWrite,
         reserve_size: usize,
+        settings: &Settings,
     ) -> Result<Vec<u8>> {
-        let settings = crate::settings::get_settings().unwrap_or_default();
-        // TO DO BEFORE MERGE? Pass Settings in here?
-
         let threshold = settings.core.backing_store_memory_threshold_in_mb;
 
         let mut intermediate_stream = io_utils::stream_with_fs_fallback(threshold);
