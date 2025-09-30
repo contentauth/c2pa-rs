@@ -1996,6 +1996,7 @@ pub(crate) mod tests {
         assert_eq!(action2.unwrap().actions()[0].action(), c2pa_action::EDITED);
     }
 
+    #[cfg(any(not(target_arch = "wasm32"), target_os = "wasi"))]
     #[cfg(feature = "file_io")]
     #[c2pa_test_async]
     #[allow(deprecated)]
@@ -2017,6 +2018,7 @@ pub(crate) mod tests {
         );
     }
 
+    #[cfg(any(not(target_arch = "wasm32"), target_os = "wasi"))]
     #[cfg(feature = "file_io")]
     #[c2pa_test_async]
     #[allow(deprecated)]
@@ -2268,6 +2270,7 @@ pub(crate) mod tests {
         //println!("{manifest_store}");main
     }
 
+    #[cfg(any(not(target_arch = "wasm32"), target_os = "wasi"))]
     #[cfg(feature = "file_io")]
     #[c2pa_test_async]
     #[allow(deprecated)]
@@ -2846,6 +2849,7 @@ pub(crate) mod tests {
         assert_eq!(manifest_store.validation_status(), None);
     }
 
+    #[cfg(any(not(target_arch = "wasm32"), target_os = "wasi"))]
     #[cfg(feature = "file_io")]
     #[c2pa_test_async]
     #[allow(deprecated)]

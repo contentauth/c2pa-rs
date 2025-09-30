@@ -4973,6 +4973,8 @@ pub mod tests {
         use serde::Serialize;
         #[cfg(all(feature = "file_io", feature = "v1_api"))]
         use sha2::Sha256;
+        #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
+        use wasm_bindgen_test::*;
 
         use super::super::*;
         use crate::assertions::DigitalSourceType;
@@ -5389,6 +5391,7 @@ pub mod tests {
             assert_eq!(memmem::find(&buf, &original_jumbf[0..1024]), None);
         }
 
+        #[cfg(any(not(target_arch = "wasm32"), target_os = "wasi"))]
         #[c2pa_test_async]
         async fn test_jumbf_generation_async() {
             let signer = async_test_signer(SigningAlg::Ps256);
@@ -5452,6 +5455,7 @@ pub mod tests {
             .unwrap();
         }
 
+        #[cfg(any(not(target_arch = "wasm32"), target_os = "wasi"))]
         #[cfg(feature = "v1_api")]
         #[c2pa_test_async]
         async fn test_jumbf_generation_remote() {
@@ -7815,6 +7819,7 @@ pub mod tests {
             }
         }
 
+        #[cfg(any(not(target_arch = "wasm32"), target_os = "wasi"))]
         #[cfg(feature = "file_io")]
         #[cfg(feature = "v1_api")]
         #[c2pa_test_async]
@@ -7982,6 +7987,7 @@ pub mod tests {
             assert!(!report.has_any_error());
         }
 
+        #[cfg(any(not(target_arch = "wasm32"), target_os = "wasi"))]
         #[cfg(feature = "file_io")]
         #[cfg(feature = "v1_api")]
         #[c2pa_test_async]
