@@ -1210,6 +1210,9 @@ impl Ingredient {
         redactions: Option<Vec<String>>,
         resources: Option<&ResourceStore>, // use alternate resource store (for Builder model)
     ) -> Result<HashedUri> {
+        let settings = crate::settings::get_settings().unwrap_or_default();
+        // TO DO BEFORE MERGE? Pass Settings in here?
+
         let mut thumbnail = None;
         // for Builder model, ingredient resources may be in the manifest
         let get_resource = |id: &str| {
@@ -1229,7 +1232,7 @@ impl Ingredient {
 
                 // have Store check and load ingredients and add them to a claim
                 let ingredient_store =
-                    Store::load_ingredient_to_claim(claim, &manifest_data, redactions)?;
+                    Store::load_ingredient_to_claim(claim, &manifest_data, redactions, &settings)?;
 
                 let ingredient_active_claim = ingredient_store
                     .provenance_claim()

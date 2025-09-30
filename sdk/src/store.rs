@@ -4039,10 +4039,8 @@ impl Store {
         claim: &mut Claim,
         data: &[u8],
         redactions: Option<Vec<String>>,
+        settings: &Settings,
     ) -> Result<Store> {
-        let settings = crate::settings::get_settings().unwrap_or_default();
-        // TO DO BEFORE MERGE? Pass Settings in here?
-
         // constants for ingredient conflict reasons
         const CONFLICTING_MANIFEST: usize = 1; // Conflicts with another C2PA Manifest
 
@@ -4050,7 +4048,7 @@ impl Store {
         let mut to_remove_from_incoming = Vec::new();
 
         let mut report = StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
-        let i_store = Store::from_jumbf(data, &mut report, &settings)?;
+        let i_store = Store::from_jumbf(data, &mut report, settings)?;
 
         let empty_store = Store::default();
 
@@ -5992,6 +5990,7 @@ pub mod tests {
             &mut claim,
             &load_jumbf_from_stream(format, &mut output_stream).unwrap(),
             None,
+            &settings,
         )
         .unwrap();
 
@@ -6090,7 +6089,7 @@ pub mod tests {
                 .unwrap();
 
         let mut new_store =
-            Store::load_ingredient_to_claim(&mut claim, &manifest_bytes, None).unwrap();
+            Store::load_ingredient_to_claim(&mut claim, &manifest_bytes, None, &settings).unwrap();
 
         let ingredient_hashes = new_store.get_manifest_box_hashes(pc);
         let parent_hashed_uri = HashedUri::new(
@@ -6441,9 +6440,13 @@ pub mod tests {
             &settings,
         )
         .unwrap();
-        let mut redacted_store =
-            Store::load_ingredient_to_claim(&mut claim, &manifest_bytes, Some(vec![redacted_uri]))
-                .unwrap();
+        let mut redacted_store = Store::load_ingredient_to_claim(
+            &mut claim,
+            &manifest_bytes,
+            Some(vec![redacted_uri]),
+            &settings,
+        )
+        .unwrap();
 
         let ingredient_hashes = restored_store.get_manifest_box_hashes(pc);
         let parent_hashed_uri = HashedUri::new(
@@ -6528,7 +6531,8 @@ pub mod tests {
             Store::load_jumbf_from_stream(format, &mut output_stream2, &Settings::default())
                 .unwrap();
 
-        Store::load_ingredient_to_claim(&mut new_claim, &redacted_manifest_bytes, None).unwrap();
+        Store::load_ingredient_to_claim(&mut new_claim, &redacted_manifest_bytes, None, &settings)
+            .unwrap();
 
         // load original ingredient without redaction
         let (original_manifest_bytes, _) = Store::load_jumbf_from_stream(
@@ -6538,9 +6542,13 @@ pub mod tests {
         )
         .unwrap();
 
-        let _conflict_store =
-            Store::load_ingredient_to_claim(&mut new_claim, &original_manifest_bytes, None)
-                .unwrap();
+        let _conflict_store = Store::load_ingredient_to_claim(
+            &mut new_claim,
+            &original_manifest_bytes,
+            None,
+            &settings,
+        )
+        .unwrap();
 
         // the confict_store is adjusted to remove the conflicting claim
         let redacted_claim = new_claim.claim_ingredient(pc.label()).unwrap();
@@ -6609,9 +6617,13 @@ pub mod tests {
         )
         .unwrap();
 
-        let mut redacted_store =
-            Store::load_ingredient_to_claim(&mut claim, &manifest_bytes, Some(vec![redacted_uri]))
-                .unwrap();
+        let mut redacted_store = Store::load_ingredient_to_claim(
+            &mut claim,
+            &manifest_bytes,
+            Some(vec![redacted_uri]),
+            &settings,
+        )
+        .unwrap();
 
         let ingredient_hashes = restored_store.get_manifest_box_hashes(pc);
         let parent_hashed_uri = HashedUri::new(
@@ -6695,7 +6707,8 @@ pub mod tests {
             Store::load_jumbf_from_stream(format, &mut Cursor::new(ingredient_vec), &settings)
                 .unwrap();
 
-        Store::load_ingredient_to_claim(&mut new_claim, &original_manifest_bytes, None).unwrap();
+        Store::load_ingredient_to_claim(&mut new_claim, &original_manifest_bytes, None, &settings)
+            .unwrap();
 
         // the confict_store is adjusted to remove the conflicting claim
         let not_redacted_claim = new_claim.claim_ingredient(pc.label()).unwrap();
@@ -6710,7 +6723,8 @@ pub mod tests {
             Store::load_jumbf_from_stream(format, &mut output_stream2, &Settings::default())
                 .unwrap();
 
-        Store::load_ingredient_to_claim(&mut new_claim, &redacted_manifest_bytes, None).unwrap();
+        Store::load_ingredient_to_claim(&mut new_claim, &redacted_manifest_bytes, None, &settings)
+            .unwrap();
 
         // the confict_store is adjusted to remove the conflicting claim
         let redacted_claim = new_claim.claim_ingredient(pc.label()).unwrap();
@@ -6772,9 +6786,13 @@ pub mod tests {
 
         output_stream.rewind().unwrap();
         let ingredient_vec = load_jumbf_from_stream(format, &mut output_stream).unwrap();
-        let mut redacted_store =
-            Store::load_ingredient_to_claim(&mut claim, &ingredient_vec, Some(vec![redacted_uri]))
-                .unwrap();
+        let mut redacted_store = Store::load_ingredient_to_claim(
+            &mut claim,
+            &ingredient_vec,
+            Some(vec![redacted_uri]),
+            &settings,
+        )
+        .unwrap();
 
         let ingredient_hashes = restored_store.get_manifest_box_hashes(pc);
         let parent_hashed_uri = HashedUri::new(
@@ -6858,6 +6876,7 @@ pub mod tests {
             &mut claim2,
             &ingredient_vec,
             Some(vec![redacted_uri2]),
+            &settings,
         )
         .unwrap();
 
@@ -6927,6 +6946,7 @@ pub mod tests {
             &mut new_claim,
             &load_jumbf_from_stream(format, &mut op_output).unwrap(),
             None,
+            &settings,
         )
         .unwrap();
 
@@ -6936,6 +6956,7 @@ pub mod tests {
             &mut new_claim,
             &load_jumbf_from_stream(format, &mut op2_output).unwrap(),
             None,
+            &settings,
         )
         .unwrap();
 
