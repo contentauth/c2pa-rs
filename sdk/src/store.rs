@@ -2578,10 +2578,8 @@ impl Store {
     pub async fn get_box_hashed_embeddable_manifest_async(
         &mut self,
         signer: &dyn AsyncSigner,
+        settings: &Settings,
     ) -> Result<Vec<u8>> {
-        let settings = crate::settings::get_settings().unwrap_or_default();
-        // TO DO BEFORE MERGE? Pass Settings in here?
-
         let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
 
         // make sure there is only one
@@ -2600,7 +2598,7 @@ impl Store {
 
         // sign contents
         let sig = self
-            .sign_claim_async(pc, signer, signer.reserve_size(), &settings)
+            .sign_claim_async(pc, signer, signer.reserve_size(), settings)
             .await?;
         let sig_placeholder = Store::sign_claim_placeholder(pc, signer.reserve_size());
 
@@ -7653,6 +7651,8 @@ pub mod tests {
     #[c2pa_test_async]
     #[cfg(feature = "file_io")]
     async fn test_boxhash_embeddable_manifest_async() {
+        let settings = Settings::default();
+
         // test adding to actual image
         let ap = fixture_path("boxhash.jpg");
         let box_hash_path = fixture_path("boxhash.json");
@@ -7676,7 +7676,7 @@ pub mod tests {
 
         // get the embeddable manifest
         let em = store
-            .get_box_hashed_embeddable_manifest_async(&signer)
+            .get_box_hashed_embeddable_manifest_async(&signer, &settings)
             .await
             .unwrap();
 

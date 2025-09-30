@@ -1472,7 +1472,9 @@ impl Builder {
         let bytes = if _sync {
             store.get_box_hashed_embeddable_manifest(signer, &settings)
         } else {
-            store.get_box_hashed_embeddable_manifest_async(signer).await
+            store
+                .get_box_hashed_embeddable_manifest_async(signer, &settings)
+                .await
         }?;
         // get composed version for embedding to JPEG
         Store::get_composed_manifest(&bytes, format)
