@@ -1125,7 +1125,7 @@ impl Store {
             return Err(Error::JumbfNotFound);
         }
 
-        let mut store = Store::new(&settings);
+        let mut store = Store::new(settings);
 
         // setup a cursor for reading the buffer...
         let mut buf_reader = Cursor::new(buffer);
@@ -1661,7 +1661,7 @@ impl Store {
                             check_ingredient_trust,
                             &store.ctp,
                             validation_log,
-                            &settings,
+                            settings,
                         )?;
                     }
 
@@ -2560,7 +2560,7 @@ impl Store {
         let mut jumbf_bytes = self.to_jumbf_internal(signer.reserve_size())?;
 
         // sign contents
-        let sig = self.sign_claim(pc, signer, signer.reserve_size(), &settings)?;
+        let sig = self.sign_claim(pc, signer, signer.reserve_size(), settings)?;
         let sig_placeholder = Store::sign_claim_placeholder(pc, signer.reserve_size());
 
         if sig_placeholder.len() != sig.len() {
@@ -2812,14 +2812,14 @@ impl Store {
         let jumbf = self.to_jumbf(signer)?;
 
         // use temp store so mulitple calls across renditions will work (the Store is not finalized this way)
-        let mut temp_store = Store::from_jumbf(&jumbf, &mut validation_log, &settings)?;
+        let mut temp_store = Store::from_jumbf(&jumbf, &mut validation_log, settings)?;
 
         let mut jumbf_bytes = temp_store.start_save_bmff_fragmented(
             asset_path,
             fragments,
             output_path,
             signer.reserve_size(),
-            &settings,
+            settings,
         )?;
 
         let mut preliminary_claim = PartialClaim::default();
@@ -2868,7 +2868,7 @@ impl Store {
 
         // sign the claim
         let pc = temp_store.provenance_claim().ok_or(Error::ClaimEncoding)?;
-        let sig = temp_store.sign_claim(pc, signer, signer.reserve_size(), &settings)?;
+        let sig = temp_store.sign_claim(pc, signer, signer.reserve_size(), settings)?;
         let sig_placeholder = Store::sign_claim_placeholder(pc, signer.reserve_size());
 
         match temp_store.finish_save(jumbf_bytes, &dest_path, sig, &sig_placeholder) {
@@ -2923,7 +2923,7 @@ impl Store {
             input_stream,
             &mut intermediate_stream,
             signer.reserve_size(),
-            &settings,
+            settings,
         )?;
 
         let mut preliminary_claim = PartialClaim::default();
@@ -2967,9 +2967,9 @@ impl Store {
 
         let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
         let sig = if _sync {
-            self.sign_claim(pc, signer, signer.reserve_size(), &settings)
+            self.sign_claim(pc, signer, signer.reserve_size(), settings)
         } else {
-            self.sign_claim_async(pc, signer, signer.reserve_size(), &settings)
+            self.sign_claim_async(pc, signer, signer.reserve_size(), settings)
                 .await
         }?;
         let sig_placeholder = Store::sign_claim_placeholder(pc, signer.reserve_size());
@@ -3000,7 +3000,7 @@ impl Store {
                         self,
                         &mut crate::claim::ClaimAssetData::Stream(output_stream, format),
                         &mut validation_log,
-                        &settings,
+                        settings,
                     )?;
                 }
                 Ok(m)
@@ -3089,7 +3089,7 @@ impl Store {
                 let mut bmff_hash = Store::generate_bmff_data_hash_for_stream(
                     &mut intermediate_stream,
                     pc.alg(),
-                    &settings,
+                    settings,
                 )?;
 
                 if pc.version() < 2 {
@@ -3286,7 +3286,7 @@ impl Store {
             self,
             &mut ClaimAssetData::Path(asset_path),
             validation_log,
-            &settings,
+            settings,
         )
     }
 
@@ -3674,7 +3674,7 @@ impl Store {
                 &mut stream,
                 verify,
                 validation_log,
-                &settings,
+                settings,
             )
         } else {
             Self::from_manifest_data_and_stream_async(
@@ -3683,7 +3683,7 @@ impl Store {
                 &mut stream,
                 verify,
                 validation_log,
-                &settings,
+                settings,
             )
             .await
         };
@@ -3761,7 +3761,7 @@ impl Store {
         stream.rewind()?;
 
         // First we convert the JUMBF into a usable store.
-        let store = Store::from_jumbf(c2pa_data, validation_log, &settings).inspect_err(|e| {
+        let store = Store::from_jumbf(c2pa_data, validation_log, settings).inspect_err(|e| {
             log_item!("asset", "error loading file", "load_from_asset")
                 .failure_no_throw(validation_log, e);
         })?;
@@ -4195,7 +4195,7 @@ impl Store {
         }
 
         // make necessary changes to the incoming store
-        let mut i_store_mut = Store::from_jumbf(data, &mut report, &settings)?;
+        let mut i_store_mut = Store::from_jumbf(data, &mut report, settings)?;
         let mut final_redactions = Vec::new();
         if let Some(mut redactions) = redactions {
             final_redactions.append(&mut redactions);
