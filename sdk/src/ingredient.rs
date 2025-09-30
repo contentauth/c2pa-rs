@@ -784,7 +784,7 @@ impl Ingredient {
                         .and_then(|mut store| {
                             // verify the store
                             store
-                                .verify_from_path(path, &mut validation_log)
+                                .verify_from_path(path, &mut validation_log, &settings)
                                 .map(|_| store)
                         })
                         .inspect_err(|e| {

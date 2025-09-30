@@ -3280,10 +3280,8 @@ impl Store {
         &mut self,
         asset_path: &'_ Path,
         validation_log: &mut StatusTracker,
+        settings: &Settings,
     ) -> Result<()> {
-        let settings = crate::settings::get_settings().unwrap_or_default();
-        // TO DO BEFORE MERGE? Pass Settings in here?
-
         Store::verify_store(
             self,
             &mut ClaimAssetData::Path(asset_path),
