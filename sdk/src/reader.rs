@@ -144,7 +144,11 @@ impl Reader {
             Store::from_stream_async(format, &mut stream, verify, &mut validation_log).await
         }?;
 
-        Self::from_store(store, &mut validation_log)
+        if _sync {
+            Self::from_store(store, &mut validation_log)
+        } else {
+            Self::from_store_async(store, &mut validation_log).await
+        }
     }
 
     #[async_generic]
@@ -159,7 +163,11 @@ impl Reader {
             Store::from_stream_async(format, &mut stream, verify, &mut validation_log).await
         }?;
 
-        Self::from_store(store, &validation_log)
+        if _sync {
+            Self::from_store(store, &mut validation_log)
+        } else {
+            Self::from_store_async(store, &mut validation_log).await
+        }
     }
 
     #[cfg(feature = "file_io")]
