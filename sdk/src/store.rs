@@ -3731,6 +3731,7 @@ impl Store {
                 &mut stream,
                 verify,
                 validation_log,
+                settings,
             )
         } else {
             Self::from_manifest_data_and_stream_async(
@@ -3739,6 +3740,7 @@ impl Store {
                 &mut stream,
                 verify,
                 validation_log,
+                settings,
             )
             .await
         };
@@ -3796,7 +3798,7 @@ impl Store {
         settings: &Settings,
     ) -> Result<Self> {
         // first we convert the JUMBF into a usable store
-        let store = Store::from_jumbf(c2pa_data, validation_log).inspect_err(|e| {
+        let store = Store::from_jumbf(c2pa_data, validation_log, settings).inspect_err(|e| {
             log_item!("asset", "error loading file", "load_from_asset")
                 .failure_no_throw(validation_log, e);
         })?;
