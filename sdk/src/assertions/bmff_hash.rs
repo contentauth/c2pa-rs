@@ -35,6 +35,7 @@ use crate::{
     },
     asset_io::CAIRead,
     cbor_types::UriT,
+    settings::Settings,
     utils::{
         hash_utils::{
             concat_and_hash, hash_stream_by_alg, vec_compare, verify_stream_by_alg, HashRange,
@@ -1345,10 +1346,8 @@ impl BmffHash {
         reader: &mut dyn CAIRead,
         box_info: &BoxInfoLite,
         merkle_map: &mut MerkleMap,
+        settings: &Settings,
     ) -> crate::Result<Vec<Vec<u8>>> {
-        let settings = crate::settings::get_settings().unwrap_or_default();
-        // TO DO BEFORE MERGE? Pass Settings in here?
-
         let max_proofs = settings.core.merkle_tree_max_proofs;
 
         // build the Merkle tree

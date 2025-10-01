@@ -2346,8 +2346,12 @@ impl Store {
                 };
 
                 // build list of ordered UUID merkle boxes
-                let mut current_uuid_boxes =
-                    dh.create_merkle_map_for_mdat_box(asset_stream, mdat_box, &mut merkle_map)?;
+                let mut current_uuid_boxes = dh.create_merkle_map_for_mdat_box(
+                    asset_stream,
+                    mdat_box,
+                    &mut merkle_map,
+                    settings,
+                )?;
                 uuid_boxes.append(&mut current_uuid_boxes);
 
                 merkle_maps.push(merkle_map);
