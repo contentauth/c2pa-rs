@@ -25,6 +25,7 @@ use crate::{
             TimeStampError,
         },
     },
+    settings::Settings,
     status_tracker::StatusTracker,
 };
 
@@ -41,9 +42,6 @@ pub fn default_rfc3161_request(
     data: &[u8],
     message: &[u8],
 ) -> Result<Vec<u8>, TimeStampError> {
-    let settings = crate::settings::get_settings().unwrap_or_default();
-    // TO DO BEFORE MERGE? Pass Settings in here?
-
     let request = Constructed::decode(
         bcder::decode::SliceSource::new(data),
         bcder::Mode::Der,
@@ -57,6 +55,11 @@ pub fn default_rfc3161_request(
 
     let mut local_log = StatusTracker::default();
     let ctp = CertificateTrustPolicy::passthrough();
+
+    // TO REVIEW: I think in this case, we're doing structural validation of
+    // time stamps but not trust validation. If so, the below is correct. (I think.)
+    let mut settings = Settings::default();
+    settings.verify.verify_timestamp_trust = false;
 
     // Make sure the time stamp is valid before we return it.
     if _sync {
