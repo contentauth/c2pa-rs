@@ -29,6 +29,7 @@ use crate::{
         HashObjectPositions, RemoteRefEmbed, RemoteRefEmbedType,
     },
     error::{Error, Result},
+    settings::Settings,
     status_tracker::{ErrorBehavior, StatusTracker},
     store::Store,
     utils::{
@@ -1537,15 +1538,17 @@ pub(crate) fn read_bmff_c2pa_boxes(reader: &mut dyn CAIRead) -> Result<C2PABmffB
 
 impl CAIReader for BmffIO {
     fn read_cai(&self, reader: &mut dyn CAIRead) -> Result<Vec<u8>> {
-        let settings = crate::settings::get_settings().unwrap_or_default();
-        // TO DO BEFORE MERGE? Pass Settings in here?
-
         let c2pa_boxes = read_bmff_c2pa_boxes(reader)?;
 
         // is this an update manifest?
         if let Some(original_bytes) = c2pa_boxes.original_bytes {
             if let Some(update_bytes) = c2pa_boxes.update_bytes {
                 let mut validation_log = StatusTracker::default();
+
+                let settings = Settings::default();
+                // ^^ TO REVIEW: Is there a reason we'd need non-default settings here?
+                // If so, that means we hae to rework CAIReader and CAIWriter traits
+                // to take a &Settings arg and that is a pretty huge change.
 
                 // combine original Store and update Store to single logical manifest Store
                 let mut original_store =
@@ -1654,9 +1657,6 @@ impl CAIWriter for BmffIO {
         output_stream: &mut dyn CAIReadWrite,
         store_bytes: &[u8],
     ) -> Result<()> {
-        let settings = crate::settings::get_settings().unwrap_or_default();
-        // TO DO BEFORE MERGE? Pass Settings in here?
-
         let size = stream_len(input_stream)?;
         input_stream.rewind()?;
 
@@ -1692,6 +1692,12 @@ impl CAIWriter for BmffIO {
         // if the incoming Store has an update manifest we must split it into original and update stores
         let mut validation_log =
             StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
+
+        let settings = Settings::default();
+        // ^^ TO REVIEW: Is there a reason we'd need non-default settings here?
+        // If so, that means we hae to rework CAIReader and CAIWriter traits
+        // to take a &Settings arg and that is a pretty huge change.
+
         let (pc, is_update) =
             if let Ok(store) = Store::from_jumbf(store_bytes, &mut validation_log, &settings) {
                 let pc = store
