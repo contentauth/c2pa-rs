@@ -1939,10 +1939,8 @@ impl Store {
         claim: &'a Claim,
         asset_data: &mut ClaimAssetData<'_>,
         validation_log: &mut StatusTracker,
+        settings: &Settings,
     ) -> Result<StoreValidationInfo<'a>> {
-        let settings = crate::settings::get_settings().unwrap_or_default();
-        // TO DO BEFORE MERGE? Pass Settings in here?
-
         let mut svi = StoreValidationInfo::default();
         Store::get_claim_referenced_manifests(claim, self, &mut svi, true, validation_log)?;
 
@@ -2099,7 +2097,7 @@ impl Store {
         };
 
         // get info needed to complete validation
-        let svi = store.get_store_validation_info(claim, asset_data, validation_log)?;
+        let svi = store.get_store_validation_info(claim, asset_data, validation_log, settings)?;
 
         if _sync {
             // verify the provenance claim
