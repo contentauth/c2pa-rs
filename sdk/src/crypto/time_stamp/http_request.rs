@@ -41,6 +41,9 @@ pub fn default_rfc3161_request(
     data: &[u8],
     message: &[u8],
 ) -> Result<Vec<u8>, TimeStampError> {
+    let settings = crate::settings::get_settings().unwrap_or_default();
+    // TO DO BEFORE MERGE? Pass Settings in here?
+
     let request = Constructed::decode(
         bcder::decode::SliceSource::new(data),
         bcder::Mode::Der,
@@ -57,9 +60,9 @@ pub fn default_rfc3161_request(
 
     // Make sure the time stamp is valid before we return it.
     if _sync {
-        verify_time_stamp(&ts, message, &ctp, &mut local_log)?;
+        verify_time_stamp(&ts, message, &ctp, &mut local_log, &settings)?;
     } else {
-        verify_time_stamp_async(&ts, message, &ctp, &mut local_log).await?;
+        verify_time_stamp_async(&ts, message, &ctp, &mut local_log, &settings).await?;
     }
 
     Ok(ts)

@@ -104,6 +104,9 @@ pub(crate) fn parse_and_validate_sigtst(
     ctp: &CertificateTrustPolicy,
     validation_log: &mut StatusTracker,
 ) -> Result<Vec<TstInfo>, CoseError> {
+    let settings = crate::settings::get_settings().unwrap_or_default();
+    // TO DO BEFORE MERGE? Pass Settings in here?
+
     let tst_container: TstContainer = ciborium::from_reader(sigtst_cbor)
         .map_err(|err| CoseError::CborParsingError(err.to_string()))?;
 
@@ -113,9 +116,9 @@ pub(crate) fn parse_and_validate_sigtst(
         let tbs = cose_countersign_data(data, p_header);
 
         let tst_info_res = if _sync {
-            verify_time_stamp(&token.val, &tbs, ctp, validation_log)
+            verify_time_stamp(&token.val, &tbs, ctp, validation_log, &settings)
         } else {
-            verify_time_stamp_async(&token.val, &tbs, ctp, validation_log).await
+            verify_time_stamp_async(&token.val, &tbs, ctp, validation_log, &settings).await
         };
 
         if let Ok(tst_info) = tst_info_res {

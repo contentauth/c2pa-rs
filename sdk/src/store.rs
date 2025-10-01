@@ -1940,6 +1940,9 @@ impl Store {
         asset_data: &mut ClaimAssetData<'_>,
         validation_log: &mut StatusTracker,
     ) -> Result<StoreValidationInfo<'a>> {
+        let settings = crate::settings::get_settings().unwrap_or_default();
+        // TO DO BEFORE MERGE? Pass Settings in here?
+
         let mut svi = StoreValidationInfo::default();
         Store::get_claim_referenced_manifests(claim, self, &mut svi, true, validation_log)?;
 
@@ -2029,6 +2032,7 @@ impl Store {
                             rc.signature_val(),
                             &self.ctp,
                             validation_log,
+                            &settings,
                         ) {
                             svi.timestamps.insert(rc.label().to_owned(), tst_info);
                             continue;
