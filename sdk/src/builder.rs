@@ -26,10 +26,9 @@ use serde_with::skip_serializing_none;
 use uuid::Uuid;
 use zip::{write::SimpleFileOptions, ZipArchive, ZipWriter};
 
-use crate::assertion::AssertionBase;
 #[allow(deprecated)]
 use crate::{
-    assertion::AssertionDecodeError,
+    assertion::{AssertionBase, AssertionDecodeError},
     assertions::{
         c2pa_action, labels, Action, ActionTemplate, Actions, AssertionMetadata, BmffHash, BoxHash,
         CreativeWork, DataHash, DigitalSourceType, EmbeddedData, Exif, Metadata, SoftwareAgent,
@@ -38,6 +37,7 @@ use crate::{
     claim::Claim,
     //claim::{Claim, ALLOWED_UPDATE_MANIFEST_ACTIONS},
     error::{Error, Result},
+    http::{AsyncGenericResolver, SyncGenericResolver},
     jumbf_io,
     resource_store::{ResourceRef, ResourceResolver, ResourceStore},
     salt::DefaultSalt,
@@ -599,9 +599,11 @@ impl Builder {
     {
         let ingredient: Ingredient = Ingredient::from_json(&ingredient_json.into())?;
         let ingredient = if _sync {
-            ingredient.with_stream(format, stream)?
+            ingredient.with_stream(format, stream, &SyncGenericResolver::new())?
         } else {
-            ingredient.with_stream_async(format, stream).await?
+            ingredient
+                .with_stream_async(format, stream, &AsyncGenericResolver::new())
+                .await?
         };
         self.definition.ingredients.push(ingredient);
         #[allow(clippy::unwrap_used)]
@@ -2938,7 +2940,8 @@ mod tests {
             .unwrap();
 
         builder
-            .add_ingredient_from_stream(parent_json, "image/jpeg", &mut cloud_image)
+            .add_ingredient_from_stream_async(parent_json, "image/jpeg", &mut cloud_image)
+            .await
             .unwrap();
 
         builder
@@ -2954,7 +2957,9 @@ mod tests {
 
         output.set_position(0);
 
-        let reader = Reader::from_stream("jpeg", &mut output).expect("from_bytes");
+        let reader = Reader::from_stream_async("jpeg", &mut output)
+            .await
+            .expect("from_bytes");
         let m = reader.active_manifest().unwrap();
         assert_eq!(m.ingredients().len(), 1);
         assert!(m.ingredients()[0].active_manifest().is_some());
