@@ -8258,8 +8258,7 @@ pub mod tests {
     async fn test_async_dynamic_assertions() {
         use async_trait::async_trait;
 
-        let settings = crate::settings::get_settings().unwrap_or_default();
-        // TO DO BEFORE MERGE? Pass Settings in here?
+        let settings = Settings::default();
 
         #[derive(Serialize)]
         struct TestAssertion {
