@@ -132,9 +132,9 @@ pub(crate) fn parse_and_validate_sigtst(
         let tbs = cose_countersign_data(data, p_header);
 
         let tst_info_res = if _sync {
-            verify_time_stamp(&token.val, &tbs, ctp, validation_log, &settings)
+            verify_time_stamp(&token.val, &tbs, ctp, validation_log, settings)
         } else {
-            verify_time_stamp_async(&token.val, &tbs, ctp, validation_log, &settings).await
+            verify_time_stamp_async(&token.val, &tbs, ctp, validation_log, settings).await
         };
 
         if let Ok(tst_info) = tst_info_res {

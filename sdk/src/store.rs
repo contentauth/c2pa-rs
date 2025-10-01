@@ -2030,7 +2030,7 @@ impl Store {
                             rc.signature_val(),
                             &self.ctp,
                             validation_log,
-                            &settings,
+                            settings,
                         ) {
                             svi.timestamps.insert(rc.label().to_owned(), tst_info);
                             continue;

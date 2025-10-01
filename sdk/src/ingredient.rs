@@ -1230,7 +1230,7 @@ impl Ingredient {
 
                 // have Store check and load ingredients and add them to a claim
                 let ingredient_store =
-                    Store::load_ingredient_to_claim(claim, &manifest_data, redactions, &settings)?;
+                    Store::load_ingredient_to_claim(claim, &manifest_data, redactions, settings)?;
 
                 let ingredient_active_claim = ingredient_store
                     .provenance_claim()
