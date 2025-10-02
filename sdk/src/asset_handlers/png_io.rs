@@ -725,6 +725,7 @@ impl AssetBoxHash for PngIO {
             pad: ByteBuf::from(Vec::new()),
             range_start: 0,
             range_len: 8,
+            ..Default::default()
         };
         box_maps.push(pngh_bm);
 
@@ -740,6 +741,7 @@ impl AssetBoxHash for PngIO {
                     pad: ByteBuf::from(Vec::new()),
                     range_start: pc.start,
                     range_len: pc.length as u64 + 12, // length(4) + name(4) + crc(4)
+                    ..Default::default()
                 };
                 box_maps.push(c2pa_bm);
                 continue;
@@ -754,6 +756,7 @@ impl AssetBoxHash for PngIO {
                 pad: ByteBuf::from(Vec::new()),
                 range_start: pc.start,
                 range_len: pc.length as u64 + 12, // length(4) + name(4) + crc(4)
+                ..Default::default()
             };
             box_maps.push(c2pa_bm);
         }

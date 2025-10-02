@@ -773,6 +773,7 @@ fn make_box_maps(input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>> {
                     pad: ByteBuf::from(Vec::new()),
                     range_start: seg.position as u64,
                     range_len: 0,
+                    ..Default::default()
                 };
 
                 box_maps.push(bm);
@@ -786,6 +787,7 @@ fn make_box_maps(input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>> {
                     pad: ByteBuf::from(Vec::new()),
                     range_start: seg.position as u64,
                     range_len: 0,
+                    ..Default::default()
                 };
 
                 box_maps.push(bm);
@@ -836,6 +838,7 @@ fn make_box_maps(input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>> {
                                 pad: ByteBuf::from(Vec::new()),
                                 range_start: seg.position as u64,
                                 range_len: (raw_bytes.len() + 4) as u64,
+                                ..Default::default()
                             };
 
                             box_maps.push(c2pa_bm);
@@ -853,6 +856,7 @@ fn make_box_maps(input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>> {
                                 pad: ByteBuf::from(Vec::new()),
                                 range_start: seg.position as u64,
                                 range_len: 0,
+                                ..Default::default()
                             };
 
                             box_maps.push(bm);
@@ -876,6 +880,7 @@ fn make_box_maps(input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>> {
                     pad: ByteBuf::from(Vec::new()),
                     range_start: seg.position as u64,
                     range_len: 0,
+                    ..Default::default()
                 };
 
                 box_maps.push(bm);
@@ -889,6 +894,7 @@ fn make_box_maps(input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>> {
                     pad: ByteBuf::from(Vec::new()),
                     range_start: seg.position as u64,
                     range_len: 0,
+                    ..Default::default()
                 };
 
                 box_maps.push(bm);
@@ -902,6 +908,7 @@ fn make_box_maps(input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>> {
                     pad: ByteBuf::from(Vec::new()),
                     range_start: seg.position as u64,
                     range_len: 0,
+                    ..Default::default()
                 };
 
                 box_maps.push(bm);
@@ -915,6 +922,7 @@ fn make_box_maps(input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>> {
                     pad: ByteBuf::from(Vec::new()),
                     range_start: seg.position as u64,
                     range_len: 0,
+                    ..Default::default()
                 };
 
                 box_maps.push(bm);
@@ -928,6 +936,7 @@ fn make_box_maps(input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>> {
                     pad: ByteBuf::from(Vec::new()),
                     range_start: seg.position as u64,
                     range_len: 0,
+                    ..Default::default()
                 };
 
                 box_maps.push(bm);
@@ -945,6 +954,7 @@ fn make_box_maps(input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>> {
                     pad: ByteBuf::from(Vec::new()),
                     range_start: seg.position as u64,
                     range_len: 0,
+                    ..Default::default()
                 };
 
                 box_maps.push(bm);
@@ -958,6 +968,7 @@ fn make_box_maps(input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>> {
                     pad: ByteBuf::from(Vec::new()),
                     range_start: seg.position as u64,
                     range_len: 0,
+                    ..Default::default()
                 };
 
                 box_maps.push(bm);
@@ -971,6 +982,7 @@ fn make_box_maps(input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>> {
                     pad: ByteBuf::from(Vec::new()),
                     range_start: seg.position as u64,
                     range_len: 0,
+                    ..Default::default()
                 };
 
                 box_maps.push(bm);
@@ -984,6 +996,7 @@ fn make_box_maps(input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>> {
                     pad: ByteBuf::from(Vec::new()),
                     range_start: seg.position as u64,
                     range_len: 0,
+                    ..Default::default()
                 };
 
                 box_maps.push(bm);
@@ -997,6 +1010,7 @@ fn make_box_maps(input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>> {
                     pad: ByteBuf::from(Vec::new()),
                     range_start: seg.position as u64,
                     range_len: 0,
+                    ..Default::default()
                 };
 
                 box_maps.push(bm);
@@ -1014,6 +1028,7 @@ fn make_box_maps(input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>> {
                     pad: ByteBuf::from(Vec::new()),
                     range_start: seg.position as u64,
                     range_len: 0,
+                    ..Default::default()
                 };
 
                 box_maps.push(bm);

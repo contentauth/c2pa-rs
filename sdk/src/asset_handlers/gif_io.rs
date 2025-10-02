@@ -639,6 +639,7 @@ impl BlockMarker<Block> {
             pad: ByteBuf::from(Vec::new()),
             range_start: self.start(),
             range_len: self.len(),
+            ..Default::default()
         })
     }
 }
@@ -1423,7 +1424,8 @@ mod tests {
                 excluded: None,
                 pad: ByteBuf::from(Vec::new()),
                 range_start: 0,
-                range_len: 6
+                range_len: 6,
+                ..Default::default()
             })
         );
         assert_eq!(
@@ -1435,7 +1437,8 @@ mod tests {
                 excluded: None,
                 pad: ByteBuf::from(Vec::new()),
                 range_start: 368495,
-                range_len: 778
+                range_len: 778,
+                ..Default::default()
             })
         );
         assert_eq!(
@@ -1447,7 +1450,8 @@ mod tests {
                 excluded: None,
                 pad: ByteBuf::from(Vec::new()),
                 range_start: SAMPLE1.len() as u64,
-                range_len: 1
+                range_len: 1,
+                ..Default::default()
             })
         );
         assert_eq!(box_map.len(), 276);

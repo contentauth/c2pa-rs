@@ -48,6 +48,28 @@ pub struct BoxMap {
 
     #[serde(skip)]
     pub range_len: u64,
+
+    #[serde(skip)]
+    pub is_tiff: bool, // if true use tiff rules to interpret data
+
+    #[serde(skip)]
+    pub entry_is_data: Option<Vec<u8>>, // if the data is contained in the entry then this field contains the data to hash
+}
+
+impl Default for BoxMap {
+    fn default() -> Self {
+        Self {
+            names: Default::default(),
+            alg: Default::default(),
+            hash: Default::default(),
+            excluded: Default::default(),
+            pad: Default::default(),
+            range_start: Default::default(),
+            range_len: Default::default(),
+            is_tiff: false,
+            entry_is_data: None,
+        }
+    }
 }
 
 /// Helper class to create BoxHash assertion
@@ -197,6 +219,7 @@ impl BoxHash {
                 pad: ByteBuf::from(vec![]),
                 range_start: 0,
                 range_len: 0,
+                ..Default::default()
             };
 
             let mut c2pa_box = BoxMap {
@@ -207,6 +230,7 @@ impl BoxHash {
                 pad: ByteBuf::from(vec![]),
                 range_start: 0,
                 range_len: 0,
+                ..Default::default()
             };
 
             let mut after_c2pa = BoxMap {
@@ -217,6 +241,7 @@ impl BoxHash {
                 pad: ByteBuf::from(vec![]),
                 range_start: 0,
                 range_len: 0,
+                ..Default::default()
             };
 
             let mut is_before_c2pa = true;
@@ -515,6 +540,7 @@ mod tests {
                     pad: ByteBuf::from(vec![]),
                     range_start: 0,
                     range_len: 10,
+                    ..Default::default()
                 },
                 // And follow with
                 BoxMap {
@@ -525,6 +551,7 @@ mod tests {
                     pad: ByteBuf::from(vec![]),
                     range_start: 10,
                     range_len: 10,
+                    ..Default::default()
                 },
             ])
         });
@@ -562,6 +589,7 @@ mod tests {
                     pad: ByteBuf::from(vec![]),
                     range_start: 0,
                     range_len: 10,
+                    ..Default::default()
                 },
                 // Make sure the first one is the C2PA box
                 BoxMap {
@@ -572,6 +600,7 @@ mod tests {
                     pad: ByteBuf::from(vec![]),
                     range_start: 10,
                     range_len: 10,
+                    ..Default::default()
                 },
             ])
         });
@@ -609,6 +638,7 @@ mod tests {
                     pad: ByteBuf::from(vec![]),
                     range_start: 0,
                     range_len: 10,
+                    ..Default::default()
                 },
                 // Make sure the first one is the C2PA box
                 BoxMap {
@@ -619,6 +649,7 @@ mod tests {
                     pad: ByteBuf::from(vec![]),
                     range_start: 10,
                     range_len: 10,
+                    ..Default::default()
                 },
                 BoxMap {
                     names: vec!["test1".to_string()],
@@ -628,6 +659,7 @@ mod tests {
                     pad: ByteBuf::from(vec![]),
                     range_start: 20,
                     range_len: 10,
+                    ..Default::default()
                 },
             ])
         });
