@@ -58,8 +58,8 @@ use crate::{
     jumbf::{
         self,
         boxes::{
-            CAICBORAssertionBox, CAIJSONAssertionBox, CAISignatureBox,
-            CAIUUIDAssertionBox, JUMBFCBORContentBox, JumbfEmbeddedFileBox,
+            CAICBORAssertionBox, CAIJSONAssertionBox, CAISignatureBox, CAIUUIDAssertionBox,
+            JUMBFCBORContentBox, JumbfEmbeddedFileBox,
         },
         labels::{
             assertion_label_from_uri, box_name_from_uri, manifest_label_from_uri,
