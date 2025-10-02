@@ -58,7 +58,7 @@ use crate::{
     jumbf::{
         self,
         boxes::{
-            BMFFBox, CAICBORAssertionBox, CAIJSONAssertionBox, CAISignatureBox,
+            CAICBORAssertionBox, CAIJSONAssertionBox, CAISignatureBox,
             CAIUUIDAssertionBox, JUMBFCBORContentBox, JumbfEmbeddedFileBox,
         },
         labels::{
@@ -1231,7 +1231,7 @@ impl Claim {
         let sigc = JUMBFCBORContentBox::new(signed_data);
         sigb.add_signature(Box::new(sigc));
 
-        sigb.write_box_payload(&mut hash_bytes)?;
+        sigb.super_box().write_box_payload(&mut hash_bytes)?;
 
         Ok(hash_by_alg(alg, &hash_bytes, None))
     }

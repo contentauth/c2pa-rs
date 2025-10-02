@@ -925,6 +925,10 @@ impl CAISignatureBox {
     pub fn add_signature(&mut self, b: Box<dyn BMFFBox>) {
         self.sig_box.add_data_box(b)
     }
+
+    pub fn super_box(&self) -> &dyn BMFFBox {
+        &self.sig_box
+    }
 }
 
 impl Default for CAISignatureBox {
