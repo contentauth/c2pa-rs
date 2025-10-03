@@ -54,5 +54,5 @@ mockall = "0.13.0"
 
 [target.'cfg(not(target_os = "wasi"))'.dev-dependencies]
 assert_cmd = "2.0.14"
-httpmock = "0.7.0"
+httpmock = "0.8.0"
 predicates = "3.1"
