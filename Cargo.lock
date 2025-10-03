@@ -62,9 +62,9 @@ checksum = "4b46cbb362ab8752921c97e041f5e366ee6297bd428a31275b9fcf1e380f7299"
 
 [[package]]
 name = "anstream"
-version = "0.6.20"
+version = "0.6.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3ae563653d1938f79b1ab1b5e668c87c76a9930414574a6583a7b7e11a8e6192"
+checksum = "43d5b281e737544384e969a5ccad3f1cdd24b48086a0fc1b2a5262a26b8f4f4a"
 dependencies = [
  "anstyle",
  "anstyle-parse",
@@ -642,7 +642,7 @@ checksum = "d71b6127be86fdcfddb610f7182ac57211d4b18a3e9c82eb2d17662f2227ad6a"
 
 [[package]]
 name = "c2pa"
-version = "0.67.0"
+version = "0.67.1"
 dependencies = [
  "anyhow",
  "asn1-rs",
@@ -749,7 +749,7 @@ dependencies = [
 
 [[package]]
 name = "c2pa-c-ffi"
-version = "0.67.0"
+version = "0.67.1"
 dependencies = [
  "c2pa",
  "cbindgen",
@@ -763,7 +763,7 @@ dependencies = [
 
 [[package]]
 name = "c2pa_macros"
-version = "0.67.0"
+version = "0.67.1"
 dependencies = [
  "quote",
  "syn 2.0.106",
@@ -771,7 +771,7 @@ dependencies = [
 
 [[package]]
 name = "c2patool"
-version = "0.23.3"
+version = "0.23.4"
 dependencies = [
  "anyhow",
  "assert_cmd",
@@ -1574,7 +1574,7 @@ dependencies = [
 
 [[package]]
 name = "export_schema"
-version = "0.67.0"
+version = "0.67.1"
 dependencies = [
  "anyhow",
  "c2pa",
@@ -2716,7 +2716,7 @@ checksum = "112b39cec0b298b6c1999fee3e31427f74f676e4cb9879ed1a121b43661a4154"
 
 [[package]]
 name = "make_test_images"
-version = "0.67.0"
+version = "0.67.1"
 dependencies = [
  "anyhow",
  "c2pa",
@@ -4086,9 +4086,9 @@ dependencies = [
 
 [[package]]
 name = "rustls-webpki"
-version = "0.103.6"
+version = "0.103.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8572f3c2cb9934231157b45499fc41e1f58c589fdfb81a844ba873265e80f8eb"
+checksum = "e10b3f4191e8a80e6b43eebabfac91e5dcecebb27a71f04e820c47ec41d314bf"
 dependencies = [
  "ring",
  "rustls-pki-types",
@@ -5027,9 +5027,9 @@ checksum = "e421abadd41a4225275504ea4d6566923418b7f05506fbc9c0fe86ba7396114b"
 
 [[package]]
 name = "typenum"
-version = "1.18.0"
+version = "1.19.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1dccffe3ce07af9386bfd29e80c0ab1a8205a2fc34e4bcd40364df902cfa8f3f"
+checksum = "562d481066bde0658276a35467c4af00bdc6ee726305698a55b86e61d7ad82bb"
 
 [[package]]
 name = "ucd-trie"
