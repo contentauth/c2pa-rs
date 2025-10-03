@@ -12,7 +12,7 @@
 // each license.
 
 #[cfg(feature = "file_io")]
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::{
     collections::{HashMap, HashSet},
     io::{Cursor, Read, Seek},
@@ -1965,8 +1965,7 @@ impl Store {
                 let format = typ.to_owned();
                 object_locations_from_stream(&format, reader)
             }
-            #[cfg(feature = "file_io")]
-            ClaimAssetData::StreamFragments(reader, _path_bufs, typ) => {
+            ClaimAssetData::StreamFragments(reader, _fragments, typ) => {
                 let format = typ.to_owned();
                 object_locations_from_stream(&format, reader)
             }
@@ -3716,11 +3715,10 @@ impl Store {
     /// fragments: list of paths to the fragments to verify
     /// verify: if true will run verification checks when loading, all fragments must verify for Ok status
     /// validation_log: If present all found errors are logged and returned, otherwise first error causes exit and is returned
-    #[cfg(feature = "file_io")]
-    pub fn load_from_file_and_fragments(
+    pub fn load_fragments_from_stream(
         asset_type: &str,
         init_segment: &mut dyn CAIRead,
-        fragments: &Vec<PathBuf>,
+        fragments: &mut [Box<dyn CAIRead>],
         verify: bool,
         validation_log: &mut StatusTracker,
     ) -> Result<Store> {
@@ -7887,15 +7885,18 @@ pub mod tests {
                     // test verifying all at once
                     let mut output_fragments = Vec::new();
                     for entry in &fragments {
-                        output_fragments.push(new_output_path.join(entry.file_name().unwrap()));
+                        let file =
+                            std::fs::File::open(new_output_path.join(entry.file_name().unwrap()))
+                                .unwrap();
+                        output_fragments.push(Box::new(file) as Box<dyn CAIRead>);
                     }
 
                     //let mut reader = Cursor::new(init_stream);
                     let mut validation_log = StatusTracker::default();
-                    let _manifest = Store::load_from_file_and_fragments(
+                    let _manifest = Store::load_fragments_from_stream(
                         "mp4",
                         &mut init_stream,
-                        &output_fragments,
+                        &mut output_fragments,
                         false,
                         &mut validation_log,
                     )
