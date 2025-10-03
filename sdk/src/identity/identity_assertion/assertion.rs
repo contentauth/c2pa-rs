@@ -93,6 +93,10 @@ impl IdentityAssertion {
                         ia.label = Some(to_assertion_uri(manifest_label, a.label()));
                     }
                 }
+                // TO DO: Add error readout if the proposed new setting resulted
+                // in this assertion being parsed and converted to JSON. This function
+                // has become incompatible with the now-default behavior to validate
+                // identity assertions during parsing.
                 (a.label().to_owned(), ia)
             })
             .inspect(|(label, r)| {
