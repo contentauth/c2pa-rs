@@ -17,8 +17,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     assertions::{
-        region_of_interest::RegionOfInterest, Action, ActionTemplate, DigitalSourceType,
-        SoftwareAgent,
+        region_of_interest::RegionOfInterest, Action, ActionParameters, ActionTemplate,
+        DigitalSourceType, SoftwareAgent,
     },
     cbor_types::DateT,
     resource_store::UriOrResource,
@@ -280,8 +280,8 @@ pub(crate) struct ActionSettings {
 
     /// Additional parameters of the action. These vary by the type of action.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub parameters: Option<HashMap<String, toml::Value>>,
-
+    pub parameters: Option<ActionParameters>,
+    /// One of the defined URI values at `<https://cv.iptc.org/newscodes/digitalsourcetype/>`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub source_type: Option<DigitalSourceType>,
     /// List of related actions.
@@ -309,19 +309,7 @@ impl TryFrom<ActionSettings> for Action {
                 .map(SoftwareAgent::ClaimGeneratorInfo),
             software_agent_index: value.software_agent_index,
             changes: value.changes,
-            parameters: value
-                .parameters
-                .map(|template_parameters| {
-                    template_parameters
-                        .into_iter()
-                        .map(|(key, value)| {
-                            serde_cbor::value::to_value(value)
-                                .map(|value| (key, value))
-                                .map_err(|err| err.into())
-                        })
-                        .collect::<Result<HashMap<String, serde_cbor::Value>>>()
-                })
-                .transpose()?,
+            parameters: value.parameters,
             source_type: value.source_type,
             related: value.related,
             reason: value.reason,
@@ -340,7 +328,8 @@ impl TryFrom<ActionSettings> for Action {
 pub(crate) struct ActionsSettings {
     /// Whether or not to set the [Actions::all_actions_included][crate::assertions::Actions::all_actions_included]
     /// field.
-    pub all_actions_included: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub all_actions_included: Option<bool>,
     /// Templates to be added to the [Actions::templates][crate::assertions::Actions::templates] field.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub templates: Option<Vec<ActionTemplateSettings>>,
@@ -371,7 +360,7 @@ pub(crate) struct ActionsSettings {
 impl Default for ActionsSettings {
     fn default() -> Self {
         ActionsSettings {
-            all_actions_included: true,
+            all_actions_included: None,
             templates: None,
             actions: None,
             auto_created_action: AutoActionSettings {
