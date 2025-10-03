@@ -29,7 +29,6 @@ use crate::{
         HashObjectPositions, RemoteRefEmbed, RemoteRefEmbedType,
     },
     error::{Error, Result},
-    settings::Settings,
     status_tracker::{ErrorBehavior, StatusTracker},
     store::Store,
     utils::{
@@ -1545,16 +1544,9 @@ impl CAIReader for BmffIO {
             if let Some(update_bytes) = c2pa_boxes.update_bytes {
                 let mut validation_log = StatusTracker::default();
 
-                let settings = Settings::default();
-                // ^^ TO REVIEW: Is there a reason we'd need non-default settings here?
-                // If so, that means we hae to rework CAIReader and CAIWriter traits
-                // to take a &Settings arg and that is a pretty huge change.
-
                 // combine original Store and update Store to single logical manifest Store
-                let mut original_store =
-                    Store::from_jumbf(&original_bytes, &mut validation_log, &settings)?;
-                let update_store =
-                    Store::from_jumbf(&update_bytes, &mut validation_log, &settings)?;
+                let mut original_store = Store::from_jumbf(&original_bytes, &mut validation_log)?;
+                let update_store = Store::from_jumbf(&update_bytes, &mut validation_log)?;
 
                 original_store.append_store(&update_store);
 
@@ -1693,21 +1685,16 @@ impl CAIWriter for BmffIO {
         let mut validation_log =
             StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
 
-        let settings = Settings::default();
-        // ^^ TO REVIEW: Is there a reason we'd need non-default settings here?
-        // If so, that means we hae to rework CAIReader and CAIWriter traits
-        // to take a &Settings arg and that is a pretty huge change.
-
-        let (pc, is_update) =
-            if let Ok(store) = Store::from_jumbf(store_bytes, &mut validation_log, &settings) {
-                let pc = store
-                    .provenance_claim()
-                    .ok_or(Error::BadParam("no provenance claim".to_string()))?;
-                let is_update = pc.update_manifest();
-                (Some(pc.clone()), is_update)
-            } else {
-                (None, false)
-            };
+        let (pc, is_update) = if let Ok(store) = Store::from_jumbf(store_bytes, &mut validation_log)
+        {
+            let pc = store
+                .provenance_claim()
+                .ok_or(Error::BadParam("no provenance claim".to_string()))?;
+            let is_update = pc.update_manifest();
+            (Some(pc.clone()), is_update)
+        } else {
+            (None, false)
+        };
 
         // "original" manifest store and "update" manifest store can only appear together
         if has_original && !has_update || !has_original && has_update {
@@ -1739,8 +1726,7 @@ impl CAIWriter for BmffIO {
                 .len();
             let pc = pc.ok_or(Error::BadParam("no provenance manifest".to_string()))?;
 
-            let mut update_store =
-                Store::from_jumbf(update_manifest_bytes, &mut validation_log, &settings)?;
+            let mut update_store = Store::from_jumbf(update_manifest_bytes, &mut validation_log)?;
             // add new update manfiest or replace existing one if the is a 8finalization pass
             update_store.replace_claim_or_insert(pc.label().to_string(), pc);
 
@@ -1764,7 +1750,7 @@ impl CAIWriter for BmffIO {
         if has_manifest && !has_update && is_update {
             let pc = pc.ok_or(Error::BadParam("no provenance manifest".to_string()))?;
 
-            let mut update_store = Store::new(&settings);
+            let mut update_store = Store::new();
             update_store.insert_restored_claim(pc.label().to_string(), pc);
             let new_update_bytes = update_store.to_jumbf_internal(0)?;
 

@@ -132,32 +132,23 @@ struct ManifestInfo<'a> {
 impl Default for Store {
     fn default() -> Self {
         let settings = crate::settings::get_settings().unwrap_or_default();
-        Self::new(&settings)
+        Self::with_settings(&settings)
     }
 }
 
 impl Store {
-    /// Create a new, empty claims store.
-    pub fn new(settings: &Settings) -> Self {
-        Self::new_with_label(MANIFEST_STORE_EXT, settings)
+    /// Create a new, empty claims store with default settings.
+    pub fn new() -> Self {
+        Store {
+            label: MANIFEST_STORE_EXT.to_owned(),
+            ..Default::default()
+        }
     }
 
-    /// Create a new, empty claims store with a custom label.
-    ///
-    /// In most cases, calling [`Store::new()`] is preferred.
-    pub fn new_with_label(label: &str, settings: &Settings) -> Self {
-        let mut store = Store {
-            claims_map: HashMap::new(),
-            manifest_box_hash_cache: HashMap::new(),
-            claims: Vec::new(),
-            label: label.to_string(),
-            ctp: CertificateTrustPolicy::default(),
-            provenance_path: None,
-            remote_url: None,
-            embedded: false,
-        };
+    /// Create a new, empty claims store with the specified settings.
+    pub fn with_settings(settings: &Settings) -> Self {
+        let mut store = Store::new();
 
-        // load the trust handler settings, don't worry about status as these are checked during setting generation
         if let Some(ta) = &settings.trust.trust_anchors {
             let _v = store.add_trust(ta.as_bytes());
         }
@@ -1116,16 +1107,26 @@ impl Store {
         true
     }
 
-    pub fn from_jumbf(
+    pub fn from_jumbf(buffer: &[u8], validation_log: &mut StatusTracker) -> Result<Store> {
+        Self::from_jumbf_impl(Store::new(), buffer, validation_log)
+    }
+
+    pub fn from_jumbf_with_settings(
         buffer: &[u8],
         validation_log: &mut StatusTracker,
         settings: &Settings,
     ) -> Result<Store> {
+        Self::from_jumbf_impl(Store::with_settings(settings), buffer, validation_log)
+    }
+
+    fn from_jumbf_impl(
+        mut store: Store,
+        buffer: &[u8],
+        validation_log: &mut StatusTracker,
+    ) -> Result<Store> {
         if buffer.is_empty() {
             return Err(Error::JumbfNotFound);
         }
-
-        let mut store = Store::new(settings);
 
         // setup a cursor for reading the buffer...
         let mut buf_reader = Cursor::new(buffer);
@@ -2747,6 +2748,7 @@ impl Store {
 
         // generate fragments and produce Merkle tree
         bmff_hash.add_merkle_for_fragmented(
+            settings.core.merkle_tree_max_proofs,
             pc.alg(),
             asset_path,
             fragments,
@@ -2818,7 +2820,8 @@ impl Store {
         let jumbf = self.to_jumbf(signer)?;
 
         // use temp store so mulitple calls across renditions will work (the Store is not finalized this way)
-        let mut temp_store = Store::from_jumbf(&jumbf, &mut validation_log, settings)?;
+        let mut temp_store =
+            Store::from_jumbf_with_settings(&jumbf, &mut validation_log, settings)?;
 
         let mut jumbf_bytes = temp_store.start_save_bmff_fragmented(
             asset_path,
@@ -3769,10 +3772,11 @@ impl Store {
         stream.rewind()?;
 
         // First we convert the JUMBF into a usable store.
-        let store = Store::from_jumbf(c2pa_data, validation_log, settings).inspect_err(|e| {
-            log_item!("asset", "error loading file", "load_from_asset")
-                .failure_no_throw(validation_log, e);
-        })?;
+        let store = Store::from_jumbf_with_settings(c2pa_data, validation_log, settings)
+            .inspect_err(|e| {
+                log_item!("asset", "error loading file", "load_from_asset")
+                    .failure_no_throw(validation_log, e);
+            })?;
 
         if verify {
             stream.rewind()?;
@@ -3871,7 +3875,7 @@ impl Store {
         let manifest_bytes =
             Store::load_jumbf_from_stream(format, &mut stream, &Settings::default())?.0;
 
-        let store = Store::from_jumbf(&manifest_bytes, validation_log, settings)?;
+        let store = Store::from_jumbf_with_settings(&manifest_bytes, validation_log, settings)?;
         let verify = settings.verify.verify_after_reading;
 
         if verify {
@@ -4056,7 +4060,7 @@ impl Store {
         let mut to_remove_from_incoming = Vec::new();
 
         let mut report = StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
-        let i_store = Store::from_jumbf(data, &mut report, settings)?;
+        let i_store = Store::from_jumbf_with_settings(data, &mut report, settings)?;
 
         let empty_store = Store::default();
 
@@ -4203,7 +4207,7 @@ impl Store {
         }
 
         // make necessary changes to the incoming store
-        let mut i_store_mut = Store::from_jumbf(data, &mut report, settings)?;
+        let mut i_store_mut = Store::from_jumbf_with_settings(data, &mut report, settings)?;
         let mut final_redactions = Vec::new();
         if let Some(mut redactions) = redactions {
             final_redactions.append(&mut redactions);
@@ -4438,7 +4442,7 @@ pub mod tests {
             create_test_streams("earth_apollo17.jpg");
 
         // Create claims store.
-        let mut store = Store::new(&Settings::default());
+        let mut store = Store::with_settings(&Settings::default());
 
         // ClaimGeneratorInfo is mandatory in Claim V2
         let cgi = ClaimGeneratorInfo::new("claim_v1_unit_test");
@@ -4511,7 +4515,7 @@ pub mod tests {
             create_test_streams("earth_apollo17.jpg");
 
         // Create claims store.
-        let mut store = Store::new(&Settings::default());
+        let mut store = Store::with_settings(&Settings::default());
 
         // ClaimGeneratorInfo is mandatory in Claim V2
         let cgi = ClaimGeneratorInfo::new("claim_v2_unit_test");
@@ -4585,7 +4589,7 @@ pub mod tests {
             create_test_streams("earth_apollo17.jpg");
 
         // Create claims store.
-        let mut store = Store::new(&Settings::default());
+        let mut store = Store::with_settings(&Settings::default());
 
         // ClaimGeneratorInfo is mandatory in Claim V2
         let cgi = ClaimGeneratorInfo::new("claim_v2_unit_test");
@@ -4642,7 +4646,7 @@ pub mod tests {
             create_test_streams("unsupported_type.txt");
         let format = "text/plain";
         // Create claims store.
-        let mut store = Store::new(&Settings::default());
+        let mut store = Store::with_settings(&Settings::default());
 
         // Create a new claim.
         let claim1 = create_test_claim().unwrap();
@@ -4738,7 +4742,7 @@ pub mod tests {
         let (format, mut input_stream, mut output_stream) =
             create_test_streams("earth_apollo17.jpg");
 
-        let mut store = Store::new(&Settings::default());
+        let mut store = Store::with_settings(&Settings::default());
 
         let claim = create_test_claim().unwrap();
 
@@ -4773,7 +4777,7 @@ pub mod tests {
         let (format, mut input_stream, mut output_stream) =
             create_test_streams("earth_apollo17.jpg");
 
-        let mut store = Store::new(&Settings::default());
+        let mut store = Store::with_settings(&Settings::default());
 
         let claim = create_test_claim().unwrap();
 
@@ -4802,7 +4806,7 @@ pub mod tests {
     #[cfg(feature = "file_io")]
     fn test_jumbf_replacement_generation() {
         // Create claims store.
-        let mut store = Store::new(&Settings::default());
+        let mut store = Store::with_settings(&Settings::default());
 
         // Create a new claim.
         let claim1 = create_test_claim().unwrap();
@@ -4847,7 +4851,7 @@ pub mod tests {
             create_test_streams("earth_apollo17.jpg");
 
         // Create claims store.
-        let mut store = Store::new(&Settings::default());
+        let mut store = Store::with_settings(&Settings::default());
 
         // Create a new claim.
         let claim1 = crate::utils::test::create_test_claim()?;
@@ -4943,7 +4947,7 @@ pub mod tests {
         let (format, mut input_stream, mut output_stream) = create_test_streams("libpng-test.png");
 
         // Create claims store.
-        let mut store = Store::new(&Settings::default());
+        let mut store = Store::with_settings(&Settings::default());
 
         // Create a new claim.
         let claim1 = create_test_claim().unwrap();
@@ -5223,7 +5227,7 @@ pub mod tests {
         let (format, mut input_stream, mut output_stream) = create_test_streams("sample1.wav");
 
         // Create claims store.
-        let mut store = Store::new(&Settings::default());
+        let mut store = Store::with_settings(&Settings::default());
 
         // Create a new claim.
         let claim1 = create_test_claim().unwrap();
@@ -5325,7 +5329,7 @@ pub mod tests {
         let (format, mut input_stream, mut output_stream) = create_test_streams("test.avi");
 
         // Create claims store.
-        let mut store = Store::new(&Settings::default());
+        let mut store = Store::with_settings(&Settings::default());
 
         // Create a new claim.
         let claim1 = create_test_claim().unwrap();
@@ -5434,7 +5438,7 @@ pub mod tests {
         let (format, mut input_stream, mut output_stream) = create_test_streams("sample1.webp");
 
         // Create claims store.
-        let mut store = Store::new(&Settings::default());
+        let mut store = Store::with_settings(&Settings::default());
 
         // Create a new claim.
         let claim1 = create_test_claim().unwrap();
@@ -5543,7 +5547,7 @@ pub mod tests {
         let (format, mut input_stream, mut output_stream) = create_test_streams("sample1.heic");
 
         // Create claims store.
-        let mut store = Store::new(&Settings::default());
+        let mut store = Store::with_settings(&Settings::default());
 
         // Create a new claim.
         let claim1 = create_test_claim().unwrap();
@@ -5602,7 +5606,7 @@ pub mod tests {
         let (format, mut input_stream, mut output_stream) = create_test_streams("sample1.avif");
 
         // Create claims store.
-        let mut store = Store::new(&Settings::default());
+        let mut store = Store::with_settings(&Settings::default());
 
         // Create a new claim.
         let claim1 = create_test_claim().unwrap();
@@ -5655,7 +5659,7 @@ pub mod tests {
         let (format, mut input_stream, mut output_stream) = create_test_streams("sample1.heif");
 
         // Create claims store.
-        let mut store = Store::new(&Settings::default());
+        let mut store = Store::with_settings(&Settings::default());
 
         // Create a new claim.
         let claim1 = create_test_claim().unwrap();
@@ -7150,7 +7154,7 @@ pub mod tests {
         let (format, mut input_stream, mut output_stream) = create_test_streams("video1.mp4");
 
         // Create claims store.
-        let mut store = Store::new(&Settings::default());
+        let mut store = Store::with_settings(&Settings::default());
 
         // Create a new claim.
         let claim1 = create_test_claim().unwrap();
@@ -7190,7 +7194,7 @@ pub mod tests {
         let (format, mut input_stream, mut output_stream) = create_test_streams("video1.mp4");
 
         // Create claims store.
-        let mut store = Store::new(&Settings::default());
+        let mut store = Store::with_settings(&Settings::default());
 
         // Create a new claim.
         let claim1 = crate::utils::test::create_test_claim_v1().unwrap();
@@ -7233,7 +7237,7 @@ pub mod tests {
         crate::settings::set_settings_value("core.merkle_tree_chunk_size_in_kb", 1).unwrap();
 
         // Create claims store.
-        let mut store = Store::new(&Settings::default());
+        let mut store = Store::with_settings(&Settings::default());
 
         // Create a new claim.
         let claim1 = create_test_claim().unwrap();
@@ -7276,7 +7280,7 @@ pub mod tests {
         crate::settings::set_settings_value("core.merkle_tree_max_proofs", 0).unwrap();
 
         // Create claims store.
-        let mut store = Store::new(&Settings::default());
+        let mut store = Store::with_settings(&Settings::default());
 
         // Create a new claim.
         let claim1 = create_test_claim().unwrap();
@@ -7319,7 +7323,7 @@ pub mod tests {
         crate::settings::set_settings_value("core.merkle_tree_chunk_size_in_kb", 1).unwrap();
 
         // Create claims store.
-        let mut store = Store::new(&Settings::default());
+        let mut store = Store::with_settings(&Settings::default());
 
         // Create a new claim.
         let claim1 = create_test_claim().unwrap();
@@ -7359,7 +7363,7 @@ pub mod tests {
         let (format, mut input_stream, mut output_stream) = create_test_streams("video1.mp4");
 
         // Create claims store.
-        let mut store = Store::new(&Settings::default());
+        let mut store = Store::with_settings(&Settings::default());
 
         // Create a new claim.
         let claim1 = create_test_claim().unwrap();
@@ -7471,7 +7475,7 @@ pub mod tests {
             let settings = Settings::default();
 
             // Create claims store.
-            let mut store = Store::new(&Settings::default());
+            let mut store = Store::with_settings(&Settings::default());
 
             // Create a new claim.
             let mut claim = create_test_claim().unwrap();
@@ -7548,7 +7552,7 @@ pub mod tests {
         let (format, mut input_stream, mut output_stream) = create_test_streams("libpng-test.png");
 
         // Create claims store.
-        let mut store = Store::new(&Settings::default());
+        let mut store = Store::with_settings(&Settings::default());
 
         // Create a new claim.
         let mut claim = create_test_claim().unwrap();
@@ -7613,7 +7617,7 @@ pub mod tests {
         let mut buf_io = Cursor::new(file_buffer);
 
         // Create claims store.
-        let mut store = Store::new(&Settings::default());
+        let mut store = Store::with_settings(&Settings::default());
 
         // Create a new claim.
         let claim1 = create_test_claim().unwrap();
@@ -7663,7 +7667,7 @@ pub mod tests {
         let (format, mut input_stream, mut output_stream) = create_test_streams("TUSCANY.TIF");
 
         // Create claims store.
-        let mut store = Store::new(&Settings::default());
+        let mut store = Store::with_settings(&Settings::default());
 
         // Create a new claim.
         let claim1 = create_test_claim().unwrap();
@@ -7739,7 +7743,7 @@ pub mod tests {
         let box_hash_path = fixture_path("boxhash.json");
 
         // Create claims store.
-        let mut store = Store::new(&Settings::default());
+        let mut store = Store::with_settings(&Settings::default());
 
         // Create a new claim.
         let mut claim = create_test_claim().unwrap();
@@ -7820,7 +7824,7 @@ pub mod tests {
         let box_hash_path = fixture_path("boxhash.json");
 
         // Create claims store.
-        let mut store = Store::new(&Settings::default());
+        let mut store = Store::with_settings(&Settings::default());
 
         // Create a new claim.
         let mut claim = create_test_claim().unwrap();
@@ -7904,7 +7908,7 @@ pub mod tests {
         let signer = async_test_signer(SigningAlg::Ps256);
 
         // Create claims store.
-        let mut store = Store::new(&Settings::default());
+        let mut store = Store::with_settings(&Settings::default());
 
         // Create a new claim.
         let claim = create_test_claim().unwrap();
@@ -7986,7 +7990,7 @@ pub mod tests {
         let signer = test_signer(SigningAlg::Ps256);
 
         // Create claims store.
-        let mut store = Store::new(&Settings::default());
+        let mut store = Store::with_settings(&Settings::default());
 
         // Create a new claim.
         let claim = create_test_claim().unwrap();
@@ -8070,7 +8074,7 @@ pub mod tests {
         let signer = test_signer(SigningAlg::Ps256);
 
         // Create claims store.
-        let mut store = Store::new(&Settings::default());
+        let mut store = Store::with_settings(&Settings::default());
 
         // Create a new claim.
         let claim = create_test_claim().unwrap();
@@ -8226,7 +8230,7 @@ pub mod tests {
         let mut buf_io = Cursor::new(file_buffer);
 
         // Create claims store.
-        let mut store = Store::new(&Settings::default());
+        let mut store = Store::with_settings(&Settings::default());
 
         // Create a new claim.
         let claim1 = create_test_claim().unwrap();
@@ -8363,7 +8367,7 @@ pub mod tests {
         let mut buf_io = Cursor::new(file_buffer);
 
         // Create claims store.
-        let mut store = Store::new(&Settings::default());
+        let mut store = Store::with_settings(&Settings::default());
 
         // Create a new claim.
         let claim1 = create_test_claim().unwrap();
@@ -8435,7 +8439,7 @@ pub mod tests {
                     }
 
                     // Create claims store.
-                    let mut store = Store::new(&Settings::default());
+                    let mut store = Store::with_settings(&Settings::default());
 
                     // Create a new claim.
                     let claim = create_test_claim().unwrap();
@@ -8547,8 +8551,12 @@ pub mod tests {
         let (manifest_bytes, _remote_url) =
             Store::load_jumbf_from_stream(format, &mut stream, &settings).unwrap();
 
-        let store =
-            Store::from_jumbf(&manifest_bytes, &mut StatusTracker::default(), &settings).unwrap();
+        let store = Store::from_jumbf_with_settings(
+            &manifest_bytes,
+            &mut StatusTracker::default(),
+            &settings,
+        )
+        .unwrap();
 
         let jumbf = store
             .to_jumbf_internal(0)

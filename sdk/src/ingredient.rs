@@ -777,7 +777,7 @@ impl Ingredient {
             Ok(manifest_bytes) => {
                 (
                     // generate a store from the buffer and then validate from the asset path
-                    Store::from_jumbf(&manifest_bytes, &mut validation_log, settings)
+                    Store::from_jumbf_with_settings(&manifest_bytes, &mut validation_log, settings)
                         .and_then(|mut store| {
                             // verify the store
                             store
@@ -1008,7 +1008,11 @@ impl Ingredient {
                 Ok((manifest_bytes, _)) => {
                     (
                         // generate a store from the buffer and then validate from the asset path
-                        match Store::from_jumbf(&manifest_bytes, &mut validation_log, settings) {
+                        match Store::from_jumbf_with_settings(
+                            &manifest_bytes,
+                            &mut validation_log,
+                            settings,
+                        ) {
                             Ok(store) => {
                                 // verify the store
                                 Store::verify_store_async(
@@ -1451,7 +1455,11 @@ impl Ingredient {
 
         let manifest_bytes: Vec<u8> = manifest_bytes.into();
         // generate a store from the buffer and then validate from the asset path
-        let result = match Store::from_jumbf(&manifest_bytes, &mut validation_log, &settings) {
+        let result = match Store::from_jumbf_with_settings(
+            &manifest_bytes,
+            &mut validation_log,
+            &settings,
+        ) {
             Ok(store) => {
                 // verify the store
                 stream.rewind()?;
