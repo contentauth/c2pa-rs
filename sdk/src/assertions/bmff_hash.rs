@@ -35,7 +35,7 @@ use crate::{
     },
     asset_io::CAIRead,
     cbor_types::UriT,
-    settings::get_settings_value,
+    settings::Settings,
     utils::{
         hash_utils::{
             concat_and_hash, hash_stream_by_alg, vec_compare, verify_stream_by_alg, HashRange,
@@ -1044,7 +1044,11 @@ impl BmffHash {
         local_id: usize,
         unique_id: Option<usize>,
     ) -> crate::Result<()> {
-        let max_proofs = get_settings_value::<usize>("core.merkle_tree_max_proofs")?;
+        let settings = crate::settings::get_settings().unwrap_or_default();
+        // TO DO (https://github.com/contentauth/c2pa-rs/issues/1454):
+        // Add a Settings argument here?
+
+        let max_proofs = settings.core.merkle_tree_max_proofs;
 
         if !output_dir.exists() {
             std::fs::create_dir_all(output_dir)?;
@@ -1342,8 +1346,9 @@ impl BmffHash {
         reader: &mut dyn CAIRead,
         box_info: &BoxInfoLite,
         merkle_map: &mut MerkleMap,
+        settings: &Settings,
     ) -> crate::Result<Vec<Vec<u8>>> {
-        let max_proofs = get_settings_value::<usize>("core.merkle_tree_max_proofs")?;
+        let max_proofs = settings.core.merkle_tree_max_proofs;
 
         // build the Merkle tree
         let m_tree = self.create_merkle_tree_for_merkle_map(reader, box_info, merkle_map)?;
