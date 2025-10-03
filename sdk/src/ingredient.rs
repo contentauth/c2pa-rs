@@ -734,9 +734,6 @@ impl Ingredient {
         options: &dyn IngredientOptions,
     ) -> Result<Self> {
         let settings = crate::settings::get_settings().unwrap_or_default();
-        // TO DO (https://github.com/contentauth/c2pa-rs/issues/1454):
-        // Add a Settings argument here?
-
         Self::from_file_impl(path.as_ref(), options, &settings)
     }
 
@@ -811,6 +808,7 @@ impl Ingredient {
                     ingredient.maybe_add_thumbnail(
                         &format,
                         &mut std::io::BufReader::new(std::fs::File::open(path)?),
+                        &settings,
                     )?;
                 }
             }
@@ -833,9 +831,6 @@ impl Ingredient {
     /// Thumbnail will be set only if one can be retrieved from a previous valid manifest.
     pub fn from_stream(format: &str, stream: &mut dyn CAIRead) -> Result<Self> {
         let settings = crate::settings::get_settings().unwrap_or_default();
-        // TO DO (https://github.com/contentauth/c2pa-rs/issues/1454):
-        // Add a Settings argument here?
-
         let ingredient = Self::from_stream_info(stream, format, "untitled");
         stream.rewind()?;
         ingredient.add_stream_internal(format, stream, &settings)
@@ -955,7 +950,7 @@ impl Ingredient {
 
         // create a thumbnail if we don't already have a manifest with a thumb we can use
         #[cfg(feature = "add_thumbnails")]
-        self.maybe_add_thumbnail(format, &mut std::io::BufReader::new(stream))?;
+        self.maybe_add_thumbnail(format, &mut std::io::BufReader::new(stream), &settings)?;
 
         Ok(self)
     }
@@ -1002,8 +997,6 @@ impl Ingredient {
         stream: &mut dyn CAIRead,
         settings: &Settings,
     ) -> Result<Self> {
-        // TO DO (https://github.com/contentauth/c2pa-rs/issues/1454):
-        // Make this the official signature?
         let mut ingredient = Self::from_stream_info(stream, format, "untitled");
         stream.rewind()?;
 
@@ -1049,7 +1042,7 @@ impl Ingredient {
 
         // create a thumbnail if we don't already have a manifest with a thumb we can use
         #[cfg(feature = "add_thumbnails")]
-        ingredient.maybe_add_thumbnail(format, &mut std::io::BufReader::new(stream))?;
+        ingredient.maybe_add_thumbnail(format, &mut std::io::BufReader::new(stream), &settings)?;
 
         Ok(ingredient)
     }
@@ -1452,9 +1445,6 @@ impl Ingredient {
         stream: &mut dyn CAIRead,
     ) -> Result<Self> {
         let settings = crate::settings::get_settings().unwrap_or_default();
-        // TO DO (https://github.com/contentauth/c2pa-rs/issues/1454):
-        // Add a Settings argument here?
-
         let mut ingredient = Self::from_stream_info(stream, format, "untitled");
 
         let mut validation_log = StatusTracker::default();
@@ -1489,7 +1479,7 @@ impl Ingredient {
 
         // create a thumbnail if we don't already have a manifest with a thumb we can use
         #[cfg(feature = "add_thumbnails")]
-        ingredient.maybe_add_thumbnail(format, &mut std::io::BufReader::new(stream))?;
+        ingredient.maybe_add_thumbnail(format, &mut std::io::BufReader::new(stream), &settings)?;
 
         Ok(ingredient)
     }
@@ -1499,14 +1489,15 @@ impl Ingredient {
     /// This function takes into account the [Settings][crate::settings::Settings]:
     /// * `builder.thumbnail.enabled`
     #[cfg(feature = "add_thumbnails")]
-    pub fn maybe_add_thumbnail<R>(&mut self, format: &str, stream: &mut R) -> Result<()>
+    pub(crate) fn maybe_add_thumbnail<R>(
+        &mut self,
+        format: &str,
+        stream: &mut R,
+        settings: &Settings,
+    ) -> Result<()>
     where
         R: std::io::BufRead + std::io::Seek,
     {
-        let settings = crate::settings::get_settings().unwrap_or_default();
-        // TO DO (https://github.com/contentauth/c2pa-rs/issues/1454):
-        // Add a Settings argument here?
-
         let auto_thumbnail = settings.builder.thumbnail.enabled;
 
         if self.thumbnail.is_none() && auto_thumbnail {
