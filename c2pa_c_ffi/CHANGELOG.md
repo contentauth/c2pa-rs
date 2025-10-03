@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.67.2](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.67.1...c2pa-c-ffi-v0.67.2)
+_03 October 2025_
+
+### Fixed
+
+* Add linker flags to Android library builds ([#1463](https://github.com/contentauth/c2pa-rs/pull/1463))
+
 ## [0.67.1](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.67.0...c2pa-c-ffi-v0.67.1)
 _02 October 2025_
 
