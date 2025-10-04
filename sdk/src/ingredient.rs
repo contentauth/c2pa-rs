@@ -1022,7 +1022,7 @@ impl Ingredient {
             None => Vec::new(),
         };
 
-        // use either the active_manifest or c2pa_manifest field
+        // the c2pa_manifest() method will return the active_manifest or c2pa_manifest field
         let active_manifest = ingredient_assertion
             .c2pa_manifest()
             .and_then(|hash_url| manifest_label_from_uri(&hash_url.url()));
@@ -1231,18 +1231,15 @@ impl Ingredient {
         // if the ingredient defines a thumbnail, add it to the claim
         // otherwise use the parent claim thumbnail if available
         if let Some(thumb_ref) = self.thumbnail_ref() {
-            // assume this is a JUMBF uri if it has a manifest label
-            let hash_url = match manifest_label_from_uri(&thumb_ref.identifier) {
-                Some(_) => {
-                    // we have a JUMBF uri so build a hashed uri to the existing assertion
-                    let hash = match thumb_ref.hash.as_ref() {
-                        Some(h) => base64::decode(h)
-                            .map_err(|_e| Error::BadParam("Invalid hash".to_string()))?,
-                        None => return Err(Error::BadParam("hash is missing".to_string())), /* todo: add hash missing error */
-                    };
+            // if we have a hash, just build the hashed uri
+            let hash_url = match thumb_ref.hash.as_ref() {
+                Some(h) => {
+                    let hash = base64::decode(h)
+                        .map_err(|_e| Error::BadParam("Invalid hash".to_string()))?;
                     HashedUri::new(thumb_ref.identifier.clone(), thumb_ref.alg.clone(), &hash)
                 }
                 None => {
+                    // get the resource data and add it to the claim
                     let data = get_resource(&thumb_ref.identifier)?;
                     if claim.version() < 2 {
                         claim.add_databox(
@@ -1320,7 +1317,7 @@ impl Ingredient {
                 assertion.format = self.format.clone();
                 assertion
             }
-            _ => return Err(Error::UnsupportedType), // todo: better error
+            _ => return Err(Error::ClaimVersion),
         };
         ingredient_assertion.instance_id = self.instance_id.clone();
         match claim.version() {
