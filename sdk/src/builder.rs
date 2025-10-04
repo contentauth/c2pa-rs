@@ -26,10 +26,9 @@ use serde_with::skip_serializing_none;
 use uuid::Uuid;
 use zip::{write::SimpleFileOptions, ZipArchive, ZipWriter};
 
-use crate::assertion::AssertionBase;
 #[allow(deprecated)]
 use crate::{
-    assertion::AssertionDecodeError,
+    assertion::{AssertionBase, AssertionDecodeError},
     assertions::{
         c2pa_action, labels, Action, ActionTemplate, Actions, AssertionMetadata, BmffHash, BoxHash,
         CreativeWork, DataHash, DigitalSourceType, EmbeddedData, Exif, Metadata, SoftwareAgent,
@@ -46,7 +45,7 @@ use crate::{
         builder::{ActionSettings, ActionTemplateSettings, ClaimGeneratorInfoSettings},
     },
     store::Store,
-    utils::mime::format_to_mime,
+    utils::{hash_utils::hash_to_b64, mime::format_to_mime},
     AsyncSigner,
     ClaimGeneratorInfo,
     HashRange,
@@ -75,7 +74,7 @@ pub struct ManifestDefinition {
     /// This is typically a reverse domain name.
     pub vendor: Option<String>,
 
-    /// Claim Generator Info is always required with at least one entry
+    /// Claim Generator Info is always required with an entry
     #[serde(default = "default_claim_generator_info")]
     pub claim_generator_info: Vec<ClaimGeneratorInfo>,
 
@@ -322,7 +321,7 @@ pub struct Builder {
 
     /// Container for binary assets (like thumbnails).
     #[serde(skip)]
-    resources: ResourceStore,
+    pub(crate) resources: ResourceStore,
 }
 
 impl AsRef<Builder> for Builder {
@@ -1611,6 +1610,15 @@ impl Builder {
     /// * Returns an [`Error`] if the manifest cannot be converted.
     pub fn composed_manifest(manifest_bytes: &[u8], format: &str) -> Result<Vec<u8>> {
         Store::get_composed_manifest(manifest_bytes, format)
+    }
+}
+
+impl std::fmt::Display for Builder {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut json = serde_json::to_value(self).map_err(|_| std::fmt::Error)?;
+        json = hash_to_b64(json);
+        let output = serde_json::to_string_pretty(&json).map_err(|_| std::fmt::Error)?;
+        f.write_str(&output)
     }
 }
 
