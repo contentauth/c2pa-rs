@@ -32,7 +32,6 @@ use serde_with::skip_serializing_none;
 #[cfg(feature = "file_io")]
 use crate::utils::io_utils::uri_to_path;
 use crate::{
-    crypto::base64,
     dynamic_assertion::PartialClaim,
     error::{Error, Result},
     jumbf::labels::{manifest_label_from_uri, to_absolute_uri, to_relative_uri},
@@ -42,6 +41,7 @@ use crate::{
     settings::get_settings_value,
     status_tracker::StatusTracker,
     store::Store,
+    utils::hash_utils::hash_to_b64,
     validation_results::{ValidationResults, ValidationState},
     validation_status::ValidationStatus,
     Manifest, ManifestAssertion,
@@ -326,44 +326,6 @@ impl Reader {
         }
     }
 
-    /// replace byte arrays with base64 encoded strings
-    fn hash_to_b64(mut value: Value) -> Value {
-        use std::collections::VecDeque;
-
-        let mut queue = VecDeque::new();
-        queue.push_back(&mut value);
-
-        while let Some(current) = queue.pop_front() {
-            match current {
-                Value::Object(obj) => {
-                    for (_, v) in obj.iter_mut() {
-                        if let Value::Array(hash_arr) = v {
-                            if !hash_arr.is_empty() && hash_arr.iter().all(|x| x.is_number()) {
-                                // Pre-allocate with capacity to avoid reallocations
-                                let mut hash_bytes = Vec::with_capacity(hash_arr.len());
-                                // Convert numbers to bytes safely
-                                for n in hash_arr.iter() {
-                                    if let Some(num) = n.as_u64() {
-                                        hash_bytes.push(num as u8);
-                                    }
-                                }
-                                *v = Value::String(base64::encode(&hash_bytes));
-                            }
-                        }
-                        queue.push_back(v);
-                    }
-                }
-                Value::Array(arr) => {
-                    for v in arr.iter_mut() {
-                        queue.push_back(v);
-                    }
-                }
-                _ => {}
-            }
-        }
-        value
-    }
-
     /// Returns a [Vec] of mime types that [c2pa-rs] is able to read.
     pub fn supported_mime_types() -> Vec<String> {
         jumbf_io::supported_reader_mime_types()
@@ -404,7 +366,7 @@ impl Reader {
             }
         }
         // Convert hash values to base64 strings
-        Ok(Self::hash_to_b64(json))
+        Ok(hash_to_b64(json))
     }
 
     /// Convert the reader to a JSON value with detailed formatting.
@@ -436,7 +398,7 @@ impl Reader {
             }
         }
         // Convert hash values to base64 strings
-        json = Self::hash_to_b64(json);
+        json = hash_to_b64(json);
         Ok(json)
     }
 
@@ -884,13 +846,52 @@ impl std::fmt::Debug for Reader {
         let json = self
             .to_json_detailed_formatted()
             .map_err(|_| std::fmt::Error)?;
-        // let report = match self.validation_results() {
-        //     Some(results) => ManifestStoreReport::from_store_with_results(&self.store, results),
-        //     None => ManifestStoreReport::from_store(&self.store),
-        // }
-        // .map_err(|_| std::fmt::Error)?;
         let output = serde_json::to_string_pretty(&json).map_err(|_| std::fmt::Error)?;
         f.write_str(&output)
+    }
+}
+
+impl TryInto<crate::Builder> for Reader {
+    type Error = Error;
+
+    fn try_into(mut self) -> Result<crate::Builder> {
+        let mut builder = crate::Builder::new();
+        if let Some(label) = &self.active_manifest {
+            if let Some(parts) = crate::jumbf::labels::manifest_label_to_parts(label) {
+                builder.definition.vendor = parts.cgi.clone();
+                if parts.is_v1 {
+                    builder.definition.claim_version = Some(1);
+                }
+            }
+            builder.definition.label = Some(label.to_string());
+            //let jumbf = self.store.to_jumbf_internal(0)?;
+            //let manifest_data_ref = builder.resources.add_with("manifest_data", "application/c2pa", jumbf)?;
+            if let Some(mut manifest) = self.manifests.remove(label) {
+                builder.definition.claim_generator_info =
+                    manifest.claim_generator_info.take().unwrap_or_default();
+                builder.definition.format = manifest.format().unwrap_or_default().to_string();
+                builder.definition.title = manifest.title().map(|s| s.to_owned());
+                builder.definition.instance_id = manifest.instance_id().to_owned();
+                builder.definition.thumbnail = manifest.thumbnail_ref().cloned();
+                builder.definition.redactions = manifest.redactions.take();
+                let ingredients = manifest.ingredients.drain(..).collect::<Vec<_>>();
+                for ingredient in ingredients {
+                    // if ingredient.active_manifest().is_some(){
+                    //     //let manifest_data_ref = manifest.resources_mut().add_with("manifest_data", "application/c2pa", jumbf.clone())?;
+                    //     let manifest_data_ref = crate::ResourceRef::new("application/c2pa",label);
+                    //     ingredient.set_manifest_data_ref(manifest_data_ref)?;
+                    // }
+                    builder.add_ingredient(ingredient);
+                }
+                for assertion in manifest.assertions.iter() {
+                    builder.add_assertion(assertion.label(), assertion.value()?)?;
+                }
+                for (uri, data) in manifest.resources().resources() {
+                    builder.add_resource(uri, std::io::Cursor::new(data))?;
+                }
+            }
+        }
+        Ok(builder)
     }
 }
 
@@ -906,6 +907,27 @@ pub mod tests {
     const IMAGE_COMPLEX_MANIFEST: &[u8] = include_bytes!("../tests/fixtures/CACAE-uri-CA.jpg");
     const IMAGE_WITH_MANIFEST: &[u8] = include_bytes!("../tests/fixtures/CA.jpg");
     const IMAGE_WITH_REMOTE_MANIFEST: &[u8] = include_bytes!("../tests/fixtures/cloud.jpg");
+    const IMAGE_WITH_INGREDIENT_MANIFEST: &[u8] = include_bytes!("../../target/images/CAICAI.jpg");
+
+    #[test]
+    fn test_into_builder() -> Result<()> {
+        let mut source = Cursor::new(IMAGE_WITH_INGREDIENT_MANIFEST);
+        let format = "image/jpeg";
+        let reader = Reader::from_stream(format, &mut source)?;
+        println!("{reader}");
+        assert_eq!(reader.validation_state(), ValidationState::Trusted);
+        let mut builder: crate::Builder = reader.try_into()?;
+        println!("{builder}");
+        source.set_position(0);
+        let mut dest = Cursor::new(Vec::new());
+        let signer = crate::settings::Settings::signer()?;
+        builder.sign(&signer, format, &mut source, &mut dest)?;
+        dest.set_position(0);
+        let reader2 = Reader::from_stream(format, &mut dest)?;
+        println!("{reader2}");
+        assert_eq!(reader2.validation_state(), ValidationState::Trusted);
+        Ok(())
+    }
 
     #[test]
     fn test_reader_embedded() -> Result<()> {
