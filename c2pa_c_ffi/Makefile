@@ -26,6 +26,9 @@ IPHONEOS_DEPLOYMENT_TARGET ?= 15.0
 # This clears RUSTFLAGS to prevent -D warnings from failing the cross installation
 CROSS_INSTALL_RUSTFLAGS = RUSTFLAGS=""
 
+# Android 16KB page size alignment requirement
+ANDROID_LINKER_FLAGS = -C link-arg=-Wl,-z,max-page-size=16384
+
 # Helper function to create a zip file
 define make_zip
 	set -e; \
@@ -142,25 +145,25 @@ release-ios-arm64-sim:
 # 64-bit Android devices
 release-android-arm64:
 	$(CROSS_INSTALL_RUSTFLAGS) cargo install cross --git https://github.com/cross-rs/cross
-	cross build --target=aarch64-linux-android $(CARGO_BUILD_FLAGS)
+	RUSTFLAGS="$${RUSTFLAGS} $(ANDROID_LINKER_FLAGS)" cross build --target=aarch64-linux-android $(CARGO_BUILD_FLAGS)
 	@$(call make_zip,$(TARGET_DIR)/aarch64-linux-android/release,aarch64-linux-android)
 
 # 32-bit Android devices
 release-android-armv7:
 	$(CROSS_INSTALL_RUSTFLAGS) cargo install cross --git https://github.com/cross-rs/cross
-	cross build --target=armv7-linux-androideabi $(CARGO_BUILD_FLAGS)
+	RUSTFLAGS="$${RUSTFLAGS} $(ANDROID_LINKER_FLAGS)" cross build --target=armv7-linux-androideabi $(CARGO_BUILD_FLAGS)
 	@$(call make_zip,$(TARGET_DIR)/armv7-linux-androideabi/release,armv7-linux-androideabi)
 
 # 32-bit x86 Android emulators
 release-android-x86:
 	$(CROSS_INSTALL_RUSTFLAGS) cargo install cross --git https://github.com/cross-rs/cross
-	cross build --target=i686-linux-android $(CARGO_BUILD_FLAGS)
+	RUSTFLAGS="$${RUSTFLAGS} $(ANDROID_LINKER_FLAGS)" cross build --target=i686-linux-android $(CARGO_BUILD_FLAGS)
 	@$(call make_zip,$(TARGET_DIR)/i686-linux-android/release,i686-linux-android)
 
 # 64-bit x86 Android emulators
 release-android-x86_64:
 	$(CROSS_INSTALL_RUSTFLAGS) cargo install cross --git https://github.com/cross-rs/cross
-	cross build --target=x86_64-linux-android $(CARGO_BUILD_FLAGS)
+	RUSTFLAGS="$${RUSTFLAGS} $(ANDROID_LINKER_FLAGS)" cross build --target=x86_64-linux-android $(CARGO_BUILD_FLAGS)
 	@$(call make_zip,$(TARGET_DIR)/x86_64-linux-android/release,x86_64-linux-android)
 
 
