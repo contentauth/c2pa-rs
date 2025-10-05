@@ -875,12 +875,19 @@ impl TryInto<crate::Builder> for Reader {
                 builder.definition.thumbnail = manifest.thumbnail_ref().cloned();
                 builder.definition.redactions = manifest.redactions.take();
                 let ingredients = manifest.ingredients.drain(..).collect::<Vec<_>>();
-                for ingredient in ingredients {
-                    // if ingredient.active_manifest().is_some(){
-                    //     //let manifest_data_ref = manifest.resources_mut().add_with("manifest_data", "application/c2pa", jumbf.clone())?;
-                    //     let manifest_data_ref = crate::ResourceRef::new("application/c2pa",label);
-                    //     ingredient.set_manifest_data_ref(manifest_data_ref)?;
-                    // }
+                for mut ingredient in ingredients {
+                    if ingredient.active_manifest().is_some(){
+                        let ingredient_claim = self.store.get_claim(ingredient.active_manifest().unwrap());
+                        if let Some(claim) = ingredient_claim {
+                            // recreate an ingredient store to get the jumbf data
+                            let mut ingredient_store = Store::new();
+                            ingredient_store.commit_claim(claim.clone())?;
+                            let jumbf = ingredient_store.to_jumbf_internal(0)?;
+                            let manifest_data_ref = manifest.resources_mut().add_with("manifest_data", "application/c2pa", jumbf.clone())?;
+                            //let manifest_data_ref = crate::ResourceRef::new("application/c2pa",label);
+                            ingredient.set_manifest_data_ref(manifest_data_ref)?;
+                        }
+                    }
                     builder.add_ingredient(ingredient);
                 }
                 for assertion in manifest.assertions.iter() {
@@ -911,6 +918,7 @@ pub mod tests {
 
     #[test]
     fn test_into_builder() -> Result<()> {
+        crate::settings::Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml"))?;
         let mut source = Cursor::new(IMAGE_WITH_INGREDIENT_MANIFEST);
         let format = "image/jpeg";
         let reader = Reader::from_stream(format, &mut source)?;
@@ -926,6 +934,7 @@ pub mod tests {
         let reader2 = Reader::from_stream(format, &mut dest)?;
         println!("{reader2}");
         assert_eq!(reader2.validation_state(), ValidationState::Trusted);
+        std::fs::write("../target/images/CAICAI-rebuilt.jpg", dest.get_ref())?;
         Ok(())
     }
 
