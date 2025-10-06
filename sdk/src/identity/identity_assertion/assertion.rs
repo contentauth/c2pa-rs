@@ -290,9 +290,6 @@ impl IdentityAssertion {
         status_tracker: &mut StatusTracker,
     ) -> Result<serde_json::Value, ValidationError<String>> {
         let settings = crate::settings::get_settings().unwrap_or_default();
-        // TO DO (https://github.com/contentauth/c2pa-rs/issues/1454):
-        // Add a Settings argument here?
-
         self.check_padding(status_tracker)?;
 
         self.signer_payload
