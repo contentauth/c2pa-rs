@@ -964,31 +964,12 @@ impl Ingredient {
         Self::from_stream_async(format, &mut stream).await
     }
 
-    /// Creates an `Ingredient` from a memory buffer (async version).
-    ///
-    /// This does not set title or hash.
-    /// Thumbnail will be set only if one can be retrieved from a previous valid manifest.
-    pub async fn from_memory_async_with_settings(
-        format: &str,
-        buffer: &[u8],
-        settings: &Settings,
-    ) -> Result<Self> {
-        // TO DO (https://github.com/contentauth/c2pa-rs/issues/1454):
-        // Replace `from_memory_async` with this?
-
-        let mut stream = Cursor::new(buffer);
-        Self::from_stream_async_with_settings(format, &mut stream, settings).await
-    }
-
     /// Creates an `Ingredient` from a stream (async version).
     ///
     /// This does not set title or hash.
     /// Thumbnail will be set only if one can be retrieved from a previous valid manifest.
     pub async fn from_stream_async(format: &str, stream: &mut dyn CAIRead) -> Result<Self> {
         let settings = crate::settings::get_settings().unwrap_or_default();
-        // TO DO (https://github.com/contentauth/c2pa-rs/issues/1454):
-        // Add a Settings argument here?
-
         Self::from_stream_async_with_settings(format, stream, &settings).await
     }
 
@@ -1756,17 +1737,15 @@ mod tests {
     #[cfg(feature = "fetch_remote_manifests")]
     #[c2pa_test_async]
     async fn test_jpg_cloud_from_memory() {
-        let mut settings = crate::settings::get_settings().unwrap_or_default();
-        settings.verify.verify_trust = false;
-        settings.verify.remote_manifest_fetch = true;
+        crate::settings::set_settings_value("verify.verify_trust", false).unwrap();
+        crate::settings::set_settings_value("verify.remote_manifest_fetch", true).unwrap();
 
         let image_bytes = include_bytes!("../tests/fixtures/cloud.jpg");
         let format = "image/jpeg";
 
-        let ingredient =
-            Ingredient::from_memory_async_with_settings(format, image_bytes, &settings)
-                .await
-                .expect("from_memory_async");
+        let ingredient = Ingredient::from_memory_async(format, image_bytes)
+            .await
+            .expect("from_memory_async");
 
         // println!("ingredient = {ingredient}");
         assert_eq!(ingredient.title(), Some("untitled"));
@@ -1780,17 +1759,15 @@ mod tests {
     #[cfg(not(any(feature = "fetch_remote_manifests", feature = "file_io")))]
     #[c2pa_test_async]
     async fn test_jpg_cloud_from_memory_no_file_io() {
-        let mut settings = crate::settings::get_settings().unwrap_or_default();
-        settings.verify.verify_trust = false;
-        settings.verify.remote_manifest_fetch = true;
+        crate::settings::set_settings_value("verify.verify_trust", false).unwrap();
+        crate::settings::set_settings_value("verify.remote_manifest_fetch", true).unwrap();
 
         let image_bytes = include_bytes!("../tests/fixtures/cloud.jpg");
         let format = "image/jpeg";
 
-        let ingredient =
-            Ingredient::from_memory_async_with_settings(format, image_bytes, &settings)
-                .await
-                .expect("from_memory_async");
+        let ingredient = Ingredient::from_memory_async(format, image_bytes)
+            .await
+            .expect("from_memory_async");
 
         assert!(ingredient.validation_status().is_some());
         assert_eq!(
