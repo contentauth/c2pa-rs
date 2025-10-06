@@ -140,8 +140,14 @@ impl Store {
     /// Create a new, empty claims store with default settings.
     pub fn new() -> Self {
         Store {
-            label: MANIFEST_STORE_EXT.to_owned(),
-            ..Default::default()
+            claims_map: HashMap::new(),
+            manifest_box_hash_cache: HashMap::new(),
+            claims: Vec::new(),
+            label: MANIFEST_STORE_EXT.to_string(),
+            ctp: CertificateTrustPolicy::default(),
+            provenance_path: None,
+            remote_url: None,
+            embedded: false,
         }
     }
 
@@ -149,6 +155,7 @@ impl Store {
     pub fn with_settings(settings: &Settings) -> Self {
         let mut store = Store::new();
 
+        // load the trust handler settings, don't worry about status as these are checked during setting generation
         if let Some(ta) = &settings.trust.trust_anchors {
             let _v = store.add_trust(ta.as_bytes());
         }
@@ -1107,10 +1114,12 @@ impl Store {
         true
     }
 
+    #[inline]
     pub fn from_jumbf(buffer: &[u8], validation_log: &mut StatusTracker) -> Result<Store> {
         Self::from_jumbf_impl(Store::new(), buffer, validation_log)
     }
 
+    #[inline]
     pub fn from_jumbf_with_settings(
         buffer: &[u8],
         validation_log: &mut StatusTracker,

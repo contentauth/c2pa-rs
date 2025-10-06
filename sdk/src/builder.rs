@@ -1274,7 +1274,7 @@ impl Builder {
     fn to_store(&self, settings: &Settings) -> Result<Store> {
         let claim = self.to_claim(settings)?;
 
-        let mut store = Store::new(settings);
+        let mut store = Store::with_settings(settings);
 
         // if this can be an update manifest, then set the update_manifest flag
         if self.intent == Some(BuilderIntent::Update) {
