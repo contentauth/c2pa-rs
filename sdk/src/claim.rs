@@ -1830,8 +1830,6 @@ impl Claim {
         validation_log: &mut StatusTracker,
         settings: &Settings,
     ) -> Result<()> {
-        // TO DO BEFORE MERGE? Are ctp and cert_check params redundant?
-
         // Parse COSE signed data (signature) and validate it.
         let sig = claim.signature_val().clone();
         let additional_bytes: Vec<u8> = Vec::new();
@@ -1903,8 +1901,6 @@ impl Claim {
         validation_log: &mut StatusTracker,
         settings: &Settings,
     ) -> Result<()> {
-        // TO DO BEFORE MERGE? Are cert_check and ctp redundant?
-
         // Parse COSE signed data (signature) and validate it.
         let sig = claim.signature_val();
         let additional_bytes: Vec<u8> = Vec::new();
