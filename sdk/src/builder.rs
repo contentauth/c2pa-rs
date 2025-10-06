@@ -594,58 +594,13 @@ impl Builder {
         R: Read + Seek + Send,
     {
         let settings = crate::settings::get_settings().unwrap_or_default();
-        // TO DO (https://github.com/contentauth/c2pa-rs/issues/1454):
-        // Add a Settings argument here?
 
-        if _sync {
-            self.add_ingredient_from_stream_with_settings(
-                ingredient_json,
-                format,
-                stream,
-                &settings,
-            )
-        } else {
-            self.add_ingredient_from_stream_with_settings_async(
-                ingredient_json,
-                format,
-                stream,
-                &settings,
-            )
-            .await
-        }
-    }
-
-    /// Adds an [`Ingredient`] to the manifest with JSON and a stream.
-    // TODO: Add example.
-    ///
-    /// # Arguments
-    /// * `ingredient_json` - A JSON string representing the [`Ingredient`].  This ingredient is merged  with the ingredient specified in the `stream` argument, and these values take precedence.
-    /// * `format` - The format of the [`Ingredient`].
-    /// * `stream` - A stream from which to read the [`Ingredient`].  This ingredient is merged  with the ingredient specified in the `ingredient_json` argument, whose values take precedence.  You can specify values here that are not specified in `ingredient_json`.
-    /// # Returns
-    /// * A mutable reference to the [`Ingredient`].
-    /// # Errors
-    /// * Returns an [`Error`] if the [`Ingredient`] is not valid
-    #[async_generic]
-    pub fn add_ingredient_from_stream_with_settings<'a, T, R>(
-        &'a mut self,
-        ingredient_json: T,
-        format: &str,
-        stream: &mut R,
-        settings: &Settings,
-    ) -> Result<&'a mut Ingredient>
-    where
-        T: Into<String>,
-        R: Read + Seek + Send,
-    {
-        // TO DO (https://github.com/contentauth/c2pa-rs/issues/1454):
-        // Make this the official API?
         let ingredient: Ingredient = Ingredient::from_json(&ingredient_json.into())?;
         let ingredient = if _sync {
-            ingredient.with_stream(format, stream, settings)?
+            ingredient.with_stream(format, stream, &settings)?
         } else {
             ingredient
-                .with_stream_async(format, stream, settings)
+                .with_stream_async(format, stream, &settings)
                 .await?
         };
 
@@ -1382,8 +1337,6 @@ impl Builder {
         format: &str,
     ) -> Result<Vec<u8>> {
         let settings = crate::settings::get_settings().unwrap_or_default();
-        // TO DO (https://github.com/contentauth/c2pa-rs/issues/1454):
-        // Add a Settings argument here?
 
         let dh: Result<DataHash> = self.find_assertion(DataHash::LABEL);
         if dh.is_err() {
@@ -1428,8 +1381,6 @@ impl Builder {
         format: &str,
     ) -> Result<Vec<u8>> {
         let settings = crate::settings::get_settings().unwrap_or_default();
-        // TO DO (https://github.com/contentauth/c2pa-rs/issues/1454):
-        // Add a Settings argument here?
 
         let mut store = self.to_store(&settings)?;
         if _sync {
@@ -1464,8 +1415,6 @@ impl Builder {
         format: &str,
     ) -> Result<Vec<u8>> {
         let settings = crate::settings::get_settings().unwrap_or_default();
-        // TO DO (https://github.com/contentauth/c2pa-rs/issues/1454):
-        // Add a Settings argument here?
 
         self.definition.instance_id = format!("xmp:iid:{}", Uuid::new_v4());
 
@@ -1511,8 +1460,6 @@ impl Builder {
         W: Write + Read + Seek + Send,
     {
         let settings = crate::settings::get_settings().unwrap_or_default();
-        // TO DO (https://github.com/contentauth/c2pa-rs/issues/1454):
-        // Add a Settings argument here?
 
         let format = format_to_mime(format);
         self.definition.format.clone_from(&format);
@@ -1593,8 +1540,6 @@ impl Builder {
         output_path: P,
     ) -> Result<()> {
         let settings = crate::settings::get_settings().unwrap_or_default();
-        // TO DO (https://github.com/contentauth/c2pa-rs/issues/1454):
-        // Add a Settings argument here?
 
         if !output_path.as_ref().exists() {
             // ensure the path exists
@@ -2978,8 +2923,7 @@ mod tests {
     /// test if the sdk can add a cloud ingredient retrieved from a stream and a cloud manifest
     // This works with or without the fetch_remote_manifests feature
     async fn test_add_cloud_ingredient() {
-        let mut settings = crate::settings::get_settings().unwrap();
-        settings.verify.remote_manifest_fetch = false;
+        crate::settings::set_settings_value("verify.remote_manifest_fetch", false).unwrap();
 
         let mut input = Cursor::new(TEST_IMAGE_CLEAN);
         let mut cloud_image = Cursor::new(TEST_IMAGE_CLOUD);
@@ -3018,12 +2962,7 @@ mod tests {
             .unwrap();
 
         builder
-            .add_ingredient_from_stream_with_settings(
-                parent_json,
-                "image/jpeg",
-                &mut cloud_image,
-                &settings,
-            )
+            .add_ingredient_from_stream(parent_json, "image/jpeg", &mut cloud_image)
             .unwrap();
 
         builder
