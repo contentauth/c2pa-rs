@@ -141,7 +141,7 @@ impl IfdEntry {
             1 | 2 | 6 | 7 => self.value_count <= 4, // 8 bit cases
             3 | 8 => self.value_count <= 2,         // 16 bit cases
             4 | 9 | 11 => self.value_count <= 1,
-            _ => true,
+            _ => false,
         }
     }
 
@@ -914,7 +914,7 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
         Ok(ifd_offset)
     }
 
-    // add new TAG by supplying the IDF entry
+    // add new TAG by supplying the IFD entry
     pub fn add_target_tag(&mut self, entry: IfdClonedEntry) {
         self.additional_ifds.insert(entry.entry_tag, entry);
     }
@@ -1215,7 +1215,7 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
             // clone the image data
             self.clone_image_data(&mut cloned_ifd, asset_reader)?;
 
-            // add in new Tags to last IDF (cp2 tags)
+            // add in new Tags to last IFD (cp2 tags)
             if page_token == last_page {
                 for (tag, new_entry) in &self.additional_ifds {
                     cloned_ifd.insert(*tag, new_entry.clone());
@@ -1260,7 +1260,7 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
             let ifd_offset = self.write_ifd(&mut cloned_ifd)?;
             page_ifd_offsets.push((ifd_offset, self.offset()?));
 
-            // write 0s for now.  Patched in the nextstep
+            // write 0s for now, offset patched in the next step
             if self.big_tiff {
                 self.writer.write_u64(0)?;
             } else {
@@ -1283,7 +1283,7 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
                 }
                 prior_write_point = *write_point;
             } else {
-                // seek and patch the prior IDF next offset field
+                // seek and patch the prior IFD next offset field
                 self.writer.seek(SeekFrom::Start(prior_write_point))?;
 
                 if self.big_tiff {
@@ -1339,8 +1339,21 @@ fn tiff_clone_with_tags<R: Read + Seek + ?Sized, W: Read + Write + Seek + ?Sized
     asset_reader: &mut R,
     tiff_tags: Vec<IfdClonedEntry>,
 ) -> Result<()> {
-    let (mut tiff_tree, tokens, endianness, big_tiff) = map_tiff(asset_reader)?;
+    let (mut tiff_tree, page_tokens, endianness, big_tiff) = map_tiff(asset_reader)?;
 
+    let first_page = page_tokens
+        .first()
+        .ok_or(Error::InvalidAsset("no IFD".to_string()))?;
+    let last_page = page_tokens
+        .last()
+        .ok_or(Error::InvalidAsset("no IFD".to_string()))?;
+    let last_ifd = &tiff_tree[*last_page].data;
+
+    let contain_old_c2pa = first_page == last_page && last_ifd.get_tag(C2PA_TAG).is_some();
+    let c2pa_entry = tiff_tags.iter().find(|v| v.entry_tag == C2PA_TAG);
+
+    // remove C2PA entry from list since we will hand that separately;
+   
     let mut bo = ByteOrdered::new(writer, endianness);
 
     let mut tc = TiffCloner::new(endianness, big_tiff, &mut bo)?;
@@ -1602,17 +1615,65 @@ impl CAIWriter for TiffIO {
             .last()
             .ok_or(Error::InvalidAsset("no IFD found".to_string()))?;
 
-        let mut bo = ByteOrdered::new(output_stream, e);
-        let mut tc = TiffCloner::new(e, big_tiff, &mut bo)?;
+        // if this is a 1.4 or later style manifest we can just remove the last IFD
+        if page_tokens.len() > 1 && ifds[*last_page].data.entries.get(&C2PA_TAG).is_some() {
+            let last_idf = &ifds[*last_page].data;
+            let last_ifd_offset = last_idf.offset;
 
-        ifds[*last_page].data.entries.remove(&C2PA_TAG);
-        tc.clone_tiff(&mut ifds, &page_tokens, input_stream)?;
+            // terminate the new last IFD with 0s
+            let new_last_page_token = &page_tokens[page_tokens.len() - 2];
+            let new_last_page_ifd = &ifds[*new_last_page_token].data;
+            let new_last_ifd_offset = new_last_page_ifd.offset;
+
+            // sanity check, this IFD must have pointed to the last IFD (C2PA IFD)
+            if let Some(next_ifd_offset) = new_last_page_ifd.next_ifd_offset {
+                if next_ifd_offset == last_ifd_offset {
+                    // skip source upto last IDF
+                    input_stream.rewind()?;
+                    let mut trucate_source = input_stream.take(last_ifd_offset);
+                    std::io::copy(&mut trucate_source, output_stream)?;
+
+                    // skip down to correct next IFD field
+
+                    let entry_cnt = new_last_page_ifd.entry_cnt;
+
+                    if big_tiff {
+                        let next_ifd_offset = new_last_ifd_offset + 8 + (20 * entry_cnt); // entry count len + (entry size * entry count)
+                        output_stream.seek(SeekFrom::Start(next_ifd_offset))?;
+                        let bytes = 0u64;
+                        output_stream.write(&bytes.to_ne_bytes())?;
+                    } else {
+                        let next_ifd_offset = new_last_ifd_offset + 2 + (12 * entry_cnt); // entry count len + (entry size * entry count)
+                        output_stream.seek(SeekFrom::Start(next_ifd_offset))?;
+                        let bytes = 0u32;
+                        output_stream.write(&bytes.to_ne_bytes())?;
+                    };
+                } else {
+                    return Err(Error::InvalidAsset("IFD chain is incorrect".to_string()));
+                }
+            } else {
+                return Err(Error::InvalidAsset("ID chain is incorrect".to_string()));
+            }
+        } else {
+            // this is the legacy case (< 1.4) with the C2PA tag mixed with the rest of the content so
+            // we remove tag if found and rewrite the file
+            if ifds[*last_page].data.entries.remove(&C2PA_TAG).is_some() {
+                let mut bo = ByteOrdered::new(output_stream, e);
+                let mut tc = TiffCloner::new(e, big_tiff, &mut bo)?;
+
+                tc.clone_tiff(&mut ifds, &page_tokens, input_stream)?;
+            } else {
+                // just copy if no changes made
+                input_stream.rewind()?;
+                std::io::copy(input_stream, output_stream)?;
+            }
+        }
         Ok(())
     }
 }
 
-fn ifd_cloned_entry_bytes(
-    entry: &IfdClonedEntry,
+fn ifd_entry_hash_bytes(
+    entry: &IfdEntry,
     endianness: Endianness,
     big_tiff: bool,
 ) -> Result<Vec<u8>> {
@@ -1631,34 +1692,17 @@ fn ifd_cloned_entry_bytes(
         writer.write_u32(cnt)?;
     }
 
-    writer.write_all(&entry.value_bytes)?;
-
-    Ok(writer.into_inner())
-}
-
-fn ifd_entry_bytes(entry: &IfdEntry, endianness: Endianness, big_tiff: bool) -> Result<Vec<u8>> {
-    let mut output = Vec::new();
-    let mut writer = ByteOrdered::runtime(output, endianness);
-
-    writer.write_u16(entry.entry_tag)?;
-    writer.write_u16(entry.entry_type)?;
-
+    // convert offset to host endianess
+    let decoded_offset = decode_offset(entry.value_offset, endianness, big_tiff)?;
     if big_tiff {
-        writer.write_u64(entry.value_count)?;
+        writer.write_u64(decoded_offset)?;
     } else {
-        let cnt = u32::try_from(entry.value_count)
-            .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?;
-
-        writer.write_u32(cnt)?;
+        let decoded_offset32 = u32::try_from(decoded_offset)
+            .or_else(|_| Err(Error::InvalidAsset("value out of range".to_string())))?;
+        writer.write_u32(decoded_offset32)?;
     }
 
-    output = writer.into_inner();
-
-    // value_offset is already in target endianness
-    let mut value_offset_bytes = entry.value_offset.to_ne_bytes().to_vec();
-    output.append(&mut value_offset_bytes);
-
-    Ok(output)
+    Ok(writer.into_inner())
 }
 
 fn subifd_bytes(
@@ -1723,9 +1767,9 @@ fn subifd_bytes(
 
         for (tag, entry) in &subfile_ifd.entries {
             // start with the bytes of the tag itself
-            let mut entry_value_bytes = ifd_entry_bytes(entry, endianness, big_tiff)?;
+            let mut entry_value_bytes = ifd_entry_hash_bytes(entry, endianness, big_tiff)?;
 
-            // if the IDF entry has self contained data then it does not point to additional data
+            // if the IFD entry has self contained data then it does not point to additional data
             if entry.tag_contains_data() {
                 out_bytes.append(&mut entry_value_bytes);
                 continue;
@@ -1982,9 +2026,11 @@ fn subifd_bytes(
                 52545 => continue,
                 _ => {
                     // get the data for the tag
-                    let mut tag_data =
-                        read_ifd_entry_data(entry, input_stream, endianness, big_tiff)?;
-                    entry_value_bytes.append(&mut tag_data);
+                    if !entry.tag_contains_data() {
+                        let mut tag_data =
+                            read_ifd_entry_data(entry, input_stream, endianness, big_tiff)?;
+                        entry_value_bytes.append(&mut tag_data);
+                    }
                 }
             }
 
@@ -2002,6 +2048,8 @@ impl AssetBoxHash for TiffIO {
         let mut box_maps = Vec::new();
 
         // add TIFh header
+        input_stream.seek(SeekFrom::Start(0))?;
+        let tifh_data = input_stream.read_to_vec(8)?;
         let tifh_bm = BoxMap {
             names: vec!["TIFh".to_string()],
             alg: None,
@@ -2011,7 +2059,7 @@ impl AssetBoxHash for TiffIO {
             range_start: 0,
             range_len: 8,
             is_tiff: true,
-            entry_is_data: None,
+            entry_is_data: Some(tifh_data),
         };
         box_maps.push(tifh_bm);
 
@@ -2036,7 +2084,8 @@ impl AssetBoxHash for TiffIO {
                     entry_is_data: None,
                 };
 
-                let mut entry_value_bytes = ifd_cloned_entry_bytes(entry, e, big_tiff)?;
+                let source_entry = ifd.data.get_tag(*tag).ok_or(Error::NotFound)?;
+                let mut entry_value_bytes = ifd_entry_hash_bytes(source_entry, e, big_tiff)?;
 
                 match *tag {
                     STRIPOFFSETS => {
@@ -2116,7 +2165,7 @@ impl AssetBoxHash for TiffIO {
                     }
                     TILEOFFSETS => {
                         // offset bytes
-                       let tbc_entry = ifd_clone.get(&TILEBYTECOUNTS).ok_or(Error::NotFound)?;
+                        let tbc_entry = ifd_clone.get(&TILEBYTECOUNTS).ok_or(Error::NotFound)?;
 
                         // get the tile bytes
                         let to_entry = entry;
@@ -2187,7 +2236,7 @@ impl AssetBoxHash for TiffIO {
                     }
                     FREEOFFSETS => {
                         // offset bytes
-                       let fbc_entry = ifd_clone.get(&FREEBYTECOUNTS).ok_or(Error::NotFound)?;
+                        let fbc_entry = ifd_clone.get(&FREEBYTECOUNTS).ok_or(Error::NotFound)?;
 
                         // get the tile bytes
                         let fo_entry = entry;
@@ -2258,7 +2307,7 @@ impl AssetBoxHash for TiffIO {
                     }
                     SUBFILE_TAG | EXIFIFD_TAG | GPSIFD_TAG | INTEROPERABILITY_TAG => {
                         let source_entry = ifd.data.get_tag(*tag).ok_or(Error::NotFound)?;
-                        
+
                         subifd_bytes(
                             input_stream,
                             source_entry,
@@ -2273,9 +2322,12 @@ impl AssetBoxHash for TiffIO {
                     _ => {
                         // get the data for the tag
                         let source_entry = ifd.data.get_tag(*tag).ok_or(Error::NotFound)?;
-                        let mut source_entry_data = read_ifd_entry_data(source_entry, input_stream, e, big_tiff)?;
-                        
-                        entry_value_bytes.append(&mut source_entry_data);
+                        if !source_entry.tag_contains_data() {
+                            let mut source_entry_data =
+                                read_ifd_entry_data(source_entry, input_stream, e, big_tiff)?;
+                            entry_value_bytes.append(&mut source_entry_data);
+                        }
+
                         current_bm.entry_is_data = Some(entry_value_bytes);
                     }
                 }
@@ -2300,7 +2352,7 @@ impl AssetPatch for TiffIO {
 
         let last_page = page_tokens
             .last()
-            .ok_or(Error::InvalidAsset("no IDF".to_string()))?;
+            .ok_or(Error::InvalidAsset("no IFD".to_string()))?;
         let last_ifd = &tiff_tree[*last_page].data;
 
         let cai_ifd_entry = last_ifd.get_tag(C2PA_TAG).ok_or(Error::JumbfNotFound)?;
@@ -2507,6 +2559,26 @@ pub mod tests {
 
         assert_eq!(&loaded, data.as_bytes());
 
+        tiff_io.remove_cai_store(&output).unwrap();
+
+        match tiff_io.read_cai_store(&output) {
+            Err(Error::JumbfNotFound) => (),
+            _ => panic!("should be no C2PA store"),
+        }
+    }
+
+    #[test]
+    fn test_remove_manifest_1_4() {
+        let source = crate::utils::test::fixture_path("tiff_with_box_hash.dng");
+
+        let temp_dir = tempdirectory().unwrap();
+        let output = temp_dir_path(&temp_dir, "test.tif");
+
+        std::fs::copy(source, &output).unwrap();
+
+        let tiff_io = TiffIO {};
+
+        // first make sure that calling this without a manifest does not error
         tiff_io.remove_cai_store(&output).unwrap();
 
         match tiff_io.read_cai_store(&output) {
