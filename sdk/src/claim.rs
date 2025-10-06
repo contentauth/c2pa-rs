@@ -2581,14 +2581,29 @@ impl Claim {
 
                     // update with any needed update hash adjustments
                     if svi.update_manifest_label.is_some() {
+                        let mut start_adjust = 0;
+                        let mut start_offset = 0;
                         if let Some(exclusions) = &mut dh.exclusions {
                             if let Some(range) = &svi.manifest_store_range {
                                 // find the range that starts at the same position as the manifest store range
                                 if let Some(pos) =
                                     exclusions.iter().position(|r| r.start() == range.start())
                                 {
+                                    // find the adjustment length
+                                    start_offset = range.start();
+                                    start_adjust =
+                                        range.length().saturating_sub(exclusions[pos].length());
+
                                     // replace range using the size that covers entire manifest (including update manifests)
                                     exclusions[pos] = range.clone();
+                                }
+                            }
+                            // fix up offsets affected by update manifest
+                            if start_offset > 0 {
+                                for exclusion in exclusions {
+                                    if exclusion.start() > start_offset {
+                                        exclusion.set_start(exclusion.start() + start_adjust);
+                                    }
                                 }
                             }
                         }
