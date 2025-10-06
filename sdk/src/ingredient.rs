@@ -808,7 +808,7 @@ impl Ingredient {
                     ingredient.maybe_add_thumbnail(
                         &format,
                         &mut std::io::BufReader::new(std::fs::File::open(path)?),
-                        &settings,
+                        settings,
                     )?;
                 }
             }
@@ -950,7 +950,7 @@ impl Ingredient {
 
         // create a thumbnail if we don't already have a manifest with a thumb we can use
         #[cfg(feature = "add_thumbnails")]
-        self.maybe_add_thumbnail(format, &mut std::io::BufReader::new(stream), &settings)?;
+        self.maybe_add_thumbnail(format, &mut std::io::BufReader::new(stream), settings)?;
 
         Ok(self)
     }
@@ -1046,7 +1046,7 @@ impl Ingredient {
 
         // create a thumbnail if we don't already have a manifest with a thumb we can use
         #[cfg(feature = "add_thumbnails")]
-        ingredient.maybe_add_thumbnail(format, &mut std::io::BufReader::new(stream), &settings)?;
+        ingredient.maybe_add_thumbnail(format, &mut std::io::BufReader::new(stream), settings)?;
 
         Ok(ingredient)
     }
@@ -1512,9 +1512,7 @@ impl Ingredient {
             stream.rewind()?;
 
             if let Some((output_format, image)) =
-                crate::utils::thumbnail::make_thumbnail_bytes_from_stream(
-                    format, stream, &settings,
-                )?
+                crate::utils::thumbnail::make_thumbnail_bytes_from_stream(format, stream, settings)?
             {
                 self.set_thumbnail(output_format.to_string(), image)?;
             }

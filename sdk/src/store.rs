@@ -3811,10 +3811,11 @@ impl Store {
         settings: &Settings,
     ) -> Result<Self> {
         // first we convert the JUMBF into a usable store
-        let store = Store::from_jumbf(c2pa_data, validation_log, settings).inspect_err(|e| {
-            log_item!("asset", "error loading file", "load_from_asset")
-                .failure_no_throw(validation_log, e);
-        })?;
+        let store = Store::from_jumbf_with_settings(c2pa_data, validation_log, settings)
+            .inspect_err(|e| {
+                log_item!("asset", "error loading file", "load_from_asset")
+                    .failure_no_throw(validation_log, e);
+            })?;
 
         //let verify = get_settings_value::<bool>("verify.verify_after_reading")?; // defaults to true
 

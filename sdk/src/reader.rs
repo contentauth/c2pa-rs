@@ -39,7 +39,6 @@ use crate::{
     jumbf_io,
     manifest::StoreOptions,
     manifest_store_report::ManifestStoreReport,
-    settings::Settings,
     status_tracker::StatusTracker,
     store::Store,
     validation_results::{ValidationResults, ValidationState},
