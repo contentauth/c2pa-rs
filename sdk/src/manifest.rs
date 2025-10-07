@@ -35,6 +35,7 @@ use crate::{
     jumbf::labels::{to_absolute_uri, to_assertion_uri},
     manifest_assertion::ManifestAssertion,
     resource_store::{mime_from_uri, skip_serializing_resources, ResourceRef, ResourceStore},
+    settings::get_settings_value,
     status_tracker::StatusTracker,
     store::Store,
     ClaimGeneratorInfo, ManifestAssertionKind,
@@ -437,6 +438,9 @@ impl Manifest {
             })
             .collect();
 
+        let decode_identity_assertions =
+            get_settings_value::<bool>("core.decode_identity_assertions").unwrap_or_default();
+
         for assertion in claim.assertions() {
             let claim_assertion = match store
                 .get_claim_assertion_from_uri(&to_absolute_uri(claim.label(), &assertion.url()))
@@ -538,7 +542,10 @@ impl Manifest {
                         .set_instance(claim_assertion.instance());
                     manifest.assertions.push(manifest_assertion);
                 }
-                label if label == "cawg.identity" || label.starts_with("cawg.identity__") => {
+                label
+                    if decode_identity_assertions
+                        && (label == "cawg.identity" || label.starts_with("cawg.identity__")) =>
+                {
                     let value = assertion.as_json_object()?;
                     let mut ma = ManifestAssertion::new(label.to_string(), value)
                         .set_instance(claim_assertion.instance());
@@ -555,7 +562,7 @@ impl Manifest {
                     let value: Option<serde_json::Value> = if _sync {
                         crate::log_item!(
                             uri,
-                            "formatting not supported in sync",
+                            "decoding identity assertions not supported in sync",
                             "from_store - validating cawg.identity"
                         )
                         .validation_status("cawg.validation_skipped")

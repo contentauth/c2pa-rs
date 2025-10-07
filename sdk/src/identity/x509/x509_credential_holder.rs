@@ -88,7 +88,8 @@ mod tests {
             x509::{X509CredentialHolder, X509SignatureVerifier},
             IdentityAssertion,
         },
-        status_tracker::{LogKind, StatusTracker},
+        settings::{get_settings_value, set_settings_value},
+        status_tracker::StatusTracker,
         Builder, Reader, SigningAlg,
     };
 
@@ -97,6 +98,11 @@ mod tests {
 
     #[c2pa_test_async]
     async fn simple_case() {
+        let old_decode_identity_assertions =
+            get_settings_value::<bool>("core.decode_identity_assertions").unwrap_or_default();
+
+        set_settings_value("core.decode_identity_assertions", false).unwrap();
+
         let format = "image/jpeg";
         let mut source = Cursor::new(TEST_IMAGE);
         let mut dest = Cursor::new(Vec::new());
@@ -141,24 +147,6 @@ mod tests {
 
         assert_eq!(manifest_store.validation_status(), None);
 
-        let validation_results = manifest_store.validation_results().unwrap();
-        let active_manifest_results = validation_results.active_manifest().unwrap();
-        let active_manifest_success_codes = active_manifest_results.success();
-
-        println!("{manifest_store}");
-
-        let mut ia_success_codes = active_manifest_success_codes.iter().filter(|s| {
-            s.url()
-                .map(|url| url.ends_with("cawg.identity"))
-                .unwrap_or(false)
-                && !s.code().starts_with("assertion.")
-        });
-
-        let ia_success = ia_success_codes.next().unwrap();
-        assert_eq!(ia_success.code(), "signingCredential.trusted");
-        assert!(ia_success.url().unwrap().ends_with("cawg.identity"));
-        assert_eq!(ia_success.kind(), &LogKind::Success);
-
         let manifest = manifest_store.active_manifest().unwrap();
         let mut st = StatusTracker::default();
         let mut ia_iter = IdentityAssertion::from_manifest(manifest, &mut st);
@@ -186,5 +174,11 @@ mod tests {
         );
 
         // TO DO: Not sure what to check from COSE_Sign1.
+
+        set_settings_value(
+            "core.decode_identity_assertions",
+            old_decode_identity_assertions,
+        )
+        .unwrap();
     }
 }
