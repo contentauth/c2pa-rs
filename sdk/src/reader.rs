@@ -729,7 +729,6 @@ impl Reader {
                     log_item!(uri.clone(), "Failed to load manifest", "Reader::from_store")
                         .validation_status(code)
                         .failure(validation_log, Error::C2PAValidation(e.to_string()))?;
-                    //validation_log.add_failure(ValidationStatus::from_error(&e));
                 }
             };
         }
