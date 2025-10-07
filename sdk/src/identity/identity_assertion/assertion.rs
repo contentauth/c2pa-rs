@@ -97,7 +97,8 @@ impl IdentityAssertion {
                 // TO DO: Add error readout if the proposed new setting resulted
                 // in this assertion being parsed and converted to JSON. This function
                 // has become incompatible with the now-default behavior to validate
-                // identity assertions during parsing.
+                // identity assertions during parsing. This applies only if this API
+                // becomes public again.
                 (a.label().to_owned(), ia)
             })
             .inspect(|(label, r)| {
