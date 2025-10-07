@@ -140,11 +140,7 @@ mod tests {
         // Read back the Manifest that was generated.
         dest.rewind().unwrap();
 
-        // TO DO: Retool this test to use Reader::from_stream (NOT async) and add a setting
-        // to parse (convert to JSON) or not parse (leave usable with iteration pattern
-        // below) the identity assertions.
-        let manifest_store = Reader::from_stream_async(format, &mut dest).await.unwrap();
-
+        let manifest_store = Reader::from_stream(format, &mut dest).unwrap();
         assert_eq!(manifest_store.validation_status(), None);
 
         let manifest = manifest_store.active_manifest().unwrap();
