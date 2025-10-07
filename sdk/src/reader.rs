@@ -132,7 +132,7 @@ impl Reader {
     ///
     /// # Note
     /// [CAWG identity] assertions require async calls for validation.
-    /// 
+    ///
     /// [CAWG identity]: https://cawg.io/identity/
     #[async_generic]
     #[cfg(not(target_arch = "wasm32"))]
@@ -196,7 +196,7 @@ impl Reader {
     ///
     /// # Note
     /// [CAWG identity] assertions require async calls for validation.
-    /// 
+    ///
     /// [CAWG identity]: https://cawg.io/identity/
     #[async_generic]
     pub fn from_file<P: AsRef<std::path::Path>>(path: P) -> Result<Reader> {
