@@ -324,12 +324,13 @@ pub struct ActionsSettings {
     #[doc(hidden)]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) templates: Option<Vec<ActionTemplateSettings>>,
-    //
-    // /// Actions to be added to the [Actions::actions][crate::assertions::Actions::actions] field.
-    // #[doc(hidden)]
-    // #[serde(skip_serializing_if = "Option::is_none")]
-    // pub(crate) actions: Option<Vec<ActionSettings>>,
-    //
+    /// Actions to be added to the [Actions::actions][crate::assertions::Actions::actions] field.
+    #[doc(hidden)]
+    // TODO: ActionSettings indirectly depends on ActionParameters which contains a serde_cbor::Value and
+    // schemars can't generate a schema for cbor values. It also doesn't feel right to change our API for
+    // the sake of json schemas.
+    #[serde(skip)]
+    pub(crate) actions: Option<Vec<ActionSettings>>,
     /// Whether to automatically generate a c2pa.created [Action] assertion or error that it doesn't already exist.
     ///
     /// For more information about the mandatory conditions for a c2pa.created action assertion, see here:
@@ -352,6 +353,7 @@ impl Default for ActionsSettings {
         ActionsSettings {
             all_actions_included: true,
             templates: None,
+            actions: None,
             auto_created_action: AutoActionSettings {
                 enabled: true,
                 source_type: Some(DigitalSourceType::Empty),
@@ -394,8 +396,10 @@ pub struct BuilderSettings {
     ///
     /// For more information on the reasoning behind this field see [ActionsSettings].
     pub actions: ActionsSettings,
-    /// Whether to create [`CertificateStatus`] assertions for manifests, also known as OCSP stapling. The
-    /// assertion can be fetched for the active manifest or for all manifests (including ingredients).
+    // TODO: this setting affects fetching and generation of the assertion; needs clarification
+    /// Whether to create [`CertificateStatus`] assertions for manifests to store certificate revocation
+    /// status. The assertion can be fetched for the active manifest or for all manifests (including
+    /// ingredients).
     ///
     /// The default is to not fetch them at all.
     ///
@@ -403,12 +407,17 @@ pub struct BuilderSettings {
     /// <https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#certificate_status_assertion>
     ///
     /// [`CertificateStatus`]: crate::assertions::CertificateStatus
-    pub certificate_status_fetch: Option<OcspFetchScope>,
-    /// Whether existing [`CertificateStatus`] assertions should be refreshed, also known as OCSP stapling. Use
-    /// [`BuilderSettings::certificate_status_fetch`] to configure which certificates are affected.
+    pub(crate) certificate_status_fetch: Option<OcspFetchScope>,
+    // TODO: this setting affects fetching and generation of the assertion; needs clarification
+    /// Whether to only use [`CertificateStatus`] assertions to check certificate revocation status. If there
+    /// is a stapled OCSP in the COSE claim of the manifest, it will be ignored. If [`Verify::ocsp_fetch`] is
+    /// enabled, it will also be ignored.
     ///
     /// The default value is false.
-    pub certificate_status_should_override: Option<bool>,
+    ///
+    /// [`CertificateStatus`]: crate::assertions::CertificateStatus
+    /// [`Verify::ocsp_fetch`]: crate::settings::Verify::ocsp_fetch
+    pub(crate) certificate_status_should_override: Option<bool>,
 }
 
 /// The scope of which manifests to fetch for OCSP.

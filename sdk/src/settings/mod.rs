@@ -265,8 +265,12 @@ pub struct Verify {
     /// Verifying timestamp trust is REQUIRED by the C2PA spec. This option should only be used for development or testing.
     /// </div>
     pub verify_timestamp_trust: bool,
-    /// Whether to fetch the certificates OCSP status during validation. This setting will fetch OCSP for all certificates
-    /// even if they are stapled with a [`CertificateStatus`] assertion.
+    /// Whether to fetch the certificates OCSP status during validation.
+    ///
+    /// Revocation status is checked in the following order:
+    /// 1. The OCSP staple stored in the COSE claim of the manifest
+    /// 2. Otherwise if `ocsp_fetch` is enabled, it fetches a new OCSP status
+    /// 3. Otherwise if `ocsp_fetch` is disabled, it checks [`CertificateStatus`] assertions
     ///
     /// The default value is false.
     ///
