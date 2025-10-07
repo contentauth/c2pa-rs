@@ -124,8 +124,7 @@ mod cawg {
 
         builder.sign_file_async(&signer, source, &dest).await?;
 
-        //let reader = Reader::from_file_async(dest).await?;
-        let reader = Reader::from_file(dest)?;
+        let reader = Reader::from_file_async(dest).await?;
         println!("{reader}");
         Ok(())
     }
