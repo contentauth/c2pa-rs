@@ -550,8 +550,6 @@ impl Manifest {
                     let mut ma = ManifestAssertion::new(label.to_string(), value)
                         .set_instance(claim_assertion.instance());
 
-                    //dbg!(&identity_assertion);
-
                     let mut partial_claim = crate::dynamic_assertion::PartialClaim::default();
                     for a in claim.assertions() {
                         partial_claim.add_assertion(a);
