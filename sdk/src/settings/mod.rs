@@ -284,7 +284,7 @@ pub struct Verify {
     /// The default value is true.
     ///
     /// <div class="warning">
-    /// This field is only applicable if the crate is compiled with the `fetch_remote_manifests` feature.
+    /// This setting is only applicable if the crate is compiled with the `fetch_remote_manifests` feature.
     /// </div>
     ///
     /// [`Reader`]: crate::Reader

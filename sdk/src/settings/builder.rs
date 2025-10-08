@@ -152,8 +152,21 @@ pub struct AutoActionSettings {
 #[serde(untagged, rename_all = "lowercase")]
 pub enum ClaimGeneratorInfoOperatingSystem {
     /// Whether or not to automatically infer the operating system.
+    ///
+    /// This option will attempt to following the [LLVM "triples"] conventions. For more information,
+    /// see [`ClaimGeneratorInfoOperatingSystem::Other`].
+    ///
+    /// [LLVM "triples"]: https://clang.llvm.org/docs/CrossCompilation.html#target-triple
     Auto,
     /// The name of the operating system.
+    ///
+    /// It is recommended to follow the [LLVM "triples"] conventions to define the operating system,
+    /// with the format `<arch><sub>-<vendor>-<sys>-<env>`. For instance:
+    /// - `x86_64-unknown-linux-gnu`
+    /// - `x86_64-pc-windows-msvc`
+    /// - `arm64-apple-darwin`
+    ///
+    /// [LLVM "triples"]: https://clang.llvm.org/docs/CrossCompilation.html#target-triple
     Other(String),
 }
 
@@ -187,7 +200,9 @@ impl TryFrom<ClaimGeneratorInfoSettings> for ClaimGeneratorInfo {
             icon: value.icon.map(UriOrResource::ResourceRef),
             operating_system: {
                 value.operating_system.map(|os| match os {
-                    ClaimGeneratorInfoOperatingSystem::Auto => consts::OS.to_owned(),
+                    ClaimGeneratorInfoOperatingSystem::Auto => {
+                        format!("{}-unknown-{}", consts::ARCH, consts::OS)
+                    }
                     ClaimGeneratorInfoOperatingSystem::Other(name) => name,
                 })
             },
