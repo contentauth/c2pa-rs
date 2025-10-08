@@ -8,6 +8,10 @@ The **[Coalition for Content Provenance and Authenticity](https://c2pa.org)** (C
 
 For the best experience, read the docs on the [CAI Open Source SDK documentation website](https://opensource.contentauthenticity.org/docs/rust-sdk/).  
 
+Join the [Content Authenticity Initiative](https://contentauthenticity.org/membership) to connect with a global community advancing the movement for content transparency, get access to the latest ecosystem news, attend events, and access the CAI brand kit to share your involvement. 
+
+Join the [CAI Discord](https://discord.com/invite/CAI) to connect with other implementers, ask questions about the CAI open-source tools, and receive expert guidance on how to build with the C2PA standard.
+
 You can also read the documentation directly in GitHub:
 
 - [Usage](https://github.com/contentauth/c2pa-rs/blob/main/docs/usage.md)
