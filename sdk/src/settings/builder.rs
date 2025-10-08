@@ -419,7 +419,8 @@ pub(crate) struct BuilderSettings {
     pub intent: Option<BuilderIntent>,
 
     /// When adding assertions in this list, they will be marked as created. The default is gathered.
-    pub created_assertions: Option<Vec<String>>,
+    /// This is the base label and will match any version or instance. Do not include the version or instance value.
+    pub created_assertion_labels: Option<Vec<String>>,
 }
 
 #[derive(Copy, Clone, Debug, Deserialize, PartialEq, Serialize)]

@@ -1038,7 +1038,6 @@ impl Builder {
                         }
                     }
 
-
                     // Do this at the end of the preprocessing step to ensure all ingredient references
                     // are resolved to their hashed URIs.
                     Self::add_actions_assertion_settings(&ingredient_map, &mut actions)?;

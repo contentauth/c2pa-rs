@@ -258,7 +258,7 @@ pub static METADATA_LABEL_REGEX: LazyLock<Regex> = LazyLock::new(|| {
 /// ```
 pub fn parse_label(label: &str) -> (&str, usize, usize) {
     // First, extract instance if present
-    let (without_instance, instance) = if let Some(pos) = label.find("__") {
+    let (without_instance, instance) = if let Some(pos) = label.rfind("__") {
         let instance_str = &label[pos + 2..];
         let instance = instance_str.parse::<usize>().unwrap_or(0);
         (&label[..pos], instance)
@@ -267,9 +267,11 @@ pub fn parse_label(label: &str) -> (&str, usize, usize) {
     };
 
     // Then, extract version if present
+    #[allow(clippy::unwrap_used)]
+    static VERSION_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^v\d+$").unwrap());
     let components: Vec<&str> = without_instance.split('.').collect();
     if let Some(last) = components.last() {
-        if last.len() > 1 && last.starts_with('v') {
+        if VERSION_RE.is_match(last) {
             if let Ok(version) = last[1..].parse::<usize>() {
                 let base_end = without_instance.len() - last.len() - 1;
                 return (&without_instance[..base_end], version, instance);

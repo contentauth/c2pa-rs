@@ -70,7 +70,7 @@ use crate::{
     jumbf_io::get_assetio_handler,
     log_item,
     resource_store::UriOrResource,
-    salt::{DefaultSalt, SaltGenerator, NO_SALT},
+    salt::{DefaultSalt, SaltGenerator},
     settings::get_settings_value,
     status_tracker::{ErrorBehavior, StatusTracker},
     store::StoreValidationInfo,
@@ -1356,7 +1356,7 @@ impl Claim {
             if labels::HASH_LABELS.contains(&base_label) || add_as_created_assertion {
                 ClaimAssertionType::Created
             } else if let Ok(created_assertions) =
-                get_settings_value::<Vec<String>>("builder.created_assertions")
+                get_settings_value::<Vec<String>>("builder.created_assertion_labels")
             {
                 if created_assertions.iter().any(|label| label == base_label) {
                     ClaimAssertionType::Created
@@ -1393,12 +1393,7 @@ impl Claim {
             self.compatibility_checks(&assertion)?
         }
 
-        // Generate the salt if this is a redactable assertion.
-        let salt = if labels::NON_REDACTABLE_LABELS.contains(&base_label) {
-            NO_SALT.generate_salt()
-        } else {
-            salt_generator.generate_salt()
-        };
+        let salt = salt_generator.generate_salt();
 
         // Get hash of the assertion's contents.
         let hash = Claim::calc_assertion_box_hash(&as_label, &assertion, salt.clone(), self.alg())?;
@@ -1409,10 +1404,8 @@ impl Claim {
 
         let mut c2pa_assertion = C2PAAssertion::new(link_relative, None, &hash);
 
-        // Add salt to all redactable assertions  (todo: should we just salt them all?)
-        if !labels::NON_REDACTABLE_LABELS.contains(&base_label) {
-            c2pa_assertion.add_salt(salt.clone());
-        }
+        // Add salt
+        c2pa_assertion.add_salt(salt.clone());
 
         // find the ClaimAssertionType and add to gathered or created lists if needed
         let assertion_type = self.claim_assertion_type(base_label, add_as_created_assertion);
@@ -1421,13 +1414,10 @@ impl Claim {
             ClaimAssertionType::Created => {
                 self.created_assertions.push(c2pa_assertion.clone());
             }
-            ClaimAssertionType::Gathered => match &mut self.gathered_assertions {
-                Some(ga) => ga.push(c2pa_assertion.clone()),
-                None => {
-                    let new_ga = [c2pa_assertion.clone()];
-                    self.gathered_assertions = Some(new_ga.to_vec());
-                }
-            },
+            ClaimAssertionType::Gathered => self
+                .gathered_assertions
+                .get_or_insert_default()
+                .push(c2pa_assertion.clone()),
             ClaimAssertionType::V1 => { /* not created or gathered */ }
         }
 

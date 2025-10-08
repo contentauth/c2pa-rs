@@ -71,16 +71,6 @@ impl AssertionBase for EmbeddedData {
     }
 }
 
-// impl AssertionBinary for EmbeddedData {
-//     fn binary_data(&self) -> &[u8] {
-//         self.data.as_slice()
-//     }
-
-//     fn from_binary_data(label: String, content_type: String, data: Vec<u8>) -> Self {
-//         Self { label, content_type, data }
-//     }
-// }
-
 impl TryFrom<Assertion> for EmbeddedData {
     type Error = crate::Error;
 

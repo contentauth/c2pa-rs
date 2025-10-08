@@ -215,42 +215,6 @@ pub trait AssertionJson: Serialize + DeserializeOwned + AssertionBase {
     }
 }
 
-/// Trait to handle default binary encoding/decoding of Assertions
-#[allow(dead_code)]
-pub trait AssertionBinary: AssertionBase {
-    /// Get the binary data for this assertion
-    fn binary_data(&self) -> &[u8];
-
-    /// Create a new instance from binary data and assertion metadata
-    fn from_binary_data(label: String, content_type: String, data: Vec<u8>) -> Self;
-
-    /// Default implementation for binary assertions
-    fn to_binary_assertion(&self) -> Result<Assertion> {
-        let data = AssertionData::Binary(self.binary_data().to_vec());
-        Ok(
-            Assertion::new(self.label(), self.version(), data)
-                .set_content_type(self.content_type()),
-        )
-    }
-
-    /// Default implementation for binary assertions
-    fn from_binary_assertion(assertion: &Assertion) -> Result<Self> {
-        assertion.check_max_version(Self::VERSION)?;
-
-        match assertion.decode_data() {
-            AssertionData::Binary(data) => Ok(Self::from_binary_data(
-                assertion.label().to_string(),
-                assertion.content_type().to_string(),
-                data.to_vec(),
-            )),
-            data => Err(AssertionDecodeError::from_assertion_unexpected_data_type(
-                assertion, data, "binary",
-            )
-            .into()),
-        }
-    }
-}
-
 /// Assertion data as binary CBOR or JSON depending upon
 /// the Assertion type (see spec).
 /// For JSON assertions the data is a JSON string and a Vec of u8 values for
