@@ -276,11 +276,20 @@ pub struct Verify {
     ///
     /// [`CertificateStatus`]: crate::assertions::CertificateStatus
     pub ocsp_fetch: bool,
-    /// Whether to fetch remote manifests during reading in the [`Reader`].
+    /// Whether to fetch remote manifests in the following scenarios:
+    /// - Constructing a [`Reader`]
+    /// - Constructing an [`Ingredient`]
+    /// - Adding an [`Ingredient`] to the [`Builder`]
     ///
     /// The default value is true.
     ///
+    /// <div class="warning">
+    /// This field is only applicable if the crate is compiled with the `fetch_remote_manifests` feature.
+    /// </div>
+    ///
     /// [`Reader`]: crate::Reader
+    /// [`Ingredient`]: crate::Ingredient
+    /// [`Builder`]: crate::Builder
     pub remote_manifest_fetch: bool,
     /// Whether to verify ingredient certificates against the trust lists specific in [`Trust`].
     ///
