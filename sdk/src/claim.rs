@@ -71,7 +71,7 @@ use crate::{
     log_item,
     resource_store::UriOrResource,
     salt::{DefaultSalt, SaltGenerator, NO_SALT},
-    settings::get_settings_value,
+    settings::Settings,
     status_tracker::{ErrorBehavior, StatusTracker},
     store::StoreValidationInfo,
     utils::hash_utils::{hash_by_alg, vec_compare},
@@ -1828,6 +1828,7 @@ impl Claim {
         cert_check: bool,
         ctp: &CertificateTrustPolicy,
         validation_log: &mut StatusTracker,
+        settings: &Settings,
     ) -> Result<()> {
         // Parse COSE signed data (signature) and validate it.
         let sig = claim.signature_val().clone();
@@ -1867,6 +1868,7 @@ impl Claim {
             svi.certificate_statuses.get(&certificate_serial_num),
             svi.timestamps.get(claim.label()),
             validation_log,
+            settings,
         )?;
 
         let verified = verify_cose_async(
@@ -1877,10 +1879,12 @@ impl Claim {
             ctp,
             svi.timestamps.get(claim.label()),
             validation_log,
+            &settings.verify,
         )
         .await;
 
-        let result = Claim::verify_internal(claim, asset_data, svi, verified, validation_log);
+        let result =
+            Claim::verify_internal(claim, asset_data, svi, verified, validation_log, settings);
         validation_log.pop_current_uri();
         result
     }
@@ -1895,6 +1899,7 @@ impl Claim {
         cert_check: bool,
         ctp: &CertificateTrustPolicy,
         validation_log: &mut StatusTracker,
+        settings: &Settings,
     ) -> Result<()> {
         // Parse COSE signed data (signature) and validate it.
         let sig = claim.signature_val();
@@ -1945,6 +1950,7 @@ impl Claim {
             svi.certificate_statuses.get(&certificate_serial_num),
             svi.timestamps.get(claim.label()),
             validation_log,
+            settings,
         )?;
 
         let verified = verify_cose(
@@ -1955,9 +1961,11 @@ impl Claim {
             ctp,
             svi.timestamps.get(claim.label()),
             validation_log,
+            &settings.verify,
         );
 
-        let result = Claim::verify_internal(claim, asset_data, svi, verified, validation_log);
+        let result =
+            Claim::verify_internal(claim, asset_data, svi, verified, validation_log, settings);
         validation_log.pop_current_uri();
         result
     }
@@ -1981,6 +1989,7 @@ impl Claim {
         claim: &Claim,
         svi: &StoreValidationInfo<'_>,
         validation_log: &mut StatusTracker,
+        settings: &Settings,
     ) -> Result<()> {
         let all_actions = claim.action_assertions();
         let created_actions = claim.created_action_assertions();
@@ -2029,10 +2038,8 @@ impl Claim {
         }
 
         // Skip further checks for v1 claims if not in strict validation mode
-        if claim.version() == 1 {
-            if let Ok(false) = get_settings_value::<bool>("verify.strict_v1_validation") {
-                return Ok(()); // no further checks for v1 claims
-            }
+        if claim.version() == 1 && !settings.verify.strict_v1_validation {
+            return Ok(()); // no further checks for v1 claims
         }
 
         let mut first_actions_assertion = None;
@@ -2858,6 +2865,7 @@ impl Claim {
         svi: &StoreValidationInfo,
         verified: Result<CertificateInfo>,
         validation_log: &mut StatusTracker,
+        settings: &Settings,
     ) -> Result<()> {
         // signature check
         match verified {
@@ -3190,7 +3198,7 @@ impl Claim {
         Claim::verify_hash_binding(claim, asset_data, svi, validation_log)?;
 
         // check action rules
-        Claim::verify_actions(claim, svi, validation_log)?;
+        Claim::verify_actions(claim, svi, validation_log, settings)?;
 
         // check metadata rules
         if claim.version() >= 2 {
@@ -3913,12 +3921,14 @@ pub(crate) fn check_ocsp_status(
     ocsp_responses: Option<&Vec<Vec<u8>>>,
     tst_info: Option<&TstInfo>,
     validation_log: &mut StatusTracker,
+    settings: &Settings,
 ) -> Result<OcspResponse> {
     // Moved here instead of c2pa-crypto because of the dependency on settings.
 
-    let fetch_policy = match get_settings_value::<bool>("verify.ocsp_fetch") {
-        Ok(true) => OcspFetchPolicy::FetchAllowed,
-        _ => OcspFetchPolicy::DoNotFetch,
+    let fetch_policy = if settings.verify.ocsp_fetch {
+        OcspFetchPolicy::FetchAllowed
+    } else {
+        OcspFetchPolicy::DoNotFetch
     };
 
     if _sync {
@@ -3930,6 +3940,7 @@ pub(crate) fn check_ocsp_status(
             ocsp_responses,
             tst_info,
             validation_log,
+            settings,
         )?)
     } else {
         Ok(crate::crypto::cose::check_ocsp_status_async(
@@ -3940,6 +3951,7 @@ pub(crate) fn check_ocsp_status(
             ocsp_responses,
             tst_info,
             validation_log,
+            settings,
         )
         .await?)
     }

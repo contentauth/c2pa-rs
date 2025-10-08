@@ -37,6 +37,7 @@ use crate::{
     jumbf_io::get_assetio_handler,
     resource_store::UriOrResource,
     salt::DefaultSalt,
+    settings::Settings,
     store::Store,
     utils::{io_utils::tempdirectory, mime::extension_to_mime},
     AsyncSigner, ClaimGeneratorInfo, Result,
@@ -310,7 +311,7 @@ pub fn create_test_claim_v1() -> Result<Claim> {
 /// Creates a store with an unsigned claim for testing
 pub fn create_test_store() -> Result<Store> {
     // Create claims store.
-    let mut store = Store::new();
+    let mut store = Store::with_settings(&Settings::default());
 
     let claim = create_test_claim()?;
     store.commit_claim(claim).unwrap();
@@ -320,7 +321,7 @@ pub fn create_test_store() -> Result<Store> {
 /// Creates a store with an unsigned v1 claim for testing
 pub fn create_test_store_v1() -> Result<Store> {
     // Create claims store.
-    let mut store = Store::new();
+    let mut store = Store::with_settings(&Settings::default());
 
     let claim = create_test_claim_v1()?;
     store.commit_claim(claim).unwrap();
