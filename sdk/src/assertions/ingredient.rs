@@ -417,7 +417,7 @@ impl Ingredient {
         */
 
         // check rules
-         if self.active_manifest.is_none() && self.validation_results.is_some()
+        if self.active_manifest.is_none() && self.validation_results.is_some()
             || self.active_manifest.is_some() && self.validation_results.is_none()
         {
             return Err(serde::ser::Error::custom(

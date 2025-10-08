@@ -52,7 +52,7 @@ use crate::{
     validation_status::{self, ValidationStatus},
 };
 
-#[derive(Debug, Default, Deserialize, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 /// An `Ingredient` is any external asset that has been used in the creation of an asset.
 pub struct Ingredient {

@@ -815,6 +815,108 @@ impl Reader {
 
         Ok(assertion_values)
     }
+
+    pub fn into_builder(mut self) -> Result<crate::Builder> {
+        let mut builder = crate::Builder::new();
+        if let Some(label) = &self.active_manifest {
+            if let Some(parts) = crate::jumbf::labels::manifest_label_to_parts(label) {
+                builder.definition.vendor = parts.cgi.clone();
+                if parts.is_v1 {
+                    builder.definition.claim_version = Some(1);
+                }
+            }
+            builder.definition.label = Some(label.to_string());
+            if let Some(mut manifest) = self.manifests.remove(label) {
+                builder.definition.claim_generator_info =
+                    manifest.claim_generator_info.take().unwrap_or_default();
+                builder.definition.format = manifest.format().unwrap_or_default().to_string();
+                builder.definition.title = manifest.title().map(|s| s.to_owned());
+                builder.definition.instance_id = manifest.instance_id().to_owned();
+                builder.definition.thumbnail = manifest.thumbnail_ref().cloned();
+                builder.definition.redactions = manifest.redactions.take();
+                let ingredients = manifest.ingredients.drain(..).collect::<Vec<_>>();
+                for mut ingredient in ingredients {
+                    if let Some(active_manifest) = ingredient.active_manifest() {
+                        let ingredient_claim = self.store.get_claim(active_manifest);
+                        if let Some(claim) = ingredient_claim {
+                            // recreate an ingredient store to get the jumbf data
+                            let mut ingredient_store = Store::new();
+                            ingredient_store.commit_claim(claim.clone())?;
+                            let jumbf = ingredient_store.to_jumbf_internal(0)?;
+                            let manifest_data_ref = manifest.resources_mut().add_with(
+                                "manifest_data",
+                                "application/c2pa",
+                                jumbf.clone(),
+                            )?;
+                            ingredient.set_manifest_data_ref(manifest_data_ref)?;
+                        }
+                    }
+                    builder.add_ingredient(ingredient);
+                }
+                for assertion in manifest.assertions.iter() {
+                    builder.add_assertion(assertion.label(), assertion.value()?)?;
+                }
+                for (uri, data) in manifest.resources().resources() {
+                    builder.add_resource(uri, std::io::Cursor::new(data))?;
+                }
+            }
+        }
+        Ok(builder)
+    }
+
+    /// This reconstructs the jumbf for a single manifest
+    //// Normally reader has the only one store for the whole asset
+    fn get_c2pa_data_for_manifest(&self, label: &str) -> Result<Vec<u8>> {
+        let claim = self
+            .store
+            .get_claim(label)
+            .ok_or_else(|| Error::ClaimMissing {
+                label: label.to_string(),
+            })?;
+        // recreate an ingredient store to get the jumbf data
+        let mut ingredient_store = Store::new();
+        ingredient_store.commit_claim(claim.clone())?;
+        ingredient_store.to_jumbf_internal(0)
+    }
+
+    /// Given a manifest label and an ingredient label, return the associated [`Ingredient`], if it exists.
+    /// If the ingredient has an active manifest, the manifest data ref will be set to the correct value.
+    /// # Arguments
+    /// * `manifest_label` - The label of the manifest containing the ingredient.
+    /// * `ingredient_label` - The label of the requested [`Ingredient`].       
+    /// # Errors
+    /// Returns an [`Error`] if the manifest or ingredient is not found.
+    pub(crate) fn get_ingredient(
+        &self,
+        manifest_label: &str,
+        ingredient_label: &str,
+    ) -> Result<crate::Ingredient> {
+        let manifest = self
+            .manifests
+            .get(manifest_label)
+            .ok_or_else(|| Error::ClaimMissing {
+                label: manifest_label.to_string(),
+            })?;
+
+        let mut ingredient = manifest
+            .ingredients()
+            .iter()
+            .find(|&ingredient| ingredient.label() == Some(ingredient_label))
+            .ok_or_else(|| Error::IngredientNotFound)?
+            .to_owned();
+
+        // if we have an active manifest, we need to set the manifest data ref
+        if ingredient.active_manifest().is_some() {
+            let c2pa_data = self.get_c2pa_data_for_manifest(manifest_label)?;
+            let manifest_data_ref = ingredient.resources_mut().add_with(
+                "manifest_data",
+                "application/c2pa",
+                c2pa_data,
+            )?;
+            ingredient.set_manifest_data_ref(manifest_data_ref)?;
+        }
+        Ok(ingredient)
+    }
 }
 
 /// Convert the Reader to a JSON value.
@@ -854,51 +956,40 @@ impl std::fmt::Debug for Reader {
 impl TryInto<crate::Builder> for Reader {
     type Error = Error;
 
-    fn try_into(mut self) -> Result<crate::Builder> {
-        let mut builder = crate::Builder::new();
-        if let Some(label) = &self.active_manifest {
-            if let Some(parts) = crate::jumbf::labels::manifest_label_to_parts(label) {
-                builder.definition.vendor = parts.cgi.clone();
-                if parts.is_v1 {
-                    builder.definition.claim_version = Some(1);
-                }
-            }
-            builder.definition.label = Some(label.to_string());
-            //let jumbf = self.store.to_jumbf_internal(0)?;
-            //let manifest_data_ref = builder.resources.add_with("manifest_data", "application/c2pa", jumbf)?;
-            if let Some(mut manifest) = self.manifests.remove(label) {
-                builder.definition.claim_generator_info =
-                    manifest.claim_generator_info.take().unwrap_or_default();
-                builder.definition.format = manifest.format().unwrap_or_default().to_string();
-                builder.definition.title = manifest.title().map(|s| s.to_owned());
-                builder.definition.instance_id = manifest.instance_id().to_owned();
-                builder.definition.thumbnail = manifest.thumbnail_ref().cloned();
-                builder.definition.redactions = manifest.redactions.take();
-                let ingredients = manifest.ingredients.drain(..).collect::<Vec<_>>();
-                for mut ingredient in ingredients {
-                    if ingredient.active_manifest().is_some(){
-                        let ingredient_claim = self.store.get_claim(ingredient.active_manifest().unwrap());
-                        if let Some(claim) = ingredient_claim {
-                            // recreate an ingredient store to get the jumbf data
-                            let mut ingredient_store = Store::new();
-                            ingredient_store.commit_claim(claim.clone())?;
-                            let jumbf = ingredient_store.to_jumbf_internal(0)?;
-                            let manifest_data_ref = manifest.resources_mut().add_with("manifest_data", "application/c2pa", jumbf.clone())?;
-                            //let manifest_data_ref = crate::ResourceRef::new("application/c2pa",label);
-                            ingredient.set_manifest_data_ref(manifest_data_ref)?;
-                        }
-                    }
-                    builder.add_ingredient(ingredient);
-                }
-                for assertion in manifest.assertions.iter() {
-                    builder.add_assertion(assertion.label(), assertion.value()?)?;
-                }
-                for (uri, data) in manifest.resources().resources() {
-                    builder.add_resource(uri, std::io::Cursor::new(data))?;
-                }
-            }
-        }
-        Ok(builder)
+    fn try_into(self) -> Result<crate::Builder> {
+        self.into_builder()
+        // let mut builder = crate::Builder::new();
+        // if let Some(label) = &self.active_manifest {
+        //     if let Some(parts) = crate::jumbf::labels::manifest_label_to_parts(label) {
+        //         builder.definition.vendor = parts.cgi.clone();
+        //         if parts.is_v1 {
+        //             builder.definition.claim_version = Some(1);
+        //         }
+        //     }
+        //     builder.definition.label = Some(label.to_string());
+        //     if let Some(manifest) = self.manifests.get(label) {
+        //         builder.definition.claim_generator_info =
+        //             manifest.claim_generator_info.as_deref().unwrap_or_default().to_vec(); // .take().unwrap_or_default();
+        //         builder.definition.format = manifest.format().unwrap_or_default().to_string();
+        //         builder.definition.title = manifest.title().map(|s| s.to_owned());
+        //         builder.definition.instance_id = manifest.instance_id().to_owned();
+        //         builder.definition.thumbnail = manifest.thumbnail_ref().cloned();
+        //         builder.definition.redactions = manifest.redactions.clone();
+        //         //let ingredients = manifest.ingredients.drain(..).collect::<Vec<_>>();
+        //         for ingredient in manifest.ingredients.iter().as_ref() {
+        //             builder.add_ingredient(
+        //                 self.get_ingredient(label, ingredient.label().unwrap_or_default())?,
+        //             );
+        //         }
+        //         for assertion in manifest.assertions.iter() {
+        //             builder.add_assertion(assertion.label(), assertion.value()?)?;
+        //         }
+        //         for (uri, data) in manifest.resources().resources() {
+        //             builder.add_resource(uri, std::io::Cursor::new(data))?;
+        //         }
+        //     }
+        // }
+        // Ok(builder)
     }
 }
 
