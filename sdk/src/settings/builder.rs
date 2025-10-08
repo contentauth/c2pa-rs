@@ -424,7 +424,7 @@ pub struct BuilderSettings {
 #[cfg_attr(feature = "json_schema", derive(schemars::JsonSchema))]
 #[derive(Copy, Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "lowercase")]
-pub enum OcspFetchScope {
+pub(crate) enum OcspFetchScope {
     /// Fetch OCSP for all manifests.
     All,
     /// Fetch OCSP for the active manifest only.
