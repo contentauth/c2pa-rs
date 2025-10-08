@@ -64,20 +64,32 @@ pub enum ThumbnailQuality {
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct ThumbnailSettings {
     /// Whether or not to automatically generate thumbnails.
+    ///
+    /// The default value is true.
+    ///
+    /// <div class="warning">
+    /// This setting is only applicable if the crate is compiled with the `add_thumbnails` feature.
+    /// </div>
     pub enabled: bool,
     /// Whether to ignore thumbnail generation errors.
     ///
     /// This may occur, for instance, if the thumbnail media type or color layout isn't
     /// supported.
+    ///
+    /// The default value is true.
     pub ignore_errors: bool,
     /// The size of the longest edge of the thumbnail.
     ///
     /// This function will resize the input to preserve aspect ratio.
+    ///
+    /// The default value is 1024.
     pub long_edge: u32,
     /// Format of the thumbnail.
     ///
     /// If this field isn't specified, the thumbnail format will correspond to the
     /// input format.
+    ///
+    /// The default value is None.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub format: Option<ThumbnailFormat>,
     /// Whether or not to prefer a smaller sized media format for the thumbnail.
@@ -88,11 +100,15 @@ pub struct ThumbnailSettings {
     ///
     /// For instance, if the source input type is a PNG, but it doesn't have an alpha channel,
     /// the image will be converted to a JPEG of smaller size.
+    ///
+    /// The default value is true.
     pub prefer_smallest_format: bool,
     /// The output quality of the thumbnail.
     ///
     /// This setting contains sensible defaults for things like quality, compression, and
     /// algorithms for various formats.
+    ///
+    /// The default value is [`ThumbnailQuality::Medium`].
     pub quality: ThumbnailQuality,
 }
 
