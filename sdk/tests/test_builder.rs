@@ -54,9 +54,10 @@ fn test_builder_ca_jpg() -> Result<()> {
 
     builder.sign(&Settings::signer()?, format, &mut source, &mut dest)?;
 
-    //dest.set_position(0);
-    //let reader = Reader::from_stream(format, &mut dest)?;
-    //std::fs::write("CA_test.json", reader.json()).unwrap();
+    // use this to update the known good
+    // dest.set_position(0);
+    // let reader = Reader::from_stream(format, &mut dest)?;
+    // std::fs::write("known_good/CA_test.json", reader.json()).unwrap();
 
     dest.set_position(0);
     compare_stream_to_known_good(&mut dest, format, "CA_test.json")
