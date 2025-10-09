@@ -15,7 +15,7 @@
 
 use std::{fmt::Debug, iter::Iterator};
 
-use log::{error, info};
+use log::info;
 
 /// A `StatusTracker` is used in the validation logic of c2pa-rs and
 /// related crates to control error-handling behavior and optionally
@@ -90,7 +90,7 @@ impl StatusTracker {
                 log_item.label = std::borrow::Cow::Owned(current_uri.to_string());
             }
         }
-        error!("Validation error: {log_item:#?}");
+
         self.logged_items.push(log_item);
 
         match self.error_behavior {

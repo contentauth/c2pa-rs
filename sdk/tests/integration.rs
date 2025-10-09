@@ -377,7 +377,7 @@ mod integration_1 {
         //println!("{reader}");
         // ensure certificate status assertion was created
         assert!(reader_json.contains(r#"label": "c2pa.certificate-status"#));
-        assert_eq!(reader.validation_state(), ValidationState::Valid);
+        assert_eq!(reader.validation_state(), ValidationState::Trusted);
         assert!(reader_json.contains("signingCredential.ocsp.notRevoked"));
         Ok(())
     }
