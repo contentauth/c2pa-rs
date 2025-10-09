@@ -150,7 +150,7 @@ impl ValidationStatus {
     }
 
     // Maps errors into validation_status codes.
-    fn code_from_error(error: &Error) -> &str {
+    pub(crate) fn code_from_error(error: &Error) -> &'static str {
         match error {
             Error::ClaimMissing { .. } => CLAIM_MISSING,
             Error::AssertionMissing { .. } => ASSERTION_MISSING,
@@ -163,6 +163,7 @@ impl ValidationStatus {
     }
 
     /// Creates a ValidationStatus from an error code.
+    #[allow(dead_code)]
     pub(crate) fn from_error(error: &Error) -> Self {
         // We need to create error codes here for client processing.
         let code = Self::code_from_error(error);
