@@ -84,6 +84,8 @@ fn main() -> Result<()> {
     }
     .to_string();
 
+    Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml"))?;
+
     Settings::from_toml(&modified_core)?;
 
     let json = manifest_def(title, format);
@@ -152,7 +154,7 @@ fn main() -> Result<()> {
     }
 
     println!("{}", reader.json());
-    assert_ne!(reader.validation_state(), ValidationState::Invalid);
+    assert_eq!(reader.validation_state(), ValidationState::Trusted);
     assert_eq!(reader.active_manifest().unwrap().title().unwrap(), title);
 
     Ok(())
