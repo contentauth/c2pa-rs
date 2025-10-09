@@ -2001,6 +2001,13 @@ impl Claim {
             )?;
         }
 
+        // Skip further checks for v1 claims if not in strict validation mode
+        if claim.version() == 1 {
+            if let Ok(false) = get_settings_value::<bool>("verify.strict_v1_validation") {
+                return Ok(()); // no further checks for v1 claims
+            }
+        }
+
         // 1. make sure every action has an actions array that is not empty
         if let Some(bad_assertion) = all_actions.iter().find(|a| {
             if let Ok(actions) = Actions::from_assertion(a.assertion()) {
@@ -2581,14 +2588,29 @@ impl Claim {
 
                     // update with any needed update hash adjustments
                     if svi.update_manifest_label.is_some() {
+                        let mut start_adjust = 0;
+                        let mut start_offset = 0;
                         if let Some(exclusions) = &mut dh.exclusions {
                             if let Some(range) = &svi.manifest_store_range {
                                 // find the range that starts at the same position as the manifest store range
                                 if let Some(pos) =
                                     exclusions.iter().position(|r| r.start() == range.start())
                                 {
+                                    // find the adjustment length
+                                    start_offset = range.start();
+                                    start_adjust =
+                                        range.length().saturating_sub(exclusions[pos].length());
+
                                     // replace range using the size that covers entire manifest (including update manifests)
                                     exclusions[pos] = range.clone();
+                                }
+                            }
+                            // fix up offsets affected by update manifest
+                            if start_offset > 0 {
+                                for exclusion in exclusions {
+                                    if exclusion.start() > start_offset {
+                                        exclusion.set_start(exclusion.start() + start_adjust);
+                                    }
                                 }
                             }
                         }
