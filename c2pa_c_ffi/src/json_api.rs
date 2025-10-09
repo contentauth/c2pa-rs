@@ -78,6 +78,8 @@ pub fn sign_file(
 mod tests {
     use std::{ffi::CString, fs::remove_dir_all, path::PathBuf};
 
+    use c2pa::settings::Settings;
+
     use super::*;
     use crate::c_api::c2pa_load_settings;
 
@@ -89,6 +91,8 @@ mod tests {
 
     #[test]
     fn test_verify_from_file_no_base() {
+        let _ = Settings::from_toml(include_str!("../../sdk/tests/fixtures/test_settings.toml"));
+
         let path = test_path("tests/fixtures/C.jpg");
         let result = read_file(&path, None);
         assert!(result.is_ok());
@@ -100,6 +104,8 @@ mod tests {
 
     #[test]
     fn test_read_from_file_with_base() {
+        let _ = Settings::from_toml(include_str!("../../sdk/tests/fixtures/test_settings.toml"));
+
         let path = test_path("tests/fixtures/C.jpg");
         let data_dir = "../target/data_dir";
         if PathBuf::from(data_dir).exists() {
