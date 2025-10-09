@@ -1990,7 +1990,7 @@ impl Store {
                         .validation_status(validation_status::ASSERTION_TIMESTAMP_MALFORMED)
                         .failure_as_err(
                             validation_log,
-                            Error::OtherError("timestamp assertion malformed".into()),
+                            Error::ValidationRule("timestamp assertion malformed".into()),
                         )
                     })?;
 
@@ -2004,19 +2004,8 @@ impl Store {
                             validation_log,
                         ) {
                             svi.timestamps.insert(rc.label().to_owned(), tst_info);
-                            continue;
                         }
                     }
-                    log_item!(
-                        to_manifest_uri(referenced_claim),
-                        "could not validate timestamp assertion",
-                        "get_claim_referenced_manifests"
-                    )
-                    .validation_status(validation_status::ASSERTION_TIMESTAMP_MALFORMED)
-                    .failure(
-                        validation_log,
-                        Error::OtherError("timestamp assertion malformed".into()),
-                    )?;
                 }
             }
 
