@@ -45,16 +45,15 @@
 //! # Ok(())
 //! # }
 //! ```
+
+//! ## Example: Adding a signed Manifest to an Asset
 //!
-//! ## Example: Adding a Manifest to a file
-//!
-//! ```ignore-wasm32
+//! ```
 //! # use c2pa::Result;
-//! use std::path::PathBuf;
+//! use std::io::Cursor;
 //!
-//! use c2pa::{create_signer, Builder, SigningAlg};
+//! use c2pa::{settings::Settings, Builder, SigningAlg};
 //! use serde::Serialize;
-//! use tempfile::tempdir;
 //!
 //! #[derive(Serialize)]
 //! struct Test {
@@ -62,26 +61,16 @@
 //! }
 //!
 //! # fn main() -> Result<()> {
-//! #[cfg(feature = "file_io")]
 //! {
+//!     Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml"))?;
 //!     let mut builder = Builder::from_json(r#"{"title": "Test"}"#)?;
 //!     builder.add_assertion("org.contentauth.test", &Test { my_tag: 42 })?;
 //!
-//!     // Create a ps256 signer using certs and key files
-//!     let signer = create_signer::from_files(
-//!         "tests/fixtures/certs/ps256.pub",
-//!         "tests/fixtures/certs/ps256.pem",
-//!         SigningAlg::Ps256,
-//!         None,
-//!     )?;
-//!
 //!     // embed a manifest using the signer
-//!     std::fs::remove_file("../target/tmp/lib_sign.jpg"); // ensure the file does not exist
-//!     builder.sign_file(
-//!         &*signer,
-//!         "tests/fixtures/C.jpg",
-//!         "../target/tmp/lib_sign.jpg",
-//!     )?;
+//!     let mut source = std::fs::File::open("tests/fixtures/C.jpg")?;
+//!     let mut dest = Cursor::new(Vec::new());
+//!     let signer = Settings::signer()?;
+//!     let _c2pa_data = builder.sign(&signer, "image/jpeg", &mut source, &mut dest)?;
 //! }
 //! # Ok(())
 //! # }
