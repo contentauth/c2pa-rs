@@ -67,7 +67,7 @@ fn manifest_def(title: &str, format: &str) -> String {
     }).to_string()
 }
 
-/// This example demonstrates how to use the new v2 API to create a manifest store
+/// This example demonstrates how to use the API to create a manifest store
 /// It uses only streaming apis, showing how to avoid file i/o
 /// This example uses the `ed25519` signing algorithm
 fn main() -> Result<()> {
@@ -94,12 +94,20 @@ fn main() -> Result<()> {
     builder.add_ingredient_from_stream(
         json!({
             "title": parent_name,
-            "relationship": "parentOf"
+            "relationship": "parentOf",
+            "label": "parent_label",  // use a label to tie this ingredient to an action
         })
         .to_string(),
         format,
         &mut source,
     )?;
+
+    builder.add_action(json!({
+        "action": "c2pa.opened",
+        "parameters": {
+            "ingredientIds": ["parent_label"], // the ingredient title to reference the ingredient
+        }
+    }))?;
 
     let thumb_uri = builder
         .definition
