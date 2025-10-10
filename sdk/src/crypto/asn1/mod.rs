@@ -10,10 +10,6 @@
 // cryptographic-message-syntax crate located at:
 // https://github.com/indygreg/cryptography-rs/tree/main/cryptographic-message-syntax/src/asn1
 
-// We can not incorporate the entire crate directly because other parts of the
-// crate contain dependencies on blocking calls in reqwest. Those calls are not
-// available in WASM environment.
-
 #[allow(dead_code)]
 pub mod rfc3161;
 #[allow(dead_code)]
