@@ -14,7 +14,7 @@
 #![deny(clippy::expect_used)]
 #![deny(clippy::panic)]
 #![deny(clippy::unwrap_used)]
-#![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg, doc_cfg_hide))]
+#![cfg_attr(docsrs, feature(doc_cfg))]
 
 //! This library supports reading, creating, and embedding C2PA data
 //! for a variety of asset types.
@@ -136,7 +136,7 @@ pub mod validation_status;
 pub use assertions::DigitalSourceType;
 #[doc(inline)]
 pub use assertions::Relationship;
-pub use builder::{Builder, ManifestDefinition};
+pub use builder::{Builder, BuilderIntent, ManifestDefinition};
 pub use callback_signer::{CallbackFunc, CallbackSigner};
 pub use claim_generator_info::ClaimGeneratorInfo;
 // pub use dynamic_assertion::{

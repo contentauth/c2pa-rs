@@ -7,6 +7,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.23.4](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.23.3...c2patool-v0.23.4)
+_02 October 2025_
+
+## [0.23.3](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.23.2...c2patool-v0.23.3)
+_30 September 2025_
+
+### Fixed
+
+* AllActionsIncluded defaults to None ([#1459](https://github.com/contentauth/c2pa-rs/pull/1459))
+
+## [0.23.2](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.23.1...c2patool-v0.23.2)
+_24 September 2025_
+
+### Fixed
+
+* We lost the ability to read the deprecated instanceId actions parameters field. ([#1443](https://github.com/contentauth/c2pa-rs/pull/1443))
+
+## [0.23.1](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.23.0...c2patool-v0.23.1)
+_23 September 2025_
+
+### Documented
+
+* Document `--external-manifest` c2patool argument ([#1435](https://github.com/contentauth/c2pa-rs/pull/1435))
+
+## [0.23.0](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.22.1...c2patool-v0.23.0)
+_19 September 2025_
+
+### Added
+
+* Allow specifying external binary manifest to `c2patool` ([#1428](https://github.com/contentauth/c2pa-rs/pull/1428))
+
+## [0.22.1](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.22.0...c2patool-v0.22.1)
+_15 September 2025_
+
+## [0.22.0](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.21.0...c2patool-v0.22.0)
+_10 September 2025_
+
+### Added
+
+* Remove the v1_api feature and all associated code ([#1387](https://github.com/contentauth/c2pa-rs/pull/1387))
+
 ## [0.21.0](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.20.4...c2patool-v0.21.0)
 _06 September 2025_
 

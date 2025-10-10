@@ -44,6 +44,7 @@ pub(crate) trait SettingsValidate {
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[allow(unused)]
 pub(crate) struct Trust {
+    verify_trust_list: bool,
     user_anchors: Option<String>,
     trust_anchors: Option<String>,
     trust_config: Option<String>,
@@ -106,6 +107,7 @@ impl Default for Trust {
         #[cfg(test)]
         {
             let mut trust = Self {
+                verify_trust_list: true,
                 user_anchors: None,
                 trust_anchors: None,
                 trust_config: None,
@@ -130,6 +132,7 @@ impl Default for Trust {
         #[cfg(not(test))]
         {
             Self {
+                verify_trust_list: true,
                 user_anchors: None,
                 trust_anchors: None,
                 trust_config: None,
@@ -225,7 +228,7 @@ impl Default for Verify {
         Self {
             verify_after_reading: true,
             verify_after_sign: true,
-            verify_trust: cfg!(test),
+            verify_trust: true,
             verify_timestamp_trust: !cfg!(test), // verify timestamp trust unless in test mode
             ocsp_fetch: false,
             remote_manifest_fetch: true,

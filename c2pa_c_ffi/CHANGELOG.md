@@ -7,6 +7,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.67.1](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.67.0...c2pa-c-ffi-v0.67.1)
+_02 October 2025_
+
+## [0.67.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.66.0...c2pa-c-ffi-v0.67.0)
+_30 September 2025_
+
+### Added
+
+* Fix ARM builds ([#1456](https://github.com/contentauth/c2pa-rs/pull/1456))
+
+## [0.66.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.65.1...c2pa-c-ffi-v0.66.0)
+_24 September 2025_
+
+### Fixed
+
+* We lost the ability to read the deprecated instanceId actions parameters field. ([#1443](https://github.com/contentauth/c2pa-rs/pull/1443))
+
+## [0.65.1](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.65.0...c2pa-c-ffi-v0.65.1)
+_23 September 2025_
+
+### Fixed
+
+* Add checks at C API level ([#1438](https://github.com/contentauth/c2pa-rs/pull/1438))
+
+## [0.65.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.64.0...c2pa-c-ffi-v0.65.0)
+_19 September 2025_
+
+### Added
+
+* Expose add_action from the Builder at the C level ([#1425](https://github.com/contentauth/c2pa-rs/pull/1425))
+* *(sdk)* Introduce new API to retrieve detailed manifest JSON ([#1406](https://github.com/contentauth/c2pa-rs/pull/1406))
+
+## [0.63.1](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.63.0...c2pa-c-ffi-v0.63.1)
+_15 September 2025_
+
+## [0.63.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.62.0...c2pa-c-ffi-v0.63.0)
+_10 September 2025_
+
+### Added
+
+* Remove the v1_api feature and all associated code ([#1387](https://github.com/contentauth/c2pa-rs/pull/1387))
+
+### Fixed
+
+* Make zip script syntax change ([#1399](https://github.com/contentauth/c2pa-rs/pull/1399))
+
 ## [0.61.1](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.61.0...c2pa-c-ffi-v0.61.1)
 _06 September 2025_
 

@@ -26,8 +26,8 @@ jobs:
             target: x86_64-unknown-linux-gnu
           - os: windows-latest
             target: x86_64-pc-windows-msvc
-          - os: windows-latest
-            target: aarm64-pc-windows-msvc
+          - os: windows-11-arm
+            target: aarch64-pc-windows-msvc
           - os: macos-latest
             target: aarch64-apple-ios
           - os: macos-latest
@@ -49,15 +49,24 @@ jobs:
 
       - name: Set up Rust
         uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          cache: false
 
       - name: Build Windows release
         if: matrix.os == 'windows-latest'
         shell: pwsh
         run: |
           ./make_release.ps1
-          
+
+      - name: Build Windows ARM release
+        if: matrix.os == 'windows-11-arm'
+        shell: pwsh
+        run: |
+          $env:TARGET_ARCH = "aarch64"
+          ./make_release.ps1
+
       - name: Build release
-        if: matrix.os != 'windows-latest'
+        if: matrix.os != 'windows-latest' && matrix.os != 'windows-11-arm'
         run: make release TARGET=${{ matrix.target }}
 
       - name: Upload build artifacts
@@ -84,10 +93,15 @@ jobs:
       - name: Extract tag_name from zip file
         id: extract_tag
         run: |
-          ZIP=$(ls c2pa-v*-*.zip | head -n1)
-          TAG_NAME=$(echo "$ZIP" | sed -E 's/^(c2pa-v[0-9]+\.[0-9]+\.[0-9]+)-.*\.zip/\1/')
-          echo "Found tag: $TAG_NAME"
-          echo "tag_name=$TAG_NAME" >> $GITHUB_OUTPUT
+          ZIP=$(find . -name "c2pa-v*-*.zip" | head -n1)
+          if [ -n "$ZIP" ]; then
+            TAG_NAME=$(echo "$ZIP" | sed -E 's/.*\/(c2pa-v[0-9]+\.[0-9]+\.[0-9]+)-.*\.zip/\1/')
+            echo "Found tag: $TAG_NAME"
+            echo "tag_name=$TAG_NAME" >> $GITHUB_OUTPUT
+          else
+            echo "No zip files found"
+            exit 1
+          fi
 
       - name: Create Release
         id: create_release

@@ -334,7 +334,7 @@ where
         }
     };
 
-    if cfg!(feature = "no_interleaved_io") || cfg!(target_arch = "wasm32") {
+    if cfg!(target_arch = "wasm32") {
         // hash the data for ranges
         for r in ranges {
             let start = r.start();

@@ -9,6 +9,9 @@ name: CI
 on:
   workflow_dispatch:
   pull_request:
+    branches:
+      - main
+      - v1_api
     types:
       - opened
       - reopened
@@ -17,6 +20,7 @@ on:
   push:
     branches:
       - main
+      - v1_api
 
 jobs:
   get-features:
@@ -299,7 +303,7 @@ jobs:
         id: setup-chrome
         uses: browser-actions/setup-chrome@v2
         with:
-          chrome-version: 138
+          chrome-version: 140
           install-chromedriver: true
 
       - name: Install wasm-pack
