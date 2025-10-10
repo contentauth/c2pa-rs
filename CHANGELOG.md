@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.67.1](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.67.0...c2pa-v0.67.1)
+_02 October 2025_
+
+### Fixed
+
+* Mark `DigitalSourceType` fields as deprecated without warning (new serde update) ([#1427](https://github.com/contentauth/c2pa-rs/pull/1427))
+* Correct the payload of claim signature box when calculating the hash. ([#1466](https://github.com/contentauth/c2pa-rs/pull/1466))
+
 ## [0.67.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.66.0...c2pa-v0.67.0)
 _30 September 2025_
 
