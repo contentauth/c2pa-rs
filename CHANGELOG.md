@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.67.2](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.67.1...c2pa-v0.67.2)
+_10 October 2025_
+
+### Documented
+
+* Update README.md to add CAI membership & Discord links ([#1482](https://github.com/contentauth/c2pa-rs/pull/1482))
+* Fix docs.rs build by removing removed features ([#1480](https://github.com/contentauth/c2pa-rs/pull/1480))
+
+### Fixed
+
+* Expose underlying timestamp assertion support ([#1371](https://github.com/contentauth/c2pa-rs/pull/1371))
+* Turn on trust by default ([#1483](https://github.com/contentauth/c2pa-rs/pull/1483))
+* Empty actions array should be allowed for v1 claim compatibility [CAI-9573] ([#1477](https://github.com/contentauth/c2pa-rs/pull/1477))
+* Add support for new data hash exclusions when update manifests are pr… ([#1478](https://github.com/contentauth/c2pa-rs/pull/1478))
+
+### Other
+
+* Update httpmock to 0.8.0 ([#1472](https://github.com/contentauth/c2pa-rs/pull/1472))
+
 ## [0.67.1](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.67.0...c2pa-v0.67.1)
 _02 October 2025_
 
