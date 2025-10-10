@@ -545,6 +545,17 @@ pub(crate) struct IfdClonedEntry {
     pub value_bytes: Vec<u8>,
 }
 
+impl IfdClonedEntry {
+    pub fn tag_contains_data(&self) -> bool {
+        match self.entry_type {
+            1 | 2 | 6 | 7 => self.value_count <= 4, // 8 bit cases
+            3 | 8 => self.value_count <= 2,         // 16 bit cases
+            4 | 9 | 11 => self.value_count <= 1,
+            _ => false,
+        }
+    }
+}
+
 // read IFD entry bytes in file endianess order
 pub fn read_ifd_entry_data<R: Read + Seek + ?Sized>(
     entry: &IfdEntry,
@@ -843,8 +854,35 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
         Ok(())
     }
 
+    fn ifd_len(&self, target_ifd: &mut BTreeMap<u16, IfdClonedEntry>) -> u64 {
+        let mut cnt = 0;
+
+        // count
+        cnt += if self.big_tiff { 8 } else { 2 };
+
+        // entries
+        let num_entries = target_ifd.len() as u64;
+        // tag + cnt + count + value_bytes
+        let entry_size: u64 = if self.big_tiff {
+            2 + 2 + 8 + 8
+        } else {
+            2 + 2 + 4 + 4
+        };
+
+        cnt += (num_entries * entry_size);
+
+        // add in next_ifd pointer
+        cnt += if self.big_tiff { 8 } else { 4 };
+
+        cnt
+    }
+
     fn write_ifd(&mut self, target_ifd: &mut BTreeMap<u16, IfdClonedEntry>) -> Result<u64> {
-        // write out all data and save the offsets, skipping subfiles since the data is already written
+        let mut data = Vec::new();
+        let mut data_writer = Cursor::new(data);
+        let mut bo = ByteOrdered::new(data_writer, self.endianness.clone());
+
+        // write out all data to buffer and save the offsets, skipping subfiles since the data is already written
         for &mut IfdClonedEntry {
             value_bytes: ref mut value_bytes_ref,
             ..
@@ -854,28 +892,14 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
 
             if value_bytes_ref.len() > data_bytes {
                 // get location of entry data start
-                let offset = self.writer.stream_position()?;
+                let offset = bo.stream_position()?;
 
                 // write out the data bytes
-                self.writer.write_all(value_bytes_ref)?;
+                bo.write_all(value_bytes_ref)?;
 
-                // set offset pointer in file source endian
-                let mut offset_vec = vec![0; data_bytes];
-
-                with_order!(offset_vec.as_mut_slice(), self.endianness, |ew| {
-                    if self.big_tiff {
-                        ew.write_u64(offset)?;
-                    } else {
-                        let offset_u32 = u32::try_from(offset).map_err(|_err| {
-                            Error::InvalidAsset("value out of range".to_string())
-                        })?; // get beginning of chunk which starts 4 bytes before label
-
-                        ew.write_u32(offset_u32)?;
-                    }
-                });
-
-                // set to new data offset position
-                *value_bytes_ref = offset_vec;
+                // set to new data offset position in native endianness,
+                // will be converted to target endianness when we write
+                *value_bytes_ref = offset.to_ne_bytes().to_vec();
             } else {
                 while value_bytes_ref.len() < data_bytes {
                     value_bytes_ref.push(0);
@@ -894,6 +918,9 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
         // write out the entry count
         self.write_entry_count(target_ifd.len())?;
 
+        // ifd size
+        let ifd_size = self.ifd_len(target_ifd);
+
         // write out the directory entries
         for (tag, entry) in target_ifd.iter() {
             self.writer.write_u16(*tag)?;
@@ -908,8 +935,33 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
                 self.writer.write_u32(cnt)?;
             }
 
-            self.writer.write_all(&entry.value_bytes)?;
+            if entry.tag_contains_data() {
+                self.writer.write_all(&entry.value_bytes)?;
+            } else {
+                // this is an offset of fix up to account for the IFD written before the data
+                let mut offset = u64::from_ne_bytes(entry.value_bytes[..8].try_into().unwrap());
+                offset += ifd_size;
+
+                if self.big_tiff {
+                    bo.write_u64(offset)?;
+                } else {
+                    let offset32 = u32::try_from(offset)
+                        .or_else(|_| Err(Error::InvalidAsset("value out of range".to_string())))?;
+                    bo.write_u32(offset32)?;
+                }
+            }
         }
+
+        // write 0s for next offset
+        if self.big_tiff {
+            bo.write_u64(0)?;
+        } else {
+            bo.write_u32(0)?;
+        }
+
+        // write out the data
+        data = bo.into_inner().into_inner();
+        self.writer.write_all(&data)?;
 
         Ok(ifd_offset)
     }
@@ -1259,13 +1311,6 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
             // write directory
             let ifd_offset = self.write_ifd(&mut cloned_ifd)?;
             page_ifd_offsets.push((ifd_offset, self.offset()?));
-
-            // write 0s for now, offset patched in the next step
-            if self.big_tiff {
-                self.writer.write_u64(0)?;
-            } else {
-                self.writer.write_u32(0)?;
-            }
         }
 
         // link all IFDs
@@ -1337,7 +1382,7 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
 fn tiff_clone_with_tags<R: Read + Seek + ?Sized, W: Read + Write + Seek + ?Sized>(
     writer: &mut W,
     asset_reader: &mut R,
-    tiff_tags: Vec<IfdClonedEntry>,
+    mut tiff_tags: Vec<IfdClonedEntry>,
 ) -> Result<()> {
     let (mut tiff_tree, page_tokens, endianness, big_tiff) = map_tiff(asset_reader)?;
 
@@ -1349,20 +1394,56 @@ fn tiff_clone_with_tags<R: Read + Seek + ?Sized, W: Read + Write + Seek + ?Sized
         .ok_or(Error::InvalidAsset("no IFD".to_string()))?;
     let last_ifd = &tiff_tree[*last_page].data;
 
-    let contain_old_c2pa = first_page == last_page && last_ifd.get_tag(C2PA_TAG).is_some();
-    let c2pa_entry = tiff_tags.iter().find(|v| v.entry_tag == C2PA_TAG);
+    let contains_old_c2pa = first_page == last_page && last_ifd.get_tag(C2PA_TAG).is_some();
+    let contains_new_c2pa = first_page != last_page && last_ifd.get_tag(C2PA_TAG).is_some();
 
-    // remove C2PA entry from list since we will hand that separately;
-   
-    let mut bo = ByteOrdered::new(writer, endianness);
+    let new_c2pa_entry = if let Some(pos) = tiff_tags.iter().position(|v| v.entry_tag == C2PA_TAG) {
+        Some(tiff_tags.remove(pos))
+    } else {
+        None
+    };
 
-    let mut tc = TiffCloner::new(endianness, big_tiff, &mut bo)?;
+    // if this is a 1.3 style TIFF manifest just erase it or if we have to write some new tags
+    let intermediate_data = Vec::new();
+    let mut intermediate_stream = Cursor::new(intermediate_data);
+    if contains_old_c2pa || !tiff_tags.is_empty() {
+        let mut bo = ByteOrdered::new(intermediate_stream, endianness);
+        let mut tc = TiffCloner::new(endianness, big_tiff, &mut bo)?;
 
-    for t in tiff_tags {
-        tc.add_target_tag(t);
+        for t in tiff_tags {
+            tc.add_target_tag(t);
+        }
+
+        tc.clone_tiff(&mut tiff_tree, &page_tokens, asset_reader)?;
+        intermediate_stream = bo.into_inner();
+        intermediate_stream.rewind()?;
     }
 
-    tc.clone_tiff(&mut tiff_tree, &tokens, asset_reader)?;
+    // we need to add the manifest if asked otherwise we just write the output
+    if let Some(c2pa_entry) = new_c2pa_entry {
+        // if we had to rewrite the data to change the tags the intermediate_stream
+        if stream_len(&mut intermediate_stream)? > 0 {
+            intermediate_stream.rewind();
+
+            // map the modified asset
+            let (mut tiff_tree, page_tokens, endianness, big_tiff) = map_tiff(asset_reader)?;
+
+            let last_page = page_tokens
+                .last()
+                .ok_or(Error::InvalidAsset("no IFD".to_string()))?;
+            let last_ifd = &tiff_tree[*last_page].data;
+        } else {
+            std::io::copy(asset_reader, writer)?;
+        }
+    } else {
+        // if we had to rewrite the data to change the tags the intermediate_stream
+        if stream_len(&mut intermediate_stream)? > 0 {
+            intermediate_stream.rewind()?;
+            std::io::copy(&mut intermediate_stream, writer)?;
+        } else {
+            std::io::copy(asset_reader, writer)?;
+        }
+    }
 
     Ok(())
 }
@@ -1617,6 +1698,7 @@ impl CAIWriter for TiffIO {
 
         // if this is a 1.4 or later style manifest we can just remove the last IFD
         if page_tokens.len() > 1 && ifds[*last_page].data.entries.get(&C2PA_TAG).is_some() {
+            let (ifds, page_tokens, e, big_tiff) = map_tiff(input_stream)?;
             let last_idf = &ifds[*last_page].data;
             let last_ifd_offset = last_idf.offset;
 
