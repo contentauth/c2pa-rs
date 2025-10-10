@@ -14,7 +14,7 @@
 use serde::Serialize;
 
 use crate::{
-    assertion::{Assertion, AssertionBase, AssertionData, AssertionKind},
+    assertion::{Assertion, AssertionBase, AssertionData},
     assertions::labels,
     error::Result,
 };
@@ -53,8 +53,6 @@ impl EmbeddedData {
 }
 
 impl AssertionBase for EmbeddedData {
-    const KIND: AssertionKind = AssertionKind::Binary;
-
     fn label(&self) -> &str {
         self.label.as_str()
     }

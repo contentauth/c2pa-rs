@@ -1588,7 +1588,6 @@ impl BmffHash {
 impl AssertionCbor for BmffHash {}
 
 impl AssertionBase for BmffHash {
-    const CREATED: bool = true;
     const LABEL: &'static str = Self::LABEL;
     const VERSION: Option<usize> = Some(ASSERTION_CREATION_VERSION);
 

@@ -95,20 +95,6 @@ pub fn get_thumbnail_instance(label: &str) -> Option<usize> {
     }
 }
 
-/// The kind of assertion encoding to use
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AssertionKind {
-    Cbor,
-    Json,
-    Binary,
-}
-
-impl Default for AssertionKind {
-    fn default() -> Self {
-        Self::Cbor
-    }
-}
-
 /// The core required trait for all assertions.
 ///
 /// This defines the label and version for the assertion
@@ -123,12 +109,6 @@ where
     /// The version for this assertion (if any) Defaults to None/1
     const VERSION: Option<usize> = None;
 
-    /// Indicates if this should be added as a created or gathered assertion
-    const CREATED: bool = false;
-
-    /// The kind of encoding to use for this assertion (defaults to CBOR)
-    const KIND: AssertionKind = AssertionKind::Cbor;
-
     /// Returns a label for this assertion.
     fn label(&self) -> &str {
         Self::LABEL
@@ -138,24 +118,6 @@ where
         Self::VERSION
     }
 
-    /// Returns true if this assertion was created (as opposed to gathered)
-    fn created(&self) -> bool {
-        Self::CREATED
-    }
-
-    /// Returns the assertion kind for this assertion
-    fn kind(&self) -> AssertionKind {
-        Self::KIND
-    }
-
-    /// Returns the content type for this assertion based on its kind
-    fn content_type(&self) -> &str {
-        match self.kind() {
-            AssertionKind::Cbor => "application/cbor",
-            AssertionKind::Json => "application/json",
-            AssertionKind::Binary => "application/octet-stream",
-        }
-    }
     /// Convert this instance to an Assertion
     fn to_assertion(&self) -> Result<Assertion>;
 
@@ -169,10 +131,7 @@ pub trait AssertionCbor: Serialize + DeserializeOwned + AssertionBase {
         let data = AssertionData::Cbor(
             serde_cbor::to_vec(self).map_err(|err| Error::AssertionEncoding(err.to_string()))?,
         );
-        Ok(
-            Assertion::new(self.label(), self.version(), data)
-                .set_content_type(self.content_type()),
-        )
+        Ok(Assertion::new(self.label(), self.version(), data).set_content_type("application/cbor"))
     }
 
     fn from_cbor_assertion(assertion: &Assertion) -> Result<Self> {
