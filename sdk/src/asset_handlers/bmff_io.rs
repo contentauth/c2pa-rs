@@ -1684,7 +1684,6 @@ impl CAIWriter for BmffIO {
         // if the incoming Store has an update manifest we must split it into original and update stores
         let mut validation_log =
             StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
-
         let (pc, is_update) = if let Ok(store) = Store::from_jumbf(store_bytes, &mut validation_log)
         {
             let pc = store
@@ -1727,7 +1726,7 @@ impl CAIWriter for BmffIO {
             let pc = pc.ok_or(Error::BadParam("no provenance manifest".to_string()))?;
 
             let mut update_store = Store::from_jumbf(update_manifest_bytes, &mut validation_log)?;
-            // add new update manfiest or replace existing one if the is a 8finalization pass
+            // add new update manfiest or replace existing one if the is a finalization pass
             update_store.replace_claim_or_insert(pc.label().to_string(), pc);
 
             let new_update_bytes = update_store.to_jumbf_internal(0)?;
