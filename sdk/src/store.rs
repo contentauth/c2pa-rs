@@ -71,7 +71,6 @@ use crate::{
     },
     log_item,
     manifest_store_report::ManifestStoreReport,
-    salt::DefaultSalt,
     settings::{builder::OcspFetch, get_settings_value},
     status_tracker::{ErrorBehavior, StatusTracker},
     utils::{
@@ -1101,14 +1100,7 @@ impl Store {
     // desired_version_label - is the label to compare to the base
     // returns true if desired version is <= base version
     fn check_label_version(base_version_label: &str, desired_version_label: &str) -> bool {
-        if let Some(desired_version) = labels::version(desired_version_label) {
-            if let Some(base_version) = labels::version(base_version_label) {
-                if desired_version > base_version {
-                    return false;
-                }
-            }
-        }
-        true
+        labels::version(desired_version_label) <= labels::version(base_version_label)
     }
 
     pub fn from_jumbf(buffer: &[u8], validation_log: &mut StatusTracker) -> Result<Store> {
@@ -1321,7 +1313,7 @@ impl Store {
             // make sure box version label match the read Claim
             if claim.version() > 1 {
                 match labels::version(&claim_box_ver) {
-                    Some(v) if claim.version() >= v => (),
+                    v if Some(claim.version()) >= v => (),
                     _ => return Err(Error::InvalidClaim(InvalidClaimError::ClaimBoxVersion)),
                 }
             }
@@ -1998,7 +1990,7 @@ impl Store {
                         .validation_status(validation_status::ASSERTION_TIMESTAMP_MALFORMED)
                         .failure_as_err(
                             validation_log,
-                            Error::ValidationRule("timestamp assertion malformed".into()),
+                            Error::OtherError("timestamp assertion malformed".into()),
                         )
                     })?;
 
@@ -2012,8 +2004,19 @@ impl Store {
                             validation_log,
                         ) {
                             svi.timestamps.insert(rc.label().to_owned(), tst_info);
+                            continue;
                         }
                     }
+                    log_item!(
+                        to_manifest_uri(referenced_claim),
+                        "could not validate timestamp assertion",
+                        "get_claim_referenced_manifests"
+                    )
+                    .validation_status(validation_status::ASSERTION_TIMESTAMP_MALFORMED)
+                    .failure(
+                        validation_log,
+                        Error::OtherError("timestamp assertion malformed".into()),
+                    )?;
                 }
             }
 
@@ -2355,7 +2358,7 @@ impl Store {
             let mut stream = Cursor::new(data);
             ph.gen_hash_from_stream(&mut stream)?;
 
-            pc.add_assertion_with_salt(&ph, &DefaultSalt::default())?;
+            pc.add_assertion(&ph)?;
         }
 
         let jumbf_bytes = self.to_jumbf_internal(reserve_size)?;
@@ -2588,10 +2591,7 @@ impl Store {
 
         let pc = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
         // always add dynamic assertions as gathered assertions
-        assertions
-            .iter()
-            .map(|a| pc.add_gathered_assertion_with_salt(a, &DefaultSalt::default()))
-            .collect()
+        assertions.iter().map(|a| pc.add_assertion(a)).collect()
     }
 
     /// Write the dynamic assertions to the manifest.
@@ -2633,7 +2633,7 @@ impl Store {
                     final_assertions.push(User::new(&label, &data).to_assertion()?);
                 }
                 DynamicAssertionContent::Binary(format, data) => {
-                    todo!("Binary dynamic assertions not yet supported");
+                    //final_assertions.push(EmbeddedData::to_binary_assertion(&EmbeddedData::new(&label, format, data))?);
                 }
             }
         }

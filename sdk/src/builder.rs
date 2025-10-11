@@ -1619,15 +1619,8 @@ impl Builder {
     /// * `ingredient_label` - The label of the ingredient to add.
     /// # Returns
     /// * A reference to the added ingredient.
-    pub fn add_ingredient_from_reader(
-        &mut self,
-        reader: &crate::Reader,
-        manifest_label: &str,
-        ingredient_label: &str,
-    ) -> Result<&Ingredient> {
-        let ingredient = reader
-            .get_ingredient(manifest_label, ingredient_label)?
-            .to_owned();
+    pub fn add_ingredient_from_reader(&mut self, reader: &crate::Reader) -> Result<&Ingredient> {
+        let ingredient = reader.to_ingredient()?;
         self.add_ingredient(ingredient);
         self.definition
             .ingredients
@@ -3337,16 +3330,10 @@ mod tests {
         let reader = Reader::from_stream(format, &mut dest).unwrap();
         println!("first: {reader}");
 
-        // Now we can get the ingredient we want from the reader
-        // since we just added one parent ingredient we know it will be the first one.
-        let manifest = reader.active_manifest().unwrap();
-        let manifest_label = manifest.label().unwrap();
-        let ingredient_label = manifest.ingredients().first().unwrap().label().unwrap();
-
         // create a new builder and add our ingredient from the reader.
         let builder2 = &mut Builder::new();
         builder2
-            .add_ingredient_from_reader(&reader, manifest_label, ingredient_label)
+            .add_ingredient_from_reader(&reader)
             .unwrap();
         assert!(!builder2.definition.ingredients.is_empty());
         println!("\nbuilder2:{builder2}");
@@ -3356,7 +3343,7 @@ mod tests {
         dest2.rewind().unwrap();
         let reader2 = Reader::from_stream(format, dest2).unwrap();
         println!("\nreader2:{reader2}");
-        assert_eq!(reader2.active_manifest().unwrap().ingredients().len(), 5);
+        assert_eq!(reader2.active_manifest().unwrap().ingredients().len(), 1);
         Ok(())
     }
 }

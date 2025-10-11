@@ -44,7 +44,7 @@ use crate::{
     utils::hash_utils::hash_to_b64,
     validation_results::{ValidationResults, ValidationState},
     validation_status::ValidationStatus,
-    Manifest, ManifestAssertion,
+    Ingredient, Manifest, ManifestAssertion, Relationship,
 };
 
 /// A trait for post-validation of manifest assertions.
@@ -816,6 +816,10 @@ impl Reader {
         Ok(assertion_values)
     }
 
+    /// Convert the Reader back into a Builder.
+    /// This can be used to modify an existing manifest store.
+    /// # Errors
+    /// Returns an [`Error`] if there is no active manifest.
     pub fn into_builder(mut self) -> Result<crate::Builder> {
         let mut builder = crate::Builder::new();
         if let Some(label) = &self.active_manifest {
@@ -864,57 +868,23 @@ impl Reader {
         Ok(builder)
     }
 
-    /// This reconstructs the jumbf for a single manifest
-    //// Normally reader has the only one store for the whole asset
-    fn get_c2pa_data_for_manifest(&self, label: &str) -> Result<Vec<u8>> {
-        let claim = self
-            .store
-            .get_claim(label)
-            .ok_or_else(|| Error::ClaimMissing {
-                label: label.to_string(),
-            })?;
-        // recreate an ingredient store to get the jumbf data
-        let mut ingredient_store = Store::new();
-        ingredient_store.commit_claim(claim.clone())?;
-        ingredient_store.to_jumbf_internal(0)
-    }
-
-    /// Given a manifest label and an ingredient label, return the associated [`Ingredient`], if it exists.
-    /// If the ingredient has an active manifest, the manifest data ref will be set to the correct value.
-    /// # Arguments
-    /// * `manifest_label` - The label of the manifest containing the ingredient.
-    /// * `ingredient_label` - The label of the requested [`Ingredient`].       
+    /// Convert a Reader into an [`Ingredient`] using the parent ingredient from the active manifest.
     /// # Errors
-    /// Returns an [`Error`] if the manifest or ingredient is not found.
-    pub(crate) fn get_ingredient(
-        &self,
-        manifest_label: &str,
-        ingredient_label: &str,
-    ) -> Result<crate::Ingredient> {
-        let manifest = self
-            .manifests
-            .get(manifest_label)
-            .ok_or_else(|| Error::ClaimMissing {
-                label: manifest_label.to_string(),
-            })?;
-
-        let mut ingredient = manifest
-            .ingredients()
-            .iter()
-            .find(|&ingredient| ingredient.label() == Some(ingredient_label))
+    /// Returns an [`Error`] if there is no parent ingredient.
+    pub(crate) fn to_ingredient(&self) -> Result<Ingredient> {
+        // make a copy of the parent ingredient (or return an error if not found)
+        let mut ingredient = self
+            .active_manifest()
+            .and_then(|m| {
+                m.ingredients()
+                    .iter()
+                    .find(|&i| *i.relationship() == Relationship::ParentOf)
+            })
             .ok_or_else(|| Error::IngredientNotFound)?
             .to_owned();
 
-        // if we have an active manifest, we need to set the manifest data ref
-        if ingredient.active_manifest().is_some() {
-            let c2pa_data = self.get_c2pa_data_for_manifest(manifest_label)?;
-            let manifest_data_ref = ingredient.resources_mut().add_with(
-                "manifest_data",
-                "application/c2pa",
-                c2pa_data,
-            )?;
-            ingredient.set_manifest_data_ref(manifest_data_ref)?;
-        }
+        let c2pa_data = self.store.to_jumbf_internal(0)?;
+        ingredient.set_manifest_data(c2pa_data)?;
         Ok(ingredient)
     }
 }
@@ -1014,16 +984,20 @@ pub mod tests {
         let format = "image/jpeg";
         let reader = Reader::from_stream(format, &mut source)?;
         println!("{reader}");
+
         assert_eq!(reader.validation_state(), ValidationState::Trusted);
         let mut builder: crate::Builder = reader.try_into()?;
         println!("{builder}");
+
         source.set_position(0);
         let mut dest = Cursor::new(Vec::new());
         let signer = crate::settings::Settings::signer()?;
         builder.sign(&signer, format, &mut source, &mut dest)?;
+
         dest.set_position(0);
         let reader2 = Reader::from_stream(format, &mut dest)?;
         println!("{reader2}");
+
         assert_eq!(reader2.validation_state(), ValidationState::Trusted);
         std::fs::write("../target/images/CAICAI-rebuilt.jpg", dest.get_ref())?;
         Ok(())
@@ -1112,13 +1086,14 @@ pub mod tests {
 
     #[test]
     #[cfg(feature = "file_io")]
-    /// Test that the reader can validate a file with nested assertion errors
+    ///
     fn test_reader_to_folder() -> Result<()> {
         use crate::utils::{io_utils::tempdirectory, test::temp_dir_path};
-        let reader = Reader::from_file("tests/fixtures/CACAE-uri-CA.jpg")?;
+        let reader = Reader::from_file("../target/images/CAICAI.jpg")?;
         assert_eq!(reader.validation_status(), None);
         let temp_dir = tempdirectory().unwrap();
         reader.to_folder(temp_dir.path())?;
+        reader.to_folder("foo2")?; // should be ok if folder exists
         let path = temp_dir_path(&temp_dir, "manifest.json");
         assert!(path.exists());
         #[cfg(target_os = "wasi")]
