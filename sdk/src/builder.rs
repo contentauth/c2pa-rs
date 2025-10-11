@@ -26,10 +26,9 @@ use serde_with::skip_serializing_none;
 use uuid::Uuid;
 use zip::{write::SimpleFileOptions, ZipArchive, ZipWriter};
 
-use crate::assertion::AssertionBase;
 #[allow(deprecated)]
 use crate::{
-    assertion::AssertionDecodeError,
+    assertion::{AssertionBase, AssertionDecodeError},
     assertions::{
         c2pa_action, labels, Action, ActionTemplate, Actions, AssertionMetadata, BmffHash, BoxHash,
         CreativeWork, DataHash, DigitalSourceType, EmbeddedData, Exif, Metadata, SoftwareAgent,
@@ -46,7 +45,7 @@ use crate::{
         builder::{ActionSettings, ActionTemplateSettings, ClaimGeneratorInfoSettings},
     },
     store::Store,
-    utils::mime::format_to_mime,
+    utils::{hash_utils::hash_to_b64, mime::format_to_mime},
     AsyncSigner,
     ClaimGeneratorInfo,
     HashRange,
@@ -75,7 +74,7 @@ pub struct ManifestDefinition {
     /// This is typically a reverse domain name.
     pub vendor: Option<String>,
 
-    /// Claim Generator Info is always required with at least one entry
+    /// Claim Generator Info is always required with an entry
     #[serde(default = "default_claim_generator_info")]
     pub claim_generator_info: Vec<ClaimGeneratorInfo>,
 
@@ -322,7 +321,7 @@ pub struct Builder {
 
     /// Container for binary assets (like thumbnails).
     #[serde(skip)]
-    resources: ResourceStore,
+    pub(crate) resources: ResourceStore,
 }
 
 impl AsRef<Builder> for Builder {
@@ -1611,6 +1610,31 @@ impl Builder {
     /// * Returns an [`Error`] if the manifest cannot be converted.
     pub fn composed_manifest(manifest_bytes: &[u8], format: &str) -> Result<Vec<u8>> {
         Store::get_composed_manifest(manifest_bytes, format)
+    }
+
+    /// Add an ingredient to the manifest from a Reader.
+    /// # Arguments
+    /// * `reader` - The Reader to get the ingredient from.
+    /// * `manifest_label` - The label of the manifest to get the ingredient from.
+    /// * `ingredient_label` - The label of the ingredient to add.
+    /// # Returns
+    /// * A reference to the added ingredient.
+    pub fn add_ingredient_from_reader(&mut self, reader: &crate::Reader) -> Result<&Ingredient> {
+        let ingredient = reader.to_ingredient()?;
+        self.add_ingredient(ingredient);
+        self.definition
+            .ingredients
+            .last()
+            .ok_or(Error::IngredientNotFound)
+    }
+}
+
+impl std::fmt::Display for Builder {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut json = serde_json::to_value(self).map_err(|_| std::fmt::Error)?;
+        json = hash_to_b64(json);
+        let output = serde_json::to_string_pretty(&json).map_err(|_| std::fmt::Error)?;
+        f.write_str(&output)
     }
 }
 
@@ -3276,5 +3300,50 @@ mod tests {
         let active_manifest = reader.active_manifest().unwrap();
         let ingredient = active_manifest.ingredients().first().unwrap();
         assert_eq!(ingredient.title(), Some("C.jpg"));
+    }
+
+    #[test]
+    fn test_builder_add_ingredient_from_reader() -> Result<()> {
+        Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml"))?;
+        use std::io::Cursor;
+        let format = "image/jpeg";
+        let mut source = Cursor::new(TEST_IMAGE);
+        let mut dest = Cursor::new(Vec::new());
+
+        // first an example of capturing an ingredient as a builder.
+        // We create a new builder, and set the Intent to Edit
+        // this tells the builder to capture the source file as a parent ingredient
+        // if one is not otherwise added.
+        let mut builder = Builder::new();
+        builder.set_intent(BuilderIntent::Edit);
+        let signer = &Settings::signer().unwrap();
+        // We have a different options here. We can embed the manifest into a destination file
+        // or we can bypass the embedding and just get the manifest data back.
+        // you can also output to null if you just want the manifest data.
+        // Here we embed the manifest into a destination file.
+        let _c2pa_data = builder
+            .sign(signer, format, &mut source, &mut dest)
+            .unwrap();
+
+        dest.rewind().unwrap();
+        // use read_from_manifest_data_and_stream to validate if not embedded.
+        let reader = Reader::from_stream(format, &mut dest).unwrap();
+        println!("first: {reader}");
+
+        // create a new builder and add our ingredient from the reader.
+        let builder2 = &mut Builder::new();
+        builder2
+            .add_ingredient_from_reader(&reader)
+            .unwrap();
+        assert!(!builder2.definition.ingredients.is_empty());
+        println!("\nbuilder2:{builder2}");
+        source.rewind().unwrap();
+        let dest2 = &mut Cursor::new(Vec::new());
+        builder2.sign(signer, format, &mut source, dest2).unwrap();
+        dest2.rewind().unwrap();
+        let reader2 = Reader::from_stream(format, dest2).unwrap();
+        println!("\nreader2:{reader2}");
+        assert_eq!(reader2.active_manifest().unwrap().ingredients().len(), 1);
+        Ok(())
     }
 }
