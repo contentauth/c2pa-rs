@@ -350,7 +350,8 @@ impl TryFrom<ActionSettings> for Action {
 pub struct ActionsSettings {
     /// Whether or not to set the [Actions::all_actions_included][crate::assertions::Actions::all_actions_included]
     /// field.
-    pub all_actions_included: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub all_actions_included: Option<bool>,
     /// Templates to be added to the [Actions::templates][crate::assertions::Actions::templates] field.
     #[doc(hidden)]
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -382,7 +383,7 @@ pub struct ActionsSettings {
 impl Default for ActionsSettings {
     fn default() -> Self {
         ActionsSettings {
-            all_actions_included: true,
+            all_actions_included: None,
             templates: None,
             actions: None,
             auto_created_action: AutoActionSettings {

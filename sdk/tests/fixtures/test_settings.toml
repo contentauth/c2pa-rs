@@ -8,6 +8,8 @@ version = 1
 # String to user-provided trust anchors (PEM format).
 # user_anchors = ""
 # String to system trust anchors (PEM format).
+# trust_anchors = ""
+[trust]
 trust_anchors = """-----BEGIN CERTIFICATE-----
 MIICEzCCAcWgAwIBAgIUW4fUnS38162x10PCnB8qFsrQuZgwBQYDK2VwMHcxCzAJ
 BgNVBAYTAlVTMQswCQYDVQQIDAJDQTESMBAGA1UEBwwJU29tZXdoZXJlMRowGAYD
@@ -429,7 +431,7 @@ operating_system = "auto"
 [builder.actions]
 # Signifies if all the actions that ever happened on a particular asset are specified
 # or if some are missing.
-all_actions_included = true
+#all_actions_included = true
 
 # A template to use as the base values for a particular action.
 #[[builder.actions.templates]]

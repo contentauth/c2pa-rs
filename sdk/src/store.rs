@@ -76,8 +76,7 @@ use crate::{
     status_tracker::{ErrorBehavior, StatusTracker},
     utils::{
         hash_utils::HashRange,
-        io_utils,
-        io_utils::{insert_data_at, stream_len},
+        io_utils::{self, insert_data_at, stream_len},
         is_zero,
         patch::patch_bytes,
     },
@@ -486,11 +485,47 @@ impl Store {
         placeholder
     }
 
+    fn get_cose_sign1_signature(&self, manifest_id: &str) -> Option<Vec<u8>> {
+        let manifest = self.get_claim(manifest_id)?;
+
+        let sig = manifest.signature_val();
+        let data = manifest.data().ok()?;
+        let mut validation_log =
+            StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
+
+        let sign1 = parse_cose_sign1(sig, &data, &mut validation_log).ok()?;
+
+        Some(sign1.signature)
+    }
+
+    /// Creates a TimeStamp (c2pa.time-stamp) assertion containing the TimeStampTokens for each
+    /// specified manifest_id.  If any time stamp request fails the assertion is not created.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[allow(dead_code)]
+    pub fn get_timestamp_assertion(
+        &self,
+        manifest_ids: &[&str],
+        tsa_url: &str,
+    ) -> Result<TimeStamp> {
+        let mut timestamp_assertion = TimeStamp::new();
+        for manifest_id in manifest_ids {
+            // lets add a timestamp for old manifest
+            let signature = self
+                .get_cose_sign1_signature(manifest_id)
+                .ok_or(Error::ClaimMissingSignatureBox)?;
+
+            let timestamp_token = TimeStamp::send_timestamp_token_request(tsa_url, &signature)?;
+
+            timestamp_assertion.add_timestamp(manifest_id, &timestamp_token);
+        }
+        Ok(timestamp_assertion)
+    }
+
     /// Return OCSP info if available
     // Currently only called from manifest_store behind a feature flag but this is allowable
     // anywhere so allow dead code here for future uses to compile
     #[allow(dead_code)]
-    pub(crate) fn get_ocsp_status(&self) -> Option<String> {
+    pub fn get_ocsp_status(&self) -> Option<String> {
         let claim = self
             .provenance_claim()
             .ok_or(Error::ProvenanceMissing)
@@ -1998,11 +2033,12 @@ impl Store {
                         .validation_status(validation_status::ASSERTION_TIMESTAMP_MALFORMED)
                         .failure_as_err(
                             validation_log,
-                            Error::OtherError("timestamp assertion malformed".into()),
+                            Error::ValidationRule("timestamp assertion malformed".into()),
                         )
                     })?;
 
                 // save the valid timestamps stored in the StoreValidationInfo
+                // we only use valid timestamps, otherwise just ignore
                 for (referenced_claim, time_stamp_token) in timestamp_assertion.as_ref() {
                     if let Some(rc) = svi.manifest_map.get(referenced_claim) {
                         if let Ok(tst_info) = verify_time_stamp(
@@ -2012,19 +2048,8 @@ impl Store {
                             validation_log,
                         ) {
                             svi.timestamps.insert(rc.label().to_owned(), tst_info);
-                            continue;
                         }
                     }
-                    log_item!(
-                        to_manifest_uri(referenced_claim),
-                        "could not validate timestamp assertion",
-                        "get_claim_referenced_manifests"
-                    )
-                    .validation_status(validation_status::ASSERTION_TIMESTAMP_MALFORMED)
-                    .failure(
-                        validation_log,
-                        Error::OtherError("timestamp assertion malformed".into()),
-                    )?;
                 }
             }
 

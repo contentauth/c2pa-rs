@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.23.4](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.23.3...c2patool-v0.23.4)
+_02 October 2025_
+
+## [0.23.3](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.23.2...c2patool-v0.23.3)
+_30 September 2025_
+
+### Fixed
+
+* AllActionsIncluded defaults to None ([#1459](https://github.com/contentauth/c2pa-rs/pull/1459))
+
+## [0.23.2](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.23.1...c2patool-v0.23.2)
+_24 September 2025_
+
+### Fixed
+
+* We lost the ability to read the deprecated instanceId actions parameters field. ([#1443](https://github.com/contentauth/c2pa-rs/pull/1443))
+
 ## [0.23.1](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.23.0...c2patool-v0.23.1)
 _23 September 2025_
 

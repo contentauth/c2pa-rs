@@ -78,7 +78,7 @@ pub enum CoseError {
     #[error(transparent)]
     RawSignatureValidationError(#[from] RawSignatureValidationError),
 
-    /// An unexpected internal error occured while requesting the time stamp
+    /// An unexpected internal error occurred while requesting the time stamp
     /// response.
     #[error("internal error ({0})")]
     InternalError(String),

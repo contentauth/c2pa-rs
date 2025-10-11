@@ -77,7 +77,7 @@ some_other_field = ""
 [builder.actions]
 # Signifies if all the actions that ever happened on a particular asset are specified
 # or if some are missing.
-all_actions_included = true
+# all_actions_included = true
 
 # A template to use as the base values for a particular action.
 [[builder.actions.templates]]
