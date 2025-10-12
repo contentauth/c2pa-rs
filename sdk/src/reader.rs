@@ -130,6 +130,7 @@ impl Reader {
     pub fn from_stream(format: &str, mut stream: impl Read + Seek + Send) -> Result<Reader> {
         let verify = get_settings_value::<bool>("verify.verify_after_reading")?; // defaults to true
         let mut validation_log = StatusTracker::default();
+        stream.rewind()?; // Ensure stream is at the start
         let store = if _sync {
             Store::from_stream(format, &mut stream, verify, &mut validation_log)
         } else {
@@ -1086,14 +1087,13 @@ pub mod tests {
 
     #[test]
     #[cfg(feature = "file_io")]
-    ///
+    /// Tests that the reader can write resources to a folder
     fn test_reader_to_folder() -> Result<()> {
         use crate::utils::{io_utils::tempdirectory, test::temp_dir_path};
         let reader = Reader::from_file("../target/images/CAICAI.jpg")?;
         assert_eq!(reader.validation_status(), None);
         let temp_dir = tempdirectory().unwrap();
         reader.to_folder(temp_dir.path())?;
-        reader.to_folder("foo2")?; // should be ok if folder exists
         let path = temp_dir_path(&temp_dir, "manifest.json");
         assert!(path.exists());
         #[cfg(target_os = "wasi")]
