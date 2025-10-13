@@ -26,8 +26,10 @@ use crate::{
         raw_signature::{AsyncRawSigner, RawSigner},
         time_stamp::{verify_time_stamp, verify_time_stamp_async, ContentInfo, TimeStampResponse},
     },
+    log_item,
     settings::Settings,
     status_tracker::StatusTracker,
+    validation_status,
 };
 
 /// Given a COSE signature, retrieve the `sigTst` header from it and validate
@@ -127,6 +129,18 @@ pub(crate) fn parse_and_validate_sigtst(
         .map_err(|err| CoseError::CborParsingError(err.to_string()))?;
 
     let mut tstinfos: Vec<TstInfo> = vec![];
+
+    // only a single value is allowed in tstTokens
+    if tst_container.tst_tokens.len() > 1 {
+        log_item!(
+            "",
+            "only a single timestamp response is allowed in a manifest",
+            "parse_and_validate_sigtst"
+        )
+        .validation_status(validation_status::TIMESTAMP_MALFORMED)
+        .informational(validation_log);
+        return Err(CoseError::NoTimeStampToken);
+    }
 
     for token in &tst_container.tst_tokens {
         let tbs = cose_countersign_data(data, p_header);

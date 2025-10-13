@@ -9,6 +9,8 @@ version_minor = 0
 # String to user-provided trust anchors (PEM format).
 # user_anchors = ""
 # String to system trust anchors (PEM format).
+# trust_anchors = ""
+[trust]
 trust_anchors = """-----BEGIN CERTIFICATE-----
 MIICEzCCAcWgAwIBAgIUW4fUnS38162x10PCnB8qFsrQuZgwBQYDK2VwMHcxCzAJ
 BgNVBAYTAlVTMQswCQYDVQQIDAJDQTESMBAGA1UEBwwJU29tZXdoZXJlMRowGAYD

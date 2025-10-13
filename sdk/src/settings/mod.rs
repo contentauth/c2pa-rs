@@ -228,7 +228,7 @@ impl Default for Verify {
         Self {
             verify_after_reading: true,
             verify_after_sign: true,
-            verify_trust: cfg!(test),
+            verify_trust: true,
             verify_timestamp_trust: !cfg!(test), // verify timestamp trust unless in test mode
             ocsp_fetch: false,
             remote_manifest_fetch: true,
