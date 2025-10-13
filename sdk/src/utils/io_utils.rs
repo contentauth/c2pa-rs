@@ -411,7 +411,4 @@ mod tests {
         )
         .is_err());
     }
-
-    // REVIEW NOTE: I deleted tests here that duplicate tests found in
-    // https://github.com/Stebalien/tempfile/blob/master/tests/spooled.rs.
 }
