@@ -425,7 +425,7 @@ fn configure_sdk(args: &CliArgs) -> Result<()> {
             Settings::from_toml(
                 &toml::toml! {
                     [cawg_trust]
-                    trust_anchors = data
+                    user_anchors = data
                 }
                 .to_string(),
             )?;
@@ -433,10 +433,10 @@ fn configure_sdk(args: &CliArgs) -> Result<()> {
             enable_cawg_trust_checks = true;
         }
 
-        if let Some(carg_trust_anchors) = &cawg_trust_anchors {
-            debug!("Using CAWG trust anchors from {carg_trust_anchors:?}");
+        if let Some(cawg_trust_anchors) = &cawg_trust_anchors {
+            debug!("Using CAWG trust anchors from {cawg_trust_anchors:?}");
 
-            let data = load_trust_resource(carg_trust_anchors)?;
+            let data = load_trust_resource(cawg_trust_anchors)?;
             Settings::from_toml(
                 &toml::toml! {
                     [cawg_trust]
