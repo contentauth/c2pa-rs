@@ -190,15 +190,27 @@ fn parse_resource_string(s: &str) -> Result<TrustResource> {
 enum Commands {
     /// Sub-command to configure trust store options, "trust --help for more details"
     Trust {
-        /// URL or path to file containing list of trust anchors in PEM format
+        /// URL or path to file containing list of user trust anchors in PEM format for CAWG validation
+        #[arg(long = "cawg_user_trust_anchors", env="C2PATOOL_CAWG_USERTRUST_ANCHORS", value_parser = parse_resource_string)]
+        cawg_user_trust_anchors: Option<TrustResource>,
+
+        /// URL or path to file containing list of CAWG trust anchors in PEM format for CAWG validation
+        #[arg(long = "cawg_trust_anchors", env="C2PATOOL_CAWG_TRUST_ANCHORS", value_parser = parse_resource_string)]
+        cawg_trust_anchors: Option<TrustResource>,
+
+        /// URL or path to file containing list of user trust anchors in PEM format for C2PA validaiton
+        #[arg(long = "user_trust_anchors", env="C2PATOOL_USER_TRUST_ANCHORS", value_parser = parse_resource_string)]
+        user_trust_anchors: Option<TrustResource>,
+
+        /// URL or path to file containing list of trust anchors in PEM format for C2PA validation
         #[arg(long = "trust_anchors", env="C2PATOOL_TRUST_ANCHORS", value_parser = parse_resource_string)]
         trust_anchors: Option<TrustResource>,
 
-        /// URL or path to file containing specific manifest signing certificates in PEM format to implicitly trust
+        /// URL or path to file containing specific manifest signing certificates in PEM format to implicitly trust for C2PA validation
         #[arg(long = "allowed_list", env="C2PATOOL_ALLOWED_LIST", value_parser = parse_resource_string)]
         allowed_list: Option<TrustResource>,
 
-        /// URL or path to file containing configured EKUs in Oid dot notation
+        /// URL or path to file containing configured EKUs in Oid dot notation for C2PA validation
         #[arg(long = "trust_config", env="C2PATOOL_TRUST_CONFIG", value_parser = parse_resource_string)]
         trust_config: Option<TrustResource>,
     },
@@ -395,15 +407,64 @@ fn configure_sdk(args: &CliArgs) -> Result<()> {
     }
 
     let mut enable_trust_checks = false;
+    let mut enable_cawg_trust_checks = false;
 
     if let Some(Commands::Trust {
+        cawg_user_trust_anchors,
+        cawg_trust_anchors,
+        user_trust_anchors,
         trust_anchors,
         allowed_list,
         trust_config,
     }) = &args.command
     {
+        if let Some(cawg_user_trust_anchors) = &cawg_user_trust_anchors {
+            debug!("Using CAWG user trust anchors from {cawg_user_trust_anchors:?}");
+
+            let data = load_trust_resource(cawg_user_trust_anchors)?;
+            Settings::from_toml(
+                &toml::toml! {
+                    [cawg_trust]
+                    trust_anchors = data
+                }
+                .to_string(),
+            )?;
+
+            enable_cawg_trust_checks = true;
+        }
+
+        if let Some(carg_trust_anchors) = &cawg_trust_anchors {
+            debug!("Using CAWG trust anchors from {carg_trust_anchors:?}");
+
+            let data = load_trust_resource(carg_trust_anchors)?;
+            Settings::from_toml(
+                &toml::toml! {
+                    [cawg_trust]
+                    trust_anchors = data
+                }
+                .to_string(),
+            )?;
+
+            enable_cawg_trust_checks = true;
+        }
+
+        if let Some(user_trust_anchors) = &user_trust_anchors {
+            debug!("Using C2PA user trust anchors from {user_trust_anchors:?}");
+
+            let data = load_trust_resource(user_trust_anchors)?;
+            Settings::from_toml(
+                &toml::toml! {
+                    [trust]
+                    user_anchors = data
+                }
+                .to_string(),
+            )?;
+
+            enable_trust_checks = true;
+        }
+
         if let Some(trust_list) = &trust_anchors {
-            debug!("Using trust anchors from {trust_list:?}");
+            debug!("Using C2PA trust anchors from {trust_list:?}");
 
             let data = load_trust_resource(trust_list)?;
             Settings::from_toml(
@@ -418,7 +479,7 @@ fn configure_sdk(args: &CliArgs) -> Result<()> {
         }
 
         if let Some(allowed_list) = &allowed_list {
-            debug!("Using allowed list from {allowed_list:?}");
+            debug!("Using C2PA allowed list from {allowed_list:?}");
 
             let data = load_trust_resource(allowed_list)?;
             Settings::from_toml(
@@ -433,7 +494,7 @@ fn configure_sdk(args: &CliArgs) -> Result<()> {
         }
 
         if let Some(trust_config) = &trust_config {
-            debug!("Using trust config from {trust_config:?}");
+            debug!("Using C2PA trust config from {trust_config:?}");
 
             let data = load_trust_resource(trust_config)?;
             Settings::from_toml(
@@ -455,6 +516,16 @@ fn configure_sdk(args: &CliArgs) -> Result<()> {
             &toml::toml! {
                 [verify]
                 verify_trust = true
+            }
+            .to_string(),
+        )?;
+    }
+
+    if enable_cawg_trust_checks {
+        Settings::from_toml(
+            &toml::toml! {
+                [cawg_trust]
+                verify_trust_list = true
             }
             .to_string(),
         )?;
