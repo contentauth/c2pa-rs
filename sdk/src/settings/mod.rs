@@ -48,9 +48,6 @@ pub(crate) trait SettingsValidate {
 #[cfg_attr(feature = "json_schema", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct Trust {
-    // REVIEW NOTE: should we remove this field in favor of `verify.verify_trust`, only CAWG is using it.
-    /// Whether to verify certificates against the trust lists specified in [`Trust`], only applicable to CAWG.
-    ///
     /// The default value is true.
     pub verify_trust_list: bool,
     /// List of additional user-provided trust anchor root certificates as a PEM bundle.
@@ -200,7 +197,7 @@ pub struct Core {
     /// [`BmffHash`]: crate::assertions::BmffHash
     pub merkle_tree_max_proofs: usize,
     /// Maximum amount of data in megabytes that will be loaded into memory before
-    /// it's stored in temporary files on the disk.
+    /// being stored in temporary files on the disk.
     ///
     /// This option defaults to 512MB and can result in noticeable performance improvements.
     pub backing_store_memory_threshold_in_mb: usize,
@@ -294,7 +291,6 @@ pub struct Verify {
     /// Whether to verify ingredient certificates against the trust lists specific in [`Trust`].
     ///
     /// The default value is true.
-    #[doc(hidden)]
     pub(crate) check_ingredient_trust: bool,
     /// Whether to skip ingredient conflict resolution when multiple ingredients have the same
     /// manifest identifier. This settings is only applicable for C2PA v2 validation.
@@ -303,7 +299,6 @@ pub struct Verify {
     ///
     /// See more information in the spec here:
     /// <https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_versioning_manifests_due_to_conflicts>
-    #[doc(hidden)]
     pub(crate) skip_ingredient_conflict_resolution: bool,
     /// Whether to do strictly C2PA v1 validation or otherwise the latest validation.
     ///
