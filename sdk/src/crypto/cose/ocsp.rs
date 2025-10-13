@@ -34,6 +34,7 @@ use crate::{
 /// Given a COSE signature, extract the OCSP data and validate the status of
 /// that report.
 #[async_generic]
+#[allow(clippy::too_many_arguments)]
 pub fn check_ocsp_status(
     sign1: &CoseSign1,
     data: &[u8],

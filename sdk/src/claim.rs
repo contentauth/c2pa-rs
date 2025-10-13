@@ -2011,10 +2011,8 @@ impl Claim {
         }
 
         // Skip further checks for v1 claims if not in strict validation mode
-        if claim.version() == 1 {
-            if let Ok(false) = get_settings_value::<bool>("verify.strict_v1_validation") {
-                return Ok(()); // no further checks for v1 claims
-            }
+        if claim.version() == 1 && !settings.verify.strict_v1_validation {
+            return Ok(()); // no further checks for v1 claims
         }
 
         // 1. make sure every action has an actions array that is not empty

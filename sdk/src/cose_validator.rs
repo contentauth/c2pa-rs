@@ -45,6 +45,7 @@ fn get_sign_cert(sign1: &coset::CoseSign1) -> Result<Vec<u8>> {
 /// tst_info allows for overriding the timestamp, this is used by the timestamp assertion
 /// returns - Ok on success
 #[async_generic]
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn verify_cose(
     cose_bytes: &[u8],
     data: &[u8],

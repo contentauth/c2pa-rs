@@ -1035,6 +1035,7 @@ impl BmffHash {
     }
 
     #[cfg(feature = "file_io")]
+    #[allow(clippy::too_many_arguments)]
     pub fn add_merkle_for_fragmented(
         &mut self,
         max_proofs: usize,

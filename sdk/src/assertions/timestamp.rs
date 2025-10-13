@@ -50,7 +50,10 @@ impl TimeStamp {
 
     #[cfg(not(target_arch = "wasm32"))]
     pub fn send_timestamp_token_request(tsa_url: &str, message: &[u8]) -> Result<Vec<u8>> {
-        use crate::{crypto::cose::CertificateTrustPolicy, status_tracker::StatusTracker, Error};
+        use crate::{
+            crypto::cose::CertificateTrustPolicy, settings::Settings,
+            status_tracker::StatusTracker, Error,
+        };
 
         let body = crate::crypto::time_stamp::default_rfc3161_message(message)?;
         let headers = None;
@@ -62,7 +65,19 @@ impl TimeStamp {
         // make sure it is a good response
         let ctp = CertificateTrustPolicy::passthrough();
         let mut tracker = StatusTracker::default();
-        crate::crypto::time_stamp::verify_time_stamp(&bytes, message, &ctp, &mut tracker)?;
+
+        // TO REVIEW: I think in this case, we're doing structural validation of
+        // time stamps but not trust validation. If so, the below is correct. (I think.)
+        let mut settings = Settings::default();
+        settings.verify.verify_timestamp_trust = false;
+
+        crate::crypto::time_stamp::verify_time_stamp(
+            &bytes,
+            message,
+            &ctp,
+            &mut tracker,
+            &settings,
+        )?;
 
         let token = crate::crypto::cose::timestamptoken_from_timestamprsp(&bytes)
             .ok_or(Error::OtherError("timestamp token not found".into()))?;
