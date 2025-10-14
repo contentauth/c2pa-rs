@@ -26,6 +26,7 @@ use serde_with::skip_serializing_none;
 use uuid::Uuid;
 use zip::{write::SimpleFileOptions, ZipArchive, ZipWriter};
 
+use crate::Reader;
 #[allow(deprecated)]
 use crate::{
     assertion::{AssertionBase, AssertionDecodeError},
@@ -604,6 +605,15 @@ impl Builder {
         R: Read + Seek + Send,
     {
         let ingredient: Ingredient = Ingredient::from_json(&ingredient_json.into())?;
+
+        if format == "c2pa" || format == "application/c2pa" {
+            let reader = Reader::from_stream(format, stream)?;
+            let parent_ingredient = self.add_ingredient_from_reader(&reader)?;
+            parent_ingredient.merge(&ingredient);
+            #[allow(clippy::unwrap_used)]
+            return Ok(self.definition.ingredients.last_mut().unwrap());
+        }
+
         let ingredient = if _sync {
             ingredient.with_stream(format, stream)?
         } else {
@@ -820,6 +830,7 @@ impl Builder {
         let mut stream = stream;
         Self::old_from_archive(&mut stream).or_else(|_| {
             // if the old method fails, try the new method
+            stream.rewind()?;
             crate::Reader::from_stream("application/c2pa", stream).and_then(|r| r.into_builder())
         })
     }
@@ -1224,6 +1235,7 @@ impl Builder {
         let auto_placed =
             settings::get_settings_value::<bool>("builder.actions.auto_placed_action.enabled")?;
         if auto_placed {
+            println!("auto_placed_action enabled!!!!!!");
             // Get a list of ingredient URIs referenced by "c2pa.placed" actions.
             let mut referenced_uris = HashSet::new();
             for action in &actions.actions {
@@ -1661,12 +1673,15 @@ impl Builder {
     /// * `ingredient_label` - The label of the ingredient to add.
     /// # Returns
     /// * A reference to the added ingredient.
-    pub fn add_ingredient_from_reader(&mut self, reader: &crate::Reader) -> Result<&Ingredient> {
+    pub fn add_ingredient_from_reader(
+        &mut self,
+        reader: &crate::Reader,
+    ) -> Result<&mut Ingredient> {
         let ingredient = reader.to_ingredient()?;
         self.add_ingredient(ingredient);
         self.definition
             .ingredients
-            .last()
+            .last_mut()
             .ok_or(Error::IngredientNotFound)
     }
 
@@ -1699,17 +1714,7 @@ impl Builder {
             .get_box_map(&mut empty_asset)?;
         let box_hash = BoxHash { boxes };
 
-        // let box_mapper = c2pa_io.asset_box_hash_ref()?;
-        // let boxes = box_mapper.get_box_map(&mut std::io::Cursor::new(""))?;
-
-        // let c2pa_io =
-        //     jumbf_io::get_assetio_handler("application/c2pa").ok_or(Error::UnsupportedType)?;
-        // let box_mapper = c2pa_io.asset_box_hash_ref()?;
-        // let boxes = box_mapper.get_bx_map(&mut std::io::Cursor::new(""))?;
-        //let box_hash = BoxHash { boxes };
-
         // then convert the builder to a claim and add the box hash assertion
-
         let mut claim = self.to_claim()?;
         claim.add_assertion(&box_hash)?;
 
@@ -1747,7 +1752,6 @@ mod tests {
     use crate::utils::test::fixture_path;
     use crate::{
         assertions::{c2pa_action, BoxHash, DigitalSourceType},
-        asset_handlers::jpeg_io::JpegIO,
         crypto::raw_signature::SigningAlg,
         hash_stream_by_alg,
         settings::Settings,
@@ -2688,7 +2692,10 @@ mod tests {
     #[c2pa_test_async]
     #[cfg(target_arch = "wasm32")]
     async fn test_builder_box_hashed_embeddable() {
-        use crate::asset_io::{CAIWriter, HashBlockObjectType};
+        use crate::{
+            asset_handlers::jpeg_io::JpegIO,
+            asset_io::{CAIWriter, HashBlockObjectType},
+        };
         const BOX_HASH_IMAGE: &[u8] = include_bytes!("../tests/fixtures/boxhash.jpg");
         const BOX_HASH: &[u8] = include_bytes!("../tests/fixtures/boxhash.json");
 
@@ -2749,7 +2756,10 @@ mod tests {
     #[c2pa_test_async]
     #[cfg(any(target_arch = "wasm32", feature = "file_io"))]
     async fn test_builder_box_hashed_embeddable_with_exclusions() {
-        use crate::asset_io::{CAIWriter, HashBlockObjectType};
+        use crate::{
+            asset_handlers::jpeg_io::JpegIO,
+            asset_io::{CAIWriter, HashBlockObjectType},
+        };
         const BOX_HASH_IMAGE: &[u8] = include_bytes!("../tests/fixtures/boxhash.jpg");
         const BOX_HASH: &[u8] = include_bytes!("../tests/fixtures/boxhash_with_exclusion.json");
 

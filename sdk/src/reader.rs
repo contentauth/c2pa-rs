@@ -976,9 +976,10 @@ pub mod tests {
     const IMAGE_COMPLEX_MANIFEST: &[u8] = include_bytes!("../tests/fixtures/CACAE-uri-CA.jpg");
     const IMAGE_WITH_MANIFEST: &[u8] = include_bytes!("../tests/fixtures/CA.jpg");
     const IMAGE_WITH_REMOTE_MANIFEST: &[u8] = include_bytes!("../tests/fixtures/cloud.jpg");
-    const IMAGE_WITH_INGREDIENT_MANIFEST: &[u8] = include_bytes!("../../target/images/CAICAI.jpg");
+    const IMAGE_WITH_INGREDIENT_MANIFEST: &[u8] = include_bytes!("../../target/images/CA.jpg");
 
     #[test]
+    // Verify that we can convert a Reader back into a Builder re-sign and the read it back again
     fn test_into_builder() -> Result<()> {
         crate::settings::Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml"))?;
         let mut source = Cursor::new(IMAGE_WITH_INGREDIENT_MANIFEST);
@@ -1000,7 +1001,7 @@ pub mod tests {
         println!("{reader2}");
 
         assert_eq!(reader2.validation_state(), ValidationState::Trusted);
-        std::fs::write("../target/images/CAICAI-rebuilt.jpg", dest.get_ref())?;
+        std::fs::write("../target/images/CA-rebuilt.jpg", dest.get_ref())?;
         Ok(())
     }
 

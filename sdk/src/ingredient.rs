@@ -1455,6 +1455,50 @@ impl Ingredient {
 
         Ok(())
     }
+
+    // allows overriding fields in an ingredient with another ingredient
+    pub(crate) fn merge(&mut self, other: &Ingredient) {
+        // println!("before merge: {}", self);
+        self.relationship = other.relationship.clone();
+
+        if let Some(title) = &other.title {
+            self.title = Some(title.clone());
+        }
+        if let Some(format) = &other.format {
+            self.format = Some(format.clone());
+        }
+        if let Some(instance_id) = &other.instance_id {
+            self.instance_id = Some(instance_id.clone());
+        }
+        if let Some(provenance) = &other.provenance {
+            self.provenance = Some(provenance.clone());
+        }
+        if let Some(hash) = &other.hash {
+            self.hash = Some(hash.clone());
+        }
+        if let Some(document_id) = &other.document_id {
+            self.document_id = Some(document_id.clone());
+        }
+        if let Some(description) = &other.description {
+            self.description = Some(description.clone());
+        }
+        if let Some(informational_uri) = &other.informational_uri {
+            self.informational_uri = Some(informational_uri.clone());
+        }
+        if let Some(data) = &other.data {
+            self.data = Some(data.clone());
+        }
+        if let Some(thumbnail) = &other.thumbnail {
+            self.thumbnail = Some(thumbnail.clone());
+        }
+        if let Some(metadata) = &other.metadata {
+            self.metadata = Some(metadata.clone());
+        }
+        if let Some(label) = &other.label {
+            self.label = Some(label.clone());
+        }
+        //println!("after merge: {}", self);
+    }
 }
 
 impl std::fmt::Display for Ingredient {
