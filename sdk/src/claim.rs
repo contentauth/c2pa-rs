@@ -1811,10 +1811,14 @@ impl Claim {
         let mut validation_log =
             StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
 
+        // REVIEW-NOTE: I don't think we need to verify timestamp trust here?
+        let mut settings = crate::settings::get_settings().unwrap_or_default();
+        settings.verify.verify_timestamp_trust = false;
+
         if _sync {
-            Some(get_signing_info(sig, &data, &mut validation_log))
+            Some(get_signing_info(sig, &data, &mut validation_log, &settings))
         } else {
-            Some(get_signing_info_async(sig, &data, &mut validation_log).await)
+            Some(get_signing_info_async(sig, &data, &mut validation_log, &settings).await)
         }
     }
 
@@ -1879,7 +1883,7 @@ impl Claim {
             ctp,
             svi.timestamps.get(claim.label()),
             validation_log,
-            &settings.verify,
+            settings,
         )
         .await;
 
@@ -1961,7 +1965,7 @@ impl Claim {
             ctp,
             svi.timestamps.get(claim.label()),
             validation_log,
-            &settings.verify,
+            settings,
         );
 
         let result =
@@ -1971,13 +1975,13 @@ impl Claim {
     }
 
     /// Get the signing certificate chain as PEM bytes
-    pub fn get_cert_chain(&self) -> Result<Vec<u8>> {
+    pub fn get_cert_chain(&self, settings: &Settings) -> Result<Vec<u8>> {
         let sig = self.signature_val();
         let data = self.data()?;
         let mut validation_log =
             StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
 
-        let vi = get_signing_info(sig, &data, &mut validation_log);
+        let vi = get_signing_info(sig, &data, &mut validation_log, settings);
 
         Ok(vi.cert_chain)
     }

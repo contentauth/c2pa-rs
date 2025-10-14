@@ -93,7 +93,7 @@ pub fn sign_claim(
                 &passthrough_cap,
                 None,
                 &mut cose_log,
-                &settings.verify,
+                settings,
             ) {
                 Ok(r) => {
                     if !r.validated {

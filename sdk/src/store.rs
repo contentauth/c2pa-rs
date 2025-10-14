@@ -617,7 +617,7 @@ impl Store {
                             &self.ctp,
                             None,
                             &mut cose_log,
-                            &settings.verify,
+                            settings,
                         )
                     } else {
                         verify_cose_async(
@@ -628,7 +628,7 @@ impl Store {
                             &self.ctp,
                             None,
                             &mut cose_log,
-                            &settings.verify,
+                            settings,
                         )
                         .await
                     };
@@ -4283,6 +4283,7 @@ impl Store {
         &self,
         manifest_labels: Vec<String>,
         validation_log: &mut StatusTracker,
+        settings: &Settings,
     ) -> Result<Vec<(String, Vec<u8>)>> {
         let mut oscp_response_ders = Vec::new();
 
@@ -4293,8 +4294,15 @@ impl Store {
 
                 let sign1 = parse_cose_sign1(&sig, &data, validation_log)?;
                 let ocsp_response_der = if _sync {
-                    fetch_and_check_ocsp_response(&sign1, &data, &self.ctp, None, validation_log)?
-                        .ocsp_der
+                    fetch_and_check_ocsp_response(
+                        &sign1,
+                        &data,
+                        &self.ctp,
+                        None,
+                        validation_log,
+                        settings,
+                    )?
+                    .ocsp_der
                 } else {
                     fetch_and_check_ocsp_response_async(
                         &sign1,
@@ -4302,6 +4310,7 @@ impl Store {
                         &self.ctp,
                         None,
                         validation_log,
+                        settings,
                     )
                     .await?
                     .ocsp_der

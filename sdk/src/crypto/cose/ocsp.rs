@@ -60,6 +60,7 @@ pub fn check_ocsp_status(
                         ocsp_response_ders,
                         tst_info,
                         validation_log,
+                        settings,
                     )
                 } else {
                     process_ocsp_responses_async(
@@ -69,6 +70,7 @@ pub fn check_ocsp_status(
                         ocsp_response_ders,
                         tst_info,
                         validation_log,
+                        settings,
                     )
                     .await
                 };
@@ -86,6 +88,7 @@ pub fn check_ocsp_status(
                     ctp,
                     tst_info,
                     validation_log,
+                    settings,
                 )
             } else {
                 check_stapled_ocsp_response_async(
@@ -95,6 +98,7 @@ pub fn check_ocsp_status(
                     ctp,
                     tst_info,
                     validation_log,
+                    settings,
                 )
                 .await
             }
@@ -103,10 +107,24 @@ pub fn check_ocsp_status(
         None => match fetch_policy {
             OcspFetchPolicy::FetchAllowed => {
                 if _sync {
-                    fetch_and_check_ocsp_response(sign1, data, ctp, tst_info, validation_log)
+                    fetch_and_check_ocsp_response(
+                        sign1,
+                        data,
+                        ctp,
+                        tst_info,
+                        validation_log,
+                        settings,
+                    )
                 } else {
-                    fetch_and_check_ocsp_response_async(sign1, data, ctp, tst_info, validation_log)
-                        .await
+                    fetch_and_check_ocsp_response_async(
+                        sign1,
+                        data,
+                        ctp,
+                        tst_info,
+                        validation_log,
+                        settings,
+                    )
+                    .await
                 }
             }
             OcspFetchPolicy::DoNotFetch => {
@@ -120,6 +138,7 @@ pub fn check_ocsp_status(
                                 ocsp_response_ders,
                                 tst_info,
                                 validation_log,
+                                settings,
                             )
                         } else {
                             process_ocsp_responses_async(
@@ -129,6 +148,7 @@ pub fn check_ocsp_status(
                                 ocsp_response_ders,
                                 tst_info,
                                 validation_log,
+                                settings,
                             )
                             .await
                         }
@@ -153,6 +173,7 @@ fn process_ocsp_responses(
     ocsp_response_ders: &[Vec<u8>],
     tst_info: Option<&TstInfo>,
     validation_log: &mut StatusTracker,
+    settings: &Settings,
 ) -> Result<OcspResponse, CoseError> {
     for ocsp_response_der in ocsp_response_ders {
         let mut current_validation_log = StatusTracker::default();
@@ -164,6 +185,7 @@ fn process_ocsp_responses(
                 ctp,
                 tst_info,
                 &mut current_validation_log,
+                settings,
             )
         } else {
             check_stapled_ocsp_response_async(
@@ -173,6 +195,7 @@ fn process_ocsp_responses(
                 ctp,
                 tst_info,
                 &mut current_validation_log,
+                settings,
             )
             .await
         } {
@@ -232,6 +255,7 @@ fn check_stapled_ocsp_response(
     ctp: &CertificateTrustPolicy,
     tst_info: Option<&TstInfo>,
     validation_log: &mut StatusTracker,
+    settings: &Settings,
 ) -> Result<OcspResponse, CoseError> {
     // this timestamp is checked as part of Cose Signature so don't need to log its results here
     let mut local_log_sync = StatusTracker::default();
@@ -241,9 +265,9 @@ fn check_stapled_ocsp_response(
         Some(tst_info) => Ok(tst_info.clone()),
         None => {
             if _sync {
-                validate_cose_tst_info(sign1, data, ctp, &mut local_log_sync)
+                validate_cose_tst_info(sign1, data, ctp, &mut local_log_sync, settings)
             } else {
-                validate_cose_tst_info_async(sign1, data, ctp, &mut local_log_sync).await
+                validate_cose_tst_info_async(sign1, data, ctp, &mut local_log_sync, settings).await
             }
         }
     };
@@ -298,6 +322,7 @@ pub(crate) fn fetch_and_check_ocsp_response(
     ctp: &CertificateTrustPolicy,
     _tst_info: Option<&TstInfo>,
     validation_log: &mut StatusTracker,
+    settings: &Settings,
 ) -> Result<OcspResponse, CoseError> {
     let certs = cert_chain_from_sign1(sign1)?;
 
@@ -316,7 +341,7 @@ pub(crate) fn fetch_and_check_ocsp_response(
     let ocsp_response_der = ocsp_der;
 
     let signing_time: Option<DateTime<Utc>> =
-        validate_cose_tst_info(sign1, data, ctp, validation_log)
+        validate_cose_tst_info(sign1, data, ctp, validation_log, settings)
             .ok()
             .map(|tst_info| tst_info.gen_time.clone().into());
 
