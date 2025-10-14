@@ -114,19 +114,32 @@ impl ReaderBuilder {
     //     todo!()
     // }
 
-    // TODO: impl the async cases
-    // TODO: pass the settings down the stack (waiting on #1444)
     #[async_generic]
-    pub fn build(self, format: &str, stream: impl Read + Seek + Send) -> Result<Reader> {
+    pub fn build(self, format: &str, mut stream: impl Read + Seek + Send) -> Result<Reader> {
         match self.fragments {
             Some(mut fragments) => {
-                // TODO: can we pass in an external manifest here?
                 match self.external_manifest {
                     Some(external_manifest) => {
                         // TODO: we can add a from_manifest_data_and_fragments function
                         todo!()
                     }
-                    None => Reader::from_fragments(format, stream, &mut fragments),
+                    None => {
+                        let mut validation_log = StatusTracker::default();
+                        if _sync {
+                            let store = Store::load_fragments_from_stream(
+                                format,
+                                &mut stream,
+                                &mut fragments,
+                                self.settings.verify.verify_after_reading,
+                                &mut validation_log,
+                                &self.settings,
+                            )?;
+                            Reader::from_store(store, &validation_log)
+                        } else {
+                            // TODO: add a load_fragments_from_stream_async function
+                            todo!()
+                        }
+                    }
                 }
             }
             None => match self.external_manifest {
@@ -136,9 +149,53 @@ impl ReaderBuilder {
                     let mut c2pa_data = Vec::new();
                     external_manifest.read_to_end(&mut c2pa_data)?;
 
-                    Reader::from_manifest_data_and_stream(&c2pa_data, format, stream)
+                    let mut validation_log = StatusTracker::default();
+                    if _sync {
+                        let store = Store::from_manifest_data_and_stream(
+                            &c2pa_data,
+                            format,
+                            stream,
+                            self.settings.verify.verify_after_reading,
+                            &mut validation_log,
+                            &self.settings,
+                        )?;
+                        Reader::from_store(store, &validation_log)
+                    } else {
+                        let store = Store::from_manifest_data_and_stream_async(
+                            &c2pa_data,
+                            format,
+                            stream,
+                            self.settings.verify.verify_after_reading,
+                            &mut validation_log,
+                            &self.settings,
+                        )
+                        .await?;
+                        Reader::from_store_async(store, &validation_log).await
+                    }
                 }
-                None => Reader::from_stream(format, stream),
+                None => {
+                    let mut validation_log = StatusTracker::default();
+                    if _sync {
+                        let store = Store::from_stream(
+                            format,
+                            &mut stream,
+                            self.settings.verify.verify_after_reading,
+                            &mut validation_log,
+                            &self.settings,
+                        )?;
+                        Reader::from_store(store, &validation_log)
+                    } else {
+                        let store = Store::from_stream_async(
+                            format,
+                            &mut stream,
+                            self.settings.verify.verify_after_reading,
+                            &mut validation_log,
+                            &self.settings,
+                        )
+                        .await?;
+                        Reader::from_store_async(store, &validation_log).await
+                    }
+                }
             },
         }
     }
