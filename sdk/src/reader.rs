@@ -545,42 +545,37 @@ impl Reader {
 
     /// Get the [`ValidationState`] of the manifest store.
     pub fn validation_state(&self) -> ValidationState {
-        // let settings = crate::settings::get_settings().unwrap_or_default();
+        let settings = crate::settings::get_settings().unwrap_or_default();
 
-        // if let Some(validation_results) = self.validation_results() {
-        //     return validation_results.validation_state();
-        // }
+        if let Some(validation_results) = self.validation_results() {
+            return validation_results.validation_state();
+        }
 
-        // let verify_trust = settings.verify.verify_trust;
-        // match self.validation_status() {
-        //     Some(status) => {
-        //         // if there are any errors, the state is invalid unless the only error is an untrusted credential
-        //         let errs = status
-        //             .iter()
-        //             .any(|s| s.code() != crate::validation_status::SIGNING_CREDENTIAL_UNTRUSTED);
-        //         if errs {
-        //             ValidationState::Invalid
-        //         } else if verify_trust {
-        //             // If we verified trust and didn't get an error, we can assume it is trusted
-        //             ValidationState::Trusted
-        //         } else {
-        //             ValidationState::Valid
-        //         }
-        //     }
-        //     None => {
-        //         if verify_trust {
-        //             // if we are verifying trust, and there is no validation status, we can assume it is trusted
-        //             ValidationState::Trusted
-        //         } else {
-        //             ValidationState::Valid
-        //         }
-        //     }
-        // }
-
-        // REVIEW-NOTE: this field is always set on construction, it seems we previously recomputed it because
-        //              thread-local settings could change at any time
-        //              I'm not sure why we define it as an optional, perhaps that should change?
-        self.validation_state.unwrap_or(ValidationState::Invalid)
+        let verify_trust = settings.verify.verify_trust;
+        match self.validation_status() {
+            Some(status) => {
+                // if there are any errors, the state is invalid unless the only error is an untrusted credential
+                let errs = status
+                    .iter()
+                    .any(|s| s.code() != crate::validation_status::SIGNING_CREDENTIAL_UNTRUSTED);
+                if errs {
+                    ValidationState::Invalid
+                } else if verify_trust {
+                    // If we verified trust and didn't get an error, we can assume it is trusted
+                    ValidationState::Trusted
+                } else {
+                    ValidationState::Valid
+                }
+            }
+            None => {
+                if verify_trust {
+                    // if we are verifying trust, and there is no validation status, we can assume it is trusted
+                    ValidationState::Trusted
+                } else {
+                    ValidationState::Valid
+                }
+            }
+        }
     }
 
     /// Return the active [`Manifest`], or `None` if there's no active manifest.
