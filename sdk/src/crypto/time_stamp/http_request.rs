@@ -56,8 +56,8 @@ pub fn default_rfc3161_request(
     let mut local_log = StatusTracker::default();
     let ctp = CertificateTrustPolicy::passthrough();
 
-    // TO REVIEW: I think in this case, we're doing structural validation of
-    // time stamps but not trust validation. If so, the below is correct. (I think.)
+    // TODO: separate verifying time stamp and verifying time stamp trust into separate functions?
+    //       do we need to pass settings here at all if `ctp` is set to pasthrough anyways?
     let mut settings = Settings::default();
     settings.verify.verify_timestamp_trust = false;
 

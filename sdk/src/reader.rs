@@ -128,8 +128,7 @@ impl Reader {
     #[cfg(not(target_arch = "wasm32"))]
     pub fn from_stream(format: &str, mut stream: impl Read + Seek + Send) -> Result<Reader> {
         let settings = crate::settings::get_settings().unwrap_or_default();
-        // TO DO BEFORE MERGE: Passing `verify` may be redundant now that we're
-        // passing settings.
+        // TODO: passing verify is redundant with settings
         let verify = settings.verify.verify_after_reading;
 
         let mut validation_log = StatusTracker::default();
@@ -165,8 +164,7 @@ impl Reader {
     #[cfg(target_arch = "wasm32")]
     pub fn from_stream(format: &str, mut stream: impl Read + Seek) -> Result<Reader> {
         let settings = crate::settings::get_settings().unwrap_or_default();
-        // TO DO BEFORE MERGE: Passing `verify` may be redundant now that we're
-        // passing settings.
+        // TODO: passing verify is redundant with settings
         let verify = settings.verify.verify_after_reading;
 
         let mut validation_log = StatusTracker::default();
