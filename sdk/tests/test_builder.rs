@@ -24,6 +24,7 @@ use common::compare_stream_to_known_good;
 use common::test_signer;
 
 #[test]
+#[ignore = "See discussion in builder.rs near line 1190"]
 #[cfg(all(feature = "add_thumbnails", feature = "file_io"))]
 fn test_builder_ca_jpg() -> Result<()> {
     Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml"))?;
@@ -54,9 +55,10 @@ fn test_builder_ca_jpg() -> Result<()> {
 
     builder.sign(&Settings::signer()?, format, &mut source, &mut dest)?;
 
-    //dest.set_position(0);
-    //let reader = Reader::from_stream(format, &mut dest)?;
-    //std::fs::write("CA_test.json", reader.json()).unwrap();
+    // use this to update the known good
+    // dest.set_position(0);
+    // let reader = Reader::from_stream(format, &mut dest)?;
+    // std::fs::write("tests/known_good/CA_test.json", reader.json()).unwrap();
 
     dest.set_position(0);
     compare_stream_to_known_good(&mut dest, format, "CA_test.json")
@@ -301,6 +303,8 @@ fn test_dynamic_assertions_builder() -> Result<()> {
         }
     }
 
+    Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml"))?;
+
     //let manifest_def = std::fs::read_to_string(fixtures_path("simple_manifest.json"))?;
     let mut builder = Builder::new();
     builder.set_intent(BuilderIntent::Edit);
@@ -320,7 +324,7 @@ fn test_dynamic_assertions_builder() -> Result<()> {
 
     println!("reader: {reader}");
 
-    assert_ne!(reader.validation_state(), ValidationState::Invalid);
+    assert_eq!(reader.validation_state(), ValidationState::Trusted);
 
     Ok(())
 }

@@ -17,7 +17,9 @@ mod integration_v2 {
     use std::io::{Cursor, Seek};
 
     use anyhow::Result;
-    use c2pa::{crypto::raw_signature::SigningAlg, Builder, CallbackSigner, Reader};
+    use c2pa::{
+        crypto::raw_signature::SigningAlg, settings::Settings, Builder, CallbackSigner, Reader,
+    };
     use serde_json::json;
 
     const PARENT_JSON: &str = r#"
@@ -152,6 +154,8 @@ mod integration_v2 {
         let json = get_manifest_def(title, format);
 
         // don't try to verify on wasm since it doesn't support ed25519 yet
+
+        Settings::from_toml(include_str!("fixtures/test_settings.toml"))?;
 
         let mut builder = Builder::from_json(&json)?;
         builder.add_ingredient_from_stream(PARENT_JSON, format, &mut source)?;

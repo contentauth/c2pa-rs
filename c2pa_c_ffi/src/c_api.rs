@@ -17,6 +17,61 @@ use std::{
     ptr,
 };
 
+/// Validates that a buffer size is within safe bounds and doesn't cause integer overflow
+/// when used with pointer arithmetic.
+///
+/// # Arguments
+/// * `size` - Size to validate
+/// * `ptr` - Pointer to validate against (for address space checks)
+///
+/// # Returns
+/// * `true` if the size is safe to use
+/// * `false` if the size would cause integer overflow
+unsafe fn is_safe_buffer_size(size: usize, ptr: *const c_uchar) -> bool {
+    // Combined checks for early return - improves branch prediction
+    if size == 0 || size > isize::MAX as usize {
+        return false;
+    }
+
+    // Check if the buffer would extend beyond address space to fail fast
+    if !ptr.is_null() {
+        let end_ptr = ptr.add(size);
+        if end_ptr < ptr {
+            return false; // Wrapped around
+        }
+    }
+
+    true
+}
+
+/// Creates a safe slice from raw parts with bounds validation
+///
+/// # Arguments
+/// * `ptr` - Pointer to the data
+/// * `len` - Length of the data
+/// * `param_name` - Name of the parameter for error reporting
+///
+/// # Returns
+/// * `Ok(slice)` if the slice is safe to create
+/// * `Err(Error)` if bounds validation fails
+unsafe fn safe_slice_from_raw_parts(
+    ptr: *const c_uchar,
+    len: usize,
+    param_name: &str,
+) -> Result<&[u8], Error> {
+    if ptr.is_null() {
+        return Err(Error::NullParameter(param_name.to_string()));
+    }
+
+    if !is_safe_buffer_size(len, ptr) {
+        return Err(Error::Other(format!(
+            "Buffer size {len} is invalid for parameter '{param_name}'",
+        )));
+    }
+
+    Ok(std::slice::from_raw_parts(ptr, len))
+}
+
 // C has no namespace so we prefix things with C2PA to make them unique
 #[allow(deprecated)]
 use c2pa::settings::load_settings_from_str;
@@ -570,7 +625,16 @@ pub unsafe extern "C" fn c2pa_reader_from_manifest_data_and_stream(
 ) -> *mut C2paReader {
     check_or_return_null!(manifest_data);
     let format = from_cstr_or_return_null!(format);
-    let manifest_bytes = std::slice::from_raw_parts(manifest_data, manifest_size);
+
+    // Safe bounds validation for manifest data
+    let manifest_bytes =
+        match safe_slice_from_raw_parts(manifest_data, manifest_size, "manifest_data") {
+            Ok(bytes) => bytes,
+            Err(err) => {
+                err.set_last();
+                return std::ptr::null_mut();
+            }
+        };
 
     let result = C2paReader::from_manifest_data_and_stream(manifest_bytes, &format, &mut (*stream));
     return_boxed!(post_validate(result))
@@ -1210,7 +1274,19 @@ pub unsafe extern "C" fn c2pa_format_embeddable(
     let format = from_cstr_or_return_int!(format);
     check_or_return_int!(manifest_bytes_ptr);
     check_or_return_int!(result_bytes_ptr);
-    let bytes = std::slice::from_raw_parts(manifest_bytes_ptr, manifest_bytes_size);
+
+    // Safe bounds validation for manifest bytes
+    let bytes = match safe_slice_from_raw_parts(
+        manifest_bytes_ptr,
+        manifest_bytes_size,
+        "manifest_bytes_ptr",
+    ) {
+        Ok(bytes) => bytes,
+        Err(err) => {
+            err.set_last();
+            return -1;
+        }
+    };
 
     let result = c2pa::Builder::composed_manifest(bytes, &format);
     ok_or_return_int!(result, |result_bytes: Vec<u8>| {
@@ -1377,8 +1453,17 @@ pub unsafe extern "C" fn c2pa_ed25519_sign(
     len: usize,
     private_key: *const c_char,
 ) -> *const c_uchar {
-    let bytes = std::slice::from_raw_parts(bytes, len);
+    check_or_return_null!(bytes);
     let private_key = from_cstr_or_return_null!(private_key);
+
+    // Safe bounds validation for input bytes
+    let bytes = match safe_slice_from_raw_parts(bytes, len, "bytes") {
+        Ok(bytes) => bytes,
+        Err(err) => {
+            err.set_last();
+            return std::ptr::null();
+        }
+    };
 
     let result = CallbackSigner::ed25519_sign(bytes, private_key.as_bytes());
     match result {
@@ -1931,9 +2016,30 @@ mod tests {
                 return -1;
             }
 
-            let signature_slice = unsafe { std::slice::from_raw_parts(signature, signature_len) };
+            // Safe bounds validation for test callback
+            let signature_slice =
+                match unsafe { safe_slice_from_raw_parts(signature, signature_len, "signature") } {
+                    Ok(slice) => slice,
+                    Err(_) => {
+                        unsafe { c2pa_signature_free(signature) };
+                        return -1;
+                    }
+                };
+
+            // Validate signed_bytes bounds
+            if !unsafe { is_safe_buffer_size(signed_len, signed_bytes) } {
+                unsafe { c2pa_signature_free(signature) };
+                return -1;
+            }
+
             let signed_slice = unsafe { std::slice::from_raw_parts_mut(signed_bytes, signed_len) };
-            signed_slice[..signature_len].copy_from_slice(signature_slice);
+
+            if signature_len <= signed_slice.len() {
+                signed_slice[..signature_len].copy_from_slice(signature_slice);
+            } else {
+                unsafe { c2pa_signature_free(signature) };
+                return -1;
+            }
 
             unsafe { c2pa_signature_free(signature) };
             signature_len as isize

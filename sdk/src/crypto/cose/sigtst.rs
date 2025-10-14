@@ -26,7 +26,10 @@ use crate::{
         raw_signature::{AsyncRawSigner, RawSigner},
         time_stamp::{verify_time_stamp, verify_time_stamp_async, ContentInfo, TimeStampResponse},
     },
+    log_item,
+    settings::Settings,
     status_tracker::StatusTracker,
+    validation_status,
 };
 
 /// Given a COSE signature, retrieve the `sigTst` header from it and validate
@@ -40,6 +43,9 @@ pub(crate) fn validate_cose_tst_info(
     ctp: &CertificateTrustPolicy,
     validation_log: &mut StatusTracker,
 ) -> Result<TstInfo, CoseError> {
+    let settings = crate::settings::get_settings().unwrap_or_default();
+    // TO DO BEFORE MERGE? Pass Settings in here?
+
     let Some((sigtst, tss)) = &sign1
         .unprotected
         .rest
@@ -75,10 +81,24 @@ pub(crate) fn validate_cose_tst_info(
         .map_err(|e| CoseError::InternalError(e.to_string()))?;
 
     let tst_infos = if _sync {
-        parse_and_validate_sigtst(&time_cbor, tbs, &sign1.protected, ctp, validation_log)?
+        parse_and_validate_sigtst(
+            &time_cbor,
+            tbs,
+            &sign1.protected,
+            ctp,
+            validation_log,
+            &settings,
+        )?
     } else {
-        parse_and_validate_sigtst_async(&time_cbor, tbs, &sign1.protected, ctp, validation_log)
-            .await?
+        parse_and_validate_sigtst_async(
+            &time_cbor,
+            tbs,
+            &sign1.protected,
+            ctp,
+            validation_log,
+            &settings,
+        )
+        .await?
     };
 
     // For now, we only pay attention to the first time stamp header.
@@ -103,19 +123,32 @@ pub(crate) fn parse_and_validate_sigtst(
     p_header: &ProtectedHeader,
     ctp: &CertificateTrustPolicy,
     validation_log: &mut StatusTracker,
+    settings: &Settings,
 ) -> Result<Vec<TstInfo>, CoseError> {
     let tst_container: TstContainer = ciborium::from_reader(sigtst_cbor)
         .map_err(|err| CoseError::CborParsingError(err.to_string()))?;
 
     let mut tstinfos: Vec<TstInfo> = vec![];
 
+    // only a single value is allowed in tstTokens
+    if tst_container.tst_tokens.len() > 1 {
+        log_item!(
+            "",
+            "only a single timestamp response is allowed in a manifest",
+            "parse_and_validate_sigtst"
+        )
+        .validation_status(validation_status::TIMESTAMP_MALFORMED)
+        .informational(validation_log);
+        return Err(CoseError::NoTimeStampToken);
+    }
+
     for token in &tst_container.tst_tokens {
         let tbs = cose_countersign_data(data, p_header);
 
         let tst_info_res = if _sync {
-            verify_time_stamp(&token.val, &tbs, ctp, validation_log)
+            verify_time_stamp(&token.val, &tbs, ctp, validation_log, settings)
         } else {
-            verify_time_stamp_async(&token.val, &tbs, ctp, validation_log).await
+            verify_time_stamp_async(&token.val, &tbs, ctp, validation_log, settings).await
         };
 
         if let Ok(tst_info) = tst_info_res {

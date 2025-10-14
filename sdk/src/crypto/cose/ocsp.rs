@@ -26,6 +26,7 @@ use crate::{
         ocsp::OcspResponse,
     },
     log_item,
+    settings::Settings,
     status_tracker::StatusTracker,
     validation_status::{self, SIGNING_CREDENTIAL_NOT_REVOKED, SIGNING_CREDENTIAL_REVOKED},
 };
@@ -33,6 +34,7 @@ use crate::{
 /// Given a COSE signature, extract the OCSP data and validate the status of
 /// that report.
 #[async_generic]
+#[allow(clippy::too_many_arguments)]
 pub fn check_ocsp_status(
     sign1: &CoseSign1,
     data: &[u8],
@@ -41,8 +43,11 @@ pub fn check_ocsp_status(
     ocsp_responses: Option<&Vec<Vec<u8>>>,
     tst_info: Option<&TstInfo>,
     validation_log: &mut StatusTracker,
+    settings: &Settings,
 ) -> Result<OcspResponse, CoseError> {
-    if crate::settings::get_settings_value::<bool>("builder.certificate_status_should_override")
+    if settings
+        .builder
+        .certificate_status_should_override
         .unwrap_or(false)
     {
         if let Some(ocsp_response_ders) = ocsp_responses {

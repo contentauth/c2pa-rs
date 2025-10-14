@@ -35,7 +35,7 @@ use crate::{
     },
     asset_io::CAIRead,
     cbor_types::UriT,
-    settings::get_settings_value,
+    settings::Settings,
     utils::{
         hash_utils::{
             concat_and_hash, hash_stream_by_alg, vec_compare, verify_stream_by_alg, HashRange,
@@ -1032,8 +1032,10 @@ impl BmffHash {
     }
 
     #[cfg(feature = "file_io")]
+    #[allow(clippy::too_many_arguments)]
     pub fn add_merkle_for_fragmented(
         &mut self,
+        max_proofs: usize,
         alg: &str,
         asset_path: &std::path::Path,
         fragment_paths: &Vec<std::path::PathBuf>,
@@ -1041,8 +1043,6 @@ impl BmffHash {
         local_id: usize,
         unique_id: Option<usize>,
     ) -> crate::Result<()> {
-        let max_proofs = get_settings_value::<usize>("core.merkle_tree_max_proofs")?;
-
         if !output_dir.exists() {
             std::fs::create_dir_all(output_dir)?;
         } else {
@@ -1339,8 +1339,9 @@ impl BmffHash {
         reader: &mut dyn CAIRead,
         box_info: &BoxInfoLite,
         merkle_map: &mut MerkleMap,
+        settings: &Settings,
     ) -> crate::Result<Vec<Vec<u8>>> {
-        let max_proofs = get_settings_value::<usize>("core.merkle_tree_max_proofs")?;
+        let max_proofs = settings.core.merkle_tree_max_proofs;
 
         // build the Merkle tree
         let m_tree = self.create_merkle_tree_for_merkle_map(reader, box_info, merkle_map)?;
