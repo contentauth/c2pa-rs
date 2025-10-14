@@ -976,7 +976,7 @@ pub mod tests {
     const IMAGE_COMPLEX_MANIFEST: &[u8] = include_bytes!("../tests/fixtures/CACAE-uri-CA.jpg");
     const IMAGE_WITH_MANIFEST: &[u8] = include_bytes!("../tests/fixtures/CA.jpg");
     const IMAGE_WITH_REMOTE_MANIFEST: &[u8] = include_bytes!("../tests/fixtures/cloud.jpg");
-    const IMAGE_WITH_INGREDIENT_MANIFEST: &[u8] = include_bytes!("../../target/images/CA.jpg");
+    const IMAGE_WITH_INGREDIENT_MANIFEST: &[u8] = include_bytes!("../target/images/CA.jpg");
 
     #[test]
     // Verify that we can convert a Reader back into a Builder re-sign and the read it back again
