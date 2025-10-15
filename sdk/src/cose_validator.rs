@@ -29,7 +29,7 @@ use crate::{
         raw_signature::SigningAlg,
     },
     error::{Error, Result},
-    settings::get_settings_value,
+    settings::Settings,
     status_tracker::StatusTracker,
 };
 
@@ -46,6 +46,7 @@ fn get_sign_cert(sign1: &coset::CoseSign1) -> Result<Vec<u8>> {
 /// tst_info allows for overriding the timestamp, this is used by the timestamp assertion
 /// returns - Ok on success
 #[async_generic]
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn verify_cose(
     cose_bytes: &[u8],
     data: &[u8],
@@ -54,11 +55,13 @@ pub(crate) fn verify_cose(
     ctp: &CertificateTrustPolicy,
     tst_info: Option<&TstInfo>,
     validation_log: &mut StatusTracker,
+    settings: &Settings,
 ) -> Result<CertificateInfo> {
     let verifier = if cert_check {
-        match get_settings_value::<bool>("verify.verify_trust") {
-            Ok(true) => Verifier::VerifyTrustPolicy(Cow::Borrowed(ctp)),
-            _ => Verifier::VerifyCertificateProfileOnly(Cow::Borrowed(ctp)),
+        if settings.verify.verify_trust {
+            Verifier::VerifyTrustPolicy(Cow::Borrowed(ctp))
+        } else {
+            Verifier::VerifyCertificateProfileOnly(Cow::Borrowed(ctp))
         }
     } else {
         Verifier::IgnoreProfileAndTrustPolicy
@@ -73,9 +76,9 @@ pub(crate) fn verify_cose(
         Some(tst_info) => Some(tst_info.clone()),
         None => {
             if _sync {
-                validate_cose_tst_info(&sign1, data, ctp, validation_log).ok()
+                validate_cose_tst_info(&sign1, data, ctp, validation_log, settings).ok()
             } else {
-                validate_cose_tst_info_async(&sign1, data, ctp, validation_log)
+                validate_cose_tst_info_async(&sign1, data, ctp, validation_log, settings)
                     .await
                     .ok()
             }
@@ -180,6 +183,7 @@ pub(crate) fn get_signing_info(
     cose_bytes: &[u8],
     data: &[u8],
     validation_log: &mut StatusTracker,
+    settings: &Settings,
 ) -> CertificateInfo {
     let mut date = None;
     let mut issuer_org = None;
@@ -194,9 +198,9 @@ pub(crate) fn get_signing_info(
                 Ok(der_bytes) => {
                     if let Ok((_rem, signcert)) = X509Certificate::from_der(&der_bytes) {
                         date = if _sync {
-                            signing_time_from_sign1(&sign1, data)
+                            signing_time_from_sign1(&sign1, data, settings)
                         } else {
-                            signing_time_from_sign1_async(&sign1, data).await
+                            signing_time_from_sign1_async(&sign1, data, settings).await
                         };
                         issuer_org = extract_subject_from_cert(&signcert);
                         cert_serial_number = Some(extract_serial_from_cert(&signcert));
@@ -246,13 +250,14 @@ pub mod tests {
 
     use super::*;
     use crate::{
-        crypto::raw_signature::SigningAlg, status_tracker::StatusTracker,
+        crypto::raw_signature::SigningAlg, settings::Settings, status_tracker::StatusTracker,
         utils::test_signer::test_signer, Signer,
     };
 
     #[test]
     fn test_no_timestamp() {
-        crate::settings::set_settings_value("verify.verify_trust", false).unwrap();
+        let mut settings = Settings::default();
+        settings.verify.verify_trust = false;
 
         let mut validation_log = StatusTracker::default();
 
@@ -266,11 +271,12 @@ pub mod tests {
         let signer = test_signer(SigningAlg::Ps256);
 
         let cose_bytes =
-            crate::cose_sign::sign_claim(&claim_bytes, signer.as_ref(), box_size).unwrap();
+            crate::cose_sign::sign_claim(&claim_bytes, signer.as_ref(), box_size, &settings)
+                .unwrap();
 
         let cose_sign1 = parse_cose_sign1(&cose_bytes, &claim_bytes, &mut validation_log).unwrap();
 
-        let signing_time = signing_time_from_sign1(&cose_sign1, &claim_bytes);
+        let signing_time = signing_time_from_sign1(&cose_sign1, &claim_bytes, &settings);
 
         assert_eq!(signing_time, None);
     }
@@ -281,7 +287,8 @@ pub mod tests {
             time_stamp::{TimeStampError, TimeStampProvider},
         };
 
-        crate::settings::set_settings_value("verify.verify_trust", false).unwrap();
+        let mut settings = Settings::default();
+        settings.verify.verify_trust = false;
 
         let mut validation_log = StatusTracker::default();
 
@@ -332,9 +339,13 @@ pub mod tests {
         };
 
         // sign and staple
-        let cose_bytes =
-            crate::cose_sign::sign_claim(&claim_bytes, &ocsp_signer, ocsp_signer.reserve_size())
-                .unwrap();
+        let cose_bytes = crate::cose_sign::sign_claim(
+            &claim_bytes,
+            &ocsp_signer,
+            ocsp_signer.reserve_size(),
+            &settings,
+        )
+        .unwrap();
 
         let cose_sign1 = parse_cose_sign1(&cose_bytes, &claim_bytes, &mut validation_log).unwrap();
         let ocsp_stapled = get_ocsp_der(&cose_sign1).unwrap();

@@ -39,7 +39,7 @@ use crate::{
     jumbf_io, log_item,
     manifest::StoreOptions,
     manifest_store_report::ManifestStoreReport,
-    settings::get_settings_value,
+    settings::Settings,
     status_tracker::StatusTracker,
     store::Store,
     validation_results::{ValidationResults, ValidationState},
@@ -137,38 +137,46 @@ impl Reader {
     #[async_generic]
     #[cfg(not(target_arch = "wasm32"))]
     pub fn from_stream(format: &str, mut stream: impl Read + Seek + Send) -> Result<Reader> {
-        let verify = get_settings_value::<bool>("verify.verify_after_reading")?; // defaults to true
+        let settings = crate::settings::get_settings().unwrap_or_default();
+        // TODO: passing verify is redundant with settings
+        let verify = settings.verify.verify_after_reading;
+
         let mut validation_log = StatusTracker::default();
 
         let store = if _sync {
-            Store::from_stream(format, &mut stream, verify, &mut validation_log)
+            Store::from_stream(format, &mut stream, verify, &mut validation_log, &settings)
         } else {
-            Store::from_stream_async(format, &mut stream, verify, &mut validation_log).await
+            Store::from_stream_async(format, &mut stream, verify, &mut validation_log, &settings)
+                .await
         }?;
 
         if _sync {
-            Self::from_store(store, &mut validation_log)
+            Self::from_store(store, &mut validation_log, &settings)
         } else {
-            Self::from_store_async(store, &mut validation_log).await
+            Self::from_store_async(store, &mut validation_log, &settings).await
         }
     }
 
     #[async_generic]
     #[cfg(target_arch = "wasm32")]
     pub fn from_stream(format: &str, mut stream: impl Read + Seek) -> Result<Reader> {
-        let verify = get_settings_value::<bool>("verify.verify_after_reading")?; // defaults to true
+        let settings = crate::settings::get_settings().unwrap_or_default();
+        // TODO: passing verify is redundant with settings
+        let verify = settings.verify.verify_after_reading;
+
         let mut validation_log = StatusTracker::default();
 
         let store = if _sync {
-            Store::from_stream(format, &mut stream, verify, &mut validation_log)
+            Store::from_stream(format, &mut stream, verify, &mut validation_log, &settings)
         } else {
-            Store::from_stream_async(format, &mut stream, verify, &mut validation_log).await
+            Store::from_stream_async(format, &mut stream, verify, &mut validation_log, &settings)
+                .await
         }?;
 
         if _sync {
-            Self::from_store(store, &mut validation_log)
+            Self::from_store(store, &mut validation_log, &settings)
         } else {
-            Self::from_store_async(store, &mut validation_log).await
+            Self::from_store_async(store, &mut validation_log, &settings).await
         }
     }
 
@@ -254,15 +262,17 @@ impl Reader {
     /// # Errors
     /// This function returns an [`Error`] ef the c2pa_data is not valid, or severe errors occur in validation.
     /// You must check validation status for non-severe errors.
-    #[async_generic()]
+    #[async_generic]
     pub fn from_manifest_data_and_stream(
         c2pa_data: &[u8],
         format: &str,
         stream: impl Read + Seek + Send,
     ) -> Result<Reader> {
+        let settings = crate::settings::get_settings().unwrap_or_default();
+
         let mut validation_log = StatusTracker::default();
 
-        let verify = get_settings_value::<bool>("verify.verify_after_reading")?; // defaults to true
+        let verify = settings.verify.verify_after_reading;
 
         let store = if _sync {
             Store::from_manifest_data_and_stream(
@@ -271,6 +281,7 @@ impl Reader {
                 stream,
                 verify,
                 &mut validation_log,
+                &settings,
             )
         } else {
             Store::from_manifest_data_and_stream_async(
@@ -279,11 +290,12 @@ impl Reader {
                 stream,
                 verify,
                 &mut validation_log,
+                &settings,
             )
             .await
         }?;
 
-        Self::from_store(store, &mut validation_log)
+        Self::from_store(store, &mut validation_log, &settings)
     }
 
     /// Create a [`Reader`] from an initial segment and a fragment stream.
@@ -297,12 +309,14 @@ impl Reader {
     /// # Errors
     /// This function returns an [`Error`] if the streams are not valid, or severe errors occur in validation.
     /// You must check validation status for non-severe errors.
-    #[async_generic()]
+    #[async_generic]
     pub fn from_fragment(
         format: &str,
         mut stream: impl Read + Seek + Send,
         mut fragment: impl Read + Seek + Send,
     ) -> Result<Self> {
+        let settings = crate::settings::get_settings().unwrap_or_default();
+
         let mut validation_log = StatusTracker::default();
 
         let store = if _sync {
@@ -311,6 +325,7 @@ impl Reader {
                 &mut stream,
                 &mut fragment,
                 &mut validation_log,
+                &settings,
             )
         } else {
             Store::load_fragment_from_stream_async(
@@ -318,11 +333,12 @@ impl Reader {
                 &mut stream,
                 &mut fragment,
                 &mut validation_log,
+                &settings,
             )
             .await
         }?;
 
-        Self::from_store(store, &mut validation_log)
+        Self::from_store(store, &mut validation_log, &settings)
     }
 
     #[cfg(feature = "file_io")]
@@ -333,8 +349,9 @@ impl Reader {
         path: P,
         fragments: &Vec<std::path::PathBuf>,
     ) -> Result<Reader> {
-        let verify = get_settings_value::<bool>("verify.verify_after_reading")?; // defaults to true
+        let settings = crate::settings::get_settings().unwrap_or_default();
 
+        let verify = settings.verify.verify_after_reading;
         let mut validation_log = StatusTracker::default();
 
         let asset_type = jumbf_io::get_supported_file_extension(path.as_ref())
@@ -348,8 +365,9 @@ impl Reader {
             fragments,
             verify,
             &mut validation_log,
+            &settings,
         ) {
-            Ok(store) => Self::from_store(store, &mut validation_log),
+            Ok(store) => Self::from_store(store, &mut validation_log, &settings),
             Err(e) => Err(e),
         }
     }
@@ -536,11 +554,13 @@ impl Reader {
 
     /// Get the [`ValidationState`] of the manifest store.
     pub fn validation_state(&self) -> ValidationState {
+        let settings = crate::settings::get_settings().unwrap_or_default();
+
         if let Some(validation_results) = self.validation_results() {
             return validation_results.validation_state();
         }
 
-        let verify_trust = get_settings_value("verify.verify_trust").unwrap_or(false);
+        let verify_trust = settings.verify.verify_trust;
         match self.validation_status() {
             Some(status) => {
                 // if there are any errors, the state is invalid unless the only error is an untrusted credential
@@ -705,7 +725,11 @@ impl Reader {
     }
 
     #[async_generic()]
-    fn from_store(store: Store, validation_log: &mut StatusTracker) -> Result<Self> {
+    fn from_store(
+        store: Store,
+        validation_log: &mut StatusTracker,
+        settings: &Settings,
+    ) -> Result<Self> {
         let active_manifest = store.provenance_label();
         let mut manifests = HashMap::new();
         let mut options = StoreOptions::default();
@@ -713,10 +737,22 @@ impl Reader {
         for claim in store.claims() {
             let manifest_label = claim.label();
             let result = if _sync {
-                Manifest::from_store(&store, manifest_label, &mut options, validation_log)
+                Manifest::from_store(
+                    &store,
+                    manifest_label,
+                    &mut options,
+                    validation_log,
+                    settings,
+                )
             } else {
-                Manifest::from_store_async(&store, manifest_label, &mut options, validation_log)
-                    .await
+                Manifest::from_store_async(
+                    &store,
+                    manifest_label,
+                    &mut options,
+                    validation_log,
+                    settings,
+                )
+                .await
             };
 
             match result {

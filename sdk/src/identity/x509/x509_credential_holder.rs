@@ -88,7 +88,7 @@ mod tests {
             x509::{X509CredentialHolder, X509SignatureVerifier},
             IdentityAssertion,
         },
-        settings::{get_settings_value, set_settings_value},
+        settings::set_settings_value,
         status_tracker::StatusTracker,
         Builder, Reader, SigningAlg,
     };
@@ -98,8 +98,8 @@ mod tests {
 
     #[c2pa_test_async]
     async fn simple_case() {
-        let old_decode_identity_assertions =
-            get_settings_value::<bool>("core.decode_identity_assertions").unwrap_or_default();
+        let settings = crate::settings::get_settings().unwrap_or_default();
+        let old_decode_identity_assertions = settings.core.decode_identity_assertions;
 
         set_settings_value("core.decode_identity_assertions", false).unwrap();
 

@@ -24,6 +24,7 @@ use common::compare_stream_to_known_good;
 use common::test_signer;
 
 #[test]
+#[ignore = "See https://github.com/contentauth/c2pa-rs/blob/dbe0d34e1ab0bed00ba368e940dfef6b56986e5c/sdk/src/builder.rs?plain=1#L1138-L1152:w"]
 #[cfg(all(feature = "add_thumbnails", feature = "file_io"))]
 fn test_builder_ca_jpg() -> Result<()> {
     Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml"))?;

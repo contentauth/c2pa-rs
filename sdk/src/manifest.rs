@@ -35,7 +35,7 @@ use crate::{
     jumbf::labels::{to_absolute_uri, to_assertion_uri},
     manifest_assertion::ManifestAssertion,
     resource_store::{mime_from_uri, skip_serializing_resources, ResourceRef, ResourceStore},
-    settings::get_settings_value,
+    settings::Settings,
     status_tracker::StatusTracker,
     store::Store,
     ClaimGeneratorInfo, ManifestAssertionKind,
@@ -354,6 +354,7 @@ impl Manifest {
         manifest_label: &str,
         options: &mut StoreOptions,
         validation_log: &mut StatusTracker,
+        settings: &Settings,
     ) -> Result<Self> {
         let claim = store
             .get_claim(manifest_label)
@@ -438,8 +439,7 @@ impl Manifest {
             })
             .collect();
 
-        let decode_identity_assertions =
-            get_settings_value::<bool>("core.decode_identity_assertions").unwrap_or_default();
+        let decode_identity_assertions = settings.core.decode_identity_assertions;
 
         for assertion in claim.assertions() {
             let claim_assertion = match store

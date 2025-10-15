@@ -149,6 +149,7 @@ pub mod tests {
     use super::{AssetIO, C2paIO, CAIReader, CAIWriter};
     use crate::{
         crypto::raw_signature::SigningAlg,
+        settings::Settings,
         status_tracker::{ErrorBehavior, StatusTracker},
         store::Store,
         utils::{
@@ -160,6 +161,8 @@ pub mod tests {
 
     #[test]
     fn c2pa_io_parse() {
+        let settings = Settings::default();
+
         let path = fixture_path("C.jpg");
 
         let temp_dir = tempdirectory().expect("temp dir");
@@ -183,6 +186,7 @@ pub mod tests {
             &stream,
             true,
             &mut StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError),
+            &settings,
         )
         .expect("loading store");
 
