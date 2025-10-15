@@ -174,9 +174,9 @@ impl Reader {
         }?;
 
         if _sync {
-            Self::from_store(store, &mut validation_log)
+            Self::from_store(store, &mut validation_log, &settings)
         } else {
-            Self::from_store_async(store, &mut validation_log).await
+            Self::from_store_async(store, &mut validation_log, &settings).await
         }
     }
 
