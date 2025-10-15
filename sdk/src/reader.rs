@@ -340,6 +340,7 @@ impl Reader {
 
         Self::from_store(store, &mut validation_log, &settings)
     }
+
     #[cfg(feature = "file_io")]
     /// Loads a [`Reader`]` from an initial segment and fragments.  This
     /// would be used to load and validate fragmented MP4 files that span
