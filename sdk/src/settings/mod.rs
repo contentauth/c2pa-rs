@@ -179,7 +179,7 @@ pub(crate) struct Core {
     pub(crate) backing_store_memory_threshold_in_mb: usize,
     // TODO: pending https://github.com/contentauth/c2pa-rs/pull/1180
     // prefer_update_manifests: bool,
-    decode_identity_assertions: bool,
+    pub(crate) decode_identity_assertions: bool,
 }
 
 impl Default for Core {

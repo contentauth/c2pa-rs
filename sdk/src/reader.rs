@@ -39,6 +39,7 @@ use crate::{
     jumbf_io, log_item,
     manifest::StoreOptions,
     manifest_store_report::ManifestStoreReport,
+    settings::Settings,
     status_tracker::StatusTracker,
     store::Store,
     validation_results::{ValidationResults, ValidationState},
@@ -150,9 +151,9 @@ impl Reader {
         }?;
 
         if _sync {
-            Self::from_store(store, &mut validation_log)
+            Self::from_store(store, &mut validation_log, &settings)
         } else {
-            Self::from_store_async(store, &mut validation_log).await
+            Self::from_store_async(store, &mut validation_log, &settings).await
         }
     }
 
@@ -294,7 +295,7 @@ impl Reader {
             .await
         }?;
 
-        Self::from_store(store, &mut validation_log)
+        Self::from_store(store, &mut validation_log, &settings)
     }
 
     /// Create a [`Reader`] from an initial segment and a fragment stream.
@@ -337,9 +338,8 @@ impl Reader {
             .await
         }?;
 
-        Self::from_store(store, &mut validation_log)
+        Self::from_store(store, &mut validation_log, &settings)
     }
-
     #[cfg(feature = "file_io")]
     /// Loads a [`Reader`]` from an initial segment and fragments.  This
     /// would be used to load and validate fragmented MP4 files that span
@@ -366,7 +366,7 @@ impl Reader {
             &mut validation_log,
             &settings,
         ) {
-            Ok(store) => Self::from_store(store, &mut validation_log),
+            Ok(store) => Self::from_store(store, &mut validation_log, &settings),
             Err(e) => Err(e),
         }
     }
@@ -724,7 +724,11 @@ impl Reader {
     }
 
     #[async_generic()]
-    fn from_store(store: Store, validation_log: &mut StatusTracker) -> Result<Self> {
+    fn from_store(
+        store: Store,
+        validation_log: &mut StatusTracker,
+        settings: &Settings,
+    ) -> Result<Self> {
         let active_manifest = store.provenance_label();
         let mut manifests = HashMap::new();
         let mut options = StoreOptions::default();
@@ -732,10 +736,22 @@ impl Reader {
         for claim in store.claims() {
             let manifest_label = claim.label();
             let result = if _sync {
-                Manifest::from_store(&store, manifest_label, &mut options, validation_log)
+                Manifest::from_store(
+                    &store,
+                    manifest_label,
+                    &mut options,
+                    validation_log,
+                    settings,
+                )
             } else {
-                Manifest::from_store_async(&store, manifest_label, &mut options, validation_log)
-                    .await
+                Manifest::from_store_async(
+                    &store,
+                    manifest_label,
+                    &mut options,
+                    validation_log,
+                    settings,
+                )
+                .await
             };
 
             match result {
