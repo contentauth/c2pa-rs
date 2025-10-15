@@ -499,31 +499,6 @@ impl Reader {
         Self::from_store(store, &validation_log)
     }
 
-    // TODO: doc
-    pub fn from_fragments(
-        format: &str,
-        mut init_segment: impl Read + Seek + Send,
-        // TODO: make this take impl Read + Seek + Send
-        fragments: &mut [Box<dyn CAIRead>],
-    ) -> Result<Self> {
-        let settings = crate::settings::get_settings().unwrap_or_default();
-        let verify = settings.verify.verify_after_reading;
-
-        let mut validation_log = StatusTracker::default();
-
-        match Store::load_fragments_from_stream(
-            &format,
-            &mut init_segment,
-            fragments,
-            verify,
-            &mut validation_log,
-            &settings,
-        ) {
-            Ok(store) => Self::from_store(store, &validation_log),
-            Err(e) => Err(e),
-        }
-    }
-
     #[cfg(feature = "file_io")]
     /// Loads a [`Reader`]` from an initial segment and fragments.  This
     /// would be used to load and validate fragmented MP4 files that span
