@@ -3855,6 +3855,49 @@ impl Store {
         Ok(store)
     }
 
+    #[async_generic]
+    pub fn from_manifest_data_and_stream_and_fragments(
+        c2pa_data: &[u8],
+        asset_type: &str,
+        init_segment: &mut dyn CAIRead,
+        fragments: &mut [Box<dyn CAIRead>],
+        verify: bool,
+        validation_log: &mut StatusTracker,
+        settings: &Settings,
+    ) -> Result<Self> {
+        init_segment.rewind()?;
+
+        // First we convert the JUMBF into a usable store.
+        let store = Store::from_jumbf_with_settings(c2pa_data, validation_log, settings)
+            .inspect_err(|e| {
+                log_item!("asset", "error loading file", "load_from_asset")
+                    .failure_no_throw(validation_log, e);
+            })?;
+
+        if verify {
+            init_segment.rewind()?;
+            // verify store and claims
+            if _sync {
+                Store::verify_store(
+                    &store,
+                    &mut ClaimAssetData::StreamFragments(init_segment, fragments, asset_type),
+                    validation_log,
+                    settings,
+                )?;
+            } else {
+                Store::verify_store_async(
+                    &store,
+                    &mut ClaimAssetData::StreamFragments(init_segment, fragments, asset_type),
+                    validation_log,
+                    settings,
+                )
+                .await?;
+            }
+        }
+
+        Ok(store)
+    }
+
     /// Load Store from a init and fragments
     /// asset_type: asset extension or mime type
     /// init_segment: reader for the file containing the initialization segments

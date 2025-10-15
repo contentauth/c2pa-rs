@@ -120,9 +120,37 @@ impl ReaderBuilder {
         match self.fragments {
             Some(mut fragments) => {
                 match self.external_manifest {
-                    Some(external_manifest) => {
-                        // TODO: we can add a from_manifest_data_and_fragments function
-                        todo!()
+                    Some(mut external_manifest) => {
+                        // TODO: internally we actually convert c2pa_data to a stream again, we should modify the function
+                        //       signatures to stream by default
+                        let mut c2pa_data = Vec::new();
+                        external_manifest.read_to_end(&mut c2pa_data)?;
+
+                        let mut validation_log = StatusTracker::default();
+                        if _sync {
+                            let store = Store::from_manifest_data_and_stream_and_fragments(
+                                &c2pa_data,
+                                format,
+                                &mut stream,
+                                &mut fragments,
+                                self.settings.verify.verify_after_reading,
+                                &mut validation_log,
+                                &self.settings,
+                            )?;
+                            Reader::from_store(store, &validation_log)
+                        } else {
+                            let store = Store::from_manifest_data_and_stream_and_fragments_async(
+                                &c2pa_data,
+                                format,
+                                &mut stream,
+                                &mut fragments,
+                                self.settings.verify.verify_after_reading,
+                                &mut validation_log,
+                                &self.settings,
+                            )
+                            .await?;
+                            Reader::from_store_async(store, &validation_log).await
+                        }
                     }
                     None => {
                         let mut validation_log = StatusTracker::default();
