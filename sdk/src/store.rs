@@ -3861,6 +3861,7 @@ impl Store {
     /// fragments: list of paths to the fragments to verify
     /// verify: if true will run verification checks when loading, all fragments must verify for Ok status
     /// validation_log: If present all found errors are logged and returned, otherwise first error causes exit and is returned
+    #[async_generic]
     pub fn load_fragments_from_stream(
         asset_type: &str,
         init_segment: &mut dyn CAIRead,
@@ -3869,24 +3870,45 @@ impl Store {
         validation_log: &mut StatusTracker,
         settings: &Settings,
     ) -> Result<Store> {
-        let store = Self::from_stream(
-            asset_type,
-            &mut *init_segment,
-            verify,
-            validation_log,
-            settings,
-        )?;
+        let store = if _sync {
+            Self::from_stream(
+                asset_type,
+                &mut *init_segment,
+                verify,
+                validation_log,
+                settings,
+            )?
+        } else {
+            Self::from_stream_async(
+                asset_type,
+                &mut *init_segment,
+                verify,
+                validation_log,
+                settings,
+            )
+            .await?
+        };
 
         // verify the store
         if verify {
             init_segment.rewind()?;
             // verify store and claims
-            Store::verify_store(
-                &store,
-                &mut ClaimAssetData::StreamFragments(init_segment, fragments, asset_type),
-                validation_log,
-                settings,
-            )?;
+            if _sync {
+                Store::verify_store(
+                    &store,
+                    &mut ClaimAssetData::StreamFragments(init_segment, fragments, asset_type),
+                    validation_log,
+                    settings,
+                )?;
+            } else {
+                Store::verify_store_async(
+                    &store,
+                    &mut ClaimAssetData::StreamFragments(init_segment, fragments, asset_type),
+                    validation_log,
+                    settings,
+                )
+                .await?;
+            }
         }
 
         Ok(store)

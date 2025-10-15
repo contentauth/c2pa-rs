@@ -110,6 +110,7 @@ impl ReaderBuilder {
         self
     }
 
+    // TODO:
     // pub fn http_resolver(self, resolver: impl SyncHttpResolver) -> Self {
     //     todo!()
     // }
@@ -136,8 +137,16 @@ impl ReaderBuilder {
                             )?;
                             Reader::from_store(store, &validation_log)
                         } else {
-                            // TODO: add a load_fragments_from_stream_async function
-                            todo!()
+                            let store = Store::load_fragments_from_stream_async(
+                                format,
+                                &mut stream,
+                                &mut fragments,
+                                self.settings.verify.verify_after_reading,
+                                &mut validation_log,
+                                &self.settings,
+                            )
+                            .await?;
+                            Reader::from_store_async(store, &validation_log).await
                         }
                     }
                 }
