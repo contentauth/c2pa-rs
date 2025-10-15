@@ -1811,7 +1811,7 @@ impl Claim {
         let mut validation_log =
             StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
 
-        // REVIEW-NOTE: I don't think we need to verify timestamp trust here?
+        // TODO: I believe we validate at an earlier point in the code, making this unecessary
         let mut settings = crate::settings::get_settings().unwrap_or_default();
         settings.verify.verify_timestamp_trust = false;
 
