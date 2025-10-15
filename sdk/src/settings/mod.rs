@@ -201,6 +201,13 @@ pub struct Core {
     ///
     /// This option defaults to 512MB and can result in noticeable performance improvements.
     pub backing_store_memory_threshold_in_mb: usize,
+    /// Whether to decode CAWG [`IdentityAssertion`]s during reading in the [`Reader`].
+    ///
+    /// This option defaults to true.
+    ///
+    /// [`IdentityAssertion`]: crate::identity::IdentityAssertion
+    /// [`Reader`]: crate::Reader
+    pub decode_identity_assertions: bool,
 }
 
 impl Default for Core {
@@ -209,6 +216,7 @@ impl Default for Core {
             merkle_tree_chunk_size_in_kb: None,
             merkle_tree_max_proofs: 5,
             backing_store_memory_threshold_in_mb: 512,
+            decode_identity_assertions: true,
         }
     }
 }

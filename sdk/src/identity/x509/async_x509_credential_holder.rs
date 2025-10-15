@@ -116,6 +116,7 @@ mod tests {
             x509::{AsyncX509CredentialHolder, X509SignatureVerifier},
             IdentityAssertion,
         },
+        settings::{get_settings_value, set_settings_value},
         status_tracker::StatusTracker,
         Builder, Reader, SigningAlg,
     };
@@ -125,6 +126,11 @@ mod tests {
 
     #[c2pa_test_async]
     async fn simple_case_async() {
+        let old_decode_identity_assertions =
+            get_settings_value::<bool>("core.decode_identity_assertions").unwrap_or_default();
+
+        set_settings_value("core.decode_identity_assertions", false).unwrap();
+
         let format = "image/jpeg";
         let mut source = Cursor::new(TEST_IMAGE);
         let mut dest = Cursor::new(Vec::new());
@@ -164,7 +170,7 @@ mod tests {
         // Read back the Manifest that was generated.
         dest.rewind().unwrap();
 
-        let manifest_store = Reader::from_stream(format, &mut dest).unwrap();
+        let manifest_store = Reader::from_stream_async(format, &mut dest).await.unwrap();
         assert_eq!(manifest_store.validation_status(), None);
 
         let manifest = manifest_store.active_manifest().unwrap();
@@ -194,5 +200,10 @@ mod tests {
         );
 
         // TO DO: Not sure what to check from COSE_Sign1.
+        set_settings_value(
+            "core.decode_identity_assertions",
+            old_decode_identity_assertions,
+        )
+        .unwrap();
     }
 }
