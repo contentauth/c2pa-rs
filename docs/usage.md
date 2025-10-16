@@ -40,7 +40,6 @@ The following are a list of features that can be enabled or disabled:
 - **fetch_remote_manifests**: Fetches remote manifests over the network if one exists and there is no embedded manifest and it's enabled in settings.
 - **file_io**: Enables APIs that use filesystem I/O.
 - **json_schema**: Adds the [`schemars`](https://github.com/GREsau/schemars) crate to derive JSON schemas for JSON-compatible structs.
-- **serialize_thumbnails**: Includes binary thumbnail data in the [`serde`](https://github.com/serde-rs/serde) serialization output.
 - **pdf**: Enable support for basic PDF read support.
 
 > [!NOTE]
