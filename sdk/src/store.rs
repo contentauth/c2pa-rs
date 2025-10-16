@@ -57,6 +57,7 @@ use crate::{
     error::{Error, Result},
     hash_utils::{hash_by_alg, vec_compare, verify_by_alg},
     hashed_uri::HashedUri,
+    http::{AsyncGenericResolver, AsyncHttpResolver, SyncGenericResolver, SyncHttpResolver},
     jumbf::{
         self,
         boxes::*,
@@ -88,7 +89,6 @@ use crate::{
 };
 
 const MANIFEST_STORE_EXT: &str = "c2pa"; // file extension for external manifests
-#[cfg(any(not(target_arch = "wasm32"), target_os = "wasi"))] // Browser manages fetch & memory
 const DEFAULT_MANIFEST_RESPONSE_SIZE: usize = 10 * 1024 * 1024; // 10 MB
 
 pub(crate) struct ManifestHashes {
@@ -3335,26 +3335,38 @@ impl Store {
     }
 
     // fetch remote manifest if possible
-    #[cfg(all(feature = "fetch_remote_manifests", not(target_arch = "wasm32")))]
-    fn fetch_remote_manifest(url: &str) -> Result<Vec<u8>> {
+    #[cfg(feature = "fetch_remote_manifests")]
+    #[async_generic(async_signature(
+        url: &str,
+        http_resolver: &impl AsyncHttpResolver
+    ))]
+    fn fetch_remote_manifest(url: &str, http_resolver: &impl SyncHttpResolver) -> Result<Vec<u8>> {
         //const MANIFEST_CONTENT_TYPE: &str = "application/x-c2pa-manifest-store"; // todo verify once these are served
 
-        match ureq::get(url).call() {
+        let request = http::Request::get(url).body(Vec::new())?;
+        let response = if _sync {
+            http_resolver.http_resolve(request)
+        } else {
+            http_resolver.http_resolve_async(request).await
+        };
+
+        match response {
             Ok(response) => {
                 if response.status() == 200 {
-                    let body = response.into_body();
-                    let len = body
-                        .content_length()
-                        .and_then(|content_length| content_length.try_into().ok())
+                    let len = response
+                        .headers()
+                        .get(http::header::CONTENT_LENGTH)
+                        .and_then(|content_length| content_length.to_str().ok())
+                        .and_then(|content_length| content_length.parse().ok())
                         .unwrap_or(DEFAULT_MANIFEST_RESPONSE_SIZE); // todo figure out good max to accept
+                    let body = response.into_body();
 
                     let mut response_bytes: Vec<u8> = Vec::with_capacity(len);
 
                     let len64 = u64::try_from(len)
                         .map_err(|_err| Error::BadParam("value out of range".to_string()))?;
 
-                    body.into_reader()
-                        .take(len64)
+                    body.take(len64)
                         .read_to_end(&mut response_bytes)
                         .map_err(|_err| {
                             Error::RemoteManifestFetch("error reading content stream".to_string())
@@ -3373,205 +3385,37 @@ impl Store {
         }
     }
 
-    #[cfg(all(feature = "fetch_remote_manifests", target_os = "wasi"))]
-    fn fetch_remote_manifest(url: &str) -> Result<Vec<u8>> {
-        use url::Url;
-        use wasi::http::{
-            outgoing_handler,
-            types::{Fields, OutgoingRequest, Scheme},
-        };
-
-        //const MANIFEST_CONTENT_TYPE: &str = "application/x-c2pa-manifest-store"; // todo verify once these are served
-        const DEFAULT_MANIFEST_RESPONSE_SIZE: usize = 10 * 1024 * 1024; // 10 MB
-        let parsed_url = Url::parse(url)
-            .map_err(|e| Error::RemoteManifestFetch(format!("invalid URL: {}", e)))?;
-        let authority = parsed_url.authority();
-        let path_with_query = parsed_url[url::Position::AfterPort..].to_string();
-        let scheme = match parsed_url.scheme() {
-            "http" => Scheme::Http,
-            "https" => Scheme::Https,
-            _ => {
-                return Err(Error::RemoteManifestFetch(
-                    "unsupported URL scheme".to_string(),
-                ))
-            }
-        };
-
-        let request = OutgoingRequest::new(Fields::new());
-        request.set_path_with_query(Some(&path_with_query)).unwrap();
-        request.set_authority(Some(&authority)).unwrap();
-        request.set_scheme(Some(&scheme)).unwrap();
-        match outgoing_handler::handle(request, None) {
-            Ok(resp) => {
-                resp.subscribe().block();
-                let response = resp
-                    .get()
-                    .ok_or(Error::RemoteManifestFetch(
-                        "HTTP request response missing".to_string(),
-                    ))?
-                    .map_err(|_| {
-                        Error::RemoteManifestFetch(
-                            "HTTP request response requested more than once".to_string(),
-                        )
-                    })?
-                    .map_err(|_| Error::RemoteManifestFetch("HTTP request failed".to_string()))?;
-                if response.status() == 200 {
-                    let content_length: usize = response
-                        .headers()
-                        .get("Content-Length")
-                        .first()
-                        .and_then(|val| if val.is_empty() { None } else { Some(val) })
-                        .and_then(|val| std::str::from_utf8(val).ok())
-                        .and_then(|str_parsed_header| str_parsed_header.parse().ok())
-                        .unwrap_or(DEFAULT_MANIFEST_RESPONSE_SIZE);
-                    let body = {
-                        let mut buf = Vec::with_capacity(content_length);
-                        let response_body = response
-                            .consume()
-                            .expect("failed to get incoming request body");
-                        let mut stream = response_body
-                            .stream()
-                            .expect("failed to get response body stream");
-                        stream
-                            .read_to_end(&mut buf)
-                            .expect("failed to read response body");
-                        buf
-                    };
-                    Ok(body)
-                } else {
-                    Err(Error::RemoteManifestFetch(format!(
-                        "fetch failed: code: {}",
-                        response.status(),
-                    )))
-                }
-            }
-            Err(e) => Err(Error::RemoteManifestFetch(e.to_string())),
-        }
-    }
-
-    // fetch remote manifest if possible
-    // TODO: Switch to reqwest once it supports WASI https://github.com/seanmonstar/reqwest/issues/2294
-    #[cfg(all(feature = "fetch_remote_manifests", target_os = "wasi"))]
-    async fn fetch_remote_manifest_async(url: &str) -> Result<Vec<u8>> {
-        use wstd::{
-            http::{Client, Request},
-            io::{empty, AsyncRead},
-        };
-
-        let request = Request::get(url)
-            .body(empty())
-            .map_err(|e| Error::RemoteManifestFetch(format!("failed to build request: {e}")))?;
-
-        let mut response = Client::new()
-            .send(request)
-            .await
-            .map_err(|e| Error::RemoteManifestFetch(format!("request failed: {e}")))?;
-
-        let status = response.status().as_u16();
-        if status != 200 {
-            return Err(Error::RemoteManifestFetch(format!(
-                "fetch failed: code: {}",
-                status
-            )));
-        }
-
-        let content_length = response
-            .headers()
-            .get("Content-Length")
-            .and_then(|val| val.to_str().ok())
-            .and_then(|s| s.parse::<usize>().ok())
-            .unwrap_or(DEFAULT_MANIFEST_RESPONSE_SIZE);
-
-        let body = response.body_mut();
-        let mut body_buf = Vec::with_capacity(content_length);
-        body.read_to_end(&mut body_buf).await.map_err(|e| {
-            Error::RemoteManifestFetch(format!("failed to read response body: {e}"))
-        })?;
-
-        Ok(body_buf)
-    }
-
-    #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
-    pub async fn fetch_remote_manifest_async(url: &str) -> Result<Vec<u8>> {
-        let resp = reqwest::get(url)
-            .await
-            .map_err(|e| Error::RemoteManifestFetch(format!("{e:?}")))?;
-
-        if !resp.status().is_success() {
-            return Err(Error::RemoteManifestFetch(format!(
-                "HTTP error: {}",
-                resp.status()
-            )));
-        }
-
-        let bytes = resp
-            .bytes()
-            .await
-            .map_err(|e| Error::RemoteManifestFetch(format!("{e:?}")))?;
-
-        Ok(bytes.to_vec())
-    }
-
-    /// Handles remote manifests when fetch_remote_manifests feature is enabled
-    fn handle_remote_manifest(ext_ref: &str, settings: &Settings) -> Result<Vec<u8>> {
-        #[allow(unused)] // Not used in all configurations.
-        let remote_manifest_fetch_enabled = settings.verify.remote_manifest_fetch;
-
+    /// Handles remote manifests when file_io/fetch_remote_manifests feature is enabled
+    #[async_generic(async_signature(
+        ext_ref: &str,
+        http_resolver: &impl AsyncHttpResolver,
+        settings: &Settings
+    ))]
+    fn handle_remote_manifest(
+        ext_ref: &str,
+        http_resolver: &impl SyncHttpResolver,
+        settings: &Settings,
+    ) -> Result<Vec<u8>> {
         // verify provenance path is remote url
         if Store::is_valid_remote_url(ext_ref) {
-            #[cfg(all(
-                feature = "fetch_remote_manifests",
-                any(not(target_arch = "wasm32"), target_os = "wasi")
-            ))]
+            #[cfg(feature = "fetch_remote_manifests")]
             {
-                // Everything except browser Wasm if fetch_remote_manifests is enabled.
-                if remote_manifest_fetch_enabled {
-                    Store::fetch_remote_manifest(ext_ref)
+                // Everything except browser wasm if fetch_remote_manifests is enabled
+                if settings.verify.remote_manifest_fetch {
+                    if _sync {
+                        Store::fetch_remote_manifest(ext_ref, http_resolver)
+                    } else {
+                        Store::fetch_remote_manifest_async(ext_ref, http_resolver).await
+                    }
                 } else {
                     Err(Error::RemoteManifestUrl(ext_ref.to_owned()))
                 }
             }
-            #[cfg(all(
-                feature = "fetch_remote_manifests",
-                target_arch = "wasm32",
-                not(target_os = "wasi")
-            ))]
-            {
-                // For wasm-bindgen, we can't use the async function in sync context
-                // This will be handled by the async versions of the functions
-                Err(Error::RemoteManifestUrl(format!(
-                    "Remote manifest cannot be fetched synchronously in Wasm: {ext_ref}"
-                )))
-            }
+
             #[cfg(not(feature = "fetch_remote_manifests"))]
             Err(Error::RemoteManifestUrl(ext_ref.to_owned()))
         } else {
             Err(Error::JumbfNotFound)
-        }
-    }
-
-    /// Handles remote manifests asynchronously when fetch_remote_manifests feature is enabled.
-    ///
-    /// Required because wasm-bindgen cannot use async functions in a sync context.
-    #[cfg(target_arch = "wasm32")]
-    async fn handle_remote_manifest_async(ext_ref: &str, settings: &Settings) -> Result<Vec<u8>> {
-        #[allow(unused)] // Not used in all configurations.
-        let remote_manifest_fetch_enabled = settings.verify.remote_manifest_fetch;
-
-        #[cfg(not(feature = "fetch_remote_manifests"))]
-        return Err(Error::RemoteManifestUrl(ext_ref.to_owned()));
-
-        #[cfg(feature = "fetch_remote_manifests")]
-        {
-            if Store::is_valid_remote_url(ext_ref) {
-                if remote_manifest_fetch_enabled {
-                    Store::fetch_remote_manifest_async(ext_ref).await
-                } else {
-                    Err(Error::RemoteManifestUrl(ext_ref.to_owned()))
-                }
-            } else {
-                Err(Error::JumbfNotFound)
-            }
         }
     }
 
@@ -3584,10 +3428,16 @@ impl Store {
     ///
     /// Returns a tuple (jumbf_bytes, remote_url), returning a remote_url only
     /// if it was used to fetch the jumbf_bytes.
-    #[async_generic]
+    #[async_generic(async_signature(
+        asset_type: &str,
+        stream: &mut dyn CAIRead,
+        http_resolver: &impl AsyncHttpResolver,
+        settings: &Settings
+    ))]
     pub fn load_jumbf_from_stream(
         asset_type: &str,
         stream: &mut dyn CAIRead,
+        http_resolver: &impl SyncHttpResolver,
         settings: &Settings,
     ) -> Result<(Vec<u8>, Option<String>)> {
         match load_jumbf_from_stream(asset_type, stream) {
@@ -3598,25 +3448,13 @@ impl Store {
                     crate::utils::xmp_inmemory_utils::XmpInfo::from_source(stream, asset_type)
                         .provenance
                 {
-                    #[cfg(not(target_arch = "wasm32"))]
-                    return Ok((
-                        Store::handle_remote_manifest(&ext_ref, settings)?,
-                        Some(ext_ref),
-                    ));
-                    #[cfg(target_arch = "wasm32")]
-                    {
-                        if _sync {
-                            return Ok((
-                                Store::handle_remote_manifest(&ext_ref, &settings)?,
-                                Some(ext_ref),
-                            ));
-                        } else {
-                            return Ok((
-                                Store::handle_remote_manifest_async(&ext_ref, &settings).await?,
-                                Some(ext_ref),
-                            ));
-                        }
-                    }
+                    let jumbf = if _sync {
+                        Store::handle_remote_manifest(&ext_ref, http_resolver, settings)?
+                    } else {
+                        Store::handle_remote_manifest_async(&ext_ref, http_resolver, settings)
+                            .await?
+                    };
+                    Ok((jumbf, Some(ext_ref)))
                 } else {
                     Err(Error::JumbfNotFound)
                 }
@@ -3658,7 +3496,11 @@ impl Store {
                     )
                     .provenance
                     {
-                        Store::handle_remote_manifest(&ext_ref, settings)
+                        Store::handle_remote_manifest(
+                            &ext_ref,
+                            &SyncGenericResolver::new(),
+                            settings,
+                        )
                     } else {
                         Err(Error::JumbfNotFound)
                     }
@@ -3696,20 +3538,32 @@ impl Store {
     }
 
     /// Load store from a stream
-    #[async_generic]
+    #[async_generic(async_signature(
+        format: &str,
+        mut stream: impl Read + Seek + Send,
+        http_resolver: &impl AsyncHttpResolver,
+        verify: bool,
+        validation_log: &mut StatusTracker,
+        settings: &Settings,
+    ))]
     #[cfg(not(target_arch = "wasm32"))]
     pub fn from_stream(
         format: &str,
         mut stream: impl Read + Seek + Send,
+        http_resolver: &impl SyncHttpResolver,
         verify: bool,
         validation_log: &mut StatusTracker,
         settings: &Settings,
     ) -> Result<Self> {
-        let (manifest_bytes, remote_url) =
-            Store::load_jumbf_from_stream(format, &mut stream, settings).inspect_err(|e| {
-                log_item!("asset", "error loading file", "load_from_asset")
-                    .failure_no_throw(validation_log, e);
-            })?;
+        let (manifest_bytes, remote_url) = if _sync {
+            Store::load_jumbf_from_stream(format, &mut stream, http_resolver, settings)
+        } else {
+            Store::load_jumbf_from_stream_async(format, &mut stream, http_resolver, settings).await
+        }
+        .inspect_err(|e| {
+            log_item!("asset", "error loading file", "load_from_asset")
+                .failure_no_throw(validation_log, e);
+        })?;
 
         let store = if _sync {
             Self::from_manifest_data_and_stream(
@@ -3743,19 +3597,27 @@ impl Store {
     }
 
     /// Load store from a stream
-    #[async_generic]
+    #[async_generic(async_signature(
+        format: &str,
+        mut stream: impl Read + Seek,
+        http_resolver: &impl AsyncHttpResolver,
+        verify: bool,
+        validation_log: &mut StatusTracker,
+        settings: &Settings,
+    ))]
     #[cfg(target_arch = "wasm32")]
     pub fn from_stream(
         format: &str,
         mut stream: impl Read + Seek,
+        http_resolver: &impl SyncHttpResolver,
         verify: bool,
         validation_log: &mut StatusTracker,
         settings: &Settings,
     ) -> Result<Self> {
         let (manifest_bytes, remote_url) = if _sync {
-            Store::load_jumbf_from_stream(format, &mut stream, settings)
+            Store::load_jumbf_from_stream(format, &mut stream, http_resolver, settings)
         } else {
-            Store::load_jumbf_from_stream_async(format, &mut stream, settings).await
+            Store::load_jumbf_from_stream_async(format, &mut stream, http_resolver, settings).await
         }
         .inspect_err(|e| {
             log_item!("asset", "error loading file", "load_from_asset")
@@ -3874,6 +3736,7 @@ impl Store {
         let store = Self::from_stream(
             asset_type,
             &mut *init_segment,
+            &SyncGenericResolver::new(),
             verify,
             validation_log,
             settings,
@@ -3908,8 +3771,24 @@ impl Store {
         validation_log: &mut StatusTracker,
         settings: &Settings,
     ) -> Result<Store> {
-        let manifest_bytes =
-            Store::load_jumbf_from_stream(format, &mut stream, &Settings::default())?.0;
+        let manifest_bytes = if _sync {
+            Store::load_jumbf_from_stream(
+                format,
+                &mut stream,
+                &SyncGenericResolver::new(),
+                &Settings::default(),
+            )?
+            .0
+        } else {
+            Store::load_jumbf_from_stream_async(
+                format,
+                &mut stream,
+                &AsyncGenericResolver::new(),
+                settings,
+            )
+            .await?
+            .0
+        };
 
         let store = Store::from_jumbf_with_settings(&manifest_bytes, validation_log, settings)?;
         let verify = settings.verify.verify_after_reading;
@@ -4269,7 +4148,6 @@ impl Store {
         Ok(i_store)
     }
 
-    #[allow(dead_code)]
     /// Fetches ocsp response ders from the specified manifests.
     ///
     /// # Arguments
@@ -4517,6 +4395,7 @@ pub mod tests {
         let new_store = Store::from_stream(
             format,
             &mut output_stream,
+            &SyncGenericResolver::new(),
             true,
             &mut report,
             &Settings::default(),
@@ -4590,6 +4469,7 @@ pub mod tests {
         let new_store = Store::from_stream(
             format,
             &mut output_stream,
+            &SyncGenericResolver::new(),
             true,
             &mut report,
             &Settings::default(),
@@ -4668,6 +4548,7 @@ pub mod tests {
         let _new_store = Store::from_stream(
             format,
             &mut output_stream,
+            &SyncGenericResolver::new(),
             true,
             &mut report,
             &Settings::default(),
@@ -4724,6 +4605,7 @@ pub mod tests {
         let new_store = Store::from_stream(
             format,
             &mut output_stream,
+            &SyncGenericResolver::new(),
             true,
             &mut StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError),
             &Settings::default(),
@@ -4973,6 +4855,7 @@ pub mod tests {
         let _new_store = Store::from_stream_async(
             format,
             &mut output_stream,
+            &AsyncGenericResolver::new(),
             true,
             &mut report,
             &Settings::default(),
@@ -5056,6 +4939,7 @@ pub mod tests {
         let new_store = Store::from_stream(
             format,
             &mut output_stream,
+            &SyncGenericResolver::new(),
             true,
             &mut report,
             &Settings::default(),
@@ -5336,8 +5220,15 @@ pub mod tests {
 
         // read from new stream
         output_stream.rewind().unwrap();
-        let new_store =
-            Store::from_stream(format, &mut output_stream, true, &mut report, &settings).unwrap();
+        let new_store = Store::from_stream(
+            format,
+            &mut output_stream,
+            &SyncGenericResolver::new(),
+            true,
+            &mut report,
+            &settings,
+        )
+        .unwrap();
 
         // dump store and compare to original
         for claim in new_store.claims() {
@@ -5442,6 +5333,7 @@ pub mod tests {
         let new_store = Store::from_stream(
             format,
             &mut output_stream,
+            &SyncGenericResolver::new(),
             true,
             &mut report,
             &Settings::default(),
@@ -5551,6 +5443,7 @@ pub mod tests {
         let new_store = Store::from_stream(
             format,
             &mut output_stream,
+            &SyncGenericResolver::new(),
             true,
             &mut report,
             &Settings::default(),
@@ -5619,6 +5512,7 @@ pub mod tests {
         let new_store = Store::from_stream(
             format,
             &mut output_stream,
+            &SyncGenericResolver::new(),
             true,
             &mut report,
             &Settings::default(),
@@ -5675,8 +5569,15 @@ pub mod tests {
 
         // read from new stream
         output_stream.rewind().unwrap();
-        let new_store =
-            Store::from_stream(format, &mut output_stream, true, &mut report, &settings).unwrap();
+        let new_store = Store::from_stream(
+            format,
+            &mut output_stream,
+            &SyncGenericResolver::new(),
+            true,
+            &mut report,
+            &settings,
+        )
+        .unwrap();
 
         // dump store and compare to original
         for claim in new_store.claims() {
@@ -5728,8 +5629,15 @@ pub mod tests {
 
         // read from new stream
         output_stream.rewind().unwrap();
-        let new_store =
-            Store::from_stream(format, &mut output_stream, true, &mut report, &settings).unwrap();
+        let new_store = Store::from_stream(
+            format,
+            &mut output_stream,
+            &SyncGenericResolver::new(),
+            true,
+            &mut report,
+            &settings,
+        )
+        .unwrap();
 
         // dump store and compare to original
         for claim in new_store.claims() {
@@ -5766,6 +5674,7 @@ pub mod tests {
         let result = Store::from_stream(
             format,
             &mut input_stream,
+            &SyncGenericResolver::new(),
             true,
             tracker,
             &Settings::default(),
@@ -5783,6 +5692,7 @@ pub mod tests {
         let result = Store::from_stream(
             format,
             &mut input_stream,
+            &SyncGenericResolver::new(),
             true,
             &mut report,
             &Settings::default(),
@@ -5802,6 +5712,7 @@ pub mod tests {
         let _r = Store::from_stream(
             format,
             &mut input_stream,
+            &SyncGenericResolver::new(),
             true,
             &mut report,
             &Settings::default(),
@@ -5822,6 +5733,7 @@ pub mod tests {
         Store::from_stream(
             format,
             &mut input_stream,
+            &SyncGenericResolver::new(),
             true,
             &mut report,
             &Settings::default(),
@@ -5861,6 +5773,7 @@ pub mod tests {
         let _r = Store::from_stream(
             format,
             &mut input_stream,
+            &SyncGenericResolver::new(),
             true,
             &mut report,
             &Settings::default(),
@@ -5908,6 +5821,7 @@ pub mod tests {
         let restored_store = Store::from_stream(
             format,
             &mut output_stream,
+            &SyncGenericResolver::new(),
             true,
             &mut StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError),
             &settings,
@@ -5957,6 +5871,7 @@ pub mod tests {
         let restored_store = Store::from_stream(
             format,
             &mut output_stream,
+            &SyncGenericResolver::new(),
             true,
             &mut StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError),
             &settings,
@@ -5998,6 +5913,7 @@ pub mod tests {
         let _r = Store::from_stream(
             format,
             &mut patched_stream,
+            &SyncGenericResolver::new(),
             true,
             &mut report,
             &Settings::default(),
@@ -6033,8 +5949,15 @@ pub mod tests {
         let mut report = StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
         // read back in
         output_stream.rewind().unwrap();
-        let restored_store =
-            Store::from_stream(format, &mut output_stream, true, &mut report, &settings).unwrap();
+        let restored_store = Store::from_stream(
+            format,
+            &mut output_stream,
+            &SyncGenericResolver::new(),
+            true,
+            &mut report,
+            &settings,
+        )
+        .unwrap();
         let pc = restored_store.provenance_claim().unwrap();
 
         // should be a regular manifest
@@ -6079,8 +6002,15 @@ pub mod tests {
 
         // read back in store with update manifest
         output_stream2.rewind().unwrap();
-        let um_store =
-            Store::from_stream(format, &mut output_stream2, true, &mut report, &settings).unwrap();
+        let um_store = Store::from_stream(
+            format,
+            &mut output_stream2,
+            &SyncGenericResolver::new(),
+            true,
+            &mut report,
+            &settings,
+        )
+        .unwrap();
 
         let um = um_store.provenance_claim().unwrap();
 
@@ -6126,9 +6056,15 @@ pub mod tests {
         output_stream.rewind().unwrap();
         let ingredient_vec = output_stream.get_ref().clone();
         let mut ingredient_stream = Cursor::new(ingredient_vec);
-        let restored_store =
-            Store::from_stream(format, &mut ingredient_stream, true, &mut report, &settings)
-                .unwrap();
+        let restored_store = Store::from_stream(
+            format,
+            &mut ingredient_stream,
+            &SyncGenericResolver::new(),
+            true,
+            &mut report,
+            &settings,
+        )
+        .unwrap();
         let pc = restored_store.provenance_claim().unwrap();
 
         // should be a regular manifest
@@ -6141,10 +6077,13 @@ pub mod tests {
         claim.add_claim_generator_info(cgi);
 
         ingredient_stream.rewind().unwrap();
-        let (manifest_bytes, _) =
-            Store::load_jumbf_from_stream(format, &mut ingredient_stream, &Settings::default())
-                .unwrap();
-
+        let (manifest_bytes, _) = Store::load_jumbf_from_stream(
+            format,
+            &mut ingredient_stream,
+            &SyncGenericResolver::new(),
+            &Settings::default(),
+        )
+        .unwrap();
         let mut new_store =
             Store::load_ingredient_to_claim(&mut claim, &manifest_bytes, None, &settings).unwrap();
 
@@ -6215,9 +6154,15 @@ pub mod tests {
 
         // read back in store with update manifest
         output_stream2.rewind().unwrap();
-        let um_store =
-            Store::from_stream(format, &mut output_stream2, true, &mut um_report, &settings)
-                .unwrap();
+        let um_store = Store::from_stream(
+            format,
+            &mut output_stream2,
+            &SyncGenericResolver::new(),
+            true,
+            &mut um_report,
+            &settings,
+        )
+        .unwrap();
 
         let um = um_store.provenance_claim().unwrap();
 
@@ -6249,6 +6194,7 @@ pub mod tests {
         let mut store = Store::from_stream(
             format,
             &mut input_stream,
+            &SyncGenericResolver::new(),
             true,
             &mut report,
             &Settings::default(),
@@ -6318,9 +6264,15 @@ pub mod tests {
 
         // read back in store with update manifest
         output_stream.rewind().unwrap();
-        let mut um_store =
-            Store::from_stream(format, &mut output_stream, true, &mut um_report, &settings)
-                .unwrap();
+        let mut um_store = Store::from_stream(
+            format,
+            &mut output_stream,
+            &SyncGenericResolver::new(),
+            true,
+            &mut um_report,
+            &settings,
+        )
+        .unwrap();
 
         let um = um_store.provenance_claim().unwrap();
 
@@ -6402,6 +6354,7 @@ pub mod tests {
         let collapsed_store = Store::from_stream(
             format,
             &mut output_stream2,
+            &SyncGenericResolver::new(),
             true,
             &mut collapsed_report,
             &settings,
@@ -6422,16 +6375,15 @@ pub mod tests {
         let (format, mut input_stream, _output_stream) = create_test_streams("update_manifest.jpg");
 
         let mut report = StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
-
         let restored_store = Store::from_stream(
             format,
             &mut input_stream,
+            &SyncGenericResolver::new(),
             true,
             &mut report,
             &Settings::default(),
         )
         .unwrap();
-
         let pc = restored_store.provenance_claim().unwrap();
 
         // should be an update manifest
@@ -6472,11 +6424,15 @@ pub mod tests {
         output_stream.rewind().unwrap();
         let ingredient_vec = output_stream.get_ref().clone();
         let mut ingredient_stream = Cursor::new(ingredient_vec.clone());
-
-        let restored_store =
-            Store::from_stream(format, &mut ingredient_stream, true, &mut report, &settings)
-                .unwrap();
-
+        let restored_store = Store::from_stream(
+            format,
+            &mut ingredient_stream,
+            &SyncGenericResolver::new(),
+            true,
+            &mut report,
+            &settings,
+        )
+        .unwrap();
         let pc = restored_store.provenance_claim().unwrap();
 
         // should be a regular manifest
@@ -6494,6 +6450,7 @@ pub mod tests {
         let (manifest_bytes, _) = Store::load_jumbf_from_stream(
             format,
             &mut Cursor::new(ingredient_vec.clone()),
+            &SyncGenericResolver::new(),
             &settings,
         )
         .unwrap();
@@ -6563,10 +6520,15 @@ pub mod tests {
 
         // read back in store with update manifest
         output_stream2.rewind().unwrap();
-
-        let um_store =
-            Store::from_stream(format, &mut output_stream2, true, &mut um_report, &settings)
-                .unwrap();
+        let um_store = Store::from_stream(
+            format,
+            &mut output_stream2,
+            &SyncGenericResolver::new(),
+            true,
+            &mut um_report,
+            &settings,
+        )
+        .unwrap();
 
         let um = um_store.provenance_claim().unwrap();
 
@@ -6584,10 +6546,13 @@ pub mod tests {
 
         // load ingredient with redaction
         output_stream2.rewind().unwrap();
-        let (redacted_manifest_bytes, _) =
-            Store::load_jumbf_from_stream(format, &mut output_stream2, &Settings::default())
-                .unwrap();
-
+        let (redacted_manifest_bytes, _) = Store::load_jumbf_from_stream(
+            format,
+            &mut output_stream2,
+            &SyncGenericResolver::new(),
+            &Settings::default(),
+        )
+        .unwrap();
         Store::load_ingredient_to_claim(&mut new_claim, &redacted_manifest_bytes, None, &settings)
             .unwrap();
 
@@ -6595,10 +6560,10 @@ pub mod tests {
         let (original_manifest_bytes, _) = Store::load_jumbf_from_stream(
             format,
             &mut Cursor::new(ingredient_vec),
+            &SyncGenericResolver::new(),
             &Settings::default(),
         )
         .unwrap();
-
         let _conflict_store = Store::load_ingredient_to_claim(
             &mut new_claim,
             &original_manifest_bytes,
@@ -6648,10 +6613,15 @@ pub mod tests {
         output_stream.rewind().unwrap();
         let ingredient_vec = output_stream.get_ref().clone();
         let mut ingredient_stream = Cursor::new(ingredient_vec.clone());
-
-        let restored_store =
-            Store::from_stream(format, &mut ingredient_stream, true, &mut report, &settings)
-                .unwrap();
+        let restored_store = Store::from_stream(
+            format,
+            &mut ingredient_stream,
+            &SyncGenericResolver::new(),
+            true,
+            &mut report,
+            &settings,
+        )
+        .unwrap();
 
         let pc = restored_store.provenance_claim().unwrap();
 
@@ -6670,6 +6640,7 @@ pub mod tests {
         let (manifest_bytes, _) = Store::load_jumbf_from_stream(
             format,
             &mut Cursor::new(ingredient_vec.clone()),
+            &SyncGenericResolver::new(),
             &settings,
         )
         .unwrap();
@@ -6740,10 +6711,15 @@ pub mod tests {
 
         // read back in store with update manifest
         output_stream2.rewind().unwrap();
-
-        let um_store =
-            Store::from_stream(format, &mut output_stream2, true, &mut um_report, &settings)
-                .unwrap();
+        let um_store = Store::from_stream(
+            format,
+            &mut output_stream2,
+            &SyncGenericResolver::new(),
+            true,
+            &mut um_report,
+            &settings,
+        )
+        .unwrap();
 
         let um = um_store.provenance_claim().unwrap();
 
@@ -6760,10 +6736,13 @@ pub mod tests {
         new_claim.add_claim_generator_info(cgi);
 
         // load original ingredient without redaction
-        let (original_manifest_bytes, _) =
-            Store::load_jumbf_from_stream(format, &mut Cursor::new(ingredient_vec), &settings)
-                .unwrap();
-
+        let (original_manifest_bytes, _) = Store::load_jumbf_from_stream(
+            format,
+            &mut Cursor::new(ingredient_vec),
+            &SyncGenericResolver::new(),
+            &settings,
+        )
+        .unwrap();
         Store::load_ingredient_to_claim(&mut new_claim, &original_manifest_bytes, None, &settings)
             .unwrap();
 
@@ -6776,10 +6755,13 @@ pub mod tests {
         // load ingredient with redaction
         output_stream2.rewind().unwrap();
 
-        let (redacted_manifest_bytes, _) =
-            Store::load_jumbf_from_stream(format, &mut output_stream2, &Settings::default())
-                .unwrap();
-
+        let (redacted_manifest_bytes, _) = Store::load_jumbf_from_stream(
+            format,
+            &mut output_stream2,
+            &SyncGenericResolver::new(),
+            &settings,
+        )
+        .unwrap();
         Store::load_ingredient_to_claim(&mut new_claim, &redacted_manifest_bytes, None, &settings)
             .unwrap();
 
@@ -6823,10 +6805,15 @@ pub mod tests {
         let mut report = StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
         // read back in
         output_stream.rewind().unwrap();
-
-        let restored_store =
-            Store::from_stream(format, &mut output_stream, true, &mut report, &settings).unwrap();
-
+        let restored_store = Store::from_stream(
+            format,
+            &mut output_stream,
+            &SyncGenericResolver::new(),
+            true,
+            &mut report,
+            &settings,
+        )
+        .unwrap();
         let pc = restored_store.provenance_claim().unwrap();
 
         // should be a regular manifest
@@ -6909,9 +6896,15 @@ pub mod tests {
 
         // read back in store with update manifest
         op_output.rewind().unwrap();
-
-        let um_store =
-            Store::from_stream(format, &mut op_output, true, &mut um_report, &settings).unwrap();
+        let um_store = Store::from_stream(
+            format,
+            &mut op_output,
+            &SyncGenericResolver::new(),
+            true,
+            &mut um_report,
+            &settings,
+        )
+        .unwrap();
 
         let um = um_store.provenance_claim().unwrap();
 
@@ -7080,10 +7073,10 @@ pub mod tests {
         let (format, mut input_stream, _output_stream) = create_test_streams("CA.jpg");
 
         let mut report = StatusTracker::default();
-
         let store = Store::from_stream(
             format,
             &mut input_stream,
+            &SyncGenericResolver::new(),
             true,
             &mut report,
             &Settings::default(),
@@ -7098,10 +7091,10 @@ pub mod tests {
     fn test_no_alg() {
         let (format, mut input_stream, _output_stream) = create_test_streams("no_alg.jpg");
         let mut report = StatusTracker::default();
-
         let _store = Store::from_stream(
             format,
             &mut input_stream,
+            &SyncGenericResolver::new(),
             true,
             &mut report,
             &Settings::default(),
@@ -7133,10 +7126,10 @@ pub mod tests {
         let (format, mut input_stream, _output_stream) =
             create_test_streams("legacy_ingredient_hash.jpg");
         let mut report = StatusTracker::default();
-
         let store = Store::from_stream(
             format,
             &mut input_stream,
+            &SyncGenericResolver::new(),
             true,
             &mut report,
             &Settings::default(),
@@ -7152,10 +7145,10 @@ pub mod tests {
         let (format, mut input_stream, _output_stream) = create_test_streams("legacy.mp4");
         // test 1.0 bmff hash
         let mut report = StatusTracker::default();
-
         let store = Store::from_stream(
             format,
             &mut input_stream,
+            &SyncGenericResolver::new(),
             true,
             &mut report,
             &Settings::default(),
@@ -7222,9 +7215,15 @@ pub mod tests {
 
         // can we read back in
         output_stream.set_position(0);
-
-        let new_store =
-            Store::from_stream(format, &mut output_stream, true, &mut report, &settings).unwrap();
+        let new_store = Store::from_stream(
+            format,
+            &mut output_stream,
+            &SyncGenericResolver::new(),
+            true,
+            &mut report,
+            &settings,
+        )
+        .unwrap();
 
         assert!(!report.has_any_error());
 
@@ -7262,9 +7261,15 @@ pub mod tests {
 
         // can we read back in
         output_stream.set_position(0);
-
-        let new_store =
-            Store::from_stream(format, &mut output_stream, true, &mut report, &settings).unwrap();
+        let new_store = Store::from_stream(
+            format,
+            &mut output_stream,
+            &SyncGenericResolver::new(),
+            true,
+            &mut report,
+            &settings,
+        )
+        .unwrap();
 
         assert!(!report.has_any_error());
 
@@ -7305,9 +7310,15 @@ pub mod tests {
 
         // can we read back in
         output_stream.set_position(0);
-
-        let new_store =
-            Store::from_stream(format, &mut output_stream, true, &mut report, &settings).unwrap();
+        let new_store = Store::from_stream(
+            format,
+            &mut output_stream,
+            &SyncGenericResolver::new(),
+            true,
+            &mut report,
+            &settings,
+        )
+        .unwrap();
 
         assert!(!report.has_any_error());
 
@@ -7348,9 +7359,15 @@ pub mod tests {
 
         // can we read back in
         output_stream.set_position(0);
-
-        let new_store =
-            Store::from_stream(format, &mut output_stream, true, &mut report, &settings).unwrap();
+        let new_store = Store::from_stream(
+            format,
+            &mut output_stream,
+            &SyncGenericResolver::new(),
+            true,
+            &mut report,
+            &settings,
+        )
+        .unwrap();
 
         assert!(!report.has_any_error());
 
@@ -7391,9 +7408,15 @@ pub mod tests {
 
         // can we read back in
         output_stream.set_position(0);
-
-        let new_store =
-            Store::from_stream(format, &mut output_stream, true, &mut report, &settings).unwrap();
+        let new_store = Store::from_stream(
+            format,
+            &mut output_stream,
+            &SyncGenericResolver::new(),
+            true,
+            &mut report,
+            &settings,
+        )
+        .unwrap();
 
         assert!(!report.has_any_error());
 
@@ -7432,8 +7455,13 @@ pub mod tests {
 
         output_stream.set_position(0);
 
-        let (manifest_bytes, _) =
-            Store::load_jumbf_from_stream(format, &mut input_stream, &settings).unwrap();
+        let (manifest_bytes, _) = Store::load_jumbf_from_stream(
+            format,
+            &mut input_stream,
+            &SyncGenericResolver::new(),
+            &settings,
+        )
+        .unwrap();
 
         let _new_store = {
             Store::from_manifest_data_and_stream(
@@ -7462,6 +7490,7 @@ pub mod tests {
         let result = Store::from_stream(
             format,
             &mut input_stream,
+            &SyncGenericResolver::new(),
             true,
             &mut report,
             &Settings::default(),
@@ -7689,10 +7718,10 @@ pub mod tests {
 
         // make sure we can read from new file
         let mut report = StatusTracker::default();
-
         let _new_store = Store::from_stream_async(
             "image/jpeg",
             &mut result_stream,
+            &AsyncGenericResolver::new(),
             true,
             &mut report,
             &Settings::default(),
@@ -7738,10 +7767,10 @@ pub mod tests {
 
         // read from new file
         output_stream.rewind().unwrap();
-
         let new_store = Store::from_stream(
             format,
             &mut output_stream,
+            &SyncGenericResolver::new(),
             true,
             &mut report,
             &Settings::default(),
@@ -7849,6 +7878,7 @@ pub mod tests {
         let _new_store = Store::from_stream_async(
             "image/jpeg",
             &mut out_stream,
+            &AsyncGenericResolver::new(),
             true,
             &mut report,
             &Settings::default(),
@@ -7926,10 +7956,10 @@ pub mod tests {
         out_stream.rewind().unwrap();
 
         let mut report = StatusTracker::default();
-
         let _new_store = Store::from_stream(
             "image/jpeg",
             &mut out_stream,
+            &SyncGenericResolver::new(),
             true,
             &mut report,
             &Settings::default(),
@@ -8007,10 +8037,10 @@ pub mod tests {
 
         output_file.rewind().unwrap();
         let mut report = StatusTracker::default();
-
         let _new_store = Store::from_stream_async(
             "image/jpeg",
             &mut output_file,
+            &AsyncGenericResolver::new(),
             true,
             &mut report,
             &Settings::default(),
@@ -8088,10 +8118,10 @@ pub mod tests {
 
         output_file.rewind().unwrap();
         let mut report = StatusTracker::default();
-
         let _new_store = Store::from_stream(
             "image/jpeg",
             &mut output_file,
+            &SyncGenericResolver::new(),
             true,
             &mut report,
             &Settings::default(),
@@ -8167,10 +8197,10 @@ pub mod tests {
 
         output_file.rewind().unwrap();
         let mut report = StatusTracker::default();
-
         let _new_store = Store::from_stream(
             "image/jpeg",
             &mut output_file,
+            &SyncGenericResolver::new(),
             true,
             &mut report,
             &Settings::default(),
@@ -8299,6 +8329,7 @@ pub mod tests {
         let new_store = Store::from_stream(
             "image/jpeg",
             &mut result_stream,
+            &SyncGenericResolver::new(),
             true,
             &mut report,
             &Settings::default(),
@@ -8433,9 +8464,15 @@ pub mod tests {
 
         // make sure we can read from new file
         let mut report = StatusTracker::default();
-
-        let new_store =
-            Store::from_stream("jpeg", &mut result_stream, true, &mut report, &settings).unwrap();
+        let new_store = Store::from_stream(
+            "jpeg",
+            &mut result_stream,
+            &SyncGenericResolver::new(),
+            true,
+            &mut report,
+            &settings,
+        )
+        .unwrap();
 
         println!("new_store: {new_store}");
 
@@ -8593,8 +8630,13 @@ pub mod tests {
         let mut stream = std::fs::File::open(&ap).unwrap();
         let format = "image/jpeg";
 
-        let (manifest_bytes, _remote_url) =
-            Store::load_jumbf_from_stream(format, &mut stream, &settings).unwrap();
+        let (manifest_bytes, _remote_url) = Store::load_jumbf_from_stream(
+            format,
+            &mut stream,
+            &SyncGenericResolver::new(),
+            &settings,
+        )
+        .unwrap();
 
         let store = Store::from_jumbf_with_settings(
             &manifest_bytes,

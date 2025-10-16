@@ -26,21 +26,23 @@ use serde_with::skip_serializing_none;
 use uuid::Uuid;
 use zip::{write::SimpleFileOptions, ZipArchive, ZipWriter};
 
-use crate::{assertion::AssertionBase, settings::Settings};
 #[allow(deprecated)]
+use crate::assertions::CreativeWork;
 use crate::{
-    assertion::AssertionDecodeError,
+    assertion::{AssertionBase, AssertionDecodeError},
     assertions::{
         c2pa_action, labels, Action, ActionTemplate, Actions, AssertionMetadata, BmffHash, BoxHash,
-        CreativeWork, DataHash, DigitalSourceType, EmbeddedData, Exif, Metadata, SoftwareAgent,
-        Thumbnail, User, UserCbor,
+        DataHash, DigitalSourceType, EmbeddedData, Exif, Metadata, SoftwareAgent, Thumbnail, User,
+        UserCbor,
     },
     claim::Claim,
     //claim::{Claim, ALLOWED_UPDATE_MANIFEST_ACTIONS},
     error::{Error, Result},
+    http::{AsyncGenericResolver, SyncGenericResolver},
     jumbf_io,
     resource_store::{ResourceRef, ResourceResolver, ResourceStore},
     salt::DefaultSalt,
+    settings::Settings,
     store::Store,
     utils::mime::format_to_mime,
     AsyncSigner,
@@ -597,10 +599,10 @@ impl Builder {
 
         let ingredient: Ingredient = Ingredient::from_json(&ingredient_json.into())?;
         let ingredient = if _sync {
-            ingredient.with_stream(format, stream, &settings)?
+            ingredient.with_stream(format, stream, &SyncGenericResolver::new(), &settings)?
         } else {
             ingredient
-                .with_stream_async(format, stream, &settings)
+                .with_stream_async(format, stream, &AsyncGenericResolver::new(), &settings)
                 .await?
         };
 
@@ -2947,7 +2949,8 @@ mod tests {
             .unwrap();
 
         builder
-            .add_ingredient_from_stream(parent_json, "image/jpeg", &mut cloud_image)
+            .add_ingredient_from_stream_async(parent_json, "image/jpeg", &mut cloud_image)
+            .await
             .unwrap();
 
         builder
@@ -2963,7 +2966,9 @@ mod tests {
 
         output.set_position(0);
 
-        let reader = Reader::from_stream("jpeg", &mut output).expect("from_bytes");
+        let reader = Reader::from_stream_async("jpeg", &mut output)
+            .await
+            .expect("from_bytes");
         let m = reader.active_manifest().unwrap();
         assert_eq!(m.ingredients().len(), 1);
         assert!(m.ingredients()[0].active_manifest().is_some());
