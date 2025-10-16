@@ -12,7 +12,7 @@
 // each license.
 
 mod common;
-use c2pa::{validation_status, Error, Reader, Result};
+use c2pa::{settings::Settings, validation_status, Error, Reader, Result};
 use c2pa_macros::c2pa_test_async;
 use common::{assert_err, compare_to_known_good, fixture_stream};
 #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
@@ -52,6 +52,8 @@ fn test_reader_c_jpg() -> Result<()> {
 
 #[test]
 fn test_reader_xca_jpg() -> Result<()> {
+    Settings::from_toml(include_str!("fixtures/test_settings.toml"))?;
+
     let (format, mut stream) = fixture_stream("XCA.jpg")?;
     let reader = Reader::from_stream(&format, &mut stream)?;
     // validation_results should have the expected failure

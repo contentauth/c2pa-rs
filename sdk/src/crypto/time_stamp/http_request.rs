@@ -29,6 +29,7 @@ use crate::{
         AsyncGenericResolver, AsyncHttpResolver, HttpResolverError, SyncGenericResolver,
         SyncHttpResolver,
     },
+    settings::Settings,
     status_tracker::StatusTracker,
 };
 
@@ -63,11 +64,16 @@ pub fn default_rfc3161_request(
     let mut local_log = StatusTracker::default();
     let ctp = CertificateTrustPolicy::passthrough();
 
+    // TODO: separate verifying time stamp and verifying time stamp trust into separate functions?
+    //       do we need to pass settings here at all if `ctp` is set to pasthrough anyways?
+    let mut settings = Settings::default();
+    settings.verify.verify_timestamp_trust = false;
+
     // Make sure the time stamp is valid before we return it.
     if _sync {
-        verify_time_stamp(&ts, message, &ctp, &mut local_log)?;
+        verify_time_stamp(&ts, message, &ctp, &mut local_log, &settings)?;
     } else {
-        verify_time_stamp_async(&ts, message, &ctp, &mut local_log).await?;
+        verify_time_stamp_async(&ts, message, &ctp, &mut local_log, &settings).await?;
     }
 
     Ok(ts)

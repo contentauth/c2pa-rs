@@ -233,7 +233,7 @@ struct ManifestDef {
 fn special_errs(e: c2pa::Error) -> anyhow::Error {
     match e {
         Error::JumbfNotFound => anyhow!("No claim found"),
-        Error::FileNotFound(name) => anyhow!("File not found: {}", name),
+        Error::FileNotFound(name) => anyhow!("File not found: {name}"),
         Error::UnsupportedType => anyhow!("Unsupported file type"),
         Error::PrereleaseError => anyhow!("Prerelease claim found"),
         _ => e.into(),
@@ -449,19 +449,12 @@ fn configure_sdk(args: &CliArgs) -> Result<()> {
     }
 
     // if any trust setting is provided enable the trust checks
+    // there is no disabling of default setting only the ability to enable if they were internally disabled
     if enable_trust_checks {
         Settings::from_toml(
             &toml::toml! {
                 [verify]
                 verify_trust = true
-            }
-            .to_string(),
-        )?;
-    } else {
-        Settings::from_toml(
-            &toml::toml! {
-                [verify]
-                verify_trust = false
             }
             .to_string(),
         )?;
