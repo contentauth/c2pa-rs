@@ -28,27 +28,30 @@ use crate::{
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "json_schema", derive(JsonSchema))]
-/// Indicates if the manifest store is valid and trusted.
+/// Represents the levels of assurance a manifest store achives when evaluated against the C2PA
+/// specifications structural, cryptographic, and trust requirements.
 ///
-/// The Trusted state implies the manifest store is valid and the active signature is trusted.
+/// See [§14.3. Validation states].
+///
+/// [§14.3. Validation states]: https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_validation_states
 pub enum ValidationState {
     // REVIEW-NOTE: A "WellFormed" manifest is invalid, should we rename this to "Malformed?"
-    /// The manfiest fails to meet [ValidationState::WellFormed] requirements, meaning it cannot
+    /// The manifest store fails to meet [ValidationState::WellFormed] requirements, meaning it cannot
     /// even be parsed or its basic structure is non-compliant.
     Invalid,
-    /// The manifest follows all required structural and syntactic rules in the C2PA spec.
+    /// The manifest store follows all required structural and syntactic rules in the C2PA specification.
     ///
     /// See [§14.3.4. Well-Formed Manifest].
     ///
     /// [§14.3.4. Well-Formed Manifest]: https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_well_formed_manifest
     WellFormed,
-    /// The manifest is well-formed and the cryptographic integrity checks succeed.
+    /// The manifest store is well-formed and the cryptographic integrity checks succeed.
     ///
     /// See [§14.3.5. Valid Manifest].
     ///
     /// [§14.3.5. Valid Manifest]: https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_valid_manifest
     Valid,
-    /// The manifest is valid and signed by a certificate that chains up to a trusted root or known
+    /// The manifest store is valid and signed by a certificate that chains up to a trusted root or known
     /// authority in the trust list.
     ///
     /// See [§14.3.6. Trusted Manifest].
@@ -198,7 +201,7 @@ impl ValidationResults {
         results
     }
 
-    /// Returns the [ValidationState] of the manifest based on the validation results.
+    /// Returns the [ValidationState] of the manifest store based on the validation results.
     ///
     /// See [§14.3. Validation states].
     ///
