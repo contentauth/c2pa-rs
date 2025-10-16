@@ -11,6 +11,8 @@
 // specific language governing permissions and limitations under
 // each license.
 
+use std::collections::HashSet;
+
 #[cfg(feature = "json_schema")]
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -21,7 +23,7 @@ use crate::{
     jumbf::labels::manifest_label_from_uri,
     status_tracker::{LogKind, StatusTracker},
     store::Store,
-    validation_status::{log_kind, ValidationStatus},
+    validation_status::{self, log_kind, ValidationStatus},
 };
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -30,11 +32,28 @@ use crate::{
 ///
 /// The Trusted state implies the manifest store is valid and the active signature is trusted.
 pub enum ValidationState {
-    /// Errors were found in the manifest store.
+    // REVIEW-NOTE: A "WellFormed" manifest is invalid, should we rename this to "Malformed?"
+    /// The manfiest fails to meet [ValidationState::WellFormed] requirements, meaning it cannot
+    /// even be parsed or its basic structure is non-compliant.
     Invalid,
-    /// No errors were found in validation, but the active signature is not trusted.
+    /// The manifest follows all required structural and syntactic rules in the C2PA spec.
+    ///
+    /// See [§14.3.4. Well-Formed Manifest].
+    ///
+    /// [§14.3.4. Well-Formed Manifest]: https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_well_formed_manifest
+    WellFormed,
+    /// The manifest is well-formed and the cryptographic integrity checks succeed.
+    ///
+    /// See [§14.3.5. Valid Manifest].
+    ///
+    /// [§14.3.5. Valid Manifest]: https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_valid_manifest
     Valid,
-    /// The manifest store is valid and the active signature is trusted.
+    /// The manifest is valid and signed by a certificate that chains up to a trusted root or known
+    /// authority in the trust list.
+    ///
+    /// See [§14.3.6. Trusted Manifest].
+    ///
+    /// [§14.3.6. Trusted Manifest]: https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_trusted_manifest
     Trusted,
 }
 
@@ -179,30 +198,72 @@ impl ValidationResults {
         results
     }
 
-    /// Returns the [ValidationState] of the manifest store based on the validation results.
+    /// Returns the [ValidationState] of the manifest based on the validation results.
+    ///
+    /// See [§14.3. Validation states].
+    ///
+    /// [§14.3. Validation states]: https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_validation_states
     pub fn validation_state(&self) -> ValidationState {
-        let mut is_trusted = true; // Assume the state is trusted until proven otherwise
         if let Some(active_manifest) = self.active_manifest.as_ref() {
-            if !active_manifest.failure().is_empty() {
-                return ValidationState::Invalid;
-            }
-            // There must be a trusted credential in the active manifest for the state to be trusted
-            is_trusted = active_manifest.success().iter().any(|status| {
-                status.code() == crate::validation_status::SIGNING_CREDENTIAL_TRUSTED
+            let success_codes: HashSet<&str> = active_manifest
+                .success()
+                .iter()
+                .map(|status| status.code())
+                .collect();
+            let failure_codes: HashSet<&str> = active_manifest
+                .failure()
+                .iter()
+                .map(|status| status.code())
+                .collect();
+            // let ingredient_failure_codes: HashSet<&str> = self
+            //     .ingredient_deltas
+            //     .as_ref()
+            //     .map(|deltas| {
+            //         deltas
+            //             .iter()
+            //             .flat_map(|idv| idv.validation_deltas().failure())
+            //             .map(|status| status.code())
+            //             .collect()
+            //     })
+            //     .unwrap_or_default();
+            let ingredient_failure = self.ingredient_deltas.as_ref().is_some_and(|deltas| {
+                deltas
+                    .iter()
+                    .any(|idv| !idv.validation_deltas().failure().is_empty())
             });
-        }
-        if let Some(ingredient_deltas) = self.ingredient_deltas.as_ref() {
-            for idv in ingredient_deltas.iter() {
-                if !idv.validation_deltas().failure().is_empty() {
-                    return ValidationState::Invalid;
-                }
+
+            let is_trusted = success_codes.contains(validation_status::SIGNING_CREDENTIAL_TRUSTED)
+                && success_codes.contains(validation_status::CLAIM_SIGNATURE_VALIDATED)
+                && success_codes.contains(validation_status::CLAIM_SIGNATURE_INSIDE_VALIDITY)
+                && failure_codes.is_empty()
+                && !ingredient_failure;
+            if is_trusted {
+                return ValidationState::Trusted;
+            }
+
+            let is_valid = success_codes.contains(validation_status::CLAIM_SIGNATURE_VALIDATED)
+                && success_codes.contains(validation_status::CLAIM_SIGNATURE_INSIDE_VALIDITY)
+                && failure_codes.len() == 1
+                && failure_codes.contains(validation_status::SIGNING_CREDENTIAL_UNTRUSTED)
+                && !ingredient_failure;
+            if is_valid {
+                return ValidationState::Valid;
+            }
+
+            let is_well_formed = (failure_codes.is_empty()
+                || failure_codes.iter().all(|&code| {
+                    code == validation_status::SIGNING_CREDENTIAL_OCSP_UNKNOWN
+                        || code == validation_status::SIGNING_CREDENTIAL_REVOKED
+                        || code == validation_status::SIGNING_CREDENTIAL_UNTRUSTED
+                }))
+                // TODO: what codes to ignore here?
+                && !ingredient_failure;
+            if is_well_formed {
+                return ValidationState::WellFormed;
             }
         }
-        if is_trusted {
-            ValidationState::Trusted
-        } else {
-            ValidationState::Valid
-        }
+
+        ValidationState::Invalid
     }
 
     /// Returns a list of all validation errors in [ValidationResults].
