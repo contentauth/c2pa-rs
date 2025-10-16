@@ -476,7 +476,7 @@ impl Settings {
     /// For example "core.hash_alg" would get the settings.core.hash_alg value. The nesting can be arbitrarily
     /// deep based on the [Settings] definition.
     #[allow(unused)]
-    pub(crate) fn get_value<'de, T: serde::de::Deserialize<'de>>(value_path: &str) -> Result<T> {
+    fn get_value<'de, T: serde::de::Deserialize<'de>>(value_path: &str) -> Result<T> {
         SETTINGS.with_borrow(|current_settings| {
             let update_config = Config::builder()
                 .add_source(current_settings.clone())
@@ -491,7 +491,7 @@ impl Settings {
 
     /// Set [Settings] back to the default values.
     #[allow(unused)]
-    pub fn reset() -> Result<()> {
+    pub(crate) fn reset() -> Result<()> {
         if let Ok(default_settings) = Config::try_from(&Settings::default()) {
             SETTINGS.set(default_settings);
             Ok(())
@@ -602,9 +602,7 @@ pub(crate) fn set_settings_value<T: Into<config::Value>>(value_path: &str, value
 
 /// See [Settings::get_value] for more information.
 #[allow(unused)]
-pub(crate) fn get_settings_value<'de, T: serde::de::Deserialize<'de>>(
-    value_path: &str,
-) -> Result<T> {
+fn get_settings_value<'de, T: serde::de::Deserialize<'de>>(value_path: &str) -> Result<T> {
     Settings::get_value(value_path)
 }
 

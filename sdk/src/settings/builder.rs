@@ -48,7 +48,7 @@ pub enum ThumbnailFormat {
 }
 /// Quality of the thumbnail.
 #[cfg_attr(feature = "json_schema", derive(schemars::JsonSchema))]
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ThumbnailQuality {
     /// Low quality.
