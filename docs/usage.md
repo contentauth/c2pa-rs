@@ -32,23 +32,23 @@ c2pa = { version = "0.45.2", features = ["file_io", "add_thumbnails"] }
 
 ## Features
 
-The Rust library crate provides the following capabilities:
+The following are a list of features that can be enabled or disabled:
 
-* `openssl` *(enabled by default)* - Enables the system `openssl` implementation for cryptography.
-* `rust_native_crypto` - Enables the Rust native implementation for cryptography.
-* `add_thumbnails` generates thumbnails automatically for JPEG and PNG files. (no longer included with `file_io`)
-* `fetch_remote_manifests` enables the verification step to retrieve externally referenced manifest stores.  External manifests are only fetched if there is no embedded manifest store and no locally adjacent .c2pa manifest store file of the same name.
-* `file_io` enables manifest generation, signing via OpenSSL, and embedding manifests in [supported file formats](supported-formats.md).
-* `json_schema` is used by `make schema` to produce a JSON schema document that represents the `ManifestStore` data structures.
-* `serialize_thumbnails` includes binary thumbnail data in the [Serde](https://serde.rs/) serialization output.
-* `pdf` - Enable support for reading claims on PDF files.
+- **openssl** *(enabled by default)*: Enables the system `openssl` implementation for cryptography.
+- **rust_native_crypto**: Enables the Rust native implementation for cryptography.
+- **add_thumbnails**: Adds the [`image`](https://github.com/image-rs/image) crate to enable auto-generated thumbnails, if possible and enabled in settings.
+- **fetch_remote_manifests**: Fetches remote manifests over the network if one exists and there is no embedded manifest and it's enabled in settings.
+- **file_io**: Enables APIs that use filesystem I/O.
+- **json_schema**: Adds the [`schemars`](https://github.com/GREsau/schemars) crate to derive JSON schemas for JSON-compatible structs.
+- **serialize_thumbnails**: Includes binary thumbnail data in the [`serde`](https://github.com/serde-rs/serde) serialization output.
+- **pdf**: Enable support for basic PDF read support.
 
-* the `v1_api` feature is no longer supported.
+> [!NOTE]
+> If both `rust_native_crypto` and `openssl` are enabled, it will default to `rust_native_crypto`.
+> It is recommended to disable default features when using `rust_native_crypto` as to avoid including `openssl` as a dependency.
 
-[!NOTE]
-If both `rust_native_crypto` and `openssl` are enabled, it will default to `rust_native_crypto`.
-It is recommended to disable default features when using `rust_native_crypto` as to avoid including `openssl` as a dependency.
-
+> [!NOTE]
+> The `v1_api` feature is no longer supported and the respective APIs have been removed.
 
 ### Resource references
 

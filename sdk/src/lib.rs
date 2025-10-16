@@ -25,7 +25,9 @@
 //! The library has a Builder/Reader API that focuses on simplicity
 //! and stream support.
 //!
-//! ## Example: Reading a ManifestStore
+//! # Examples
+//!
+//! ## Reading a manifest
 //!
 //! ```
 //! # use c2pa::Result;
@@ -46,7 +48,7 @@
 //! # }
 //! ```
 //!
-//! ## Example: Adding a Manifest to a file
+//! ## Adding a manifest to a file
 //!
 //! ```ignore-wasm32
 //! # use c2pa::Result;
@@ -86,6 +88,20 @@
 //! # Ok(())
 //! # }
 //! ```
+//!
+//! # Features
+//!
+//! The following are a list of features that can be enabled or disabled:
+//!
+//! - **openssl** *(enabled by default)*: Enables the system `openssl` implementation for cryptography.
+//! - **rust_native_crypto**: Enables the Rust native implementation for cryptography.
+//! - **add_thumbnails**: Adds the [`image`](https://github.com/image-rs/image) crate to enable auto-generated thumbnails, if possible and enabled in settings.
+//! - **fetch_remote_manifests**: Fetches remote manifests over the network if one exists and there is no embedded manifest and it's enabled in settings.
+//! - **file_io**: Enables APIs that use filesystem I/O.
+//! - **json_schema**: Adds the [`schemars`](https://github.com/GREsau/schemars) crate to derive JSON schemas for JSON-compatible structs.
+// TODO: clarify this as it seems to do more?
+//! - **serialize_thumbnails**: Includes binary thumbnail data in the [`serde`](https://github.com/serde-rs/serde) serialization output.
+//! - **pdf**: Enable support for basic PDF read support.
 
 /// The internal name of the C2PA SDK
 pub const NAME: &str = "c2pa-rs";
