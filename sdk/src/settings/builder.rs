@@ -359,7 +359,7 @@ pub struct ActionsSettings {
     // TODO: ActionSettings indirectly depends on ActionParameters which contains a serde_cbor::Value and
     // schemars can't generate a schema for cbor values. It also doesn't feel right to change our API for
     // the sake of json schemas.
-    #[serde(skip)]
+    #[schemars(skip)]
     pub(crate) actions: Option<Vec<ActionSettings>>,
     /// Whether to automatically generate a c2pa.created [Action] assertion or error that it doesn't already exist.
     ///
