@@ -34,7 +34,7 @@ use crate::{
     ingredient::Ingredient,
     jumbf::labels::{to_absolute_uri, to_assertion_uri},
     manifest_assertion::ManifestAssertion,
-    resource_store::{mime_from_uri, skip_serializing_resources, ResourceRef, ResourceStore},
+    resource_store::{mime_from_uri, ResourceRef, ResourceStore},
     settings::Settings,
     status_tracker::StatusTracker,
     store::Store,
@@ -123,7 +123,6 @@ pub struct Manifest {
 
     /// container for binary assets (like thumbnails)
     #[serde(skip_deserializing)]
-    #[serde(skip_serializing_if = "skip_serializing_resources")]
     resources: ResourceStore,
 }
 

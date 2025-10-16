@@ -40,7 +40,7 @@ use crate::{
         labels::{assertion_label_from_uri, manifest_label_from_uri},
     },
     log_item,
-    resource_store::{skip_serializing_resources, ResourceRef, ResourceStore},
+    resource_store::{ResourceRef, ResourceStore},
     salt::DefaultSalt,
     settings::Settings,
     status_tracker::StatusTracker,
@@ -146,7 +146,6 @@ pub struct Ingredient {
     label: Option<String>,
 
     #[serde(skip_deserializing)]
-    #[serde(skip_serializing_if = "skip_serializing_resources")]
     resources: ResourceStore,
 
     #[serde(skip_serializing_if = "Option::is_none")]
