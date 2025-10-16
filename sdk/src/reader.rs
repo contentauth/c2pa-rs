@@ -1071,7 +1071,7 @@ pub mod tests {
         println!("{reader2}");
 
         assert_eq!(reader2.validation_state(), ValidationState::Trusted);
-        std::fs::write("../target/images/CA-rebuilt.jpg", dest.get_ref())?;
+        //std::fs::write("../target/CA-rebuilt.jpg", dest.get_ref())?;
         Ok(())
     }
 
