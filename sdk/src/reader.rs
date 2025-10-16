@@ -1046,7 +1046,7 @@ pub mod tests {
     const IMAGE_COMPLEX_MANIFEST: &[u8] = include_bytes!("../tests/fixtures/CACAE-uri-CA.jpg");
     const IMAGE_WITH_MANIFEST: &[u8] = include_bytes!("../tests/fixtures/CA.jpg");
     const IMAGE_WITH_REMOTE_MANIFEST: &[u8] = include_bytes!("../tests/fixtures/cloud.jpg");
-    const IMAGE_WITH_INGREDIENT_MANIFEST: &[u8] = include_bytes!("../tests/fixtures/CA.jpg");
+    const IMAGE_WITH_INGREDIENT_MANIFEST: &[u8] = include_bytes!("../tests/fixtures/CACA.jpg");
 
     #[test]
     // Verify that we can convert a Reader back into a Builder re-sign and the read it back again
@@ -1161,7 +1161,10 @@ pub mod tests {
     /// Tests that the reader can write resources to a folder
     fn test_reader_to_folder() -> Result<()> {
         use crate::utils::{io_utils::tempdirectory, test::temp_dir_path};
-        let reader = Reader::from_file("../target/images/CAICAI.jpg")?;
+        let reader = Reader::from_stream(
+            "image/jpeg",
+            std::io::Cursor::new(IMAGE_WITH_INGREDIENT_MANIFEST),
+        )?;
         assert_eq!(reader.validation_status(), None);
         let temp_dir = tempdirectory().unwrap();
         reader.to_folder(temp_dir.path())?;
