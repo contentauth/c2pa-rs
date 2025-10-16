@@ -410,8 +410,7 @@ where
                 Some(path) => {
                     if path != Path::new("META-INF/content_credential.c2pa") {
                         let start = file.header_start();
-                        let len =
-                            (file.data_start() + file.compressed_size()) - file.header_start();
+                        let len = (file.data_start() + file.compressed_size()) - start;
                         let format = crate::format_from_path(&path);
                         uri_map.insert(
                             path,

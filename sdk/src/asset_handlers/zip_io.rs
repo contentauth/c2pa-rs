@@ -35,10 +35,7 @@ impl CAIWriter for ZipIO {
 
         match writer.add_directory("META-INF", SimpleFileOptions::default()) {
             Err(ZipError::InvalidArchive(err)) if err.starts_with("Duplicate filename") => {}
-            Err(err) => {
-                println!("{:?}", err);
-                return Err(Error::EmbeddingError);
-            }
+            Err(_) => return Err(Error::EmbeddingError),
             _ => {}
         }
 
