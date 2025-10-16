@@ -1235,7 +1235,6 @@ impl Builder {
         let auto_placed =
             settings::get_settings_value::<bool>("builder.actions.auto_placed_action.enabled")?;
         if auto_placed {
-            println!("auto_placed_action enabled!!!!!!");
             // Get a list of ingredient URIs referenced by "c2pa.placed" actions.
             let mut referenced_uris = HashSet::new();
             for action in &actions.actions {
