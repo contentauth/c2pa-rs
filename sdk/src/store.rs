@@ -8579,7 +8579,7 @@ pub mod tests {
 
         let reader = crate::Reader::from_stream("image/png", &mut dst).unwrap();
 
-        assert_eq!(reader.validation_state(), crate::ValidationState::Invalid);
+        assert_eq!(reader.validation_state(), crate::ValidationState::Malformed);
     }
 
     #[test]

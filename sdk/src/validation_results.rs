@@ -35,10 +35,9 @@ use crate::{
 ///
 /// [§14.3. Validation states]: https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_validation_states
 pub enum ValidationState {
-    // REVIEW-NOTE: A "WellFormed" manifest is invalid, should we rename this to "Malformed?"
     /// The manifest store fails to meet [ValidationState::WellFormed] requirements, meaning it cannot
     /// even be parsed or its basic structure is non-compliant.
-    Invalid,
+    Malformed,
     /// The manifest store follows all required structural and syntactic rules in the C2PA specification.
     ///
     /// See [§14.3.4. Well-Formed Manifest].
@@ -266,7 +265,7 @@ impl ValidationResults {
             }
         }
 
-        ValidationState::Invalid
+        ValidationState::Malformed
     }
 
     /// Returns a list of all validation errors in [ValidationResults].
