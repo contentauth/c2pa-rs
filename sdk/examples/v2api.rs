@@ -15,7 +15,10 @@
 use std::io::{Cursor, Seek};
 
 use anyhow::Result;
-use c2pa::{settings::load_settings_from_str, Builder, CallbackSigner, Reader, SigningAlg};
+use c2pa::{
+    crypto::raw_signature::SigningAlg, settings::Settings, validation_results::ValidationState,
+    Builder, CallbackSigner, Reader,
+};
 use serde_json::json;
 
 const TEST_IMAGE: &[u8] = include_bytes!("../tests/fixtures/CA.jpg");
@@ -73,21 +76,22 @@ fn main() -> Result<()> {
     let parent_name = "CA.jpg";
     let mut source = Cursor::new(TEST_IMAGE);
 
-    let modified_core = json!({
-        "core": {
-            "debug": true,
-            "hash_alg": "sha512",
-            "max_memory_usage": 123456
-        }
-    })
+    let modified_core = toml::toml! {
+        [core]
+        debug = true
+        hash_alg = "sha512"
+        max_memory_usage = 123456
+    }
     .to_string();
 
-    load_settings_from_str(&modified_core, "json")?;
+    Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml"))?;
+
+    Settings::from_toml(&modified_core)?;
 
     let json = manifest_def(title, format);
 
     let mut builder = Builder::from_json(&json)?;
-    builder.add_ingredient(
+    builder.add_ingredient_from_stream(
         json!({
             "title": parent_name,
             "relationship": "parentOf"
@@ -122,7 +126,8 @@ fn main() -> Result<()> {
     // unzip the manifest builder from the zipped stream
     zipped.rewind()?;
 
-    let ed_signer = |_context: *const (), data: &[u8]| ed_sign(data, PRIVATE_KEY);
+    let ed_signer =
+        |_context: *const (), data: &[u8]| CallbackSigner::ed25519_sign(data, PRIVATE_KEY);
     let signer = CallbackSigner::new(ed_signer, SigningAlg::Ed25519, CERTS);
 
     let mut builder = Builder::from_archive(&mut zipped)?;
@@ -149,47 +154,21 @@ fn main() -> Result<()> {
     }
 
     println!("{}", reader.json());
-    assert!(reader.validation_status().is_none());
+    assert_eq!(reader.validation_state(), ValidationState::Trusted);
     assert_eq!(reader.active_manifest().unwrap().title().unwrap(), title);
 
     Ok(())
 }
 
-// Sign the data using the Ed25519 algorithm
-fn ed_sign(data: &[u8], private_key: &[u8]) -> c2pa::Result<Vec<u8>> {
-    use ed25519_dalek::{Signature, Signer, SigningKey};
-    use pem::parse;
-
-    // Parse the PEM data to get the private key
-    let pem = parse(private_key).map_err(|e| c2pa::Error::OtherError(Box::new(e)))?;
-    // For Ed25519, the key is 32 bytes long, so we skip the first 16 bytes of the PEM data
-    let key_bytes = &pem.contents()[16..];
-    let signing_key =
-        SigningKey::try_from(key_bytes).map_err(|e| c2pa::Error::OtherError(Box::new(e)))?;
-    // Sign the data
-    let signature: Signature = signing_key.sign(data);
-
-    Ok(signature.to_bytes().to_vec())
-}
-
-// #[cfg(feature = "openssl")]
-// use openssl::{error::ErrorStack, pkey::PKey};
-// #[cfg(feature = "openssl")]
-// fn ed_sign(data: &[u8], pkey: &[u8]) -> std::result::Result<Vec<u8>, ErrorStack> {
-//     let pkey = PKey::private_key_from_pem(pkey)?;
-//     let mut signer = openssl::sign::Signer::new_without_digest(&pkey)?;
-//     signer.sign_oneshot_to_vec(data)
-// }
-
 #[cfg(test)]
 mod tests {
-    #[cfg(target_arch = "wasm32")]
+    use c2pa_macros::c2pa_test_async;
+    #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
     use wasm_bindgen_test::*;
 
     use super::*;
 
-    #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
-    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    #[c2pa_test_async]
     async fn test_v2_api() -> Result<()> {
         main()
     }

@@ -15,119 +15,80 @@
 // Isolate from wasm by wrapping in module.
 #[cfg(feature = "file_io")]
 mod integration_1 {
-    use std::path::PathBuf;
+    use std::{io, path::PathBuf};
 
     use c2pa::{
-        assertions::{c2pa_action, Action, Actions},
-        create_signer,
-        settings::load_settings_from_str,
-        Error, Ingredient, Manifest, ManifestPatchCallback, ManifestStore, Result, Signer,
-        SigningAlg,
+        assertions::{c2pa_action, Action, Actions, AssetReference, Metadata},
+        settings::Settings,
+        Builder, Ingredient, Reader, Result,
     };
-    use tempfile::tempdir;
+    #[allow(unused)] // different code path for WASI
+    use tempfile::{tempdir, TempDir};
 
-    const GENERATOR: &str = "app";
-
-    // prevent tests from polluting the results of each other because of Rust unit test concurrency
-    static PROTECT: std::sync::Mutex<u32> = std::sync::Mutex::new(1);
-
-    fn get_temp_signer() -> Box<dyn Signer> {
-        let _protect = PROTECT.lock().unwrap();
-
-        // sign and embed into the target file
-        let mut signcert_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        signcert_path.push("tests/fixtures/certs/ps256.pub");
-        let mut pkey_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        pkey_path.push("tests/fixtures/certs/ps256.pem");
-        create_signer::from_files(signcert_path, pkey_path, SigningAlg::Ps256, None)
-            .expect("get_signer_from_files")
+    /// Returns the path to a fixture file.
+    fn fixture_path(file_name: &str) -> PathBuf {
+        #[cfg(target_os = "wasi")]
+        let mut fixture_path = PathBuf::from("/");
+        #[cfg(not(target_os = "wasi"))]
+        let mut fixture_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        fixture_path.push("tests/fixtures");
+        fixture_path.push(file_name);
+        fixture_path
     }
 
-    fn configure_trust(
-        trust_anchors: Option<String>,
-        allowed_list: Option<String>,
-        trust_config: Option<String>,
-    ) -> Result<()> {
-        let ta = r#"{"trust": { "trust_anchors": replacement_val } }"#;
-        let al = r#"{"trust": { "allowed_list": replacement_val } }"#;
-        let tc = r#"{"trust": { "trust_config": replacement_val } }"#;
+    // prevent tests from polluting the results of each other because of Rust unit test concurrency
+    //static PROTECT: std::sync::Mutex<u32> = std::sync::Mutex::new(1);
 
-        let mut enable_trust_checks = false;
-        if let Some(trust_list) = trust_anchors {
-            let replacement_val = serde_json::Value::String(trust_list).to_string(); // escape string
-            let setting = ta.replace("replacement_val", &replacement_val);
+    fn tempdirectory() -> io::Result<TempDir> {
+        #[cfg(target_os = "wasi")]
+        return TempDir::new_in("/");
 
-            load_settings_from_str(&setting, "json")?;
-
-            enable_trust_checks = true;
-        }
-
-        if let Some(allowed_list) = allowed_list {
-            let replacement_val = serde_json::Value::String(allowed_list).to_string(); // escape string
-            let setting = al.replace("replacement_val", &replacement_val);
-
-            load_settings_from_str(&setting, "json")?;
-
-            enable_trust_checks = true;
-        }
-
-        if let Some(trust_config) = trust_config {
-            let replacement_val = serde_json::Value::String(trust_config).to_string(); // escape string
-            let setting = tc.replace("replacement_val", &replacement_val);
-
-            load_settings_from_str(&setting, "json")?;
-
-            enable_trust_checks = true;
-        }
-
-        // enable trust checks
-        if enable_trust_checks {
-            load_settings_from_str(r#"{"verify": { "verify_trust": true} }"#, "json")?;
-        }
-
-        Ok(())
+        #[cfg(not(target_os = "wasi"))]
+        return tempdir();
     }
 
     #[test]
     #[cfg(feature = "file_io")]
     fn test_embed_manifest() -> Result<()> {
+        Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml"))?;
+
         // set up parent and destination paths
-        let dir = tempdir()?;
-        let output_path = dir.path().join("test_file.jpg");
-        let mut parent_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        parent_path.push("tests/fixtures/earth_apollo17.jpg");
-        let mut ingredient_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        ingredient_path.push("tests/fixtures/libpng-test.png");
+        let temp_dir = tempdirectory()?;
+        let output_path = temp_dir.path().join("test_file.jpg");
+        let parent_path = fixture_path("earth_apollo17.jpg");
+        let ingredient_path = fixture_path("libpng-test.png");
 
-        let config = include_bytes!("../tests/fixtures/certs/trust/store.cfg");
-        let priv_trust = include_bytes!("../tests/fixtures/certs/trust/test_cert_root_bundle.pem");
-
-        // Configure before first use so that trust settings are used for all calls.
-        // In production code you should check that the file is indeed UTF-8 text.
-        configure_trust(
-            Some(String::from_utf8_lossy(priv_trust).to_string()),
-            None,
-            Some(String::from_utf8_lossy(config).to_string()),
-        )?;
-
+        // let generator = ClaimGeneratorInfo::new("app");
         // create a new Manifest
-        let mut manifest = Manifest::new(GENERATOR.to_owned());
+        let mut builder = Builder::new();
 
         // allocate actions so we can add them
         let mut actions = Actions::new();
 
         // add a parent ingredient
-        let parent = Ingredient::from_file(&parent_path)?;
+        // let mut parent = Ingredient::from_file(&parent_path)?;
+        // parent.set_is_parent();
         // add an action assertion stating that we imported this file
         actions = actions.add_action(
-            Action::new(c2pa_action::EDITED)
+            Action::new(c2pa_action::OPENED)
                 .set_when("2015-06-26T16:43:23+0200")
                 .set_parameter("name".to_owned(), "import")?
-                .set_parameter("identifier".to_owned(), parent.instance_id().to_owned())?,
+                .set_parameter("org.cai.ingredientIds", ["apollo17"])?,
         );
 
+        let ingredient_json = serde_json::json!({
+            "name": "Earth from Apollo 17",
+            "description": "A photo of Earth taken from Apollo 17",
+            "relationship": "parentOf",
+            "label": "apollo17"
+        });
         // set the parent ingredient
-        manifest.set_parent(parent)?;
+        let mut parent_file = std::fs::File::open(&parent_path)?;
+        builder.add_ingredient_from_stream(
+            ingredient_json.to_string(),
+            "image/jpeg",
+            &mut parent_file,
+        )?;
 
         actions = actions.add_action(
             Action::new("c2pa.edit").set_parameter("name".to_owned(), "brightnesscontrast")?,
@@ -140,25 +101,24 @@ mod integration_1 {
         actions = actions.add_action(
             Action::new(c2pa_action::EDITED)
                 .set_parameter("name".to_owned(), "import")?
-                .set_parameter("identifier".to_owned(), ingredient.instance_id().to_owned())?,
-            // could add other parameters for position and size here
+                .set_parameter("org.cai.ingredientIds", ["apollo17"])?,
         );
 
-        manifest.add_ingredient(ingredient);
+        builder.add_ingredient(ingredient);
 
-        manifest.add_assertion(&actions)?;
+        builder.add_assertion(Actions::LABEL, &actions)?;
 
         // sign and embed into the target file
-        let signer = get_temp_signer();
-        manifest.embed(&parent_path, &output_path, signer.as_ref())?;
+        let signer = Settings::signer()?;
+        builder.sign_file(signer.as_ref(), &parent_path, &output_path)?;
 
         // read our new file with embedded manifest
-        let manifest_store = ManifestStore::from_file(&output_path)?;
+        let reader = Reader::from_file(&output_path)?;
 
-        println!("{manifest_store}");
+        println!("{reader}");
 
-        assert!(manifest_store.get_active().is_some());
-        if let Some(manifest) = manifest_store.get_active() {
+        assert!(reader.active_manifest().is_some());
+        if let Some(manifest) = reader.active_manifest() {
             assert!(manifest.title().is_some());
             assert_eq!(manifest.ingredients().len(), 2);
         } else {
@@ -170,35 +130,32 @@ mod integration_1 {
     #[test]
     #[cfg(feature = "file_io")]
     fn test_embed_json_manifest() -> Result<()> {
+        Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml"))?;
+
         // set up parent and destination paths
-        let dir = tempdir()?;
-        let output_path = dir.path().join("test_file.jpg");
+        let temp_dir = tempdirectory()?;
+        let output_path = temp_dir.path().join("test_file.jpg");
 
-        let mut fixture_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        fixture_path.push("tests/fixtures");
-
-        let mut parent_path = fixture_path.clone();
-        parent_path.push("earth_apollo17.jpg");
-        let mut manifest_path = fixture_path.clone();
-        manifest_path.push("manifest.json");
+        let parent_path = fixture_path("earth_apollo17.jpg");
+        let manifest_path = fixture_path("manifest.json");
 
         let json = std::fs::read_to_string(manifest_path)?;
 
-        let mut manifest = Manifest::from_json(&json)?;
-        manifest.with_base_path(fixture_path.canonicalize()?)?;
+        let mut builder = Builder::from_json(&json)?;
+        builder.base_path = Some(fixture_path(""));
 
         // sign and embed into the target file
-        let signer = get_temp_signer();
-        manifest.embed(&parent_path, &output_path, signer.as_ref())?;
+        let signer = Settings::signer()?;
+        builder.sign_file(signer.as_ref(), &parent_path, &output_path)?;
 
         // read our new file with embedded manifest
-        let manifest_store = ManifestStore::from_file(&output_path)?;
+        let reader = Reader::from_file(&output_path)?;
 
-        println!("{manifest_store}");
+        println!("{reader}");
         // std::fs::copy(&output_path, "test_file.jpg")?; // for debugging to get copy of the file
 
-        assert!(manifest_store.get_active().is_some());
-        if let Some(manifest) = manifest_store.get_active() {
+        assert!(reader.active_manifest().is_some());
+        if let Some(manifest) = reader.active_manifest() {
             assert!(manifest.title().is_some());
             assert_eq!(manifest.ingredients().len(), 2);
         } else {
@@ -207,176 +164,221 @@ mod integration_1 {
         Ok(())
     }
 
-    struct PlacedCallback {
-        path: String,
-    }
-
-    impl ManifestPatchCallback for PlacedCallback {
-        fn patch_manifest(&self, manifest_store: &[u8]) -> Result<Vec<u8>> {
-            use ::jumbf::parser::SuperBox;
-
-            if let Ok((_raw, sb)) = SuperBox::from_slice(manifest_store) {
-                if let Some(my_box) = sb.find_by_label(&self.path) {
-                    // find box I am looking for
-                    if let Some(db) = my_box.data_box() {
-                        let data_offset = db.offset_within_superbox(&sb).unwrap();
-                        let replace_bytes = r#"{"some_tag": "some value is replaced"}"#;
-
-                        if db.data.len() != replace_bytes.len() {
-                            return Err(Error::OtherError("replacement data size mismatch".into()));
-                        }
-
-                        // sanity check to make sure offset code is working
-                        let offset = memchr::memmem::find(manifest_store, db.data).unwrap();
-                        if offset != data_offset {
-                            return Err(Error::OtherError("data box offset incorrect".into()));
-                        }
-
-                        let mut new_manifest_store = manifest_store.to_vec();
-                        new_manifest_store.splice(
-                            data_offset..data_offset + replace_bytes.len(),
-                            replace_bytes.as_bytes().iter().cloned(),
-                        );
-
-                        return Ok(new_manifest_store);
-                    }
-                }
-
-                Err(Error::NotFound)
-            } else {
-                Err(Error::OtherError("could not parse JUMBF".into()))
-            }
-        }
-    }
     #[test]
     #[cfg(feature = "file_io")]
-    fn test_placed_manifest() -> Result<()> {
+    fn test_embed_bmff_manifest() -> Result<()> {
+        Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml"))?;
+
         // set up parent and destination paths
+        let temp_dir = tempdirectory()?;
+        let output_path = temp_dir.path().join("test_bmff.heic");
 
-        use std::io::Seek;
-        let dir = tempdir()?;
-        let output_path = dir.path().join("test_file.jpg");
+        let parent_path = fixture_path("sample1.heic");
 
-        let mut fixture_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        fixture_path.push("tests/fixtures");
-        let mut manifest_path = fixture_path.clone();
-        manifest_path.push("manifest.json");
-        let mut parent_path = fixture_path.clone();
-        parent_path.push("earth_apollo17.jpg");
-
-        let json = std::fs::read_to_string(manifest_path)?;
-
-        let mut manifest = Manifest::from_json(&json)?;
-        manifest.with_base_path(fixture_path.canonicalize()?)?;
+        let mut builder = Builder::new();
 
         // sign and embed into the target file
-        let signer = get_temp_signer();
+        let signer = Settings::signer()?;
+        builder.sign_file(signer.as_ref(), &parent_path, &output_path)?;
 
-        let mut input_stream = std::fs::File::open(&parent_path).unwrap();
-        let mut output_stream = std::fs::OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .open(output_path)
-            .unwrap();
+        // read our new file with embedded manifest
+        let reader = Reader::from_file(&output_path)?;
 
-        // get placed manifest
-        let (placed_manifest, label) = manifest
-            .get_placed_manifest(signer.reserve_size(), "jpg", &mut input_stream)
-            .unwrap();
+        println!("{reader}");
+        // std::fs::copy(&output_path, "test_file.jpg")?; // for debugging to get copy of the file
 
-        // my manifest callback handler
-        // set some data needed by callback to do what it needs to
-        // for this example let's tell it which jumbf box we can to change
-        // There is currently no way to get this directly from Manifest so I am using a hack
-        // to get_placed_manifest to return the manifest UUID.
-        let path = format!("{}/c2pa.assertions/{}", label, "com.mycompany.myassertion");
+        assert!(reader.active_manifest().is_some());
+        assert_eq!(reader.validation_status(), None);
+        if let Some(manifest) = reader.active_manifest() {
+            assert!(manifest.title().is_some());
+        } else {
+            panic!("no manifest in store");
+        }
+        Ok(())
+    }
 
-        let my_callback = PlacedCallback {
-            path: path.to_string(),
-        };
+    #[test]
+    #[cfg(feature = "file_io")]
+    fn test_asset_reference_assertion() -> Result<()> {
+        Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml"))?;
+        // set up parent and destination paths
+        let temp_dir = tempdirectory()?;
+        let output_path = temp_dir.path().join("test_file.jpg");
+        let parent_path = fixture_path("earth_apollo17.jpg");
 
-        let callbacks: Vec<Box<dyn ManifestPatchCallback>> = vec![Box::new(my_callback)];
+        // create a new Manifest
+        let mut builder = Builder::new();
 
-        // add manifest back into data
-        input_stream.rewind().unwrap();
-        Manifest::embed_placed_manifest(
-            &placed_manifest,
-            "jpg",
-            &mut input_stream,
-            &mut output_stream,
-            signer.as_ref(),
-            &callbacks,
+        // allocate references
+        let references = AssetReference::new(
+            "https://some.storage.us/foo",
+            Some("A copy of the asset on the web"),
         )
-        .unwrap();
+        .add_reference("ipfs://cid", Some("A copy of the asset on IPFS"));
+
+        // add references assertion
+        builder.add_assertion(AssetReference::LABEL, &references)?;
+
+        // sign and embed into the target file
+        let signer = Settings::signer()?;
+        builder.sign_file(signer.as_ref(), &parent_path, &output_path)?;
+
+        // read our new file with embedded manifest
+        let reader = Reader::from_file(&output_path)?;
+
+        println!("{reader}");
+
+        assert!(reader.active_manifest().is_some());
+        if let Some(manifest) = reader.active_manifest() {
+            assert!(manifest.title().is_some());
+            assert_eq!(manifest.assertions().len(), 2); // one for AssetReference and one for Actions
+            let assertion_ref: AssetReference = manifest.assertions()[1].to_assertion()?;
+            assert_eq!(assertion_ref, references);
+        } else {
+            panic!("no manifest in store");
+        }
+        Ok(())
+    }
+
+    #[test]
+    #[cfg(feature = "file_io")]
+    fn test_metadata_assertion() -> Result<()> {
+        Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml"))?;
+        // set up parent and destination paths
+        let temp_dir = tempdirectory()?;
+        let output_path = temp_dir.path().join("test_file.jpg");
+        let parent_path = fixture_path("earth_apollo17.jpg");
+
+        // create a new Manifest
+        let mut builder = Builder::new();
+
+        // allocate references
+        const C2PA_METADATA: &str = r#"{
+         "@context" : {
+            "exif": "http://ns.adobe.com/exif/1.0/",
+            "Iptc4xmpExt": "http://iptc.org/std/Iptc4xmpExt/2008-02-29/",
+            "photoshop" : "http://ns.adobe.com/photoshop/1.0/"
+        },
+        "photoshop:DateCreated": "Aug 31, 2022",
+        "Iptc4xmpExt:DigitalSourceType": "http://cv.iptc.org/newscodes/digitalsourcetype/digitalCapture",
+        "exif:GPSVersionID": "2.2.0.0",
+        "exif:GPSLatitude": "39,21.102N"
+        }
+        "#;
+
+        const CUSTOM_METADATA: &str = r#" {
+        "@context" : {
+            "bar": "http://foo.com/bar/1.0/"
+        },
+        "bar:baz" : "foo"
+        }
+        "#;
+
+        // allocate metadata
+        let c2pa_metadata_assertion = Metadata::new("c2pa.metadata", C2PA_METADATA)?;
+        let custom_metadata_assertion = Metadata::new("custom.foo.metadata", CUSTOM_METADATA)?;
+
+        // add metadata assertions
+        builder.add_assertion_json(
+            c2pa_metadata_assertion.get_label(),
+            &c2pa_metadata_assertion,
+        )?;
+        builder.add_assertion_json(
+            custom_metadata_assertion.get_label(),
+            &custom_metadata_assertion,
+        )?;
+
+        // sign and embed into the target file
+        let signer = Settings::signer()?;
+        builder.sign_file(signer.as_ref(), &parent_path, &output_path)?;
+
+        // read our new file with embedded manifest
+        let reader = Reader::from_file(&output_path)?;
+
+        println!("{reader}");
+
+        Ok(())
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(feature = "file_io")]
+    #[tokio::test]
+    async fn test_cawg_signing_via_settings() -> Result<()> {
+        Settings::from_toml(include_str!(
+            "../tests/fixtures/test_settings_with_cawg_signing.toml"
+        ))?;
+
+        // Set up parent and destination paths.
+        let temp_dir = tempdirectory()?;
+        let output_path = temp_dir.path().join("test_file.jpg");
+        let parent_path = fixture_path("earth_apollo17.jpg");
+
+        // Create a new Manifest.
+        let mut builder = Builder::new();
+
+        // Sign and embed into the target file.
+        let signer = Settings::signer()?;
+        builder.sign_file(signer.as_ref(), &parent_path, &output_path)?;
+
+        // Read back the new file with embedded manifest.
+        let mut reader = Reader::from_file(&output_path)?;
+
+        reader
+            .post_validate_async(&c2pa::identity::validator::CawgValidator {})
+            .await
+            .unwrap();
+
+        dbg!(&reader);
+
+        // The test credentials are currently flagged as untrusted.
+        // This will be fixed when https://github.com/contentauth/c2pa-rs/pull/1356
+        // is merged.
+        assert_eq!(
+            reader
+                .validation_results()
+                .unwrap()
+                .active_manifest()
+                .unwrap()
+                .failure()
+                .last()
+                .unwrap()
+                .code(),
+            "signingCredential.untrusted"
+        );
 
         Ok(())
     }
 
     #[test]
     #[cfg(feature = "file_io")]
-    fn test_placed_manifest_bmff() -> Result<()> {
+    fn test_certificate_status() -> Result<()> {
+        use c2pa::ValidationState;
+
+        Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml"))?;
+
         // set up parent and destination paths
+        let temp_dir = tempdirectory()?;
+        let output_path = temp_dir.path().join("test_file.jpg");
+        let parent_path = fixture_path("ocsp.jpg");
 
-        use std::io::Seek;
-        let dir = tempdir()?;
-        let output_path = dir.path().join("video1.mp4");
-
-        let mut fixture_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        fixture_path.push("tests/fixtures");
-        let mut manifest_path = fixture_path.clone();
-        manifest_path.push("manifest.json");
-        let mut parent_path = fixture_path.clone();
-        parent_path.push("video1.mp4");
-
-        let json = std::fs::read_to_string(manifest_path)?;
-
-        let mut manifest = Manifest::from_json(&json)?;
-        manifest.with_base_path(fixture_path.canonicalize()?)?;
+        // create a new Manifest
+        let mut builder = Builder::new();
+        builder.set_intent(c2pa::BuilderIntent::Update);
 
         // sign and embed into the target file
-        let signer = get_temp_signer();
+        let signer = Settings::signer()?;
+        builder.sign_file(signer.as_ref(), &parent_path, &output_path)?;
 
-        let mut input_stream = std::fs::File::open(&parent_path).unwrap();
-        let mut output_stream = std::fs::OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .open(output_path)
-            .unwrap();
+        // std::fs::copy(&output_path, "cert_status.jpg")?;
 
-        // get placed manifest
-        let (placed_manifest, label) = manifest
-            .get_placed_manifest(signer.reserve_size(), "mp4", &mut input_stream)
-            .unwrap();
-
-        // my manifest callback handler
-        // set some data needed by callback to do what it needs to
-        // for this example let's tell it which jumbf box we can to change
-        // There is currently no way to get this directly from Manifest so I am using a hack
-        // to get_placed_manifest to return the manifest UUID.
-        let path = format!("{}/c2pa.assertions/{}", label, "com.mycompany.myassertion");
-
-        let my_callback = PlacedCallback {
-            path: path.to_string(),
-        };
-
-        let callbacks: Vec<Box<dyn ManifestPatchCallback>> = vec![Box::new(my_callback)];
-
-        // add manifest back into data
-        input_stream.rewind().unwrap();
-        Manifest::embed_placed_manifest(
-            &placed_manifest,
-            "mp4",
-            &mut input_stream,
-            &mut output_stream,
-            signer.as_ref(),
-            &callbacks,
-        )
-        .unwrap();
-
+        // read our new file with embedded manifest
+        let reader = Reader::from_file(&output_path)?;
+        let reader_json = reader.json();
+        //println!("{reader}");
+        // ensure certificate status assertion was created
+        assert!(reader_json.contains(r#"label": "c2pa.certificate-status"#));
+        assert_eq!(reader.validation_state(), ValidationState::Trusted);
+        assert!(reader_json.contains("signingCredential.ocsp.notRevoked"));
         Ok(())
     }
 }

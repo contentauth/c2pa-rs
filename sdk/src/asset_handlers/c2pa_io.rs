@@ -146,20 +146,26 @@ pub mod tests {
     #![allow(clippy::expect_used)]
     #![allow(clippy::unwrap_used)]
 
-    use tempfile::tempdir;
-
     use super::{AssetIO, C2paIO, CAIReader, CAIWriter};
     use crate::{
-        status_tracker::OneShotStatusTracker,
+        crypto::raw_signature::SigningAlg,
+        settings::Settings,
+        status_tracker::{ErrorBehavior, StatusTracker},
         store::Store,
-        utils::test::{fixture_path, temp_dir_path, temp_signer},
+        utils::{
+            io_utils::tempdirectory,
+            test::{fixture_path, temp_dir_path},
+            test_signer::test_signer,
+        },
     };
 
     #[test]
     fn c2pa_io_parse() {
+        let settings = Settings::default();
+
         let path = fixture_path("C.jpg");
 
-        let temp_dir = tempdir().expect("temp dir");
+        let temp_dir = tempdirectory().expect("temp dir");
         let temp_path = temp_dir_path(&temp_dir, "test.c2pa");
 
         let c2pa_io = C2paIO {};
@@ -168,10 +174,23 @@ pub mod tests {
             .save_cai_store(&temp_path, &manifest)
             .expect("save cai store");
 
-        let store = Store::load_from_asset(&temp_path, false, &mut OneShotStatusTracker::new())
-            .expect("loading store");
+        let mut temp_file = std::fs::File::open(&temp_path).expect("open temp file");
+        let manifest_2 = c2pa_io.read_cai(&mut temp_file).expect("read cai store");
 
-        let signer = temp_signer();
+        assert_eq!(&manifest, &manifest_2);
+        // validate against our source stream and the saved / loaded manifest
+        let stream = std::fs::File::open(&path).expect("open temp file");
+        let store = Store::from_manifest_data_and_stream(
+            &manifest,
+            "image/jpeg",
+            &stream,
+            true,
+            &mut StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError),
+            &settings,
+        )
+        .expect("loading store");
+
+        let signer = test_signer(SigningAlg::Ps256);
 
         let manifest2 = store.to_jumbf(signer.as_ref()).expect("to_jumbf");
         assert_eq!(&manifest, &manifest2);

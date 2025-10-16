@@ -18,31 +18,27 @@ use std::{
     path::Path,
 };
 
-//use conv::ValueFrom;
-use log::warn;
-// multihash versions
-use multibase::{decode, encode};
-use multihash::{wrap, Code, Multihash, Sha1, Sha2_256, Sha2_512, Sha3_256, Sha3_384, Sha3_512};
 use range_set::RangeSet;
 use serde::{Deserialize, Serialize};
 // direct sha functions
 use sha2::{Digest, Sha256, Sha384, Sha512};
 
-use crate::{Error, Result};
+use crate::{utils::io_utils::stream_len, Error, Result};
 
 const MAX_HASH_BUF: usize = 256 * 1024 * 1024; // cap memory usage to 256MB
 
 #[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Eq)]
+/// Defines a hash range to be used with `hash_stream_by_alg`
 pub struct HashRange {
-    start: usize,
-    length: usize,
+    start: u64,
+    length: u64,
 
     #[serde(skip)]
     bmff_offset: Option<u64>, /* optional tracking of offset positions to include in BMFF_V2 hashes in BE format */
 }
 
 impl HashRange {
-    pub fn new(start: usize, length: usize) -> Self {
+    pub fn new(start: u64, length: u64) -> Self {
         HashRange {
             start,
             length,
@@ -52,21 +48,21 @@ impl HashRange {
 
     /// update the start value
     #[allow(dead_code)]
-    pub fn set_start(&mut self, start: usize) {
+    pub fn set_start(&mut self, start: u64) {
         self.start = start;
     }
 
     /// return start as usize
-    pub fn start(&self) -> usize {
+    pub fn start(&self) -> u64 {
         self.start
     }
 
     /// return length as usize
-    pub fn length(&self) -> usize {
+    pub fn length(&self) -> u64 {
         self.length
     }
 
-    pub fn set_length(&mut self, length: usize) {
+    pub fn set_length(&mut self, length: u64) {
         self.length = length;
     }
 
@@ -87,21 +83,6 @@ pub fn vec_compare(va: &[u8], vb: &[u8]) -> bool {
      va.iter()
        .zip(vb)
        .all(|(a,b)| a == b)
-}
-
-/// Generate hash of type hash_type for supplied data array.  The
-/// hash_type are those specified in the multihash specification.  Currently
-/// we only support Sha2-256/512 or Sha2-256/512.
-/// Returns hash or None if incompatible type
-pub fn hash_by_type(hash_type: u8, data: &[u8]) -> Option<Multihash> {
-    match hash_type {
-        0x12 => Some(Sha2_256::digest(data)),
-        0x13 => Some(Sha2_512::digest(data)),
-        0x14 => Some(Sha3_512::digest(data)),
-        0x15 => Some(Sha3_384::digest(data)),
-        0x16 => Some(Sha3_256::digest(data)),
-        _ => None,
-    }
 }
 
 #[derive(Clone)]
@@ -226,15 +207,11 @@ where
         "sha384" => SHA384(Sha384::new()),
         "sha512" => SHA512(Sha512::new()),
         _ => {
-            warn!(
-                "Unsupported hashing algorithm: {}, substituting sha256",
-                alg
-            );
-            SHA256(Sha256::new())
+            return Err(Error::UnsupportedType);
         }
     };
 
-    let data_len = data.seek(SeekFrom::End(0))?;
+    let data_len = stream_len(data)?;
     data.rewind()?;
 
     if data_len < 1 {
@@ -253,7 +230,7 @@ where
             let data_end = data_len - 1;
 
             // range extends past end of file so fail
-            if data_len < range_end as u64 {
+            if data_len < range_end {
                 return Err(Error::BadParam(
                     "The exclusion range exceed the data length".to_string(),
                 ));
@@ -264,31 +241,56 @@ where
                 let mut ranges_vec: Vec<RangeInclusive<u64>> = Vec::new();
                 let mut ranges = RangeSet::<[RangeInclusive<u64>; 1]>::from(0..=data_end);
                 for exclusion in hr {
-                    let end = (exclusion.start() + exclusion.length() - 1) as u64;
-                    let exclusion_start = exclusion.start() as u64;
-                    ranges.remove_range(exclusion_start..=end);
-
                     // add new BMFF V2 offset as a new range to be included so that we can
                     // pause to add the offset hash
                     if let Some(offset) = exclusion.bmff_offset() {
                         bmff_v2_starts.push(offset);
+                        continue;
                     }
+
+                    let end = exclusion.start() + exclusion.length() - 1;
+                    let exclusion_start = exclusion.start();
+                    ranges.remove_range(exclusion_start..=end);
                 }
 
                 // merge standard ranges and BMFF V2 ranges into single list
                 if !bmff_v2_starts.is_empty() {
-                    // remove any offset hashes that would be excluded
-                    let test_ranges = ranges.clone().into_smallvec();
-                    bmff_v2_starts.retain(|o| test_ranges.iter().any(|r| r.contains(&(*o + 1))));
+                    bmff_v2_starts.sort();
 
-                    // add in remaining BMFF V2 offsets
-                    for os in bmff_v2_starts.iter() {
-                        ranges_vec.push(RangeInclusive::new(*os, *os));
+                    // split ranges at BMFF V2 offsets and insert offset value
+                    for r in ranges.into_smallvec() {
+                        // if bmff_v2 offset is within the range then split the range at the off set and both side to ranges_vec
+                        let mut current_range = r;
+                        for os in &bmff_v2_starts {
+                            if current_range.contains(os) {
+                                if *current_range.start() == *os {
+                                    ranges_vec.push(RangeInclusive::new(*os, *os));
+                                // offset
+                                } else {
+                                    ranges_vec
+                                        .push(RangeInclusive::new(*current_range.start(), *os - 1)); // left side
+                                    ranges_vec.push(RangeInclusive::new(*os, *os)); // offset
+                                    current_range = RangeInclusive::new(*os, *current_range.end());
+                                    // right side
+                                }
+                            }
+                        }
+                        ranges_vec.push(current_range);
                     }
 
-                    // add regularly included ranges
-                    for r in ranges.into_smallvec() {
-                        ranges_vec.push(r);
+                    // add in remaining BMFF V2 offsets that were not included in the ranges because of subsets
+                    let range_start = RangeInclusive::new(0, 0);
+                    let range_end = RangeInclusive::new(data_end, data_end);
+                    let before_any_range = *ranges_vec.first().unwrap_or(&range_start).start();
+                    let after_any_range = *ranges_vec.last().unwrap_or(&range_end).end();
+
+                    for os in &bmff_v2_starts {
+                        if !ranges_vec.iter().any(|r| r.contains(os))
+                            && *os > before_any_range
+                            && *os < after_any_range
+                        {
+                            ranges_vec.push(RangeInclusive::new(*os, *os));
+                        }
                     }
 
                     // sort by start position
@@ -309,8 +311,8 @@ where
                 //build final ranges
                 let mut ranges_vec: Vec<RangeInclusive<u64>> = Vec::new();
                 for inclusion in hr {
-                    let end = (inclusion.start() + inclusion.length() - 1) as u64;
-                    let inclusion_start = inclusion.start() as u64;
+                    let end = inclusion.start() + inclusion.length() - 1;
+                    let inclusion_start = inclusion.start();
 
                     // add new BMFF V2 offset as a new range to be included so that we can
                     // pause to add the offset hash
@@ -334,20 +336,21 @@ where
         }
     };
 
-    if cfg!(feature = "no_interleaved_io") || cfg!(target_arch = "wasm32") {
+    if cfg!(target_arch = "wasm32") {
         // hash the data for ranges
         for r in ranges {
             let start = r.start();
             let end = r.end();
             let mut chunk_left = end - start + 1;
 
+            // check to see if this range is an BMFF V2 offset to include in the hash
+            if bmff_v2_starts.contains(start) && end == start {
+                hasher_enum.update(&start.to_be_bytes());
+                continue;
+            }
+
             // move to start of range
             data.seek(SeekFrom::Start(*start))?;
-
-            // check to see if this range is an BMFF V2 offset to include in the hash
-            if bmff_v2_starts.contains(start) && (end - start) == 0 {
-                hasher_enum.update(&start.to_be_bytes());
-            }
 
             loop {
                 let mut chunk = vec![0u8; std::cmp::min(chunk_left as usize, MAX_HASH_BUF)];
@@ -369,13 +372,14 @@ where
             let end = r.end();
             let mut chunk_left = end - start + 1;
 
+            // check to see if this range is an BMFF V2 offset to include in the hash
+            if bmff_v2_starts.contains(start) && end == start {
+                hasher_enum.update(&start.to_be_bytes());
+                continue;
+            }
+
             // move to start of range
             data.seek(SeekFrom::Start(*start))?;
-
-            // check to see if this range is an BMFF V2 offset to include in the hash
-            if bmff_v2_starts.contains(start) && (end - start) == 0 {
-                hasher_enum.update(&start.to_be_bytes());
-            }
 
             let mut chunk = vec![0u8; std::cmp::min(chunk_left as usize, MAX_HASH_BUF)];
             data.read_exact(&mut chunk)?;
@@ -458,81 +462,6 @@ where
         vec_compare(hash, &data_hash)
     } else {
         false
-    }
-}
-
-/// Return a Sha256 hash of array of bytes
-#[allow(dead_code)]
-pub fn hash_sha256(data: &[u8]) -> Vec<u8> {
-    let mh = Sha2_256::digest(data);
-    let digest = mh.digest();
-
-    digest.to_vec()
-}
-
-pub fn hash_sha1(data: &[u8]) -> Vec<u8> {
-    let mh = Sha1::digest(data);
-    let digest = mh.digest();
-    digest.to_vec()
-}
-
-/// Verify muiltihash against input data.  True if match,
-/// false if no match or unsupported.  The hash value should be
-/// be multibase encoded string.
-pub fn verify_hash(hash: &str, data: &[u8]) -> bool {
-    match decode(hash) {
-        Ok((_code, mh)) => {
-            if mh.len() < 2 {
-                return false;
-            }
-
-            // multihash lead bytes
-            let hash_type = mh[0]; // hash type
-            let _hash_len = mh[1]; // hash data length
-
-            // hash with the same algorithm as target
-            if let Some(data_hash) = hash_by_type(hash_type, data) {
-                vec_compare(data_hash.digest(), &mh.as_slice()[2..])
-            } else {
-                false
-            }
-        }
-        Err(_) => false,
-    }
-}
-
-/// Return the hash of data in the same hash format in_hash
-pub fn hash_as_source(in_hash: &str, data: &[u8]) -> Option<String> {
-    match decode(in_hash) {
-        Ok((code, mh)) => {
-            if mh.len() < 2 {
-                return None;
-            }
-
-            // multihash lead bytes
-            let hash_type = mh[0]; // hash type
-
-            // hash with the same algorithm as target
-            match hash_by_type(hash_type, data) {
-                Some(hash) => {
-                    let digest = hash.digest();
-
-                    let wrapped = match hash_type {
-                        0x12 => wrap(Code::Sha2_256, digest),
-                        0x13 => wrap(Code::Sha2_512, digest),
-                        0x14 => wrap(Code::Sha3_512, digest),
-                        0x15 => wrap(Code::Sha3_384, digest),
-                        0x16 => wrap(Code::Sha3_256, digest),
-                        _ => return None,
-                    };
-
-                    // Return encoded hash.
-                    Some(encode(code, wrapped.as_bytes()))
-                }
-                None => None,
-            }
-        }
-        Err(_) => None,
     }
 }
 

@@ -25,12 +25,16 @@ use tempfile::Builder;
 use crate::{
     assertions::{BoxMap, C2PA_BOXHASH},
     asset_io::{
-        self, AssetBoxHash, AssetIO, AssetPatch, CAIReader, CAIWriter, ComposedManifestRef,
-        HashBlockObjectType, HashObjectPositions, RemoteRefEmbed, RemoteRefEmbedType,
+        self, AssetBoxHash, AssetIO, AssetPatch, CAIRead, CAIReadWrite, CAIReader, CAIWriter,
+        ComposedManifestRef, HashBlockObjectType, HashObjectPositions, RemoteRefEmbed,
+        RemoteRefEmbedType,
     },
     error::Result,
-    utils::xmp_inmemory_utils::{self, MIN_XMP},
-    CAIRead, CAIReadWrite, Error,
+    utils::{
+        io_utils::stream_len,
+        xmp_inmemory_utils::{self, MIN_XMP},
+    },
+    Error,
 };
 
 // https://www.w3.org/Graphics/GIF/spec-gif89a.txt
@@ -62,7 +66,7 @@ impl CAIReader for GifIO {
             }
         }
 
-        bytes.truncate(bytes.len() - 258);
+        bytes.truncate(bytes.len() - 257);
         String::from_utf8(bytes).ok()
     }
 }
@@ -107,9 +111,7 @@ impl CAIWriter for GifIO {
                 },
                 HashObjectPositions {
                     offset: usize::try_from(c2pa_block.end())?,
-                    length: usize::try_from(
-                        input_stream.seek(SeekFrom::End(0))? - c2pa_block.end(),
-                    )?,
+                    length: usize::try_from(stream_len(input_stream)? - c2pa_block.end())?,
                     htype: HashBlockObjectType::Other,
                 },
             ]),
@@ -130,8 +132,7 @@ impl CAIWriter for GifIO {
                     },
                     HashObjectPositions {
                         offset: end_preamble_pos + 1,
-                        length: usize::try_from(input_stream.seek(SeekFrom::End(0))?)?
-                            - end_preamble_pos,
+                        length: usize::try_from(stream_len(input_stream)?)? - end_preamble_pos,
                         htype: HashBlockObjectType::Other,
                     },
                 ])
@@ -201,7 +202,7 @@ impl RemoteRefEmbed for GifIO {
                     // TODO: we read xmp here, then search for it again after, we can cache it
                     &self
                         .read_xmp(source_stream)
-                        .unwrap_or_else(|| format!("http://ns.adobe.com/xap/1.0/\0 {}", MIN_XMP)),
+                        .unwrap_or_else(|| MIN_XMP.to_string()),
                     &url,
                 )?;
 
@@ -278,7 +279,7 @@ impl AssetBoxHash for GifIO {
                         Block::LocalColorTable(_) | Block::GlobalColorTable(_) => {
                             match box_maps.last_mut() {
                                 Some(last_box_map) => {
-                                    last_box_map.range_len += usize::try_from(marker.len())?
+                                    last_box_map.range_len += marker.len();
                                 }
                                 // Realistically, this case is unreachable, but to play it safe, we error.
                                 None => return Err(Error::NotFound),
@@ -286,7 +287,7 @@ impl AssetBoxHash for GifIO {
                         }
                         _ => {
                             let mut box_map = marker.to_box_map()?;
-                            box_map.range_start += offset;
+                            box_map.range_start += offset as u64;
                             box_maps.push(box_map);
                         }
                     }
@@ -386,8 +387,11 @@ impl GifIO {
 
         Header::from_stream(stream)?;
         let logical_screen_descriptor = LogicalScreenDescriptor::from_stream(stream)?;
-        if logical_screen_descriptor.color_table_flag {
-            GlobalColorTable::from_stream(stream, logical_screen_descriptor.color_resolution)?;
+        if logical_screen_descriptor.global_color_table_flag {
+            GlobalColorTable::from_stream(
+                stream,
+                logical_screen_descriptor.global_color_table_size,
+            )?;
         }
 
         Ok(())
@@ -486,6 +490,7 @@ impl GifIO {
         Ok(())
     }
 
+    #[allow(dead_code)] // this here for wasm builds to pass clippy  (todo: remove)
     fn replace_block_in_place(
         &self,
         stream: &mut dyn CAIReadWrite,
@@ -630,9 +635,10 @@ impl BlockMarker<Block> {
             names,
             alg: None,
             hash: ByteBuf::from(Vec::new()),
+            excluded: None,
             pad: ByteBuf::from(Vec::new()),
-            range_start: usize::try_from(self.start())?,
-            range_len: usize::try_from(self.len())?,
+            range_start: self.start(),
+            range_len: self.len(),
         })
     }
 }
@@ -680,7 +686,7 @@ impl Block {
                     0xf9 => Ok(Block::GraphicControlExtension(
                         GraphicControlExtension::from_stream(stream)?,
                     )),
-                    0x21 => Ok(Block::PlainTextExtension(PlainTextExtension::from_stream(
+                    0x01 => Ok(Block::PlainTextExtension(PlainTextExtension::from_stream(
                         stream,
                     )?)),
                     ext_label => Err(Error::InvalidAsset(format!(
@@ -713,10 +719,10 @@ impl Block {
                 LogicalScreenDescriptor::from_stream(stream)?,
             )),
             Block::LogicalScreenDescriptor(logical_screen_descriptor) => {
-                match logical_screen_descriptor.color_table_flag {
+                match logical_screen_descriptor.global_color_table_flag {
                     true => Some(Block::GlobalColorTable(GlobalColorTable::from_stream(
                         stream,
-                        logical_screen_descriptor.color_resolution,
+                        logical_screen_descriptor.global_color_table_size,
                     )?)),
                     false => None,
                 }
@@ -825,8 +831,8 @@ impl Header {
 
 #[derive(Debug, Clone, PartialEq)]
 struct LogicalScreenDescriptor {
-    color_table_flag: bool,
-    color_resolution: u8,
+    global_color_table_flag: bool,
+    global_color_table_size: u8,
 }
 
 impl LogicalScreenDescriptor {
@@ -834,14 +840,14 @@ impl LogicalScreenDescriptor {
         stream.seek(SeekFrom::Current(4))?;
 
         let packed = stream.read_u8()?;
-        let color_table_flag = (packed >> 7) & 1;
-        let color_resolution = (packed >> 4) & 0b111;
+        let global_color_table_flag = (packed >> 7) & 1;
+        let global_color_table_size = packed & 0b111;
 
         stream.seek(SeekFrom::Current(2))?;
 
         Ok(LogicalScreenDescriptor {
-            color_table_flag: color_table_flag != 0,
-            color_resolution,
+            global_color_table_flag: global_color_table_flag != 0,
+            global_color_table_size,
         })
     }
 }
@@ -850,10 +856,8 @@ impl LogicalScreenDescriptor {
 struct GlobalColorTable {}
 
 impl GlobalColorTable {
-    fn from_stream(stream: &mut dyn CAIRead, color_resolution: u8) -> Result<GlobalColorTable> {
-        stream.seek(SeekFrom::Current(
-            3 * (2_i64.pow(color_resolution as u32 + 1)),
-        ))?;
+    fn from_stream(stream: &mut dyn CAIRead, size: u8) -> Result<GlobalColorTable> {
+        stream.seek(SeekFrom::Current(3 * (2_i64.pow(size as u32 + 1))))?;
 
         Ok(GlobalColorTable {})
     }
@@ -902,8 +906,7 @@ impl ApplicationExtension {
         // App block size is a fixed value.
         if app_block_size != 0x0b {
             return Err(Error::InvalidAsset(format!(
-                "Invalid block size for app block extension {}!=11",
-                app_block_size
+                "Invalid block size for app block extension {app_block_size}!=11"
             )));
         }
 
@@ -1117,22 +1120,31 @@ impl DataSubBlocks {
     }
 
     fn to_decoded_bytes(&self) -> Vec<u8> {
-        // Amount of bytes - (length markers + terminator).
-        let mut bytes = Vec::with_capacity(self.bytes.len() - (self.bytes.len().div_ceil(255) + 1));
-        for chunk in self.bytes.chunks(256) {
-            bytes.extend_from_slice(&chunk[1..]);
+        let mut bytes = Vec::with_capacity(gif_chunks(&self.bytes).map(|c| c.len()).sum());
+        for chunk in gif_chunks(&self.bytes) {
+            bytes.extend_from_slice(chunk);
         }
-
-        // Remove terminator.
-        bytes.truncate(bytes.len() - 1);
-
         bytes
     }
 }
 
+fn gif_chunks(mut encoded_bytes: &[u8]) -> impl Iterator<Item = &[u8]> {
+    std::iter::from_fn(move || {
+        let (&len, rest) = encoded_bytes.split_first()?;
+        if len == 0 {
+            return None;
+        }
+        let (chunk, rest) = rest.split_at_checked(len.into())?;
+        encoded_bytes = rest;
+        Some(chunk)
+    })
+}
+
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used)]
     use io::{Cursor, Seek};
+    use xmp_inmemory_utils::extract_provenance;
 
     use super::*;
 
@@ -1157,8 +1169,8 @@ mod tests {
                 start: 6,
                 len: 7,
                 block: Block::LogicalScreenDescriptor(LogicalScreenDescriptor {
-                    color_table_flag: true,
-                    color_resolution: 7
+                    global_color_table_flag: true,
+                    global_color_table_size: 7
                 })
             })
         );
@@ -1408,6 +1420,7 @@ mod tests {
                 names: vec!["GIF89a".to_owned()],
                 alg: None,
                 hash: ByteBuf::from(Vec::new()),
+                excluded: None,
                 pad: ByteBuf::from(Vec::new()),
                 range_start: 0,
                 range_len: 6
@@ -1419,6 +1432,7 @@ mod tests {
                 names: vec!["2C".to_owned()],
                 alg: None,
                 hash: ByteBuf::from(Vec::new()),
+                excluded: None,
                 pad: ByteBuf::from(Vec::new()),
                 range_start: 368495,
                 range_len: 778
@@ -1430,8 +1444,9 @@ mod tests {
                 names: vec!["3B".to_owned()],
                 alg: None,
                 hash: ByteBuf::from(Vec::new()),
+                excluded: None,
                 pad: ByteBuf::from(Vec::new()),
-                range_start: SAMPLE1.len(),
+                range_start: SAMPLE1.len() as u64,
                 range_len: 1
             })
         );
@@ -1459,7 +1474,7 @@ mod tests {
 
         let gif_io = GifIO {};
 
-        assert!(gif_io.read_xmp(&mut stream).is_none());
+        assert_eq!(gif_io.read_xmp(&mut stream), None);
 
         let mut output_stream1 = Cursor::new(Vec::with_capacity(SAMPLE1.len()));
         gif_io.embed_reference_to_stream(
@@ -1468,8 +1483,9 @@ mod tests {
             RemoteRefEmbedType::Xmp("Test".to_owned()),
         )?;
 
-        let xmp = gif_io.read_xmp(&mut output_stream1);
-        assert_eq!(xmp, Some("http://ns.adobe.com/xap/1.0/\0<?xpacket begin=\"\" id=\"W5M0MpCehiHzreSzNTczkc9d\"?>\n<x:xmpmeta xmlns:x=\"adobe:ns:meta/\" x:xmptk=\"XMP Core 6.0.0\">\n  <rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\">\n    <rdf:Description rdf:about=\"\" xmlns:dcterms=\"http://purl.org/dc/terms/\" dcterms:provenance=\"Test\">\n    </rdf:Description>\n  </rdf:RDF>\n</x:xmpmeta".to_owned()));
+        let xmp = gif_io.read_xmp(&mut output_stream1).unwrap();
+        let p = extract_provenance(&xmp).unwrap();
+        assert_eq!(&p, "Test");
 
         Ok(())
     }

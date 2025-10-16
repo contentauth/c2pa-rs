@@ -66,14 +66,14 @@ pub fn get_thumbnail_type(thumbnail_label: &str) -> String {
     "none".to_string()
 }
 
-pub fn get_thumbnail_image_type(thumbnail_label: &str) -> String {
+pub fn get_thumbnail_image_type(thumbnail_label: &str) -> Option<String> {
     let components: Vec<&str> = thumbnail_label.split('.').collect();
 
     if thumbnail_label.contains("thumbnail") && components.len() >= 4 {
         let image_type: Vec<&str> = components[3].split('_').collect(); // strip and other label adornments
-        image_type[0].to_ascii_lowercase()
+        Some(image_type[0].to_ascii_lowercase())
     } else {
-        "none".to_string()
+        None
     }
 }
 
@@ -86,10 +86,7 @@ pub fn get_thumbnail_instance(label: &str) -> Option<usize> {
             let components: Vec<&str> = label.split("__").collect();
             if components.len() == 2 {
                 let subparts: Vec<&str> = components[1].split('.').collect();
-                match subparts[0].parse::<usize>() {
-                    Ok(i) => Some(i),
-                    Err(_e) => None,
-                }
+                subparts[0].parse::<usize>().ok()
             } else {
                 Some(0)
             }
@@ -130,8 +127,9 @@ where
 /// Trait to handle default Cbor encoding/decoding of Assertions
 pub trait AssertionCbor: Serialize + DeserializeOwned + AssertionBase {
     fn to_cbor_assertion(&self) -> Result<Assertion> {
-        let data =
-            AssertionData::Cbor(serde_cbor::to_vec(self).map_err(|_err| Error::AssertionEncoding)?);
+        let data = AssertionData::Cbor(
+            serde_cbor::to_vec(self).map_err(|err| Error::AssertionEncoding(err.to_string()))?,
+        );
         Ok(Assertion::new(self.label(), self.version(), data))
     }
 
@@ -157,7 +155,7 @@ pub trait AssertionCbor: Serialize + DeserializeOwned + AssertionBase {
 pub trait AssertionJson: Serialize + DeserializeOwned + AssertionBase {
     fn to_json_assertion(&self) -> Result<Assertion> {
         let data = AssertionData::Json(
-            serde_json::to_string(self).map_err(|_err| Error::AssertionEncoding)?,
+            serde_json::to_string(self).map_err(|err| Error::AssertionEncoding(err.to_string()))?,
         );
         Ok(Assertion::new(self.label(), self.version(), data).set_content_type("application/json"))
     }
@@ -179,12 +177,22 @@ pub trait AssertionJson: Serialize + DeserializeOwned + AssertionBase {
 /// the Assertion type (see spec).
 /// For JSON assertions the data is a JSON string and a Vec of u8 values for
 /// binary data and JSON data to be CBOR encoded.
-#[derive(Deserialize, Serialize, PartialEq, Eq, Clone)]
+#[derive(Deserialize, Serialize, PartialEq, Eq, Clone, Hash)]
 pub enum AssertionData {
     Json(String),          // json encoded data
     Binary(Vec<u8>),       // binary data
     Cbor(Vec<u8>),         // binary cbor encoded data
     Uuid(String, Vec<u8>), // user defined content (uuid, data)
+}
+
+impl From<AssertionData> for Vec<u8> {
+    fn from(ad: AssertionData) -> Self {
+        match ad {
+            AssertionData::Json(s) => s.into_bytes(), // json encoded data
+            AssertionData::Binary(x) | AssertionData::Uuid(_, x) => x, // binary data
+            AssertionData::Cbor(x) => x,
+        }
+    }
 }
 
 impl fmt::Debug for AssertionData {
@@ -217,7 +225,7 @@ impl fmt::Debug for AssertionData {
 /// contain its AssertionData.  For the User Assertion type we
 /// allow a String to set the label. The AssertionData contains
 /// the data payload for the assertion and the version number for its schema (if supported).
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Assertion {
     label: String,
     version: Option<usize>,
@@ -241,8 +249,8 @@ impl Assertion {
     }
 
     /// return content_type for the the data enclosed in the Assertion
-    pub(crate) fn content_type(&self) -> String {
-        self.content_type.clone()
+    pub(crate) fn content_type(&self) -> &str {
+        self.content_type.as_str()
     }
 
     // pub(crate) fn set_data(mut self, data: &AssertionData) -> Self {
@@ -251,8 +259,8 @@ impl Assertion {
     // }
 
     // Return version string of known assertion if available
-    pub(crate) fn get_ver(&self) -> Option<usize> {
-        self.version
+    pub(crate) fn get_ver(&self) -> usize {
+        self.version.unwrap_or(1)
     }
 
     // pub fn check_version(&self, max_version: usize) -> AssertionDecodeResult<()> {
@@ -289,25 +297,21 @@ impl Assertion {
     pub(crate) fn label_root(&self) -> String {
         let label = get_mutable_label(&self.label).0;
         // thumbnails need the image_type added
-        match get_thumbnail_image_type(&self.label).as_str() {
-            "none" => label,
-            image_type => format!("{label}.{image_type}"),
+        match get_thumbnail_image_type(&self.label) {
+            None => label,
+            Some(image_type) => format!("{label}.{image_type}"),
         }
     }
 
     /// Return the CAI label for this Assertion with version string if available
     pub(crate) fn label(&self) -> String {
         let base_label = self.label_root();
-        match self.get_ver() {
-            Some(v) => {
-                if v > 1 {
-                    // c2pa does not include v1 labels
-                    format!("{base_label}.v{v}")
-                } else {
-                    base_label
-                }
-            }
-            None => base_label,
+        let v = self.get_ver();
+        if v > 1 {
+            // c2pa does not include v1 labels
+            format!("{base_label}.v{v}")
+        } else {
+            base_label
         }
     }
 
@@ -392,6 +396,26 @@ impl Assertion {
             mime_type,
             AssertionData::Binary(binary_data.to_vec()),
         )
+    }
+
+    /// Deconstruct a binary assertion, moving the Vec<u8> out without copying
+    pub(crate) fn binary_deconstruct(
+        assertion: Assertion,
+    ) -> Result<(String, Option<usize>, String, Vec<u8>)> {
+        match assertion.data {
+            AssertionData::Binary(data) => Ok((
+                assertion.label,
+                assertion.version,
+                assertion.content_type,
+                data,
+            )),
+            _ => Err(AssertionDecodeError::from_assertion_unexpected_data_type(
+                &assertion,
+                assertion.decode_data(),
+                "binary",
+            )
+            .into()),
+        }
     }
 
     /// create an assertion from user binary data
@@ -556,7 +580,6 @@ impl AssertionDecodeError {
         }
     }
 
-    #[cfg(feature = "unstable_api")]
     pub(crate) fn from_err<S: Into<AssertionDecodeErrorCause>>(
         label: String,
         version: Option<usize>,
@@ -616,6 +639,10 @@ pub enum AssertionDecodeErrorCause {
 
     #[error(transparent)]
     CborError(#[from] serde_cbor::Error),
+
+    /// There was a problem decoding field.
+    #[error("the assertion had a mandatory field: {expected} that could not be decoded")]
+    FieldDecoding { expected: String },
 }
 
 pub(crate) type AssertionDecodeResult<T> = std::result::Result<T, AssertionDecodeError>;
@@ -641,8 +668,8 @@ pub mod tests {
         let a = Assertion::new(Actions::LABEL, Some(2), json);
         let a_no_ver = Assertion::new(Actions::LABEL, None, json2);
 
-        assert_eq!(a.get_ver().unwrap(), 2);
-        assert_eq!(a_no_ver.get_ver(), None);
+        assert_eq!(a.get_ver(), 2);
+        assert_eq!(a_no_ver.get_ver(), 1);
         assert_eq!(a.label(), format!("{}.{}", Actions::LABEL, "v2"));
         assert_eq!(a.label_root(), Actions::LABEL);
         assert_eq!(a_no_ver.label(), Actions::LABEL);

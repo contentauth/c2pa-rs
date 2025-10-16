@@ -34,7 +34,10 @@ use hex::FromHex;
 use log::debug;
 use thiserror::Error;
 
-use crate::jumbf::{boxio, labels};
+use crate::{
+    jumbf::{boxio, labels},
+    utils::io_utils::ReaderUtils,
+};
 
 /// `JumbfParseError` enumerates errors detected while parsing JUMBF data structures.
 #[derive(Debug, Error)]
@@ -279,67 +282,74 @@ impl JUMBFSuperBox {
         self.data_boxes.len()
     }
 
-    pub fn data_box(&self, index: usize) -> &dyn BMFFBox {
-        self.data_boxes[index].as_ref()
+    pub fn data_box(&self, index: usize) -> Option<&dyn BMFFBox> {
+        self.data_boxes.get(index).map(|b| b.as_ref())
     }
 
     pub fn data_box_as_superbox(&self, index: usize) -> Option<&JUMBFSuperBox> {
-        let da_box = &self.data_boxes[index];
-        da_box.as_ref().as_any().downcast_ref::<JUMBFSuperBox>()
+        self.data_boxes
+            .get(index)
+            .and_then(|da_box| da_box.as_ref().as_any().downcast_ref::<JUMBFSuperBox>())
     }
 
     pub fn data_box_as_json_box(&self, index: usize) -> Option<&JUMBFJSONContentBox> {
-        let da_box = &self.data_boxes[index];
-        da_box
-            .as_ref()
-            .as_any()
-            .downcast_ref::<JUMBFJSONContentBox>()
+        self.data_boxes.get(index).and_then(|da_box| {
+            da_box
+                .as_ref()
+                .as_any()
+                .downcast_ref::<JUMBFJSONContentBox>()
+        })
     }
 
     pub fn data_box_as_cbor_box(&self, index: usize) -> Option<&JUMBFCBORContentBox> {
-        let da_box = &self.data_boxes[index];
-        da_box
-            .as_ref()
-            .as_any()
-            .downcast_ref::<JUMBFCBORContentBox>()
+        self.data_boxes.get(index).and_then(|da_box| {
+            da_box
+                .as_ref()
+                .as_any()
+                .downcast_ref::<JUMBFCBORContentBox>()
+        })
     }
 
     pub fn data_box_as_jp2c_box(&self, index: usize) -> Option<&JUMBFCodestreamContentBox> {
-        let da_box = &self.data_boxes[index];
-        da_box
-            .as_ref()
-            .as_any()
-            .downcast_ref::<JUMBFCodestreamContentBox>()
+        self.data_boxes.get(index).and_then(|da_box| {
+            da_box
+                .as_ref()
+                .as_any()
+                .downcast_ref::<JUMBFCodestreamContentBox>()
+        })
     }
 
     pub fn data_box_as_uuid_box(&self, index: usize) -> Option<&JUMBFUUIDContentBox> {
-        let da_box = &self.data_boxes[index];
-        da_box
-            .as_ref()
-            .as_any()
-            .downcast_ref::<JUMBFUUIDContentBox>()
+        self.data_boxes.get(index).and_then(|da_box| {
+            da_box
+                .as_ref()
+                .as_any()
+                .downcast_ref::<JUMBFUUIDContentBox>()
+        })
     }
 
     pub fn data_box_as_embedded_file_content_box(
         &self,
         index: usize,
     ) -> Option<&JUMBFEmbeddedFileContentBox> {
-        let da_box = &self.data_boxes[index];
-        da_box
-            .as_ref()
-            .as_any()
-            .downcast_ref::<JUMBFEmbeddedFileContentBox>()
+        self.data_boxes.get(index).and_then(|da_box| {
+            da_box
+                .as_ref()
+                .as_any()
+                .downcast_ref::<JUMBFEmbeddedFileContentBox>()
+        })
     }
 
     pub fn data_box_as_embedded_media_type_box(
         &self,
         index: usize,
     ) -> Option<&JUMBFEmbeddedFileDescriptionBox> {
-        let da_box = &self.data_boxes[index];
-        da_box
-            .as_ref()
-            .as_any()
-            .downcast_ref::<JUMBFEmbeddedFileDescriptionBox>()
+        self.data_boxes.get(index).and_then(|da_box| {
+            da_box
+                .as_ref()
+                .as_any()
+                .downcast_ref::<JUMBFEmbeddedFileDescriptionBox>()
+        })
     }
 }
 
@@ -501,6 +511,7 @@ pub const JUMBF_CBOR_UUID: &str = "63626F7200110010800000AA00389B71";
 // pub const JUMBF_XML_UUID: &str = "786D6C2000110010800000AA00389B71";
 pub const JUMBF_UUID_UUID: &str = "7575696400110010800000AA00389B71";
 pub const JUMBF_EMBEDDED_FILE_UUID: &str = "40CB0C32BB8A489DA70B2AD6F47F4369";
+pub const C2PA_REDACTION_UUID: &str = "CAA98EEE9D4DF80E86AD4DFFCA263973";
 // ANCHOR JUMBF Content box
 /// JUMBF Content box (ISO 19566-5:2019, Annex B)
 #[derive(Debug, Default)]
@@ -914,6 +925,10 @@ impl CAISignatureBox {
     pub fn add_signature(&mut self, b: Box<dyn BMFFBox>) {
         self.sig_box.add_data_box(b)
     }
+
+    pub fn super_box(&self) -> &dyn BMFFBox {
+        &self.sig_box
+    }
 }
 
 impl Default for CAISignatureBox {
@@ -954,9 +969,15 @@ impl BMFFBox for CAIClaimBox {
 }
 
 impl CAIClaimBox {
-    pub fn new() -> Self {
+    pub fn new(version: usize) -> Self {
+        let v = if version > 1 {
+            format!("{}.v{}", labels::CLAIM, version)
+        } else {
+            labels::CLAIM.to_string()
+        };
+
         CAIClaimBox {
-            claim_box: JUMBFSuperBox::new(labels::CLAIM, Some(CAI_CLAIM_UUID)),
+            claim_box: JUMBFSuperBox::new(&v, Some(CAI_CLAIM_UUID)),
         }
     }
 
@@ -969,7 +990,7 @@ impl CAIClaimBox {
 
 impl Default for CAIClaimBox {
     fn default() -> Self {
-        Self::new()
+        Self::new(1)
     }
 }
 
@@ -1429,8 +1450,11 @@ impl CAIStore {
         self.store.data_boxes.len()
     }
 
-    pub fn data_box(&self, index: usize) -> &dyn BMFFBox {
-        self.store.data_boxes[index].as_ref()
+    pub fn data_box(&self, index: usize) -> Option<&dyn BMFFBox> {
+        self.store
+            .data_boxes
+            .get(index)
+            .map(|da_box| da_box.as_ref())
     }
 
     pub fn assertion_store(&self) -> Option<&JUMBFSuperBox> {
@@ -1503,13 +1527,18 @@ impl Cai {
         self.sbox.data_boxes.len()
     }
 
-    pub fn data_box(&self, index: usize) -> &dyn BMFFBox {
-        self.sbox.data_boxes[index].as_ref()
+    pub fn data_box(&self, index: usize) -> Option<&dyn BMFFBox> {
+        self.sbox
+            .data_boxes
+            .get(index)
+            .map(|da_box| da_box.as_ref())
     }
 
     pub fn data_box_as_superbox(&self, index: usize) -> Option<&JUMBFSuperBox> {
-        let da_box = &self.sbox.data_boxes[index];
-        da_box.as_ref().as_any().downcast_ref::<JUMBFSuperBox>()
+        self.sbox
+            .data_boxes
+            .get(index)
+            .and_then(|da_box| da_box.as_ref().as_any().downcast_ref::<JUMBFSuperBox>())
     }
 
     pub fn store(&self) -> Option<&JUMBFSuperBox> {
@@ -1572,19 +1601,21 @@ impl JumbfEmbeddedFileBox {
     }
 
     pub fn media_type_box(&self) -> Option<&JUMBFEmbeddedFileDescriptionBox> {
-        let efd_box = &self.embedding_box.data_boxes[0];
-        efd_box
-            .as_ref()
-            .as_any()
-            .downcast_ref::<JUMBFEmbeddedFileDescriptionBox>()
+        self.embedding_box.data_boxes.first().and_then(|efd_box| {
+            efd_box
+                .as_ref()
+                .as_any()
+                .downcast_ref::<JUMBFEmbeddedFileDescriptionBox>()
+        })
     }
 
     pub fn data_box(&self) -> Option<&JUMBFEmbeddedFileContentBox> {
-        let efc_box = &self.embedding_box.data_boxes[1];
-        efc_box
-            .as_ref()
-            .as_any()
-            .downcast_ref::<JUMBFEmbeddedFileContentBox>()
+        self.embedding_box.data_boxes.get(1).and_then(|efc_box| {
+            efc_box
+                .as_ref()
+                .as_any()
+                .downcast_ref::<JUMBFEmbeddedFileContentBox>()
+        })
     }
 
     pub fn set_salt(&mut self, salt: Vec<u8>) -> JumbfParseResult<()> {
@@ -1957,8 +1988,9 @@ impl BoxReader {
 
             if header.name == BoxType::SaltHash {
                 let data_len = header.size - HEADER_SIZE;
-                let mut buf = vec![0u8; data_len as usize];
-                reader.read_exact(&mut buf)?;
+                let buf = reader
+                    .read_to_vec(data_len)
+                    .map_err(|_| JumbfParseError::InvalidBoxHeader)?;
 
                 bytes_left -= header.size;
 
@@ -1995,8 +2027,9 @@ impl BoxReader {
         }
 
         let json_len = size - HEADER_SIZE;
-        let mut buf = vec![0u8; json_len as usize];
-        reader.read_exact(&mut buf)?;
+        let buf = reader
+            .read_to_vec(json_len)
+            .map_err(|_| JumbfParseError::InvalidBoxHeader)?;
 
         Ok(JUMBFJSONContentBox::new(buf))
     }
@@ -2016,8 +2049,9 @@ impl BoxReader {
         }
 
         let cbor_len = size - HEADER_SIZE;
-        let mut buf = vec![0u8; cbor_len as usize];
-        reader.read_exact(&mut buf)?;
+        let buf = reader
+            .read_to_vec(cbor_len)
+            .map_err(|_| JumbfParseError::InvalidBoxHeader)?;
 
         Ok(JUMBFCBORContentBox::new(buf))
     }
@@ -2037,8 +2071,9 @@ impl BoxReader {
         }
 
         let padding_len = size - HEADER_SIZE;
-        let mut buf = vec![0u8; padding_len as usize];
-        reader.read_exact(&mut buf)?;
+        let buf = reader
+            .read_to_vec(padding_len)
+            .map_err(|_| JumbfParseError::InvalidBoxHeader)?;
 
         Ok(JUMBFPaddingContentBox::new_with_vec(buf))
     }
@@ -2059,8 +2094,9 @@ impl BoxReader {
 
         // read the data itself...
         let data_len = size - HEADER_SIZE;
-        let mut buf = vec![0u8; data_len as usize];
-        reader.read_exact(&mut buf)?;
+        let buf = reader
+            .read_to_vec(data_len)
+            .map_err(|_| JumbfParseError::InvalidBoxHeader)?;
 
         Ok(JUMBFCodestreamContentBox::new(buf))
     }
@@ -2085,8 +2121,9 @@ impl BoxReader {
 
         // and finally the data itself...
         let data_len = size - HEADER_SIZE - 16 /*UUID*/;
-        let mut buf = vec![0u8; data_len as usize];
-        reader.read_exact(&mut buf)?;
+        let buf = reader
+            .read_to_vec(data_len)
+            .map_err(|_| JumbfParseError::InvalidBoxHeader)?;
 
         Ok(JUMBFUUIDContentBox::new(&uuid, buf))
     }
@@ -2115,8 +2152,9 @@ impl BoxReader {
 
         // read the data itself...
         let data_len = size - HEADER_SIZE - TOGGLE_SIZE;
-        let mut buf = vec![0u8; data_len as usize];
-        reader.read_exact(&mut buf)?;
+        let mut buf = reader
+            .read_to_vec(data_len)
+            .map_err(|_| JumbfParseError::InvalidBoxHeader)?;
 
         let (media_type, file_name) = match togs[0] {
             1 => {
@@ -2164,8 +2202,9 @@ impl BoxReader {
 
         // read data itself...
         let data_len = size - HEADER_SIZE;
-        let mut buf = vec![0u8; data_len as usize];
-        reader.read_exact(&mut buf)?;
+        let buf = reader
+            .read_to_vec(data_len)
+            .map_err(|_| JumbfParseError::InvalidBoxHeader)?;
 
         Ok(JUMBFEmbeddedFileContentBox::new(buf))
     }
@@ -2203,10 +2242,7 @@ impl BoxReader {
             return Err(JumbfParseError::UnexpectedEof);
         }
         let box_label = jdesc.label();
-        debug!(
-            "{}",
-            format!("START#Label: {box_label:?}" /* jdesc.label() */)
-        );
+        debug!("START#Label: {box_label:?}");
         let mut sbox = JUMBFSuperBox::from(jdesc);
 
         // read each following box and add it to the sbox
@@ -2252,7 +2288,7 @@ impl BoxReader {
                             .map_err(|_| JumbfParseError::InvalidEmbeddedFileBox)?,
                     ),
                     _ => {
-                        debug!("{}", format!("Unknown Boxtype: {:?}", box_header.name));
+                        debug!("Unknown Boxtype: {:?}", box_header.name);
                         // per the jumbf spec ignore unknown boxes so skip by if possible
                         let header = BoxReader::read_header(reader)
                             .map_err(|_| JumbfParseError::InvalidBoxHeader)?;
@@ -2266,8 +2302,10 @@ impl BoxReader {
 
                         // read data itself...
                         let data_len = box_header.size - HEADER_SIZE;
-                        let mut buf = vec![0u8; data_len as usize];
-                        reader.read_exact(&mut buf)?;
+                        reader
+                            .read_to_vec(data_len)
+                            .map_err(|_| JumbfParseError::InvalidBoxHeader)?;
+
                         continue;
                     }
                 };
@@ -2282,10 +2320,7 @@ impl BoxReader {
             }
         }
 
-        debug!(
-            "{}",
-            format!("END#Label: {box_label:?}" /* jdesc.label() */)
-        );
+        debug!("END#Label: {box_label:?}");
 
         // return the filled out sbox
         Ok(sbox)
@@ -2452,7 +2487,7 @@ pub mod tests {
     // ANCHOR: Claim Box
     #[test]
     fn cai_claim_box() {
-        let mut cb = CAIClaimBox::new();
+        let mut cb = CAIClaimBox::new(1);
 
         let claim_json = String::from(
             "{
@@ -2566,7 +2601,7 @@ pub mod tests {
         cai_store.add_box(Box::new(a_store));
 
         // create a claim & add it to the cai store
-        let mut cb = CAIClaimBox::new();
+        let mut cb = CAIClaimBox::new(1);
         let claim_json = String::from(
             "{
             \"recorder\" : \"Photoshop\",
@@ -2634,7 +2669,7 @@ pub mod tests {
         cai_store.add_box(Box::new(a_store));
 
         // create a claim & add it to the cai store
-        let mut cb = CAIClaimBox::new();
+        let mut cb = CAIClaimBox::new(1);
         let claim_json = String::from(
             "{
             \"recorder\" : \"Photoshop\",

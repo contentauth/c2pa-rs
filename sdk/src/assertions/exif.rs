@@ -23,10 +23,11 @@ use crate::{
     Error, Result,
 };
 
-/// The EXIF assertion as defined in the C2PA spec section 17.13
-///  See <https://c2pa.org/specifications/specifications/1.0/specs/C2PA_Specification.html#_exif_information>
+/// The EXIF assertion (part of CAWG metadata specification).
 ///
-/// This does not yet define or validate individual fields, but will ensure the correct assertion structure
+/// This does not yet define or validate individual fields, but will ensure the correct assertion structure.
+// NOTE: Hidden because it's now part of standard metadata assertions.
+#[doc(hidden)]
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Exif {
     #[serde(rename = "@context", skip_serializing_if = "Option::is_none")]
@@ -36,11 +37,14 @@ pub struct Exif {
 }
 
 impl Exif {
+    // A label for our assertion, use reverse domain name syntax
+    pub const LABEL: &'static str = labels::EXIF;
+
     pub fn new() -> Self {
         Self {
             object_context: Some(json!({
               "dc": "http://purl.org/dc/elements/1.1/",
-              "exifEX": "http://cipa.jp/exif/2.32/",
+              "exifEX": "http://cipa.jp/exif/1.0/",
               "exif": "http://ns.adobe.com/exif/1.0/",
               "tiff": "http://ns.adobe.com/tiff/1.0/",
               "xmp": "http://ns.adobe.com/xap/1.0/",
@@ -129,12 +133,12 @@ pub mod tests {
     #![allow(clippy::unwrap_used)]
 
     use super::*;
-    use crate::Manifest;
+    use crate::builder::Builder;
 
     const SPEC_EXAMPLE: &str = r#"{
         "@context" : {
           "dc": "http://purl.org/dc/elements/1.1/",
-          "exifEX": "http://cipa.jp/exif/2.32/",
+          "exifEX": "http://cipa.jp/exif/1.0/",
           "exif": "http://ns.adobe.com/exif/1.0/",
           "tiff": "http://ns.adobe.com/tiff/1.0/",
           "xmp": "http://ns.adobe.com/xap/1.0/",
@@ -166,40 +170,37 @@ pub mod tests {
 
     #[test]
     fn exif_new() {
-        let mut manifest = Manifest::new("my_app".to_owned());
+        let mut builder = Builder::new();
+
         let original = Exif::new()
             .insert("exif:GPSLatitude", "39,21.102N")
             .unwrap();
-        manifest.add_assertion(&original).expect("adding assertion");
-        println!("{manifest}");
-        let exif: Exif = manifest
-            .find_assertion(Exif::LABEL)
-            .expect("find_assertion");
+        builder
+            .add_assertion(Exif::LABEL, &original)
+            .expect("adding assertion");
+        let exif: Exif = builder.find_assertion(Exif::LABEL).expect("find_assertion");
         let latitude: String = exif.get("exif:GPSLatitude").unwrap();
         assert_eq!(&latitude, "39,21.102N")
     }
 
     #[test]
     fn exif_from_json() {
-        let mut manifest = Manifest::new("my_app".to_owned());
+        let mut builder = Builder::new();
         let original = Exif::from_json_str(SPEC_EXAMPLE).expect("from_json");
-        manifest.add_assertion(&original).expect("adding assertion");
-        println!("{manifest}");
-        let exif: Exif = manifest
-            .find_assertion(Exif::LABEL)
-            .expect("find_assertion");
+        builder
+            .add_assertion(Exif::LABEL, &original)
+            .expect("adding assertion");
+        let exif: Exif = builder.find_assertion(Exif::LABEL).expect("find_assertion");
         let latitude: String = exif.get("exif:GPSLatitude").unwrap();
         assert_eq!(&latitude, "39,21.102N")
     }
 
     #[test]
-    fn exif_to_assertoin() {
+    fn exif_to_assertion() {
         let original = Exif::from_json_str(SPEC_EXAMPLE).expect("from_json");
         let assertion = original.to_assertion().expect("to_assertion");
         assert_eq!(assertion.content_type(), "application/json");
-        println!("{assertion:?}");
         let result = Exif::from_assertion(&assertion).expect("from_assertion");
-        println!("{result:?}");
         let latitude: String = result.get("exif:GPSLatitude").unwrap();
         assert_eq!(&latitude, "39,21.102N")
     }

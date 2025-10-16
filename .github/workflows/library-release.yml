@@ -1,0 +1,118 @@
+name: Publish c2pa-library binaries
+
+on:
+  push:
+    tags:
+      - 'c2pa-v*' # Trigger on version tags (e.g., v1.0.0)
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Publish c2pa-library binaries
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            target: universal-apple-darwin
+          - os: macos-latest
+            target: aarch64-apple-darwin
+          - os: macos-latest
+            target: x86_64-apple-darwin
+          - os: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+          - os: windows-11-arm
+            target: aarch64-pc-windows-msvc
+          - os: macos-latest
+            target: aarch64-apple-ios
+          - os: macos-latest
+            target: x86_64-apple-ios
+          - os: macos-latest
+            target: aarch64-apple-ios-sim
+          - os: ubuntu-latest
+            target: aarch64-linux-android
+          - os: ubuntu-latest
+            target: armv7-linux-androideabi
+          - os: ubuntu-latest
+            target: i686-linux-android
+          - os: ubuntu-latest
+            target: x86_64-linux-android
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Rust
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          cache: false
+
+      - name: Build Windows release
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          ./make_release.ps1
+
+      - name: Build Windows ARM release
+        if: matrix.os == 'windows-11-arm'
+        shell: pwsh
+        run: |
+          $env:TARGET_ARCH = "aarch64"
+          ./make_release.ps1
+
+      - name: Build release
+        if: matrix.os != 'windows-latest' && matrix.os != 'windows-11-arm'
+        run: make release TARGET=${{ matrix.target }}
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-artifacts-${{ matrix.os }}-${{ matrix.target }}
+          path: target/artifacts/
+
+  release:
+    needs: build
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: release-artifacts-*
+          path: .
+          merge-multiple: true
+
+      - name: List downloaded artifacts
+        run: ls -lh
+
+      - name: Extract tag_name from zip file
+        id: extract_tag
+        run: |
+          ZIP=$(find . -name "c2pa-v*-*.zip" | head -n1)
+          if [ -n "$ZIP" ]; then
+            TAG_NAME=$(echo "$ZIP" | sed -E 's/.*\/(c2pa-v[0-9]+\.[0-9]+\.[0-9]+)-.*\.zip/\1/')
+            echo "Found tag: $TAG_NAME"
+            echo "tag_name=$TAG_NAME" >> $GITHUB_OUTPUT
+          else
+            echo "No zip files found"
+            exit 1
+          fi
+
+      - name: Create Release
+        id: create_release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ steps.extract_tag.outputs.tag_name }}
+
+          files: ./*
+          draft: false
+          prerelease: true
+          generate_release_notes: true
+
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

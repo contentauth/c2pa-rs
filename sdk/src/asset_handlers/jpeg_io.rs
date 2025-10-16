@@ -27,7 +27,6 @@ use img_parts::{
     Bytes, DynImage,
 };
 use serde_bytes::ByteBuf;
-use tempfile::Builder;
 
 use crate::{
     assertions::{BoxMap, C2PA_BOXHASH},
@@ -37,12 +36,15 @@ use crate::{
         RemoteRefEmbedType,
     },
     error::{Error, Result},
-    utils::xmp_inmemory_utils::{add_provenance, MIN_XMP},
+    utils::{
+        io_utils::tempfile_builder,
+        xmp_inmemory_utils::{add_provenance, MIN_XMP},
+    },
 };
 
 static SUPPORTED_TYPES: [&str; 3] = ["jpg", "jpeg", "image/jpeg"];
 
-const XMP_SIGNATURE: &[u8] = b"http://ns.adobe.com/xap/1.0/";
+const XMP_SIGNATURE: &str = "http://ns.adobe.com/xap/1.0/";
 const XMP_SIGNATURE_BUFFER_SIZE: usize = XMP_SIGNATURE.len() + 1; // skip null or space char at end
 
 const MAX_JPEG_MARKER_SIZE: usize = 64000; // technically it's 64K but a bit smaller is fine
@@ -57,11 +59,10 @@ fn vec_compare(va: &[u8], vb: &[u8]) -> bool {
 }
 
 // Return contents of APP1 segment if it is an XMP segment.
-fn extract_xmp(seg: &JpegSegment) -> Option<String> {
-    let contents = seg.contents();
-    if contents.starts_with(XMP_SIGNATURE) {
-        let rest = contents.slice(XMP_SIGNATURE_BUFFER_SIZE..);
-        String::from_utf8(rest.to_vec()).ok()
+fn extract_xmp(seg: &JpegSegment) -> Option<&str> {
+    let (sig, rest) = seg.contents().split_at_checked(XMP_SIGNATURE_BUFFER_SIZE)?;
+    if sig.starts_with(XMP_SIGNATURE.as_bytes()) {
+        std::str::from_utf8(rest).ok()
     } else {
         None
     }
@@ -69,13 +70,9 @@ fn extract_xmp(seg: &JpegSegment) -> Option<String> {
 
 // Extract XMP from bytes.
 fn xmp_from_bytes(asset_bytes: &[u8]) -> Option<String> {
-    if let Ok(jpeg) = Jpeg::from_bytes(Bytes::copy_from_slice(asset_bytes)) {
-        let segs = jpeg.segments_by_marker(markers::APP1);
-        let xmp: String = segs.filter_map(extract_xmp).collect();
-        Some(xmp)
-    } else {
-        None
-    }
+    let jpeg = Jpeg::from_bytes(Bytes::copy_from_slice(asset_bytes)).ok()?;
+    let mut segs = jpeg.segments_by_marker(markers::APP1);
+    segs.find_map(extract_xmp).map(String::from)
 }
 
 fn add_required_segs_to_stream(
@@ -141,7 +138,13 @@ fn get_cai_segments(jpeg: &img_parts::jpeg::Jpeg) -> Result<Vec<usize>> {
                 cai_segs.push(i);
             } else {
                 // check if this is a CAI JUMBF block
-                let jumb_type = &raw_vec.as_mut_slice()[24..28];
+                let jumb_type = &raw_vec
+                    .as_mut_slice()
+                    .get(24..28)
+                    .ok_or(Error::InvalidAsset(
+                        "Invalid JPEG CAI JUMBF block".to_string(),
+                    ))?;
+
                 let is_cai = vec_compare(&C2PA_MARKER, jumb_type);
                 if is_cai {
                     cai_segs.push(i);
@@ -156,15 +159,22 @@ fn get_cai_segments(jpeg: &img_parts::jpeg::Jpeg) -> Result<Vec<usize>> {
 }
 
 // delete cai segments
-fn delete_cai_segments(jpeg: &mut img_parts::jpeg::Jpeg) -> Result<()> {
+fn delete_cai_segments(jpeg: &mut img_parts::jpeg::Jpeg) -> Result<Option<usize>> {
     let cai_segs = get_cai_segments(jpeg)?;
     let jpeg_segs = jpeg.segments_mut();
+
+    let insertion_point = if !cai_segs.is_empty() {
+        Some(cai_segs[0])
+    } else {
+        None
+    };
 
     // remove cai segments
     for seg in cai_segs.iter().rev() {
         jpeg_segs.remove(*seg);
     }
-    Ok(())
+
+    Ok(insertion_point)
 }
 
 pub struct JpegIO {}
@@ -273,7 +283,10 @@ impl CAIWriter for JpegIO {
         let mut jpeg = Jpeg::from_bytes(buf.into()).map_err(|_err| Error::EmbeddingError)?;
 
         // remove existing CAI segments
-        delete_cai_segments(&mut jpeg)?;
+        let insertion_point = match delete_cai_segments(&mut jpeg)? {
+            Some(i) if i > 0 => i - 1,
+            _ => 0,
+        };
 
         let jumbf_len = store_bytes.len();
         let num_segments = (jumbf_len / MAX_JPEG_MARKER_SIZE) + 1;
@@ -304,7 +317,9 @@ impl CAIWriter for JpegIO {
             if seg > 1 {
                 // the LBox and TBox are already in the JUMBF
                 // but we need to duplicate them in all other segments
-                let lbox_tbox = &store_bytes[..8];
+                let lbox_tbox = store_bytes
+                    .get(0..8)
+                    .ok_or(Error::InvalidAsset("Store bytes too short".to_string()))?;
                 seg_data.extend(lbox_tbox);
             }
             if seg_chucks.len() > 0 {
@@ -318,7 +333,12 @@ impl CAIWriter for JpegIO {
 
             let seg_bytes = Bytes::from(seg_data);
             let app11_segment = JpegSegment::new_with_contents(markers::APP11, seg_bytes);
-            jpeg.segments_mut().insert(seg, app11_segment); // we put this in the beginning...
+            if seg + insertion_point <= jpeg.segments().len() {
+                jpeg.segments_mut()
+                    .insert(seg + insertion_point, app11_segment); // we put this in the beginning...
+            } else {
+                return Err(Error::InvalidAsset("JPEG JUMBF segment error".to_owned()));
+            }
         }
 
         output_stream.rewind()?;
@@ -350,6 +370,12 @@ impl CAIWriter for JpegIO {
             .map_err(|e| Error::OtherError(Box::new(e)))?
             .ok_or(Error::UnsupportedType)?;
 
+        let mut cai_loc = HashObjectPositions {
+            offset: 0,
+            length: 0,
+            htype: HashBlockObjectType::Cai,
+        };
+
         match dimg {
             DynImage::Jpeg(jpeg) => {
                 for seg in jpeg.segments() {
@@ -368,28 +394,22 @@ impl CAIWriter for JpegIO {
 
                                 if cai_seg_cnt > 0 && is_cai_continuation {
                                     cai_seg_cnt += 1;
-
-                                    let v = HashObjectPositions {
-                                        offset: curr_offset,
-                                        length: seg.len_with_entropy(),
-                                        htype: HashBlockObjectType::Cai,
-                                    };
-                                    positions.push(v);
+                                    cai_loc.length += seg.len_with_entropy();
                                 } else {
                                     // check if this is a CAI JUMBF block
-                                    let jumb_type = raw_vec.as_mut_slice()[24..28].to_vec();
+                                    let jumb_type = raw_vec
+                                        .get(24..28)
+                                        .ok_or(Error::InvalidAsset(
+                                            "Invalid JPEG CAI JUMBF block".to_string(),
+                                        ))?
+                                        .to_vec();
                                     let is_cai = vec_compare(&C2PA_MARKER, &jumb_type);
                                     if is_cai {
                                         cai_seg_cnt = 1;
                                         cai_en.clone_from(&en); // store the identifier
 
-                                        let v = HashObjectPositions {
-                                            offset: curr_offset,
-                                            length: seg.len_with_entropy(),
-                                            htype: HashBlockObjectType::Cai,
-                                        };
-
-                                        positions.push(v);
+                                        cai_loc.offset = curr_offset;
+                                        cai_loc.length += seg.len_with_entropy();
                                     } else {
                                         // save other for completeness sake
                                         let v = HashObjectPositions {
@@ -427,6 +447,10 @@ impl CAIWriter for JpegIO {
                 }
             }
             _ => return Err(Error::InvalidAsset("Unknown image format".to_owned())),
+        }
+
+        if cai_loc.length > 0 {
+            positions.push(cai_loc);
         }
 
         Ok(positions)
@@ -469,10 +493,7 @@ impl AssetIO for JpegIO {
             .open(asset_path)
             .map_err(Error::IoError)?;
 
-        let mut temp_file = Builder::new()
-            .prefix("c2pa_temp")
-            .rand_bytes(5)
-            .tempfile()?;
+        let mut temp_file = tempfile_builder("c2pa_temp")?;
 
         self.write_cai(&mut input_stream, &mut temp_file, store_bytes)?;
 
@@ -595,21 +616,21 @@ impl RemoteRefEmbed for JpegIO {
                     Jpeg::from_bytes(buf.into()).map_err(|_err| Error::EmbeddingError)?;
 
                 // find any existing XMP segment and remember where it was
-                let mut xmp = MIN_XMP.to_string(); // default minimal XMP
-                let mut xmp_index = None;
                 let segments = jpeg.segments_mut();
-                for (i, seg) in segments.iter().enumerate() {
-                    if seg.marker() == markers::APP1 && seg.contents().starts_with(XMP_SIGNATURE) {
-                        xmp = extract_xmp(seg).unwrap_or_else(|| xmp.clone());
-                        xmp_index = Some(i);
-                        break;
-                    }
-                }
+                let (xmp_index, xmp) = segments
+                    .iter()
+                    .enumerate()
+                    .find_map(|(i, seg)| {
+                        if seg.marker() == markers::APP1 {
+                            Some((Some(i), extract_xmp(seg)?))
+                        } else {
+                            None
+                        }
+                    })
+                    .unwrap_or((None, MIN_XMP));
+
                 // add provenance and JPEG XMP prefix
-                let xmp = format!(
-                    "http://ns.adobe.com/xap/1.0/\0 {}",
-                    add_provenance(&xmp, &manifest_uri)?
-                );
+                let xmp = format!("{XMP_SIGNATURE}\0{}", add_provenance(xmp, &manifest_uri)?);
                 let segment = JpegSegment::new_with_contents(markers::APP1, Bytes::from(xmp));
                 // insert or add the segment
                 match xmp_index {
@@ -667,7 +688,7 @@ fn get_entropy_size(input_stream: &mut dyn CAIRead) -> Result<usize> {
 }
 
 fn has_length(marker: u8) -> bool {
-    matches!(marker, RST0..=RST7 | APP0..=APP15 | SOF0..=SOF15 | SOS | COM | DQT | DRI)
+    matches!(marker, APP0..=APP15 | SOF0..=SOF15 | SOS | COM | DQT | DRI)
 }
 
 fn get_seg_size(input_stream: &mut dyn CAIRead) -> Result<usize> {
@@ -758,8 +779,9 @@ fn make_box_maps(input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>> {
                     names: vec!["EOI".to_string()],
                     alg: None,
                     hash: ByteBuf::from(Vec::new()),
+                    excluded: None,
                     pad: ByteBuf::from(Vec::new()),
-                    range_start: seg.position,
+                    range_start: seg.position as u64,
                     range_len: 0,
                 };
 
@@ -770,8 +792,9 @@ fn make_box_maps(input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>> {
                     names: vec!["SOI".to_string()],
                     alg: None,
                     hash: ByteBuf::from(Vec::new()),
+                    excluded: None,
                     pad: ByteBuf::from(Vec::new()),
-                    range_start: seg.position,
+                    range_start: seg.position as u64,
                     range_len: 0,
                 };
 
@@ -794,11 +817,22 @@ fn make_box_maps(input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>> {
                     if cai_seg_cnt > 0 && is_cai_continuation {
                         cai_seg_cnt += 1;
 
-                        let cai_bm = &mut box_maps[cai_index];
-                        cai_bm.range_len += raw_bytes.len() + 4;
+                        if let Some(cai_bm) = box_maps.get_mut(cai_index) {
+                            cai_bm.range_len += (raw_bytes.len() + 4) as u64;
+                        } else {
+                            return Err(Error::InvalidAsset(
+                                "CAI segment index out of bounds".to_string(),
+                            ));
+                        }
                     } else {
                         // check if this is a CAI JUMBF block
-                        let jumb_type = raw_vec.as_mut_slice()[24..28].to_vec();
+                        let jumb_type = raw_vec
+                            .as_mut_slice()
+                            .get(24..28)
+                            .ok_or(Error::InvalidAsset(
+                                "Invalid JPEG CAI JUMBF block".to_string(),
+                            ))?
+                            .to_vec();
                         let is_cai = vec_compare(&C2PA_MARKER, &jumb_type);
                         if is_cai {
                             cai_seg_cnt = 1;
@@ -808,9 +842,10 @@ fn make_box_maps(input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>> {
                                 names: vec![C2PA_BOXHASH.to_string()],
                                 alg: None,
                                 hash: ByteBuf::from(Vec::new()),
+                                excluded: None,
                                 pad: ByteBuf::from(Vec::new()),
-                                range_start: seg.position,
-                                range_len: raw_bytes.len() + 4,
+                                range_start: seg.position as u64,
+                                range_len: (raw_bytes.len() + 4) as u64,
                             };
 
                             box_maps.push(c2pa_bm);
@@ -824,8 +859,9 @@ fn make_box_maps(input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>> {
                                 names: vec![name.to_string()],
                                 alg: None,
                                 hash: ByteBuf::from(Vec::new()),
+                                excluded: None,
                                 pad: ByteBuf::from(Vec::new()),
-                                range_start: seg.position,
+                                range_start: seg.position as u64,
                                 range_len: 0,
                             };
 
@@ -846,8 +882,9 @@ fn make_box_maps(input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>> {
                     names: vec![name.to_string()],
                     alg: None,
                     hash: ByteBuf::from(Vec::new()),
+                    excluded: None,
                     pad: ByteBuf::from(Vec::new()),
-                    range_start: seg.position,
+                    range_start: seg.position as u64,
                     range_len: 0,
                 };
 
@@ -858,8 +895,9 @@ fn make_box_maps(input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>> {
                     names: vec!["APP0".to_string()],
                     alg: None,
                     hash: ByteBuf::from(Vec::new()),
+                    excluded: None,
                     pad: ByteBuf::from(Vec::new()),
-                    range_start: seg.position,
+                    range_start: seg.position as u64,
                     range_len: 0,
                 };
 
@@ -870,8 +908,9 @@ fn make_box_maps(input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>> {
                     names: vec!["DQT".to_string()],
                     alg: None,
                     hash: ByteBuf::from(Vec::new()),
+                    excluded: None,
                     pad: ByteBuf::from(Vec::new()),
-                    range_start: seg.position,
+                    range_start: seg.position as u64,
                     range_len: 0,
                 };
 
@@ -882,8 +921,9 @@ fn make_box_maps(input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>> {
                     names: vec!["DHT".to_string()],
                     alg: None,
                     hash: ByteBuf::from(Vec::new()),
+                    excluded: None,
                     pad: ByteBuf::from(Vec::new()),
-                    range_start: seg.position,
+                    range_start: seg.position as u64,
                     range_len: 0,
                 };
 
@@ -894,8 +934,9 @@ fn make_box_maps(input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>> {
                     names: vec!["DAC".to_string()],
                     alg: None,
                     hash: ByteBuf::from(Vec::new()),
+                    excluded: None,
                     pad: ByteBuf::from(Vec::new()),
-                    range_start: seg.position,
+                    range_start: seg.position as u64,
                     range_len: 0,
                 };
 
@@ -910,8 +951,9 @@ fn make_box_maps(input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>> {
                     names: vec![name.to_string()],
                     alg: None,
                     hash: ByteBuf::from(Vec::new()),
+                    excluded: None,
                     pad: ByteBuf::from(Vec::new()),
-                    range_start: seg.position,
+                    range_start: seg.position as u64,
                     range_len: 0,
                 };
 
@@ -922,8 +964,9 @@ fn make_box_maps(input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>> {
                     names: vec!["SOS".to_string()],
                     alg: None,
                     hash: ByteBuf::from(Vec::new()),
+                    excluded: None,
                     pad: ByteBuf::from(Vec::new()),
-                    range_start: seg.position,
+                    range_start: seg.position as u64,
                     range_len: 0,
                 };
 
@@ -934,21 +977,35 @@ fn make_box_maps(input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>> {
                     names: vec!["DRI".to_string()],
                     alg: None,
                     hash: ByteBuf::from(Vec::new()),
+                    excluded: None,
                     pad: ByteBuf::from(Vec::new()),
-                    range_start: seg.position,
+                    range_start: seg.position as u64,
                     range_len: 0,
                 };
 
                 box_maps.push(bm);
             }
-            jfifdump::SegmentKind::Rst(_r) => (),
+            jfifdump::SegmentKind::Rst(r) => {
+                let bm = BoxMap {
+                    names: vec![format!("RST{}", r.nr)],
+                    alg: None,
+                    hash: ByteBuf::from(Vec::new()),
+                    excluded: None,
+                    pad: ByteBuf::from(Vec::new()),
+                    range_start: seg.position as u64,
+                    range_len: 0,
+                };
+
+                box_maps.push(bm);
+            }
             jfifdump::SegmentKind::Comment(_) => {
                 let bm = BoxMap {
                     names: vec!["COM".to_string()],
                     alg: None,
                     hash: ByteBuf::from(Vec::new()),
+                    excluded: None,
                     pad: ByteBuf::from(Vec::new()),
-                    range_start: seg.position,
+                    range_start: seg.position as u64,
                     range_len: 0,
                 };
 
@@ -963,8 +1020,9 @@ fn make_box_maps(input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>> {
                     names: vec![name.to_string()],
                     alg: None,
                     hash: ByteBuf::from(Vec::new()),
+                    excluded: None,
                     pad: ByteBuf::from(Vec::new()),
-                    range_start: seg.position,
+                    range_start: seg.position as u64,
                     range_len: 0,
                 };
 
@@ -981,16 +1039,18 @@ impl AssetBoxHash for JpegIO {
         let mut box_maps = make_box_maps(input_stream)?;
 
         for bm in box_maps.iter_mut() {
-            if bm.names[0] == C2PA_BOXHASH {
-                continue;
+            if let Some(name) = bm.names.first() {
+                if name == C2PA_BOXHASH {
+                    continue;
+                }
             }
 
-            input_stream.seek(std::io::SeekFrom::Start(bm.range_start as u64))?;
+            input_stream.seek(std::io::SeekFrom::Start(bm.range_start))?;
 
-            let size = if bm.names[0] == "SOS" {
+            let size = if bm.names.first().is_some_and(|name| name == "SOS") {
                 let mut size = get_seg_size(input_stream)?;
 
-                input_stream.seek(std::io::SeekFrom::Start((bm.range_start + size) as u64))?;
+                input_stream.seek(std::io::SeekFrom::Start(bm.range_start + size as u64))?;
 
                 size += get_entropy_size(input_stream)?;
 
@@ -999,7 +1059,7 @@ impl AssetBoxHash for JpegIO {
                 get_seg_size(input_stream)?
             };
 
-            bm.range_len = size;
+            bm.range_len = size as u64;
         }
 
         Ok(box_maps)
@@ -1039,7 +1099,9 @@ impl ComposedManifestRef for JpegIO {
             if seg > 1 {
                 // the LBox and TBox are already in the JUMBF
                 // but we need to duplicate them in all other segments
-                let lbox_tbox = &manifest_data[..8];
+                let lbox_tbox = manifest_data
+                    .get(0..8)
+                    .ok_or(Error::InvalidAsset("Manifest data too short".to_string()))?;
                 seg_data.extend(lbox_tbox);
             }
             if seg_chucks.len() > 0 {
@@ -1082,23 +1144,30 @@ pub mod tests {
 
     use std::io::{Read, Seek};
 
-    #[cfg(target_arch = "wasm32")]
+    use c2pa_macros::c2pa_test_async;
+    #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
     use wasm_bindgen_test::*;
 
     use super::*;
+    use crate::utils::io_utils::tempdirectory;
     #[test]
     fn test_extract_xmp() {
         let contents = Bytes::from_static(b"http://ns.adobe.com/xap/1.0/\0stuff");
         let seg = JpegSegment::new_with_contents(markers::APP1, contents);
         let result = extract_xmp(&seg);
-        assert_eq!(result, Some("stuff".to_owned()));
+        assert_eq!(result, Some("stuff"));
 
         let contents = Bytes::from_static(b"http://ns.adobe.com/xap/1.0/ stuff");
         let seg = JpegSegment::new_with_contents(markers::APP1, contents);
         let result = extract_xmp(&seg);
-        assert_eq!(result, Some("stuff".to_owned()));
+        assert_eq!(result, Some("stuff"));
 
         let contents = Bytes::from_static(b"tiny");
+        let seg = JpegSegment::new_with_contents(markers::APP1, contents);
+        let result = extract_xmp(&seg);
+        assert_eq!(result, None);
+
+        let contents = Bytes::from_static(b"http://ns.adobe.com/xap/1.0/");
         let seg = JpegSegment::new_with_contents(markers::APP1, contents);
         let result = extract_xmp(&seg);
         assert_eq!(result, None);
@@ -1108,7 +1177,7 @@ pub mod tests {
     fn test_remove_c2pa() {
         let source = crate::utils::test::fixture_path("CA.jpg");
 
-        let temp_dir = tempfile::tempdir().unwrap();
+        let temp_dir = tempdirectory().unwrap();
         let output = crate::utils::test::temp_dir_path(&temp_dir, "CA_test.jpg");
 
         std::fs::copy(source, &output).unwrap();
@@ -1152,7 +1221,7 @@ pub mod tests {
     fn test_xmp_read_write() {
         let source = crate::utils::test::fixture_path("CA.jpg");
 
-        let temp_dir = tempfile::tempdir().unwrap();
+        let temp_dir = tempdirectory().unwrap();
         let output = crate::utils::test::temp_dir_path(&temp_dir, "CA_test.jpg");
 
         std::fs::copy(source, &output).unwrap();
@@ -1179,8 +1248,7 @@ pub mod tests {
         assert!(read_xmp.contains(test_msg));
     }
 
-    #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
-    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    #[c2pa_test_async]
     async fn test_xmp_read_write_stream() {
         let source_bytes = include_bytes!("../../tests/fixtures/CA.jpg");
 
@@ -1230,7 +1298,7 @@ pub mod tests {
             .unwrap();
         let curr_manifest = jpeg_io.read_cai_store(&source).unwrap();
 
-        let temp_dir = tempfile::tempdir().unwrap();
+        let temp_dir = tempdirectory().unwrap();
         let output = crate::utils::test::temp_dir_path(&temp_dir, "CA_test.jpg");
 
         std::fs::copy(source, &output).unwrap();
@@ -1269,5 +1337,94 @@ pub mod tests {
         let restored_manifest = jpeg_io.read_cai(&mut out_stream).unwrap();
 
         assert_eq!(&curr_manifest, &restored_manifest);
+    }
+
+    #[test]
+    fn test_crash_write_cai() {
+        let data = [
+            0xff, 0xd8, 0xff, 0xff, 0xff, 0xff, 0xff, 0xd9, 0x00, 0x00, 0x00, 0x06, 0xc9,
+        ];
+
+        let mut stream = Cursor::new(&data);
+
+        let jpeg_io = JpegIO {};
+
+        let result = jpeg_io.get_object_locations_from_stream(&mut stream);
+        assert!(matches!(result, Err(Error::InvalidAsset(_))));
+    }
+
+    #[test]
+    fn test_crash_get_cai_segments() {
+        let data = [
+            0xff, 0xd8, 0xff, 0xfd, 0x60, 0xff, 0xff, 0xeb, 0x00, 0x1b, 0x1b, 0x1b, 0x1b, 0x1b,
+            0x1b, 0x1b, 0x1b, 0x1b, 0x1b, 0x1b, 0x1b, 0x1b, 0x1b, 0x1b, 0x1b, 0x1b, 0x1b, 0x1b,
+            0x1b, 0x1b, 0x1b, 0x1b, 0x1b, 0x1b, 0x1b, 0x1b, 0x1b, 0x1b, 0x1b, 0x1b, 0x1b, 0x1b,
+            0x1b, 0x1b, 0x1b, 0x1b, 0x1b, 0x1b, 0x1b, 0x1b, 0x1b, 0x1b, 0x1b, 0x1b, 0x1b, 0x1b,
+            0x1b, 0x1b, 0x1b, 0x1b, 0x1b, 0x1b, 0x1b, 0x1b, 0x1b, 0x1b, 0x1b, 0x1b, 0x1b, 0x1b,
+            0x1b, 0x1b, 0x1b, 0x1b, 0x1b, 0x1b, 0x1b, 0x1b, 0x1b, 0x27, 0xc2, 0xb8, 0x00, 0x00,
+            0xa3, 0x54, 0x8d, 0x8a, 0xff, 0x0b, 0x50, 0x50, 0x49, 0xff, 0xfb, 0xfb, 0xfb, 0xfb,
+            0xfb, 0xfb, 0xfb, 0xfb, 0x00, 0x00, 0x00, 0x00, 0xf3, 0xff, 0x55, 0xff, 0xd8, 0xff,
+            0x89, 0x50, 0x4e, 0x47, 0x52, 0x49, 0x46, 0x51, 0x42, 0x45, 0x57, 0x46, 0xff, 0xff,
+            0x00, 0xff, 0xff, 0xd8, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xdf, 0xff, 0xd8, 0xe5,
+            0xe5, 0xe5, 0xe5, 0xe5, 0xe5, 0xe5, 0xe5, 0xe5, 0xe5, 0xe5, 0xe5, 0xe5, 0xe5, 0xe5,
+            0xe5, 0xe5, 0xe5, 0xff, 0xff, 0xff, 0xff, 0xff, 0x52, 0x00, 0x04, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xe5, 0xe5, 0xe5, 0xe5, 0xe5, 0xe5, 0xec,
+            0xe5, 0xe5, 0xe5, 0xe5, 0x50, 0x4e, 0x47, 0xda, 0x3a, 0x10, 0xff, 0x60, 0xff, 0xff,
+            0x53, 0x00, 0x00, 0x00, 0x52, 0x49, 0x46, 0x46, 0xe5, 0xe5, 0xe5, 0xe5, 0xe5, 0xe5,
+            0xff, 0xff, 0xff, 0xff, 0xff, 0x52, 0x00, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0xe5, 0xe5, 0xe5, 0xe5, 0xe5, 0xe5, 0xec, 0xe5, 0xe5, 0xe5,
+            0xe5, 0x50, 0x4e, 0x47, 0xda, 0x00, 0x10, 0xff, 0x60, 0xff, 0xff, 0xeb, 0x00, 0x27,
+            0xc2, 0xb8, 0x00, 0x00, 0xff, 0xff, 0xff, 0x0b, 0x50, 0x52, 0x49, 0xff, 0xa3, 0x01,
+            0x00, 0x00, 0x00, 0xc2, 0xb8, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x07,
+            0x28, 0xa4, 0x0d, 0x0a, 0xff, 0x60, 0xff, 0xff, 0xff, 0xff, 0xff, 0x24, 0xff, 0xff,
+            0xff, 0x44, 0xff, 0xff, 0xff, 0x00, 0x00, 0x00, 0x00, 0x00, 0xa3, 0x54, 0xe5, 0xe5,
+            0xe5, 0xe5, 0x50, 0x4e, 0x47, 0xda, 0x3a, 0x10, 0xff, 0x60, 0xff, 0xff, 0xeb, 0x00,
+            0x27, 0xc2, 0xb8, 0xe5, 0xe5, 0xe5, 0xe5, 0xe5, 0xe5, 0xe5, 0xe5, 0xe5, 0xff, 0xff,
+            0xff, 0xff, 0xff, 0x52, 0x00, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0xe5, 0xe5, 0xe5, 0xe5, 0xe5, 0xe5, 0xec, 0xe5, 0xe5, 0xe5, 0xe5, 0x50,
+            0x4e, 0x47, 0xda, 0x00, 0x10, 0xff, 0x60, 0xff, 0xff, 0xeb, 0x00, 0x27, 0xc2, 0xb8,
+            0x00, 0x00, 0xff, 0xff, 0xff, 0x0b, 0x89, 0x50, 0x4e, 0x47, 0x53, 0x00, 0x00, 0x00,
+            0x52, 0x49, 0x46, 0x46, 0x0d, 0x0a, 0x1a, 0x0a, 0x50, 0x52, 0x49, 0xff, 0xa3, 0x01,
+            0x00, 0x00, 0x00, 0xc2, 0xb8, 0xff, 0x07, 0xff, 0x60, 0x25, 0xff, 0xff, 0xff, 0xff,
+            0xdf, 0x24, 0xff, 0xff, 0x00, 0x00, 0xf3, 0xff, 0xff, 0x24, 0xff, 0xff, 0xfb, 0xfb,
+            0xfb, 0xfb, 0xfb, 0xfb, 0xfb, 0xfb, 0xfb, 0xfb, 0xfb, 0xfb, 0xfb, 0xfb, 0xfb, 0x00,
+            0x27, 0xc2, 0xff, 0xd9, 0xff, 0x00, 0xff, 0xff,
+        ];
+
+        let mut stream = Cursor::new(&data);
+
+        let jpeg_io = JpegIO {};
+
+        let result = jpeg_io.get_object_locations_from_stream(&mut stream);
+        assert!(matches!(result, Err(Error::InvalidAsset(_))));
+    }
+
+    #[test]
+    fn test_crash_jpeg_segments() {
+        let data = [
+            0xff, 0xd8, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x01, 0x00, 0x00, 0x47,
+            0xd2, 0x00, 0x10, 0xff, 0x60, 0xff, 0xff, 0xeb, 0x00, 0x27, 0xc2, 0xb8, 0xff, 0xd8,
+            0xff, 0xff, 0x60, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+            0xff, 0xff, 0x60, 0xff, 0x4e, 0x4e, 0x4e, 0xff, 0x00, 0x00, 0x2b, 0xff, 0xff, 0xff,
+            0xff, 0xff, 0xff, 0xff, 0xff, 0x3d, 0xff, 0xff, 0x00, 0xff, 0x5c, 0xff, 0xff, 0xda,
+            0x00, 0x02, 0x00, 0x01, 0x00, 0xff, 0x0b, 0x50, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+            0xff, 0x10, 0x00, 0x00, 0x59, 0x00, 0x00, 0x00, 0x00, 0x04, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0xdf, 0xdf, 0x52, 0x49, 0x46, 0x46, 0xff, 0xff, 0xff, 0xff, 0x3d, 0xff,
+            0xff, 0x00, 0xff, 0x5c, 0x4b, 0x4e, 0x60, 0xff, 0xff, 0x00, 0x00, 0x2b, 0xff, 0xff,
+            0x3d, 0xff, 0xff, 0x00, 0xff, 0x5c, 0xff, 0xff, 0xda, 0x00, 0x10, 0x00, 0x00, 0x59,
+            0x00, 0x00, 0x00, 0x00, 0xfd, 0x00, 0x00, 0x00, 0x07, 0x60, 0xff, 0xff, 0xff, 0xff,
+            0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x60, 0xff, 0x4e, 0x4e, 0x4e,
+            0xff, 0x00, 0x00, 0x2b, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x3d, 0xff,
+            0xff, 0x00, 0xff, 0x5c, 0xff, 0xff, 0xda, 0x00, 0x10, 0x00, 0x00, 0x59, 0x00, 0x00,
+            0x00, 0x00, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xdf, 0xdf, 0x52, 0x49, 0x46,
+            0x46, 0x25, 0x00, 0x00, 0xdf, 0xdf, 0x52, 0x49, 0x46, 0xad, 0x46, 0x6f, 0x00, 0x6f,
+            0x00,
+        ];
+
+        let mut stream = Cursor::new(&data);
+
+        let jpeg_io = JpegIO {};
+
+        let _ = jpeg_io.get_object_locations_from_stream(&mut stream);
     }
 }

@@ -1,13 +1,16 @@
 /target/
 
-Cargo.lock
-
 **/*.rs.bk
+**/*.tmp*
 
 .DS_Store
 .idea
+.secrets
 .cargo/config.toml
 
 .vscode
 
 /semver-checks/target/
+
+# Unit test output lands here. TO DO: Fix
+cli/target

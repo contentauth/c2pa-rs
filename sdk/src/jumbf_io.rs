@@ -36,7 +36,7 @@ use crate::{
 
 // initialize asset handlers
 lazy_static! {
-    static ref ASSET_HANDLERS: HashMap<String, Box<dyn AssetIO>> = {
+    static ref CAI_READERS: HashMap<String, Box<dyn AssetIO>> = {
         let handlers: Vec<Box<dyn AssetIO>> = vec![
             #[cfg(feature = "pdf")]
             Box::new(PdfIO::new("")),
@@ -154,19 +154,19 @@ pub fn save_jumbf_to_memory(asset_type: &str, data: &[u8], store_bytes: &[u8]) -
 pub(crate) fn get_assetio_handler_from_path(asset_path: &Path) -> Option<&dyn AssetIO> {
     let ext = get_file_extension(asset_path)?;
 
-    ASSET_HANDLERS.get(&ext).map(|h| h.as_ref())
+    CAI_READERS.get(&ext).map(|h| h.as_ref())
 }
 
 pub(crate) fn get_assetio_handler(ext: &str) -> Option<&dyn AssetIO> {
     let ext = ext.to_lowercase();
 
-    ASSET_HANDLERS.get(&ext).map(|h| h.as_ref())
+    CAI_READERS.get(&ext).map(|h| h.as_ref())
 }
 
 pub(crate) fn get_cailoader_handler(asset_type: &str) -> Option<&dyn CAIReader> {
     let asset_type = asset_type.to_lowercase();
 
-    ASSET_HANDLERS.get(&asset_type).map(|h| h.get_reader())
+    CAI_READERS.get(&asset_type).map(|h| h.get_reader())
 }
 
 pub(crate) fn get_caiwriter_handler(asset_type: &str) -> Option<&dyn CAIWriter> {
@@ -188,36 +188,54 @@ pub(crate) fn get_file_extension(path: &Path) -> Option<String> {
 pub(crate) fn get_supported_file_extension(path: &Path) -> Option<String> {
     let ext = get_file_extension(path)?;
 
-    if ASSET_HANDLERS.get(&ext).is_some() {
+    if CAI_READERS.get(&ext).is_some() {
         Some(ext)
     } else {
         None
     }
 }
 
+/// Returns a [Vec<String>] of supported mime types for reading manifests.
+pub(crate) fn supported_reader_mime_types() -> Vec<String> {
+    CAI_READERS.keys().map(String::to_owned).collect()
+}
+
+/// Returns a [Vec<String>] of mime types that [c2pa-rs] is able to sign.
+pub(crate) fn supported_builder_mime_types() -> Vec<String> {
+    CAI_WRITERS.keys().map(String::to_owned).collect()
+}
+
 #[cfg(feature = "file_io")]
-/// save_jumbf to a file
-/// in_path - path is source file
-/// out_path - path to the output file
+/// Save JUMBF data to a file.
+///
+/// Parameters:
+/// * save_jumbf to a file
+/// * in_path - path is source file
+/// * out_path - path to the output file
+///
 /// If no output file is given an new file will be created with "-c2pa" appending to file name e.g. "test.jpg" => "test-c2pa.jpg"
 /// If input == output then the input file will be overwritten.
-pub fn save_jumbf_to_file(data: &[u8], in_path: &Path, out_path: Option<&Path>) -> Result<()> {
-    let ext = get_file_extension(in_path).ok_or(Error::UnsupportedType)?;
+pub fn save_jumbf_to_file<P1: AsRef<Path>, P2: AsRef<Path>>(
+    data: &[u8],
+    in_path: P1,
+    out_path: Option<P2>,
+) -> Result<()> {
+    let ext = get_file_extension(in_path.as_ref()).ok_or(Error::UnsupportedType)?;
 
     // if no output path make a new file based off of source file name
-    let asset_out_path: PathBuf = match out_path {
-        Some(p) => p.to_owned(),
+    let asset_out_path: PathBuf = match out_path.as_ref() {
+        Some(p) => p.as_ref().to_owned(),
         None => {
-            let filename_osstr = in_path.file_stem().ok_or(Error::UnsupportedType)?;
+            let filename_osstr = in_path.as_ref().file_stem().ok_or(Error::UnsupportedType)?;
             let filename = filename_osstr.to_str().ok_or(Error::UnsupportedType)?;
 
             let out_name = format!("{filename}-c2pa.{ext}");
-            in_path.to_owned().with_file_name(out_name)
+            in_path.as_ref().to_owned().with_file_name(out_name)
         }
     };
 
     // clone output to be overwritten
-    if in_path != asset_out_path {
+    if in_path.as_ref() != asset_out_path {
         fs::copy(in_path, &asset_out_path).map_err(Error::IoError)?;
     }
 
@@ -247,7 +265,7 @@ pub fn save_jumbf_to_file(data: &[u8], in_path: &Path, out_path: Option<&Path>) 
 /// search_bytes - bytes to be replaced
 /// replace_bytes - replacement bytes
 /// returns the location where splice occurred
-#[cfg(test)] // this only used in unit tests
+#[allow(dead_code)] // this only used in Store unit tests, update this when those tests are updated
 #[cfg(feature = "file_io")]
 pub(crate) fn update_file_jumbf(
     out_path: &Path,
@@ -267,21 +285,11 @@ pub(crate) fn update_file_jumbf(
 
 #[cfg(feature = "file_io")]
 /// load the JUMBF block from an asset if available
-pub fn load_jumbf_from_file(in_path: &Path) -> Result<Vec<u8>> {
-    let ext = get_file_extension(in_path).ok_or(Error::UnsupportedType)?;
+pub fn load_jumbf_from_file<P: AsRef<Path>>(in_path: P) -> Result<Vec<u8>> {
+    let ext = get_file_extension(in_path.as_ref()).ok_or(Error::UnsupportedType)?;
 
     match get_assetio_handler(&ext) {
-        Some(asset_handler) => asset_handler.read_cai_store(in_path),
-        _ => Err(Error::UnsupportedType),
-    }
-}
-
-#[cfg(feature = "file_io")]
-pub(crate) fn object_locations(in_path: &Path) -> Result<Vec<HashObjectPositions>> {
-    let ext = get_file_extension(in_path).ok_or(Error::UnsupportedType)?;
-
-    match get_assetio_handler(&ext) {
-        Some(asset_handler) => asset_handler.get_object_locations(in_path),
+        Some(asset_handler) => asset_handler.read_cai_store(in_path.as_ref()),
         _ => Err(Error::UnsupportedType),
     }
 }
@@ -308,6 +316,7 @@ where
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn object_locations_from_stream<R>(
     format: &str,
     stream: &mut R,
@@ -316,32 +325,45 @@ where
     R: Read + Seek + Send + ?Sized,
 {
     let mut reader = CAIReadAdapter { reader: stream };
-
     match get_caiwriter_handler(format) {
         Some(handler) => handler.get_object_locations_from_stream(&mut reader),
         _ => Err(Error::UnsupportedType),
     }
 }
 
-#[cfg(feature = "file_io")]
+#[cfg(target_arch = "wasm32")]
+pub(crate) fn object_locations_from_stream<R>(
+    format: &str,
+    stream: &mut R,
+) -> Result<Vec<HashObjectPositions>>
+where
+    R: Read + Seek + ?Sized,
+{
+    let mut reader = CAIReadAdapter { reader: stream };
+    match get_caiwriter_handler(format) {
+        Some(handler) => handler.get_object_locations_from_stream(&mut reader),
+        _ => Err(Error::UnsupportedType),
+    }
+}
+
 /// removes the C2PA JUMBF from an asset
 /// Note: Use with caution since this deletes C2PA data
 /// It is useful when creating remote manifests from embedded manifests
 ///
 /// path - path to file to be updated
 /// returns Unsupported type or errors from remove_cai_store
-#[allow(dead_code)]
-pub fn remove_jumbf_from_file(path: &Path) -> Result<()> {
-    let ext = get_file_extension(path).ok_or(Error::UnsupportedType)?;
+#[cfg(feature = "file_io")]
+pub fn remove_jumbf_from_file<P: AsRef<Path>>(path: P) -> Result<()> {
+    let ext = get_file_extension(path.as_ref()).ok_or(Error::UnsupportedType)?;
     match get_assetio_handler(&ext) {
-        Some(asset_handler) => asset_handler.remove_cai_store(path),
+        Some(asset_handler) => asset_handler.remove_cai_store(path.as_ref()),
         _ => Err(Error::UnsupportedType),
     }
 }
 
 /// returns a list of supported file extensions and mime types
 pub fn get_supported_types() -> Vec<String> {
-    ASSET_HANDLERS.keys().map(|k| k.to_owned()).collect()
+    CAI_READERS.keys().map(|k| k.to_owned()).collect()
 }
 
 #[cfg(test)]
@@ -354,7 +376,8 @@ pub mod tests {
     use super::*;
     use crate::{
         asset_io::RemoteRefEmbedType,
-        utils::test::{create_test_store, temp_signer},
+        crypto::raw_signature::SigningAlg,
+        utils::{test::create_test_store, test_signer::test_signer},
     };
 
     #[test]
@@ -427,6 +450,28 @@ pub mod tests {
     }
 
     #[test]
+    fn test_get_writer_tiff() {
+        let h = TiffIO::new("");
+        // Writing native formats is beyond the scope of the SDK.
+        // Only the following are supported.
+        let supported_tiff_types: [&str; 6] = [
+            "tif",
+            "tiff",
+            "image/tiff",
+            "dng",
+            "image/dng",
+            "image/x-adobe-dng",
+        ];
+        for tiff_type in h.supported_types() {
+            if supported_tiff_types.contains(tiff_type) {
+                assert!(get_caiwriter_handler(tiff_type).is_some());
+            } else {
+                assert!(get_caiwriter_handler(tiff_type).is_none());
+            }
+        }
+    }
+
+    #[test]
     fn test_get_supported_list() {
         let supported = get_supported_types();
 
@@ -452,7 +497,7 @@ pub mod tests {
     fn test_jumbf(asset_type: &str, reader: &mut dyn CAIRead) {
         let mut writer = Cursor::new(Vec::new());
         let store = create_test_store().unwrap();
-        let signer = temp_signer();
+        let signer = test_signer(SigningAlg::Ps256);
         let jumbf = store.to_jumbf(&*signer).unwrap();
         save_jumbf_to_stream(asset_type, reader, &mut writer, &jumbf).unwrap();
         writer.set_position(0);

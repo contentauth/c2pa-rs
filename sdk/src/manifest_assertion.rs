@@ -121,8 +121,8 @@ impl ManifestAssertion {
     ///
     /// # Example: Creating a custom assertion from a serde_json object.
     ///
-    ///```
-    /// # use c2pa::Result;
+    /// ```
+    /// # use c2pa::Result;    
     /// use c2pa::ManifestAssertion;
     /// use serde_json::json;
     /// # fn main() -> Result<()> {
@@ -137,7 +137,7 @@ impl ManifestAssertion {
     ) -> Result<Self> {
         Ok(Self::new(
             label.into(),
-            serde_json::to_value(data).map_err(|_err| Error::AssertionEncoding)?,
+            serde_json::to_value(data).map_err(|err| Error::AssertionEncoding(err.to_string()))?,
         ))
     }
 
@@ -146,7 +146,8 @@ impl ManifestAssertion {
         Ok(Self {
             label: label.into(),
             data: ManifestData::Binary(
-                serde_cbor::to_vec(data).map_err(|_err| Error::AssertionEncoding)?,
+                serde_cbor::to_vec(data)
+                    .map_err(|err| Error::AssertionEncoding(err.to_string()))?,
             ),
             instance: None,
             kind: Some(ManifestAssertionKind::Cbor),
@@ -157,7 +158,7 @@ impl ManifestAssertion {
     ///
     /// # Example: Creating a custom assertion an Action assertion
     ///
-    ///```
+    /// ```
     /// # use c2pa::Result;
     /// use c2pa::{
     ///     assertions::{c2pa_action, Action, Actions},
@@ -172,7 +173,7 @@ impl ManifestAssertion {
     pub fn from_assertion<T: Serialize + AssertionBase>(data: &T) -> Result<Self> {
         Ok(Self::new(
             data.label().to_owned(),
-            serde_json::to_value(data).map_err(|_err| Error::AssertionEncoding)?,
+            serde_json::to_value(data).map_err(|err| Error::AssertionEncoding(err.to_string()))?,
         ))
     }
 

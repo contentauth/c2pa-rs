@@ -100,6 +100,7 @@ impl fmt::Display for UriT {
     }
 }
 
+#[allow(dead_code)]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BytesT(pub Vec<u8>);
 
@@ -140,6 +141,23 @@ impl fmt::Display for BytesT {
             "{}",
             format!("{:02x?}", &self.0.to_vec()).replace(',', "")
         )
+    }
+}
+
+// Convert map member to concrete value.  mp must be a Value::Map, key is the value of
+// the map you would like to extract
+pub(crate) fn map_cbor_to_type<T: serde::de::DeserializeOwned>(
+    key: &str,
+    mp: &serde_cbor::Value,
+) -> Option<T> {
+    if let serde_cbor::Value::Map(m) = mp {
+        let k = serde_cbor::Value::Text(key.to_string());
+        let v = m.get(&k)?;
+        let v_bytes = serde_cbor::ser::to_vec(v).ok()?;
+        let output: T = serde_cbor::from_slice(&v_bytes).ok()?;
+        Some(output)
+    } else {
+        None
     }
 }
 

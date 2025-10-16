@@ -22,7 +22,7 @@ use crate::{
     asset_io::{AssetBoxHash, CAIRead},
     error::{Error, Result},
     utils::hash_utils::{hash_stream_by_alg, verify_stream_by_alg, HashRange},
-    validation_status::ASSERTION_BOXHASH_UNKNOWN,
+    validation_results::validation_codes::ASSERTION_BOXHASH_UNKNOWN_BOX,
 };
 
 const ASSERTION_CREATION_VERSION: usize = 1;
@@ -37,13 +37,17 @@ pub struct BoxMap {
     pub alg: Option<String>,
 
     pub hash: ByteBuf,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub excluded: Option<bool>,
+
     pub pad: ByteBuf,
 
     #[serde(skip)]
-    pub range_start: usize,
+    pub range_start: u64,
 
     #[serde(skip)]
-    pub range_len: usize,
+    pub range_len: u64,
 }
 
 /// Helper class to create BoxHash assertion
@@ -88,7 +92,8 @@ impl BoxHash {
             return Err(Error::HashMismatch("No box hash found".to_string()));
         }
 
-        // get source box list
+        // get source box list, the source list is returned expanded
+        // to show each box as an individual entry
         let source_bms = bhp.get_box_map(reader)?;
         let mut source_index = 0;
 
@@ -106,7 +111,7 @@ impl BoxHash {
 
             // build up current inclusion, consuming all names in this BoxMap
             let mut skip_c2pa = false;
-            let mut inclusion = HashRange::new(0, 0);
+            let mut inclusion = HashRange::new(0u64, 0u64);
             for name in &bm.names {
                 match source_bms.get(source_index) {
                     Some(next_source_bm) => {
@@ -133,16 +138,24 @@ impl BoxHash {
                                 inclusion.set_length(len_to_this_seg + next_source_bm.range_len);
                             }
                         } else {
-                            return Err(Error::HashMismatch(ASSERTION_BOXHASH_UNKNOWN.to_owned()));
+                            return Err(Error::HashMismatch(
+                                ASSERTION_BOXHASH_UNKNOWN_BOX.to_owned(),
+                            ));
                         }
                     }
-                    None => return Err(Error::HashMismatch(ASSERTION_BOXHASH_UNKNOWN.to_owned())),
+                    None => {
+                        return Err(Error::HashMismatch(
+                            ASSERTION_BOXHASH_UNKNOWN_BOX.to_owned(),
+                        ))
+                    }
                 }
                 source_index += 1;
             }
 
             // C2PA chunks are skipped for hashing purposes
-            if skip_c2pa {
+            // or if the box is explicitly excluded
+            let exclude = bm.excluded.unwrap_or(false);
+            if skip_c2pa || exclude {
                 continue;
             }
 
@@ -180,6 +193,7 @@ impl BoxHash {
                 names: Vec::new(),
                 alg: Some(alg.to_string()),
                 hash: ByteBuf::from(vec![]),
+                excluded: None,
                 pad: ByteBuf::from(vec![]),
                 range_start: 0,
                 range_len: 0,
@@ -189,6 +203,7 @@ impl BoxHash {
                 names: Vec::new(),
                 alg: Some(alg.to_string()),
                 hash: ByteBuf::from(vec![]),
+                excluded: None,
                 pad: ByteBuf::from(vec![]),
                 range_start: 0,
                 range_len: 0,
@@ -198,6 +213,7 @@ impl BoxHash {
                 names: Vec::new(),
                 alg: Some(alg.to_string()),
                 hash: ByteBuf::from(vec![]),
+                excluded: None,
                 pad: ByteBuf::from(vec![]),
                 range_start: 0,
                 range_len: 0,
@@ -237,7 +253,22 @@ impl BoxHash {
                 }
             }
 
-            self.boxes = vec![before_c2pa, c2pa_box, after_c2pa];
+            // Instead of assuming we can combine all of the different ranges of
+            // box hashes, we will check the bounds of each one
+            let mut boxes = Vec::<BoxMap>::new();
+            // Only add if we have some before the C2PA box
+            if before_c2pa.range_len > 0 {
+                boxes.push(before_c2pa);
+            }
+            // Do the same for the actual C2PA box
+            if c2pa_box.range_len > 0 {
+                boxes.push(c2pa_box);
+            }
+            // And finally, add the boxes after the C2PA box
+            if after_c2pa.range_len > 0 {
+                boxes.push(after_c2pa);
+            }
+            self.boxes = boxes;
 
             // compute the hashes
             for bm in self.boxes.iter_mut() {
@@ -456,5 +487,164 @@ mod tests {
         reloaded_bh
             .verify_stream_hash(&mut input, Some("sha256"), bhp)
             .unwrap();
+    }
+
+    // Setup a mock for the AssetBoxHash trait
+    mockall::mock! {
+        pub MABH { }
+        impl AssetBoxHash for MABH {
+            fn get_box_map(&self, reader: &mut dyn CAIRead) -> Result<Vec<BoxMap>>;
+        }
+    }
+
+    #[test]
+    fn test_with_no_box_hashes_after_c2pa() {
+        // Algorithm to use
+        let alg = "sha256";
+        // Create a mock object
+        let mut mock = MockMABH::new();
+        // Setup the expectation when asked for the box map
+        mock.expect_get_box_map().returning(|_| {
+            Ok(vec![
+                // Make sure the first one is the C2PA box
+                BoxMap {
+                    names: vec!["C2PA".to_string()],
+                    alg: Some(alg.to_string()),
+                    hash: ByteBuf::from(vec![0]),
+                    excluded: None,
+                    pad: ByteBuf::from(vec![]),
+                    range_start: 0,
+                    range_len: 10,
+                },
+                // And follow with
+                BoxMap {
+                    names: vec!["test".to_string()],
+                    alg: Some(alg.to_string()),
+                    hash: ByteBuf::from(vec![0]),
+                    excluded: None,
+                    pad: ByteBuf::from(vec![]),
+                    range_start: 10,
+                    range_len: 10,
+                },
+            ])
+        });
+        // The data size must match what we return in the expectation
+        let data = vec![0u8; 20];
+        // And create a reader on that data, for the API call
+        let mut reader = Cursor::new(data);
+        // Create the BoxHash object
+        let mut bh = BoxHash { boxes: Vec::new() };
+        // And generate the box hashes
+        let result = bh.generate_box_hash_from_stream(&mut reader, alg, &mock, true);
+        // We should expect an OK result
+        assert!(result.is_ok());
+        // With a total of 2 boxes
+        assert_eq!(bh.boxes.len(), 2);
+        assert_eq!(bh.boxes[0].names[0], "C2PA");
+        assert_eq!(bh.boxes[1].names[0], "test");
+    }
+
+    #[test]
+    fn test_with_no_box_hashes_before_c2pa() {
+        // Algorithm to use
+        let alg = "sha256";
+        // Create a mock object
+        let mut mock = MockMABH::new();
+        // Setup the expectation when asked for the box map
+        mock.expect_get_box_map().returning(|_| {
+            Ok(vec![
+                // And follow with
+                BoxMap {
+                    names: vec!["test".to_string()],
+                    alg: Some(alg.to_string()),
+                    hash: ByteBuf::from(vec![0]),
+                    excluded: None,
+                    pad: ByteBuf::from(vec![]),
+                    range_start: 0,
+                    range_len: 10,
+                },
+                // Make sure the first one is the C2PA box
+                BoxMap {
+                    names: vec!["C2PA".to_string()],
+                    alg: Some(alg.to_string()),
+                    hash: ByteBuf::from(vec![0]),
+                    excluded: None,
+                    pad: ByteBuf::from(vec![]),
+                    range_start: 10,
+                    range_len: 10,
+                },
+            ])
+        });
+        // The data size must match what we return in the expectation
+        let data = vec![0u8; 20];
+        // And create a reader on that data, for the API call
+        let mut reader = Cursor::new(data);
+        // Create the BoxHash object
+        let mut bh = BoxHash { boxes: Vec::new() };
+        // And generate the box hashes
+        let result = bh.generate_box_hash_from_stream(&mut reader, alg, &mock, true);
+        // We should expect an OK result
+        assert!(result.is_ok());
+        // With a total of 2 boxes
+        assert_eq!(bh.boxes.len(), 2);
+        assert_eq!(bh.boxes[0].names[0], "test");
+        assert_eq!(bh.boxes[1].names[0], "C2PA");
+    }
+
+    #[test]
+    fn test_with_no_box_hashes_before_and_after_c2pa() {
+        // Algorithm to use
+        let alg = "sha256";
+        // Create a mock object
+        let mut mock = MockMABH::new();
+        // Setup the expectation when asked for the box map
+        mock.expect_get_box_map().returning(|_| {
+            Ok(vec![
+                // And follow with
+                BoxMap {
+                    names: vec!["test".to_string()],
+                    alg: Some(alg.to_string()),
+                    hash: ByteBuf::from(vec![0]),
+                    excluded: None,
+                    pad: ByteBuf::from(vec![]),
+                    range_start: 0,
+                    range_len: 10,
+                },
+                // Make sure the first one is the C2PA box
+                BoxMap {
+                    names: vec!["C2PA".to_string()],
+                    alg: Some(alg.to_string()),
+                    hash: ByteBuf::from(vec![0]),
+                    excluded: None,
+                    pad: ByteBuf::from(vec![]),
+                    range_start: 10,
+                    range_len: 10,
+                },
+                BoxMap {
+                    names: vec!["test1".to_string()],
+                    alg: Some(alg.to_string()),
+                    hash: ByteBuf::from(vec![0]),
+                    excluded: None,
+                    pad: ByteBuf::from(vec![]),
+                    range_start: 20,
+                    range_len: 10,
+                },
+            ])
+        });
+        // The data size must match what we return in the expectation
+        let data = vec![0u8; 30];
+        // And create a reader on that data, for the API call
+        let mut reader = Cursor::new(data);
+        // Create the BoxHash object
+        let mut bh = BoxHash { boxes: Vec::new() };
+        // And generate the box hashes
+        let result = bh.generate_box_hash_from_stream(&mut reader, alg, &mock, true);
+        // We should expect an OK result
+        assert!(result.is_ok());
+        // With a total of 2 boxes
+        assert_eq!(bh.boxes.len(), 3);
+        assert_eq!(bh.boxes[0].names[0], "test");
+        assert_eq!(bh.boxes[1].names[0], "C2PA");
+        assert_eq!(bh.boxes[2].names[0], "test1");
     }
 }

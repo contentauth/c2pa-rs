@@ -1,0 +1,23 @@
+{
+    "ta_url": "http://timestamp.digicert.com",
+    
+    "claim_generator": "TestApp/0.0.1",
+    "claim_generator_info": [{
+        "name": "Test App",
+        "version": "0.0.1"
+    }],
+    "assertions": [
+        {
+            "label": "c2pa.training-mining",
+            "data": {
+                "entries": {
+                    "c2pa.ai_generative_training": { "use": "notAllowed" },
+                    "c2pa.ai_inference": { "use": "notAllowed" },
+                    "c2pa.ai_training": { "use": "notAllowed" },
+                    "c2pa.data_mining": { "use": "notAllowed" }
+                }
+            }
+        }
+    ]
+}
+        

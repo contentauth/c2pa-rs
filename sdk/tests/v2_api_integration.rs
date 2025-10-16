@@ -13,13 +13,13 @@
 
 /// Complete functional integration test with acquisitions and ingredients.
 //  Isolate from wasm by wrapping in module.
-#[cfg(not(target_arch = "wasm32"))] // wasm doesn't support ed25519 yet
 mod integration_v2 {
-
     use std::io::{Cursor, Seek};
 
     use anyhow::Result;
-    use c2pa::{Builder, CallbackSigner, Reader, SigningAlg};
+    use c2pa::{
+        crypto::raw_signature::SigningAlg, settings::Settings, Builder, CallbackSigner, Reader,
+    };
     use serde_json::json;
 
     const PARENT_JSON: &str = r#"
@@ -59,7 +59,11 @@ mod integration_v2 {
                 "title": "Test",
                 "format": "image/jpeg",
                 "instance_id": "12345",
-                "relationship": "inputTo"
+                "relationship": "inputTo",
+                "metadata": {
+                    "dateTime": "1985-04-12T23:20:50.52Z",
+                    "my_custom_metadata": "my custom metatdata value"
+                }
             }
         ],
         "assertions": [
@@ -68,9 +72,71 @@ mod integration_v2 {
                 "data": {
                     "actions": [
                         {
-                            "action": "c2pa.edited",
+                            "action": "c2pa.created",
                             "digitalSourceType": "http://cv.iptc.org/newscodes/digitalsourcetype/trainedAlgorithmicMedia",
-                            "softwareAgent": "Adobe Firefly 0.1.0"
+                            "softwareAgent": {
+                                "name": "Adobe Firefly",
+                                "version": "0.1.0",
+                            },
+                            "description": "This image was edited by Adobe Firefly",
+                            "when": "2025-04-22T17:25:28Z",
+                            "parameters": {
+                                "description": "This image was edited by Adobe Firefly",
+                            },
+                            "softwareAgentIndex": 0,
+                        }
+                    ],
+                    "softwareAgents": [
+                        {
+                            "name": "Adobe Firefly",
+                        }
+                    ]
+                }
+            },
+            {
+                "label": "c2pa.metadata",
+                "data": {
+                    "@context" : {
+                        "exif": "http://ns.adobe.com/exif/1.0/",
+                        "exifEX": "http://cipa.jp/exif/1.0/",
+                        "tiff": "http://ns.adobe.com/tiff/1.0/",
+                        "Iptc4xmpExt": "http://iptc.org/std/Iptc4xmpExt/2008-02-29/",
+                        "photoshop" : "http://ns.adobe.com/photoshop/1.0/"
+                    },
+                    "photoshop:DateCreated": "Aug 31, 2022",
+                    "Iptc4xmpExt:DigitalSourceType": "https://cv.iptc.org/newscodes/digitalsourcetype/digitalCapture",
+                    "exif:GPSVersionID": "2.2.0.0",
+                    "exif:GPSLatitude": "39,21.102N",
+                    "exif:GPSLongitude": "74,26.5737W",
+                    "exif:GPSAltitudeRef": 0,
+                    "exif:GPSAltitude": "100963/29890",
+                    "exifEX:LensSpecification": { "@list": [ 1.55, 4.2, 1.6, 2.4 ] }
+                },
+                "kind": "Json"
+            },
+            {
+                "label": "c2pa.soft-binding",
+                "data": {
+                    "alg": "phash",
+                    "pad": [0],
+                    "blocks": [
+                        {
+                            "scope": {
+                                "timespan": {
+                                    "end": 133016,
+                                    "start": 0,
+                                }
+                            },
+                            "value": "dmFsdWUxCg=="
+                        },
+                        {
+                            "scope": {
+                                "timespan": {
+                                    "end": 245009,
+                                    "start": 133017,
+                                }
+                            },
+                            "value": "ZG1Gc2RXVXlDZz09=="
                         }
                     ]
                 }
@@ -89,8 +155,10 @@ mod integration_v2 {
 
         // don't try to verify on wasm since it doesn't support ed25519 yet
 
+        Settings::from_toml(include_str!("fixtures/test_settings.toml"))?;
+
         let mut builder = Builder::from_json(&json)?;
-        builder.add_ingredient(PARENT_JSON, format, &mut source)?;
+        builder.add_ingredient_from_stream(PARENT_JSON, format, &mut source)?;
 
         // add a manifest thumbnail ( just reuse the image for now )
         source.rewind()?;
@@ -120,6 +188,14 @@ mod integration_v2 {
             dest
         };
 
+        #[cfg(not(target_os = "wasi"))]
+        {
+            // write dest to file for debugging
+            let debug_path = format!("{}/../target/v2_test.jpg", env!("CARGO_MANIFEST_DIR"));
+            std::fs::write(debug_path, dest.get_ref())?;
+            dest.rewind()?;
+        }
+
         let reader = Reader::from_stream(format, &mut dest)?;
 
         // extract a thumbnail image from the ManifestStore
@@ -136,7 +212,7 @@ mod integration_v2 {
         }
 
         println!("{}", reader.json());
-        assert!(reader.validation_status().is_none());
+        assert_eq!(reader.validation_status(), None);
         assert_eq!(reader.active_manifest().unwrap().title().unwrap(), title);
 
         Ok(())
@@ -148,13 +224,14 @@ mod integration_v2 {
 
         // Parse the PEM data to get the private key
         let pem = parse(private_key).map_err(|e| c2pa::Error::OtherError(Box::new(e)))?;
+
         // For Ed25519, the key is 32 bytes long, so we skip the first 16 bytes of the PEM data
         let key_bytes = &pem.contents()[16..];
         let signing_key =
             SigningKey::try_from(key_bytes).map_err(|e| c2pa::Error::OtherError(Box::new(e)))?;
+
         // Sign the data
         let signature: Signature = signing_key.sign(data);
-
         Ok(signature.to_bytes().to_vec())
     }
 }

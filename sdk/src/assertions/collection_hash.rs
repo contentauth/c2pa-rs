@@ -139,12 +139,7 @@ impl CollectionHash {
             uri_map.hash = Some(hash_stream_by_alg(
                 &alg,
                 &mut file,
-                Some(vec![HashRange::new(
-                    0,
-                    usize::try_from(file_len).map_err(|_| {
-                        Error::BadParam(format!("Value {} out of usize range", file_len))
-                    })?,
-                )]),
+                Some(vec![HashRange::new(0, file_len)]),
                 false,
             )?);
         }
@@ -173,12 +168,7 @@ impl CollectionHash {
                         alg,
                         hash,
                         &mut file,
-                        Some(vec![HashRange::new(
-                            0,
-                            usize::try_from(file_len).map_err(|_| {
-                                Error::BadParam(format!("Value {} out of usize range", file_len))
-                            })?,
-                        )]),
+                        Some(vec![HashRange::new(0, file_len)]),
                         false,
                     ) {
                         return Err(Error::HashMismatch(format!(
@@ -399,12 +389,7 @@ where
     let start = reader.central_directory_start();
     let length = length - start;
 
-    Ok(HashRange::new(
-        usize::try_from(start)
-            .map_err(|_| Error::BadParam(format!("Value {} out of usize range", start)))?,
-        usize::try_from(length)
-            .map_err(|_| Error::BadParam(format!("Value {} out of usize range", length)))?,
-    ))
+    Ok(HashRange::new(start, length))
 }
 
 pub fn zip_uri_ranges<R>(stream: &mut R) -> Result<HashMap<PathBuf, UriHashedDataMap>>
@@ -435,17 +420,7 @@ where
                                 size: Some(len),
                                 dc_format: format,
                                 data_types: None,
-                                zip_hash_range: Some(HashRange::new(
-                                    usize::try_from(start).map_err(|_| {
-                                        Error::BadParam(format!(
-                                            "Value {} out of usize range",
-                                            start
-                                        ))
-                                    })?,
-                                    usize::try_from(len).map_err(|_| {
-                                        Error::BadParam(format!("Value {} out of usize range", len))
-                                    })?,
-                                )),
+                                zip_hash_range: Some(HashRange::new(start, len)),
                             },
                         );
                     }

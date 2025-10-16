@@ -53,7 +53,7 @@ pub struct DataHash {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pad2: Option<serde_bytes::ByteBuf>,
 
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing)]
     pub url: Option<UriT>,
 
     #[serde(skip_deserializing, skip_serializing)]
@@ -219,11 +219,17 @@ impl DataHash {
             return Err(Error::BadParam("asset hash is remote".to_owned()));
         }
 
-        let curr_alg = alg.unwrap_or("sha256");
+        let curr_alg = match &self.alg {
+            Some(a) => a.clone(),
+            None => match alg {
+                Some(a) => a.to_owned(),
+                None => return Err(Error::HashMismatch("no alg specified".to_owned())),
+            },
+        };
 
         let exclusions = self.exclusions.as_ref().cloned();
 
-        if verify_asset_by_alg(curr_alg, &self.hash, asset_path, exclusions) {
+        if verify_asset_by_alg(&curr_alg, &self.hash, asset_path, exclusions) {
             Ok(())
         } else {
             Err(Error::HashMismatch("Hashes do not match".to_owned()))
@@ -240,7 +246,7 @@ impl DataHash {
             Some(a) => a.clone(),
             None => match alg {
                 Some(a) => a.to_owned(),
-                None => "sha256".to_string(),
+                None => return Err(Error::HashMismatch("no alg specified".to_owned())),
             },
         };
 
@@ -267,11 +273,6 @@ impl AssertionBase for DataHash {
     const VERSION: Option<usize> = Some(ASSERTION_CREATION_VERSION);
 
     fn to_assertion(&self) -> Result<Assertion> {
-        if self.hash.is_empty() {
-            return Err(Error::BadParam(
-                "no hash found, gen_hash must be called".to_string(),
-            ));
-        }
         Self::to_cbor_assertion(self)
     }
 

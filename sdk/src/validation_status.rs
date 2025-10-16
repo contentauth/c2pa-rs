@@ -13,7 +13,7 @@
 
 //! Implements validation status for specific parts of a manifest.
 //!
-//! See <https://c2pa.org/specifications/specifications/1.0/specs/C2PA_Specification.html#_existing_manifests>.
+//! See <https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_existing_manifests>.
 
 #![deny(missing_docs)]
 
@@ -22,20 +22,18 @@ use log::debug;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+pub use crate::validation_results::validation_codes::*;
 use crate::{
-    assertion::AssertionBase,
-    assertions::Ingredient,
     error::Error,
     jumbf,
-    status_tracker::{LogItem, StatusTracker},
-    store::Store,
+    status_tracker::{LogItem, LogKind},
 };
 
 /// A `ValidationStatus` struct describes the validation status of a
 /// specific part of a manifest.
 ///
-/// See <https://c2pa.org/specifications/specifications/1.0/specs/C2PA_Specification.html#_existing_manifests>.
-#[derive(Clone, Debug, Deserialize, Serialize)]
+/// See <https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_existing_manifests>.
+#[derive(Clone, Debug, Deserialize, Serialize, Eq)]
 #[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 pub struct ValidationStatus {
     code: String,
@@ -45,6 +43,21 @@ pub struct ValidationStatus {
 
     #[serde(skip_serializing_if = "Option::is_none")]
     explanation: Option<String>,
+
+    #[serde(skip_serializing)]
+    #[allow(dead_code)]
+    success: Option<bool>, // deprecated in 2.x, allow reading for compatibility
+
+    #[serde(skip)]
+    #[serde(default = "default_log_kind")]
+    kind: LogKind,
+
+    #[serde(skip)]
+    ingredient_uri: Option<String>,
+}
+
+fn default_log_kind() -> LogKind {
+    LogKind::Success
 }
 
 impl ValidationStatus {
@@ -53,13 +66,20 @@ impl ValidationStatus {
             code: code.into(),
             url: None,
             explanation: None,
+            success: None,
+            ingredient_uri: None,
+            kind: LogKind::Success,
         }
+    }
+
+    pub(crate) fn new_failure<S: Into<String>>(code: S) -> Self {
+        Self::new(code).set_kind(LogKind::Failure)
     }
 
     /// Returns the validation status code.
     ///
     /// Validation status codes are the labels from the "Value"
-    /// column in <https://c2pa.org/specifications/specifications/1.0/specs/C2PA_Specification.html#_existing_manifests>.
+    /// column in <https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_existing_manifests>.
     ///
     /// These are also defined as constants in the
     /// [`validation_status`](crate::validation_status) mod.
@@ -77,9 +97,26 @@ impl ValidationStatus {
         self.explanation.as_deref()
     }
 
+    /// Returns the internal JUMBF reference to the Ingredient that was validated.
+    pub fn ingredient_uri(&self) -> Option<&str> {
+        self.ingredient_uri.as_deref()
+    }
+
     /// Sets the internal JUMBF reference to the entity was validated.
-    pub(crate) fn set_url(mut self, url: String) -> Self {
-        self.url = Some(url);
+    pub fn set_url<S: Into<String>>(mut self, url: S) -> Self {
+        self.url = Some(url.into());
+        self
+    }
+
+    /// Sets the LogKind for this validation status.
+    pub fn set_kind(mut self, kind: LogKind) -> Self {
+        self.kind = kind;
+        self
+    }
+
+    /// Sets the internal JUMBF reference to the Ingredient that was validated.
+    pub fn set_ingredient_uri<S: Into<String>>(mut self, uri: S) -> Self {
+        self.ingredient_uri = Some(uri.into());
         self
     }
 
@@ -91,13 +128,18 @@ impl ValidationStatus {
 
     /// Returns `true` if this has a successful validation code.
     pub fn passed(&self) -> bool {
-        is_success(&self.code)
+        self.kind != LogKind::Failure
+    }
+
+    /// Returns the LogKind for this validation status.
+    pub fn kind(&self) -> &LogKind {
+        &self.kind
     }
 
     // Maps errors into validation_status codes.
     fn code_from_error_str(error: &str) -> &str {
         match error {
-            e if e.starts_with("ClaimMissing") => CLAIM_MISSING,
+            "ClaimMissing" => CLAIM_MISSING,
             e if e.starts_with("AssertionMissing") => ASSERTION_MISSING,
             e if e.starts_with("AssertionDecoding") => ASSERTION_REQUIRED_MISSING,
             e if e.starts_with("HashMismatch") => ASSERTION_DATAHASH_MATCH,
@@ -108,7 +150,7 @@ impl ValidationStatus {
     }
 
     // Maps errors into validation_status codes.
-    fn code_from_error(error: &Error) -> &str {
+    pub(crate) fn code_from_error(error: &Error) -> &'static str {
         match error {
             Error::ClaimMissing { .. } => CLAIM_MISSING,
             Error::AssertionMissing { .. } => ASSERTION_MISSING,
@@ -121,385 +163,55 @@ impl ValidationStatus {
     }
 
     /// Creates a ValidationStatus from an error code.
+    #[allow(dead_code)]
     pub(crate) fn from_error(error: &Error) -> Self {
         // We need to create error codes here for client processing.
         let code = Self::code_from_error(error);
-        debug!("ValidationStatus {} from error {:#?}", code, error);
-        Self::new(code.to_string()).set_explanation(error.to_string())
+        debug!("ValidationStatus {code} from error {error:#?}");
+        Self::new_failure(code.to_string()).set_explanation(error.to_string())
     }
 
     /// Creates a ValidationStatus from a validation_log item.
-    pub(crate) fn from_validation_item(item: &LogItem) -> Option<Self> {
+    pub(crate) fn from_log_item(item: &LogItem) -> Option<Self> {
         match item.validation_status.as_ref() {
-            Some(status) => Some(
-                Self::new(status.to_string())
+            Some(status) => Some({
+                let mut vi = Self::new(status.to_string())
                     .set_url(item.label.to_string())
-                    .set_explanation(item.description.to_string()),
-            ),
+                    .set_kind(item.kind.clone())
+                    .set_explanation(item.description.to_string());
+                if let Some(ingredient_uri) = &item.ingredient_uri {
+                    vi = vi.set_ingredient_uri(ingredient_uri.to_string());
+                }
+                vi
+            }),
             // If we don't have a validation_status, then make one from the err_val
             // using the description plus error text explanation.
-            None => item.error_str().as_ref().map(|e| {
+            None => item.err_val.as_ref().map(|e| {
                 let code = Self::code_from_error_str(e);
-                Self::new(code.to_string())
+                Self::new_failure(code.to_string())
                     .set_url(item.label.to_string())
                     .set_explanation(format!("{}: {}", item.description, e))
             }),
+        }
+    }
+
+    // converts a validation status url into and absolute URI given the manifest label.
+    pub(crate) fn make_absolute(&mut self, manifest_label: &str) {
+        if let Some(url) = &self.url {
+            if url.starts_with("self#jumbf") {
+                // Some are just labels (i.e. "Cose_Sign1")
+                self.url = Some(jumbf::labels::to_absolute_uri(manifest_label, url));
+            }
         }
     }
 }
 
 impl PartialEq for ValidationStatus {
     fn eq(&self, other: &Self) -> bool {
-        self.code == other.code && self.url == other.url
+        self.code == other.code && self.url == other.url && self.kind == other.kind
     }
 }
 
-// TODO: Does this still need to be public? (I do see one reference in the JS SDK.)
-
-/// Given a `Store` and a `StatusTracker`, return `ValidationStatus` items for each
-/// item in the tracker which reflect errors in the active manifest or which would not
-/// be reported as a validation error for any ingredient.
-pub fn status_for_store(
-    store: &Store,
-    validation_log: &impl StatusTracker,
-) -> Vec<ValidationStatus> {
-    let statuses: Vec<ValidationStatus> = validation_log
-        .get_log()
-        .iter()
-        .filter_map(ValidationStatus::from_validation_item)
-        .filter(|s| !is_success(&s.code))
-        .collect();
-
-    // Filter out any status that is already captured in an ingredient assertion.
-    if let Some(claim) = store.provenance_claim() {
-        let active_manifest = Some(claim.label().to_string());
-
-        // This closure returns true if the URI references the store's active manifest.
-        let is_active_manifest = |uri: Option<&str>| {
-            uri.filter(|uri| jumbf::labels::manifest_label_from_uri(uri) == active_manifest)
-                .is_some()
-        };
-
-        // We only need to do the more detailed filtering if there are any status
-        // reports that reference ingredients.
-        if statuses
-            .iter()
-            .any(|s| !is_active_manifest(s.url.as_deref()))
-        {
-            // Collect all the ValidationStatus records from all the ingredients in the store.
-            let ingredient_statuses: Vec<ValidationStatus> = claim
-                .ingredient_assertions()
-                .iter()
-                .filter_map(|a| Ingredient::from_assertion(a).ok())
-                .filter_map(|i| i.validation_status)
-                .flat_map(|x| x.into_iter())
-                .collect();
-
-            // Filter to only contain the active statuses and nested statuses not found in active.
-            return statuses
-                .iter()
-                .filter(|s| {
-                    is_active_manifest(s.url.as_deref())
-                        || !ingredient_statuses.iter().any(|i| s == &i)
-                })
-                .map(|s| s.to_owned())
-                .collect();
-        }
-    }
-
-    statuses
-}
-
-// -- success codes --
-
-/// The claim signature referenced in the ingredient's claim validated.
-///
-/// `ValidationStatus.url()` will point to a C2PA claim signature box.
-pub const CLAIM_SIGNATURE_VALIDATED: &str = "claimSignature.validated";
-
-/// The signing credential is listed on the validator's trust list.
-///
-/// `ValidationStatus.url()` will point to a C2PA claim signature box.
-pub const SIGNING_CREDENTIAL_TRUSTED: &str = "signingCredential.trusted";
-
-/// The time-stamp credential is listed on the validator's trust list.
-///
-/// `ValidationStatus.url()` will point to a C2PA claim signature box.
-pub const TIMESTAMP_TRUSTED: &str = "timeStamp.trusted";
-
-/// The hash of the the referenced assertion in the ingredient's manifest
-/// matches the corresponding hash in the assertion's hashed URI in the claim.
-///
-/// `ValidationStatus.url()` will point to a C2PA assertion.
-pub const ASSERTION_HASHEDURI_MATCH: &str = "assertion.hashedURI.match";
-
-/// Hash of a byte range of the asset matches the hash declared in the
-/// data hash assertion.
-///
-/// `ValidationStatus.url()` will point to a C2PA assertion.
-pub const ASSERTION_DATAHASH_MATCH: &str = "assertion.dataHash.match";
-
-/// Hash of a box-based asset matches the hash declared in the BMFF
-/// hash assertion.
-///
-/// `ValidationStatus.url()` will point to a C2PA assertion.
-pub const ASSERTION_BMFFHASH_MATCH: &str = "assertion.bmffHash.match";
-
-/// Hash of a box-based asset matches the hash declared in the General Box
-/// Hash assertion.
-///
-/// `ValidationStatus.url()` will point to a C2PA assertion.
-pub const ASSERTION_BOXHASH_MATCH: &str = "assertion.boxesHash.match";
-
-/// A non-embedded (remote) assertion was accessible at the time of
-/// validation.
-///
-/// `ValidationStatus.url()` will point to a C2PA assertion.
-pub const ASSERTION_ACCESSIBLE: &str = "assertion.accessible";
-
-// -- failure codes --
-
-/// The referenced claim in the ingredient's manifest cannot be found.
-///
-/// `ValidationStatus.url()` will point to a C2PA claim box.
-pub const CLAIM_MISSING: &str = "claim.missing";
-
-/// More than one claim box is present in the manifest.
-///
-/// `ValidationStatus.url()` will point to a C2PA claim box.
-pub const CLAIM_MULTIPLE: &str = "claim.multiple";
-
-/// No hard bindings are present in the claim.
-///
-/// `ValidationStatus.url()` will point to a C2PA claim box.
-pub const HARD_BINDINGS_MISSING: &str = "claim.hardBindings.missing";
-
-/// A required field is not present in the claim.
-///
-/// `ValidationStatus.url()` will point to a C2PA claim box.
-pub const CLAIM_REQUIRED_MISSING: &str = "claim.required.missing";
-
-/// The cbor of the claim is not valid.
-///
-/// `ValidationStatus.url()` will point to a C2PA claim box.
-pub const CLAIM_CBOR_INVALID: &str = "claim.cbor.invalid";
-
-/// The hash of the the referenced ingredient claim in the manifest
-/// does not match the corresponding hash in the ingredient's hashed
-/// URI in the claim.
-///
-/// `ValidationStatus.url()` will point to a C2PA assertion.
-pub const INGREDIENT_HASHEDURI_MISMATCH: &str = "ingredient.hashedURI.mismatch";
-
-/// The claim signature referenced in the ingredient's claim
-/// cannot be found in its manifest.
-///
-/// `ValidationStatus.url()` will point to a C2PA claim signature box.
-pub const CLAIM_SIGNATURE_MISSING: &str = "claimSignature.missing";
-
-/// The claim signature referenced in the ingredient's claim
-/// failed to validate.
-///
-/// `ValidationStatus.url()` will point to a C2PA claim signature box.
-pub const CLAIM_SIGNATURE_MISMATCH: &str = "claimSignature.mismatch";
-
-/// If a manifest was documented to exist in a remote location,
-/// but is not present there, or the location is not currently available
-/// (such as in an offline scenario),
-/// the `manifest.inaccessible` error code shall be used to report the situation.
-///
-/// `ValidationStatus.url()` URI reference to the C2PA Manifest that could not be accessed.
-pub const MANIFEST_INACCESSIBLE: &str = "manifest.inaccessible";
-
-/// The manifest has more than one ingredient whose `relationship`
-/// is `parentOf`.
-///
-/// `ValidationStatus.url()` will point to a C2PA claim box.
-pub const MANIFEST_MULTIPLE_PARENTS: &str = "manifest.multipleParents";
-
-/// The manifest is an update manifest, but it contains hard binding
-/// or actions assertions.
-///
-/// `ValidationStatus.url()` will point to a C2PA claim box.
-pub const MANIFEST_UPDATE_INVALID: &str = "manifest.update.invalid";
-
-/// The manifest is an update manifest, but it contains either zero
-/// or multiple `parentOf` ingredients.
-///
-/// `ValidationStatus.url()` will point to a C2PA claim box.
-pub const MANIFEST_UPDATE_WRONG_PARENTS: &str = "manifest.update.wrongParents";
-
-/// The signing credential is not listed on the validator's trust list.
-///
-/// `ValidationStatus.url()` will point to a C2PA claim signature box.
-pub const SIGNING_CREDENTIAL_UNTRUSTED: &str = "signingCredential.untrusted";
-
-/// The signing credential is not valid for signing.
-///
-/// `ValidationStatus.url()` will point to a C2PA claim signature box.
-pub const SIGNING_CREDENTIAL_INVALID: &str = "signingCredential.invalid";
-
-/// The signing credential has been revoked by the issuer.
-///
-/// `ValidationStatus.url()` will point to a C2PA claim signature box.
-pub const SIGNING_CREDENTIAL_REVOKED: &str = "signingCredential.revoked";
-
-/// The signing credential has expired.
-///
-/// `ValidationStatus.url()` will point to a C2PA claim signature box.
-pub const SIGNING_CREDENTIAL_EXPIRED: &str = "signingCredential.expired";
-
-/// The time-stamp does not correspond to the contents of the claim.
-///
-/// `ValidationStatus.url()` will point to a C2PA claim signature box.
-pub const TIMESTAMP_MISMATCH: &str = "timeStamp.mismatch";
-
-/// The time-stamp credential is not listed on the validator's trust list.
-///
-/// `ValidationStatus.url()` will point to a C2PA claim signature box.
-pub const TIMESTAMP_UNTRUSTED: &str = "timeStamp.untrusted";
-
-/// The signed time-stamp attribute in the signature falls outside the
-/// validity window of the signing certificate or the TSA's certificate.
-///
-/// `ValidationStatus.url()` will point to a C2PA claim signature box.
-pub const TIMESTAMP_OUTSIDE_VALIDITY: &str = "timeStamp.outsideValidity";
-
-/// The hash of the the referenced assertion in the manifest does not
-/// match the corresponding hash in the assertion's hashed URI in the claim.
-///
-/// `ValidationStatus.url()` will point to a C2PA assertion.
-pub const ASSERTION_HASHEDURI_MISMATCH: &str = "assertion.hashedURI.mismatch";
-
-/// An assertion listed in the ingredient's claim is missing from the
-/// ingredient's manifest.
-///
-/// `ValidationStatus.url()` will point to a C2PA claim box.
-pub const ASSERTION_MISSING: &str = "assertion.missing";
-
-/// An assertion was found in the ingredient's manifest that was not
-/// explicitly declared in the ingredient's claim.
-///
-/// `ValidationStatus.url()` will point to a C2PA claim box or assertion.
-pub const ASSERTION_UNDECLARED: &str = "assertion.undeclared";
-
-/// A non-embedded (remote) assertion was inaccessible at the time of validation.
-///
-/// `ValidationStatus.url()` will point to a C2PA assertion.
-pub const ASSERTION_INACCESSIBLE: &str = "assertion.inaccessible";
-
-/// An assertion was declared as redacted in the ingredient's claim
-/// but is still present in the ingredient's manifest.
-///
-/// `ValidationStatus.url()` will point to a C2PA assertion.
-pub const ASSERTION_NOT_REDACTED: &str = "assertion.notRedacted";
-
-/// An assertion was declared as redacted by its own claim.
-///
-/// `ValidationStatus.url()` will point to a C2PA claim box.
-pub const ASSERTION_SELF_REDACTED: &str = "assertion.selfRedacted";
-
-/// A required field is not present in an assertion.
-///
-/// `ValidationStatus.url()` will point to a C2PA assertion.
-pub const ASSERTION_REQUIRED_MISSING: &str = "assertion.required.missing";
-
-/// The JSON(-LD) of an assertion is not valid.
-///
-/// `ValidationStatus.url()` will point to a C2PA assertion.
-pub const ASSERTION_JSON_INVALID: &str = "assertion.json.invalid";
-
-/// The cbor of an assertion is not valid.
-///
-/// `ValidationStatus.url()` will point to a C2PA assertion.
-pub const ASSERTION_CBOR_INVALID: &str = "assertion.cbor.invalid";
-
-/// An action that requires an associated ingredient either does not have one
-/// or the one specified cannot be located
-///
-/// `ValidationStatus.url()` will point to a C2PA assertion.
-pub const ACTION_ASSERTION_INGREDIENT_MISMATCH: &str = "assertion.action.ingredientMismatch";
-
-/// An `action` assertion was redacted when the ingredient's
-/// claim was created.
-///
-/// `ValidationStatus.url()` will point to a C2PA assertion.
-pub const ACTION_ASSERTION_REDACTED: &str = "assertion.action.redacted";
-
-/// The hash of a byte range of the asset does not match the
-/// hash declared in the data hash assertion.
-///
-/// `ValidationStatus.url()` will point to a C2PA assertion.
-pub const ASSERTION_DATAHASH_MISMATCH: &str = "assertion.dataHash.mismatch";
-
-/// The hash of a box-based asset does not match the hash declared
-/// in the BMFF hash assertion.
-///
-/// `ValidationStatus.url()` will point to a C2PA assertion.
-pub const ASSERTION_BMFFHASH_MISMATCH: &str = "assertion.bmffHash.mismatch";
-
-/// The hash of a box-based asset does not match the hash declared
-/// in the General Boxes hash assertion.
-///
-/// `ValidationStatus.url()` will point to a C2PA assertion.
-pub const ASSERTION_BOXHASH_MISMATCH: &str = "assertion.boxesHash.mismatch";
-
-/// The hash of a box-based asset does not contain boxes in the expected order for
-/// the General Boxes hash assertion.
-///
-/// `ValidationStatus.url()` will point to a C2PA assertion.
-pub const ASSERTION_BOXHASH_UNKNOWN: &str = "assertion.boxesHash.";
-
-/// A hard binding assertion is in a cloud data assertion.
-///
-/// `ValidationStatus.url()` will point to a C2PA assertion.
-pub const ASSERTION_CLOUD_DATA_HARD_BINDING: &str = "assertion.cloud-data.hardBinding";
-
-/// An update manifest contains a cloud data assertion referencing
-/// an actions assertion.
-///
-/// `ValidationStatus.url()` will point to a C2PA assertion.
-pub const ASSERTION_CLOUD_DATA_ACTIONS: &str = "assertion.cloud-data.actions";
-
-/// The value of an `alg` header, or other header that specifies an
-/// algorithm used to compute the value of another field, is unknown
-/// or unsupported.
-///
-/// `ValidationStatus.url()` will point to a C2PA claim box or C2PA assertion.
-pub const ALGORITHM_UNSUPPORTED: &str = "algorithm.unsupported";
-
-/// A value to be used when there was an error not specifically listed here.
-///
-/// `ValidationStatus.url()` will point to a C2PA claim box or C2PA assertion.
-pub const GENERAL_ERROR: &str = "general.error";
-
-// -- unofficial status codes --
+// -- unofficial status code --
 
 pub(crate) const STATUS_PRERELEASE: &str = "com.adobe.prerelease";
-
-/// Returns `true` if the status code is a known C2PA success status code.
-///
-/// Returns `false` if the status code is a known C2PA failure status
-/// code or is unknown.
-///
-/// # Examples
-///
-/// ```
-/// use c2pa::validation_status::*;
-///
-/// assert!(is_success(CLAIM_SIGNATURE_VALIDATED));
-/// assert!(!is_success(SIGNING_CREDENTIAL_REVOKED));
-/// ```
-pub fn is_success(status_code: &str) -> bool {
-    matches!(
-        status_code,
-        CLAIM_SIGNATURE_VALIDATED
-            | SIGNING_CREDENTIAL_TRUSTED
-            | TIMESTAMP_TRUSTED
-            | ASSERTION_HASHEDURI_MATCH
-            | ASSERTION_DATAHASH_MATCH
-            | ASSERTION_BMFFHASH_MATCH
-            | ASSERTION_ACCESSIBLE
-            | ASSERTION_BOXHASH_MATCH
-    )
-}

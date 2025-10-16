@@ -40,9 +40,15 @@ pub struct HashObjectPositions {
     pub htype: HashBlockObjectType, // type of hash block object
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 pub trait CAIRead: Read + Seek + Send {}
+#[cfg(target_arch = "wasm32")]
+pub trait CAIRead: Read + Seek {}
 
+#[cfg(not(target_arch = "wasm32"))]
 impl<T> CAIRead for T where T: Read + Seek + Send {}
+#[cfg(target_arch = "wasm32")]
+impl<T> CAIRead for T where T: Read + Seek {}
 
 impl From<String> for Box<dyn CAIRead> {
     fn from(val: String) -> Self {
@@ -180,7 +186,7 @@ pub trait AssetIO: Sync + Send {
     // List of supported extensions and mime types
     fn supported_types(&self) -> &[&str];
 
-    /// OPTIONAL INTERFACES
+    // OPTIONAL INTERFACES
 
     // Returns [`AssetPatch`] trait if this I/O handler supports patching.
     #[allow(dead_code)] // this here for wasm builds to pass clippy  (todo: remove)

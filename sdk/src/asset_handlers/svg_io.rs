@@ -12,18 +12,18 @@
 // each license.
 
 use std::{
-    fs::{File, OpenOptions},
+    borrow::Cow,
+    fs::{self, File, OpenOptions},
     io::{BufReader, Cursor, Seek, SeekFrom, Write},
     path::Path,
 };
 
-use conv::ValueFrom;
-use fast_xml::{
+use quick_xml::{
     events::{BytesText, Event},
     Reader, Writer,
 };
-use tempfile::Builder;
 
+use crate::crypto::base64;
 use crate::{
     asset_io::{
         rename_or_move,
@@ -37,9 +37,13 @@ use crate::{
         //HashBlockObjectType,
         HashObjectPositions,
         RemoteRefEmbed,
+        RemoteRefEmbedType,
     },
     error::{Error, Result},
-    utils::base64,
+    utils::{
+        io_utils::{patch_stream, stream_len, tempfile_builder, ReaderUtils},
+        xmp_inmemory_utils::{self, MIN_XMP},
+    },
 };
 
 static SUPPORTED_TYPES: [&str; 8] = [
@@ -58,6 +62,8 @@ const METADATA: &str = "metadata";
 const MANIFEST: &str = "c2pa:manifest";
 const MANIFEST_NS: &str = "xmlns:c2pa";
 const MANIFEST_NS_VAL: &str = "http://c2pa.org/manifest";
+const XPACKET: &str = "xpacket";
+const XMP_ID: &str = "W5M0MpCehiHzreSzNTczkc9d";
 
 pub struct SvgIO {}
 
@@ -79,8 +85,9 @@ impl CAIReader for SvgIO {
     }
 
     // Get XMP block
-    fn read_xmp(&self, _asset_reader: &mut dyn CAIRead) -> Option<String> {
-        None
+    fn read_xmp(&self, asset_reader: &mut dyn CAIRead) -> Option<String> {
+        let (xmp, _dtd, _insertion_pt) = read_xmp(asset_reader).ok()?;
+        xmp
     }
 }
 
@@ -116,10 +123,7 @@ impl AssetIO for SvgIO {
             .open(asset_path)
             .map_err(Error::IoError)?;
 
-        let mut temp_file = Builder::new()
-            .prefix("c2pa_temp")
-            .rand_bytes(5)
-            .tempfile()?;
+        let mut temp_file = tempfile_builder("c2pa_temp")?;
 
         self.write_cai(&mut input_stream, &mut temp_file, store_bytes)?;
 
@@ -140,10 +144,7 @@ impl AssetIO for SvgIO {
     fn remove_cai_store(&self, asset_path: &Path) -> Result<()> {
         let mut input_file = File::open(asset_path)?;
 
-        let mut temp_file = Builder::new()
-            .prefix("c2pa_temp")
-            .rand_bytes(5)
-            .tempfile()?;
+        let mut temp_file = tempfile_builder("c2pa_temp")?;
 
         self.remove_cai_store_from_stream(&mut input_file, &mut temp_file)?;
 
@@ -152,7 +153,7 @@ impl AssetIO for SvgIO {
     }
 
     fn remote_ref_writer_ref(&self) -> Option<&dyn RemoteRefEmbed> {
-        None
+        Some(self)
     }
 
     fn supported_types(&self) -> &[&str] {
@@ -161,8 +162,8 @@ impl AssetIO for SvgIO {
 }
 
 // create manifest entry
-fn create_manifest_tag(data: &[u8], with_meta: bool) -> Result<Vec<u8>> {
-    let mut output: Vec<u8> = Vec::with_capacity(data.len() + 256);
+fn create_manifest_tag(data: &[u8], with_meta: bool) -> Result<Event<'_>> {
+    let output: Vec<u8> = Vec::with_capacity(data.len() + 256);
     let mut writer = Writer::new(Cursor::new(output));
 
     let encoded = base64::encode(data);
@@ -174,7 +175,7 @@ fn create_manifest_tag(data: &[u8], with_meta: bool) -> Result<Vec<u8>> {
                 writer
                     .create_element(MANIFEST)
                     .with_attribute((MANIFEST_NS, MANIFEST_NS_VAL))
-                    .write_text_content(BytesText::from_plain_str(&encoded))?;
+                    .write_text_content(BytesText::from_escaped(&encoded))?;
                 Ok(())
             })
             .map_err(|_e| Error::XmlWriteError)?;
@@ -182,18 +183,21 @@ fn create_manifest_tag(data: &[u8], with_meta: bool) -> Result<Vec<u8>> {
         writer
             .create_element(MANIFEST)
             .with_attribute((MANIFEST_NS, MANIFEST_NS_VAL))
-            .write_text_content(BytesText::from_plain_str(&encoded))
+            .write_text_content(BytesText::from_escaped(&encoded))
             .map_err(|_e| Error::XmlWriteError)?;
     }
 
-    output = writer.into_inner().into_inner();
+    let output = writer.into_inner().into_inner();
+    let output_str = String::from_utf8(output).map_err(|_e| Error::XmlWriteError)?;
+    let event = Event::Text(BytesText::from_escaped(Cow::Owned(output_str)));
 
-    Ok(output)
+    Ok(event)
 }
 
 enum DetectedTagsDepth {
     Metadata,
     Manifest,
+    Xmp,
     Empty,
 }
 
@@ -204,22 +208,17 @@ fn detect_manifest_location(
     input_stream.rewind()?;
 
     let mut buf = Vec::new();
-
     let buf_reader = BufReader::new(input_stream);
-
     let mut xml_reader = Reader::from_reader(buf_reader);
-
     let mut xml_path: Vec<String> = Vec::new();
-
     let mut detected_level = DetectedTagsDepth::Empty;
     let mut insertion_point = 0;
-
     let mut output: Option<Vec<u8>> = None;
 
     loop {
-        match xml_reader.read_event(&mut buf) {
+        match xml_reader.read_event_into(&mut buf) {
             Ok(Event::Start(ref e)) => {
-                let name = String::from_utf8_lossy(e.name()).into_owned();
+                let name = String::from_utf8_lossy(e.name().into_inner()).into_owned();
                 xml_path.push(name);
 
                 if xml_path.len() == 2 && xml_path[0] == SVG && xml_path[1] == METADATA {
@@ -234,23 +233,28 @@ fn detect_manifest_location(
                 {
                     detected_level = DetectedTagsDepth::Manifest;
                     insertion_point = xml_reader.buffer_position();
-
-                    let mut temp_buf = Vec::new();
-                    let s = xml_reader
-                        .read_text(e.name(), &mut temp_buf)
-                        .map_err(|_e| {
-                            Error::InvalidAsset("XML manifest tag invalid content".to_string())
-                        })?;
-
-                    output = Some(base64::decode(&s).map_err(|_e| {
-                        dbg!(_e);
-                        Error::InvalidAsset("XML bad base64 encoding".to_string())
-                    })?);
                 }
 
                 if xml_path.len() == 1 && xml_path[0] == SVG {
                     detected_level = DetectedTagsDepth::Empty;
                     insertion_point = xml_reader.buffer_position();
+                }
+            }
+            Ok(Event::Text(e)) => {
+                if xml_path.len() == 3
+                    && xml_path[0] == SVG
+                    && xml_path[1] == METADATA
+                    && xml_path[2] == MANIFEST
+                {
+                    let encoded_content = e
+                        .unescape()
+                        .map_err(|_e| {
+                            Error::InvalidAsset("XML incorrectly escaped character".to_string())
+                        })?
+                        .into_owned();
+                    output = Some(base64::decode(&encoded_content).map_err(|_e| {
+                        Error::InvalidAsset("XML bad base64 encoding".to_string())
+                    })?);
                 }
             }
             Ok(Event::End(_)) => {
@@ -260,7 +264,82 @@ fn detect_manifest_location(
             Err(_) => return Err(Error::InvalidAsset("XML invalid".to_string())),
             _ => (),
         }
+        buf.clear();
     }
+    let insertion_point = usize::try_from(insertion_point)?;
+
+    Ok((output, detected_level, insertion_point))
+}
+
+fn read_xmp(input_stream: &mut dyn CAIRead) -> Result<(Option<String>, DetectedTagsDepth, usize)> {
+    input_stream.rewind()?;
+
+    let mut insertion_point = stream_len(input_stream)?;
+    let mut buf = Vec::new();
+    let buf_reader = BufReader::new(input_stream);
+    let mut xml_reader = Reader::from_reader(buf_reader);
+    let mut xml_path: Vec<String> = Vec::new();
+    let mut detected_level = DetectedTagsDepth::Empty;
+    let mut output = None;
+
+    loop {
+        match xml_reader.read_event_into(&mut buf) {
+            Ok(Event::Start(ref e)) => {
+                let name: String = String::from_utf8_lossy(e.name().into_inner()).into_owned();
+                xml_path.push(name);
+
+                if xml_path.len() == 1 && xml_path[0] == SVG {
+                    detected_level = DetectedTagsDepth::Empty;
+                    insertion_point = xml_reader.buffer_position();
+                }
+
+                if xml_path.len() == 2 && xml_path[0] == SVG && xml_path[1] == METADATA {
+                    detected_level = DetectedTagsDepth::Metadata;
+                    insertion_point = xml_reader.buffer_position();
+                }
+            }
+            Ok(Event::PI(e)) => {
+                let possible_insertion_point = xml_reader.buffer_position();
+                let pi = String::from_utf8_lossy(&e);
+
+                if pi.contains(XPACKET) && pi.contains(XMP_ID) {
+                    // reconstruct opening XMP PI tag
+                    let tag = format!("<?{pi}?>");
+                    // start of xmp xpacket
+                    detected_level = DetectedTagsDepth::Xmp;
+                    // adjust to include the opening XMP PI
+                    insertion_point = possible_insertion_point
+                        .checked_sub(tag.len() as u64)
+                        .ok_or(Error::BadParam("file read out of range".into()))?;
+                } else if pi.contains(XPACKET) {
+                    // this has read to the end of xpacket
+                    let xmp_len = possible_insertion_point
+                        .checked_sub(insertion_point)
+                        .ok_or(Error::BadParam("file read out of range".into()))?;
+
+                    let mut reader = xml_reader.into_inner();
+                    reader.seek(SeekFrom::Start(insertion_point as u64))?;
+                    let raw_xmp = reader.read_to_vec(xmp_len as u64)?;
+
+                    let xmp = String::from_utf8(raw_xmp).map_err(|_e| {
+                        Error::InvalidAsset("XML could not convert UTF8".to_string())
+                    })?;
+
+                    // save value and break
+                    output = Some(xmp);
+                    break;
+                }
+            }
+            Ok(Event::End(_)) => {
+                let _p = xml_path.pop();
+            }
+            Ok(Event::Eof) => break,
+            Err(_) => return Err(Error::InvalidAsset("XML invalid".to_string())),
+            _ => (),
+        }
+        buf.clear();
+    }
+    let insertion_point = usize::try_from(insertion_point)?;
 
     Ok((output, detected_level, insertion_point))
 }
@@ -320,12 +399,10 @@ impl CAIWriter for SvgIO {
         match detected_tag_location {
             DetectedTagsDepth::Metadata => {
                 // add manifest case
-                let manifest_data = create_manifest_tag(store_bytes, false)?;
-
                 loop {
-                    match reader.read_event(&mut buf) {
+                    match reader.read_event_into(&mut buf) {
                         Ok(Event::Start(e)) => {
-                            let name = String::from_utf8_lossy(e.name()).into_owned();
+                            let name = String::from_utf8_lossy(e.name().into_inner()).into_owned();
                             xml_path.push(name);
 
                             // writes the event to the writer
@@ -337,7 +414,7 @@ impl CAIWriter for SvgIO {
                             if xml_path.len() == 2 && xml_path[0] == SVG && xml_path[1] == METADATA
                             {
                                 writer
-                                    .write(&manifest_data)
+                                    .write_event(create_manifest_tag(store_bytes, false)?)
                                     .map_err(|_e| Error::XmlWriteError)?;
                             }
                         }
@@ -348,7 +425,7 @@ impl CAIWriter for SvgIO {
                                 .write_event(Event::End(e))
                                 .map_err(|_e| Error::XmlWriteError)?;
                         }
-                        Ok(e) => writer.write_event(&e).map_err(|_e| Error::XmlWriteError)?,
+                        Ok(e) => writer.write_event(e).map_err(|_e| Error::XmlWriteError)?,
                         Err(_e) => return Err(Error::InvalidAsset("XML invalid".to_string())),
                     }
                     buf.clear();
@@ -359,9 +436,9 @@ impl CAIWriter for SvgIO {
                 let encoded = base64::encode(store_bytes);
 
                 loop {
-                    match reader.read_event(&mut buf) {
+                    match reader.read_event_into(&mut buf) {
                         Ok(Event::Start(e)) => {
-                            let name = String::from_utf8_lossy(e.name()).into_owned();
+                            let name = String::from_utf8_lossy(e.name().into_inner()).into_owned();
                             xml_path.push(name);
 
                             // writes the event to the writer
@@ -377,7 +454,7 @@ impl CAIWriter for SvgIO {
                                 && xml_path[2] == MANIFEST
                             {
                                 writer
-                                    .write(encoded.as_bytes())
+                                    .write_event(Event::Text(BytesText::new(&encoded)))
                                     .map_err(|_e| Error::XmlWriteError)?;
                             } else {
                                 writer
@@ -392,20 +469,18 @@ impl CAIWriter for SvgIO {
                                 .write_event(Event::End(e))
                                 .map_err(|_e| Error::XmlWriteError)?;
                         }
-                        Ok(e) => writer.write_event(&e).map_err(|_e| Error::XmlWriteError)?,
+                        Ok(e) => writer.write_event(e).map_err(|_e| Error::XmlWriteError)?,
                         Err(_e) => return Err(Error::InvalidAsset("XML invalid".to_string())),
                     }
                     buf.clear();
                 }
             }
-            DetectedTagsDepth::Empty => {
+            _ => {
                 //add metadata & manifest case
-                let manifest_data = create_manifest_tag(store_bytes, true)?;
-
                 loop {
-                    match reader.read_event(&mut buf) {
+                    match reader.read_event_into(&mut buf) {
                         Ok(Event::Start(e)) => {
-                            let name = String::from_utf8_lossy(e.name()).into_owned();
+                            let name = String::from_utf8_lossy(e.name().into_inner()).into_owned();
                             xml_path.push(name);
 
                             // writes the event to the writer
@@ -416,7 +491,7 @@ impl CAIWriter for SvgIO {
                             // add manifest data
                             if xml_path.len() == 1 && xml_path[0] == SVG {
                                 writer
-                                    .write(&manifest_data)
+                                    .write_event(create_manifest_tag(store_bytes, true)?)
                                     .map_err(|_e| Error::XmlWriteError)?;
                             }
                         }
@@ -427,7 +502,7 @@ impl CAIWriter for SvgIO {
                                 .write_event(Event::End(e))
                                 .map_err(|_e| Error::XmlWriteError)?;
                         }
-                        Ok(e) => writer.write_event(&e).map_err(|_e| Error::XmlWriteError)?,
+                        Ok(e) => writer.write_event(e).map_err(|_e| Error::XmlWriteError)?,
                         Err(_e) => return Err(Error::InvalidAsset("XML invalid".to_string())),
                     }
                     buf.clear();
@@ -470,9 +545,9 @@ impl CAIWriter for SvgIO {
 
         // add position from cai to end
         let end = manifest_pos + encoded_manifest_len;
-        let length = usize::value_from(input_stream.seek(SeekFrom::End(0))?)
+        let length = usize::try_from(stream_len(input_stream)?)
             .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?
-            - end;
+            .saturating_sub(end);
         positions.push(HashObjectPositions {
             offset: end,
             length,
@@ -497,9 +572,9 @@ impl CAIWriter for SvgIO {
         let mut xml_path: Vec<String> = Vec::new();
 
         loop {
-            match reader.read_event(&mut buf) {
+            match reader.read_event_into(&mut buf) {
                 Ok(Event::Start(e)) => {
-                    let name = String::from_utf8_lossy(e.name()).into_owned();
+                    let name = String::from_utf8_lossy(e.name().into_inner()).into_owned();
                     xml_path.push(name);
 
                     if xml_path.len() == 3
@@ -546,7 +621,7 @@ impl CAIWriter for SvgIO {
                             .map_err(|_e| Error::XmlWriteError)?; // pass Event through
                     }
                 }
-                Ok(e) => writer.write_event(&e).map_err(|_e| Error::XmlWriteError)?,
+                Ok(e) => writer.write_event(e).map_err(|_e| Error::XmlWriteError)?,
                 Err(_e) => return Err(Error::InvalidAsset("XML invalid".to_string())),
             }
             buf.clear();
@@ -589,6 +664,78 @@ impl AssetPatch for SvgIO {
     }
 }
 
+impl RemoteRefEmbed for SvgIO {
+    fn embed_reference(&self, asset_path: &Path, embed_ref: RemoteRefEmbedType) -> Result<()> {
+        match &embed_ref {
+            RemoteRefEmbedType::Xmp(_) => {
+                let mut input_stream = File::open(asset_path)?;
+                let mut output_stream = Cursor::new(Vec::new());
+                self.embed_reference_to_stream(&mut input_stream, &mut output_stream, embed_ref)?;
+                fs::write(asset_path, output_stream.into_inner())?;
+                Ok(())
+            }
+            _ => Err(Error::UnsupportedType),
+        }
+    }
+
+    fn embed_reference_to_stream(
+        &self,
+        source_stream: &mut dyn CAIRead,
+        output_stream: &mut dyn CAIReadWrite,
+        embed_ref: RemoteRefEmbedType,
+    ) -> Result<()> {
+        match embed_ref {
+            RemoteRefEmbedType::Xmp(url) => {
+                source_stream.rewind()?;
+
+                let (raw_xmp, dtd, insertion_pt) = read_xmp(source_stream)?;
+
+                let xmp = xmp_inmemory_utils::add_provenance(
+                    &raw_xmp.clone().unwrap_or_else(|| MIN_XMP.to_string()),
+                    &url,
+                )?;
+
+                if let Some(raw_xmp) = raw_xmp {
+                    // replace existing
+                    patch_stream(
+                        source_stream,
+                        output_stream,
+                        insertion_pt as u64,
+                        raw_xmp.len() as u64,
+                        xmp.as_bytes(),
+                    )
+                } else {
+                    // insert at location and level
+                    match dtd {
+                        DetectedTagsDepth::Metadata => patch_stream(
+                            source_stream,
+                            output_stream,
+                            insertion_pt as u64,
+                            0,
+                            xmp.as_bytes(),
+                        ),
+                        DetectedTagsDepth::Empty => {
+                            // we have to add metadata tag
+                            let new_xmp = format!("<metadata>{xmp}</metadata>");
+                            patch_stream(
+                                source_stream,
+                                output_stream,
+                                insertion_pt as u64,
+                                0,
+                                new_xmp.as_bytes(),
+                            )
+                        }
+                        _ => Err(Error::OtherError(
+                            "could not determine XML insertion point".into(),
+                        )),
+                    }
+                }
+            }
+            _ => Err(Error::UnsupportedType),
+        }
+    }
+}
+
 #[cfg(test)]
 pub mod tests {
     #![allow(clippy::expect_used)]
@@ -597,11 +744,12 @@ pub mod tests {
 
     use std::io::Read;
 
-    use tempfile::tempdir;
+    use xmp_inmemory_utils::extract_provenance;
 
     use super::*;
     use crate::utils::{
         hash_utils::vec_compare,
+        io_utils::tempdirectory,
         test::{fixture_path, temp_dir_path},
     };
 
@@ -611,7 +759,7 @@ pub mod tests {
         let source = fixture_path("sample1.svg");
 
         let mut success = false;
-        if let Ok(temp_dir) = tempdir() {
+        if let Ok(temp_dir) = tempdirectory() {
             let output = temp_dir_path(&temp_dir, "sample1.svg");
 
             if let Ok(_size) = std::fs::copy(source, &output) {
@@ -634,7 +782,7 @@ pub mod tests {
         let source = fixture_path("sample2.svg");
 
         let mut success = false;
-        if let Ok(temp_dir) = tempdir() {
+        if let Ok(temp_dir) = tempdirectory() {
             let output = temp_dir_path(&temp_dir, "sample2.svg");
 
             if let Ok(_size) = std::fs::copy(source, &output) {
@@ -657,7 +805,7 @@ pub mod tests {
         let source = fixture_path("sample3.svg");
 
         let mut success = false;
-        if let Ok(temp_dir) = tempdir() {
+        if let Ok(temp_dir) = tempdirectory() {
             let output = temp_dir_path(&temp_dir, "sample3.svg");
 
             if let Ok(_size) = std::fs::copy(source, &output) {
@@ -680,7 +828,7 @@ pub mod tests {
         let source = fixture_path("sample1.svg");
 
         let mut success = false;
-        if let Ok(temp_dir) = tempdir() {
+        if let Ok(temp_dir) = tempdirectory() {
             let output = temp_dir_path(&temp_dir, "sample1.svg");
 
             if let Ok(_size) = std::fs::copy(source, &output) {
@@ -709,7 +857,7 @@ pub mod tests {
     fn test_remove_c2pa() {
         let source = fixture_path("sample4.svg");
 
-        let temp_dir = tempdir().unwrap();
+        let temp_dir = tempdirectory().unwrap();
         let output = temp_dir_path(&temp_dir, "sample4.svg");
 
         std::fs::copy(source, &output).unwrap();
@@ -730,7 +878,7 @@ pub mod tests {
         let source = fixture_path("sample1.svg");
 
         let mut success = false;
-        if let Ok(temp_dir) = tempdir() {
+        if let Ok(temp_dir) = tempdirectory() {
             let output = temp_dir_path(&temp_dir, "sample1.svg");
 
             if let Ok(_size) = std::fs::copy(source, &output) {
@@ -757,5 +905,109 @@ pub mod tests {
             }
         }
         assert!(success)
+    }
+
+    #[test]
+    fn test_xmp_read() {
+        let source = fixture_path("sample1.svg");
+        let mut stream = File::open(&source).unwrap();
+
+        let svg_io = SvgIO::new("svg");
+
+        let xmp = svg_io.read_xmp(&mut stream).unwrap();
+
+        assert!(xmp.starts_with("<?xpacket"));
+        assert!(xmp.ends_with("<?xpacket end=\"w\"?>"));
+        println!("{xmp}")
+    }
+
+    #[test]
+    fn test_add_to_existing_xmp() {
+        let source = fixture_path("sample1.svg");
+        let mut stream = File::open(&source).unwrap();
+        let test_data = "http://mysite.com/somelink";
+        let mut output_stream = Cursor::new(Vec::new());
+
+        let svg_io = SvgIO::new("svg");
+
+        let ref_writer = svg_io.remote_ref_writer_ref().unwrap();
+        ref_writer
+            .embed_reference_to_stream(
+                &mut stream,
+                &mut output_stream,
+                RemoteRefEmbedType::Xmp(test_data.to_string()),
+            )
+            .unwrap();
+
+        output_stream.rewind().unwrap();
+        let xmp = svg_io.read_xmp(&mut output_stream).unwrap();
+
+        assert!(xmp.starts_with("<?xpacket"));
+        assert!(xmp.ends_with("<?xpacket end=\"w\"?>"));
+        assert_eq!(&extract_provenance(&xmp).unwrap(), test_data);
+        println!("{xmp}")
+    }
+
+    #[test]
+    fn test_add_to_no_xmp_and_metadata_tag() {
+        let source = fixture_path("sample2.svg");
+        let mut stream = File::open(&source).unwrap();
+        let test_data = "http://mysite.com/somelink";
+        let mut output_stream = Cursor::new(Vec::new());
+
+        let svg_io = SvgIO::new("svg");
+
+        let ref_writer = svg_io.remote_ref_writer_ref().unwrap();
+        ref_writer
+            .embed_reference_to_stream(
+                &mut stream,
+                &mut output_stream,
+                RemoteRefEmbedType::Xmp(test_data.to_string()),
+            )
+            .unwrap();
+
+        output_stream.rewind().unwrap();
+        let xmp = svg_io.read_xmp(&mut output_stream).unwrap();
+
+        assert!(xmp.starts_with("<?xpacket"));
+        assert!(xmp.ends_with("<?xpacket end=\"w\"?>"));
+        assert_eq!(&extract_provenance(&xmp).unwrap(), test_data);
+        println!("{xmp}");
+    }
+
+    #[test]
+    fn test_add_to_no_xmp_and_no_metadata_tag() {
+        let source = fixture_path("sample5.svg");
+        let mut stream = File::open(&source).unwrap();
+        let test_data = "http://mysite.com/somelink";
+        let mut output_stream = Cursor::new(Vec::new());
+
+        let svg_io = SvgIO::new("svg");
+
+        let ref_writer = svg_io.remote_ref_writer_ref().unwrap();
+        ref_writer
+            .embed_reference_to_stream(
+                &mut stream,
+                &mut output_stream,
+                RemoteRefEmbedType::Xmp(test_data.to_string()),
+            )
+            .unwrap();
+
+        output_stream.rewind().unwrap();
+        let xmp = svg_io.read_xmp(&mut output_stream).unwrap();
+
+        assert!(xmp.starts_with("<?xpacket"));
+        assert!(xmp.ends_with("<?xpacket end=\"w\"?>"));
+        assert_eq!(&extract_provenance(&xmp).unwrap(), test_data);
+        println!("{xmp}");
+    }
+
+    #[test]
+    fn test_crash_integer_underflow() {
+        let data = [0x22, 0x3c, 0x73, 0x76, 0x67];
+        let mut stream = Cursor::new(&data);
+        let svg_io = SvgIO::new("svg");
+
+        let _ = svg_io.get_object_locations_from_stream(&mut stream);
     }
 }

@@ -13,7 +13,7 @@
 
 /// Converts a file extension to a MIME type
 pub fn extension_to_mime(extension: &str) -> Option<&'static str> {
-    Some(match extension {
+    Some(match extension.to_lowercase().as_str() {
         "jpg" | "jpeg" => "image/jpeg",
         "png" => "image/png",
         "gif" => "image/gif",
@@ -60,7 +60,7 @@ pub fn format_to_mime(format: &str) -> String {
 /// Converts a format to a file extension
 #[cfg(feature = "file_io")]
 pub fn format_to_extension(format: &str) -> Option<&'static str> {
-    Some(match format {
+    Some(match format.to_lowercase().as_str() {
         "jpg" | "jpeg" | "image/jpeg" => "jpg",
         "png" | "image/png" => "png",
         "gif" | "image/gif" => "gif",
@@ -97,7 +97,7 @@ pub fn format_to_extension(format: &str) -> Option<&'static str> {
 ///
 /// This function will use the file extension to determine the MIME type.
 pub fn format_from_path<P: AsRef<std::path::Path>>(path: P) -> Option<String> {
-    path.as_ref()
-        .extension()
-        .map(|ext| crate::utils::mime::format_to_mime(ext.to_string_lossy().as_ref()))
+    path.as_ref().extension().map(|ext| {
+        crate::utils::mime::format_to_mime(ext.to_string_lossy().to_lowercase().as_ref())
+    })
 }

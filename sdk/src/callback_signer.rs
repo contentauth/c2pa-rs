@@ -16,16 +16,16 @@
 //! The `callback_signer` module provides a way to obtain a [`Signer`] or [`AsyncSigner`]
 //! using a callback and public signing certificates.
 
-use crate::{
-    error::{Error, Result},
-    AsyncSigner, Signer, SigningAlg,
-};
+use async_trait::async_trait;
+
+use crate::{crypto::raw_signature::SigningAlg, AsyncSigner, Error, Result, Signer};
 
 /// Defines a callback function interface for a [`CallbackSigner`].
 ///
 /// The callback should return a signature for the given data.
 /// The callback should return an error if the data cannot be signed.
-pub type CallbackFunc = dyn Fn(*const (), &[u8]) -> std::result::Result<Vec<u8>, Error>;
+pub type CallbackFunc =
+    dyn Fn(*const (), &[u8]) -> std::result::Result<Vec<u8>, Error> + Send + Sync;
 
 /// Defines a signer that uses a callback to sign data.
 ///
@@ -51,18 +51,18 @@ pub struct CallbackSigner {
 }
 
 unsafe impl Send for CallbackSigner {}
-
 unsafe impl Sync for CallbackSigner {}
 
 impl CallbackSigner {
     /// Create a new callback signer.
     pub fn new<F, T>(callback: F, alg: SigningAlg, certs: T) -> Self
     where
-        F: Fn(*const (), &[u8]) -> std::result::Result<Vec<u8>, Error> + 'static,
+        F: Fn(*const (), &[u8]) -> std::result::Result<Vec<u8>, Error> + Send + Sync + 'static,
         T: Into<Vec<u8>>,
     {
         let certs = certs.into();
         let reserve_size = 10000 + certs.len();
+
         Self {
             context: std::ptr::null(),
             callback: Box::new(callback),
@@ -83,10 +83,43 @@ impl CallbackSigner {
     ///
     /// This can be used to store any necessary state for the callback.
     /// Safety: The context must be valid for the lifetime of the signer.
-    /// There is no Rust memory management for the context since it may also come from FFI.    
+    /// There is no Rust memory management for the context since it may also come from FFI.
     pub fn set_context(mut self, context: *const ()) -> Self {
         self.context = context;
         self
+    }
+
+    /// Sign data using an Ed25519 private key.
+    /// This static function is provided for testing with [`CallbackSigner`].
+    /// For a released product the private key should be stored securely.
+    /// The signing should be done in a secure environment.
+    /// The private key should not be exposed to the client.
+    /// Example: (only for testing)
+    /// ```
+    /// use c2pa::{CallbackSigner, SigningAlg};
+    ///
+    /// const CERTS: &[u8] = include_bytes!("../tests/fixtures/certs/ed25519.pub");
+    /// const PRIVATE_KEY: &[u8] = include_bytes!("../tests/fixtures/certs/ed25519.pem");
+    ///
+    /// let ed_signer =
+    ///     |_context: *const _, data: &[u8]| CallbackSigner::ed25519_sign(data, PRIVATE_KEY);
+    /// let signer = CallbackSigner::new(ed_signer, SigningAlg::Ed25519, CERTS);
+    /// ```
+    pub fn ed25519_sign(data: &[u8], private_key: &[u8]) -> Result<Vec<u8>> {
+        use ed25519_dalek::{Signature, Signer, SigningKey};
+        use pem::parse;
+
+        // Parse the PEM data to get the private key
+        let pem = parse(private_key).map_err(|e| Error::OtherError(Box::new(e)))?;
+
+        // For Ed25519, the key is 32 bytes long, so we skip the first 16 bytes of the PEM data
+        let key_bytes = pem.contents().get(16..).ok_or(Error::InvalidSigningKey)?;
+        let signing_key =
+            SigningKey::try_from(key_bytes).map_err(|e| Error::OtherError(Box::new(e)))?;
+
+        // Sign the data
+        let signature: Signature = signing_key.sign(data);
+        Ok(signature.to_bytes().to_vec())
     }
 }
 
@@ -127,11 +160,8 @@ impl Signer for CallbackSigner {
     }
 }
 
-use async_trait::async_trait;
-
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
-// I'm not sure if this is useful since the callback is still synchronous.
 impl AsyncSigner for CallbackSigner {
     async fn sign(&self, data: Vec<u8>) -> Result<Vec<u8>> {
         (self.callback)(self.context, &data)

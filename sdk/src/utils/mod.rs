@@ -11,10 +11,14 @@
 // specific language governing permissions and limitations under
 // each license.
 
-pub(crate) mod base64;
 pub(crate) mod cbor_types;
+
+mod debug_byte_slice;
+pub(crate) use debug_byte_slice::DebugByteSlice;
+
 #[allow(dead_code)]
 pub(crate) mod hash_utils;
+pub(crate) mod io_utils;
 pub(crate) mod merkle;
 pub(crate) mod mime;
 #[allow(dead_code)] // for wasm build
@@ -28,3 +32,19 @@ pub(crate) mod xmp_inmemory_utils;
 #[cfg(test)]
 #[allow(dead_code)] // for wasm build
 pub mod test;
+#[cfg(test)]
+pub(crate) mod test_signer;
+
+// fast 0 vector test using byte alignment to perform faster native byte align comparison
+pub(crate) fn is_zero(bytes: &[u8]) -> bool {
+    if bytes.is_empty() {
+        return true;
+    }
+
+    unsafe {
+        let (prefix, aligned, suffix) = bytes.align_to::<u64>();
+        prefix.iter().all(|&x| x == 0)
+            && aligned.iter().all(|&x| x == 0u64)
+            && suffix.iter().all(|&x| x == 0u8)
+    }
+}

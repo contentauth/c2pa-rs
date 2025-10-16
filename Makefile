@@ -5,38 +5,46 @@ ifeq ($(OS),Windows_NT)
 	PLATFORM := win
 else
 	UNAME := $(shell uname)
-    ifeq ($(UNAME),Linux)
-        PLATFORM := linux
-    endif
-    ifeq ($(UNAME),Darwin)
-        PLATFORM := mac
-    endif
+	ifeq ($(UNAME),Linux)
+		PLATFORM := linux
+	endif
+	ifeq ($(UNAME),Darwin)
+		PLATFORM := mac
+	endif
 endif
 
 check-format:
 	cargo +nightly fmt -- --check
 
 check-docs:
-	cargo doc --no-deps --workspace --all-features
+	cargo doc --no-deps --workspace --features="file_io"
 
 clippy:
-	cargo +nightly clippy --all-features --all-targets -- -D warnings
+	cargo clippy --features="file_io" --all-targets -- -D warnings
 
 test-local:
-	cargo test --all-features
+	cargo test --features="file_io, fetch_remote_manifests, add_thumbnails" --all-targets
 
 test-wasm:
-	cd sdk && wasm-pack test --node
+	cd sdk && wasm-pack test --node -- --no-default-features --features="rust_native_crypto, fetch_remote_manifests"
 
 test-wasm-web:
-	cd sdk && wasm-pack test --chrome --headless -- --features="serialize_thumbnails"
-	
+	cd sdk && wasm-pack test --chrome --headless -- --no-default-features --features="rust_native_crypto, fetch_remote_manifests"
+
+# WASI testing requires upstream llvm clang (not XCode), wasmtime, and the target wasm32-wasip2 on the nightly toolchain
+test-wasi:
+ifeq ($(PLATFORM),mac)
+	$(eval CC := /opt/homebrew/opt/llvm/bin/clang)
+endif
+	CC=$(CC) CARGO_TARGET_WASM32_WASIP2_RUNNER="wasmtime -S cli -S http --dir ." cargo +nightly test --target wasm32-wasip2 -p c2pa --no-default-features --features="rust_native_crypto, file_io, fetch_remote_manifests, add_thumbnails"
+	rm -r sdk/Users
+
 # Full local validation, build and test all features including wasm
 # Run this before pushing a PR to pre-validate
 test: check-format check-docs clippy test-local test-wasm-web
 
 # Auto format code according to standards
-fmt: 
+fmt:
 	cargo +nightly fmt
 
 # Builds and views documentation
@@ -60,3 +68,6 @@ client:
 # Runs the show example
 show:
 	cargo run --example show -- sdk/tests/fixtures/ca.jpg
+
+release:
+	cd c2pa_c_ffi && make release

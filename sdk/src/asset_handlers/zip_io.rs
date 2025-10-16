@@ -13,11 +13,11 @@ use zip::{
 
 use crate::{
     asset_io::{
-        self, AssetIO, CAIReadWrapper, CAIReadWriteWrapper, CAIReader, CAIWriter,
-        HashObjectPositions,
+        self, AssetIO, CAIRead, CAIReadWrapper, CAIReadWrite, CAIReadWriteWrapper, CAIReader,
+        CAIWriter, HashObjectPositions,
     },
     error::Result,
-    CAIRead, CAIReadWrite, Error,
+    Error,
 };
 
 pub struct ZipIO {}
@@ -34,8 +34,11 @@ impl CAIWriter for ZipIO {
             .map_err(|_| Error::EmbeddingError)?;
 
         match writer.add_directory("META-INF", SimpleFileOptions::default()) {
-            Err(ZipError::InvalidArchive("Duplicate filename")) => {}
-            Err(_) => return Err(Error::EmbeddingError),
+            Err(ZipError::InvalidArchive(err)) if err.starts_with("Duplicate filename") => {}
+            Err(err) => {
+                println!("{:?}", err);
+                return Err(Error::EmbeddingError);
+            }
             _ => {}
         }
 
@@ -43,7 +46,7 @@ impl CAIWriter for ZipIO {
             Path::new("META-INF/content_credential.c2pa"),
             SimpleFileOptions::default().compression_method(CompressionMethod::Stored),
         ) {
-            Err(ZipError::InvalidArchive("Duplicate filename")) => {
+            Err(ZipError::InvalidArchive(err)) if err.starts_with("Duplicate filename") => {
                 writer.abort_file().map_err(|_| Error::EmbeddingError)?;
                 // TODO: remove code duplication
                 writer
@@ -84,7 +87,7 @@ impl CAIWriter for ZipIO {
             Path::new("META-INF/content_credential.c2pa"),
             SimpleFileOptions::default(),
         ) {
-            Err(ZipError::InvalidArchive("Duplicate filename")) => {}
+            Err(ZipError::InvalidArchive(err)) if err.starts_with("Duplicate filename") => {}
             Err(_) => return Err(Error::EmbeddingError),
             _ => {}
         }

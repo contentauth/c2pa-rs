@@ -239,9 +239,7 @@ impl C2paPdf for Pdf {
         }
 
         // Find the File Spec, which contains the reference to the manifest.
-        let file_spec_ref = self
-            .c2pa_file_spec_object_id()
-            .ok_or_else(|| Error::NoManifest)?;
+        let file_spec_ref = self.c2pa_file_spec_object_id().ok_or(Error::NoManifest)?;
 
         // Find the manifest's file stream.
         let file_stream_ef_ref = self
@@ -344,7 +342,7 @@ impl Pdf {
     fn remove_c2pa_file_spec_reference(&mut self) -> Result<(), Error> {
         let c2pa_file_spec_reference = self
             .c2pa_file_spec_object_id()
-            .ok_or_else(|| Error::FindingC2PAFileSpec)?;
+            .ok_or(Error::FindingC2PAFileSpec)?;
 
         self.document
             .catalog_mut()?
@@ -389,7 +387,7 @@ impl Pdf {
             .document
             .page_iter()
             .next()
-            .ok_or_else(|| Error::AddingAnnotation)?;
+            .ok_or(Error::AddingAnnotation)?;
 
         // Get a mutable ref to the first page as a Dictionary object.
         let first_page = self
@@ -525,7 +523,7 @@ impl Pdf {
                     .map(|value| value == CONTENT_CREDS)
                     .unwrap_or_default()
             })
-            .ok_or_else(|| Error::UnableToFindEmbeddedFileManifest)?;
+            .ok_or(Error::UnableToFindEmbeddedFileManifest)?;
 
         let content_creds_reference_idx = content_creds_marker_idx + 1;
         if content_creds_reference_idx >= names_vector.len() {
@@ -546,30 +544,39 @@ mod tests {
 
     use super::*;
 
-    #[cfg(target_arch = "wasm32")]
+    #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
     wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
 
-    #[cfg(target_arch = "wasm32")]
+    #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
     use wasm_bindgen_test::*;
 
-    #[cfg_attr(not(target_arch = "wasm32"), test)]
-    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    #[test]
+    #[cfg_attr(
+        all(target_arch = "wasm32", not(target_os = "wasi")),
+        wasm_bindgen_test
+    )]
     fn test_loads_pdf_from_bytes() {
         let bytes = include_bytes!("../../tests/fixtures/basic.pdf");
         let pdf_result = Pdf::from_bytes(bytes);
         assert!(pdf_result.is_ok());
     }
 
-    #[cfg_attr(not(target_arch = "wasm32"), test)]
-    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    #[test]
+    #[cfg_attr(
+        all(target_arch = "wasm32", not(target_os = "wasi")),
+        wasm_bindgen_test
+    )]
     fn test_loads_pdf_from_bytes_with_invalid_file() {
         let bytes = include_bytes!("../../tests/fixtures/XCA.jpg");
         let pdf_result = Pdf::from_bytes(bytes);
         assert!(matches!(pdf_result, Err(Error::UnableToReadPdf(_))));
     }
 
-    #[cfg_attr(not(target_arch = "wasm32"), test)]
-    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    #[test]
+    #[cfg_attr(
+        all(target_arch = "wasm32", not(target_os = "wasi")),
+        wasm_bindgen_test
+    )]
     fn test_is_password_protected() {
         let bytes = include_bytes!("../../tests/fixtures/basic-password.pdf");
         let pdf_result = Pdf::from_bytes(bytes).unwrap();
@@ -580,16 +587,22 @@ mod tests {
         assert!(!pdf.is_password_protected());
     }
 
-    #[cfg_attr(not(target_arch = "wasm32"), test)]
-    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    #[test]
+    #[cfg_attr(
+        all(target_arch = "wasm32", not(target_os = "wasi")),
+        wasm_bindgen_test
+    )]
     fn test_has_c2pa_manifest_on_file_without_manifest() {
         let bytes = include_bytes!("../../tests/fixtures/basic.pdf");
         let pdf = Pdf::from_bytes(bytes).unwrap();
         assert!(!pdf.has_c2pa_manifest())
     }
 
-    #[cfg_attr(not(target_arch = "wasm32"), test)]
-    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    #[test]
+    #[cfg_attr(
+        all(target_arch = "wasm32", not(target_os = "wasi")),
+        wasm_bindgen_test
+    )]
     fn test_has_c2pa_manifest_on_file_with_manifest() {
         let bytes = include_bytes!("../../tests/fixtures/basic.pdf");
         let mut pdf = Pdf::from_bytes(bytes).unwrap();
@@ -599,8 +612,11 @@ mod tests {
         assert!(pdf.has_c2pa_manifest());
     }
 
-    #[cfg_attr(not(target_arch = "wasm32"), test)]
-    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    #[test]
+    #[cfg_attr(
+        all(target_arch = "wasm32", not(target_os = "wasi")),
+        wasm_bindgen_test
+    )]
     fn test_adds_embedded_file_spec_to_pdf_stream() {
         let bytes = include_bytes!("../../tests/fixtures/express.pdf");
         let mut pdf = Pdf::from_bytes(bytes).unwrap();
@@ -617,8 +633,11 @@ mod tests {
         assert_eq!(stream.unwrap().as_stream().unwrap().content, bytes);
     }
 
-    #[cfg_attr(not(target_arch = "wasm32"), test)]
-    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    #[test]
+    #[cfg_attr(
+        all(target_arch = "wasm32", not(target_os = "wasi")),
+        wasm_bindgen_test
+    )]
     fn test_write_manifest_as_annotation() {
         let mut pdf = Pdf::from_bytes(include_bytes!("../../tests/fixtures/express.pdf")).unwrap();
         assert!(!pdf.has_c2pa_manifest());
@@ -626,8 +645,11 @@ mod tests {
         assert!(pdf.has_c2pa_manifest());
     }
 
-    #[cfg_attr(not(target_arch = "wasm32"), test)]
-    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    #[test]
+    #[cfg_attr(
+        all(target_arch = "wasm32", not(target_os = "wasi")),
+        wasm_bindgen_test
+    )]
     fn test_write_manifest_bytes_to_pdf_with_existing_annotations() {
         let mut pdf =
             Pdf::from_bytes(include_bytes!("../../tests/fixtures/basic-annotation.pdf")).unwrap();
@@ -635,8 +657,11 @@ mod tests {
         assert!(pdf.has_c2pa_manifest());
     }
 
-    #[cfg_attr(not(target_arch = "wasm32"), test)]
-    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    #[test]
+    #[cfg_attr(
+        all(target_arch = "wasm32", not(target_os = "wasi")),
+        wasm_bindgen_test
+    )]
     fn test_add_manifest_to_embedded_files() {
         let mut pdf = Pdf::from_bytes(include_bytes!("../../tests/fixtures/basic.pdf")).unwrap();
         pdf.write_manifest_as_embedded_file(vec![10u8, 20u8])
@@ -645,8 +670,11 @@ mod tests {
         assert!(pdf.has_c2pa_manifest());
     }
 
-    #[cfg_attr(not(target_arch = "wasm32"), test)]
-    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    #[test]
+    #[cfg_attr(
+        all(target_arch = "wasm32", not(target_os = "wasi")),
+        wasm_bindgen_test
+    )]
     fn test_add_manifest_to_embedded_files_attachments_present() {
         let mut pdf =
             Pdf::from_bytes(include_bytes!("../../tests/fixtures/basic-attachments.pdf")).unwrap();
@@ -656,8 +684,11 @@ mod tests {
         assert!(pdf.has_c2pa_manifest());
     }
 
-    #[cfg_attr(not(target_arch = "wasm32"), test)]
-    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    #[test]
+    #[cfg_attr(
+        all(target_arch = "wasm32", not(target_os = "wasi")),
+        wasm_bindgen_test
+    )]
     fn test_save_to() {
         let mut pdf = Pdf::from_bytes(include_bytes!("../../tests/fixtures/basic.pdf")).unwrap();
         assert!(!pdf.has_c2pa_manifest());
@@ -672,8 +703,11 @@ mod tests {
         assert!(saved_pdf.has_c2pa_manifest());
     }
 
-    #[cfg_attr(not(target_arch = "wasm32"), test)]
-    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    #[test]
+    #[cfg_attr(
+        all(target_arch = "wasm32", not(target_os = "wasi")),
+        wasm_bindgen_test
+    )]
     fn test_reads_manifest_bytes_for_embedded_files_manifest() {
         let mut pdf = Pdf::from_bytes(include_bytes!("../../tests/fixtures/express.pdf")).unwrap();
         assert!(!pdf.has_c2pa_manifest());
@@ -689,8 +723,11 @@ mod tests {
         ));
     }
 
-    #[cfg_attr(not(target_arch = "wasm32"), test)]
-    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    #[test]
+    #[cfg_attr(
+        all(target_arch = "wasm32", not(target_os = "wasi")),
+        wasm_bindgen_test
+    )]
     fn test_reads_manifest_bytes_for_annotation_manifest() {
         let mut pdf = Pdf::from_bytes(include_bytes!("../../tests/fixtures/basic.pdf")).unwrap();
         assert!(!pdf.has_c2pa_manifest());
@@ -706,16 +743,22 @@ mod tests {
         ));
     }
 
-    #[cfg_attr(not(target_arch = "wasm32"), test)]
-    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    #[test]
+    #[cfg_attr(
+        all(target_arch = "wasm32", not(target_os = "wasi")),
+        wasm_bindgen_test
+    )]
     fn test_read_manifest_bytes_from_pdf_without_bytes_returns_none() {
         let pdf = Pdf::from_bytes(include_bytes!("../../tests/fixtures/basic.pdf")).unwrap();
         assert!(!pdf.has_c2pa_manifest());
         assert!(matches!(pdf.read_manifest_bytes(), Ok(None)));
     }
 
-    #[cfg_attr(not(target_arch = "wasm32"), test)]
-    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    #[test]
+    #[cfg_attr(
+        all(target_arch = "wasm32", not(target_os = "wasi")),
+        wasm_bindgen_test
+    )]
     fn test_read_manifest_bytes_from_pdf_with_other_af_relationship_returns_none() {
         let mut pdf = Pdf::from_bytes(include_bytes!("../../tests/fixtures/basic.pdf")).unwrap();
         pdf.document
@@ -726,8 +769,11 @@ mod tests {
         assert!(matches!(pdf.read_manifest_bytes(), Ok(None)));
     }
 
-    #[cfg_attr(not(target_arch = "wasm32"), test)]
-    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    #[test]
+    #[cfg_attr(
+        all(target_arch = "wasm32", not(target_os = "wasi")),
+        wasm_bindgen_test
+    )]
     fn test_read_pdf_with_associated_file_that_is_not_manifest() {
         let mut pdf = Pdf::from_bytes(include_bytes!("../../tests/fixtures/basic.pdf")).unwrap();
         pdf.document
@@ -738,22 +784,31 @@ mod tests {
         assert!(matches!(pdf.read_manifest_bytes(), Ok(None)));
     }
 
-    #[cfg_attr(not(target_arch = "wasm32"), test)]
-    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    #[test]
+    #[cfg_attr(
+        all(target_arch = "wasm32", not(target_os = "wasi")),
+        wasm_bindgen_test
+    )]
     fn test_read_xmp_on_pdf_with_none() {
         let pdf = Pdf::from_bytes(include_bytes!("../../tests/fixtures/basic-no-xmp.pdf")).unwrap();
-        assert!(pdf.read_xmp().is_none());
+        assert_eq!(pdf.read_xmp(), None);
     }
 
-    #[cfg_attr(not(target_arch = "wasm32"), test)]
-    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    #[test]
+    #[cfg_attr(
+        all(target_arch = "wasm32", not(target_os = "wasi")),
+        wasm_bindgen_test
+    )]
     fn test_read_xmp_on_pdf_with_some_metadata() {
         let pdf = Pdf::from_bytes(include_bytes!("../../tests/fixtures/basic.pdf")).unwrap();
         assert!(pdf.read_xmp().is_some());
     }
 
-    #[cfg_attr(not(target_arch = "wasm32"), test)]
-    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    #[test]
+    #[cfg_attr(
+        all(target_arch = "wasm32", not(target_os = "wasi")),
+        wasm_bindgen_test
+    )]
     fn test_remove_manifest_bytes_from_file_without_c2pa_returns_error() {
         let mut pdf = Pdf::from_bytes(include_bytes!("../../tests/fixtures/basic.pdf")).unwrap();
 
@@ -763,8 +818,11 @@ mod tests {
         ));
     }
 
-    #[cfg_attr(not(target_arch = "wasm32"), test)]
-    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    #[test]
+    #[cfg_attr(
+        all(target_arch = "wasm32", not(target_os = "wasi")),
+        wasm_bindgen_test
+    )]
     fn test_remove_manifest_from_file_with_annotation_based_manifest() {
         let mut pdf = Pdf::from_bytes(include_bytes!("../../tests/fixtures/basic.pdf")).unwrap();
         let manifest_bytes = vec![0u8, 1u8, 1u8, 2u8, 3u8];
@@ -776,8 +834,11 @@ mod tests {
         assert!(!pdf.has_c2pa_manifest());
     }
 
-    #[cfg_attr(not(target_arch = "wasm32"), test)]
-    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    #[test]
+    #[cfg_attr(
+        all(target_arch = "wasm32", not(target_os = "wasi")),
+        wasm_bindgen_test
+    )]
     fn test_remove_manifest_from_file_with_embedded_file_based_manifest() {
         let mut pdf = Pdf::from_bytes(include_bytes!("../../tests/fixtures/basic.pdf")).unwrap();
         let manifest_bytes = vec![0u8, 1u8, 1u8, 2u8, 3u8];
