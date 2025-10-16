@@ -145,7 +145,7 @@ pub struct Ingredient {
     #[serde(skip_serializing_if = "Option::is_none")]
     label: Option<String>,
 
-    #[serde(skip_deserializing)]
+    #[serde(skip)]
     resources: ResourceStore,
 
     #[serde(skip_serializing_if = "Option::is_none")]

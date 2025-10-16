@@ -122,7 +122,7 @@ pub struct Manifest {
     remote_manifest: Option<RemoteManifest>,
 
     /// container for binary assets (like thumbnails)
-    #[serde(skip_deserializing)]
+    #[serde(skip)]
     resources: ResourceStore,
 }
 
