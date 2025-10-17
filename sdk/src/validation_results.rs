@@ -23,17 +23,17 @@ use crate::{
     jumbf::labels::manifest_label_from_uri,
     status_tracker::{LogKind, StatusTracker},
     store::Store,
-    validation_status::{self, log_kind, ValidationStatus},
+    validation_status::{self, log_kind, ValidationStatus, ASSERTION_ACTION_MALFORMED},
 };
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 /// Represents the levels of assurance a manifest store achives when evaluated against the C2PA
 /// specifications structural, cryptographic, and trust requirements.
 ///
 /// See [§14.3. Validation states].
 ///
 /// [§14.3. Validation states]: https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_validation_states
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 pub enum ValidationState {
     /// The manifest store fails to meet [ValidationState::WellFormed] requirements, meaning it cannot
     /// even be parsed or its basic structure is non-compliant.
@@ -217,50 +217,40 @@ impl ValidationResults {
                 .iter()
                 .map(|status| status.code())
                 .collect();
-            // let ingredient_failure_codes: HashSet<&str> = self
-            //     .ingredient_deltas
-            //     .as_ref()
-            //     .map(|deltas| {
-            //         deltas
-            //             .iter()
-            //             .flat_map(|idv| idv.validation_deltas().failure())
-            //             .map(|status| status.code())
-            //             .collect()
-            //     })
-            //     .unwrap_or_default();
             let ingredient_failure = self.ingredient_deltas.as_ref().is_some_and(|deltas| {
                 deltas
                     .iter()
                     .any(|idv| !idv.validation_deltas().failure().is_empty())
             });
 
-            let is_trusted = success_codes.contains(validation_status::SIGNING_CREDENTIAL_TRUSTED)
-                && success_codes.contains(validation_status::CLAIM_SIGNATURE_VALIDATED)
-                && success_codes.contains(validation_status::CLAIM_SIGNATURE_INSIDE_VALIDITY)
-                && failure_codes.is_empty()
-                && !ingredient_failure;
-            if is_trusted {
-                return ValidationState::Trusted;
-            }
-
-            let is_valid = success_codes.contains(validation_status::CLAIM_SIGNATURE_VALIDATED)
-                && success_codes.contains(validation_status::CLAIM_SIGNATURE_INSIDE_VALIDITY)
-                && failure_codes.len() == 1
-                && failure_codes.contains(validation_status::SIGNING_CREDENTIAL_UNTRUSTED)
-                && !ingredient_failure;
-            if is_valid {
-                return ValidationState::Valid;
-            }
-
+            // https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_well_formed_manifest
             let is_well_formed = (failure_codes.is_empty()
+                // We allow any codes that the spec states CANNOT occur to make it "valid."
                 || failure_codes.iter().all(|&code| {
                     code == validation_status::SIGNING_CREDENTIAL_OCSP_UNKNOWN
                         || code == validation_status::SIGNING_CREDENTIAL_REVOKED
                         || code == validation_status::SIGNING_CREDENTIAL_UNTRUSTED
+                        || code == validation_status::CLAIM_SIGNATURE_OUTSIDE_VALIDITY
                 }))
-                // TODO: what codes to ignore here?
+                // Note that as of this writing, an ingredient delta failure only occurs in the SDK if there is a hash mismatch on
+                // the ingredient's active manifest, thus signaling it was modified.
                 && !ingredient_failure;
-            if is_well_formed {
+
+            // https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_valid_manifest
+            let is_valid = success_codes.contains(validation_status::CLAIM_SIGNATURE_VALIDATED)
+                && success_codes.contains(validation_status::CLAIM_SIGNATURE_INSIDE_VALIDITY)
+                && is_well_formed;
+
+            // https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_trusted_manifest
+            let is_trusted = success_codes.contains(validation_status::SIGNING_CREDENTIAL_TRUSTED)
+                && failure_codes.is_empty()
+                && is_valid;
+
+            if is_trusted {
+                return ValidationState::Trusted;
+            } else if is_valid {
+                return ValidationState::Valid;
+            } else if is_well_formed {
                 return ValidationState::WellFormed;
             }
         }
