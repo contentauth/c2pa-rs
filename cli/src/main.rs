@@ -449,19 +449,12 @@ fn configure_sdk(args: &CliArgs) -> Result<()> {
     }
 
     // if any trust setting is provided enable the trust checks
+    // there is no disabling of default setting only the ability to enable if they were internally disabled
     if enable_trust_checks {
         Settings::from_toml(
             &toml::toml! {
                 [verify]
                 verify_trust = true
-            }
-            .to_string(),
-        )?;
-    } else {
-        Settings::from_toml(
-            &toml::toml! {
-                [verify]
-                verify_trust = false
             }
             .to_string(),
         )?;

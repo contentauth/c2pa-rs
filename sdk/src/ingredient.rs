@@ -40,8 +40,9 @@ use crate::{
         labels::{assertion_label_from_uri, manifest_label_from_uri},
     },
     log_item,
-    resource_store::{skip_serializing_resources, ResourceRef, ResourceStore},
+    resource_store::{ResourceRef, ResourceStore},
     salt::DefaultSalt,
+    settings::Settings,
     status_tracker::StatusTracker,
     store::Store,
     utils::{
@@ -144,8 +145,7 @@ pub struct Ingredient {
     #[serde(skip_serializing_if = "Option::is_none")]
     label: Option<String>,
 
-    #[serde(skip_deserializing)]
-    #[serde(skip_serializing_if = "skip_serializing_resources")]
+    #[serde(skip)]
     resources: ResourceStore,
 
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -732,12 +732,17 @@ impl Ingredient {
         path: P,
         options: &dyn IngredientOptions,
     ) -> Result<Self> {
-        Self::from_file_impl(path.as_ref(), options)
+        let settings = crate::settings::get_settings().unwrap_or_default();
+        Self::from_file_impl(path.as_ref(), options, &settings)
     }
 
     // Internal implementation to avoid code bloat.
     #[cfg(feature = "file_io")]
-    fn from_file_impl(path: &Path, options: &dyn IngredientOptions) -> Result<Self> {
+    fn from_file_impl(
+        path: &Path,
+        options: &dyn IngredientOptions,
+        settings: &Settings,
+    ) -> Result<Self> {
         #[cfg(feature = "diagnostics")]
         let _t = crate::utils::time_it::TimeIt::new("Ingredient:from_file_with_options");
 
@@ -767,15 +772,15 @@ impl Ingredient {
         let mut validation_log = StatusTracker::default();
 
         // retrieve the manifest bytes from embedded, sidecar or remote and convert to store if found
-        let (result, manifest_bytes) = match Store::load_jumbf_from_path(path) {
+        let (result, manifest_bytes) = match Store::load_jumbf_from_path(path, settings) {
             Ok(manifest_bytes) => {
                 (
                     // generate a store from the buffer and then validate from the asset path
-                    Store::from_jumbf(&manifest_bytes, &mut validation_log)
+                    Store::from_jumbf_with_settings(&manifest_bytes, &mut validation_log, settings)
                         .and_then(|mut store| {
                             // verify the store
                             store
-                                .verify_from_path(path, &mut validation_log)
+                                .verify_from_path(path, &mut validation_log, settings)
                                 .map(|_| store)
                         })
                         .inspect_err(|e| {
@@ -802,6 +807,7 @@ impl Ingredient {
                     ingredient.maybe_add_thumbnail(
                         &format,
                         &mut std::io::BufReader::new(std::fs::File::open(path)?),
+                        settings,
                     )?;
                 }
             }
@@ -823,9 +829,10 @@ impl Ingredient {
     /// This does not set title or hash.
     /// Thumbnail will be set only if one can be retrieved from a previous valid manifest.
     pub fn from_stream(format: &str, stream: &mut dyn CAIRead) -> Result<Self> {
+        let settings = crate::settings::get_settings().unwrap_or_default();
         let ingredient = Self::from_stream_info(stream, format, "untitled");
         stream.rewind()?;
-        ingredient.add_stream_internal(format, stream)
+        ingredient.add_stream_internal(format, stream, &settings)
     }
 
     /// Create an Ingredient from JSON.
@@ -840,11 +847,12 @@ impl Ingredient {
     /// Sets thumbnail if not defined and a valid claim thumbnail is found or add_thumbnails is enabled.
     /// Instance_id, document_id, and provenance will be overridden if found in the stream.
     /// Format will be overridden only if it is the default (application/octet-stream).
-    #[async_generic()]
+    #[async_generic]
     pub(crate) fn with_stream<S: Into<String>>(
         mut self,
         format: S,
         stream: &mut dyn CAIRead,
+        settings: &Settings,
     ) -> Result<Self> {
         let format = format.into();
 
@@ -876,21 +884,27 @@ impl Ingredient {
         stream.rewind()?;
 
         if _sync {
-            self.add_stream_internal(&format, stream)
+            self.add_stream_internal(&format, stream, settings)
         } else {
-            self.add_stream_internal_async(&format, stream).await
+            self.add_stream_internal_async(&format, stream, settings)
+                .await
         }
     }
 
     // Internal implementation to avoid code bloat.
-    #[async_generic()]
-    fn add_stream_internal(mut self, format: &str, stream: &mut dyn CAIRead) -> Result<Self> {
+    #[async_generic]
+    fn add_stream_internal(
+        mut self,
+        format: &str,
+        stream: &mut dyn CAIRead,
+        settings: &Settings,
+    ) -> Result<Self> {
         let mut validation_log = StatusTracker::default();
 
         // retrieve the manifest bytes from embedded or remote and convert to store if found
         let jumbf_result = match self.manifest_data() {
             Some(data) => Ok(data.into_owned()),
-            None => Store::load_jumbf_from_stream(format, stream)
+            None => Store::load_jumbf_from_stream(format, stream, settings)
                 .map(|(manifest_bytes, _)| manifest_bytes),
         };
 
@@ -903,6 +917,7 @@ impl Ingredient {
                     &mut *stream,
                     true,
                     &mut validation_log,
+                    settings,
                 );
                 (result, Some(manifest_bytes))
             }
@@ -911,13 +926,13 @@ impl Ingredient {
 
         // Fetch ocsp responses and store it with the ingredient
         if let Ok(ref mut store) = result {
-            let labels = store.get_manifest_labels_for_ocsp();
+            let labels = store.get_manifest_labels_for_ocsp(settings);
 
             let ocsp_response_ders = if _sync {
-                store.get_ocsp_response_ders(labels, &mut validation_log)?
+                store.get_ocsp_response_ders(labels, &mut validation_log, settings)?
             } else {
                 store
-                    .get_ocsp_response_ders_async(labels, &mut validation_log)
+                    .get_ocsp_response_ders_async(labels, &mut validation_log, settings)
                     .await?
             };
 
@@ -934,7 +949,7 @@ impl Ingredient {
 
         // create a thumbnail if we don't already have a manifest with a thumb we can use
         #[cfg(feature = "add_thumbnails")]
-        self.maybe_add_thumbnail(format, &mut std::io::BufReader::new(stream))?;
+        self.maybe_add_thumbnail(format, &mut std::io::BufReader::new(stream), settings)?;
 
         Ok(self)
     }
@@ -953,6 +968,15 @@ impl Ingredient {
     /// This does not set title or hash.
     /// Thumbnail will be set only if one can be retrieved from a previous valid manifest.
     pub async fn from_stream_async(format: &str, stream: &mut dyn CAIRead) -> Result<Self> {
+        let settings = crate::settings::get_settings().unwrap_or_default();
+        Self::from_stream_async_with_settings(format, stream, &settings).await
+    }
+
+    pub(crate) async fn from_stream_async_with_settings(
+        format: &str,
+        stream: &mut dyn CAIRead,
+        settings: &Settings,
+    ) -> Result<Self> {
         let mut ingredient = Self::from_stream_info(stream, format, "untitled");
         stream.rewind()?;
 
@@ -960,17 +984,22 @@ impl Ingredient {
 
         // retrieve the manifest bytes from embedded, sidecar or remote and convert to store if found
         let (result, manifest_bytes) =
-            match Store::load_jumbf_from_stream_async(format, stream).await {
+            match Store::load_jumbf_from_stream_async(format, stream, settings).await {
                 Ok((manifest_bytes, _)) => {
                     (
                         // generate a store from the buffer and then validate from the asset path
-                        match Store::from_jumbf(&manifest_bytes, &mut validation_log) {
+                        match Store::from_jumbf_with_settings(
+                            &manifest_bytes,
+                            &mut validation_log,
+                            settings,
+                        ) {
                             Ok(store) => {
                                 // verify the store
                                 Store::verify_store_async(
                                     &store,
                                     &mut ClaimAssetData::Stream(stream, format),
                                     &mut validation_log,
+                                    settings,
                                 )
                                 .await
                                 .map(|_| store)
@@ -997,7 +1026,7 @@ impl Ingredient {
 
         // create a thumbnail if we don't already have a manifest with a thumb we can use
         #[cfg(feature = "add_thumbnails")]
-        ingredient.maybe_add_thumbnail(format, &mut std::io::BufReader::new(stream))?;
+        ingredient.maybe_add_thumbnail(format, &mut std::io::BufReader::new(stream), settings)?;
 
         Ok(ingredient)
     }
@@ -1157,6 +1186,7 @@ impl Ingredient {
         claim: &mut Claim,
         redactions: Option<Vec<String>>,
         resources: Option<&ResourceStore>, // use alternate resource store (for Builder model)
+        settings: &Settings,
     ) -> Result<HashedUri> {
         let mut thumbnail = None;
         // for Builder model, ingredient resources may be in the manifest
@@ -1177,7 +1207,7 @@ impl Ingredient {
 
                 // have Store check and load ingredients and add them to a claim
                 let ingredient_store =
-                    Store::load_ingredient_to_claim(claim, &manifest_data, redactions)?;
+                    Store::load_ingredient_to_claim(claim, &manifest_data, redactions, settings)?;
 
                 let ingredient_active_claim = ingredient_store
                     .provenance_claim()
@@ -1398,20 +1428,27 @@ impl Ingredient {
         format: &str,
         stream: &mut dyn CAIRead,
     ) -> Result<Self> {
+        let settings = crate::settings::get_settings().unwrap_or_default();
         let mut ingredient = Self::from_stream_info(stream, format, "untitled");
 
         let mut validation_log = StatusTracker::default();
 
         let manifest_bytes: Vec<u8> = manifest_bytes.into();
         // generate a store from the buffer and then validate from the asset path
-        let result = match Store::from_jumbf(&manifest_bytes, &mut validation_log) {
+        let result = match Store::from_jumbf_with_settings(
+            &manifest_bytes,
+            &mut validation_log,
+            &settings,
+        ) {
             Ok(store) => {
                 // verify the store
                 stream.rewind()?;
+
                 Store::verify_store_async(
                     &store,
                     &mut ClaimAssetData::Stream(stream, format),
                     &mut validation_log,
+                    &settings,
                 )
                 .await
                 .map(|_| store)
@@ -1430,7 +1467,7 @@ impl Ingredient {
 
         // create a thumbnail if we don't already have a manifest with a thumb we can use
         #[cfg(feature = "add_thumbnails")]
-        ingredient.maybe_add_thumbnail(format, &mut std::io::BufReader::new(stream))?;
+        ingredient.maybe_add_thumbnail(format, &mut std::io::BufReader::new(stream), &settings)?;
 
         Ok(ingredient)
     }
@@ -1440,17 +1477,22 @@ impl Ingredient {
     /// This function takes into account the [Settings][crate::settings::Settings]:
     /// * `builder.thumbnail.enabled`
     #[cfg(feature = "add_thumbnails")]
-    pub fn maybe_add_thumbnail<R>(&mut self, format: &str, stream: &mut R) -> Result<()>
+    pub(crate) fn maybe_add_thumbnail<R>(
+        &mut self,
+        format: &str,
+        stream: &mut R,
+        settings: &Settings,
+    ) -> Result<()>
     where
         R: std::io::BufRead + std::io::Seek,
     {
-        let auto_thumbnail =
-            crate::settings::get_settings_value::<bool>("builder.thumbnail.enabled")?;
+        let auto_thumbnail = settings.builder.thumbnail.enabled;
+
         if self.thumbnail.is_none() && auto_thumbnail {
             stream.rewind()?;
 
             if let Some((output_format, image)) =
-                crate::utils::thumbnail::make_thumbnail_bytes_from_stream(format, stream)?
+                crate::utils::thumbnail::make_thumbnail_bytes_from_stream(format, stream, settings)?
             {
                 self.set_thumbnail(output_format.to_string(), image)?;
             }
@@ -1694,21 +1736,16 @@ mod tests {
     #[cfg(feature = "fetch_remote_manifests")]
     #[c2pa_test_async]
     async fn test_jpg_cloud_from_memory() {
-        // Save original settings
-        let original_verify_trust =
-            crate::settings::get_settings_value("verify.verify_trust").unwrap_or(true);
-        let original_remote_fetch =
-            crate::settings::get_settings_value("verify.remote_manifest_fetch").unwrap_or(true);
-
-        // Set our test settings
         crate::settings::set_settings_value("verify.verify_trust", false).unwrap();
         crate::settings::set_settings_value("verify.remote_manifest_fetch", true).unwrap();
 
         let image_bytes = include_bytes!("../tests/fixtures/cloud.jpg");
         let format = "image/jpeg";
+
         let ingredient = Ingredient::from_memory_async(format, image_bytes)
             .await
             .expect("from_memory_async");
+
         // println!("ingredient = {ingredient}");
         assert_eq!(ingredient.title(), Some("untitled"));
         assert_eq!(ingredient.format(), Some(format));
@@ -1716,23 +1753,21 @@ mod tests {
         assert!(ingredient.provenance().unwrap().starts_with("https:"));
         assert!(ingredient.manifest_data().is_some());
         assert_eq!(ingredient.validation_status(), None);
-
-        // Restore original settings
-        crate::settings::set_settings_value("verify.verify_trust", original_verify_trust).unwrap();
-        crate::settings::set_settings_value("verify.remote_manifest_fetch", original_remote_fetch)
-            .unwrap();
     }
 
     #[cfg(not(any(feature = "fetch_remote_manifests", feature = "file_io")))]
     #[c2pa_test_async]
     async fn test_jpg_cloud_from_memory_no_file_io() {
         crate::settings::set_settings_value("verify.verify_trust", false).unwrap();
+        crate::settings::set_settings_value("verify.remote_manifest_fetch", true).unwrap();
 
         let image_bytes = include_bytes!("../tests/fixtures/cloud.jpg");
         let format = "image/jpeg";
+
         let ingredient = Ingredient::from_memory_async(format, image_bytes)
             .await
             .expect("from_memory_async");
+
         assert!(ingredient.validation_status().is_some());
         assert_eq!(
             ingredient.validation_status().unwrap()[0].code(),
