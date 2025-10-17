@@ -909,10 +909,10 @@ impl Reader {
                 builder.definition.instance_id = manifest.instance_id().to_owned();
                 builder.definition.thumbnail = manifest.thumbnail_ref().cloned();
                 builder.definition.redactions = manifest.redactions.take();
-                let ingredients = manifest.ingredients.drain(..).collect::<Vec<_>>();
+                let ingredients = std::mem::take(&mut manifest.ingredients); //manifest.ingredients.drain(..).collect::<Vec<_>>();
                 for mut ingredient in ingredients {
                     if let Some(active_manifest) = ingredient.active_manifest() {
-                        let ingredient_claim = self.store.get_claim(active_manifest);
+                        let ingredient_claim = self.store.remove_claim(active_manifest);
                         if let Some(claim) = ingredient_claim {
                             // recreate an ingredient store to get the jumbf data
                             let mut ingredient_store = Store::new();
@@ -921,7 +921,7 @@ impl Reader {
                             let manifest_data_ref = manifest.resources_mut().add_with(
                                 "manifest_data",
                                 "application/c2pa",
-                                jumbf.clone(),
+                                jumbf,
                             )?;
                             ingredient.set_manifest_data_ref(manifest_data_ref)?;
                         }
