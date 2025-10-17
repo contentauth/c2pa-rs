@@ -39,16 +39,6 @@ use crate::{
     Error, Result,
 };
 
-/// Function that is used by serde to determine whether or not we should serialize
-/// resources based on the `serialize_resources` flag.
-/// (Serialization is disabled by default.)
-pub(crate) fn skip_serializing_resources(_: &ResourceStore) -> bool {
-    //TODO: Why is this disabled for wasm32?
-    !cfg!(feature = "serialize_thumbnails")
-        || cfg!(test)
-        || cfg!(not(all(target_arch = "wasm32", not(target_os = "wasi"))))
-}
-
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 #[serde(untagged)]

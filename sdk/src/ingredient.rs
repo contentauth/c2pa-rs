@@ -40,7 +40,7 @@ use crate::{
         labels::{assertion_label_from_uri, manifest_label_from_uri},
     },
     log_item,
-    resource_store::{skip_serializing_resources, ResourceRef, ResourceStore},
+    resource_store::{ResourceRef, ResourceStore},
     settings::Settings,
     status_tracker::StatusTracker,
     store::Store,
@@ -144,8 +144,7 @@ pub struct Ingredient {
     #[serde(skip_serializing_if = "Option::is_none")]
     label: Option<String>,
 
-    #[serde(skip_deserializing)]
-    #[serde(skip_serializing_if = "skip_serializing_resources")]
+    #[serde(skip)]
     resources: ResourceStore,
 
     #[serde(skip_serializing_if = "Option::is_none")]
