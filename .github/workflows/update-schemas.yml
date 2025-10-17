@@ -1,0 +1,21 @@
+name: Update schemas in contentauth/json-manifest-reference
+on:
+  push:
+    tags:
+      - "c2pa-v*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  repository-dispatch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Send repository dispatch
+        uses: peter-evans/repository-dispatch@v4
+        with:
+          event-type: c2pa-rs-release
+          repository: contentauth/json-manifest-reference
+          # REVIEW-NOTE what is the caiopensrc PAT?
+          token: ${{ secrets.PAT }}
