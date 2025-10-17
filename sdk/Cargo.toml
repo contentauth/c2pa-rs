@@ -72,7 +72,7 @@ required-features = ["file_io"]
 name = "v2show"
 
 [[example]]
-name = "v2api"
+name = "api"
 
 [[example]]
 name = "fragmented_bmff"
