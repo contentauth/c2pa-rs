@@ -196,7 +196,7 @@ fn test_builder_embedded_v1_otgp() -> Result<()> {
     dest.set_position(0);
     let reader = Reader::from_stream(format, &mut dest)?;
     // check that the v1 OTGP is embedded and we catch it correct with validation_results
-    assert_ne!(reader.validation_state(), ValidationState::Invalid);
+    assert_ne!(reader.validation_state(), ValidationState::Malformed);
     //println!("reader: {}", reader);
     assert_eq!(
         reader.active_manifest().unwrap().ingredients()[0]

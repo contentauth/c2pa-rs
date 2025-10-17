@@ -11,6 +11,8 @@
 // specific language governing permissions and limitations under
 // each license.
 
+use std::collections::HashSet;
+
 #[cfg(feature = "json_schema")]
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -21,30 +23,54 @@ use crate::{
     jumbf::labels::manifest_label_from_uri,
     status_tracker::{LogKind, StatusTracker},
     store::Store,
-    validation_status::{log_kind, ValidationStatus},
+    validation_status::{self, log_kind, ValidationStatus},
 };
 
+/// Represents the levels of assurance a manifest store achives when evaluated against the C2PA
+/// specifications structural, cryptographic, and trust requirements.
+///
+/// See [§14.3. Validation states].
+///
+/// [§14.3. Validation states]: https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_validation_states
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "json_schema", derive(JsonSchema))]
-/// Indicates if the manifest store is valid and trusted.
-///
-/// The Trusted state implies the manifest store is valid and the active signature is trusted.
 pub enum ValidationState {
-    /// Errors were found in the manifest store.
-    Invalid,
-    /// No errors were found in validation, but the active signature is not trusted.
+    /// Validation is disabled in the SDK and the [ValidationState] is unable to be determined.
+    Unknown,
+    /// The manifest store fails to meet [ValidationState::WellFormed] requirements, meaning it cannot
+    /// even be parsed or its basic structure is non-compliant.
+    Malformed,
+    /// The manifest store follows all required structural and syntactic rules in the C2PA specification.
+    ///
+    /// See [§14.3.4. Well-Formed Manifest].
+    ///
+    /// [§14.3.4. Well-Formed Manifest]: https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_well_formed_manifest
+    WellFormed,
+    /// The manifest store is well-formed and the cryptographic integrity checks succeed.
+    ///
+    /// See [§14.3.5. Valid Manifest].
+    ///
+    /// [§14.3.5. Valid Manifest]: https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_valid_manifest
     Valid,
-    /// The manifest store is valid and the active signature is trusted.
+    /// The manifest store is valid and signed by a certificate that chains up to a trusted root or known
+    /// authority in the trust list.
+    ///
+    /// See [§14.3.6. Trusted Manifest].
+    ///
+    /// [§14.3.6. Trusted Manifest]: https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_trusted_manifest
     Trusted,
 }
 
+/// Contains a set of success, informational, and failure validation status codes.
 #[derive(Clone, Serialize, Default, Deserialize, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "json_schema", derive(JsonSchema))]
-/// Contains a set of success, informational, and failure validation status codes.
 pub struct StatusCodes {
-    pub success: Vec<ValidationStatus>, // an array of validation success codes. May be empty.
-    pub informational: Vec<ValidationStatus>, // an array of validation informational codes. May be empty.
-    pub failure: Vec<ValidationStatus>,       // an array of validation failure codes. May be empty.
+    /// An array of validation success codes. May be empty.
+    pub success: Vec<ValidationStatus>,
+    /// An array of validation informational codes. May be empty.
+    pub informational: Vec<ValidationStatus>,
+    // An array of validation failure codes. May be empty.
+    pub failure: Vec<ValidationStatus>,
 }
 
 impl StatusCodes {
@@ -85,18 +111,22 @@ impl StatusCodes {
     }
 }
 
-#[derive(Clone, Serialize, Default, Deserialize, Debug, PartialEq, Eq)]
-#[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 /// A map of validation results for a manifest store.
 ///
 /// The map contains the validation results for the active manifest and any ingredient deltas.
 /// It is normal for there to be many
+#[derive(Clone, Serialize, Default, Deserialize, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 pub struct ValidationResults {
+    /// Validation status codes for the ingredient's active manifest. Present if ingredient is a C2PA
+    /// asset. Not present if the ingredient is not a C2PA asset.
     #[serde(rename = "activeManifest", skip_serializing_if = "Option::is_none")]
-    active_manifest: Option<StatusCodes>, // Validation status codes for the ingredient's active manifest. Present if ingredient is a C2PA asset. Not present if the ingredient is not a C2PA asset.
+    active_manifest: Option<StatusCodes>,
 
+    /// List of any changes/deltas between the current and previous validation results for each ingredient's
+    /// manifest. Present if the the ingredient is a C2PA asset.
     #[serde(rename = "ingredientDeltas", skip_serializing_if = "Option::is_none")]
-    ingredient_deltas: Option<Vec<IngredientDeltaValidationResult>>, // List of any changes/deltas between the current and previous validation results for each ingredient's manifest. Present if the the ingredient is a C2PA asset.
+    ingredient_deltas: Option<Vec<IngredientDeltaValidationResult>>,
 }
 
 impl ValidationResults {
@@ -180,29 +210,67 @@ impl ValidationResults {
     }
 
     /// Returns the [ValidationState] of the manifest store based on the validation results.
+    ///
+    /// See [§14.3. Validation states].
+    ///
+    /// [§14.3. Validation states]: https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_validation_states
     pub fn validation_state(&self) -> ValidationState {
-        let mut is_trusted = true; // Assume the state is trusted until proven otherwise
         if let Some(active_manifest) = self.active_manifest.as_ref() {
-            if !active_manifest.failure().is_empty() {
-                return ValidationState::Invalid;
+            // If there are no success codes and no failure codes, we assume validation was disabled in the SDK
+            // and the state is unknown.
+            if active_manifest.success().is_empty() && active_manifest.failure().is_empty() {
+                return ValidationState::Unknown;
             }
-            // There must be a trusted credential in the active manifest for the state to be trusted
-            is_trusted = active_manifest.success().iter().any(|status| {
-                status.code() == crate::validation_status::SIGNING_CREDENTIAL_TRUSTED
+
+            let success_codes: HashSet<&str> = active_manifest
+                .success()
+                .iter()
+                .map(|status| status.code())
+                .collect();
+            let failure_codes: HashSet<&str> = active_manifest
+                .failure()
+                .iter()
+                .map(|status| status.code())
+                .collect();
+            let ingredient_failure = self.ingredient_deltas.as_ref().is_some_and(|deltas| {
+                deltas
+                    .iter()
+                    .any(|idv| !idv.validation_deltas().failure().is_empty())
             });
-        }
-        if let Some(ingredient_deltas) = self.ingredient_deltas.as_ref() {
-            for idv in ingredient_deltas.iter() {
-                if !idv.validation_deltas().failure().is_empty() {
-                    return ValidationState::Invalid;
-                }
+
+            // https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_well_formed_manifest
+            let is_well_formed = (failure_codes.is_empty()
+                // We allow any codes that the spec states CANNOT occur to make it "valid."
+                || failure_codes.iter().all(|&code| {
+                    code == validation_status::SIGNING_CREDENTIAL_OCSP_UNKNOWN
+                        || code == validation_status::SIGNING_CREDENTIAL_REVOKED
+                        || code == validation_status::SIGNING_CREDENTIAL_UNTRUSTED
+                        || code == validation_status::CLAIM_SIGNATURE_OUTSIDE_VALIDITY
+                }))
+                // Note that as of this writing, an ingredient delta failure only occurs in the SDK if there is a hash mismatch on
+                // the ingredient's active manifest, thus signaling it was modified.
+                && !ingredient_failure;
+
+            // https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_valid_manifest
+            let is_valid = success_codes.contains(validation_status::CLAIM_SIGNATURE_VALIDATED)
+                && success_codes.contains(validation_status::CLAIM_SIGNATURE_INSIDE_VALIDITY)
+                && is_well_formed;
+
+            // https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_trusted_manifest
+            let is_trusted = success_codes.contains(validation_status::SIGNING_CREDENTIAL_TRUSTED)
+                && failure_codes.is_empty()
+                && is_valid;
+
+            if is_trusted {
+                return ValidationState::Trusted;
+            } else if is_valid {
+                return ValidationState::Valid;
+            } else if is_well_formed {
+                return ValidationState::WellFormed;
             }
         }
-        if is_trusted {
-            ValidationState::Trusted
-        } else {
-            ValidationState::Valid
-        }
+
+        ValidationState::Malformed
     }
 
     /// Returns a list of all validation errors in [ValidationResults].
