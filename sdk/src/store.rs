@@ -3913,45 +3913,24 @@ impl Store {
         validation_log: &mut StatusTracker,
         settings: &Settings,
     ) -> Result<Store> {
-        let store = if _sync {
-            Self::from_stream(
-                asset_type,
-                &mut *init_segment,
-                verify,
-                validation_log,
-                settings,
-            )?
-        } else {
-            Self::from_stream_async(
-                asset_type,
-                &mut *init_segment,
-                verify,
-                validation_log,
-                settings,
-            )
-            .await?
-        };
+        let store = Self::from_stream(
+            asset_type,
+            &mut *init_segment,
+            verify,
+            validation_log,
+            settings,
+        )?;
 
         // verify the store
         if verify {
             init_segment.rewind()?;
             // verify store and claims
-            if _sync {
-                Store::verify_store(
-                    &store,
-                    &mut ClaimAssetData::StreamFragments(init_segment, fragments, asset_type),
-                    validation_log,
-                    settings,
-                )?;
-            } else {
-                Store::verify_store_async(
-                    &store,
-                    &mut ClaimAssetData::StreamFragments(init_segment, fragments, asset_type),
-                    validation_log,
-                    settings,
-                )
-                .await?;
-            }
+            Store::verify_store(
+                &store,
+                &mut ClaimAssetData::StreamFragments(init_segment, fragments, asset_type),
+                validation_log,
+                settings,
+            )?;
         }
 
         Ok(store)

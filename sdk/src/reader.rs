@@ -137,7 +137,7 @@ impl ReaderBuilder {
                                 &mut validation_log,
                                 &self.settings,
                             )?;
-                            Reader::from_store(store, &validation_log)
+                            Reader::from_store(store, &mut validation_log, &self.settings)
                         } else {
                             let store = Store::from_manifest_data_and_stream_and_fragments_async(
                                 &c2pa_data,
@@ -149,7 +149,8 @@ impl ReaderBuilder {
                                 &self.settings,
                             )
                             .await?;
-                            Reader::from_store_async(store, &validation_log).await
+                            Reader::from_store_async(store, &mut validation_log, &self.settings)
+                                .await
                         }
                     }
                     None => {
@@ -163,7 +164,7 @@ impl ReaderBuilder {
                                 &mut validation_log,
                                 &self.settings,
                             )?;
-                            Reader::from_store(store, &validation_log)
+                            Reader::from_store(store, &mut validation_log, &self.settings)
                         } else {
                             let store = Store::load_fragments_from_stream_async(
                                 format,
@@ -174,7 +175,8 @@ impl ReaderBuilder {
                                 &self.settings,
                             )
                             .await?;
-                            Reader::from_store_async(store, &validation_log).await
+                            Reader::from_store_async(store, &mut validation_log, &self.settings)
+                                .await
                         }
                     }
                 }
@@ -196,7 +198,7 @@ impl ReaderBuilder {
                             &mut validation_log,
                             &self.settings,
                         )?;
-                        Reader::from_store(store, &validation_log)
+                        Reader::from_store(store, &mut validation_log, &self.settings)
                     } else {
                         let store = Store::from_manifest_data_and_stream_async(
                             &c2pa_data,
@@ -207,7 +209,7 @@ impl ReaderBuilder {
                             &self.settings,
                         )
                         .await?;
-                        Reader::from_store_async(store, &validation_log).await
+                        Reader::from_store_async(store, &mut validation_log, &self.settings).await
                     }
                 }
                 None => {
@@ -220,7 +222,7 @@ impl ReaderBuilder {
                             &mut validation_log,
                             &self.settings,
                         )?;
-                        Reader::from_store(store, &validation_log)
+                        Reader::from_store(store, &mut validation_log, &self.settings)
                     } else {
                         let store = Store::from_stream_async(
                             format,
@@ -230,7 +232,7 @@ impl ReaderBuilder {
                             &self.settings,
                         )
                         .await?;
-                        Reader::from_store_async(store, &validation_log).await
+                        Reader::from_store_async(store, &mut validation_log, &self.settings).await
                     }
                 }
             },
