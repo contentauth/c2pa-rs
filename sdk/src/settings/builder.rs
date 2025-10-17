@@ -47,7 +47,7 @@ pub(crate) enum ThumbnailFormat {
     Tiff,
 }
 /// Quality of the thumbnail.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub(crate) enum ThumbnailQuality {
     /// Low quality.

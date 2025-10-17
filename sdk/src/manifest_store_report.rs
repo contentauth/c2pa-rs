@@ -147,6 +147,7 @@ impl ManifestReport {
 
         json = b64_tag(json, "hash");
         json = omit_tag(json, "pad");
+        json = omit_tag(json, "pad1");
 
         json
     }

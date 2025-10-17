@@ -27,6 +27,7 @@ use crate::{
         time_stamp::{verify_time_stamp, verify_time_stamp_async, ContentInfo, TimeStampResponse},
     },
     log_item,
+    settings::Settings,
     status_tracker::StatusTracker,
     validation_status,
 };
@@ -41,6 +42,7 @@ pub(crate) fn validate_cose_tst_info(
     data: &[u8],
     ctp: &CertificateTrustPolicy,
     validation_log: &mut StatusTracker,
+    settings: &Settings,
 ) -> Result<TstInfo, CoseError> {
     let Some((sigtst, tss)) = &sign1
         .unprotected
@@ -77,10 +79,24 @@ pub(crate) fn validate_cose_tst_info(
         .map_err(|e| CoseError::InternalError(e.to_string()))?;
 
     let tst_infos = if _sync {
-        parse_and_validate_sigtst(&time_cbor, tbs, &sign1.protected, ctp, validation_log)?
+        parse_and_validate_sigtst(
+            &time_cbor,
+            tbs,
+            &sign1.protected,
+            ctp,
+            validation_log,
+            settings,
+        )?
     } else {
-        parse_and_validate_sigtst_async(&time_cbor, tbs, &sign1.protected, ctp, validation_log)
-            .await?
+        parse_and_validate_sigtst_async(
+            &time_cbor,
+            tbs,
+            &sign1.protected,
+            ctp,
+            validation_log,
+            settings,
+        )
+        .await?
     };
 
     // For now, we only pay attention to the first time stamp header.
@@ -105,6 +121,7 @@ pub(crate) fn parse_and_validate_sigtst(
     p_header: &ProtectedHeader,
     ctp: &CertificateTrustPolicy,
     validation_log: &mut StatusTracker,
+    settings: &Settings,
 ) -> Result<Vec<TstInfo>, CoseError> {
     let tst_container: TstContainer = ciborium::from_reader(sigtst_cbor)
         .map_err(|err| CoseError::CborParsingError(err.to_string()))?;
@@ -127,9 +144,9 @@ pub(crate) fn parse_and_validate_sigtst(
         let tbs = cose_countersign_data(data, p_header);
 
         let tst_info_res = if _sync {
-            verify_time_stamp(&token.val, &tbs, ctp, validation_log)
+            verify_time_stamp(&token.val, &tbs, ctp, validation_log, settings)
         } else {
-            verify_time_stamp_async(&token.val, &tbs, ctp, validation_log).await
+            verify_time_stamp_async(&token.val, &tbs, ctp, validation_log, settings).await
         };
 
         if let Ok(tst_info) = tst_info_res {
