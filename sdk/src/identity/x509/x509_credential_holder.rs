@@ -88,6 +88,7 @@ mod tests {
             x509::{X509CredentialHolder, X509SignatureVerifier},
             IdentityAssertion,
         },
+        settings::set_settings_value,
         status_tracker::StatusTracker,
         Builder, Reader, SigningAlg,
     };
@@ -97,6 +98,11 @@ mod tests {
 
     #[c2pa_test_async]
     async fn simple_case() {
+        let settings = crate::settings::get_settings().unwrap_or_default();
+        let old_decode_identity_assertions = settings.core.decode_identity_assertions;
+
+        set_settings_value("core.decode_identity_assertions", false).unwrap();
+
         let format = "image/jpeg";
         let mut source = Cursor::new(TEST_IMAGE);
         let mut dest = Cursor::new(Vec::new());
@@ -164,5 +170,11 @@ mod tests {
         );
 
         // TO DO: Not sure what to check from COSE_Sign1.
+
+        set_settings_value(
+            "core.decode_identity_assertions",
+            old_decode_identity_assertions,
+        )
+        .unwrap();
     }
 }
