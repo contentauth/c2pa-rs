@@ -192,15 +192,15 @@ enum Commands {
     Trust {
         /// URL or path to file containing list of trust anchors in PEM format
         #[arg(long = "trust_anchors", env="C2PATOOL_TRUST_ANCHORS", value_parser = parse_resource_string)]
-        trust_anchors: Option<TrustResource>,
+        trust_anchors: Option<Vec<TrustResource>>,
 
         /// URL or path to file containing specific manifest signing certificates in PEM format to implicitly trust
         #[arg(long = "allowed_list", env="C2PATOOL_ALLOWED_LIST", value_parser = parse_resource_string)]
-        allowed_list: Option<TrustResource>,
+        allowed_list: Option<Vec<TrustResource>>,
 
         /// URL or path to file containing configured EKUs in Oid dot notation
         #[arg(long = "trust_config", env="C2PATOOL_TRUST_CONFIG", value_parser = parse_resource_string)]
-        trust_config: Option<TrustResource>,
+        trust_config: Option<Vec<TrustResource>>,
     },
     /// Sub-command to add manifest to fragmented BMFF content
     ///
@@ -275,6 +275,14 @@ fn load_ingredient(path: &Path) -> Result<Ingredient> {
     } else {
         Ok(Ingredient::from_file(path)?)
     }
+}
+
+fn load_trust_resources(resources: &[TrustResource]) -> Result<String> {
+    Ok(resources
+        .iter()
+        .map(load_trust_resource)
+        .collect::<Result<Vec<String>>>()?
+        .join("\n"))
 }
 
 fn load_trust_resource(resource: &TrustResource) -> Result<String> {
@@ -405,7 +413,7 @@ fn configure_sdk(args: &CliArgs) -> Result<()> {
         if let Some(trust_list) = &trust_anchors {
             debug!("Using trust anchors from {trust_list:?}");
 
-            let data = load_trust_resource(trust_list)?;
+            let data = load_trust_resources(trust_list)?;
             Settings::from_toml(
                 &toml::toml! {
                     [trust]
@@ -420,7 +428,7 @@ fn configure_sdk(args: &CliArgs) -> Result<()> {
         if let Some(allowed_list) = &allowed_list {
             debug!("Using allowed list from {allowed_list:?}");
 
-            let data = load_trust_resource(allowed_list)?;
+            let data = load_trust_resources(allowed_list)?;
             Settings::from_toml(
                 &toml::toml! {
                     [trust]
@@ -435,7 +443,7 @@ fn configure_sdk(args: &CliArgs) -> Result<()> {
         if let Some(trust_config) = &trust_config {
             debug!("Using trust config from {trust_config:?}");
 
-            let data = load_trust_resource(trust_config)?;
+            let data = load_trust_resources(trust_config)?;
             Settings::from_toml(
                 &toml::toml! {
                     [trust]
