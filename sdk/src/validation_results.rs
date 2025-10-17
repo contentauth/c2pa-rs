@@ -23,7 +23,7 @@ use crate::{
     jumbf::labels::manifest_label_from_uri,
     status_tracker::{LogKind, StatusTracker},
     store::Store,
-    validation_status::{self, log_kind, ValidationStatus, ASSERTION_ACTION_MALFORMED},
+    validation_status::{self, log_kind, ValidationStatus},
 };
 
 /// Represents the levels of assurance a manifest store achives when evaluated against the C2PA
@@ -35,6 +35,8 @@ use crate::{
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 pub enum ValidationState {
+    /// Validation is disabled in the SDK and the [ValidationState] is unable to be determined.
+    Unknown,
     /// The manifest store fails to meet [ValidationState::WellFormed] requirements, meaning it cannot
     /// even be parsed or its basic structure is non-compliant.
     Malformed,
@@ -59,13 +61,16 @@ pub enum ValidationState {
     Trusted,
 }
 
+/// Contains a set of success, informational, and failure validation status codes.
 #[derive(Clone, Serialize, Default, Deserialize, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "json_schema", derive(JsonSchema))]
-/// Contains a set of success, informational, and failure validation status codes.
 pub struct StatusCodes {
-    pub success: Vec<ValidationStatus>, // an array of validation success codes. May be empty.
-    pub informational: Vec<ValidationStatus>, // an array of validation informational codes. May be empty.
-    pub failure: Vec<ValidationStatus>,       // an array of validation failure codes. May be empty.
+    /// An array of validation success codes. May be empty.
+    pub success: Vec<ValidationStatus>,
+    /// An array of validation informational codes. May be empty.
+    pub informational: Vec<ValidationStatus>,
+    // An array of validation failure codes. May be empty.
+    pub failure: Vec<ValidationStatus>,
 }
 
 impl StatusCodes {
@@ -106,18 +111,22 @@ impl StatusCodes {
     }
 }
 
-#[derive(Clone, Serialize, Default, Deserialize, Debug, PartialEq, Eq)]
-#[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 /// A map of validation results for a manifest store.
 ///
 /// The map contains the validation results for the active manifest and any ingredient deltas.
 /// It is normal for there to be many
+#[derive(Clone, Serialize, Default, Deserialize, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 pub struct ValidationResults {
+    /// Validation status codes for the ingredient's active manifest. Present if ingredient is a C2PA
+    /// asset. Not present if the ingredient is not a C2PA asset.
     #[serde(rename = "activeManifest", skip_serializing_if = "Option::is_none")]
-    active_manifest: Option<StatusCodes>, // Validation status codes for the ingredient's active manifest. Present if ingredient is a C2PA asset. Not present if the ingredient is not a C2PA asset.
+    active_manifest: Option<StatusCodes>,
 
+    /// List of any changes/deltas between the current and previous validation results for each ingredient's
+    /// manifest. Present if the the ingredient is a C2PA asset.
     #[serde(rename = "ingredientDeltas", skip_serializing_if = "Option::is_none")]
-    ingredient_deltas: Option<Vec<IngredientDeltaValidationResult>>, // List of any changes/deltas between the current and previous validation results for each ingredient's manifest. Present if the the ingredient is a C2PA asset.
+    ingredient_deltas: Option<Vec<IngredientDeltaValidationResult>>,
 }
 
 impl ValidationResults {
@@ -207,6 +216,12 @@ impl ValidationResults {
     /// [§14.3. Validation states]: https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_validation_states
     pub fn validation_state(&self) -> ValidationState {
         if let Some(active_manifest) = self.active_manifest.as_ref() {
+            // If there are no success codes and no failure codes, we assume validation was disabled in the SDK
+            // and the state is unknown.
+            if active_manifest.success().is_empty() && active_manifest.failure().is_empty() {
+                return ValidationState::Unknown;
+            }
+
             let success_codes: HashSet<&str> = active_manifest
                 .success()
                 .iter()
