@@ -32,6 +32,7 @@ use serde_with::skip_serializing_none;
 #[cfg(feature = "file_io")]
 use crate::utils::io_utils::uri_to_path;
 use crate::{
+    asset_io::CAIRead,
     crypto::base64,
     dynamic_assertion::PartialClaim,
     error::{Error, Result},
@@ -70,6 +71,173 @@ pub trait AsyncPostValidator {
         preliminary_claim: &PartialClaim,
         tracker: &mut StatusTracker,
     ) -> Result<Option<Value>>;
+}
+
+pub struct ReaderBuilder {
+    settings: Settings,
+    external_manifest: Option<Box<dyn CAIRead>>,
+    fragments: Option<Vec<Box<dyn CAIRead>>>,
+}
+
+impl ReaderBuilder {
+    pub fn new() -> Self {
+        Self {
+            settings: Settings::default(),
+            external_manifest: None,
+            fragments: None,
+        }
+    }
+
+    pub fn with_settings(settings: Settings) -> Self {
+        Self {
+            settings,
+            external_manifest: None,
+            fragments: None,
+        }
+    }
+
+    pub fn external_manifest(
+        mut self,
+        external_manifest: impl Read + Seek + Send + 'static,
+    ) -> Self {
+        self.external_manifest = Some(Box::new(external_manifest));
+        self
+    }
+
+    pub fn add_fragment(mut self, fragment: impl Read + Seek + Send + 'static) -> Self {
+        let fragments = self.fragments.get_or_insert_default();
+        fragments.push(Box::new(fragment));
+        self
+    }
+
+    // TODO:
+    // pub fn http_resolver(self, resolver: impl SyncHttpResolver) -> Self {
+    //     todo!()
+    // }
+
+    #[async_generic]
+    pub fn build(self, format: &str, mut stream: impl Read + Seek + Send) -> Result<Reader> {
+        match self.fragments {
+            Some(mut fragments) => {
+                match self.external_manifest {
+                    Some(mut external_manifest) => {
+                        // TODO: internally we actually convert c2pa_data to a stream again, we should modify the function
+                        //       signatures to stream by default
+                        let mut c2pa_data = Vec::new();
+                        external_manifest.read_to_end(&mut c2pa_data)?;
+
+                        let mut validation_log = StatusTracker::default();
+                        if _sync {
+                            let store = Store::from_manifest_data_and_stream_and_fragments(
+                                &c2pa_data,
+                                format,
+                                &mut stream,
+                                &mut fragments,
+                                self.settings.verify.verify_after_reading,
+                                &mut validation_log,
+                                &self.settings,
+                            )?;
+                            Reader::from_store(store, &mut validation_log, &self.settings)
+                        } else {
+                            let store = Store::from_manifest_data_and_stream_and_fragments_async(
+                                &c2pa_data,
+                                format,
+                                &mut stream,
+                                &mut fragments,
+                                self.settings.verify.verify_after_reading,
+                                &mut validation_log,
+                                &self.settings,
+                            )
+                            .await?;
+                            Reader::from_store_async(store, &mut validation_log, &self.settings)
+                                .await
+                        }
+                    }
+                    None => {
+                        let mut validation_log = StatusTracker::default();
+                        if _sync {
+                            let store = Store::load_fragments_from_stream(
+                                format,
+                                &mut stream,
+                                &mut fragments,
+                                self.settings.verify.verify_after_reading,
+                                &mut validation_log,
+                                &self.settings,
+                            )?;
+                            Reader::from_store(store, &mut validation_log, &self.settings)
+                        } else {
+                            let store = Store::load_fragments_from_stream_async(
+                                format,
+                                &mut stream,
+                                &mut fragments,
+                                self.settings.verify.verify_after_reading,
+                                &mut validation_log,
+                                &self.settings,
+                            )
+                            .await?;
+                            Reader::from_store_async(store, &mut validation_log, &self.settings)
+                                .await
+                        }
+                    }
+                }
+            }
+            None => match self.external_manifest {
+                Some(mut external_manifest) => {
+                    // TODO: internally we actually convert c2pa_data to a stream again, we should modify the function
+                    //       signatures to stream by default
+                    let mut c2pa_data = Vec::new();
+                    external_manifest.read_to_end(&mut c2pa_data)?;
+
+                    let mut validation_log = StatusTracker::default();
+                    if _sync {
+                        let store = Store::from_manifest_data_and_stream(
+                            &c2pa_data,
+                            format,
+                            stream,
+                            self.settings.verify.verify_after_reading,
+                            &mut validation_log,
+                            &self.settings,
+                        )?;
+                        Reader::from_store(store, &mut validation_log, &self.settings)
+                    } else {
+                        let store = Store::from_manifest_data_and_stream_async(
+                            &c2pa_data,
+                            format,
+                            stream,
+                            self.settings.verify.verify_after_reading,
+                            &mut validation_log,
+                            &self.settings,
+                        )
+                        .await?;
+                        Reader::from_store_async(store, &mut validation_log, &self.settings).await
+                    }
+                }
+                None => {
+                    let mut validation_log = StatusTracker::default();
+                    if _sync {
+                        let store = Store::from_stream(
+                            format,
+                            &mut stream,
+                            self.settings.verify.verify_after_reading,
+                            &mut validation_log,
+                            &self.settings,
+                        )?;
+                        Reader::from_store(store, &mut validation_log, &self.settings)
+                    } else {
+                        let store = Store::from_stream_async(
+                            format,
+                            &mut stream,
+                            self.settings.verify.verify_after_reading,
+                            &mut validation_log,
+                            &self.settings,
+                        )
+                        .await?;
+                        Reader::from_store_async(store, &mut validation_log, &self.settings).await
+                    }
+                }
+            },
+        }
+    }
 }
 
 /// Use a Reader to read and validate a manifest store.
@@ -359,10 +527,15 @@ impl Reader {
 
         let mut init_segment = std::fs::File::open(path.as_ref())?;
 
-        match Store::load_from_file_and_fragments(
+        let mut fragments: Vec<Box<dyn CAIRead>> = fragments
+            .iter()
+            .map(|path| File::open(path).map(|file| Box::new(file) as Box<dyn CAIRead>))
+            .collect::<Result<_, std::io::Error>>()?;
+
+        match Store::load_fragments_from_stream(
             &asset_type,
             &mut init_segment,
-            fragments,
+            &mut fragments,
             verify,
             &mut validation_log,
             &settings,
