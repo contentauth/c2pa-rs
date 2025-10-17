@@ -1135,21 +1135,6 @@ impl Builder {
                         action.set_parameter("ingredients", vec![parent_ingredient_uri])?;
 
                     let source_type = &settings.builder.actions.auto_opened_action.source_type;
-                    // TO DISCUSS BEFORE MERGE: Previous code was this:
-                    // let source_type =
-                    //      settings::get_settings_value::<Option<DigitalSourceType>>(
-                    //          "builder.auto_opened_action.source_type",
-                    //      );
-                    //
-                    // ... which omits the ".actions" node after "builder"
-                    //
-                    // When I traced through this in the `main` branch, I found that
-                    // this was always yielding `Err(NotFound)` which probably results
-                    // in a missing source type in the following match clause.
-                    //
-                    // I've #[ignore]d the test named `test_builder_ca_jpg` because it
-                    // seems to be expecting this (wrong?) result. Looking for guidance
-                    // on how to repair that test.
                     match source_type {
                         Some(source_type) => Some(action.set_source_type(source_type.clone())),
                         _ => Some(action),

@@ -930,10 +930,10 @@ impl Ingredient {
             let labels = store.get_manifest_labels_for_ocsp(settings);
 
             let ocsp_response_ders = if _sync {
-                store.get_ocsp_response_ders(labels, &mut validation_log)?
+                store.get_ocsp_response_ders(labels, &mut validation_log, settings)?
             } else {
                 store
-                    .get_ocsp_response_ders_async(labels, &mut validation_log)
+                    .get_ocsp_response_ders_async(labels, &mut validation_log, settings)
                     .await?
             };
 

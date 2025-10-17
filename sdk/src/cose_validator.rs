@@ -29,6 +29,7 @@ use crate::{
         raw_signature::SigningAlg,
     },
     error::{Error, Result},
+    settings::Settings,
     status_tracker::StatusTracker,
 };
 
@@ -54,10 +55,10 @@ pub(crate) fn verify_cose(
     ctp: &CertificateTrustPolicy,
     tst_info: Option<&TstInfo>,
     validation_log: &mut StatusTracker,
-    verify_settings: &crate::settings::Verify,
+    settings: &Settings,
 ) -> Result<CertificateInfo> {
     let verifier = if cert_check {
-        if verify_settings.verify_trust {
+        if settings.verify.verify_trust {
             Verifier::VerifyTrustPolicy(Cow::Borrowed(ctp))
         } else {
             Verifier::VerifyCertificateProfileOnly(Cow::Borrowed(ctp))
@@ -75,9 +76,9 @@ pub(crate) fn verify_cose(
         Some(tst_info) => Some(tst_info.clone()),
         None => {
             if _sync {
-                validate_cose_tst_info(&sign1, data, ctp, validation_log).ok()
+                validate_cose_tst_info(&sign1, data, ctp, validation_log, settings).ok()
             } else {
-                validate_cose_tst_info_async(&sign1, data, ctp, validation_log)
+                validate_cose_tst_info_async(&sign1, data, ctp, validation_log, settings)
                     .await
                     .ok()
             }
@@ -182,6 +183,7 @@ pub(crate) fn get_signing_info(
     cose_bytes: &[u8],
     data: &[u8],
     validation_log: &mut StatusTracker,
+    settings: &Settings,
 ) -> CertificateInfo {
     let mut date = None;
     let mut issuer_org = None;
@@ -196,9 +198,9 @@ pub(crate) fn get_signing_info(
                 Ok(der_bytes) => {
                     if let Ok((_rem, signcert)) = X509Certificate::from_der(&der_bytes) {
                         date = if _sync {
-                            signing_time_from_sign1(&sign1, data)
+                            signing_time_from_sign1(&sign1, data, settings)
                         } else {
-                            signing_time_from_sign1_async(&sign1, data).await
+                            signing_time_from_sign1_async(&sign1, data, settings).await
                         };
                         issuer_org = extract_subject_from_cert(&signcert);
                         cert_serial_number = Some(extract_serial_from_cert(&signcert));
@@ -274,7 +276,7 @@ pub mod tests {
 
         let cose_sign1 = parse_cose_sign1(&cose_bytes, &claim_bytes, &mut validation_log).unwrap();
 
-        let signing_time = signing_time_from_sign1(&cose_sign1, &claim_bytes);
+        let signing_time = signing_time_from_sign1(&cose_sign1, &claim_bytes, &settings);
 
         assert_eq!(signing_time, None);
     }

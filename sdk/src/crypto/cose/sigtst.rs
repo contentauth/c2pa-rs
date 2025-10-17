@@ -42,10 +42,8 @@ pub(crate) fn validate_cose_tst_info(
     data: &[u8],
     ctp: &CertificateTrustPolicy,
     validation_log: &mut StatusTracker,
+    settings: &Settings,
 ) -> Result<TstInfo, CoseError> {
-    let settings = crate::settings::get_settings().unwrap_or_default();
-    // TO DO BEFORE MERGE? Pass Settings in here?
-
     let Some((sigtst, tss)) = &sign1
         .unprotected
         .rest
@@ -87,7 +85,7 @@ pub(crate) fn validate_cose_tst_info(
             &sign1.protected,
             ctp,
             validation_log,
-            &settings,
+            settings,
         )?
     } else {
         parse_and_validate_sigtst_async(
@@ -96,7 +94,7 @@ pub(crate) fn validate_cose_tst_info(
             &sign1.protected,
             ctp,
             validation_log,
-            &settings,
+            settings,
         )
         .await?
     };

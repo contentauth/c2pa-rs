@@ -70,6 +70,7 @@ pub struct IdentityAssertion {
     pub(crate) label: Option<String>,
 }
 
+#[allow(unused)] // TEMPORARY while considering API simplification
 impl IdentityAssertion {
     /// Find the `IdentityAssertion`s that may be present in a given
     /// [`Manifest`].
@@ -77,7 +78,7 @@ impl IdentityAssertion {
     /// Iterator returns a [`Result`] because each assertion may fail to parse.
     ///
     /// Aside from CBOR parsing, no further validation is performed.
-    pub fn from_manifest<'a>(
+    pub(crate) fn from_manifest<'a>(
         manifest: &'a Manifest,
         status_tracker: &'a mut StatusTracker,
     ) -> impl Iterator<Item = Result<Self, crate::Error>> + use<'a> {
@@ -92,6 +93,11 @@ impl IdentityAssertion {
                         ia.label = Some(to_assertion_uri(manifest_label, a.label()));
                     }
                 }
+                // TO DO: Add error readout if the proposed new setting resulted
+                // in this assertion being parsed and converted to JSON. This function
+                // has become incompatible with the now-default behavior to validate
+                // identity assertions during parsing. This applies only if this API
+                // becomes public again.
                 (a.label().to_owned(), ia)
             })
             .inspect(|(label, r)| {
@@ -119,7 +125,7 @@ impl IdentityAssertion {
     /// of the identity assertion.
     ///
     /// [`validate`]: Self::validate
-    pub async fn to_summary<SV: SignatureVerifier>(
+    pub(crate) async fn to_summary<SV: SignatureVerifier>(
         &self,
         manifest: &Manifest,
         status_tracker: &mut StatusTracker,
@@ -160,7 +166,7 @@ impl IdentityAssertion {
     }
 
     /// Summarize all of the identity assertions found for a [`Manifest`].
-    pub async fn summarize_all<SV: SignatureVerifier>(
+    pub(crate) async fn summarize_all<SV: SignatureVerifier>(
         manifest: &Manifest,
         status_tracker: &mut StatusTracker,
         verifier: &SV,
@@ -209,7 +215,7 @@ impl IdentityAssertion {
     }
 
     /// Summarize all of the identity assertions found for a [`Reader`].
-    pub async fn summarize_from_reader<SV: SignatureVerifier>(
+    pub(crate) async fn summarize_from_reader<SV: SignatureVerifier>(
         reader: &Reader,
         status_tracker: &mut StatusTracker,
         verifier: &SV,
@@ -242,7 +248,7 @@ impl IdentityAssertion {
     /// be derived from the signature. This is the [`SignatureVerifier::Output`]
     /// type which typically describes the named actor, but may also contain
     /// information about the time of signing or the credential's source.
-    pub async fn validate<SV: SignatureVerifier>(
+    pub(crate) async fn validate<SV: SignatureVerifier>(
         &self,
         manifest: &Manifest,
         status_tracker: &mut StatusTracker,
@@ -284,7 +290,7 @@ impl IdentityAssertion {
     /// be derived from the signature. This is the [`SignatureVerifier::Output`]
     /// type which typically describes the named actor, but may also contain
     /// information about the time of signing or the credential's source.
-    pub async fn validate_partial_claim(
+    pub(crate) async fn validate_partial_claim(
         &self,
         partial_claim: &PartialClaim,
         status_tracker: &mut StatusTracker,
