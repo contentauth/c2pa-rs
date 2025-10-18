@@ -1167,12 +1167,26 @@ pub mod tests {
         )?;
         assert_eq!(reader.validation_status(), None);
         let temp_dir = tempdirectory().unwrap();
-        reader.to_folder(temp_dir.path())?;
-        let path = temp_dir_path(&temp_dir, "manifest.json");
-        assert!(path.exists());
+
+        // Ensure cleanup happens even if the test fails
+        let cleanup_result = (|| -> Result<()> {
+            reader.to_folder(temp_dir.path())?;
+            let path = temp_dir_path(&temp_dir, "manifest.json");
+            assert!(path.exists());
+            Ok(())
+        })();
+
+        // Always attempt cleanup on WASI targets
         #[cfg(target_os = "wasi")]
-        crate::utils::io_utils::wasm_remove_dir_all(temp_dir)?;
-        Ok(())
+        if let Err(e) = crate::utils::io_utils::wasm_remove_dir_all(&temp_dir) {
+            eprintln!(
+                "Warning: Failed to cleanup temp directory {}: {}",
+                temp_dir.path().display(),
+                e
+            );
+        }
+
+        cleanup_result
     }
 
     #[test]

@@ -226,49 +226,92 @@ pub(crate) fn tempdirectory() -> Result<TempDir> {
 #[allow(unused)]
 #[cfg(target_os = "wasi")]
 pub fn wasm_remove_dir_all<P: AsRef<std::path::Path>>(path: P) -> Result<()> {
-    for entry in std::fs::read_dir(&path)? {
-        let entry = entry?;
-        let entry_path = entry.path();
-        // List initial entries for debugging
-        eprintln!("Initial entry: {}", entry_path.display());
-        if entry_path.is_file() || entry_path.is_symlink() {
-            eprintln!("Removing file {}", entry_path.display());
-            std::fs::remove_file(&entry_path).map_err(|e| {
-                eprintln!("Failed to remove file {}: {}", entry_path.display(), e);
+    let path = path.as_ref();
+
+    // First, try the standard remove_dir_all which should work in most cases
+    match std::fs::remove_dir_all(path) {
+        Ok(_) => return Ok(()),
+        Err(e) => {
+            eprintln!(
+                "std::fs::remove_dir_all failed for {}: {}",
+                path.display(),
                 e
-            })?;
-        } else if entry_path.is_dir() {
-            eprintln!("Removing directory: {}", entry_path.display());
-            wasm_remove_dir_all(&entry_path).map_err(|e| {
-                eprintln!("Failed to remove directory {}: {}", entry_path.display(), e);
-                e
-            })?;
+            );
+            // Fall back to manual recursive removal
         }
     }
 
-    // List remaining entries if the directory is still not empty
-    if let Ok(entries) = std::fs::read_dir(&path) {
-        for entry in entries {
-            if let Ok(entry) = entry {
-                eprintln!("Remaining entry before removal: {}", entry.path().display());
+    // Manual recursive removal with retries
+    let mut retries = 5;
+    while retries > 0 {
+        // Check if directory still exists
+        if !path.exists() {
+            return Ok(());
+        }
+
+        // Try to remove all contents recursively
+        let mut success = true;
+        if let Ok(entries) = std::fs::read_dir(path) {
+            let entries: Vec<_> = entries.collect();
+            for entry in entries {
+                let entry = match entry {
+                    Ok(entry) => entry,
+                    Err(e) => {
+                        eprintln!(
+                            "Failed to read directory entry in {}: {}",
+                            path.display(),
+                            e
+                        );
+                        success = false;
+                        continue;
+                    }
+                };
+
+                let entry_path = entry.path();
+                eprintln!("Processing entry: {}", entry_path.display());
+
+                if entry_path.is_file() || entry_path.is_symlink() {
+                    if let Err(e) = std::fs::remove_file(&entry_path) {
+                        eprintln!("Failed to remove file {}: {}", entry_path.display(), e);
+                        success = false;
+                    } else {
+                        eprintln!("Removed file: {}", entry_path.display());
+                    }
+                } else if entry_path.is_dir() {
+                    if let Err(e) = wasm_remove_dir_all(&entry_path) {
+                        eprintln!("Failed to remove directory {}: {}", entry_path.display(), e);
+                        success = false;
+                    } else {
+                        eprintln!("Removed directory: {}", entry_path.display());
+                    }
+                }
             }
         }
-    }
 
-    // Retry removing the directory if it fails
-    let mut retries = 3;
-    while retries > 0 {
-        match std::fs::remove_dir_all(&path) {
-            Ok(_) => return Ok(()),
+        // Try to remove the directory itself
+        match std::fs::remove_dir(path) {
+            Ok(_) => {
+                eprintln!("Successfully removed directory: {}", path.display());
+                return Ok(());
+            }
             Err(e) => {
-                eprintln!(
-                    "Failed to remove directory {}: {}. Retries left: {}",
-                    path.as_ref().display(),
-                    e,
-                    retries - 1
-                );
-                retries -= 1;
-                std::thread::sleep(std::time::Duration::from_millis(100));
+                eprintln!("Failed to remove directory {}: {}", path.display(), e);
+                if success {
+                    // If we successfully removed all contents but still can't remove the dir,
+                    // it might be a timing issue, so we'll retry
+                    retries -= 1;
+                    if retries > 0 {
+                        eprintln!("Retrying in 100ms, {} retries left", retries);
+                        std::thread::sleep(std::time::Duration::from_millis(100));
+                    }
+                } else {
+                    // If we couldn't remove all contents, retry the whole process
+                    retries -= 1;
+                    if retries > 0 {
+                        eprintln!("Retrying recursive removal, {} retries left", retries);
+                        std::thread::sleep(std::time::Duration::from_millis(100));
+                    }
+                }
             }
         }
     }
@@ -276,8 +319,9 @@ pub fn wasm_remove_dir_all<P: AsRef<std::path::Path>>(path: P) -> Result<()> {
     Err(std::io::Error::new(
         std::io::ErrorKind::Other,
         format!(
-            "Failed to remove directory {} after retries",
-            path.as_ref().display()
+            "Failed to remove directory {} after {} retries",
+            path.display(),
+            5
         ),
     ))?
 }
