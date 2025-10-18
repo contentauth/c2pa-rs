@@ -92,7 +92,7 @@ pub struct Manifest {
 
     /// A List of ingredients
     #[serde(default = "default_vec::<Ingredient>")]
-    ingredients: Vec<Ingredient>,
+    pub(crate) ingredients: Vec<Ingredient>,
 
     /// A List of verified credentials
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -100,7 +100,7 @@ pub struct Manifest {
 
     /// A list of assertions
     #[serde(default = "default_vec::<ManifestAssertion>")]
-    assertions: Vec<ManifestAssertion>,
+    pub(crate) assertions: Vec<ManifestAssertion>,
 
     /// A list of assertion hash references.
     #[serde(skip)]
@@ -108,7 +108,7 @@ pub struct Manifest {
 
     /// A list of redactions - URIs to a redacted assertions
     #[serde(skip_serializing_if = "Option::is_none")]
-    redactions: Option<Vec<String>>,
+    pub(crate) redactions: Option<Vec<String>>,
 
     /// Signature data (only used for reporting)
     #[serde(skip_serializing_if = "Option::is_none")]

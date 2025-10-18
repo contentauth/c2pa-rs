@@ -10,8 +10,6 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use std::path::PathBuf;
-
 use c2pa::{identity::validator::CawgValidator, Ingredient, Reader, Relationship};
 use tokio::runtime::Runtime;
 
@@ -53,7 +51,7 @@ pub fn sign_file(
 
     // if data_dir is provided, set the base path for the manifest
     if let Some(path) = data_dir {
-        builder.base_path = Some(PathBuf::from(path));
+        builder.set_base_path(path);
     }
 
     // If the source file has a manifest store, and no parent is specified, treat the source's manifest store as the parent.
