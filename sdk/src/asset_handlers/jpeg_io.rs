@@ -18,7 +18,7 @@ use std::{
     path::*,
 };
 
-use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
+use byteorder::{BigEndian, ByteOrder, ReadBytesExt, WriteBytesExt};
 use img_parts::{
     jpeg::{
         markers::{self, APP0, APP15, COM, DQT, DRI, P, RST0, RST7, SOF0, SOF15, SOS, Z},
@@ -47,9 +47,23 @@ static SUPPORTED_TYPES: [&str; 3] = ["jpg", "jpeg", "image/jpeg"];
 const XMP_SIGNATURE: &str = "http://ns.adobe.com/xap/1.0/";
 const XMP_SIGNATURE_BUFFER_SIZE: usize = XMP_SIGNATURE.len() + 1; // skip null or space char at end
 
+const XMP_EXTENSION_SIGNATURE: &str = "http://ns.adobe.com/xmp/extension/";
+const XMP_EXTENSION_SIGNATURE_BUFFER_SIZE: usize = XMP_EXTENSION_SIGNATURE.len() + 1; // skip null or space char at end
+
+const XMP_EXTENDED_NOTE: &str = "xmpNote:HasExtendedXMP";
+const XMP_EXTENDED_NOTE_SIZE: usize = XMP_EXTENDED_NOTE.len() + 1 + 1; // skip '=' and '"'
+
 const MAX_JPEG_MARKER_SIZE: usize = 64000; // technically it's 64K but a bit smaller is fine
 
 const C2PA_MARKER: [u8; 4] = [0x63, 0x32, 0x70, 0x61];
+
+struct XmpExtension {
+    guid: String,
+    #[allow(dead_code)]
+    length: u32,
+    offset: u32,
+    content: String,
+}
 
 fn vec_compare(va: &[u8], vb: &[u8]) -> bool {
     (va.len() == vb.len()) &&  // zip stops at the shortest
@@ -68,11 +82,72 @@ fn extract_xmp(seg: &JpegSegment) -> Option<&str> {
     }
 }
 
-// Extract XMP from bytes.
+fn extract_xmp_extensions(seg: &JpegSegment) -> Option<XmpExtension> {
+    let (sig, rest) = seg
+        .contents()
+        .split_at_checked(XMP_EXTENSION_SIGNATURE_BUFFER_SIZE)?;
+
+    if sig.starts_with(XMP_EXTENSION_SIGNATURE.as_bytes()) && rest.len() > 40 {
+        // 32 byte GUID, 4 byte length, 4 byte offset
+        let guid = std::str::from_utf8(&rest[..32]).ok()?.to_string();
+        let length = BigEndian::read_u32(&rest[32..36]);
+        let offset = BigEndian::read_u32(&rest[36..40]);
+        let content = std::str::from_utf8(&rest[40..]).ok()?.to_string();
+        return Some(XmpExtension {
+            guid,
+            length,
+            offset,
+            content,
+        });
+    }
+    None
+}
+
 fn xmp_from_bytes(asset_bytes: &[u8]) -> Option<String> {
     let jpeg = Jpeg::from_bytes(Bytes::copy_from_slice(asset_bytes)).ok()?;
     let mut segs = jpeg.segments_by_marker(markers::APP1);
-    segs.find_map(extract_xmp).map(String::from)
+
+    let mut standard_xmp = segs.find_map(extract_xmp).map(String::from)?;
+
+    // Check for the existence of XMP extensions.
+    if let Some(pos) = standard_xmp.find(XMP_EXTENDED_NOTE) {
+        let beginning = pos + XMP_EXTENDED_NOTE_SIZE;
+        let guid = &standard_xmp[beginning..beginning + 32];
+
+        // Only incorporate ExtendedXMP blocks whose GUID matches the value of xmpNote:HasExtendedXMP.
+        let mut extensions: Vec<XmpExtension> = segs
+            .filter_map(|seg| {
+                let extension = extract_xmp_extensions(seg)?;
+                if extension.guid != guid {
+                    return None;
+                }
+                Some(extension)
+            })
+            .collect();
+
+        extensions.sort_by_key(|extensions| extensions.offset);
+
+        // The first chunk has offset 0, the second chunk has an offset equal to the first chunk's size, and so on.
+        for i in 1..extensions.len() {
+            let prev = &extensions[i - 1];
+            let curr = &extensions[i];
+
+            if prev.offset + (prev.content.len() as u32) != curr.offset {
+                return None;
+            }
+        }
+
+        let extensions_content: Vec<String> = extensions
+            .into_iter()
+            .map(|extension| extension.content)
+            .collect();
+
+        if !extensions_content.is_empty() {
+            standard_xmp.push_str(&extensions_content.join(""));
+        }
+    }
+
+    Some(standard_xmp)
 }
 
 fn add_required_segs_to_stream(
@@ -1142,7 +1217,7 @@ impl ComposedManifestRef for JpegIO {
 pub mod tests {
     #![allow(clippy::unwrap_used)]
 
-    use std::io::{Read, Seek};
+    use std::io::{Read, Seek, Write};
 
     use c2pa_macros::c2pa_test_async;
     #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
@@ -1150,6 +1225,32 @@ pub mod tests {
 
     use super::*;
     use crate::utils::io_utils::tempdirectory;
+
+    #[test]
+    fn test_extract_extensions_xmp() {
+        let jpeg = Jpeg::from_bytes(Bytes::copy_from_slice(include_bytes!(
+            "../../tests/fixtures/motion_photo.jpg"
+        )))
+        .ok()
+        .unwrap();
+        let segs = jpeg.segments_by_marker(markers::APP1);
+
+        let mut extensions: Vec<XmpExtension> = segs.filter_map(extract_xmp_extensions).collect();
+
+        extensions.sort_by_key(|extension| extension.offset);
+
+        let extensions_content: Vec<String> = extensions
+            .iter()
+            .map(|extensions| extensions.content.clone())
+            .collect();
+
+        assert_eq!(extensions_content.len(), 11);
+
+        for i in 1..extensions.len() {
+            assert!(extensions[i].offset >= extensions[i - 1].offset);
+        }
+    }
+
     #[test]
     fn test_extract_xmp() {
         let contents = Bytes::from_static(b"http://ns.adobe.com/xap/1.0/\0stuff");
