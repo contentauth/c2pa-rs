@@ -37,8 +37,7 @@ rustdoc-args = ["--cfg", "docsrs"]
 default = ["openssl", "http_reqwest", "http_ureq", "http_wasi", "http_wstd"]
 add_thumbnails = ["image"]
 file_io = []
-serialize_thumbnails = []
-fetch_remote_manifests = []
+fetch_remote_manifests = ["dep:wasi"]
 json_schema = ["dep:schemars"]
 openssl = [
     "dep:openssl",
