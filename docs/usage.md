@@ -47,7 +47,10 @@ The following are a list of features that can be enabled or disabled:
 > It is recommended to disable default features when using `rust_native_crypto` to avoid including `openssl` as a dependency.
 
 > [!NOTE]
-> The `v1_api` feature is no longer supported and the respective APIs have been removed.
+> The `v1_api` feature is no longer supported and its respective APIs have been removed.
+
+> [!NOTE]
+> The `serialize_thumbnails` feature is no longer supported, thumbnails can be serialized by accessing resources directly.
 
 ### Resource references
 
