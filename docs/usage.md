@@ -34,13 +34,13 @@ c2pa = { version = "0.45.2", features = ["file_io", "add_thumbnails"] }
 
 The following are a list of features that can be enabled or disabled:
 
-- **openssl** *(enabled by default)*: Enables the system `openssl` implementation for cryptography.
-- **rust_native_crypto**: Enables the Rust native implementation for cryptography.
-- **add_thumbnails**: Adds the [`image`](https://github.com/image-rs/image) crate to enable auto-generated thumbnails, if possible and enabled in settings.
-- **fetch_remote_manifests**: Fetches remote manifests over the network when no embedded manifest is present and that option is enabled in settings.
-- **file_io**: Enables APIs that use filesystem I/O.
-- **json_schema**: Adds the [`schemars`](https://github.com/GREsau/schemars) crate to derive JSON schemas for JSON-compatible structs.
-- **pdf**: Enables basic PDF read support.
+* `openssl` *(enabled by default)* - Enables the system `openssl` implementation for cryptography.
+* `rust_native_crypto` - Enables the Rust native implementation for cryptography.
+* `add_thumbnails` generates thumbnails automatically for JPEG and PNG files. (no longer included with `file_io`)
+* `fetch_remote_manifests` enables the verification step to retrieve externally referenced manifest stores.  External manifests are only fetched if there is no embedded manifest store and no locally adjacent .c2pa manifest store file of the same name.
+* `file_io` enables manifest generation, signing via OpenSSL, and embedding manifests in [supported file formats](supported-formats.md).
+* `json_schema` is used by `make schema` to produce a JSON schema document that represents the `ManifestStore` data structures.
+* `pdf` - Enable support for reading claims on PDF files.
 
 > [!NOTE]
 > If both `rust_native_crypto` and `openssl` are enabled, it will default to `rust_native_crypto`.
