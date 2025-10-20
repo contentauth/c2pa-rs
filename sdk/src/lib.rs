@@ -96,10 +96,10 @@
 //! - **openssl** *(enabled by default)*: Enables the system `openssl` implementation for cryptography.
 //! - **rust_native_crypto**: Enables the Rust native implementation for cryptography.
 //! - **add_thumbnails**: Adds the [`image`](https://github.com/image-rs/image) crate to enable auto-generated thumbnails, if possible and enabled in settings.
-//! - **fetch_remote_manifests**: Fetches remote manifests over the network if one exists and there is no embedded manifest and it's enabled in settings.
+//! - **fetch_remote_manifests**: Fetches remote manifests over the network when no embedded manifest is present and that option is enabled in settings.
 //! - **file_io**: Enables APIs that use filesystem I/O.
 //! - **json_schema**: Adds the [`schemars`](https://github.com/GREsau/schemars) crate to derive JSON schemas for JSON-compatible structs.
-//! - **pdf**: Enable support for basic PDF read support.
+//! - **pdf**: Enables basic PDF read support.
 
 /// The internal name of the C2PA SDK
 pub const NAME: &str = "c2pa-rs";

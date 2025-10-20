@@ -37,14 +37,14 @@ The following are a list of features that can be enabled or disabled:
 - **openssl** *(enabled by default)*: Enables the system `openssl` implementation for cryptography.
 - **rust_native_crypto**: Enables the Rust native implementation for cryptography.
 - **add_thumbnails**: Adds the [`image`](https://github.com/image-rs/image) crate to enable auto-generated thumbnails, if possible and enabled in settings.
-- **fetch_remote_manifests**: Fetches remote manifests over the network if one exists and there is no embedded manifest and it's enabled in settings.
+- **fetch_remote_manifests**: Fetches remote manifests over the network when no embedded manifest is present and that option is enabled in settings.
 - **file_io**: Enables APIs that use filesystem I/O.
 - **json_schema**: Adds the [`schemars`](https://github.com/GREsau/schemars) crate to derive JSON schemas for JSON-compatible structs.
-- **pdf**: Enable support for basic PDF read support.
+- **pdf**: Enables basic PDF read support.
 
 > [!NOTE]
 > If both `rust_native_crypto` and `openssl` are enabled, it will default to `rust_native_crypto`.
-> It is recommended to disable default features when using `rust_native_crypto` as to avoid including `openssl` as a dependency.
+> It is recommended to disable default features when using `rust_native_crypto` to avoid including `openssl` as a dependency.
 
 > [!NOTE]
 > The `v1_api` feature is no longer supported and the respective APIs have been removed.
