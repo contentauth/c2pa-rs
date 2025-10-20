@@ -100,7 +100,7 @@ jobs:
           token: ${{ secrets.CODECOV_TOKEN }}
           fail_ci_if_error: true
           verbose: true
-          files: ./lcov-openssl-filtered.info,./lcov-rust_native_crypto-filtered.info
+          files: ./lcov-openssl.filtered.info,./lcov-rust_native_crypto.filtered.info
 
   tests-rust-native-crypto:
     name: Unit tests (Rust native crypto installed)
@@ -155,7 +155,7 @@ jobs:
           token: ${{ secrets.CODECOV_TOKEN }}
           fail_ci_if_error: true
           verbose: true
-          files: ./lcov-openssl-filtered.info,./lcov-rust_native_crypto-filtered.info
+          files: ./lcov-openssl.filtered.info,./lcov-rust_native_crypto.filtered.info
 
   tests-cli:
     name: Unit tests (c2patool)
