@@ -17,5 +17,4 @@ jobs:
         with:
           event-type: c2pa-rs-release
           repository: contentauth/json-manifest-reference
-          # REVIEW-NOTE what is the caiopensrc PAT?
           token: ${{ secrets.TRIGGER_JSON_MANIFEST_UPDATE }}
