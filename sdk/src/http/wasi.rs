@@ -16,7 +16,7 @@
 pub mod sync_impl {
     use std::io::{self, Read};
 
-    use http::{Method, Request, Response};
+    use http::{header, Method, Request, Response};
     use wasi::{
         http::{
             outgoing_handler::{self, OutgoingRequest},
@@ -56,7 +56,10 @@ pub mod sync_impl {
         ) -> Result<Response<Box<dyn Read>>, HttpResolverError> {
             let fields = Fields::new();
             for (name, value) in request.headers() {
-                fields.set(name.as_str(), &[value.as_bytes().to_vec()])?;
+                // `wasi` forbids this header and returns `HeaderError::Forbidden`.
+                if name != header::HOST {
+                    fields.set(name.as_str(), &[value.as_bytes().to_vec()])?;
+                }
             }
 
             let wasi_request = OutgoingRequest::new(fields);
@@ -108,6 +111,7 @@ pub mod sync_impl {
                 // Note that this MUST be dropped before `OutgoingBody::finish` is called
                 // or else there will be a panic.
                 let stream = body.write().map_err(|_| WasiError)?;
+                // TODO: is this max 4096 bytes?
                 stream.blocking_write_and_flush(request.body())?;
             }
             OutgoingBody::finish(body, None)?;
