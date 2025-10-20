@@ -1,3 +1,16 @@
+// Copyright 2025 Adobe. All rights reserved.
+// This file is licensed to you under the Apache License,
+// Version 2.0 (http://www.apache.org/licenses/LICENSE-2.0)
+// or the MIT license (http://opensource.org/licenses/MIT),
+// at your option.
+
+// Unless required by applicable law or agreed to in writing,
+// this software is distributed on an "AS IS" BASIS, WITHOUT
+// WARRANTIES OR REPRESENTATIONS OF ANY KIND, either express or
+// implied. See the LICENSE-MIT and LICENSE-APACHE files for the
+// specific language governing permissions and limitations under
+// each license.
+
 use std::{
     collections::HashMap,
     io::{Read, Seek, Write},
@@ -13,10 +26,11 @@ use crate::{
     crypto::base64,
     manifest::{Manifest, StoreOptions},
     manifest_store_report::ManifestStoreReport,
-    settings::{self, Settings},
+    settings::Settings,
+    status_tracker::StatusTracker,
     store::Store,
     validation_status::ValidationStatus,
-    Error, Result, ValidationResults,
+    ClaimGeneratorInfo, DigitalSourceType, Error, HashedUri, Result, ValidationResults,
 };
 
 #[derive(Serialize, Deserialize, Debug, Default)]
@@ -33,14 +47,22 @@ pub struct StandardStoreReport {
 
 impl StandardStoreReport {
     fn from_store(store: &Store, validation_results: &ValidationResults) -> Result<Self> {
+        let settings = Settings::default();
         let mut validation_results = validation_results.clone();
         let active_manifest = store.provenance_label();
         let mut manifests = HashMap::new();
+        let mut validation_log = StatusTracker::default();
         let mut options = StoreOptions::default();
 
         for claim in store.claims() {
             let manifest_label = claim.label();
-            let result = Manifest::from_store(store, manifest_label, &mut options);
+            let result = Manifest::from_store(
+                store,
+                manifest_label,
+                &mut options,
+                &mut validation_log,
+                &settings,
+            );
 
             match result {
                 Ok(manifest) => {
@@ -60,29 +82,44 @@ impl StandardStoreReport {
     }
 }
 
-/// Experimental optimized Content Credential StructureSett
+/// Experimental optimized Content Credential Structure
 pub struct ContentCredential {
     claim: Claim,
     store: Store,
+    settings: Settings,
 }
 
 impl ContentCredential {
-    pub fn new(_settings: &Settings) -> Self {
-        let vendor =
-            settings::get_settings_value::<Option<String>>("builder.vendor").unwrap_or(None);
-        let claim = Claim::new("", vendor.as_deref(), 2);
+    pub fn new(settings: &Settings) -> Self {
+        let mut claim = Claim::new("", settings.builder.vendor.as_deref(), 2);
+        claim.instance_id = uuid::Uuid::new_v4().to_string();
         ContentCredential {
             claim,
             store: Store::new(),
+            settings: settings.clone(),
         }
     }
 
+    /// Use this for a content credential that is being created from scratch
+    pub fn create(source_type: DigitalSourceType, settings: &Settings) -> Result<Self> {
+        let mut cc = Self::new(settings);
+
+        let actions = Actions::new()
+            .add_action(Action::new(c2pa_action::CREATED).set_source_type(source_type));
+
+        cc.add_assertion(&actions)?;
+
+        Ok(cc)
+    }
+
+    /// creates a content credential from an existing stream
     pub fn from_stream(
         settings: &Settings,
         format: &str,
         mut stream: impl Read + Seek + Send,
     ) -> Result<Self> {
         let mut cc = Self::new(settings);
+        stream.rewind()?;
         let (_, store) = cc.with_stream_impl(Relationship::ParentOf, format, &mut stream)?;
         cc.store = store; // replaces the empty store
         Ok(cc)
@@ -99,10 +136,18 @@ impl ContentCredential {
         None
     }
 
-    pub fn add_assertion(&mut self, assertion: &impl AssertionBase) -> Result<crate::HashedUri> {
+    pub fn add_assertion(&mut self, assertion: &impl AssertionBase) -> Result<HashedUri> {
         self.claim.add_assertion(assertion)
     }
 
+    pub fn add_action(&mut self, action: Action) -> Result<()> {
+        self.claim.add_action(action)?;
+        Ok(())
+    }
+
+    /// This is used to add component ingredients from a stream
+    ///
+    /// Parent ingredients are created using from_stream.
     pub fn add_ingredient_from_stream(
         &mut self,
         format: &str,
@@ -113,6 +158,7 @@ impl ContentCredential {
             .0)
     }
 
+    /// internal implementation to add ingredient from stream
     fn with_stream_impl(
         &mut self,
         relationship: Relationship,
@@ -127,32 +173,37 @@ impl ContentCredential {
         };
 
         let (ingredient_assertion, store) =
-            Ingredient::from_stream(relationship, format, &mut stream)?;
+            Ingredient::from_stream(relationship, format, &mut stream, &self.settings)?;
+
+        let manifest_bytes = store.to_jumbf_internal(0)?;
+        Store::load_ingredient_to_claim(&mut self.claim, &manifest_bytes, None, &self.settings)?;
 
         // add the ingredient assertion and get it's uri
         let ingredient_hashed_uri = self.add_assertion(&ingredient_assertion)?;
 
         // todo add to exiting actions and check fo
-        let action =
-            Action::new(action_label).set_parameter("ingredients", vec![ingredient_hashed_uri])?;
+        let action = Action::new(action_label).add_ingredient(ingredient_hashed_uri)?;
 
-        let actions = Actions::new().add_action_checked(action)?;
+        //let actions = Actions::new().add_action_checked(action)?;
+        self.claim.add_action(action)?;
 
-        self.add_assertion(&actions)?;
+        //self.add_assertion(&action)?;
 
         // capture the store and validation results from the assertion
         Ok((self, store))
     }
 
-    fn set_claim_generator_info(&mut self) -> Result<&Self> {
+    /// sets the default claim generator info if not already set
+    fn set_default_claim_generator_info(&mut self) -> Result<&Self> {
         if self.claim.claim_generator_info().is_none() {
             // only set if not already set
             self.claim
-                .add_claim_generator_info(crate::ClaimGeneratorInfo::default());
+                .add_claim_generator_info(ClaimGeneratorInfo::default());
         }
         Ok(self)
     }
 
+    /// signs and saves the content credential to the destination stream
     pub fn save_to_stream<R, W>(
         &mut self,
         format: &str,
@@ -164,12 +215,14 @@ impl ContentCredential {
         W: Write + Read + Seek + Send,
     {
         let signer = Settings::signer()?;
-        self.set_claim_generator_info()?;
+        self.set_default_claim_generator_info()?;
         self.store.commit_claim(self.claim.clone())?;
-        self.store.save_to_stream(format, source, dest, &signer)
+        source.rewind()?; // always reset source to start
+        self.store
+            .save_to_stream(format, source, dest, &signer, &self.settings)
     }
 
-    /// replace byte arrays with base64 encoded strings
+    /// replace byte arrays with base64 encoded strings for more readable output
     fn hash_to_b64(mut value: Value) -> Value {
         use std::collections::VecDeque;
 
@@ -207,7 +260,9 @@ impl ContentCredential {
         value
     }
 
-    pub fn value(&self) -> Result<Value> {
+    /// Generates a value similar to the C2PA Reader output
+    pub fn reader_value(&self) -> Result<Value> {
+        // get the validation results from the parent ingredient
         let results = self
             .parent_ingredient()
             .and_then(|i| i.validation_results)
@@ -219,6 +274,7 @@ impl ContentCredential {
         Ok(Self::hash_to_b64(json))
     }
 
+    /// generates a value similar to the C2PA Reader detailed output
     pub fn detailed_value(&self) -> Result<Value> {
         let results = self
             .parent_ingredient()
@@ -234,7 +290,7 @@ impl ContentCredential {
 
 impl std::fmt::Display for ContentCredential {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let value = self.value().map_err(|_| std::fmt::Error)?;
+        let value = self.reader_value().map_err(|_| std::fmt::Error)?;
         f.write_str(
             serde_json::to_string_pretty(&value)
                 .map_err(|_| std::fmt::Error)?
@@ -254,58 +310,52 @@ impl std::fmt::Debug for ContentCredential {
     }
 }
 
-#[test]
-fn test_content_credential_from_stream() -> Result<()> {
-    const IMAGE_WITH_MANIFEST: &[u8] = include_bytes!("../tests/fixtures/CA.jpg");
-    //let settings = Settings::default();
-    let mut source = std::io::Cursor::new(IMAGE_WITH_MANIFEST);
-    let settings = Settings::default();
-    let mut cr = ContentCredential::from_stream(&settings, "image/jpeg", &mut source)?;
-    println!("{cr}");
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::utils::test::*;
 
-    source.set_position(0);
-    let mut dest = std::io::Cursor::new(Vec::new());
-    cr.save_to_stream("image/jpeg", &mut source, &mut dest)?;
+    #[test]
+    fn test_content_credential_created() -> Result<()> {
+        let (format, mut source, mut dest) = create_test_streams(CA_JPEG);
+        let settings = Settings::default();
 
-    dest.set_position(0);
-    let cr2 = ContentCredential::from_stream(&settings, "image/jpeg", &mut dest)?;
-    println!("{cr2}");
-    Ok(())
+        let mut cr = ContentCredential::create(DigitalSourceType::Empty, &settings)?;
+
+        cr.save_to_stream(format, &mut source, &mut dest)?;
+
+        let cr = ContentCredential::from_stream(&settings, format, &mut dest)?;
+        println!("{cr}");
+        Ok(())
+    }
+
+    #[test]
+    fn test_content_credential_from_stream() -> Result<()> {
+        let (format, mut source, mut dest) = create_test_streams(CA_JPEG);
+        let settings = Settings::default();
+
+        let mut cr = ContentCredential::from_stream(&settings, format, &mut source)?;
+        println!("{cr}");
+
+        cr.save_to_stream(format, &mut source, &mut dest)?;
+
+        let cr2 = ContentCredential::from_stream(&settings, format, &mut dest)?;
+        println!("{cr2}");
+        Ok(())
+    }
+
+    #[test]
+    fn test_add_ingredient_from_stream() -> Result<()> {
+        let (format, mut source, mut dest) = create_test_streams(CA_JPEG);
+        let settings = Settings::default();
+
+        let mut cr = ContentCredential::create(DigitalSourceType::Empty, &settings)?;
+        cr.add_ingredient_from_stream(format, &mut source)?;
+
+        cr.save_to_stream(format, &mut source, &mut dest)?;
+
+        let cr = ContentCredential::from_stream(&settings, format, &mut dest)?;
+        println!("{cr:?}");
+        Ok(())
+    }
 }
-
-#[test]
-fn test_content_credential_created() -> Result<()> {
-    const IMAGE_WITH_MANIFEST: &[u8] = include_bytes!("../tests/fixtures/CA.jpg");
-    //let settings = Settings::default();
-    let mut source = std::io::Cursor::new(IMAGE_WITH_MANIFEST);
-    let settings = Settings::default();
-    let mut cr = ContentCredential::new(&settings);
-    let action = crate::assertions::Actions::new().add_action(
-        crate::assertions::Action::new(crate::assertions::c2pa_action::CREATED)
-            .set_source_type(crate::DigitalSourceType::Empty)
-            .set_parameter("note", "Created by test_content_credential_created")?,
-    );
-    cr.add_assertion(&action)?;
-
-    source.set_position(0);
-    let mut dest = std::io::Cursor::new(Vec::new());
-    cr.save_to_stream("image/jpeg", &mut source, &mut dest)?;
-
-    dest.set_position(0);
-    let cr = ContentCredential::from_stream(&settings, "image/jpeg", &mut dest)?;
-    println!("{cr}");
-    Ok(())
-}
-
-// #[test]
-// fn test_from_reader() -> Result<()> {
-//     const IMAGE_WITH_MANIFEST: &[u8] = include_bytes!("../tests/fixtures/CA.jpg");
-//     let mut source = std::io::Cursor::new(IMAGE_WITH_MANIFEST);
-//     let settings = Settings::default();
-//     let reader = crate::Reader::from_stream("image/jpeg", &mut source)?;
-//     let reader_str = reader.to_string();
-//     let cr = ContentCredential::from_reader(&reader)?;
-//     let cr = cr.to_string();
-//     assert_eq!(reader_str, cr);
-//     Ok(())
-// }

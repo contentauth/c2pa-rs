@@ -1164,7 +1164,7 @@ impl Claim {
     /// If not, a new Actions assertion is created and added to the claim.
     /// If multiple exist, this will update the first one found.
     pub fn add_action(&mut self, action: Action) -> Result<&mut Self> {
-        match self.get_assertion(labels::ACTIONS, 0) {
+        match self.get_assertion(Actions::LABEL_VERSIONED, 0) {
             None => {
                 let actions = Actions::new().add_action_checked(action)?;
                 self.add_assertion(&actions)?;

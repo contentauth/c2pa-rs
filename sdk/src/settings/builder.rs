@@ -393,6 +393,8 @@ impl SettingsValidate for ActionsSettings {
 #[allow(unused)]
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize, Default)]
 pub(crate) struct BuilderSettings {
+    /// The name of the vendor creating the content credential.
+    pub vendor: Option<String>,
     /// Claim generator info that is automatically added to the builder.
     ///
     /// Note that this information will prepend any claim generator info

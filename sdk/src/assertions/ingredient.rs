@@ -25,6 +25,7 @@ use crate::{
     error::Result,
     hashed_uri::HashedUri,
     jumbf::labels::{to_manifest_uri, to_signature_uri},
+    settings::Settings,
     status_tracker::StatusTracker,
     store::Store,
     validation_results::ValidationResults,
@@ -533,9 +534,25 @@ impl Ingredient {
         relationship: Relationship,
         format: &str,
         mut stream: impl Read + Seek + Send,
+        settings: &Settings,
     ) -> Result<(Self, Store)> {
         let mut validation_log = StatusTracker::default();
-        let store: Store = Store::from_stream(format, &mut stream, true, &mut validation_log)?;
+
+        // // Try to get xmp info, if this fails all XmpInfo fields will be None.
+        // let xmp_info = XmpInfo::from_source(stream, &format);
+
+        // let id = if let Some(id) = xmp_info.instance_id {
+        //     id
+        // } else {
+        //     default_instance_id()
+        // };
+
+        // let mut ingredient = Self::new(title.into(), format, id);
+
+        // ingredient.document_id = xmp_info.document_id; // use document id if one exists
+        // ingredient.provenance = xmp_info.provenance;
+        let store: Store =
+            Store::from_stream(format, &mut stream, true, &mut validation_log, settings)?;
         let validation_results = ValidationResults::from_store(&store, &validation_log);
         let ingredient =
             Self::from_store_and_validation_results(relationship, &store, &validation_results)?;

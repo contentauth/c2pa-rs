@@ -655,6 +655,27 @@ impl Action {
         Ok(self)
     }
 
+    /// Adds an ingredient HashedUri to the action.
+    pub(crate) fn add_ingredient(mut self, ingredient: HashedUri) -> Result<Self> {
+        match &mut self.parameters {
+            Some(params) => match &mut params.ingredients {
+                Some(ingredients) => {
+                    ingredients.push(ingredient);
+                }
+                None => {
+                    params.ingredients = Some(vec![ingredient]);
+                }
+            },
+            None => {
+                self.parameters = Some(ActionParameters {
+                    ingredients: Some(vec![ingredient]),
+                    ..Default::default()
+                });
+            }
+        }
+        Ok(self)
+    }
+
     /// Extracts ingredient IDs from the action
     /// There are many deprecated ways to specify ingredient IDs
     /// priority: parameters.ingredientIds, parameters.org.cai.ingredientIds, parameters.instanceId, instanceId.
@@ -770,6 +791,7 @@ impl Actions {
     ///
     /// See <https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_actions>.
     pub const LABEL: &'static str = labels::ACTIONS;
+    pub const LABEL_VERSIONED: &'static str = "c2pa.actions.v2";
     pub const VERSION: Option<usize> = Some(ASSERTION_CREATION_VERSION);
 
     /// Creates a new [`Actions`] assertion struct.
@@ -898,7 +920,7 @@ impl AssertionBase for Actions {
     }
 
     fn label(&self) -> &str {
-        "c2pa.actions.v2"
+        Self::LABEL_VERSIONED
     }
 
     fn to_assertion(&self) -> Result<Assertion> {
