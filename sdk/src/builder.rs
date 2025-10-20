@@ -3217,7 +3217,7 @@ mod tests {
         //std::fs::write("redaction2.jpg", output.get_ref()).unwrap();
 
         let reader = Reader::from_stream("jpeg", &mut output).expect("from_bytes");
-        println!("{reader}");
+        //println!("{reader}");
         assert_eq!(reader.validation_state(), ValidationState::Trusted);
         let m = reader.active_manifest().unwrap();
         assert_eq!(m.ingredients().len(), 1);
