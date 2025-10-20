@@ -81,6 +81,12 @@ jobs:
         run: |
           cargo llvm-cov --lib --features "$FEATURES" --lcov --output-path lcov-openssl.info
 
+      - name: Filter out tests
+        uses: scouten/uncover-tests@v1
+        with:
+          input-file: lcov-openssl.info
+          output-file: lcov-openssl.filtered.info
+
       # Tokens aren't available for PRs originating from forks,
       # so we don't attempt to upload code coverage in that case.
       - name: Upload code coverage results
@@ -94,7 +100,7 @@ jobs:
           token: ${{ secrets.CODECOV_TOKEN }}
           fail_ci_if_error: true
           verbose: true
-          files: ./lcov-openssl.info,./lcov-rust_native_crypto.info
+          files: ./lcov-openssl-filtered.info,./lcov-rust_native_crypto-filtered.info
 
   tests-rust-native-crypto:
     name: Unit tests (Rust native crypto installed)
@@ -130,6 +136,12 @@ jobs:
         run: |
           cargo llvm-cov -p c2pa --no-default-features --features "$FEATURES" --lcov --output-path lcov-rust_native_crypto.info
 
+      - name: Filter out tests
+        uses: scouten/uncover-tests@v1
+        with:
+          input-file: lcov-rust_native_crypto.info
+          output-file: lcov-rust_native_crypto.filtered.info
+
       # Tokens aren't available for PRs originating from forks,
       # so we don't attempt to upload code coverage in that case.
       - name: Upload code coverage results
@@ -143,7 +155,7 @@ jobs:
           token: ${{ secrets.CODECOV_TOKEN }}
           fail_ci_if_error: true
           verbose: true
-          files: ./lcov-openssl.info,./lcov-rust_native_crypto.info
+          files: ./lcov-openssl-filtered.info,./lcov-rust_native_crypto-filtered.info
 
   tests-cli:
     name: Unit tests (c2patool)
