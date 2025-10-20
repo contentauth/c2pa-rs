@@ -499,7 +499,6 @@ impl Store {
 
     /// Creates a TimeStamp (c2pa.time-stamp) assertion containing the TimeStampTokens for each
     /// specified manifest_id.  If any time stamp request fails the assertion is not created.
-    #[cfg(not(target_arch = "wasm32"))]
     #[allow(dead_code)]
     pub fn get_timestamp_assertion(
         &self,
