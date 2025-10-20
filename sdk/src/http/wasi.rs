@@ -16,10 +16,13 @@
 pub mod sync_impl {
     use std::io::{self, Read};
 
-    use http::{Request, Response};
-    use wasi::http::{
-        outgoing_handler::{self, OutgoingRequest},
-        types::{Fields, IncomingBody, InputStream},
+    use http::{Method, Request, Response};
+    use wasi::{
+        http::{
+            outgoing_handler::{self, OutgoingRequest},
+            types::{self, Fields, IncomingBody, InputStream, OutgoingBody},
+        },
+        io::streams,
     };
 
     use crate::http::{HttpResolverError, SyncHttpResolver};
@@ -51,7 +54,12 @@ pub mod sync_impl {
             &self,
             request: Request<Vec<u8>>,
         ) -> Result<Response<Box<dyn Read>>, HttpResolverError> {
-            let wasi_request = OutgoingRequest::new(Fields::new());
+            let fields = Fields::new();
+            for (name, value) in request.headers() {
+                fields.set(name.as_str(), &[value.as_bytes().to_vec()])?;
+            }
+
+            let wasi_request = OutgoingRequest::new(fields);
 
             let path_with_query = request
                 .uri()
@@ -80,6 +88,29 @@ pub mod sync_impl {
             wasi_request
                 .set_scheme(scheme.as_ref())
                 .map_err(|_| WasiError)?;
+
+            let method = match request.method() {
+                &Method::GET => wasi::http::types::Method::Get,
+                &Method::HEAD => wasi::http::types::Method::Head,
+                &Method::POST => wasi::http::types::Method::Post,
+                &Method::PUT => wasi::http::types::Method::Put,
+                &Method::DELETE => wasi::http::types::Method::Delete,
+                &Method::CONNECT => wasi::http::types::Method::Connect,
+                &Method::OPTIONS => wasi::http::types::Method::Options,
+                &Method::TRACE => wasi::http::types::Method::Trace,
+                &Method::PATCH => wasi::http::types::Method::Patch,
+                method => wasi::http::types::Method::Other(method.as_str().to_owned()),
+            };
+            wasi_request.set_method(&method).map_err(|_| WasiError)?;
+
+            let body = wasi_request.body().map_err(|_| WasiError)?;
+            {
+                // Note that this MUST be dropped before `OutgoingBody::finish` is called
+                // or else there will be a panic.
+                let stream = body.write().map_err(|_| WasiError)?;
+                stream.blocking_write_and_flush(request.body())?;
+            }
+            OutgoingBody::finish(body, None)?;
 
             let wasi_response = outgoing_handler::handle(wasi_request, None)?;
             wasi_response.subscribe().block();
@@ -126,6 +157,18 @@ pub mod sync_impl {
 
     impl From<outgoing_handler::ErrorCode> for HttpResolverError {
         fn from(value: outgoing_handler::ErrorCode) -> Self {
+            Self::Other(Box::new(value))
+        }
+    }
+
+    impl From<types::HeaderError> for HttpResolverError {
+        fn from(value: types::HeaderError) -> Self {
+            Self::Other(Box::new(value))
+        }
+    }
+
+    impl From<streams::StreamError> for HttpResolverError {
+        fn from(value: streams::StreamError) -> Self {
             Self::Other(Box::new(value))
         }
     }

@@ -119,6 +119,7 @@ fn time_stamp_request_http(
         .headers()
         .get(header::CONTENT_TYPE)
         .and_then(|header| header.to_str().ok());
+
     if response.status() == 200 && content_type == Some(HTTP_CONTENT_TYPE_RESPONSE) {
         let len = response
             .headers()

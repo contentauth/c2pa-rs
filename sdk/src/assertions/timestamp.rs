@@ -48,7 +48,6 @@ impl TimeStamp {
         self.0.get(manifest_id).map(|buf| buf.as_ref())
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
     pub fn send_timestamp_token_request(tsa_url: &str, message: &[u8]) -> Result<Vec<u8>> {
         use crate::{
             crypto::cose::CertificateTrustPolicy, settings::Settings,

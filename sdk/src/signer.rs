@@ -64,9 +64,7 @@ pub trait Signer {
     ///
     /// The default implementation will send the request to the URL
     /// provided by [`Self::time_authority_url()`], if any.
-    #[allow(unused)] // message not used on WASM
     fn send_timestamp_request(&self, message: &[u8]) -> Option<Result<Vec<u8>>> {
-        #[cfg(not(target_arch = "wasm32"))]
         if let Some(url) = self.time_authority_url() {
             if let Ok(body) = self.timestamp_request_body(message) {
                 let headers: Option<Vec<(String, String)>> = self.timestamp_request_headers();
