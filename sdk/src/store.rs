@@ -1368,7 +1368,7 @@ impl Store {
             // make sure box version label match the read Claim
             if claim.version() > 1 {
                 match labels::version(&claim_box_ver) {
-                    v if Some(claim.version()) >= v => (),
+                    v if claim.version() >= v => (),
                     _ => return Err(Error::InvalidClaim(InvalidClaimError::ClaimBoxVersion)),
                 }
             }

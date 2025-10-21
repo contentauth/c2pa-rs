@@ -41,7 +41,6 @@ use crate::{
     },
     log_item,
     resource_store::{ResourceRef, ResourceStore},
-    salt::DefaultSalt,
     settings::Settings,
     status_tracker::StatusTracker,
     store::Store,
@@ -1284,7 +1283,7 @@ impl Ingredient {
                             format_to_mime(&thumb_ref.format),
                             data.into_owned(),
                         );
-                        claim.add_assertion_with_salt(&thumbnail, &DefaultSalt::default())?
+                        claim.add_assertion(&thumbnail)?
                     }
                 }
             };
@@ -1307,7 +1306,7 @@ impl Ingredient {
                         format_to_mime(&data_ref.format),
                         box_data.into_owned(),
                     );
-                    claim.add_assertion_with_salt(&embedded_data, &DefaultSalt::default())?
+                    claim.add_assertion(&embedded_data)?
                 }
             };
 
@@ -1329,7 +1328,7 @@ impl Ingredient {
                     } else {
                         CertificateStatus::new(ocsp_responses)
                     };
-                claim.add_assertion_with_salt(&certificate_status, &DefaultSalt::default())?;
+                claim.add_assertion(&certificate_status)?;
             }
         }
 
