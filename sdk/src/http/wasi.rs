@@ -111,7 +111,6 @@ pub mod sync_impl {
                 // Note that this MUST be dropped before `OutgoingBody::finish` is called
                 // or else there will be a panic.
                 let stream = body.write().map_err(|_| WasiError)?;
-                // TODO: is this max 4096 bytes?
                 stream.blocking_write_and_flush(request.body())?;
             }
             OutgoingBody::finish(body, None)?;
