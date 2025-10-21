@@ -421,10 +421,8 @@ pub struct BuilderSettings {
     /// provided explicitly to the builder.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub claim_generator_info: Option<ClaimGeneratorInfoSettings>,
-
     /// Various settings for configuring automatic thumbnail generation.
     pub thumbnail: ThumbnailSettings,
-
     /// Settings for configuring fields in an [Actions][crate::assertions::Actions] assertion.
     ///
     /// For more information on the reasoning behind this field see [ActionsSettings].
@@ -451,10 +449,20 @@ pub struct BuilderSettings {
     /// [`CertificateStatus`]: crate::assertions::CertificateStatus
     /// [`Verify::ocsp_fetch`]: crate::settings::Verify::ocsp_fetch
     pub(crate) certificate_status_should_override: Option<bool>,
-    /// Sets a default intent for builders, can be Create, Edit, or Update.
+    /// The default [`BuilderIntent`] for the [`Builder`].
+    ///
+    /// See [`BuilderIntent`] for more information.
+    ///
+    /// [`BuilderIntent`]: crate::BuilderIntent
+    /// [`Builder`]: crate::Builder
     pub intent: Option<BuilderIntent>,
-    /// When adding assertions in this list, they will be marked as created. The default is gathered.
-    /// This is the base label and will match any version or instance. Do not include the version or instance value.
+    /// Assertions with a base label included in this list will be automatically marked as a created assertion.
+    /// Assertions not in this list will be automatically marked as gathered.
+    ///
+    /// Note that the label should be a **base label**, not including the assertion version nor instance.
+    ///
+    /// See more information on the difference between created vs gathered assertions in the spec here:
+    /// <https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_fields>
     pub created_assertion_labels: Option<Vec<String>>,
 }
 
