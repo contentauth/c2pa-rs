@@ -48,8 +48,15 @@ pub(crate) trait SettingsValidate {
 #[cfg_attr(feature = "json_schema", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct Trust {
+    /// Whether to verify certificates against the trust lists specified in [`Trust`]. This
+    /// option is ONLY applicable to CAWG.
+    ///
     /// The default value is true.
-    pub verify_trust_list: bool,
+    ///
+    /// <div class="warning">
+    /// Verifying trust is REQUIRED by the CAWG spec. This option should only be used for development or testing.
+    /// </div>
+    pub(crate) verify_trust_list: bool,
     /// List of additional user-provided trust anchor root certificates as a PEM bundle.
     pub user_anchors: Option<String>,
     /// List of default trust anchor root certificates as a PEM bundle.
@@ -261,7 +268,7 @@ pub struct Verify {
     /// <div class="warning">
     /// Verifying trust is REQUIRED by the C2PA spec. This option should only be used for development or testing.
     /// </div>
-    pub verify_trust: bool,
+    pub(crate) verify_trust: bool,
     /// Whether to verify the timestamp certificates against the trust lists specified in [`Trust`].
     ///
     /// The default value is true.
@@ -269,7 +276,7 @@ pub struct Verify {
     /// <div class="warning">
     /// Verifying timestamp trust is REQUIRED by the C2PA spec. This option should only be used for development or testing.
     /// </div>
-    pub verify_timestamp_trust: bool,
+    pub(crate) verify_timestamp_trust: bool,
     /// Whether to fetch the certificates OCSP status during validation.
     ///
     /// Revocation status is checked in the following order:
