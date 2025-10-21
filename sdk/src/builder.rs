@@ -26,31 +26,23 @@ use serde_with::skip_serializing_none;
 use uuid::Uuid;
 use zip::{write::SimpleFileOptions, ZipArchive, ZipWriter};
 
-use crate::{assertion::AssertionBase, settings::Settings};
 #[allow(deprecated)]
 use crate::{
-    assertion::AssertionDecodeError,
+    assertion::{AssertionBase, AssertionDecodeError},
     assertions::{
         c2pa_action, labels, Action, ActionTemplate, Actions, AssertionMetadata, BmffHash, BoxHash,
         CreativeWork, DataHash, DigitalSourceType, EmbeddedData, Exif, Metadata, SoftwareAgent,
         Thumbnail, User, UserCbor,
     },
     claim::Claim,
-    //claim::{Claim, ALLOWED_UPDATE_MANIFEST_ACTIONS},
     error::{Error, Result},
     jumbf_io,
     resource_store::{ResourceRef, ResourceResolver, ResourceStore},
-    salt::DefaultSalt,
+    settings::{self, Settings},
     store::Store,
     utils::mime::format_to_mime,
-    AsyncSigner,
-    ClaimGeneratorInfo,
-    HashRange,
-    HashedUri,
-    Ingredient,
-    ManifestAssertionKind,
-    Relationship,
-    Signer,
+    AsyncSigner, ClaimGeneratorInfo, HashRange, HashedUri, Ingredient, ManifestAssertionKind,
+    Relationship, Signer,
 };
 
 /// Version of the Builder Archive file
@@ -142,10 +134,16 @@ pub enum AssertionData {
 #[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 #[non_exhaustive]
 pub struct AssertionDefinition {
+    /// An assertion label in reverse domain format
     pub label: String,
+    /// The assertion data
     pub data: AssertionData,
+    /// The kind of assertion data, either Cbor or Json (defaults to Cbor)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub kind: Option<ManifestAssertionKind>,
+    /// True if this assertion is attributed to the signer (defaults to false)
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub created: bool,
 }
 
 impl<'de> Deserialize<'de> for AssertionDefinition {
@@ -159,6 +157,8 @@ impl<'de> Deserialize<'de> for AssertionDefinition {
             data: serde_json::Value,
             #[serde(default)]
             kind: Option<ManifestAssertionKind>,
+            #[serde(default)]
+            created: bool,
         }
 
         let helper = Helper::deserialize(deserializer)?;
@@ -182,11 +182,20 @@ impl<'de> Deserialize<'de> for AssertionDefinition {
             label: helper.label,
             data,
             kind: helper.kind,
+            created: helper.created,
         })
     }
 }
 
 impl AssertionDefinition {
+    pub(crate) fn label(&self) -> &str {
+        self.label.as_str()
+    }
+
+    pub(crate) fn created(&self) -> bool {
+        self.created
+    }
+
     pub(crate) fn to_assertion<T: DeserializeOwned>(&self) -> Result<T> {
         match &self.data {
             AssertionData::Json(value) => serde_json::from_value(value.clone()).map_err(|e| {
@@ -319,6 +328,10 @@ pub struct Builder {
     /// Container for binary assets (like thumbnails).
     #[serde(skip)]
     resources: ResourceStore,
+
+    // Contains the builder settings
+    #[serde(skip)]
+    settings: Settings,
 }
 
 impl AsRef<Builder> for Builder {
@@ -332,7 +345,10 @@ impl Builder {
     /// # Returns
     /// * A new [`Builder`].
     pub fn new() -> Self {
-        Default::default()
+        Self {
+            settings: settings::get_settings().unwrap_or_default(),
+            ..Default::default()
+        }
     }
 
     /// Sets the [`BuilderIntent`] for this [`Builder`].
@@ -352,6 +368,16 @@ impl Builder {
     pub fn set_intent(&mut self, intent: BuilderIntent) -> &mut Self {
         self.intent = Some(intent);
         self
+    }
+
+    /// Returns the current [`BuilderIntent`] for this [`Builder`], if set.
+    /// If not set, it will use the Settings default intent.
+    pub(crate) fn intent(&self) -> Option<BuilderIntent> {
+        let mut intent = self.intent.clone();
+        if intent.is_none() {
+            intent = self.settings.builder.intent.clone();
+        }
+        intent
     }
 
     /// Creates a new [`Builder`] from a JSON [`ManifestDefinition`] string.
@@ -479,7 +505,7 @@ impl Builder {
     ///
     /// # Arguments
     /// * `label` - A label for the assertion.
-    /// * `data` - The data for the assertion. The data is any Serde-serializable type.
+    /// * `data` - The data for the assertion. The data can be any Serde-serializable type or an AssertionDefinition.
     /// # Returns
     /// * A mutable reference to the [`Builder`].
     /// # Errors
@@ -489,10 +515,12 @@ impl Builder {
         S: Into<String>,
         T: Serialize,
     {
+        let created = false;
         self.definition.assertions.push(AssertionDefinition {
             label: label.into(),
             data: AssertionData::Cbor(serde_cbor::value::to_value(data)?),
             kind: None, // defaults to cbor
+            created,
         });
         Ok(self)
     }
@@ -512,10 +540,12 @@ impl Builder {
         S: Into<String>,
         T: Serialize,
     {
+        let created = false;
         self.definition.assertions.push(AssertionDefinition {
             label: label.into(),
             data: AssertionData::Json(serde_json::to_value(data)?),
             kind: Some(ManifestAssertionKind::Json),
+            created,
         });
         Ok(self)
     }
@@ -556,7 +586,7 @@ impl Builder {
             .definition
             .assertions
             .iter()
-            .position(|a| a.label == Actions::LABEL)
+            .position(|a| a.label() == Actions::LABEL)
         {
             // Remove and use the existing actions assertion
             let assertion_def = self.definition.assertions.remove(pos);
@@ -788,6 +818,19 @@ impl Builder {
 
     // Convert a Manifest into a Claim
     fn to_claim(&self, settings: &Settings) -> Result<Claim> {
+        // utility function to add created or gathered assertions
+        fn add_assertion(
+            claim: &mut Claim,
+            assertion: &impl AssertionBase,
+            created: bool,
+        ) -> Result<HashedUri> {
+            if created {
+                claim.add_created_assertion(assertion)
+            } else {
+                claim.add_assertion(assertion)
+            }
+        }
+
         let definition = &self.definition;
         let mut claim_generator_info = definition.claim_generator_info.clone();
 
@@ -862,8 +905,6 @@ impl Builder {
         claim.format = Some(definition.format.clone());
         definition.instance_id.clone_into(&mut claim.instance_id);
 
-        let salt = DefaultSalt::default();
-
         if let Some(thumb_ref) = definition.thumbnail.as_ref() {
             // Setting the format to "none" will ensure that no claim thumbnail is added
             if thumb_ref.format != "none" {
@@ -884,7 +925,8 @@ impl Builder {
                     )
                     .into()
                 };
-                claim.add_assertion_with_salt(&thumbnail, &salt)?;
+                // todo: add setting for created added thumbnails
+                add_assertion(&mut claim, &thumbnail, false)?;
             }
         }
         // add all ingredients to the claim
@@ -914,7 +956,7 @@ impl Builder {
         let mut found_actions = false;
         // add any additional assertions
         for manifest_assertion in &definition.assertions {
-            match manifest_assertion.label.as_str() {
+            match manifest_assertion.label() {
                 l if l.starts_with(Actions::LABEL) => {
                     found_actions = true;
 
@@ -1006,37 +1048,39 @@ impl Builder {
                 #[allow(deprecated)]
                 CreativeWork::LABEL => {
                     let cw: CreativeWork = manifest_assertion.to_assertion()?;
-                    claim.add_gathered_assertion_with_salt(&cw, &salt)
+                    claim.add_assertion(&cw)
                 }
                 Exif::LABEL => {
                     let exif: Exif = manifest_assertion.to_assertion()?;
-                    claim.add_gathered_assertion_with_salt(&exif, &salt)
+                    add_assertion(&mut claim, &exif, manifest_assertion.created())
                 }
                 BoxHash::LABEL => {
                     let box_hash: BoxHash = manifest_assertion.to_assertion()?;
-                    claim.add_assertion_with_salt(&box_hash, &salt)
+                    claim.add_assertion(&box_hash)
                 }
                 DataHash::LABEL => {
                     let data_hash: DataHash = manifest_assertion.to_assertion()?;
-                    claim.add_assertion_with_salt(&data_hash, &salt)
+                    claim.add_assertion(&data_hash)
                 }
                 BmffHash::LABEL => {
                     let bmff_hash: BmffHash = manifest_assertion.to_assertion()?;
-                    claim.add_assertion_with_salt(&bmff_hash, &salt)
+                    claim.add_assertion(&bmff_hash)
                 }
                 Metadata::LABEL => {
                     // user metadata will go through the fallback path
                     let metadata: Metadata = manifest_assertion.to_assertion()?;
-                    claim.add_gathered_assertion_with_salt(&metadata, &salt)
+                    add_assertion(&mut claim, &metadata, manifest_assertion.created())
                 }
                 _ => match &manifest_assertion.data {
-                    AssertionData::Json(value) => claim.add_gathered_assertion_with_salt(
-                        &User::new(&manifest_assertion.label, &serde_json::to_string(&value)?),
-                        &salt,
+                    AssertionData::Json(value) => add_assertion(
+                        &mut claim,
+                        &User::new(manifest_assertion.label(), &serde_json::to_string(&value)?),
+                        manifest_assertion.created(),
                     ),
-                    AssertionData::Cbor(value) => claim.add_gathered_assertion_with_salt(
-                        &UserCbor::new(&manifest_assertion.label, serde_cbor::to_vec(value)?),
-                        &salt,
+                    AssertionData::Cbor(value) => add_assertion(
+                        &mut claim,
+                        &UserCbor::new(manifest_assertion.label(), serde_cbor::to_vec(value)?),
+                        manifest_assertion.created(),
                     ),
                 },
             }?;
@@ -1047,7 +1091,8 @@ impl Builder {
             Self::add_actions_assertion_settings(&ingredient_map, &mut actions, settings)?;
 
             if !actions.actions().is_empty() {
-                claim.add_assertion(&actions)?;
+                // todo: add setting for created added actions
+                add_assertion(&mut claim, &actions, false)?;
             }
         }
 
@@ -1217,7 +1262,7 @@ impl Builder {
         let mut store = Store::with_settings(settings);
 
         // if this can be an update manifest, then set the update_manifest flag
-        if self.intent == Some(BuilderIntent::Update) {
+        if self.intent() == Some(BuilderIntent::Update) {
             store.commit_update_manifest(claim)
         } else {
             store.commit_claim(claim)
@@ -1236,7 +1281,7 @@ impl Builder {
     where
         R: Read + Seek + ?Sized,
     {
-        if self.intent == Some(BuilderIntent::Update) {
+        if self.intent() == Some(BuilderIntent::Update) {
             // do not auto add a thumbnail to an update manifest
             return Ok(self);
         }
@@ -1280,7 +1325,7 @@ impl Builder {
     {
         // check settings to see if we should add a parent ingredient
         let auto_parent = matches!(
-            self.intent,
+            self.intent(),
             Some(BuilderIntent::Edit | BuilderIntent::Update)
         );
         if auto_parent && !self.definition.ingredients.iter().any(|i| i.is_parent()) {
@@ -1296,8 +1341,11 @@ impl Builder {
 
     // Find an assertion in the manifest.
     pub(crate) fn find_assertion<T: DeserializeOwned>(&self, label: &str) -> Result<T> {
-        if let Some(manifest_assertion) =
-            self.definition.assertions.iter().find(|a| a.label == label)
+        if let Some(manifest_assertion) = self
+            .definition
+            .assertions
+            .iter()
+            .find(|a| a.label() == label)
         {
             manifest_assertion.to_assertion()
         } else {
@@ -1797,7 +1845,7 @@ mod tests {
         assert_eq!(definition.thumbnail, Some(thumbnail_ref));
         assert_eq!(definition.ingredients[0].title(), Some("Parent Test"));
         assert_eq!(
-            definition.assertions[0].label,
+            definition.assertions[0].label(),
             "org.test.assertion".to_string()
         );
         assert_eq!(definition.label, Some("ABCDE".to_string()));
@@ -1828,9 +1876,9 @@ mod tests {
             "thumbnail.jpg"
         );
         assert_eq!(definition.ingredients[0].title(), Some("Test"));
-        assert_eq!(definition.assertions[0].label, "c2pa.actions".to_string());
+        assert_eq!(definition.assertions[0].label(), "c2pa.actions".to_string());
         assert_eq!(
-            definition.assertions[1].label,
+            definition.assertions[1].label(),
             "org.test.assertion".to_string()
         );
 
@@ -2332,6 +2380,7 @@ mod tests {
     #[cfg(feature = "file_io")]
     fn test_builder_sign_file() {
         use crate::utils::io_utils::tempdirectory;
+        crate::utils::test::setup_logger();
 
         let source = "tests/fixtures/CA.jpg";
         let dir = tempdirectory().unwrap();
@@ -2841,9 +2890,7 @@ mod tests {
             .expect("builder sign");
 
         output.set_position(0);
-        println!("output len: {}", output.get_ref().len());
         let reader = Reader::from_stream("jpeg", &mut output).expect("from_bytes");
-        println!("reader = {reader}");
         let m = reader.active_manifest().unwrap();
 
         //println!("after = {m}");
@@ -3134,10 +3181,10 @@ mod tests {
 
         let mut builder2 = Builder {
             definition,
-            intent: Some(BuilderIntent::Update),
             ..Default::default()
         };
 
+        builder2.set_intent(BuilderIntent::Update);
         // rewind our new asset stream so we can add it as an ingredient
         dest1.set_position(0);
 

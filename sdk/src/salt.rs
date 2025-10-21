@@ -20,18 +20,6 @@ pub trait SaltGenerator {
     fn generate_salt(&self) -> Option<Vec<u8>>;
 }
 
-/// NoSalt return a no salt option to a function
-pub struct NoSalt {}
-
-impl SaltGenerator for NoSalt {
-    fn generate_salt(&self) -> Option<Vec<u8>> {
-        None
-    }
-}
-
-/// const NoSalt instance that can be used when no salting is required
-pub const NO_SALT: &NoSalt = &NoSalt {};
-
 /// Default salt generator
 /// This generator uses OpenSSL to generate a
 /// salt of the specified length (default 16 bytes)
