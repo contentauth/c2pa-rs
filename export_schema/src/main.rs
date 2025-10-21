@@ -24,9 +24,8 @@ fn main() -> Result<()> {
     let reader = schema_for!(Reader);
     write_schema(&reader, "Reader");
 
-    // TODO: no longer json, generate toml schema?
-    // let settings = schema_for!(Settings);
-    // write_schema(&settings, "Settings");
+    let settings = schema_for!(Settings);
+    write_schema(&settings, "Settings");
 
     Ok(())
 }
