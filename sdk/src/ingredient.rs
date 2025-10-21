@@ -40,8 +40,7 @@ use crate::{
         labels::{assertion_label_from_uri, manifest_label_from_uri},
     },
     log_item,
-    resource_store::{skip_serializing_resources, ResourceRef, ResourceStore},
-    salt::DefaultSalt,
+    resource_store::{ResourceRef, ResourceStore},
     settings::Settings,
     status_tracker::StatusTracker,
     store::Store,
@@ -145,8 +144,7 @@ pub struct Ingredient {
     #[serde(skip_serializing_if = "Option::is_none")]
     label: Option<String>,
 
-    #[serde(skip_deserializing)]
-    #[serde(skip_serializing_if = "skip_serializing_resources")]
+    #[serde(skip)]
     resources: ResourceStore,
 
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1288,7 +1286,7 @@ impl Ingredient {
                             format_to_mime(&thumb_ref.format),
                             data.into_owned(),
                         );
-                        claim.add_assertion_with_salt(&thumbnail, &DefaultSalt::default())?
+                        claim.add_assertion(&thumbnail)?
                     }
                 }
             };
@@ -1311,7 +1309,7 @@ impl Ingredient {
                         format_to_mime(&data_ref.format),
                         box_data.into_owned(),
                     );
-                    claim.add_assertion_with_salt(&embedded_data, &DefaultSalt::default())?
+                    claim.add_assertion(&embedded_data)?
                 }
             };
 
@@ -1333,7 +1331,7 @@ impl Ingredient {
                     } else {
                         CertificateStatus::new(ocsp_responses)
                     };
-                claim.add_assertion_with_salt(&certificate_status, &DefaultSalt::default())?;
+                claim.add_assertion(&certificate_status)?;
             }
         }
 

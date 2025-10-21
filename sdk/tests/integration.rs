@@ -232,7 +232,7 @@ mod integration_1 {
         if let Some(manifest) = reader.active_manifest() {
             assert!(manifest.title().is_some());
             assert_eq!(manifest.assertions().len(), 2); // one for AssetReference and one for Actions
-            let assertion_ref: AssetReference = manifest.assertions()[1].to_assertion()?;
+            let assertion_ref: AssetReference = manifest.assertions()[0].to_assertion()?;
             assert_eq!(assertion_ref, references);
         } else {
             panic!("no manifest in store");
