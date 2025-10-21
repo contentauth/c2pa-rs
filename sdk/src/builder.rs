@@ -609,8 +609,7 @@ impl Builder {
             let reader = Reader::from_stream(format, stream)?;
             let parent_ingredient = self.add_ingredient_from_reader(&reader)?;
             parent_ingredient.merge(&ingredient);
-            #[allow(clippy::unwrap_used)]
-            return Ok(self.definition.ingredients.last_mut().unwrap());
+            return self.definition.ingredients.last_mut().ok_or(Error::IngredientNotFound);
         }
 
         let ingredient = if _sync {
@@ -623,8 +622,7 @@ impl Builder {
 
         self.definition.ingredients.push(ingredient);
 
-        #[allow(clippy::unwrap_used)]
-        Ok(self.definition.ingredients.last_mut().unwrap()) // ok since we just added it
+        self.definition.ingredients.last_mut().ok_or(Error::IngredientNotFound)
     }
 
     /// Adds an [`Ingredient`] to the manifest from an existing Ingredient.
@@ -1684,8 +1682,6 @@ impl Builder {
     /// Add an ingredient to the manifest from a Reader.
     /// # Arguments
     /// * `reader` - The Reader to get the ingredient from.
-    /// * `manifest_label` - The label of the manifest to get the ingredient from.
-    /// * `ingredient_label` - The label of the ingredient to add.
     /// # Returns
     /// * A reference to the added ingredient.
     pub fn add_ingredient_from_reader(
@@ -3489,30 +3485,29 @@ mod tests {
         // if one is not otherwise added.
         let mut builder = Builder::new();
         builder.set_intent(BuilderIntent::Edit);
-        let signer = &Settings::signer().unwrap();
+        let signer = &Settings::signer()?;
         // We have a different options here. We can embed the manifest into a destination file
         // or we can bypass the embedding and just get the manifest data back.
         // you can also output to null if you just want the manifest data.
         // Here we embed the manifest into a destination file.
         let _c2pa_data = builder
-            .sign(signer, format, &mut source, &mut dest)
-            .unwrap();
+            .sign(signer, format, &mut source, &mut dest)?;
 
-        dest.rewind().unwrap();
+        dest.rewind()?;
         // use read_from_manifest_data_and_stream to validate if not embedded.
-        let reader = Reader::from_stream(format, &mut dest).unwrap();
+        let reader = Reader::from_stream(format, &mut dest)?;
         println!("first: {reader}");
 
         // create a new builder and add our ingredient from the reader.
         let builder2 = &mut Builder::new();
-        builder2.add_ingredient_from_reader(&reader).unwrap();
+        builder2.add_ingredient_from_reader(&reader)?;
         assert!(!builder2.definition.ingredients.is_empty());
         println!("\nbuilder2:{builder2}");
-        source.rewind().unwrap();
+        source.rewind()?;
         let dest2 = &mut Cursor::new(Vec::new());
-        builder2.sign(signer, format, &mut source, dest2).unwrap();
-        dest2.rewind().unwrap();
-        let reader2 = Reader::from_stream(format, dest2).unwrap();
+        builder2.sign(signer, format, &mut source, dest2)?;
+        dest2.rewind()?;
+        let reader2 = Reader::from_stream(format, dest2)?;
         println!("\nreader2:{reader2}");
         assert_eq!(reader2.active_manifest().unwrap().ingredients().len(), 1);
         Ok(())

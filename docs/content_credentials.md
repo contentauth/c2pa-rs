@@ -5,8 +5,8 @@ We have long struggled with the need to save and later continue to edit C2PA man
 The spec doesn't call out a specific way to do this. It only allows for appending new signed manifests.
 But there are many scenarios where we need a work in progress.
 - Validating an ingredient once and saving it for later use.
-- Frequent small edits over time without creating a long chain of signed manifests
 - Applications that want to keep track of changes over time and export later.
+- Frequent small edits over time without creating a long chain of signed manifests
 
 We created the concept of a Builder archive to help address this. But the archive is a new format
 that needs to be documented and supported over time as content changes.
@@ -32,7 +32,6 @@ For Builder archives - Sign and save a manifest, either embedded or sidecar.  If
 
 - Note that this will work when reading any content. You can always extract an ingredient to a Builder.
 
-- You MAY not always be able to convert a reader into a Builder (TBD - do we need limits on this?)
 
 - The signature here can be local and does not need to be on a trust list. The purpose is to be able to detect any tampering of the data. But you could also use a trusted signature.
 
@@ -61,19 +60,19 @@ For Builder archives - Sign and save a manifest, either embedded or sidecar.  If
 2) Validate an ingredient with a manifest, store in Builder and save.
 3) Read and display these saved Builders
 4) Create new Builder, add component Ingredient from Reader from asset.
-5) add two ingredients to a builder, save Read, and then add both to new Builder and save/read.
-6) Create Builder and add opened Ingredient, save, read and convert to builder, add componentOf Ingredient, sign
+5) Add two ingredients to a builder, save, read, and then add both to new Builder and save/read.
+6) Create Builder and add opened Ingredient, save, read and convert to a Builder, add componentOf Ingredient, sign
 
 ## Content Credentials API
 
 A future lower level API will wrap the Claim and Store structures providing a single object interface for C2PA. This would have the same underlying JUMBF object, but would not provide the declarative JSON api. It would also not have the higher level Ingredient and Resource APIs. Assertions would be added directly to a the content_credential and read directly from it. This will include direct access to CBOR and Binary assertions. Ingredient assertions would be built by first adding binary assertions for thumbnails and icons and then adding those references directly to the a Ingredient assertion before adding it. Content Credentials can be added to Content Credentials as Ingredients and Ingredient read as another Credential. In this model there are no Builder, Reader or Ingredient objects.
 
-- Content Credentials will alway be created with Settings and be the common context.
+- Content Credentials will always be created with Settings and be the common context.
 - Content Credentials will interact only with Assets which will abstract data i/o.
 
 ## Asset objects (not directly related to the above)
 
-Asset object create a persistent layer over the asset_io traits, allowing for single read and write in many cases.
+An Asset object creates a persistent layer over the asset_io traits. Currently we parse entire asset every time we need to access information about it. We have separate passes for XMP, JUMBF, Offset/box generation & etc..
 
 - The details of file i/o, in memory, streamed, or remote web access are handled here. 
 - This will parse the asset, extract XMP, and C2PA data and allow 

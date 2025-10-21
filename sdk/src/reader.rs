@@ -999,38 +999,6 @@ impl TryInto<crate::Builder> for Reader {
 
     fn try_into(self) -> Result<crate::Builder> {
         self.into_builder()
-        // let mut builder = crate::Builder::new();
-        // if let Some(label) = &self.active_manifest {
-        //     if let Some(parts) = crate::jumbf::labels::manifest_label_to_parts(label) {
-        //         builder.definition.vendor = parts.cgi.clone();
-        //         if parts.is_v1 {
-        //             builder.definition.claim_version = Some(1);
-        //         }
-        //     }
-        //     builder.definition.label = Some(label.to_string());
-        //     if let Some(manifest) = self.manifests.get(label) {
-        //         builder.definition.claim_generator_info =
-        //             manifest.claim_generator_info.as_deref().unwrap_or_default().to_vec(); // .take().unwrap_or_default();
-        //         builder.definition.format = manifest.format().unwrap_or_default().to_string();
-        //         builder.definition.title = manifest.title().map(|s| s.to_owned());
-        //         builder.definition.instance_id = manifest.instance_id().to_owned();
-        //         builder.definition.thumbnail = manifest.thumbnail_ref().cloned();
-        //         builder.definition.redactions = manifest.redactions.clone();
-        //         //let ingredients = manifest.ingredients.drain(..).collect::<Vec<_>>();
-        //         for ingredient in manifest.ingredients.iter().as_ref() {
-        //             builder.add_ingredient(
-        //                 self.get_ingredient(label, ingredient.label().unwrap_or_default())?,
-        //             );
-        //         }
-        //         for assertion in manifest.assertions.iter() {
-        //             builder.add_assertion(assertion.label(), assertion.value()?)?;
-        //         }
-        //         for (uri, data) in manifest.resources().resources() {
-        //             builder.add_resource(uri, std::io::Cursor::new(data))?;
-        //         }
-        //     }
-        // }
-        // Ok(builder)
     }
 }
 

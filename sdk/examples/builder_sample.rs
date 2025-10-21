@@ -87,13 +87,13 @@ fn main() -> Result<()> {
 
     Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml"))?;
 
-    // here we capture an ingredient with it's validation into a c2pa_data object.
+    // Here we capture an ingredient with its validation into a c2pa_data object.
     let ingredient_c2pa = capture_ingredient(format, &mut ingredient_source)?;
-    // the ingredient_c2pa can be saved to a file or database or wherever you want to keep it
-    // for this example we will just keep it in memory and add it to a new manifest
+    // The ingredient_c2pa can be saved to a file, blob storage, a database, or wherever you want to keep it.
+    // For this example we will just keep it in memory and add it to a new manifest
 
     // Now create a new builder and set the intent to create a new manifest store
-    // we will add the ingredient as a componentOf relationship
+    // We will add the ingredient as a componentOf relationship
     let mut builder = Builder::from_json(&manifest_def("Builder Sample", format))?;
     builder.set_intent(c2pa::BuilderIntent::Create(DigitalSourceType::Empty));
 

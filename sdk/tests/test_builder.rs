@@ -80,7 +80,7 @@ fn test_builder_riff() -> Result<()> {
     Ok(())
 }
 
-// Source: https://github.com/contentauth/c2pa-rs/issues/530
+
 #[test]
 fn test_builder_sidecar_only() -> Result<()> {
     Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml"))?;
