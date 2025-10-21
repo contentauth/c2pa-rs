@@ -40,13 +40,19 @@ For Builder archives - Sign and save a manifest, either embedded or sidecar.  If
 
 - signing the bits of the source image and capturing a thumbnail are optional.
 
-### new methods
+### Code support
 
-```
-    let builder = reader.to_builder()?;
+- Adds the ability to box hash sign a .c2pa asset
+- Allows add_ingredient_from_stream with a .c2pa asset.
+- Builder.to_archive() generates a .c2pa asset.
+- Builder.from_archive() reads from a .c2pa asset (or the older archive format)
 
-    builder.add_ingredient_from_reader(&reader)?;
-```
+#### To capture, save and add an individual ingredient
+- Capture an ingredient by adding an ingredient to a new builder and then signing/archiving it.
+- Add a captured .c2pa archived ingredient using add_ingredient_from_stream. This will use the parent ingredient in the archive as the ingredient added.
+
+
+
 
 ### Questions
 
