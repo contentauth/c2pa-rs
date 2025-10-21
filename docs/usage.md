@@ -40,8 +40,6 @@ The Rust library crate provides the following capabilities:
 * `fetch_remote_manifests` enables the verification step to retrieve externally referenced manifest stores.  External manifests are only fetched if there is no embedded manifest store and no locally adjacent .c2pa manifest store file of the same name.
 * `file_io` enables manifest generation, signing via OpenSSL, and embedding manifests in [supported file formats](supported-formats.md).
 * `json_schema` is used by `make schema` to produce a JSON schema document that represents the `ManifestStore` data structures.
-* `no_interleaved_io` forces fully-synchronous I/O; otherwise, the library uses threaded I/O for some operations to improve performance.
-* `serialize_thumbnails` includes binary thumbnail data in the [Serde](https://serde.rs/) serialization output.
 * `pdf` - Enable support for reading claims on PDF files.
 
 * the `v1_api` feature is no longer supported.

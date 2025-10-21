@@ -31,8 +31,6 @@ rustdoc-args = ["--cfg", "docsrs"]
 default = ["openssl"]
 add_thumbnails = ["image"]
 file_io = []
-serialize_thumbnails = []
-no_interleaved_io = ["file_io"]
 fetch_remote_manifests = ["dep:wasi"]
 json_schema = ["dep:schemars"]
 openssl = ["dep:openssl"]
@@ -74,7 +72,7 @@ required-features = ["file_io"]
 name = "v2show"
 
 [[example]]
-name = "v2api"
+name = "api"
 
 [[example]]
 name = "fragmented_bmff"
@@ -156,7 +154,7 @@ regex = "1.11"
 riff = "2.0.0"
 rsa = { version = "0.9.7", features = ["pem", "sha2", "std"], optional = true }
 schemars = { version = "0.8.21", optional = true }
-serde = { version = "1.0.197", features = ["derive"] }
+serde = { version = "1.0.225", features = ["derive"] }
 serde_bytes = "0.11.14"
 serde_cbor = "0.11.1"
 serde_derive = "1.0.197"
@@ -176,7 +174,7 @@ x509-parser = "0.16.0"
 zeroize = { version = "1.8", features = ["zeroize_derive"] }
 zip = { version = "3.0.0", default-features = false }
 
-# Use the asm feature of sha2 on aarch64 for better performance. This nearly
+# Use the asm feature of sha2 on aarch64 macOS for better performance. This nearly
 # halves hashing time for large assets (> 50gb mp4, for example).
 #
 # Note: This feature has been removed in later versions of sha2.
@@ -184,10 +182,10 @@ zip = { version = "3.0.0", default-features = false }
 #
 # See: https://github.com/RustCrypto/hashes/pull/542 and
 # https://github.com/RustCrypto/hashes/tree/master/sha2#backends (which hasn't been released yet).
-[target.'cfg(target_arch = "aarch64")'.dependencies]
-sha2 = { version = "0.10.6", features = ["asm"] }
-[target.'cfg(not(target_arch = "aarch64"))'.dependencies]
 sha2 = "0.10.6"
+# Apply the "asm" feature only for macOS on AArch64.
+[target.'cfg(all(target_arch = "aarch64", target_os = "macos"))'.dependencies]
+sha2 = { version = "0.10.6", features = ["asm"] }
 
 # This list matches the `rust_native_crypto` feature since they are not optional on WASM.
 [target.'cfg(target_arch = "wasm32")'.dependencies]
@@ -282,7 +280,7 @@ once_cell = "1.17.2"
 wasm-bindgen-test = "0.3.45"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
-httpmock = "0.7.0"
+httpmock = "0.8.0"
 tokio = { version = "1.44.2", features = ["full"] }
 criterion = { package = "codspeed-criterion-compat", version = "3.0.5" }
 

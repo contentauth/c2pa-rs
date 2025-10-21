@@ -118,42 +118,29 @@ pub(crate) fn stream_len<R: Read + Seek + ?Sized>(reader: &mut R) -> Result<u64>
     Ok(len)
 }
 
-#[cfg(target_arch = "wasm32")]
-fn stream_with_fs_fallback_wasm(
-    _threshold_override: Option<usize>,
-) -> Result<std::io::Cursor<Vec<u8>>> {
-    Ok(std::io::Cursor::new(Vec::new()))
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-fn stream_with_fs_fallback_file_io(threshold_override: Option<usize>) -> Result<SpooledTempFile> {
-    let threshold = threshold_override.unwrap_or(crate::settings::get_settings_value::<usize>(
-        "core.backing_store_memory_threshold_in_mb",
-    )?);
-
-    Ok(SpooledTempFile::new(threshold))
-}
-
-/// Will create a [Read], [Write], and [Seek] capable stream that will stay in memory
-/// as long as the threshold is not exceeded. The threshold is specified in MB in the
-/// settings under ""core.backing_store_memory_threshold_in_mb"
+/// Will create a [`Read`]-, [`Write`]-, and [`Seek`]-capable stream that will
+/// stay in memory unless a threshold size is exceeded.
 ///
 /// # Parameters
-/// - `threshold_override`: Optional override for the threshold value in MB. If provided, this
-///   value will be used instead of the one from settings.
+/// - `threshold`: Size (in MB) of stream beyond which an on-disk stream will be used.
+///    This threshold should be the one specified in settings under
+///    `core.backing_store_memory_threshold_in_mb`.
 ///
 /// # Errors
 /// - Returns an error if the threshold value from settings is not valid.
 ///
 /// # Note
-/// This will return a an in-memory stream when the compilation target doesn't support file I/O.
-pub(crate) fn stream_with_fs_fallback(
-    threshold_override: Option<usize>,
-) -> Result<impl Read + Write + Seek> {
-    #[cfg(target_arch = "wasm32")]
-    return stream_with_fs_fallback_wasm(threshold_override);
-    #[cfg(not(target_arch = "wasm32"))]
-    return stream_with_fs_fallback_file_io(threshold_override);
+/// This will always return an in-memory stream when the compilation target doesn't
+/// support file I/O.
+#[cfg(target_arch = "wasm32")]
+pub(crate) fn stream_with_fs_fallback(_threshold: usize) -> impl Read + Write + Seek {
+    std::io::Cursor::new(Vec::new())
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn stream_with_fs_fallback(threshold: usize) -> impl Read + Write + Seek {
+    SpooledTempFile::new(threshold * 1024 * 1024)
+    // IMPORTANT: SpooledTempFile API is in bytes; this function's API is in MB.
 }
 
 // Returns a new Vec first making sure it can hold the desired capacity.  Fill
@@ -234,65 +221,6 @@ pub(crate) fn tempdirectory() -> Result<TempDir> {
 
     #[cfg(not(target_os = "wasi"))]
     return tempdir().map_err(Error::IoError);
-}
-
-#[allow(unused)]
-#[cfg(target_os = "wasi")]
-pub fn wasm_remove_dir_all<P: AsRef<std::path::Path>>(path: P) -> Result<()> {
-    for entry in std::fs::read_dir(&path)? {
-        let entry = entry?;
-        let entry_path = entry.path();
-        // List initial entries for debugging
-        eprintln!("Initial entry: {}", entry_path.display());
-        if entry_path.is_file() || entry_path.is_symlink() {
-            eprintln!("Removing file {}", entry_path.display());
-            std::fs::remove_file(&entry_path).map_err(|e| {
-                eprintln!("Failed to remove file {}: {}", entry_path.display(), e);
-                e
-            })?;
-        } else if entry_path.is_dir() {
-            eprintln!("Removing directory: {}", entry_path.display());
-            wasm_remove_dir_all(&entry_path).map_err(|e| {
-                eprintln!("Failed to remove directory {}: {}", entry_path.display(), e);
-                e
-            })?;
-        }
-    }
-
-    // List remaining entries if the directory is still not empty
-    if let Ok(entries) = std::fs::read_dir(&path) {
-        for entry in entries {
-            if let Ok(entry) = entry {
-                eprintln!("Remaining entry before removal: {}", entry.path().display());
-            }
-        }
-    }
-
-    // Retry removing the directory if it fails
-    let mut retries = 3;
-    while retries > 0 {
-        match std::fs::remove_dir_all(&path) {
-            Ok(_) => return Ok(()),
-            Err(e) => {
-                eprintln!(
-                    "Failed to remove directory {}: {}. Retries left: {}",
-                    path.as_ref().display(),
-                    e,
-                    retries - 1
-                );
-                retries -= 1;
-                std::thread::sleep(std::time::Duration::from_millis(100));
-            }
-        }
-    }
-
-    Err(std::io::Error::new(
-        std::io::ErrorKind::Other,
-        format!(
-            "Failed to remove directory {} after retries",
-            path.as_ref().display()
-        ),
-    ))?
 }
 
 /// Convert a URI to a file path using PathBuf for better path handling.
@@ -423,44 +351,5 @@ mod tests {
             &[],
         )
         .is_err());
-    }
-
-    #[cfg(not(target_arch = "wasm32"))]
-    #[test]
-    fn test_safe_stream_threshold_behavior() {
-        let mut stream = stream_with_fs_fallback_file_io(Some(10)).unwrap();
-
-        // Less data written than required to write to the FS.
-        let small_data = b"small"; // 5 bytes
-        stream.write_all(small_data).unwrap();
-        assert!(!stream.is_rolled(), "data still in memory");
-
-        // Adds more data to exceed the threshold.
-        let large_data = b"this is larger than 10 bytes total";
-        stream.write_all(large_data).unwrap();
-        assert!(stream.is_rolled(), "data moved to disk");
-    }
-
-    #[cfg(not(target_arch = "wasm32"))]
-    #[test]
-    fn test_safe_stream_no_threshold_behavior() {
-        let mut stream = stream_with_fs_fallback_file_io(None).unwrap();
-
-        // Less data written than required to write to the FS.
-        let small_data = b"small"; // 5 bytes
-        stream.write_all(small_data).unwrap();
-        assert!(!stream.is_rolled(), "data still in memory");
-
-        let large_data = vec![0; 1024 * 1024]; // 1MB.
-        let threshold = crate::settings::get_settings_value::<usize>(
-            "core.backing_store_memory_threshold_in_mb",
-        )
-        .unwrap();
-
-        for _ in 0..threshold {
-            stream.write_all(&large_data).unwrap();
-        }
-
-        assert!(stream.is_rolled(), "data moved to disk");
     }
 }

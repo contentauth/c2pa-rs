@@ -44,11 +44,11 @@ pub(crate) trait SettingsValidate {
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[allow(unused)]
 pub(crate) struct Trust {
-    verify_trust_list: bool,
-    user_anchors: Option<String>,
-    trust_anchors: Option<String>,
-    trust_config: Option<String>,
-    allowed_list: Option<String>,
+    pub(crate) verify_trust_list: bool,
+    pub(crate) user_anchors: Option<String>,
+    pub(crate) trust_anchors: Option<String>,
+    pub(crate) trust_config: Option<String>,
+    pub(crate) allowed_list: Option<String>,
 }
 
 impl Trust {
@@ -171,14 +171,15 @@ pub(crate) struct Core {
     soft_hash_alg: Option<String>,
     salt_jumbf_boxes: bool,
     prefer_box_hash: bool,
-    merkle_tree_chunk_size_in_kb: Option<usize>,
-    merkle_tree_max_proofs: usize,
+    pub(crate) merkle_tree_chunk_size_in_kb: Option<usize>,
+    pub(crate) merkle_tree_max_proofs: usize,
     compress_manifests: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     max_memory_usage: Option<u64>,
-    backing_store_memory_threshold_in_mb: usize,
+    pub(crate) backing_store_memory_threshold_in_mb: usize,
     // TODO: pending https://github.com/contentauth/c2pa-rs/pull/1180
     // prefer_update_manifests: bool,
+    pub(crate) decode_identity_assertions: bool,
 }
 
 impl Default for Core {
@@ -195,6 +196,7 @@ impl Default for Core {
             max_memory_usage: None,
             backing_store_memory_threshold_in_mb: 512,
             // prefer_update_manifests: true,
+            decode_identity_assertions: true,
         }
     }
 }
@@ -212,15 +214,15 @@ impl SettingsValidate for Core {
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[allow(unused)]
 pub(crate) struct Verify {
-    verify_after_reading: bool,
-    verify_after_sign: bool,
-    verify_trust: bool,
-    verify_timestamp_trust: bool,
-    ocsp_fetch: bool,
-    remote_manifest_fetch: bool,
-    check_ingredient_trust: bool,
-    skip_ingredient_conflict_resolution: bool,
-    strict_v1_validation: bool,
+    pub(crate) verify_after_reading: bool,
+    pub(crate) verify_after_sign: bool,
+    pub(crate) verify_trust: bool,
+    pub(crate) verify_timestamp_trust: bool,
+    pub(crate) ocsp_fetch: bool,
+    pub(crate) remote_manifest_fetch: bool,
+    pub(crate) check_ingredient_trust: bool,
+    pub(crate) skip_ingredient_conflict_resolution: bool,
+    pub(crate) strict_v1_validation: bool,
 }
 
 impl Default for Verify {
@@ -228,7 +230,7 @@ impl Default for Verify {
         Self {
             verify_after_reading: true,
             verify_after_sign: true,
-            verify_trust: cfg!(test),
+            verify_trust: true,
             verify_timestamp_trust: !cfg!(test), // verify timestamp trust unless in test mode
             ocsp_fetch: false,
             remote_manifest_fetch: true,
@@ -255,11 +257,11 @@ pub struct Settings {
     version_minor: usize,
     // TODO (https://github.com/contentauth/c2pa-rs/issues/1314):
     // Rename to c2pa_trust? Discuss possibly breaking change.
-    trust: Trust,
-    cawg_trust: Trust,
-    core: Core,
-    verify: Verify,
-    builder: BuilderSettings,
+    pub(crate) trust: Trust,
+    pub(crate) cawg_trust: Trust,
+    pub(crate) core: Core,
+    pub(crate) verify: Verify,
+    pub(crate) builder: BuilderSettings,
     #[serde(skip_serializing_if = "Option::is_none")]
     signer: Option<SignerSettings>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -379,7 +381,7 @@ impl Settings {
     /// For example "core.hash_alg" would get the settings.core.hash_alg value. The nesting can be arbitrarily
     /// deep based on the [Settings] definition.
     #[allow(unused)]
-    pub(crate) fn get_value<'de, T: serde::de::Deserialize<'de>>(value_path: &str) -> Result<T> {
+    fn get_value<'de, T: serde::de::Deserialize<'de>>(value_path: &str) -> Result<T> {
         SETTINGS.with_borrow(|current_settings| {
             let update_config = Config::builder()
                 .add_source(current_settings.clone())
@@ -394,7 +396,7 @@ impl Settings {
 
     /// Set [Settings] back to the default values.
     #[allow(unused)]
-    pub fn reset() -> Result<()> {
+    pub(crate) fn reset() -> Result<()> {
         if let Ok(default_settings) = Config::try_from(&Settings::default()) {
             SETTINGS.set(default_settings);
             Ok(())
@@ -506,9 +508,7 @@ pub(crate) fn set_settings_value<T: Into<config::Value>>(value_path: &str, value
 
 /// See [Settings::get_value] for more information.
 #[allow(unused)]
-pub(crate) fn get_settings_value<'de, T: serde::de::Deserialize<'de>>(
-    value_path: &str,
-) -> Result<T> {
+fn get_settings_value<'de, T: serde::de::Deserialize<'de>>(value_path: &str) -> Result<T> {
     Settings::get_value(value_path)
 }
 

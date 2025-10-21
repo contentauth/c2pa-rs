@@ -35,7 +35,7 @@ use crate::{
         },
     },
     log_item,
-    settings::get_settings_value,
+    settings::Settings,
     status_tracker::StatusTracker,
     validation_status::{
         TIMESTAMP_MALFORMED, TIMESTAMP_MISMATCH, TIMESTAMP_OUTSIDE_VALIDITY, TIMESTAMP_TRUSTED,
@@ -65,10 +65,11 @@ pub fn verify_time_stamp(
     data: &[u8],
     ctp: &CertificateTrustPolicy,
     validation_log: &mut StatusTracker,
+    settings: &Settings,
 ) -> Result<TstInfo, TimeStampError> {
     // Get the signed data frorm the timestamp data
     let Ok(Some(sd)) = signed_data_from_time_stamp_response(ts) else {
-        log_item!("", "count not parse timestamp data", "verify_time_stamp")
+        log_item!("", "could not parse timestamp data", "verify_time_stamp")
             .validation_status(TIMESTAMP_MALFORMED)
             .informational(validation_log);
 
@@ -79,7 +80,7 @@ pub fn verify_time_stamp(
 
     // Grab the list of certs used in signing this timestamp
     let Some(certs) = &sd.certificates else {
-        log_item!("", "count not parse timestamp data", "verify_time_stamp")
+        log_item!("", "could not parse timestamp data", "verify_time_stamp")
             .validation_status(TIMESTAMP_UNTRUSTED)
             .informational(validation_log);
 
@@ -102,7 +103,7 @@ pub fn verify_time_stamp(
         .collect();
 
     if cert_ders.len() != certs.len() {
-        log_item!("", "count not parse timestamp data", "verify_time_stamp")
+        log_item!("", "could not parse timestamp data", "verify_time_stamp")
             .validation_status(TIMESTAMP_UNTRUSTED)
             .informational(validation_log);
 
@@ -530,7 +531,7 @@ pub fn verify_time_stamp(
         }
 
         // the certificate must be on the trust list to be considered valid
-        let verify_trust = get_settings_value("verify.verify_timestamp_trust").unwrap_or(true);
+        let verify_trust = settings.verify.verify_timestamp_trust;
 
         if verify_trust
             && ctp
