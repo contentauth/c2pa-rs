@@ -16,23 +16,15 @@
 #[cfg(feature = "file_io")]
 use std::path::Path;
 use std::{
+    collections::HashMap,
     io::{Cursor, Read, Write},
     path::PathBuf,
 };
 
-#[cfg(feature = "v1_api")]
-use async_trait::async_trait;
 use env_logger;
+use once_cell::sync::Lazy;
 use tempfile::TempDir;
 
-#[cfg(feature = "v1_api")]
-use crate::crypto::{
-    cose::TimeStampStorage,
-    raw_signature::{AsyncRawSigner, RawSignerError},
-    time_stamp::{AsyncTimeStampProvider, TimeStampError},
-};
-#[cfg(feature = "v1_api")]
-use crate::signer::RemoteSigner;
 use crate::{
     assertions::{
         labels, Action, Actions, DigitalSourceType, EmbeddedData, Ingredient, Relationship,
@@ -44,8 +36,9 @@ use crate::{
     hash_utils::Hasher,
     jumbf_io::get_assetio_handler,
     resource_store::UriOrResource,
-    salt::DefaultSalt,
+    settings::Settings,
     store::Store,
+    utils::{io_utils::tempdirectory, mime::extension_to_mime},
     AsyncSigner, ClaimGeneratorInfo, Result,
 };
 
@@ -54,6 +47,9 @@ pub const TEST_SMALL_JPEG: &str = "earth_apollo17.jpg";
 pub const TEST_WEBP: &str = "mars.webp";
 
 pub const TEST_USER_ASSERTION: &str = "test_label";
+
+/// File extension for external manifest sidecar files
+pub const MANIFEST_STORE_EXT: &str = "c2pa";
 
 pub const TEST_VC: &str = r#"{
     "@context": [
@@ -80,6 +76,61 @@ pub const TEST_VC: &str = r#"{
     }
 }"#;
 
+// Macro that both defines constants and registers fixtures
+macro_rules! define_fixtures {
+    ($base_path:expr, $($name:ident => ($file:expr, $format:expr)),* $(,)?) => {
+        // Define the constants
+        $(
+            pub const $name: &str = $file;
+        )*
+
+        // Create the registry mapping filenames to data and format
+        static EMBEDDED_FIXTURES: Lazy<HashMap<&'static str, (&'static [u8], &'static str)>> = Lazy::new(|| {
+            let mut map = HashMap::new();
+            $(
+                // Convert to &[u8] slice to avoid fixed-size array type issues
+                let bytes: &'static [u8] = include_bytes!(concat!("../../tests/fixtures/", $file));
+                map.insert($file, (bytes, $format));
+            )*
+            map
+        });
+
+        // Add a registry access function
+        pub fn get_registry() -> &'static HashMap<&'static str, (&'static [u8], &'static str)> {
+            &EMBEDDED_FIXTURES
+        }
+    };
+}
+
+// Register your fixtures with the macro
+// Use with base path parameter
+define_fixtures!(
+    "../../tests/fixtures/",
+    SMALL_JPEG => ("earth_apollo17.jpg", "image/jpeg"),
+    C_JPEG => ("C.jpg", "image/jpeg"),
+    CA_JPEG => ("CA.jpg", "image/jpeg"),
+    XCA_JPEG => ("XCA.jpg", "image/jpeg"),
+    SAMPLE_PNG => ("libpng-test.png", "image/png"),
+    SAMPLE_WAV => ("sample1.wav", "audio/wav"),
+    SAMPLE_WEBP => ("sample1.webp", "image/webp"),
+    SAMPLE_TIFF => ("TUSCANY.TIF", "image/tiff"),
+    SAMPLE_AVI => ("test.avi", "video/avi"),
+    SAMPLE_AVIF => ("sample1.avif", "image/avif"),
+    SAMPLE_HEIC => ("sample1.heic", "image/heic"),
+    SAMPLE_HEIF => ("sample1.heif", "image/heif"),
+    SAMPLE_MP4 => ("video1.mp4", "video/mp4"),
+    LEGACY_MP4 => ("legacy.mp4", "video/mp4"),
+    LEGACY_INGREDIENT_HASH => ("legacy_ingredient_hash.jpg", "image/jpeg"),
+    NO_MANIFEST => ("no_manifest.jpg", "image/jpeg"),
+    NO_ALG => ("no_alg.jpg", "image/jpeg"),
+    SAMPLE_BAD_SIGNATURE => ("CIE-sig-CA.jpg", "image/jpeg"),
+    SAMPLE_PSD => ("Purple Square.psd", "image/vnd.adobe.photoshop"),
+    TEST_TEXT_PLAIN => ("unsupported_type.txt", "text/plain"),
+    PRE_RELEASE => ("prerelease.jpg", "image/jpeg"),
+
+    // Add more as needed
+);
+
 pub fn setup_logger() {
     static INIT: std::sync::Once = std::sync::Once::new();
     INIT.call_once(|| {
@@ -100,14 +151,33 @@ pub(crate) fn static_test_v1_uuid() -> &'static str {
     const TEST_GUID: &str = "urn:uuid:f75ddc48-cdc8-4723-bcfe-77a8d68a5920";
     TEST_GUID
 }
+
+/// Creates a minimal valid claim for testing (v2)
+///
+/// This claim has just enough information to be valid, including a
+/// claim_generator_info and a c2pa.created action assertion.
+pub fn create_min_test_claim() -> Result<Claim> {
+    let mut claim = Claim::new("contentauth unit test", Some("contentauth"), 2);
+
+    let mut cg_info = ClaimGeneratorInfo::new("test app");
+    cg_info.version = Some("2.3.4".to_string());
+    claim.add_claim_generator_info(cg_info);
+
+    let created_action = Action::new("c2pa.created").set_source_type(DigitalSourceType::Empty);
+    let actions = Actions::new().add_action(created_action);
+
+    claim.add_assertion(&actions)?;
+
+    Ok(claim)
+}
+
 /// Creates a claim for testing (v2)
 pub fn create_test_claim() -> Result<Claim> {
-    // First create and add a claim thumbnail (we don't need to reference this anywhere)
     let mut claim = Claim::new("contentauth unit test", Some("contentauth"), 2);
 
     // Add an icon for the claim_generator
     let icon = EmbeddedData::new(labels::ICON, "image/jpeg", vec![0xde, 0xad, 0xbe, 0xef]);
-    let icon_ref = claim.add_assertion_with_salt(&icon, &DefaultSalt::default())?;
+    let icon_ref = claim.add_assertion(&icon)?;
 
     let mut cg_info = ClaimGeneratorInfo::new("test app");
     cg_info.version = Some("2.3.4".to_string());
@@ -122,8 +192,7 @@ pub fn create_test_claim() -> Result<Claim> {
         "image/jpeg",
         vec![0xde, 0xad, 0xbe, 0xef],
     );
-    let _claim_thumbnail_ref =
-        claim.add_assertion_with_salt(&claim_thumbnail, &DefaultSalt::default())?;
+    let _claim_thumbnail_ref = claim.add_assertion(&claim_thumbnail)?;
 
     // Create and add a thumbnail for an ingredient
     let ingredient_thumbnail = EmbeddedData::new(
@@ -131,22 +200,21 @@ pub fn create_test_claim() -> Result<Claim> {
         "image/jpeg",
         vec![0xde, 0xad, 0xbe, 0xef],
     );
-    let ingredient_thumbnail_ref =
-        claim.add_assertion_with_salt(&ingredient_thumbnail, &DefaultSalt::default())?;
+    let ingredient_thumbnail_ref = claim.add_assertion(&ingredient_thumbnail)?;
 
     // create a new v3 ingredient and add the thumbnail reference
     let ingredient = Ingredient::new_v3(Relationship::ComponentOf)
         .set_title("image_1.jpg")
         .set_format("image/jpeg")
         .set_thumbnail(Some(&ingredient_thumbnail_ref));
-    let ingredient_ref = claim.add_assertion_with_salt(&ingredient, &DefaultSalt::default())?;
+    let ingredient_ref = claim.add_assertion(&ingredient)?;
 
     // create a second v3 ingredient and add the thumbnail reference
     let ingredient2 = Ingredient::new_v3(Relationship::ComponentOf)
         .set_title("image_2.jpg")
         .set_format("image/png")
         .set_thumbnail(Some(&ingredient_thumbnail_ref));
-    let ingredient_ref2 = claim.add_assertion_with_salt(&ingredient2, &DefaultSalt::default())?;
+    let ingredient_ref2 = claim.add_assertion(&ingredient2)?;
 
     let created_action = Action::new("c2pa.created").set_source_type(DigitalSourceType::Empty);
 
@@ -224,7 +292,7 @@ pub fn create_test_claim_v1() -> Result<Claim> {
     claim.add_assertion(&thumbnail_claim)?;
     claim.add_assertion(&user_assertion)?;
 
-    let thumb_uri = claim.add_assertion_with_salt(&thumbnail_ingred, &DefaultSalt::default())?;
+    let thumb_uri = claim.add_assertion(&thumbnail_ingred)?;
 
     let review = ReviewRating::new(
         "a 3rd party plugin was used",
@@ -250,8 +318,8 @@ pub fn create_test_claim_v1() -> Result<Claim> {
     )
     .set_thumbnail(Some(&thumb_uri));
 
-    claim.add_assertion_with_salt(&ingredient, &DefaultSalt::default())?;
-    claim.add_assertion_with_salt(&ingredient2, &DefaultSalt::default())?;
+    claim.add_assertion(&ingredient)?;
+    claim.add_assertion(&ingredient2)?;
 
     Ok(claim)
 }
@@ -259,7 +327,7 @@ pub fn create_test_claim_v1() -> Result<Claim> {
 /// Creates a store with an unsigned claim for testing
 pub fn create_test_store() -> Result<Store> {
     // Create claims store.
-    let mut store = Store::new();
+    let mut store = Store::with_settings(&Settings::default());
 
     let claim = create_test_claim()?;
     store.commit_claim(claim).unwrap();
@@ -269,7 +337,7 @@ pub fn create_test_store() -> Result<Store> {
 /// Creates a store with an unsigned v1 claim for testing
 pub fn create_test_store_v1() -> Result<Store> {
     // Create claims store.
-    let mut store = Store::new();
+    let mut store = Store::with_settings(&Settings::default());
 
     let claim = create_test_claim_v1()?;
     store.commit_claim(claim).unwrap();
@@ -287,6 +355,165 @@ pub fn fixture_path(file_name: &str) -> PathBuf {
     path.push("tests/fixtures");
     path.push(file_name);
     path
+}
+
+/// Create in-memory test streams from a fixture file
+#[allow(clippy::expect_used)]
+pub fn create_test_streams(
+    fixture_name: &str,
+) -> (
+    &'static str,
+    std::io::Cursor<Vec<u8>>,
+    std::io::Cursor<Vec<u8>>,
+) {
+    // Try to use embedded fixture first
+    if let Some(fixture) = get_registry().get(fixture_name) {
+        // Access tuple elements directly by position
+        let data = fixture.0;
+        let format = fixture.1;
+
+        let input_cursor = std::io::Cursor::new(data.to_vec());
+        let output_cursor = std::io::Cursor::new(Vec::new());
+
+        return (format, input_cursor, output_cursor);
+    }
+
+    #[cfg(feature = "file_io")]
+    {
+        // Fallback to file-based fixture if not embedded
+        let input_path = fixture_path(fixture_name);
+        let input_data = std::fs::read(&input_path).expect("could not read input file");
+
+        // Determine format from input file extension
+        let format = input_path
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .and_then(extension_to_mime)
+            .unwrap_or("application/octet-stream");
+
+        let input_cursor = std::io::Cursor::new(input_data);
+        let output_cursor = std::io::Cursor::new(Vec::new());
+
+        (format, input_cursor, output_cursor)
+    }
+    #[cfg(not(feature = "file_io"))]
+    {
+        panic!(
+            "Fixture '{}' not found in embedded registry and file I/O is disabled",
+            fixture_name
+        );
+    }
+}
+
+/// Setup for file-based tests that need actual file I/O operations
+pub struct TestFileSetup {
+    pub temp_dir: TempDir,
+    pub input_path: PathBuf,
+    pub output_path: PathBuf,
+    pub format: String,
+}
+
+impl TestFileSetup {
+    /// Create a new test file setup from a fixture file
+    #[allow(clippy::expect_used)]
+    pub fn new(fixture_name: &str) -> Self {
+        let input_path = fixture_path(fixture_name);
+        let extension = input_path
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .unwrap_or("bin");
+
+        let format = extension_to_mime(extension)
+            .unwrap_or("application/octet-stream")
+            .to_string();
+        let temp_dir = tempdirectory().expect("create temp dir");
+
+        // Create output path with same extension as input
+        let mut output_path = temp_dir.path().join(fixture_name);
+        output_path.set_extension(extension);
+
+        Self {
+            temp_dir,
+            input_path,
+            output_path,
+            format,
+        }
+    }
+
+    /// Get the path to the temporary directory
+    pub fn temp_dir_path(&self) -> &std::path::Path {
+        self.temp_dir.path()
+    }
+
+    /// Create a path within the temporary directory
+    pub fn temp_path(&self, filename: &str) -> PathBuf {
+        self.temp_dir.path().join(filename)
+    }
+
+    /// Get a sidecar path for the output file (with .c2pa extension)
+    pub fn sidecar_path(&self) -> PathBuf {
+        self.output_path.with_extension(MANIFEST_STORE_EXT)
+    }
+
+    /// Create a file:// URL for the sidecar file
+    pub fn sidecar_url(&self) -> String {
+        let path_buf = self.sidecar_path(); // Store PathBuf in a variable to extend its lifetime
+        let path_str = path_buf.to_str().unwrap();
+        // Convert backslashes to forward slashes on Windows
+        let path_str = path_str.replace('\\', "/");
+
+        // Check if the path already starts with a slash and handle accordingly
+        if path_str.starts_with('/') {
+            format!("file://{path_str}")
+        } else {
+            format!("file:///{path_str}")
+        }
+    }
+
+    /// Get the file extension of the input file
+    pub fn extension(&self) -> &str {
+        self.input_path
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .unwrap_or("bin")
+    }
+
+    /// Create an input file stream for reading
+    #[allow(clippy::expect_used)]
+    pub fn input_stream(&self) -> std::fs::File {
+        std::fs::File::open(&self.input_path).expect("open input file")
+    }
+
+    /// Create an output file stream for writing
+    #[allow(clippy::expect_used)]
+    pub fn output_stream(&self) -> std::fs::File {
+        std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(true)
+            .read(true)
+            .write(true)
+            .open(&self.output_path)
+            .expect("create output file")
+    }
+
+    /// Create format and streams tuple like create_test_streams
+    /// Returns (format, input_stream, output_stream)
+    pub fn create_streams(&self) -> (&str, std::fs::File, std::fs::File) {
+        (&self.format, self.input_stream(), self.output_stream())
+    }
+}
+
+/// Run a test that requires file I/O operations
+///
+/// This helper manages the temporary directory lifecycle and provides
+/// the test function with file paths for input and output operations.
+pub fn run_file_test<F>(fixture_name: &str, test_fn: F)
+where
+    F: FnOnce(&TestFileSetup),
+{
+    let setup = TestFileSetup::new(fixture_name);
+    test_fn(&setup);
+    // TestFileSetup automatically cleans up temp_dir when dropped
 }
 
 /// returns a path to a file in the temp_dir folder
@@ -452,137 +679,6 @@ impl AsyncSigner for AsyncTestGoodSigner {
     ) -> Option<crate::error::Result<Vec<u8>>> {
         Some(Ok(Vec::new()))
     }
-}
-
-#[cfg(feature = "v1_api")]
-struct TempRemoteSigner {}
-
-#[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
-#[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
-#[cfg(feature = "v1_api")]
-impl crate::signer::RemoteSigner for TempRemoteSigner {
-    async fn sign_remote(&self, claim_bytes: &[u8]) -> crate::error::Result<Vec<u8>> {
-        let signer = crate::utils::test_signer::async_test_signer(SigningAlg::Ps256);
-
-        // this would happen on some remote server
-        // TEMPORARY: Assume v1 until we plumb things through further.
-        crate::cose_sign::cose_sign_async(
-            &signer,
-            claim_bytes,
-            self.reserve_size(),
-            TimeStampStorage::V1_sigTst,
-        )
-        .await
-    }
-
-    fn reserve_size(&self) -> usize {
-        10000
-    }
-}
-
-/// Create a [`RemoteSigner`] instance that can be used for testing purposes.
-///
-/// # Returns
-///
-/// Returns a boxed [`RemoteSigner`] instance.X509SignatureVerifier
-#[cfg(feature = "v1_api")]
-pub fn temp_remote_signer() -> Box<dyn RemoteSigner> {
-    Box::new(TempRemoteSigner {})
-}
-
-/// Create an AsyncSigner that acts as a RemoteSigner
-#[cfg(feature = "v1_api")]
-struct TempAsyncRemoteSigner {
-    signer: TempRemoteSigner,
-}
-
-#[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
-#[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
-#[cfg(feature = "v1_api")]
-impl AsyncSigner for TempAsyncRemoteSigner {
-    // this will not be called but requires an implementation
-    async fn sign(&self, claim_bytes: Vec<u8>) -> Result<Vec<u8>> {
-        let signer = crate::utils::test_signer::async_test_signer(SigningAlg::Ps256);
-
-        // this would happen on some remote server
-        // TEMPORARY: Assume V1 until we plumb through further.
-        crate::cose_sign::cose_sign_async(
-            &signer,
-            &claim_bytes,
-            AsyncSigner::reserve_size(self),
-            TimeStampStorage::V1_sigTst,
-        )
-        .await
-    }
-
-    // signer will return a COSE structure
-    fn direct_cose_handling(&self) -> bool {
-        true
-    }
-
-    fn alg(&self) -> SigningAlg {
-        SigningAlg::Ps256
-    }
-
-    fn certs(&self) -> Result<Vec<Vec<u8>>> {
-        Ok(Vec::new())
-    }
-
-    fn reserve_size(&self) -> usize {
-        10000
-    }
-
-    async fn send_timestamp_request(
-        &self,
-        _message: &[u8],
-    ) -> Option<crate::error::Result<Vec<u8>>> {
-        Some(Ok(Vec::new()))
-    }
-}
-
-#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
-#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
-#[cfg(feature = "v1_api")]
-impl AsyncRawSigner for TempAsyncRemoteSigner {
-    async fn sign(&self, _claim_bytes: Vec<u8>) -> std::result::Result<Vec<u8>, RawSignerError> {
-        unreachable!("Should not be called");
-    }
-
-    fn alg(&self) -> SigningAlg {
-        SigningAlg::Ps256
-    }
-
-    fn cert_chain(&self) -> std::result::Result<Vec<Vec<u8>>, RawSignerError> {
-        Ok(Vec::new())
-    }
-
-    fn reserve_size(&self) -> usize {
-        10000
-    }
-}
-
-#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
-#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
-#[cfg(feature = "v1_api")]
-impl AsyncTimeStampProvider for TempAsyncRemoteSigner {
-    async fn send_time_stamp_request(
-        &self,
-        _message: &[u8],
-    ) -> Option<std::result::Result<Vec<u8>, TimeStampError>> {
-        Some(Ok(Vec::new()))
-    }
-}
-
-/// Create a [`AsyncSigner`] that does it's own COSE handling for testing.
-///
-/// # Returns
-///
-/// Returns a boxed [`RemoteSigner`] instance.
-#[cfg(feature = "v1_api")]
-pub fn temp_async_remote_signer() -> Box<dyn crate::signer::AsyncSigner> {
-    Box::new(TempAsyncRemoteSigner {
-        signer: TempRemoteSigner {},
-    })
 }
 
 #[test]
