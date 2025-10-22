@@ -1,5 +1,5 @@
 [verify]
-trusted = true
+verify_trust = true
 
 [trust]
 trust_config = """

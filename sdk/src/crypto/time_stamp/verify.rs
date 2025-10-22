@@ -533,21 +533,26 @@ pub fn verify_time_stamp(
         // the certificate must be on the trust list to be considered valid
         let verify_trust = settings.verify.verify_timestamp_trust;
 
-        if verify_trust
-            && ctp
+        if verify_trust {
+            // per the spec TSA trust can only be checked against the system trust list not the user trust list
+            let mut adjusted_ctp = ctp.clone();
+            adjusted_ctp.set_trust_anchors_only(true);
+
+            if adjusted_ctp
                 .check_certificate_trust(&cert_ders[0..], &cert_ders[0], Some(signing_time))
                 .is_err()
-        {
-            log_item!(
-                "",
-                format!("timestamp cert untrusted: {}", &common_name),
-                "verify_time_stamp"
-            )
-            .validation_status(TIMESTAMP_UNTRUSTED)
-            .informational(&mut current_validation_log);
+            {
+                log_item!(
+                    "",
+                    format!("timestamp cert untrusted: {}", &common_name),
+                    "verify_time_stamp"
+                )
+                .validation_status(TIMESTAMP_UNTRUSTED)
+                .informational(&mut current_validation_log);
 
-            last_err = TimeStampError::Untrusted;
-            continue;
+                last_err = TimeStampError::Untrusted;
+                continue;
+            }
         }
 
         log_item!(

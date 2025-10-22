@@ -408,8 +408,8 @@ tsa_url = "http://timestamp.digicert.com"
 
 # Configuration for the `Builder`.
 [builder]
-certificate_status_fetch = "all"
-certificate_status_should_override = true
+#certificate_status_fetch = "all"
+#certificate_status_should_override = true
 
 # Claim generator info list.
 [builder.claim_generator_info]
