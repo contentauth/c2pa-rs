@@ -58,6 +58,9 @@ pub struct CertificateTrustPolicy {
 
     /// passthrough mode
     passthrough: bool,
+
+    /// Use only system trust for this check
+    trust_anchors_only: bool,
 }
 
 impl Default for CertificateTrustPolicy {
@@ -68,6 +71,7 @@ impl Default for CertificateTrustPolicy {
             end_entity_cert_set: HashSet::default(),
             additional_ekus: HashSet::default(),
             passthrough: false,
+            trust_anchors_only: false,
         };
 
         this.add_valid_ekus(include_bytes!("./valid_eku_oids.cfg"));
@@ -98,6 +102,7 @@ impl CertificateTrustPolicy {
             end_entity_cert_set: HashSet::default(),
             additional_ekus: HashSet::default(),
             passthrough: false,
+            trust_anchors_only: false,
         }
     }
 
@@ -109,6 +114,7 @@ impl CertificateTrustPolicy {
             end_entity_cert_set: HashSet::default(),
             additional_ekus: HashSet::default(),
             passthrough: true,
+            trust_anchors_only: false,
         }
     }
 
@@ -339,6 +345,19 @@ impl CertificateTrustPolicy {
                 self.additional_ekus.insert(line.to_string());
             }
         }
+    }
+
+    /// Set whether we only want to use system trust_achors and ignores user_anchors,
+    /// returns last trust_anchors_value
+    pub fn set_trust_anchors_only(&mut self, trust_anchors_only: bool) -> bool {
+        let val = self.trust_anchors_only;
+        self.trust_anchors_only = trust_anchors_only;
+        val
+    }
+
+    /// Get whether we only want to use system trust_achors and ignores user_anchors
+    pub fn trust_anchors_only(&self) -> bool {
+        self.trust_anchors_only
     }
 
     /// Remove all trust anchors, private credentials, and EKUs previously
