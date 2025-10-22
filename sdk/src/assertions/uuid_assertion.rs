@@ -17,6 +17,7 @@ use crate::{
 };
 
 /// Helper class to create User assertion
+#[allow(dead_code)]
 #[derive(Debug, Default)]
 pub struct Uuid {
     label: String,

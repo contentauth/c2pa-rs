@@ -18,25 +18,25 @@ check-format:
 
 check-docs:
 	cargo doc --no-deps --workspace --features="file_io"
+
 clippy:
 	cargo clippy --features="file_io" --all-targets -- -D warnings
 
 test-local:
-	cargo test --features="file_io, fetch_remote_manifests, add_thumbnails, v1_api" --all-targets
-# Builds and views documentation
+	cargo test --features="file_io, fetch_remote_manifests, add_thumbnails" --all-targets
 
 test-wasm:
-	cd sdk && wasm-pack test --node -- --no-default-features --features="rust_native_crypto"
+	cd sdk && wasm-pack test --node -- --no-default-features --features="rust_native_crypto, fetch_remote_manifests"
 
 test-wasm-web:
-	cd sdk && wasm-pack test --chrome --headless -- --no-default-features --features="rust_native_crypto"
+	cd sdk && wasm-pack test --chrome --headless -- --no-default-features --features="rust_native_crypto, fetch_remote_manifests"
 
 # WASI testing requires upstream llvm clang (not XCode), wasmtime, and the target wasm32-wasip2 on the nightly toolchain
 test-wasi:
 ifeq ($(PLATFORM),mac)
 	$(eval CC := /opt/homebrew/opt/llvm/bin/clang)
 endif
-	CC=$(CC) CARGO_TARGET_WASM32_WASIP2_RUNNER="wasmtime -S cli -S http --dir ." cargo +nightly test --target wasm32-wasip2 -p c2pa -p c2patool --all-features
+	CC=$(CC) CARGO_TARGET_WASM32_WASIP2_RUNNER="wasmtime -S cli -S http --dir ." cargo +nightly test --target wasm32-wasip2 -p c2pa --no-default-features --features="rust_native_crypto, file_io, fetch_remote_manifests, add_thumbnails"
 	rm -r sdk/Users
 
 # Full local validation, build and test all features including wasm
@@ -70,4 +70,4 @@ show:
 	cargo run --example show -- sdk/tests/fixtures/ca.jpg
 
 release:
-	cd c_api && make release
+	cd c2pa_c_ffi && make release

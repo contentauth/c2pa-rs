@@ -241,7 +241,10 @@ const SHA384_OID: Oid = bcder::Oid(OctetString::from_static(&[96, 134, 72, 1, 10
 
 const SHA512_OID: Oid = bcder::Oid(OctetString::from_static(&[96, 134, 72, 1, 101, 3, 4, 2, 3]));
 
-#[cfg_attr(feature = "rust_native_crypto", allow(unused))]
+#[cfg_attr(
+    any(feature = "rust_native_crypto", target_arch = "wasm32"),
+    allow(unused)
+)]
 const SHA1_OID: Oid = bcder::Oid(OctetString::from_static(&[43, 14, 3, 2, 26]));
 
 #[test]
@@ -340,7 +343,10 @@ fn rs512() {
 }
 
 #[test]
-#[cfg(feature = "openssl")]
+#[cfg(all(
+    feature = "openssl",
+    not(all(feature = "rust_native_crypto", target_arch = "wasm32"))
+))]
 fn sha1() {
     let signature =
         include_bytes!("../../../../tests/fixtures/crypto/raw_signature/legacy/sha1.raw_sig");
@@ -352,6 +358,7 @@ fn sha1() {
     validator.validate(signature, SAMPLE_DATA, pub_key).unwrap();
 }
 
+#[allow(dead_code)]
 fn ans1_oid_bcder_oid(asn1_oid: &asn1_rs::Oid) -> bcder::Oid {
     const TEST_FAIL: Oid = bcder::Oid(OctetString::from_static(&[0, 0, 0, 0]));
 
@@ -368,13 +375,13 @@ fn ans1_oid_bcder_oid(asn1_oid: &asn1_rs::Oid) -> bcder::Oid {
 fn test_get_by_sig_and_alg() {
     use crate::crypto::raw_signature::oids::*;
 
-    let rsa_oid = ans1_oid_bcder_oid(&RSA_OID);
-    let rsa_pss_oid = ans1_oid_bcder_oid(&RSA_PSS_OID);
-    let ec_pubic_key_oid = ans1_oid_bcder_oid(&EC_PUBLICKEY_OID);
-    let ed25519_oid = ans1_oid_bcder_oid(&ED25519_OID);
-    let sha256 = ans1_oid_bcder_oid(&SHA256_OID);
-    let sha384 = ans1_oid_bcder_oid(&SHA384_OID);
-    let sha512 = ans1_oid_bcder_oid(&SHA512_OID);
+    let rsa_oid = ans1_oid_bcder_oid(&RSA_OID).unwrap();
+    let rsa_pss_oid = ans1_oid_bcder_oid(&RSA_PSS_OID).unwrap();
+    let ec_pubic_key_oid = ans1_oid_bcder_oid(&EC_PUBLICKEY_OID).unwrap();
+    let ed25519_oid = ans1_oid_bcder_oid(&ED25519_OID).unwrap();
+    let sha256 = ans1_oid_bcder_oid(&SHA256_OID).unwrap();
+    let sha384 = ans1_oid_bcder_oid(&SHA384_OID).unwrap();
+    let sha512 = ans1_oid_bcder_oid(&SHA512_OID).unwrap();
 
     assert!(validator_for_sig_and_hash_algs(&rsa_oid, &sha256).is_some());
     assert!(validator_for_sig_and_hash_algs(&rsa_oid, &sha384).is_some());

@@ -36,7 +36,7 @@ use crate::{
 
 // initialize asset handlers
 lazy_static! {
-    static ref ASSET_HANDLERS: HashMap<String, Box<dyn AssetIO>> = {
+    static ref CAI_READERS: HashMap<String, Box<dyn AssetIO>> = {
         let handlers: Vec<Box<dyn AssetIO>> = vec![
             #[cfg(feature = "pdf")]
             Box::new(PdfIO::new("")),
@@ -152,19 +152,19 @@ pub fn save_jumbf_to_memory(asset_type: &str, data: &[u8], store_bytes: &[u8]) -
 pub(crate) fn get_assetio_handler_from_path(asset_path: &Path) -> Option<&dyn AssetIO> {
     let ext = get_file_extension(asset_path)?;
 
-    ASSET_HANDLERS.get(&ext).map(|h| h.as_ref())
+    CAI_READERS.get(&ext).map(|h| h.as_ref())
 }
 
 pub(crate) fn get_assetio_handler(ext: &str) -> Option<&dyn AssetIO> {
     let ext = ext.to_lowercase();
 
-    ASSET_HANDLERS.get(&ext).map(|h| h.as_ref())
+    CAI_READERS.get(&ext).map(|h| h.as_ref())
 }
 
 pub(crate) fn get_cailoader_handler(asset_type: &str) -> Option<&dyn CAIReader> {
     let asset_type = asset_type.to_lowercase();
 
-    ASSET_HANDLERS.get(&asset_type).map(|h| h.get_reader())
+    CAI_READERS.get(&asset_type).map(|h| h.get_reader())
 }
 
 pub(crate) fn get_caiwriter_handler(asset_type: &str) -> Option<&dyn CAIWriter> {
@@ -186,11 +186,21 @@ pub(crate) fn get_file_extension(path: &Path) -> Option<String> {
 pub(crate) fn get_supported_file_extension(path: &Path) -> Option<String> {
     let ext = get_file_extension(path)?;
 
-    if ASSET_HANDLERS.get(&ext).is_some() {
+    if CAI_READERS.get(&ext).is_some() {
         Some(ext)
     } else {
         None
     }
+}
+
+/// Returns a [Vec<String>] of supported mime types for reading manifests.
+pub(crate) fn supported_reader_mime_types() -> Vec<String> {
+    CAI_READERS.keys().map(String::to_owned).collect()
+}
+
+/// Returns a [Vec<String>] of mime types that [c2pa-rs] is able to sign.
+pub(crate) fn supported_builder_mime_types() -> Vec<String> {
+    CAI_WRITERS.keys().map(String::to_owned).collect()
 }
 
 #[cfg(feature = "file_io")]
@@ -282,16 +292,6 @@ pub fn load_jumbf_from_file<P: AsRef<Path>>(in_path: P) -> Result<Vec<u8>> {
     }
 }
 
-#[cfg(all(feature = "v1_api", feature = "file_io"))]
-pub(crate) fn object_locations(in_path: &Path) -> Result<Vec<HashObjectPositions>> {
-    let ext = get_file_extension(in_path).ok_or(Error::UnsupportedType)?;
-
-    match get_assetio_handler(&ext) {
-        Some(asset_handler) => asset_handler.get_object_locations(in_path),
-        _ => Err(Error::UnsupportedType),
-    }
-}
-
 struct CAIReadAdapter<R> {
     pub reader: R,
 }
@@ -314,6 +314,7 @@ where
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn object_locations_from_stream<R>(
     format: &str,
     stream: &mut R,
@@ -322,7 +323,21 @@ where
     R: Read + Seek + Send + ?Sized,
 {
     let mut reader = CAIReadAdapter { reader: stream };
+    match get_caiwriter_handler(format) {
+        Some(handler) => handler.get_object_locations_from_stream(&mut reader),
+        _ => Err(Error::UnsupportedType),
+    }
+}
 
+#[cfg(target_arch = "wasm32")]
+pub(crate) fn object_locations_from_stream<R>(
+    format: &str,
+    stream: &mut R,
+) -> Result<Vec<HashObjectPositions>>
+where
+    R: Read + Seek + ?Sized,
+{
+    let mut reader = CAIReadAdapter { reader: stream };
     match get_caiwriter_handler(format) {
         Some(handler) => handler.get_object_locations_from_stream(&mut reader),
         _ => Err(Error::UnsupportedType),
@@ -346,7 +361,7 @@ pub fn remove_jumbf_from_file<P: AsRef<Path>>(path: P) -> Result<()> {
 
 /// returns a list of supported file extensions and mime types
 pub fn get_supported_types() -> Vec<String> {
-    ASSET_HANDLERS.keys().map(|k| k.to_owned()).collect()
+    CAI_READERS.keys().map(|k| k.to_owned()).collect()
 }
 
 #[cfg(test)]

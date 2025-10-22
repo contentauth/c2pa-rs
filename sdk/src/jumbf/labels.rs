@@ -13,36 +13,38 @@
 
 #![deny(missing_docs)]
 
-//! Labels for JUMBF boxes as defined in C2PA 1.0 Specification.
+//! Labels for JUMBF boxes as defined in C2PA Specification.
 //!
-//! See <https://c2pa.org/specifications/specifications/1.0/specs/C2PA_Specification.html#_c2pa_box_details>.
+//! See <https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_c2pa_box_details>.
+
+use std::fmt::Display;
 
 /// Label for the C2PA manifest store.
 ///
 /// This value should be used when possible, since it may contain a version suffix
 /// when needed to support a future version of the spec.
 ///
-/// See <https://c2pa.org/specifications/specifications/1.0/specs/C2PA_Specification.html#_c2pa_box_details>.
+/// See <https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_c2pa_box_details>.
 pub const MANIFEST_STORE: &str = "c2pa";
 
 /// Label for the C2PA assertion store box.
 ///
-/// See <https://c2pa.org/specifications/specifications/1.0/specs/C2PA_Specification.html#_c2pa_box_details>.
+/// See <https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_c2pa_box_details>.
 pub const ASSERTIONS: &str = "c2pa.assertions";
 
 /// Label for the C2PA claim box.
 ///
-/// See <https://c2pa.org/specifications/specifications/1.0/specs/C2PA_Specification.html#_c2pa_box_details>.
+/// See <https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_c2pa_box_details>.
 pub const CLAIM: &str = "c2pa.claim";
 
 /// Label for the C2PA claim signature box.
 ///
-/// See <https://c2pa.org/specifications/specifications/1.0/specs/C2PA_Specification.html#_c2pa_box_details>.
+/// See <https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_c2pa_box_details>.
 pub const SIGNATURE: &str = "c2pa.signature";
 
 /// Label for the credentials store box.
 ///
-/// See <https://c2pa.org/specifications/specifications/1.0/specs/C2PA_Specification.html#_credential_storage>.
+/// See <https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_credential_storage>.
 pub const CREDENTIALS: &str = "c2pa.credentials";
 
 /// Label for the DataBox box.
@@ -179,11 +181,47 @@ pub(crate) fn box_name_from_uri(uri: &str) -> Option<String> {
 }
 
 // Struct deconstructed manifest label
+#[derive(Clone, Debug)]
 pub(crate) struct ManifestParts {
     pub guid: String,
     pub is_v1: bool,
-    pub vendor: Option<String>,
-    pub version: Option<String>,
+    pub cgi: Option<String>,
+    pub version: Option<usize>,
+    pub reason: Option<usize>,
+}
+
+impl Display for ManifestParts {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if self.is_v1 {
+            if let Some(vendor) = &self.cgi {
+                let mp = format!("{}:urn:uuid:{}", vendor, &self.guid);
+                write!(f, "{mp}")
+            } else {
+                let mp = format!("urn:uuid:{}", &self.guid);
+                write!(f, "{mp}")
+            }
+        } else {
+            let mut mp = format!("urn:c2pa:{}", self.guid);
+
+            if let Some(vendor) = &self.cgi {
+                mp = format!("{mp}:{vendor}");
+            }
+
+            if let Some(version) = self.version {
+                if self.cgi.is_some() {
+                    mp = format!("{mp}:{version}");
+                } else {
+                    mp = format!("{mp}::{version}");
+                }
+
+                // add reason if need be
+                if let Some(reason) = self.reason {
+                    mp = format!("{mp}_{reason}");
+                }
+            }
+            write!(f, "{mp}")
+        }
+    }
 }
 
 // Given a JUMBF URI, return the manifest parts contained within it.
@@ -198,6 +236,7 @@ pub(crate) fn manifest_label_to_parts(uri: &str) -> Option<ManifestParts> {
     let guid;
     let mut vendor = None;
     let mut version = None;
+    let mut reason = None;
     let is_v1;
 
     if parts[0] == "urn" || parts[1] == "urn" {
@@ -212,19 +251,33 @@ pub(crate) fn manifest_label_to_parts(uri: &str) -> Option<ManifestParts> {
                 }
 
                 if parts.len() > 3 && !parts[3].is_empty() {
+                    // vendor is limited to 32 printable characters and no spaces
+                    if parts[3].len() > 32
+                        || parts[3].split_whitespace().count() != 1
+                        || !parts[3].is_ascii()
+                    {
+                        return None;
+                    }
                     vendor = Some(parts[3].to_owned());
                 }
 
                 if parts.len() > 4 && !parts[4].is_empty() {
-                    version = Some(parts[4].to_owned());
+                    let version_parts: Vec<&str> = parts[4].split("_").collect();
+                    version = Some(version_parts[0].parse::<usize>().ok()?);
+
+                    // get reason if available
+                    if let Some(r) = version_parts.get(1) {
+                        reason = Some(r.parse::<usize>().ok()?);
+                    }
                 }
             }
 
             return Some(ManifestParts {
                 guid,
                 is_v1,
-                vendor,
+                cgi: vendor,
                 version,
+                reason,
             });
         } else if parts[2] == "uuid" {
             // this must be a 1.x path to begin with a vendor
@@ -239,8 +292,9 @@ pub(crate) fn manifest_label_to_parts(uri: &str) -> Option<ManifestParts> {
             return Some(ManifestParts {
                 guid,
                 is_v1,
-                vendor,
+                cgi: vendor,
                 version,
+                reason,
             });
         }
     }
@@ -355,37 +409,39 @@ pub mod tests {
         let l1_mp = manifest_label_to_parts(&l1).unwrap();
         assert_eq!(l1_mp.guid, "F9168C5E-CEB2-4FAA-B6BF-329BF39FA1E4");
         assert!(!l1_mp.is_v1);
-        assert_eq!(l1_mp.vendor, None);
+        assert_eq!(l1_mp.cgi, None);
         assert_eq!(l1_mp.version, None);
 
         let l2_mp = manifest_label_to_parts(&l2).unwrap();
         assert_eq!(l2_mp.guid, "F9168C5E-CEB2-4FAA-B6BF-329BF39FA1E4");
         assert!(!l2_mp.is_v1);
-        assert_eq!(l2_mp.vendor, Some("acme".to_owned()));
+        assert_eq!(l2_mp.cgi, Some("acme".to_owned()));
         assert_eq!(l2_mp.version, None);
 
         let l3_mp = manifest_label_to_parts(&l3).unwrap();
         assert_eq!(l3_mp.guid, "F9168C5E-CEB2-4FAA-B6BF-329BF39FA1E4");
         assert!(!l3_mp.is_v1);
-        assert_eq!(l3_mp.vendor, Some("acme".to_owned()));
-        assert_eq!(l3_mp.version, Some("2_1".to_owned()));
+        assert_eq!(l3_mp.cgi, Some("acme".to_owned()));
+        assert_eq!(l3_mp.version, Some(2));
+        assert_eq!(l3_mp.reason, Some(1));
 
         let l4_mp = manifest_label_to_parts(&l4).unwrap();
         assert_eq!(l4_mp.guid, "F9168C5E-CEB2-4FAA-B6BF-329BF39FA1E4");
         assert!(!l4_mp.is_v1);
-        assert_eq!(l4_mp.vendor, None);
-        assert_eq!(l4_mp.version, Some("2_1".to_owned()));
+        assert_eq!(l4_mp.cgi, None);
+        assert_eq!(l4_mp.version, Some(2));
+        assert_eq!(l4_mp.reason, Some(1));
 
         let l5_mp = manifest_label_to_parts(&l5).unwrap();
         assert_eq!(l5_mp.guid, "F9168C5E-CEB2-4FAA-B6BF-329BF39FA1E4");
         assert!(l5_mp.is_v1);
-        assert_eq!(l5_mp.vendor, None);
+        assert_eq!(l5_mp.cgi, None);
         assert_eq!(l5_mp.version, None);
 
         let l6_mp = manifest_label_to_parts(&l6).unwrap();
         assert_eq!(l6_mp.guid, "F9168C5E-CEB2-4FAA-B6BF-329BF39FA1E4");
         assert!(l6_mp.is_v1);
-        assert_eq!(l6_mp.vendor, Some("acme".to_owned()));
+        assert_eq!(l6_mp.cgi, Some("acme".to_owned()));
         assert_eq!(l6_mp.version, None);
 
         assert!(manifest_label_to_parts(&l7).is_none());
@@ -396,7 +452,33 @@ pub mod tests {
             manifest_label_to_parts("urn:c2pa:3fad1ead-8ed5-44d0-873b-ea5f58adea82:acme").unwrap();
         assert_eq!(raw_1.guid, "3fad1ead-8ed5-44d0-873b-ea5f58adea82");
         assert!(!raw_1.is_v1);
-        assert_eq!(raw_1.vendor, Some("acme".to_owned()));
+        assert_eq!(raw_1.cgi, Some("acme".to_owned()));
         assert_eq!(raw_1.version, None);
+
+        // test to string conversion
+        assert_eq!(
+            &l1_mp.to_string(),
+            "urn:c2pa:F9168C5E-CEB2-4FAA-B6BF-329BF39FA1E4"
+        );
+        assert_eq!(
+            &l2_mp.to_string(),
+            "urn:c2pa:F9168C5E-CEB2-4FAA-B6BF-329BF39FA1E4:acme"
+        );
+        assert_eq!(
+            &l3_mp.to_string(),
+            "urn:c2pa:F9168C5E-CEB2-4FAA-B6BF-329BF39FA1E4:acme:2_1"
+        );
+        assert_eq!(
+            &l4_mp.to_string(),
+            "urn:c2pa:F9168C5E-CEB2-4FAA-B6BF-329BF39FA1E4::2_1"
+        );
+        assert_eq!(
+            &l5_mp.to_string(),
+            "urn:uuid:F9168C5E-CEB2-4FAA-B6BF-329BF39FA1E4"
+        );
+        assert_eq!(
+            &l6_mp.to_string(),
+            "acme:urn:uuid:F9168C5E-CEB2-4FAA-B6BF-329BF39FA1E4"
+        );
     }
 }

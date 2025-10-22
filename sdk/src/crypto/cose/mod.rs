@@ -20,7 +20,7 @@ pub use certificate_info::CertificateInfo;
 
 mod certificate_trust_policy;
 pub use certificate_trust_policy::{
-    CertificateTrustError, CertificateTrustPolicy, InvalidCertificateError,
+    CertificateTrustError, CertificateTrustPolicy, InvalidCertificateError, TrustAnchorType,
 };
 
 mod certificate_profile;
@@ -32,7 +32,8 @@ mod error;
 pub use error::CoseError;
 
 mod ocsp;
-pub use ocsp::{check_ocsp_status, check_ocsp_status_async, OcspFetchPolicy};
+pub use ocsp::{check_ocsp_status, check_ocsp_status_async, get_ocsp_der, OcspFetchPolicy};
+pub(crate) use ocsp::{fetch_and_check_ocsp_response, fetch_and_check_ocsp_response_async};
 
 mod sign;
 pub use sign::{sign, sign_async, sign_v2_embedded, sign_v2_embedded_async, CosePayload};
@@ -45,8 +46,8 @@ pub use sign1::{
 
 mod sigtst;
 pub(crate) use sigtst::{
-    add_sigtst_header, add_sigtst_header_async, validate_cose_tst_info,
-    validate_cose_tst_info_async,
+    add_sigtst_header, add_sigtst_header_async, timestamptoken_from_timestamprsp,
+    validate_cose_tst_info, validate_cose_tst_info_async,
 };
 
 mod time_stamp_storage;

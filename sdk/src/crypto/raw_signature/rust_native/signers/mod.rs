@@ -52,7 +52,7 @@ pub(crate) fn signer_from_cert_chain_and_private_key(
             )?,
         )),
 
-        SigningAlg::Es256 | SigningAlg::Es384 => Ok(Box::new(
+        SigningAlg::Es256 | SigningAlg::Es384 | SigningAlg::Es512 => Ok(Box::new(
             ecdsa_signer::EcdsaSigner::from_cert_chain_and_private_key(
                 cert_chain,
                 private_key,
@@ -286,6 +286,7 @@ mod async_signer_tests {
     #![allow(clippy::unwrap_used)]
     #![allow(unused)] // test fns appear unused on WASM
 
+    use c2pa_macros::c2pa_test_async;
     #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
     use wasm_bindgen_test::wasm_bindgen_test;
 
@@ -293,8 +294,7 @@ mod async_signer_tests {
         async_signer_from_cert_chain_and_private_key, validator_for_signing_alg, SigningAlg,
     };
 
-    #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
-    // #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    #[c2pa_test_async]
     async fn es256() {
         let cert_chain =
             include_bytes!("../../../../../tests/fixtures/crypto/raw_signature/es256.pub");
@@ -322,8 +322,7 @@ mod async_signer_tests {
         validator.validate(&signature, data, pub_key).unwrap();
     }
 
-    #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
-    // #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    #[c2pa_test_async]
     async fn es384() {
         let cert_chain =
             include_bytes!("../../../../../tests/fixtures/crypto/raw_signature/es384.pub");
@@ -351,7 +350,7 @@ mod async_signer_tests {
         validator.validate(&signature, data, pub_key).unwrap();
     }
 
-    #[cfg_attr(feature = "openssl", actix::test)]
+    #[c2pa_test_async]
     async fn es512() {
         let cert_chain =
             include_bytes!("../../../../../tests/fixtures/crypto/raw_signature/es512.pub");
@@ -379,12 +378,7 @@ mod async_signer_tests {
         validator.validate(&signature, data, pub_key).unwrap();
     }
 
-    #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
-    #[cfg_attr(
-        all(target_arch = "wasm32", not(target_os = "wasi")),
-        wasm_bindgen_test
-    )]
-    #[cfg_attr(target_os = "wasi", wstd::test)]
+    #[c2pa_test_async]
     async fn ed25519() {
         let cert_chain =
             include_bytes!("../../../../../tests/fixtures/crypto/raw_signature/ed25519.pub");
@@ -412,9 +406,7 @@ mod async_signer_tests {
         validator.validate(&signature, data, pub_key).unwrap();
     }
 
-    #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
-    // #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
-    #[cfg_attr(target_os = "wasi", wstd::test)]
+    #[c2pa_test_async]
     async fn ps256() {
         let cert_chain =
             include_bytes!("../../../../../tests/fixtures/crypto/raw_signature/ps256.pub");
@@ -442,9 +434,7 @@ mod async_signer_tests {
         validator.validate(&signature, data, pub_key).unwrap();
     }
 
-    #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
-    // #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
-    #[cfg_attr(target_os = "wasi", wstd::test)]
+    #[c2pa_test_async]
     async fn ps384() {
         let cert_chain =
             include_bytes!("../../../../../tests/fixtures/crypto/raw_signature/ps384.pub");
@@ -472,9 +462,7 @@ mod async_signer_tests {
         validator.validate(&signature, data, pub_key).unwrap();
     }
 
-    #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
-    // #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
-    #[cfg_attr(target_os = "wasi", wstd::test)]
+    #[c2pa_test_async]
     async fn ps512() {
         let cert_chain =
             include_bytes!("../../../../../tests/fixtures/crypto/raw_signature/ps512.pub");

@@ -19,11 +19,17 @@ use coset::{sig_structure_data, HeaderBuilder, Label, ProtectedHeader, Signature
 use serde::{Deserialize, Serialize};
 use serde_bytes::ByteBuf;
 
-use crate::crypto::{
-    asn1::rfc3161::{TimeStampResp, TstInfo},
-    cose::{CoseError, TimeStampStorage},
-    raw_signature::{AsyncRawSigner, RawSigner},
-    time_stamp::{verify_time_stamp, verify_time_stamp_async, ContentInfo, TimeStampResponse},
+use crate::{
+    crypto::{
+        asn1::rfc3161::{TimeStampResp, TstInfo},
+        cose::{CertificateTrustPolicy, CoseError, TimeStampStorage},
+        raw_signature::{AsyncRawSigner, RawSigner},
+        time_stamp::{verify_time_stamp, verify_time_stamp_async, ContentInfo, TimeStampResponse},
+    },
+    log_item,
+    settings::Settings,
+    status_tracker::StatusTracker,
+    validation_status,
 };
 
 /// Given a COSE signature, retrieve the `sigTst` header from it and validate
@@ -31,7 +37,13 @@ use crate::crypto::{
 ///
 /// Return a [`TstInfo`] struct if available and valid.
 #[async_generic]
-pub fn validate_cose_tst_info(sign1: &coset::CoseSign1, data: &[u8]) -> Result<TstInfo, CoseError> {
+pub(crate) fn validate_cose_tst_info(
+    sign1: &coset::CoseSign1,
+    data: &[u8],
+    ctp: &CertificateTrustPolicy,
+    validation_log: &mut StatusTracker,
+    settings: &Settings,
+) -> Result<TstInfo, CoseError> {
     let Some((sigtst, tss)) = &sign1
         .unprotected
         .rest
@@ -67,9 +79,24 @@ pub fn validate_cose_tst_info(sign1: &coset::CoseSign1, data: &[u8]) -> Result<T
         .map_err(|e| CoseError::InternalError(e.to_string()))?;
 
     let tst_infos = if _sync {
-        parse_and_validate_sigtst(&time_cbor, tbs, &sign1.protected)?
+        parse_and_validate_sigtst(
+            &time_cbor,
+            tbs,
+            &sign1.protected,
+            ctp,
+            validation_log,
+            settings,
+        )?
     } else {
-        parse_and_validate_sigtst_async(&time_cbor, tbs, &sign1.protected).await?
+        parse_and_validate_sigtst_async(
+            &time_cbor,
+            tbs,
+            &sign1.protected,
+            ctp,
+            validation_log,
+            settings,
+        )
+        .await?
     };
 
     // For now, we only pay attention to the first time stamp header.
@@ -92,21 +119,39 @@ pub(crate) fn parse_and_validate_sigtst(
     sigtst_cbor: &[u8],
     data: &[u8],
     p_header: &ProtectedHeader,
+    ctp: &CertificateTrustPolicy,
+    validation_log: &mut StatusTracker,
+    settings: &Settings,
 ) -> Result<Vec<TstInfo>, CoseError> {
     let tst_container: TstContainer = ciborium::from_reader(sigtst_cbor)
         .map_err(|err| CoseError::CborParsingError(err.to_string()))?;
 
     let mut tstinfos: Vec<TstInfo> = vec![];
 
+    // only a single value is allowed in tstTokens
+    if tst_container.tst_tokens.len() > 1 {
+        log_item!(
+            "",
+            "only a single timestamp response is allowed in a manifest",
+            "parse_and_validate_sigtst"
+        )
+        .validation_status(validation_status::TIMESTAMP_MALFORMED)
+        .informational(validation_log);
+        return Err(CoseError::NoTimeStampToken);
+    }
+
     for token in &tst_container.tst_tokens {
         let tbs = cose_countersign_data(data, p_header);
-        let tst_info = if _sync {
-            verify_time_stamp(&token.val, &tbs)?
+
+        let tst_info_res = if _sync {
+            verify_time_stamp(&token.val, &tbs, ctp, validation_log, settings)
         } else {
-            verify_time_stamp_async(&token.val, &tbs).await?
+            verify_time_stamp_async(&token.val, &tbs, ctp, validation_log, settings).await
         };
 
-        tstinfos.push(tst_info);
+        if let Ok(tst_info) = tst_info_res {
+            tstinfos.push(tst_info);
+        }
     }
 
     if tstinfos.is_empty() {
@@ -226,8 +271,8 @@ fn make_cose_timestamp(ts_data: &[u8]) -> TstContainer {
     container
 }
 
-// Return timeStampToken used by sigTst2.
-fn timestamptoken_from_timestamprsp(ts: &[u8]) -> Option<Vec<u8>> {
+/// Return DER encoded TimeStampToken used by sigTst2 from TimeStampResponse.
+pub fn timestamptoken_from_timestamprsp(ts: &[u8]) -> Option<Vec<u8>> {
     let ts_resp = TimeStampResponse(
         Constructed::decode(ts, bcder::Mode::Der, TimeStampResp::take_from).ok()?,
     );

@@ -34,10 +34,10 @@ fn main() -> Result<()> {
         let reader = match Reader::from_stream(&format, &mut file) {
             Ok(reader) => Ok(reader),
             Err(Error::RemoteManifestUrl(url)) => {
-                println!("Fetching remote manifest from {}", url);
+                println!("Fetching remote manifest from {url}");
                 let mut c2pa_data = Vec::new();
                 let resp = ureq::get(&url).call()?;
-                resp.into_reader().read_to_end(&mut c2pa_data)?;
+                resp.into_body().into_reader().read_to_end(&mut c2pa_data)?;
                 Reader::from_manifest_data_and_stream(&c2pa_data, &format, &mut file)
             }
             Err(Error::JumbfNotFound) => {

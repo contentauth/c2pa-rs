@@ -11,23 +11,25 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use std::io::Write;
+use std::{borrow::Cow, io::Write};
 
 use async_generic::async_generic;
+use coset::CoseSign1;
 use x509_parser::{num_bigint::BigUint, prelude::*};
 
 use crate::{
     crypto::{
+        asn1::rfc3161::TstInfo,
         base64,
         cose::{
             cert_chain_from_sign1, parse_cose_sign1, signing_alg_from_sign1,
-            signing_time_from_sign1, signing_time_from_sign1_async, CertificateInfo,
-            CertificateTrustPolicy, Verifier,
+            signing_time_from_sign1, signing_time_from_sign1_async, validate_cose_tst_info,
+            validate_cose_tst_info_async, CertificateInfo, CertificateTrustPolicy, Verifier,
         },
         raw_signature::SigningAlg,
     },
     error::{Error, Result},
-    settings::get_settings_value,
+    settings::Settings,
     status_tracker::StatusTracker,
 };
 
@@ -41,30 +43,65 @@ fn get_sign_cert(sign1: &coset::CoseSign1) -> Result<Vec<u8>> {
 /// cose_bytes - byte array containing the raw COSE_SIGN1 data
 /// data:  data that was used to create the cose_bytes, these must match
 /// addition_data: additional optional data that may have been used during signing
+/// tst_info allows for overriding the timestamp, this is used by the timestamp assertion
 /// returns - Ok on success
 #[async_generic]
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn verify_cose(
     cose_bytes: &[u8],
     data: &[u8],
     additional_data: &[u8],
     cert_check: bool,
     ctp: &CertificateTrustPolicy,
+    tst_info: Option<&TstInfo>,
     validation_log: &mut StatusTracker,
+    settings: &Settings,
 ) -> Result<CertificateInfo> {
     let verifier = if cert_check {
-        match get_settings_value::<bool>("verify.verify_trust") {
-            Ok(true) => Verifier::VerifyTrustPolicy(ctp),
-            _ => Verifier::VerifyCertificateProfileOnly(ctp),
+        if settings.verify.verify_trust {
+            Verifier::VerifyTrustPolicy(Cow::Borrowed(ctp))
+        } else {
+            Verifier::VerifyCertificateProfileOnly(Cow::Borrowed(ctp))
         }
     } else {
         Verifier::IgnoreProfileAndTrustPolicy
     };
 
+    let sign1 = parse_cose_sign1(cose_bytes, data, validation_log)?;
+
+    // Timestamps failures are not fatal according to C2PA spec, we just need to log the state and use
+    // the returned value unless an alternate timestamp is provided.  Timestamp certs are subject to the same
+    // trust list checks as the signing certificate.
+    let tst_info = match tst_info {
+        Some(tst_info) => Some(tst_info.clone()),
+        None => {
+            if _sync {
+                validate_cose_tst_info(&sign1, data, ctp, validation_log, settings).ok()
+            } else {
+                validate_cose_tst_info_async(&sign1, data, ctp, validation_log, settings)
+                    .await
+                    .ok()
+            }
+        }
+    };
+
     if _sync {
-        Ok(verifier.verify_signature(cose_bytes, data, additional_data, validation_log)?)
+        Ok(verifier.verify_signature(
+            cose_bytes,
+            data,
+            additional_data,
+            tst_info.as_ref(),
+            validation_log,
+        )?)
     } else {
         Ok(verifier
-            .verify_signature_async(cose_bytes, data, additional_data, validation_log)
+            .verify_signature_async(
+                cose_bytes,
+                data,
+                additional_data,
+                tst_info.as_ref(),
+                validation_log,
+            )
             .await?)
     }
 }
@@ -90,34 +127,54 @@ fn dump_cert_chain(certs: &[Vec<u8>]) -> Result<Vec<u8>> {
 
         // write lines
         writer
-            .write_fmt(format_args!("{}\n", cert_begin))
+            .write_fmt(format_args!("{cert_begin}\n"))
             .map_err(|_e| Error::UnsupportedType)?;
         for l in cert_lines {
             writer
-                .write_fmt(format_args!("{}\n", l))
+                .write_fmt(format_args!("{l}\n"))
                 .map_err(|_e| Error::UnsupportedType)?;
         }
         writer
-            .write_fmt(format_args!("{}\n", cert_end))
+            .write_fmt(format_args!("{cert_end}\n"))
             .map_err(|_e| Error::UnsupportedType)?;
     }
 
     Ok(writer)
 }
 
-fn extract_subject_from_cert(cert: &X509Certificate) -> Result<String> {
+fn extract_subject_from_cert(cert: &X509Certificate) -> Option<String> {
     cert.subject()
         .iter_organization()
         .map(|attr| attr.as_str())
         .last()
-        .ok_or(Error::CoseX5ChainMissing)?
-        .map(|attr| attr.to_string())
-        .map_err(|_e| Error::CoseX5ChainMissing)
+        .map(|attr| match attr {
+            Ok(attr) => Some(attr.to_string()),
+            Err(_) => None,
+        })?
+}
+
+fn extract_common_name_from_cert(cert: &X509Certificate) -> Option<String> {
+    cert.subject()
+        .iter_common_name()
+        .map(|attr| attr.as_str())
+        .last()
+        .map(|attr| match attr {
+            Ok(attr) => Some(attr.to_string()),
+            Err(_) => None,
+        })?
 }
 
 /// Returns the unique serial number from the provided cert.
 fn extract_serial_from_cert(cert: &X509Certificate) -> BigUint {
     cert.serial.clone()
+}
+
+/// Returns the unique serial number from the provided CoseSign1
+pub(crate) fn get_signing_cert_serial_num(sign1: &CoseSign1) -> Result<BigUint> {
+    let der_bytes = get_sign_cert(sign1)?;
+    let (_rem, signcert) =
+        X509Certificate::from_der(&der_bytes).map_err(|_| Error::CoseInvalidCert)?;
+    Ok(extract_serial_from_cert(&signcert))
 }
 
 #[allow(unused_variables)]
@@ -126,9 +183,11 @@ pub(crate) fn get_signing_info(
     cose_bytes: &[u8],
     data: &[u8],
     validation_log: &mut StatusTracker,
+    settings: &Settings,
 ) -> CertificateInfo {
     let mut date = None;
     let mut issuer_org = None;
+    let mut common_name = None;
     let mut alg: Option<SigningAlg> = None;
     let mut cert_serial_number = None;
 
@@ -139,12 +198,13 @@ pub(crate) fn get_signing_info(
                 Ok(der_bytes) => {
                     if let Ok((_rem, signcert)) = X509Certificate::from_der(&der_bytes) {
                         date = if _sync {
-                            signing_time_from_sign1(&sign1, data)
+                            signing_time_from_sign1(&sign1, data, settings)
                         } else {
-                            signing_time_from_sign1_async(&sign1, data).await
+                            signing_time_from_sign1_async(&sign1, data, settings).await
                         };
-                        issuer_org = extract_subject_from_cert(&signcert).ok();
+                        issuer_org = extract_subject_from_cert(&signcert);
                         cert_serial_number = Some(extract_serial_from_cert(&signcert));
+                        common_name = extract_common_name_from_cert(&signcert);
                         if let Ok(a) = signing_alg_from_sign1(&sign1) {
                             alg = Some(a);
                         }
@@ -174,6 +234,8 @@ pub(crate) fn get_signing_info(
         cert_chain: certs,
         cert_serial_number,
         revocation_status: None,
+        iat: None,
+        common_name,
     }
 }
 
@@ -188,13 +250,14 @@ pub mod tests {
 
     use super::*;
     use crate::{
-        crypto::raw_signature::SigningAlg, status_tracker::StatusTracker,
+        crypto::raw_signature::SigningAlg, settings::Settings, status_tracker::StatusTracker,
         utils::test_signer::test_signer, Signer,
     };
 
     #[test]
     fn test_no_timestamp() {
-        crate::settings::set_settings_value("verify.verify_trust", false).unwrap();
+        let mut settings = Settings::default();
+        settings.verify.verify_trust = false;
 
         let mut validation_log = StatusTracker::default();
 
@@ -208,11 +271,12 @@ pub mod tests {
         let signer = test_signer(SigningAlg::Ps256);
 
         let cose_bytes =
-            crate::cose_sign::sign_claim(&claim_bytes, signer.as_ref(), box_size).unwrap();
+            crate::cose_sign::sign_claim(&claim_bytes, signer.as_ref(), box_size, &settings)
+                .unwrap();
 
         let cose_sign1 = parse_cose_sign1(&cose_bytes, &claim_bytes, &mut validation_log).unwrap();
 
-        let signing_time = signing_time_from_sign1(&cose_sign1, &claim_bytes);
+        let signing_time = signing_time_from_sign1(&cose_sign1, &claim_bytes, &settings);
 
         assert_eq!(signing_time, None);
     }
@@ -223,7 +287,8 @@ pub mod tests {
             time_stamp::{TimeStampError, TimeStampProvider},
         };
 
-        crate::settings::set_settings_value("verify.verify_trust", false).unwrap();
+        let mut settings = Settings::default();
+        settings.verify.verify_trust = false;
 
         let mut validation_log = StatusTracker::default();
 
@@ -274,9 +339,13 @@ pub mod tests {
         };
 
         // sign and staple
-        let cose_bytes =
-            crate::cose_sign::sign_claim(&claim_bytes, &ocsp_signer, ocsp_signer.reserve_size())
-                .unwrap();
+        let cose_bytes = crate::cose_sign::sign_claim(
+            &claim_bytes,
+            &ocsp_signer,
+            ocsp_signer.reserve_size(),
+            &settings,
+        )
+        .unwrap();
 
         let cose_sign1 = parse_cose_sign1(&cose_bytes, &claim_bytes, &mut validation_log).unwrap();
         let ocsp_stapled = get_ocsp_der(&cose_sign1).unwrap();

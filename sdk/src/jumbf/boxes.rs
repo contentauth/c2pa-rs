@@ -511,6 +511,7 @@ pub const JUMBF_CBOR_UUID: &str = "63626F7200110010800000AA00389B71";
 // pub const JUMBF_XML_UUID: &str = "786D6C2000110010800000AA00389B71";
 pub const JUMBF_UUID_UUID: &str = "7575696400110010800000AA00389B71";
 pub const JUMBF_EMBEDDED_FILE_UUID: &str = "40CB0C32BB8A489DA70B2AD6F47F4369";
+pub const C2PA_REDACTION_UUID: &str = "CAA98EEE9D4DF80E86AD4DFFCA263973";
 // ANCHOR JUMBF Content box
 /// JUMBF Content box (ISO 19566-5:2019, Annex B)
 #[derive(Debug, Default)]
@@ -923,6 +924,10 @@ impl CAISignatureBox {
     // add a signature content box *WITHOUT* taking ownership of the box
     pub fn add_signature(&mut self, b: Box<dyn BMFFBox>) {
         self.sig_box.add_data_box(b)
+    }
+
+    pub fn super_box(&self) -> &dyn BMFFBox {
+        &self.sig_box
     }
 }
 

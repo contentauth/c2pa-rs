@@ -14,11 +14,11 @@ For a simple example of calling c2patool from a Node.js server application, see 
 
 **Additional documentation**:
 
-- [Using C2PA Tool](./docs/usage.md)
-- [Manifest definition file](./docs/manifest.md)
-- [Using an X.509 certificate](./docs/x_509.md)
-- [Change log / release notes](./CHANGELOG.md)
-- [Contributing to the project](./docs/project-contributions.md)
+- [Using C2PA Tool](https://github.com/contentauth/c2pa-rs/blob/main/cli/docs/usage.md)
+- [Manifest definition file](https://github.com/contentauth/c2pa-rs/blob/main/cli/docs/manifest.md)
+- [Using an X.509 certificate](https://github.com/contentauth/c2pa-rs/blob/main/cli/docs/x_509.md)
+- [Change log / release notes](https://github.com/contentauth/c2pa-rs/blob/main/cli/CHANGELOG.md)
+- [Contributing to the project](https://github.com/contentauth/c2pa-rs/blob/main/cli/docs/project-contributions.md)
 
 </div>
 
@@ -45,7 +45,7 @@ NOTE: You also may want to get some of the example files provided in the reposit
 
 ### Installing from source
 
-Instead of installing a prebuilt binary, you can [build the project from source](https://github.com/contentauth/c2pa-rs/blob/docs/no-c2patool-binstall/cli/docs/project-contributions.md#building-from-source).
+Instead of installing a prebuilt binary, you can [build the project from source](https://github.com/contentauth/c2pa-rs/blob/main/cli/docs/project-contributions.md#building-from-source).
 
 ### Upgrading
 

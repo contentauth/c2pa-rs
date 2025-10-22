@@ -36,15 +36,20 @@ pub(crate) fn manifest_json() -> String {
             "format": "image/jpeg",
             "identifier": "thumbnail.jpg"
         },
-        "ingredients": [
-            {
-                "title": "Test",
-                "format": "image/jpeg",
-                "instance_id": "12345",
-                "relationship": "componentOf"
-            }
-        ],
         "assertions": [
+            {
+                "label": "c2pa.actions",
+                "data": {
+                    "actions": [
+                        {
+                            "action": "c2pa.opened",
+                            "parameters": {
+                                "org.cai.ingredientIds": ["12345"]
+                            }
+                        }
+                    ]
+                }
+            },
             {
                 "label": "org.test.assertion",
                 "data": "assertion"

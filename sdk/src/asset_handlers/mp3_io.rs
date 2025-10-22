@@ -18,7 +18,6 @@ use std::{
 };
 
 use byteorder::{BigEndian, ReadBytesExt};
-use conv::ValueFrom;
 use id3::{
     frame::{EncapsulatedObject, Private},
     *,
@@ -432,9 +431,9 @@ impl CAIWriter for Mp3IO {
             get_manifest_pos(&mut output_stream).ok_or(Error::EmbeddingError)?;
 
         positions.push(HashObjectPositions {
-            offset: usize::value_from(manifest_pos)
+            offset: usize::try_from(manifest_pos)
                 .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?,
-            length: usize::value_from(manifest_len)
+            length: usize::try_from(manifest_len)
                 .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?,
             htype: HashBlockObjectType::Cai,
         });
@@ -442,21 +441,21 @@ impl CAIWriter for Mp3IO {
         // add hash of chunks before cai
         positions.push(HashObjectPositions {
             offset: 0,
-            length: usize::value_from(manifest_pos)
+            length: usize::try_from(manifest_pos)
                 .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?,
             htype: HashBlockObjectType::Other,
         });
 
         // add position from cai to end
-        let end = u64::value_from(manifest_pos)
-            .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?
-            + u64::value_from(manifest_len)
-                .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?;
+        let Some(end) = u64::checked_add(manifest_pos, manifest_len as u64) else {
+            return Err(Error::InvalidAsset("value out of range".to_string()));
+        };
+
         let file_end = stream_len(&mut output_stream)?;
         positions.push(HashObjectPositions {
-            offset: usize::value_from(end)
+            offset: usize::try_from(end)
                 .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?, // len of cai
-            length: usize::value_from(file_end - end)
+            length: usize::try_from(file_end - end)
                 .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?,
             htype: HashBlockObjectType::Other,
         });

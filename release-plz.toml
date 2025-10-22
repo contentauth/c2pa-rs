@@ -41,6 +41,7 @@ release_commits = "^(feat|fix|docs|perf|refactor|revert|test|update)[(:]"
 
 [[package]]
 name = "c2pa"
+version_group = "c2pa-rs"
 changelog_path = "./CHANGELOG.md"
 # This being the most important crate in the workspace,
 # we will leave the changelog in the repo root instead
@@ -50,7 +51,12 @@ changelog_path = "./CHANGELOG.md"
 name = "c2patool"
 
 [[package]]
-name = "c2pa-c"
+name = "c2pa-c-ffi"
+version_group = "c2pa-rs"
+publish_features = ["rust_native_crypto"]
+
+[[package]]
+name = "c2pa_macros"
 publish = false
 release = false
 

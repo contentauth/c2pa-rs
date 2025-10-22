@@ -15,13 +15,21 @@
 
 mod actions;
 pub(crate) use actions::V2_DEPRECATED_ACTIONS;
-pub use actions::{c2pa_action, Action, ActionTemplate, Actions, SoftwareAgent};
+pub use actions::{
+    c2pa_action, Action, ActionParameters, ActionTemplate, Actions, DigitalSourceType,
+    SoftwareAgent,
+};
+
+mod asset_reference;
+pub use asset_reference::AssetReference;
 
 mod asset_types;
 pub use asset_types::{AssetTypeEnum, AssetTypes};
 
 mod bmff_hash;
-pub use bmff_hash::{BmffHash, BmffMerkleMap, DataMap, ExclusionsMap, SubsetMap};
+pub use bmff_hash::{
+    BmffHash, BmffMerkleMap, DataMap, ExclusionsMap, MerkleMap, SubsetMap, VecByteBuf,
+};
 
 mod box_hash;
 pub use box_hash::{BoxHash, BoxMap, C2PA_BOXHASH};
@@ -29,7 +37,11 @@ pub use box_hash::{BoxHash, BoxMap, C2PA_BOXHASH};
 mod data_hash;
 pub use data_hash::DataHash;
 
+mod certificate_status;
+pub(crate) use certificate_status::CertificateStatus;
+
 mod creative_work;
+#[allow(deprecated)]
 pub use creative_work::CreativeWork;
 
 mod exif;
@@ -43,15 +55,22 @@ pub use ingredient::Relationship;
 pub mod labels;
 
 mod metadata;
-pub use metadata::{
-    c2pa_source, Actor, AssetType, DataBox, DataSource, Metadata, ReviewCode, ReviewRating,
+pub use metadata::Metadata;
+
+mod assertion_metadata;
+pub use assertion_metadata::{
+    c2pa_source, Actor, AssertionMetadata, AssetType, DataBox, DataSource, ReviewCode, ReviewRating,
 };
 
 mod schema_org;
+#[allow(deprecated)]
 pub use schema_org::{SchemaDotOrg, SchemaDotOrgPerson};
 
 mod thumbnail;
 pub(crate) use thumbnail::Thumbnail;
+
+mod timestamp;
+pub(crate) use timestamp::TimeStamp;
 
 mod user;
 pub(crate) use user::User;
@@ -63,4 +82,10 @@ mod uuid_assertion;
 #[allow(unused_imports)]
 pub(crate) use uuid_assertion::Uuid;
 
+mod embedded_data;
+pub use embedded_data::EmbeddedData;
+
 pub mod region_of_interest;
+
+mod soft_binding;
+pub use soft_binding::{SoftBinding, SoftBindingBlock, SoftBindingScope, SoftBindingTimespan};

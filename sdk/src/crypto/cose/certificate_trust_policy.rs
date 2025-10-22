@@ -22,13 +22,32 @@ use x509_parser::{extensions::ExtendedKeyUsage, pem::Pem};
 
 use crate::crypto::{base64, hash::sha256};
 
+/// Enum to describe the type of trust anchor that validated the certificate.
+#[derive(Debug, Eq, PartialEq)]
+pub enum TrustAnchorType {
+    /// Trust anchors provided by sanctioned authority.
+    System,
+
+    /// User provided trust anchor.
+    User,
+
+    /// End-entity certificate.
+    EndEntity,
+
+    /// No check performed
+    NoCheck,
+}
+
 /// A `CertificateTrustPolicy` is configured with information about trust
 /// anchors, privately-accepted end-entity certificates, and allowed EKUs. It
 /// can be used to evaluate a signing certificate against those policies.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct CertificateTrustPolicy {
     /// Trust anchors (root X.509 certificates) in DER format.
     trust_anchor_ders: Vec<Vec<u8>>,
+
+    // User provided trust anchors in DER format.
+    user_trust_anchor_ders: Vec<Vec<u8>>,
 
     /// Base-64 encoded SHA-256 hash of end-entity certificates (root X.509
     /// certificates) in DER format.
@@ -36,14 +55,19 @@ pub struct CertificateTrustPolicy {
 
     /// Additional extended key usage (EKU) OIDs.
     additional_ekus: HashSet<String>,
+
+    /// passthrough mode
+    passthrough: bool,
 }
 
 impl Default for CertificateTrustPolicy {
     fn default() -> Self {
         let mut this = CertificateTrustPolicy {
             trust_anchor_ders: vec![],
+            user_trust_anchor_ders: vec![],
             end_entity_cert_set: HashSet::default(),
             additional_ekus: HashSet::default(),
+            passthrough: false,
         };
 
         this.add_valid_ekus(include_bytes!("./valid_eku_oids.cfg"));
@@ -51,7 +75,7 @@ impl Default for CertificateTrustPolicy {
         // In testing configs, also add debug/trust anchors.
         #[cfg(test)]
         {
-            let _ = this.add_trust_anchors(include_bytes!(
+            let _ = this.add_user_trust_anchors(include_bytes!(
                 "../../../tests/fixtures/crypto/raw_signature/test_cert_root_bundle.pem"
             ));
         }
@@ -70,15 +94,28 @@ impl CertificateTrustPolicy {
     pub fn new() -> Self {
         CertificateTrustPolicy {
             trust_anchor_ders: vec![],
+            user_trust_anchor_ders: vec![],
             end_entity_cert_set: HashSet::default(),
             additional_ekus: HashSet::default(),
+            passthrough: false,
+        }
+    }
+
+    /// Creates a passthrough policy checker for cases when trust checks should not be performed
+    pub fn passthrough() -> Self {
+        Self {
+            trust_anchor_ders: vec![],
+            user_trust_anchor_ders: vec![],
+            end_entity_cert_set: HashSet::default(),
+            additional_ekus: HashSet::default(),
+            passthrough: true,
         }
     }
 
     /// Evaluate a certificate against the trust policy described by this
     /// struct.
     ///
-    /// Returns `Ok(())` if the certificate appears on the end-entity
+    /// Returns `Ok(TrustAnchorType)` if the certificate appears on the end-entity
     /// certificate list or has a valid chain to one of the trust anchors that
     /// was provided and that it has a valid extended key usage (EKU).
     ///
@@ -92,15 +129,19 @@ impl CertificateTrustPolicy {
         chain_der: &[Vec<u8>],
         end_entity_cert_der: &[u8],
         signing_time_epoch: Option<i64>,
-    ) -> Result<(), CertificateTrustError> {
+    ) -> Result<TrustAnchorType, CertificateTrustError> {
+        if self.passthrough {
+            return Ok(TrustAnchorType::NoCheck);
+        }
+
         // First check to see if the certificate appears in the allowed set of
         // end-entity certificates.
         let cert_hash = base64_sha256_cert_der(end_entity_cert_der);
         if self.end_entity_cert_set.contains(&cert_hash) {
-            return Ok(());
+            return Ok(TrustAnchorType::EndEntity);
         }
 
-        #[cfg(feature = "rust_native_crypto")]
+        #[cfg(any(feature = "rust_native_crypto", target_arch = "wasm32"))]
         {
             return crate::crypto::raw_signature::rust_native::check_certificate_trust::check_certificate_trust(
                 self,
@@ -110,7 +151,10 @@ impl CertificateTrustPolicy {
             );
         }
 
-        #[cfg(feature = "openssl")]
+        #[cfg(all(
+            feature = "openssl",
+            not(all(feature = "rust_native_crypto", target_arch = "wasm32"))
+        ))]
         {
             return crate::crypto::raw_signature::openssl::check_certificate_trust::check_certificate_trust(
                 self,
@@ -150,7 +194,9 @@ impl CertificateTrustPolicy {
     /// and configures the trust handler to accept certificates that chain up to
     /// these trust anchors.
     ///
-    /// [§14.4.1, C2PA Signers]: https://c2pa.org/specifications/specifications/2.1/specs/C2PA_Specification.html#_c2pa_signers
+    ///  The function can be called multiple times to add multiple trust anchors. For example,
+    ///  the C2PA trust anchors and timestamping trust anchors can be added separately.
+    /// [§14.4.1, C2PA Signers]: <https://c2pa.org/specifications/specifications/2.1/specs/C2PA_Specification.html#_c2pa_signers>
     pub fn add_trust_anchors(
         &mut self,
         trust_anchor_pems: &[u8],
@@ -160,6 +206,25 @@ impl CertificateTrustPolicy {
             // decoded PEM content, which is expected to be in DER format.
             match maybe_pem {
                 Ok(pem) => self.trust_anchor_ders.push(pem.contents),
+                Err(e) => {
+                    return Err(InvalidCertificateError(e.to_string()));
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Add user provided trust anchors that shall be accepted when verifying COSE signatures.
+    /// These anchors are distinct from the C2PA trust anchors and are used to validate certificates
+    /// that are not part of the C2PA trust anchors.
+    pub fn add_user_trust_anchors(
+        &mut self,
+        trust_anchor_pems: &[u8],
+    ) -> Result<(), InvalidCertificateError> {
+        for maybe_pem in Pem::iter_from_buffer(trust_anchor_pems) {
+            match maybe_pem {
+                Ok(pem) => self.user_trust_anchor_ders.push(pem.contents),
                 Err(e) => {
                     return Err(InvalidCertificateError(e.to_string()));
                 }
@@ -232,6 +297,11 @@ impl CertificateTrustPolicy {
         Ok(())
     }
 
+    /// Add default extended key usage (EKU) values.
+    pub fn add_default_valid_ekus(&mut self) {
+        self.add_valid_ekus(include_bytes!("./valid_eku_oids.cfg"));
+    }
+
     /// Add extended key usage (EKU) values that shall be accepted when
     /// verifying COSE signatures.
     ///
@@ -286,6 +356,13 @@ impl CertificateTrustPolicy {
         self.trust_anchor_ders.iter()
     }
 
+    /// Return an iterator over the user trust anchors.
+    ///
+    /// Each anchor will be returned in DER format.
+    pub(crate) fn user_trust_anchor_ders(&self) -> impl Iterator<Item = &'_ Vec<u8>> {
+        self.user_trust_anchor_ders.iter()
+    }
+
     /// Return `true` if the EKU OID is allowed.
     pub(crate) fn has_allowed_eku<'a>(&self, eku: &'a ExtendedKeyUsage) -> Option<Oid<'a>> {
         if eku.email_protection {
@@ -328,7 +405,8 @@ pub enum CertificateTrustError {
     /// configured.
     ///
     /// A certificate can be approved either by adding one or more trust anchors
-    /// via a call to [`CertificateTrustPolicy::add_trust_anchors`] or by
+    /// via a call to [`CertificateTrustPolicy::add_trust_anchors`] or
+    /// [`CertificateTrustPolicy::add_user_trust_anchors`] or by
     /// adding one or more end-entity certificates via
     /// [`CertificateTrustPolicy::add_end_entity_credentials`].
     ///
@@ -355,14 +433,20 @@ pub enum CertificateTrustError {
     InternalError(String),
 }
 
-#[cfg(feature = "openssl")]
+#[cfg(all(
+    feature = "openssl",
+    not(all(feature = "rust_native_crypto", target_arch = "wasm32"))
+))]
 impl From<openssl::error::ErrorStack> for CertificateTrustError {
     fn from(err: openssl::error::ErrorStack) -> Self {
         Self::CryptoLibraryError(err.to_string())
     }
 }
 
-#[cfg(feature = "openssl")]
+#[cfg(all(
+    feature = "openssl",
+    not(all(feature = "rust_native_crypto", target_arch = "wasm32"))
+))]
 impl From<crate::crypto::raw_signature::openssl::OpenSslMutexUnavailable>
     for CertificateTrustError
 {
@@ -393,14 +477,16 @@ mod tests {
     #![allow(clippy::expect_used)]
     #![allow(clippy::panic)]
     #![allow(clippy::unwrap_used)]
-
     use asn1_rs::{oid, Oid};
+    use c2pa_macros::c2pa_test_async;
     #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
     use wasm_bindgen_test::wasm_bindgen_test;
     use x509_parser::{extensions::ExtendedKeyUsage, pem::Pem};
 
     use crate::crypto::{
-        cose::{CertificateTrustError, CertificateTrustPolicy, InvalidCertificateError},
+        cose::{
+            CertificateTrustError, CertificateTrustPolicy, InvalidCertificateError, TrustAnchorType,
+        },
         raw_signature::{signer::test_signer, SigningAlg},
     };
 
@@ -641,15 +727,18 @@ zGxQnM2hCA==
 "#;
 
     #[test]
-    fn test_trust_store() {
-        let ctp = CertificateTrustPolicy::default();
+    fn test_system_trust_store() {
+        let mut ctp = CertificateTrustPolicy::new();
+        ctp.add_trust_anchors(include_bytes!(
+            "../../../tests/fixtures/crypto/raw_signature/test_cert_root_bundle.pem"
+        ))
+        .unwrap();
 
         let ps256 = test_signer(SigningAlg::Ps256);
         let ps384 = test_signer(SigningAlg::Ps384);
         let ps512 = test_signer(SigningAlg::Ps512);
         let es256 = test_signer(SigningAlg::Es256);
         let es384 = test_signer(SigningAlg::Es384);
-        #[cfg(feature = "openssl")]
         let es512 = test_signer(SigningAlg::Es512);
         let ed25519 = test_signer(SigningAlg::Ed25519);
 
@@ -658,33 +747,104 @@ zGxQnM2hCA==
         let ps512_certs = ps512.cert_chain().unwrap();
         let es256_certs = es256.cert_chain().unwrap();
         let es384_certs = es384.cert_chain().unwrap();
-        #[cfg(feature = "openssl")]
         let es512_certs = es512.cert_chain().unwrap();
         let ed25519_certs = ed25519.cert_chain().unwrap();
 
-        ctp.check_certificate_trust(&ps256_certs[1..], &ps256_certs[0], None)
-            .unwrap();
-        ctp.check_certificate_trust(&ps384_certs[1..], &ps384_certs[0], None)
-            .unwrap();
-        ctp.check_certificate_trust(&ps512_certs[1..], &ps512_certs[0], None)
-            .unwrap();
-        ctp.check_certificate_trust(&es256_certs[1..], &es256_certs[0], None)
-            .unwrap();
-        ctp.check_certificate_trust(&es384_certs[1..], &es384_certs[0], None)
-            .unwrap();
-        #[cfg(feature = "openssl")]
-        ctp.check_certificate_trust(&es512_certs[1..], &es512_certs[0], None)
-            .unwrap();
-        ctp.check_certificate_trust(&ed25519_certs[1..], &ed25519_certs[0], None)
-            .unwrap();
+        assert!(
+            ctp.check_certificate_trust(&ps256_certs[1..], &ps256_certs[0], None)
+                .unwrap()
+                == TrustAnchorType::System
+        );
+        assert!(
+            ctp.check_certificate_trust(&ps384_certs[1..], &ps384_certs[0], None)
+                .unwrap()
+                == TrustAnchorType::System
+        );
+        assert!(
+            ctp.check_certificate_trust(&ps512_certs[1..], &ps512_certs[0], None)
+                .unwrap()
+                == TrustAnchorType::System
+        );
+        assert!(
+            ctp.check_certificate_trust(&es256_certs[1..], &es256_certs[0], None)
+                .unwrap()
+                == TrustAnchorType::System
+        );
+        assert!(
+            ctp.check_certificate_trust(&es384_certs[1..], &es384_certs[0], None)
+                .unwrap()
+                == TrustAnchorType::System
+        );
+        assert!(
+            ctp.check_certificate_trust(&es512_certs[1..], &es512_certs[0], None)
+                .unwrap()
+                == TrustAnchorType::System
+        );
+        assert!(
+            ctp.check_certificate_trust(&ed25519_certs[1..], &ed25519_certs[0], None)
+                .unwrap()
+                == TrustAnchorType::System
+        );
     }
 
-    #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
-    #[cfg_attr(
-        all(target_arch = "wasm32", not(target_os = "wasi")),
-        wasm_bindgen_test
-    )]
-    #[cfg_attr(target_os = "wasi", wstd::test)]
+    #[test]
+    fn test_user_trust_store() {
+        let ctp = CertificateTrustPolicy::default();
+
+        let ps256 = test_signer(SigningAlg::Ps256);
+        let ps384 = test_signer(SigningAlg::Ps384);
+        let ps512 = test_signer(SigningAlg::Ps512);
+        let es256 = test_signer(SigningAlg::Es256);
+        let es384 = test_signer(SigningAlg::Es384);
+        let es512 = test_signer(SigningAlg::Es512);
+        let ed25519 = test_signer(SigningAlg::Ed25519);
+
+        let ps256_certs = ps256.cert_chain().unwrap();
+        let ps384_certs = ps384.cert_chain().unwrap();
+        let ps512_certs = ps512.cert_chain().unwrap();
+        let es256_certs = es256.cert_chain().unwrap();
+        let es384_certs = es384.cert_chain().unwrap();
+        let es512_certs = es512.cert_chain().unwrap();
+        let ed25519_certs = ed25519.cert_chain().unwrap();
+
+        assert!(
+            ctp.check_certificate_trust(&ps256_certs[1..], &ps256_certs[0], None)
+                .unwrap()
+                == TrustAnchorType::User
+        );
+        assert!(
+            ctp.check_certificate_trust(&ps384_certs[1..], &ps384_certs[0], None)
+                .unwrap()
+                == TrustAnchorType::User
+        );
+        assert!(
+            ctp.check_certificate_trust(&ps512_certs[1..], &ps512_certs[0], None)
+                .unwrap()
+                == TrustAnchorType::User
+        );
+        assert!(
+            ctp.check_certificate_trust(&es256_certs[1..], &es256_certs[0], None)
+                .unwrap()
+                == TrustAnchorType::User
+        );
+        assert!(
+            ctp.check_certificate_trust(&es384_certs[1..], &es384_certs[0], None)
+                .unwrap()
+                == TrustAnchorType::User
+        );
+        assert!(
+            ctp.check_certificate_trust(&es512_certs[1..], &es512_certs[0], None)
+                .unwrap()
+                == TrustAnchorType::User
+        );
+        assert!(
+            ctp.check_certificate_trust(&ed25519_certs[1..], &ed25519_certs[0], None)
+                .unwrap()
+                == TrustAnchorType::User
+        );
+    }
+
+    #[c2pa_test_async]
     async fn test_trust_store_async() {
         let ctp = CertificateTrustPolicy::default();
 
@@ -742,7 +902,6 @@ zGxQnM2hCA==
         let ps512 = test_signer(SigningAlg::Ps512);
         let es256 = test_signer(SigningAlg::Es256);
         let es384 = test_signer(SigningAlg::Es384);
-        #[cfg(feature = "openssl")]
         let es512 = test_signer(SigningAlg::Es512);
         let ed25519 = test_signer(SigningAlg::Ed25519);
 
@@ -751,7 +910,6 @@ zGxQnM2hCA==
         let ps512_certs = ps512.cert_chain().unwrap();
         let es256_certs = es256.cert_chain().unwrap();
         let es384_certs = es384.cert_chain().unwrap();
-        #[cfg(feature = "openssl")]
         let es512_certs = es512.cert_chain().unwrap();
         let ed25519_certs = ed25519.cert_chain().unwrap();
 
@@ -792,7 +950,6 @@ zGxQnM2hCA==
             CertificateTrustError::CertificateNotTrusted
         );
 
-        #[cfg(feature = "openssl")]
         assert_eq!(
             ctp.check_certificate_trust(&es512_certs[2..], &es512_certs[0], None)
                 .unwrap_err(),
@@ -806,12 +963,7 @@ zGxQnM2hCA==
         );
     }
 
-    #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
-    #[cfg_attr(
-        all(target_arch = "wasm32", not(target_os = "wasi")),
-        wasm_bindgen_test
-    )]
-    #[cfg_attr(target_os = "wasi", wstd::test)]
+    #[c2pa_test_async]
     async fn test_broken_trust_chain_async() {
         let ctp = CertificateTrustPolicy::default();
 
@@ -933,7 +1085,6 @@ zGxQnM2hCA==
         let ps512 = test_signer(SigningAlg::Ps512);
         let es256 = test_signer(SigningAlg::Es256);
         let es384 = test_signer(SigningAlg::Es384);
-        #[cfg(feature = "openssl")]
         let es512 = test_signer(SigningAlg::Es512);
         let ed25519 = test_signer(SigningAlg::Ed25519);
 
@@ -942,7 +1093,6 @@ zGxQnM2hCA==
         assert_eq!(ps512.alg(), SigningAlg::Ps512);
         assert_eq!(es256.alg(), SigningAlg::Es256);
         assert_eq!(es384.alg(), SigningAlg::Es384);
-        #[cfg(feature = "openssl")]
         assert_eq!(es512.alg(), SigningAlg::Es512);
         assert_eq!(ed25519.alg(), SigningAlg::Ed25519);
 
@@ -951,7 +1101,6 @@ zGxQnM2hCA==
         let ps512_certs = ps512.cert_chain().unwrap();
         let es256_certs = es256.cert_chain().unwrap();
         let es384_certs = es384.cert_chain().unwrap();
-        #[cfg(feature = "openssl")]
         let es512_certs = es512.cert_chain().unwrap();
         let ed25519_certs = ed25519.cert_chain().unwrap();
 
@@ -965,19 +1114,13 @@ zGxQnM2hCA==
             .unwrap();
         ctp.check_certificate_trust(&es384_certs[1..], &es384_certs[0], None)
             .unwrap();
-        #[cfg(feature = "openssl")]
         ctp.check_certificate_trust(&es512_certs[1..], &es512_certs[0], None)
             .unwrap();
         ctp.check_certificate_trust(&ed25519_certs[1..], &ed25519_certs[0], None)
             .unwrap();
     }
 
-    #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
-    #[cfg_attr(
-        all(target_arch = "wasm32", not(target_os = "wasi")),
-        wasm_bindgen_test
-    )]
-    #[cfg_attr(target_os = "wasi", wstd::test)]
+    #[c2pa_test_async]
     async fn test_allowed_list_async() {
         let mut ctp = CertificateTrustPolicy::new();
 
@@ -1102,12 +1245,7 @@ zGxQnM2hCA==
             .unwrap();
     }
 
-    #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
-    #[cfg_attr(
-        all(target_arch = "wasm32", not(target_os = "wasi")),
-        wasm_bindgen_test
-    )]
-    #[cfg_attr(target_os = "wasi", wstd::test)]
+    #[c2pa_test_async]
     async fn test_allowed_list_hashes_async() {
         let mut ctp = CertificateTrustPolicy::new();
 
