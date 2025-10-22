@@ -120,22 +120,24 @@ pub(crate) fn check_certificate_trust(
         }
 
         // Check against user provided trust anchors.
-        for (anchor_cert, anchor_der) in &user_anchors {
-            if chain_cert.issuer() == anchor_cert.subject() {
-                let data = chain_cert.tbs_certificate.as_ref();
-                let sig = chain_cert.signature_value.as_ref();
+        if !ctp.trust_anchors_only() {
+            for (anchor_cert, anchor_der) in &user_anchors {
+                if chain_cert.issuer() == anchor_cert.subject() {
+                    let data = chain_cert.tbs_certificate.as_ref();
+                    let sig = chain_cert.signature_value.as_ref();
 
-                let sig_alg = cert_signing_alg(&chain_cert);
+                    let sig_alg = cert_signing_alg(&chain_cert);
 
-                let result = verify_data(anchor_der, sig_alg, sig, data);
+                    let result = verify_data(anchor_der, sig_alg, sig, data);
 
-                match result {
-                    Ok(b) => {
-                        if b {
-                            return Ok(TrustAnchorType::User);
+                    match result {
+                        Ok(b) => {
+                            if b {
+                                return Ok(TrustAnchorType::User);
+                            }
                         }
+                        Err(_) => continue,
                     }
-                    Err(_) => continue,
                 }
             }
         }

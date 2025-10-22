@@ -5,7 +5,7 @@ version_major = 1
 version_minor = 0
 
 # Trust settings for certificate validation.
-# [trust]
+[trust]
 # String to user-provided trust anchors (PEM format).
 # user_anchors = ""
 # String to system trust anchors (PEM format).
@@ -407,8 +407,8 @@ tsa_url = "http://timestamp.digicert.com"
 
 # Configuration for the `Builder`.
 [builder]
-certificate_status_fetch = "all"
-certificate_status_should_override = true
+#certificate_status_fetch = "all"
+#certificate_status_should_override = true
 
 # Claim generator info list.
 [builder.claim_generator_info]

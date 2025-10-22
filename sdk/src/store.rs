@@ -577,6 +577,10 @@ impl Store {
     ) -> Result<Vec<u8>> {
         let claim_bytes = claim.data()?;
 
+        // no verification of timestamp trust while signing
+        let mut adjusted_settings = settings.clone();
+        adjusted_settings.verify.verify_timestamp_trust = false;
+
         let tss = if claim.version() > 1 {
             TimeStampStorage::V2_sigTst2_CTT
         } else {
@@ -588,7 +592,7 @@ impl Store {
                 // Let the signer do all the COSE processing and return the structured COSE data.
                 return signer.sign(&claim_bytes); // do not verify remote signers (we never did)
             } else {
-                cose_sign(signer, &claim_bytes, box_size, tss, settings)
+                cose_sign(signer, &claim_bytes, box_size, tss, &adjusted_settings)
             }
         } else {
             if signer.direct_cose_handling() {
@@ -617,7 +621,7 @@ impl Store {
                             &self.ctp,
                             None,
                             &mut cose_log,
-                            settings,
+                            &adjusted_settings,
                         )
                     } else {
                         verify_cose_async(
@@ -628,7 +632,7 @@ impl Store {
                             &self.ctp,
                             None,
                             &mut cose_log,
-                            settings,
+                            &adjusted_settings,
                         )
                         .await
                     };
@@ -1583,7 +1587,7 @@ impl Store {
 
                     // allow the extra ingredient trust checks
                     // these checks are to prevent the trust spoofing
-                    let check_ingredient_trust: bool = settings.verify.check_ingredient_trust;
+                    let check_ingredient_trust: bool = settings.verify.verify_trust;
 
                     // get the 1.1-1.2 box hash
                     let ingredient_hashes = store.get_manifest_box_hashes(ingredient);
@@ -2070,18 +2074,26 @@ impl Store {
 
                 // save the valid timestamps stored in the StoreValidationInfo
                 // we only use valid timestamps, otherwise just ignore
+                let mut adjusted_settings = settings.clone();
+                let original_trust_val = adjusted_settings.verify.verify_timestamp_trust;
                 for (referenced_claim, time_stamp_token) in timestamp_assertion.as_ref() {
                     if let Some(rc) = svi.manifest_map.get(referenced_claim) {
+                        if rc.version() == 1 {
+                            // no trust checks for leagacy timestamps
+                            adjusted_settings.verify.verify_timestamp_trust = false;
+                        }
+
                         if let Ok(tst_info) = verify_time_stamp(
                             time_stamp_token,
                             rc.signature_val(),
                             &self.ctp,
                             validation_log,
-                            settings,
+                            &adjusted_settings,
                         ) {
                             svi.timestamps.insert(rc.label().to_owned(), tst_info);
                         }
                     }
+                    adjusted_settings.verify.verify_timestamp_trust = original_trust_val;
                 }
             }
 
@@ -4287,10 +4299,18 @@ impl Store {
     ) -> Result<Vec<(String, Vec<u8>)>> {
         let mut oscp_response_ders = Vec::new();
 
+        let mut adjusted_settings = settings.clone();
+        let original_trust_val = adjusted_settings.verify.verify_timestamp_trust;
+
         for manifest_label in manifest_labels {
             if let Some(claim) = self.claims_map.get(&manifest_label) {
                 let sig = claim.signature_val().clone();
                 let data = claim.data()?;
+
+                // no timestamp trust checks for 1.x manifests
+                if claim.version() == 1 {
+                    adjusted_settings.verify.verify_timestamp_trust = false;
+                }
 
                 let sign1 = parse_cose_sign1(&sig, &data, validation_log)?;
                 let ocsp_response_der = if _sync {
@@ -4320,6 +4340,7 @@ impl Store {
                     oscp_response_ders.push((manifest_label, ocsp_response_der));
                 }
             }
+            adjusted_settings.verify.verify_timestamp_trust = original_trust_val;
         }
 
         Ok(oscp_response_ders)
