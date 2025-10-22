@@ -34,13 +34,13 @@ c2pa = { version = "0.45.2", features = ["file_io", "add_thumbnails"] }
 
 You can enable any of the following features:
 
-* `openssl` *(enabled by default)* - Use the system `openssl` implementation for cryptography.
-* `rust_native_crypto` - Use Rust native cryptography.
-* `add_thumbnails` - Generates thumbnails automatically for JPEG and PNG files. This capability is no longer enabled by the `file_io` feature.
-* `fetch_remote_manifests` - Enables the verification step to retrieve externally-referenced manifest stores.  External manifests are only fetched if there is no embedded manifest store and no local `.c2pa` manifest store file of the same name (a "sidecar" manifest file).
-* `file_io` - Enables manifest generation, signing via OpenSSL, and embedding manifests in [supported file formats](supported-formats.md).
-* `json_schema` - Used by `make schema` to produce a JSON schema document that represents the `ManifestStore` data structures.
-* `pdf` - Enable support for reading claims on PDF files.
+- **openssl** *(enabled by default)*: Use the vendored `openssl` implementation for cryptography.
+- **rust_native_crypto**: Use Rust native cryptography.
+- **add_thumbnails**: Adds the [`image`](https://github.com/image-rs/image) crate to enable auto-generated thumbnails, if possible and enabled in settings.
+- **fetch_remote_manifests**: Fetches remote manifests over the network when no embedded manifest is present and that option is enabled in settings.
+- **file_io**: Enables APIs that use filesystem I/O.
+- **json_schema**: Adds the [`schemars`](https://github.com/GREsau/schemars) crate to derive JSON schemas for JSON-compatible structs.
+- **pdf**: Enables basic PDF read support.
 
 > [!NOTE]
 > If both `rust_native_crypto` and `openssl` are enabled, then only `rust_native_crypto` will be enabled.
@@ -50,8 +50,8 @@ You can enable any of the following features:
 
 The following features are no longer supported:
 
-* `v1_api`. The old API that this enabled have been removed.
-* `serialize_thumbnails`. Serialize thumbnails by accessing resources directly.
+* **v1_api**. The old API that this enabled has been removed.
+* **serialize_thumbnails**. Thumbnails can be serialized by accessing resources directly.
 
 ### Resource references
 

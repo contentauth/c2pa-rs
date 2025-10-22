@@ -93,8 +93,8 @@
 //!
 //! The following are a list of features that can be enabled or disabled:
 //!
-//! - **openssl** *(enabled by default)*: Enables the system `openssl` implementation for cryptography.
-//! - **rust_native_crypto**: Enables the Rust native implementation for cryptography.
+//! - **openssl** *(enabled by default)*: Use the vendored `openssl` implementation for cryptography.
+//! - **rust_native_crypto**: Use Rust native cryptography.
 //! - **add_thumbnails**: Adds the [`image`](https://github.com/image-rs/image) crate to enable auto-generated thumbnails, if possible and enabled in settings.
 //! - **fetch_remote_manifests**: Fetches remote manifests over the network when no embedded manifest is present and that option is enabled in settings.
 //! - **file_io**: Enables APIs that use filesystem I/O.
