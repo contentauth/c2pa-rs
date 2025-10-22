@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.24.0](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.23.4...c2patool-v0.24.0)
+_22 October 2025_
+
+### Added
+
+* Add settings structs to the public API ([#1447](https://github.com/contentauth/c2pa-rs/pull/1447))
+
+### Documented
+
+* Change relative to absolute URLs ([#1418](https://github.com/contentauth/c2pa-rs/pull/1418))
+
+### Fixed
+
+* Turn on trust by default ([#1483](https://github.com/contentauth/c2pa-rs/pull/1483))
+
+### Other
+
+* Update httpmock to 0.8.0 ([#1472](https://github.com/contentauth/c2pa-rs/pull/1472))
+
+### Updated dependencies
+
+* Bump httpmock from 0.8.1 to 0.8.2 ([#1504](https://github.com/contentauth/c2pa-rs/pull/1504))
+
 ## [0.23.4](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.23.3...c2patool-v0.23.4)
 _02 October 2025_
 
