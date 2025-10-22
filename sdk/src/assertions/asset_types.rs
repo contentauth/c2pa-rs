@@ -15,7 +15,7 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use super::{labels, AssetType, Metadata};
+use super::{labels, AssertionMetadata, AssetType};
 use crate::{
     assertion::{Assertion, AssertionBase, AssertionCbor},
     error::Result,
@@ -101,7 +101,7 @@ const ASSERTION_CREATION_VERSION: usize = 1;
 #[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 pub struct AssetTypes {
     types: Vec<AssetType>,
-    metadata: Option<Metadata>,
+    metadata: Option<AssertionMetadata>,
 }
 
 #[allow(dead_code)]
@@ -125,12 +125,12 @@ impl AssetTypes {
         &self.types
     }
 
-    pub fn set_metadata(mut self, md: Metadata) -> Self {
+    pub fn set_metadata(mut self, md: AssertionMetadata) -> Self {
         self.metadata = Some(md);
         self
     }
 
-    pub fn metadata(&self) -> Option<&Metadata> {
+    pub fn metadata(&self) -> Option<&AssertionMetadata> {
         self.metadata.as_ref()
     }
 }

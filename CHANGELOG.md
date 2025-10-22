@@ -2,9 +2,185 @@
 
 All notable changes to this project will be documented in this file.
 
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [Unreleased]
+
+## [0.67.1](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.67.0...c2pa-v0.67.1)
+_02 October 2025_
+
+### Fixed
+
+* Mark `DigitalSourceType` fields as deprecated without warning (new serde update) ([#1427](https://github.com/contentauth/c2pa-rs/pull/1427))
+* Correct the payload of claim signature box when calculating the hash. ([#1466](https://github.com/contentauth/c2pa-rs/pull/1466))
+
+## [0.67.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.66.0...c2pa-v0.67.0)
+_30 September 2025_
+
+### Fixed
+
+* Do not generate multiple `c2pa.placed` actions with settings ([#1458](https://github.com/contentauth/c2pa-rs/pull/1458))
+* AllActionsIncluded defaults to None ([#1459](https://github.com/contentauth/c2pa-rs/pull/1459))
+
+### Other
+
+* Fix pdf benchmarks ([#1452](https://github.com/contentauth/c2pa-rs/pull/1452))
+
+## [0.66.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.65.1...c2pa-v0.66.0)
+_24 September 2025_
+
+### Fixed
+
+* We lost the ability to read the deprecated instanceId actions parameters field. ([#1443](https://github.com/contentauth/c2pa-rs/pull/1443))
+* Remove `no_interleaved_io` feature ([#1437](https://github.com/contentauth/c2pa-rs/pull/1437))
+
+## [0.65.1](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.65.0...c2pa-v0.65.1)
+_23 September 2025_
+
+### Fixed
+
+* Add support for iso6 boxes (tfra, tfhd and saio) ([#1442](https://github.com/contentauth/c2pa-rs/pull/1442))
+* [CAI-9586] Some validation errors are thrown as exceptions ([#1441](https://github.com/contentauth/c2pa-rs/pull/1441))
+* Only enable "asm" feature on aarch64 macos ([#1440](https://github.com/contentauth/c2pa-rs/pull/1440))
+
+## [0.65.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.64.0...c2pa-v0.65.0)
+_19 September 2025_
+
+### Added
+
+* Expose add_action from the Builder at the C level ([#1425](https://github.com/contentauth/c2pa-rs/pull/1425))
+* Add Redaction and Update manifest support to Builder ([#1180](https://github.com/contentauth/c2pa-rs/pull/1180))
+* Add `ParametersMap` to `Actions` ([#1274](https://github.com/contentauth/c2pa-rs/pull/1274))
+* *(sdk)* Introduce new API to retrieve detailed manifest JSON ([#1406](https://github.com/contentauth/c2pa-rs/pull/1406))
+
+## [0.64.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.63.0...c2pa-v0.64.0)
+_15 September 2025_
+
+### Added
+
+* Fetch OCSP wasm ([#1402](https://github.com/contentauth/c2pa-rs/pull/1402))
+
+### Fixed
+
+* Allow v1 claim  c2pa.manifest cbor assertions without full valid… ([#1412](https://github.com/contentauth/c2pa-rs/pull/1412))
+
+## [0.63.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.62.0...c2pa-v0.63.0)
+_10 September 2025_
+
+### Added
+
+* Add `cawg_trust.verify_trust_list` setting ([#1356](https://github.com/contentauth/c2pa-rs/pull/1356))
+* Remove the v1_api feature and all associated code ([#1387](https://github.com/contentauth/c2pa-rs/pull/1387))
+
+### Fixed
+
+* Fix/trust list check ([#1398](https://github.com/contentauth/c2pa-rs/pull/1398))
+* Remove unmaintained dependencies conv and custom_derive ([#1393](https://github.com/contentauth/c2pa-rs/pull/1393))
+
+## [0.62.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.61.0...c2pa-v0.62.0)
+_06 September 2025_
+
+### Added
+
+* Implement CAWG X.509 signing via settings ([#1388](https://github.com/contentauth/c2pa-rs/pull/1388))
+
+### Fixed
+
+* Assertion metadata localizations support was missing. CAI-9444 ([#1390](https://github.com/contentauth/c2pa-rs/pull/1390))
+* Make `openssl` and `rust_native_crypto` features additive ([#1379](https://github.com/contentauth/c2pa-rs/pull/1379))
+* Make OpenSSL code path enforce COSE specified salt length ([#1376](https://github.com/contentauth/c2pa-rs/pull/1376))
+
+## [0.61.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.60.1...c2pa-v0.61.0)
+_03 September 2025_
+
+### Added
+
+* Add benchmarking ([#1311](https://github.com/contentauth/c2pa-rs/pull/1311))
+
+### Fixed
+
+* Rewind output  stream after adding dynamic assertions ([#1358](https://github.com/contentauth/c2pa-rs/pull/1358))
+* Fix label handling for custom metadata ([#1354](https://github.com/contentauth/c2pa-rs/pull/1354))
+* Gif global color table size ([#1348](https://github.com/contentauth/c2pa-rs/pull/1348))
+* Fix overly agressive metata collection ([#1345](https://github.com/contentauth/c2pa-rs/pull/1345))
+
+## [0.60.1](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.60.0...c2pa-v0.60.1)
+_27 August 2025_
+
+### Fixed
+
+* Removes asm feature for sha2 ([#1343](https://github.com/contentauth/c2pa-rs/pull/1343))
+* Reset settings after test_stream_thumbnail ([#1339](https://github.com/contentauth/c2pa-rs/pull/1339))
+
+## [0.60.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.59.1...c2pa-v0.60.0)
+_26 August 2025_
+
+### Added
+
+* *(sdk)* Falls back to fs for large intermediate streams ([#1341](https://github.com/contentauth/c2pa-rs/pull/1341))
+* Add ability to set/get the description for an action. ([#1276](https://github.com/contentauth/c2pa-rs/pull/1276))
+
+### Fixed
+
+* Ingredient thumbnail generation respect settings ([#1332](https://github.com/contentauth/c2pa-rs/pull/1332))
+* Fix a regression for invalid manifest handling and reader creation ([#1312](https://github.com/contentauth/c2pa-rs/pull/1312))
+* Fix test
+
+### Other
+
+* Fix docs and dead code lint ([#1340](https://github.com/contentauth/c2pa-rs/pull/1340))
+
+## [0.59.1](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.59.0...c2pa-v0.59.1)
+_15 August 2025_
+
+### Fixed
+
+* Add common name to manifest dump ([#1319](https://github.com/contentauth/c2pa-rs/pull/1319))
+* Support box hash exclusions ([#1317](https://github.com/contentauth/c2pa-rs/pull/1317))
+# Changelog
+
+All notable changes to this project will be documented in this file.
+
 This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html), except that – as is typical in the Rust community – the minimum supported Rust version may be increased without a major version increase.
 
 Since version 0.36.2, the format of this changelog is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
+
+## [0.59.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.58.0...c2pa-v0.59.0)
+_14 August 2025_
+
+### Added
+
+* Add option for configuring trust when validating identity assertions (CAI-7980) ([#1239](https://github.com/contentauth/c2pa-rs/pull/1239))
+* Add new soft binding fields to the ingredient assertion structure ([#1306](https://github.com/contentauth/c2pa-rs/pull/1306))
+* Add cawg.metadata label and test. ([#1305](https://github.com/contentauth/c2pa-rs/pull/1305))
+* Certificate status assertion ([#1236](https://github.com/contentauth/c2pa-rs/pull/1236))
+* Browser wasm fetch remote manifests ([#1259](https://github.com/contentauth/c2pa-rs/pull/1259))
+* Define `DigitalSourceType` as enum ([#1260](https://github.com/contentauth/c2pa-rs/pull/1260))
+* Impl Soft Binding assertion definition ([#1147](https://github.com/contentauth/c2pa-rs/pull/1147))
+* Add metadata assertion and support for validation ([#1258](https://github.com/contentauth/c2pa-rs/pull/1258))
+* Remove `Send` trait for `CAIRead` on Wasm ([#1264](https://github.com/contentauth/c2pa-rs/pull/1264))
+* [**breaking**] Change `Verifier` to hold a `Cow<'a, CertificateTrustPolicy` rather than a reference ([#1238](https://github.com/contentauth/c2pa-rs/pull/1238))
+* V2 Claims are now generated by default ([#1266](https://github.com/contentauth/c2pa-rs/pull/1266))
+* Bump MSRV to 1.86.0 ([#1269](https://github.com/contentauth/c2pa-rs/pull/1269))
+* Expand settings API ([#1192](https://github.com/contentauth/c2pa-rs/pull/1192))
+
+### Fixed
+
+* Fix broken ingredient recursion ([#1309](https://github.com/contentauth/c2pa-rs/pull/1309))
+* Mark the CreativeWork assertion as deprecated ([#1304](https://github.com/contentauth/c2pa-rs/pull/1304))
+* Make common name available to manifest_store ([#1300](https://github.com/contentauth/c2pa-rs/pull/1300))
+* V2 redactions were reporting validation error if the assertion was redacted ([#1282](https://github.com/contentauth/c2pa-rs/pull/1282))
+* Bmff update manifest support ([#1284](https://github.com/contentauth/c2pa-rs/pull/1284))
+* Report correct identity assertion JUMBF URI when reporting validation status ([#1292](https://github.com/contentauth/c2pa-rs/pull/1292))
+* Support for BMFF V3 hashing options ([#1253](https://github.com/contentauth/c2pa-rs/pull/1253))
+* Remove "other" field in `Metadata` assertion ([#1251](https://github.com/contentauth/c2pa-rs/pull/1251))
+* Add support for m4v ([#1254](https://github.com/contentauth/c2pa-rs/pull/1254))
+
+### Other
+
+* Rename Metadata to AssertionMetadata ([#1261](https://github.com/contentauth/c2pa-rs/pull/1261))
+* Feature flag `test_reader_remote_url` with feature `fetch_remote_manifests` ([#1252](https://github.com/contentauth/c2pa-rs/pull/1252))
 
 ## [0.58.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.57.0...c2pa-v0.58.0)
 _18 July 2025_

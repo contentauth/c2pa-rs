@@ -12,6 +12,7 @@
 // each license.
 
 use std::{
+    borrow::Cow,
     collections::BTreeMap,
     fmt::{Debug, Formatter},
 };
@@ -20,6 +21,7 @@ use serde::{Deserialize, Serialize};
 use serde_bytes::ByteBuf;
 
 use crate::{
+    crypto::cose::{CertificateTrustPolicy, Verifier},
     dynamic_assertion::PartialClaim,
     identity::{
         claim_aggregation::IcaSignatureVerifier,
@@ -34,6 +36,7 @@ use crate::{
         x509::X509SignatureVerifier,
         SignatureVerifier, ToCredentialSummary, ValidationError,
     },
+    jumbf::labels::to_assertion_uri,
     log_current_item, log_item,
     status_tracker::StatusTracker,
     Manifest, Reader,
@@ -61,8 +64,13 @@ pub struct IdentityAssertion {
     // does not work with Option<Vec<u8>>.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) pad2: Option<ByteBuf>,
+
+    // Label for the assertion. Only assigned when reading from a manifest.
+    #[serde(skip)]
+    pub(crate) label: Option<String>,
 }
 
+#[allow(unused)] // TEMPORARY while considering API simplification
 impl IdentityAssertion {
     /// Find the `IdentityAssertion`s that may be present in a given
     /// [`Manifest`].
@@ -70,28 +78,41 @@ impl IdentityAssertion {
     /// Iterator returns a [`Result`] because each assertion may fail to parse.
     ///
     /// Aside from CBOR parsing, no further validation is performed.
-    pub fn from_manifest<'a>(
+    pub(crate) fn from_manifest<'a>(
         manifest: &'a Manifest,
         status_tracker: &'a mut StatusTracker,
     ) -> impl Iterator<Item = Result<Self, crate::Error>> + use<'a> {
         manifest
             .assertions()
             .iter()
-            .filter(|a| a.label().starts_with("cawg.identity"))
-            .map(|a| (a.label().to_owned(), a.to_assertion()))
+            .filter(|a| a.label() == "cawg.identity" || a.label().starts_with("cawg.identity__"))
+            .map(|a| {
+                let mut ia: Result<Self, crate::Error> = a.to_assertion();
+                if let Ok(ref mut ia) = ia {
+                    if let Some(manifest_label) = manifest.label() {
+                        ia.label = Some(to_assertion_uri(manifest_label, a.label()));
+                    }
+                }
+                // TO DO: Add error readout if the proposed new setting resulted
+                // in this assertion being parsed and converted to JSON. This function
+                // has become incompatible with the now-default behavior to validate
+                // identity assertions during parsing. This applies only if this API
+                // becomes public again.
+                (a.label().to_owned(), ia)
+            })
             .inspect(|(label, r)| {
+                let mut label = label.to_owned();
                 if let Err(err) = r {
-                    // TO DO: a.label() is probably wrong (not a full JUMBF URI)
-                    log_item!(
-                        label.clone(),
-                        "invalid CBOR",
-                        "IdentityAssertion::from_manifest"
-                    )
-                    .validation_status("cawg.identity.cbor.invalid")
-                    .failure_no_throw(
-                        status_tracker,
-                        crate::Error::AssertionSpecificError(err.to_string()),
-                    );
+                    if let Some(manifest_label) = manifest.label() {
+                        label = to_assertion_uri(manifest_label, &label);
+                    }
+
+                    log_item!(label, "invalid CBOR", "IdentityAssertion::from_manifest")
+                        .validation_status("cawg.identity.cbor.invalid")
+                        .failure_no_throw(
+                            status_tracker,
+                            crate::Error::AssertionSpecificError(err.to_string()),
+                        );
                 }
             })
             .map(move |(_label, r)| r)
@@ -104,7 +125,7 @@ impl IdentityAssertion {
     /// of the identity assertion.
     ///
     /// [`validate`]: Self::validate
-    pub async fn to_summary<SV: SignatureVerifier>(
+    pub(crate) async fn to_summary<SV: SignatureVerifier>(
         &self,
         manifest: &Manifest,
         status_tracker: &mut StatusTracker,
@@ -145,7 +166,7 @@ impl IdentityAssertion {
     }
 
     /// Summarize all of the identity assertions found for a [`Manifest`].
-    pub async fn summarize_all<SV: SignatureVerifier>(
+    pub(crate) async fn summarize_all<SV: SignatureVerifier>(
         manifest: &Manifest,
         status_tracker: &mut StatusTracker,
         verifier: &SV,
@@ -193,38 +214,8 @@ impl IdentityAssertion {
         }
     }
 
-    /// Summarize all of the identity assertions found for a [`ManifestStore`].
-    ///
-    /// [`ManifestStore`]: crate::ManifestStore
-    #[cfg(feature = "v1_api")]
-    pub async fn summarize_manifest_store<SV: SignatureVerifier>(
-        store: &crate::ManifestStore,
-        status_tracker: &mut StatusTracker,
-        verifier: &SV,
-    ) -> impl Serialize {
-        // NOTE: We can't write this using .map(...).collect() because there are async
-        // calls.
-        let mut reports: BTreeMap<
-            String,
-            IdentityAssertionsForManifest<
-                <<SV as SignatureVerifier>::Output as ToCredentialSummary>::CredentialSummary,
-            >,
-        > = BTreeMap::new();
-
-        for (id, manifest) in store.manifests() {
-            let report = Self::summarize_all_impl(manifest, status_tracker, verifier).await;
-            reports.insert(id.clone(), report);
-        }
-
-        IdentityAssertionsForManifestStore::<
-            <<SV as SignatureVerifier>::Output as ToCredentialSummary>::CredentialSummary,
-        > {
-            assertions_for_manifest: reports,
-        }
-    }
-
     /// Summarize all of the identity assertions found for a [`Reader`].
-    pub async fn summarize_from_reader<SV: SignatureVerifier>(
+    pub(crate) async fn summarize_from_reader<SV: SignatureVerifier>(
         reader: &Reader,
         status_tracker: &mut StatusTracker,
         verifier: &SV,
@@ -257,18 +248,31 @@ impl IdentityAssertion {
     /// be derived from the signature. This is the [`SignatureVerifier::Output`]
     /// type which typically describes the named actor, but may also contain
     /// information about the time of signing or the credential's source.
-    pub async fn validate<SV: SignatureVerifier>(
+    pub(crate) async fn validate<SV: SignatureVerifier>(
         &self,
         manifest: &Manifest,
         status_tracker: &mut StatusTracker,
         verifier: &SV,
     ) -> Result<SV::Output, ValidationError<SV::Error>> {
-        // TO DO: Create new status tracker here and pass it through
-        // the rest of this code. Then we can rewrite the log with
-        // assertion label at the end of this process.
+        if let Some(ref label) = self.label {
+            status_tracker.push_current_uri(label);
+        }
 
-        // UPDATED TO DO: Hold off until Gavin lands the post-validate branch.
-        // Then we'll get the assertion label handed to us nicely.
+        let result = self.validate_imp(manifest, status_tracker, verifier).await;
+
+        if self.label.is_some() {
+            status_tracker.pop_current_uri();
+        }
+
+        result
+    }
+
+    async fn validate_imp<SV: SignatureVerifier>(
+        &self,
+        manifest: &Manifest,
+        status_tracker: &mut StatusTracker,
+        verifier: &SV,
+    ) -> Result<SV::Output, ValidationError<SV::Error>> {
         self.check_padding(status_tracker)?;
 
         self.signer_payload
@@ -286,11 +290,12 @@ impl IdentityAssertion {
     /// be derived from the signature. This is the [`SignatureVerifier::Output`]
     /// type which typically describes the named actor, but may also contain
     /// information about the time of signing or the credential's source.
-    pub async fn validate_partial_claim(
+    pub(crate) async fn validate_partial_claim(
         &self,
         partial_claim: &PartialClaim,
         status_tracker: &mut StatusTracker,
     ) -> Result<serde_json::Value, ValidationError<String>> {
+        let settings = crate::settings::get_settings().unwrap_or_default();
         self.check_padding(status_tracker)?;
 
         self.signer_payload
@@ -299,7 +304,34 @@ impl IdentityAssertion {
         let sig_type = self.signer_payload.sig_type.as_str();
 
         if sig_type == "cawg.x509.cose" {
-            let verifier = X509SignatureVerifier {};
+            let mut ctp = CertificateTrustPolicy::default();
+
+            // Load the trust handler settings. Don't worry about status as these
+            // are checked during setting generation.
+
+            let cose_verifier = if settings.cawg_trust.verify_trust_list {
+                if let Some(ta) = settings.cawg_trust.trust_anchors {
+                    let _ = ctp.add_trust_anchors(ta.as_bytes());
+                }
+
+                if let Some(pa) = settings.cawg_trust.user_anchors {
+                    let _ = ctp.add_user_trust_anchors(pa.as_bytes());
+                }
+
+                if let Some(tc) = settings.cawg_trust.trust_config {
+                    ctp.add_valid_ekus(tc.as_bytes());
+                }
+
+                if let Some(al) = settings.cawg_trust.allowed_list {
+                    let _ = ctp.add_end_entity_credentials(al.as_bytes());
+                }
+
+                Verifier::VerifyTrustPolicy(Cow::Owned(ctp))
+            } else {
+                Verifier::IgnoreProfileAndTrustPolicy
+            };
+
+            let verifier = X509SignatureVerifier { cose_verifier };
 
             let result = verifier
                 .check_signature(&self.signer_payload, &self.signature, status_tracker)
@@ -383,6 +415,7 @@ impl Debug for IdentityAssertion {
         f.debug_struct("IdentityAssertion")
             .field("signer_payload", &self.signer_payload)
             .field("signature", &DebugByteSlice(&self.signature))
+            .field("label", &self.label)
             .finish()
     }
 }

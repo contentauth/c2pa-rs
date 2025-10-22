@@ -95,6 +95,10 @@ impl SignatureVerifier for IcaSignatureVerifier {
         // tracker to capture the C2PA timestamp informational statuses
         let mut timestamp_tracker = StatusTracker::default();
 
+        // TODO: do we need to pass settings here at all if `ctp` is set to pasthrough anyways?
+        let mut settings = crate::settings::get_settings().unwrap_or_default();
+        settings.verify.verify_timestamp_trust = false;
+
         // todo: since this is calling the C2PA Cose timestamp validator should it follow the C2PA rules?
         // todo: (CAI-8847) since C2PA requires trust lists for TSAs what does that mean for CAWG since it is using
         // the C2PA header's timestamp
@@ -103,6 +107,7 @@ impl SignatureVerifier for IcaSignatureVerifier {
             payload_bytes,
             &local_ctp,
             &mut timestamp_tracker,
+            &settings,
         )
         .await
         .inspect(|tst_info| self.save_time_stamp(tst_info, &mut ica_credential, status_tracker))
@@ -605,19 +610,15 @@ impl IcaSignatureVerifier {
             ));
         };
 
-        // TO DO: Bring in substitute for now() on Wasm.
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            let now = Utc::now().fixed_offset();
+        let now = Utc::now().fixed_offset();
 
-            if now < valid_from {
-                return Err((
-                    IcaValidationError::InvalidValidFromDate(
-                        "validFrom is after current date/time".to_owned(),
-                    ),
-                    "cawg.ica.valid_from.invalid",
-                ));
-            }
+        if now < valid_from {
+            return Err((
+                IcaValidationError::InvalidValidFromDate(
+                    "validFrom is after current date/time".to_owned(),
+                ),
+                "cawg.ica.valid_from.invalid",
+            ));
         }
 
         if let Some(tst_info) = maybe_tst_info {
@@ -651,19 +652,15 @@ impl IcaSignatureVerifier {
             return Ok(());
         };
 
-        // TO DO: Bring in substitute for now() on Wasm.
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            let now = Utc::now().fixed_offset();
+        let now = Utc::now().fixed_offset();
 
-            if now > valid_until {
-                return Err((
-                    IcaValidationError::InvalidValidUntilDate(
-                        "validUntil is before current date/time".to_owned(),
-                    ),
-                    "cawg.ica.valid_until.invalid",
-                ));
-            }
+        if now > valid_until {
+            return Err((
+                IcaValidationError::InvalidValidUntilDate(
+                    "validUntil is before current date/time".to_owned(),
+                ),
+                "cawg.ica.valid_until.invalid",
+            ));
         }
 
         if let Some(tst_info) = maybe_tst_info {

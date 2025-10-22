@@ -18,6 +18,9 @@
 //! These constants do not include version suffixes.
 //!
 //! See <https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_c2pa_standard_assertions>.
+use std::sync::LazyLock;
+
+use regex::Regex;
 
 /// Label prefix for a claim assertion.
 ///
@@ -176,6 +179,11 @@ pub const CREATIVE_WORK: &str = "stds.schema-org.CreativeWork";
 /// See <https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#timestamp_assertion>.
 pub const TIMESTAMP: &str = "c2pa.time-stamp";
 
+/// Label prefix for a certificate status assertion.
+///
+/// See <https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#certificate_status_assertion>.
+pub const CERTIFICATE_STATUS: &str = "c2pa.certificate-status";
+
 // Assertion store label
 pub(crate) const ASSERTION_STORE: &str = "c2pa.assertions";
 
@@ -184,17 +192,123 @@ pub(crate) const DATABOX_STORE: &str = "c2pa.databoxes";
 
 /// Label prefix for asset reference assertion.
 ///
-/// See <https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_asset_reference>
+/// See <https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_asset_reference>.
 pub const ASSET_REFERENCE: &str = "c2pa.asset-ref";
 
-/// Return the version suffix from an assertion label if it exists.
+/// extension to indicate a multipart hash
+///
+/// See <https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_multi_asset_hash>.
+pub const PART: &str = ".part";
+
+/// Label prefix for a C2PA metadata assertion.
+///
+/// A C2PA metadata assertion can only be used for [specific metadata fields]
+/// as described in the C2PA Technical Specification and only if those fields
+/// are generated from a hardware or software source.
+///
+/// See <https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_metadata>.
+///
+/// [specific metadata fields]: https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#metadata_annex
+pub const METADATA: &str = "c2pa.metadata";
+
+/// Label prefix for a [CAWG metadata assertion].
+///
+/// The CAWG metadata assertion is intended for human-generated metadata
+/// and may contain metadata from any documented schema.
+///
+/// [CAWG metadata assertion]: https://cawg.io/metadata/
+pub const CAWG_METADATA: &str = "cawg.metadata";
+
+/// Array of all hash labels because they have special treatment
+pub const HASH_LABELS: [&str; 4] = [DATA_HASH, BOX_HASH, BMFF_HASH, COLLECTION_HASH];
+
+/// Array of all non-redactable labels
+pub const NON_REDACTABLE_LABELS: [&str; 5] =
+    [ACTIONS, DATA_HASH, BOX_HASH, BMFF_HASH, COLLECTION_HASH];
+
+/// Must have a label that ends in '.metadata' and is preceded by an entity-specific namespace.
+/// For example, a 'com.litware.metadata' assertion would be valid.
+pub static METADATA_LABEL_REGEX: LazyLock<Regex> = LazyLock::new(|| {
+    #[allow(clippy::unwrap_used)]
+    {
+        Regex::new(r"^(?:[a-zA-Z0-9][a-zA-Z0-9_-]*)(?:\.(?:[a-zA-Z0-9][a-zA-Z0-9_-]*))*\.metadata$")
+            .unwrap()
+    }
+});
+
+/// Parse a label into its components
+///
+/// This function takes a label string and parses it into its base label,
+/// version number, and instance number. The base label is the part of the
+/// label without any version or instance suffixes. The version number is
+/// extracted from a suffix of the form `.v{number}`, defaulting to 1 if
+/// not present. The instance number is extracted from a suffix of the form
+/// `__{number}`, defaulting to 0 if not present.
+///
+/// ABNF grammar for labels:
+/// ```abnf
+/// namespaced-label = qualified-namespace label [version] [instance]
+/// qualified-namespace = "c2pa" / entity
+/// entity = entity-component *( "." entity-component )
+/// entity-component = 1( DIGIT / ALPHA ) *( DIGIT / ALPHA / "-" / "_" )
+/// label = 1*( "." label-component )
+/// label-component = 1( DIGIT / ALPHA ) *( DIGIT / ALPHA / "-" / "_" )
+/// version = ".v" 1*DIGIT
+/// instance = "__" 1*DIGIT
+/// ```
+pub fn parse_label(label: &str) -> (&str, usize, usize) {
+    // First, extract instance if present
+    let (without_instance, instance) = if let Some(pos) = label.rfind("__") {
+        let instance_str = &label[pos + 2..];
+        let instance = instance_str.parse::<usize>().unwrap_or(0);
+        (&label[..pos], instance)
+    } else {
+        (label, 0)
+    };
+
+    // Then, extract version if present
+    #[allow(clippy::unwrap_used)]
+    static VERSION_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^v\d+$").unwrap());
+    let components: Vec<&str> = without_instance.split('.').collect();
+    if let Some(last) = components.last() {
+        if VERSION_RE.is_match(last) {
+            if let Ok(version) = last[1..].parse::<usize>() {
+                let base_end = without_instance.len() - last.len() - 1;
+                return (&without_instance[..base_end], version, instance);
+            }
+        }
+    }
+
+    (without_instance, 1, instance)
+}
+
+/// Extract the base label without version or instance suffixes
+///
+/// This function removes both the version suffix (`.v{number}`) and
+/// instance suffix (`__{number}`) from a label, returning just the base.
+///
+/// # Examples
+/// ```
+/// use c2pa::assertions::labels;
+///
+/// assert_eq!(labels::base("c2pa.ingredient"), "c2pa.ingredient");
+/// assert_eq!(labels::base("c2pa.ingredient.v3"), "c2pa.ingredient");
+/// assert_eq!(labels::base("c2pa.ingredient__2"), "c2pa.ingredient");
+/// assert_eq!(labels::base("c2pa.ingredient.v3__2"), "c2pa.ingredient");
+/// assert_eq!(labels::base("c2pa.actions__1"), "c2pa.actions");
+/// ```
+pub fn base(label: &str) -> &str {
+    parse_label(label).0
+}
+
+/// Extract version from a label
 ///
 /// When an assertion's schema is changed in a backwards-compatible manner,
 /// the label would consist of an incremented version number, for example
 /// moving from `c2pa.ingredient` to `c2pa.ingredient.v2`.
 ///
-/// If such a suffix exists (`.v(integer)`), return that; otherwise,
-/// return `None`.
+/// Returns the version number, or 1 if no version suffix is present
+/// (since version 1 is the default and never explicitly included).
 ///
 /// See <https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_versioning>.
 ///
@@ -203,39 +317,38 @@ pub const ASSET_REFERENCE: &str = "c2pa.asset-ref";
 /// ```
 /// use c2pa::assertions::labels;
 ///
-/// assert_eq!(labels::version("c2pa.ingredient"), None);
-/// assert_eq!(labels::version("c2pa.ingredient.v2"), Some(2));
-/// assert_eq!(labels::version("c2pa.ingredient.V2"), None);
-/// assert_eq!(labels::version("c2pa.ingredient.x2"), None);
-/// assert_eq!(labels::version("c2pa.ingredient.v-2"), None);
+/// assert_eq!(labels::version("c2pa.ingredient"), 1);
+/// assert_eq!(labels::version("c2pa.ingredient.v2"), 2);
+/// assert_eq!(labels::version("c2pa.ingredient.v3__2"), 3);
+/// assert_eq!(labels::version("c2pa.ingredient.V2"), 1);
+/// assert_eq!(labels::version("c2pa.ingredient.x2"), 1);
+/// assert_eq!(labels::version("c2pa.ingredient.v-2"), 1);
 /// ```
-pub fn version(label: &str) -> Option<usize> {
-    let components: Vec<&str> = label.split('.').collect();
-    if let Some(last) = components.last() {
-        if last.len() > 1 {
-            let (ver, ver_inst_str) = last.split_at(1);
-            if ver == "v" {
-                if let Ok(ver) = ver_inst_str.parse::<usize>() {
-                    return Some(ver);
-                }
-            }
-        }
-    }
-
-    None
+pub fn version(label: &str) -> usize {
+    parse_label(label).1
 }
 
-/// Set the version of a label.
-/// If the version is 1, the original label is returned.
-/// Otherwise, the label is suffixed with the version number.
-/// This expects the label to not already have a version suffix.
-pub fn set_version(base_label: &str, version: usize) -> String {
-    if version == 1 {
-        // c2pa does not include v1 labels
-        base_label.to_string()
-    } else {
-        format!("{base_label}.v{version}")
-    }
+/// Extract the instance number from a label (return 0 if none)
+///
+/// This function looks for a double underscore followed by a number
+/// in the label and returns that number as the instance. If no such
+/// pattern is found, it returns zero.
+/// "__0" is default and never part of a label.
+/// Invalid instances are also treated as zero.
+///
+/// # Examples
+/// ```
+/// use c2pa::assertions::labels;
+///
+/// assert_eq!(labels::instance("c2pa.ingredient"), 0);
+/// assert_eq!(labels::instance("c2pa.actions__1"), 1);
+/// assert_eq!(labels::instance("c2pa.ingredient.v3__2"), 2);
+/// assert_eq!(labels::instance("c2pa.ingredient__2"), 2);
+/// assert_eq!(labels::instance("c2pa.ingredient__x"), 0);
+/// assert_eq!(labels::instance("c2pa.ingredient__"), 0);
+/// ```
+pub fn instance(label: &str) -> usize {
+    parse_label(label).2
 }
 
 /// Given a thumbnail label prefix such as `CLAIM_THUMBNAIL` and a file

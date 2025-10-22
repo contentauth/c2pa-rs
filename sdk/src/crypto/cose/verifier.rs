@@ -11,7 +11,7 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use std::io::Write;
+use std::{borrow::Cow, io::Write};
 
 use asn1_rs::FromDer;
 use async_generic::async_generic;
@@ -48,12 +48,12 @@ pub enum Verifier<'a> {
     /// Use a [`CertificateTrustPolicy`] to validate the signing certificate's
     /// profile against C2PA requirements _and_ validate the certificate's
     /// membership against a trust configuration.
-    VerifyTrustPolicy(&'a CertificateTrustPolicy),
+    VerifyTrustPolicy(Cow<'a, CertificateTrustPolicy>),
 
     /// Validate the certificate's membership against a trust configuration, but
     /// do not against any trust list. The [`CertificateTrustPolicy`] is used to
     /// enforce EKU (Extended Key Usage) policy only.
-    VerifyCertificateProfileOnly(&'a CertificateTrustPolicy),
+    VerifyCertificateProfileOnly(Cow<'a, CertificateTrustPolicy>),
 
     /// Ignore both trust configuration and trust lists.
     IgnoreProfileAndTrustPolicy,
@@ -104,14 +104,20 @@ impl Verifier<'_> {
         }
 
         if _sync {
-            self.verify_profile(&sign1, tst_info, validation_log)?;
-            self.verify_trust(&sign1, tst_info, validation_log)?;
+            self.verify_profile(&sign1, tst_info, validation_log)
         } else {
             self.verify_profile_async(&sign1, tst_info, validation_log)
-                .await?;
-            self.verify_trust_async(&sign1, tst_info, validation_log)
-                .await?;
+                .await
         }
+        .ok(); // Ignore errors here - they have already been logged.
+
+        if _sync {
+            self.verify_trust(&sign1, tst_info, validation_log)
+        } else {
+            self.verify_trust_async(&sign1, tst_info, validation_log)
+                .await
+        }
+        .ok(); // Ignore errors here - they have already been logged.
 
         // Reconstruct payload and additional data as it should have been at time of
         // signing.
@@ -184,8 +190,8 @@ impl Verifier<'_> {
         validation_log: &mut StatusTracker,
     ) -> Result<(), CoseError> {
         let ctp = match self {
-            Self::VerifyTrustPolicy(ctp) => *ctp,
-            Self::VerifyCertificateProfileOnly(ctp) => *ctp,
+            Self::VerifyTrustPolicy(ref ctp) => ctp,
+            Self::VerifyCertificateProfileOnly(ref ctp) => ctp,
             Self::IgnoreProfileAndTrustPolicy => {
                 return Ok(());
             }
@@ -196,7 +202,7 @@ impl Verifier<'_> {
 
         Ok(check_end_entity_certificate_profile(
             end_entity_cert_der,
-            ctp,
+            ctp.as_ref(),
             validation_log,
             tst_info,
         )?)
@@ -213,9 +219,9 @@ impl Verifier<'_> {
         // IMPORTANT: This function assumes that verify_profile has already been called.
 
         let ctp = match self {
-            Self::VerifyTrustPolicy(ctp) => *ctp,
+            Self::VerifyTrustPolicy(ref ctp) => ctp,
 
-            Self::VerifyCertificateProfileOnly(_ctp) => {
+            Self::VerifyCertificateProfileOnly(ref _ctp) => {
                 return Ok(TrustAnchorType::NoCheck);
             }
 
@@ -261,6 +267,12 @@ impl Verifier<'_> {
                     .failure_as_err(validation_log, e.into()),
             ),
         }
+    }
+}
+
+impl Default for Verifier<'_> {
+    fn default() -> Self {
+        Self::VerifyTrustPolicy(Cow::Owned(CertificateTrustPolicy::default()))
     }
 }
 

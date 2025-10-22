@@ -35,20 +35,9 @@ use crate::{
     claim::Claim,
     hashed_uri::HashedUri,
     jumbf::labels::{assertion_label_from_uri, to_absolute_uri, DATABOXES},
-    salt::DefaultSalt,
     utils::mime::format_to_mime,
     Error, Result,
 };
-
-/// Function that is used by serde to determine whether or not we should serialize
-/// resources based on the `serialize_resources` flag.
-/// (Serialization is disabled by default.)
-pub(crate) fn skip_serializing_resources(_: &ResourceStore) -> bool {
-    //TODO: Why is this disabled for wasm32?
-    !cfg!(feature = "serialize_thumbnails")
-        || cfg!(test)
-        || cfg!(not(all(target_arch = "wasm32", not(target_os = "wasi"))))
-}
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "json_schema", derive(JsonSchema))]
@@ -74,7 +63,7 @@ impl UriOrResource {
                             format_to_mime(&r.format),
                             data.to_vec(),
                         );
-                        claim.add_assertion_with_salt(&icon_assertion, &DefaultSalt::default())?
+                        claim.add_assertion(&icon_assertion)?
                     }
                 };
                 Ok(UriOrResource::HashedUri(hash_uri))
@@ -102,7 +91,10 @@ impl UriOrResource {
                             .ok_or(Error::AssertionMissing {
                                 url: h.url().to_string(),
                             })?;
-                    (assertion.label(), assertion.data().to_vec())
+                    (
+                        assertion.content_type().to_string(),
+                        assertion.data().to_vec(),
+                    )
                 };
                 let url = to_absolute_uri(claim.label(), &h.url());
                 let resource_ref = resources.add_with(&url, &format, data)?;
@@ -222,6 +214,7 @@ impl ResourceStore {
             "png" | "image/png" => ".png",
             //make "svg" | "image/svg+xml" => ".svg",
             "c2pa" | "application/x-c2pa-manifest-store" | "application/c2pa" => ".c2pa",
+            "ocsp" => ".ocsp",
             _ => "",
         };
         // clean string for possible filesystem use
@@ -311,7 +304,7 @@ impl ResourceStore {
     /// Returns a copy on write reference to the resource if found.
     ///
     /// Returns [`Error::ResourceNotFound`] if it cannot find a resource matching that ID.
-    pub fn get(&self, id: &str) -> Result<Cow<Vec<u8>>> {
+    pub fn get(&self, id: &str) -> Result<Cow<'_, Vec<u8>>> {
         #[cfg(feature = "file_io")]
         if !self.resources.contains_key(id) {
             match self.base_path.as_ref() {
@@ -444,11 +437,23 @@ mod tests {
             "claim_generator": "test",
             "format" : "image/jpeg",
             "instance_id": "12345",
-            "assertions": [],
             "thumbnail": {
                 "format": "image/jpeg",
                 "identifier": "abc123"
             },
+            "assertions": [
+                {
+                    "label": "c2pa.actions",
+                    "data": {
+                        "actions": [
+                            {
+                                "action": "c2pa.created",
+                                "digitalSourceType": "http://c2pa.org/digitalsourcetype/empty"
+                            }
+                        ]
+                    }
+                }
+            ],
             "ingredients": [{
                 "title": "A.jpg",
                 "format": "image/jpeg",

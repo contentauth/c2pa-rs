@@ -18,7 +18,6 @@ use std::{
     path::Path,
 };
 
-use conv::ValueFrom;
 use quick_xml::{
     events::{BytesText, Event},
     Reader, Writer,
@@ -163,7 +162,7 @@ impl AssetIO for SvgIO {
 }
 
 // create manifest entry
-fn create_manifest_tag(data: &[u8], with_meta: bool) -> Result<Event> {
+fn create_manifest_tag(data: &[u8], with_meta: bool) -> Result<Event<'_>> {
     let output: Vec<u8> = Vec::with_capacity(data.len() + 256);
     let mut writer = Writer::new(Cursor::new(output));
 
@@ -546,7 +545,7 @@ impl CAIWriter for SvgIO {
 
         // add position from cai to end
         let end = manifest_pos + encoded_manifest_len;
-        let length = usize::value_from(stream_len(input_stream)?)
+        let length = usize::try_from(stream_len(input_stream)?)
             .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?
             .saturating_sub(end);
         positions.push(HashObjectPositions {

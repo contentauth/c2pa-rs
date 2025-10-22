@@ -16,8 +16,8 @@ use std::io::{Cursor, Seek};
 
 use anyhow::Result;
 use c2pa::{
-    crypto::raw_signature::SigningAlg, settings::load_settings_from_str,
-    validation_results::ValidationState, Builder, CallbackSigner, Reader,
+    crypto::raw_signature::SigningAlg, settings::Settings, validation_results::ValidationState,
+    Builder, CallbackSigner, Reader,
 };
 use serde_json::json;
 
@@ -67,7 +67,7 @@ fn manifest_def(title: &str, format: &str) -> String {
     }).to_string()
 }
 
-/// This example demonstrates how to use the new v2 API to create a manifest store
+/// This example demonstrates how to use the API to create a manifest store
 /// It uses only streaming apis, showing how to avoid file i/o
 /// This example uses the `ed25519` signing algorithm
 fn main() -> Result<()> {
@@ -76,16 +76,17 @@ fn main() -> Result<()> {
     let parent_name = "CA.jpg";
     let mut source = Cursor::new(TEST_IMAGE);
 
-    let modified_core = json!({
-        "core": {
-            "debug": true,
-            "hash_alg": "sha512",
-            "max_memory_usage": 123456
-        }
-    })
+    let modified_core = toml::toml! {
+        [core]
+        debug = true
+        hash_alg = "sha512"
+        max_memory_usage = 123456
+    }
     .to_string();
 
-    load_settings_from_str(&modified_core, "json")?;
+    Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml"))?;
+
+    Settings::from_toml(&modified_core)?;
 
     let json = manifest_def(title, format);
 
@@ -93,12 +94,20 @@ fn main() -> Result<()> {
     builder.add_ingredient_from_stream(
         json!({
             "title": parent_name,
-            "relationship": "parentOf"
+            "relationship": "parentOf",
+            "label": "parent_label",  // use a label to tie this ingredient to an action
         })
         .to_string(),
         format,
         &mut source,
     )?;
+
+    builder.add_action(json!({
+        "action": "c2pa.opened",
+        "parameters": {
+            "ingredientIds": ["parent_label"], // the ingredient title to reference the ingredient
+        }
+    }))?;
 
     let thumb_uri = builder
         .definition
@@ -153,30 +162,21 @@ fn main() -> Result<()> {
     }
 
     println!("{}", reader.json());
-    assert_ne!(reader.validation_state(), ValidationState::Invalid);
+    assert_eq!(reader.validation_state(), ValidationState::Trusted);
     assert_eq!(reader.active_manifest().unwrap().title().unwrap(), title);
 
     Ok(())
 }
 
-// use openssl::{error::ErrorStack, pkey::PKey};
-// #[cfg(feature = "openssl")]
-// fn ed_sign(data: &[u8], pkey: &[u8]) -> std::result::Result<Vec<u8>, ErrorStack> {
-//     let pkey = PKey::private_key_from_pem(pkey)?;
-//     let mut signer = openssl::sign::Signer::new_without_digest(&pkey)?;
-//     signer.sign_oneshot_to_vec(data)
-// }
-
 #[cfg(test)]
 mod tests {
+    use c2pa_macros::c2pa_test_async;
     #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
     use wasm_bindgen_test::*;
 
     use super::*;
 
-    #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
-    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
-    #[cfg_attr(target_os = "wasi", wstd::test)]
+    #[c2pa_test_async]
     async fn test_v2_api() -> Result<()> {
         main()
     }

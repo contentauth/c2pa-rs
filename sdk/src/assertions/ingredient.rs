@@ -18,7 +18,7 @@ use serde::{ser::SerializeStruct, Deserialize, Serialize, Serializer};
 use super::AssetType;
 use crate::{
     assertion::{Assertion, AssertionBase, AssertionDecodeError, AssertionDecodeErrorCause},
-    assertions::{labels, Metadata, ReviewRating},
+    assertions::{labels, AssertionMetadata, ReviewRating},
     cbor_types::map_cbor_to_type,
     error::Result,
     hashed_uri::HashedUri,
@@ -56,7 +56,7 @@ pub struct Ingredient {
     pub validation_status: Option<Vec<ValidationStatus>>,
     pub relationship: Relationship,
     pub thumbnail: Option<HashedUri>,
-    pub metadata: Option<Metadata>,
+    pub metadata: Option<AssertionMetadata>,
     pub data: Option<HashedUri>,
     pub description: Option<String>,
     pub informational_uri: Option<String>,
@@ -66,6 +66,8 @@ pub struct Ingredient {
     pub active_manifest: Option<HashedUri>,
     pub claim_signature: Option<HashedUri>,
 
+    pub soft_bindings_matched: Option<bool>,
+    pub soft_binding_algorithms_matched: Option<Vec<String>>,
     pub version: usize,
 }
 
@@ -220,7 +222,7 @@ impl Ingredient {
 
     pub fn add_reviews(mut self, reviews: Option<Vec<ReviewRating>>) -> Self {
         if let Some(reviews) = reviews {
-            let metadata = Metadata::new().set_reviews(reviews);
+            let metadata = AssertionMetadata::new().set_reviews(reviews);
             self.metadata = Some(metadata);
         };
         self
@@ -409,6 +411,8 @@ impl Ingredient {
             ? "thumbnail": $hashed-uri-map, ; hashed_uri reference to a thumbnail in a data box
             ? "description": tstr .size (1..max-tstr-length), ; Additional description of the ingredient
             ? "informationalURI": tstr .size (1..max-tstr-length), ; URI to an informational page about the ingredient or its data
+            ? "softBindingsMatched": bool, ; Whether soft bindings were matched
+            ? "softBindingAlgorithmsMatched": [1* tstr] ; Array of algorithm names used for discovering the active manifest
             ? "metadata": $assertion-metadata-map ; additional information about the assertion
         */
 
@@ -455,6 +459,12 @@ impl Ingredient {
         if self.informational_uri.is_some() {
             ingredient_map_len += 1
         }
+        if self.soft_bindings_matched.is_some() {
+            ingredient_map_len += 1
+        }
+        if self.soft_binding_algorithms_matched.is_some() {
+            ingredient_map_len += 1
+        }
         if self.metadata.is_some() {
             ingredient_map_len += 1
         }
@@ -497,6 +507,12 @@ impl Ingredient {
         }
         if let Some(info) = &self.informational_uri {
             ingredient_map.serialize_field("informationalURI", info)?;
+        }
+        if let Some(sbm) = &self.soft_bindings_matched {
+            ingredient_map.serialize_field("softBindingsMatched", sbm)?;
+        }
+        if let Some(sba) = &self.soft_binding_algorithms_matched {
+            ingredient_map.serialize_field("softBindingAlgorithmsMatched", sba)?;
         }
         if let Some(md) = &self.metadata {
             ingredient_map.serialize_field("metadata", md)?;
@@ -578,7 +594,7 @@ impl AssertionBase for Ingredient {
             "metadata",
         ];
 
-        static V3_FIELDS: [&str; 13] = [
+        static V3_FIELDS: [&str; 15] = [
             "dc:title",
             "dc:format",
             "relationship",
@@ -591,6 +607,8 @@ impl AssertionBase for Ingredient {
             "thumbnail",
             "description",
             "informationalURI",
+            "softBindingsMatched",
+            "softBindingAlgorithmsMatched",
             "metadata",
         ];
 
@@ -641,7 +659,8 @@ impl AssertionBase for Ingredient {
                 let thumbnail: Option<HashedUri> = map_cbor_to_type("thumbnail", &ingredient_value);
                 let validation_status: Option<Vec<ValidationStatus>> =
                     map_cbor_to_type("validationStatus", &ingredient_value);
-                let metadata: Option<Metadata> = map_cbor_to_type("metadata", &ingredient_value);
+                let metadata: Option<AssertionMetadata> =
+                    map_cbor_to_type("metadata", &ingredient_value);
 
                 Ingredient {
                     title: Some(title),
@@ -707,7 +726,8 @@ impl AssertionBase for Ingredient {
                     map_cbor_to_type("description", &ingredient_value);
                 let informational_uri: Option<String> =
                     map_cbor_to_type("informational_URI", &ingredient_value);
-                let metadata: Option<Metadata> = map_cbor_to_type("metadata", &ingredient_value);
+                let metadata: Option<AssertionMetadata> =
+                    map_cbor_to_type("metadata", &ingredient_value);
 
                 Ingredient {
                     title: Some(title),
@@ -774,7 +794,12 @@ impl AssertionBase for Ingredient {
                     map_cbor_to_type("description", &ingredient_value);
                 let informational_uri: Option<String> =
                     map_cbor_to_type("informationalURI", &ingredient_value);
-                let metadata: Option<Metadata> = map_cbor_to_type("metadata", &ingredient_value);
+                let soft_bindings_matched: Option<bool> =
+                    map_cbor_to_type("softBindingsMatched", &ingredient_value);
+                let soft_binding_algorithms_matched: Option<Vec<String>> =
+                    map_cbor_to_type("softBindingAlgorithmsMatched", &ingredient_value);
+                let metadata: Option<AssertionMetadata> =
+                    map_cbor_to_type("metadata", &ingredient_value);
 
                 Ingredient {
                     title,
@@ -790,6 +815,8 @@ impl AssertionBase for Ingredient {
                     data_types,
                     active_manifest,
                     claim_signature,
+                    soft_bindings_matched,
+                    soft_binding_algorithms_matched,
                     version,
                     ..Default::default()
                 }
@@ -960,7 +987,7 @@ pub mod tests {
             );
 
         let ingredient_deltas = IngredientDeltaValidationResult::new(
-            "self#jumbf=c2pa/urn:c2pa:5E7B01FC-4932-4BAB-AB32-D4F12A8AA322/c2pa.assertions/c2pa.ingredient.v3", 
+            "self#jumbf=c2pa/urn:c2pa:5E7B01FC-4932-4BAB-AB32-D4F12A8AA322/c2pa.assertions/c2pa.ingredient.v3",
             StatusCodes::default()
                 .add_failure_val(ValidationStatus::new("assertion.hashedURI.mismatch")
                     .set_url("self#jumbf=c2pa/urn:c2pa:F095F30E-6CD5-4BF7-8C44-CE8420CA9FB7/c2pa.assertions/c2pa.metadata"))
@@ -972,7 +999,7 @@ pub mod tests {
 
         let review_rating = ReviewRating::new("Content bindings validated", None, 5);
 
-        let metadata = Metadata::new()
+        let metadata = AssertionMetadata::new()
             .set_date_time("2021-06-28T16:49:32.874Z".to_owned())
             .add_review(review_rating);
 
@@ -983,7 +1010,7 @@ pub mod tests {
 
         let mut all_vals = Ingredient {
             title: Some("test_title".to_owned()),
-            format: Some("image/jpg".to_owned()),
+            format: Some("image/jpeg".to_owned()),
             document_id: Some("12345".to_owned()),
             instance_id: Some("67890".to_owned()),
             c2pa_manifest: Some(HashedUri::new("self#jumbf=c2pa/urn:c2pa:5E7B01FC-4932-4BAB-AB32-D4F12A8AA322".to_owned(), Some("sha256".to_owned()), &[1,2,3,4,5,6,7,8,9,0])),
@@ -998,6 +1025,8 @@ pub mod tests {
             validation_results: Some(validation_results.clone()),
             active_manifest: Some(HashedUri::new("self#jumbf=c2pa/urn:c2pa:5E7B01FC-4932-4BAB-AB32-D4F12A8AA322".to_owned(), Some("sha256".to_owned()), &[1,2,3,4,5,6,7,8,9,0])),
             claim_signature: Some(HashedUri::new("self#jumbf=c2pa/urn:c2pa:5E7B01FC-4932-4BAB-AB32-D4F12A8AA322/c2pa.signature".to_owned(), Some("sha256".to_owned()), &[1,2,3,4,5,6,7,8,9,0])),
+            soft_bindings_matched: Some(true),
+            soft_binding_algorithms_matched: Some(vec!["alg1".to_owned(), "alg2".to_owned()]),
             version: 1,
         };
 
@@ -1016,7 +1045,7 @@ pub mod tests {
         let v1_decoded = Ingredient::from_assertion(&v1).unwrap();
         let v1_expected = Ingredient {
             title: Some("test_title".to_owned()),
-            format: Some("image/jpg".to_owned()),
+            format: Some("image/jpeg".to_owned()),
             document_id: Some("12345".to_owned()),
             instance_id: Some("67890".to_owned()),
             c2pa_manifest: Some(HashedUri::new("self#jumbf=c2pa/urn:c2pa:5E7B01FC-4932-4BAB-AB32-D4F12A8AA322".to_owned(), Some("sha256".to_owned()), &[1,2,3,4,5,6,7,8,9,0])),
@@ -1036,7 +1065,7 @@ pub mod tests {
         let v2_decoded = Ingredient::from_assertion(&v2).unwrap();
         let v2_expected = Ingredient {
             title: Some("test_title".to_owned()),
-            format: Some("image/jpg".to_owned()),
+            format: Some("image/jpeg".to_owned()),
             document_id: Some("12345".to_owned()),
             instance_id: Some("67890".to_owned()),
             c2pa_manifest: Some(HashedUri::new("self#jumbf=c2pa/urn:c2pa:5E7B01FC-4932-4BAB-AB32-D4F12A8AA322".to_owned(), Some("sha256".to_owned()), &[1,2,3,4,5,6,7,8,9,0])),
@@ -1060,7 +1089,7 @@ pub mod tests {
         let v3_decoded = Ingredient::from_assertion(&v3).unwrap();
         let v3_expected = Ingredient {
             title: Some("test_title".to_owned()),
-            format: Some("image/jpg".to_owned()),
+            format: Some("image/jpeg".to_owned()),
             instance_id: Some("67890".to_owned()),
             relationship: Relationship::ParentOf,
             thumbnail: Some(HashedUri::new("self#jumbf=c2pa/urn:c2pa:5E7B01FC-4932-4BAB-AB32-D4F12A8AA322/c2pa.thumbnail.ingredient_1.jpg".to_owned(), Some("sha256".to_owned()), &[1,2,3,4,5,6,7,8,9,0])),
@@ -1072,6 +1101,8 @@ pub mod tests {
             validation_results: Some(validation_results),
             active_manifest: Some(HashedUri::new("self#jumbf=c2pa/urn:c2pa:5E7B01FC-4932-4BAB-AB32-D4F12A8AA322".to_owned(), Some("sha256".to_owned()), &[1,2,3,4,5,6,7,8,9,0])),
             claim_signature: Some(HashedUri::new("self#jumbf=c2pa/urn:c2pa:5E7B01FC-4932-4BAB-AB32-D4F12A8AA322/c2pa.signature".to_owned(), Some("sha256".to_owned()), &[1,2,3,4,5,6,7,8,9,0])),
+            soft_bindings_matched: Some(true),
+            soft_binding_algorithms_matched: Some(vec!["alg1".to_owned(), "alg2".to_owned()]),
             version: 3,
             ..Default::default()
         };
