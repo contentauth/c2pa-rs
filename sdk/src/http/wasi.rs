@@ -14,7 +14,7 @@
 // TODO: Switch to reqwest_blocking once it supports WASI https://github.com/contentauth/c2pa-rs/issues/1377
 #[cfg(all(target_os = "wasi", feature = "http_wasi"))]
 pub mod sync_impl {
-    use std::io::{self, Read};
+    use std::io::{self, Read, Write};
 
     use http::{header, Method, Request, Response};
     use wasi::{
@@ -110,8 +110,8 @@ pub mod sync_impl {
             {
                 // Note that this MUST be dropped before `OutgoingBody::finish` is called
                 // or else there will be a panic.
-                let stream = body.write().map_err(|_| WasiError)?;
-                stream.blocking_write_and_flush(request.body())?;
+                let mut stream = body.write().map_err(|_| WasiError)?;
+                stream.write_all(request.body())?;
             }
             OutgoingBody::finish(body, None)?;
 
