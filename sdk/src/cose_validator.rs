@@ -245,6 +245,7 @@ pub(crate) fn get_signing_info(
 pub mod tests {
     use ciborium::Value;
     use coset::Label;
+    #[allow(deprecated)]
     use sha2::digest::generic_array::sequence::Shorten;
     use x509_parser::{certificate::X509Certificate, pem::Pem};
 
