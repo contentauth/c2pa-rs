@@ -25,7 +25,9 @@
 //! The library has a Builder/Reader API that focuses on simplicity
 //! and stream support.
 //!
-//! ## Example: Reading a ManifestStore
+//! # Examples
+//!
+//! ## Reading a manifest
 //!
 //! ```
 //! # use c2pa::Result;
@@ -46,7 +48,7 @@
 //! # }
 //! ```
 //!
-//! ## Example: Adding a Manifest to a file
+//! ## Adding a manifest to a file
 //!
 //! ```ignore-wasm32
 //! # use c2pa::Result;
@@ -87,28 +89,32 @@
 //! # }
 //! ```
 //!
-//! ## WASM
+//! # WASM
 //!
 //! The only supported HTTP features for WASM (not WASI) are `http_reqwest`. This means WASM
 //! only supports the async API for network requests.
 //!
-//! ### WASI
+//! ## WASI
 //!
 //! The only supported HTTP features for WASI are `http_wasi` and `http_wstd`. The former
 //! enables sync network requests, while the latter enables async network requests.
 //!
-//! ## Features
+//! # Features
 //!
-//! The following are a list of features that can be enabled or disabled:
+//! You can enable any of the following features:
 //!
-//! - **openssl** *(enabled by default)*: Enables the system `openssl` implementation for cryptography.
-//! - **rust_native_crypto**: Enables the Rust native implementation for cryptography.
+//! - **openssl** *(enabled by default)*: Use the vendored `openssl` implementation for cryptography.
+//! - **rust_native_crypto**: Use Rust native cryptography.
+//! - **add_thumbnails**: Adds the [`image`](https://github.com/image-rs/image) crate to enable auto-generated thumbnails, if possible and enabled in settings.
+//! - **fetch_remote_manifests**: Fetches remote manifests over the network when no embedded manifest is present and that option is enabled in settings.
+//! - **file_io**: Enables APIs that use filesystem I/O.
+//! - **json_schema**: Adds the [`schemars`](https://github.com/GREsau/schemars) crate to derive JSON schemas for JSON-compatible structs.
+//! - **pdf**: Enables basic PDF read support.
 //! - **http_ureq** *(enabled by default)*: Enables `ureq` for sync HTTP requests.
 //! - **http_reqwest** *(enabled by default)*: Enables `reqwest` for async HTTP requests.
 //! - **http_reqwest_blocking**: Enables the `blocking` feature of `reqwest` for sync HTTP requests.
 //! - **http_wasi** *(enabled by default)*: Enables `wasi` for sync HTTP requests on WASI.
 //! - **http_wstd** *(enabled by default)*: Enables `wstd` for async HTTP requests on WASI.
-// TODO: document other features...
 
 /// The internal name of the C2PA SDK
 pub const NAME: &str = "c2pa-rs";

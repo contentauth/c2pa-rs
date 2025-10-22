@@ -1911,6 +1911,11 @@ impl Claim {
         let sig = claim.signature_val();
         let additional_bytes: Vec<u8> = Vec::new();
 
+        let mut adjusted_settings = settings.clone();
+        if claim.version() == 1 {
+            adjusted_settings.verify.verify_timestamp_trust = false;
+        }
+
         // use the signature uri as the current uri while validating the signature info
         validation_log.push_current_uri(to_signature_uri(claim.label()));
 
@@ -1956,7 +1961,7 @@ impl Claim {
             svi.certificate_statuses.get(&certificate_serial_num),
             svi.timestamps.get(claim.label()),
             validation_log,
-            settings,
+            &adjusted_settings,
         )?;
 
         let verified = verify_cose(
@@ -1967,11 +1972,17 @@ impl Claim {
             ctp,
             svi.timestamps.get(claim.label()),
             validation_log,
-            settings,
+            &adjusted_settings,
         );
 
-        let result =
-            Claim::verify_internal(claim, asset_data, svi, verified, validation_log, settings);
+        let result = Claim::verify_internal(
+            claim,
+            asset_data,
+            svi,
+            verified,
+            validation_log,
+            &adjusted_settings,
+        );
         validation_log.pop_current_uri();
         result
     }

@@ -1,7 +1,7 @@
 use std::{fs, path::Path};
 
 use anyhow::Result;
-use c2pa::{Builder, ManifestDefinition, Reader};
+use c2pa::{settings::Settings, Builder, ManifestDefinition, Reader};
 use schemars::{schema::RootSchema, schema_for};
 
 fn write_schema(schema: &RootSchema, name: &str) {
@@ -24,9 +24,8 @@ fn main() -> Result<()> {
     let reader = schema_for!(Reader);
     write_schema(&reader, "Reader");
 
-    // TODO: no longer json, generate toml schema?
-    // let settings = schema_for!(Settings);
-    // write_schema(&settings, "Settings");
+    let settings = schema_for!(Settings);
+    write_schema(&settings, "Settings");
 
     Ok(())
 }

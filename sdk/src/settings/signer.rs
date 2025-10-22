@@ -29,11 +29,11 @@ use crate::{
 /// A [`Signer`] can be obtained by calling the [`signer()`] function.
 ///
 /// [`Signer`]: crate::Signer
-/// [`signer()`]: Builder::signer
-#[allow(unused)]
+/// [`signer()`]: crate::settings::Settings::signer
+#[cfg_attr(feature = "json_schema", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "lowercase")]
-pub(crate) enum SignerSettings {
+pub enum SignerSettings {
     /// A signer configured locally.
     Local {
         // Algorithm to use for signing.
@@ -62,9 +62,9 @@ pub(crate) enum SignerSettings {
 
 impl SignerSettings {
     // TODO: add async signer
-    /// Returns the constructed signer from the [BuilderSettings::signer] field.
+    /// Returns the constructed signer from the [Settings::signer] field.
     ///
-    /// If the signer settings aren't specified, this function will return [Error::MissingSignerSettings][crate::Error::MissingSignerSettings].
+    /// If the signer settings aren't specified, this function will return [Error::MissingSignerSettings].
     pub fn signer() -> Result<Box<dyn Signer>> {
         let c2pa_signer = Self::c2pa_signer()?;
 

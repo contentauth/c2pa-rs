@@ -298,7 +298,7 @@ fn check_stapled_ocsp_response(
             if check_end_entity_certificate_profile(
                 &ocsp_certs[0],
                 ctp,
-                validation_log,
+                &mut current_validation_log,
                 tst_info.as_ref(),
             )
             .is_err()
@@ -318,7 +318,7 @@ pub(crate) fn fetch_and_check_ocsp_response(
     sign1: &CoseSign1,
     data: &[u8],
     ctp: &CertificateTrustPolicy,
-    _tst_info: Option<&TstInfo>,
+    tst_info: Option<&TstInfo>,
     validation_log: &mut StatusTracker,
     settings: &Settings,
 ) -> Result<OcspResponse, CoseError> {
@@ -334,10 +334,13 @@ pub(crate) fn fetch_and_check_ocsp_response(
         return Ok(OcspResponse::default());
     };
 
-    let signing_time: Option<DateTime<Utc>> =
-        validate_cose_tst_info(sign1, data, ctp, validation_log, settings)
+    // use supplied override time if provided
+    let signing_time: Option<DateTime<Utc>> = match tst_info {
+        Some(tst_info) => Some(tst_info.gen_time.clone().into()),
+        None => validate_cose_tst_info(sign1, data, ctp, validation_log, settings)
             .ok()
-            .map(|tst_info| tst_info.gen_time.clone().into());
+            .map(|tst_info| tst_info.gen_time.clone().into()),
+    };
 
     // Check the OCSP response, but only if it is well-formed.
     // Revocation errors are reported in the validation log.
