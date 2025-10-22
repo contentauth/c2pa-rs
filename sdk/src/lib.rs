@@ -91,7 +91,7 @@
 //!
 //! # Features
 //!
-//! The following are a list of features that can be enabled or disabled:
+//! You can enable any of the following features:
 //!
 //! - **openssl** *(enabled by default)*: Use the vendored `openssl` implementation for cryptography.
 //! - **rust_native_crypto**: Use Rust native cryptography.
