@@ -1,0 +1,32 @@
+# C2PA Language Bindings Documentation
+
+## Update Bindings.md Task
+
+When asked to "update the bindings comparison" or similar, perform the following task:
+
+1. **Examine the current Reader and Builder methods** in `sdk/src/reader.rs` and `sdk/src/builder.rs`
+2. **Check each language binding** for method availability:
+   - `../c2pa-node-v2` - Node.js binding
+   - `../c2pa-js/packages/c2pa-web` - Web JavaScript binding  
+   - `../c2pa-c` - C++ binding
+   - `./c2pa_c_ffi` - C FFI binding
+   - `../c2pa-python` - Python binding
+
+3. **Update the comparison tables** in `docs/Bindings.md` with:
+   - ✅ = Method available
+   - ❌ = Method not available  
+   - N/A = Not applicable (e.g., file system access in browser environments)
+
+4. **Key considerations**:
+   - Web JS SDK cannot access files directly, so file-based methods should be N/A
+   - Archive methods (`to_archive`, `from_archive`) can work with buffers in web environments
+   - Different bindings may use different method names (e.g., `fromAsset` vs `from_stream`)
+   - Update coverage statistics and method notes accordingly
+
+5. **Focus on**:
+   - Reader methods from the Reader struct
+   - Builder methods from the Builder struct
+   - Accurate representation of what's actually available in each binding
+   - Clear distinction between unavailable vs not applicable methods
+
+This ensures the docs/Bindings.md document stays current with the evolving C2PA language bindings.
