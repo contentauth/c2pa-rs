@@ -833,8 +833,15 @@ impl Actions {
     }
 
     /// Adds an [`Action`] to this assertion's list of actions.
+    /// OPENED and CREATED actions are inserted at the beginning of the list.
+    /// as required by the c2pa specification.
+    /// Note, this does not check for duplicates since it does not return errors.
     pub fn add_action(mut self, action: Action) -> Self {
-        self.actions.push(action);
+        if action.action() == c2pa_action::OPENED || action.action() == c2pa_action::CREATED {
+            self.actions.insert(0, action);
+        } else {
+            self.actions.push(action);
+        }
         self
     }
 
@@ -862,7 +869,7 @@ impl Actions {
 impl AssertionCbor for Actions {}
 
 impl AssertionBase for Actions {
-    const LABEL: &'static str = labels::ACTIONS;
+    const LABEL: &'static str = Self::LABEL;
     const VERSION: Option<usize> = Some(ASSERTION_CREATION_VERSION);
 
     fn version(&self) -> Option<usize> {

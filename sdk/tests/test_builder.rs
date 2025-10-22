@@ -329,6 +329,99 @@ fn test_dynamic_assertions_builder() -> Result<()> {
 }
 
 #[test]
+fn test_assertion_created_field() -> Result<()> {
+    use serde_json::json;
+
+    Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml"))?;
+
+    const TEST_IMAGE: &[u8] = include_bytes!("fixtures/CA.jpg");
+    let format = "image/jpeg";
+    let mut source = Cursor::new(TEST_IMAGE);
+
+    let definition = json!(
+    {
+        "assertions": [
+        {
+            "label": "org.test.gathered",
+            "data": {
+                "value": "gathered"
+            }
+        },
+        {
+            "label": "org.test.created",
+            "kind": "Json",
+            "data": {
+                "value": "created"
+            },
+            "created": true
+        }]
+    }
+    )
+    .to_string();
+
+    let mut builder = Builder::from_json(&definition)?;
+
+    // Add a regular assertion (should default to created = false)
+    builder.add_assertion("org.test.regular", &json!({"value": "regular"}))?;
+
+    // let created = json!({
+    //     "value": "created"
+    // });
+    // builder.add_assertion("org.test.created", &created)?;
+
+    // let gathered = json!({
+    //     "value": "gathered"
+    // });
+    // builder.add_assertion("org.test.gathered", &gathered)?;
+
+    let mut dest = Cursor::new(Vec::new());
+    builder.sign(&Settings::signer()?, format, &mut source, &mut dest)?;
+
+    dest.set_position(0);
+    let reader = Reader::from_stream(format, &mut dest)?;
+
+    // Verify the manifest was created successfully
+    assert_ne!(reader.validation_state(), ValidationState::Invalid);
+
+    let manifest = reader.active_manifest().unwrap();
+
+    // Find our test assertions
+    let regular_assertion = manifest
+        .assertions()
+        .iter()
+        .find(|a| a.label() == "org.test.regular")
+        .expect("Should find regular assertion");
+
+    let created_assertion = manifest
+        .assertions()
+        .iter()
+        .find(|a| a.label() == "org.test.created")
+        .expect("Should find created assertion");
+
+    let gathered_assertion = manifest
+        .assertions()
+        .iter()
+        .find(|a| a.label() == "org.test.gathered")
+        .expect("Should find gathered assertion");
+
+    // Verify the values are preserved correctly
+    assert_eq!(regular_assertion.value().unwrap()["value"], "regular");
+    assert_eq!(created_assertion.value().unwrap()["value"], "created");
+    assert_eq!(gathered_assertion.value().unwrap()["value"], "gathered");
+
+    assert_eq!(created_assertion.kind(), &ManifestAssertionKind::Json);
+    assert_eq!(gathered_assertion.kind(), &ManifestAssertionKind::Cbor);
+    assert_eq!(regular_assertion.kind(), &ManifestAssertionKind::Cbor);
+
+    // Test the created() method to verify the created field is preserved
+    assert!(!regular_assertion.created()); // add_assertion defaults to false
+    assert!(created_assertion.created()); // explicitly set to true
+    assert!(!gathered_assertion.created()); // explicitly set to false
+
+    Ok(())
+}
+
+#[test]
 fn test_metadata_formats_json_manifest() -> Result<()> {
     use c2pa::settings::Settings;
     Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml"))?;
