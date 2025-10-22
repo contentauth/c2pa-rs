@@ -11,15 +11,38 @@
 // specific language governing permissions and limitations under
 // each license.
 
+#[cfg(feature = "file_io")]
+use std::path::PathBuf;
 use std::{
     ffi::OsStr,
     io::{Read, Seek, SeekFrom, Write},
+    path::Path,
 };
 
 #[allow(unused)] // different code path for WASI
-use tempfile::{tempdir, Builder, NamedTempFile, TempDir};
+use tempfile::{tempdir, Builder, NamedTempFile, SpooledTempFile, TempDir};
 
-use crate::{Error, Result};
+use crate::{asset_io::rename_or_move, Error, Result};
+// Replace data at arbitrary location and len in a file.
+// start_location is where the replacement data will start
+// replace_len is how many bytes from source to replaced starting a start_location
+// data is the data that will be inserted at start_location
+#[allow(dead_code)]
+pub(crate) fn patch_data_in_file(
+    source_path: &Path,
+    start_location: u64,
+    replace_len: u64,
+    data: &[u8],
+) -> Result<()> {
+    let mut source = std::fs::File::open(source_path)?;
+    let mut dest = tempfile_builder("c2pa_temp")?;
+
+    patch_stream(&mut source, &mut dest, start_location, replace_len, data)?;
+
+    rename_or_move(dest, source_path)?;
+
+    Ok(())
+}
 
 // Insert data at arbitrary location in a stream.
 // location is from the start of the source stream
@@ -93,6 +116,31 @@ pub(crate) fn stream_len<R: Read + Seek + ?Sized>(reader: &mut R) -> Result<u64>
     }
 
     Ok(len)
+}
+
+/// Will create a [`Read`]-, [`Write`]-, and [`Seek`]-capable stream that will
+/// stay in memory unless a threshold size is exceeded.
+///
+/// # Parameters
+/// - `threshold`: Size (in MB) of stream beyond which an on-disk stream will be used.
+///    This threshold should be the one specified in settings under
+///    `core.backing_store_memory_threshold_in_mb`.
+///
+/// # Errors
+/// - Returns an error if the threshold value from settings is not valid.
+///
+/// # Note
+/// This will always return an in-memory stream when the compilation target doesn't
+/// support file I/O.
+#[cfg(target_arch = "wasm32")]
+pub(crate) fn stream_with_fs_fallback(_threshold: usize) -> impl Read + Write + Seek {
+    std::io::Cursor::new(Vec::new())
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn stream_with_fs_fallback(threshold: usize) -> impl Read + Write + Seek {
+    SpooledTempFile::new(threshold * 1024 * 1024)
+    // IMPORTANT: SpooledTempFile API is in bytes; this function's API is in MB.
 }
 
 // Returns a new Vec first making sure it can hold the desired capacity.  Fill
@@ -175,63 +223,27 @@ pub(crate) fn tempdirectory() -> Result<TempDir> {
     return tempdir().map_err(Error::IoError);
 }
 
-#[allow(unused)]
-#[cfg(target_os = "wasi")]
-pub fn wasm_remove_dir_all<P: AsRef<std::path::Path>>(path: P) -> Result<()> {
-    for entry in std::fs::read_dir(&path)? {
-        let entry = entry?;
-        let entry_path = entry.path();
-        // List initial entries for debugging
-        eprintln!("Initial entry: {}", entry_path.display());
-        if entry_path.is_file() || entry_path.is_symlink() {
-            eprintln!("Removing file {}", entry_path.display());
-            std::fs::remove_file(&entry_path).map_err(|e| {
-                eprintln!("Failed to remove file {}: {}", entry_path.display(), e);
-                e
-            })?;
-        } else if entry_path.is_dir() {
-            eprintln!("Removing directory: {}", entry_path.display());
-            wasm_remove_dir_all(&entry_path).map_err(|e| {
-                eprintln!("Failed to remove directory {}: {}", entry_path.display(), e);
-                e
-            })?;
-        }
+/// Convert a URI to a file path using PathBuf for better path handling.
+#[cfg(feature = "file_io")]
+pub fn uri_to_path(uri: &str, manifest_label: Option<&str>) -> PathBuf {
+    let mut path_str = uri.replace(':', "_");
+    if let Some(stripped) = path_str.strip_prefix("self#jumbf=") {
+        path_str = stripped.to_owned();
+    } else {
+        return PathBuf::from(path_str);
     }
 
-    // List remaining entries if the directory is still not empty
-    if let Ok(entries) = std::fs::read_dir(&path) {
-        for entry in entries {
-            if let Ok(entry) = entry {
-                eprintln!("Remaining entry before removal: {}", entry.path().display());
-            }
-        }
+    let mut path = PathBuf::from(path_str);
+
+    if let Ok(stripped) = path.strip_prefix("/c2pa/") {
+        path = stripped.to_path_buf();
+    } else if let Some(manifest_label) = manifest_label {
+        let mut new_path = PathBuf::from(manifest_label.replace(':', "_"));
+        new_path.push(path);
+        path = new_path;
     }
 
-    // Retry removing the directory if it fails
-    let mut retries = 3;
-    while retries > 0 {
-        match std::fs::remove_dir_all(&path) {
-            Ok(_) => return Ok(()),
-            Err(e) => {
-                eprintln!(
-                    "Failed to remove directory {}: {}. Retries left: {}",
-                    path.as_ref().display(),
-                    e,
-                    retries - 1
-                );
-                retries -= 1;
-                std::thread::sleep(std::time::Duration::from_millis(100));
-            }
-        }
-    }
-
-    Err(std::io::Error::new(
-        std::io::ErrorKind::Other,
-        format!(
-            "Failed to remove directory {} after retries",
-            path.as_ref().display()
-        ),
-    ))?
+    path
 }
 
 #[cfg(test)]
@@ -241,9 +253,44 @@ mod tests {
 
     use std::io::Cursor;
 
+    #[cfg(feature = "file_io")]
+    #[test]
+    fn test_uri_to_path() {
+        let uri = "self#jumbf=/c2pa/urn:uuid:b3386820-9994-4b58-926f-1c47b82504c4:contentauth/c2pa.assertions/c2pa.thumbnail.claim.jpeg";
+        let expected_path = "urn_uuid_b3386820-9994-4b58-926f-1c47b82504c4_contentauth/c2pa.assertions/c2pa.thumbnail.claim.jpeg";
+
+        assert_eq!(uri_to_path(uri, None), PathBuf::from(expected_path));
+        assert_eq!(
+            uri_to_path(expected_path, None),
+            PathBuf::from(expected_path)
+        );
+
+        let uri = "self#jumbf=c2pa.assertions/c2pa.thumbnail.claim";
+        let manifest_label = "test";
+        let expected_path = format!("{manifest_label}/c2pa.assertions/c2pa.thumbnail.claim");
+
+        assert_eq!(
+            uri_to_path(uri, Some(manifest_label)),
+            PathBuf::from(&expected_path)
+        );
+        assert_eq!(
+            uri_to_path(&expected_path, Some(manifest_label)),
+            PathBuf::from(expected_path)
+        );
+
+        // Test manifest label with colon replacement
+        let uri = "self#jumbf=c2pa.assertions/c2pa.thumbnail.claim";
+        let manifest_label_with_colon = "urn:uuid:test:label";
+        let expected_path_with_colon = "urn_uuid_test_label/c2pa.assertions/c2pa.thumbnail.claim";
+
+        assert_eq!(
+            uri_to_path(uri, Some(manifest_label_with_colon)),
+            PathBuf::from(expected_path_with_colon)
+        );
+    }
+
     //use env_logger;
     use super::*;
-
     #[test]
     fn test_patch_stream() {
         let source = "this is a very very good test";

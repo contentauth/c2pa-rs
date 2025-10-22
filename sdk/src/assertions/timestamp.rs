@@ -28,15 +28,13 @@ pub struct TimeStamp(HashMap<String, ByteBuf>);
 
 #[allow(dead_code)]
 impl TimeStamp {
-    /// Label prefix for an [`Actions`] assertion.
+    /// Label prefix for an [`Timestamp`] assertion.
     ///
-    /// See <https://c2pa.org/specifications/specifications/1.0/specs/C2PA_Specification.html#_actions>.
+    /// See <https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_actions>.
     pub const LABEL: &'static str = labels::TIMESTAMP;
 
-    pub fn new(label: &str, timestamp: &[u8]) -> Self {
-        let mut ts = TimeStamp(HashMap::new());
-        ts.0.insert(label.to_string(), ByteBuf::from(timestamp.to_vec()));
-        ts
+    pub fn new() -> Self {
+        TimeStamp(HashMap::new())
     }
 
     //
@@ -48,6 +46,43 @@ impl TimeStamp {
     /// Get the timestamp for a given manifest id
     pub fn get_timestamp(&self, manifest_id: &str) -> Option<&[u8]> {
         self.0.get(manifest_id).map(|buf| buf.as_ref())
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn send_timestamp_token_request(tsa_url: &str, message: &[u8]) -> Result<Vec<u8>> {
+        use crate::{
+            crypto::cose::CertificateTrustPolicy, settings::Settings,
+            status_tracker::StatusTracker, Error,
+        };
+
+        let body = crate::crypto::time_stamp::default_rfc3161_message(message)?;
+        let headers = None;
+
+        let bytes =
+            crate::crypto::time_stamp::default_rfc3161_request(tsa_url, headers, &body, message)
+                .map_err(|_e| Error::OtherError("timestamp token not found".into()))?;
+
+        // make sure it is a good response
+        let ctp = CertificateTrustPolicy::passthrough();
+        let mut tracker = StatusTracker::default();
+
+        // TODO: separate verifying time stamp and verifying time stamp trust into separate functions?
+        //       do we need to pass settings here at all if `ctp` is set to pasthrough anyways?
+        let mut settings = Settings::default();
+        settings.verify.verify_timestamp_trust = false;
+
+        crate::crypto::time_stamp::verify_time_stamp(
+            &bytes,
+            message,
+            &ctp,
+            &mut tracker,
+            &settings,
+        )?;
+
+        let token = crate::crypto::cose::timestamptoken_from_timestamprsp(&bytes)
+            .ok_or(Error::OtherError("timestamp token not found".into()))?;
+
+        Ok(token)
     }
 }
 

@@ -11,7 +11,7 @@ The new API focuses on streaming I/O and supports the following structs:
 - [Reader](https://docs.rs/c2pa/latest/c2pa/struct.Reader.html)
 - [ManifestDefinition](https://docs.rs/c2pa/latest/c2pa/struct.ManifestDefinition.html)
 
-### API Changes for C2PA 2.1
+### API Changes for C2PA 2.2
 
 `Reader` has some new methods: 
 - `validation_state()` returns `ValidationState`, which can be `Invalid`, `Valid` or `Trusted`. Use this method instead of checking for `validation_status() = None`.
@@ -24,15 +24,12 @@ An `AssetType` assertion is now supported.
 
 ### C2PA v2 claims
 
-**NOTE**: The library now supports [C2PA v2 claims](https://c2pa.org/specifications/specifications/2.1/specs/C2PA_Specification.html#_claims), however development is still in progress and all features are not fully implemented yet. While you can experiment with this functionality, it is not recommended for production use at this time.
+**NOTE**: The library now supports [C2PA v2 claims](https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_claims) by default. V2 claims have many new checks and status codes.  Additionally:
 
-To generate v2 claims, set the `Builder` manifest definition `claim_version` field to `2`.
+- The `title()` and `format()` methods of both `Manifest` and `Ingredient` objects now return an `Option<String>` because in v2 claims, `title` is optional and `format` does not exist.
+- The first `action` must be `c2pa.created` or `c2pa.opened` (which requires an ingredient). 
 
-The `title()` and `format()` methods of both `Manifest` and `Ingredient` objects now return an `Option<String>` because in v2 claims, `title` is optional and `format` does not exist.
-
-In v2 claims, the first `action` must be `c2pa.created` or `c2pa.opened`. 
-
-V2 claims have many new checks and status codes.
+WARNING: Implementations should not generate deprecated v1 claims.  If needed, though, you can generate v1 claims by setting the `Builder` manifest definition `claim_version` field to `1`.
 
 ### Using the old API
 
@@ -41,6 +38,8 @@ To use the old deprecated API, enable the `v1_api` feature; for example:
 ```
 c2pa = {version="0.45.2", features=["v1_api"]}
 ```
+
+This will be the last release with the `v1_api` feature available.
 
 ## Language binding support
 
@@ -74,12 +73,12 @@ c2pa = {version="0.45.2", features=["v1_api"]}
  |                | sign_fragmented_files              |      |        |      |       | 
  |                | sign_file                          |   X  |    X   |      |       | 
  | Reader         |                                    |      |        |      |       | 
- |                | from_stream                        |      |    X   |      |       | 
+ |                | from_stream                        |   X  |    X   |      |       | 
  |                | from_stream_async                  |      |        |      |       | 
- |                | from_file                          |      |    X   |      |       | 
+ |                | from_file                          |   X  |    X   |      |       | 
  |                | from_file_async                    |      |        |      |       | 
  |                | from_json                          |      |        |      |       | 
- |                | from_manifest_data_and_stream      |      |    X   |      |       | 
+ |                | from_manifest_data_and_stream      |   X  |    X   |      |       | 
  |                | from_manifest_data_and_stream_async|      |        |      |       | 
  |                | from_fragment                      |      |        |      |       | 
  |                | from_fragment_async                |      |        |      |       | 

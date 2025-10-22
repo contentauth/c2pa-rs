@@ -159,15 +159,22 @@ fn get_cai_segments(jpeg: &img_parts::jpeg::Jpeg) -> Result<Vec<usize>> {
 }
 
 // delete cai segments
-fn delete_cai_segments(jpeg: &mut img_parts::jpeg::Jpeg) -> Result<()> {
+fn delete_cai_segments(jpeg: &mut img_parts::jpeg::Jpeg) -> Result<Option<usize>> {
     let cai_segs = get_cai_segments(jpeg)?;
     let jpeg_segs = jpeg.segments_mut();
+
+    let insertion_point = if !cai_segs.is_empty() {
+        Some(cai_segs[0])
+    } else {
+        None
+    };
 
     // remove cai segments
     for seg in cai_segs.iter().rev() {
         jpeg_segs.remove(*seg);
     }
-    Ok(())
+
+    Ok(insertion_point)
 }
 
 pub struct JpegIO {}
@@ -276,7 +283,10 @@ impl CAIWriter for JpegIO {
         let mut jpeg = Jpeg::from_bytes(buf.into()).map_err(|_err| Error::EmbeddingError)?;
 
         // remove existing CAI segments
-        delete_cai_segments(&mut jpeg)?;
+        let insertion_point = match delete_cai_segments(&mut jpeg)? {
+            Some(i) if i > 0 => i - 1,
+            _ => 0,
+        };
 
         let jumbf_len = store_bytes.len();
         let num_segments = (jumbf_len / MAX_JPEG_MARKER_SIZE) + 1;
@@ -323,8 +333,9 @@ impl CAIWriter for JpegIO {
 
             let seg_bytes = Bytes::from(seg_data);
             let app11_segment = JpegSegment::new_with_contents(markers::APP11, seg_bytes);
-            if seg <= jpeg.segments().len() {
-                jpeg.segments_mut().insert(seg, app11_segment); // we put this in the beginning...
+            if seg + insertion_point <= jpeg.segments().len() {
+                jpeg.segments_mut()
+                    .insert(seg + insertion_point, app11_segment); // we put this in the beginning...
             } else {
                 return Err(Error::InvalidAsset("JPEG JUMBF segment error".to_owned()));
             }
@@ -359,6 +370,12 @@ impl CAIWriter for JpegIO {
             .map_err(|e| Error::OtherError(Box::new(e)))?
             .ok_or(Error::UnsupportedType)?;
 
+        let mut cai_loc = HashObjectPositions {
+            offset: 0,
+            length: 0,
+            htype: HashBlockObjectType::Cai,
+        };
+
         match dimg {
             DynImage::Jpeg(jpeg) => {
                 for seg in jpeg.segments() {
@@ -377,13 +394,7 @@ impl CAIWriter for JpegIO {
 
                                 if cai_seg_cnt > 0 && is_cai_continuation {
                                     cai_seg_cnt += 1;
-
-                                    let v = HashObjectPositions {
-                                        offset: curr_offset,
-                                        length: seg.len_with_entropy(),
-                                        htype: HashBlockObjectType::Cai,
-                                    };
-                                    positions.push(v);
+                                    cai_loc.length += seg.len_with_entropy();
                                 } else {
                                     // check if this is a CAI JUMBF block
                                     let jumb_type = raw_vec
@@ -397,13 +408,8 @@ impl CAIWriter for JpegIO {
                                         cai_seg_cnt = 1;
                                         cai_en.clone_from(&en); // store the identifier
 
-                                        let v = HashObjectPositions {
-                                            offset: curr_offset,
-                                            length: seg.len_with_entropy(),
-                                            htype: HashBlockObjectType::Cai,
-                                        };
-
-                                        positions.push(v);
+                                        cai_loc.offset = curr_offset;
+                                        cai_loc.length += seg.len_with_entropy();
                                     } else {
                                         // save other for completeness sake
                                         let v = HashObjectPositions {
@@ -441,6 +447,10 @@ impl CAIWriter for JpegIO {
                 }
             }
             _ => return Err(Error::InvalidAsset("Unknown image format".to_owned())),
+        }
+
+        if cai_loc.length > 0 {
+            positions.push(cai_loc);
         }
 
         Ok(positions)
@@ -620,7 +630,7 @@ impl RemoteRefEmbed for JpegIO {
                     .unwrap_or((None, MIN_XMP));
 
                 // add provenance and JPEG XMP prefix
-                let xmp = format!("{XMP_SIGNATURE}\0 {}", add_provenance(xmp, &manifest_uri)?);
+                let xmp = format!("{XMP_SIGNATURE}\0{}", add_provenance(xmp, &manifest_uri)?);
                 let segment = JpegSegment::new_with_contents(markers::APP1, Bytes::from(xmp));
                 // insert or add the segment
                 match xmp_index {
@@ -769,8 +779,9 @@ fn make_box_maps(input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>> {
                     names: vec!["EOI".to_string()],
                     alg: None,
                     hash: ByteBuf::from(Vec::new()),
+                    excluded: None,
                     pad: ByteBuf::from(Vec::new()),
-                    range_start: seg.position,
+                    range_start: seg.position as u64,
                     range_len: 0,
                 };
 
@@ -781,8 +792,9 @@ fn make_box_maps(input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>> {
                     names: vec!["SOI".to_string()],
                     alg: None,
                     hash: ByteBuf::from(Vec::new()),
+                    excluded: None,
                     pad: ByteBuf::from(Vec::new()),
-                    range_start: seg.position,
+                    range_start: seg.position as u64,
                     range_len: 0,
                 };
 
@@ -806,7 +818,7 @@ fn make_box_maps(input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>> {
                         cai_seg_cnt += 1;
 
                         if let Some(cai_bm) = box_maps.get_mut(cai_index) {
-                            cai_bm.range_len += raw_bytes.len() + 4;
+                            cai_bm.range_len += (raw_bytes.len() + 4) as u64;
                         } else {
                             return Err(Error::InvalidAsset(
                                 "CAI segment index out of bounds".to_string(),
@@ -830,9 +842,10 @@ fn make_box_maps(input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>> {
                                 names: vec![C2PA_BOXHASH.to_string()],
                                 alg: None,
                                 hash: ByteBuf::from(Vec::new()),
+                                excluded: None,
                                 pad: ByteBuf::from(Vec::new()),
-                                range_start: seg.position,
-                                range_len: raw_bytes.len() + 4,
+                                range_start: seg.position as u64,
+                                range_len: (raw_bytes.len() + 4) as u64,
                             };
 
                             box_maps.push(c2pa_bm);
@@ -846,8 +859,9 @@ fn make_box_maps(input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>> {
                                 names: vec![name.to_string()],
                                 alg: None,
                                 hash: ByteBuf::from(Vec::new()),
+                                excluded: None,
                                 pad: ByteBuf::from(Vec::new()),
-                                range_start: seg.position,
+                                range_start: seg.position as u64,
                                 range_len: 0,
                             };
 
@@ -868,8 +882,9 @@ fn make_box_maps(input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>> {
                     names: vec![name.to_string()],
                     alg: None,
                     hash: ByteBuf::from(Vec::new()),
+                    excluded: None,
                     pad: ByteBuf::from(Vec::new()),
-                    range_start: seg.position,
+                    range_start: seg.position as u64,
                     range_len: 0,
                 };
 
@@ -880,8 +895,9 @@ fn make_box_maps(input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>> {
                     names: vec!["APP0".to_string()],
                     alg: None,
                     hash: ByteBuf::from(Vec::new()),
+                    excluded: None,
                     pad: ByteBuf::from(Vec::new()),
-                    range_start: seg.position,
+                    range_start: seg.position as u64,
                     range_len: 0,
                 };
 
@@ -892,8 +908,9 @@ fn make_box_maps(input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>> {
                     names: vec!["DQT".to_string()],
                     alg: None,
                     hash: ByteBuf::from(Vec::new()),
+                    excluded: None,
                     pad: ByteBuf::from(Vec::new()),
-                    range_start: seg.position,
+                    range_start: seg.position as u64,
                     range_len: 0,
                 };
 
@@ -904,8 +921,9 @@ fn make_box_maps(input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>> {
                     names: vec!["DHT".to_string()],
                     alg: None,
                     hash: ByteBuf::from(Vec::new()),
+                    excluded: None,
                     pad: ByteBuf::from(Vec::new()),
-                    range_start: seg.position,
+                    range_start: seg.position as u64,
                     range_len: 0,
                 };
 
@@ -916,8 +934,9 @@ fn make_box_maps(input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>> {
                     names: vec!["DAC".to_string()],
                     alg: None,
                     hash: ByteBuf::from(Vec::new()),
+                    excluded: None,
                     pad: ByteBuf::from(Vec::new()),
-                    range_start: seg.position,
+                    range_start: seg.position as u64,
                     range_len: 0,
                 };
 
@@ -932,8 +951,9 @@ fn make_box_maps(input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>> {
                     names: vec![name.to_string()],
                     alg: None,
                     hash: ByteBuf::from(Vec::new()),
+                    excluded: None,
                     pad: ByteBuf::from(Vec::new()),
-                    range_start: seg.position,
+                    range_start: seg.position as u64,
                     range_len: 0,
                 };
 
@@ -944,8 +964,9 @@ fn make_box_maps(input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>> {
                     names: vec!["SOS".to_string()],
                     alg: None,
                     hash: ByteBuf::from(Vec::new()),
+                    excluded: None,
                     pad: ByteBuf::from(Vec::new()),
-                    range_start: seg.position,
+                    range_start: seg.position as u64,
                     range_len: 0,
                 };
 
@@ -956,8 +977,9 @@ fn make_box_maps(input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>> {
                     names: vec!["DRI".to_string()],
                     alg: None,
                     hash: ByteBuf::from(Vec::new()),
+                    excluded: None,
                     pad: ByteBuf::from(Vec::new()),
-                    range_start: seg.position,
+                    range_start: seg.position as u64,
                     range_len: 0,
                 };
 
@@ -968,8 +990,9 @@ fn make_box_maps(input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>> {
                     names: vec![format!("RST{}", r.nr)],
                     alg: None,
                     hash: ByteBuf::from(Vec::new()),
+                    excluded: None,
                     pad: ByteBuf::from(Vec::new()),
-                    range_start: seg.position,
+                    range_start: seg.position as u64,
                     range_len: 0,
                 };
 
@@ -980,8 +1003,9 @@ fn make_box_maps(input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>> {
                     names: vec!["COM".to_string()],
                     alg: None,
                     hash: ByteBuf::from(Vec::new()),
+                    excluded: None,
                     pad: ByteBuf::from(Vec::new()),
-                    range_start: seg.position,
+                    range_start: seg.position as u64,
                     range_len: 0,
                 };
 
@@ -996,8 +1020,9 @@ fn make_box_maps(input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>> {
                     names: vec![name.to_string()],
                     alg: None,
                     hash: ByteBuf::from(Vec::new()),
+                    excluded: None,
                     pad: ByteBuf::from(Vec::new()),
-                    range_start: seg.position,
+                    range_start: seg.position as u64,
                     range_len: 0,
                 };
 
@@ -1020,12 +1045,12 @@ impl AssetBoxHash for JpegIO {
                 }
             }
 
-            input_stream.seek(std::io::SeekFrom::Start(bm.range_start as u64))?;
+            input_stream.seek(std::io::SeekFrom::Start(bm.range_start))?;
 
             let size = if bm.names.first().is_some_and(|name| name == "SOS") {
                 let mut size = get_seg_size(input_stream)?;
 
-                input_stream.seek(std::io::SeekFrom::Start((bm.range_start + size) as u64))?;
+                input_stream.seek(std::io::SeekFrom::Start(bm.range_start + size as u64))?;
 
                 size += get_entropy_size(input_stream)?;
 
@@ -1034,7 +1059,7 @@ impl AssetBoxHash for JpegIO {
                 get_seg_size(input_stream)?
             };
 
-            bm.range_len = size;
+            bm.range_len = size as u64;
         }
 
         Ok(box_maps)
@@ -1119,6 +1144,7 @@ pub mod tests {
 
     use std::io::{Read, Seek};
 
+    use c2pa_macros::c2pa_test_async;
     #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
     use wasm_bindgen_test::*;
 
@@ -1222,12 +1248,7 @@ pub mod tests {
         assert!(read_xmp.contains(test_msg));
     }
 
-    #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
-    #[cfg_attr(
-        all(target_arch = "wasm32", not(target_os = "wasi")),
-        wasm_bindgen_test
-    )]
-    #[allow(unused)] // not run for WASI
+    #[c2pa_test_async]
     async fn test_xmp_read_write_stream() {
         let source_bytes = include_bytes!("../../tests/fixtures/CA.jpg");
 

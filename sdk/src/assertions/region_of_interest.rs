@@ -1,12 +1,12 @@
 //! A set of structs to define a region of interest within an
-//! [`Action`][crate::assertions::Action] or [`Metadata`].
+//! [`Action`][crate::assertions::Action] or [`AssertionMetadata`].
 
 #[cfg(feature = "json_schema")]
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
 
-use super::Metadata;
+use super::AssertionMetadata;
 
 /// An x, y coordinate used for specifying vertices in polygons.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -233,8 +233,9 @@ pub enum Role {
 
 /// A region of interest within an asset describing the change.
 ///
-/// This struct can be used from [`Action::changes`][crate::assertions::Action::changes] or
-/// [`Metadata::region_of_interest`][crate::assertions::Metadata::region_of_interest].
+/// This struct can be used from [`Action::changes`][crate::assertions::Action::changes],
+/// [`AssertionMetadata::region_of_interest`][crate::assertions::AssertionMetadata::region_of_interest], or
+/// [`SoftBindingScope::region`][crate::assertions::soft_binding::SoftBindingScope::region].
 #[skip_serializing_none]
 #[derive(Debug, Default, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "json_schema", derive(JsonSchema))]
@@ -259,5 +260,5 @@ pub struct RegionOfInterest {
     // If we didn't have a box, `Metadata` would recursively use `RegionOfInterest` causing an infinite size error.
     //
     /// Additional information about the asset.
-    pub metadata: Option<Box<Metadata>>,
+    pub metadata: Option<Box<AssertionMetadata>>,
 }

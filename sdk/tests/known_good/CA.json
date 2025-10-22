@@ -50,7 +50,7 @@
           "kind": "Json"
         },
         {
-          "label": "c2pa.actions",
+          "label": "c2pa.actions.v2",
           "data": {
             "actions": [
               {
@@ -75,6 +75,7 @@
       "signature_info": {
         "alg": "Ps256",
         "issuer": "C2PA Test Signing Cert",
+        "common_name": "C2PA Signer",
         "cert_serial_number": "720724073027128164015125666832722375746636448153",
         "time": "2024-08-06T21:53:37+00:00"
       },
@@ -84,6 +85,11 @@
   "validation_results": {
     "activeManifest": {
       "success": [
+        {
+          "code": "timeStamp.validated",
+          "url": "self#jumbf=/c2pa/contentauth:urn:uuid:c2677d4b-0a93-4444-876f-ed2f2d40b8cf/c2pa.signature",
+          "explanation": "timestamp message digest matched: DigiCert Timestamp 2023"
+        },
         {
           "code": "claimSignature.insideValidity",
           "url": "self#jumbf=/c2pa/contentauth:urn:uuid:c2677d4b-0a93-4444-876f-ed2f2d40b8cf/c2pa.signature",
@@ -130,9 +136,31 @@
           "explanation": "data hash valid"
         }
       ],
-      "informational": [],
+      "informational": [
+        {
+          "code": "timeStamp.untrusted",
+          "url": "self#jumbf=/c2pa/contentauth:urn:uuid:c2677d4b-0a93-4444-876f-ed2f2d40b8cf/c2pa.signature",
+          "explanation": "timestamp cert untrusted: DigiCert Timestamp 2023"
+        }
+      ],
       "failure": []
-    }
+    },
+    "ingredientDeltas": [
+      {
+        "ingredientAssertionURI": "self#jumbf=/c2pa/contentauth:urn:uuid:c2677d4b-0a93-4444-876f-ed2f2d40b8cf/c2pa.assertions/c2pa.ingredient",
+        "validationDeltas": {
+          "success": [],
+          "informational": [
+            {
+              "code": "ingredient.unknownProvenance",
+              "url": "self#jumbf=/c2pa/contentauth:urn:uuid:c2677d4b-0a93-4444-876f-ed2f2d40b8cf/c2pa.assertions/c2pa.ingredient",
+              "explanation": "A.jpg: ingredient does not have provenance"
+            }
+          ],
+          "failure": []
+        }
+      }
+    ]
   },
   "validation_state": "Valid"
 }

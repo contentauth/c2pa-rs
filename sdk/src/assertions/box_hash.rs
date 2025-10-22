@@ -37,13 +37,17 @@ pub struct BoxMap {
     pub alg: Option<String>,
 
     pub hash: ByteBuf,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub excluded: Option<bool>,
+
     pub pad: ByteBuf,
 
     #[serde(skip)]
-    pub range_start: usize,
+    pub range_start: u64,
 
     #[serde(skip)]
-    pub range_len: usize,
+    pub range_len: u64,
 }
 
 /// Helper class to create BoxHash assertion
@@ -88,7 +92,8 @@ impl BoxHash {
             return Err(Error::HashMismatch("No box hash found".to_string()));
         }
 
-        // get source box list
+        // get source box list, the source list is returned expanded
+        // to show each box as an individual entry
         let source_bms = bhp.get_box_map(reader)?;
         let mut source_index = 0;
 
@@ -106,7 +111,7 @@ impl BoxHash {
 
             // build up current inclusion, consuming all names in this BoxMap
             let mut skip_c2pa = false;
-            let mut inclusion = HashRange::new(0, 0);
+            let mut inclusion = HashRange::new(0u64, 0u64);
             for name in &bm.names {
                 match source_bms.get(source_index) {
                     Some(next_source_bm) => {
@@ -148,7 +153,9 @@ impl BoxHash {
             }
 
             // C2PA chunks are skipped for hashing purposes
-            if skip_c2pa {
+            // or if the box is explicitly excluded
+            let exclude = bm.excluded.unwrap_or(false);
+            if skip_c2pa || exclude {
                 continue;
             }
 
@@ -186,6 +193,7 @@ impl BoxHash {
                 names: Vec::new(),
                 alg: Some(alg.to_string()),
                 hash: ByteBuf::from(vec![]),
+                excluded: None,
                 pad: ByteBuf::from(vec![]),
                 range_start: 0,
                 range_len: 0,
@@ -195,6 +203,7 @@ impl BoxHash {
                 names: Vec::new(),
                 alg: Some(alg.to_string()),
                 hash: ByteBuf::from(vec![]),
+                excluded: None,
                 pad: ByteBuf::from(vec![]),
                 range_start: 0,
                 range_len: 0,
@@ -204,6 +213,7 @@ impl BoxHash {
                 names: Vec::new(),
                 alg: Some(alg.to_string()),
                 hash: ByteBuf::from(vec![]),
+                excluded: None,
                 pad: ByteBuf::from(vec![]),
                 range_start: 0,
                 range_len: 0,
@@ -501,6 +511,7 @@ mod tests {
                     names: vec!["C2PA".to_string()],
                     alg: Some(alg.to_string()),
                     hash: ByteBuf::from(vec![0]),
+                    excluded: None,
                     pad: ByteBuf::from(vec![]),
                     range_start: 0,
                     range_len: 10,
@@ -510,6 +521,7 @@ mod tests {
                     names: vec!["test".to_string()],
                     alg: Some(alg.to_string()),
                     hash: ByteBuf::from(vec![0]),
+                    excluded: None,
                     pad: ByteBuf::from(vec![]),
                     range_start: 10,
                     range_len: 10,
@@ -546,6 +558,7 @@ mod tests {
                     names: vec!["test".to_string()],
                     alg: Some(alg.to_string()),
                     hash: ByteBuf::from(vec![0]),
+                    excluded: None,
                     pad: ByteBuf::from(vec![]),
                     range_start: 0,
                     range_len: 10,
@@ -555,6 +568,7 @@ mod tests {
                     names: vec!["C2PA".to_string()],
                     alg: Some(alg.to_string()),
                     hash: ByteBuf::from(vec![0]),
+                    excluded: None,
                     pad: ByteBuf::from(vec![]),
                     range_start: 10,
                     range_len: 10,
@@ -591,6 +605,7 @@ mod tests {
                     names: vec!["test".to_string()],
                     alg: Some(alg.to_string()),
                     hash: ByteBuf::from(vec![0]),
+                    excluded: None,
                     pad: ByteBuf::from(vec![]),
                     range_start: 0,
                     range_len: 10,
@@ -600,6 +615,7 @@ mod tests {
                     names: vec!["C2PA".to_string()],
                     alg: Some(alg.to_string()),
                     hash: ByteBuf::from(vec![0]),
+                    excluded: None,
                     pad: ByteBuf::from(vec![]),
                     range_start: 10,
                     range_len: 10,
@@ -608,6 +624,7 @@ mod tests {
                     names: vec!["test1".to_string()],
                     alg: Some(alg.to_string()),
                     hash: ByteBuf::from(vec![0]),
+                    excluded: None,
                     pad: ByteBuf::from(vec![]),
                     range_start: 20,
                     range_len: 10,

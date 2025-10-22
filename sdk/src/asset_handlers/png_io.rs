@@ -18,7 +18,6 @@ use std::{
 };
 
 use byteorder::{BigEndian, ReadBytesExt};
-use conv::ValueFrom;
 use png_pong::chunk::InternationalText;
 use serde_bytes::ByteBuf;
 
@@ -339,10 +338,10 @@ impl CAIWriter for PngIO {
         let mut iter = ps.into_iter();
         if let Some(existing_cai_data) = iter.find(|png_cp| png_cp.name == CAI_CHUNK) {
             // replace existing CAI data
-            let cai_start = usize::value_from(existing_cai_data.start)
+            let cai_start = usize::try_from(existing_cai_data.start)
                 .map_err(|_err| Error::InvalidAsset("value out of range".to_owned()))?; // get beginning of chunk which starts 4 bytes before label
 
-            let cai_end = usize::value_from(existing_cai_data.end())
+            let cai_end = usize::try_from(existing_cai_data.end())
                 .map_err(|_err| Error::InvalidAsset("value out of range".to_owned()))?;
 
             png_buf.splice(cai_start..cai_end, empty_buf.iter().cloned());
@@ -356,7 +355,7 @@ impl CAIWriter for PngIO {
 
         // add new cai data after the image header chunk
         if let Some(img_hdr) = iter.find(|png_cp| png_cp.name == IMG_HDR) {
-            let img_hdr_end = usize::value_from(img_hdr.end())
+            let img_hdr_end = usize::try_from(img_hdr.end())
                 .map_err(|_err| Error::InvalidAsset("value out of range".to_owned()))?;
 
             png_buf.splice(img_hdr_end..img_hdr_end, cai_data.iter().cloned());
@@ -450,10 +449,10 @@ impl CAIWriter for PngIO {
         let mut iter = ps.into_iter();
         if let Some(existing_cai) = iter.find(|pcp| pcp.name == CAI_CHUNK) {
             // replace existing CAI
-            let start = usize::value_from(existing_cai.start)
+            let start = usize::try_from(existing_cai.start)
                 .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?; // get beginning of chunk which starts 4 bytes before label
 
-            let end = usize::value_from(existing_cai.end())
+            let end = usize::try_from(existing_cai.end())
                 .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?;
 
             png_buf.splice(start..end, empty_buf.iter().cloned());
@@ -521,10 +520,10 @@ impl AssetIO for PngIO {
         let mut iter = ps.into_iter();
         if let Some(existing_cai) = iter.find(|pcp| pcp.name == CAI_CHUNK) {
             // replace existing CAI
-            let start = usize::value_from(existing_cai.start)
+            let start = usize::try_from(existing_cai.start)
                 .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?; // get beginning of chunk which starts 4 bytes before label
 
-            let end = usize::value_from(existing_cai.end())
+            let end = usize::try_from(existing_cai.end())
                 .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?;
 
             png_buf.splice(start..end, empty_buf.iter().cloned());
@@ -686,10 +685,10 @@ impl RemoteRefEmbed for PngIO {
                         .map_err(Error::IoError)?;
 
                     // replace existing XMP
-                    let xmp_start = usize::value_from(start)
+                    let xmp_start = usize::try_from(start)
                         .map_err(|_err| Error::InvalidAsset("value out of range".to_owned()))?; // get beginning of chunk which starts 4 bytes before label
 
-                    let xmp_end = usize::value_from(start + xmp_len as u64)
+                    let xmp_end = usize::try_from(start + xmp_len as u64)
                         .map_err(|_err| Error::InvalidAsset("value out of range".to_owned()))?;
 
                     png_buf.splice(xmp_start..xmp_end, xmp_data.iter().cloned());
@@ -722,6 +721,7 @@ impl AssetBoxHash for PngIO {
             names: vec!["PNGh".to_string()],
             alg: None,
             hash: ByteBuf::from(Vec::new()),
+            excluded: None,
             pad: ByteBuf::from(Vec::new()),
             range_start: 0,
             range_len: 8,
@@ -736,9 +736,10 @@ impl AssetBoxHash for PngIO {
                     names: vec![C2PA_BOXHASH.to_string()],
                     alg: None,
                     hash: ByteBuf::from(Vec::new()),
+                    excluded: None,
                     pad: ByteBuf::from(Vec::new()),
-                    range_start: pc.start as usize,
-                    range_len: (pc.length + 12) as usize, // length(4) + name(4) + crc(4)
+                    range_start: pc.start,
+                    range_len: pc.length as u64 + 12, // length(4) + name(4) + crc(4)
                 };
                 box_maps.push(c2pa_bm);
                 continue;
@@ -749,9 +750,10 @@ impl AssetBoxHash for PngIO {
                 names: vec![pc.name_str],
                 alg: None,
                 hash: ByteBuf::from(Vec::new()),
+                excluded: None,
                 pad: ByteBuf::from(Vec::new()),
-                range_start: pc.start as usize,
-                range_len: (pc.length + 12) as usize, // length(4) + name(4) + crc(4)
+                range_start: pc.start,
+                range_len: pc.length as u64 + 12, // length(4) + name(4) + crc(4)
             };
             box_maps.push(c2pa_bm);
         }

@@ -37,6 +37,9 @@ pub struct OcspResponse {
 
     /// OCSP certificate chain.
     pub ocsp_certs: Option<Vec<Vec<u8>>>,
+
+    /// Associated certificate serial number
+    pub certificate_serial_num: String,
 }
 
 impl Default for OcspResponse {
@@ -46,12 +49,16 @@ impl Default for OcspResponse {
             next_update: time::utc_now(),
             revoked_at: None,
             ocsp_certs: None,
+            certificate_serial_num: String::new(),
         }
     }
 }
 
 impl OcspResponse {
     /// Convert an OCSP response in DER format to `OcspResponse`.
+    /// The correct usage when there is no attested signing time
+    /// to pass a signing_time of None.  The OCSP responses the
+    /// follow the current time rules as outlined in the C2PA spec.
     pub(crate) fn from_der_checked(
         der: &[u8],
         signing_time: Option<DateTime<Utc>>,
@@ -103,6 +110,11 @@ impl OcspResponse {
         for single_response in &response_data.responses {
             let cert_status = &single_response.cert_status;
 
+            // Extract certificate serial number from cert_id
+            if output.certificate_serial_num.is_empty() {
+                output.certificate_serial_num = single_response.cert_id.serial_number.to_string();
+            }
+
             match cert_status {
                 CertStatus::Good => {
                     // check cert range against signing time
@@ -120,7 +132,8 @@ impl OcspResponse {
                             .and_utc()
                             .timestamp()
                     } else {
-                        this_update
+                        // use producedAt + 24hr when there is no nextUpdate
+                        response_data.produced_at.to_utc().timestamp() + (24 * 60 * 60)
                     };
 
                     // Was signing time within the acceptable range?
@@ -130,7 +143,8 @@ impl OcspResponse {
                     } else {
                         // If no signing time was provided, use current system time.
                         let now = time::utc_now().timestamp();
-                        now >= this_update && now <= next_update
+
+                        now >= this_update
                     };
 
                     if let Some(nu) = &single_response.next_update {
@@ -151,23 +165,33 @@ impl OcspResponse {
                         );
                     } else {
                         // As soon as we find one successful match, nothing else matters.
+                        log_item!(
+                            "OCSP_RESPONSE",
+                            "certificate not revoked",
+                            "check_ocsp_response"
+                        )
+                        .validation_status(validation_codes::SIGNING_CREDENTIAL_NOT_REVOKED)
+                        .success(validation_log);
+
                         return Ok(output);
                     }
                 }
 
                 CertStatus::Revoked(revoked_info) => {
-                    if let Some(reason) = revoked_info.revocation_reason {
-                        if reason == CrlReason::RemoveFromCRL {
-                            let revocation_time = &revoked_info.revocation_time;
+                    let revocation_time = &revoked_info.revocation_time;
 
-                            let revoked_at = NaiveDateTime::parse_from_str(
-                                &revocation_time.to_string(),
-                                DATE_FMT,
-                            )
+                    let revoked_at =
+                        NaiveDateTime::parse_from_str(&revocation_time.to_string(), DATE_FMT)
                             .map_err(|_e| OcspError::InvalidCertificate)?
                             .and_utc()
                             .timestamp();
 
+                    let revoked_at_native =
+                        NaiveDateTime::parse_from_str(&revocation_time.to_string(), DATE_FMT)
+                            .map_err(|_e| OcspError::InvalidCertificate)?;
+
+                    if let Some(reason) = revoked_info.revocation_reason {
+                        if reason == CrlReason::RemoveFromCRL {
                             // Was signing time prior to revocation?
                             let in_range = if let Some(st) = signing_time {
                                 revoked_at > st.timestamp()
@@ -178,16 +202,10 @@ impl OcspResponse {
                             };
 
                             if !in_range {
-                                let revoked_at_native = NaiveDateTime::parse_from_str(
-                                    &revocation_time.to_string(),
-                                    DATE_FMT,
-                                )
-                                .map_err(|_e| OcspError::InvalidCertificate)?;
-
                                 let utc_with_offset: DateTime<Utc> =
                                     DateTime::from_naive_utc_and_offset(revoked_at_native, Utc);
 
-                                let msg = format!("certificate revoked at: {}", utc_with_offset);
+                                let msg = format!("certificate revoked at: {utc_with_offset}");
 
                                 log_item!("OCSP_RESPONSE", msg, "check_ocsp_response")
                                     .validation_status(validation_codes::SIGNING_CREDENTIAL_REVOKED)
@@ -237,6 +255,7 @@ impl OcspResponse {
                                 ));
                             } else {
                                 // As soon as we find one successful match, we're done.
+                                output.revoked_at = None;
                                 return Ok(output);
                             }
                         }
@@ -251,10 +270,19 @@ impl OcspResponse {
                             &mut internal_validation_log,
                             OcspError::CertificateRevoked,
                         );
+                        output.revoked_at =
+                            Some(DateTime::from_naive_utc_and_offset(revoked_at_native, Utc));
                     }
                 }
 
-                CertStatus::Unknown(_) => return Err(OcspError::CertificateStatusUnknown),
+                CertStatus::Unknown(_) => {
+                    log_item!("OCSP_RESPONSE", "unknown certStatus", "check_ocsp_response")
+                        .validation_status(validation_codes::SIGNING_CREDENTIAL_OCSP_UNKNOWN)
+                        .failure_no_throw(
+                            &mut internal_validation_log,
+                            OcspError::CertificateStatusUnknown,
+                        );
+                }
             }
         }
 
@@ -288,11 +316,9 @@ pub(crate) enum OcspError {
 
 const DATE_FMT: &str = "%Y-%m-%d %H:%M:%S %Z";
 
-#[cfg(not(target_arch = "wasm32"))]
 mod fetch;
 
-#[cfg(not(target_arch = "wasm32"))]
-pub(crate) use fetch::fetch_ocsp_response;
+pub(crate) use fetch::{fetch_ocsp_response, fetch_ocsp_response_async};
 
 #[cfg(test)]
 mod tests {
@@ -304,7 +330,14 @@ mod tests {
     #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
     use wasm_bindgen_test::wasm_bindgen_test;
 
-    use crate::{crypto::ocsp::OcspResponse, status_tracker::StatusTracker};
+    use crate::{
+        crypto::ocsp::OcspResponse,
+        status_tracker::StatusTracker,
+        validation_status::{
+            SIGNING_CREDENTIAL_NOT_REVOKED, SIGNING_CREDENTIAL_OCSP_UNKNOWN,
+            SIGNING_CREDENTIAL_REVOKED,
+        },
+    };
 
     #[test]
     #[cfg_attr(
@@ -312,7 +345,7 @@ mod tests {
         wasm_bindgen_test
     )]
     fn good() {
-        let rsp_data = include_bytes!("../../../tests/fixtures/crypto/ocsp/good.data");
+        let rsp_data = include_bytes!("../../../tests/fixtures/crypto/ocsp/response_good.der");
 
         let mut validation_log = StatusTracker::default();
 
@@ -323,6 +356,7 @@ mod tests {
 
         assert_eq!(ocsp_data.revoked_at, None);
         assert!(ocsp_data.ocsp_certs.is_some());
+        assert!(validation_log.has_status(SIGNING_CREDENTIAL_NOT_REVOKED));
     }
 
     #[test]
@@ -331,7 +365,7 @@ mod tests {
         wasm_bindgen_test
     )]
     fn revoked() {
-        let rsp_data = include_bytes!("../../../tests/fixtures/crypto/ocsp/revoked.data");
+        let rsp_data = include_bytes!("../../../tests/fixtures/crypto/ocsp/response_revoked.der");
 
         let mut validation_log = StatusTracker::default();
 
@@ -341,6 +375,46 @@ mod tests {
             OcspResponse::from_der_checked(rsp_data, Some(test_time), &mut validation_log).unwrap();
 
         assert!(ocsp_data.revoked_at.is_some());
+        assert!(validation_log.has_status(SIGNING_CREDENTIAL_REVOKED));
+    }
+
+    #[test]
+    #[cfg_attr(
+        all(target_arch = "wasm32", not(target_os = "wasi")),
+        wasm_bindgen_test
+    )]
+    fn unknown() {
+        let rsp_data = include_bytes!("../../../tests/fixtures/crypto/ocsp/response_unknown.der");
+
+        let mut validation_log = StatusTracker::default();
+
+        let test_time = Utc.with_ymd_and_hms(2024, 2, 1, 8, 0, 0).unwrap();
+
+        let ocsp_data =
+            OcspResponse::from_der_checked(rsp_data, Some(test_time), &mut validation_log).unwrap();
+
+        assert!(ocsp_data.revoked_at.is_none());
         assert!(validation_log.has_any_error());
+        assert!(validation_log.has_status(SIGNING_CREDENTIAL_OCSP_UNKNOWN));
+    }
+
+    #[test]
+    #[cfg_attr(
+        all(target_arch = "wasm32", not(target_os = "wasi")),
+        wasm_bindgen_test
+    )]
+    fn validity() {
+        let rsp_data = include_bytes!("../../../tests/fixtures/crypto/ocsp/response_good.der");
+
+        let mut validation_log = StatusTracker::default();
+
+        let test_time = Utc.with_ymd_and_hms(2026, 2, 1, 8, 0, 0).unwrap();
+
+        let ocsp_data =
+            OcspResponse::from_der_checked(rsp_data, Some(test_time), &mut validation_log).unwrap();
+
+        assert!(ocsp_data.revoked_at.is_none());
+        assert!(validation_log.has_any_error());
+        assert!(validation_log.has_status(SIGNING_CREDENTIAL_REVOKED));
     }
 }

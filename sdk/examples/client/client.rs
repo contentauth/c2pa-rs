@@ -16,6 +16,7 @@
 use std::path::PathBuf;
 
 use anyhow::Result;
+#[allow(deprecated)]
 use c2pa::{
     assertions::{c2pa_action, labels, Action, Actions, CreativeWork, Exif, SchemaDotOrgPerson},
     create_signer,
@@ -49,6 +50,7 @@ fn show_manifest(reader: &Reader, manifest_label: &str, level: usize) -> Result<
                         println!("{}{}", indent, action.action());
                     }
                 }
+                #[allow(deprecated)]
                 labels::CREATIVE_WORK => {
                     let creative_work: CreativeWork = assertion.to_assertion()?;
                     if let Some(authors) = creative_work.author() {
@@ -114,10 +116,12 @@ pub fn main() -> Result<()> {
     // create an action assertion stating that we imported this file
     let actions = Actions::new().add_action(
         Action::new(c2pa_action::OPENED)
-            .set_parameter("ingredients", [parent.instance_id().to_owned()])?,
+            .set_parameter("ingredientIds", [parent.instance_id().to_owned()])?,
     );
 
     // build a creative work assertion
+    // TO DO: Replace this example.
+    #[allow(deprecated)]
     let creative_work =
         CreativeWork::new().add_author(SchemaDotOrgPerson::new().set_name("me")?)?;
 
@@ -140,6 +144,7 @@ pub fn main() -> Result<()> {
     builder.definition.claim_version = Some(2);
     let mut generator = ClaimGeneratorInfo::new(GENERATOR);
     generator.set_version("0.1");
+    #[allow(deprecated)]
     builder
         .set_claim_generator_info(generator)
         .add_ingredient(parent)

@@ -20,10 +20,13 @@ use coset::{
 
 use crate::{
     crypto::{
-        cose::{validate_cose_tst_info, validate_cose_tst_info_async, CoseError},
+        cose::{
+            validate_cose_tst_info, validate_cose_tst_info_async, CertificateTrustPolicy, CoseError,
+        },
         raw_signature::SigningAlg,
     },
     log_item,
+    settings::Settings,
     status_tracker::StatusTracker,
     validation_results::validation_codes::CLAIM_SIGNATURE_MISMATCH,
 };
@@ -175,13 +178,18 @@ fn cert_chain_from_cbor_value(value: Value) -> Result<Vec<Vec<u8>>, CoseError> {
 pub fn signing_time_from_sign1(
     sign1: &coset::CoseSign1,
     data: &[u8],
+    settings: &Settings,
 ) -> Option<chrono::DateTime<chrono::Utc>> {
     // get timestamp info if available
 
+    let mut local_log = StatusTracker::default();
+    // allow timestamp reading by using passthrough certificate check
+    let local_ctp = CertificateTrustPolicy::passthrough();
+
     let time_stamp_info = if _sync {
-        validate_cose_tst_info(sign1, data)
+        validate_cose_tst_info(sign1, data, &local_ctp, &mut local_log, settings)
     } else {
-        validate_cose_tst_info_async(sign1, data).await
+        validate_cose_tst_info_async(sign1, data, &local_ctp, &mut local_log, settings).await
     };
 
     if let Ok(tst_info) = time_stamp_info {

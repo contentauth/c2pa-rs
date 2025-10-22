@@ -16,34 +16,28 @@ use std::{
     collections::HashMap,
     io::{Read, Seek, Write},
 };
-#[cfg(feature = "file_io")]
-use std::{
-    fs::{create_dir_all, read, write},
-    path::{Path, PathBuf},
-};
 
 #[cfg(feature = "json_schema")]
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+#[cfg(feature = "file_io")]
+use {
+    crate::utils::io_utils::uri_to_path,
+    std::{
+        fs::{create_dir_all, read, write},
+        path::{Path, PathBuf},
+    },
+};
 
 use crate::{
-    assertions::{labels, AssetType},
+    assertions::{labels, AssetType, EmbeddedData},
     asset_io::CAIRead,
     claim::Claim,
     hashed_uri::HashedUri,
-    jumbf::labels::{assertion_label_from_uri, to_absolute_uri},
+    jumbf::labels::{assertion_label_from_uri, to_absolute_uri, DATABOXES},
+    utils::mime::format_to_mime,
     Error, Result,
 };
-
-/// Function that is used by serde to determine whether or not we should serialize
-/// resources based on the `serialize_resources` flag.
-/// (Serialization is disabled by default.)
-pub(crate) fn skip_serializing_resources(_: &ResourceStore) -> bool {
-    //TODO: Why is this disabled for wasm32?
-    !cfg!(feature = "serialize_thumbnails")
-        || cfg!(test)
-        || cfg!(not(all(target_arch = "wasm32", not(target_os = "wasi"))))
-}
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "json_schema", derive(JsonSchema))]
@@ -61,7 +55,17 @@ impl UriOrResource {
         match self {
             UriOrResource::ResourceRef(r) => {
                 let data = resources.get(&r.identifier)?;
-                let hash_uri = claim.add_databox(&r.format, data.to_vec(), None)?;
+                let hash_uri = match claim.version() {
+                    1 => claim.add_databox(&r.format, data.to_vec(), None)?,
+                    _ => {
+                        let icon_assertion = EmbeddedData::new(
+                            labels::ICON,
+                            format_to_mime(&r.format),
+                            data.to_vec(),
+                        );
+                        claim.add_assertion(&icon_assertion)?
+                    }
+                };
                 Ok(UriOrResource::HashedUri(hash_uri))
             }
             UriOrResource::HashedUri(h) => Ok(UriOrResource::HashedUri(h.clone())),
@@ -76,10 +80,24 @@ impl UriOrResource {
         match self {
             UriOrResource::ResourceRef(r) => Ok(UriOrResource::ResourceRef(r.clone())),
             UriOrResource::HashedUri(h) => {
-                let data_box = claim.get_databox(h).ok_or(Error::MissingDataBox)?;
+                let (format, data) = if h.url().contains(DATABOXES) {
+                    let data_box = claim.get_databox(h).ok_or(Error::MissingDataBox)?;
+                    (data_box.format.to_owned(), data_box.data.clone())
+                } else {
+                    let (label, instance) = Claim::assertion_label_from_link(&h.url());
+                    let assertion =
+                        claim
+                            .get_assertion(&label, instance)
+                            .ok_or(Error::AssertionMissing {
+                                url: h.url().to_string(),
+                            })?;
+                    (
+                        assertion.content_type().to_string(),
+                        assertion.data().to_vec(),
+                    )
+                };
                 let url = to_absolute_uri(claim.label(), &h.url());
-                let resource_ref =
-                    resources.add_with(&url, &data_box.format, data_box.data.clone())?;
+                let resource_ref = resources.add_with(&url, &format, data)?;
                 Ok(UriOrResource::ResourceRef(resource_ref))
             }
         }
@@ -142,6 +160,7 @@ impl ResourceRef {
 /// Resource store to contain binary objects referenced from JSON serializable structures
 #[derive(Debug, Serialize)]
 #[cfg_attr(feature = "json_schema", derive(JsonSchema))]
+#[doc(hidden)]
 pub struct ResourceStore {
     resources: HashMap<String, Vec<u8>>,
     #[cfg(feature = "file_io")]
@@ -195,6 +214,7 @@ impl ResourceStore {
             "png" | "image/png" => ".png",
             //make "svg" | "image/svg+xml" => ".svg",
             "c2pa" | "application/x-c2pa-manifest-store" | "application/c2pa" => ".c2pa",
+            "ocsp" => ".ocsp",
             _ => "",
         };
         // clean string for possible filesystem use
@@ -243,20 +263,14 @@ impl ResourceStore {
         if id.starts_with("self#jumbf=") {
             #[cfg(feature = "file_io")]
             if self.base_path.is_some() {
-                // convert to a file path always including the manifest label
-                id = id.replace("self#jumbf=", "");
-                if id.starts_with("/c2pa/") {
-                    id = id.replacen("/c2pa/", "", 1);
-                } else if let Some(label) = self.label.as_ref() {
-                    id = format!("{}/{id}", label);
-                }
-                id = id.replace([':'], "_");
+                let mut path = uri_to_path(&id, self.label.as_deref());
                 // add a file extension if it doesn't have one
                 if !(id.ends_with(".jpeg") || id.ends_with(".png")) {
                     if let Some(ext) = crate::utils::mime::format_to_extension(format) {
-                        id = format!("{}.{}", id, ext);
+                        path.set_extension(ext);
                     }
                 }
+                id = path.display().to_string()
             }
             if !self.exists(&id) {
                 self.add(&id, value)?;
@@ -290,7 +304,7 @@ impl ResourceStore {
     /// Returns a copy on write reference to the resource if found.
     ///
     /// Returns [`Error::ResourceNotFound`] if it cannot find a resource matching that ID.
-    pub fn get(&self, id: &str) -> Result<Cow<Vec<u8>>> {
+    pub fn get(&self, id: &str) -> Result<Cow<'_, Vec<u8>>> {
         #[cfg(feature = "file_io")]
         if !self.resources.contains_key(id) {
             match self.base_path.as_ref() {
@@ -423,11 +437,23 @@ mod tests {
             "claim_generator": "test",
             "format" : "image/jpeg",
             "instance_id": "12345",
-            "assertions": [],
             "thumbnail": {
                 "format": "image/jpeg",
                 "identifier": "abc123"
             },
+            "assertions": [
+                {
+                    "label": "c2pa.actions",
+                    "data": {
+                        "actions": [
+                            {
+                                "action": "c2pa.created",
+                                "digitalSourceType": "http://c2pa.org/digitalsourcetype/empty"
+                            }
+                        ]
+                    }
+                }
+            ],
             "ingredients": [{
                 "title": "A.jpg",
                 "format": "image/jpeg",
