@@ -355,6 +355,14 @@ mod integration_1 {
         use c2pa::ValidationState;
 
         Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml"))?;
+        Settings::from_toml(
+            &toml::toml! {
+                [builder]
+                certificate_status_fetch = "all"
+                certificate_status_should_override = true
+            }
+            .to_string(),
+        )?;
 
         // set up parent and destination paths
         let temp_dir = tempdirectory()?;
