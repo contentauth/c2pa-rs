@@ -13,6 +13,8 @@
 
 use thiserror::Error;
 
+use crate::http::HttpResolverError;
+
 /// Describes errors that can occur when requesting or verifying an [RFC 3161]
 /// time stamp.
 ///
@@ -68,4 +70,8 @@ pub enum TimeStampError {
     /// response.
     #[error("internal error ({0})")]
     InternalError(String),
+
+    /// An error occurred while resolving the http request.
+    #[error(transparent)]
+    HttpResolverError(#[from] HttpResolverError),
 }

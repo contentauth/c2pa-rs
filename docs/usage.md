@@ -41,6 +41,11 @@ You can enable any of the following features:
 - **file_io**: Enables APIs that use filesystem I/O.
 - **json_schema**: Adds the [`schemars`](https://github.com/GREsau/schemars) crate to derive JSON schemas for JSON-compatible structs.
 - **pdf**: Enables basic PDF read support.
+* **http_ureq** *(enabled by default)* - Enables `ureq` for sync HTTP requests.
+* **http_reqwest** *(enabled by default)* - Enables `reqwest` for async HTTP requests.
+* **http_reqwest_blocking** - Enables the `blocking` feature of `reqwest` for sync HTTP requests.
+* **http_wasi** *(enabled by default)* - Enables `wasi` for sync HTTP requests on WASI.
+* **http_wstd** *(enabled by default)* - Enables `wstd` for async HTTP requests on WASI.
 
 > [!NOTE]
 > If both `rust_native_crypto` and `openssl` are enabled, then only `rust_native_crypto` will be enabled.

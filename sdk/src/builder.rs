@@ -27,15 +27,17 @@ use uuid::Uuid;
 use zip::{write::SimpleFileOptions, ZipArchive, ZipWriter};
 
 #[allow(deprecated)]
+use crate::assertions::CreativeWork;
 use crate::{
     assertion::{AssertionBase, AssertionDecodeError},
     assertions::{
         c2pa_action, labels, Action, ActionTemplate, Actions, AssertionMetadata, BmffHash, BoxHash,
-        CreativeWork, DataHash, DigitalSourceType, EmbeddedData, Exif, Metadata, SoftwareAgent,
-        Thumbnail, User, UserCbor,
+        DataHash, DigitalSourceType, EmbeddedData, Exif, Metadata, SoftwareAgent, Thumbnail, User,
+        UserCbor,
     },
     claim::Claim,
     error::{Error, Result},
+    http::{AsyncGenericResolver, SyncGenericResolver},
     jumbf_io,
     resource_store::{ResourceRef, ResourceResolver, ResourceStore},
     settings::{self, Settings},
@@ -627,10 +629,10 @@ impl Builder {
 
         let ingredient: Ingredient = Ingredient::from_json(&ingredient_json.into())?;
         let ingredient = if _sync {
-            ingredient.with_stream(format, stream, &settings)?
+            ingredient.with_stream(format, stream, &SyncGenericResolver::new(), &settings)?
         } else {
             ingredient
-                .with_stream_async(format, stream, &settings)
+                .with_stream_async(format, stream, &AsyncGenericResolver::new(), &settings)
                 .await?
         };
 
@@ -2994,7 +2996,8 @@ mod tests {
             .unwrap();
 
         builder
-            .add_ingredient_from_stream(parent_json, "image/jpeg", &mut cloud_image)
+            .add_ingredient_from_stream_async(parent_json, "image/jpeg", &mut cloud_image)
+            .await
             .unwrap();
 
         builder
@@ -3010,7 +3013,9 @@ mod tests {
 
         output.set_position(0);
 
-        let reader = Reader::from_stream("jpeg", &mut output).expect("from_bytes");
+        let reader = Reader::from_stream_async("jpeg", &mut output)
+            .await
+            .expect("from_bytes");
         let m = reader.active_manifest().unwrap();
         assert_eq!(m.ingredients().len(), 1);
         assert!(m.ingredients()[0].active_manifest().is_some());

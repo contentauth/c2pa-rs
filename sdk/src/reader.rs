@@ -35,6 +35,7 @@ use crate::{
     crypto::base64,
     dynamic_assertion::PartialClaim,
     error::{Error, Result},
+    http::{AsyncGenericResolver, SyncGenericResolver},
     jumbf::labels::{manifest_label_from_uri, to_absolute_uri, to_relative_uri},
     jumbf_io, log_item,
     manifest::StoreOptions,
@@ -136,7 +137,7 @@ impl Reader {
     /// [CAWG identity]: https://cawg.io/identity/
     #[async_generic]
     #[cfg(not(target_arch = "wasm32"))]
-    pub fn from_stream(format: &str, mut stream: impl Read + Seek + Send) -> Result<Reader> {
+    pub fn from_stream(format: &str, stream: impl Read + Seek + Send) -> Result<Reader> {
         let settings = crate::settings::get_settings().unwrap_or_default();
         // TODO: passing verify is redundant with settings
         let verify = settings.verify.verify_after_reading;
@@ -144,10 +145,24 @@ impl Reader {
         let mut validation_log = StatusTracker::default();
 
         let store = if _sync {
-            Store::from_stream(format, &mut stream, verify, &mut validation_log, &settings)
+            Store::from_stream(
+                format,
+                stream,
+                &SyncGenericResolver::new(),
+                verify,
+                &mut validation_log,
+                &settings,
+            )
         } else {
-            Store::from_stream_async(format, &mut stream, verify, &mut validation_log, &settings)
-                .await
+            Store::from_stream_async(
+                format,
+                stream,
+                &AsyncGenericResolver::new(),
+                verify,
+                &mut validation_log,
+                &settings,
+            )
+            .await
         }?;
 
         if _sync {
@@ -167,10 +182,24 @@ impl Reader {
         let mut validation_log = StatusTracker::default();
 
         let store = if _sync {
-            Store::from_stream(format, &mut stream, verify, &mut validation_log, &settings)
+            Store::from_stream(
+                format,
+                &mut stream,
+                &SyncGenericResolver::new(),
+                verify,
+                &mut validation_log,
+                &settings,
+            )
         } else {
-            Store::from_stream_async(format, &mut stream, verify, &mut validation_log, &settings)
-                .await
+            Store::from_stream_async(
+                format,
+                &mut stream,
+                &AsyncGenericResolver::new(),
+                verify,
+                &mut validation_log,
+                &settings,
+            )
+            .await
         }?;
 
         if _sync {
