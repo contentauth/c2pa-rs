@@ -42,6 +42,10 @@ define make_zip
 	cp $(1)/c2pa.h $(1)/include/; \
 	if echo "$(2)" | grep -q "ios"; then \
 		cp $(1)/libc2pa_c.a $(1)/lib/; \
+	elif echo "$(2)" | grep -q "musl-dynamic"; then \
+		find $(1) -name "libc2pa_c.*" ! -name "*.a" ! -path "*/deps/*" -exec cp {} $(1)/lib/ \;; \
+	elif echo "$(2)" | grep -q "musl"; then \
+		cp $(1)/libc2pa_c.a $(1)/lib/; \
 	else \
 		find $(1) -name "libc2pa_c.*" ! -name "*.a" ! -path "*/deps/*" -exec cp {} $(1)/lib/ \;; \
 	fi; \
@@ -118,6 +122,26 @@ release-linux-gnu-arm:
 	CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc cargo build --target=aarch64-unknown-linux-gnu  $(CARGO_BUILD_FLAGS)
 	@$(call make_zip,$(TARGET_DIR)/aarch64-unknown-linux-gnu/release,aarch64-unknown-linux-gnu)
 
+release-linux-musl-x86:
+	$(CROSS_INSTALL_RUSTFLAGS) cargo install cross --git https://github.com/cross-rs/cross
+	cross build --target=x86_64-unknown-linux-musl  $(CARGO_BUILD_FLAGS)
+	@$(call make_zip,$(TARGET_DIR)/x86_64-unknown-linux-musl/release,x86_64-unknown-linux-musl)
+
+release-linux-musl-arm:
+	$(CROSS_INSTALL_RUSTFLAGS) cargo install cross --git https://github.com/cross-rs/cross
+	cross build --target=aarch64-unknown-linux-musl  $(CARGO_BUILD_FLAGS)
+	@$(call make_zip,$(TARGET_DIR)/aarch64-unknown-linux-musl/release,aarch64-unknown-linux-musl)
+
+release-linux-musl-x86-dynamic:
+	$(CROSS_INSTALL_RUSTFLAGS) cargo install cross --git https://github.com/cross-rs/cross
+	RUSTFLAGS="-C target-feature=-crt-static" cross build --target=x86_64-unknown-linux-musl  $(CARGO_BUILD_FLAGS)
+	@$(call make_zip,$(TARGET_DIR)/x86_64-unknown-linux-musl/release,x86_64-unknown-linux-musl-dynamic)
+
+release-linux-musl-arm-dynamic:
+	$(CROSS_INSTALL_RUSTFLAGS) cargo install cross --git https://github.com/cross-rs/cross
+	RUSTFLAGS="-C target-feature=-crt-static" cross build --target=aarch64-unknown-linux-musl  $(CARGO_BUILD_FLAGS)
+	@$(call make_zip,$(TARGET_DIR)/aarch64-unknown-linux-musl/release,aarch64-unknown-linux-musl-dynamic)
+
 # iOS physical devices
 release-ios-arm64:
 	rustup target add aarch64-apple-ios
@@ -187,6 +211,14 @@ else ifeq ($(TARGET),x86_64-unknown-linux-gnu)
 release: release-linux-gnu-x86
 else ifeq ($(TARGET),aarch64-unknown-linux-gnu)
 release: release-linux-gnu-arm
+else ifeq ($(TARGET),x86_64-unknown-linux-musl)
+release: release-linux-musl-x86
+else ifeq ($(TARGET),aarch64-unknown-linux-musl)
+release: release-linux-musl-arm
+else ifeq ($(TARGET),x86_64-unknown-linux-musl-dynamic)
+release: release-linux-musl-x86-dynamic
+else ifeq ($(TARGET),aarch64-unknown-linux-musl-dynamic)
+release: release-linux-musl-arm-dynamic
 # Mobile targets
 else ifeq ($(TARGET),aarch64-apple-ios)
 release: release-ios-arm64
