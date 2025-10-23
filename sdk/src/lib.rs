@@ -132,6 +132,9 @@ pub mod identity;
 /// The jumbf_io module contains the definitions for the JUMBF data in assets.
 pub mod jumbf_io;
 
+/// The reader_asset module provides a way to create Reader instances from various asset types.
+pub mod reader_asset;
+
 /// The settings module provides a way to configure the C2PA SDK.
 pub mod settings;
 
