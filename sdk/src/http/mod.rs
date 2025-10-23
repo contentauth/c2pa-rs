@@ -155,18 +155,18 @@ pub enum HttpResolverError {
     Other(Box<dyn std::error::Error + Send + Sync>),
 }
 
-#[cfg(all(not(target_os = "wasi"), feature = "http_reqwest_blocking"))]
+#[cfg(all(
+    not(target_os = "wasi"),
+    feature = "http_reqwest_blocking",
+    not(feature = "http_ureq")
+))]
 mod sync_resolver {
     pub type Impl = reqwest::blocking::Client;
     pub fn new() -> Impl {
         reqwest::blocking::Client::new()
     }
 }
-#[cfg(all(
-    not(target_os = "wasi"),
-    feature = "http_ureq",
-    not(feature = "http_reqwest_blocking")
-))]
+#[cfg(all(not(target_os = "wasi"), feature = "http_ureq",))]
 mod sync_resolver {
     pub type Impl = ureq::Agent;
     pub fn new() -> Impl {
