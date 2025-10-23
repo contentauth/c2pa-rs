@@ -81,14 +81,16 @@ where
 }
 
 fn main() -> Result<()> {
-    let format = "image/jpeg";
-    let ingredient_name = "Restored Ingredient";
+    const INGREDIENT_ID: &str = "ingredient_1"; // used to map the ingredient to the action
+    const INGREDIENT_TITLE: &str = "Restored Ingredient";
+    const FORMAT: &str = "image/jpeg";
+
     let mut ingredient_source = Cursor::new(INGREDIENT_IMAGE);
 
     Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml"))?;
 
     // Here we capture an ingredient with its validation into a c2pa_data object.
-    let ingredient_c2pa = capture_ingredient(format, &mut ingredient_source)?;
+    let ingredient_c2pa = capture_ingredient(FORMAT, &mut ingredient_source)?;
     // The ingredient_c2pa can be saved to a file, blob storage, a database, or wherever you want to keep it.
     // For this example we will just keep it in memory and add it to a new manifest
 
@@ -101,9 +103,9 @@ fn main() -> Result<()> {
     // When the format is "application/c2pa" we will fetch the parent stream from the manifest.
     builder.add_ingredient_from_stream(
         json!({   // we can override any values in the saved ingredient here
-            "title": ingredient_name,
+            "title": INGREDIENT_TITLE,
             "relationship": "componentOf",// This relationship will override the one in the saved ingredient
-            "label": "component_image"
+            "label": INGREDIENT_ID // used only to map the ingredient to the action
         })
         .to_string(),
         "application/c2pa",
@@ -113,42 +115,40 @@ fn main() -> Result<()> {
         {
             "action": "c2pa.placed",
             "parameters": {
-                "ingredientIds": ["component_image"],
+                "ingredientIds": [INGREDIENT_ID],
             }
         }
     ))?;
 
-    //println!("Builder: {builder}");
+    // write the manifest builder to a archived stream
+    // let mut archive = Cursor::new(Vec::new());
+    // builder.to_archive(&mut archive)?;
 
-    // write the manifest builder to a zipped stream
-    //let mut archive = Cursor::new(Vec::new());
-    //builder.to_archive(&mut archive)?;
+    // write the archive stream to a file for debugging
+    // let debug_path = format!("{}/../target/archive_test.c2pa", env!("CARGO_MANIFEST_DIR"));
+    // std::fs::write(debug_path, archive.get_ref())?;
 
-    // // write the zipped stream to a file for debugging
-    // //let debug_path = format!("{}/../target/test.zip", env!("CARGO_MANIFEST_DIR"));
-    // // std::fs::write(debug_path, zipped.get_ref())?;
-
-    // // unzip the manifest builder from the zipped stream
-    //archive.rewind()?;
-    //let mut builder = Builder::from_archive(&mut archive)?;
+    // unpack the manifest builder from the archived stream
+    // archive.rewind()?;
+    // let mut builder = Builder::from_archive(&mut archive)?;
 
     // Now we will sign a new image that will reference the previously captured ingredient
     let signer = Settings::signer()?;
     let mut source = Cursor::new(SOURCE_IMAGE);
     let mut dest = Cursor::new(Vec::new());
-    builder.sign(&signer, format, &mut source, &mut dest)?;
+    builder.sign(&signer, FORMAT, &mut source, &mut dest)?;
 
     // read and validate the signed manifest store
     dest.rewind()?;
 
-    let reader = Reader::from_stream(format, &mut dest)?;
+    let reader = Reader::from_stream(FORMAT, &mut dest)?;
     println!("{}", reader.json());
     assert_eq!(reader.validation_state(), ValidationState::Trusted);
     assert_eq!(
         reader.active_manifest().unwrap().ingredients()[0]
             .title()
             .unwrap(),
-        ingredient_name
+        INGREDIENT_TITLE
     );
 
     Ok(())
