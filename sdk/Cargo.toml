@@ -153,7 +153,7 @@ rasn-pkix = "0.26.0"
 regex = "1.11"
 riff = "2.0.0"
 rsa = { version = "0.9.7", features = ["pem", "sha2", "std"], optional = true }
-schemars = { version = "0.8.21", optional = true }
+schemars = { version = "1.0.4", optional = true }
 serde = { version = "1.0.225", features = ["derive"] }
 serde_bytes = "0.11.14"
 serde_cbor = "0.11.1"
