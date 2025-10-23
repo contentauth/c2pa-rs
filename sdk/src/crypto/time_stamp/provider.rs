@@ -186,10 +186,16 @@ pub trait AsyncTimeStampProvider {
     ) -> Option<Result<Vec<u8>, TimeStampError>> {
         if let Some(url) = self.time_stamp_service_url() {
             if let Ok(body) = self.time_stamp_request_body(message) {
+                use crate::http::AsyncGenericResolver;
+
                 let headers: Option<Vec<(String, String)>> = self.time_stamp_request_headers();
                 return Some(
                     super::http_request::default_rfc3161_request_async(
-                        &url, headers, &body, message,
+                        &url,
+                        headers,
+                        &body,
+                        message,
+                        &AsyncGenericResolver::new(),
                     )
                     .await,
                 );
