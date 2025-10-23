@@ -28,13 +28,7 @@ all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
 [features]
-# The reason we use `ureq` instead of `reqwest_blocking` is because the blocking version
-# of reqwest creates a new tokio runtime. A lot of our tests create their own tokio runtime
-# but do not call the async versions of our API. Thus, we use ureq, which has a complete
-# blocking implementation, no runtimes included.
-# TODO: make our async tests always use the async API so we don't need ureq + reqwest
-#       https://github.com/contentauth/c2pa-rs/issues/1364
-default = ["openssl", "http_reqwest", "http_ureq", "http_wasi", "http_wstd"]
+default = ["openssl", "default_http"]
 add_thumbnails = ["image"]
 file_io = []
 fetch_remote_manifests = ["dep:wasi"]
@@ -55,6 +49,10 @@ rust_native_crypto = [
     "dep:rsa",
     "dep:spki",
 ]
+# TODO: make our async tests always use the async API so we don't need ureq + reqwest
+#       see https://github.com/contentauth/c2pa-rs/issues/1364
+# Enables default http features for sync and async http resolvers.
+default_http = ["http_reqwest", "http_ureq", "http_wasi", "http_wstd"]
 # Enable `reqwest` sync http resolver, not supported on WASM/WASI.
 http_reqwest_blocking = ["dep:reqwest", "reqwest/blocking"]
 # Enable `ureq` sync http resolver, not supported on WASM/WASI.

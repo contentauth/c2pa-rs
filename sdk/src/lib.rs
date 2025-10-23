@@ -103,6 +103,7 @@
 //!
 //! You can enable any of the following features:
 //!
+//! - **default_http** *(enabled by default)*: Enables default http features for sync and async http resolvers (`http_req`, `http_reqwest`, `http_wasi`, and `http_std`).
 //! - **openssl** *(enabled by default)*: Use the vendored `openssl` implementation for cryptography.
 //! - **rust_native_crypto**: Use Rust native cryptography.
 //! - **add_thumbnails**: Adds the [`image`](https://github.com/image-rs/image) crate to enable auto-generated thumbnails, if possible and enabled in settings.
@@ -110,11 +111,11 @@
 //! - **file_io**: Enables APIs that use filesystem I/O.
 //! - **json_schema**: Adds the [`schemars`](https://github.com/GREsau/schemars) crate to derive JSON schemas for JSON-compatible structs.
 //! - **pdf**: Enables basic PDF read support.
-//! - **http_ureq** *(enabled by default)*: Enables `ureq` for sync HTTP requests.
-//! - **http_reqwest** *(enabled by default)*: Enables `reqwest` for async HTTP requests.
+//! - **http_ureq**: Enables `ureq` for sync HTTP requests.
+//! - **http_reqwest**: Enables `reqwest` for async HTTP requests.
 //! - **http_reqwest_blocking**: Enables the `blocking` feature of `reqwest` for sync HTTP requests.
-//! - **http_wasi** *(enabled by default)*: Enables `wasi` for sync HTTP requests on WASI.
-//! - **http_wstd** *(enabled by default)*: Enables `wstd` for async HTTP requests on WASI.
+//! - **http_wasi**: Enables `wasi` for sync HTTP requests on WASI.
+//! - **http_wstd**: Enables `wstd` for async HTTP requests on WASI.
 
 /// The internal name of the C2PA SDK
 pub const NAME: &str = "c2pa-rs";
