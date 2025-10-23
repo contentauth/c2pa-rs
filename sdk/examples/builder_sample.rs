@@ -96,7 +96,7 @@ fn main() -> Result<()> {
 
     // Now create a new builder and set the intent to create a new manifest store
     // We will add the ingredient as a componentOf relationship
-    let mut builder = Builder::from_json(&manifest_def("Builder Sample", format))?;
+    let mut builder = Builder::from_json(&manifest_def("Builder Sample", FORMAT))?;
     builder.set_intent(c2pa::BuilderIntent::Create(DigitalSourceType::Empty));
 
     // Now add our saved ingredient as a c2pa stream.
