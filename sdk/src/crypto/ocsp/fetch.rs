@@ -25,7 +25,7 @@ use x509_parser::{
 
 use crate::{
     crypto::base64,
-    http::{AsyncGenericResolver, AsyncHttpResolver, SyncGenericResolver, SyncHttpResolver},
+    http::{AsyncHttpResolver, SyncHttpResolver},
 };
 
 const AD_OCSP_OID: Oid<'static> = oid!(1.3.6 .1 .5 .5 .7 .48 .1);
@@ -145,8 +145,14 @@ fn process_ocsp_responders(certs: &[Vec<u8>]) -> Option<Vec<OcspRequestData>> {
 ///
 /// Checks for an OCSP responder in the end-entity certificate. If found, it
 /// will attempt to retrieve the raw DER-encoded OCSP response.
-#[async_generic]
-pub(crate) fn fetch_ocsp_response(certs: &[Vec<u8>]) -> Option<Vec<u8>> {
+#[async_generic(async_signature(
+    certs: &[Vec<u8>],
+    http_resolver: &impl AsyncHttpResolver,
+))]
+pub(crate) fn fetch_ocsp_response(
+    certs: &[Vec<u8>],
+    http_resolver: &impl SyncHttpResolver,
+) -> Option<Vec<u8>> {
     let requests = process_ocsp_responders(certs)?;
     for request_data in requests {
         let req_url = request_data.url.join(&request_data.request_str).ok()?;
@@ -158,14 +164,10 @@ pub(crate) fn fetch_ocsp_response(certs: &[Vec<u8>]) -> Option<Vec<u8>> {
         }
 
         let request = request.body(Vec::new()).ok()?;
-        // TODO: we should boil these resolvers down from the store
         let response = if _sync {
-            SyncGenericResolver::new().http_resolve(request).ok()?
+            http_resolver.http_resolve(request).ok()?
         } else {
-            AsyncGenericResolver::new()
-                .http_resolve_async(request)
-                .await
-                .ok()?
+            http_resolver.http_resolve_async(request).await.ok()?
         };
 
         if response.status() == 200 {
