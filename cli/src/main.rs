@@ -32,7 +32,6 @@ use c2pa::{
     ClaimGeneratorInfo, Error, Ingredient, ManifestDefinition, Reader, Signer,
 };
 use clap::{Parser, Subcommand};
-use etcetera::BaseStrategy;
 use log::debug;
 use serde::Deserialize;
 use signer::SignConfig;
@@ -152,20 +151,8 @@ struct CliArgs {
     /// Path to the config file.
     ///
     /// By default config files are read from `$XDG_CONFIG_HOME/c2pa/c2pa.toml`.
-    #[clap(
-        long,
-        env = "C2PATOOL_SETTINGS",
-        default_value = default_settings_path().into_os_string()
-    )]
-    settings: PathBuf,
-}
-
-fn default_settings_path() -> PathBuf {
-    let strategy = etcetera::choose_base_strategy().unwrap();
-    let mut path = strategy.config_dir();
-    path.push("c2pa");
-    path.push("c2pa.toml");
-    path
+    #[clap(long, env = "C2PATOOL_SETTINGS")]
+    settings: Option<PathBuf>,
 }
 
 #[derive(Clone, Debug)]
@@ -389,9 +376,11 @@ fn blocking_get(url: &str) -> Result<String> {
 }
 
 fn configure_sdk(args: &CliArgs) -> Result<()> {
-    if args.settings.exists() {
-        let settings = fs::read_to_string(&args.settings)?;
-        Settings::from_toml(&settings)?
+    if let Some(settings) = &args.settings {
+        if settings.exists() {
+            let settings = fs::read_to_string(settings)?;
+            Settings::from_toml(&settings)?
+        }
     }
 
     let mut enable_trust_checks = false;
