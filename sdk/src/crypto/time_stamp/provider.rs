@@ -16,7 +16,10 @@ use bcder::{encode::Values, OctetString};
 use rand::{thread_rng, Rng};
 use x509_certificate::DigestAlgorithm;
 
-use crate::crypto::{asn1::rfc3161::TimeStampReq, time_stamp::TimeStampError};
+use crate::{
+    crypto::{asn1::rfc3161::TimeStampReq, time_stamp::TimeStampError},
+    http::SyncGenericResolver,
+};
 
 /// A `TimeStampProvider` implementation can contact a [RFC 3161] time stamp
 /// service and generate a corresponding time stamp for a specific piece of
@@ -56,7 +59,11 @@ pub trait TimeStampProvider {
             if let Ok(body) = self.time_stamp_request_body(message) {
                 let headers: Option<Vec<(String, String)>> = self.time_stamp_request_headers();
                 return Some(super::http_request::default_rfc3161_request(
-                    &url, headers, &body, message,
+                    &url,
+                    headers,
+                    &body,
+                    message,
+                    &SyncGenericResolver::new(),
                 ));
             }
         }
@@ -112,10 +119,16 @@ pub trait AsyncTimeStampProvider: Sync {
     ) -> Option<Result<Vec<u8>, TimeStampError>> {
         if let Some(url) = self.time_stamp_service_url() {
             if let Ok(body) = self.time_stamp_request_body(message) {
+                use crate::http::AsyncGenericResolver;
+
                 let headers: Option<Vec<(String, String)>> = self.time_stamp_request_headers();
                 return Some(
                     super::http_request::default_rfc3161_request_async(
-                        &url, headers, &body, message,
+                        &url,
+                        headers,
+                        &body,
+                        message,
+                        &AsyncGenericResolver::new(),
                     )
                     .await,
                 );
