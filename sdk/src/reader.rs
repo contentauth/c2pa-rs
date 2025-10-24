@@ -32,6 +32,7 @@ use serde_with::skip_serializing_none;
 #[cfg(feature = "file_io")]
 use crate::utils::io_utils::uri_to_path;
 use crate::{
+    claim::Claim,
     dynamic_assertion::PartialClaim,
     error::{Error, Result},
     jumbf::labels::{manifest_label_from_uri, to_absolute_uri, to_relative_uri},
@@ -954,9 +955,47 @@ impl Reader {
             .ok_or_else(|| Error::IngredientNotFound)?
             .to_owned();
 
-        let c2pa_data = self.store.to_jumbf_internal(0)?;
-        ingredient.set_manifest_data(c2pa_data)?;
+        // now we need to rebuild the manifest data for the ingredient
+        // strip out the active manifest claim from the store before adding it to the ingredient
+        // We only care about the ingredient and any claims it references
+        if let Some(active_label) = ingredient.active_manifest() {
+            let claim = self
+                .store
+                .get_claim(active_label)
+                .ok_or_else(|| Error::ClaimMissing {
+                    label: active_label.to_string(),
+                })?;
+
+            // build a new store with just the ingredient claim and any referenced claims
+            let ingredient_store = {
+                let mut store = Store::new();
+
+                // Recursively collect all ingredient claims
+                self.collect_ingredient_claims_recursive(claim, &mut store)?;
+
+                // Add the main claim last
+                store.commit_claim(claim.clone())?;
+                store
+            };
+            let c2pa_data = ingredient_store.to_jumbf_internal(0)?;
+            ingredient.set_manifest_data(c2pa_data)?;
+        }
+
         Ok(ingredient)
+    }
+
+    /// Recursively collect all ingredient claims referenced by the given claim
+    fn collect_ingredient_claims_recursive(&self, claim: &Claim, store: &mut Store) -> Result<()> {
+        for ingredient in claim.claim_ingredients() {
+            if let Some(ingredient_claim) = self.store.get_claim(ingredient.label()) {
+                // First, recursively collect any ingredients this claim references
+                self.collect_ingredient_claims_recursive(ingredient_claim, store)?;
+
+                // Then add this ingredient claim to the store
+                store.commit_claim(ingredient_claim.clone())?;
+            }
+        }
+        Ok(())
     }
 }
 

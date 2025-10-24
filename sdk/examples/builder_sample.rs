@@ -120,17 +120,18 @@ fn main() -> Result<()> {
         }
     ))?;
 
+    // Illustrate that we can archive and restore the builder with ingredients
     // write the manifest builder to a archived stream
-    // let mut archive = Cursor::new(Vec::new());
-    // builder.to_archive(&mut archive)?;
+    let mut archive = Cursor::new(Vec::new());
+    builder.to_archive(&mut archive)?;
 
     // write the archive stream to a file for debugging
     // let debug_path = format!("{}/../target/archive_test.c2pa", env!("CARGO_MANIFEST_DIR"));
-    // std::fs::write(debug_path, archive.get_ref())?;
+    // std::fs::write(&debug_path, archive.get_ref())?;
 
     // unpack the manifest builder from the archived stream
-    // archive.rewind()?;
-    // let mut builder = Builder::from_archive(&mut archive)?;
+    archive.rewind()?;
+    let mut builder = Builder::from_archive(&mut archive)?;
 
     // Now we will sign a new image that will reference the previously captured ingredient
     let signer = Settings::signer()?;
