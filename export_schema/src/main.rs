@@ -2,9 +2,9 @@ use std::{fs, path::Path};
 
 use anyhow::Result;
 use c2pa::{settings::Settings, Builder, ManifestDefinition, Reader};
-use schemars::{schema::RootSchema, schema_for};
+use schemars::{schema_for, Schema};
 
-fn write_schema(schema: &RootSchema, name: &str) {
+fn write_schema(schema: &Schema, name: &str) {
     println!("Exporting JSON schema for {name}");
     let output = serde_json::to_string_pretty(schema).expect("Failed to serialize schema");
     let output_dir = Path::new("./target/schema");
