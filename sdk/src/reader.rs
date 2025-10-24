@@ -32,6 +32,7 @@ use serde_with::skip_serializing_none;
 #[cfg(feature = "file_io")]
 use crate::utils::io_utils::uri_to_path;
 use crate::{
+    asset_io::CAIRead,
     crypto::base64,
     dynamic_assertion::PartialClaim,
     error::{Error, Result},
@@ -347,7 +348,7 @@ impl Reader {
     /// multiple separate asset files.
     pub fn from_fragmented_files<P: AsRef<std::path::Path>>(
         path: P,
-        fragments: &Vec<std::path::PathBuf>,
+        fragments: &[std::path::PathBuf],
     ) -> Result<Reader> {
         let settings = crate::settings::get_settings().unwrap_or_default();
 
@@ -359,10 +360,15 @@ impl Reader {
 
         let mut init_segment = std::fs::File::open(path.as_ref())?;
 
-        match Store::load_from_file_and_fragments(
+        let mut fragments: Vec<Box<dyn CAIRead>> = fragments
+            .iter()
+            .map(|path| File::open(path).map(|file| Box::new(file) as Box<dyn CAIRead>))
+            .collect::<Result<_, std::io::Error>>()?;
+
+        match Store::load_fragments_from_stream(
             &asset_type,
             &mut init_segment,
-            fragments,
+            &mut fragments,
             verify,
             &mut validation_log,
             &settings,

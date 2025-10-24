@@ -128,7 +128,7 @@ fn test_builder_fragmented() -> Result<()> {
                 let output_fragments = fragments
                     .into_iter()
                     .map(|f| new_output_path.join(f.file_name().unwrap()))
-                    .collect();
+                    .collect::<Vec<_>>();
                 let reader = Reader::from_fragmented_files(&output_init, &output_fragments)?;
                 //println!("reader: {}", reader);
                 assert_eq!(reader.validation_status(), None);

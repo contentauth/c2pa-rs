@@ -816,11 +816,10 @@ impl BmffHash {
         Ok(())
     }
 
-    #[cfg(feature = "file_io")]
     pub fn verify_stream_segments(
         &self,
         init_stream: &mut dyn CAIRead,
-        fragment_paths: &Vec<std::path::PathBuf>,
+        fragment_paths: &mut [Box<dyn CAIRead>],
         alg: Option<&str>,
     ) -> crate::Result<()> {
         self.verify_self()?;
@@ -849,11 +848,9 @@ impl BmffHash {
                 return Err(Error::HashMismatch("No fragment specified".to_string()));
             }
 
-            for fp in fragment_paths {
-                let mut fragment_stream = std::fs::File::open(fp)?;
-
+            for mut fragment_stream in fragment_paths {
                 // get merkle boxes from segment
-                let c2pa_boxes = read_bmff_c2pa_boxes(&mut fragment_stream)?;
+                let c2pa_boxes = read_bmff_c2pa_boxes(fragment_stream)?;
                 let bmff_merkle = c2pa_boxes.bmff_merkle;
 
                 if bmff_merkle.is_empty() {

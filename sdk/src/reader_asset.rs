@@ -4,14 +4,12 @@ use std::{
     path::Path,
 };
 
+use async_generic::async_generic;
+
 use crate::{
     asset_io::CAIRead, settings::Settings, status_tracker::StatusTracker, store::Store, Reader,
     Result,
 };
-
-// Create a combined trait to work around trait object limitations
-// trait ReadSeekSend: Read + Seek + Send {}
-// impl<T: Read + Seek + Send> ReadSeekSend for T {}
 
 // Simple enum to handle different stream types
 pub enum StreamType {
@@ -92,40 +90,100 @@ impl ReaderAsset {
         self
     }
 
+    #[async_generic]
     pub fn to_reader(mut self) -> Result<Reader> {
         let mut validation_log = StatusTracker::default();
         let verify = self.settings.verify.verify_after_reading;
 
         if let Some(manifest_data) = self.manifest_data {
-            let store = Store::from_manifest_data_and_stream(
-                &manifest_data,
-                &self.format,
-                &mut self.stream,
-                verify,
-                &mut validation_log,
-                &self.settings,
-            )?;
-            Reader::from_store(store, &mut validation_log, &self.settings)
-        // we need to add stream fragments support to store
-        //} else if let Some(fragments) = self.fragments {
-        // let store = Store::from_stream_with_fragments(
-        //     &self.format,
-        //     &mut self.stream,
-        //     fragments,
-        //     verify,
-        //     &mut validation_log,
-        //     &self.settings,
-        // )?;
-        // Reader::from_store(store, &mut validation_log, &self.settings)
+            if let Some(fragments) = self.fragments {
+                // Convert Vec<StreamType> to Vec<Box<dyn CAIRead>>
+                let mut fragment_boxes: Vec<Box<dyn CAIRead>> = fragments
+                    .into_iter()
+                    .map(|f| Box::new(f) as Box<dyn CAIRead>)
+                    .collect();
+
+                let store = if _sync {
+                    Store::from_manifest_data_and_stream_and_fragments(
+                        &manifest_data,
+                        &self.format,
+                        &mut self.stream,
+                        &mut fragment_boxes,
+                        verify,
+                        &mut validation_log,
+                        &self.settings,
+                    )?
+                } else {
+                    Store::from_manifest_data_and_stream_and_fragments_async(
+                        &manifest_data,
+                        &self.format,
+                        &mut self.stream,
+                        &mut fragment_boxes,
+                        verify,
+                        &mut validation_log,
+                        &self.settings,
+                    )
+                    .await?
+                };
+
+                if _sync {
+                    Reader::from_store(store, &mut validation_log, &self.settings)
+                } else {
+                    Reader::from_store_async(store, &mut validation_log, &self.settings).await
+                }
+            } else {
+                let store = if _sync {
+                    Store::from_manifest_data_and_stream(
+                        &manifest_data,
+                        &self.format,
+                        &mut self.stream,
+                        verify,
+                        &mut validation_log,
+                        &self.settings,
+                    )?
+                } else {
+                    Store::from_manifest_data_and_stream_async(
+                        &manifest_data,
+                        &self.format,
+                        &mut self.stream,
+                        verify,
+                        &mut validation_log,
+                        &self.settings,
+                    )
+                    .await?
+                };
+
+                if _sync {
+                    Reader::from_store(store, &mut validation_log, &self.settings)
+                } else {
+                    Reader::from_store_async(store, &mut validation_log, &self.settings).await
+                }
+            }
         } else {
-            let store = Store::from_stream(
-                &self.format,
-                &mut self.stream,
-                verify,
-                &mut validation_log,
-                &self.settings,
-            )?;
-            Reader::from_store(store, &mut validation_log, &self.settings)
+            let store = if _sync {
+                Store::from_stream(
+                    &self.format,
+                    &mut self.stream,
+                    verify,
+                    &mut validation_log,
+                    &self.settings,
+                )?
+            } else {
+                Store::from_stream_async(
+                    &self.format,
+                    &mut self.stream,
+                    verify,
+                    &mut validation_log,
+                    &self.settings,
+                )
+                .await?
+            };
+
+            if _sync {
+                Reader::from_store(store, &mut validation_log, &self.settings)
+            } else {
+                Reader::from_store_async(store, &mut validation_log, &self.settings).await
+            }
         }
     }
 }
