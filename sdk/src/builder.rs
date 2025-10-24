@@ -1495,6 +1495,11 @@ impl Builder {
         W: Write + Read + Seek + Send,
     {
         let settings = crate::settings::get_settings().unwrap_or_default();
+        let http_resolver = if _sync {
+            SyncGenericResolver::new()
+        } else {
+            AsyncGenericResolver::new()
+        };
 
         let format = format_to_mime(format);
         self.definition.format.clone_from(&format);
@@ -1517,10 +1522,10 @@ impl Builder {
 
         // sign and write our store to to the output image file
         if _sync {
-            store.save_to_stream(&format, source, dest, signer, &settings)
+            store.save_to_stream(&format, source, dest, signer, &http_resolver, &settings)
         } else {
             store
-                .save_to_stream_async(&format, source, dest, signer, &settings)
+                .save_to_stream_async(&format, source, dest, signer, &http_resolver, &settings)
                 .await
         }
     }

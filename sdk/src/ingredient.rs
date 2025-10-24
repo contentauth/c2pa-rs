@@ -733,7 +733,8 @@ impl Ingredient {
         options: &dyn IngredientOptions,
     ) -> Result<Self> {
         let settings = crate::settings::get_settings().unwrap_or_default();
-        Self::from_file_impl(path.as_ref(), options, &settings)
+        let http_resolver = SyncGenericResolver::new();
+        Self::from_file_impl(path.as_ref(), options, &http_resolver, &settings)
     }
 
     // Internal implementation to avoid code bloat.
@@ -741,6 +742,7 @@ impl Ingredient {
     fn from_file_impl(
         path: &Path,
         options: &dyn IngredientOptions,
+        http_resolver: &impl SyncHttpResolver,
         settings: &Settings,
     ) -> Result<Self> {
         #[cfg(feature = "diagnostics")]
@@ -772,15 +774,25 @@ impl Ingredient {
         let mut validation_log = StatusTracker::default();
 
         // retrieve the manifest bytes from embedded, sidecar or remote and convert to store if found
-        let (result, manifest_bytes) = match Store::load_jumbf_from_path(path, settings) {
-            Ok(manifest_bytes) => {
-                (
-                    // generate a store from the buffer and then validate from the asset path
-                    Store::from_jumbf_with_settings(&manifest_bytes, &mut validation_log, settings)
+        let (result, manifest_bytes) =
+            match Store::load_jumbf_from_path(path, http_resolver, settings) {
+                Ok(manifest_bytes) => {
+                    (
+                        // generate a store from the buffer and then validate from the asset path
+                        Store::from_jumbf_with_settings(
+                            &manifest_bytes,
+                            &mut validation_log,
+                            settings,
+                        )
                         .and_then(|mut store| {
                             // verify the store
                             store
-                                .verify_from_path(path, &mut validation_log, settings)
+                                .verify_from_path(
+                                    path,
+                                    &mut validation_log,
+                                    http_resolver,
+                                    settings,
+                                )
                                 .map(|_| store)
                         })
                         .inspect_err(|e| {
@@ -788,11 +800,11 @@ impl Ingredient {
                             log_item!("asset", "error loading file", "Ingredient::from_file")
                                 .failure_no_throw(&mut validation_log, e);
                         }),
-                    Some(manifest_bytes),
-                )
-            }
-            Err(err) => (Err(err), None),
-        };
+                        Some(manifest_bytes),
+                    )
+                }
+                Err(err) => (Err(err), None),
+            };
 
         // set validation status from result and log
         ingredient.update_validation_status(result, manifest_bytes, &validation_log)?;
@@ -929,14 +941,28 @@ impl Ingredient {
         // We can't use functional combinators since we can't use async callbacks (https://github.com/rust-lang/rust/issues/62290)
         let (mut result, manifest_bytes) = match jumbf_result {
             Ok(manifest_bytes) => {
-                let result = Store::from_manifest_data_and_stream(
-                    &manifest_bytes,
-                    format,
-                    &mut *stream,
-                    true,
-                    &mut validation_log,
-                    settings,
-                );
+                let result = if _sync {
+                    Store::from_manifest_data_and_stream(
+                        &manifest_bytes,
+                        format,
+                        &mut *stream,
+                        true,
+                        &mut validation_log,
+                        http_resolver,
+                        settings,
+                    )
+                } else {
+                    Store::from_manifest_data_and_stream_async(
+                        &manifest_bytes,
+                        format,
+                        &mut *stream,
+                        true,
+                        &mut validation_log,
+                        http_resolver,
+                        settings,
+                    )
+                    .await
+                };
                 (result, Some(manifest_bytes))
             }
             Err(err) => (Err(err), None),
@@ -947,10 +973,20 @@ impl Ingredient {
             let labels = store.get_manifest_labels_for_ocsp(settings);
 
             let ocsp_response_ders = if _sync {
-                store.get_ocsp_response_ders(labels, &mut validation_log, settings)?
+                store.get_ocsp_response_ders(
+                    labels,
+                    &mut validation_log,
+                    http_resolver,
+                    settings,
+                )?
             } else {
                 store
-                    .get_ocsp_response_ders_async(labels, &mut validation_log, settings)
+                    .get_ocsp_response_ders_async(
+                        labels,
+                        &mut validation_log,
+                        http_resolver,
+                        settings,
+                    )
                     .await?
             };
 
@@ -987,12 +1023,14 @@ impl Ingredient {
     /// Thumbnail will be set only if one can be retrieved from a previous valid manifest.
     pub async fn from_stream_async(format: &str, stream: &mut dyn CAIRead) -> Result<Self> {
         let settings = crate::settings::get_settings().unwrap_or_default();
-        Self::from_stream_async_with_settings(format, stream, &settings).await
+        let http_resolver = AsyncGenericResolver::new();
+        Self::from_stream_async_with_settings(format, stream, &http_resolver, &settings).await
     }
 
     pub(crate) async fn from_stream_async_with_settings(
         format: &str,
         stream: &mut dyn CAIRead,
+        http_resolver: &impl AsyncHttpResolver,
         settings: &Settings,
     ) -> Result<Self> {
         let mut ingredient = Self::from_stream_info(stream, format, "untitled");
@@ -1023,6 +1061,7 @@ impl Ingredient {
                                 &store,
                                 &mut ClaimAssetData::Stream(stream, format),
                                 &mut validation_log,
+                                http_resolver,
                                 settings,
                             )
                             .await
@@ -1453,6 +1492,7 @@ impl Ingredient {
         stream: &mut dyn CAIRead,
     ) -> Result<Self> {
         let settings = crate::settings::get_settings().unwrap_or_default();
+        let http_resolver = AsyncGenericResolver::new();
         let mut ingredient = Self::from_stream_info(stream, format, "untitled");
 
         let mut validation_log = StatusTracker::default();
@@ -1472,6 +1512,7 @@ impl Ingredient {
                     &store,
                     &mut ClaimAssetData::Stream(stream, format),
                     &mut validation_log,
+                    &http_resolver,
                     &settings,
                 )
                 .await
