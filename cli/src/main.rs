@@ -153,6 +153,10 @@ struct CliArgs {
     /// By default config files are read from `$XDG_CONFIG_HOME/c2pa/c2pa.toml`.
     #[clap(long, env = "C2PATOOL_SETTINGS")]
     settings: Option<PathBuf>,
+
+    /// Disable CAWG verification.  CAWG verifation requires network access
+    #[clap(long = "no_cawg_verify")]
+    no_cawg_verify: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -607,6 +611,8 @@ fn main() -> Result<()> {
         return info(path);
     }
 
+    let cawg_validate = !args.no_cawg_verify;
+
     if args.cert_chain {
         let reader = Reader::from_file(path).map_err(special_errs)?;
         // todo: add cawg certs here??
@@ -825,7 +831,9 @@ fn main() -> Result<()> {
 
                 // generate a report on the output file
                 let mut reader = Reader::from_file(&output).map_err(special_errs)?;
-                validate_cawg(&mut reader)?;
+                if cawg_validate {
+                    validate_cawg(&mut reader)?;
+                }
                 if args.detailed {
                     println!("{reader:#?}");
                 } else {
@@ -857,7 +865,9 @@ fn main() -> Result<()> {
             println!("Ingredient report written to the directory {:?}", &output);
         } else {
             let mut reader = Reader::from_file(&args.path).map_err(special_errs)?;
-            validate_cawg(&mut reader)?;
+            if cawg_validate {
+                validate_cawg(&mut reader)?;
+            }
             reader.to_folder(&output)?;
             let report = reader.to_string();
             if args.detailed {
@@ -876,25 +886,31 @@ fn main() -> Result<()> {
         )
     } else if args.detailed {
         let mut reader = reader_from_args(&args)?;
-        validate_cawg(&mut reader)?;
+        if cawg_validate {
+            validate_cawg(&mut reader)?;
+        }
         println!("{reader:#?}");
     } else if let Some(Commands::Fragment {
         fragments_glob: Some(fg),
     }) = &args.command
     {
         let mut stores = verify_fragmented(&args.path, fg)?;
-        if stores.len() == 1 {
+        if stores.len() == 1 && cawg_validate {
             validate_cawg(&mut stores[0])?;
             println!("{}", stores[0]);
         } else {
-            for store in &mut stores {
-                validate_cawg(store)?;
+            if cawg_validate {
+                for store in &mut stores {
+                    validate_cawg(store)?;
+                }
             }
             println!("{} Init manifests validated", stores.len());
         }
     } else {
         let mut reader = reader_from_args(&args)?;
-        validate_cawg(&mut reader)?;
+        if cawg_validate {
+            validate_cawg(&mut reader)?;
+        }
         println!("{reader}");
     }
 
