@@ -51,9 +51,9 @@ pub struct BoxMap {
 }
 
 /// Helper class to create BoxHash assertion
-#[derive(Serialize, Deserialize, Debug, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Debug, Default, PartialEq, Eq)]
 pub struct BoxHash {
-    boxes: Vec<BoxMap>,
+    pub boxes: Vec<BoxMap>,
 }
 
 impl BoxHash {

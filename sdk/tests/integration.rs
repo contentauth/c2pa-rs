@@ -142,7 +142,7 @@ mod integration_1 {
         let json = std::fs::read_to_string(manifest_path)?;
 
         let mut builder = Builder::from_json(&json)?;
-        builder.base_path = Some(fixture_path(""));
+        builder.set_base_path(fixture_path(""));
 
         // sign and embed into the target file
         let signer = Settings::signer()?;
