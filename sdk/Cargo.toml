@@ -172,7 +172,7 @@ web-time = "1.1"
 x509-certificate = "0.24.0"
 x509-parser = "0.16.0"
 zeroize = { version = "1.8", features = ["zeroize_derive"] }
-zip = { version = "3.0.0", default-features = false }
+zip = { version = "6.0.0", default-features = false }
 
 # Use the asm feature of sha2 on aarch64 macOS for better performance. This nearly
 # halves hashing time for large assets (> 50gb mp4, for example).
