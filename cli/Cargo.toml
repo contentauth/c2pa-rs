@@ -19,6 +19,12 @@ repository = "https://github.com/contentauth/c2pa-rs/tree/main/cli"
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(test)'] }
 # Workaround for https://github.com/est31/cargo-udeps/issues/293.
 
+[features]
+default = ["networking"]
+networking = [
+    "c2pa/default_http"
+]
+
 [dependencies]
 anyhow = "1.0"
 atree = "0.5.2"

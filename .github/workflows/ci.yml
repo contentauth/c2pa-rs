@@ -41,8 +41,7 @@ jobs:
       - name: Get all features
         id: get-features
         run: |
-          # TODO: `http_reqwest_blocking` is disabled due to  https://github.com/contentauth/c2pa-rs/issues/1364
-          FEATURES=$(cargo metadata --format-version=1 | jq -r '[.packages[] | select(.name=="c2pa") | .features | keys | map(select(. != "default" and . != "http_reqwest_blocking")) | .[]] | unique | join(" ")')
+          FEATURES=$(cargo metadata --format-version=1 | jq -r '[.packages[] | select(.name=="c2pa") | .features | keys | map(select(. != "default")) | .[]] | unique | join(" ")')
 
           RUST_NATIVE_FEATURES=$(echo $FEATURES | sed 's/openssl//g')
           OPENSSL_FEATURES=$(echo $FEATURES | sed 's/rust_native_crypto//g')
