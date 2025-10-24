@@ -35,6 +35,7 @@ use crate::{
     crypto::base64,
     error::{Error, Result},
     hashed_uri::HashedUri,
+    http::{AsyncGenericResolver, AsyncHttpResolver, SyncGenericResolver, SyncHttpResolver},
     jumbf::{
         self,
         labels::{assertion_label_from_uri, manifest_label_from_uri},
@@ -831,7 +832,7 @@ impl Ingredient {
         let settings = crate::settings::get_settings().unwrap_or_default();
         let ingredient = Self::from_stream_info(stream, format, "untitled");
         stream.rewind()?;
-        ingredient.add_stream_internal(format, stream, &settings)
+        ingredient.add_stream_internal(format, stream, &SyncGenericResolver::new(), &settings)
     }
 
     /// Create an Ingredient from JSON.
@@ -846,11 +847,18 @@ impl Ingredient {
     /// Sets thumbnail if not defined and a valid claim thumbnail is found or add_thumbnails is enabled.
     /// Instance_id, document_id, and provenance will be overridden if found in the stream.
     /// Format will be overridden only if it is the default (application/octet-stream).
-    #[async_generic]
+    #[async_generic(async_signature(
+        mut self,
+        format: S,
+        stream: &mut dyn CAIRead,
+        http_resolver: &impl AsyncHttpResolver,
+        settings: &Settings,
+    ))]
     pub(crate) fn with_stream<S: Into<String>>(
         mut self,
         format: S,
         stream: &mut dyn CAIRead,
+        http_resolver: &impl SyncHttpResolver,
         settings: &Settings,
     ) -> Result<Self> {
         let format = format.into();
@@ -883,19 +891,26 @@ impl Ingredient {
         stream.rewind()?;
 
         if _sync {
-            self.add_stream_internal(&format, stream, settings)
+            self.add_stream_internal(&format, stream, http_resolver, settings)
         } else {
-            self.add_stream_internal_async(&format, stream, settings)
+            self.add_stream_internal_async(&format, stream, http_resolver, settings)
                 .await
         }
     }
 
     // Internal implementation to avoid code bloat.
-    #[async_generic]
+    #[async_generic(async_signature(
+        mut self,
+        format: &str,
+        stream: &mut dyn CAIRead,
+        http_resolver: &impl AsyncHttpResolver,
+        settings: &Settings,
+    ))]
     fn add_stream_internal(
         mut self,
         format: &str,
         stream: &mut dyn CAIRead,
+        http_resolver: &impl SyncHttpResolver,
         settings: &Settings,
     ) -> Result<Self> {
         let mut validation_log = StatusTracker::default();
@@ -903,8 +918,12 @@ impl Ingredient {
         // retrieve the manifest bytes from embedded or remote and convert to store if found
         let jumbf_result = match self.manifest_data() {
             Some(data) => Ok(data.into_owned()),
-            None => Store::load_jumbf_from_stream(format, stream, settings)
-                .map(|(manifest_bytes, _)| manifest_bytes),
+            None => if _sync {
+                Store::load_jumbf_from_stream(format, stream, http_resolver, settings)
+            } else {
+                Store::load_jumbf_from_stream_async(format, stream, http_resolver, settings).await
+            }
+            .map(|(manifest_bytes, _)| manifest_bytes),
         };
 
         // We can't use functional combinators since we can't use async callbacks (https://github.com/rust-lang/rust/issues/62290)
@@ -982,43 +1001,49 @@ impl Ingredient {
         let mut validation_log = StatusTracker::default();
 
         // retrieve the manifest bytes from embedded, sidecar or remote and convert to store if found
-        let (result, manifest_bytes) =
-            match Store::load_jumbf_from_stream_async(format, stream, settings).await {
-                Ok((manifest_bytes, _)) => {
-                    (
-                        // generate a store from the buffer and then validate from the asset path
-                        match Store::from_jumbf_with_settings(
-                            &manifest_bytes,
-                            &mut validation_log,
-                            settings,
-                        ) {
-                            Ok(store) => {
-                                // verify the store
-                                Store::verify_store_async(
-                                    &store,
-                                    &mut ClaimAssetData::Stream(stream, format),
-                                    &mut validation_log,
-                                    settings,
-                                )
-                                .await
-                                .map(|_| store)
-                            }
-                            Err(e) => {
-                                log_item!(
-                                    "asset",
-                                    "error loading asset",
-                                    "Ingredient::from_stream_async"
-                                )
-                                .failure_no_throw(&mut validation_log, &e);
+        let (result, manifest_bytes) = match Store::load_jumbf_from_stream_async(
+            format,
+            stream,
+            &AsyncGenericResolver::new(),
+            settings,
+        )
+        .await
+        {
+            Ok((manifest_bytes, _)) => {
+                (
+                    // generate a store from the buffer and then validate from the asset path
+                    match Store::from_jumbf_with_settings(
+                        &manifest_bytes,
+                        &mut validation_log,
+                        settings,
+                    ) {
+                        Ok(store) => {
+                            // verify the store
+                            Store::verify_store_async(
+                                &store,
+                                &mut ClaimAssetData::Stream(stream, format),
+                                &mut validation_log,
+                                settings,
+                            )
+                            .await
+                            .map(|_| store)
+                        }
+                        Err(e) => {
+                            log_item!(
+                                "asset",
+                                "error loading asset",
+                                "Ingredient::from_stream_async"
+                            )
+                            .failure_no_throw(&mut validation_log, &e);
 
-                                Err(e)
-                            }
-                        },
-                        Some(manifest_bytes),
-                    )
-                }
-                Err(err) => (Err(err), None),
-            };
+                            Err(e)
+                        }
+                    },
+                    Some(manifest_bytes),
+                )
+            }
+            Err(err) => (Err(err), None),
+        };
 
         // set validation status from result and log
         ingredient.update_validation_status(result, manifest_bytes, &validation_log)?;

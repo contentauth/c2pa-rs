@@ -42,6 +42,7 @@ jobs:
         id: get-features
         run: |
           FEATURES=$(cargo metadata --format-version=1 | jq -r '[.packages[] | select(.name=="c2pa") | .features | keys | map(select(. != "default")) | .[]] | unique | join(" ")')
+
           RUST_NATIVE_FEATURES=$(echo $FEATURES | sed 's/openssl//g')
           OPENSSL_FEATURES=$(echo $FEATURES | sed 's/rust_native_crypto//g')
           echo "rust-native-features=$RUST_NATIVE_FEATURES" >> "$GITHUB_OUTPUT"
@@ -310,7 +311,7 @@ jobs:
         run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
 
       - name: Run Wasm tests
-        run: wasm-pack test --chrome --chromedriver ${{ steps.setup-chrome.outputs.chromedriver-path }} --headless --no-default-features --features rust_native_crypto,fetch_remote_manifests
+        run: wasm-pack test --chrome --chromedriver ${{ steps.setup-chrome.outputs.chromedriver-path }} --headless --no-default-features --features rust_native_crypto,fetch_remote_manifests,http_reqwest
         working-directory: ./sdk
         env:
           WASM_BINDGEN_TEST_TIMEOUT: 60
