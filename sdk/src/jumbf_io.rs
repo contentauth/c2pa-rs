@@ -100,16 +100,34 @@ pub(crate) fn is_bmff_format(asset_type: &str) -> bool {
     bmff_io.supported_types().contains(&asset_type)
 }
 
+/// Checks whether the stream matches the specified asset type, or otherwise returns
+/// [Error::IncorrectFormat].
+pub fn check_stream_supported(asset_type: &str, stream: &mut dyn CAIRead) -> Result<()> {
+    match get_assetio_handler(asset_type) {
+        Some(asset_handler) => {
+            if !asset_handler.supports_stream(stream)? {
+                Err(Error::IncorrectFormat(asset_type.to_owned()))
+            } else {
+                Ok(())
+            }
+        }
+        None => Err(Error::IncorrectFormat(asset_type.to_owned())),
+    }
+}
+
 /// Return jumbf block from in memory asset
 #[allow(dead_code)]
 pub fn load_jumbf_from_memory(asset_type: &str, data: &[u8]) -> Result<Vec<u8>> {
     let mut buf_reader = Cursor::new(data);
 
+    check_stream_supported(asset_type, &mut buf_reader)?;
     load_jumbf_from_stream(asset_type, &mut buf_reader)
 }
 
 /// Return jumbf block from stream asset
 pub fn load_jumbf_from_stream(asset_type: &str, input_stream: &mut dyn CAIRead) -> Result<Vec<u8>> {
+    check_stream_supported(asset_type, input_stream)?;
+
     let cai_block = match get_cailoader_handler(asset_type) {
         Some(asset_handler) => asset_handler.read_cai(input_stream)?,
         None => return Err(Error::UnsupportedType),
@@ -127,6 +145,8 @@ pub fn save_jumbf_to_stream(
     output_stream: &mut dyn CAIReadWrite,
     store_bytes: &[u8],
 ) -> Result<()> {
+    check_stream_supported(asset_type, input_stream)?;
+
     match get_caiwriter_handler(asset_type) {
         Some(asset_handler) => asset_handler.write_cai(input_stream, output_stream, store_bytes),
         None => Err(Error::UnsupportedType),
@@ -136,6 +156,8 @@ pub fn save_jumbf_to_stream(
 /// writes the jumbf data in store_bytes into an asset in data and returns the newly created asset
 pub fn save_jumbf_to_memory(asset_type: &str, data: &[u8], store_bytes: &[u8]) -> Result<Vec<u8>> {
     let mut input_stream = Cursor::new(data);
+    check_stream_supported(asset_type, &mut input_stream)?;
+
     let output_vec: Vec<u8> = Vec::with_capacity(data.len() + store_bytes.len() + 1024);
     let mut output_stream = Cursor::new(output_vec);
 

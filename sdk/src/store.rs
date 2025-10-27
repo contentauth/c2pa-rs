@@ -5797,11 +5797,11 @@ pub mod tests {
             &mut report,
             &Settings::default(),
         );
-        assert!(matches!(result, Err(Error::UnsupportedType)));
+        assert!(matches!(result, Err(Error::IncorrectFormat(_))));
         println!("Error report: {report:?}");
         assert!(!report.logged_items().is_empty());
 
-        assert!(report.has_error(Error::UnsupportedType));
+        assert!(report.has_error(Error::IncorrectFormat(format.to_owned())));
     }
 
     #[test]
