@@ -15,10 +15,11 @@ use std::{fs::File, path::Path};
 
 use crate::{
     asset_io::{
-        AssetIO, CAIRead, CAIReadWrite, CAIReader, CAIWriter, ComposedManifestRef,
+        AssetIO, CAIRead, CAIReadWrapper, CAIReadWrite, CAIReader, CAIWriter, ComposedManifestRef,
         HashBlockObjectType, HashObjectPositions,
     },
     error::{Error, Result},
+    jumbf::boxes::{self, BoxReader, Cai},
 };
 
 static SUPPORTED_TYPES: [&str; 3] = [
@@ -128,9 +129,13 @@ impl AssetIO for C2paIO {
         &SUPPORTED_TYPES
     }
 
-    fn supports_stream(&self, _stream: &mut dyn CAIRead) -> Result<bool> {
-        // TODO: complex
-        Ok(true)
+    fn supports_stream(&self, stream: &mut dyn CAIRead) -> Result<bool> {
+        stream.rewind()?;
+
+        let super_box = BoxReader::read_super_box(&mut CAIReadWrapper { reader: stream })?;
+        let cai_block = Cai::from(super_box);
+
+        Ok(cai_block.desc_box().uuid() == boxes::CAI_BLOCK_UUID)
     }
 
     fn composed_data_ref(&self) -> Option<&dyn ComposedManifestRef> {
