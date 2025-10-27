@@ -1955,7 +1955,6 @@ mod tests {
     // Source: https://github.com/contentauth/c2pa-rs/pull/1458
     #[test]
     fn test_builder_one_placed_action_via_ingredient_id_ref() {
-        #[cfg(target_os = "wasi")]
         Settings::reset().unwrap();
 
         Settings::from_toml(
@@ -2027,7 +2026,6 @@ mod tests {
 
     #[test]
     fn test_builder_settings_auto_created() {
-        #[cfg(target_os = "wasi")]
         Settings::reset().unwrap();
 
         Settings::from_toml(
@@ -2065,7 +2063,6 @@ mod tests {
 
     #[test]
     fn test_builder_settings_auto_opened() {
-        #[cfg(target_os = "wasi")]
         Settings::reset().unwrap();
 
         let mut builder = Builder::new();
@@ -2121,7 +2118,6 @@ mod tests {
 
     #[test]
     fn test_builder_settings_auto_placed() {
-        #[cfg(target_os = "wasi")]
         Settings::reset().unwrap();
 
         Settings::from_toml(
@@ -2217,7 +2213,6 @@ mod tests {
 
     #[test]
     fn test_builder_settings_all_actions_included() {
-        #[cfg(target_os = "wasi")]
         Settings::reset().unwrap();
 
         Settings::from_toml(
@@ -2257,7 +2252,6 @@ mod tests {
 
     #[test]
     fn test_builder_settings_action_templates() {
-        #[cfg(target_os = "wasi")]
         Settings::reset().unwrap();
 
         Settings::from_toml(
@@ -2318,7 +2312,6 @@ mod tests {
 
     #[test]
     fn test_builder_settings_actions() {
-        #[cfg(target_os = "wasi")]
         Settings::reset().unwrap();
 
         Settings::from_toml(

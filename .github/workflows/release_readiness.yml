@@ -69,7 +69,10 @@ jobs:
           RUST_BACKTRACE: "1"
           FEATURES: ${{needs.get-features.outputs.openssl-features}}
         run: |
-          cargo test --features "$FEATURES"
+          # Run reader and builder tests single-threaded to avoid global state issues
+          cargo test --features "$FEATURES" -- --test-threads=1 builder::tests reader::tests
+          # Run all other tests multi-threaded for better performance
+          cargo test --features "$FEATURES" -- --exclude builder::tests --exclude reader::tests
 
   tests-rust-native-crypto:
     name: Unit tests (with Rust native crypto installed)
@@ -100,7 +103,10 @@ jobs:
           RUST_BACKTRACE: "1"
           FEATURES: ${{needs.get-features.outputs.rust_native_crypto-features}}
         run: |
-          cargo test --features "$FEATURES"
+          # Run reader and builder tests single-threaded to avoid global state issues
+          cargo test --features "$FEATURES" -- --test-threads=1 builder::tests reader::tests
+          # Run all other tests multi-threaded for better performance
+          cargo test --features "$FEATURES" -- --exclude builder::tests --exclude reader::tests
 
   tests-cross:
     name: Unit tests
@@ -134,7 +140,10 @@ jobs:
         env:
           FEATURES: ${{needs.get-features.outputs.openssl-features}}
         run: |
-          cross test --all-targets --features "$FEATURES" --target ${{ matrix.target }}
+          # Run reader and builder tests single-threaded to avoid global state issues
+          cross test --all-targets --features "$FEATURES" --target ${{ matrix.target }} -- --test-threads=1 builder::tests reader::tests
+          # Run all other tests multi-threaded for better performance
+          cross test --all-targets --features "$FEATURES" --target ${{ matrix.target }} -- --exclude builder::tests --exclude reader::tests
 
   test-direct-minimal-versions:
     name: Unit tests with minimum versions of direct dependencies
@@ -163,7 +172,10 @@ jobs:
         env:
           FEATURES: ${{needs.get-features.outputs.openssl-features}}
         run: |
-          cargo +nightly-2025-07-28 test -Z direct-minimal-versions --all-targets --features "$FEATURES"
+          # Run reader and builder tests single-threaded to avoid global state issues
+          cargo +nightly-2025-07-28 test -Z direct-minimal-versions --all-targets --features "$FEATURES" -- --test-threads=1 builder::tests reader::tests
+          # Run all other tests multi-threaded for better performance
+          cargo +nightly-2025-07-28 test -Z direct-minimal-versions --all-targets --features "$FEATURES" -- --exclude builder::tests --exclude reader::tests
 
   docs_rs:
     name: Preflight docs.rs build

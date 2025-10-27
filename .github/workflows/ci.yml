@@ -79,7 +79,12 @@ jobs:
           RUST_BACKTRACE: "1"
           FEATURES: ${{needs.get-features.outputs.openssl-features}}
         run: |
-          cargo llvm-cov --lib --features "$FEATURES" --lcov --output-path lcov-openssl.info
+          # Run reader and builder tests single-threaded to avoid global state issues
+          cargo llvm-cov --lib --features "$FEATURES" --lcov --output-path lcov-openssl-reader-builder.info -- --test-threads=1 builder::tests reader::tests
+          # Run all other tests multi-threaded for better performance
+          cargo llvm-cov --lib --features "$FEATURES" --lcov --output-path lcov-openssl-other.info -- --exclude builder::tests --exclude reader::tests
+          # Combine coverage reports
+          lcov --add-tracefile lcov-openssl-reader-builder.info --add-tracefile lcov-openssl-other.info --output-file lcov-openssl.info
 
       # Tokens aren't available for PRs originating from forks,
       # so we don't attempt to upload code coverage in that case.
@@ -128,7 +133,12 @@ jobs:
           RUST_BACKTRACE: "1"
           FEATURES: ${{needs.get-features.outputs.rust-native-features}}
         run: |
-          cargo llvm-cov -p c2pa --no-default-features --features "$FEATURES" --lcov --output-path lcov-rust_native_crypto.info
+          # Run reader and builder tests single-threaded to avoid global state issues
+          cargo llvm-cov -p c2pa --no-default-features --features "$FEATURES" --lcov --output-path lcov-rust_native_crypto-reader-builder.info -- --test-threads=1 builder::tests reader::tests
+          # Run all other tests multi-threaded for better performance
+          cargo llvm-cov -p c2pa --no-default-features --features "$FEATURES" --lcov --output-path lcov-rust_native_crypto-other.info -- --exclude builder::tests --exclude reader::tests
+          # Combine coverage reports
+          lcov --add-tracefile lcov-rust_native_crypto-reader-builder.info --add-tracefile lcov-rust_native_crypto-other.info --output-file lcov-rust_native_crypto.info
 
       # Tokens aren't available for PRs originating from forks,
       # so we don't attempt to upload code coverage in that case.

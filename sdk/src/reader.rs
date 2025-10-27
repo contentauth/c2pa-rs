@@ -1020,8 +1020,9 @@ pub mod tests {
     }
 
     #[test]
-    #[cfg(not(target_os = "wasi"))] // todo: enable when disable we find out wasi trust issues
     fn test_reader_trusted() -> Result<()> {
+        crate::settings::reset_default_settings()?;
+
         let reader =
             Reader::from_stream("image/jpeg", std::io::Cursor::new(IMAGE_COMPLEX_MANIFEST))?;
         assert_eq!(reader.validation_state(), ValidationState::Trusted);

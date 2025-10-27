@@ -439,13 +439,6 @@ impl Settings {
         Settings::from_string(toml, "toml").map(|_| ())
     }
 
-    /// Create [Settings] from a toml string without affecting global state.
-    pub(crate) fn from_toml_str(toml: &str) -> Result<Self> {
-        #[allow(deprecated)]
-        Settings::from_string(toml, "toml")
-    }
-
-
     /// Set the [Settings] from a url to a toml file.
     #[cfg(not(target_arch = "wasm32"))]
     pub fn from_url(url: &str) -> Result<()> {
@@ -536,7 +529,6 @@ impl Settings {
         }
     }
 
-
     /// Serializes the [Settings] into a toml string.
     pub fn to_toml() -> Result<String> {
         let settings =
@@ -557,10 +549,6 @@ impl Settings {
     #[inline]
     pub fn signer() -> Result<Box<dyn Signer>> {
         SignerSettings::signer()
-    }
-
-    pub(crate) fn signer_from_settings(settings: &Settings) -> Result<Box<dyn Signer>> {
-        SignerSettings::signer_from_settings(settings)
     }
 }
 
