@@ -14,7 +14,7 @@
 use std::{
     collections::HashMap,
     fs::File,
-    io::{BufReader, Cursor, SeekFrom, Write},
+    io::{BufReader, Cursor, Write},
     path::*,
 };
 

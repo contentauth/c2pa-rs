@@ -104,14 +104,24 @@ pub(crate) fn is_bmff_format(asset_type: &str) -> bool {
 /// [Error::IncorrectFormat].
 pub fn check_stream_supported(asset_type: &str, stream: &mut dyn CAIRead) -> Result<()> {
     match get_assetio_handler(asset_type) {
-        Some(asset_handler) => {
-            if !asset_handler.supports_stream(stream)? {
-                Err(Error::IncorrectFormat(asset_type.to_owned()))
-            } else {
-                Ok(())
-            }
-        }
-        None => Err(Error::IncorrectFormat(asset_type.to_owned())),
+        Some(asset_handler) => match asset_handler.supports_stream(stream) {
+            // Failed to check if asset supports the stream.
+            Err(err) => Err(Error::IncorrectFormat {
+                format: asset_type.to_owned(),
+                source: Some(Box::new(err)),
+            }),
+            // Did not fail, although the asset doesn't support the stream.
+            Ok(false) => Err(Error::IncorrectFormat {
+                format: asset_type.to_owned(),
+                source: None,
+            }),
+            // Stream supported.
+            Ok(true) => Ok(()),
+        },
+        None => Err(Error::IncorrectFormat {
+            format: asset_type.to_owned(),
+            source: None,
+        }),
     }
 }
 
@@ -530,8 +540,12 @@ pub mod tests {
             .unwrap();
         removed.set_position(0);
         let result = load_jumbf_from_stream(asset_type, &mut removed);
-        if (asset_type != "wav")
-            && (asset_type != "avi" && asset_type != "mp3" && asset_type != "webp")
+        // For c2pa this is expected to return `Error::IncorrectFormat`.
+        if asset_type != "wav"
+            && asset_type != "avi"
+            && asset_type != "mp3"
+            && asset_type != "webp"
+            && asset_type != "c2pa"
         {
             assert!(matches!(&result.err().unwrap(), Error::JumbfNotFound));
         }

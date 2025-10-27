@@ -228,8 +228,12 @@ pub enum Error {
     #[error("thumbnail format {0} is unsupported")]
     UnsupportedThumbnailFormat(String),
 
-    #[error("the specified stream is not of format {0}")]
-    IncorrectFormat(String),
+    #[error("the specified stream is not of format {format}")]
+    IncorrectFormat {
+        format: String,
+        #[source]
+        source: Option<Box<dyn std::error::Error + Send + Sync>>,
+    },
 
     #[error("`trust.signer_info` is missing from settings")]
     MissingSignerSettings,

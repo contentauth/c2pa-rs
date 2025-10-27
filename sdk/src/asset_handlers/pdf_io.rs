@@ -11,7 +11,7 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use std::{fs::File, io::SeekFrom, path::Path};
+use std::{fs::File, path::Path};
 
 use crate::{
     asset_handlers::pdf::{C2paPdf, Pdf},
