@@ -719,7 +719,9 @@ impl Reader {
             };
 
             match result {
-                Ok(manifest) => {
+                Ok(mut manifest) => {
+                    // Generate manifest_data for ingredients
+                    Self::populate_ingredient_manifest_data(&store, &mut manifest)?;
                     manifests.insert(manifest_label.to_owned(), manifest);
                 }
                 Err(e) => {
@@ -770,6 +772,64 @@ impl Reader {
             store,
             assertion_values: HashMap::new(),
         })
+    }
+
+    /// Populate manifest_data references for all ingredients in a manifest
+    fn populate_ingredient_manifest_data(store: &Store, manifest: &mut Manifest) -> Result<()> {
+        for ingredient in manifest.ingredients_mut() {
+            if let Some(active_label) = ingredient.active_manifest() {
+                if let Some(claim) = store.get_claim(active_label) {
+                    // Generate the ingredient store with all referenced claims
+                    let ingredient_store = {
+                        let mut ingredient_store = Store::new();
+                        let mut active_claim = claim.clone();
+
+                        // Recursively collect all ingredient claims
+                        Self::collect_ingredient_claims_for_store(store, claim, &mut active_claim)?;
+
+                        // Add the main claim
+                        ingredient_store.commit_claim(active_claim)?;
+                        ingredient_store
+                    };
+
+                    let c2pa_data = ingredient_store.to_jumbf_internal(0)?;
+
+                    // Create a unique resource name based on the ingredient's active manifest label
+                    // This ensures each ingredient has a uniquely identifiable manifest_data resource
+                    let resource_name = format!("{}/manifest_data", active_label.replace('/', "_"));
+
+                    let manifest_data_ref = ingredient.resources_mut().add_with(
+                        &resource_name,
+                        "application/c2pa",
+                        c2pa_data,
+                    )?;
+
+                    ingredient.set_manifest_data_ref(manifest_data_ref)?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Helper method to recursively collect ingredient claims for a store
+    fn collect_ingredient_claims_for_store(
+        store: &Store,
+        claim: &Claim,
+        active_claim: &mut Claim,
+    ) -> Result<()> {
+        for ingredient in claim.claim_ingredients() {
+            if let Some(ingredient_claim) = store.get_claim(ingredient.label()) {
+                // First, recursively collect any ingredients this claim references
+                Self::collect_ingredient_claims_for_store(store, ingredient_claim, active_claim)?;
+
+                // Then add this ingredient claim to the primary claim
+                active_claim.replace_ingredient_or_insert(
+                    ingredient_claim.label().to_string(),
+                    ingredient_claim.clone(),
+                );
+            }
+        }
+        Ok(())
     }
 
     /// Post-validate the reader. This function is called after the reader is created.
@@ -969,12 +1029,13 @@ impl Reader {
             // build a new store with just the ingredient claim and any referenced claims
             let ingredient_store = {
                 let mut store = Store::new();
+                let mut active_claim = claim.clone();
 
-                // Recursively collect all ingredient claims
-                self.collect_ingredient_claims_recursive(claim, &mut store)?;
+                // Recursively collect all ingredient claims and add them to primary_claim
+                self.collect_ingredient_claims_recursive(claim, &mut active_claim)?;
 
                 // Add the main claim last
-                store.commit_claim(claim.clone())?;
+                store.commit_claim(active_claim)?;
                 store
             };
             let c2pa_data = ingredient_store.to_jumbf_internal(0)?;
@@ -984,15 +1045,22 @@ impl Reader {
         Ok(ingredient)
     }
 
-    /// Recursively collect all ingredient claims referenced by the given claim
-    fn collect_ingredient_claims_recursive(&self, claim: &Claim, store: &mut Store) -> Result<()> {
+    /// Recursively collect all ingredient claims and add them to the primary claim
+    fn collect_ingredient_claims_recursive(
+        &self,
+        claim: &Claim,
+        active_claim: &mut Claim,
+    ) -> Result<()> {
         for ingredient in claim.claim_ingredients() {
             if let Some(ingredient_claim) = self.store.get_claim(ingredient.label()) {
                 // First, recursively collect any ingredients this claim references
-                self.collect_ingredient_claims_recursive(ingredient_claim, store)?;
+                self.collect_ingredient_claims_recursive(ingredient_claim, active_claim)?;
 
-                // Then add this ingredient claim to the store
-                store.commit_claim(ingredient_claim.clone())?;
+                // Then add this ingredient claim to the primary claim
+                active_claim.replace_ingredient_or_insert(
+                    ingredient_claim.label().to_string(),
+                    ingredient_claim.clone(),
+                );
             }
         }
         Ok(())
@@ -1165,7 +1233,7 @@ pub mod tests {
 
     #[test]
     #[cfg(feature = "file_io")]
-    /// Tests that the reader can write resources to a folder
+    /// Tests that the reader can write resources to a folder and that ingredients have manifest_data populated
     fn test_reader_to_folder() -> Result<()> {
         // Skip this test in GitHub workflow when target is WASI
         if std::env::var("GITHUB_ACTIONS").is_ok() && cfg!(target_os = "wasi") {
@@ -1179,6 +1247,25 @@ pub mod tests {
             std::io::Cursor::new(IMAGE_WITH_INGREDIENT_MANIFEST),
         )?;
         assert_eq!(reader.validation_status(), None);
+
+        // Test that ingredients have manifest_data populated
+        if let Some(manifest) = reader.active_manifest() {
+            for ingredient in manifest.ingredients() {
+                // Verify that each ingredient has manifest_data
+                assert!(
+                    ingredient.manifest_data().is_some(),
+                    "Ingredient should have manifest_data populated"
+                );
+
+                // Verify the manifest_data is not empty
+                let manifest_data = ingredient.manifest_data().unwrap();
+                assert!(
+                    !manifest_data.is_empty(),
+                    "Ingredient manifest_data should not be empty"
+                );
+            }
+        }
+
         let temp_dir = tempdirectory().unwrap();
         reader.to_folder(temp_dir.path())?;
         let path = temp_dir_path(&temp_dir, "manifest.json");

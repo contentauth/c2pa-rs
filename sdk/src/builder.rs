@@ -702,7 +702,6 @@ impl Builder {
     /// * `stream` - A stream to write the zip into.
     /// # Errors
     /// * Returns an [`Error`] if the archive cannot be written.
-    #[allow(dead_code)]
     fn old_to_archive(&mut self, stream: impl Write + Seek) -> Result<()> {
         drop(
             // this drop seems to be required to force a flush before reading back.
@@ -847,8 +846,12 @@ impl Builder {
     /// * Returns an [`Error`] if the archive cannot be written.
     pub fn to_archive(&mut self, mut stream: impl Write + Seek) -> Result<()> {
         let settings = crate::settings::get_settings().unwrap_or_default();
-        let c2pa_data = self.working_store_sign(&settings)?;
-        stream.write_all(&c2pa_data)?;
+        if let Some(true) = settings.builder.generate_c2pa_archive {
+            let c2pa_data = self.working_store_sign(&settings)?;
+            stream.write_all(&c2pa_data)?;
+        } else {
+            return self.old_to_archive(stream);
+        }
         Ok(())
     }
 
