@@ -71,8 +71,10 @@ jobs:
         run: |
           # Run reader and builder tests single-threaded to avoid global state issues
           cargo test --features "$FEATURES" -- --test-threads=1 builder::tests reader::tests
+          # Get all other test modules (excluding reader and builder)
+          OTHER_TESTS=$(cargo test --features "$FEATURES" -- --list | grep "::tests::" | grep -v "builder::tests\|reader::tests" | sed 's/::tests::.*//' | sort -u | tr '\n' ' ')
           # Run all other tests multi-threaded for better performance
-          cargo test --features "$FEATURES" -- --exclude builder::tests --exclude reader::tests
+          cargo test --features "$FEATURES" -- $OTHER_TESTS
 
   tests-rust-native-crypto:
     name: Unit tests (with Rust native crypto installed)
@@ -105,8 +107,10 @@ jobs:
         run: |
           # Run reader and builder tests single-threaded to avoid global state issues
           cargo test --features "$FEATURES" -- --test-threads=1 builder::tests reader::tests
+          # Get all other test modules (excluding reader and builder)
+          OTHER_TESTS=$(cargo test --features "$FEATURES" -- --list | grep "::tests::" | grep -v "builder::tests\|reader::tests" | sed 's/::tests::.*//' | sort -u | tr '\n' ' ')
           # Run all other tests multi-threaded for better performance
-          cargo test --features "$FEATURES" -- --exclude builder::tests --exclude reader::tests
+          cargo test --features "$FEATURES" -- $OTHER_TESTS
 
   tests-cross:
     name: Unit tests
@@ -142,8 +146,10 @@ jobs:
         run: |
           # Run reader and builder tests single-threaded to avoid global state issues
           cross test --all-targets --features "$FEATURES" --target ${{ matrix.target }} -- --test-threads=1 builder::tests reader::tests
+          # Get all other test modules (excluding reader and builder)
+          OTHER_TESTS=$(cross test --all-targets --features "$FEATURES" --target ${{ matrix.target }} -- --list | grep "::tests::" | grep -v "builder::tests\|reader::tests" | sed 's/::tests::.*//' | sort -u | tr '\n' ' ')
           # Run all other tests multi-threaded for better performance
-          cross test --all-targets --features "$FEATURES" --target ${{ matrix.target }} -- --exclude builder::tests --exclude reader::tests
+          cross test --all-targets --features "$FEATURES" --target ${{ matrix.target }} -- $OTHER_TESTS
 
   test-direct-minimal-versions:
     name: Unit tests with minimum versions of direct dependencies
@@ -174,8 +180,10 @@ jobs:
         run: |
           # Run reader and builder tests single-threaded to avoid global state issues
           cargo +nightly-2025-07-28 test -Z direct-minimal-versions --all-targets --features "$FEATURES" -- --test-threads=1 builder::tests reader::tests
+          # Get all other test modules (excluding reader and builder)
+          OTHER_TESTS=$(cargo +nightly-2025-07-28 test -Z direct-minimal-versions --all-targets --features "$FEATURES" -- --list | grep "::tests::" | grep -v "builder::tests\|reader::tests" | sed 's/::tests::.*//' | sort -u | tr '\n' ' ')
           # Run all other tests multi-threaded for better performance
-          cargo +nightly-2025-07-28 test -Z direct-minimal-versions --all-targets --features "$FEATURES" -- --exclude builder::tests --exclude reader::tests
+          cargo +nightly-2025-07-28 test -Z direct-minimal-versions --all-targets --features "$FEATURES" -- $OTHER_TESTS
 
   docs_rs:
     name: Preflight docs.rs build
