@@ -379,6 +379,15 @@ impl AssetIO for GifIO {
     fn supported_types(&self) -> &[&str] {
         &["gif", "image/gif"]
     }
+
+    fn supports_stream(&self, stream: &mut dyn CAIRead) -> Result<bool> {
+        stream.rewind()?;
+
+        let mut header = [0u8; 6];
+        stream.read_exact(&mut header)?;
+
+        Ok(header == *b"GIF87a" || header == *b"GIF89a")
+    }
 }
 
 impl GifIO {

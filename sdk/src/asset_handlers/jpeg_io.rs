@@ -14,7 +14,7 @@
 use std::{
     collections::HashMap,
     fs::File,
-    io::{BufReader, Cursor, Write},
+    io::{BufReader, Cursor, SeekFrom, Write},
     path::*,
 };
 
@@ -567,6 +567,15 @@ impl AssetIO for JpegIO {
 
     fn supported_types(&self) -> &[&str] {
         &SUPPORTED_TYPES
+    }
+
+    fn supports_stream(&self, stream: &mut dyn CAIRead) -> Result<bool> {
+        stream.rewind()?;
+
+        let mut header = [0u8; 3];
+        stream.read_exact(&mut header)?;
+
+        Ok(header == [0xFF, 0xD8, 0xFF])
     }
 }
 

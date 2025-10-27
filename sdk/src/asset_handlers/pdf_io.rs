@@ -11,13 +11,12 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use std::{fs::File, path::Path};
+use std::{fs::File, io::SeekFrom, path::Path};
 
 use crate::{
     asset_handlers::pdf::{C2paPdf, Pdf},
     asset_io::{AssetIO, CAIRead, CAIReader, CAIWriter, ComposedManifestRef, HashObjectPositions},
-    Error,
-    Error::{JumbfNotFound, NotImplemented, PdfReadError},
+    Error::{self, JumbfNotFound, NotImplemented, PdfReadError},
 };
 
 static SUPPORTED_TYPES: [&str; 2] = ["pdf", "application/pdf"];
@@ -107,6 +106,15 @@ impl AssetIO for PdfIO {
 
     fn supported_types(&self) -> &[&str] {
         &SUPPORTED_TYPES
+    }
+
+    fn supports_stream(&self, stream: &mut dyn CAIRead) -> crate::Result<bool> {
+        stream.rewind()?;
+
+        let mut header = [0u8; 5];
+        stream.read_exact(&mut header)?;
+
+        Ok(header == *b"%PDF-")
     }
 
     fn composed_data_ref(&self) -> Option<&dyn ComposedManifestRef> {

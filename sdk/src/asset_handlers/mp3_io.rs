@@ -344,6 +344,10 @@ impl AssetIO for Mp3IO {
     fn supported_types(&self) -> &[&str] {
         &SUPPORTED_TYPES
     }
+    fn supports_stream(&self, _stream: &mut dyn CAIRead) -> Result<bool> {
+        // TODO: complex
+        Ok(true)
+    }
 }
 
 impl CAIWriter for Mp3IO {

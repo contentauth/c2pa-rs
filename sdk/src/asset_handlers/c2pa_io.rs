@@ -128,6 +128,11 @@ impl AssetIO for C2paIO {
         &SUPPORTED_TYPES
     }
 
+    fn supports_stream(&self, _stream: &mut dyn CAIRead) -> Result<bool> {
+        // TODO: complex
+        Ok(true)
+    }
+
     fn composed_data_ref(&self) -> Option<&dyn ComposedManifestRef> {
         Some(self)
     }

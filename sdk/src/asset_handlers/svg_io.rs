@@ -159,6 +159,11 @@ impl AssetIO for SvgIO {
     fn supported_types(&self) -> &[&str] {
         &SUPPORTED_TYPES
     }
+
+    fn supports_stream(&self, _stream: &mut dyn CAIRead) -> Result<bool> {
+        // TODO: complex
+        Ok(true)
+    }
 }
 
 // create manifest entry

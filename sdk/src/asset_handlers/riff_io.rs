@@ -386,6 +386,16 @@ impl AssetIO for RiffIO {
     fn supported_types(&self) -> &[&str] {
         &SUPPORTED_TYPES
     }
+
+    fn supports_stream(&self, stream: &mut dyn CAIRead) -> Result<bool> {
+        stream.rewind()?;
+
+        let mut header = [0u8; 4];
+        stream.read_exact(&mut header)?;
+
+        // TODO: if we want to detect the subtype we can do extra parsing on the next few bytes
+        Ok(header == *b"RIFF")
+    }
 }
 
 impl CAIWriter for RiffIO {

@@ -186,6 +186,14 @@ pub trait AssetIO: Sync + Send {
     // List of supported extensions and mime types
     fn supported_types(&self) -> &[&str];
 
+    /// Returns whether the asset handler supports parsing the specified stream.
+    ///
+    /// It's recommended to default to true if unimplemented for a particular format.
+    fn supports_stream(&self, stream: &mut dyn CAIRead) -> Result<bool> {
+        let _stream = stream;
+        Ok(true)
+    }
+
     // OPTIONAL INTERFACES
 
     // Returns [`AssetPatch`] trait if this I/O handler supports patching.
@@ -260,7 +268,7 @@ pub trait RemoteRefEmbed {
 
 /// `ComposedManifestRefEmbed` is used to generate a C2PA manifest.  The
 /// returned `Vec<u8>` contains data preformatted to be directly compatible
-/// with the type specified in `format`.  
+/// with the type specified in `format`.
 pub trait ComposedManifestRef {
     // Return entire CAI block as Vec<u8>
     fn compose_manifest(&self, manifest_data: &[u8], format: &str) -> Result<Vec<u8>>;

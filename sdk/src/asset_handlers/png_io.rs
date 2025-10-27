@@ -196,6 +196,7 @@ fn read_string(asset_reader: &mut dyn CAIRead, max_read: u32) -> Result<String> 
 
     Ok(String::from_utf8_lossy(&s).to_string())
 }
+
 pub struct PngIO {}
 
 impl CAIReader for PngIO {
@@ -568,6 +569,15 @@ impl AssetIO for PngIO {
 
     fn supported_types(&self) -> &[&str] {
         &SUPPORTED_TYPES
+    }
+
+    fn supports_stream(&self, stream: &mut dyn CAIRead) -> Result<bool> {
+        stream.rewind()?;
+
+        let mut header = [0u8; 8];
+        stream.read_exact(&mut header)?;
+
+        Ok(header == [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A])
     }
 }
 
