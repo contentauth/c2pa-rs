@@ -300,7 +300,6 @@ pub mod tests {
 
     #[test]
     fn test_make_local_signer() {
-        #[cfg(target_os = "wasi")]
         Settings::reset().unwrap();
 
         // Testing with a different alg than the default test signer.
@@ -330,7 +329,6 @@ pub mod tests {
 
         use crate::create_signer;
 
-        #[cfg(target_os = "wasi")]
         Settings::reset().unwrap();
 
         let alg = SigningAlg::Ps384;
