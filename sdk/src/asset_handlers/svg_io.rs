@@ -160,9 +160,13 @@ impl AssetIO for SvgIO {
         &SUPPORTED_TYPES
     }
 
-    fn supports_stream(&self, _stream: &mut dyn CAIRead) -> Result<bool> {
-        // TODO: complex
-        Ok(true)
+    fn supports_stream(&self, stream: &mut dyn CAIRead) -> Result<bool> {
+        stream.rewind()?;
+
+        let mut bytes = [0u8; 4096];
+        let len = stream.read(&mut bytes)?;
+
+        Ok(bytes[..len].windows(4).any(|pattern| pattern == b"<svg"))
     }
 }
 
