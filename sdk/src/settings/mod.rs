@@ -19,11 +19,12 @@ pub mod signer;
 #[cfg(feature = "file_io")]
 use std::path::Path;
 use std::{
-    cell::RefCell,
     io::{BufRead, BufReader, Cursor},
+    sync::RwLock,
 };
 
 use config::{Config, FileFormat};
+use lazy_static::lazy_static;
 use serde_derive::{Deserialize, Serialize};
 use signer::SignerSettings;
 
@@ -31,10 +32,10 @@ use crate::{crypto::base64, settings::builder::BuilderSettings, Error, Result, S
 
 const VERSION: u32 = 1;
 
-thread_local!(
-    static SETTINGS: RefCell<Config> =
-        RefCell::new(Config::try_from(&Settings::default()).unwrap_or_default());
-);
+lazy_static! {
+    static ref SETTINGS: RwLock<Config> =
+        RwLock::new(Config::try_from(&Settings::default()).unwrap_or_default());
+}
 
 // trait used to validate user input to make sure user supplied configurations are valid
 pub(crate) trait SettingsValidate {
@@ -401,12 +402,15 @@ impl Settings {
             .build()
             .map_err(|_e| Error::BadParam("could not parse configuration file".into()))?;
 
-        let update_config = SETTINGS.with_borrow(|current_settings| {
-            Config::builder()
-                .add_source(current_settings.clone())
-                .add_source(new_config)
-                .build() // merge overrides, allows for partial changes
-        });
+        let update_config = match SETTINGS.read() {
+            Ok(current_settings) => {
+                Config::builder()
+                    .add_source(current_settings.clone())
+                    .add_source(new_config)
+                    .build() // merge overrides, allows for partial changes
+            }
+            Err(_) => return Err(Error::OtherError("could not read settings".into())),
+        };
 
         match update_config {
             Ok(update_config) => {
@@ -418,7 +422,10 @@ impl Settings {
 
                 settings.validate()?;
 
-                SETTINGS.set(update_config.clone());
+                match SETTINGS.write() {
+                    Ok(mut settings) => *settings = update_config.clone(),
+                    Err(_) => return Err(Error::OtherError("could not write settings".into())),
+                }
 
                 Ok(settings)
             }
@@ -431,6 +438,13 @@ impl Settings {
         #[allow(deprecated)]
         Settings::from_string(toml, "toml").map(|_| ())
     }
+
+    /// Create [Settings] from a toml string without affecting global state.
+    pub(crate) fn from_toml_str(toml: &str) -> Result<Self> {
+        #[allow(deprecated)]
+        Settings::from_string(toml, "toml")
+    }
+
 
     /// Set the [Settings] from a url to a toml file.
     #[cfg(not(target_arch = "wasm32"))]
@@ -451,7 +465,10 @@ impl Settings {
     /// deep based on the [Settings] definition.
     #[allow(unused)]
     pub(crate) fn set_value<T: Into<config::Value>>(value_path: &str, value: T) -> Result<()> {
-        let c = SETTINGS.take();
+        let c = match SETTINGS.read() {
+            Ok(config) => config.clone(),
+            Err(_) => return Err(Error::OtherError("could not read settings".into())),
+        };
 
         let update_config = Config::builder()
             .add_source(c.clone())
@@ -468,11 +485,17 @@ impl Settings {
                 .map_err(|e| Error::BadParam(e.to_string()))?;
             settings.validate()?;
 
-            SETTINGS.set(update_config);
+            match SETTINGS.write() {
+                Ok(mut settings) => *settings = update_config,
+                Err(_) => return Err(Error::OtherError("could not write settings".into())),
+            }
 
             Ok(())
         } else {
-            SETTINGS.set(c);
+            match SETTINGS.write() {
+                Ok(mut settings) => *settings = c,
+                Err(_) => return Err(Error::OtherError("could not write settings".into())),
+            }
             Err(Error::OtherError("could not save settings".into()))
         }
     }
@@ -484,28 +507,35 @@ impl Settings {
     /// deep based on the [Settings] definition.
     #[allow(unused)]
     fn get_value<'de, T: serde::de::Deserialize<'de>>(value_path: &str) -> Result<T> {
-        SETTINGS.with_borrow(|current_settings| {
-            let update_config = Config::builder()
-                .add_source(current_settings.clone())
-                .build()
-                .map_err(|_e| Error::OtherError("could not update configuration".into()))?;
+        match SETTINGS.read() {
+            Ok(current_settings) => {
+                let update_config = Config::builder()
+                    .add_source(current_settings.clone())
+                    .build()
+                    .map_err(|_e| Error::OtherError("could not update configuration".into()))?;
 
-            update_config
-                .get::<T>(value_path)
-                .map_err(|_| Error::NotFound)
-        })
+                update_config
+                    .get::<T>(value_path)
+                    .map_err(|_| Error::NotFound)
+            }
+            Err(_) => Err(Error::OtherError("could not read settings".into())),
+        }
     }
 
     /// Set [Settings] back to the default values.
     #[allow(unused)]
     pub(crate) fn reset() -> Result<()> {
         if let Ok(default_settings) = Config::try_from(&Settings::default()) {
-            SETTINGS.set(default_settings);
+            match SETTINGS.write() {
+                Ok(mut settings) => *settings = default_settings,
+                Err(_) => return Err(Error::OtherError("could not write settings".into())),
+            }
             Ok(())
         } else {
             Err(Error::OtherError("could not save settings".into()))
         }
     }
+
 
     /// Serializes the [Settings] into a toml string.
     pub fn to_toml() -> Result<String> {
@@ -527,6 +557,10 @@ impl Settings {
     #[inline]
     pub fn signer() -> Result<Box<dyn Signer>> {
         SignerSettings::signer()
+    }
+
+    pub(crate) fn signer_from_settings(settings: &Settings) -> Result<Box<dyn Signer>> {
+        SignerSettings::signer_from_settings(settings)
     }
 }
 
@@ -568,7 +602,10 @@ impl SettingsValidate for Settings {
 // Get snapshot of the Settings objects, returns None if there is an error
 #[allow(unused)]
 pub(crate) fn get_settings() -> Option<Settings> {
-    SETTINGS.with_borrow(|config| config.clone().try_deserialize::<Settings>().ok())
+    match SETTINGS.try_read() {
+        Ok(config) => config.clone().try_deserialize::<Settings>().ok(),
+        Err(_) => None,
+    }
 }
 
 // Load settings from configuration file
@@ -884,10 +921,7 @@ pub mod tests {
 
     #[test]
     fn test_load_settings_from_sample_toml() {
-        #[cfg(target_os = "wasi")]
-        Settings::reset().unwrap();
-
-        let toml = include_bytes!("../../examples/c2pa.toml");
-        Settings::from_toml(std::str::from_utf8(toml).unwrap()).unwrap();
+        let toml_bytes = include_bytes!("../../examples/c2pa.toml");
+        Settings::from_toml(std::str::from_utf8(toml_bytes).unwrap()).unwrap();
     }
 }
