@@ -76,7 +76,11 @@ impl Trust {
     fn load_trust_from_data(&self, trust_data: &[u8]) -> Result<Vec<Vec<u8>>> {
         let mut certs = Vec::new();
 
-        for pem_result in x509_parser::pem::Pem::iter_from_buffer(trust_data) {
+        // allow for JSON-encoded PEMs with \n
+        let trust_data = String::from_utf8_lossy(trust_data)
+            .replace("\\n", "\n")
+            .into_bytes();
+        for pem_result in x509_parser::pem::Pem::iter_from_buffer(&trust_data) {
             let pem = pem_result.map_err(|_e| Error::CoseInvalidCert)?;
             certs.push(pem.contents);
         }
@@ -115,7 +119,7 @@ impl Trust {
         if found_der_hash {
             Ok(())
         } else {
-            Err(Error::NotFound)
+            Err(Error::CoseInvalidCert)
         }
     }
 }
@@ -427,6 +431,12 @@ impl Settings {
     }
 
     /// Set the [Settings] from a toml file.
+    pub fn from_json(toml: &str) -> Result<()> {
+        #[allow(deprecated)]
+        Settings::from_string(toml, "json").map(|_| ())
+    }
+
+    /// Set the [Settings] from a toml file.
     pub fn from_toml(toml: &str) -> Result<()> {
         #[allow(deprecated)]
         Settings::from_string(toml, "toml").map(|_| ())
@@ -492,7 +502,7 @@ impl Settings {
 
             update_config
                 .get::<T>(value_path)
-                .map_err(|_| Error::NotFound)
+                .map_err(|_| Error::BadParam("could not get settings value".into()))
         })
     }
 
