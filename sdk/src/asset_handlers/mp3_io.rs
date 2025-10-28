@@ -344,9 +344,17 @@ impl AssetIO for Mp3IO {
     fn supported_types(&self) -> &[&str] {
         &SUPPORTED_TYPES
     }
-    fn supports_stream(&self, _stream: &mut dyn CAIRead) -> Result<bool> {
-        // TODO: complex
-        Ok(true)
+
+    fn supports_stream(&self, stream: &mut dyn CAIRead) -> Result<bool> {
+        stream.rewind()?;
+
+        let mut header = [0u8; 3];
+        stream.read_exact(&mut header)?;
+
+        Ok(
+            (header[0] == 0x49 && header[1] == 0x44 && header[2] == 0x33)
+                || (header[0] == 0xFF && header[1] == 0xFB),
+        )
     }
 }
 
