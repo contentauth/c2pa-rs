@@ -229,7 +229,10 @@ pub enum Error {
     UnsupportedThumbnailFormat(String),
 
     #[error("the specified stream is not of format {format}")]
-    IncorrectFormat {
+    InvalidFormat { format: String },
+
+    #[error("failed to check format {format}")]
+    FormatCheckFailed {
         format: String,
         #[source]
         source: Option<Box<dyn std::error::Error + Send + Sync>>,

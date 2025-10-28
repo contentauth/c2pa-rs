@@ -100,28 +100,25 @@ pub(crate) fn is_bmff_format(asset_type: &str) -> bool {
     bmff_io.supported_types().contains(&asset_type)
 }
 
-/// Checks whether the stream matches the specified asset type, or otherwise returns
-/// [Error::IncorrectFormat].
+/// Checks whether the stream matches the specified asset type.
+///
+/// This function may return the following errors:
+/// - [Error::InvalidFormat] if the stream doesn't match the input format.
+/// - [Error::FormatCheckFailed] if there was an error during the format check.
+/// - [Error::UnsupportedType] if the format does not have a corresponding parser.
 pub fn check_stream_supported(asset_type: &str, stream: &mut dyn CAIRead) -> Result<()> {
     match get_assetio_handler(asset_type) {
         Some(asset_handler) => match asset_handler.supports_stream(stream) {
-            // Failed to check if asset supports the stream.
-            Err(err) => Err(Error::IncorrectFormat {
+            Err(err) => Err(Error::FormatCheckFailed {
                 format: asset_type.to_owned(),
                 source: Some(Box::new(err)),
             }),
-            // Did not fail, although the asset doesn't support the stream.
-            Ok(false) => Err(Error::IncorrectFormat {
+            Ok(false) => Err(Error::InvalidFormat {
                 format: asset_type.to_owned(),
-                source: None,
             }),
-            // Stream supported.
             Ok(true) => Ok(()),
         },
-        None => Err(Error::IncorrectFormat {
-            format: asset_type.to_owned(),
-            source: None,
-        }),
+        None => Err(Error::UnsupportedType),
     }
 }
 
