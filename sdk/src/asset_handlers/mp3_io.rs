@@ -353,7 +353,7 @@ impl AssetIO for Mp3IO {
 
         Ok(
             (header[0] == 0x49 && header[1] == 0x44 && header[2] == 0x33)
-                || (header[0] == 0xFF && header[1] == 0xFB),
+                || (header[0] == 0xff && header[1] == 0xfb),
         )
     }
 }

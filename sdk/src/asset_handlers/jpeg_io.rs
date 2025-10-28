@@ -575,7 +575,7 @@ impl AssetIO for JpegIO {
         let mut header = [0u8; 3];
         stream.read_exact(&mut header)?;
 
-        Ok(header == [0xFF, 0xD8, 0xFF])
+        Ok(header == [0xff, 0xd8, 0xff])
     }
 }
 
