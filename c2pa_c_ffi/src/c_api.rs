@@ -1633,6 +1633,68 @@ mod tests {
     }
 
     #[test]
+    fn test_sign_again_with_info() {
+        let source_image = include_bytes!(fixture_path!("IMG_0003_aca.png"));
+        let mut source_stream = TestC2paStream::from_bytes(source_image.to_vec());
+        let dest_vec = Vec::new();
+        let mut dest_stream = TestC2paStream::new(dest_vec).into_c_stream();
+        let certs = include_str!(fixture_path!("certs/ed25519.pub"));
+        let private_key = include_bytes!(fixture_path!("certs/ed25519.pem"));
+        let alg = CString::new("Ed25519").unwrap();
+        let sign_cert = CString::new(certs).unwrap();
+        let private_key = CString::new(private_key).unwrap();
+        let signer_info = C2paSignerInfo {
+            alg: alg.as_ptr(),
+            sign_cert: sign_cert.as_ptr(),
+            private_key: private_key.as_ptr(),
+            ta_url: std::ptr::null(),
+        };
+        let signer = unsafe { c2pa_signer_from_info(&signer_info) };
+
+        assert!(!signer.is_null());
+        let manifest_def = CString::new("{}").unwrap();
+        let builder = unsafe { c2pa_builder_from_json(manifest_def.as_ptr()) };
+        assert!(!builder.is_null());
+        let format = CString::new("image/png").unwrap();
+        let mut manifest_bytes_ptr = std::ptr::null();
+        let _ = unsafe {
+            c2pa_builder_sign(
+                builder,
+                format.as_ptr(),
+                &mut source_stream,
+                &mut dest_stream,
+                signer,
+                &mut manifest_bytes_ptr,
+            )
+        };
+        // let error = unsafe { c2pa_error() };
+        // let error = unsafe { CString::from_raw(error) };
+        // assert_eq!(error.to_str().unwrap(), "Other Invalid signing algorithm");
+        // assert_eq!(result, 65485);
+        
+        // Write the signed file to tmp_folder
+        let tmp_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tmp_folder");
+        std::fs::create_dir_all(&tmp_dir).unwrap();
+        let output_path = tmp_dir.join("IMG_0003_aca_signed.png");
+        
+        // Seek to the beginning of the dest_stream and copy to file
+        use std::io::{Seek, SeekFrom, Write};
+        dest_stream.seek(SeekFrom::Start(0)).unwrap();
+        let mut output_file = std::fs::File::create(&output_path).unwrap();
+        std::io::copy(&mut dest_stream, &mut output_file).unwrap();
+        output_file.flush().unwrap();
+        println!("Signed file written to: {}", output_path.display());
+        
+        TestC2paStream::drop_c_stream(source_stream);
+        TestC2paStream::drop_c_stream(dest_stream);
+        unsafe {
+            c2pa_manifest_bytes_free(manifest_bytes_ptr);
+        }
+        unsafe { c2pa_builder_free(builder) };
+        unsafe { c2pa_signer_free(signer) };
+    }
+
+    #[test]
     fn builder_add_actions_and_sign() {
         let source_image = include_bytes!(fixture_path!("IMG_0003.jpg"));
         let mut source_stream = TestC2paStream::from_bytes(source_image.to_vec());
