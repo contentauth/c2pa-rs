@@ -1667,16 +1667,12 @@ mod tests {
                 &mut manifest_bytes_ptr,
             )
         };
-        // let error = unsafe { c2pa_error() };
-        // let error = unsafe { CString::from_raw(error) };
-        // assert_eq!(error.to_str().unwrap(), "Other Invalid signing algorithm");
-        // assert_eq!(result, 65485);
-        
+
         // Write the signed file to tmp_folder
         let tmp_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tmp_folder");
         std::fs::create_dir_all(&tmp_dir).unwrap();
         let output_path = tmp_dir.join("IMG_0003_aca_signed.png");
-        
+
         // Seek to the beginning of the dest_stream and copy to file
         use std::io::{Seek, SeekFrom, Write};
         dest_stream.seek(SeekFrom::Start(0)).unwrap();
@@ -1684,7 +1680,25 @@ mod tests {
         std::io::copy(&mut dest_stream, &mut output_file).unwrap();
         output_file.flush().unwrap();
         println!("Signed file written to: {}", output_path.display());
-        
+
+        // Read the signed file back to check for remote URL
+        let file_bytes = std::fs::read(&output_path).unwrap();
+        let mut read_stream = TestC2paStream::from_bytes(file_bytes);
+        let format = CString::new("image/png").unwrap();
+
+        let reader = unsafe { c2pa_reader_from_stream(format.as_ptr(), &mut read_stream) };
+        if !reader.is_null() {
+            let remote_url = unsafe { c2pa_reader_remote_url(reader) };
+            if !remote_url.is_null() {
+                let url_str = unsafe { std::ffi::CStr::from_ptr(remote_url) };
+                println!("Remote URL found: {}", url_str.to_str().unwrap());
+            } else {
+                println!("No remote URL in manifest");
+            }
+            unsafe { c2pa_reader_free(reader) };
+        }
+        TestC2paStream::drop_c_stream(read_stream);
+
         TestC2paStream::drop_c_stream(source_stream);
         TestC2paStream::drop_c_stream(dest_stream);
         unsafe {
