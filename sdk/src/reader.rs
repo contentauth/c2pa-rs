@@ -32,6 +32,7 @@ use serde_with::skip_serializing_none;
 #[cfg(feature = "file_io")]
 use crate::utils::io_utils::uri_to_path;
 use crate::{
+    asset_data::AssetData,
     asset_io::CAIRead,
     crypto::base64,
     dynamic_assertion::PartialClaim,
@@ -108,6 +109,149 @@ type ValidationFn =
     dyn Fn(&str, &crate::ManifestAssertion, &mut StatusTracker) -> Option<serde_json::Value>;
 
 impl Reader {
+    /// Create a manifest store [`Reader`] from a [`AssetData`] with specified settings.
+    /// This is the unified constructor that replaces from_stream, from_file, from_manifest_data_and_stream,
+    /// from_fragment, and from_fragmented_files methods.
+    ///
+    /// # Arguments
+    /// * `asset` - A [`AssetData`] containing the asset data.
+    /// * `settings` - The [`Settings`] to use for processing.
+    ///
+    /// # Returns
+    /// A [`Reader`] for the manifest store.
+    ///
+    /// # Errors
+    /// Returns an [`Error`] when the manifest data cannot be read. If there's no error upon reading,
+    /// you must still check validation status to ensure that the manifest data is validated.
+    ///
+    /// # Example
+    /// ```no_run
+    /// use std::io::Cursor;
+    ///
+    /// use c2pa::{AssetData, Reader, Settings};
+    ///
+    /// let settings = Settings::default();
+    /// let data = include_bytes!("../tests/fixtures/CA.jpg");
+    /// let asset = AssetData::from_memory(data, "image/jpeg");
+    /// let reader = Reader::from_asset(asset, &settings).unwrap();
+    /// println!("{}", reader.json());
+    /// ```
+    #[async_generic]
+    pub fn from_asset(asset: AssetData<'_>, settings: &Settings) -> Result<Reader> {
+        let mut validation_log = StatusTracker::default();
+        let verify = settings.verify.verify_after_reading;
+
+        let store = match asset {
+            AssetData::Stream(mut stream, format) => {
+                if _sync {
+                    Store::from_stream(
+                        format,
+                        stream.as_mut(),
+                        verify,
+                        &mut validation_log,
+                        settings,
+                    )?
+                } else {
+                    Store::from_stream_async(
+                        format,
+                        stream.as_mut(),
+                        verify,
+                        &mut validation_log,
+                        settings,
+                    )
+                    .await?
+                }
+            }
+            AssetData::StreamWithManifest(mut stream, format, manifest_data) => {
+                if _sync {
+                    Store::from_manifest_data_and_stream(
+                        manifest_data,
+                        format,
+                        stream.as_mut(),
+                        verify,
+                        &mut validation_log,
+                        settings,
+                    )?
+                } else {
+                    Store::from_manifest_data_and_stream_async(
+                        manifest_data,
+                        format,
+                        stream.as_mut(),
+                        verify,
+                        &mut validation_log,
+                        settings,
+                    )
+                    .await?
+                }
+            }
+            AssetData::StreamFragment(initial_segment, fragment, format) => {
+                if _sync {
+                    Store::load_fragment_from_stream(
+                        format,
+                        initial_segment,
+                        fragment,
+                        &mut validation_log,
+                        settings,
+                    )?
+                } else {
+                    Store::load_fragment_from_stream_async(
+                        format,
+                        initial_segment,
+                        fragment,
+                        &mut validation_log,
+                        settings,
+                    )
+                    .await?
+                }
+            }
+            AssetData::StreamFragments(initial_segment, fragments, format) => {
+                Store::load_fragments_from_stream(
+                    format,
+                    initial_segment,
+                    fragments,
+                    verify,
+                    &mut validation_log,
+                    settings,
+                )?
+            }
+            AssetData::StreamWithManifestsAndFragments(
+                initial_segment,
+                fragments,
+                format,
+                manifest_data,
+            ) => {
+                if _sync {
+                    Store::from_manifest_data_and_stream_and_fragments(
+                        manifest_data,
+                        format,
+                        initial_segment,
+                        fragments,
+                        verify,
+                        &mut validation_log,
+                        settings,
+                    )?
+                } else {
+                    Store::from_manifest_data_and_stream_and_fragments_async(
+                        manifest_data,
+                        format,
+                        initial_segment,
+                        fragments,
+                        verify,
+                        &mut validation_log,
+                        settings,
+                    )
+                    .await?
+                }
+            }
+        };
+
+        if _sync {
+            Self::from_store(store, &mut validation_log, settings)
+        } else {
+            Self::from_store_async(store, &mut validation_log, settings).await
+        }
+    }
+
     /// Create a manifest store [`Reader`] from a stream.  A Reader is used to validate C2PA data from an asset.
     ///
     /// # Arguments
