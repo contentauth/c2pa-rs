@@ -17,6 +17,9 @@ use std::{
     ptr,
 };
 
+use chrono::Local;
+use fern::Dispatch;
+
 /// Validates that a buffer size is within safe bounds and doesn't cause integer overflow
 /// when used with pointer arithmetic.
 ///
@@ -65,7 +68,7 @@ unsafe fn safe_slice_from_raw_parts(
 
     if !is_safe_buffer_size(len, ptr) {
         return Err(Error::Other(format!(
-            "Buffer size {len} is invalid for parameter '{param_name}'",
+            "Buffer size {len} is invalid for parameter '{param_name}'"
         )));
     }
 
@@ -376,6 +379,36 @@ pub unsafe extern "C" fn c2pa_version() -> *mut c_char {
         c2pa::VERSION
     );
     to_c_string(version)
+}
+
+/// Sets up file logging.
+/// The logger will append any logged text to the end of the log_file provided.
+///
+/// # Safety
+/// Reads from NULL-terminated C strings.
+#[no_mangle]
+pub unsafe extern "C" fn c2pa_init_file_logging(log_file: *const c_char) -> c_int {
+    let log_file = from_cstr_or_return_int!(log_file);
+    let result = Dispatch::new()
+        .format(|out, message, record| {
+            out.finish(format_args!(
+                "[{}][{}] {}",
+                Local::now().format("%Y-%m-%d %H:%M:%S"),
+                record.level(),
+                message
+            ))
+        })
+        .level(log::LevelFilter::Info)
+        .chain(std::io::stdout())
+        // Log to a file
+        .chain(fern::log_file(log_file).unwrap())
+        .apply();
+
+    if result.is_ok() {
+        0
+    } else {
+        -1
+    }
 }
 
 /// Returns the last error message.
@@ -2109,6 +2142,10 @@ mod tests {
     #[test]
     #[cfg(feature = "file_io")]
     fn test_c2pa_sign_file_null_source_path() {
+        let log_path_str = "c2pa_test.log";
+        let log_path = CString::new(log_path_str).unwrap();
+        unsafe { c2pa_init_file_logging(log_path.as_ptr()) };
+
         let dest_path = CString::new("/tmp/output.jpg").unwrap();
         let manifest = CString::new("{}").unwrap();
         let signer_info = C2paSignerInfo {
@@ -2130,6 +2167,12 @@ mod tests {
         let error = unsafe { c2pa_error() };
         let error_str = unsafe { CString::from_raw(error) };
         assert_eq!(error_str.to_str().unwrap(), "NullParameter: source_path");
+
+        use std::fs;
+        let content = fs::read(log_path_str);
+        assert!(content.is_ok());
+        assert!(content.unwrap().is_empty());
+        let _ = fs::remove_file(log_path_str);
     }
 
     #[test]
