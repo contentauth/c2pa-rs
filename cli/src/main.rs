@@ -700,7 +700,7 @@ fn main() -> Result<()> {
 
         // set manifest base path before ingredients so ingredients can override it
         if let Some(base) = base_path.as_ref() {
-            builder.base_path = Some(base.clone());
+            builder.set_base_path(base);
             sign_config.set_base_path(base);
         }
 

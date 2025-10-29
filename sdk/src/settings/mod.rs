@@ -601,7 +601,7 @@ fn get_settings_value<'de, T: serde::de::Deserialize<'de>>(value_path: &str) -> 
     Settings::get_value(value_path)
 }
 
-/// See [Settings::reset] for more information.
+/// Reset all settings back to default values.
 #[allow(unused)]
 // #[deprecated = "use `Settings::reset` instead"]
 pub fn reset_default_settings() -> Result<()> {
