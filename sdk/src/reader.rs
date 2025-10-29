@@ -138,7 +138,7 @@ impl Reader {
     /// [CAWG identity]: https://cawg.io/identity/
     #[async_generic]
     #[cfg(not(target_arch = "wasm32"))]
-    pub fn from_stream(format: &str, stream: impl Read + Seek + Send) -> Result<Reader> {
+    pub fn from_stream(format: &str, mut stream: impl Read + Seek + Send) -> Result<Reader> {
         let settings = crate::settings::get_settings().unwrap_or_default();
         // TODO: passing verify is redundant with settings
         let verify = settings.verify.verify_after_reading;
