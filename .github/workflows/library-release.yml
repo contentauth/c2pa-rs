@@ -70,7 +70,7 @@ jobs:
         run: make release TARGET=${{ matrix.target }}
 
       - name: Upload build artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: release-artifacts-${{ matrix.os }}-${{ matrix.target }}
           path: target/artifacts/
