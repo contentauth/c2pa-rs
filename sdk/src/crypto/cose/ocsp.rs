@@ -313,9 +313,7 @@ fn check_stapled_ocsp_response(
 }
 
 /// Fetches and validates an OCSP response for the given COSE signature.
-#[async_generic()]
-#[allow(unreachable_code)] // wasm-bindgen will immediately return error for synchronous use.
-#[allow(unused_variables)]
+#[async_generic]
 pub(crate) fn fetch_and_check_ocsp_response(
     sign1: &CoseSign1,
     data: &[u8],
@@ -326,19 +324,15 @@ pub(crate) fn fetch_and_check_ocsp_response(
 ) -> Result<OcspResponse, CoseError> {
     let certs = cert_chain_from_sign1(sign1)?;
 
-    let ocsp_der: Vec<u8> = if _sync {
-        match crate::crypto::ocsp::fetch_ocsp_response(&certs) {
-            Some(der) => der,
-            None => return Ok(OcspResponse::default()),
-        }
+    let ocsp_der = if _sync {
+        crate::crypto::ocsp::fetch_ocsp_response(&certs)
     } else {
-        match crate::crypto::ocsp::fetch_ocsp_response_async(&certs).await {
-            Some(der) => der,
-            None => return Ok(OcspResponse::default()),
-        }
+        crate::crypto::ocsp::fetch_ocsp_response_async(&certs).await
     };
 
-    let ocsp_response_der = ocsp_der;
+    let Some(ocsp_response_der) = ocsp_der else {
+        return Ok(OcspResponse::default());
+    };
 
     // use supplied override time if provided
     let signing_time: Option<DateTime<Utc>> = match tst_info {

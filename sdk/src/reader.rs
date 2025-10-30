@@ -35,6 +35,7 @@ use crate::{
     claim::Claim,
     dynamic_assertion::PartialClaim,
     error::{Error, Result},
+    http::{AsyncGenericResolver, SyncGenericResolver},
     jumbf::labels::{manifest_label_from_uri, to_absolute_uri, to_relative_uri},
     jumbf_io, log_item,
     manifest::StoreOptions,
@@ -145,10 +146,24 @@ impl Reader {
         let mut validation_log = StatusTracker::default();
         stream.rewind()?; // Ensure stream is at the start
         let store = if _sync {
-            Store::from_stream(format, &mut stream, verify, &mut validation_log, &settings)
+            Store::from_stream(
+                format,
+                stream,
+                &SyncGenericResolver::new(),
+                verify,
+                &mut validation_log,
+                &settings,
+            )
         } else {
-            Store::from_stream_async(format, &mut stream, verify, &mut validation_log, &settings)
-                .await
+            Store::from_stream_async(
+                format,
+                stream,
+                &AsyncGenericResolver::new(),
+                verify,
+                &mut validation_log,
+                &settings,
+            )
+            .await
         }?;
 
         if _sync {
@@ -168,10 +183,24 @@ impl Reader {
         let mut validation_log = StatusTracker::default();
 
         let store = if _sync {
-            Store::from_stream(format, &mut stream, verify, &mut validation_log, &settings)
+            Store::from_stream(
+                format,
+                &mut stream,
+                &SyncGenericResolver::new(),
+                verify,
+                &mut validation_log,
+                &settings,
+            )
         } else {
-            Store::from_stream_async(format, &mut stream, verify, &mut validation_log, &settings)
-                .await
+            Store::from_stream_async(
+                format,
+                &mut stream,
+                &AsyncGenericResolver::new(),
+                verify,
+                &mut validation_log,
+                &settings,
+            )
+            .await
         }?;
 
         if _sync {
