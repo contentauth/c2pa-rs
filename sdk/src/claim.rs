@@ -337,18 +337,13 @@ pub enum AssertionStoreJsonFormat {
 }
 
 /// Remote manifest options. Use 'set_remote_manifest' to generate external manifests.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub enum RemoteManifest {
-    NoRemote,                // No external manifest (default)
+    #[default]
+    NoRemote, // No external manifest (default)
     SideCar,        // Manifest will be saved as a side car file, output asset is untouched.
     Remote(String), /* Manifest will be saved as a side car file, output asset will contain remote reference */
     EmbedWithRemote(String), /* Manifest will be embedded with a remote reference, sidecar will be generated */
-}
-
-impl Default for RemoteManifest {
-    fn default() -> Self {
-        Self::NoRemote
-    }
 }
 
 #[derive(Serialize, Deserialize, Debug)]

@@ -207,7 +207,11 @@ impl CertificateTrustPolicy {
         &mut self,
         trust_anchor_pems: &[u8],
     ) -> Result<(), InvalidCertificateError> {
-        for maybe_pem in Pem::iter_from_buffer(trust_anchor_pems) {
+        // allow for JSON-encoded PEMs with \n
+        let trust_anchor_pems = String::from_utf8_lossy(trust_anchor_pems)
+            .replace("\\n", "\n")
+            .into_bytes();
+        for maybe_pem in Pem::iter_from_buffer(&trust_anchor_pems) {
             // NOTE: The `x509_parser::pem::Pem` struct's `contents` field contains the
             // decoded PEM content, which is expected to be in DER format.
             match maybe_pem {

@@ -177,20 +177,15 @@ impl StatusTracker {
 /// [`add_error`] function is called.
 ///
 /// [`add_error`]: StatusTracker::add_error
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Debug, Default, Eq, PartialEq)]
 pub enum ErrorBehavior {
     /// If an error is encountered, stop validation immediately.
     StopOnFirstError,
 
     /// If an error is encountered, log it and continue validation as much as
     /// possible.
+    #[default]
     ContinueWhenPossible,
-}
-
-impl Default for ErrorBehavior {
-    fn default() -> Self {
-        Self::ContinueWhenPossible
-    }
 }
 
 mod log_item;
