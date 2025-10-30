@@ -314,6 +314,7 @@ jobs:
         working-directory: ./sdk
         env:
           WASM_BINDGEN_TEST_TIMEOUT: 60
+          CHROMEDRIVER_ARGS: --whitelisted-ips=
 
   benchmarks:
     name: Run benchmarks on signing and reading
