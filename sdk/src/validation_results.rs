@@ -210,12 +210,6 @@ impl ValidationResults {
     /// [§14.3. Validation states]: https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_validation_states
     pub fn validation_state(&self) -> ValidationState {
         if let Some(active_manifest) = self.active_manifest.as_ref() {
-            // If there are no success codes and no failure codes, we assume validation was disabled in the SDK
-            // and the state is unknown.
-            if active_manifest.success().is_empty() && active_manifest.failure().is_empty() {
-                return ValidationState::Unknown;
-            }
-
             let success_codes: HashSet<&str> = active_manifest
                 .success()
                 .iter()
@@ -248,6 +242,10 @@ impl ValidationResults {
             } else if is_valid {
                 return ValidationState::Valid;
             }
+        } else {
+            // REVIEW-NOTE: is this the best way to detect that it wasn't validated? should we also check if success/failure is empty if there
+            //              is an active manifest?
+            return ValidationState::Unknown;
         }
 
         ValidationState::Invalid
