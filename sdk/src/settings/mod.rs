@@ -76,7 +76,11 @@ impl Trust {
     fn load_trust_from_data(&self, trust_data: &[u8]) -> Result<Vec<Vec<u8>>> {
         let mut certs = Vec::new();
 
-        for pem_result in x509_parser::pem::Pem::iter_from_buffer(trust_data) {
+        // allow for JSON-encoded PEMs with \n
+        let trust_data = String::from_utf8_lossy(trust_data)
+            .replace("\\n", "\n")
+            .into_bytes();
+        for pem_result in x509_parser::pem::Pem::iter_from_buffer(&trust_data) {
             let pem = pem_result.map_err(|_e| Error::CoseInvalidCert)?;
             certs.push(pem.contents);
         }
@@ -115,7 +119,7 @@ impl Trust {
         if found_der_hash {
             Ok(())
         } else {
-            Err(Error::NotFound)
+            Err(Error::CoseInvalidCert)
         }
     }
 }
@@ -282,11 +286,9 @@ pub struct Verify {
     /// Revocation status is checked in the following order:
     /// 1. The OCSP staple stored in the COSE claim of the manifest
     /// 2. Otherwise if `ocsp_fetch` is enabled, it fetches a new OCSP status
-    /// 3. Otherwise if `ocsp_fetch` is disabled, it checks [`CertificateStatus`] assertions
+    /// 3. Otherwise if `ocsp_fetch` is disabled, it checks `CertificateStatus` assertions
     ///
     /// The default value is false.
-    ///
-    /// [`CertificateStatus`]: crate::assertions::CertificateStatus
     pub ocsp_fetch: bool,
     /// Whether to fetch remote manifests in the following scenarios:
     /// - Constructing a [`Reader`]
@@ -380,19 +382,18 @@ impl Settings {
             .to_string_lossy();
 
         let setting_buf = std::fs::read(&settings_path).map_err(Error::IoError)?;
-        #[allow(deprecated)]
         Settings::from_string(&String::from_utf8_lossy(&setting_buf), &ext)
     }
 
-    #[deprecated = "use `Settings::from_toml` instead"]
+    /// Load settings from string representation of the configuration. Format of configuration must be supplied (json or toml).
     pub fn from_string(settings_str: &str, format: &str) -> Result<Self> {
         let f = match format.to_lowercase().as_str() {
             "json" => FileFormat::Json,
-            "json5" => FileFormat::Json5,
+            //"json5" => FileFormat::Json5,
             //"ini" => FileFormat::Ini,
             "toml" => FileFormat::Toml,
             //"yaml" => FileFormat::Yaml,
-            "ron" => FileFormat::Ron,
+            //ron" => FileFormat::Ron,
             _ => return Err(Error::UnsupportedType),
         };
 
@@ -428,7 +429,6 @@ impl Settings {
 
     /// Set the [Settings] from a toml file.
     pub fn from_toml(toml: &str) -> Result<()> {
-        #[allow(deprecated)]
         Settings::from_string(toml, "toml").map(|_| ())
     }
 
@@ -492,7 +492,7 @@ impl Settings {
 
             update_config
                 .get::<T>(value_path)
-                .map_err(|_| Error::NotFound)
+                .map_err(|_| Error::BadParam("could not get settings value".into()))
         })
     }
 
@@ -582,10 +582,7 @@ pub(crate) fn load_settings_from_file<P: AsRef<Path>>(settings_path: P) -> Resul
 
 /// Load settings from string representation of the configuration. Format of configuration must be supplied.
 #[allow(unused)]
-// TODO: when this is removed, remove the additional features (for all supported formats) from the Cargo.toml
-#[deprecated = "use `Settings::from_toml`"]
 pub fn load_settings_from_str(settings_str: &str, format: &str) -> Result<()> {
-    #[allow(deprecated)]
     Settings::from_string(settings_str, format).map(|_| ())
 }
 
@@ -764,7 +761,6 @@ pub mod tests {
 
         {
             let settings_str: &str = &String::from_utf8_lossy(&setting_buf);
-            #[allow(deprecated)]
             Settings::from_string(settings_str, "json").map(|_| ())
         }
         .unwrap();
