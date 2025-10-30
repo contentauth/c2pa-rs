@@ -2643,6 +2643,9 @@ mod tests {
     #[cfg(feature = "file_io")]
     #[test]
     fn test_builder_base_path() {
+        #[cfg(target_os = "wasi")]
+        Settings::reset().unwrap();
+
         let mut source = Cursor::new(TEST_IMAGE_CLEAN);
         let mut dest = Cursor::new(Vec::new());
 
