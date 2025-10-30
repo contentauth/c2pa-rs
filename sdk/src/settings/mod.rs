@@ -286,11 +286,9 @@ pub struct Verify {
     /// Revocation status is checked in the following order:
     /// 1. The OCSP staple stored in the COSE claim of the manifest
     /// 2. Otherwise if `ocsp_fetch` is enabled, it fetches a new OCSP status
-    /// 3. Otherwise if `ocsp_fetch` is disabled, it checks [`CertificateStatus`] assertions
+    /// 3. Otherwise if `ocsp_fetch` is disabled, it checks `CertificateStatus` assertions
     ///
     /// The default value is false.
-    ///
-    /// [`CertificateStatus`]: crate::assertions::CertificateStatus
     pub ocsp_fetch: bool,
     /// Whether to fetch remote manifests in the following scenarios:
     /// - Constructing a [`Reader`]
