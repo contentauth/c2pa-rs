@@ -21,6 +21,8 @@ use bcder::{
     encode::{self, PrimitiveContent, Values},
     Captured, Mode, Oid, Tag,
 };
+// Use der crate for time types to avoid custom date parsing
+use der::{Decode, Encode};
 
 // Common ASN.1 types shared across multiple RFCs
 
@@ -123,13 +125,19 @@ impl PrimitiveContent for GeneralName {
     }
 }
 
-/// Generalized time structure compatible with bcder
+/// Generalized time structure - hybrid bcder/der approach
+/// Uses der crate's GeneralizedTime internally for proper time handling
 #[derive(Clone, Debug)]
-pub struct GeneralizedTime(pub Captured);
+pub struct GeneralizedTime {
+    // Store the der type for proper time parsing
+    der_time: der::asn1::GeneralizedTime,
+    // Cache the DER encoding for bcder compatibility
+    der_bytes: Vec<u8>,
+}
 
 impl PartialEq for GeneralizedTime {
     fn eq(&self, other: &Self) -> bool {
-        self.0.as_slice() == other.0.as_slice()
+        self.der_time == other.der_time
     }
 }
 
@@ -137,115 +145,148 @@ impl Eq for GeneralizedTime {}
 
 impl std::fmt::Display for GeneralizedTime {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Format the time string manually from DER bytes
         write!(f, "{}", self.as_str())
     }
 }
 
 impl GeneralizedTime {
+    /// Create from der::asn1::GeneralizedTime
+    pub fn from_der_time(der_time: der::asn1::GeneralizedTime) -> Result<Self, der::Error> {
+        let mut der_bytes = Vec::new();
+        der_time.encode_to_vec(&mut der_bytes)?;
+        Ok(Self {
+            der_time,
+            der_bytes,
+        })
+    }
+
+    /// Parse from DER bytes (for bcder compatibility)
+    pub fn from_der_bytes(bytes: &[u8]) -> Result<Self, der::Error> {
+        let der_time = der::asn1::GeneralizedTime::from_der(bytes)?;
+        Ok(Self {
+            der_time,
+            der_bytes: bytes.to_vec(),
+        })
+    }
+
+    /// Get DER encoding for bcder
+    pub fn as_der_bytes(&self) -> &[u8] {
+        &self.der_bytes
+    }
+
+    /// Get the underlying der time
+    pub fn as_der_time(&self) -> &der::asn1::GeneralizedTime {
+        &self.der_time
+    }
+
+    /// Parse from bcder Constructed (allows fractional seconds and Z)
     pub fn take_from_allow_fractional_z<S: Source>(
         cons: &mut Constructed<S>,
     ) -> Result<Self, DecodeError<S::Error>> {
-        cons.capture_one().map(GeneralizedTime)
+        // Capture the raw DER bytes
+        let captured = cons.capture_one()?;
+        let bytes = captured.as_slice();
+
+        // Parse with der crate - it will properly validate the time format
+        Self::from_der_bytes(bytes).map_err(|_| cons.content_err("invalid GeneralizedTime"))
     }
 
+    /// Parse from bcder Primitive (no fractional or timezone offsets)
     pub fn from_primitive_no_fractional_or_timezone_offsets<S: bcder::decode::Source>(
         prim: &mut bcder::decode::Primitive<S>,
     ) -> Result<Self, bcder::decode::DecodeError<S::Error>> {
-        use bcder::OctetString;
         let bytes = prim.take_all()?;
-        Ok(GeneralizedTime(Captured::from_values(
-            Mode::Der,
-            OctetString::encode_slice_as(bytes.as_ref(), Tag::GENERALIZED_TIME),
-        )))
+
+        // Reconstruct the full DER encoding (tag + length + content)
+        let mut der_bytes = Vec::with_capacity(2 + bytes.len());
+        der_bytes.push(0x18); // GENERALIZED_TIME tag
+        der_bytes.push(bytes.len() as u8); // length
+        der_bytes.extend_from_slice(bytes.as_ref());
+
+        // Parse with der crate - it will properly validate the time format
+        Self::from_der_bytes(&der_bytes)
+            .map_err(|_| bcder::decode::DecodeError::content("invalid GeneralizedTime", prim.pos()))
     }
 
-    pub fn encode_ref(&self) -> impl Values + '_ {
-        &self.0
+    /// Encode for bcder
+    pub fn encode_ref(&self) -> Captured {
+        // Return the raw DER bytes as a Captured value
+        // These bytes already include tag, length, and content
+        Captured::from_values(Mode::Der, bcder::OctetString::encode_slice(&self.der_bytes))
     }
 
-    /// Parse the raw ASN.1 bytes to extract the time string
+    /// Get time string representation (for compatibility)
     pub fn as_str(&self) -> &str {
-        // The Captured value contains the entire DER encoding: tag, length, and content
-        let slice = self.0.as_slice();
-
-        // For GeneralizedTime, we expect: tag (1 byte) + length (1 byte) + content
-        // Most common case: length < 128 (short form)
-        if slice.len() >= 2 {
-            let length = slice[1] as usize;
-            if length < 128 && slice.len() >= 2 + length {
-                // Short form length - skip tag and length bytes
-                if let Ok(s) = std::str::from_utf8(&slice[2..2 + length]) {
+        // Extract the content from the DER encoding
+        // DER format: tag (1 byte) + length (1 byte) + content
+        if self.der_bytes.len() >= 2 {
+            let length = self.der_bytes[1] as usize;
+            if length < 128 && self.der_bytes.len() >= 2 + length {
+                if let Ok(s) = std::str::from_utf8(&self.der_bytes[2..2 + length]) {
                     return s;
                 }
             }
         }
-
-        // Fallback for edge cases or invalid data
         ""
     }
 }
 
 impl From<GeneralizedTime> for chrono::DateTime<chrono::Utc> {
     fn from(gt: GeneralizedTime) -> Self {
-        use chrono::TimeZone;
-
-        // Parse GeneralizedTime format: YYYYMMDDHHmmSS[.f*]Z
-        let time_str = gt.as_str();
-        // TODO: Get rid of this fallback
-        let time_str = if time_str.is_empty() {
-            "19700101000000Z"
-        } else {
-            time_str
-        };
-
-        // Remove 'Z' suffix and fractional seconds for simplicity
-        let time_str = time_str.trim_end_matches('Z');
-        let (time_str, _frac) = time_str.split_once('.').unwrap_or((time_str, ""));
-
-        // Parse: YYYYMMDDHHMMSS
-        if time_str.len() >= 14 {
-            let year = time_str[0..4].parse().unwrap_or(1970);
-            let month = time_str[4..6].parse().unwrap_or(1);
-            let day = time_str[6..8].parse().unwrap_or(1);
-            let hour = time_str[8..10].parse().unwrap_or(0);
-            let minute = time_str[10..12].parse().unwrap_or(0);
-            let second = time_str[12..14].parse().unwrap_or(0);
-
-            chrono::Utc
-                .with_ymd_and_hms(year, month, day, hour, minute, second)
-                .single()
-                .unwrap_or_else(|| chrono::Utc.with_ymd_and_hms(1970, 1, 1, 0, 0, 0).unwrap())
-        } else {
-            // Default to epoch
-            // TODO: Get rid of this fallback
-            chrono::Utc.with_ymd_and_hms(1970, 1, 1, 0, 0, 0).unwrap()
-        }
+        // Use der's conversion to SystemTime, then to chrono
+        let system_time = gt.der_time.to_system_time();
+        system_time.into()
     }
 }
 
-// Conversion from chrono DateTime for compatibility
 impl From<chrono::DateTime<chrono::Utc>> for GeneralizedTime {
     fn from(dt: chrono::DateTime<chrono::Utc>) -> Self {
-        use chrono::TimeZone;
-        // Format to ASN.1 GeneralizedTime format
-        let time_str = dt.format("%Y%m%d%H%M%SZ").to_string();
-        let bytes = time_str.as_bytes();
+        // Convert chrono to SystemTime, then to der's GeneralizedTime
+        let system_time: std::time::SystemTime = dt.into();
 
-        // Build the DER encoding manually: tag + length + content
-        let mut der_bytes = Vec::with_capacity(2 + bytes.len());
-        der_bytes.push(0x18); // GENERALIZED_TIME tag
-        der_bytes.push(bytes.len() as u8);
-        der_bytes.extend_from_slice(bytes);
+        // Try to convert to GeneralizedTime
+        let der_time = if let Ok(time) = der::asn1::GeneralizedTime::from_system_time(system_time) {
+            time
+        } else {
+            // Fallback to Unix epoch (1970-01-01 00:00:00 UTC)
+            // This should never fail as epoch is always valid
+            match der::asn1::GeneralizedTime::from_unix_duration(std::time::Duration::from_secs(0))
+            {
+                Ok(epoch) => epoch,
+                Err(_) => {
+                    // If even epoch fails, we have a serious problem
+                    // Use a compile-time known valid time: 2000-01-01 00:00:00Z
+                    // This is a last resort and should never happen in practice
+                    let bytes = b"\x18\x0f20000101000000Z";
+                    match der::asn1::GeneralizedTime::from_der(bytes) {
+                        Ok(t) => t,
+                        // At this point we're out of options - this should be unreachable
+                        Err(_) => {
+                            // Safety: This path should be unreachable as we're using a known-valid constant
+                            unreachable!(
+                                "Failed to create GeneralizedTime from hardcoded valid constant"
+                            )
+                        }
+                    }
+                }
+            }
+        };
 
-        // Parse the DER bytes we just created to get a properly constructed Captured
-        use bcder::decode::Constructed as DecodeConstructed;
-        match DecodeConstructed::decode(der_bytes.as_ref(), Mode::Der, |cons| {
-            cons.capture_one().map(GeneralizedTime)
-        }) {
+        // Convert to our wrapper type
+        // This can only fail if encoding fails, which shouldn't happen for valid times
+        match Self::from_der_time(der_time) {
             Ok(gt) => gt,
             Err(_) => {
-                // Fallback to epoch if parsing fails
-                Self::from(chrono::Utc.with_ymd_and_hms(1970, 1, 1, 0, 0, 0).unwrap())
+                // If encoding fails, try with a minimal valid time
+                let bytes = b"\x18\x0f20000101000000Z";
+                if let Ok(fallback_der) = der::asn1::GeneralizedTime::from_der(bytes) {
+                    if let Ok(fallback) = Self::from_der_time(fallback_der) {
+                        return fallback;
+                    }
+                }
+                // Safety: This should be unreachable
+                unreachable!("Failed to create GeneralizedTime wrapper")
             }
         }
     }

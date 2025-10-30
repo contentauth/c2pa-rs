@@ -25,6 +25,7 @@ use bcder::{
     encode::{PrimitiveContent, Values},
     BitString, Captured, ConstOid, Integer, Mode, OctetString, Oid, Tag,
 };
+use der::Decode;
 
 // Re-use common types from parent module
 use super::{AlgorithmIdentifier, GeneralizedTime};
@@ -32,16 +33,18 @@ use crate::crypto::asn1::rfc3281::AttributeCertificate;
 
 // Define local bcder-compatible types to replace x509_certificate imports
 
-/// UTC time compatible with bcder - stores both the raw DER and parsed DateTime
+/// UTC time compatible with bcder - hybrid approach using der crate
 #[derive(Clone, Debug)]
 pub struct UtcTime {
-    captured: Captured,
-    datetime: chrono::DateTime<chrono::Utc>,
+    // Store the der type for proper time parsing (handles Y2K correctly)
+    der_time: der::asn1::UtcTime,
+    // Cache the DER encoding for bcder compatibility
+    der_bytes: Vec<u8>,
 }
 
 impl PartialEq for UtcTime {
     fn eq(&self, other: &Self) -> bool {
-        self.captured.as_slice() == other.captured.as_slice()
+        self.der_time == other.der_time
     }
 }
 
@@ -51,63 +54,37 @@ impl UtcTime {
     pub fn from_primitive<S: Source>(
         prim: &mut Primitive<S>,
     ) -> Result<Self, DecodeError<S::Error>> {
-        use chrono::TimeZone;
-
-        // Capture the primitive's tag and content
+        // Get the raw bytes (without tag/length)
         let bytes = prim.take_all()?;
 
-        //TODO: this should be done by imported functionality.
-        // Parse the time string to DateTime
-        let datetime = if let Ok(time_str) = std::str::from_utf8(bytes.as_ref()) {
-            let time_str = time_str.trim_end_matches('Z');
-            if time_str.len() >= 12 {
-                // Parse YYMMDDHHMMSS (2-digit year)
-                let year = time_str[0..2].parse::<i32>().unwrap_or(70);
-                // Y2K handling: 00-49 = 2000-2049, 50-99 = 1950-1999
-                let year = if year < 50 { 2000 + year } else { 1900 + year };
-                let month = time_str[2..4].parse().unwrap_or(1);
-                let day = time_str[4..6].parse().unwrap_or(1);
-                let hour = time_str[6..8].parse().unwrap_or(0);
-                let minute = time_str[8..10].parse().unwrap_or(0);
-                let second = time_str[10..12].parse().unwrap_or(0);
+        // Reconstruct the full DER encoding (tag + length + content)
+        let mut der_bytes = Vec::with_capacity(2 + bytes.len());
+        der_bytes.push(0x17); // UTC_TIME tag
+        der_bytes.push(bytes.len() as u8); // length
+        der_bytes.extend_from_slice(bytes.as_ref());
 
-                // TODO: Get rid of this fallback
-                chrono::Utc
-                    .with_ymd_and_hms(year, month, day, hour, minute, second)
-                    .single()
-                    .unwrap_or_else(|| chrono::Utc.with_ymd_and_hms(1970, 1, 1, 0, 0, 0).unwrap())
-            } else {
-                chrono::Utc.with_ymd_and_hms(1970, 1, 1, 0, 0, 0).unwrap()
-            }
-        } else {
-            chrono::Utc.with_ymd_and_hms(1970, 1, 1, 0, 0, 0).unwrap()
-        };
+        // Parse with der crate - it handles Y2K correctly and validates format
+        let der_time = der::asn1::UtcTime::from_der(&der_bytes)
+            .map_err(|_| DecodeError::content("invalid UtcTime", prim.pos()))?;
 
-        Ok(UtcTime {
-            captured: Captured::from_values(
-                Mode::Der,
-                OctetString::encode_slice_as(bytes.as_ref(), Tag::UTC_TIME),
-            ),
-            datetime,
-        })
+        Ok(UtcTime { der_time, der_bytes })
     }
-}
 
-impl Deref for UtcTime {
-    type Target = chrono::DateTime<chrono::Utc>;
-
-    fn deref(&self) -> &Self::Target {
-        &self.datetime
+    /// Convert to chrono DateTime
+    pub fn to_datetime(&self) -> chrono::DateTime<chrono::Utc> {
+        // Convert der's time to SystemTime, then to chrono
+        let system_time = self.der_time.to_system_time();
+        system_time.into()
     }
 }
 
 impl Values for UtcTime {
-    fn encoded_len(&self, mode: Mode) -> usize {
-        self.captured.encoded_len(mode)
+    fn encoded_len(&self, _mode: Mode) -> usize {
+        self.der_bytes.len()
     }
 
-    fn write_encoded<W: Write>(&self, mode: Mode, target: &mut W) -> Result<(), std::io::Error> {
-        self.captured.write_encoded(mode, target)
+    fn write_encoded<W: Write>(&self, _mode: Mode, target: &mut W) -> Result<(), std::io::Error> {
+        target.write_all(&self.der_bytes)
     }
 }
 
@@ -1493,7 +1470,7 @@ impl Time {
 impl From<Time> for chrono::DateTime<chrono::Utc> {
     fn from(t: Time) -> Self {
         match t {
-            Time::UtcTime(utc) => *utc,
+            Time::UtcTime(utc) => utc.to_datetime(),
             Time::GeneralizedTime(gt) => gt.into(),
         }
     }
