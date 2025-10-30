@@ -185,6 +185,7 @@ thiserror = "2.0.17"
 url = "2.5.3"
 uuid = { version = "1.18.0", features = ["serde", "v4"] }
 web-time = "1.1"
+x509-cert = "0.2.5"
 x509-certificate = "0.24.0"
 x509-parser = "0.16.0"
 zeroize = { version = "1.8", features = ["zeroize_derive"] }
