@@ -120,7 +120,7 @@ config = { version = "0.14.0", default-features = false, features = [
 ] }
 const-hex = "1.14"
 const-oid = { version = "0.9.6", optional = true }
-coset = "0.3.8"
+coset = "0.4.0"
 extfmt = "0.1.1"
 der = { version = "0.7.9", optional = true }
 ecdsa = { version = "0.16.9", features = ["digest", "sha2"], optional = true }
@@ -189,7 +189,7 @@ web-time = "1.1"
 x509-certificate = "0.24.0"
 x509-parser = "0.16.0"
 zeroize = { version = "1.8", features = ["zeroize_derive"] }
-zip = { version = "3.0.0", default-features = false }
+zip = { version = "6.0.0", default-features = false }
 
 # Use the asm feature of sha2 on aarch64 macOS for better performance. This nearly
 # halves hashing time for large assets (> 50gb mp4, for example).
