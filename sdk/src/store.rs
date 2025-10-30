@@ -260,7 +260,7 @@ impl Store {
     }
 
     // remove a claim from the store
-    fn remove_claim(&mut self, label: &str) -> Option<Claim> {
+    pub(crate) fn remove_claim(&mut self, label: &str) -> Option<Claim> {
         self.claims.retain(|l| l != label);
         self.claims_map.remove(label)
     }
