@@ -37,6 +37,8 @@ use crate::{
 pub enum ValidationState {
     /// The manifest store fails to meet [ValidationState::WellFormed] requirements, meaning it cannot
     /// even be parsed or its basic structure is non-compliant.
+    ///
+    /// This case may also occur if validation is disabled in the SDK.
     Invalid,
     /// The manifest store is well-formed and the cryptographic integrity checks succeed.
     ///
