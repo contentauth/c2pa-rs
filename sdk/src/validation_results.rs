@@ -35,6 +35,8 @@ use crate::{
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 pub enum ValidationState {
+    /// Validation is disabled in the SDK and the [ValidationState] is unable to be determined.
+    Unknown,
     /// The manifest store fails to meet [ValidationState::WellFormed] requirements, meaning it cannot
     /// even be parsed or its basic structure is non-compliant.
     Invalid,
@@ -236,6 +238,10 @@ impl ValidationResults {
             } else if is_valid {
                 return ValidationState::Valid;
             }
+        } else {
+            // REVIEW-NOTE: is this the best way to detect that it wasn't validated? should we also check if success/failure is empty if there
+            //              is an active manifest?
+            return ValidationState::Unknown;
         }
 
         ValidationState::Invalid
