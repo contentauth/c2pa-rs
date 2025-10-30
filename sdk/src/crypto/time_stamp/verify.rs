@@ -211,7 +211,9 @@ pub fn verify_time_stamp(
                 if let Some(gt) = timestamp_to_generalized_time(signed_signing_time) {
                     // Use actual signed time.
                     signing_time = generalized_time_to_datetime(gt.clone()).timestamp();
-                    tst.gen_time = gt;
+                    // Convert through DateTime instead of using Into
+                    let dt: chrono::DateTime<chrono::Utc> = gt.into();
+                    tst.gen_time = dt.into();
                 };
             }
 

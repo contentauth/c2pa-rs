@@ -115,7 +115,7 @@ pub fn check_certificate_profile(
     if let Some(tst_info) = _tst_info_opt {
         // A valid time stamp was associated with this signature: Ensure that the
         // timestamp was valid at that time.
-        let signing_time = generalized_time_to_datetime(tst_info.gen_time.clone());
+        let signing_time = generalized_time_to_datetime(tst_info.gen_time.clone().into());
         if !signcert.validity().is_valid_at(
             x509_parser::time::ASN1Time::from_timestamp(signing_time.timestamp())
                 .map_err(|_| CertificateProfileError::InvalidCertificate)?,
