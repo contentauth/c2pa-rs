@@ -1895,10 +1895,7 @@ mod tests {
         let manifest_store = Reader::from_stream(format, &mut dest).expect("from_bytes");
 
         println!("{manifest_store}");
-        assert_ne!(
-            manifest_store.validation_state(),
-            ValidationState::Malformed
-        );
+        assert_ne!(manifest_store.validation_state(), ValidationState::Invalid);
         assert!(manifest_store.active_manifest().is_some());
         let manifest = manifest_store.active_manifest().unwrap();
         assert_eq!(manifest.title().unwrap(), "Test_Manifest");

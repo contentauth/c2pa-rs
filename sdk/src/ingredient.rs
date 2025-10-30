@@ -1229,7 +1229,7 @@ impl Ingredient {
 
                 // if there are validations and they have all passed, then use the parent claim thumbnail if available
                 if let Some(validation_results) = self.validation_results() {
-                    if validation_results.validation_state() != crate::ValidationState::Malformed {
+                    if validation_results.validation_state() != crate::ValidationState::Invalid {
                         thumbnail = ingredient_active_claim
                             .assertions()
                             .iter()

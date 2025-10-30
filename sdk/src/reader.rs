@@ -568,7 +568,7 @@ impl Reader {
                     .iter()
                     .any(|s| s.code() != crate::validation_status::SIGNING_CREDENTIAL_UNTRUSTED);
                 if errs {
-                    ValidationState::Malformed
+                    ValidationState::Invalid
                 } else if verify_trust {
                     // If we verified trust and didn't get an error, we can assume it is trusted
                     ValidationState::Trusted
@@ -1015,7 +1015,7 @@ pub mod tests {
             reader.validation_status().unwrap()[0].code(),
             crate::validation_status::ASSERTION_DATAHASH_MISMATCH
         );
-        assert_eq!(reader.validation_state(), ValidationState::Malformed);
+        assert_eq!(reader.validation_state(), ValidationState::Invalid);
         Ok(())
     }
 
