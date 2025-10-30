@@ -407,7 +407,6 @@ pub mod tests {
 
     #[test]
     fn test_make_thumbnail_bytes_from_stream() {
-        #[cfg(target_os = "wasi")]
         Settings::reset().unwrap();
 
         Settings::from_toml(
@@ -437,7 +436,6 @@ pub mod tests {
 
     #[test]
     fn test_make_thumbnail_with_prefer_smallest_format() {
-        #[cfg(target_os = "wasi")]
         Settings::reset().unwrap();
 
         Settings::from_toml(
@@ -504,7 +502,6 @@ pub mod tests {
 
     #[test]
     fn test_make_thumbnail_and_ignore_errors() {
-        #[cfg(target_os = "wasi")]
         Settings::reset().unwrap();
 
         Settings::from_toml(
