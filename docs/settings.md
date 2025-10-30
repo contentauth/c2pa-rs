@@ -112,7 +112,7 @@ Configuration for C2PA certificate trust validation.
 - **allowed_list** (`string | null`): Explicitly allowed certificates (PEM format)
 
 ### cawg_trust
-Identical structure to `trust` but for CAWG (Coalition for Content Provenance and Authenticity Working Group) certificate validation.
+Identical structure to `trust` but for CAWG (Coalition for Content Provenance and Authenticity Working Group) validation when an X.509 certificate is used.
 
 ### core
 Core library features and performance settings.
