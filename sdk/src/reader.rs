@@ -140,6 +140,11 @@ impl Reader {
     #[cfg(not(target_arch = "wasm32"))]
     pub fn from_stream(format: &str, mut stream: impl Read + Seek + Send) -> Result<Reader> {
         let settings = crate::settings::get_settings().unwrap_or_default();
+        let http_resolver = if _sync {
+            SyncGenericResolver::new()
+        } else {
+            AsyncGenericResolver::new()
+        };
         // TODO: passing verify is redundant with settings
         let verify = settings.verify.verify_after_reading;
 
@@ -149,18 +154,18 @@ impl Reader {
             Store::from_stream(
                 format,
                 stream,
-                &SyncGenericResolver::new(),
                 verify,
                 &mut validation_log,
+                &http_resolver,
                 &settings,
             )
         } else {
             Store::from_stream_async(
                 format,
                 stream,
-                &AsyncGenericResolver::new(),
                 verify,
                 &mut validation_log,
+                &http_resolver,
                 &settings,
             )
             .await
@@ -177,6 +182,11 @@ impl Reader {
     #[cfg(target_arch = "wasm32")]
     pub fn from_stream(format: &str, mut stream: impl Read + Seek) -> Result<Reader> {
         let settings = crate::settings::get_settings().unwrap_or_default();
+        let http_resolver = if _sync {
+            SyncGenericResolver::new()
+        } else {
+            AsyncGenericResolver::new()
+        };
         // TODO: passing verify is redundant with settings
         let verify = settings.verify.verify_after_reading;
 
@@ -186,18 +196,18 @@ impl Reader {
             Store::from_stream(
                 format,
                 &mut stream,
-                &SyncGenericResolver::new(),
                 verify,
                 &mut validation_log,
+                &http_resolver,
                 &settings,
             )
         } else {
             Store::from_stream_async(
                 format,
                 &mut stream,
-                &AsyncGenericResolver::new(),
                 verify,
                 &mut validation_log,
+                &http_resolver,
                 &settings,
             )
             .await
@@ -299,6 +309,11 @@ impl Reader {
         stream: impl Read + Seek + Send,
     ) -> Result<Reader> {
         let settings = crate::settings::get_settings().unwrap_or_default();
+        let http_resolver = if _sync {
+            SyncGenericResolver::new()
+        } else {
+            AsyncGenericResolver::new()
+        };
 
         let mut validation_log = StatusTracker::default();
 
@@ -311,6 +326,7 @@ impl Reader {
                 stream,
                 verify,
                 &mut validation_log,
+                &http_resolver,
                 &settings,
             )
         } else {
@@ -320,6 +336,7 @@ impl Reader {
                 stream,
                 verify,
                 &mut validation_log,
+                &http_resolver,
                 &settings,
             )
             .await
@@ -346,6 +363,11 @@ impl Reader {
         mut fragment: impl Read + Seek + Send,
     ) -> Result<Self> {
         let settings = crate::settings::get_settings().unwrap_or_default();
+        let http_resolver = if _sync {
+            SyncGenericResolver::new()
+        } else {
+            AsyncGenericResolver::new()
+        };
 
         let mut validation_log = StatusTracker::default();
 
@@ -355,6 +377,7 @@ impl Reader {
                 &mut stream,
                 &mut fragment,
                 &mut validation_log,
+                &http_resolver,
                 &settings,
             )
         } else {
@@ -363,6 +386,7 @@ impl Reader {
                 &mut stream,
                 &mut fragment,
                 &mut validation_log,
+                &http_resolver,
                 &settings,
             )
             .await
@@ -371,15 +395,16 @@ impl Reader {
         Self::from_store(store, &mut validation_log, &settings)
     }
 
-    #[cfg(feature = "file_io")]
     /// Loads a [`Reader`]` from an initial segment and fragments.  This
     /// would be used to load and validate fragmented MP4 files that span
     /// multiple separate asset files.
+    #[cfg(feature = "file_io")]
     pub fn from_fragmented_files<P: AsRef<std::path::Path>>(
         path: P,
         fragments: &Vec<std::path::PathBuf>,
     ) -> Result<Reader> {
         let settings = crate::settings::get_settings().unwrap_or_default();
+        let http_resolver = SyncGenericResolver::new();
 
         let verify = settings.verify.verify_after_reading;
         let mut validation_log = StatusTracker::default();
@@ -395,6 +420,7 @@ impl Reader {
             fragments,
             verify,
             &mut validation_log,
+            &http_resolver,
             &settings,
         ) {
             Ok(store) => Self::from_store(store, &mut validation_log, &settings),
