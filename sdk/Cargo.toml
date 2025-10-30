@@ -104,7 +104,7 @@ config = { version = "0.14.0", default-features = false, features = [
 ] }
 const-hex = "1.14"
 const-oid = { version = "0.9.6", optional = true }
-coset = "0.3.8"
+coset = "0.4.0"
 extfmt = "0.1.1"
 der = { version = "0.7.9", optional = true }
 ecdsa = { version = "0.16.9", features = ["digest", "sha2"], optional = true }
