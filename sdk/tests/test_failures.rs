@@ -8,8 +8,9 @@ fn test_reader_ts_changed() -> Result<()> {
     let reader = Reader::from_stream(&format, &mut stream).unwrap();
     // in the older validation statuses, this was an error, but now it is informational
     // TODO: Make this consistent with how it was before
-    // After migrating to x509-cert, the timestamp is now properly parsed
-    // and we detect that it has been modified, rather than failing to parse it
+    // After migrating to der crate, the timestamp is correctly rejected as malformed
+    // The timestamp in the fixture has invalid time values (minute=63 which exceeds max of 59)
+    // and der crate properly validates the time format
     assert_eq!(
         reader
             .validation_results()
@@ -18,7 +19,7 @@ fn test_reader_ts_changed() -> Result<()> {
             .unwrap()
             .informational[0]
             .code(),
-        validation_status::TIMESTAMP_MISMATCH
+        validation_status::TIMESTAMP_MALFORMED
     );
 
     Ok(())
