@@ -45,7 +45,6 @@ impl CAIWriter for ZipIO {
         ) {
             Err(ZipError::InvalidArchive(err)) if err.starts_with("Duplicate filename") => {
                 writer.abort_file().map_err(|_| Error::EmbeddingError)?;
-                // TODO: remove code duplication
                 writer
                     .start_file_from_path(
                         Path::new("META-INF/content_credential.c2pa"),
@@ -67,7 +66,7 @@ impl CAIWriter for ZipIO {
         &self,
         _input_stream: &mut dyn CAIRead,
     ) -> Result<Vec<HashObjectPositions>> {
-        // TODO: error?
+        // TODO: error since data hash isn't supported?
         Ok(Vec::new())
     }
 
@@ -254,7 +253,6 @@ mod tests {
 
     use super::*;
 
-    // TODO: add more sample file types
     const SAMPLES: [&[u8]; 3] = [
         include_bytes!("../../tests/fixtures/sample1.zip"),
         include_bytes!("../../tests/fixtures/sample1.docx"),
