@@ -29,7 +29,6 @@ Here's the JSON with all default values:
 {
   "version": 1,
   "trust": {
-    "verify_trust_list": true,
     "user_anchors": null,
     "trust_anchors": null,
     "trust_config": null,
@@ -107,7 +106,6 @@ Here's the JSON with all default values:
 ### trust
 Configuration for C2PA certificate trust validation.
 
-- **verify_trust_list** (`boolean`, default: `true`): Whether to verify certificates against trust lists
 - **user_anchors** (`string | null`): Additional user-provided root certificates (PEM format)
 - **trust_anchors** (`string | null`): Default trust anchor root certificates (PEM format)
 - **trust_config** (`string | null`): Allowed extended key usage (EKU) object identifiers

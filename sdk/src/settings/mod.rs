@@ -384,19 +384,18 @@ impl Settings {
             .to_string_lossy();
 
         let setting_buf = std::fs::read(&settings_path).map_err(Error::IoError)?;
-        #[allow(deprecated)]
         Settings::from_string(&String::from_utf8_lossy(&setting_buf), &ext)
     }
 
-    #[deprecated = "use `Settings::from_toml` instead"]
+    /// Load settings from string representation of the configuration. Format of configuration must be supplied (json or toml).
     pub fn from_string(settings_str: &str, format: &str) -> Result<Self> {
         let f = match format.to_lowercase().as_str() {
             "json" => FileFormat::Json,
-            "json5" => FileFormat::Json5,
+            //"json5" => FileFormat::Json5,
             //"ini" => FileFormat::Ini,
             "toml" => FileFormat::Toml,
             //"yaml" => FileFormat::Yaml,
-            "ron" => FileFormat::Ron,
+            //ron" => FileFormat::Ron,
             _ => return Err(Error::UnsupportedType),
         };
 
@@ -431,14 +430,7 @@ impl Settings {
     }
 
     /// Set the [Settings] from a toml file.
-    pub fn from_json(toml: &str) -> Result<()> {
-        #[allow(deprecated)]
-        Settings::from_string(toml, "json").map(|_| ())
-    }
-
-    /// Set the [Settings] from a toml file.
     pub fn from_toml(toml: &str) -> Result<()> {
-        #[allow(deprecated)]
         Settings::from_string(toml, "toml").map(|_| ())
     }
 
@@ -592,10 +584,7 @@ pub(crate) fn load_settings_from_file<P: AsRef<Path>>(settings_path: P) -> Resul
 
 /// Load settings from string representation of the configuration. Format of configuration must be supplied.
 #[allow(unused)]
-// TODO: when this is removed, remove the additional features (for all supported formats) from the Cargo.toml
-#[deprecated = "use `Settings::from_toml`"]
 pub fn load_settings_from_str(settings_str: &str, format: &str) -> Result<()> {
-    #[allow(deprecated)]
     Settings::from_string(settings_str, format).map(|_| ())
 }
 
@@ -774,7 +763,6 @@ pub mod tests {
 
         {
             let settings_str: &str = &String::from_utf8_lossy(&setting_buf);
-            #[allow(deprecated)]
             Settings::from_string(settings_str, "json").map(|_| ())
         }
         .unwrap();

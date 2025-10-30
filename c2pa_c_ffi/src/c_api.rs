@@ -1414,7 +1414,7 @@ pub unsafe extern "C" fn c2pa_signer_from_info(signer_info: &C2paSignerInfo) -> 
     }
 }
 
-/// Creates a C2paSigner from the global settings.
+/// Creates a C2paSigner from the settings.
 /// The signer is created from the settings defined in the c2pa_settings.json file.
 ///
 /// # Errors
