@@ -1640,6 +1640,15 @@ impl AssetIO for BmffIO {
     fn supported_types(&self) -> &[&str] {
         &SUPPORTED_TYPES
     }
+
+    fn supports_stream(&self, stream: &mut dyn CAIRead) -> Result<bool> {
+        stream.rewind()?;
+
+        let mut header = [0u8; 12];
+        stream.read_exact(&mut header)?;
+
+        Ok(header[4..8] == *b"ftyp")
+    }
 }
 
 impl CAIWriter for BmffIO {

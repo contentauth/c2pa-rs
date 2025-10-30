@@ -18,10 +18,11 @@ use serde_bytes::ByteBuf;
 use crate::{
     assertions::{BoxMap, C2PA_BOXHASH},
     asset_io::{
-        AssetBoxHash, AssetIO, CAIRead, CAIReadWrite, CAIReader, CAIWriter, ComposedManifestRef,
-        HashBlockObjectType, HashObjectPositions,
+        AssetBoxHash, AssetIO, CAIRead, CAIReadWrapper, CAIReadWrite, CAIReader, CAIWriter,
+        ComposedManifestRef, HashBlockObjectType, HashObjectPositions,
     },
     error::{Error, Result},
+    jumbf::boxes::{self, BoxReader, Cai},
 };
 
 static SUPPORTED_TYPES: [&str; 3] = [
@@ -35,6 +36,8 @@ pub struct C2paIO {}
 
 impl CAIReader for C2paIO {
     fn read_cai(&self, asset_reader: &mut dyn CAIRead) -> Result<Vec<u8>> {
+        asset_reader.rewind()?;
+
         let mut cai_data = Vec::new();
         // read the whole file
         asset_reader.read_to_end(&mut cai_data)?;
@@ -129,6 +132,15 @@ impl AssetIO for C2paIO {
 
     fn supported_types(&self) -> &[&str] {
         &SUPPORTED_TYPES
+    }
+
+    fn supports_stream(&self, stream: &mut dyn CAIRead) -> Result<bool> {
+        stream.rewind()?;
+
+        let super_box = BoxReader::read_super_box(&mut CAIReadWrapper { reader: stream })?;
+        let cai_block = Cai::from(super_box);
+
+        Ok(cai_block.desc_box().uuid() == boxes::CAI_BLOCK_UUID)
     }
 
     fn composed_data_ref(&self) -> Option<&dyn ComposedManifestRef> {

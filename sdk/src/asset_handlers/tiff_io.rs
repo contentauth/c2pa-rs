@@ -1332,6 +1332,7 @@ where
 
     asset_reader.read_to_vec(xmp_ifd_entry.value_count).ok()
 }
+
 pub struct TiffIO {}
 
 impl CAIReader for TiffIO {
@@ -1425,6 +1426,24 @@ impl AssetIO for TiffIO {
 
     fn supported_types(&self) -> &[&str] {
         &SUPPORTED_TYPES
+    }
+
+    fn supports_stream(&self, stream: &mut dyn CAIRead) -> Result<bool> {
+        stream.rewind()?;
+
+        let mut header = [0u8; 4];
+        stream.read_exact(&mut header)?;
+
+        Ok(
+            // Little-endian TIFF
+            header == [0x49, 0x49, 0x2A, 0x00]
+            // Big-endian TIFF
+            || header == [0x4D, 0x4D, 0x00, 0x2A]
+            // Little-endian BigTIFF
+            || header == [0x49, 0x49, 0x2B, 0x00]
+            // Big-endian BigTIFF
+            || header == [0x4D, 0x4D, 0x00, 0x2B],
+        )
     }
 }
 

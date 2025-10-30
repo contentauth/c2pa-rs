@@ -568,6 +568,15 @@ impl AssetIO for JpegIO {
     fn supported_types(&self) -> &[&str] {
         &SUPPORTED_TYPES
     }
+
+    fn supports_stream(&self, stream: &mut dyn CAIRead) -> Result<bool> {
+        stream.rewind()?;
+
+        let mut header = [0u8; 3];
+        stream.read_exact(&mut header)?;
+
+        Ok(header == [0xff, 0xd8, 0xff])
+    }
 }
 
 impl RemoteRefEmbed for JpegIO {

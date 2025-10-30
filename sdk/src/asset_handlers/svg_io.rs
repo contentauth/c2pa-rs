@@ -159,6 +159,15 @@ impl AssetIO for SvgIO {
     fn supported_types(&self) -> &[&str] {
         &SUPPORTED_TYPES
     }
+
+    fn supports_stream(&self, stream: &mut dyn CAIRead) -> Result<bool> {
+        stream.rewind()?;
+
+        let mut bytes = [0u8; 4096];
+        let len = stream.read(&mut bytes)?;
+
+        Ok(bytes[..len].windows(4).any(|pattern| pattern == b"<svg"))
+    }
 }
 
 // create manifest entry
