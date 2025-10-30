@@ -394,7 +394,7 @@ jobs:
 
       - name: Run WASI tests (c2pa-rs)
         env:
-          CARGO_TARGET_WASM32_WASIP2_RUNNER: "wasmtime -S cli -S http --dir . --env GITHUB_ACTIONS=${GITHUB_ACTIONS}"
+          CARGO_TARGET_WASM32_WASIP2_RUNNER: "wasmtime -S cli -S http --dir ."
           CC: clang
           RUST_MIN_STACK: 16777216
           FEATURES: ${{needs.get-features.outputs.rust-native-features}}
