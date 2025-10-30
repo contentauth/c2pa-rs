@@ -15,7 +15,6 @@ use asn1_rs::{Any, Class, FromDer, Header, Tag};
 use chrono::{DateTime, Utc};
 use thiserror::Error;
 use web_time::SystemTime;
-use x509_certificate::asn1time::GeneralizedTime;
 use x509_parser::{
     certificate::{BasicExtension, X509Certificate},
     der_parser::{ber::parse_ber_sequence, oid},
@@ -115,7 +114,7 @@ pub fn check_certificate_profile(
     if let Some(tst_info) = _tst_info_opt {
         // A valid time stamp was associated with this signature: Ensure that the
         // timestamp was valid at that time.
-        let signing_time = generalized_time_to_datetime(tst_info.gen_time.clone().into());
+        let signing_time: DateTime<Utc> = tst_info.gen_time.clone().into();
         if !signcert.validity().is_valid_at(
             x509_parser::time::ASN1Time::from_timestamp(signing_time.timestamp())
                 .map_err(|_| CertificateProfileError::InvalidCertificate)?,
@@ -537,10 +536,6 @@ pub enum CertificateProfileError {
     /// response.
     #[error("internal error ({0})")]
     InternalError(String),
-}
-
-fn generalized_time_to_datetime(gt: GeneralizedTime) -> DateTime<Utc> {
-    gt.into()
 }
 
 const RSA_OID: Oid<'static> = oid!(1.2.840 .113549 .1 .1 .1);

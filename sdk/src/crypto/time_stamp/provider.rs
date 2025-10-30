@@ -14,7 +14,7 @@
 use async_trait::async_trait;
 use bcder::{encode::Values, OctetString};
 use rand::{thread_rng, Rng};
-use x509_certificate::DigestAlgorithm;
+use sha2::{Digest, Sha256};
 
 use crate::{
     crypto::{asn1::rfc3161::TimeStampReq, time_stamp::TimeStampError},
@@ -210,34 +210,28 @@ pub trait AsyncTimeStampProvider {
 ///
 /// [RFC 3161]: https://datatracker.ietf.org/doc/html/rfc3161
 pub fn default_rfc3161_message(data: &[u8]) -> Result<Vec<u8>, TimeStampError> {
-    let request = time_stamp_message_http(data, DigestAlgorithm::Sha256)?;
-
-    let mut body = Vec::<u8>::new();
-    request
-        .encode_ref()
-        .write_encoded(bcder::Mode::Der, &mut body)?;
-
-    Ok(body)
-}
-
-fn time_stamp_message_http(
-    message: &[u8],
-    digest_algorithm: DigestAlgorithm,
-) -> Result<TimeStampReq, TimeStampError> {
-    let mut h = digest_algorithm.digester();
-    h.update(message);
-    let digest = h.finish();
+    // Hash the data with SHA-256
+    let mut hasher = Sha256::new();
+    hasher.update(data);
+    let digest = hasher.finalize();
 
     let mut random = [0u8; 8];
     thread_rng().try_fill(&mut random).map_err(|_| {
         TimeStampError::InternalError("Unable to generate random number".to_string())
     })?;
 
+    // SHA-256 OID: 2.16.840.1.101.3.4.2.1
+    let sha256_oid = bcder::Oid(bytes::Bytes::from_static(&[
+        96, 134, 72, 1, 101, 3, 4, 2, 1,
+    ]));
+
     let request = TimeStampReq {
         version: bcder::Integer::from(1_u8),
         message_imprint: crate::crypto::asn1::rfc3161::MessageImprint {
-            hash_algorithm: digest_algorithm.into(),
-            hashed_message: OctetString::new(bytes::Bytes::copy_from_slice(digest.as_ref())),
+            hash_algorithm: crate::crypto::asn1::AlgorithmIdentifier {
+                algorithm: sha256_oid,
+            },
+            hashed_message: OctetString::new(bytes::Bytes::copy_from_slice(&digest)),
         },
         req_policy: None,
         nonce: Some(bcder::Integer::from(u64::from_le_bytes(random))),
@@ -245,5 +239,10 @@ fn time_stamp_message_http(
         extensions: None,
     };
 
-    Ok(request)
+    let mut body = Vec::<u8>::new();
+    request
+        .encode_ref()
+        .write_encoded(bcder::Mode::Der, &mut body)?;
+
+    Ok(body)
 }
