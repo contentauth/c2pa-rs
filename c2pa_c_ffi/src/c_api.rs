@@ -74,7 +74,7 @@ unsafe fn safe_slice_from_raw_parts(
 
 // C has no namespace so we prefix things with C2PA to make them unique
 #[allow(deprecated)]
-use c2pa::settings::load_settings_from_str;
+use c2pa::settings::{load_settings_from_str, Settings};
 #[cfg(feature = "file_io")]
 use c2pa::Ingredient;
 use c2pa::{
@@ -1414,6 +1414,25 @@ pub unsafe extern "C" fn c2pa_signer_from_info(signer_info: &C2paSignerInfo) -> 
     }
 }
 
+/// Creates a C2paSigner from the settings.
+/// The signer is created from the settings defined in the c2pa_settings.json file.
+///
+/// # Errors
+/// Returns NULL if there were errors, otherwise returns a pointer to a C2paSigner.
+/// The error string can be retrieved by calling c2pa_error.
+/// # Safety
+/// The returned value MUST be released by calling c2pa_signer_free
+/// and it is no longer valid after that call.
+#[no_mangle]
+pub unsafe extern "C" fn c2pa_signer_from_settings() -> *mut C2paSigner {
+    let signer = Settings::signer();
+    ok_or_return_null!(signer, |signer| {
+        Box::into_raw(Box::new(C2paSigner {
+            signer: Box::new(signer),
+        }))
+    })
+}
+
 /// Returns the size to reserve for the signature for this signer.
 ///
 /// # Parameters
@@ -2139,5 +2158,17 @@ mod tests {
         let json_report = json_str.to_str().unwrap();
         assert!(json_report.contains("cawg.identity"));
         assert!(json_report.contains("cawg.identity.well-formed"));
+    }
+
+    #[test]
+    fn test_c2pa_signer_from_settings() {
+        const SETTINGS: &str = include_str!("../../sdk/tests/fixtures/test_settings.json");
+        let settings = CString::new(SETTINGS).unwrap();
+        let format = CString::new("json").unwrap();
+        let result = unsafe { c2pa_load_settings(settings.as_ptr(), format.as_ptr()) };
+        assert_eq!(result, 0);
+        let signer = unsafe { c2pa_signer_from_settings() };
+        assert!(!signer.is_null());
+        unsafe { c2pa_signer_free(signer) };
     }
 }

@@ -20,7 +20,7 @@ readme = "../README.md"
 keywords = ["xmp", "metadata"]
 categories = ["api-bindings"]
 edition = "2021"
-rust-version = "1.86.0"
+rust-version = "1.88.0"
 exclude = ["tests/fixtures"]
 
 [package.metadata.docs.rs]
@@ -72,7 +72,7 @@ required-features = ["file_io"]
 name = "v2show"
 
 [[example]]
-name = "v2api"
+name = "api"
 
 [[example]]
 name = "fragmented_bmff"
@@ -104,7 +104,7 @@ config = { version = "0.14.0", default-features = false, features = [
 ] }
 const-hex = "1.14"
 const-oid = { version = "0.9.6", optional = true }
-coset = "0.3.8"
+coset = "0.4.0"
 extfmt = "0.1.1"
 der = { version = "0.7.9", optional = true }
 ecdsa = { version = "0.16.9", features = ["digest", "sha2"], optional = true }
@@ -117,7 +117,7 @@ ed25519-dalek = { version = "2.1.1", features = [
 ] }
 env_logger = "0.10.0"
 hex = "0.4.3"
-hex-literal = "0.4.1" # Might be only a dev dependency
+hex-literal = "1.0.0" # Might be only a dev dependency
 id3 = "=1.16.1"
 img-parts = "0.3.2"
 iref = { version = "3.2.2", features = ["serde"] }
@@ -125,7 +125,7 @@ jfifdump = "0.6.0"
 log = "0.4.8"
 lopdf = { version = "0.31.0", optional = true }
 lazy_static = "1.4.0"
-memchr = "2.7.4"
+memchr = "2.7.6"
 mp4 = "0.14.0"
 nom = "7.1.3"
 non-empty-string = { version = "=0.2.4", features = ["serde"] }
@@ -138,7 +138,7 @@ p521 = { version = "0.13.3", features = [
     "digest",
     "ecdsa",
 ], optional = true }
-pem = "3.0.2"
+pem = "3.0.6"
 pkcs1 = { version = "0.7.5", optional = true }
 pkcs8 = "0.10.2"
 png_pong = "0.9.1"
@@ -153,13 +153,13 @@ rasn-pkix = "0.26.0"
 regex = "1.11"
 riff = "2.0.0"
 rsa = { version = "0.9.7", features = ["pem", "sha2", "std"], optional = true }
-schemars = { version = "0.8.21", optional = true }
+schemars = { version = "1.0.4", optional = true }
 serde = { version = "1.0.225", features = ["derive"] }
 serde_bytes = "0.11.14"
 serde_cbor = "0.11.1"
 serde_derive = "1.0.197"
 serde_json = { version = "1.0.117", features = ["preserve_order"] }
-serde_with = "3.11.0"
+serde_with = "3.15.1"
 serde-transcode = "1.1.1"
 sha1 = "0.10.6"
 spki = { version = "0.7.3", optional = true }
@@ -172,7 +172,7 @@ web-time = "1.1"
 x509-certificate = "0.24.0"
 x509-parser = "0.16.0"
 zeroize = { version = "1.8", features = ["zeroize_derive"] }
-zip = { version = "3.0.0", default-features = false }
+zip = { version = "6.0.0", default-features = false }
 
 # Use the asm feature of sha2 on aarch64 macOS for better performance. This nearly
 # halves hashing time for large assets (> 50gb mp4, for example).
@@ -270,7 +270,7 @@ reqwest = { version = "0.12.8", default-features = false, features = [
 [dev-dependencies]
 anyhow = "1.0.97"
 glob = "0.3.1"
-hex-literal = "0.4.1"
+hex-literal = "1.0.0"
 jumbf = "0.4.0"
 c2pa_macros = { path = "../macros" }
 mockall = "0.13.1"
@@ -280,7 +280,7 @@ once_cell = "1.17.2"
 wasm-bindgen-test = "0.3.45"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
-httpmock = "0.8.0"
+httpmock = "0.8.2"
 tokio = { version = "1.44.2", features = ["full"] }
 criterion = { package = "codspeed-criterion-compat", version = "3.0.5" }
 

@@ -71,8 +71,7 @@ use crate::{
     },
     log_item,
     manifest_store_report::ManifestStoreReport,
-    salt::DefaultSalt,
-    settings::{builder::OcspFetch, Settings},
+    settings::{builder::OcspFetchScope, Settings},
     status_tracker::{ErrorBehavior, StatusTracker},
     utils::{
         hash_utils::HashRange,
@@ -259,7 +258,7 @@ impl Store {
     }
 
     // remove a claim from the store
-    fn remove_claim(&mut self, label: &str) -> Option<Claim> {
+    pub(crate) fn remove_claim(&mut self, label: &str) -> Option<Claim> {
         self.claims.retain(|l| l != label);
         self.claims_map.remove(label)
     }
@@ -577,6 +576,10 @@ impl Store {
     ) -> Result<Vec<u8>> {
         let claim_bytes = claim.data()?;
 
+        // no verification of timestamp trust while signing
+        let mut adjusted_settings = settings.clone();
+        adjusted_settings.verify.verify_timestamp_trust = false;
+
         let tss = if claim.version() > 1 {
             TimeStampStorage::V2_sigTst2_CTT
         } else {
@@ -588,7 +591,7 @@ impl Store {
                 // Let the signer do all the COSE processing and return the structured COSE data.
                 return signer.sign(&claim_bytes); // do not verify remote signers (we never did)
             } else {
-                cose_sign(signer, &claim_bytes, box_size, tss, settings)
+                cose_sign(signer, &claim_bytes, box_size, tss, &adjusted_settings)
             }
         } else {
             if signer.direct_cose_handling() {
@@ -617,7 +620,7 @@ impl Store {
                             &self.ctp,
                             None,
                             &mut cose_log,
-                            settings,
+                            &adjusted_settings,
                         )
                     } else {
                         verify_cose_async(
@@ -628,7 +631,7 @@ impl Store {
                             &self.ctp,
                             None,
                             &mut cose_log,
-                            settings,
+                            &adjusted_settings,
                         )
                         .await
                     };
@@ -648,8 +651,8 @@ impl Store {
     pub fn get_manifest_labels_for_ocsp(&self, settings: &Settings) -> Vec<String> {
         let labels = match settings.builder.certificate_status_fetch {
             Some(ocsp_fetch) => match ocsp_fetch {
-                OcspFetch::All => self.claims.clone(),
-                OcspFetch::Active => {
+                OcspFetchScope::All => self.claims.clone(),
+                OcspFetchScope::Active => {
                     if let Some(active_label) = self.provenance_label() {
                         vec![active_label]
                     } else {
@@ -1140,14 +1143,7 @@ impl Store {
     // desired_version_label - is the label to compare to the base
     // returns true if desired version is <= base version
     fn check_label_version(base_version_label: &str, desired_version_label: &str) -> bool {
-        if let Some(desired_version) = labels::version(desired_version_label) {
-            if let Some(base_version) = labels::version(base_version_label) {
-                if desired_version > base_version {
-                    return false;
-                }
-            }
-        }
-        true
+        labels::version(desired_version_label) <= labels::version(base_version_label)
     }
 
     #[inline]
@@ -1376,7 +1372,7 @@ impl Store {
             // make sure box version label match the read Claim
             if claim.version() > 1 {
                 match labels::version(&claim_box_ver) {
-                    Some(v) if claim.version() >= v => (),
+                    v if claim.version() >= v => (),
                     _ => return Err(Error::InvalidClaim(InvalidClaimError::ClaimBoxVersion)),
                 }
             }
@@ -1583,7 +1579,7 @@ impl Store {
 
                     // allow the extra ingredient trust checks
                     // these checks are to prevent the trust spoofing
-                    let check_ingredient_trust: bool = settings.verify.check_ingredient_trust;
+                    let check_ingredient_trust: bool = settings.verify.verify_trust;
 
                     // get the 1.1-1.2 box hash
                     let ingredient_hashes = store.get_manifest_box_hashes(ingredient);
@@ -2070,18 +2066,26 @@ impl Store {
 
                 // save the valid timestamps stored in the StoreValidationInfo
                 // we only use valid timestamps, otherwise just ignore
+                let mut adjusted_settings = settings.clone();
+                let original_trust_val = adjusted_settings.verify.verify_timestamp_trust;
                 for (referenced_claim, time_stamp_token) in timestamp_assertion.as_ref() {
                     if let Some(rc) = svi.manifest_map.get(referenced_claim) {
+                        if rc.version() == 1 {
+                            // no trust checks for leagacy timestamps
+                            adjusted_settings.verify.verify_timestamp_trust = false;
+                        }
+
                         if let Ok(tst_info) = verify_time_stamp(
                             time_stamp_token,
                             rc.signature_val(),
                             &self.ctp,
                             validation_log,
-                            settings,
+                            &adjusted_settings,
                         ) {
                             svi.timestamps.insert(rc.label().to_owned(), tst_info);
                         }
                     }
+                    adjusted_settings.verify.verify_timestamp_trust = original_trust_val;
                 }
             }
 
@@ -2451,7 +2455,7 @@ impl Store {
             let mut stream = Cursor::new(data);
             ph.gen_hash_from_stream(&mut stream)?;
 
-            pc.add_assertion_with_salt(&ph, &DefaultSalt::default())?;
+            pc.add_assertion(&ph)?;
         }
 
         let jumbf_bytes = self.to_jumbf_internal(reserve_size)?;
@@ -2691,10 +2695,7 @@ impl Store {
 
         let pc = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
         // always add dynamic assertions as gathered assertions
-        assertions
-            .iter()
-            .map(|a| pc.add_gathered_assertion_with_salt(a, &DefaultSalt::default()))
-            .collect()
+        assertions.iter().map(|a| pc.add_assertion(a)).collect()
     }
 
     /// Write the dynamic assertions to the manifest.
@@ -2736,7 +2737,7 @@ impl Store {
                     final_assertions.push(User::new(&label, &data).to_assertion()?);
                 }
                 DynamicAssertionContent::Binary(format, data) => {
-                    todo!("Binary dynamic assertions not yet supported");
+                    //final_assertions.push(EmbeddedData::to_binary_assertion(&EmbeddedData::new(&label, format, data))?);
                 }
             }
         }
@@ -4287,10 +4288,18 @@ impl Store {
     ) -> Result<Vec<(String, Vec<u8>)>> {
         let mut oscp_response_ders = Vec::new();
 
+        let mut adjusted_settings = settings.clone();
+        let original_trust_val = adjusted_settings.verify.verify_timestamp_trust;
+
         for manifest_label in manifest_labels {
             if let Some(claim) = self.claims_map.get(&manifest_label) {
                 let sig = claim.signature_val().clone();
                 let data = claim.data()?;
+
+                // no timestamp trust checks for 1.x manifests
+                if claim.version() == 1 {
+                    adjusted_settings.verify.verify_timestamp_trust = false;
+                }
 
                 let sign1 = parse_cose_sign1(&sig, &data, validation_log)?;
                 let ocsp_response_der = if _sync {
@@ -4320,6 +4329,7 @@ impl Store {
                     oscp_response_ders.push((manifest_label, ocsp_response_der));
                 }
             }
+            adjusted_settings.verify.verify_timestamp_trust = original_trust_val;
         }
 
         Ok(oscp_response_ders)
