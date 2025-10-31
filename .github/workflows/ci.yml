@@ -313,7 +313,7 @@ jobs:
         run: wasm-pack test --chrome --chromedriver ${{ steps.setup-chrome.outputs.chromedriver-path }} --headless --no-default-features --features rust_native_crypto,fetch_remote_manifests
         working-directory: ./sdk
         env:
-          CHROME_BINARY: ${{ steps.setup-chrome.outputs.chrome-path }}
+          WASM_BINDGEN_TEST_TIMEOUT: 60
 
   benchmarks:
     name: Run benchmarks on signing and reading
