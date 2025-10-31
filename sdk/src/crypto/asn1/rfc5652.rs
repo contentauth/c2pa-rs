@@ -56,17 +56,11 @@ impl UtcTime {
     ) -> Result<Self, DecodeError<S::Error>> {
         // Get the raw bytes (without tag/length)
         let bytes = prim.take_all()?;
-
-        // Reconstruct the full DER encoding (tag + length + content)
-        let mut der_bytes = Vec::with_capacity(2 + bytes.len());
-        der_bytes.push(0x17); // UTC_TIME tag
-        der_bytes.push(bytes.len() as u8); // length
-        der_bytes.extend_from_slice(bytes.as_ref());
-
+        // Reconstruct DER encoding using helper (tag 0x17 = UTC_TIME)
+        let der_bytes = super::reconstruct_der_bytes(0x17, bytes.as_ref());
         // Parse with der crate - it handles Y2K correctly and validates format
         let der_time = der::asn1::UtcTime::from_der(&der_bytes)
             .map_err(|_| DecodeError::content("invalid UtcTime", prim.pos()))?;
-
         Ok(UtcTime { der_time, der_bytes })
     }
 
