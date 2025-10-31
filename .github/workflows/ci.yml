@@ -306,14 +306,11 @@ jobs:
           chrome-version: 142
           install-chromedriver: true
 
-      - name: Log Chrome details
-        run: chrome --version
-
       - name: Install wasm-pack
         run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
 
       - name: Run Wasm tests
-        run: wasm-pack test --chrome --chromedriver ${{ steps.setup-chrome.outputs.chromedriver-path }} --headless --no-default-features --features rust_native_crypto,fetch_remote_manifests
+        run: wasm-pack test --chrome --chromedriver ${{ steps.setup-chrome.outputs.chromedriver-path }} --headless --no-default-features --features rust_native_crypto,fetch_remote_manifests --chrome-arg --no-sandbox --chrome-arg --disable-dev-shm-usage
         working-directory: ./sdk
         env:
           WASM_BINDGEN_TEST_TIMEOUT: 60
