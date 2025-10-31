@@ -16,9 +16,11 @@ use bcder::{encode::Values, OctetString};
 use rand::{thread_rng, Rng};
 use sha2::{Digest, Sha256};
 
-use crate::{
-    crypto::{asn1::rfc3161::TimeStampReq, time_stamp::TimeStampError},
+use crate::crypto::{
+    asn1::rfc3161::TimeStampReq,
     http::SyncGenericResolver,
+    raw_signature::oids::{ans1_oid_bcder_oid, SHA256_OID},
+    time_stamp::TimeStampError,
 };
 
 /// A `TimeStampProvider` implementation can contact a [RFC 3161] time stamp
@@ -221,9 +223,8 @@ pub fn default_rfc3161_message(data: &[u8]) -> Result<Vec<u8>, TimeStampError> {
     })?;
 
     // SHA-256 OID: 2.16.840.1.101.3.4.2.1
-    let sha256_oid = bcder::Oid(bytes::Bytes::from_static(&[
-        96, 134, 72, 1, 101, 3, 4, 2, 1,
-    ]));
+    let sha256_oid = ans1_oid_bcder_oid(&SHA256_OID)
+        .ok_or_else(|| TimeStampError::InternalError("Invalid SHA-256 OID".to_string()))?;
 
     let request = TimeStampReq {
         version: bcder::Integer::from(1_u8),
