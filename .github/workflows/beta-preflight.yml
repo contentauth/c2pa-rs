@@ -152,7 +152,7 @@ jobs:
 
       - name: "`cargo check` with default features"
         run: cargo check
-        
+
   tests-cross:
     name: Unit tests
     runs-on: ubuntu-latest
@@ -183,8 +183,11 @@ jobs:
       # it isn't readily accessible from cross-compilation
       # environment. (A PR to fix this would be welcomed!)
 
+      # Integration tests are excluded because they require executing
+      # the compiled binary, which isn't reliably possible when cross-compiling,
+      # due to architecture mismatch.
       - name: Run unit tests (cross build)
-        run: cross test --all-targets --all-features --target ${{ matrix.target }}
+        run: cross test --lib --bins --all-features --target ${{ matrix.target }}
 
   tests-wasm:
     name: Unit tests (WASM)
