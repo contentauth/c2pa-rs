@@ -11,12 +11,8 @@ use bcder::{
     encode::{self, PrimitiveContent, Values},
     ConstOid, Integer, OctetString, Oid, Tag,
 };
-use x509_certificate::{
-    asn1time::GeneralizedTime,
-    rfc3280::GeneralName,
-    rfc5280::{AlgorithmIdentifier, Extensions},
-};
 
+use super::{AlgorithmIdentifier, Extensions, GeneralName, GeneralizedTime};
 use crate::crypto::asn1::{rfc4210::PkiFreeText, rfc5652::ContentInfo};
 
 /// Content-Type for Time-Stamp Token Info.
