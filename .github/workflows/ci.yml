@@ -315,6 +315,7 @@ jobs:
         env:
           WASM_BINDGEN_TEST_TIMEOUT: 60
           CHROMIUM_ARGS: "--no-sandbox --disable-dev-shm-usage --disable-gpu"
+          CHROMEDRIVER_ARGS: "--whitelisted-ips="
 
   benchmarks:
     name: Run benchmarks on signing and reading
