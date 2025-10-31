@@ -306,6 +306,9 @@ jobs:
           chrome-version: 142
           install-chromedriver: true
 
+      - name: Log Chrome details
+        run: chrome --version
+
       - name: Install wasm-pack
         run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
 
