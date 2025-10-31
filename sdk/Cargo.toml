@@ -277,7 +277,7 @@ mockall = "0.13.1"
 once_cell = "1.17.2"
 
 [target.'cfg(all(target_arch = "wasm32", not(target_os = "wasi")))'.dev-dependencies]
-wasm-bindgen-test = "0.3.45"
+wasm-bindgen-test = "0.3.55"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 httpmock = "0.8.2"
