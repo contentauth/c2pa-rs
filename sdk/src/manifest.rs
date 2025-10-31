@@ -92,7 +92,6 @@ pub struct Manifest {
 
     /// A List of ingredients
     #[serde(default = "default_vec::<Ingredient>")]
-
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub(crate) ingredients: Vec<Ingredient>,
 
