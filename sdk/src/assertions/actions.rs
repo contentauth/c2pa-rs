@@ -315,7 +315,8 @@ pub struct ActionParameters {
 
     /// Anything from the common parameters.
     #[serde(flatten)]
-    #[schemars(skip)] // JsonSchema does not support CBOR values
+    // JsonSchema does not support CBOR values
+    #[cfg_attr(feature = "json_schema", schemars(skip))]
     pub common: HashMap<String, Value>,
 }
 
