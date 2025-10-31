@@ -29,7 +29,7 @@ test-wasm:
 	cd sdk && wasm-pack test --node -- --no-default-features --features="rust_native_crypto, fetch_remote_manifests"
 
 test-wasm-web:
-	cd sdk && wasm-pack test --chrome --headless -- --no-default-features --features="rust_native_crypto, fetch_remote_manifests"
+	cd sdk && WASM_BINDGEN_TEST_TIMEOUT=60 CHROMIUM_ARGS="--no-sandbox --disable-dev-shm-usage --disable-gpu" wasm-pack test --chrome --headless -- --no-default-features --features="rust_native_crypto, fetch_remote_manifests"
 
 # WASI testing requires upstream llvm clang (not XCode), wasmtime, and the target wasm32-wasip2 on the nightly toolchain
 test-wasi:
