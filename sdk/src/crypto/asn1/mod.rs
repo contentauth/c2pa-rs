@@ -10,9 +10,10 @@
 // cryptographic-message-syntax crate located at:
 // https://github.com/indygreg/cryptography-rs/tree/main/cryptographic-message-syntax/src/asn1
 
-// We can not incorporate the entire crate directly because other parts of the
-// crate contain dependencies on blocking calls in reqwest. Those calls are not
-// available in WASM environment.
+// We can not incorporate the entire crate directly because it relies on x509-certificate which
+// relies on ring.
+
+// Migrating fully from bcder to der will eliminate the need for much of this code.
 
 use std::io::Write;
 
