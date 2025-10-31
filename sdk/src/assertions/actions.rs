@@ -262,6 +262,7 @@ pub static V2_DEPRECATED_ACTIONS: [&str; 7] = [
 ];
 
 /// We use this to allow SourceAgent to be either a string or a ClaimGeneratorInfo
+#[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 #[derive(Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
 #[serde(untagged)]
 #[allow(clippy::large_enum_variant)]
@@ -283,6 +284,7 @@ impl From<ClaimGeneratorInfo> for SoftwareAgent {
 }
 
 /// Additional parameters of the action.
+#[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 #[derive(Deserialize, Serialize, Clone, Debug, Default, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct ActionParameters {
@@ -313,6 +315,7 @@ pub struct ActionParameters {
 
     /// Anything from the common parameters.
     #[serde(flatten)]
+    #[schemars(skip)] // JsonSchema does not support CBOR values
     pub common: HashMap<String, Value>,
 }
 
@@ -323,6 +326,7 @@ pub struct ActionParameters {
 /// the action.
 ///
 /// See <https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_actions>.
+#[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 #[derive(Deserialize, Serialize, Clone, Debug, Default, PartialEq)]
 pub struct Action {
     /// The label associated with this action. See ([`c2pa_action`]).
