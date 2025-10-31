@@ -77,11 +77,6 @@ jobs:
           RUST_BACKTRACE: "1"
         run: cargo llvm-cov --bins --all-features --lcov --output-path lcov.info
 
-      - name: Run integration tests
-        env:
-          RUST_BACKTRACE: "1"
-        run: cargo test -p c2patool --test integration --all-features
-
   doc-tests:
     name: Doc tests (requires nightly Rust)
     # TODO: Remove this once cargo-llvm-cov can run doc tests and generate
@@ -187,9 +182,10 @@ jobs:
       # Note that we do not run code coverage because
       # it isn't readily accessible from cross-compilation
       # environment. (A PR to fix this would be welcomed!)
-      # Integration tests are excluded because they require executing
-      # the compiled binary, which isn't possible when cross-compiling.
 
+      # Integration tests are excluded because they require executing
+      # the compiled binary, which isn't reliably possible when cross-compiling,
+      # due to architecture mismatch.
       - name: Run unit tests (cross build)
         run: cross test --lib --bins --all-features --target ${{ matrix.target }}
 

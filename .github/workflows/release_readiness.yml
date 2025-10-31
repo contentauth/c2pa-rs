@@ -131,7 +131,8 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       # Integration tests are excluded because they require executing
-      # the compiled binary, which isn't possible when cross-compiling.
+      # the compiled binary, which isn't reliably possible when cross-compiling,
+      # due to architecture mismatch.
       - name: Run unit tests (cross build)
         env:
           FEATURES: ${{needs.get-features.outputs.openssl-features}}
