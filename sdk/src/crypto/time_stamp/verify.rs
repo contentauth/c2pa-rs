@@ -607,6 +607,7 @@ impl TryFrom<&bcder::Oid> for DigestAlgorithm {
     type Error = ();
 
     fn try_from(oid: &bcder::Oid) -> Result<Self, Self::Error> {
+        // Using der::asn1 instead of oids defined in oid.rs, because this is faster and we intend to remove x509_parser eventually.
         // Convert bcder::Oid to string, then parse as ObjectIdentifier for comparison
         let oid_str = oid.to_string();
         let const_oid = ObjectIdentifier::new(&oid_str).map_err(|_| ())?;
