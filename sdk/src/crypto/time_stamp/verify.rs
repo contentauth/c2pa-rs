@@ -17,10 +17,11 @@ use asn1_rs::FromDer;
 use async_generic::async_generic;
 use bcder::OctetString;
 use chrono::{offset::LocalResult, DateTime, TimeZone, Utc};
+use der::asn1::ObjectIdentifier;
 use rasn::{prelude::*, types};
 use rasn_cms::{CertificateChoices, SignerIdentifier};
-use sha2::{Digest as _, Sha256, Sha384, Sha512};
 use sha1::Sha1;
+use sha2::{Digest as _, Sha256, Sha384, Sha512};
 
 use crate::{
     crypto::{
@@ -209,7 +210,6 @@ pub fn verify_time_stamp(
                 if let Some(gt) = timestamp_to_generalized_time(signed_signing_time) {
                     // Use actual signed time.
                     signing_time = generalized_time_to_datetime(gt.clone()).timestamp();
-                    // Convert through DateTime instead of using Into
                     let dt: chrono::DateTime<chrono::Utc> = gt.into();
                     tst.gen_time = dt.into();
                 };
@@ -607,22 +607,26 @@ impl TryFrom<&bcder::Oid> for DigestAlgorithm {
     type Error = ();
 
     fn try_from(oid: &bcder::Oid) -> Result<Self, Self::Error> {
-        // SHA-1: 1.3.14.3.2.26
-        const SHA1_OID: &[u8] = &[43, 14, 3, 2, 26];
-        // SHA-256: 2.16.840.1.101.3.4.2.1
-        const SHA256_OID: &[u8] = &[96, 134, 72, 1, 101, 3, 4, 2, 1];
-        // SHA-384: 2.16.840.1.101.3.4.2.2
-        const SHA384_OID: &[u8] = &[96, 134, 72, 1, 101, 3, 4, 2, 2];
-        // SHA-512: 2.16.840.1.101.3.4.2.3
-        const SHA512_OID: &[u8] = &[96, 134, 72, 1, 101, 3, 4, 2, 3];
+        // Convert bcder::Oid to string, then parse as ObjectIdentifier for comparison
+        let oid_str = oid.to_string();
+        let const_oid = ObjectIdentifier::new(&oid_str).map_err(|_| ())?;
 
-        if oid.as_ref() == SHA1_OID {
+        // SHA-1: 1.3.14.3.2.26
+        const SHA1_OID: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.3.14.3.2.26");
+        // SHA-256: 2.16.840.1.101.3.4.2.1
+        const SHA256_OID: ObjectIdentifier = ObjectIdentifier::new_unwrap("2.16.840.1.101.3.4.2.1");
+        // SHA-384: 2.16.840.1.101.3.4.2.2
+        const SHA384_OID: ObjectIdentifier = ObjectIdentifier::new_unwrap("2.16.840.1.101.3.4.2.2");
+        // SHA-512: 2.16.840.1.101.3.4.2.3
+        const SHA512_OID: ObjectIdentifier = ObjectIdentifier::new_unwrap("2.16.840.1.101.3.4.2.3");
+
+        if const_oid == SHA1_OID {
             Ok(DigestAlgorithm::Sha1)
-        } else if oid.as_ref() == SHA256_OID {
+        } else if const_oid == SHA256_OID {
             Ok(DigestAlgorithm::Sha256)
-        } else if oid.as_ref() == SHA384_OID {
+        } else if const_oid == SHA384_OID {
             Ok(DigestAlgorithm::Sha384)
-        } else if oid.as_ref() == SHA512_OID {
+        } else if const_oid == SHA512_OID {
             Ok(DigestAlgorithm::Sha512)
         } else {
             Err(())
