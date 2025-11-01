@@ -592,7 +592,7 @@ impl Ingredient {
                 .validation_results
                 .as_ref()
                 .map(|r| r.validation_state())
-                == Some(crate::ValidationState::Valid)
+                != Some(crate::ValidationState::Invalid)
             {
                 ingredient.thumbnail = claim.thumbnail();
             }
