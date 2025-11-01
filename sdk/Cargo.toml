@@ -21,13 +21,7 @@ keywords = ["xmp", "metadata"]
 categories = ["api-bindings"]
 edition = "2021"
 rust-version = "1.88.0"
-exclude = [
-    "tests/fixtures/*",
-    "!tests/fixtures/certs/",
-    "tests/fixtures/certs/*",
-    "!tests/fixtures/certs/ed25519.pem",
-    "!tests/fixtures/certs/ed25519.pub",
-]
+exclude = ["tests/fixtures"]
 
 [package.metadata.docs.rs]
 all-features = true

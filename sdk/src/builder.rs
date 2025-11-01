@@ -342,6 +342,47 @@ impl AsRef<Builder> for Builder {
 }
 
 impl Builder {
+    /// Test certificate chain used for signing working store manifests.
+    /// This is a test-only certificate and should not be used in production.
+    const WORKING_STORE_CERT_CHAIN: &'static [u8] = b"\
+-----BEGIN CERTIFICATE-----
+MIICSDCCAfqgAwIBAgIUb+aBTX1CsjJ1iuMJ9kRudz/7qEcwBQYDK2VwMIGMMQsw
+CQYDVQQGEwJVUzELMAkGA1UECAwCQ0ExEjAQBgNVBAcMCVNvbWV3aGVyZTEnMCUG
+A1UECgweQzJQQSBUZXN0IEludGVybWVkaWF0ZSBSb290IENBMRkwFwYDVQQLDBBG
+T1IgVEVTVElOR19PTkxZMRgwFgYDVQQDDA9JbnRlcm1lZGlhdGUgQ0EwHhcNMjIw
+NjEwMTg0NjQxWhcNMzAwODI2MTg0NjQxWjCBgDELMAkGA1UEBhMCVVMxCzAJBgNV
+BAgMAkNBMRIwEAYDVQQHDAlTb21ld2hlcmUxHzAdBgNVBAoMFkMyUEEgVGVzdCBT
+aWduaW5nIENlcnQxGTAXBgNVBAsMEEZPUiBURVNUSU5HX09OTFkxFDASBgNVBAMM
+C0MyUEEgU2lnbmVyMCowBQYDK2VwAyEAMp5+0e83nNgQhdhBW8Rshkjy90sa1A9J
+IzkItcDqCuKjeDB2MAwGA1UdEwEB/wQCMAAwFgYDVR0lAQH/BAwwCgYIKwYBBQUH
+AwQwDgYDVR0PAQH/BAQDAgbAMB0GA1UdDgQWBBTuLrYRqW4wu6yjIK1/iW8ud7dm
+kTAfBgNVHSMEGDAWgBRXTAfC/JxQvRlk/bCbdPMDbsSfqTAFBgMrZXADQQB2R6vb
+I+X8CTRC54j3NTvsUj454G1/bdzbiHVgl3n+ShOAJ85FJigE7Eoav7SeXeVnNjc8
+QZ1UrJGwgBBEP84G
+-----END CERTIFICATE-----
+-----BEGIN CERTIFICATE-----
+MIICKTCCAdugAwIBAgIUWqg4SaUDuPVy671PLGgfzcIsHMwwBQYDK2VwMHcxCzAJ
+BgNVBAYTAlVTMQswCQYDVQQIDAJDQTESMBAGA1UEBwwJU29tZXdoZXJlMRowGAYD
+VQQKDBFDMlBBIFRlc3QgUm9vdCBDQTEZMBcGA1UECwwQRk9SIFRFU1RJTkdfT05M
+WTEQMA4GA1UEAwwHUm9vdCBDQTAeFw0yMjA2MTAxODQ2NDFaFw0zMDA4MjcxODQ2
+NDFaMIGMMQswCQYDVQQGEwJVUzELMAkGA1UECAwCQ0ExEjAQBgNVBAcMCVNvbWV3
+aGVyZTEnMCUGA1UECgweQzJQQSBUZXN0IEludGVybWVkaWF0ZSBSb290IENBMRkw
+FwYDVQQLDBBGT1IgVEVTVElOR19PTkxZMRgwFgYDVQQDDA9JbnRlcm1lZGlhdGUg
+Q0EwKjAFBgMrZXADIQAkzdYBZtpdWfp03GLOb1lmIr/0COsfUa3b8ebt90DorqNj
+MGEwDwYDVR0TAQH/BAUwAwEB/zAOBgNVHQ8BAf8EBAMCAYYwHQYDVR0OBBYEFFdM
+B8L8nFC9GWT9sJt08wNuxJ+pMB8GA1UdIwQYMBaAFF7mVgKz9Y4kTH4Mnumakchr
+qU6MMAUGAytlcANBABXakz5vcdftU8Pbe8JDEcFSc+rTnopT8DXYwhtOd3Hvo7Zv
+v0fTuwOYImxLdmu0J1u+ULxNqK+jRO7/jSncvwA=
+-----END CERTIFICATE-----
+";
+    /// Test private key used for signing working store manifests.
+    /// This is a test-only key and should not be used in production.
+    const WORKING_STORE_PRIVATE_KEY: &'static [u8] = b"\
+-----BEGIN PRIVATE KEY-----
+MC4CAQAwBQYDK2VwBCIEIL2+9INLPNSLH3STzKQJ3Wen9R6uPbIYOIKA2574YQ4O
+-----END PRIVATE KEY-----
+";
+
     /// Creates a new [`Builder`] struct.
     /// # Returns
     /// * A new [`Builder`].
@@ -1755,8 +1796,8 @@ impl Builder {
 
     /// We use this signer to generate working store manifests
     pub(crate) fn working_store_signer() -> Result<Box<dyn Signer>> {
-        let cert_chain = include_bytes!("../tests/fixtures/certs/ed25519.pub");
-        let private_key = include_bytes!("../tests/fixtures/certs/ed25519.pem");
+        let cert_chain = Self::WORKING_STORE_CERT_CHAIN;
+        let private_key = Self::WORKING_STORE_PRIVATE_KEY;
 
         Ok(Box::new(crate::signer::RawSignerWrapper(
             crate::crypto::raw_signature::signer_from_cert_chain_and_private_key(
