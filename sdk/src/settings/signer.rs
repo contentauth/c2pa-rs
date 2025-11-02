@@ -100,39 +100,42 @@ impl SignerSettings {
         }
     }
 
+    pub(crate) fn to_signer(&self) -> Result<Box<dyn Signer>> {
+        match self {
+            SignerSettings::Local {
+                alg,
+                sign_cert,
+                private_key,
+                tsa_url,
+            } => create_signer::from_keys(
+                sign_cert.as_bytes(),
+                private_key.as_bytes(),
+                *alg,
+                tsa_url.to_owned(),
+            ),
+            #[cfg(not(target_arch = "wasm32"))]
+            SignerSettings::Remote {
+                url,
+                alg,
+                sign_cert,
+                tsa_url,
+            } => Ok(Box::new(RemoteSigner {
+                url: url.to_owned(),
+                alg: *alg,
+                reserve_size: 10000 + sign_cert.len(),
+                certs: vec![sign_cert.as_bytes().to_vec()],
+                tsa_url: tsa_url.to_owned(),
+            })),
+            #[cfg(target_arch = "wasm32")]
+            SignerSettings::Remote { .. } => Err(Error::WasmNoRemoteSigner),
+        }
+    }
+
     /// Returns a C2PA-only signer from the [`BuilderSettings::signer`] field.
     fn c2pa_signer() -> Result<Box<dyn Signer>> {
         let signer_info = Settings::get_value::<Option<SignerSettings>>("signer");
-
         match signer_info {
-            Ok(Some(signer_info)) => match signer_info {
-                SignerSettings::Local {
-                    alg,
-                    sign_cert,
-                    private_key,
-                    tsa_url,
-                } => create_signer::from_keys(
-                    sign_cert.as_bytes(),
-                    private_key.as_bytes(),
-                    alg,
-                    tsa_url.to_owned(),
-                ),
-                #[cfg(not(target_arch = "wasm32"))]
-                SignerSettings::Remote {
-                    url,
-                    alg,
-                    sign_cert,
-                    tsa_url,
-                } => Ok(Box::new(RemoteSigner {
-                    url,
-                    alg,
-                    reserve_size: 10000 + sign_cert.len(),
-                    certs: vec![sign_cert.into_bytes()],
-                    tsa_url,
-                })),
-                #[cfg(target_arch = "wasm32")]
-                SignerSettings::Remote { .. } => Err(Error::WasmNoRemoteSigner),
-            },
+            Ok(Some(signer_info)) => signer_info.to_signer(),
             #[cfg(test)]
             _ => Ok(crate::utils::test_signer::test_signer(SigningAlg::Ps256)),
             #[cfg(not(test))]

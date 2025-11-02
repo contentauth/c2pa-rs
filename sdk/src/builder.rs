@@ -1753,26 +1753,17 @@ impl Builder {
             .ok_or(Error::IngredientNotFound)
     }
 
-    /// We use this signer to generate working store manifests
-    pub(crate) fn working_store_signer() -> Result<Box<dyn Signer>> {
-        let cert_chain = include_bytes!("../tests/fixtures/certs/ed25519.pub");
-        let private_key = include_bytes!("../tests/fixtures/certs/ed25519.pem");
-
-        Ok(Box::new(crate::signer::RawSignerWrapper(
-            crate::crypto::raw_signature::signer_from_cert_chain_and_private_key(
-                cert_chain,
-                private_key,
-                crate::SigningAlg::Ed25519,
-                None,
-            )?,
-        )))
-    }
-
     /// This creates a working store from the builder
     /// The working store is signed with a BoxHash over an empty string
     /// And is returned as a Vec<u8> of the c2pa_manifest bytes
     /// This works as an archive of the store that can be read back to restore the Builder state
     fn working_store_sign(&self, settings: &Settings) -> Result<Vec<u8>> {
+        // Get the archive signer from the settings, if we don't have one, we can't create a c2pa working store
+        let signer_info = settings
+            .archive_signer
+            .as_ref()
+            .ok_or(Error::MissingSignerSettings)?;
+        let signer = signer_info.to_signer()?;
         // first we need to generate a BoxHash over an empty string
         let mut empty_asset = std::io::Cursor::new("");
         let boxes = jumbf_io::get_assetio_handler("application/c2pa")
@@ -1790,7 +1781,6 @@ impl Builder {
         let mut store = Store::new();
         store.commit_claim(claim)?;
 
-        let signer = Self::working_store_signer()?;
         store.get_box_hashed_embeddable_manifest(signer.as_ref(), settings)
     }
 }
@@ -2696,7 +2686,7 @@ mod tests {
 
     #[test]
     fn test_builder_data_hashed_embeddable_min() -> Result<()> {
-        let signer = Builder::working_store_signer().unwrap();
+        let signer = Settings::signer().unwrap();
 
         let mut builder = Builder::from_json(&simple_manifest_json()).unwrap();
 
@@ -2739,13 +2729,11 @@ mod tests {
         let boxes = box_mapper.get_box_map(&mut reader).unwrap();
         // Create the BoxHash object
         let bh = BoxHash { boxes };
-        // And generate the box hashes
-        //bh.generate_box_hash_from_stream(&mut reader, "sha256", box_mapper, true).unwrap();
 
         let mut builder = Builder::from_json(&simple_manifest_json()).unwrap();
         builder.add_assertion(labels::BOX_HASH, &bh).unwrap();
 
-        let signer = Builder::working_store_signer().unwrap();
+        let signer = Settings::signer().unwrap();
 
         let manifest_bytes = builder
             .sign_box_hashed_embeddable(signer.as_ref(), "application/c2pa")

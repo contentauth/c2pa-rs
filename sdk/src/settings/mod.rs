@@ -370,6 +370,9 @@ pub struct Settings {
     /// Settings for configuring the CAWG x509 signer, accessible via [`Settings::signer`].
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cawg_x509_signer: Option<SignerSettings>,
+    /// Settings for configuring a local archive signer.
+    /// This is used by builder.to_archive to generate a signed C2PA formatted archive.
+    pub archive_signer: Option<SignerSettings>,
 }
 
 impl Settings {
@@ -541,6 +544,7 @@ impl Default for Settings {
             builder: Default::default(),
             signer: None,
             cawg_x509_signer: None,
+            archive_signer: None,
         }
     }
 }
@@ -557,6 +561,9 @@ impl SettingsValidate for Settings {
         }
         if let Some(cawg_x509_signer) = &self.cawg_x509_signer {
             cawg_x509_signer.validate()?;
+        }
+        if let Some(archive_signer) = &self.archive_signer {
+            archive_signer.validate()?;
         }
         self.trust.validate()?;
         self.cawg_trust.validate()?;

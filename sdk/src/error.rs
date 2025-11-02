@@ -228,7 +228,7 @@ pub enum Error {
     #[error("thumbnail format {0} is unsupported")]
     UnsupportedThumbnailFormat(String),
 
-    #[error("`trust.signer_info` is missing from settings")]
+    #[error("signer is missing from settings")]
     MissingSignerSettings,
 
     #[error("`builder.auto_created_action.source_type` must be set if this feature is enabled")]
