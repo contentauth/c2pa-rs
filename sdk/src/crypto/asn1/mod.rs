@@ -246,7 +246,24 @@ impl From<GeneralizedTime> for chrono::DateTime<chrono::Utc> {
     fn from(gt: GeneralizedTime) -> Self {
         // Use der's conversion to SystemTime, then to chrono
         let system_time = gt.der_time.to_system_time();
-        system_time.into()
+
+        // Convert SystemTime directly
+        #[cfg(any(not(target_arch = "wasm32"), target_os = "wasi"))]
+        {
+            system_time.into()
+        }
+
+        #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
+        {
+            use chrono::TimeZone;
+            let duration = system_time
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or(std::time::Duration::from_secs(0));
+            chrono::Utc
+                .timestamp_opt(duration.as_secs() as i64, duration.subsec_nanos())
+                .single()
+                .unwrap_or_else(|| chrono::Utc.timestamp_opt(0, 0).unwrap())
+        }
     }
 }
 
@@ -255,7 +272,15 @@ impl From<GeneralizedTime> for chrono::DateTime<chrono::Utc> {
 impl From<chrono::DateTime<chrono::Utc>> for GeneralizedTime {
     fn from(dt: chrono::DateTime<chrono::Utc>) -> Self {
         // Convert chrono to SystemTime, then to der's GeneralizedTime
+        #[cfg(any(not(target_arch = "wasm32"), target_os = "wasi"))]
         let system_time: std::time::SystemTime = dt.into();
+
+        #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
+        let system_time: std::time::SystemTime = {
+            let timestamp = dt.timestamp();
+            let nanos = dt.timestamp_subsec_nanos();
+            std::time::UNIX_EPOCH + std::time::Duration::new(timestamp as u64, nanos)
+        };
 
         // Create GeneralizedTime from SystemTime
         // This should never fail for valid dates (der crate supports dates from 1970-2255)

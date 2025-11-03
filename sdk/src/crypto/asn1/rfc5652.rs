@@ -61,14 +61,35 @@ impl UtcTime {
         // Parse with der crate - it handles Y2K correctly and validates format
         let der_time = der::asn1::UtcTime::from_der(&der_bytes)
             .map_err(|_| DecodeError::content("invalid UtcTime", prim.pos()))?;
-        Ok(UtcTime { der_time, der_bytes })
+        Ok(UtcTime {
+            der_time,
+            der_bytes,
+        })
     }
 
     /// Convert to chrono DateTime
     pub fn to_datetime(&self) -> chrono::DateTime<chrono::Utc> {
         // Convert der's time to SystemTime, then to chrono
         let system_time = self.der_time.to_system_time();
-        system_time.into()
+
+        // Most platforms (including wasm32-wasi) support SystemTime conversion directly
+        #[cfg(any(not(target_arch = "wasm32"), target_os = "wasi"))]
+        {
+            system_time.into()
+        }
+
+        // Only wasm32-unknown-unknown needs to go through timestamp
+        #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
+        {
+            use chrono::TimeZone;
+            let duration = system_time
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or(std::time::Duration::from_secs(0));
+            chrono::Utc
+                .timestamp_opt(duration.as_secs() as i64, duration.subsec_nanos())
+                .single()
+                .unwrap_or_else(|| chrono::Utc.timestamp_opt(0, 0).unwrap())
+        }
     }
 }
 

@@ -610,7 +610,21 @@ impl IcaSignatureVerifier {
             ));
         };
 
+        // Get current time (platform-specific)
+        #[cfg(any(not(target_arch = "wasm32"), target_os = "wasi"))]
         let now = Utc::now().fixed_offset();
+
+        #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
+        let now = {
+            // On wasm32-unknown-unknown, use js_sys::Date
+            use chrono::TimeZone;
+            let js_date = js_sys::Date::new_0();
+            let millis = js_date.get_time() as i64;
+            Utc.timestamp_millis_opt(millis)
+                .single()
+                .unwrap_or_else(|| Utc.timestamp_opt(0, 0).unwrap())
+                .fixed_offset()
+        };
 
         if now < valid_from {
             return Err((
@@ -652,7 +666,21 @@ impl IcaSignatureVerifier {
             return Ok(());
         };
 
+        // Get current time (platform-specific)
+        #[cfg(any(not(target_arch = "wasm32"), target_os = "wasi"))]
         let now = Utc::now().fixed_offset();
+
+        #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
+        let now = {
+            // On wasm32-unknown-unknown, use js_sys::Date
+            use chrono::TimeZone;
+            let js_date = js_sys::Date::new_0();
+            let millis = js_date.get_time() as i64;
+            Utc.timestamp_millis_opt(millis)
+                .single()
+                .unwrap_or_else(|| Utc.timestamp_opt(0, 0).unwrap())
+                .fixed_offset()
+        };
 
         if now > valid_until {
             return Err((
