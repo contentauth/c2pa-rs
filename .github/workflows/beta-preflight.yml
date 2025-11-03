@@ -200,12 +200,11 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@beta
 
-      - name: Install wasm-pack
-        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+      - name: Install wasm-bindgen-cli
+        run: cargo install -f wasm-bindgen-cli --version 0.2.105
 
       - name: Run Wasm tests
-        run: wasm-pack test --chrome --headless
-        working-directory: ./sdk
+        run: cargo test -p c2pa --no-default-features --features rust_native_crypto,fetch_remote_manifests --target wasm32-unknown-unknown
 
   clippy_check:
     name: Clippy
