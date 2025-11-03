@@ -325,10 +325,12 @@ jobs:
           wasm-bindgen-test-runner --version
 
       - name: Run Wasm tests
-        run: cargo test -p c2pa --no-default-features --features rust_native_crypto,fetch_remote_manifests --target wasm32-unknown-unknown -- --nocapture
+        run: cargo test -p c2pa --no-default-features --features rust_native_crypto,fetch_remote_manifests --target wasm32-unknown-unknown
         env:
+          CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER: wasm-bindgen-test-runner
           WASM_BINDGEN_TEST_TIMEOUT: 60
           RUST_BACKTRACE: 1
+          RUST_LOG: debug
 
   benchmarks:
     name: Run benchmarks on signing and reading
