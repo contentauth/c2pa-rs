@@ -306,6 +306,9 @@ jobs:
           chrome-version: 142
           install-chromedriver: true
 
+      - name: Add wasm web target
+        run: rustup target add wasm32-unknown-unknown
+
       - name: Install wasm-bindgen-cli
         run: cargo install -f wasm-bindgen-cli --version 0.2.105
 
