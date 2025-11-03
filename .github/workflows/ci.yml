@@ -306,16 +306,29 @@ jobs:
           chrome-version: 142
           install-chromedriver: true
 
+      - name: Verify Chrome installation
+        run: |
+          which google-chrome-stable || which google-chrome || which chrome || echo "Chrome not found in PATH"
+          google-chrome-stable --version || google-chrome --version || chrome --version || echo "Could not get Chrome version"
+          echo "CHROME_BIN=${{ steps.setup-chrome.outputs.chrome-path }}"
+          echo "CHROMEDRIVER=${{ steps.setup-chrome.outputs.chromedriver-path }}"
+
       - name: Add wasm web target
         run: rustup target add wasm32-unknown-unknown
 
       - name: Install wasm-bindgen-cli
         run: cargo install -f wasm-bindgen-cli --version 0.2.105
 
+      - name: Verify wasm-bindgen-test-runner
+        run: |
+          which wasm-bindgen-test-runner
+          wasm-bindgen-test-runner --version
+
       - name: Run Wasm tests
-        run: cargo test -p c2pa --no-default-features --features rust_native_crypto,fetch_remote_manifests --target wasm32-unknown-unknown
+        run: cargo test -p c2pa --no-default-features --features rust_native_crypto,fetch_remote_manifests --target wasm32-unknown-unknown -- --nocapture
         env:
           WASM_BINDGEN_TEST_TIMEOUT: 60
+          RUST_BACKTRACE: 1
 
   benchmarks:
     name: Run benchmarks on signing and reading
