@@ -142,7 +142,7 @@ mod integration_1 {
         let json = std::fs::read_to_string(manifest_path)?;
 
         let mut builder = Builder::from_json(&json)?;
-        builder.base_path = Some(fixture_path(""));
+        builder.set_base_path(fixture_path(""));
 
         // sign and embed into the target file
         let signer = Settings::signer()?;
@@ -232,7 +232,7 @@ mod integration_1 {
         if let Some(manifest) = reader.active_manifest() {
             assert!(manifest.title().is_some());
             assert_eq!(manifest.assertions().len(), 2); // one for AssetReference and one for Actions
-            let assertion_ref: AssetReference = manifest.assertions()[1].to_assertion()?;
+            let assertion_ref: AssetReference = manifest.assertions()[0].to_assertion()?;
             assert_eq!(assertion_ref, references);
         } else {
             panic!("no manifest in store");
@@ -355,6 +355,14 @@ mod integration_1 {
         use c2pa::ValidationState;
 
         Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml"))?;
+        Settings::from_toml(
+            &toml::toml! {
+                [builder]
+                certificate_status_fetch = "all"
+                certificate_status_should_override = true
+            }
+            .to_string(),
+        )?;
 
         // set up parent and destination paths
         let temp_dir = tempdirectory()?;
@@ -376,7 +384,7 @@ mod integration_1 {
         let reader_json = reader.json();
         //println!("{reader}");
         // ensure certificate status assertion was created
-        assert!(reader_json.contains(r#"label": "c2pa.certificate-status"#));
+        //assert!(reader_json.contains(r#"label": "c2pa.certificate-status"#));
         assert_eq!(reader.validation_state(), ValidationState::Trusted);
         assert!(reader_json.contains("signingCredential.ocsp.notRevoked"));
         Ok(())

@@ -40,8 +40,7 @@ use crate::{
         labels::{assertion_label_from_uri, manifest_label_from_uri},
     },
     log_item,
-    resource_store::{skip_serializing_resources, ResourceRef, ResourceStore},
-    salt::DefaultSalt,
+    resource_store::{ResourceRef, ResourceStore},
     settings::Settings,
     status_tracker::StatusTracker,
     store::Store,
@@ -53,7 +52,7 @@ use crate::{
     validation_status::{self, ValidationStatus},
 };
 
-#[derive(Debug, Default, Deserialize, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 /// An `Ingredient` is any external asset that has been used in the creation of an asset.
 pub struct Ingredient {
@@ -145,8 +144,7 @@ pub struct Ingredient {
     #[serde(skip_serializing_if = "Option::is_none")]
     label: Option<String>,
 
-    #[serde(skip_deserializing)]
-    #[serde(skip_serializing_if = "skip_serializing_resources")]
+    #[serde(skip)]
     resources: ResourceStore,
 
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1052,7 +1050,7 @@ impl Ingredient {
             None => Vec::new(),
         };
 
-        // use either the active_manifest or c2pa_manifest field
+        // the c2pa_manifest() method will return the active_manifest or c2pa_manifest field
         let active_manifest = ingredient_assertion
             .c2pa_manifest()
             .and_then(|hash_url| manifest_label_from_uri(&hash_url.url()));
@@ -1262,18 +1260,15 @@ impl Ingredient {
         // if the ingredient defines a thumbnail, add it to the claim
         // otherwise use the parent claim thumbnail if available
         if let Some(thumb_ref) = self.thumbnail_ref() {
-            // assume this is a JUMBF uri if it has a manifest label
-            let hash_url = match manifest_label_from_uri(&thumb_ref.identifier) {
-                Some(_) => {
-                    // we have a JUMBF uri so build a hashed uri to the existing assertion
-                    let hash = match thumb_ref.hash.as_ref() {
-                        Some(h) => base64::decode(h)
-                            .map_err(|_e| Error::BadParam("Invalid hash".to_string()))?,
-                        None => return Err(Error::BadParam("hash is missing".to_string())), /* todo: add hash missing error */
-                    };
+            // if we have a hash, just build the hashed uri
+            let hash_url = match thumb_ref.hash.as_ref() {
+                Some(h) => {
+                    let hash = base64::decode(h)
+                        .map_err(|_e| Error::BadParam("Invalid hash".to_string()))?;
                     HashedUri::new(thumb_ref.identifier.clone(), thumb_ref.alg.clone(), &hash)
                 }
                 None => {
+                    // get the resource data and add it to the claim
                     let data = get_resource(&thumb_ref.identifier)?;
                     if claim.version() < 2 {
                         claim.add_databox(
@@ -1288,7 +1283,7 @@ impl Ingredient {
                             format_to_mime(&thumb_ref.format),
                             data.into_owned(),
                         );
-                        claim.add_assertion_with_salt(&thumbnail, &DefaultSalt::default())?
+                        claim.add_assertion(&thumbnail)?
                     }
                 }
             };
@@ -1311,7 +1306,7 @@ impl Ingredient {
                         format_to_mime(&data_ref.format),
                         box_data.into_owned(),
                     );
-                    claim.add_assertion_with_salt(&embedded_data, &DefaultSalt::default())?
+                    claim.add_assertion(&embedded_data)?
                 }
             };
 
@@ -1333,7 +1328,7 @@ impl Ingredient {
                     } else {
                         CertificateStatus::new(ocsp_responses)
                     };
-                claim.add_assertion_with_salt(&certificate_status, &DefaultSalt::default())?;
+                claim.add_assertion(&certificate_status)?;
             }
         }
 
@@ -1351,7 +1346,7 @@ impl Ingredient {
                 assertion.format = self.format.clone();
                 assertion
             }
-            _ => return Err(Error::UnsupportedType), // todo: better error
+            _ => return Err(Error::ClaimVersion),
         };
         ingredient_assertion.instance_id = self.instance_id.clone();
         match claim.version() {
@@ -1500,6 +1495,50 @@ impl Ingredient {
         }
 
         Ok(())
+    }
+
+    // allows overriding fields in an ingredient with another ingredient
+    pub(crate) fn merge(&mut self, other: &Ingredient) {
+        // println!("before merge: {}", self);
+        self.relationship = other.relationship.clone();
+
+        if let Some(title) = &other.title {
+            self.title = Some(title.clone());
+        }
+        if let Some(format) = &other.format {
+            self.format = Some(format.clone());
+        }
+        if let Some(instance_id) = &other.instance_id {
+            self.instance_id = Some(instance_id.clone());
+        }
+        if let Some(provenance) = &other.provenance {
+            self.provenance = Some(provenance.clone());
+        }
+        if let Some(hash) = &other.hash {
+            self.hash = Some(hash.clone());
+        }
+        if let Some(document_id) = &other.document_id {
+            self.document_id = Some(document_id.clone());
+        }
+        if let Some(description) = &other.description {
+            self.description = Some(description.clone());
+        }
+        if let Some(informational_uri) = &other.informational_uri {
+            self.informational_uri = Some(informational_uri.clone());
+        }
+        if let Some(data) = &other.data {
+            self.data = Some(data.clone());
+        }
+        if let Some(thumbnail) = &other.thumbnail {
+            self.thumbnail = Some(thumbnail.clone());
+        }
+        if let Some(metadata) = &other.metadata {
+            self.metadata = Some(metadata.clone());
+        }
+        if let Some(label) = &other.label {
+            self.label = Some(label.clone());
+        }
+        //println!("after merge: {}", self);
     }
 }
 

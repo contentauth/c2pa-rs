@@ -46,7 +46,7 @@ For details on what you can do with the library, see [Using the Rust library](ht
 
 This is a beta release (version 0.x.x) of the project. The minor version number (0.x.0) is incremented when there are breaking API changes, which may happen frequently.
 
-**NOTE**: The library now supports [C2PA v2 claims](https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_claims), however development is still in progress and all features are not fully implemented yet. While you can experiment with this functionality, it is not recommended for production use at this time.  For details, see [C2PA v2 claims](https://opensource.contentauthenticity.org/docs/rust-sdk/docs/release-notes#c2pa-v2-claims).
+**NOTE**: The library supports [C2PA v2 claims](https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_claims) by default, and implementations should not generate deprecated v1 claims.  For details, see [C2PA v2 claims](https://opensource.contentauthenticity.org/docs/rust-sdk/docs/release-notes#c2pa-v2-claims).
 
 ### New API
 
@@ -60,7 +60,7 @@ NOTE: The current release includes a new API that replaces old methods of readin
 
 To use the CAI Rust library, you must install [Rust and Cargo](https://doc.rust-lang.org/cargo/index.html).
 
-Minimal supported Rust version (MSRV): The `c2pa` crate requires Rust version 1.86.0 or newer. When a newer version of Rust becomes required, a new minor (0.x.0) version of this crate will be released.
+Minimal supported Rust version (MSRV): The `c2pa` crate requires Rust version 1.88.0 or newer. When a newer version of Rust becomes required, a new minor (0.x.0) version of this crate will be released.
 
 **Install C build tools**
 
