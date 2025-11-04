@@ -688,7 +688,7 @@ impl Reader {
     }
 
     #[async_generic()]
-    fn from_store(
+    pub(crate) fn from_store(
         store: Store,
         validation_log: &mut StatusTracker,
         settings: &Settings,
