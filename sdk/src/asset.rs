@@ -1,10 +1,9 @@
 use std::io::{BufReader, Read, Seek, Write};
 
 use crate::{
-    Error,
-    Result,
     asset_io::CAIRead,
     jumbf_io::{get_cailoader_handler, get_caiwriter_handler},
+    Error, Result,
 };
 
 pub struct Asset<'a> {
@@ -20,11 +19,18 @@ impl<'a> Asset<'a> {
         let xmp = cailoader_handler.read_xmp(&mut stream);
         stream.rewind()?;
         let manifest = cailoader_handler.read_cai(&mut stream)?;
-        Ok(Asset { stream: Box::new(stream), xmp, manifest: Some(manifest) })
+        Ok(Asset {
+            stream: Box::new(stream),
+            xmp,
+            manifest: Some(manifest),
+        })
     }
 
-    pub fn to_stream(&mut 
-        self, mut output: impl Read + Write + Seek + Send, format: &str) -> Result<()> {
+    pub fn to_stream(
+        &mut self,
+        mut output: impl Read + Write + Seek + Send,
+        format: &str,
+    ) -> Result<()> {
         let caiwriter_handler = get_caiwriter_handler(format).ok_or(Error::UnsupportedType)?;
         if let Some(manifest) = &self.manifest {
             caiwriter_handler.write_cai(&mut self.stream, &mut output, manifest)?;
@@ -34,15 +40,15 @@ impl<'a> Asset<'a> {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_in_result)]
 mod tests {
-    use crate::{
-        settings::Settings,
-        content_credential::ContentCredential,
+    use std::{
+        fs::File,
+        io::{BufReader, Cursor},
     };
 
     use super::*;
-    use std::fs::File;
-    use std::io::BufReader;
+    use crate::{content_credential::ContentCredential, settings::Settings};
     #[test]
     fn test_asset_from_stream() {
         let settings = Settings::default();
@@ -51,16 +57,21 @@ mod tests {
         let mut asset = Asset::from_stream(&mut reader, "image/jpeg").unwrap();
         if let Some(xmp) = &asset.xmp {
             println!("xmp: {xmp}");
-        }   
+        }
         assert!(asset.manifest.is_some());
         if let Some(manifest) = &asset.manifest {
-            let cc = ContentCredential::from_stream(&settings,"application/c2pa",std::io::Cursor::new(manifest)).unwrap();
+            let cc = ContentCredential::from_stream(
+                &settings,
+                "application/c2pa",
+                std::io::Cursor::new(manifest),
+            )
+            .unwrap();
             println!("manifest: {:?}", cc);
         }
         let mut output = Cursor::new(Vec::new());
         Asset::to_stream(&mut asset, &mut output, "image/jpeg").unwrap();
 
-        let cc = ContentCredential::from_stream(&settings,"image/jpeg", &mut output).unwrap();
+        let cc = ContentCredential::from_stream(&settings, "image/jpeg", &mut output).unwrap();
         println!("manifest: {:?}", cc);
     }
 }

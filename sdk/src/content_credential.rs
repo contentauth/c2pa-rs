@@ -23,16 +23,17 @@ use crate::{
     assertion::AssertionBase,
     assertions::{c2pa_action, Action, Actions, Ingredient, Relationship},
     claim::Claim,
-    crypto::base64,
     manifest::{Manifest, StoreOptions},
     manifest_store_report::ManifestStoreReport,
     settings::Settings,
     status_tracker::StatusTracker,
     store::Store,
+    utils::hash_utils::hash_to_b64,
     validation_status::ValidationStatus,
     ClaimGeneratorInfo, DigitalSourceType, Error, HashedUri, Result, ValidationResults,
 };
 
+/// This Generates the standard Reader output format for a Store
 #[derive(Serialize, Deserialize, Debug, Default)]
 pub struct StandardStoreReport {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -136,10 +137,12 @@ impl ContentCredential {
         None
     }
 
+    /// adds an assertion to the content credential's claim
     pub fn add_assertion(&mut self, assertion: &impl AssertionBase) -> Result<HashedUri> {
         self.claim.add_assertion(assertion)
     }
 
+    /// create a manifest store report from the store and validation results
     pub fn add_action(&mut self, action: Action) -> Result<()> {
         self.claim.add_action(action)?;
         Ok(())
@@ -184,10 +187,7 @@ impl ContentCredential {
         // todo add to exiting actions and check fo
         let action = Action::new(action_label).add_ingredient(ingredient_hashed_uri)?;
 
-        //let actions = Actions::new().add_action_checked(action)?;
         self.claim.add_action(action)?;
-
-        //self.add_assertion(&action)?;
 
         // capture the store and validation results from the assertion
         Ok((self, store))
@@ -222,44 +222,6 @@ impl ContentCredential {
             .save_to_stream(format, source, dest, &signer, &self.settings)
     }
 
-    /// replace byte arrays with base64 encoded strings for more readable output
-    fn hash_to_b64(mut value: Value) -> Value {
-        use std::collections::VecDeque;
-
-        let mut queue = VecDeque::new();
-        queue.push_back(&mut value);
-
-        while let Some(current) = queue.pop_front() {
-            match current {
-                Value::Object(obj) => {
-                    for (_, v) in obj.iter_mut() {
-                        if let Value::Array(hash_arr) = v {
-                            if !hash_arr.is_empty() && hash_arr.iter().all(|x| x.is_number()) {
-                                // Pre-allocate with capacity to avoid reallocations
-                                let mut hash_bytes = Vec::with_capacity(hash_arr.len());
-                                // Convert numbers to bytes safely
-                                for n in hash_arr.iter() {
-                                    if let Some(num) = n.as_u64() {
-                                        hash_bytes.push(num as u8);
-                                    }
-                                }
-                                *v = Value::String(base64::encode(&hash_bytes));
-                            }
-                        }
-                        queue.push_back(v);
-                    }
-                }
-                Value::Array(arr) => {
-                    for v in arr.iter_mut() {
-                        queue.push_back(v);
-                    }
-                }
-                _ => {}
-            }
-        }
-        value
-    }
-
     /// Generates a value similar to the C2PA Reader output
     pub fn reader_value(&self) -> Result<Value> {
         // get the validation results from the parent ingredient
@@ -271,7 +233,7 @@ impl ContentCredential {
             })?;
         let report = StandardStoreReport::from_store(&self.store, &results)?;
         let json = serde_json::to_value(report).map_err(Error::JsonError)?;
-        Ok(Self::hash_to_b64(json))
+        Ok(hash_to_b64(json))
     }
 
     /// generates a value similar to the C2PA Reader detailed output
@@ -284,7 +246,7 @@ impl ContentCredential {
             })?;
         let report = ManifestStoreReport::from_store_with_results(&self.store, &results)?;
         let json = serde_json::to_value(report).map_err(Error::JsonError)?;
-        Ok(Self::hash_to_b64(json))
+        Ok(hash_to_b64(json))
     }
 }
 

@@ -883,9 +883,9 @@ impl Actions {
         if action_name == c2pa_action::OPENED || action_name == c2pa_action::CREATED {
             let existing_action = self.actions.iter().find(|a| a.action() == action_name);
             if existing_action.is_some() {
-                return Err(Error::AssertionSpecificError(
-                    "Only one 'c2pa.opened' action is allowed".to_string(),
-                ));
+                return Err(Error::AssertionSpecificError(format!(
+                    "Only one '{action_name}' action is allowed"
+                )));
             }
             // always insert as first action
             self.actions.insert(0, action);
