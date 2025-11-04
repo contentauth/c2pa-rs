@@ -300,19 +300,24 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Set up Chrome
-        id: setup-chrome
         uses: browser-actions/setup-chrome@v2
         with:
           chrome-version: 142
           install-chromedriver: true
 
-      - name: Install wasm-pack
-        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+      - name: Add wasm web target
+        run: rustup target add wasm32-unknown-unknown
+
+      - name: Install cargo-binstall
+        uses: cargo-bins/cargo-binstall@main
+
+      - name: Install wasm-bindgen-cli
+        run: cargo binstall -y wasm-bindgen-cli --version 0.2.105
 
       - name: Run Wasm tests
-        run: wasm-pack test --chrome --chromedriver ${{ steps.setup-chrome.outputs.chromedriver-path }} --headless --no-default-features --features rust_native_crypto,fetch_remote_manifests
-        working-directory: ./sdk
+        run: cargo test -p c2pa --no-default-features --features rust_native_crypto,fetch_remote_manifests --target wasm32-unknown-unknown
         env:
+          CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER: wasm-bindgen-test-runner
           WASM_BINDGEN_TEST_TIMEOUT: 60
 
   benchmarks:
