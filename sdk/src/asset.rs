@@ -40,8 +40,8 @@ impl<'a> Asset<'a> {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_in_result)]
 mod tests {
+    #![allow(clippy::unwrap_used)]
     use std::{
         fs::File,
         io::{BufReader, Cursor},
