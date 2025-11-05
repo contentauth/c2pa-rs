@@ -50,7 +50,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [windows-latest, macos-latest, ubuntu-latest]
-        rust_version: [stable, 1.86.0]
+        rust_version: [stable, 1.88.0]
 
     steps:
       - name: Checkout repository
@@ -81,7 +81,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [windows-latest, macos-latest, ubuntu-latest]
-        rust_version: [stable, 1.86.0]
+        rust_version: [stable, 1.88.0]
 
     steps:
       - name: Checkout repository
@@ -112,7 +112,7 @@ jobs:
       fail-fast: false
       matrix:
         target: [aarch64-unknown-linux-gnu]
-        rust_version: [stable, 1.86.0]
+        rust_version: [stable, 1.88.0]
 
     steps:
       - name: Checkout repository
@@ -130,11 +130,14 @@ jobs:
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
 
+      # Integration tests are excluded because they require executing
+      # the compiled binary, which isn't reliably possible when cross-compiling,
+      # due to architecture mismatch.
       - name: Run unit tests (cross build)
         env:
           FEATURES: ${{needs.get-features.outputs.openssl-features}}
         run: |
-          cross test --all-targets --features "$FEATURES" --target ${{ matrix.target }}
+          cross test --lib --bins --features "$FEATURES" --target ${{ matrix.target }}
 
   test-direct-minimal-versions:
     name: Unit tests with minimum versions of direct dependencies

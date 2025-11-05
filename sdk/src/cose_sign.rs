@@ -163,7 +163,10 @@ fn signing_cert_valid(signing_cert: &[u8], settings: &Settings) -> Result<()> {
     // TODO (https://github.com/contentauth/c2pa-rs/issues/1313):
     // Need to determine if we're using C2PA or CAWG trust config here.
     if let Some(trust_config) = &settings.trust.trust_config {
-        passthrough_cap.add_valid_ekus(trust_config.as_bytes());
+        // allow for JSON-encoded PEMs with \n
+        let trust_config = trust_config.to_owned().replace("\\n", "\n").into_bytes();
+
+        passthrough_cap.add_valid_ekus(&trust_config);
     }
 
     Ok(check_end_entity_certificate_profile(

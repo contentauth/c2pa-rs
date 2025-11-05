@@ -80,6 +80,30 @@ fn test_builder_riff() -> Result<()> {
 }
 
 #[test]
+fn test_builder_sidecar_only() -> Result<()> {
+    Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml"))?;
+    let mut source = Cursor::new(include_bytes!("fixtures/earth_apollo17.jpg"));
+    let format = "image/jpeg";
+
+    let mut builder = Builder::new();
+    builder.set_intent(BuilderIntent::Edit);
+    builder.set_no_embed(true);
+    let c2pa_data = builder.sign(&Settings::signer()?, format, &mut source, &mut io::empty())?;
+
+    let reader1 = Reader::from_manifest_data_and_stream(&c2pa_data, format, &mut source)?;
+    println!("reader1: {reader1}");
+
+    let builder2: Builder = reader1.try_into()?;
+    println!("builder2 {builder2}");
+
+    //    let c2pa_stream = Cursor::new(c2pa_data);
+    //    let reader = Reader::from_stream("application/c2pa", c2pa_stream)?;
+    //    println!("reader: {reader}");
+
+    Ok(())
+}
+
+#[test]
 #[cfg(feature = "file_io")]
 #[ignore = "generates a hash error, needs investigation"]
 fn test_builder_fragmented() -> Result<()> {
@@ -195,7 +219,7 @@ fn test_builder_embedded_v1_otgp() -> Result<()> {
     dest.set_position(0);
     let reader = Reader::from_stream(format, &mut dest)?;
     // check that the v1 OTGP is embedded and we catch it correct with validation_results
-    assert_ne!(reader.validation_state(), ValidationState::Invalid);
+    assert_eq!(reader.validation_state(), ValidationState::Trusted);
     //println!("reader: {}", reader);
     assert_eq!(
         reader.active_manifest().unwrap().ingredients()[0]

@@ -258,7 +258,7 @@ impl Store {
     }
 
     // remove a claim from the store
-    fn remove_claim(&mut self, label: &str) -> Option<Claim> {
+    pub(crate) fn remove_claim(&mut self, label: &str) -> Option<Claim> {
         self.claims.retain(|l| l != label);
         self.claims_map.remove(label)
     }
@@ -483,6 +483,7 @@ impl Store {
         placeholder
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     fn get_cose_sign1_signature(&self, manifest_id: &str) -> Option<Vec<u8>> {
         let manifest = self.get_claim(manifest_id)?;
 
