@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.69.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.68.0...c2pa-v0.69.0)
+_04 November 2025_
+
+### Added
+
+* Refine validation state logic ([#1541](https://github.com/contentauth/c2pa-rs/pull/1541))
+* Adds support and documentation for JSON formatted Settings ([#1533](https://github.com/contentauth/c2pa-rs/pull/1533))
+* Allow reading a manifest store as a Builder to continue editing ([#1476](https://github.com/contentauth/c2pa-rs/pull/1476))
+
+### Fixed
+
+* Allow C2PA archives to be unsigned ([#1560](https://github.com/contentauth/c2pa-rs/pull/1560))
+* Add JsonSchema to Action ([#1550](https://github.com/contentauth/c2pa-rs/pull/1550))
+* Update to avoid deprecation warning for Command::cargo_bin ([#1548](https://github.com/contentauth/c2pa-rs/pull/1548))
+
+### Updated dependencies
+
+* Bump zip from 3.0.0 to 6.0.0 ([#1540](https://github.com/contentauth/c2pa-rs/pull/1540))
+* Bump coset from 0.3.8 to 0.4.0 ([#1539](https://github.com/contentauth/c2pa-rs/pull/1539))
+* Bump hex-literal from 0.4.1 to 1.0.0 ([#1527](https://github.com/contentauth/c2pa-rs/pull/1527))
+
 ## [0.68.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.67.1...c2pa-v0.68.0)
 _24 October 2025_
 
