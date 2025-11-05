@@ -100,7 +100,6 @@ crate-type = ["lib"]
 [dependencies]
 asn1-rs = "0.6.2"
 async-generic = "1.1"
-async-recursion = "1.1.1"
 async-trait = "0.1.78"
 atree = "0.5.2"
 base64 = "0.22.1"
