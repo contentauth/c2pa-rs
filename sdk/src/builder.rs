@@ -871,8 +871,24 @@ impl Builder {
         let mut stream = stream;
         Self::old_from_archive(&mut stream).or_else(|_| {
             // if the old method fails, try the new method
-            stream.rewind()?;
-            crate::Reader::from_stream("application/c2pa", stream).and_then(|r| r.into_builder())
+            // we should be able to call Reader::from_stream and then convert to Builder
+            // but we need to disable validation since we are not signing yet
+            // so we will read the store directly here
+            //crate::Reader::from_stream("application/c2pa", stream).and_then(|r| r.into_builder())
+            let settings = crate::settings::get_settings().unwrap_or_default();
+
+            let mut validation_log = crate::status_tracker::StatusTracker::default();
+            stream.rewind()?; // Ensure stream is at the start
+
+            let store = Store::from_stream(
+                "application/c2pa",
+                &mut stream,
+                false,
+                &mut validation_log,
+                &settings,
+            )?;
+            let reader = Reader::from_store(store, &mut validation_log, &settings)?;
+            reader.into_builder()
         })
     }
 
@@ -1753,21 +1769,6 @@ impl Builder {
             .ok_or(Error::IngredientNotFound)
     }
 
-    /// We use this signer to generate working store manifests
-    pub(crate) fn working_store_signer() -> Result<Box<dyn Signer>> {
-        let cert_chain = include_bytes!("../tests/fixtures/certs/ed25519.pub");
-        let private_key = include_bytes!("../tests/fixtures/certs/ed25519.pem");
-
-        Ok(Box::new(crate::signer::RawSignerWrapper(
-            crate::crypto::raw_signature::signer_from_cert_chain_and_private_key(
-                cert_chain,
-                private_key,
-                crate::SigningAlg::Ed25519,
-                None,
-            )?,
-        )))
-    }
-
     /// This creates a working store from the builder
     /// The working store is signed with a BoxHash over an empty string
     /// And is returned as a Vec<u8> of the c2pa_manifest bytes
@@ -1790,8 +1791,9 @@ impl Builder {
         let mut store = Store::new();
         store.commit_claim(claim)?;
 
-        let signer = Self::working_store_signer()?;
-        store.get_box_hashed_embeddable_manifest(signer.as_ref(), settings)
+        //store.to_jumbf_internal(1000)
+        store.get_data_hashed_manifest_placeholder(100, "application/c2pa")
+        //store.get_box_hashed_embeddable_manifest(signer.as_ref(), settings)
     }
 }
 
@@ -2531,7 +2533,7 @@ mod tests {
         let manifest_store = Reader::from_file(&dest).expect("from_bytes");
 
         println!("{manifest_store}");
-        assert_ne!(manifest_store.validation_state(), ValidationState::Invalid);
+        assert_eq!(manifest_store.validation_state(), ValidationState::Trusted);
         assert_eq!(manifest_store.validation_status(), None);
         assert_eq!(
             manifest_store.active_manifest().unwrap().title().unwrap(),
@@ -2589,7 +2591,7 @@ mod tests {
             //println!("{}", manifest_store);
             if format != "c2pa" {
                 // c2pa files will not validate since they have no associated asset
-                assert_ne!(manifest_store.validation_state(), ValidationState::Invalid);
+                assert_eq!(manifest_store.validation_state(), ValidationState::Trusted);
             }
             assert_eq!(
                 manifest_store.active_manifest().unwrap().title().unwrap(),
@@ -2696,7 +2698,7 @@ mod tests {
 
     #[test]
     fn test_builder_data_hashed_embeddable_min() -> Result<()> {
-        let signer = Builder::working_store_signer().unwrap();
+        let signer = Settings::signer().unwrap();
 
         let mut builder = Builder::from_json(&simple_manifest_json()).unwrap();
 
@@ -2745,7 +2747,7 @@ mod tests {
         let mut builder = Builder::from_json(&simple_manifest_json()).unwrap();
         builder.add_assertion(labels::BOX_HASH, &bh).unwrap();
 
-        let signer = Builder::working_store_signer().unwrap();
+        let signer = Settings::signer().unwrap();
 
         let manifest_bytes = builder
             .sign_box_hashed_embeddable(signer.as_ref(), "application/c2pa")
@@ -2889,6 +2891,9 @@ mod tests {
     #[cfg(feature = "file_io")]
     #[test]
     fn test_builder_base_path() {
+        #[cfg(target_os = "wasi")]
+        Settings::reset().unwrap();
+
         let mut source = Cursor::new(TEST_IMAGE_CLEAN);
         let mut dest = Cursor::new(Vec::new());
 
@@ -2917,7 +2922,7 @@ mod tests {
         let reader = Reader::from_stream("image/jpeg", &mut dest).expect("from_bytes");
 
         //println!("{}", reader);
-        assert_ne!(reader.validation_state(), ValidationState::Invalid);
+        assert_eq!(reader.validation_state(), ValidationState::Trusted);
         assert_eq!(reader.validation_status(), None);
         assert_eq!(
             reader

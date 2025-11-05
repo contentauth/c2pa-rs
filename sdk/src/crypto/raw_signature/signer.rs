@@ -177,6 +177,13 @@ impl From<crate::crypto::raw_signature::openssl::OpenSslMutexUnavailable> for Ra
     }
 }
 
+/// Convert JSON-encoded PEM data (with \n) to proper PEM format
+fn fix_json_pem(data: &[u8]) -> Vec<u8> {
+    String::from_utf8_lossy(data)
+        .replace("\\n", "\n")
+        .into_bytes()
+}
+
 /// Return a built-in [`RawSigner`] instance using the provided signing
 /// certificate and private key.
 ///
@@ -193,11 +200,14 @@ pub fn signer_from_cert_chain_and_private_key(
     alg: SigningAlg,
     time_stamp_service_url: Option<String>,
 ) -> Result<Box<dyn RawSigner + Send + Sync>, RawSignerError> {
+    let cert_chain = fix_json_pem(cert_chain);
+    let private_key = fix_json_pem(private_key);
+
     #[cfg(any(feature = "rust_native_crypto", target_arch = "wasm32"))]
     {
         match crate::crypto::raw_signature::rust_native::signers::signer_from_cert_chain_and_private_key(
-            cert_chain,
-            private_key,
+            &cert_chain,
+            &private_key,
             alg,
             time_stamp_service_url.clone(),
         ) {
@@ -213,8 +223,8 @@ pub fn signer_from_cert_chain_and_private_key(
     ))]
     {
         return crate::crypto::raw_signature::openssl::signers::signer_from_cert_chain_and_private_key(
-            cert_chain,
-            private_key,
+            &cert_chain,
+            &private_key,
             alg,
             time_stamp_service_url,
         );
