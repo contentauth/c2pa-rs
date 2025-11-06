@@ -27,15 +27,17 @@ use uuid::Uuid;
 use zip::{write::SimpleFileOptions, ZipArchive, ZipWriter};
 
 #[allow(deprecated)]
+use crate::assertions::CreativeWork;
 use crate::{
     assertion::{AssertionBase, AssertionDecodeError},
     assertions::{
         c2pa_action, labels, Action, ActionTemplate, Actions, AssertionMetadata, BmffHash, BoxHash,
-        CreativeWork, DataHash, DigitalSourceType, EmbeddedData, Exif, Metadata, SoftwareAgent,
-        Thumbnail, User, UserCbor,
+        DataHash, DigitalSourceType, EmbeddedData, Exif, Metadata, SoftwareAgent, Thumbnail, User,
+        UserCbor,
     },
     claim::Claim,
     error::{Error, Result},
+    http::{AsyncGenericResolver, SyncGenericResolver},
     jumbf_io,
     resource_store::{ResourceRef, ResourceResolver, ResourceStore},
     settings::{self, Settings},
@@ -646,10 +648,10 @@ impl Builder {
         }
 
         let ingredient = if _sync {
-            ingredient.with_stream(format, stream, &settings)?
+            ingredient.with_stream(format, stream, &SyncGenericResolver::new(), &settings)?
         } else {
             ingredient
-                .with_stream_async(format, stream, &settings)
+                .with_stream_async(format, stream, &AsyncGenericResolver::new(), &settings)
                 .await?
         };
 
@@ -885,6 +887,7 @@ impl Builder {
                 &mut stream,
                 false,
                 &mut validation_log,
+                &SyncGenericResolver::new(),
                 &settings,
             )?;
             let reader = Reader::from_store(store, &mut validation_log, &settings)?;
@@ -1569,6 +1572,11 @@ impl Builder {
         W: Write + Read + Seek + Send,
     {
         let settings = crate::settings::get_settings().unwrap_or_default();
+        let http_resolver = if _sync {
+            SyncGenericResolver::new()
+        } else {
+            AsyncGenericResolver::new()
+        };
 
         let format = format_to_mime(format);
         self.definition.format.clone_from(&format);
@@ -1592,10 +1600,10 @@ impl Builder {
 
         // sign and write our store to to the output image file
         if _sync {
-            store.save_to_stream(&format, source, dest, signer, &settings)
+            store.save_to_stream(&format, source, dest, signer, &http_resolver, &settings)
         } else {
             store
-                .save_to_stream_async(&format, source, dest, signer, &settings)
+                .save_to_stream_async(&format, source, dest, signer, &http_resolver, &settings)
                 .await
         }
     }
@@ -3196,7 +3204,8 @@ mod tests {
             .unwrap();
 
         builder
-            .add_ingredient_from_stream(parent_json, "image/jpeg", &mut cloud_image)
+            .add_ingredient_from_stream_async(parent_json, "image/jpeg", &mut cloud_image)
+            .await
             .unwrap();
 
         builder
@@ -3212,7 +3221,9 @@ mod tests {
 
         output.set_position(0);
 
-        let reader = Reader::from_stream("jpeg", &mut output).expect("from_bytes");
+        let reader = Reader::from_stream_async("jpeg", &mut output)
+            .await
+            .expect("from_bytes");
         let m = reader.active_manifest().unwrap();
         assert_eq!(m.ingredients().len(), 1);
         assert!(m.ingredients()[0].active_manifest().is_some());

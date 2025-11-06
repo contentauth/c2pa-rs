@@ -35,7 +35,6 @@ impl std::ops::Deref for TimeStampResponse {
 
 impl TimeStampResponse {
     /// Return `true` if the request was successful.
-    #[cfg(not(target_arch = "wasm32"))]
     pub(crate) fn is_success(&self) -> bool {
         use crate::crypto::asn1::rfc3161::PkiStatus;
 
@@ -45,7 +44,6 @@ impl TimeStampResponse {
         )
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
     pub(crate) fn signed_data(&self) -> Result<Option<SignedData>, TimeStampError> {
         if let Some(token) = &self.0.time_stamp_token {
             if token.content_type == OID_ID_SIGNED_DATA {
@@ -74,7 +72,6 @@ impl TimeStampResponse {
         }
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
     pub(crate) fn tst_info(&self) -> Result<Option<TstInfo>, TimeStampError> {
         if let Some(signed_data) = self.signed_data()? {
             if signed_data.encap_content_info.content_type

@@ -25,6 +25,7 @@ use crate::{
         },
         ocsp::OcspResponse,
     },
+    http::{AsyncHttpResolver, SyncHttpResolver},
     log_item,
     settings::Settings,
     status_tracker::StatusTracker,
@@ -33,7 +34,17 @@ use crate::{
 
 /// Given a COSE signature, extract the OCSP data and validate the status of
 /// that report.
-#[async_generic]
+#[async_generic(async_signature(
+    sign1: &CoseSign1,
+    data: &[u8],
+    fetch_policy: OcspFetchPolicy,
+    ctp: &CertificateTrustPolicy,
+    ocsp_responses: Option<&Vec<Vec<u8>>>,
+    tst_info: Option<&TstInfo>,
+    validation_log: &mut StatusTracker,
+    http_resolver: &impl AsyncHttpResolver,
+    settings: &Settings,
+))]
 #[allow(clippy::too_many_arguments)]
 pub fn check_ocsp_status(
     sign1: &CoseSign1,
@@ -43,6 +54,7 @@ pub fn check_ocsp_status(
     ocsp_responses: Option<&Vec<Vec<u8>>>,
     tst_info: Option<&TstInfo>,
     validation_log: &mut StatusTracker,
+    http_resolver: &impl SyncHttpResolver,
     settings: &Settings,
 ) -> Result<OcspResponse, CoseError> {
     if settings
@@ -113,6 +125,7 @@ pub fn check_ocsp_status(
                         ctp,
                         tst_info,
                         validation_log,
+                        http_resolver,
                         settings,
                     )
                 } else {
@@ -122,6 +135,7 @@ pub fn check_ocsp_status(
                         ctp,
                         tst_info,
                         validation_log,
+                        http_resolver,
                         settings,
                     )
                     .await
@@ -313,32 +327,35 @@ fn check_stapled_ocsp_response(
 }
 
 /// Fetches and validates an OCSP response for the given COSE signature.
-#[async_generic()]
-#[allow(unreachable_code)] // wasm-bindgen will immediately return error for synchronous use.
-#[allow(unused_variables)]
+#[async_generic(async_signature(
+    sign1: &CoseSign1,
+    data: &[u8],
+    ctp: &CertificateTrustPolicy,
+    tst_info: Option<&TstInfo>,
+    validation_log: &mut StatusTracker,
+    http_resolver: &impl AsyncHttpResolver,
+    settings: &Settings,
+))]
 pub(crate) fn fetch_and_check_ocsp_response(
     sign1: &CoseSign1,
     data: &[u8],
     ctp: &CertificateTrustPolicy,
     tst_info: Option<&TstInfo>,
     validation_log: &mut StatusTracker,
+    http_resolver: &impl SyncHttpResolver,
     settings: &Settings,
 ) -> Result<OcspResponse, CoseError> {
     let certs = cert_chain_from_sign1(sign1)?;
 
-    let ocsp_der: Vec<u8> = if _sync {
-        match crate::crypto::ocsp::fetch_ocsp_response(&certs) {
-            Some(der) => der,
-            None => return Ok(OcspResponse::default()),
-        }
+    let ocsp_der = if _sync {
+        crate::crypto::ocsp::fetch_ocsp_response(&certs, http_resolver)
     } else {
-        match crate::crypto::ocsp::fetch_ocsp_response_async(&certs).await {
-            Some(der) => der,
-            None => return Ok(OcspResponse::default()),
-        }
+        crate::crypto::ocsp::fetch_ocsp_response_async(&certs, http_resolver).await
     };
 
-    let ocsp_response_der = ocsp_der;
+    let Some(ocsp_response_der) = ocsp_der else {
+        return Ok(OcspResponse::default());
+    };
 
     // use supplied override time if provided
     let signing_time: Option<DateTime<Utc>> = match tst_info {
