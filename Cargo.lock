@@ -418,7 +418,7 @@ dependencies = [
 
 [[package]]
 name = "c2pa"
-version = "0.69.0"
+version = "0.70.0"
 dependencies = [
  "anyhow",
  "asn1-rs",
@@ -524,7 +524,7 @@ dependencies = [
 
 [[package]]
 name = "c2pa-c-ffi"
-version = "0.69.0"
+version = "0.70.0"
 dependencies = [
  "c2pa",
  "cbindgen",
@@ -538,7 +538,7 @@ dependencies = [
 
 [[package]]
 name = "c2pa_macros"
-version = "0.69.0"
+version = "0.70.0"
 dependencies = [
  "quote",
  "syn 2.0.109",
@@ -546,7 +546,7 @@ dependencies = [
 
 [[package]]
 name = "c2patool"
-version = "0.25.0"
+version = "0.26.0"
 dependencies = [
  "anyhow",
  "assert_cmd",
@@ -1307,7 +1307,7 @@ dependencies = [
 
 [[package]]
 name = "export_schema"
-version = "0.69.0"
+version = "0.70.0"
 dependencies = [
  "anyhow",
  "c2pa",
@@ -2311,7 +2311,7 @@ checksum = "112b39cec0b298b6c1999fee3e31427f74f676e4cb9879ed1a121b43661a4154"
 
 [[package]]
 name = "make_test_images"
-version = "0.69.0"
+version = "0.70.0"
 dependencies = [
  "anyhow",
  "c2pa",
@@ -3137,9 +3137,9 @@ dependencies = [
 
 [[package]]
 name = "quote"
-version = "1.0.41"
+version = "1.0.42"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ce25767e7b499d1b604768e7cde645d14cc8584231ea6b295e9c9eb22c02e1d1"
+checksum = "a338cc41d27e6cc6dce6cefc13a0729dfbb81c262b1f519331575dd80ef3067f"
 dependencies = [
  "proc-macro2",
 ]
