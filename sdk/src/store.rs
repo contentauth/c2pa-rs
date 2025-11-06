@@ -2189,11 +2189,6 @@ impl Store {
     where
         R: Read + Seek + ?Sized,
     {
-        if block_locations.is_empty() {
-            let out: Vec<DataHash> = vec![];
-            return Ok(out);
-        }
-
         let stream_len = stream_len(stream)?;
         stream.rewind()?;
 
@@ -2221,10 +2216,12 @@ impl Store {
             }
         }
 
-        if found_jumbf {
-            // add exclusion hash for bytes before and after jumbf
-            let mut dh = DataHash::new("jumbf manifest", alg);
+        // Create a DataHash regardless of whether JUMBF is found
+        // For remote manifests with no embedded JUMBF, this creates a hash with no exclusions
+        let mut dh = DataHash::new("jumbf manifest", alg);
 
+        if found_jumbf {
+            // add exclusion for embedded jumbf
             if calc_hashes {
                 if block_end > block_start && (block_end as u64) <= stream_len {
                     dh.add_exclusion(HashRange::new(
@@ -2242,8 +2239,6 @@ impl Store {
                         "data hash exclusions out of range".to_string(),
                     ));
                 }
-
-                dh.gen_hash_from_stream(stream)?;
             } else {
                 if block_end > block_start {
                     dh.add_exclusion(HashRange::new(
@@ -2251,16 +2246,27 @@ impl Store {
                         (block_end - block_start) as u64,
                     ));
                 }
-
-                match alg {
-                    "sha256" => dh.set_hash([0u8; 32].to_vec()),
-                    "sha384" => dh.set_hash([0u8; 48].to_vec()),
-                    "sha512" => dh.set_hash([0u8; 64].to_vec()),
-                    _ => return Err(Error::UnsupportedType),
-                }
             }
-            hashes.push(dh);
+            println!("DataHash created WITH exclusions: start={}, end={}", block_start, block_end);
+        } else {
+            println!("DataHash created with NO exclusions (remote manifest case), stream_len={}", stream_len);
         }
+
+        // Generate or set placeholder hash
+        if calc_hashes {
+            dh.gen_hash_from_stream(stream)?;
+            println!("Generated hash: {} bytes, exclusions={:?}", dh.hash.len(), dh.exclusions);
+        } else {
+            match alg {
+                "sha256" => dh.set_hash([0u8; 32].to_vec()),
+                "sha384" => dh.set_hash([0u8; 48].to_vec()),
+                "sha512" => dh.set_hash([0u8; 64].to_vec()),
+                _ => return Err(Error::UnsupportedType),
+            }
+            println!("Set placeholder hash: {} bytes", dh.hash.len());
+        }
+        
+        hashes.push(dh);
 
         Ok(hashes)
     }
@@ -3000,7 +3006,7 @@ impl Store {
             println!("save_to_stream, remote_manifest, called");
             println!("remote_manifest: {:?}", pc.remote_manifest());
             match pc.remote_manifest() {
-                RemoteManifest::NoRemote | RemoteManifest::EmbedWithRemote(_) | RemoteManifest::Remote(_) => {
+                RemoteManifest::NoRemote | RemoteManifest::EmbedWithRemote(_) => {
                     println!("save_to_stream, NoRemote | EmbedWithRemote, called");
                     jumbf_bytes = self.to_jumbf_internal(signer.reserve_size())?;
 
@@ -3012,8 +3018,14 @@ impl Store {
                         &jumbf_bytes,
                     )?;
                 }
-                _ => {
-                    println!("save_to_stream, remote_manifest variant not handled (RemoteOnly): {:?}", pc.remote_manifest());
+                RemoteManifest::SideCar | RemoteManifest::Remote(_) => {
+                    println!("save_to_stream, SideCar | Remote, updating JUMBF without embedding");
+                    // Update the JUMBF bytes but don't embed them
+                    jumbf_bytes = self.to_jumbf_internal(signer.reserve_size())?;
+
+                    // Copy the intermediate stream (with XMP) to output without embedding manifest
+                    intermediate_stream.rewind()?;
+                    std::io::copy(&mut intermediate_stream, output_stream)?;
                 }
             };
             output_stream.rewind()?;
