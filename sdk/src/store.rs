@@ -2983,10 +2983,8 @@ impl Store {
 
         // Now add the dynamic assertions and update the JUMBF.
         let modified = if _sync {
-            println!("save_to_stream, sync path, called");
             self.write_dynamic_assertions(&dynamic_assertions, &da_uris, &mut preliminary_claim)
         } else {
-            println!("save_to_stream, async path, called");
             self.write_dynamic_assertions_async(
                 &dynamic_assertions,
                 &da_uris,
@@ -2997,8 +2995,6 @@ impl Store {
         // update the JUMBF if modified with dynamic assertions
         if modified {
             let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
-            println!("save_to_stream, remote_manifest, called");
-            println!("remote_manifest: {:?}", pc.remote_manifest());
             match pc.remote_manifest() {
                 RemoteManifest::NoRemote | RemoteManifest::EmbedWithRemote(_) => {
                     println!("save_to_stream, NoRemote | EmbedWithRemote, called");
