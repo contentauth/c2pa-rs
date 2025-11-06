@@ -45,7 +45,6 @@ pub use sign1::{
 };
 
 mod sigtst;
-#[cfg(not(target_arch = "wasm32"))]
 pub(crate) use sigtst::timestamptoken_from_timestamprsp;
 pub(crate) use sigtst::{
     add_sigtst_header, add_sigtst_header_async, validate_cose_tst_info,

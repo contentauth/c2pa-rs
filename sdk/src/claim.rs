@@ -3921,7 +3921,8 @@ impl Claim {
         get_ocsp_der(&sign1).is_some()
     }
 }
-#[allow(dead_code)]
+
+#[allow(dead_code, clippy::too_many_arguments)]
 #[async_generic(async_signature(
     sign1: &coset::CoseSign1,
     data: &[u8],

@@ -485,7 +485,6 @@ impl Store {
         placeholder
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
     fn get_cose_sign1_signature(&self, manifest_id: &str) -> Option<Vec<u8>> {
         let manifest = self.get_claim(manifest_id)?;
 

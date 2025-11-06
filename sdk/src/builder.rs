@@ -887,6 +887,7 @@ impl Builder {
                 &mut stream,
                 false,
                 &mut validation_log,
+                &SyncGenericResolver::new(),
                 &settings,
             )?;
             let reader = Reader::from_store(store, &mut validation_log, &settings)?;
