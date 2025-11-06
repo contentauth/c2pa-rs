@@ -2253,11 +2253,6 @@ impl Store {
     where
         R: Read + Seek + ?Sized,
     {
-        if block_locations.is_empty() {
-            let out: Vec<DataHash> = vec![];
-            return Ok(out);
-        }
-
         let stream_len = stream_len(stream)?;
         stream.rewind()?;
 
@@ -2285,10 +2280,13 @@ impl Store {
             }
         }
 
-        if found_jumbf {
-            // add exclusion hash for bytes before and after jumbf
-            let mut dh = DataHash::new("jumbf manifest", alg);
+        // Create a DataHash regardless of whether JUMBF is found or not...
+        // For remote manifests with no embedded JUMBF, creates a hash with no exclusions,
+        // because there is nothing to exclude from the hashing (since nothing is embedded)
+        let mut dh = DataHash::new("jumbf manifest", alg);
 
+        if found_jumbf {
+            // add exclusion for embedded jumbf
             if calc_hashes {
                 if block_end > block_start && (block_end as u64) <= stream_len {
                     dh.add_exclusion(HashRange::new(
@@ -2306,25 +2304,29 @@ impl Store {
                         "data hash exclusions out of range".to_string(),
                     ));
                 }
-
-                dh.gen_hash_from_stream(stream)?;
-            } else {
-                if block_end > block_start {
-                    dh.add_exclusion(HashRange::new(
-                        block_start as u64,
-                        (block_end - block_start) as u64,
-                    ));
-                }
-
-                match alg {
-                    "sha256" => dh.set_hash([0u8; 32].to_vec()),
-                    "sha384" => dh.set_hash([0u8; 48].to_vec()),
-                    "sha512" => dh.set_hash([0u8; 64].to_vec()),
-                    _ => return Err(Error::UnsupportedType),
-                }
+            } else if block_end > block_start {
+                dh.add_exclusion(HashRange::new(
+                    block_start as u64,
+                    (block_end - block_start) as u64,
+                ));
             }
-            hashes.push(dh);
         }
+
+        // Generate or set placeholder hash
+        if calc_hashes {
+            // Second signing pass: calcultate the actual real hash
+            dh.gen_hash_from_stream(stream)?;
+        } else {
+            // First signing pass: zero-filled placeholder hash (to get to end size)
+            match alg {
+                "sha256" => dh.set_hash([0u8; 32].to_vec()),
+                "sha384" => dh.set_hash([0u8; 48].to_vec()),
+                "sha512" => dh.set_hash([0u8; 64].to_vec()),
+                _ => return Err(Error::UnsupportedType),
+            }
+        }
+
+        hashes.push(dh);
 
         Ok(hashes)
     }
@@ -3072,7 +3074,17 @@ impl Store {
                         &jumbf_bytes,
                     )?;
                 }
-                _ => (),
+                RemoteManifest::SideCar | RemoteManifest::Remote(_) => {
+                    // we are going to handle the JUMBF like we'd embed, but we won't
+                    // eventually we won't embed it, so this is a temporary hack to get the code to work
+
+                    // Update the JUMBF like it would normally be done
+                    jumbf_bytes = self.to_jumbf_internal(signer.reserve_size())?;
+
+                    // Intermediate stream goes to output, but still no embedding
+                    intermediate_stream.rewind()?;
+                    //std::io::copy(&mut intermediate_stream, output_stream)?;
+                }
             };
             output_stream.rewind()?;
         }
