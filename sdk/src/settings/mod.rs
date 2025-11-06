@@ -432,18 +432,6 @@ impl Settings {
         Settings::from_string(toml, "toml").map(|_| ())
     }
 
-    /// Set the [Settings] from a url to a toml file.
-    #[cfg(not(target_arch = "wasm32"))]
-    pub fn from_url(url: &str) -> Result<()> {
-        let toml = ureq::get(url)
-            .call()
-            .map_err(|_| Error::FailedToFetchSettings)?
-            .into_body()
-            .read_to_string()
-            .map_err(|_| Error::FailedToFetchSettings)?;
-        Settings::from_toml(&toml)
-    }
-
     /// Set a [Settings] value by path reference. The path is nested names of of the Settings objects
     /// separated by "." notation.
     ///
