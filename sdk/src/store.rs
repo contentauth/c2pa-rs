@@ -3000,7 +3000,6 @@ impl Store {
             let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
             match pc.remote_manifest() {
                 RemoteManifest::NoRemote | RemoteManifest::EmbedWithRemote(_) => {
-                    println!("save_to_stream, NoRemote | EmbedWithRemote, called");
                     jumbf_bytes = self.to_jumbf_internal(signer.reserve_size())?;
 
                     intermediate_stream.rewind()?;
@@ -3014,7 +3013,6 @@ impl Store {
                 RemoteManifest::SideCar | RemoteManifest::Remote(_) => {
                     // we are going to handle the JUMBF like we'd embed, but we won't
                     // eventually we won't embed it, so this is a temporary hack to get the code to work
-                    println!("save_to_stream, SideCar | Remote, updating JUMBF without embedding");
 
                     // Update the JUMBF like it would normally be done
                     jumbf_bytes = self.to_jumbf_internal(signer.reserve_size())?;
