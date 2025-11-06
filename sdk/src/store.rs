@@ -2247,15 +2247,11 @@ impl Store {
                     ));
                 }
             }
-            println!("DataHash created WITH exclusions: start={}, end={}", block_start, block_end);
-        } else {
-            println!("DataHash created with NO exclusions (remote manifest case), stream_len={}", stream_len);
         }
 
         // Generate or set placeholder hash
         if calc_hashes {
             dh.gen_hash_from_stream(stream)?;
-            println!("Generated hash: {} bytes, exclusions={:?}", dh.hash.len(), dh.exclusions);
         } else {
             match alg {
                 "sha256" => dh.set_hash([0u8; 32].to_vec()),
@@ -2263,9 +2259,8 @@ impl Store {
                 "sha512" => dh.set_hash([0u8; 64].to_vec()),
                 _ => return Err(Error::UnsupportedType),
             }
-            println!("Set placeholder hash: {} bytes", dh.hash.len());
         }
-        
+
         hashes.push(dh);
 
         Ok(hashes)
@@ -2883,7 +2878,6 @@ impl Store {
         }
 
         // Now add the dynamic assertions and update the JUMBF.
-        println!("write_dynamic_assertions, save_to_bmff_fragmented, called");
         let modified = temp_store.write_dynamic_assertions(
             &dynamic_assertions,
             &da_uris,
@@ -2894,7 +2888,7 @@ impl Store {
         if modified {
             let pc = temp_store.provenance_claim().ok_or(Error::ClaimEncoding)?;
             match pc.remote_manifest() {
-                RemoteManifest::NoRemote | RemoteManifest::EmbedWithRemote(_) | RemoteManifest::Remote(_) => {
+                RemoteManifest::NoRemote | RemoteManifest::EmbedWithRemote(_) => {
                     jumbf_bytes = temp_store.to_jumbf_internal(signer.reserve_size())?;
 
                     // save the jumbf to the output path

@@ -2634,13 +2634,6 @@ impl Claim {
                     }
 
                     if !dh.is_remote_hash() {
-                        println!(
-                            "Verifying DataHash: name={:?}, exclusions={:?}, hash_len={}",
-                            dh.name,
-                            dh.exclusions,
-                            dh.hash.len()
-                        );
-                        
                         // there are extra exclusion then log the information code about extra exclusion
                         if let Some(exclusions) = &dh.exclusions {
                             if exclusions.len() > 1 {
