@@ -4020,6 +4020,24 @@ impl Store {
         recurse: bool,
         validation_log: &mut StatusTracker,
     ) -> Result<()> {
+        Store::get_claim_referenced_manifests_impl(
+            claim,
+            store,
+            svi,
+            recurse,
+            validation_log,
+            &mut HashSet::new(),
+        )
+    }
+
+    fn get_claim_referenced_manifests_impl<'a>(
+        claim: &'a Claim,
+        store: &'a Store,
+        svi: &mut StoreValidationInfo<'a>,
+        recurse: bool,
+        validation_log: &mut StatusTracker,
+        seen: &mut HashSet<&'a str>,
+    ) -> Result<()> {
         // add in current redactions
         if let Some(c_redactions) = claim.redactions() {
             svi.redactions
@@ -4052,12 +4070,19 @@ impl Store {
 
                 // recurse nested ingredients
                 if recurse {
-                    Store::get_claim_referenced_manifests(
+                    if seen.contains(ingredient.label()) {
+                        // REVIEW-NOTE: add an error to the validation log?
+                        return Ok(());
+                    }
+                    seen.insert(ingredient.label());
+
+                    Store::get_claim_referenced_manifests_impl(
                         ingredient,
                         store,
                         svi,
                         recurse,
                         validation_log,
+                        seen,
                     )?;
                 }
             } else {
