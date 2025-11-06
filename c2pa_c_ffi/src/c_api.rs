@@ -1298,7 +1298,7 @@ pub unsafe extern "C" fn c2pa_format_embeddable(
     })
 }
 
-/// Creates a C2paSigner from a callback and configuration.
+/// Creates a C2paSigner from a signing callback and configuration.
 ///
 /// # Parameters
 /// * callback: a callback function to sign data.
@@ -1366,6 +1366,101 @@ pub unsafe extern "C" fn c2pa_signer_create(
     if let Some(tsa_url) = tsa_url.as_ref() {
         signer = signer.set_tsa_url(tsa_url);
     }
+    Box::into_raw(Box::new(C2paSigner {
+        signer: Box::new(signer),
+    }))
+}
+
+/// Creates a C2paSigner from a signing callback, a timestamping callback, and configuration.
+///
+/// # Parameters
+/// * callback: a callback function to sign data.
+/// * alg: the signing algorithm.
+/// * certs: a pointer to a NULL-terminated string containing the certificate chain in PEM format.
+/// * tsa_callback: a callback function to uses for RFC 3161 compliant timestamping of data.
+///
+/// # Errors
+/// Returns NULL if there were errors, otherwise returns a pointer to a C2paSigner.
+/// The error string can be retrieved by calling c2pa_error.
+///
+/// # Safety
+/// Reads from NULL-terminated C strings.
+/// The returned value MUST be released by calling c2pa_signer_free
+/// and it is no longer valid after that call.
+/// When binding through the C API to other languages, the callback must live long
+/// enough, possibly being re-used and called multiple times. The callback is logically
+/// owned by the host/caller.
+///
+/// # Example
+/// ```c
+/// auto result = c2pa_signer_create(callback, alg, certs, tsa_callback);
+/// if (result == NULL) {
+///     auto error = c2pa_error();
+///     printf("Error: %s\n", error);
+///     c2pa_string_free(error);
+/// }
+/// ```
+#[no_mangle]
+pub unsafe extern "C" fn c2pa_signer_create_with_tsa_callback(
+    context: *const c_void,
+    callback: SignerCallback,
+    alg: C2paSigningAlg,
+    certs: *const c_char,
+    tsa_callback: SignerCallback,
+) -> *mut C2paSigner {
+    let certs = from_cstr_or_return_null!(certs);
+    let context = context as *const ();
+
+    // Create a callback for signing that uses the provided C callback function
+    // The callback ignores its context parameter and will use
+    // the context set on the CallbackSigner closure
+    let c_signing_callback = move |context: *const (), data: &[u8]| {
+        // we need to guess at a max signed size, the callback must verify this is big enough or fail.
+        let signed_len_max = data.len() * 2;
+        let mut signed_bytes: Vec<u8> = vec![0; signed_len_max];
+        let signed_size = unsafe {
+            (callback)(
+                context,
+                data.as_ptr(),
+                data.len(),
+                signed_bytes.as_mut_ptr(),
+                signed_len_max,
+            )
+        };
+        if signed_size < 0 {
+            return Err(c2pa::Error::CoseSignature); // todo:: return errors from callback
+        }
+        signed_bytes.set_len(signed_size as usize);
+        Ok(signed_bytes)
+    };
+
+    // Create a callback for timestamping that uses the provided C callback function
+    // The callback ignores its context parameter and will use
+    // the context set on the CallbackSigner closure
+    let c_timestamp_callback = move |context: *const (), data: &[u8]| {
+        // we need to guess at a max signed size, the callback must verify this is big enough or fail.
+        let timestamped_len_max = 100_000;
+        let mut timestamped_bytes: Vec<u8> = vec![0; timestamped_len_max];
+        let timestamped_size = unsafe {
+            (tsa_callback)(
+                context,
+                data.as_ptr(),
+                data.len(),
+                timestamped_bytes.as_mut_ptr(),
+                timestamped_len_max,
+            )
+        };
+        if timestamped_size == -1 {
+            return Err(c2pa::Error::CoseSignature); // todo:: return errors from callback
+        }
+        timestamped_bytes.set_len(timestamped_size as usize);
+        Ok(timestamped_bytes)
+    };
+
+    let signer = CallbackSigner::new(c_signing_callback, alg.into(), certs)
+        .set_context(context)
+        .set_tsa_callback(c_timestamp_callback);
+
     Box::into_raw(Box::new(C2paSigner {
         signer: Box::new(signer),
     }))
@@ -1999,6 +2094,47 @@ mod tests {
         };
 
         // verify signer is not null (aka could be created)
+        assert!(!signer.is_null());
+
+        unsafe { c2pa_signer_free(signer) };
+    }
+
+    #[test]
+    fn test_tsa_callback_signer() {
+        let certs = include_str!(fixture_path!("certs/ed25519.pub"));
+        let certs_cstr = CString::new(certs).unwrap();
+
+        extern "C" fn test_sign_callback(
+            _context: *const (),
+            _data: *const c_uchar,
+            _len: usize,
+            _signed_bytes: *mut c_uchar,
+            _signed_len: usize,
+        ) -> isize {
+            // Placeholder signer
+            1
+        }
+
+        extern "C" fn test_tsa_callback(
+            _context: *const (),
+            _data: *const c_uchar,
+            _len: usize,
+            _signed_bytes: *mut c_uchar,
+            _signed_len: usize,
+        ) -> isize {
+            // Placeholder timestamper
+            2
+        }
+        let signer = unsafe {
+            c2pa_signer_create_with_tsa_callback(
+                std::ptr::null(),
+                test_sign_callback,
+                C2paSigningAlg::Ps384,
+                certs_cstr.as_ptr(),
+                test_tsa_callback,
+            )
+        };
+
         assert!(!signer.is_null());
 
         unsafe { c2pa_signer_free(signer) };

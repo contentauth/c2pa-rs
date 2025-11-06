@@ -35,7 +35,7 @@ pub struct CallbackSigner {
     pub context: *const (),
 
     /// The callback to use to sign data.
-    pub callback: Box<CallbackFunc>,
+    pub signing_callback: Box<CallbackFunc>,
 
     /// The signing algorithm to use.
     pub alg: SigningAlg,
@@ -48,6 +48,9 @@ pub struct CallbackSigner {
 
     /// The optional URL of a Time Stamping Authority.
     pub tsa_url: Option<String>,
+
+    /// The callback to use to timestamp data.
+    pub tsa_callback: Option<Box<CallbackFunc>>,
 }
 
 unsafe impl Send for CallbackSigner {}
@@ -65,7 +68,7 @@ impl CallbackSigner {
 
         Self {
             context: std::ptr::null(),
-            callback: Box::new(callback),
+            signing_callback: Box::new(callback),
             alg,
             certs,
             reserve_size,
@@ -86,6 +89,17 @@ impl CallbackSigner {
     /// There is no Rust memory management for the context since it may also come from FFI.
     pub fn set_context(mut self, context: *const ()) -> Self {
         self.context = context;
+        self
+    }
+
+    /// Sets the optional callback for performing C2PA Timestamping.
+    ///
+    /// The TSA URL will be used if this is not set.
+    pub fn set_tsa_callback<F>(mut self, tsa_callback: F) -> Self
+    where
+        F: Fn(*const (), &[u8]) -> std::result::Result<Vec<u8>, Error> + Send + Sync + 'static,
+    {
+        self.tsa_callback = Some(Box::new(tsa_callback));
         self
     }
 
@@ -128,18 +142,19 @@ impl Default for CallbackSigner {
     fn default() -> Self {
         Self {
             context: std::ptr::null(),
-            callback: Box::new(|_, _| Err(Error::UnsupportedType)),
+            signing_callback: Box::new(|_, _| Err(Error::UnsupportedType)),
             alg: SigningAlg::Es256,
             certs: Vec::new(),
             reserve_size: 10000,
             tsa_url: None,
+            tsa_callback: None,
         }
     }
 }
 
 impl Signer for CallbackSigner {
     fn sign(&self, data: &[u8]) -> Result<Vec<u8>> {
-        (self.callback)(self.context, data)
+        (self.signing_callback)(self.context, data)
     }
 
     fn alg(&self) -> SigningAlg {
@@ -155,8 +170,25 @@ impl Signer for CallbackSigner {
         self.reserve_size
     }
 
-    fn time_authority_url(&self) -> Option<String> {
-        self.tsa_url.clone()
+    #[allow(unused)] // message not used on WASM
+    fn send_timestamp_request(&self, message: &[u8]) -> Option<Result<Vec<u8>>> {
+        #[cfg(not(target_arch = "wasm32"))]
+        // Try to use the timestamp callback but then fallback on the URL.
+        if let Some(tsa_callback) = &self.tsa_callback {
+            return Some(tsa_callback(self.context, message));
+        } else if let Some(url) = &self.tsa_url {
+            if let Ok(body) = crate::crypto::time_stamp::default_rfc3161_message(message) {
+                let headers: Option<Vec<(String, String)>> = None;
+                return Some(
+                    crate::crypto::time_stamp::default_rfc3161_request(
+                        url, headers, &body, message,
+                    )
+                    .map_err(|e| e.into()),
+                );
+            }
+        }
+
+        None
     }
 }
 
@@ -164,7 +196,7 @@ impl Signer for CallbackSigner {
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 impl AsyncSigner for CallbackSigner {
     async fn sign(&self, data: Vec<u8>) -> Result<Vec<u8>> {
-        (self.callback)(self.context, &data)
+        (self.signing_callback)(self.context, &data)
     }
 
     fn alg(&self) -> SigningAlg {
@@ -180,12 +212,25 @@ impl AsyncSigner for CallbackSigner {
         self.reserve_size
     }
 
-    fn time_authority_url(&self) -> Option<String> {
-        self.tsa_url.clone()
-    }
+    #[allow(unused)] // message not used on WASM
+    async fn send_timestamp_request(&self, message: &[u8]) -> Option<Result<Vec<u8>>> {
+        #[cfg(not(target_arch = "wasm32"))]
+        // Try to use the timestamp callback but then fallback on the URL.
+        if let Some(tsa_callback) = &self.tsa_callback {
+            return Some(tsa_callback(self.context, message));
+        } else if let Some(url) = &self.tsa_url {
+            if let Ok(body) = crate::crypto::time_stamp::default_rfc3161_message(message) {
+                let headers: Option<Vec<(String, String)>> = None;
+                return Some(
+                    crate::crypto::time_stamp::default_rfc3161_request_async(
+                        url, headers, &body, message,
+                    )
+                    .await
+                    .map_err(|e| e.into()),
+                );
+            }
+        }
 
-    #[cfg(target_arch = "wasm32")]
-    async fn send_timestamp_request(&self, _message: &[u8]) -> Option<Result<Vec<u8>>> {
         None
     }
 }
