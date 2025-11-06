@@ -17,7 +17,7 @@
 #[cfg(feature = "file_io")]
 use std::fs::{read, File};
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     io::{Read, Seek, Write},
 };
 
@@ -876,6 +876,7 @@ impl Reader {
     ) -> Result<HashMap<String, Value>> {
         let mut assertion_values = HashMap::new();
         let mut stack: Vec<(String, Option<String>)> = vec![(manifest_label.to_string(), None)];
+        let mut seen = HashSet::new();
 
         while let Some((current_label, parent_uri)) = stack.pop() {
             // If we're processing an ingredient, push its URI to the validation log
@@ -931,11 +932,16 @@ impl Reader {
             // Add ingredients to stack for processing
             for ingredient in manifest.ingredients().iter() {
                 if let Some(label) = ingredient.active_manifest() {
-                    let ingredient_uri = crate::jumbf::labels::to_assertion_uri(
-                        &current_label,
-                        ingredient.label().unwrap_or("unknown"),
-                    );
-                    stack.push((label.to_string(), Some(ingredient_uri)));
+                    // REVIEW-NOTE: should we error if there's a cyclic ingredient?
+                    if !seen.contains(label) {
+                        seen.insert(label);
+
+                        let ingredient_uri = crate::jumbf::labels::to_assertion_uri(
+                            &current_label,
+                            ingredient.label().unwrap_or("unknown"),
+                        );
+                        stack.push((label.to_string(), Some(ingredient_uri)));
+                    }
                 }
             }
 
