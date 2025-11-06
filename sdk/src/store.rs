@@ -2216,8 +2216,9 @@ impl Store {
             }
         }
 
-        // Create a DataHash regardless of whether JUMBF is found
-        // For remote manifests with no embedded JUMBF, this creates a hash with no exclusions
+        // Create a DataHash regardless of whether JUMBF is found or not...
+        // For remote manifests with no embedded JUMBF, creates a hash with no exclusions,
+        // because there is nothing to exclude from the hashing (since nothing is embedded)
         let mut dh = DataHash::new("jumbf manifest", alg);
 
         if found_jumbf {
@@ -2251,8 +2252,10 @@ impl Store {
 
         // Generate or set placeholder hash
         if calc_hashes {
+            // Second signing pass: calcultate the actual real hash
             dh.gen_hash_from_stream(stream)?;
         } else {
+            // First signing pass: zero-filled placeholder hash (to get to end size)
             match alg {
                 "sha256" => dh.set_hash([0u8; 32].to_vec()),
                 "sha384" => dh.set_hash([0u8; 48].to_vec()),
@@ -3009,11 +3012,14 @@ impl Store {
                     )?;
                 }
                 RemoteManifest::SideCar | RemoteManifest::Remote(_) => {
+                    // we are going to handle the JUMBF like we'd embed, but we won't
+                    // eventually we won't embed it, so this is a temporary hack to get the code to work
                     println!("save_to_stream, SideCar | Remote, updating JUMBF without embedding");
-                    // Update the JUMBF bytes but don't embed them
+
+                    // Update the JUMBF like it would normally be done
                     jumbf_bytes = self.to_jumbf_internal(signer.reserve_size())?;
 
-                    // Copy the intermediate stream (with XMP) to output without embedding manifest
+                    // Intermediate stream goes to output, but still no embedding
                     intermediate_stream.rewind()?;
                     std::io::copy(&mut intermediate_stream, output_stream)?;
                 }
