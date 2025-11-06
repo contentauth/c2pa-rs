@@ -1568,6 +1568,22 @@ impl Store {
 
                 let label = Store::manifest_label_from_path(&c2pa_manifest.url());
 
+                // check for self reference, i.e. a circular reference
+                if claim.label() == label {
+                    log_item!(
+                        jumbf::labels::to_assertion_uri(claim.label(), &i.label()),
+                        "ingredient cannot reference self",
+                        "ingredient_checks"
+                    )
+                    .validation_status(validation_status::ASSERTION_INGREDIENT_MALFORMED)
+                    .failure(
+                        validation_log,
+                        Error::HashMismatch("ingredient cannot refernce self".to_string()),
+                    )?;
+
+                    continue;
+                }
+
                 if let Some(ingredient) = store.get_claim(&label) {
                     let alg = match c2pa_manifest.alg() {
                         Some(a) => a,
@@ -1627,14 +1643,11 @@ impl Store {
                                 "ingredient hash does not match found ingredient".to_string(),
                             ),
                         )?;
-                        return Err(Error::HashMismatch(
-                            "ingredient hash does not match found ingredient".to_string(),
-                        )); // hard stop regardless of StatusTracker mode
                     }
 
-                    // if manifest hash did not match and this is a V2 or greater claim then we
+                    // if manifest hash did not match because of redaction and this is a V2 or greater claim then we
                     // must try the signature validation method before proceeding
-                    if !manifests_match && ingredient_version > 1 {
+                    if !manifests_match && has_redactions && ingredient_version > 1 {
                         let claim_signature =
                             ingredient_assertion.signature().ok_or_else(|| {
                                 log_item!(
@@ -1682,10 +1695,6 @@ impl Store {
                                     "ingredient claimSignature mismatch".to_string(),
                                 ),
                             )?;
-                            return Err(Error::HashMismatch(
-                                "ingredient signature box hash does not match found ingredient"
-                                    .to_string(),
-                            )); // hard stop regardless of StatusTracker mode
                         }
                     }
 
@@ -1696,17 +1705,15 @@ impl Store {
                     }
 
                     // if manifest hash did not match we continue on to do a full claim validation
-                    if !manifests_match {
-                        Claim::verify_claim(
-                            ingredient,
-                            asset_data,
-                            svi,
-                            check_ingredient_trust,
-                            &store.ctp,
-                            validation_log,
-                            settings,
-                        )?;
-                    }
+                    Claim::verify_claim(
+                        ingredient,
+                        asset_data,
+                        svi,
+                        check_ingredient_trust,
+                        &store.ctp,
+                        validation_log,
+                        settings,
+                    )?;
 
                     // recurse nested ingredients
                     Store::ingredient_checks(
@@ -1801,6 +1808,22 @@ impl Store {
 
                 let label = Store::manifest_label_from_path(&c2pa_manifest.url());
 
+                // check for self reference, i.e. a circular reference
+                if claim.label() == label {
+                    log_item!(
+                        jumbf::labels::to_assertion_uri(claim.label(), &i.label()),
+                        "ingredient cannot reference self",
+                        "ingredient_checks"
+                    )
+                    .validation_status(validation_status::ASSERTION_INGREDIENT_MALFORMED)
+                    .failure(
+                        validation_log,
+                        Error::HashMismatch("ingredient cannot refernce self".to_string()),
+                    )?;
+
+                    continue;
+                }
+
                 if let Some(ingredient) = store.get_claim(&label) {
                     let alg = match c2pa_manifest.alg() {
                         Some(a) => a,
@@ -1813,7 +1836,7 @@ impl Store {
 
                     // allow the extra ingredient trust checks
                     // these checks are to prevent the trust spoofing
-                    let check_ingredient_trust = settings.verify.check_ingredient_trust;
+                    let check_ingredient_trust = settings.verify.verify_trust;
 
                     // get the 1.1-1.2 box hash
                     let ingredient_hashes = store.get_manifest_box_hashes(ingredient);
@@ -1860,14 +1883,11 @@ impl Store {
                                 "ingredient hash does not match found ingredient".to_string(),
                             ),
                         )?;
-                        return Err(Error::HashMismatch(
-                            "ingredient hash does not match found ingredient".to_string(),
-                        )); // hard stop regardless of StatusTracker mode
                     }
 
                     // if manifest hash did not match and this is a V2 or greater claim then we
                     // must try the signature validation method before proceeding
-                    if !manifests_match && ingredient_version > 1 {
+                    if !manifests_match && has_redactions && ingredient_version > 1 {
                         let claim_signature =
                             ingredient_assertion.signature().ok_or_else(|| {
                                 log_item!(
@@ -1915,10 +1935,6 @@ impl Store {
                                     "ingredient claimSignature mismatch".to_string(),
                                 ),
                             )?;
-                            return Err(Error::HashMismatch(
-                                "ingredient signature box hash does not match found ingredient"
-                                    .to_string(),
-                            )); // hard stop regardless of StatusTracker mode
                         }
                     }
 
@@ -1929,18 +1945,16 @@ impl Store {
                     }
 
                     // if manifest hash did not match we continue on to do a full claim validation
-                    if !manifests_match {
-                        Claim::verify_claim_async(
-                            ingredient,
-                            asset_data,
-                            svi,
-                            check_ingredient_trust,
-                            &store.ctp,
-                            validation_log,
-                            settings,
-                        )
-                        .await?;
-                    }
+                    Claim::verify_claim_async(
+                        ingredient,
+                        asset_data,
+                        svi,
+                        check_ingredient_trust,
+                        &store.ctp,
+                        validation_log,
+                        settings,
+                    )
+                    .await?;
 
                     // recurse nested ingredients
                     Store::ingredient_checks_async(
