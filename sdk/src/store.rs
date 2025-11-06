@@ -3019,7 +3019,7 @@ impl Store {
 
                     // Intermediate stream goes to output, but still no embedding
                     intermediate_stream.rewind()?;
-                    std::io::copy(&mut intermediate_stream, output_stream)?;
+                    //std::io::copy(&mut intermediate_stream, output_stream)?;
                 }
             };
             output_stream.rewind()?;
