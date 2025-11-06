@@ -743,7 +743,7 @@ impl Reader {
     }
 
     #[async_generic()]
-    fn from_store(
+    pub(crate) fn from_store(
         store: Store,
         validation_log: &mut StatusTracker,
         settings: &Settings,
@@ -1247,8 +1247,10 @@ pub mod tests {
     }
 
     #[test]
-    #[cfg(not(target_os = "wasi"))] // todo: enable when disable we find out wasi trust issues
     fn test_reader_trusted() -> Result<()> {
+        #[cfg(target_os = "wasi")]
+        Settings::reset().unwrap();
+
         let reader =
             Reader::from_stream("image/jpeg", std::io::Cursor::new(IMAGE_COMPLEX_MANIFEST))?;
         assert_eq!(reader.validation_state(), ValidationState::Trusted);
