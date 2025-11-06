@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.69.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.68.0...c2pa-c-ffi-v0.69.0)
+_04 November 2025_
+
+### Added
+
+* Adds support and documentation for JSON formatted Settings ([#1533](https://github.com/contentauth/c2pa-rs/pull/1533))
+* Allow reading a manifest store as a Builder to continue editing ([#1476](https://github.com/contentauth/c2pa-rs/pull/1476))
+
+### Other
+
+* Revert "chore: release ([#1535](https://github.com/contentauth/c2pa-rs/pull/1535))"
+
+## [0.68.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.67.1...c2pa-c-ffi-v0.68.0)
+_24 October 2025_
+
+### Fixed
+
+* Turn on trust by default ([#1483](https://github.com/contentauth/c2pa-rs/pull/1483))
+* Add linker flags to Android library builds ([#1463](https://github.com/contentauth/c2pa-rs/pull/1463))
+
+### Updated dependencies
+
+* Bump cbindgen from 0.28.0 to 0.29.2 ([#1500](https://github.com/contentauth/c2pa-rs/pull/1500))
+
 ## [0.67.1](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.67.0...c2pa-c-ffi-v0.67.1)
 _02 October 2025_
 
