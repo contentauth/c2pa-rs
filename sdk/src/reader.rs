@@ -879,6 +879,8 @@ impl Reader {
         let mut seen = HashSet::new();
 
         while let Some((current_label, parent_uri)) = stack.pop() {
+            seen.insert(current_label.clone());
+
             // If we're processing an ingredient, push its URI to the validation log
             if let Some(uri) = &parent_uri {
                 validation_log.push_ingredient_uri(uri.clone());
@@ -934,8 +936,6 @@ impl Reader {
                 if let Some(label) = ingredient.active_manifest() {
                     // REVIEW-NOTE: should we error if there's a cyclic ingredient?
                     if !seen.contains(label) {
-                        seen.insert(label);
-
                         let ingredient_uri = crate::jumbf::labels::to_assertion_uri(
                             &current_label,
                             ingredient.label().unwrap_or("unknown"),

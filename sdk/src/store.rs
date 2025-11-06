@@ -4069,11 +4069,8 @@ impl Store {
                     .insert(claim_label.clone());
 
                 // recurse nested ingredients
-                if recurse {
-                    if seen.contains(ingredient.label()) {
-                        // REVIEW-NOTE: add an error to the validation log?
-                        return Ok(());
-                    }
+                // REVIEW-NOTE: add an error to the validation log if seen already?
+                if recurse && !seen.contains(ingredient.label()) {
                     seen.insert(ingredient.label());
 
                     Store::get_claim_referenced_manifests_impl(
