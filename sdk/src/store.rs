@@ -2240,13 +2240,11 @@ impl Store {
                         "data hash exclusions out of range".to_string(),
                     ));
                 }
-            } else {
-                if block_end > block_start {
-                    dh.add_exclusion(HashRange::new(
-                        block_start as u64,
-                        (block_end - block_start) as u64,
-                    ));
-                }
+            } else if block_end > block_start {
+                dh.add_exclusion(HashRange::new(
+                    block_start as u64,
+                    (block_end - block_start) as u64,
+                ));
             }
         }
 
