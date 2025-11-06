@@ -2877,6 +2877,7 @@ impl Store {
         }
 
         // Now add the dynamic assertions and update the JUMBF.
+        println!("write_dynamic_assertions, save_to_bmff_fragmented, called");
         let modified = temp_store.write_dynamic_assertions(
             &dynamic_assertions,
             &da_uris,
@@ -2887,7 +2888,7 @@ impl Store {
         if modified {
             let pc = temp_store.provenance_claim().ok_or(Error::ClaimEncoding)?;
             match pc.remote_manifest() {
-                RemoteManifest::NoRemote | RemoteManifest::EmbedWithRemote(_) => {
+                RemoteManifest::NoRemote | RemoteManifest::EmbedWithRemote(_) | RemoteManifest::Remote(_) => {
                     jumbf_bytes = temp_store.to_jumbf_internal(signer.reserve_size())?;
 
                     // save the jumbf to the output path
@@ -2982,8 +2983,10 @@ impl Store {
 
         // Now add the dynamic assertions and update the JUMBF.
         let modified = if _sync {
+            println!("save_to_stream, sync path, called");
             self.write_dynamic_assertions(&dynamic_assertions, &da_uris, &mut preliminary_claim)
         } else {
+            println!("save_to_stream, async path, called");
             self.write_dynamic_assertions_async(
                 &dynamic_assertions,
                 &da_uris,
@@ -2994,8 +2997,11 @@ impl Store {
         // update the JUMBF if modified with dynamic assertions
         if modified {
             let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
+            println!("save_to_stream, remote_manifest, called");
+            println!("remote_manifest: {:?}", pc.remote_manifest());
             match pc.remote_manifest() {
-                RemoteManifest::NoRemote | RemoteManifest::EmbedWithRemote(_) => {
+                RemoteManifest::NoRemote | RemoteManifest::EmbedWithRemote(_) | RemoteManifest::Remote(_) => {
+                    println!("save_to_stream, NoRemote | EmbedWithRemote, called");
                     jumbf_bytes = self.to_jumbf_internal(signer.reserve_size())?;
 
                     intermediate_stream.rewind()?;
@@ -3006,7 +3012,9 @@ impl Store {
                         &jumbf_bytes,
                     )?;
                 }
-                _ => (),
+                _ => {
+                    println!("save_to_stream, remote_manifest variant not handled (RemoteOnly): {:?}", pc.remote_manifest());
+                }
             };
             output_stream.rewind()?;
         }
