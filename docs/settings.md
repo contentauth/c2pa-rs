@@ -111,11 +111,11 @@ The `builder` object specifies settings for the Builder API.
 
 | Property | Type | Default value | Description |
 | --- | --- | --- | --- |
-| `builder.claim_generator_info` | ? | null | Default claim generator information |
+| `builder.claim_generator_info` | Object | null | Default claim generator information |
 | `builder.certificate_status_fetch` | String | null | Certificate status fetching scope |
 | `builder.certificate_status_should_override` | Boolean | null | Override OCSP with certificate status assertions |
 | `builder.intent` | object | null | Default builder intent. The value uses object notation and must be one of: `{"Create": "digitalCapture"}` <br/> `{"Create": "Edit"}` <br/> `{"Create": "Update"}`. |
-| `builder.created_assertion_labels` | Array | null | Labels for created assertions |
+| `builder.created_assertion_labels` | Array | null | Array of base assertion labels you want to treated as `created`. When the builder encounters one of these, it will become a created assertion.  |
 | `builder.generate_c2pa_archive` | Boolean | null | Generate C2PA archive format |
 | `builder.actions` | Object | | Action assertion configuration. |
 | `builder.actions.all_actions_included` | Boolean | null | Whether all actions are specified |
