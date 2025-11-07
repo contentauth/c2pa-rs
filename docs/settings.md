@@ -64,7 +64,6 @@ Here's the JSON with all default values:
     "verify_timestamp_trust": true,
     "ocsp_fetch": false,
     "remote_manifest_fetch": true,
-    "check_ingredient_trust": true,
     "skip_ingredient_conflict_resolution": false,
     "strict_v1_validation": false
   },
@@ -282,7 +281,6 @@ The `verify` object specifies verification behavior.
 | `verify.verify_timestamp_trust` | Boolean | Verify time-stamp certificates | true |
 | `verify.ocsp_fetch` | Boolean | Fetch OCSP status during validation | false |
 | `verify.remote_manifest_fetch` | Boolean | Fetch remote manifests | true |
-| `verify.check_ingredient_trust` | Boolean | Verify ingredient certificates | true |
 | `verify.skip_ingredient_conflict_resolution` | Boolean | Skip ingredient conflict resolution | false |
 | `verify.strict_v1_validation` | Boolean | Use strict C2PA v1 validation | false |
 

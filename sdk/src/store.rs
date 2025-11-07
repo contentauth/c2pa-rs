@@ -1730,7 +1730,6 @@ impl Store {
                         Claim::verify_hash_binding(ingredient, asset_data, svi, validation_log)?;
                     }
 
-                    // if manifest hash did not match we continue on to do a full claim validation
                     Claim::verify_claim(
                         ingredient,
                         asset_data,
@@ -1955,7 +1954,6 @@ impl Store {
                         Claim::verify_hash_binding(ingredient, asset_data, svi, validation_log)?;
                     }
 
-                    // if manifest hash did not match we continue on to do a full claim validation
                     Claim::verify_claim_async(
                         ingredient,
                         asset_data,
