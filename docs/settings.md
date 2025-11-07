@@ -100,8 +100,8 @@ Here's the JSON with all default values:
 
 The top-level `version` property is a number specifying the settings format version. The only supported value currently is `1`.
 
-- All properties are optional except `version`.
-- If you do not specify a value, the configuration will use the default.
+- All other properties are optional.
+- If you do not specify a value, the configuration will use the default value, if any.
 - Do not quote Boolean properties.
 - To remove a configuration value, set it to null.
 
@@ -113,10 +113,10 @@ For certificate properties, use PEM format strings with `\n` for line breaks.
 
 | Property | Type | Default value | Description |
 | --- | --- | --- | --- |
-| `trust.user_anchors` | string | null | Additional user-provided root certificates (PEM format) |
-| `trust.trust_anchors` | string | null | Default trust anchor root certificates (PEM format) |
-| `trust.trust_config` | string | null | Allowed extended key usage (EKU) object identifiers |
-| `trust.allowed_list` | string | null | Explicitly allowed certificates (PEM format) |
+| `trust.user_anchors` | String | N/A | Additional user-provided root certificates (PEM format) |
+| `trust.trust_anchors` | String | N/A | Default trust anchor root certificates (PEM format) |
+| `trust.trust_config` | String | N/A | Allowed extended key usage (EKU) object identifiers |
+| `trust.allowed_list` | String | N/A | Explicitly allowed certificates (PEM format) |
 
 ### cawg_trust
 
@@ -127,10 +127,10 @@ For certificate properties, use PEM format strings with `\n` for line breaks.
 | Property | Type | Default value | Description |
 | --- | --- | --- | --- |
 | `cawg_trust.verify_trust_list` | Boolean | true | Enforce verification against the CAWG trust list |
-| `cawg_trust.user_anchors` | String | null | Additional user-provided root certificates (PEM format) |
-| `cawg_trust.trust_anchors` | String | null | Default trust anchor root certificates (PEM format) |
-| `cawg_trust.trust_config` | String | null | Allowed extended key usage (EKU) object identifiers |
-| `cawg_trust.allowed_list` | String | null | Explicitly allowed certificates (PEM format) |
+| `cawg_trust.user_anchors` | String | N/A | Additional user-provided root certificates (PEM format) |
+| `cawg_trust.trust_anchors` | String | N/A | Default trust anchor root certificates (PEM format) |
+| `cawg_trust.trust_config` | String | N/A | Allowed extended key usage (EKU) object identifiers |
+| `cawg_trust.allowed_list` | String | N/A | Explicitly allowed certificates (PEM format) |
 
 ### core
 
@@ -138,9 +138,9 @@ The `core` object specifies core library features and performance settings.
 
 | Property | Type | Default value | Description |
 | --- | --- | --- | --- |
-| `core.merkle_tree_chunk_size_in_kb` | number or null | null | Chunk size for BMFF hash merkle trees in KB |
-| `core.merkle_tree_max_proofs` | number | 5 | Maximum merkle tree proofs when validating |
-| `core.backing_store_memory_threshold_in_mb` | number | 512 | Memory threshold before using disk storage (MB) |
+| `core.merkle_tree_chunk_size_in_kb` | Number | ? | Chunk size for BMFF hash Merkle trees in KB |
+| `core.merkle_tree_max_proofs` | Number | 5 | Maximum Merkle tree proofs when validating |
+| `core.backing_store_memory_threshold_in_mb` | Number | 512 | Memory threshold before using disk storage (MB) |
 | `core.decode_identity_assertions` | Boolean | true | Whether to decode CAWG identity assertions |
 
 ## verify
@@ -152,7 +152,7 @@ The `verify` object specifies verification behavior.
 | `verify.verify_after_reading` | Boolean | true | Verify manifests after reading |
 | `verify.verify_after_sign` | Boolean | true | Verify manifests after signing |
 | `verify.verify_trust` | Boolean | true | Verify certificates against trust lists |
-| `verify.verify_timestamp_trust` | Boolean | true | Verify timestamp certificates |
+| `verify.verify_timestamp_trust` | Boolean | true | Verify time-stamp certificates |
 | `verify.ocsp_fetch` | Boolean | false | Fetch OCSP status during validation |
 | `verify.remote_manifest_fetch` | Boolean | true | Fetch remote manifests |
 | `verify.check_ingredient_trust` | Boolean | true | Verify ingredient certificates |
@@ -165,18 +165,18 @@ The `builder` object specifies settings for the Builder API.
 
 | Property | Type | Default value | Description |
 | --- | --- | --- | --- |
-| `builder.claim_generator_info` | object or null | null | Default claim generator information |
+| `builder.claim_generator_info` | ? | null | Default claim generator information |
 | `builder.certificate_status_fetch` | String | null | Certificate status fetching scope |
 | `builder.certificate_status_should_override` | Boolean | null | Override OCSP with certificate status assertions |
-| `builder.intent` | object | null | Default builder intent. The value uses object notation and must be one of: `{"Create": "digitalCapture"}`, `{"Create": "Edit"}`, or `{"Create": "Update"}`. |
+| `builder.intent` | object | null | Default builder intent. The value uses object notation and must be one of: `{"Create": "digitalCapture"}` <br/> `{"Create": "Edit"}` <br/> `{"Create": "Update"}`. |
 | `builder.created_assertion_labels` | Array | null | Labels for created assertions |
 | `builder.generate_c2pa_archive` | Boolean | null | Generate C2PA archive format |
 | `builder.actions` | Object | | Action assertion configuration. |
 | `builder.actions.all_actions_included` | Boolean | null | Whether all actions are specified |
-| `builder.actions.templates` | array or null | null | Action templates |
-| `builder.actions.actions` | array or null | null | Predefined actions to add |
+| `builder.actions.templates` | Array | null | Action templates |
+| `builder.actions.actions` | Array or null | null | Predefined actions to add |
 | `builder.actions.auto_created_action.enabled` | Boolean | true | Enable automatic `c2pa.created` actions |
-| `builder.actions.auto_created_action.source_type` | string | "empty" | Digital source type for created action |
+| `builder.actions.auto_created_action.source_type` | String | "empty" | Digital source type for created action |
 | `builder.actions.auto_opened_action.enabled` | Boolean | true | Enable automatic `c2pa.opened` actions |
 | `builder.actions.auto_opened_action.source_type` | String | null | Digital source type for opened action |
 | `builder.actions.auto_placed_action.enabled` | Boolean | true | Enable automatic `c2pa.placed` actions |
@@ -184,10 +184,10 @@ The `builder` object specifies settings for the Builder API.
 | `builder.thumbnail` | Object | | Automatic thumbnail generation settings. |
 | `builder.thumbnail.enabled` | Boolean | true | Enable automatic thumbnails |
 | `builder.thumbnail.ignore_errors` | Boolean | true | Continue on thumbnail generation errors |
-| `builder.thumbnail.long_edge` | number | 1024 | Size of thumbnail's longest edge in pixels |
-| `builder.thumbnail.format` | "jpeg" <br/> "png" <br/> "webp" <br/> null | null | Output format |
+| `builder.thumbnail.long_edge` | Number | 1024 | Size of thumbnail's longest edge in pixels |
+| `builder.thumbnail.format` | String | null | Output format | One of: <br/>`"jpeg"` <br/>` "png"` <br/> `"webp"` <br/> null |
 | `builder.thumbnail.prefer_smallest_format` | Boolean | true | Use smallest format when possible |
-| `builder.thumbnail.quality` | "low" <br/> "medium" <br/> "high" | "medium" | Quality setting |
+| `builder.thumbnail.quality` | String | `"medium"` | Quality setting. One of: <br/>`"low"` <br/> `"medium"` <br/> `"high"` |
 
 ### signer
 
@@ -203,9 +203,9 @@ When both `signer` and `cawg_x509_signer` are configured, the system creates a d
 | Property | Type | Default value | Description |
 | --- | --- | --- | --- |
 | `signer.local` | Object | | Local signer |
-| `signer.local.alg` | `ps256`<br/> `ps384`<br/>`ps512`<br/>`es256`<br/>`es384`<br/>`es512`, `ed25519`   | — | Signing algorithm |
-| `signer.local.sign_cert` | string | — | Certificate chain for signing (PEM format) |
-| `signer.local.private_key` | string | — | Private key for signing (PEM format) |
+| `signer.local.alg` | String | — | Signing algorithm. One of:<br/>`"ps256"`<br/> `"ps384"`<br/>`"ps512"`<br/>`"es256"`<br/>`"es384"`<br/>`"es512"`<br/> `"ed25519"` |
+| `signer.local.sign_cert` | String | — | Certificate chain for signing (PEM format) |
+| `signer.local.private_key` | String | — | Private key for signing (PEM format) |
 | `signer.local.tsa_url` | String | null | Time stamp authority URL for timestamping |
 
 **Remote signer**
@@ -215,9 +215,9 @@ Remote signers receive POST requests with the data to be signed as the request b
 | Property | Type | Default value | Description |
 | --- | --- | --- | --- |
 | `signer.remote` | Object | | Remote signer. NOTE: Remote signers are not supported in WASM builds. |
-| `signer.remote.url` | string | — | URL to the remote signing service (receives POST with byte stream) |
-| `signer.remote.alg` | "ps256" <br/> "ps384" <br/> "ps512" <br/> "es256" <br/> "es384" <br/> "es512" <br/> "ed25519" | — | Signing algorithm used by the remote service |
-| `signer.remote.sign_cert` | string | — | Certificate chain for the remote signer (PEM format) |
+| `signer.remote.url` | String | — | URL to the remote signing service (receives POST with byte stream) |
+| `signer.remote.alg` | String | — | Signing algorithm used by the remote service. One of:<br/>`"ps256"`<br/> `"ps384"`<br/>`"ps512"`<br/>`"es256"`<br/>`"es384"`<br/>`"es512"`<br/> `"ed25519"` |
+| `signer.remote.sign_cert` | String | — | Certificate chain for the remote signer (PEM format) |
 | `signer.remote.tsa_url` | String | null | Time stamp authority URL |
 
 ### cawg_x509_signer
@@ -234,9 +234,9 @@ When both `signer` and `cawg_x509_signer` are configured, the system creates a d
 | Property | Type | Default value | Description |
 | --- | --- | --- | --- |
 | `cawg_x509_signer.local` | Object | | Local CAWG X.509 signer |
-| `cawg_x509_signer.local.alg` | `ps256`<br/> `ps384`<br/>`ps512`<br/>`es256`<br/>`es384`<br/>`es512`, `ed25519` | — | Signing algorithm |
-| `cawg_x509_signer.local.sign_cert` | string | — | Certificate chain for signing (PEM format) |
-| `cawg_x509_signer.local.private_key` | string | — | Private key for signing (PEM format) |
+| `cawg_x509_signer.local.alg` | String | — | Signing algorithm for CAWG identity. One of:<br/>`"ps256"`<br/> `"ps384"`<br/>`"ps512"`<br/>`"es256"`<br/>`"es384"`<br/>`"es512"`<br/> `"ed25519"` |
+| `cawg_x509_signer.local.sign_cert` | String | — | Certificate chain for signing (PEM format) |
+| `cawg_x509_signer.local.private_key` | String | — | Private key for signing (PEM format) |
 | `cawg_x509_signer.local.tsa_url` | String | null | Time stamp authority URL for timestamping |
 
 **Remote CAWG signer**
@@ -246,9 +246,9 @@ Remote signers receive POST requests with the data to be signed as the request b
 | Property | Type | Default value | Description |
 | --- | --- | --- | --- |
 | `cawg_x509_signer.remote` | Object | | Remote CAWG X.509 signer. NOTE: Remote CAWG X.509 signing is not yet implemented.
-| `cawg_x509_signer.remote.url` | string | — | URL to the remote signing service (receives POST with byte stream) |
-| `cawg_x509_signer.remote.alg` | `ps256`<br/> `ps384`<br/>`ps512`<br/>`es256`<br/>`es384`<br/>`es512`, `ed25519` | — | Signing algorithm used by the remote service |
-| `cawg_x509_signer.remote.sign_cert` | string | — | Certificate chain for the remote signer (PEM format) |
+| `cawg_x509_signer.remote.url` | String | — | URL to the remote signing service (receives POST with byte stream) |
+| `cawg_x509_signer.remote.alg` | String | — | Signing algorithm used by the remote CAWG identity service. One of:<br/>`"ps256"`<br/> `"ps384"`<br/>`"ps512"`<br/>`"es256"`<br/>`"es384"`<br/>`"es512"`<br/> `"ed25519"` |
+| `cawg_x509_signer.remote.sign_cert` | String | — | Certificate chain for the remote signer (PEM format) |
 | `cawg_x509_signer.remote.tsa_url` | String | null | Time stamp authority URL |
 
 ## Examples
