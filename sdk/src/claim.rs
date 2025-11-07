@@ -4133,6 +4133,14 @@ pub mod tests {
             1,
         );
         assert!(c4.is_err());
+
+        // bad v2
+        let c5 = Claim::new_with_user_guid(
+            "claim_generator",
+            "urn:blahblah:3fad1ead-8ed5-44d0-873b-ea5f58adea82:acme",
+            2,
+        );
+        assert!(c5.is_err());
     }
 
     #[test]
