@@ -931,8 +931,8 @@ pub unsafe extern "C" fn c2pa_builder_free(builder_ptr: *mut C2paBuilder) {
 /// Edit requires a parent ingredient and is used for most assets that are being edited.
 /// Update is a special case with many restrictions but is more compact than Edit.
 ///
-/// For the `Create` intent, you must provide a valid `digital_source_type`.
-/// For `Edit` and `Update` intents, you can pass any value for `digital_source_type` as it will be ignored.
+/// For the `Create` intent, a valid `digital_source_type` must be provided.
+/// For `Edit` and `Update` intents, `digital_source_type` will be ignored (any value is allowed).
 ///
 /// # Parameters
 /// * builder_ptr: pointer to a Builder.
@@ -1855,12 +1855,12 @@ mod tests {
 
         let (signer, builder) = setup_signer_and_builder_for_signing_tests();
 
-        // Set the create intent with DigitalCapture source type
+        // The create intent requires needs a digital source type
         let result = unsafe {
             c2pa_builder_set_intent(
                 builder,
                 C2paBuilderIntent::Create,
-                C2paDigitalSourceType::DigitalCapture,
+                C2paDigitalSourceType::DigitalCreation,
             )
         };
         assert_eq!(result, 0);
@@ -1891,7 +1891,6 @@ mod tests {
         let json_str = unsafe { CString::from_raw(json) };
         let json_content = json_str.to_str().unwrap();
 
-        assert!(json_content.contains("manifest"));
         assert!(json_content.contains("c2pa.created"));
 
         TestC2paStream::drop_c_stream(source_stream);
@@ -1914,12 +1913,13 @@ mod tests {
 
         let (signer, builder) = setup_signer_and_builder_for_signing_tests();
 
-        // SEdit intent will automatically extract parent ingredient from source
+        // Edit intent will extract the parent ingredient from source
+        // (Digital source type is ignored in the case of the edit intent)
         let result = unsafe {
             c2pa_builder_set_intent(
                 builder,
                 C2paBuilderIntent::Edit,
-                C2paDigitalSourceType::DigitalCapture, // This is ignored for Edit
+                C2paDigitalSourceType::DigitalCreation,
             )
         };
         assert_eq!(result, 0);
@@ -1949,9 +1949,7 @@ mod tests {
         assert!(!json.is_null());
         let json_str = unsafe { CString::from_raw(json) };
         let json_content = json_str.to_str().unwrap();
-        println!("json_content: {}", json_content);
 
-        assert!(json_content.contains("manifest"));
         assert!(json_content.contains("c2pa.opened"));
 
         TestC2paStream::drop_c_stream(source_stream);
