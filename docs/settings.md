@@ -111,10 +111,11 @@ Here's the JSON with all default values:
 The top-level `version` property is a number specifying the settings format version. The only supported value currently is `1`.
 All other properties are optional.
 
-NOTE: Do not quote Boolean properties.
+NOTES: 
 
 - If you do not specify a value, the SDK will use the default value, if any.
 - If you specify a value of `null`, then the property will be set to `null`, not the default.
+- Do not quote Boolean property values (for example, use `true` not `"true"`).
 
 ### builder
 
@@ -122,7 +123,7 @@ The `builder` object specifies settings for the Builder API.
 
 | Property | Type | Description | Default value |
 | --- | --- | --- | --- |
-| `builder.claim_generator_info` | Object | Default claim generator information. Used if the `Builder` hasn't specified one. | N/A |
+| `builder.claim_generator_info` | Object | Default claim generator information. Used if the `Builder` hasn't specified one.<br/>See below. | N/A |
 | `builder.certificate_status_fetch` | String | Certificate status fetching scope | null |
 | `builder.certificate_status_should_override` | Boolean | Override OCSP with certificate status assertions | null |
 | `builder.intent` | object | Default builder intent. The value uses object notation and must be one of: `{"Create": "digitalCapture"}` <br/> `{"Create": "Edit"}` <br/> `{"Create": "Update"}`. | null |
@@ -131,7 +132,7 @@ The `builder` object specifies settings for the Builder API.
 | `builder.actions` | Object | Action assertion configuration. |  |
 | `builder.actions.all_actions_included` | Boolean | Whether all actions are specified | null |
 | `builder.actions.templates` | Array | Action templates | null |
-| `builder.actions.actions` | Array or null | Predefined actions to add | null |
+| `builder.actions.actions` | Array | Predefined actions to add | null |
 | `builder.actions.auto_created_action.enabled` | Boolean | Enable automatic `c2pa.created` actions | true |
 | `builder.actions.auto_created_action.source_type` | String | Digital source type for created action | "empty" |
 | `builder.actions.auto_opened_action.enabled` | Boolean | Enable automatic `c2pa.opened` actions | true |
@@ -146,16 +147,16 @@ The `builder` object specifies settings for the Builder API.
 | `builder.thumbnail.prefer_smallest_format` | Boolean | Use smallest format when possible | true |
 | `builder.thumbnail.quality` | String | Quality setting. One of: <br/>`"low"` <br/> `"medium"` <br/> `"high"` | `"medium"` |
 
-***claim_generator_info**
+**claim_generator_info**
 
 The `builder.claim_generator_info` specifies the default claim generator information.  It's a JSON object as described in the table below. It can have additional custom properties as needed by an implementation.
 
 | Property | Type | Description | Default value |
 | --- | --- | --- | --- |
 | `name` | String	| A human readable string naming the claim_generator | N/A - Required |
-| `version`	| String	 | A human readable string of the product's version | Null |
-| `icon` | `UriOrResource` | Hashed URI to the icon (either embedded or remote) | Null |
-| `operating_system`	| String	 | Human readable string of the OS the claim generator is running on | Null |
+| `version`	| String	 | A human readable string of the product's version | null |
+| `icon` | `UriOrResource` | Hashed URI to the icon (either embedded or remote) | null |
+| `operating_system`	| String	 | Human readable string of the OS the claim generator is running on | null |
 
 Only the `name` property is required. For example:
 
@@ -197,10 +198,10 @@ When both `signer` and `cawg_x509_signer` are configured, the system creates a d
 
 | Property | Type | Description | Default value |
 | --- | --- | --- | --- |
-| `cawg_x509_signer.local` | Object | Local CAWG X.509 signer |  |
-| `cawg_x509_signer.local.alg` | String | Signing algorithm for CAWG identity. One of:<br/>`"ps256"`<br/> `"ps384"`<br/>`"ps512"`<br/>`"es256"`<br/>`"es384"`<br/>`"es512"`<br/> `"ed25519"` | — |
-| `cawg_x509_signer.local.sign_cert` | String | Certificate chain for signing (PEM format) | — |
-| `cawg_x509_signer.local.private_key` | String | Private key for signing (PEM format) | — |
+| `cawg_x509_signer.local` | Object | Local CAWG X.509 signer | N/A |
+| `cawg_x509_signer.local.alg` | String | Signing algorithm for CAWG identity. One of:<br/>`"ps256"`<br/> `"ps384"`<br/>`"ps512"`<br/>`"es256"`<br/>`"es384"`<br/>`"es512"`<br/> `"ed25519"` | N/A |
+| `cawg_x509_signer.local.sign_cert` | String | Certificate chain for signing (PEM format) | N/A |
+| `cawg_x509_signer.local.private_key` | String | Private key for signing (PEM format) | N/A |
 | `cawg_x509_signer.local.tsa_url` | String | Time stamp authority URL for timestamping | null |
 
 **Remote CAWG signer**
@@ -209,10 +210,10 @@ Remote signers receive POST requests with the data to be signed as the request b
 
 | Property | Type | Description | Default value |
 | --- | --- | --- | --- |
-| `cawg_x509_signer.remote` | Object | Remote CAWG X.509 signer. NOTE: Remote CAWG X.509 signing is not yet implemented. |  |
-| `cawg_x509_signer.remote.url` | String | URL to the remote signing service (receives POST with byte stream) | — |
-| `cawg_x509_signer.remote.alg` | String | Signing algorithm used by the remote CAWG identity service. One of:<br/>`"ps256"`<br/> `"ps384"`<br/>`"ps512"`<br/>`"es256"`<br/>`"es384"`<br/>`"es512"`<br/> `"ed25519"` | — |
-| `cawg_x509_signer.remote.sign_cert` | String | Certificate chain for the remote signer (PEM format) | — |
+| `cawg_x509_signer.remote` | Object | Remote CAWG X.509 signer. NOTE: Remote CAWG X.509 signing is not yet implemented. | N/A |
+| `cawg_x509_signer.remote.url` | String | URL to the remote signing service (receives POST with byte stream) | N/A |
+| `cawg_x509_signer.remote.alg` | String | Signing algorithm used by the remote CAWG identity service. One of:<br/>`"ps256"`<br/> `"ps384"`<br/>`"ps512"`<br/>`"es256"`<br/>`"es384"`<br/>`"es512"`<br/> `"ed25519"` | N/A |
+| `cawg_x509_signer.remote.sign_cert` | String | Certificate chain for the remote signer (PEM format) | N/A |
 | `cawg_x509_signer.remote.tsa_url` | String | Time stamp authority URL | null |
 
 ### core
@@ -240,10 +241,10 @@ When both `signer` and `cawg_x509_signer` are configured, the system creates a d
 
 | Property | Type | Description | Default value |
 | --- | --- | --- | --- |
-| `signer.local` | Object | Local signer |  |
-| `signer.local.alg` | String | Signing algorithm. One of:<br/>`"ps256"`<br/> `"ps384"`<br/>`"ps512"`<br/>`"es256"`<br/>`"es384"`<br/>`"es512"`<br/> `"ed25519"` | — |
-| `signer.local.sign_cert` | String | Certificate chain for signing (PEM format) | — |
-| `signer.local.private_key` | String | Private key for signing (PEM format) | — |
+| `signer.local` | Object | Local signer | N/A |
+| `signer.local.alg` | String | Signing algorithm. One of:<br/>`"ps256"`<br/> `"ps384"`<br/>`"ps512"`<br/>`"es256"`<br/>`"es384"`<br/>`"es512"`<br/> `"ed25519"` | N/A |
+| `signer.local.sign_cert` | String | Certificate chain for signing (PEM format) | N/A |
+| `signer.local.private_key` | String | Private key for signing (PEM format) | N/A |
 | `signer.local.tsa_url` | String | Time stamp authority URL for timestamping | null |
 
 **Remote signer**
@@ -252,10 +253,10 @@ Remote signers receive POST requests with the data to be signed as the request b
 
 | Property | Type | Description | Default value |
 | --- | --- | --- | --- |
-| `signer.remote` | Object | Remote signer. NOTE: Remote signers are not supported in WASM builds. |  |
-| `signer.remote.url` | String | URL to the remote signing service (receives POST with byte stream) | — |
-| `signer.remote.alg` | String | Signing algorithm used by the remote service. One of:<br/>`"ps256"`<br/> `"ps384"`<br/>`"ps512"`<br/>`"es256"`<br/>`"es384"`<br/>`"es512"`<br/> `"ed25519"` | — |
-| `signer.remote.sign_cert` | String | Certificate chain for the remote signer (PEM format) | — |
+| `signer.remote` | Object | Remote signer. NOTE: Remote signers are not supported in WASM builds. | N/A |
+| `signer.remote.url` | String | URL to the remote signing service (receives POST with byte stream) | N/A |
+| `signer.remote.alg` | String | Signing algorithm used by the remote service. One of:<br/>`"ps256"`<br/> `"ps384"`<br/>`"ps512"`<br/>`"es256"`<br/>`"es384"`<br/>`"es512"`<br/> `"ed25519"` | N/A |
+| `signer.remote.sign_cert` | String | Certificate chain for the remote signer (PEM format) | N/A |
 | `signer.remote.tsa_url` | String | Time stamp authority URL | null |
 
 ### trust
