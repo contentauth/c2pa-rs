@@ -1847,7 +1847,7 @@ mod tests {
     }
 
     #[test]
-    fn builder_create_intend_and_sign() {
+    fn builder_create_intent_and_sign() {
         let source_image = include_bytes!(fixture_path!("IMG_0003.jpg"));
         let mut source_stream = TestC2paStream::from_bytes(source_image.to_vec());
         let dest_vec = Vec::new();
@@ -1904,7 +1904,7 @@ mod tests {
     }
 
     #[test]
-    fn builder_edit_intend_and_sign() {
+    fn builder_edit_intent_and_sign() {
         // Use an already-signed image as the source for editing
         let signed_source_image = include_bytes!(fixture_path!("C.jpg"));
         let mut source_stream = TestC2paStream::from_bytes(signed_source_image.to_vec());
