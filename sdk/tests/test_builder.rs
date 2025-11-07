@@ -15,13 +15,14 @@ use std::io::{self, Cursor, Seek};
 
 use c2pa::{
     identity::validator::CawgValidator, settings::Settings, validation_status, Builder,
-    BuilderIntent, ManifestAssertionKind, Reader, Result, ValidationState,
+    BuilderIntent, Error, ManifestAssertionKind, Reader, Result, ValidationState,
 };
 
 mod common;
 #[cfg(all(feature = "add_thumbnails", feature = "file_io"))]
 use common::compare_stream_to_known_good;
 use common::test_signer;
+use x509_parser::prelude::parse_ct_signed_certificate_timestamp_list;
 
 #[test]
 #[cfg(all(feature = "add_thumbnails", feature = "file_io"))]
@@ -142,8 +143,23 @@ fn test_builder_cyclic_ingredient() -> Result<()> {
         }
     }
 
-    // Attempt to read and validate the manifest with a cyclical ingredient.
-    let cyclic_ingredient = Cursor::new(bytes);
+    // Attempt to read the manifest with a cyclical ingredient.
+    let mut cyclic_ingredient = Cursor::new(bytes);
+    assert!(matches!(
+        Reader::from_stream(format, &mut cyclic_ingredient),
+        Err(Error::HashMismatch(..))
+    ));
+
+    cyclic_ingredient.rewind()?;
+
+    // Read the manifest without validating so we can test with post-validating the CAWG.
+    Settings::from_toml(
+        &toml::toml! {
+            [verify]
+            verify_after_reading = false
+        }
+        .to_string(),
+    )?;
     let mut reader = Reader::from_stream(format, cyclic_ingredient)?;
     // Ideally we'd use a sync path for this. There are limitations for tokio on WASM.
     #[cfg(not(target_arch = "wasm32"))]
