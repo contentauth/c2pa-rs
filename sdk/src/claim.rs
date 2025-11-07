@@ -55,6 +55,7 @@ use crate::{
     },
     error::{Error, Result},
     hashed_uri::HashedUri,
+    http::{AsyncHttpResolver, SyncHttpResolver},
     jumbf::{
         self,
         boxes::{
@@ -1823,6 +1824,7 @@ impl Claim {
     /// Verify claim signature, assertion store and asset hashes
     /// claim - claim to be verified
     /// asset_bytes - reference to bytes of the asset
+    #[allow(clippy::too_many_arguments)]
     pub(crate) async fn verify_claim_async(
         claim: &Claim,
         asset_data: &mut ClaimAssetData<'_>,
@@ -1830,6 +1832,7 @@ impl Claim {
         cert_check: bool,
         ctp: &CertificateTrustPolicy,
         validation_log: &mut StatusTracker,
+        http_resolver: &impl AsyncHttpResolver,
         settings: &Settings,
     ) -> Result<()> {
         // Parse COSE signed data (signature) and validate it.
@@ -1874,15 +1877,17 @@ impl Claim {
         let certificate_serial_num = get_signing_cert_serial_num(&sign1)?.to_string();
 
         // check certificate revocation
-        check_ocsp_status(
+        check_ocsp_status_async(
             &sign1,
             &data,
             ctp,
             svi.certificate_statuses.get(&certificate_serial_num),
             svi.timestamps.get(claim.label()),
             validation_log,
+            http_resolver,
             settings,
-        )?;
+        )
+        .await?;
 
         let verified = verify_cose_async(
             &sig,
@@ -1905,6 +1910,7 @@ impl Claim {
     /// Verify claim signature, assertion store and asset hashes
     /// claim - claim to be verified
     /// asset_bytes - reference to bytes of the asset
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn verify_claim(
         claim: &Claim,
         asset_data: &mut ClaimAssetData<'_>,
@@ -1912,6 +1918,7 @@ impl Claim {
         cert_check: bool,
         ctp: &CertificateTrustPolicy,
         validation_log: &mut StatusTracker,
+        http_resolver: &impl SyncHttpResolver,
         settings: &Settings,
     ) -> Result<()> {
         // Parse COSE signed data (signature) and validate it.
@@ -1979,6 +1986,7 @@ impl Claim {
             svi.certificate_statuses.get(&certificate_serial_num),
             svi.timestamps.get(claim.label()),
             validation_log,
+            http_resolver,
             &adjusted_settings,
         )?;
 
@@ -3936,8 +3944,18 @@ impl Claim {
         get_ocsp_der(&sign1).is_some()
     }
 }
-#[allow(dead_code)]
-#[async_generic]
+
+#[allow(dead_code, clippy::too_many_arguments)]
+#[async_generic(async_signature(
+    sign1: &coset::CoseSign1,
+    data: &[u8],
+    ctp: &CertificateTrustPolicy,
+    ocsp_responses: Option<&Vec<Vec<u8>>>,
+    tst_info: Option<&TstInfo>,
+    validation_log: &mut StatusTracker,
+    http_resolver: &impl AsyncHttpResolver,
+    settings: &Settings,
+))]
 pub(crate) fn check_ocsp_status(
     sign1: &coset::CoseSign1,
     data: &[u8],
@@ -3945,6 +3963,7 @@ pub(crate) fn check_ocsp_status(
     ocsp_responses: Option<&Vec<Vec<u8>>>,
     tst_info: Option<&TstInfo>,
     validation_log: &mut StatusTracker,
+    http_resolver: &impl SyncHttpResolver,
     settings: &Settings,
 ) -> Result<OcspResponse> {
     // Moved here instead of c2pa-crypto because of the dependency on settings.
@@ -3964,6 +3983,7 @@ pub(crate) fn check_ocsp_status(
             ocsp_responses,
             tst_info,
             validation_log,
+            http_resolver,
             settings,
         )?)
     } else {
@@ -3975,6 +3995,7 @@ pub(crate) fn check_ocsp_status(
             ocsp_responses,
             tst_info,
             validation_log,
+            http_resolver,
             settings,
         )
         .await?)
