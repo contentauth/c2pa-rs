@@ -418,7 +418,7 @@ dependencies = [
 
 [[package]]
 name = "c2pa"
-version = "0.70.0"
+version = "0.71.0"
 dependencies = [
  "anyhow",
  "asn1-rs",
@@ -524,7 +524,7 @@ dependencies = [
 
 [[package]]
 name = "c2pa-c-ffi"
-version = "0.70.0"
+version = "0.71.0"
 dependencies = [
  "c2pa",
  "cbindgen",
@@ -538,7 +538,7 @@ dependencies = [
 
 [[package]]
 name = "c2pa_macros"
-version = "0.70.0"
+version = "0.71.0"
 dependencies = [
  "quote",
  "syn 2.0.109",
@@ -546,7 +546,7 @@ dependencies = [
 
 [[package]]
 name = "c2patool"
-version = "0.26.0"
+version = "0.26.1"
 dependencies = [
  "anyhow",
  "assert_cmd",
@@ -600,9 +600,9 @@ dependencies = [
 
 [[package]]
 name = "cc"
-version = "1.2.44"
+version = "1.2.45"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "37521ac7aabe3d13122dc382493e20c9416f299d2ccd5b3a5340a2570cdeb0f3"
+checksum = "35900b6c8d709fb1d854671ae27aeaa9eec2f8b01b364e1619a40da3e6fe2afe"
 dependencies = [
  "find-msvc-tools",
  "shlex",
@@ -1307,7 +1307,7 @@ dependencies = [
 
 [[package]]
 name = "export_schema"
-version = "0.70.0"
+version = "0.71.0"
 dependencies = [
  "anyhow",
  "c2pa",
@@ -2177,22 +2177,22 @@ checksum = "68cf72bc7b75b6615ffd06bfe6840f3c57e7e4ea615558a2a452f458ebf5551e"
 
 [[package]]
 name = "jiff"
-version = "0.2.15"
+version = "0.2.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "be1f93b8b1eb69c77f24bbb0afdf66f54b632ee39af40ca21c4365a1d7347e49"
+checksum = "49cce2b81f2098e7e3efc35bc2e0a6b7abec9d34128283d7a26fa8f32a6dbb35"
 dependencies = [
  "jiff-static",
  "log",
  "portable-atomic",
  "portable-atomic-util",
- "serde",
+ "serde_core",
 ]
 
 [[package]]
 name = "jiff-static"
-version = "0.2.15"
+version = "0.2.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "03343451ff899767262ec32146f6d559dd759fdadf42ff0e227c7c48f72594b4"
+checksum = "980af8b43c3ad5d8d349ace167ec8170839f753a42d233ba19e08afe1850fa69"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2311,7 +2311,7 @@ checksum = "112b39cec0b298b6c1999fee3e31427f74f676e4cb9879ed1a121b43661a4154"
 
 [[package]]
 name = "make_test_images"
-version = "0.70.0"
+version = "0.71.0"
 dependencies = [
  "anyhow",
  "c2pa",
@@ -2600,9 +2600,9 @@ checksum = "d6790f58c7ff633d8771f42965289203411a5e5c68388703c06e14f24770b41e"
 
 [[package]]
 name = "openssl"
-version = "0.10.74"
+version = "0.10.75"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "24ad14dd45412269e1a30f52ad8f0664f0f4f4a89ee8fe28c3b3527021ebb654"
+checksum = "08838db121398ad17ab8531ce9de97b244589089e290a384c900cb9ff7434328"
 dependencies = [
  "bitflags",
  "cfg-if",
@@ -2641,9 +2641,9 @@ dependencies = [
 
 [[package]]
 name = "openssl-sys"
-version = "0.9.110"
+version = "0.9.111"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0a9f0075ba3c21b09f8e8b2026584b1d18d49388648f2fbbf3c97ea8deced8e2"
+checksum = "82cab2d520aa75e3c58898289429321eb788c3106963d0dc886ec7a5f4adc321"
 dependencies = [
  "cc",
  "libc",
