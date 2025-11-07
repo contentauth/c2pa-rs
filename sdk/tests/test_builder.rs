@@ -22,7 +22,6 @@ mod common;
 #[cfg(all(feature = "add_thumbnails", feature = "file_io"))]
 use common::compare_stream_to_known_good;
 use common::test_signer;
-use x509_parser::prelude::parse_ct_signed_certificate_timestamp_list;
 
 #[test]
 #[cfg(all(feature = "add_thumbnails", feature = "file_io"))]
