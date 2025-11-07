@@ -125,6 +125,87 @@ impl From<C2paSigningAlg> for SigningAlg {
     }
 }
 
+/// List of possible digital source types.
+#[repr(C)]
+pub enum C2paDigitalSourceType {
+    Empty,
+    TrainedAlgorithmicData,
+    DigitalCapture,
+    ComputationalCapture,
+    NegativeFilm,
+    PositiveFilm,
+    Print,
+    HumanEdits,
+    CompositeWithTrainedAlgorithmicMedia,
+    AlgorithmicallyEnhanced,
+    DigitalCreation,
+    DataDrivenMedia,
+    TrainedAlgorithmicMedia,
+    AlgorithmicMedia,
+    ScreenCapture,
+    VirtualRecording,
+    Composite,
+    CompositeCapture,
+    CompositeSynthetic,
+}
+
+impl From<C2paDigitalSourceType> for c2pa::DigitalSourceType {
+    fn from(source_type: C2paDigitalSourceType) -> Self {
+        match source_type {
+            C2paDigitalSourceType::Empty => c2pa::DigitalSourceType::Empty,
+            C2paDigitalSourceType::TrainedAlgorithmicData => {
+                c2pa::DigitalSourceType::TrainedAlgorithmicData
+            }
+            C2paDigitalSourceType::DigitalCapture => c2pa::DigitalSourceType::DigitalCapture,
+            C2paDigitalSourceType::ComputationalCapture => {
+                c2pa::DigitalSourceType::ComputationalCapture
+            }
+            C2paDigitalSourceType::NegativeFilm => c2pa::DigitalSourceType::NegativeFilm,
+            C2paDigitalSourceType::PositiveFilm => c2pa::DigitalSourceType::PositiveFilm,
+            C2paDigitalSourceType::Print => c2pa::DigitalSourceType::Print,
+            C2paDigitalSourceType::HumanEdits => c2pa::DigitalSourceType::HumanEdits,
+            C2paDigitalSourceType::CompositeWithTrainedAlgorithmicMedia => {
+                c2pa::DigitalSourceType::CompositeWithTrainedAlgorithmicMedia
+            }
+            C2paDigitalSourceType::AlgorithmicallyEnhanced => {
+                c2pa::DigitalSourceType::AlgorithmicallyEnhanced
+            }
+            C2paDigitalSourceType::DigitalCreation => c2pa::DigitalSourceType::DigitalCreation,
+            C2paDigitalSourceType::DataDrivenMedia => c2pa::DigitalSourceType::DataDrivenMedia,
+            C2paDigitalSourceType::TrainedAlgorithmicMedia => {
+                c2pa::DigitalSourceType::TrainedAlgorithmicMedia
+            }
+            C2paDigitalSourceType::AlgorithmicMedia => c2pa::DigitalSourceType::AlgorithmicMedia,
+            C2paDigitalSourceType::ScreenCapture => c2pa::DigitalSourceType::ScreenCapture,
+            C2paDigitalSourceType::VirtualRecording => c2pa::DigitalSourceType::VirtualRecording,
+            C2paDigitalSourceType::Composite => c2pa::DigitalSourceType::Composite,
+            C2paDigitalSourceType::CompositeCapture => c2pa::DigitalSourceType::CompositeCapture,
+            C2paDigitalSourceType::CompositeSynthetic => {
+                c2pa::DigitalSourceType::CompositeSynthetic
+            }
+        }
+    }
+}
+
+/// Builder intent enumeration.
+/// This specifies what kind of manifest to create.
+#[repr(C)]
+pub enum C2paBuilderIntent {
+    /// This is a new digital creation with the specified digital source type.
+    /// The Manifest must not have a parent ingredient.
+    /// A `c2pa.created` action will be added if not provided.
+    Create,
+    /// This is an edit of a pre-existing parent asset.
+    /// The Manifest must have a parent ingredient.
+    /// A parent ingredient will be generated from the source stream if not otherwise provided.
+    /// A `c2pa.opened` action will be tied to the parent ingredient.
+    Edit,
+    /// A restricted version of Edit for non-editorial changes.
+    /// There must be only one ingredient, as a parent.
+    /// No changes can be made to the hashed content of the parent.
+    Update,
+}
+
 #[repr(C)]
 pub struct C2paSigner {
     pub signer: Box<dyn c2pa::Signer>,
@@ -839,6 +920,47 @@ pub unsafe extern "C" fn c2pa_builder_free(builder_ptr: *mut C2paBuilder) {
     if !builder_ptr.is_null() {
         drop(Box::from_raw(builder_ptr));
     }
+}
+
+/// Sets the builder intent on the Builder.
+///
+/// An intent lets the API know what kind of manifest to create.
+/// Intents are `Create`, `Edit`, or `Update`.
+///
+/// Create requires a `DigitalSourceType`. It is used for assets without a parent ingredient.
+/// Edit requires a parent ingredient and is used for most assets that are being edited.
+/// Update is a special case with many restrictions but is more compact than Edit.
+///
+/// For the `Create` intent, a valid `digital_source_type` must be provided.
+/// For `Edit` and `Update` intents, `digital_source_type` will be ignored (any value is allowed).
+///
+/// # Parameters
+/// * builder_ptr: pointer to a Builder.
+/// * intent: the builder intent (Create, Edit, or Update).
+/// * digital_source_type: the digital source type (required for Create intent).
+///
+/// # Errors
+/// Returns -1 if there were errors (null pointer for builder_ptr), otherwise returns 0.
+/// The error string can be retrieved by calling c2pa_error.
+///
+/// # Safety
+/// builder_ptr must be a valid pointer to a Builder.
+#[no_mangle]
+pub unsafe extern "C" fn c2pa_builder_set_intent(
+    builder_ptr: *mut C2paBuilder,
+    intent: C2paBuilderIntent,
+    digital_source_type: C2paDigitalSourceType,
+) -> c_int {
+    let mut builder = guard_boxed_int!(builder_ptr);
+
+    let builder_intent = match intent {
+        C2paBuilderIntent::Create => c2pa::BuilderIntent::Create(digital_source_type.into()),
+        C2paBuilderIntent::Edit => c2pa::BuilderIntent::Edit,
+        C2paBuilderIntent::Update => c2pa::BuilderIntent::Update,
+    };
+
+    builder.set_intent(builder_intent);
+    0 as c_int
 }
 
 /// Sets the no-embed flag on the Builder.
@@ -1556,6 +1678,30 @@ mod tests {
         };
     }
 
+    /// Helper to create a signer and builder for testing
+    /// Returns (signer, builder)
+    fn setup_signer_and_builder_for_signing_tests() -> (*mut C2paSigner, *mut C2paBuilder) {
+        let certs = include_str!(fixture_path!("certs/ed25519.pub"));
+        let private_key = include_bytes!(fixture_path!("certs/ed25519.pem"));
+        let alg = CString::new("Ed25519").unwrap();
+        let sign_cert = CString::new(certs).unwrap();
+        let private_key = CString::new(private_key).unwrap();
+        let signer_info = C2paSignerInfo {
+            alg: alg.as_ptr(),
+            sign_cert: sign_cert.as_ptr(),
+            private_key: private_key.as_ptr(),
+            ta_url: std::ptr::null(),
+        };
+        let signer = unsafe { c2pa_signer_from_info(&signer_info) };
+        assert!(!signer.is_null());
+
+        let manifest_def = CString::new("{}").unwrap();
+        let builder = unsafe { c2pa_builder_from_json(manifest_def.as_ptr()) };
+        assert!(!builder.is_null());
+
+        (signer, builder)
+    }
+
     #[test]
     fn test_ed25519_sign() {
         let bytes = b"test";
@@ -1609,23 +1755,9 @@ mod tests {
         let mut source_stream = TestC2paStream::from_bytes(source_image.to_vec());
         let dest_vec = Vec::new();
         let mut dest_stream = TestC2paStream::new(dest_vec).into_c_stream();
-        let certs = include_str!(fixture_path!("certs/ed25519.pub"));
-        let private_key = include_bytes!(fixture_path!("certs/ed25519.pem"));
-        let alg = CString::new("Ed25519").unwrap();
-        let sign_cert = CString::new(certs).unwrap();
-        let private_key = CString::new(private_key).unwrap();
-        let signer_info = C2paSignerInfo {
-            alg: alg.as_ptr(),
-            sign_cert: sign_cert.as_ptr(),
-            private_key: private_key.as_ptr(),
-            ta_url: std::ptr::null(),
-        };
-        let signer = unsafe { c2pa_signer_from_info(&signer_info) };
 
-        assert!(!signer.is_null());
-        let manifest_def = CString::new("{}").unwrap();
-        let builder = unsafe { c2pa_builder_from_json(manifest_def.as_ptr()) };
-        assert!(!builder.is_null());
+        let (signer, builder) = setup_signer_and_builder_for_signing_tests();
+
         let format = CString::new("image/jpeg").unwrap();
         let mut manifest_bytes_ptr = std::ptr::null();
         let _ = unsafe {
@@ -1657,23 +1789,8 @@ mod tests {
         let mut source_stream = TestC2paStream::from_bytes(source_image.to_vec());
         let dest_vec = Vec::new();
         let mut dest_stream = TestC2paStream::new(dest_vec).into_c_stream();
-        let certs = include_str!(fixture_path!("certs/ed25519.pub"));
-        let private_key = include_bytes!(fixture_path!("certs/ed25519.pem"));
-        let alg = CString::new("Ed25519").unwrap();
-        let sign_cert = CString::new(certs).unwrap();
-        let private_key = CString::new(private_key).unwrap();
-        let signer_info = C2paSignerInfo {
-            alg: alg.as_ptr(),
-            sign_cert: sign_cert.as_ptr(),
-            private_key: private_key.as_ptr(),
-            ta_url: std::ptr::null(),
-        };
-        let signer = unsafe { c2pa_signer_from_info(&signer_info) };
 
-        assert!(!signer.is_null());
-        let manifest_def = CString::new("{}").unwrap();
-        let builder = unsafe { c2pa_builder_from_json(manifest_def.as_ptr()) };
-        assert!(!builder.is_null());
+        let (signer, builder) = setup_signer_and_builder_for_signing_tests();
 
         let action_json = CString::new(
             r#"{
@@ -1718,6 +1835,122 @@ mod tests {
 
         assert!(json_content.contains("manifest"));
         assert!(json_content.contains("com.example.test-action"));
+
+        TestC2paStream::drop_c_stream(source_stream);
+        TestC2paStream::drop_c_stream(read_stream);
+        unsafe {
+            c2pa_manifest_bytes_free(manifest_bytes_ptr);
+            c2pa_builder_free(builder);
+            c2pa_signer_free(signer);
+            c2pa_reader_free(reader);
+        }
+    }
+
+    #[test]
+    fn builder_create_intent_and_sign() {
+        let source_image = include_bytes!(fixture_path!("IMG_0003.jpg"));
+        let mut source_stream = TestC2paStream::from_bytes(source_image.to_vec());
+        let dest_vec = Vec::new();
+        let mut dest_stream = TestC2paStream::new(dest_vec).into_c_stream();
+
+        let (signer, builder) = setup_signer_and_builder_for_signing_tests();
+
+        // The create intent requires needs a digital source type
+        let result = unsafe {
+            c2pa_builder_set_intent(
+                builder,
+                C2paBuilderIntent::Create,
+                C2paDigitalSourceType::DigitalCreation,
+            )
+        };
+        assert_eq!(result, 0);
+
+        let format = CString::new("image/jpeg").unwrap();
+        let mut manifest_bytes_ptr = std::ptr::null();
+        let _ = unsafe {
+            c2pa_builder_sign(
+                builder,
+                format.as_ptr(),
+                &mut source_stream,
+                &mut dest_stream,
+                signer,
+                &mut manifest_bytes_ptr,
+            )
+        };
+
+        // Verify we can read the signed data back
+        let dest_test_stream = TestC2paStream::from_c_stream(dest_stream);
+        let mut read_stream = dest_test_stream.into_c_stream();
+        let format = CString::new("image/jpeg").unwrap();
+
+        let reader = unsafe { c2pa_reader_from_stream(format.as_ptr(), &mut read_stream) };
+        assert!(!reader.is_null());
+
+        let json = unsafe { c2pa_reader_json(reader) };
+        assert!(!json.is_null());
+        let json_str = unsafe { CString::from_raw(json) };
+        let json_content = json_str.to_str().unwrap();
+
+        assert!(json_content.contains("c2pa.created"));
+
+        TestC2paStream::drop_c_stream(source_stream);
+        TestC2paStream::drop_c_stream(read_stream);
+        unsafe {
+            c2pa_manifest_bytes_free(manifest_bytes_ptr);
+            c2pa_builder_free(builder);
+            c2pa_signer_free(signer);
+            c2pa_reader_free(reader);
+        }
+    }
+
+    #[test]
+    fn builder_edit_intent_and_sign() {
+        // Use an already-signed image as the source for editing
+        let signed_source_image = include_bytes!(fixture_path!("C.jpg"));
+        let mut source_stream = TestC2paStream::from_bytes(signed_source_image.to_vec());
+        let dest_vec = Vec::new();
+        let mut dest_stream = TestC2paStream::new(dest_vec).into_c_stream();
+
+        let (signer, builder) = setup_signer_and_builder_for_signing_tests();
+
+        // Edit intent will extract the parent ingredient from source
+        // (Digital source type is ignored in the case of the edit intent)
+        let result = unsafe {
+            c2pa_builder_set_intent(
+                builder,
+                C2paBuilderIntent::Edit,
+                C2paDigitalSourceType::DigitalCreation,
+            )
+        };
+        assert_eq!(result, 0);
+
+        // Verify we can read the signed data back
+        let format = CString::new("image/jpeg").unwrap();
+        let mut manifest_bytes_ptr = std::ptr::null();
+        let _ = unsafe {
+            c2pa_builder_sign(
+                builder,
+                format.as_ptr(),
+                &mut source_stream,
+                &mut dest_stream,
+                signer,
+                &mut manifest_bytes_ptr,
+            )
+        };
+
+        let dest_test_stream = TestC2paStream::from_c_stream(dest_stream);
+        let mut read_stream = dest_test_stream.into_c_stream();
+        let format = CString::new("image/jpeg").unwrap();
+
+        let reader = unsafe { c2pa_reader_from_stream(format.as_ptr(), &mut read_stream) };
+        assert!(!reader.is_null());
+
+        let json = unsafe { c2pa_reader_json(reader) };
+        assert!(!json.is_null());
+        let json_str = unsafe { CString::from_raw(json) };
+        let json_content = json_str.to_str().unwrap();
+
+        assert!(json_content.contains("c2pa.opened"));
 
         TestC2paStream::drop_c_stream(source_stream);
         TestC2paStream::drop_c_stream(read_stream);
