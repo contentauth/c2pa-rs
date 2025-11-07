@@ -158,7 +158,7 @@ pem = "3.0.6"
 pkcs1 = { version = "0.7.5", optional = true }
 pkcs8 = "0.10.2"
 png_pong = "0.9.1"
-quick-xml = "0.37.1"
+quick-xml = "0.38.3"
 rand = "0.8.5"
 rand_chacha = "0.3.1"
 range-set = "0.0.11"
