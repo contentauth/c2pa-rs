@@ -954,9 +954,7 @@ pub unsafe extern "C" fn c2pa_builder_set_intent(
     let mut builder = guard_boxed_int!(builder_ptr);
 
     let builder_intent = match intent {
-        C2paBuilderIntent::Create => {
-            c2pa::BuilderIntent::Create(digital_source_type.into())
-        }
+        C2paBuilderIntent::Create => c2pa::BuilderIntent::Create(digital_source_type.into()),
         C2paBuilderIntent::Edit => c2pa::BuilderIntent::Edit,
         C2paBuilderIntent::Update => c2pa::BuilderIntent::Update,
     };
@@ -1680,6 +1678,30 @@ mod tests {
         };
     }
 
+    /// Helper to create a signer and builder for testing
+    /// Returns (signer, builder)
+    fn setup_signer_and_builder_for_signing_tests() -> (*mut C2paSigner, *mut C2paBuilder) {
+        let certs = include_str!(fixture_path!("certs/ed25519.pub"));
+        let private_key = include_bytes!(fixture_path!("certs/ed25519.pem"));
+        let alg = CString::new("Ed25519").unwrap();
+        let sign_cert = CString::new(certs).unwrap();
+        let private_key = CString::new(private_key).unwrap();
+        let signer_info = C2paSignerInfo {
+            alg: alg.as_ptr(),
+            sign_cert: sign_cert.as_ptr(),
+            private_key: private_key.as_ptr(),
+            ta_url: std::ptr::null(),
+        };
+        let signer = unsafe { c2pa_signer_from_info(&signer_info) };
+        assert!(!signer.is_null());
+
+        let manifest_def = CString::new("{}").unwrap();
+        let builder = unsafe { c2pa_builder_from_json(manifest_def.as_ptr()) };
+        assert!(!builder.is_null());
+
+        (signer, builder)
+    }
+
     #[test]
     fn test_ed25519_sign() {
         let bytes = b"test";
@@ -1733,23 +1755,9 @@ mod tests {
         let mut source_stream = TestC2paStream::from_bytes(source_image.to_vec());
         let dest_vec = Vec::new();
         let mut dest_stream = TestC2paStream::new(dest_vec).into_c_stream();
-        let certs = include_str!(fixture_path!("certs/ed25519.pub"));
-        let private_key = include_bytes!(fixture_path!("certs/ed25519.pem"));
-        let alg = CString::new("Ed25519").unwrap();
-        let sign_cert = CString::new(certs).unwrap();
-        let private_key = CString::new(private_key).unwrap();
-        let signer_info = C2paSignerInfo {
-            alg: alg.as_ptr(),
-            sign_cert: sign_cert.as_ptr(),
-            private_key: private_key.as_ptr(),
-            ta_url: std::ptr::null(),
-        };
-        let signer = unsafe { c2pa_signer_from_info(&signer_info) };
 
-        assert!(!signer.is_null());
-        let manifest_def = CString::new("{}").unwrap();
-        let builder = unsafe { c2pa_builder_from_json(manifest_def.as_ptr()) };
-        assert!(!builder.is_null());
+        let (signer, builder) = setup_signer_and_builder_for_signing_tests();
+
         let format = CString::new("image/jpeg").unwrap();
         let mut manifest_bytes_ptr = std::ptr::null();
         let _ = unsafe {
@@ -1781,23 +1789,8 @@ mod tests {
         let mut source_stream = TestC2paStream::from_bytes(source_image.to_vec());
         let dest_vec = Vec::new();
         let mut dest_stream = TestC2paStream::new(dest_vec).into_c_stream();
-        let certs = include_str!(fixture_path!("certs/ed25519.pub"));
-        let private_key = include_bytes!(fixture_path!("certs/ed25519.pem"));
-        let alg = CString::new("Ed25519").unwrap();
-        let sign_cert = CString::new(certs).unwrap();
-        let private_key = CString::new(private_key).unwrap();
-        let signer_info = C2paSignerInfo {
-            alg: alg.as_ptr(),
-            sign_cert: sign_cert.as_ptr(),
-            private_key: private_key.as_ptr(),
-            ta_url: std::ptr::null(),
-        };
-        let signer = unsafe { c2pa_signer_from_info(&signer_info) };
 
-        assert!(!signer.is_null());
-        let manifest_def = CString::new("{}").unwrap();
-        let builder = unsafe { c2pa_builder_from_json(manifest_def.as_ptr()) };
-        assert!(!builder.is_null());
+        let (signer, builder) = setup_signer_and_builder_for_signing_tests();
 
         let action_json = CString::new(
             r#"{
@@ -1859,23 +1852,8 @@ mod tests {
         let mut source_stream = TestC2paStream::from_bytes(source_image.to_vec());
         let dest_vec = Vec::new();
         let mut dest_stream = TestC2paStream::new(dest_vec).into_c_stream();
-        let certs = include_str!(fixture_path!("certs/ed25519.pub"));
-        let private_key = include_bytes!(fixture_path!("certs/ed25519.pem"));
-        let alg = CString::new("Ed25519").unwrap();
-        let sign_cert = CString::new(certs).unwrap();
-        let private_key = CString::new(private_key).unwrap();
-        let signer_info = C2paSignerInfo {
-            alg: alg.as_ptr(),
-            sign_cert: sign_cert.as_ptr(),
-            private_key: private_key.as_ptr(),
-            ta_url: std::ptr::null(),
-        };
-        let signer = unsafe { c2pa_signer_from_info(&signer_info) };
 
-        assert!(!signer.is_null());
-        let manifest_def = CString::new("{}").unwrap();
-        let builder = unsafe { c2pa_builder_from_json(manifest_def.as_ptr()) };
-        assert!(!builder.is_null());
+        let (signer, builder) = setup_signer_and_builder_for_signing_tests();
 
         // Set the create intent with DigitalCapture source type
         let result = unsafe {
@@ -1934,24 +1912,7 @@ mod tests {
         let dest_vec = Vec::new();
         let mut dest_stream = TestC2paStream::new(dest_vec).into_c_stream();
 
-        let certs = include_str!(fixture_path!("certs/ed25519.pub"));
-        let private_key = include_bytes!(fixture_path!("certs/ed25519.pem"));
-        let alg = CString::new("Ed25519").unwrap();
-        let sign_cert = CString::new(certs).unwrap();
-        let private_key = CString::new(private_key).unwrap();
-        let signer_info = C2paSignerInfo {
-            alg: alg.as_ptr(),
-            sign_cert: sign_cert.as_ptr(),
-            private_key: private_key.as_ptr(),
-            ta_url: std::ptr::null(),
-        };
-        let signer = unsafe { c2pa_signer_from_info(&signer_info) };
-        assert!(!signer.is_null());
-
-        // Builder with edit intent
-        let manifest_def = CString::new("{}").unwrap();
-        let builder = unsafe { c2pa_builder_from_json(manifest_def.as_ptr()) };
-        assert!(!builder.is_null());
+        let (signer, builder) = setup_signer_and_builder_for_signing_tests();
 
         // SEdit intent will automatically extract parent ingredient from source
         let result = unsafe {
