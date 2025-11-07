@@ -4,6 +4,8 @@ You can configure SDK settings using a JSON file that controls many aspects of t
 
 This document describes the complete JSON schema and available options.
 
+NOTE: If you don't specify a value for a property, then the SDK will use the default value.  If you specify a value of `null`, then the property will be set to `null`, not the default.
+
 ## Overview
 
 The configuration JSON has the following top-level structure:
@@ -19,6 +21,14 @@ The configuration JSON has the following top-level structure:
   "signer": { ... },
   "cawg_x509_signer": { ... }
 }
+```
+
+### Specifying settings file
+
+To specify the settings file use [`Settings::from_string`](https://docs.rs/c2pa/latest/c2pa/settings/struct.Settings.html#method.from_string) and specify the format as `"json"`. For example:
+
+```rs
+Settings::from_string(include_str!("fixtures/test_settings.json"), "json")?;
 ```
 
 ## Complete default configuration
@@ -99,11 +109,12 @@ Here's the JSON with all default values:
 ## Property reference
 
 The top-level `version` property is a number specifying the settings format version. The only supported value currently is `1`.
+All other properties are optional.
 
-- All other properties are optional.
-- If you do not specify a value, the configuration will use the default value, if any.
-- Do not quote Boolean properties.
-- To remove a configuration value, set it to null.
+NOTE: Do not quote Boolean properties.
+
+- If you do not specify a value, the SDK will use the default value, if any.
+- If you specify a value of `null`, then the property will be set to `null`, not the default.
 
 ### builder
 
@@ -111,7 +122,7 @@ The `builder` object specifies settings for the Builder API.
 
 | Property | Type | Description | Default value |
 | --- | --- | --- | --- |
-| `builder.claim_generator_info` | Object | Default claim generator information | N/A |
+| `builder.claim_generator_info` | Object | Default claim generator information. Used if the `Builder` hasn't specified one. | N/A |
 | `builder.certificate_status_fetch` | String | Certificate status fetching scope | null |
 | `builder.certificate_status_should_override` | Boolean | Override OCSP with certificate status assertions | null |
 | `builder.intent` | object | Default builder intent. The value uses object notation and must be one of: `{"Create": "digitalCapture"}` <br/> `{"Create": "Edit"}` <br/> `{"Create": "Update"}`. | null |
@@ -134,6 +145,29 @@ The `builder` object specifies settings for the Builder API.
 | `builder.thumbnail.format` | String | Output format. One of: <br/>`"jpeg"` <br/> `"png"` <br/> `"webp"` <br/> `null` | null |
 | `builder.thumbnail.prefer_smallest_format` | Boolean | Use smallest format when possible | true |
 | `builder.thumbnail.quality` | String | Quality setting. One of: <br/>`"low"` <br/> `"medium"` <br/> `"high"` | `"medium"` |
+
+***claim_generator_info**
+
+The `builder.claim_generator_info` specifies the default claim generator information.  It's a JSON object as described in the table below. It can have additional custom properties as needed by an implementation.
+
+| Property | Type | Description | Default value |
+| --- | --- | --- | --- |
+| `name` | String	| A human readable string naming the claim_generator | N/A - Required |
+| `version`	| String	 | A human readable string of the product's version | Null |
+| `icon` | `UriOrResource` | Hashed URI to the icon (either embedded or remote) | Null |
+| `operating_system`	| String	 | Human readable string of the OS the claim generator is running on | Null |
+
+Only the `name` property is required. For example:
+
+```json
+"claim_generator_info": [
+  {
+    "name": "Adobe Content Authenticity",
+    "com.adobe.aca-version": "81c4a25",
+    "org.cai.c2pa_rs": "0.49.3"
+  }
+]
+```
 
 ### cawg_trust
 
@@ -187,7 +221,7 @@ The `core` object specifies core features and performance settings.
 
 | Property | Type | Description | Default value |
 | --- | --- | --- | --- |
-| `core.merkle_tree_chunk_size_in_kb` | Number | Chunk size for BMFF hash Merkle trees in KB | ? |
+| `core.merkle_tree_chunk_size_in_kb` | Number | Chunk size for BMFF hash Merkle trees in KB |  |
 | `core.merkle_tree_max_proofs` | Number | Maximum Merkle tree proofs when validating | 5 |
 | `core.backing_store_memory_threshold_in_mb` | Number | Memory threshold before using disk storage (MB) | 512 |
 | `core.decode_identity_assertions` | Boolean | Whether to decode CAWG identity assertions | true |
