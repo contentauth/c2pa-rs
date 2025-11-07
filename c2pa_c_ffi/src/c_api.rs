@@ -270,6 +270,34 @@ pub type SignerCallback = unsafe extern "C" fn(
     signed_len: usize,
 ) -> isize;
 
+/// Creates a signing callback closure from a C callback function.
+/// This helper function is shared between c2pa_signer_create and c2pa_signer_create_with_tsa_callback.
+fn create_signing_callback(
+    callback: SignerCallback,
+) -> impl Fn(*const (), &[u8]) -> Result<Vec<u8>, c2pa::Error> + Send + Sync + 'static {
+    move |context: *const (), data: &[u8]| {
+        // we need to guess at a max signed size, the callback must verify this is big enough or fail.
+        let signed_len_max = data.len() * 2;
+        let mut signed_bytes: Vec<u8> = vec![0; signed_len_max];
+        let signed_size = unsafe {
+            (callback)(
+                context,
+                data.as_ptr(),
+                data.len(),
+                signed_bytes.as_mut_ptr(),
+                signed_len_max,
+            )
+        };
+        if signed_size < 0 {
+            return Err(c2pa::Error::CoseSignature); // todo:: return errors from callback
+        }
+        unsafe {
+            signed_bytes.set_len(signed_size as usize);
+        }
+        Ok(signed_bytes)
+    }
+}
+
 // Internal routine to return a rust String reference to C as *mut c_char.
 // The returned value MUST be released by calling release_string
 // and it is no longer valid after that call.
@@ -1342,25 +1370,7 @@ pub unsafe extern "C" fn c2pa_signer_create(
     // Create a callback that uses the provided C callback function
     // The callback ignores its context parameter and will use
     // the context set on the CallbackSigner closure
-    let c_callback = move |context: *const (), data: &[u8]| {
-        // we need to guess at a max signed size, the callback must verify this is big enough or fail.
-        let signed_len_max = data.len() * 2;
-        let mut signed_bytes: Vec<u8> = vec![0; signed_len_max];
-        let signed_size = unsafe {
-            (callback)(
-                context,
-                data.as_ptr(),
-                data.len(),
-                signed_bytes.as_mut_ptr(),
-                signed_len_max,
-            )
-        };
-        if signed_size < 0 {
-            return Err(c2pa::Error::CoseSignature); // todo:: return errors from callback
-        }
-        signed_bytes.set_len(signed_size as usize);
-        Ok(signed_bytes)
-    };
+    let c_callback = create_signing_callback(callback);
 
     let mut signer = CallbackSigner::new(c_callback, alg.into(), certs).set_context(context);
     if let Some(tsa_url) = tsa_url.as_ref() {
@@ -1414,25 +1424,7 @@ pub unsafe extern "C" fn c2pa_signer_create_with_tsa_callback(
     // Create a callback for signing that uses the provided C callback function
     // The callback ignores its context parameter and will use
     // the context set on the CallbackSigner closure
-    let c_signing_callback = move |context: *const (), data: &[u8]| {
-        // we need to guess at a max signed size, the callback must verify this is big enough or fail.
-        let signed_len_max = data.len() * 2;
-        let mut signed_bytes: Vec<u8> = vec![0; signed_len_max];
-        let signed_size = unsafe {
-            (callback)(
-                context,
-                data.as_ptr(),
-                data.len(),
-                signed_bytes.as_mut_ptr(),
-                signed_len_max,
-            )
-        };
-        if signed_size < 0 {
-            return Err(c2pa::Error::CoseSignature); // todo:: return errors from callback
-        }
-        signed_bytes.set_len(signed_size as usize);
-        Ok(signed_bytes)
-    };
+    let c_signing_callback = create_signing_callback(callback);
 
     // Create a callback for timestamping that uses the provided C callback function
     // The callback ignores its context parameter and will use
