@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.71.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.70.0...c2pa-v0.71.0)
+_07 November 2025_
+
+### Fixed
+
+* Disallow ureq and reqwest_blocking for WASM and WASI ([#1579](https://github.com/contentauth/c2pa-rs/pull/1579))
+
 ## [0.70.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.69.0...c2pa-v0.70.0)
 _06 November 2025_
 
