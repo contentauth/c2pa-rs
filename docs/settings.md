@@ -161,13 +161,11 @@ The `builder.claim_generator_info` specifies the default claim generator informa
 Only the `name` property is required. For example:
 
 ```json
-"claim_generator_info": [
   {
     "name": "Adobe Content Authenticity",
     "com.adobe.aca-version": "81c4a25",
     "org.cai.c2pa_rs": "0.49.3"
   }
-]
 ```
 
 ### cawg_trust
