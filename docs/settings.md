@@ -270,7 +270,8 @@ The `verify` object specifies verification behavior.
 }
 ```
 
-### Local Signer configuration
+### Local signer configuration
+
 ```json
 {
   "version": 1,
@@ -288,7 +289,8 @@ The `verify` object specifies verification behavior.
 }
 ```
 
-### Remote Signer configuration
+### Remote signer configuration
+
 ```json
 {
   "version": 1,
@@ -303,7 +305,8 @@ The `verify` object specifies verification behavior.
 }
 ```
 
-### CAWG Dual Signer configuration
+### CAWG dual signer configuration
+
 ```json
 {
   "version": 1,
@@ -325,6 +328,7 @@ The `verify` object specifies verification behavior.
 ```
 
 ### Development configuration
+
 ```json
 {
   "version": 1,
@@ -341,6 +345,7 @@ The `verify` object specifies verification behavior.
 ```
 
 ### Production configuration
+
 ```json
 {
   "version": 1,
