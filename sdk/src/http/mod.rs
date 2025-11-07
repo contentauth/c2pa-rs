@@ -156,7 +156,7 @@ pub enum HttpResolverError {
 }
 
 #[cfg(all(
-    not(target_os = "wasi"),
+    not(target_arch = "wasm32"),
     feature = "http_reqwest_blocking",
     not(feature = "http_ureq")
 ))]
@@ -166,7 +166,7 @@ mod sync_resolver {
         reqwest::blocking::Client::new()
     }
 }
-#[cfg(all(not(target_os = "wasi"), feature = "http_ureq",))]
+#[cfg(all(not(target_arch = "wasm32"), feature = "http_ureq"))]
 mod sync_resolver {
     pub type Impl = ureq::Agent;
     pub fn new() -> Impl {
