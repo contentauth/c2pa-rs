@@ -352,7 +352,7 @@ mod integration_1 {
     /*
     This test is currently invalid.  It is using C2PA 2.2 assertions in 1.4 claims
     This needs to be rewritten in a way that does not require network calls, or mock
-    them correctly.
+    them correctly.  Tracking issue: https://github.com/contentauth/c2pa-rs/issues/1581
 
         #[test]
         #[cfg(feature = "file_io")]
