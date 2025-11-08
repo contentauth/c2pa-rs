@@ -1120,7 +1120,7 @@ impl Builder {
 
                     // Do this at the end of the preprocessing step to ensure all ingredient references
                     // are resolved to their hashed URIs.
-                    Self::add_actions_assertion_settings(&ingredient_map, &mut actions, settings)?;
+                    Self::add_actions_assertion_settings(&ingredient_map, &mut actions, settings, self.intent())?;
 
                     claim.add_assertion(&actions)
                 }
@@ -1167,7 +1167,7 @@ impl Builder {
 
         if !found_actions {
             let mut actions = Actions::new();
-            Self::add_actions_assertion_settings(&ingredient_map, &mut actions, settings)?;
+            Self::add_actions_assertion_settings(&ingredient_map, &mut actions, settings, self.intent())?;
 
             if !actions.actions().is_empty() {
                 // todo: add setting for created added actions
@@ -1190,6 +1190,7 @@ impl Builder {
         ingredient_map: &HashMap<String, (&Relationship, HashedUri)>,
         actions: &mut Actions,
         settings: &Settings,
+        intent: Option<BuilderIntent>,
     ) -> Result<()> {
         if actions.all_actions_included.is_none() {
             actions.all_actions_included = settings.builder.actions.all_actions_included;
@@ -1225,7 +1226,7 @@ impl Builder {
                 true => actions.actions = additional_actions,
             }
         }
-        Self::add_auto_actions_assertions_settings(ingredient_map, actions, settings)
+        Self::add_auto_actions_assertions_settings(ingredient_map, actions, settings, intent)
     }
 
     /// Adds c2pa.created, c2pa.opened, and c2pa.placed actions for the specified [Actions][crate::assertions::Actions]
@@ -1239,6 +1240,7 @@ impl Builder {
         ingredient_map: &HashMap<String, (&Relationship, HashedUri)>,
         actions: &mut Actions,
         settings: &Settings,
+        intent: Option<BuilderIntent>,
     ) -> Result<()> {
         // https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_mandatory_presence_of_at_least_one_actions_assertion
         let auto_created = settings.builder.actions.auto_created_action.enabled;
@@ -1265,8 +1267,12 @@ impl Builder {
                     }
                 }
                 (None, true, _) => {
-                    // The settings ensures this field always exists for the "c2pa.created" action.
-                    let source_type = &settings.builder.actions.auto_created_action.source_type;
+                    // If the intent is Create with a digital source type, use that.
+                    // Otherwise, fall back to the settings.
+                    let source_type = match &intent {
+                        Some(BuilderIntent::Create(dst)) => Some(dst),
+                        _ => settings.builder.actions.auto_created_action.source_type.as_ref(),
+                    };
 
                     match source_type {
                         Some(source_type) => {
