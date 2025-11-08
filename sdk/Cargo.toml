@@ -28,12 +28,14 @@ all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
 [features]
-default = ["openssl"]
+default = ["openssl", "default_http"]
 add_thumbnails = ["image"]
 file_io = []
 fetch_remote_manifests = ["dep:wasi"]
 json_schema = ["dep:schemars"]
-openssl = ["dep:openssl"]
+openssl = [
+    "dep:openssl",
+]
 pdf = ["dep:lopdf"]
 rust_native_crypto = [
     "dep:const-oid",
@@ -47,6 +49,20 @@ rust_native_crypto = [
     "dep:rsa",
     "dep:spki",
 ]
+# TODO: make our async tests always use the async API so we don't need ureq + reqwest
+#       see https://github.com/contentauth/c2pa-rs/issues/1364
+# Enables default http features for sync and async http resolvers.
+default_http = ["http_reqwest", "http_ureq", "http_wasi", "http_wstd"]
+# Enable `reqwest` sync http resolver, not supported on WASM/WASI.
+http_reqwest_blocking = ["dep:reqwest", "reqwest/blocking"]
+# Enable `ureq` sync http resolver, not supported on WASM/WASI.
+http_ureq = ["dep:ureq"]
+# Enable `wasi` sync http resolver, only supported on WASI.
+http_wasi = ["dep:wasi"]
+# Enable `wstd` async http resolver, only supported on WASI.
+http_wstd = ["dep:wstd"]
+# Enable `reqwest` async http resolver, not supported on WASI.
+http_reqwest = ["dep:reqwest"]
 
 # The diagnostics feature is unsupported and might be removed.
 # It enables some low-overhead timing features used in our development cycle.
@@ -84,7 +100,6 @@ crate-type = ["lib"]
 [dependencies]
 asn1-rs = "0.6.2"
 async-generic = "1.1"
-async-recursion = "1.1.1"
 async-trait = "0.1.78"
 atree = "0.5.2"
 base64 = "0.22.1"
@@ -118,6 +133,7 @@ ed25519-dalek = { version = "2.1.1", features = [
 env_logger = "0.10.0"
 hex = "0.4.3"
 hex-literal = "1.0.0" # Might be only a dev dependency
+http = "1.3.1"
 id3 = "=1.16.1"
 img-parts = "0.3.2"
 iref = { version = "3.2.2", features = ["serde"] }
@@ -165,7 +181,7 @@ sha1 = "0.10.6"
 spki = { version = "0.7.3", optional = true }
 static-iref = "3.0"
 tempfile = "=3.15.0"
-thiserror = "2.0.8"
+thiserror = "2.0.17"
 url = "2.5.3"
 uuid = { version = "1.18.0", features = ["serde", "v4"] }
 web-time = "1.1"
@@ -187,6 +203,28 @@ sha2 = "0.10.6"
 [target.'cfg(all(target_arch = "aarch64", target_os = "macos"))'.dependencies]
 sha2 = { version = "0.10.6", features = ["asm"] }
 
+[target.'cfg(not(target_os = "wasi"))'.dependencies]
+reqwest = { version = "0.12.23", default-features = false, features = [
+    # These are some of the defaults in `reqwest`.
+    "http2",
+    "system-proxy",
+    "rustls-tls"
+], optional = true }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+openssl = { version = "0.10.72", features = ["vendored"], optional = true }
+ureq = { version = "3.1.0", default-features = false, features = [
+    "rustls"
+], optional = true }
+
+[target.'cfg(target_os = "wasi")'.dependencies]
+wasi = { version = "0.14.3", optional = true }
+wstd = { version = "0.5.4", optional = true }
+
+# `wstd` is required for testing, but optional as a normal dependency.
+[target.'cfg(target_os = "wasi")'.dev-dependencies]
+wstd = "0.5.4"
+
 # This list matches the `rust_native_crypto` feature since they are not optional on WASM.
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 const-oid = "0.9.6"
@@ -207,12 +245,6 @@ spki = "0.7.3"
 [target.'cfg(target_env = "p2")'.dependencies]
 tempfile = { version = "3.15", features = ["nightly"] }
 
-[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-openssl = { version = "0.10.72", features = ["vendored"], optional = true }
-ureq = "3.0.12"
-http = "1.3.1"
-url = "2.5.3"
-
 [target.'cfg(any(target_os = "wasi", not(target_arch = "wasm32")))'.dependencies]
 image = { version = "0.25.6", default-features = false, features = [
     # TODO: eventually define feature flags for the asset handlers and match them
@@ -228,10 +260,6 @@ image = { version = "0.25.6", default-features = false, features = [
     # TODO: AVIF requires the dav1d crate which causes some complications compiling
     # "avif-native"
 ], optional = true }
-
-[target.'cfg(target_os = "wasi")'.dependencies]
-wasi = { version = "0.14", optional = true }
-wstd = "0.5"
 
 [target.'cfg(any(not(target_arch = "wasm32"), target_os = "wasi"))'.dependencies.chrono]
 version = "0.4.39"
@@ -261,11 +289,6 @@ web-sys = { version = "0.3.58", features = [
 
 [target.'cfg(target_os = "windows")'.dependencies]
 windows-core = "0.61.2" # Override yanked version used in chrono and other crates.
-
-[target.'cfg(not(target_os = "wasi"))'.dependencies]
-reqwest = { version = "0.12.8", default-features = false, features = [
-    "rustls-tls",
-] }
 
 [dev-dependencies]
 anyhow = "1.0.97"

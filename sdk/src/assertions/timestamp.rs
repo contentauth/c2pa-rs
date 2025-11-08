@@ -13,6 +13,7 @@
 
 use std::collections::HashMap;
 
+use async_generic::async_generic;
 use serde::{Deserialize, Serialize};
 use serde_bytes::ByteBuf;
 
@@ -20,6 +21,7 @@ use crate::{
     assertion::{Assertion, AssertionBase, AssertionCbor},
     assertions::labels,
     error::Result,
+    http::{AsyncGenericResolver, AsyncHttpResolver, SyncGenericResolver, SyncHttpResolver},
 };
 
 /// Helper class to create Timestamp assertions
@@ -48,8 +50,30 @@ impl TimeStamp {
         self.0.get(manifest_id).map(|buf| buf.as_ref())
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
+    #[async_generic]
     pub fn send_timestamp_token_request(tsa_url: &str, message: &[u8]) -> Result<Vec<u8>> {
+        if _sync {
+            Self::send_timestamp_token_request_impl(tsa_url, message, &SyncGenericResolver::new())
+        } else {
+            Self::send_timestamp_token_request_impl_async(
+                tsa_url,
+                message,
+                &AsyncGenericResolver::new(),
+            )
+            .await
+        }
+    }
+
+    #[async_generic(async_signature(
+        tsa_url: &str,
+        message: &[u8],
+        http_resolver: &impl AsyncHttpResolver,
+    ))]
+    pub(crate) fn send_timestamp_token_request_impl(
+        tsa_url: &str,
+        message: &[u8],
+        http_resolver: &impl SyncHttpResolver,
+    ) -> Result<Vec<u8>> {
         use crate::{
             crypto::cose::CertificateTrustPolicy, settings::Settings,
             status_tracker::StatusTracker, Error,
@@ -58,9 +82,25 @@ impl TimeStamp {
         let body = crate::crypto::time_stamp::default_rfc3161_message(message)?;
         let headers = None;
 
-        let bytes =
-            crate::crypto::time_stamp::default_rfc3161_request(tsa_url, headers, &body, message)
-                .map_err(|_e| Error::OtherError("timestamp token not found".into()))?;
+        let bytes = if _sync {
+            crate::crypto::time_stamp::default_rfc3161_request(
+                tsa_url,
+                headers,
+                &body,
+                message,
+                http_resolver,
+            )
+        } else {
+            crate::crypto::time_stamp::default_rfc3161_request_async(
+                tsa_url,
+                headers,
+                &body,
+                message,
+                http_resolver,
+            )
+            .await
+        }
+        .map_err(|_e| Error::OtherError("timestamp token not found".into()))?;
 
         // make sure it is a good response
         let ctp = CertificateTrustPolicy::passthrough();
@@ -71,13 +111,24 @@ impl TimeStamp {
         let mut settings = Settings::default();
         settings.verify.verify_timestamp_trust = false;
 
-        crate::crypto::time_stamp::verify_time_stamp(
-            &bytes,
-            message,
-            &ctp,
-            &mut tracker,
-            &settings,
-        )?;
+        if _sync {
+            crate::crypto::time_stamp::verify_time_stamp(
+                &bytes,
+                message,
+                &ctp,
+                &mut tracker,
+                &settings,
+            )?;
+        } else {
+            crate::crypto::time_stamp::verify_time_stamp_async(
+                &bytes,
+                message,
+                &ctp,
+                &mut tracker,
+                &settings,
+            )
+            .await?;
+        }
 
         let token = crate::crypto::cose::timestamptoken_from_timestamprsp(&bytes)
             .ok_or(Error::OtherError("timestamp token not found".into()))?;

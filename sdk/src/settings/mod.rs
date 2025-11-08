@@ -305,10 +305,7 @@ pub struct Verify {
     /// [`Ingredient`]: crate::Ingredient
     /// [`Builder`]: crate::Builder
     pub remote_manifest_fetch: bool,
-    /// Whether to verify ingredient certificates against the trust lists specific in [`Trust`].
     ///
-    /// The default value is true.
-    pub(crate) check_ingredient_trust: bool,
     /// Whether to skip ingredient conflict resolution when multiple ingredients have the same
     /// manifest identifier. This settings is only applicable for C2PA v2 validation.
     ///
@@ -332,7 +329,6 @@ impl Default for Verify {
             verify_timestamp_trust: !cfg!(test), // verify timestamp trust unless in test mode
             ocsp_fetch: false,
             remote_manifest_fetch: true,
-            check_ingredient_trust: true,
             skip_ingredient_conflict_resolution: false,
             strict_v1_validation: false,
         }
@@ -430,18 +426,6 @@ impl Settings {
     /// Set the [Settings] from a toml file.
     pub fn from_toml(toml: &str) -> Result<()> {
         Settings::from_string(toml, "toml").map(|_| ())
-    }
-
-    /// Set the [Settings] from a url to a toml file.
-    #[cfg(not(target_arch = "wasm32"))]
-    pub fn from_url(url: &str) -> Result<()> {
-        let toml = ureq::get(url)
-            .call()
-            .map_err(|_| Error::FailedToFetchSettings)?
-            .into_body()
-            .read_to_string()
-            .map_err(|_| Error::FailedToFetchSettings)?;
-        Settings::from_toml(&toml)
     }
 
     /// Set a [Settings] value by path reference. The path is nested names of of the Settings objects
@@ -867,7 +851,6 @@ pub mod tests {
             verify_trust = true
             ocsp_fetch = false
             remote_manifest_fetch = true
-            check_ingredient_trust = true
             skip_ingredient_conflict_resolution = false
             strict_v1_validation = false
         }
