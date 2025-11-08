@@ -1120,7 +1120,12 @@ impl Builder {
 
                     // Do this at the end of the preprocessing step to ensure all ingredient references
                     // are resolved to their hashed URIs.
-                    Self::add_actions_assertion_settings(&ingredient_map, &mut actions, settings, self.intent())?;
+                    Self::add_actions_assertion_settings(
+                        &ingredient_map,
+                        &mut actions,
+                        settings,
+                        self.intent(),
+                    )?;
 
                     claim.add_assertion(&actions)
                 }
@@ -1167,7 +1172,12 @@ impl Builder {
 
         if !found_actions {
             let mut actions = Actions::new();
-            Self::add_actions_assertion_settings(&ingredient_map, &mut actions, settings, self.intent())?;
+            Self::add_actions_assertion_settings(
+                &ingredient_map,
+                &mut actions,
+                settings,
+                self.intent(),
+            )?;
 
             if !actions.actions().is_empty() {
                 // todo: add setting for created added actions
@@ -1272,7 +1282,12 @@ impl Builder {
                     // Otherwise, fall back to the settings.
                     let source_type = match &intent {
                         Some(BuilderIntent::Create(dst)) => Some(dst),
-                        _ => settings.builder.actions.auto_created_action.source_type.as_ref(),
+                        _ => settings
+                            .builder
+                            .actions
+                            .auto_created_action
+                            .source_type
+                            .as_ref(),
                     };
 
                     match source_type {

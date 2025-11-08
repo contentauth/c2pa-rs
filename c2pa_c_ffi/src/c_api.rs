@@ -1896,6 +1896,11 @@ mod tests {
         // Verify the digital source type was used
         assert!(json_content.contains("digitalSourceType"));
         assert!(json_content.contains("digitalCreation"));
+        // Verify there is only one c2pa.created action
+        assert_eq!(
+            json_content.matches("\"action\": \"c2pa.created\"").count(),
+            1
+        );
 
         TestC2paStream::drop_c_stream(source_stream);
         TestC2paStream::drop_c_stream(read_stream);
