@@ -1891,7 +1891,6 @@ mod tests {
 
         let json_str = unsafe { CString::from_raw(json) };
         let json_content = json_str.to_str().unwrap();
-        println!("json: {:?}", json_content);
 
         assert!(json_content.contains("c2pa.created"));
         // Verify the digital source type was used
@@ -1953,7 +1952,6 @@ mod tests {
 
         let json_str = unsafe { CString::from_raw(json) };
         let json_content = json_str.to_str().unwrap();
-        println!("json: {:?}", json_content);
 
         assert!(json_content.contains("c2pa.created"));
         // Verify the digital source type we picked was used
@@ -2015,8 +2013,6 @@ mod tests {
         assert!(!json.is_null());
         let json_str = unsafe { CString::from_raw(json) };
         let json_content = json_str.to_str().unwrap();
-
-        println!("json: {:?}", json_content);
 
         assert!(json_content.contains("c2pa.opened"));
         // Verify the digital source type parameter was ignored for Edit intent
@@ -2185,7 +2181,6 @@ mod tests {
         let json = unsafe { c2pa_reader_json(reader) };
         assert!(!json.is_null());
         let json_str = unsafe { CString::from_raw(json) };
-        println!("json: {}", json_str.to_str().unwrap());
         assert!(json_str.to_str().unwrap().contains("Silly Cats 929"));
         assert!(json_str
             .to_str()
