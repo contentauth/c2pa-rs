@@ -1267,7 +1267,8 @@ impl Builder {
                     }
                 }
                 (None, true, _) => {
-                    // If the intent is Create with a digital source type, use that.
+                    // The settings ensures this field always exists for the "c2pa.created" action.
+                    // If the intent was set to Create with a digital source type, use that.
                     // Otherwise, fall back to the settings.
                     let source_type = match &intent {
                         Some(BuilderIntent::Create(dst)) => Some(dst),
