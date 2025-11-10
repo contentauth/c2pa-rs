@@ -146,7 +146,7 @@ fn test_builder_cyclic_ingredient() -> Result<()> {
     let mut cyclic_ingredient = Cursor::new(bytes);
     assert!(matches!(
         Reader::from_stream(format, &mut cyclic_ingredient),
-        Err(Error::CyclicIngredients { .. })
+        Err(Error::HashMismatch(..))
     ));
 
     cyclic_ingredient.rewind()?;

@@ -4040,14 +4040,6 @@ impl Store {
     ) -> Result<()> {
         let claim_label = claim.label();
 
-        if claim_label_path.contains(&claim_label) {
-            return Err(Error::CyclicIngredients {
-                claim_label_path: claim_label_path
-                    .iter()
-                    .map(|&label| label.to_owned())
-                    .collect(),
-            });
-        }
         // REVIEW-NOTE: added this so we don't compute the same ingredients more than once.
         if svi.manifest_map.contains_key(claim_label) {
             return Ok(());
@@ -4077,6 +4069,24 @@ impl Store {
             let ingredient_label = Store::manifest_label_from_path(&c2pa_manifest.url());
 
             if let Some(ingredient) = store.get_claim(&ingredient_label) {
+                if claim_label_path.contains(&ingredient.label()) {
+                    log_item!(
+                        jumbf::labels::to_assertion_uri(claim_label, &i.label()),
+                        "ingredient cannot be cyclic",
+                        "ingredient_checks"
+                    )
+                    .validation_status(validation_status::ASSERTION_INGREDIENT_MALFORMED)
+                    .failure(
+                        validation_log,
+                        Error::CyclicIngredients {
+                            claim_label_path: claim_label_path
+                                .iter()
+                                .map(|&label| label.to_owned())
+                                .collect(),
+                        },
+                    )?;
+                }
+
                 // build mapping of ingredients and those claims that reference it
                 svi.ingredient_references
                     .entry(ingredient_label.clone())
