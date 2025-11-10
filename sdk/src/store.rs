@@ -4020,24 +4020,6 @@ impl Store {
         recurse: bool,
         validation_log: &mut StatusTracker,
     ) -> Result<()> {
-        Store::get_claim_referenced_manifests_impl(
-            claim,
-            store,
-            svi,
-            recurse,
-            validation_log,
-            &mut HashSet::new(),
-        )
-    }
-
-    fn get_claim_referenced_manifests_impl<'a>(
-        claim: &'a Claim,
-        store: &'a Store,
-        svi: &mut StoreValidationInfo<'a>,
-        recurse: bool,
-        validation_log: &mut StatusTracker,
-        seen: &mut HashSet<&'a str>,
-    ) -> Result<()> {
         // add in current redactions
         if let Some(c_redactions) = claim.redactions() {
             svi.redactions
@@ -4062,25 +4044,24 @@ impl Store {
             let ingredient_label = Store::manifest_label_from_path(&c2pa_manifest.url());
 
             if let Some(ingredient) = store.get_claim(&ingredient_label) {
-                // build mapping of ingredients and those claims that reference it
-                svi.ingredient_references
-                    .entry(ingredient_label)
-                    .or_insert(HashSet::from_iter(vec![claim_label.clone()].into_iter()))
-                    .insert(claim_label.clone());
+                // REVIEW-NOTE: this should be a small optimization, do we still want this?
+                if !svi.ingredient_references.contains_key(&ingredient_label) {
+                    // build mapping of ingredients and those claims that reference it
+                    svi.ingredient_references
+                        .entry(ingredient_label.clone())
+                        .or_insert(HashSet::from_iter(vec![claim_label.clone()].into_iter()))
+                        .insert(claim_label.clone());
 
-                // recurse nested ingredients
-                // REVIEW-NOTE: add an error to the validation log if seen already?
-                if recurse && !seen.contains(ingredient.label()) {
-                    seen.insert(ingredient.label());
-
-                    Store::get_claim_referenced_manifests_impl(
-                        ingredient,
-                        store,
-                        svi,
-                        recurse,
-                        validation_log,
-                        seen,
-                    )?;
+                    // recurse nested ingredients
+                    if recurse {
+                        Store::get_claim_referenced_manifests(
+                            ingredient,
+                            store,
+                            svi,
+                            recurse,
+                            validation_log,
+                        )?;
+                    }
                 }
             } else {
                 log_item!(

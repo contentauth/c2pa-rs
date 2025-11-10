@@ -934,7 +934,7 @@ impl Reader {
             // Add ingredients to stack for processing
             for ingredient in manifest.ingredients().iter() {
                 if let Some(label) = ingredient.active_manifest() {
-                    // REVIEW-NOTE: should we error if there's a cyclic ingredient?
+                    // REVIEW-NOTE: if we already saw this manifest, do we need to compute it again here?
                     if !seen.contains(label) {
                         let ingredient_uri = crate::jumbf::labels::to_assertion_uri(
                             &current_label,
