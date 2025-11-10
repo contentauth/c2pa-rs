@@ -1120,12 +1120,7 @@ impl Builder {
 
                     // Do this at the end of the preprocessing step to ensure all ingredient references
                     // are resolved to their hashed URIs.
-                    Self::add_actions_assertion_settings(
-                        &ingredient_map,
-                        &mut actions,
-                        settings,
-                        self.intent(),
-                    )?;
+                    self.add_actions_assertion_settings(&ingredient_map, &mut actions)?;
 
                     claim.add_assertion(&actions)
                 }
@@ -1172,12 +1167,7 @@ impl Builder {
 
         if !found_actions {
             let mut actions = Actions::new();
-            Self::add_actions_assertion_settings(
-                &ingredient_map,
-                &mut actions,
-                settings,
-                self.intent(),
-            )?;
+            self.add_actions_assertion_settings(&ingredient_map, &mut actions)?;
 
             if !actions.actions().is_empty() {
                 // todo: add setting for created added actions
@@ -1197,16 +1187,15 @@ impl Builder {
     /// * `builder.actions.actions`
     /// * For more, see [Builder::add_auto_actions_assertions]
     fn add_actions_assertion_settings(
+        &self,
         ingredient_map: &HashMap<String, (&Relationship, HashedUri)>,
         actions: &mut Actions,
-        settings: &Settings,
-        intent: Option<BuilderIntent>,
     ) -> Result<()> {
         if actions.all_actions_included.is_none() {
-            actions.all_actions_included = settings.builder.actions.all_actions_included;
+            actions.all_actions_included = self.settings.builder.actions.all_actions_included;
         }
 
-        let action_templates = &settings.builder.actions.templates;
+        let action_templates = &self.settings.builder.actions.templates;
 
         if let Some(action_templates) = action_templates {
             let action_templates = action_templates
@@ -1221,7 +1210,7 @@ impl Builder {
             }
         }
 
-        let additional_actions = &settings.builder.actions.actions;
+        let additional_actions = &self.settings.builder.actions.actions;
 
         if let Some(additional_actions) = additional_actions {
             let additional_actions = additional_actions
@@ -1236,25 +1225,24 @@ impl Builder {
                 true => actions.actions = additional_actions,
             }
         }
-        Self::add_auto_actions_assertions_settings(ingredient_map, actions, settings, intent)
+        self.add_auto_actions_assertions_settings(ingredient_map, actions)
     }
 
     /// Adds c2pa.created, c2pa.opened, and c2pa.placed actions for the specified [Actions][crate::assertions::Actions]
-    /// assertion if the condiitons are applicable as defined in the spec.
+    /// assertion if the conditons are applicable as defined in the spec.
     ///
     /// This function takes into account the [Settings][crate::Settings]:
     /// * `builder.actions.auto_created_action`
     /// * `builder.actions.auto_opened_action`
     /// * `builder.actions.auto_placed_action`
     fn add_auto_actions_assertions_settings(
+        &self,
         ingredient_map: &HashMap<String, (&Relationship, HashedUri)>,
         actions: &mut Actions,
-        settings: &Settings,
-        intent: Option<BuilderIntent>,
     ) -> Result<()> {
         // https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_mandatory_presence_of_at_least_one_actions_assertion
-        let auto_created = settings.builder.actions.auto_created_action.enabled;
-        let auto_opened = settings.builder.actions.auto_opened_action.enabled;
+        let auto_created = self.settings.builder.actions.auto_created_action.enabled;
+        let auto_opened = self.settings.builder.actions.auto_opened_action.enabled;
 
         if auto_created || auto_opened {
             // look for a parentOf relationship ingredient in the ingredient map and return a copy of the hashed URI if found.
@@ -1270,7 +1258,7 @@ impl Builder {
                     let action =
                         action.set_parameter("ingredients", vec![parent_ingredient_uri])?;
 
-                    let source_type = &settings.builder.actions.auto_opened_action.source_type;
+                    let source_type = &self.settings.builder.actions.auto_opened_action.source_type;
                     match source_type {
                         Some(source_type) => Some(action.set_source_type(source_type.clone())),
                         _ => Some(action),
@@ -1280,9 +1268,10 @@ impl Builder {
                     // The settings ensures this field always exists for the "c2pa.created" action.
                     // If the intent was set to Create with a digital source type, use that.
                     // Otherwise, fall back to the settings.
-                    let source_type = match &intent {
+                    let source_type = match &self.intent {
                         Some(BuilderIntent::Create(dst)) => Some(dst),
-                        _ => settings
+                        _ => self
+                            .settings
                             .builder
                             .actions
                             .auto_created_action
@@ -1320,7 +1309,7 @@ impl Builder {
         }
 
         // https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_relationship
-        let auto_placed = settings.builder.actions.auto_placed_action.enabled;
+        let auto_placed = self.settings.builder.actions.auto_placed_action.enabled;
         if auto_placed {
             // Get a list of ingredient URIs referenced by "c2pa.placed" actions.
             let mut referenced_uris = HashSet::new();
@@ -1345,7 +1334,8 @@ impl Builder {
 
                     let action = action.set_parameter("ingredients", vec![uri])?;
 
-                    let action = match settings.builder.actions.auto_placed_action.source_type {
+                    let action = match self.settings.builder.actions.auto_placed_action.source_type
+                    {
                         Some(ref source_type) => action.set_source_type(source_type.clone()),
                         _ => action,
                     };
