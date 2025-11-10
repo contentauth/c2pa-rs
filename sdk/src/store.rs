@@ -4070,13 +4070,13 @@ impl Store {
 
             if let Some(ingredient) = store.get_claim(&ingredient_label) {
                 if claim_label_path.contains(&ingredient.label()) {
-                    log_item!(
+                    return Err(log_item!(
                         jumbf::labels::to_assertion_uri(claim_label, &i.label()),
                         "ingredient cannot be cyclic",
                         "ingredient_checks"
                     )
                     .validation_status(validation_status::ASSERTION_INGREDIENT_MALFORMED)
-                    .failure(
+                    .failure_as_err(
                         validation_log,
                         Error::CyclicIngredients {
                             claim_label_path: claim_label_path
@@ -4084,7 +4084,7 @@ impl Store {
                                 .map(|&label| label.to_owned())
                                 .collect(),
                         },
-                    )?;
+                    ));
                 }
 
                 // build mapping of ingredients and those claims that reference it
