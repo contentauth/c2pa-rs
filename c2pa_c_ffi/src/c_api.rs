@@ -389,6 +389,13 @@ pub unsafe extern "C" fn c2pa_version() -> *mut c_char {
 #[no_mangle]
 pub unsafe extern "C" fn c2pa_init_file_logging(log_file: *const c_char) -> c_int {
     let log_file = from_cstr_or_return_int!(log_file);
+    
+    // Attempt to open the log file, return -1 if it fails (e.g., parent directory doesn't exist)
+    let log_file_handle = match fern::log_file(log_file) {
+        Ok(handle) => handle,
+        Err(_) => return -1,
+    };
+    
     let result = Dispatch::new()
         .format(|out, message, record| {
             out.finish(format_args!(
@@ -401,7 +408,7 @@ pub unsafe extern "C" fn c2pa_init_file_logging(log_file: *const c_char) -> c_in
         .level(log::LevelFilter::Info)
         .chain(std::io::stdout())
         // Log to a file
-        .chain(fern::log_file(log_file).unwrap())
+        .chain(log_file_handle)
         .apply();
 
     if result.is_ok() {
