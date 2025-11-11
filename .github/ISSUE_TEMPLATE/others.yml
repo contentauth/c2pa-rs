@@ -10,4 +10,3 @@ body:
       placeholder: Describe your inquiry, question, or feedback here.
     validations:
       required: true
-
