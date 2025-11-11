@@ -10,3 +10,4 @@ body:
       placeholder: Describe the bug here.
     validations:
       required: true
+    
