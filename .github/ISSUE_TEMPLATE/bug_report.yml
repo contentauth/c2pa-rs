@@ -46,7 +46,7 @@ body:
     id: what-happened
     attributes:
       label: What happened?
-      description: Describe what went wrong.
+      description: Describe what went wrong. Please attach example files if possible.
       placeholder: Describe the actual behavior you observed.
     validations:
       required: true
