@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.71.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.70.0...c2pa-c-ffi-v0.71.0)
+_07 November 2025_
+
+### Added
+
+* Builder setIntent API exposed in C2PA C FFI ([#1574](https://github.com/contentauth/c2pa-rs/pull/1574))
+
+## [0.70.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.69.0...c2pa-c-ffi-v0.70.0)
+_06 November 2025_
+
+### Added
+
+* Sync/async HTTP resolvers API ([#1355](https://github.com/contentauth/c2pa-rs/pull/1355))
+
+### Updated dependencies
+
+* Bump thiserror from 1.0.69 to 2.0.17 ([#1562](https://github.com/contentauth/c2pa-rs/pull/1562))
+
+## [0.69.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.68.0...c2pa-c-ffi-v0.69.0)
+_04 November 2025_
+
+### Added
+
+* Adds support and documentation for JSON formatted Settings ([#1533](https://github.com/contentauth/c2pa-rs/pull/1533))
+* Allow reading a manifest store as a Builder to continue editing ([#1476](https://github.com/contentauth/c2pa-rs/pull/1476))
+
+### Other
+
+* Revert "chore: release ([#1535](https://github.com/contentauth/c2pa-rs/pull/1535))"
+
 ## [0.68.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.67.1...c2pa-c-ffi-v0.68.0)
 _24 October 2025_
 
