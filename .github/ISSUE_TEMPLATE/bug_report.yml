@@ -8,12 +8,18 @@ body:
       label: Component
       description: Which tool or component are you having problems with?
       options:
-        - c2pa-rs (Rust SDK)
-        - c2patool (CLI tool)
-        - c2pa-c (C bindings)
+        - c2pa-rs
+        - c2patool
+        - c2pa-c
         - Other
     validations:
       required: true
+  - type: input
+    id: component-other
+    attributes:
+      label: If Other, please specify
+      description: Which component are you using?
+      placeholder: e.g., Python bindings, Java SDK, etc.
   - type: input
     id: version
     attributes:
