@@ -189,6 +189,11 @@ x509-certificate = "0.24.0"
 x509-parser = "0.16.0"
 zeroize = { version = "1.8", features = ["zeroize_derive"] }
 zip = { version = "6.0.0", default-features = false }
+image = { version = "0.25.6", default-features = false, features = [
+    "png",
+    "jpeg",
+], optional = true }
+
 
 # Use the asm feature of sha2 on aarch64 macOS for better performance. This nearly
 # halves hashing time for large assets (> 50gb mp4, for example).
@@ -244,22 +249,6 @@ spki = "0.7.3"
 
 [target.'cfg(target_env = "p2")'.dependencies]
 tempfile = { version = "3.15", features = ["nightly"] }
-
-[target.'cfg(any(target_os = "wasi", not(target_arch = "wasm32")))'.dependencies]
-image = { version = "0.25.6", default-features = false, features = [
-    # TODO: eventually define feature flags for the asset handlers and match them
-    #       up here.
-    "png",
-    "jpeg",
-    "gif",
-    "webp",
-    "tiff",
-    # "bmp",
-    # "ico",
-    # "avif",
-    # TODO: AVIF requires the dav1d crate which causes some complications compiling
-    # "avif-native"
-], optional = true }
 
 [target.'cfg(any(not(target_arch = "wasm32"), target_os = "wasi"))'.dependencies.chrono]
 version = "0.4.39"

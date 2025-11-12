@@ -42,13 +42,8 @@ pub enum ThumbnailFormat {
     Png,
     /// An image in JPEG format.
     Jpeg,
-    /// An image in GIF format.
-    Gif,
-    /// An image in WEBP format.
-    WebP,
-    /// An image in TIFF format.
-    Tiff,
 }
+
 /// Quality of the thumbnail.
 #[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]

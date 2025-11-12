@@ -43,31 +43,11 @@ impl ThumbnailFormat {
     }
 }
 
-impl TryFrom<ImageFormat> for ThumbnailFormat {
-    type Error = Error;
-
-    fn try_from(format: ImageFormat) -> Result<Self> {
-        match format {
-            ImageFormat::Png => Ok(ThumbnailFormat::Png),
-            ImageFormat::Jpeg => Ok(ThumbnailFormat::Jpeg),
-            ImageFormat::Gif => Ok(ThumbnailFormat::Gif),
-            ImageFormat::WebP => Ok(ThumbnailFormat::WebP),
-            ImageFormat::Tiff => Ok(ThumbnailFormat::Tiff),
-            _ => Err(Error::UnsupportedThumbnailFormat(
-                format.to_mime_type().to_owned(),
-            )),
-        }
-    }
-}
-
 impl From<ThumbnailFormat> for ImageFormat {
     fn from(format: ThumbnailFormat) -> Self {
         match format {
             ThumbnailFormat::Png => ImageFormat::Png,
             ThumbnailFormat::Jpeg => ImageFormat::Jpeg,
-            ThumbnailFormat::Gif => ImageFormat::Gif,
-            ThumbnailFormat::WebP => ImageFormat::WebP,
-            ThumbnailFormat::Tiff => ImageFormat::Tiff,
         }
     }
 }
@@ -77,9 +57,6 @@ impl From<ThumbnailFormat> for config::ValueKind {
         let variant = match value {
             ThumbnailFormat::Png => "png",
             ThumbnailFormat::Jpeg => "jpeg",
-            ThumbnailFormat::Gif => "gif",
-            ThumbnailFormat::WebP => "webp",
-            ThumbnailFormat::Tiff => "tiff",
         };
         config::ValueKind::String(variant.to_owned())
     }
