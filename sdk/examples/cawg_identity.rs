@@ -25,25 +25,21 @@ mod cawg {
     use std::path::Path;
 
     use anyhow::Result;
-    use c2pa::{
-        crypto::raw_signature,
-        identity::{
-            builder::{AsyncIdentityAssertionBuilder, AsyncIdentityAssertionSigner},
-            x509::AsyncX509CredentialHolder,
-        },
-        AsyncSigner, Builder, Reader, SigningAlg,
-    };
     use serde_json::json;
 
-    const CERTS: &[u8] = include_bytes!("../../sdk/tests/fixtures/certs/es256.pub");
-    const PRIVATE_KEY: &[u8] = include_bytes!("../../sdk/tests/fixtures/certs/es256.pem");
+    use c2pa::{
+        Builder, DigitalSourceType, Reader, settings::Settings,
+    };
 
-    const CAWG_CERTS: &[u8] = include_bytes!("../../sdk/tests/fixtures/certs/ed25519.pub");
-    const CAWG_PRIVATE_KEY: &[u8] = include_bytes!("../../sdk/tests/fixtures/certs/ed25519.pem");
+
+    // const CERTS: &[u8] = include_bytes!("../../sdk/tests/fixtures/certs/es256.pub");
+    // const PRIVATE_KEY: &[u8] = include_bytes!("../../sdk/tests/fixtures/certs/es256.pem");
+
+    // const CAWG_CERTS: &[u8] = include_bytes!("../../sdk/tests/fixtures/certs/ed25519.pub");
+    // const CAWG_PRIVATE_KEY: &[u8] = include_bytes!("../../sdk/tests/fixtures/certs/ed25519.pem");
 
     fn manifest_def() -> String {
         json!({
-            "claim_version": 2,
             "claim_generator_info": [
                 {
                     "name": "c2pa cawg test",
@@ -52,27 +48,16 @@ mod cawg {
             ],
             "assertions": [
                 {
-                    "label": "c2pa.actions",
-                    "data": {
-                        "actions": [
-                            {
-                                "action": "c2pa.created",
-                                "digitalSourceType": " http://cv.iptc.org/newscodes/digitalsourcetype/digitalCapture"
-                            }
-                        ]
-                    }
-                },
-                {
                     "label": "cawg.training-mining",
                     "data": {
                     "entries": {
-                        "cawg.ai_inference": {
-                        "use": "notAllowed"
-                        },
-                        "cawg.ai_generative_training": {
-                        "use": "notAllowed"
+                            "cawg.ai_inference": {
+                            "use": "notAllowed"
+                            },
+                            "cawg.ai_generative_training": {
+                            "use": "notAllowed"
+                            }
                         }
-                    }
                     }
                 }
             ]
@@ -80,31 +65,31 @@ mod cawg {
         .to_string()
     }
 
-    /// Creates a CAWG signer from a certificate chains and private keys.
-    fn async_cawg_signer(referenced_assertions: &[&str]) -> Result<impl AsyncSigner> {
-        let c2pa_raw_signer = raw_signature::async_signer_from_cert_chain_and_private_key(
-            CERTS,
-            PRIVATE_KEY,
-            SigningAlg::Es256,
-            Some("http://timestamp.digicert.com".to_string()),
-        )?;
+    // /// Creates a CAWG signer from a certificate chains and private keys.
+    // fn async_cawg_signer(referenced_assertions: &[&str]) -> Result<impl AsyncSigner> {
+    //     let c2pa_raw_signer = raw_signature::async_signer_from_cert_chain_and_private_key(
+    //         CERTS,
+    //         PRIVATE_KEY,
+    //         SigningAlg::Es256,
+    //         Some("http://timestamp.digicert.com".to_string()),
+    //     )?;
 
-        let cawg_raw_signer = raw_signature::async_signer_from_cert_chain_and_private_key(
-            CAWG_CERTS,
-            CAWG_PRIVATE_KEY,
-            SigningAlg::Ed25519,
-            None,
-        )?;
+    //     let cawg_raw_signer = raw_signature::async_signer_from_cert_chain_and_private_key(
+    //         CAWG_CERTS,
+    //         CAWG_PRIVATE_KEY,
+    //         SigningAlg::Ed25519,
+    //         None,
+    //     )?;
 
-        let mut ia_signer = AsyncIdentityAssertionSigner::new(c2pa_raw_signer);
+    //     let mut ia_signer = AsyncIdentityAssertionSigner::new(c2pa_raw_signer);
 
-        let x509_holder = AsyncX509CredentialHolder::from_async_raw_signer(cawg_raw_signer);
-        let mut iab = AsyncIdentityAssertionBuilder::for_credential_holder(x509_holder);
-        iab.add_referenced_assertions(referenced_assertions);
+    //     let x509_holder = AsyncX509CredentialHolder::from_async_raw_signer(cawg_raw_signer);
+    //     let mut iab = AsyncIdentityAssertionBuilder::for_credential_holder(x509_holder);
+    //     iab.add_referenced_assertions(referenced_assertions);
 
-        ia_signer.add_identity_assertion(iab);
-        Ok(ia_signer)
-    }
+    //     ia_signer.add_identity_assertion(iab);
+    //     Ok(ia_signer)
+    // }
 
     pub async fn run<S: AsRef<Path>, D: AsRef<Path>>(source: S, dest: D) -> Result<()> {
         let source = source.as_ref();
@@ -115,14 +100,20 @@ mod cawg {
             std::fs::remove_file(dest)?;
         }
 
+        Settings::from_toml(include_str!(
+            "../tests/fixtures/test_settings_with_cawg_signing.toml"
+        ))?;
+
+
         let mut builder = Builder::from_json(&manifest_def())?;
-        builder.definition.claim_version = Some(2); // CAWG should only be used on v2 claims
+        builder.set_intent(c2pa::BuilderIntent::Create(DigitalSourceType::DigitalCapture));
 
         // This example will generate a CAWG manifest referencing the training-mining
         // assertion.
-        let signer = async_cawg_signer(&["cawg.training-mining"])?;
+        //let signer = async_cawg_signer(&["cawg.training-mining"])?;
+        let signer = Settings::signer()?;
 
-        builder.sign_file_async(&signer, source, &dest).await?;
+        builder.sign_file(&signer, source, &dest)? ;
 
         let reader = Reader::from_file_async(dest).await?;
         println!("{reader}");
@@ -147,3 +138,4 @@ async fn main() -> anyhow::Result<()> {
     let dest: std::path::PathBuf = std::path::PathBuf::from(&args[2]);
     cawg::run(source, dest).await
 }
+

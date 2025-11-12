@@ -131,25 +131,27 @@ struct CliArgs {
     #[clap(long)]
     signer_path: Option<PathBuf>,
 
-    /// To be used with the [callback_signer] argument. This value should at least: size of CoseSign1 CBOR +
-    /// the size of certificate chain provided in the manifest definition's `sign_cert` field + the size of the
-    /// signature of the Time Stamp Authority response. A typical size of CoseSign1 CBOR is in the 1-2K range. If
-    /// the reserve size is too small an error will be returned during signing.
-    /// For example:
-    ///
-    /// The reserve-size can be calculated like this if you aren't including a `tsa_url` key in
-    /// your manifest description:
-    ///
-    ///     1024 + sign_cert.len()
-    ///
-    /// Or, if you are including a `tsa_url` in your manifest definition, you will calculate the
-    /// reserve size like this:
-    ///
-    ///     1024 + sign_cert.len() + tsa_signature_response.len()
-    ///
-    /// Note:
-    /// We'll default the `reserve-size` to a value of 20_000, if no value is provided. This
-    /// will probably leave extra `0`s of unused space. Please specify a reserve-size if possible.
+    /// To be used with the [callback_signer] argument.
+    //
+    //  This value should at least: size of CoseSign1 CBOR +
+    // the size of certificate chain provided in the manifest definition's `sign_cert` field + the size of the
+    // signature of the Time Stamp Authority response. A typical size of CoseSign1 CBOR is in the 1-2K range. If
+    // the reserve size is too small an error will be returned during signing.
+    // For example:
+    //
+    // The reserve-size can be calculated like this if you aren't including a `tsa_url` key in
+    // your manifest description:
+    //
+    //     1024 + sign_cert.len()
+    //
+    // Or, if you are including a `tsa_url` in your manifest definition, you will calculate the
+    // reserve size like this:
+    //
+    //    1024 + sign_cert.len() + tsa_signature_response.len()
+    //
+    // Note:
+    // We'll default the `reserve-size` to a value of 20_000, if no value is provided. This
+    // will probably leave extra `0`s of unused space. Please specify a reserve-size if possible.
     #[clap(long, default_value("20000"))]
     reserve_size: usize,
 
@@ -396,7 +398,13 @@ fn blocking_get(url: &str) -> Result<String> {
 fn configure_sdk(args: &CliArgs) -> Result<()> {
     if args.settings.exists() {
         let settings = fs::read_to_string(&args.settings)?;
-        Settings::from_toml(&settings)?
+        // get extension from path
+        let ext = args
+            .settings
+            .extension()
+            .and_then(|s| s.to_str())
+            .unwrap_or("");
+        Settings::from_string(&settings, ext)?;
     }
 
     let mut enable_trust_checks = false;
