@@ -413,6 +413,7 @@ tsa_url = "http://timestamp.digicert.com"
 # certificate_status_fetch = "all"
 # certificate_status_should_override = true
 generate_c2pa_archive = true
+intent = "edit"
 
 # Claim generator info list.
 [builder.claim_generator_info]
@@ -471,37 +472,36 @@ operating_system = "auto"
 #
 # This is a convenience setting and it can be disabled if the information
 # is provided manually.
-[builder.actions.auto_created_action]
+#[builder.actions.auto_created_action]
 # Whether to auto create the c2pa.created action.
-enabled = true
+#enabled = true
 # The source type field is required for the c2pa.created action.
 #
 # For more information, see `c2pa::assertions::actions::source_type`.
-source_type = "http://c2pa.org/digitalsourcetype/empty"
+#source_type = "http://c2pa.org/digitalsourcetype/empty"
 
 # Settings for configuring how c2pa.opened actions are auto created.
 #
 # This is a convenience setting and it can be disabled if the information
 # is provided manually.
-[builder.actions.auto_opened_action]
+#[builder.actions.auto_opened_action]
 # Whether to auto create the c2pa.opened action.
-enabled = true
+#enabled = true
 # For more information, see `c2pa::assertions::actions::source_type`.
 #
 # Note this field is optional for the c2pa.opened action.
-source_type = "http://c2pa.org/digitalsourcetype/empty"
-
+#source_type = "http://c2pa.org/digitalsourcetype/empty"
 # Settings for configuring how c2pa.placed actions are auto created.
 #
 # This is a convenience setting and it can be disabled if the information
 # is provided manually.
-[builder.actions.auto_placed_action]
+#[builder.actions.auto_placed_action]
 # Whether to auto create the c2pa.placed action.
-enabled = true
+#enabled = true
 # For more information, see `c2pa::assertions::actions::source_type`.
 #
 # Note this field is optional for the c2pa.placed action.
-source_type = "http://c2pa.org/digitalsourcetype/empty"
+#source_type = "http://c2pa.org/digitalsourcetype/empty"
 
 # Settings for automatic thumbnail generation.
 [builder.thumbnail]

@@ -125,18 +125,18 @@ The `builder` object specifies settings for the Builder API.
 | `builder.claim_generator_info` | Object | Default claim generator information. Used if the `Builder` hasn't specified one.<br/>See below. | N/A |
 | `builder.certificate_status_fetch` | String | Certificate status fetching scope | null |
 | `builder.certificate_status_should_override` | Boolean | Override OCSP with certificate status assertions | null |
-| `builder.intent` | object | Default builder intent. The value uses object notation and must be one of: `{"Create": "digitalCapture"}` <br/> `{"Create": "Edit"}` <br/> `{"Create": "Update"}`. | null |
+| `builder.intent` | object | Default builder intent. The value uses object notation and must be one of: `{"Create": "digitalCapture"}` <br/> `"Edit"` <br/> `"Update"`. | null |
 | `builder.created_assertion_labels` | Array | Array of base assertion labels you want to treated as `created`. When the builder encounters one of these, it will become a created assertion.  | null |
 | `builder.generate_c2pa_archive` | Boolean | Generate C2PA archive format | null |
 | `builder.actions` | Object | Action assertion configuration. |  |
 | `builder.actions.all_actions_included` | Boolean | Whether all actions are specified | null |
 | `builder.actions.templates` | Array | Action templates | null |
 | `builder.actions.actions` | Array | Predefined actions to add | null |
-| `builder.actions.auto_created_action.enabled` | Boolean | Enable automatic `c2pa.created` actions | true |
+| `builder.actions.auto_created_action.enabled` | Boolean | Enable automatic `c2pa.created` actions | false |
 | `builder.actions.auto_created_action.source_type` | String | Digital source type for created action | "empty" |
-| `builder.actions.auto_opened_action.enabled` | Boolean | Enable automatic `c2pa.opened` actions | true |
+| `builder.actions.auto_opened_action.enabled` | Boolean | Enable automatic `c2pa.opened` actions | false |
 | `builder.actions.auto_opened_action.source_type` | String | Digital source type for opened action | null |
-| `builder.actions.auto_placed_action.enabled` | Boolean | Enable automatic `c2pa.placed` actions | true |
+| `builder.actions.auto_placed_action.enabled` | Boolean | Enable automatic `c2pa.placed` actions | false |
 | `builder.actions.auto_placed_action.source_type` | String | Digital source type for placed action | null |
 | `builder.thumbnail` | Object | Automatic thumbnail generation settings. |  |
 | `builder.thumbnail.enabled` | Boolean | Enable automatic thumbnails | true |
