@@ -247,9 +247,6 @@ mod async_resolver {
     }
 }
 
-// TODO: Use `httpmock` when it's supported for WASM https://github.com/contentauth/c2pa-rs/issues/1378
-//       And then also implement `wasi`/`wstd` networking tests.
-#[cfg(not(target_arch = "wasm32"))]
 #[cfg(test)]
 pub mod tests {
     #![allow(clippy::unwrap_used)]

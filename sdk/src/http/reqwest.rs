@@ -83,8 +83,6 @@ pub mod async_impl {
         }
     }
 
-    // TODO: Use `httpmock` when it's supported for WASM https://github.com/contentauth/c2pa-rs/issues/1378
-    #[cfg(not(target_arch = "wasm32"))]
     #[cfg(test)]
     pub mod tests {
         use crate::http::tests::assert_http_resolver_async;
