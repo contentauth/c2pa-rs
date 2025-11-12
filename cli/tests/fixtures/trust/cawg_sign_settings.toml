@@ -472,7 +472,7 @@ operating_system = "auto"
 # The source type field is required for the c2pa.created action.
 #
 # For more information, see `c2pa::assertions::actions::source_type`.
-#ource_type = "http://c2pa.org/digitalsourcetype/empty"
+#source_type = "http://c2pa.org/digitalsourcetype/empty"
 
 # Settings for configuring how c2pa.opened actions are auto created.
 #
@@ -480,7 +480,7 @@ operating_system = "auto"
 # is provided manually.
 #[builder.actions.auto_opened_action]
 # Whether to auto create the c2pa.opened action.
-#nabled = true
+#enabled = true
 # For more information, see `c2pa::assertions::actions::source_type`.
 #
 # Note this field is optional for the c2pa.opened action.
