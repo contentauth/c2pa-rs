@@ -243,6 +243,11 @@ pub(crate) fn manifest_label_to_parts(uri: &str) -> Option<ManifestParts> {
         if parts[0] == "urn" {
             is_v1 = parts[1] == "uuid";
 
+            // if > v1 it must be c2pa namespace
+            if !is_v1 && parts[1] != "c2pa" {
+                return None;
+            }
+
             guid = parts[2].to_owned();
 
             if !is_v1 {

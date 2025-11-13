@@ -35,6 +35,7 @@ jobs:
         id: get-features
         run: |
           FEATURES=$(cargo metadata --format-version=1 | jq -r '[.packages[] | select(.name=="c2pa") | .features | keys | map(select(. != "default")) | .[]] | unique | join(" ")')
+
           RUST_NATIVE_FEATURES=$(echo $FEATURES | sed 's/openssl//g')
           OPENSSL_FEATURES=$(echo $FEATURES | sed 's/rust_native_crypto//g')
           echo "rust-native-features=$RUST_NATIVE_FEATURES" >> "$GITHUB_OUTPUT"
@@ -130,11 +131,14 @@ jobs:
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
 
+      # Integration tests are excluded because they require executing
+      # the compiled binary, which isn't reliably possible when cross-compiling,
+      # due to architecture mismatch.
       - name: Run unit tests (cross build)
         env:
           FEATURES: ${{needs.get-features.outputs.openssl-features}}
         run: |
-          cross test --all-targets --features "$FEATURES" --target ${{ matrix.target }}
+          cross test --lib --bins --features "$FEATURES" --target ${{ matrix.target }}
 
   test-direct-minimal-versions:
     name: Unit tests with minimum versions of direct dependencies

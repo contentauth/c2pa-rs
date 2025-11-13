@@ -13,6 +13,8 @@
 
 use std::{collections::HashMap, env::consts};
 
+#[cfg(feature = "json_schema")]
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -32,7 +34,7 @@ use crate::{
 ///
 /// These formats are a combination of types supported in [image-rs](https://docs.rs/image/latest/image/enum.ImageFormat.html)
 /// and types defined by the [IANA registry media type](https://www.iana.org/assignments/media-types/media-types.xhtml) (as defined in the spec).
-#[cfg_attr(feature = "json_schema", derive(schemars::JsonSchema))]
+#[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 #[derive(Copy, Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ThumbnailFormat {
@@ -48,7 +50,7 @@ pub enum ThumbnailFormat {
     Tiff,
 }
 /// Quality of the thumbnail.
-#[cfg_attr(feature = "json_schema", derive(schemars::JsonSchema))]
+#[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ThumbnailQuality {
@@ -61,7 +63,7 @@ pub enum ThumbnailQuality {
 }
 
 /// Settings for controlling automatic thumbnail generation.
-#[cfg_attr(feature = "json_schema", derive(schemars::JsonSchema))]
+#[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct ThumbnailSettings {
     /// Whether or not to automatically generate thumbnails.
@@ -138,7 +140,7 @@ impl SettingsValidate for ThumbnailSettings {
 }
 
 /// Settings for the auto actions (e.g. created, opened, placed).
-#[cfg_attr(feature = "json_schema", derive(schemars::JsonSchema))]
+#[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct AutoActionSettings {
     /// Whether to enable this auto action or not.
@@ -148,7 +150,7 @@ pub struct AutoActionSettings {
     pub source_type: Option<DigitalSourceType>,
 }
 
-#[cfg_attr(feature = "json_schema", derive(schemars::JsonSchema))]
+#[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(untagged, rename_all = "lowercase")]
 pub enum ClaimGeneratorInfoOperatingSystem {
@@ -172,7 +174,7 @@ pub enum ClaimGeneratorInfoOperatingSystem {
 }
 
 /// Settings for the claim generator info.
-#[cfg_attr(feature = "json_schema", derive(schemars::JsonSchema))]
+#[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct ClaimGeneratorInfoSettings {
     /// A human readable string naming the claim_generator.
@@ -221,7 +223,7 @@ impl TryFrom<ClaimGeneratorInfoSettings> for ClaimGeneratorInfo {
 }
 
 /// Settings for an action template.
-#[cfg_attr(feature = "json_schema", derive(schemars::JsonSchema))]
+#[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub(crate) struct ActionTemplateSettings {
     /// The label associated with this action. See ([c2pa_action][crate::assertions::actions::c2pa_action]).
@@ -280,6 +282,7 @@ impl TryFrom<ActionTemplateSettings> for ActionTemplate {
 }
 
 /// Settings for an action.
+#[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub(crate) struct ActionSettings {
     /// The label associated with this action. See ([`c2pa_action`]).
@@ -346,7 +349,7 @@ impl TryFrom<ActionSettings> for Action {
 ///
 /// The reason this setting exists only for an [Actions][crate::assertions::Actions] assertion
 /// is because of its mandations and reusable fields.
-#[cfg_attr(feature = "json_schema", derive(schemars::JsonSchema))]
+#[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct ActionsSettings {
     /// Whether or not to set the [Actions::all_actions_included][crate::assertions::Actions::all_actions_included]
@@ -386,15 +389,15 @@ impl Default for ActionsSettings {
             templates: None,
             actions: None,
             auto_created_action: AutoActionSettings {
-                enabled: true,
-                source_type: Some(DigitalSourceType::Empty),
+                enabled: false,
+                source_type: None, // Some(DigitalSourceType::Empty),
             },
             auto_opened_action: AutoActionSettings {
-                enabled: true,
+                enabled: false,
                 source_type: None,
             },
             auto_placed_action: AutoActionSettings {
-                enabled: true,
+                enabled: false,
                 source_type: None,
             },
         }
@@ -412,7 +415,7 @@ impl SettingsValidate for ActionsSettings {
 
 // TODO: do more validation on URL fields, cert fields, etc.
 /// Settings for the [Builder][crate::Builder].
-#[cfg_attr(feature = "json_schema", derive(schemars::JsonSchema))]
+#[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize, Default)]
 pub struct BuilderSettings {
     /// The name of the vendor creating the content credential.
@@ -474,7 +477,7 @@ pub struct BuilderSettings {
 }
 
 /// The scope of which manifests to fetch for OCSP.
-#[cfg_attr(feature = "json_schema", derive(schemars::JsonSchema))]
+#[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 #[derive(Copy, Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub(crate) enum OcspFetchScope {
