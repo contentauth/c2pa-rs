@@ -1,5 +1,8 @@
 # Enforce Tier 1B support tier.
 
+# If you change the supported platforms in this workflow, please also
+# update docs/support-tiers.md to match the changes you're making.
+
 # Cool trick: If you want to assess release readiness for any PR,
 # add the "check-release" label to the PR.
 
