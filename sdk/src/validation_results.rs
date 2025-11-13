@@ -35,7 +35,7 @@ use crate::{
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 pub enum ValidationState {
-    /// The manifest store fails to meet [ValidationState::WellFormed] requirements, meaning it cannot
+    /// The manifest store fails to meet ValidationState::WellFormed requirements, meaning it cannot
     /// even be parsed or its basic structure is non-compliant.
     ///
     /// This case may also occur if validation is disabled in the SDK.
