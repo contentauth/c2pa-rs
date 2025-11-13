@@ -1338,7 +1338,6 @@ impl Builder {
                 }
             }
 
-            dbg!(&referenced_uris);
             // If a "ComponentOf" ingredient doesn't have an associated "c2pa.placed" action, create it here.
             for (_id, (relationship, uri)) in ingredient_map.iter() {
                 if *relationship == &Relationship::ComponentOf
