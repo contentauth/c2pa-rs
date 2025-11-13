@@ -1,8 +1,5 @@
 {
-  "claim_generator_info": {
-      "name": "c2pa-rs testing",
-      "version": "1.0.0"
-  },
+  "title": "My Title",
   "assertions": [
     {
       "label": "my.assertion",

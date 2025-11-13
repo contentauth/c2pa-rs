@@ -89,7 +89,7 @@ fn tool_embed_jpeg_report() -> Result<(), Box<dyn Error>> {
     Command::new(cargo::cargo_bin!("c2patool"))
         .arg(fixture_path(TEST_IMAGE))
         .arg("-m")
-        .arg("sample/test.json")
+        .arg("tests/fixtures/test.json")
         .arg("-p")
         .arg(fixture_path(TEST_IMAGE))
         .arg("-o")
@@ -208,7 +208,7 @@ fn tool_test_ingredient_folder() -> Result<(), Box<dyn std::error::Error>> {
 }
 #[test]
 // c2patool tests/fixtures/C.jpg -ifo target/tmp/ingredient_json
-// c2patool tests/fixtures/earth_apollo17.jpg -m sample/test.json -p target/tmp/ingredient_json/ingredient.json -fo target/tmp/out_2.jpg
+// c2patool tests/fixtures/earth_apollo17.jpg -m tests/fixtures/test.json -p target/tmp/ingredient_json/ingredient.json -fo target/tmp/out_2.jpg
 fn tool_test_manifest_ingredient_json() -> Result<(), Box<dyn std::error::Error>> {
     let out_path = temp_path("ingredient_json");
     // first export a c2pa file
@@ -228,7 +228,7 @@ fn tool_test_manifest_ingredient_json() -> Result<(), Box<dyn std::error::Error>
         .arg("-p")
         .arg(parent)
         .arg("-m")
-        .arg("sample/test.json")
+        .arg("tests/fixtures/test.json")
         .arg("-o")
         .arg(temp_path("out_2.jpg"))
         .arg("-f")
@@ -356,7 +356,7 @@ fn tool_sign_to_same_file_no_force() -> Result<(), Box<dyn Error>> {
 //         .arg("--reserve-size")
 //         .arg("20248")
 //         .arg("--manifest")
-//         .arg("sample/test.json")
+//         .arg("tests/fixtures/test.json")
 //         .arg("-o")
 //         .arg(&output)
 //         .arg("-f")
@@ -374,7 +374,7 @@ fn tool_sign_to_same_file_no_force() -> Result<(), Box<dyn Error>> {
 //         .arg("--reserve-size")
 //         .arg("10248")
 //         .arg("--manifest")
-//         .arg("sample/test.json")
+//         .arg("tests/fixtures/test.json")
 //         .arg("-o")
 //         .arg(&output)
 //         .arg("-f")
@@ -395,7 +395,7 @@ fn tool_sign_to_same_file_no_force() -> Result<(), Box<dyn Error>> {
 //         .arg("--reserve-size")
 //         .arg("20248")
 //         .arg("--manifest")
-//         .arg("sample/test.json")
+//         .arg("tests/fixtures/test.json")
 //         .arg("-o")
 //         .arg(&output)
 //         .arg("-f")
@@ -418,7 +418,7 @@ fn tool_sign_to_same_file_no_force() -> Result<(), Box<dyn Error>> {
 //         .arg("--reserve-size")
 //         .arg("10248")
 //         .arg("--manifest")
-//         .arg("sample/test.json")
+//         .arg("tests/fixtures/test.json")
 //         .arg("-o")
 //         .arg(&output)
 //         .arg("-f")
