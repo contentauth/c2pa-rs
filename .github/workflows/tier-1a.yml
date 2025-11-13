@@ -1,10 +1,13 @@
-# A minimal set of tests to catch common issues.
+# Enforce Tier 1A support tier.
 
-# See release_readiness.yml for a more complete suite of tests.
+# See tier-1b.yml for a more complete suite of tests.
 # You can add the label "check-release" to any PR to invoke that
 # larger set of tests.
 
-name: CI
+# If you change the supported platforms in this workflow, please also
+# update docs/support-tiers.md to match the changes you're making.
+
+name: Tier 1A
 
 on:
   workflow_dispatch:
