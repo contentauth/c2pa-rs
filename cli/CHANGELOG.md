@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.26.2](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.26.1...c2patool-v0.26.2)
+_12 November 2025_
+
+### Fixed
+
+* Use Digitalsourcetype with Builder intents ([#1586](https://github.com/contentauth/c2pa-rs/pull/1586))
+
 ## [0.26.1](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.26.0...c2patool-v0.26.1)
 _07 November 2025_
 
