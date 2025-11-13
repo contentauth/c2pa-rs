@@ -194,6 +194,11 @@ impl Store {
         self.remote_url.as_deref()
     }
 
+    // Set the remote url of the manifest if this Store
+    pub(crate) fn set_remote_url(&mut self, url: &str) {
+        self.remote_url = Some(url.to_string());
+    }
+
     /// Returns if the [`Store`] was created from an embedded manifest.
     pub fn is_embedded(&self) -> bool {
         self.embedded
@@ -3756,11 +3761,18 @@ impl Store {
         stream.rewind()?;
 
         // First we convert the JUMBF into a usable store.
-        let store = Store::from_jumbf_with_settings(c2pa_data, validation_log, settings)
+        let mut store = Store::from_jumbf_with_settings(c2pa_data, validation_log, settings)
             .inspect_err(|e| {
                 log_item!("asset", "error loading file", "load_from_asset")
                     .failure_no_throw(validation_log, e);
             })?;
+
+        // fetch remote manifest if available
+        if let Some(ext_ref) =
+            crate::utils::xmp_inmemory_utils::XmpInfo::from_source(&mut stream, format).provenance
+        {
+            store.set_remote_url(&ext_ref);
+        }
 
         if verify {
             stream.rewind()?;
