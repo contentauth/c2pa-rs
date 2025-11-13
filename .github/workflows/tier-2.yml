@@ -1,0 +1,53 @@
+# Enforce Tier 2 support tier.
+
+# If you change the supported platforms in this workflow, please also
+# update docs/support-tiers.md to match the changes you're making.
+
+# Cool trick: If you want to assess release readiness for any PR,
+# add the "check-release" label to the PR.
+
+name: Tier 2
+
+on:
+  pull_request:
+    types:
+      - opened
+      - reopened
+      - synchronize
+      - labeled
+
+jobs:
+  c-library-mobile-builds:
+    name: C library mobile builds
+    if: contains(github.event.pull_request.labels.*.name, 'release') || contains(github.event.pull_request.labels.*.name, 'check-release')
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            target: aarch64-apple-ios
+          - os: macos-latest
+            target: x86_64-apple-ios
+          - os: macos-latest
+            target: aarch64-apple-ios-sim
+          - os: ubuntu-latest
+            target: aarch64-linux-android
+          - os: ubuntu-latest
+            target: armv7-linux-androideabi
+          - os: ubuntu-latest
+            target: i686-linux-android
+          - os: ubuntu-latest
+            target: x86_64-linux-android
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Set up Rust
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+
+      - name: Build C library for mobile target
+        run: make release TARGET=${{ matrix.target }}
+        working-directory: ./c2pa_c_ffi
