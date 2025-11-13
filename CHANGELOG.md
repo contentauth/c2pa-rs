@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.71.2](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.71.1...c2pa-v0.71.2)
+_13 November 2025_
+
+### Fixed
+
+* Remove a dbg statement ([#1594](https://github.com/contentauth/c2pa-rs/pull/1594))
+
+## [0.71.1](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.71.0...c2pa-v0.71.1)
+_12 November 2025_
+
+### Fixed
+
+* Use Digitalsourcetype with Builder intents ([#1586](https://github.com/contentauth/c2pa-rs/pull/1586))
+* Restore recursive ingredient checks ([#1582](https://github.com/contentauth/c2pa-rs/pull/1582))
+
 ## [0.71.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.70.0...c2pa-v0.71.0)
 _07 November 2025_
 
