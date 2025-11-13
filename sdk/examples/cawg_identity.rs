@@ -25,12 +25,8 @@ mod cawg {
     use std::path::Path;
 
     use anyhow::Result;
+    use c2pa::{settings::Settings, Builder, DigitalSourceType, Reader};
     use serde_json::json;
-
-    use c2pa::{
-        Builder, DigitalSourceType, Reader, settings::Settings,
-    };
-
 
     // const CERTS: &[u8] = include_bytes!("../../sdk/tests/fixtures/certs/es256.pub");
     // const PRIVATE_KEY: &[u8] = include_bytes!("../../sdk/tests/fixtures/certs/es256.pem");
@@ -104,16 +100,16 @@ mod cawg {
             "../tests/fixtures/test_settings_with_cawg_signing.toml"
         ))?;
 
-
         let mut builder = Builder::from_json(&manifest_def())?;
-        builder.set_intent(c2pa::BuilderIntent::Create(DigitalSourceType::DigitalCapture));
+        builder.set_intent(c2pa::BuilderIntent::Create(
+            DigitalSourceType::DigitalCapture,
+        ));
 
         // This example will generate a CAWG manifest referencing the training-mining
         // assertion.
-        //let signer = async_cawg_signer(&["cawg.training-mining"])?;
         let signer = Settings::signer()?;
 
-        builder.sign_file(&signer, source, &dest)? ;
+        builder.sign_file(&signer, source, dest)?;
 
         let reader = Reader::from_file_async(dest).await?;
         println!("{reader}");
@@ -138,4 +134,3 @@ async fn main() -> anyhow::Result<()> {
     let dest: std::path::PathBuf = std::path::PathBuf::from(&args[2]);
     cawg::run(source, dest).await
 }
-
