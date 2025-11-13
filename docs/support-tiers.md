@@ -107,8 +107,8 @@ These requirements are enforced in the [Tier 2 workflow](/.github/workflows/tier
 * **Ubuntu:** `x86_64-unknown-linux-gnu`, Rust `stable`, `file_io`, `rust_native_crypto`, `glibc`, **build artifacts**
 * **MacOS:** `aarch64-apple-darwin`, Rust `stable`, `file_io`, `rust_native_crypto`, **build artifacts**
 * **Windows:** `x86_64-pc-windows-msvc`, Rust `stable`, `file_io`, `rust_native_crypto`, **build artifacts**
-* **iOS:** `aarch64-apple-ios` | `x86_64-apple-ios` | `aarch64-apple-ios-sim`, `file_io`, `rust_native_crypto`
-* **Android:** `aarch64-linux-android` | `armv7-linux-androideabi` | `i686-linux-android` | `x86_64-linux-android`, `file_io`, `rust_native_crypto`
+* **iOS:** `aarch64-apple-ios` | `x86_64-apple-ios` | `aarch64-apple-ios-sim`, `file_io`, `rust_native_crypto`, **build artifacts**
+* **Android:** `aarch64-linux-android` | `armv7-linux-androideabi` | `i686-linux-android` | `x86_64-linux-android`, `file_io`, `rust_native_crypto`, **build artifacts**
 
 Build artifacts are posted to the [releases](https://github.com/contentauth/c2pa-rs/releases) page for each versioned release.
 
