@@ -36,7 +36,7 @@ use crate::{
     hash_utils::Hasher,
     jumbf_io::get_assetio_handler,
     resource_store::UriOrResource,
-    salt::DefaultSalt,
+    settings::Settings,
     store::Store,
     utils::{io_utils::tempdirectory, mime::extension_to_mime},
     AsyncSigner, ClaimGeneratorInfo, Result,
@@ -151,14 +151,33 @@ pub(crate) fn static_test_v1_uuid() -> &'static str {
     const TEST_GUID: &str = "urn:uuid:f75ddc48-cdc8-4723-bcfe-77a8d68a5920";
     TEST_GUID
 }
+
+/// Creates a minimal valid claim for testing (v2)
+///
+/// This claim has just enough information to be valid, including a
+/// claim_generator_info and a c2pa.created action assertion.
+pub fn create_min_test_claim() -> Result<Claim> {
+    let mut claim = Claim::new("contentauth unit test", Some("contentauth"), 2);
+
+    let mut cg_info = ClaimGeneratorInfo::new("test app");
+    cg_info.version = Some("2.3.4".to_string());
+    claim.add_claim_generator_info(cg_info);
+
+    let created_action = Action::new("c2pa.created").set_source_type(DigitalSourceType::Empty);
+    let actions = Actions::new().add_action(created_action);
+
+    claim.add_assertion(&actions)?;
+
+    Ok(claim)
+}
+
 /// Creates a claim for testing (v2)
 pub fn create_test_claim() -> Result<Claim> {
-    // First create and add a claim thumbnail (we don't need to reference this anywhere)
     let mut claim = Claim::new("contentauth unit test", Some("contentauth"), 2);
 
     // Add an icon for the claim_generator
     let icon = EmbeddedData::new(labels::ICON, "image/jpeg", vec![0xde, 0xad, 0xbe, 0xef]);
-    let icon_ref = claim.add_assertion_with_salt(&icon, &DefaultSalt::default())?;
+    let icon_ref = claim.add_assertion(&icon)?;
 
     let mut cg_info = ClaimGeneratorInfo::new("test app");
     cg_info.version = Some("2.3.4".to_string());
@@ -173,8 +192,7 @@ pub fn create_test_claim() -> Result<Claim> {
         "image/jpeg",
         vec![0xde, 0xad, 0xbe, 0xef],
     );
-    let _claim_thumbnail_ref =
-        claim.add_assertion_with_salt(&claim_thumbnail, &DefaultSalt::default())?;
+    let _claim_thumbnail_ref = claim.add_assertion(&claim_thumbnail)?;
 
     // Create and add a thumbnail for an ingredient
     let ingredient_thumbnail = EmbeddedData::new(
@@ -182,22 +200,21 @@ pub fn create_test_claim() -> Result<Claim> {
         "image/jpeg",
         vec![0xde, 0xad, 0xbe, 0xef],
     );
-    let ingredient_thumbnail_ref =
-        claim.add_assertion_with_salt(&ingredient_thumbnail, &DefaultSalt::default())?;
+    let ingredient_thumbnail_ref = claim.add_assertion(&ingredient_thumbnail)?;
 
     // create a new v3 ingredient and add the thumbnail reference
     let ingredient = Ingredient::new_v3(Relationship::ComponentOf)
         .set_title("image_1.jpg")
         .set_format("image/jpeg")
         .set_thumbnail(Some(&ingredient_thumbnail_ref));
-    let ingredient_ref = claim.add_assertion_with_salt(&ingredient, &DefaultSalt::default())?;
+    let ingredient_ref = claim.add_assertion(&ingredient)?;
 
     // create a second v3 ingredient and add the thumbnail reference
     let ingredient2 = Ingredient::new_v3(Relationship::ComponentOf)
         .set_title("image_2.jpg")
         .set_format("image/png")
         .set_thumbnail(Some(&ingredient_thumbnail_ref));
-    let ingredient_ref2 = claim.add_assertion_with_salt(&ingredient2, &DefaultSalt::default())?;
+    let ingredient_ref2 = claim.add_assertion(&ingredient2)?;
 
     let created_action = Action::new("c2pa.created").set_source_type(DigitalSourceType::Empty);
 
@@ -275,7 +292,7 @@ pub fn create_test_claim_v1() -> Result<Claim> {
     claim.add_assertion(&thumbnail_claim)?;
     claim.add_assertion(&user_assertion)?;
 
-    let thumb_uri = claim.add_assertion_with_salt(&thumbnail_ingred, &DefaultSalt::default())?;
+    let thumb_uri = claim.add_assertion(&thumbnail_ingred)?;
 
     let review = ReviewRating::new(
         "a 3rd party plugin was used",
@@ -301,8 +318,8 @@ pub fn create_test_claim_v1() -> Result<Claim> {
     )
     .set_thumbnail(Some(&thumb_uri));
 
-    claim.add_assertion_with_salt(&ingredient, &DefaultSalt::default())?;
-    claim.add_assertion_with_salt(&ingredient2, &DefaultSalt::default())?;
+    claim.add_assertion(&ingredient)?;
+    claim.add_assertion(&ingredient2)?;
 
     Ok(claim)
 }
@@ -310,7 +327,7 @@ pub fn create_test_claim_v1() -> Result<Claim> {
 /// Creates a store with an unsigned claim for testing
 pub fn create_test_store() -> Result<Store> {
     // Create claims store.
-    let mut store = Store::new();
+    let mut store = Store::with_settings(&Settings::default());
 
     let claim = create_test_claim()?;
     store.commit_claim(claim).unwrap();
@@ -320,7 +337,7 @@ pub fn create_test_store() -> Result<Store> {
 /// Creates a store with an unsigned v1 claim for testing
 pub fn create_test_store_v1() -> Result<Store> {
     // Create claims store.
-    let mut store = Store::new();
+    let mut store = Store::with_settings(&Settings::default());
 
     let claim = create_test_claim_v1()?;
     store.commit_claim(claim).unwrap();

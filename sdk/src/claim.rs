@@ -55,6 +55,7 @@ use crate::{
     },
     error::{Error, Result},
     hashed_uri::HashedUri,
+    http::{AsyncHttpResolver, SyncHttpResolver},
     jumbf::{
         self,
         boxes::{
@@ -64,14 +65,15 @@ use crate::{
         labels::{
             assertion_label_from_uri, box_name_from_uri, manifest_label_from_uri,
             manifest_label_to_parts, to_absolute_uri, to_assertion_uri, to_databox_uri,
-            to_signature_uri, ASSERTIONS, CLAIM, CREDENTIALS, DATABOX, DATABOXES, SIGNATURE,
+            to_manifest_uri, to_signature_uri, ASSERTIONS, CLAIM, CREDENTIALS, DATABOX, DATABOXES,
+            SIGNATURE,
         },
     },
     jumbf_io::get_assetio_handler,
     log_item,
     resource_store::UriOrResource,
-    salt::{DefaultSalt, SaltGenerator, NO_SALT},
-    settings::get_settings_value,
+    salt::{DefaultSalt, SaltGenerator},
+    settings::Settings,
     status_tracker::{ErrorBehavior, StatusTracker},
     store::StoreValidationInfo,
     utils::hash_utils::{hash_by_alg, vec_compare},
@@ -337,18 +339,13 @@ pub enum AssertionStoreJsonFormat {
 }
 
 /// Remote manifest options. Use 'set_remote_manifest' to generate external manifests.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub enum RemoteManifest {
-    NoRemote,                // No external manifest (default)
+    #[default]
+    NoRemote, // No external manifest (default)
     SideCar,        // Manifest will be saved as a side car file, output asset is untouched.
     Remote(String), /* Manifest will be saved as a side car file, output asset will contain remote reference */
     EmbedWithRemote(String), /* Manifest will be embedded with a remote reference, sidecar will be generated */
-}
-
-impl Default for RemoteManifest {
-    fn default() -> Self {
-        Self::NoRemote
-    }
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -1287,21 +1284,20 @@ impl Claim {
     }
 
     /// Add an assertion to this claim and verify
+    /// This uses a default salt generator and will assumed gathered for Claims V2 except for HASH assertions.
     pub fn add_assertion(
         &mut self,
         assertion_builder: &impl AssertionBase,
     ) -> Result<C2PAAssertion> {
-        self.add_assertion_with_salt(assertion_builder, NO_SALT)
+        self.add_assertion_impl(assertion_builder, &DefaultSalt::default(), false)
     }
 
-    /// Add an assertion to this claim and verify with a salted assertion store
-    /// This version should be used if the assertion may be redacted for addition protection.
-    pub fn add_assertion_with_salt(
+    /// Same as add_assertion but forces addition to created_assertions for Claims V2
+    pub fn add_created_assertion(
         &mut self,
         assertion_builder: &impl AssertionBase,
-        salt_generator: &impl SaltGenerator,
     ) -> Result<C2PAAssertion> {
-        self.add_assertion_with_salt_impl(assertion_builder, salt_generator, self.version() > 1)
+        self.add_assertion_impl(assertion_builder, &DefaultSalt::default(), true)
     }
 
     fn compatibility_checks(&self, assertion: &Assertion) -> Result<()> {
@@ -1346,7 +1342,36 @@ impl Claim {
         Ok(())
     }
 
-    fn add_assertion_with_salt_impl(
+    /// Determine if an assertion should be added as a created or gathered assertion
+    /// for Claims V2 and later
+    fn claim_assertion_type(
+        &self,
+        base_label: &str,
+        add_as_created_assertion: bool,
+    ) -> ClaimAssertionType {
+        if self.version() > 1 {
+            if labels::HASH_LABELS.contains(&base_label) || add_as_created_assertion {
+                ClaimAssertionType::Created
+            } else if let Some(created_assertions) = {
+                let settings = crate::settings::get_settings().unwrap_or_default();
+                settings.builder.created_assertion_labels
+            } {
+                if created_assertions.iter().any(|label| label == base_label) {
+                    ClaimAssertionType::Created
+                } else {
+                    ClaimAssertionType::Gathered
+                }
+            } else {
+                ClaimAssertionType::Gathered
+            }
+        } else {
+            ClaimAssertionType::V1
+        }
+    }
+
+    /// Add an assertion to this claim
+    /// Allows setting the salt generator and whether to add as created assertion for Claims V2
+    fn add_assertion_impl(
         &mut self,
         assertion_builder: &impl AssertionBase,
         salt_generator: &impl SaltGenerator,
@@ -1356,18 +1381,19 @@ impl Claim {
         let assertion = assertion_builder.to_assertion()?;
         let assertion_label = assertion.label();
 
-        // Update label if there are multiple instances of
-        // the same claim type.
+        // Update label if there are multiple instances of the same claim type.
         let as_label = self.make_assertion_instance_label(assertion_label.as_ref());
+        // get base label and instance
+        let (base_label, _version, instance) = labels::parse_label(&as_label);
 
         // check for deprecated assertions when using Claims > V1
         if self.version() > 1 {
             self.compatibility_checks(&assertion)?
         }
 
-        // Get salted hash of the assertion's contents.
         let salt = salt_generator.generate_salt();
 
+        // Get hash of the assertion's contents.
         let hash = Claim::calc_assertion_box_hash(&as_label, &assertion, salt.clone(), self.alg())?;
 
         // Build hash link.
@@ -1375,56 +1401,29 @@ impl Claim {
         let link_relative = jumbf::labels::to_relative_uri(&link);
 
         let mut c2pa_assertion = C2PAAssertion::new(link_relative, None, &hash);
+
+        // Add salt
         c2pa_assertion.add_salt(salt.clone());
 
-        // Add to assertion store.
-        let (_l, instance) = Claim::assertion_label_from_link(&as_label);
-        let typ = if self.version() > 1 {
-            if add_as_created_assertion {
-                ClaimAssertionType::Created
-            } else {
-                ClaimAssertionType::Gathered
-            }
-        } else {
-            ClaimAssertionType::V1
-        };
-        let ca = ClaimAssertion::new(assertion.clone(), instance, &hash, self.alg(), salt, typ);
+        // find the ClaimAssertionType and add to gathered or created lists if needed
+        let assertion_type = self.claim_assertion_type(base_label, add_as_created_assertion);
 
-        if add_as_created_assertion {
-            // add to created assertions list
-            self.created_assertions.push(c2pa_assertion.clone());
+        match assertion_type {
+            ClaimAssertionType::Created => {
+                self.created_assertions.push(c2pa_assertion.clone());
+            }
+            ClaimAssertionType::Gathered => self
+                .gathered_assertions
+                .get_or_insert_default()
+                .push(c2pa_assertion.clone()),
+            ClaimAssertionType::V1 => { /* not created or gathered */ }
         }
 
+        let ca = ClaimAssertion::new(assertion, instance, &hash, self.alg(), salt, assertion_type);
         self.assertion_store.push(ca);
         self.assertions.push(c2pa_assertion.clone());
 
         Ok(c2pa_assertion)
-    }
-
-    /// Add a gathered assertion to this claim and verify with a salted assertion store
-    pub fn add_gathered_assertion_with_salt(
-        &mut self,
-        assertion_builder: &impl AssertionBase,
-        salt_generator: &impl SaltGenerator,
-    ) -> Result<C2PAAssertion> {
-        if self.claim_version < 2 {
-            // if this is called for a v1 claim then just treat is as a normal v1 assertion
-            return self.add_assertion_with_salt(assertion_builder, salt_generator);
-        }
-
-        match self.add_assertion_with_salt_impl(assertion_builder, salt_generator, false) {
-            Ok(a) => {
-                match &mut self.gathered_assertions {
-                    Some(ga) => ga.push(a.clone()),
-                    None => {
-                        let new_ga = [a.clone()];
-                        self.gathered_assertions = Some(new_ga.to_vec());
-                    }
-                }
-                Ok(a)
-            }
-            Err(e) => Err(e),
-        }
     }
 
     // Add a new DataBox and return the HashedURI reference
@@ -1811,16 +1810,21 @@ impl Claim {
         let mut validation_log =
             StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
 
+        // TODO: I believe we validate at an earlier point in the code, making this unecessary
+        let mut settings = crate::settings::get_settings().unwrap_or_default();
+        settings.verify.verify_timestamp_trust = false;
+
         if _sync {
-            Some(get_signing_info(sig, &data, &mut validation_log))
+            Some(get_signing_info(sig, &data, &mut validation_log, &settings))
         } else {
-            Some(get_signing_info_async(sig, &data, &mut validation_log).await)
+            Some(get_signing_info_async(sig, &data, &mut validation_log, &settings).await)
         }
     }
 
     /// Verify claim signature, assertion store and asset hashes
     /// claim - claim to be verified
     /// asset_bytes - reference to bytes of the asset
+    #[allow(clippy::too_many_arguments)]
     pub(crate) async fn verify_claim_async(
         claim: &Claim,
         asset_data: &mut ClaimAssetData<'_>,
@@ -1828,6 +1832,8 @@ impl Claim {
         cert_check: bool,
         ctp: &CertificateTrustPolicy,
         validation_log: &mut StatusTracker,
+        http_resolver: &impl AsyncHttpResolver,
+        settings: &Settings,
     ) -> Result<()> {
         // Parse COSE signed data (signature) and validate it.
         let sig = claim.signature_val().clone();
@@ -1856,18 +1862,32 @@ impl Claim {
             .failure(validation_log, Error::ClaimMissingSignatureBox)?;
         }
 
+        // for V2 and greater claims the label must conform
+        if claim.version() > 1 && manifest_label_to_parts(claim.label()).is_none() {
+            log_item!(
+                to_manifest_uri(claim.label()),
+                "claim box label invalid",
+                "verify_claim_async"
+            )
+            .validation_status(validation_status::CLAIM_MALFORMED)
+            .failure(validation_log, Error::ClaimInvalidContent)?;
+        }
+
         let sign1 = parse_cose_sign1(&sig, &data, validation_log)?;
         let certificate_serial_num = get_signing_cert_serial_num(&sign1)?.to_string();
 
         // check certificate revocation
-        check_ocsp_status(
+        check_ocsp_status_async(
             &sign1,
             &data,
             ctp,
             svi.certificate_statuses.get(&certificate_serial_num),
             svi.timestamps.get(claim.label()),
             validation_log,
-        )?;
+            http_resolver,
+            settings,
+        )
+        .await?;
 
         let verified = verify_cose_async(
             &sig,
@@ -1877,10 +1897,12 @@ impl Claim {
             ctp,
             svi.timestamps.get(claim.label()),
             validation_log,
+            settings,
         )
         .await;
 
-        let result = Claim::verify_internal(claim, asset_data, svi, verified, validation_log);
+        let result =
+            Claim::verify_internal(claim, asset_data, svi, verified, validation_log, settings);
         validation_log.pop_current_uri();
         result
     }
@@ -1888,6 +1910,7 @@ impl Claim {
     /// Verify claim signature, assertion store and asset hashes
     /// claim - claim to be verified
     /// asset_bytes - reference to bytes of the asset
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn verify_claim(
         claim: &Claim,
         asset_data: &mut ClaimAssetData<'_>,
@@ -1895,10 +1918,17 @@ impl Claim {
         cert_check: bool,
         ctp: &CertificateTrustPolicy,
         validation_log: &mut StatusTracker,
+        http_resolver: &impl SyncHttpResolver,
+        settings: &Settings,
     ) -> Result<()> {
         // Parse COSE signed data (signature) and validate it.
         let sig = claim.signature_val();
         let additional_bytes: Vec<u8> = Vec::new();
+
+        let mut adjusted_settings = settings.clone();
+        if claim.version() == 1 {
+            adjusted_settings.verify.verify_timestamp_trust = false;
+        }
 
         // use the signature uri as the current uri while validating the signature info
         validation_log.push_current_uri(to_signature_uri(claim.label()));
@@ -1920,6 +1950,17 @@ impl Claim {
             )
             .validation_status(validation_status::CLAIM_SIGNATURE_MISSING)
             .failure(validation_log, Error::ClaimMissingSignatureBox)?;
+        }
+
+        // for V2 and greater claims the label must conform
+        if claim.version() > 1 && manifest_label_to_parts(claim.label()).is_none() {
+            log_item!(
+                to_manifest_uri(claim.label()),
+                "claim box label invalid",
+                "verify_claim"
+            )
+            .validation_status(validation_status::CLAIM_MALFORMED)
+            .failure(validation_log, Error::ClaimInvalidContent)?;
         }
 
         // If we are validating a claim that has been loaded from a file
@@ -1945,6 +1986,8 @@ impl Claim {
             svi.certificate_statuses.get(&certificate_serial_num),
             svi.timestamps.get(claim.label()),
             validation_log,
+            http_resolver,
+            &adjusted_settings,
         )?;
 
         let verified = verify_cose(
@@ -1955,21 +1998,29 @@ impl Claim {
             ctp,
             svi.timestamps.get(claim.label()),
             validation_log,
+            &adjusted_settings,
         );
 
-        let result = Claim::verify_internal(claim, asset_data, svi, verified, validation_log);
+        let result = Claim::verify_internal(
+            claim,
+            asset_data,
+            svi,
+            verified,
+            validation_log,
+            &adjusted_settings,
+        );
         validation_log.pop_current_uri();
         result
     }
 
     /// Get the signing certificate chain as PEM bytes
-    pub fn get_cert_chain(&self) -> Result<Vec<u8>> {
+    pub fn get_cert_chain(&self, settings: &Settings) -> Result<Vec<u8>> {
         let sig = self.signature_val();
         let data = self.data()?;
         let mut validation_log =
             StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
 
-        let vi = get_signing_info(sig, &data, &mut validation_log);
+        let vi = get_signing_info(sig, &data, &mut validation_log, settings);
 
         Ok(vi.cert_chain)
     }
@@ -1981,6 +2032,7 @@ impl Claim {
         claim: &Claim,
         svi: &StoreValidationInfo<'_>,
         validation_log: &mut StatusTracker,
+        settings: &Settings,
     ) -> Result<()> {
         let all_actions = claim.action_assertions();
         let created_actions = claim.created_action_assertions();
@@ -2002,10 +2054,8 @@ impl Claim {
         }
 
         // Skip further checks for v1 claims if not in strict validation mode
-        if claim.version() == 1 {
-            if let Ok(false) = get_settings_value::<bool>("verify.strict_v1_validation") {
-                return Ok(()); // no further checks for v1 claims
-            }
+        if claim.version() == 1 && !settings.verify.strict_v1_validation {
+            return Ok(()); // no further checks for v1 claims
         }
 
         // 1. make sure every action has an actions array that is not empty
@@ -2029,10 +2079,8 @@ impl Claim {
         }
 
         // Skip further checks for v1 claims if not in strict validation mode
-        if claim.version() == 1 {
-            if let Ok(false) = get_settings_value::<bool>("verify.strict_v1_validation") {
-                return Ok(()); // no further checks for v1 claims
-            }
+        if claim.version() == 1 && !settings.verify.strict_v1_validation {
+            return Ok(()); // no further checks for v1 claims
         }
 
         let mut first_actions_assertion = None;
@@ -2858,6 +2906,7 @@ impl Claim {
         svi: &StoreValidationInfo,
         verified: Result<CertificateInfo>,
         validation_log: &mut StatusTracker,
+        settings: &Settings,
     ) -> Result<()> {
         // signature check
         match verified {
@@ -2940,17 +2989,8 @@ impl Claim {
                     .failure(validation_log, Error::ClaimDisallowedRedaction)?;
                 }
 
-                const DISALLOWED_HASH_REDACTIONS: [&str; 4] = [
-                    labels::DATA_HASH,
-                    labels::BOX_HASH,
-                    labels::BMFF_HASH,
-                    labels::COLLECTION_HASH,
-                ];
-
-                if DISALLOWED_HASH_REDACTIONS
-                    .iter()
-                    .any(|label| r.contains(label))
-                {
+                // check for disallowed hash redactions
+                if labels::HASH_LABELS.iter().any(|label| r.contains(label)) {
                     log_item!(
                         r.to_owned(),
                         "redaction of disallowed hash assertion",
@@ -3154,12 +3194,12 @@ impl Claim {
                         "verify_internal"
                     )
                     .validation_status(validation_status::ASSERTION_MISSING)
-                    .failure(
+                    .failure_no_throw(
                         validation_log,
                         Error::AssertionMissing {
                             url: assertion_absolute_uri.clone(),
                         },
-                    )?;
+                    );
                 }
             }
         }
@@ -3190,7 +3230,7 @@ impl Claim {
         Claim::verify_hash_binding(claim, asset_data, svi, validation_log)?;
 
         // check action rules
-        Claim::verify_actions(claim, svi, validation_log)?;
+        Claim::verify_actions(claim, svi, validation_log, settings)?;
 
         // check metadata rules
         if claim.version() >= 2 {
@@ -3904,8 +3944,18 @@ impl Claim {
         get_ocsp_der(&sign1).is_some()
     }
 }
-#[allow(dead_code)]
-#[async_generic]
+
+#[allow(dead_code, clippy::too_many_arguments)]
+#[async_generic(async_signature(
+    sign1: &coset::CoseSign1,
+    data: &[u8],
+    ctp: &CertificateTrustPolicy,
+    ocsp_responses: Option<&Vec<Vec<u8>>>,
+    tst_info: Option<&TstInfo>,
+    validation_log: &mut StatusTracker,
+    http_resolver: &impl AsyncHttpResolver,
+    settings: &Settings,
+))]
 pub(crate) fn check_ocsp_status(
     sign1: &coset::CoseSign1,
     data: &[u8],
@@ -3913,12 +3963,15 @@ pub(crate) fn check_ocsp_status(
     ocsp_responses: Option<&Vec<Vec<u8>>>,
     tst_info: Option<&TstInfo>,
     validation_log: &mut StatusTracker,
+    http_resolver: &impl SyncHttpResolver,
+    settings: &Settings,
 ) -> Result<OcspResponse> {
     // Moved here instead of c2pa-crypto because of the dependency on settings.
 
-    let fetch_policy = match get_settings_value::<bool>("verify.ocsp_fetch") {
-        Ok(true) => OcspFetchPolicy::FetchAllowed,
-        _ => OcspFetchPolicy::DoNotFetch,
+    let fetch_policy = if settings.verify.ocsp_fetch {
+        OcspFetchPolicy::FetchAllowed
+    } else {
+        OcspFetchPolicy::DoNotFetch
     };
 
     if _sync {
@@ -3930,6 +3983,8 @@ pub(crate) fn check_ocsp_status(
             ocsp_responses,
             tst_info,
             validation_log,
+            http_resolver,
+            settings,
         )?)
     } else {
         Ok(crate::crypto::cose::check_ocsp_status_async(
@@ -3940,6 +3995,8 @@ pub(crate) fn check_ocsp_status(
             ocsp_responses,
             tst_info,
             validation_log,
+            http_resolver,
+            settings,
         )
         .await?)
     }
@@ -4076,5 +4133,59 @@ pub mod tests {
             1,
         );
         assert!(c4.is_err());
+
+        // bad v2
+        let c5 = Claim::new_with_user_guid(
+            "claim_generator",
+            "urn:blahblah:3fad1ead-8ed5-44d0-873b-ea5f58adea82:acme",
+            2,
+        );
+        assert!(c5.is_err());
+    }
+
+    #[test]
+    fn test_add_assertion_variants() -> Result<()> {
+        let mut claim = crate::utils::test::create_min_test_claim()?;
+
+        const MY_METADATA: &str = "my.metadata";
+        let data = json!({
+        "@context" : {
+            "dc" : "http://purl.org/dc/elements/1.1/"
+        },
+        "dc:created": "2025 August 13",
+        "dc:creator": [
+             "John Doe"
+        ]
+        })
+        .to_string();
+
+        let metadata = assertions::Metadata::new(MY_METADATA, &data)?;
+
+        // add first time
+        claim.add_assertion(&metadata)?;
+
+        // add second time should create instance label
+        claim.add_assertion(&metadata)?;
+
+        // add third time should create instance label
+        claim.add_assertion(&metadata)?;
+
+        // check that we have three instances now
+        let instances = claim.count_instances(MY_METADATA);
+        assert_eq!(instances, 3);
+
+        // check that we can retrieve each one
+        for i in 0..instances {
+            let ca = claim
+                .get_claim_assertion(MY_METADATA, i)
+                .expect("should find assertion");
+            assert_eq!(ca.instance(), i);
+            assert_eq!(ca.label_raw(), MY_METADATA);
+            assert_eq!(ca.assertion().label(), MY_METADATA);
+            assert_eq!(ca.assertion_type(), ClaimAssertionType::Gathered);
+            //assert_eq!(ca.assertion().decode_data(), AssertionData::Cbor(vec![1, 2, 3, 4]));
+        }
+
+        Ok(())
     }
 }

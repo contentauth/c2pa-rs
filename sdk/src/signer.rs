@@ -19,6 +19,7 @@ use crate::{
         time_stamp::{TimeStampError, TimeStampProvider},
     },
     dynamic_assertion::{AsyncDynamicAssertion, DynamicAssertion},
+    http::SyncGenericResolver,
     Result,
 };
 
@@ -64,15 +65,17 @@ pub trait Signer {
     ///
     /// The default implementation will send the request to the URL
     /// provided by [`Self::time_authority_url()`], if any.
-    #[allow(unused)] // message not used on WASM
     fn send_timestamp_request(&self, message: &[u8]) -> Option<Result<Vec<u8>>> {
-        #[cfg(not(target_arch = "wasm32"))]
         if let Some(url) = self.time_authority_url() {
             if let Ok(body) = self.timestamp_request_body(message) {
                 let headers: Option<Vec<(String, String)>> = self.timestamp_request_headers();
                 return Some(
                     crate::crypto::time_stamp::default_rfc3161_request(
-                        &url, headers, &body, message,
+                        &url,
+                        headers,
+                        &body,
+                        message,
+                        &SyncGenericResolver::new(),
                     )
                     .map_err(|e| e.into()),
                 );
@@ -192,14 +195,18 @@ pub trait AsyncSigner: Sync {
     /// The default implementation will send the request to the URL
     /// provided by [`Self::time_authority_url()`], if any.
     async fn send_timestamp_request(&self, message: &[u8]) -> Option<Result<Vec<u8>>> {
-        // NOTE: This is currently synchronous, but may become
-        // async in the future.
         if let Some(url) = self.time_authority_url() {
             if let Ok(body) = self.timestamp_request_body(message) {
+                use crate::http::AsyncGenericResolver;
+
                 let headers: Option<Vec<(String, String)>> = self.timestamp_request_headers();
                 return Some(
                     crate::crypto::time_stamp::default_rfc3161_request_async(
-                        &url, headers, &body, message,
+                        &url,
+                        headers,
+                        &body,
+                        message,
+                        &AsyncGenericResolver::new(),
                     )
                     .await
                     .map_err(|e| e.into()),
