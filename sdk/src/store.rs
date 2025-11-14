@@ -2995,7 +2995,7 @@ impl Store {
         input_stream: &mut dyn CAIRead,
         output_stream: &mut dyn CAIReadWrite,
         signer: &dyn Signer,
-        http_resolver: &impl SyncHttpResolver,
+        http_resolver: &(impl SyncHttpResolver + ?Sized),
         settings: &Settings,
     ) -> Result<Vec<u8>> {
         let dynamic_assertions = signer.dynamic_assertions();
@@ -3505,13 +3505,13 @@ impl Store {
     #[async_generic(async_signature(
         asset_type: &str,
         stream: &mut dyn CAIRead,
-        http_resolver: &impl AsyncHttpResolver,
+        http_resolver: &(impl AsyncHttpResolver + ?Sized),
         settings: &Settings
     ))]
     pub fn load_jumbf_from_stream(
         asset_type: &str,
         stream: &mut dyn CAIRead,
-        http_resolver: &impl SyncHttpResolver,
+        http_resolver: &(impl SyncHttpResolver + ?Sized),
         settings: &Settings,
     ) -> Result<(Vec<u8>, Option<String>)> {
         match load_jumbf_from_stream(asset_type, stream) {

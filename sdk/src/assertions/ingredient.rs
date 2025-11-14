@@ -22,6 +22,7 @@ use crate::{
     assertion::{Assertion, AssertionBase, AssertionDecodeError, AssertionDecodeErrorCause},
     assertions::{labels, AssertionMetadata, ReviewRating},
     cbor_types::map_cbor_to_type,
+    context::Context,
     error::Result,
     hashed_uri::HashedUri,
     jumbf::labels::{to_manifest_uri, to_signature_uri},
@@ -534,7 +535,7 @@ impl Ingredient {
         relationship: Relationship,
         format: &str,
         mut stream: impl Read + Seek + Send,
-        settings: &Settings,
+        context: &Context,
     ) -> Result<(Self, Store)> {
         let mut validation_log = StatusTracker::default();
 
@@ -552,7 +553,7 @@ impl Ingredient {
         // ingredient.document_id = xmp_info.document_id; // use document id if one exists
         // ingredient.provenance = xmp_info.provenance;
         let store: Store =
-            Store::from_stream(format, &mut stream, true, &mut validation_log, settings)?;
+            Store::from_stream(format, &mut stream, true, &mut validation_log, context.resolver(), context.settings())?;
         let validation_results = ValidationResults::from_store(&store, &validation_log);
         let ingredient =
             Self::from_store_and_validation_results(relationship, &store, &validation_results)?;

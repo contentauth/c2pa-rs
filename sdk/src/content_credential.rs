@@ -23,6 +23,7 @@ use crate::{
     assertion::AssertionBase,
     assertions::{c2pa_action, Action, Actions, Ingredient, Relationship},
     claim::Claim,
+    context::Context,
     manifest::{Manifest, StoreOptions},
     manifest_store_report::ManifestStoreReport,
     settings::Settings,
@@ -84,46 +85,44 @@ impl StandardStoreReport {
 }
 
 /// Experimental optimized Content Credential Structure
-pub struct ContentCredential {
+pub struct ContentCredential<'a> {
     claim: Claim,
     store: Store,
-    settings: Settings,
+    context: &'a Context,
 }
 
-impl ContentCredential {
-    pub fn new(settings: &Settings) -> Self {
-        let mut claim = Claim::new("", settings.builder.vendor.as_deref(), 2);
+impl<'a> ContentCredential<'a> {
+    pub fn new(context: &'a Context) -> Self {
+        let mut claim = Claim::new("", context.settings().builder.vendor.as_deref(), 2);
         claim.instance_id = uuid::Uuid::new_v4().to_string();
         ContentCredential {
             claim,
             store: Store::new(),
-            settings: settings.clone(),
+            context,
         }
     }
 
     /// Use this for a content credential that is being created from scratch
-    pub fn create(source_type: DigitalSourceType, settings: &Settings) -> Result<Self> {
-        let mut cc = Self::new(settings);
+    pub fn create(mut self, source_type: DigitalSourceType) -> Result<Self> {
 
         let actions = Actions::new()
             .add_action(Action::new(c2pa_action::CREATED).set_source_type(source_type));
 
-        cc.add_assertion(&actions)?;
+        self.add_assertion(&actions)?;
 
-        Ok(cc)
+        Ok(self)
     }
 
     /// creates a content credential from an existing stream
     pub fn from_stream(
-        settings: &Settings,
+        context: &'a Context,
         format: &str,
         mut stream: impl Read + Seek + Send,
     ) -> Result<Self> {
-        let mut cc = Self::new(settings);
+        let mut cr = Self::new(context);
         stream.rewind()?;
-        let (_, store) = cc.with_stream_impl(Relationship::ParentOf, format, &mut stream)?;
-        cc.store = store; // replaces the empty store
-        Ok(cc)
+        cr.add_ingredient_from_stream(Relationship::ParentOf, format, &mut stream);
+        Ok(cr)
     }
 
     fn parent_ingredient(&self) -> Option<Ingredient> {
@@ -148,26 +147,37 @@ impl ContentCredential {
         Ok(())
     }
 
-    /// This is used to add component ingredients from a stream
-    ///
-    /// Parent ingredients are created using from_stream.
-    pub fn add_ingredient_from_stream(
-        &mut self,
-        format: &str,
-        mut stream: impl Read + Seek + Send,
-    ) -> Result<&Self> {
-        Ok(self
-            .with_stream_impl(Relationship::ComponentOf, format, &mut stream)?
-            .0)
-    }
+    // /// This is used to add component ingredients from a stream
+    // ///
+    // /// Parent ingredients are created using from_stream.
+    // pub fn add_ingredient_from_stream(
+    //     &mut self,
+    //     format: &str,
+    //     mut stream: impl Read + Seek + Send,
+    // ) -> Result<&Self> {
+    //     Ok(self
+    //         .add_ingredient(Relationship::ComponentOf, format, &mut stream)?
+    //         .0)
+    // }
 
     /// internal implementation to add ingredient from stream
-    fn with_stream_impl(
+    fn add_ingredient_from_stream(
         &mut self,
         relationship: Relationship,
         format: &str,
         mut stream: impl Read + Seek + Send,
-    ) -> Result<(&Self, Store)> {
+    ) -> Result<&Self> {
+
+        let (ingredient_assertion, store) =
+            Ingredient::from_stream(relationship.clone(), format, &mut stream, self.context)?;
+
+        // todo: allow passing store to load_ingredient_to_claim to avoid this conversion
+        let manifest_bytes = store.to_jumbf_internal(0)?;
+        Store::load_ingredient_to_claim(&mut self.claim, &manifest_bytes, None, self.context.settings())?;
+
+        // add the ingredient assertion and get it's uri
+        let ingredient_uri = self.add_assertion(&ingredient_assertion)?;
+
         // create an action associated with the ingredient
         let action_label = if relationship == Relationship::ParentOf {
             c2pa_action::OPENED
@@ -175,22 +185,16 @@ impl ContentCredential {
             c2pa_action::PLACED
         };
 
-        let (ingredient_assertion, store) =
-            Ingredient::from_stream(relationship, format, &mut stream, &self.settings)?;
+        let action = Action::new(action_label).add_ingredient(ingredient_uri)?;
 
-        let manifest_bytes = store.to_jumbf_internal(0)?;
-        Store::load_ingredient_to_claim(&mut self.claim, &manifest_bytes, None, &self.settings)?;
+        self.add_action(action)?;
 
-        // add the ingredient assertion and get it's uri
-        let ingredient_hashed_uri = self.add_assertion(&ingredient_assertion)?;
+        if relationship == Relationship::ParentOf {
+            // we must replace the store for parent ingredients
+            self.store = store;
+        }
 
-        // todo add to exiting actions and check fo
-        let action = Action::new(action_label).add_ingredient(ingredient_hashed_uri)?;
-
-        self.claim.add_action(action)?;
-
-        // capture the store and validation results from the assertion
-        Ok((self, store))
+        Ok(self)
     }
 
     /// sets the default claim generator info if not already set
@@ -218,8 +222,9 @@ impl ContentCredential {
         self.set_default_claim_generator_info()?;
         self.store.commit_claim(self.claim.clone())?;
         source.rewind()?; // always reset source to start
+        let resolver = self.context.resolver();
         self.store
-            .save_to_stream(format, source, dest, &signer, &self.settings)
+            .save_to_stream(format, source, dest, &signer, resolver, self.context.settings())
     }
 
     /// Generates a value similar to the C2PA Reader output
@@ -250,7 +255,7 @@ impl ContentCredential {
     }
 }
 
-impl std::fmt::Display for ContentCredential {
+impl std::fmt::Display for ContentCredential<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let value = self.reader_value().map_err(|_| std::fmt::Error)?;
         f.write_str(
@@ -261,7 +266,7 @@ impl std::fmt::Display for ContentCredential {
     }
 }
 
-impl std::fmt::Debug for ContentCredential {
+impl std::fmt::Debug for ContentCredential<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let value = self.detailed_value().map_err(|_| std::fmt::Error)?;
         f.write_str(
@@ -280,13 +285,14 @@ mod tests {
     #[test]
     fn test_content_credential_created() -> Result<()> {
         let (format, mut source, mut dest) = create_test_streams(CA_JPEG);
-        let settings = Settings::default();
+        let context = Context::new();
 
-        let mut cr = ContentCredential::create(DigitalSourceType::Empty, &settings)?;
+        let mut cr = ContentCredential::new(&context);
+        cr.create(DigitalSourceType::Empty)?;
 
         cr.save_to_stream(format, &mut source, &mut dest)?;
 
-        let cr = ContentCredential::from_stream(&settings, format, &mut dest)?;
+        let cr = ContentCredential::from_stream(&context, format, &mut dest)?;
         println!("{cr}");
         Ok(())
     }
@@ -294,14 +300,15 @@ mod tests {
     #[test]
     fn test_content_credential_from_stream() -> Result<()> {
         let (format, mut source, mut dest) = create_test_streams(CA_JPEG);
-        let settings = Settings::default();
+        let context = Context::new();
 
-        let mut cr = ContentCredential::from_stream(&settings, format, &mut source)?;
+        let mut cr = context.content_credential();
+        cr.add_ingredient_from_stream(Relationship::ParentOf,format, &mut source)?;
         println!("{cr}");
 
         cr.save_to_stream(format, &mut source, &mut dest)?;
 
-        let cr2 = ContentCredential::from_stream(&settings, format, &mut dest)?;
+        let cr2 = ContentCredential::from_stream(&context, format, &mut dest)?;
         println!("{cr2}");
         Ok(())
     }
@@ -309,14 +316,15 @@ mod tests {
     #[test]
     fn test_add_ingredient_from_stream() -> Result<()> {
         let (format, mut source, mut dest) = create_test_streams(CA_JPEG);
-        let settings = Settings::default();
+        let context = Context::new();
 
-        let mut cr = ContentCredential::create(DigitalSourceType::Empty, &settings)?;
-        cr.add_ingredient_from_stream(format, &mut source)?;
+        let mut cr = ContentCredential::new(&context);
+        cr.create(DigitalSourceType::Empty)?;
+        cr.add_ingredient_from_stream(Relationship::ParentOf,format, &mut source)?;
 
         cr.save_to_stream(format, &mut source, &mut dest)?;
 
-        let cr = ContentCredential::from_stream(&settings, format, &mut dest)?;
+        let cr = ContentCredential::from_stream(&context, format, &mut dest)?;
         println!("{cr:?}");
         Ok(())
     }

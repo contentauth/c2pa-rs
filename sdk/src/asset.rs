@@ -7,6 +7,8 @@ use crate::{
 };
 
 pub struct Asset<'a> {
+    name: Option<String>,
+    format: String,
     stream: Box<dyn CAIRead + 'a>,
     xmp: Option<String>,
     manifest: Option<Vec<u8>>,
@@ -20,11 +22,20 @@ impl<'a> Asset<'a> {
         stream.rewind()?;
         let manifest = cailoader_handler.read_cai(&mut stream)?;
         Ok(Asset {
+            name: None,
+            format: format.to_string(),
             stream: Box::new(stream),
             xmp,
             manifest: Some(manifest),
         })
     }
+
+    pub fn with_manifest(mut self, manifest: Vec<u8>) -> Self {
+        self.manifest = Some(manifest);
+        self
+    }
+
+
 
     pub fn to_stream(
         &mut self,

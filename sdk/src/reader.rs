@@ -32,7 +32,9 @@ use serde_with::skip_serializing_none;
 #[cfg(feature = "file_io")]
 use crate::utils::io_utils::uri_to_path;
 use crate::{
+    asset::Asset,
     claim::Claim,
+    context::Context,
     dynamic_assertion::PartialClaim,
     error::{Error, Result},
     http::{AsyncGenericResolver, SyncGenericResolver},
@@ -109,6 +111,40 @@ type ValidationFn =
     dyn Fn(&str, &crate::ManifestAssertion, &mut StatusTracker) -> Option<serde_json::Value>;
 
 impl Reader {
+
+     #[async_generic]
+    pub fn from_asset<'a>(context: &'a Context, asset: &'a mut Asset<'a>) -> Result<Reader> {
+        let settings = context.settings();
+        let http_resolver = if _sync {
+            SyncGenericResolver::new()
+        } else {
+            AsyncGenericResolver::new()
+        };
+        let resolver = context.resolver();
+
+        let mut validation_log = StatusTracker::default();
+        //asset.rewind()?;
+        let store = if _sync {
+            Store::from_asset(context,
+                asset,
+                &mut validation_log,
+            )
+        } else {
+            Store::from_asset_async(
+                context,
+                asset,
+                &mut validation_log,
+            )
+            .await
+        }?; 
+        if _sync {
+            Self::from_store(store, &mut validation_log, context.settings())
+        } else {
+            Self::from_store_async(store, &mut validation_log, context.settings()).await
+        }
+    }  
+
+        
     /// Create a manifest store [`Reader`] from a stream.  A Reader is used to validate C2PA data from an asset.
     ///
     /// # Arguments
