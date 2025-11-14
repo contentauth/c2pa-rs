@@ -95,12 +95,12 @@ Creates and signs C2PA manifests. The `Builder` provides both declarative (JSON-
 
 ##### Depends on
 
-- [`claim.rs`](claim.rs)
-- [`store.rs`](store.rs)
-- [`signer.rs`](signer.rs)
-- [`asset_io.rs`](asset_io.rs)
-- [`resource_store.rs`](resource_store.rs)
-- [`settings/`](settings/)
+- [`Claim`](#claim-claimrs)
+- [`Store`](#store-storers)
+- [`Signer`](#signer-and-asyncsigner-signerrs)
+- [`asset_io.rs`](#asset_iors)
+- [`ResourceStore`](#resourcestore-resource_storers)
+- [`settings/`](#settings)
 
 #### `Reader` ([reader.rs](reader.rs))
 
@@ -116,11 +116,11 @@ Reads and validates C2PA manifests from assets. The `Reader` extracts manifest s
 
 ##### Depends on
 
-- [`store.rs`](store.rs)
-- [`manifest.rs`](manifest.rs)
-- [`validation_results.rs`](validation_results.rs)
-- [`status_tracker/`](status_tracker/)
-- [`asset_io.rs`](asset_io.rs)
+- [`Store`](#store-storers)
+- [`Manifest`](#manifest-manifestrs)
+- [`validation_results.rs`](#validation_resultsrs)
+- [`status_tracker/`](#status_tracker)
+- [`asset_io.rs`](#asset_iors)
 
 #### Public type exports
 
@@ -150,10 +150,10 @@ The core internal representation of a C2PA claim. A claim is a set of assertions
 
 ##### Depends on
 
-- [`assertion.rs`](assertion.rs)
-- [`assertions/`](assertions/)
+- [`Assertion`](#assertion-assertionrs)
+- [`assertions/`](#assertions)
 - [`hashed_uri.rs`](hashed_uri.rs)
-- [`resource_store.rs`](resource_store.rs)
+- [`ResourceStore`](#resourcestore-resource_storers)
 
 #### `Manifest` ([manifest.rs](manifest.rs))
 
@@ -169,10 +169,10 @@ User-facing representation of a validated C2PA manifest. Manifests are created f
 
 ##### Depends on
 
-- [`claim.rs`](claim.rs)
-- [`ingredient.rs`](ingredient.rs)
-- [`assertions/`](assertions/)
-- [`resource_store.rs`](resource_store.rs)
+- [`Claim`](#claim-claimrs)
+- [`Ingredient`](#ingredient-ingredientrs)
+- [`assertions/`](#assertions)
+- [`ResourceStore`](#resourcestore-resource_storers)
 
 #### `Ingredient` ([ingredient.rs](ingredient.rs))
 
@@ -188,10 +188,10 @@ Represents a source asset (parent or component) used in creating the current ass
 
 ##### Depends on
 
-- [`store.rs`](store.rs)
-- [`assertions/`](assertions/)
-- [`validation_results.rs`](validation_results.rs)
-- [`resource_store.rs`](resource_store.rs)
+- [`Store`](#store-storers)
+- [`assertions/`](#assertions)
+- [`validation_results.rs`](#validation_resultsrs)
+- [`ResourceStore`](#resourcestore-resource_storers)
 
 #### `Assertion` ([assertion.rs](assertion.rs))
 
@@ -206,7 +206,7 @@ Base functionality for assertion handling, including encoding/decoding and valid
 
 ##### Depends on
 
-- [`assertions/`](assertions/)
+- [`assertions/`](#assertions)
 
 #### [assertions/](assertions/)
 
@@ -243,11 +243,11 @@ The internal manifest store that manages one or more claims and their relationsh
 
 ##### Depends on
 
-- [`claim.rs`](claim.rs)
-- [`jumbf/`](jumbf/)
-- [`asset_io.rs`](asset_io.rs)
-- [`cose_validator.rs`](cose_validator.rs)
-- [`status_tracker/`](status_tracker/)
+- [`Claim`](#claim-claimrs)
+- [`jumbf/`](#jumbf)
+- [`asset_io.rs`](#asset_iors)
+- [`cose_validator.rs`](#cose_validatorrs)
+- [`status_tracker/`](#status_tracker)
 
 #### [jumbf/](jumbf/)
 
@@ -279,8 +279,8 @@ Handles remote/external manifest references and manifest patching callbacks.
 
 ###### Depends on
 
-- [`claim.rs`](claim.rs)
-- [`http/`](http/)
+- [`Claim`](#claim-claimrs)
+- [`http/`](#http)
 
 ### Asset I/O layer
 
@@ -305,8 +305,9 @@ Defines traits for asset I/O operations. These traits abstract over different as
 - Coordinate with format-specific handlers
 
 ##### Depends on
-- [`asset_handlers/`](asset_handlers/)
-- [`jumbf/`](jumbf/)
+
+- [`asset_handlers/`](#asset_handlers)
+- [`jumbf/`](#jumbf)
 
 #### [asset_handlers/](asset_handlers/)
 
@@ -327,8 +328,8 @@ High-level JUMBF I/O operations that coordinate between asset handlers and JUMBF
 
 ##### Depends on
 
-- [`asset_handlers/`](asset_handlers/)
-- [`jumbf/`](jumbf/)
+- [`asset_handlers/`](#asset_handlers)
+- [`jumbf/`](#jumbf)
 
 ### Cryptography layer
 
@@ -355,8 +356,8 @@ Defines the `Signer` and `AsyncSigner` traits that abstract over different signi
 
 ##### Depends on
 
-- [`crypto/`](crypto/)
-- [`dynamic_assertion.rs`](dynamic_assertion.rs)
+- [`crypto/`](#crypto)
+- [`dynamic_assertion.rs`](#dynamic_assertionrs)
 
 #### [create_signer.rs](create_signer.rs)
 
@@ -371,8 +372,8 @@ Factory functions for creating standard signer implementations from keys and cer
 
 ##### Depends on
 
-- [`signer.rs`](signer.rs)
-- [`crypto/`](crypto/)
+- [`Signer`](#signer-and-asyncsigner-signerrs)
+- [`crypto/`](#crypto)
 
 #### [callback_signer.rs](callback_signer.rs)
 
@@ -386,7 +387,7 @@ A `Signer` implementation that delegates signing to user-provided callbacks. Thi
 
 ##### Depends on
 
-- [`signer.rs`](signer.rs)
+- [`Signer`](#signer-and-asyncsigner-signerrs)
 
 #### [cose_sign.rs](cose_sign.rs)
 
@@ -402,7 +403,7 @@ High-level COSE signing operations. Coordinates between signers and COSE structu
 ##### Depends on
 
 - [`crypto/cose/`](crypto/cose/)
-- [`signer.rs`](signer.rs)
+- [`Signer`](#signer-and-asyncsigner-signerrs)
 
 #### [cose_validator.rs](cose_validator.rs)
 
@@ -419,7 +420,8 @@ Validates COSE signatures, certificates, and timestamp tokens.
 ##### Depends on
 
 - [`crypto/cose/`](crypto/cose/)
-- [`status_tracker/`](status_tracker/), [`settings/`](settings/)
+- [`status_tracker/`](#status_tracker)
+- [`settings/`](#settings)
 
 ### Validation layer
 
@@ -438,9 +440,9 @@ Structured validation results following the C2PA specification's validation stat
 
 ##### Depends on
 
-- [`validation_status.rs`](validation_status.rs)
-- [`status_tracker/`](status_tracker/)
-- [`store.rs`](store.rs)
+- [`validation_status.rs`](#validation_statusrs)
+- [`status_tracker/`](#status_tracker)
+- [`Store`](#store-storers)
 
 #### [validation_status.rs](validation_status.rs)
 
@@ -455,7 +457,7 @@ Individual validation status codes as defined in the C2PA specification.
 
 ##### Depends on
 
-- [`status_tracker/`](status_tracker/)
+- [`status_tracker/`](#status_tracker)
 
 #### [status_tracker/](status_tracker/)
 
@@ -494,8 +496,8 @@ Support for assertions that are generated dynamically during the signing process
 
 ##### Depends on
 
-- [`claim.rs`](claim.rs)
-- [`signer.rs`](signer.rs)
+- [`Claim`](#claim-claimrs)
+- [`Signer`](#signer-and-asyncsigner-signerrs)
 
 #### [http/](http/)
 
