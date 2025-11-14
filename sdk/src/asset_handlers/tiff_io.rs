@@ -183,6 +183,7 @@ pub struct ImageFileDirectory {
     ifd_type: IfdType,
     entries: BTreeMap<u16, IfdEntry>,
     next_ifd_offset: Option<u64>,
+    next_idf_offset_location: u64,
 }
 
 impl ImageFileDirectory {
@@ -363,9 +364,13 @@ impl TiffStructure {
             ifd_type,
             entries: BTreeMap::new(),
             next_ifd_offset: None,
+            next_idf_offset_location: 0,
         };
 
         TiffStructure::read_ifd_entries(&mut byte_reader, big_tiff, entry_cnt, &mut ifd.entries)?;
+
+        // save for easy patching
+        ifd.next_idf_offset_location = byte_reader.stream_position()?;
 
         let next_ifd = if big_tiff {
             byte_reader.read_u64()?
@@ -869,7 +874,7 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
             2 + 2 + 4 + 4
         };
 
-        cnt += (num_entries * entry_size);
+        cnt += num_entries * entry_size;
 
         // add in next_ifd pointer
         cnt += if self.big_tiff { 8 } else { 4 };
@@ -877,9 +882,14 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
         cnt
     }
 
+    pub fn write_new_end_ifd(&mut self, target_ifd: &mut BTreeMap<u16, IfdClonedEntry>) -> Result<u64> {
+        self.writer.seek(SeekFrom::End(0))?;
+        self.write_ifd(target_ifd)
+    }
+
     fn write_ifd(&mut self, target_ifd: &mut BTreeMap<u16, IfdClonedEntry>) -> Result<u64> {
         let mut data = Vec::new();
-        let mut data_writer = Cursor::new(data);
+        let data_writer = Cursor::new(data);
         let mut bo = ByteOrdered::new(data_writer, self.endianness.clone());
 
         // write out all data to buffer and save the offsets, skipping subfiles since the data is already written
@@ -969,6 +979,19 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
     // add new TAG by supplying the IFD entry
     pub fn add_target_tag(&mut self, entry: IfdClonedEntry) {
         self.additional_ifds.insert(entry.entry_tag, entry);
+    }
+
+    pub fn set_ifd_offset(&mut self, entry: &ImageFileDirectory, offset: u64) -> Result<()> {
+        self.writer.seek(SeekFrom::Start(entry.next_idf_offset_location));
+
+        // write 0s for next offset
+        if self.big_tiff {
+            self.writer.write_u64(offset)?;
+        } else {
+            let offset32 = u32::try_from(offset)?;
+            self.writer.write_u32(offset32)?;
+        }
+        Ok(())
     }
 
     fn clone_image_data<R: Read + Seek + ?Sized>(
@@ -1244,13 +1267,13 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
     pub fn clone_tiff<R: Read + Seek + ?Sized>(
         &mut self,
         tiff_tree: &mut Arena<ImageFileDirectory>,
-        tokens: &[Token],
+        tokens: &[Token],  // first page tokens
         asset_reader: &mut R,
     ) -> Result<()> {
         let mut page_ifd_offsets = Vec::new();
 
-        let last_page = tokens
-            .last()
+        let first_page = tokens
+            .first()
             .ok_or(Error::InvalidAsset("no IFD found".to_string()))?;
 
         for page_token in tokens {
@@ -1267,8 +1290,8 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
             // clone the image data
             self.clone_image_data(&mut cloned_ifd, asset_reader)?;
 
-            // add in new Tags to last IFD (cp2 tags)
-            if page_token == last_page {
+            // add in new Tags to first IFD (XMP for example)
+            if page_token == first_page {
                 for (tag, new_entry) in &self.additional_ifds {
                     cloned_ifd.insert(*tag, new_entry.clone());
                 }
@@ -1426,12 +1449,24 @@ fn tiff_clone_with_tags<R: Read + Seek + ?Sized, W: Read + Write + Seek + ?Sized
             intermediate_stream.rewind();
 
             // map the modified asset
-            let (mut tiff_tree, page_tokens, endianness, big_tiff) = map_tiff(asset_reader)?;
+            let (tiff_tree, page_tokens, endianness, big_tiff) = map_tiff(asset_reader)?;
 
             let last_page = page_tokens
                 .last()
                 .ok_or(Error::InvalidAsset("no IFD".to_string()))?;
             let last_ifd = &tiff_tree[*last_page].data;
+
+            let mut bo = ByteOrdered::new(intermediate_stream, endianness);
+            let mut tc = TiffCloner::new(endianness, big_tiff, &mut bo)?;
+
+            let mut target_ifd = BTreeMap::new();
+            target_ifd.insert(c2pa_entry.entry_tag, c2pa_entry);
+
+            let new_lasts_ifd_pos = tc.write_new_end_ifd(&mut target_ifd)?;
+
+            // point last ifd to new last ifd
+            tc.set_ifd_offset(last_ifd, new_lasts_ifd_pos)?;
+
         } else {
             std::io::copy(asset_reader, writer)?;
         }
@@ -1506,8 +1541,10 @@ fn get_xmp_data<R>(mut asset_reader: &mut R) -> Option<Vec<u8>>
 where
     R: Read + Seek + ?Sized,
 {
-    let (tiff_tree, tokens, e, big_tiff) = map_tiff(asset_reader).ok()?;
-    let first_ifd = &tiff_tree[tokens[0]].data;
+    let (tiff_tree, page_tokens, e, big_tiff) = map_tiff(asset_reader).ok()?;
+    let first_page = page_tokens
+        .first()?;
+    let first_ifd = &tiff_tree[*first_page].data;
 
     let xmp_ifd_entry = first_ifd.get_tag(XMP_TAG)?;
     // make sure the tag type is correct
@@ -1597,7 +1634,7 @@ impl AssetIO for TiffIO {
     }
 
     fn asset_box_hash_ref(&self) -> Option<&dyn AssetBoxHash> {
-        Some(self)
+        None // not ready to be enabled
     }
 
     fn get_writer(&self, asset_type: &str) -> Option<Box<dyn CAIWriter>> {
@@ -1710,9 +1747,12 @@ impl CAIWriter for TiffIO {
             // sanity check, this IFD must have pointed to the last IFD (C2PA IFD)
             if let Some(next_ifd_offset) = new_last_page_ifd.next_ifd_offset {
                 if next_ifd_offset == last_ifd_offset {
-                    // skip source upto last IDF
+                    // skip source up to last IDF or if C2PA tag is before this use that value
+                    let c2pa_entry = &ifds[*last_page].data.entries[&C2PA_TAG];
+                    let c2pa_data_pos = decode_offset(c2pa_entry.value_offset, e, big_tiff)?;
+
                     input_stream.rewind()?;
-                    let mut trucate_source = input_stream.take(last_ifd_offset);
+                    let mut trucate_source = input_stream.take(std::cmp::min(last_ifd_offset, c2pa_data_pos));
                     std::io::copy(&mut trucate_source, output_stream)?;
 
                     // skip down to correct next IFD field

@@ -151,15 +151,14 @@ impl BoxHash {
         let mut source_index = 0;
 
         // check to see we source index starts at PNGh and skip if not included in the hash list
-        let mut is_tiff = false;
-        if let Some(first_expected_bms) = source_bms.get(source_index) {
+        let is_tiff = if let Some(first_expected_bms) = source_bms.get(source_index) {
             if first_expected_bms.names[0] == "PNGh" && self.boxes[0].names[0] != "PNGh" {
                 source_index += 1;
             }
-            is_tiff = first_expected_bms.entry_is_data.is_some(); // only tru if TIFF box hash
+            first_expected_bms.entry_is_data.is_some() // only true if TIFF box hash
         } else {
             return Err(Error::HashMismatch("No data boxes found".to_string()));
-        }
+        };
 
         // tiff boxes point to arbitrary sets of bytes so we have to hash to data as provided
         if is_tiff {
