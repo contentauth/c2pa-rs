@@ -21,14 +21,13 @@ use crate::{
     assertion::{Assertion, AssertionBase, AssertionCbor},
     assertions::labels,
     error::Result,
-    http::{AsyncGenericResolver, AsyncHttpResolver, SyncGenericResolver, SyncHttpResolver},
+    http::{AsyncHttpResolver, SyncHttpResolver},
 };
 
 /// Helper class to create Timestamp assertions
 #[derive(Serialize, Deserialize, Default, Debug, PartialEq, Eq)]
 pub struct TimeStamp(HashMap<String, ByteBuf>);
 
-#[allow(dead_code)]
 impl TimeStamp {
     /// Label prefix for an [`Timestamp`] assertion.
     ///
@@ -50,26 +49,12 @@ impl TimeStamp {
         self.0.get(manifest_id).map(|buf| buf.as_ref())
     }
 
-    #[async_generic]
-    pub fn send_timestamp_token_request(tsa_url: &str, message: &[u8]) -> Result<Vec<u8>> {
-        if _sync {
-            Self::send_timestamp_token_request_impl(tsa_url, message, &SyncGenericResolver::new())
-        } else {
-            Self::send_timestamp_token_request_impl_async(
-                tsa_url,
-                message,
-                &AsyncGenericResolver::new(),
-            )
-            .await
-        }
-    }
-
     #[async_generic(async_signature(
         tsa_url: &str,
         message: &[u8],
         http_resolver: &impl AsyncHttpResolver,
     ))]
-    pub(crate) fn send_timestamp_token_request_impl(
+    pub(crate) fn send_timestamp_token_request(
         tsa_url: &str,
         message: &[u8],
         http_resolver: &impl SyncHttpResolver,

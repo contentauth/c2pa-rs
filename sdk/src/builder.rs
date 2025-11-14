@@ -37,7 +37,7 @@ use crate::{
     },
     claim::Claim,
     error::{Error, Result},
-    http::{AsyncGenericResolver, SyncGenericResolver},
+    http::{AsyncGenericResolver, AsyncHttpResolver, SyncGenericResolver, SyncHttpResolver},
     jumbf_io,
     resource_store::{ResourceRef, ResourceResolver, ResourceStore},
     settings::{self, Settings},
@@ -1351,12 +1351,7 @@ impl Builder {
     }
 
     #[cfg(feature = "add_thumbnails")]
-    fn maybe_add_thumbnail<R>(
-        &mut self,
-        format: &str,
-        stream: &mut R,
-        settings: &Settings,
-    ) -> Result<&mut Self>
+    fn maybe_add_thumbnail<R>(&mut self, format: &str, stream: &mut R) -> Result<&mut Self>
     where
         R: Read + Seek + ?Sized,
     {
@@ -1366,7 +1361,7 @@ impl Builder {
         }
 
         // check settings to see if we should auto generate a thumbnail
-        let auto_thumbnail = settings.builder.thumbnail.enabled;
+        let auto_thumbnail = self.settings.builder.thumbnail.enabled;
 
         if self.definition.thumbnail.is_none() && auto_thumbnail {
             stream.rewind()?;
@@ -1376,7 +1371,7 @@ impl Builder {
                 crate::utils::thumbnail::make_thumbnail_bytes_from_stream(
                     format,
                     &mut stream,
-                    settings,
+                    &self.settings,
                 )?
             {
                 stream.rewind()?;
@@ -1416,6 +1411,52 @@ impl Builder {
             stream.rewind()?;
         }
         Ok(self)
+    }
+
+    #[async_generic(async_signature(
+        &mut self,
+        timestamp_authority_url: &str,
+        store: &mut Store,
+        http_resolver: &impl AsyncHttpResolver,
+    ))]
+    fn maybe_add_timestamp(
+        &mut self,
+        timestamp_authority_url: &str,
+        store: &mut Store,
+        http_resolver: &impl SyncHttpResolver,
+    ) -> Result<()> {
+        if self.intent() == Some(BuilderIntent::Update)
+            && self.definition.ingredients.iter().any(|i| i.is_parent())
+            && self.settings.builder.add_parent_timestamp_assertion
+        {
+            // TODO: or err?
+            #[allow(clippy::unwrap_used)]
+            let manifest_id = store.provenance_path().unwrap();
+
+            let manifest_ids = vec![manifest_id.as_ref()];
+            let timestamp_assertion = if _sync {
+                store.get_timestamp_assertion(
+                    &manifest_ids,
+                    timestamp_authority_url,
+                    http_resolver,
+                )?
+            } else {
+                store
+                    .get_timestamp_assertion_async(
+                        &manifest_ids,
+                        timestamp_authority_url,
+                        http_resolver,
+                    )
+                    .await?
+            };
+
+            // TODO: or err?
+            #[allow(clippy::unwrap_used)]
+            let claim = store.provenance_claim_mut().unwrap();
+            claim.add_assertion(&timestamp_assertion)?;
+        }
+
+        Ok(())
     }
 
     // Find an assertion in the manifest.
@@ -1571,7 +1612,6 @@ impl Builder {
         R: Read + Seek + Send,
         W: Write + Read + Seek + Send,
     {
-        let settings = crate::settings::get_settings().unwrap_or_default();
         let http_resolver = if _sync {
             SyncGenericResolver::new()
         } else {
@@ -1593,17 +1633,41 @@ impl Builder {
 
         // generate thumbnail if we don't already have one
         #[cfg(feature = "add_thumbnails")]
-        self.maybe_add_thumbnail(&format, source, &settings)?;
+        self.maybe_add_thumbnail(&format, source)?;
 
         // convert the manifest to a store
-        let mut store = self.to_store(&settings)?;
+        let mut store = self.to_store(&self.settings)?;
+
+        // add timestamp if conditions allow
+        if let Some(timestamp_authority_url) = signer.time_authority_url() {
+            if _sync {
+                self.maybe_add_timestamp(&timestamp_authority_url, &mut store, &http_resolver)?;
+            } else {
+                self.maybe_add_timestamp_async(&timestamp_authority_url, &mut store, &http_resolver)
+                    .await?
+            }
+        }
 
         // sign and write our store to to the output image file
         if _sync {
-            store.save_to_stream(&format, source, dest, signer, &http_resolver, &settings)
+            store.save_to_stream(
+                &format,
+                source,
+                dest,
+                signer,
+                &http_resolver,
+                &self.settings,
+            )
         } else {
             store
-                .save_to_stream_async(&format, source, dest, signer, &http_resolver, &settings)
+                .save_to_stream_async(
+                    &format,
+                    source,
+                    dest,
+                    signer,
+                    &http_resolver,
+                    &self.settings,
+                )
                 .await
         }
     }

@@ -500,7 +500,6 @@ impl Store {
 
     /// Creates a TimeStamp (c2pa.time-stamp) assertion containing the TimeStampTokens for each
     /// specified manifest_id.  If any time stamp request fails the assertion is not created.
-    #[allow(dead_code)]
     #[async_generic(async_signature(
         &self,
         manifest_ids: &[&str],
@@ -521,14 +520,10 @@ impl Store {
                 .ok_or(Error::ClaimMissingSignatureBox)?;
 
             let timestamp_token = if _sync {
-                TimeStamp::send_timestamp_token_request_impl(tsa_url, &signature, http_resolver)?
+                TimeStamp::send_timestamp_token_request(tsa_url, &signature, http_resolver)?
             } else {
-                TimeStamp::send_timestamp_token_request_impl_async(
-                    tsa_url,
-                    &signature,
-                    http_resolver,
-                )
-                .await?
+                TimeStamp::send_timestamp_token_request_async(tsa_url, &signature, http_resolver)
+                    .await?
             };
 
             timestamp_assertion.add_timestamp(manifest_id, &timestamp_token);
