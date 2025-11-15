@@ -7,7 +7,6 @@ use crate::{
     AsyncSigner, Result, Signer,
 };
 
-
 pub struct Context {
     settings: Settings,
     http_resolver: OnceCell<Box<dyn SyncHttpResolver>>,
