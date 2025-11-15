@@ -1375,8 +1375,11 @@ impl Claim {
             if labels::HASH_LABELS.contains(&base_label) || add_as_created_assertion {
                 ClaimAssertionType::Created
             } else if let Some(created_assertions) = {
-                let settings = crate::settings::get_settings().unwrap_or_default();
-                settings.builder.created_assertion_labels
+                Context::new()
+                    .settings()
+                    .builder
+                    .created_assertion_labels
+                    .clone()
             } {
                 if created_assertions.iter().any(|label| label == base_label) {
                     ClaimAssertionType::Created

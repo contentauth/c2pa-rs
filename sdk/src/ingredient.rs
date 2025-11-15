@@ -731,8 +731,7 @@ impl Ingredient {
         path: P,
         options: &dyn IngredientOptions,
     ) -> Result<Self> {
-        let settings = crate::settings::get_settings().unwrap_or_default();
-        let context = Context::new().with_settings(settings);
+        let context = Context::new();
         Self::from_file_impl(path.as_ref(), options, &context)
     }
 

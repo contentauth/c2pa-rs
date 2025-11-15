@@ -27,6 +27,14 @@ impl Default for Context {
     }
 }
 
+impl std::fmt::Debug for Context {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Context")
+            .field("settings", &self.settings)
+            .finish()
+    }
+}
+
 impl Context {
     pub fn new() -> Self {
         Self::default()
