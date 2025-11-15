@@ -1,9 +1,9 @@
-
 use std::cell::OnceCell;
+
 use crate::{
     content_credential::ContentCredential,
+    http::{AsyncGenericResolver, AsyncHttpResolver, SyncGenericResolver, SyncHttpResolver},
     settings::Settings,
-    http::{SyncGenericResolver, AsyncGenericResolver, SyncHttpResolver, AsyncHttpResolver},
 };
 
 pub enum HttpResolver {
@@ -12,7 +12,7 @@ pub enum HttpResolver {
 }
 
 pub struct Context {
-    settings: Settings, 
+    settings: Settings,
     http_resolver: OnceCell<Box<dyn SyncHttpResolver>>,
     http_resolver_async: OnceCell<Box<dyn AsyncHttpResolver>>,
 }
@@ -20,7 +20,7 @@ pub struct Context {
 impl Default for Context {
     fn default() -> Self {
         Self {
-            settings: Settings::default(),
+            settings: crate::settings::get_settings().unwrap_or_default(),
             http_resolver: OnceCell::new(),
             http_resolver_async: OnceCell::new(),
         }
@@ -37,18 +37,12 @@ impl Context {
         self
     }
 
-    pub fn with_resolver<T: SyncHttpResolver + 'static>(
-        self,
-        resolver: T,
-    ) -> Self {
+    pub fn with_resolver<T: SyncHttpResolver + 'static>(self, resolver: T) -> Self {
         let _ = self.http_resolver.set(Box::new(resolver));
         self
     }
 
-    pub fn with_resolver_async<T: AsyncHttpResolver + 'static>(
-        self,
-        resolver: T,
-    ) -> Self {
+    pub fn with_resolver_async<T: AsyncHttpResolver + 'static>(self, resolver: T) -> Self {
         let _ = self.http_resolver_async.set(Box::new(resolver));
         self
     }
@@ -61,7 +55,7 @@ impl Context {
         &mut self.settings
     }
 
-    pub fn resolver(&self) ->&dyn SyncHttpResolver {
+    pub fn resolver(&self) -> &dyn SyncHttpResolver {
         self.http_resolver
             .get_or_init(|| Box::new(SyncGenericResolver::new()))
             .as_ref()
@@ -73,8 +67,7 @@ impl Context {
             .as_ref()
     }
 
-    pub fn content_credential(&self) -> ContentCredential {
-        ContentCredential::new(&self)
+    pub fn content_credential(&self) -> ContentCredential<'_> {
+        ContentCredential::new(self)
     }
-
 }

@@ -26,7 +26,6 @@ use crate::{
     error::Result,
     hashed_uri::HashedUri,
     jumbf::labels::{to_manifest_uri, to_signature_uri},
-    settings::Settings,
     status_tracker::StatusTracker,
     store::Store,
     validation_results::ValidationResults,
@@ -552,8 +551,7 @@ impl Ingredient {
 
         // ingredient.document_id = xmp_info.document_id; // use document id if one exists
         // ingredient.provenance = xmp_info.provenance;
-        let store: Store =
-            Store::from_stream(format, &mut stream, true, &mut validation_log, context.resolver(), context.settings())?;
+        let store: Store = Store::from_stream(format, &mut stream, &mut validation_log, context)?;
         let validation_results = ValidationResults::from_store(&store, &validation_log);
         let ingredient =
             Self::from_store_and_validation_results(relationship, &store, &validation_results)?;

@@ -6,6 +6,7 @@ use crate::{
     Error, Result,
 };
 
+#[allow(dead_code)]
 pub struct Asset<'a> {
     name: Option<String>,
     format: String,
@@ -15,6 +16,7 @@ pub struct Asset<'a> {
 }
 
 impl<'a> Asset<'a> {
+    #[allow(dead_code)]
     pub fn from_stream(stream: impl Read + Seek + Send + 'a, format: &str) -> Result<Self> {
         let cailoader_handler = get_cailoader_handler(format).ok_or(Error::UnsupportedType)?;
         let mut stream = BufReader::new(stream);
@@ -30,14 +32,14 @@ impl<'a> Asset<'a> {
         })
     }
 
+    #[allow(dead_code)]
     pub fn with_manifest(mut self, manifest: Vec<u8>) -> Self {
         self.manifest = Some(manifest);
         self
     }
 
-
-
-    pub fn to_stream(
+    #[allow(dead_code)]
+    pub fn write_stream(
         &mut self,
         mut output: impl Read + Write + Seek + Send,
         format: &str,
@@ -59,10 +61,10 @@ mod tests {
     };
 
     use super::*;
-    use crate::{content_credential::ContentCredential, settings::Settings};
+    use crate::content_credential::ContentCredential;
     #[test]
     fn test_asset_from_stream() {
-        let settings = Settings::default();
+        let context = crate::context::Context::new();
         let file = File::open("tests/fixtures/C.jpg").unwrap();
         let mut reader = BufReader::new(file);
         let mut asset = Asset::from_stream(&mut reader, "image/jpeg").unwrap();
@@ -72,7 +74,7 @@ mod tests {
         assert!(asset.manifest.is_some());
         if let Some(manifest) = &asset.manifest {
             let cc = ContentCredential::from_stream(
-                &settings,
+                &context,
                 "application/c2pa",
                 std::io::Cursor::new(manifest),
             )
@@ -80,9 +82,9 @@ mod tests {
             println!("manifest: {:?}", cc);
         }
         let mut output = Cursor::new(Vec::new());
-        Asset::to_stream(&mut asset, &mut output, "image/jpeg").unwrap();
+        Asset::write_stream(&mut asset, &mut output, "image/jpeg").unwrap();
 
-        let cc = ContentCredential::from_stream(&settings, "image/jpeg", &mut output).unwrap();
+        let cc = ContentCredential::from_stream(&context, "image/jpeg", &mut output).unwrap();
         println!("manifest: {:?}", cc);
     }
 }

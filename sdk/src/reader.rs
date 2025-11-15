@@ -32,17 +32,14 @@ use serde_with::skip_serializing_none;
 #[cfg(feature = "file_io")]
 use crate::utils::io_utils::uri_to_path;
 use crate::{
-    asset::Asset,
     claim::Claim,
     context::Context,
     dynamic_assertion::PartialClaim,
     error::{Error, Result},
-    http::{AsyncGenericResolver, SyncGenericResolver},
     jumbf::labels::{manifest_label_from_uri, to_absolute_uri, to_relative_uri},
     jumbf_io, log_item,
     manifest::StoreOptions,
     manifest_store_report::ManifestStoreReport,
-    settings::Settings,
     status_tracker::StatusTracker,
     store::Store,
     utils::hash_utils::hash_to_b64,
@@ -111,40 +108,31 @@ type ValidationFn =
     dyn Fn(&str, &crate::ManifestAssertion, &mut StatusTracker) -> Option<serde_json::Value>;
 
 impl Reader {
+    //  #[async_generic]
+    // pub fn from_asset<'a>(context: &'a Context, asset: &'a mut Asset<'a>) -> Result<Reader> {
 
-     #[async_generic]
-    pub fn from_asset<'a>(context: &'a Context, asset: &'a mut Asset<'a>) -> Result<Reader> {
-        let settings = context.settings();
-        let http_resolver = if _sync {
-            SyncGenericResolver::new()
-        } else {
-            AsyncGenericResolver::new()
-        };
-        let resolver = context.resolver();
+    //     let mut validation_log = StatusTracker::default();
+    //     //asset.rewind()?;
+    //     let store = if _sync {
+    //         Store::from_asset(context,
+    //             asset,
+    //             &mut validation_log,
+    //         )
+    //     } else {
+    //         Store::from_asset_async(
+    //             context,
+    //             asset,
+    //             &mut validation_log,
+    //         )
+    //         .await
+    //     }?;
+    //     if _sync {
+    //         Self::from_store(store, &mut validation_log, context)
+    //     } else {
+    //         Self::from_store_async(store, &mut validation_log, context).await
+    //     }
+    // }
 
-        let mut validation_log = StatusTracker::default();
-        //asset.rewind()?;
-        let store = if _sync {
-            Store::from_asset(context,
-                asset,
-                &mut validation_log,
-            )
-        } else {
-            Store::from_asset_async(
-                context,
-                asset,
-                &mut validation_log,
-            )
-            .await
-        }?; 
-        if _sync {
-            Self::from_store(store, &mut validation_log, context.settings())
-        } else {
-            Self::from_store_async(store, &mut validation_log, context.settings()).await
-        }
-    }  
-
-        
     /// Create a manifest store [`Reader`] from a stream.  A Reader is used to validate C2PA data from an asset.
     ///
     /// # Arguments
@@ -175,84 +163,40 @@ impl Reader {
     #[async_generic]
     #[cfg(not(target_arch = "wasm32"))]
     pub fn from_stream(format: &str, mut stream: impl Read + Seek + Send) -> Result<Reader> {
-        let settings = crate::settings::get_settings().unwrap_or_default();
-        let http_resolver = if _sync {
-            SyncGenericResolver::new()
-        } else {
-            AsyncGenericResolver::new()
-        };
-        // TODO: passing verify is redundant with settings
-        let verify = settings.verify.verify_after_reading;
+        let context = Context::new();
 
         let mut validation_log = StatusTracker::default();
         stream.rewind()?; // Ensure stream is at the start
         let store = if _sync {
-            Store::from_stream(
-                format,
-                stream,
-                verify,
-                &mut validation_log,
-                &http_resolver,
-                &settings,
-            )
+            Store::from_stream(format, stream, &mut validation_log, &context)
         } else {
-            Store::from_stream_async(
-                format,
-                stream,
-                verify,
-                &mut validation_log,
-                &http_resolver,
-                &settings,
-            )
-            .await
+            Store::from_stream_async(format, stream, &mut validation_log, &context).await
         }?;
 
         if _sync {
-            Self::from_store(store, &mut validation_log, &settings)
+            Self::from_store(store, &mut validation_log, &context)
         } else {
-            Self::from_store_async(store, &mut validation_log, &settings).await
+            Self::from_store_async(store, &mut validation_log, &context).await
         }
     }
 
     #[async_generic]
     #[cfg(target_arch = "wasm32")]
     pub fn from_stream(format: &str, mut stream: impl Read + Seek) -> Result<Reader> {
-        let settings = crate::settings::get_settings().unwrap_or_default();
-        let http_resolver = if _sync {
-            SyncGenericResolver::new()
-        } else {
-            AsyncGenericResolver::new()
-        };
-        // TODO: passing verify is redundant with settings
-        let verify = settings.verify.verify_after_reading;
+        let context = Context::new();
 
         let mut validation_log = StatusTracker::default();
 
         let store = if _sync {
-            Store::from_stream(
-                format,
-                &mut stream,
-                verify,
-                &mut validation_log,
-                &http_resolver,
-                &settings,
-            )
+            Store::from_stream(format, &mut stream, &mut validation_log, &context)
         } else {
-            Store::from_stream_async(
-                format,
-                &mut stream,
-                verify,
-                &mut validation_log,
-                &http_resolver,
-                &settings,
-            )
-            .await
+            Store::from_stream_async(format, &mut stream, &mut validation_log, &context).await
         }?;
 
         if _sync {
-            Self::from_store(store, &mut validation_log, &settings)
+            Self::from_store(store, &mut validation_log, &context)
         } else {
-            Self::from_store_async(store, &mut validation_log, &settings).await
+            Self::from_store_async(store, &mut validation_log, &context).await
         }
     }
 
@@ -344,41 +288,30 @@ impl Reader {
         format: &str,
         stream: impl Read + Seek + Send,
     ) -> Result<Reader> {
-        let settings = crate::settings::get_settings().unwrap_or_default();
-        let http_resolver = if _sync {
-            SyncGenericResolver::new()
-        } else {
-            AsyncGenericResolver::new()
-        };
+        let context = Context::new();
 
         let mut validation_log = StatusTracker::default();
-
-        let verify = settings.verify.verify_after_reading;
 
         let store = if _sync {
             Store::from_manifest_data_and_stream(
                 c2pa_data,
                 format,
                 stream,
-                verify,
                 &mut validation_log,
-                &http_resolver,
-                &settings,
+                &context,
             )
         } else {
             Store::from_manifest_data_and_stream_async(
                 c2pa_data,
                 format,
                 stream,
-                verify,
                 &mut validation_log,
-                &http_resolver,
-                &settings,
+                &context,
             )
             .await
         }?;
 
-        Self::from_store(store, &mut validation_log, &settings)
+        Self::from_store(store, &mut validation_log, &context)
     }
 
     /// Create a [`Reader`] from an initial segment and a fragment stream.
@@ -398,12 +331,7 @@ impl Reader {
         mut stream: impl Read + Seek + Send,
         mut fragment: impl Read + Seek + Send,
     ) -> Result<Self> {
-        let settings = crate::settings::get_settings().unwrap_or_default();
-        let http_resolver = if _sync {
-            SyncGenericResolver::new()
-        } else {
-            AsyncGenericResolver::new()
-        };
+        let context = Context::new();
 
         let mut validation_log = StatusTracker::default();
 
@@ -413,8 +341,7 @@ impl Reader {
                 &mut stream,
                 &mut fragment,
                 &mut validation_log,
-                &http_resolver,
-                &settings,
+                &context,
             )
         } else {
             Store::load_fragment_from_stream_async(
@@ -422,13 +349,12 @@ impl Reader {
                 &mut stream,
                 &mut fragment,
                 &mut validation_log,
-                &http_resolver,
-                &settings,
+                &context,
             )
             .await
         }?;
 
-        Self::from_store(store, &mut validation_log, &settings)
+        Self::from_store(store, &mut validation_log, &context)
     }
 
     /// Loads a [`Reader`]` from an initial segment and fragments.  This
@@ -439,10 +365,8 @@ impl Reader {
         path: P,
         fragments: &Vec<std::path::PathBuf>,
     ) -> Result<Reader> {
-        let settings = crate::settings::get_settings().unwrap_or_default();
-        let http_resolver = SyncGenericResolver::new();
+        let context = Context::new();
 
-        let verify = settings.verify.verify_after_reading;
         let mut validation_log = StatusTracker::default();
 
         let asset_type = jumbf_io::get_supported_file_extension(path.as_ref())
@@ -454,12 +378,10 @@ impl Reader {
             &asset_type,
             &mut init_segment,
             fragments,
-            verify,
             &mut validation_log,
-            &http_resolver,
-            &settings,
+            &context,
         ) {
-            Ok(store) => Self::from_store(store, &mut validation_log, &settings),
+            Ok(store) => Self::from_store(store, &mut validation_log, &context),
             Err(e) => Err(e),
         }
     }
@@ -784,7 +706,7 @@ impl Reader {
     pub(crate) fn from_store(
         store: Store,
         validation_log: &mut StatusTracker,
-        settings: &Settings,
+        context: &Context,
     ) -> Result<Self> {
         let active_manifest = store.provenance_label();
         let mut manifests = HashMap::new();
@@ -798,7 +720,7 @@ impl Reader {
                     manifest_label,
                     &mut options,
                     validation_log,
-                    settings,
+                    context.settings(),
                 )
             } else {
                 Manifest::from_store_async(
@@ -806,7 +728,7 @@ impl Reader {
                     manifest_label,
                     &mut options,
                     validation_log,
-                    settings,
+                    context.settings(),
                 )
                 .await
             };
