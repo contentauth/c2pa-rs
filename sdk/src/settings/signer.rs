@@ -11,12 +11,14 @@
 // specific language governing permissions and limitations under
 // each license.
 
+use http::Request;
 use serde::{Deserialize, Serialize};
 
 use crate::{
     create_signer,
     crypto::raw_signature::RawSigner,
     dynamic_assertion::DynamicAssertion,
+    http::{SyncGenericResolver, SyncHttpResolver},
     identity::{builder::IdentityAssertionBuilder, x509::X509CredentialHolder},
     settings::{Settings, SettingsValidate},
     Error, Result, Signer, SigningAlg,
@@ -27,11 +29,11 @@ use crate::{
 /// A [`Signer`] can be obtained by calling the [`signer()`] function.
 ///
 /// [`Signer`]: crate::Signer
-/// [`signer()`]: Builder::signer
-#[allow(unused)]
+/// [`signer()`]: crate::settings::Settings::signer
+#[cfg_attr(feature = "json_schema", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "lowercase")]
-pub(crate) enum SignerSettings {
+pub enum SignerSettings {
     /// A signer configured locally.
     Local {
         // Algorithm to use for signing.
@@ -42,6 +44,8 @@ pub(crate) enum SignerSettings {
         private_key: String,
         // Time stamp authority URL for signing.
         tsa_url: Option<String>,
+        // Referenced assertions for CAWG identity signing (optional).
+        referenced_assertions: Option<Vec<String>>,
     },
     /// A signer configured remotely.
     Remote {
@@ -55,14 +59,16 @@ pub(crate) enum SignerSettings {
         sign_cert: String,
         // Time stamp authority URL for signing.
         tsa_url: Option<String>,
+        // Referenced assertions for CAWG identity signing (optional).
+        referenced_assertions: Option<Vec<String>>,
     },
 }
 
 impl SignerSettings {
     // TODO: add async signer
-    /// Returns the constructed signer from the [BuilderSettings::signer] field.
+    /// Returns the constructed signer from the [Settings::signer] field.
     ///
-    /// If the signer settings aren't specified, this function will return [Error::MissingSignerSettings][crate::Error::MissingSignerSettings].
+    /// If the signer settings aren't specified, this function will return [Error::MissingSignerSettings].
     pub fn signer() -> Result<Box<dyn Signer>> {
         let c2pa_signer = Self::c2pa_signer()?;
 
@@ -76,6 +82,7 @@ impl SignerSettings {
                     sign_cert: cawg_sign_cert,
                     private_key: cawg_private_key,
                     tsa_url: cawg_tsa_url,
+                    referenced_assertions,
                 } => {
                     let cawg_dual_signer = CawgX509IdentitySigner {
                         c2pa_signer,
@@ -83,6 +90,7 @@ impl SignerSettings {
                         cawg_sign_cert,
                         cawg_private_key,
                         cawg_tsa_url,
+                        cawg_referenced_assertions: referenced_assertions.unwrap_or_default(),
                     };
 
                     Ok(Box::new(cawg_dual_signer))
@@ -93,6 +101,7 @@ impl SignerSettings {
                     alg: _alg,
                     sign_cert: _sign_cert,
                     tsa_url: _tsa_url,
+                    referenced_assertions: _referenced_assertions,
                 } => todo!("Remote CAWG X.509 signing not yet supported"),
             }
         } else {
@@ -111,18 +120,19 @@ impl SignerSettings {
                     sign_cert,
                     private_key,
                     tsa_url,
+                    referenced_assertions: _,
                 } => create_signer::from_keys(
                     sign_cert.as_bytes(),
                     private_key.as_bytes(),
                     alg,
                     tsa_url.to_owned(),
                 ),
-                #[cfg(not(target_arch = "wasm32"))]
                 SignerSettings::Remote {
                     url,
                     alg,
                     sign_cert,
                     tsa_url,
+                    referenced_assertions: _,
                 } => Ok(Box::new(RemoteSigner {
                     url,
                     alg,
@@ -130,8 +140,6 @@ impl SignerSettings {
                     certs: vec![sign_cert.into_bytes()],
                     tsa_url,
                 })),
-                #[cfg(target_arch = "wasm32")]
-                SignerSettings::Remote { .. } => Err(Error::WasmNoRemoteSigner),
             },
             #[cfg(test)]
             _ => Ok(crate::utils::test_signer::test_signer(SigningAlg::Ps256)),
@@ -143,11 +151,6 @@ impl SignerSettings {
 
 impl SettingsValidate for SignerSettings {
     fn validate(&self) -> Result<()> {
-        #[cfg(target_arch = "wasm32")]
-        if matches!(self, SignerSettings::Remote { .. }) {
-            return Err(Error::WasmNoRemoteSigner);
-        }
-
         Ok(())
     }
 }
@@ -158,6 +161,7 @@ struct CawgX509IdentitySigner {
     cawg_sign_cert: String,
     cawg_private_key: String,
     cawg_tsa_url: Option<String>,
+    cawg_referenced_assertions: Vec<String>,
     // NOTE: The CAWG signing settings are stored here because
     // we can't clone or transfer ownership of an `X509CredentialHolder`
     // inside the dynamic_assertions callback.
@@ -219,9 +223,17 @@ impl Signer for CawgX509IdentitySigner {
 
         let x509_credential_holder = X509CredentialHolder::from_raw_signer(raw_signer);
 
-        let iab = IdentityAssertionBuilder::for_credential_holder(x509_credential_holder);
+        let mut iab = IdentityAssertionBuilder::for_credential_holder(x509_credential_holder);
 
-        // TODO: Configure referenced assertions and role.
+        // TODO: Configure referenced assertions and role.        // Add referenced assertions if configured
+        if !self.cawg_referenced_assertions.is_empty() {
+            let referenced_assertions: Vec<&str> = self
+                .cawg_referenced_assertions
+                .iter()
+                .map(|s| s.as_str())
+                .collect();
+            iab.add_referenced_assertions(&referenced_assertions);
+        }
 
         vec![Box::new(iab)]
     }
@@ -231,7 +243,6 @@ impl Signer for CawgX509IdentitySigner {
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 #[derive(Debug)]
 pub(crate) struct RemoteSigner {
     url: String,
@@ -241,18 +252,17 @@ pub(crate) struct RemoteSigner {
     tsa_url: Option<String>,
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 impl Signer for RemoteSigner {
     fn sign(&self, data: &[u8]) -> Result<Vec<u8>> {
         use std::io::Read;
 
-        let response = ureq::post(&self.url)
-            .send(data)
+        let request = Request::post(&self.url).body(data.to_vec())?;
+        let response = SyncGenericResolver::new()
+            .http_resolve(request)
             .map_err(|_| Error::FailedToRemoteSign)?;
         let mut bytes: Vec<u8> = Vec::with_capacity(self.reserve_size);
         response
             .into_body()
-            .into_reader()
             .take(self.reserve_size as u64)
             .read_to_end(&mut bytes)?;
         Ok(bytes)

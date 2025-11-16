@@ -1,11 +1,10 @@
 # c2pa-rs Configuration File
 
 # Version information.
-version_major = 1
-version_minor = 0
+version = 1
 
 # Trust settings for certificate validation.
-# [trust]
+[trust]
 # String to user-provided trust anchors (PEM format).
 # user_anchors = ""
 # String to system trust anchors (PEM format).
@@ -220,13 +219,13 @@ xPd7wFhjRZHfuWb2cs63xjAGjQ==
 """
 # String to trust configuration.
 trust_config = """
-//id-kp-emailProtection 
+//id-kp-emailProtection
 1.3.6.1.5.5.7.3.4
-//id-kp-documentSigning 
+//id-kp-documentSigning
 1.3.6.1.5.5.7.3.36
-//id-kp-timeStamping 
+//id-kp-timeStamping
 1.3.6.1.5.5.7.3.8
-//id-kp-OCSPSigning 
+//id-kp-OCSPSigning
 1.3.6.1.5.5.7.3.9
 // MS C2PA Signing
 1.3.6.1.4.1.311.76.59.1.9
@@ -407,8 +406,8 @@ tsa_url = "http://timestamp.digicert.com"
 
 # Configuration for the `Builder`.
 [builder]
-certificate_status_fetch = "all"
-certificate_status_should_override = true
+#certificate_status_fetch = "all"
+#certificate_status_should_override = true
 
 # Claim generator info list.
 [builder.claim_generator_info]
@@ -418,8 +417,8 @@ name = "c2pa-rs testing"
 version = "1.0.0"
 # The operating system the claim generator is running on.
 #operating_system.name = "macOS"
-# Or if the name isn't specified, it can be inferred automatically.
-operating_system.infer = true
+# Or specify "auto" to infer the operating system automatically.
+operating_system = "auto"
 # Arbitrary fields can also be defined.
 #
 # By default, the SDK adds a field "org.cai.c2pa_rs" with the value
@@ -467,37 +466,37 @@ operating_system.infer = true
 #
 # This is a convenience setting and it can be disabled if the information
 # is provided manually.
-[builder.actions.auto_created_action]
+#[builder.actions.auto_created_action]
 # Whether to auto create the c2pa.created action.
-enabled = true
+#enabled = true
 # The source type field is required for the c2pa.created action.
 #
 # For more information, see `c2pa::assertions::actions::source_type`.
-source_type = "http://c2pa.org/digitalsourcetype/empty"
+#source_type = "http://c2pa.org/digitalsourcetype/empty"
 
 # Settings for configuring how c2pa.opened actions are auto created.
 #
 # This is a convenience setting and it can be disabled if the information
 # is provided manually.
-[builder.actions.auto_opened_action]
+#[builder.actions.auto_opened_action]
 # Whether to auto create the c2pa.opened action.
-enabled = true
+#enabled = true
 # For more information, see `c2pa::assertions::actions::source_type`.
 #
 # Note this field is optional for the c2pa.opened action.
-source_type = "http://c2pa.org/digitalsourcetype/empty"
+#source_type = "http://c2pa.org/digitalsourcetype/empty"
 
 # Settings for configuring how c2pa.placed actions are auto created.
 #
 # This is a convenience setting and it can be disabled if the information
 # is provided manually.
-[builder.actions.auto_placed_action]
+#[builder.actions.auto_placed_action]
 # Whether to auto create the c2pa.placed action.
-enabled = true
+#enabled = true
 # For more information, see `c2pa::assertions::actions::source_type`.
 #
 # Note this field is optional for the c2pa.placed action.
-source_type = "http://c2pa.org/digitalsourcetype/empty"
+#source_type = "http://c2pa.org/digitalsourcetype/empty"
 
 # Settings for automatic thumbnail generation.
 [builder.thumbnail]

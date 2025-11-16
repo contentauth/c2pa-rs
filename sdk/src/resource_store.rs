@@ -35,7 +35,6 @@ use crate::{
     claim::Claim,
     hashed_uri::HashedUri,
     jumbf::labels::{assertion_label_from_uri, to_absolute_uri, DATABOXES},
-    salt::DefaultSalt,
     utils::mime::format_to_mime,
     Error, Result,
 };
@@ -64,7 +63,7 @@ impl UriOrResource {
                             format_to_mime(&r.format),
                             data.to_vec(),
                         );
-                        claim.add_assertion_with_salt(&icon_assertion, &DefaultSalt::default())?
+                        claim.add_assertion(&icon_assertion)?
                     }
                 };
                 Ok(UriOrResource::HashedUri(hash_uri))
@@ -159,7 +158,7 @@ impl ResourceRef {
 }
 
 /// Resource store to contain binary objects referenced from JSON serializable structures
-#[derive(Debug, Serialize)]
+#[derive(Clone, Debug, Serialize)]
 #[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 #[doc(hidden)]
 pub struct ResourceStore {

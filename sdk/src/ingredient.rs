@@ -35,13 +35,13 @@ use crate::{
     crypto::base64,
     error::{Error, Result},
     hashed_uri::HashedUri,
+    http::{AsyncGenericResolver, AsyncHttpResolver, SyncGenericResolver, SyncHttpResolver},
     jumbf::{
         self,
         labels::{assertion_label_from_uri, manifest_label_from_uri},
     },
     log_item,
     resource_store::{ResourceRef, ResourceStore},
-    salt::DefaultSalt,
     settings::Settings,
     status_tracker::StatusTracker,
     store::Store,
@@ -53,7 +53,7 @@ use crate::{
     validation_status::{self, ValidationStatus},
 };
 
-#[derive(Debug, Default, Deserialize, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 /// An `Ingredient` is any external asset that has been used in the creation of an asset.
 pub struct Ingredient {
@@ -733,7 +733,8 @@ impl Ingredient {
         options: &dyn IngredientOptions,
     ) -> Result<Self> {
         let settings = crate::settings::get_settings().unwrap_or_default();
-        Self::from_file_impl(path.as_ref(), options, &settings)
+        let http_resolver = SyncGenericResolver::new();
+        Self::from_file_impl(path.as_ref(), options, &http_resolver, &settings)
     }
 
     // Internal implementation to avoid code bloat.
@@ -741,6 +742,7 @@ impl Ingredient {
     fn from_file_impl(
         path: &Path,
         options: &dyn IngredientOptions,
+        http_resolver: &impl SyncHttpResolver,
         settings: &Settings,
     ) -> Result<Self> {
         #[cfg(feature = "diagnostics")]
@@ -772,15 +774,25 @@ impl Ingredient {
         let mut validation_log = StatusTracker::default();
 
         // retrieve the manifest bytes from embedded, sidecar or remote and convert to store if found
-        let (result, manifest_bytes) = match Store::load_jumbf_from_path(path, settings) {
-            Ok(manifest_bytes) => {
-                (
-                    // generate a store from the buffer and then validate from the asset path
-                    Store::from_jumbf_with_settings(&manifest_bytes, &mut validation_log, settings)
+        let (result, manifest_bytes) =
+            match Store::load_jumbf_from_path(path, http_resolver, settings) {
+                Ok(manifest_bytes) => {
+                    (
+                        // generate a store from the buffer and then validate from the asset path
+                        Store::from_jumbf_with_settings(
+                            &manifest_bytes,
+                            &mut validation_log,
+                            settings,
+                        )
                         .and_then(|mut store| {
                             // verify the store
                             store
-                                .verify_from_path(path, &mut validation_log, settings)
+                                .verify_from_path(
+                                    path,
+                                    &mut validation_log,
+                                    http_resolver,
+                                    settings,
+                                )
                                 .map(|_| store)
                         })
                         .inspect_err(|e| {
@@ -788,11 +800,11 @@ impl Ingredient {
                             log_item!("asset", "error loading file", "Ingredient::from_file")
                                 .failure_no_throw(&mut validation_log, e);
                         }),
-                    Some(manifest_bytes),
-                )
-            }
-            Err(err) => (Err(err), None),
-        };
+                        Some(manifest_bytes),
+                    )
+                }
+                Err(err) => (Err(err), None),
+            };
 
         // set validation status from result and log
         ingredient.update_validation_status(result, manifest_bytes, &validation_log)?;
@@ -832,7 +844,7 @@ impl Ingredient {
         let settings = crate::settings::get_settings().unwrap_or_default();
         let ingredient = Self::from_stream_info(stream, format, "untitled");
         stream.rewind()?;
-        ingredient.add_stream_internal(format, stream, &settings)
+        ingredient.add_stream_internal(format, stream, &SyncGenericResolver::new(), &settings)
     }
 
     /// Create an Ingredient from JSON.
@@ -847,11 +859,18 @@ impl Ingredient {
     /// Sets thumbnail if not defined and a valid claim thumbnail is found or add_thumbnails is enabled.
     /// Instance_id, document_id, and provenance will be overridden if found in the stream.
     /// Format will be overridden only if it is the default (application/octet-stream).
-    #[async_generic]
+    #[async_generic(async_signature(
+        mut self,
+        format: S,
+        stream: &mut dyn CAIRead,
+        http_resolver: &impl AsyncHttpResolver,
+        settings: &Settings,
+    ))]
     pub(crate) fn with_stream<S: Into<String>>(
         mut self,
         format: S,
         stream: &mut dyn CAIRead,
+        http_resolver: &impl SyncHttpResolver,
         settings: &Settings,
     ) -> Result<Self> {
         let format = format.into();
@@ -884,19 +903,26 @@ impl Ingredient {
         stream.rewind()?;
 
         if _sync {
-            self.add_stream_internal(&format, stream, settings)
+            self.add_stream_internal(&format, stream, http_resolver, settings)
         } else {
-            self.add_stream_internal_async(&format, stream, settings)
+            self.add_stream_internal_async(&format, stream, http_resolver, settings)
                 .await
         }
     }
 
     // Internal implementation to avoid code bloat.
-    #[async_generic]
+    #[async_generic(async_signature(
+        mut self,
+        format: &str,
+        stream: &mut dyn CAIRead,
+        http_resolver: &impl AsyncHttpResolver,
+        settings: &Settings,
+    ))]
     fn add_stream_internal(
         mut self,
         format: &str,
         stream: &mut dyn CAIRead,
+        http_resolver: &impl SyncHttpResolver,
         settings: &Settings,
     ) -> Result<Self> {
         let mut validation_log = StatusTracker::default();
@@ -904,21 +930,39 @@ impl Ingredient {
         // retrieve the manifest bytes from embedded or remote and convert to store if found
         let jumbf_result = match self.manifest_data() {
             Some(data) => Ok(data.into_owned()),
-            None => Store::load_jumbf_from_stream(format, stream, settings)
-                .map(|(manifest_bytes, _)| manifest_bytes),
+            None => if _sync {
+                Store::load_jumbf_from_stream(format, stream, http_resolver, settings)
+            } else {
+                Store::load_jumbf_from_stream_async(format, stream, http_resolver, settings).await
+            }
+            .map(|(manifest_bytes, _)| manifest_bytes),
         };
 
         // We can't use functional combinators since we can't use async callbacks (https://github.com/rust-lang/rust/issues/62290)
         let (mut result, manifest_bytes) = match jumbf_result {
             Ok(manifest_bytes) => {
-                let result = Store::from_manifest_data_and_stream(
-                    &manifest_bytes,
-                    format,
-                    &mut *stream,
-                    true,
-                    &mut validation_log,
-                    settings,
-                );
+                let result = if _sync {
+                    Store::from_manifest_data_and_stream(
+                        &manifest_bytes,
+                        format,
+                        &mut *stream,
+                        true,
+                        &mut validation_log,
+                        http_resolver,
+                        settings,
+                    )
+                } else {
+                    Store::from_manifest_data_and_stream_async(
+                        &manifest_bytes,
+                        format,
+                        &mut *stream,
+                        true,
+                        &mut validation_log,
+                        http_resolver,
+                        settings,
+                    )
+                    .await
+                };
                 (result, Some(manifest_bytes))
             }
             Err(err) => (Err(err), None),
@@ -929,10 +973,20 @@ impl Ingredient {
             let labels = store.get_manifest_labels_for_ocsp(settings);
 
             let ocsp_response_ders = if _sync {
-                store.get_ocsp_response_ders(labels, &mut validation_log, settings)?
+                store.get_ocsp_response_ders(
+                    labels,
+                    &mut validation_log,
+                    http_resolver,
+                    settings,
+                )?
             } else {
                 store
-                    .get_ocsp_response_ders_async(labels, &mut validation_log, settings)
+                    .get_ocsp_response_ders_async(
+                        labels,
+                        &mut validation_log,
+                        http_resolver,
+                        settings,
+                    )
                     .await?
             };
 
@@ -969,12 +1023,14 @@ impl Ingredient {
     /// Thumbnail will be set only if one can be retrieved from a previous valid manifest.
     pub async fn from_stream_async(format: &str, stream: &mut dyn CAIRead) -> Result<Self> {
         let settings = crate::settings::get_settings().unwrap_or_default();
-        Self::from_stream_async_with_settings(format, stream, &settings).await
+        let http_resolver = AsyncGenericResolver::new();
+        Self::from_stream_async_with_settings(format, stream, &http_resolver, &settings).await
     }
 
     pub(crate) async fn from_stream_async_with_settings(
         format: &str,
         stream: &mut dyn CAIRead,
+        http_resolver: &impl AsyncHttpResolver,
         settings: &Settings,
     ) -> Result<Self> {
         let mut ingredient = Self::from_stream_info(stream, format, "untitled");
@@ -983,43 +1039,50 @@ impl Ingredient {
         let mut validation_log = StatusTracker::default();
 
         // retrieve the manifest bytes from embedded, sidecar or remote and convert to store if found
-        let (result, manifest_bytes) =
-            match Store::load_jumbf_from_stream_async(format, stream, settings).await {
-                Ok((manifest_bytes, _)) => {
-                    (
-                        // generate a store from the buffer and then validate from the asset path
-                        match Store::from_jumbf_with_settings(
-                            &manifest_bytes,
-                            &mut validation_log,
-                            settings,
-                        ) {
-                            Ok(store) => {
-                                // verify the store
-                                Store::verify_store_async(
-                                    &store,
-                                    &mut ClaimAssetData::Stream(stream, format),
-                                    &mut validation_log,
-                                    settings,
-                                )
-                                .await
-                                .map(|_| store)
-                            }
-                            Err(e) => {
-                                log_item!(
-                                    "asset",
-                                    "error loading asset",
-                                    "Ingredient::from_stream_async"
-                                )
-                                .failure_no_throw(&mut validation_log, &e);
+        let (result, manifest_bytes) = match Store::load_jumbf_from_stream_async(
+            format,
+            stream,
+            &AsyncGenericResolver::new(),
+            settings,
+        )
+        .await
+        {
+            Ok((manifest_bytes, _)) => {
+                (
+                    // generate a store from the buffer and then validate from the asset path
+                    match Store::from_jumbf_with_settings(
+                        &manifest_bytes,
+                        &mut validation_log,
+                        settings,
+                    ) {
+                        Ok(store) => {
+                            // verify the store
+                            Store::verify_store_async(
+                                &store,
+                                &mut ClaimAssetData::Stream(stream, format),
+                                &mut validation_log,
+                                http_resolver,
+                                settings,
+                            )
+                            .await
+                            .map(|_| store)
+                        }
+                        Err(e) => {
+                            log_item!(
+                                "asset",
+                                "error loading asset",
+                                "Ingredient::from_stream_async"
+                            )
+                            .failure_no_throw(&mut validation_log, &e);
 
-                                Err(e)
-                            }
-                        },
-                        Some(manifest_bytes),
-                    )
-                }
-                Err(err) => (Err(err), None),
-            };
+                            Err(e)
+                        }
+                    },
+                    Some(manifest_bytes),
+                )
+            }
+            Err(err) => (Err(err), None),
+        };
 
         // set validation status from result and log
         ingredient.update_validation_status(result, manifest_bytes, &validation_log)?;
@@ -1051,7 +1114,7 @@ impl Ingredient {
             None => Vec::new(),
         };
 
-        // use either the active_manifest or c2pa_manifest field
+        // the c2pa_manifest() method will return the active_manifest or c2pa_manifest field
         let active_manifest = ingredient_assertion
             .c2pa_manifest()
             .and_then(|hash_url| manifest_label_from_uri(&hash_url.url()));
@@ -1261,18 +1324,15 @@ impl Ingredient {
         // if the ingredient defines a thumbnail, add it to the claim
         // otherwise use the parent claim thumbnail if available
         if let Some(thumb_ref) = self.thumbnail_ref() {
-            // assume this is a JUMBF uri if it has a manifest label
-            let hash_url = match manifest_label_from_uri(&thumb_ref.identifier) {
-                Some(_) => {
-                    // we have a JUMBF uri so build a hashed uri to the existing assertion
-                    let hash = match thumb_ref.hash.as_ref() {
-                        Some(h) => base64::decode(h)
-                            .map_err(|_e| Error::BadParam("Invalid hash".to_string()))?,
-                        None => return Err(Error::BadParam("hash is missing".to_string())), /* todo: add hash missing error */
-                    };
+            // if we have a hash, just build the hashed uri
+            let hash_url = match thumb_ref.hash.as_ref() {
+                Some(h) => {
+                    let hash = base64::decode(h)
+                        .map_err(|_e| Error::BadParam("Invalid hash".to_string()))?;
                     HashedUri::new(thumb_ref.identifier.clone(), thumb_ref.alg.clone(), &hash)
                 }
                 None => {
+                    // get the resource data and add it to the claim
                     let data = get_resource(&thumb_ref.identifier)?;
                     if claim.version() < 2 {
                         claim.add_databox(
@@ -1287,7 +1347,7 @@ impl Ingredient {
                             format_to_mime(&thumb_ref.format),
                             data.into_owned(),
                         );
-                        claim.add_assertion_with_salt(&thumbnail, &DefaultSalt::default())?
+                        claim.add_assertion(&thumbnail)?
                     }
                 }
             };
@@ -1310,7 +1370,7 @@ impl Ingredient {
                         format_to_mime(&data_ref.format),
                         box_data.into_owned(),
                     );
-                    claim.add_assertion_with_salt(&embedded_data, &DefaultSalt::default())?
+                    claim.add_assertion(&embedded_data)?
                 }
             };
 
@@ -1332,7 +1392,7 @@ impl Ingredient {
                     } else {
                         CertificateStatus::new(ocsp_responses)
                     };
-                claim.add_assertion_with_salt(&certificate_status, &DefaultSalt::default())?;
+                claim.add_assertion(&certificate_status)?;
             }
         }
 
@@ -1350,7 +1410,7 @@ impl Ingredient {
                 assertion.format = self.format.clone();
                 assertion
             }
-            _ => return Err(Error::UnsupportedType), // todo: better error
+            _ => return Err(Error::ClaimVersion),
         };
         ingredient_assertion.instance_id = self.instance_id.clone();
         match claim.version() {
@@ -1429,6 +1489,7 @@ impl Ingredient {
         stream: &mut dyn CAIRead,
     ) -> Result<Self> {
         let settings = crate::settings::get_settings().unwrap_or_default();
+        let http_resolver = AsyncGenericResolver::new();
         let mut ingredient = Self::from_stream_info(stream, format, "untitled");
 
         let mut validation_log = StatusTracker::default();
@@ -1448,6 +1509,7 @@ impl Ingredient {
                     &store,
                     &mut ClaimAssetData::Stream(stream, format),
                     &mut validation_log,
+                    &http_resolver,
                     &settings,
                 )
                 .await
@@ -1499,6 +1561,50 @@ impl Ingredient {
         }
 
         Ok(())
+    }
+
+    // allows overriding fields in an ingredient with another ingredient
+    pub(crate) fn merge(&mut self, other: &Ingredient) {
+        // println!("before merge: {}", self);
+        self.relationship = other.relationship.clone();
+
+        if let Some(title) = &other.title {
+            self.title = Some(title.clone());
+        }
+        if let Some(format) = &other.format {
+            self.format = Some(format.clone());
+        }
+        if let Some(instance_id) = &other.instance_id {
+            self.instance_id = Some(instance_id.clone());
+        }
+        if let Some(provenance) = &other.provenance {
+            self.provenance = Some(provenance.clone());
+        }
+        if let Some(hash) = &other.hash {
+            self.hash = Some(hash.clone());
+        }
+        if let Some(document_id) = &other.document_id {
+            self.document_id = Some(document_id.clone());
+        }
+        if let Some(description) = &other.description {
+            self.description = Some(description.clone());
+        }
+        if let Some(informational_uri) = &other.informational_uri {
+            self.informational_uri = Some(informational_uri.clone());
+        }
+        if let Some(data) = &other.data {
+            self.data = Some(data.clone());
+        }
+        if let Some(thumbnail) = &other.thumbnail {
+            self.thumbnail = Some(thumbnail.clone());
+        }
+        if let Some(metadata) = &other.metadata {
+            self.metadata = Some(metadata.clone());
+        }
+        if let Some(label) = &other.label {
+            self.label = Some(label.clone());
+        }
+        //println!("after merge: {}", self);
     }
 }
 

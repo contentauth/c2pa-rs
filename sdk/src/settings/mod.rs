@@ -11,8 +11,10 @@
 // specific language governing permissions and limitations under
 // each license.
 
-pub(crate) mod builder;
-pub(crate) mod signer;
+/// Settings for configuring the [`Builder`][crate::Builder].
+pub mod builder;
+/// Settings for configuring the [`Settings::signer`].
+pub mod signer;
 
 #[cfg(feature = "file_io")]
 use std::path::Path;
@@ -27,6 +29,8 @@ use signer::SignerSettings;
 
 use crate::{crypto::base64, settings::builder::BuilderSettings, Error, Result, Signer};
 
+const VERSION: u32 = 1;
+
 thread_local!(
     static SETTINGS: RefCell<Config> =
         RefCell::new(Config::try_from(&Settings::default()).unwrap_or_default());
@@ -40,15 +44,31 @@ pub(crate) trait SettingsValidate {
     }
 }
 
-// Settings for trust list feature
+/// Settings to configure the trust list.
+#[cfg_attr(feature = "json_schema", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[allow(unused)]
-pub(crate) struct Trust {
+pub struct Trust {
+    /// Whether to verify certificates against the trust lists specified in [`Trust`]. This
+    /// option is ONLY applicable to CAWG.
+    ///
+    /// The default value is true.
+    ///
+    /// <div class="warning">
+    /// Verifying trust is REQUIRED by the CAWG spec. This option should only be used for development or testing.
+    /// </div>
     pub(crate) verify_trust_list: bool,
-    pub(crate) user_anchors: Option<String>,
-    pub(crate) trust_anchors: Option<String>,
-    pub(crate) trust_config: Option<String>,
-    pub(crate) allowed_list: Option<String>,
+    /// List of additional user-provided trust anchor root certificates as a PEM bundle.
+    pub user_anchors: Option<String>,
+    /// List of default trust anchor root certificates as a PEM bundle.
+    ///
+    /// Normally this option contains the official C2PA-recognized trust anchors found here:
+    /// <https://github.com/c2pa-org/conformance-public/tree/main/trust-list>
+    pub trust_anchors: Option<String>,
+    /// List of allowed extended key usage (EKU) object identifiers (OID) that
+    /// certificates must have.
+    pub trust_config: Option<String>,
+    /// List of explicitly allowed certificates as a PEM bundle.
+    pub allowed_list: Option<String>,
 }
 
 impl Trust {
@@ -56,7 +76,11 @@ impl Trust {
     fn load_trust_from_data(&self, trust_data: &[u8]) -> Result<Vec<Vec<u8>>> {
         let mut certs = Vec::new();
 
-        for pem_result in x509_parser::pem::Pem::iter_from_buffer(trust_data) {
+        // allow for JSON-encoded PEMs with \n
+        let trust_data = String::from_utf8_lossy(trust_data)
+            .replace("\\n", "\n")
+            .into_bytes();
+        for pem_result in x509_parser::pem::Pem::iter_from_buffer(&trust_data) {
             let pem = pem_result.map_err(|_e| Error::CoseInvalidCert)?;
             certs.push(pem.contents);
         }
@@ -95,7 +119,7 @@ impl Trust {
         if found_der_hash {
             Ok(())
         } else {
-            Err(Error::NotFound)
+            Err(Error::CoseInvalidCert)
         }
     }
 }
@@ -160,42 +184,49 @@ impl SettingsValidate for Trust {
     }
 }
 
-// TODO: all of these settings aren't implemented
-// Settings for core C2PA-RS functionality
+/// Settings to configure core features.
+#[cfg_attr(feature = "json_schema", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[allow(unused)]
-pub(crate) struct Core {
-    debug: bool,
-    hash_alg: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    soft_hash_alg: Option<String>,
-    salt_jumbf_boxes: bool,
-    prefer_box_hash: bool,
-    pub(crate) merkle_tree_chunk_size_in_kb: Option<usize>,
-    pub(crate) merkle_tree_max_proofs: usize,
-    compress_manifests: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    max_memory_usage: Option<u64>,
-    pub(crate) backing_store_memory_threshold_in_mb: usize,
-    // TODO: pending https://github.com/contentauth/c2pa-rs/pull/1180
-    // prefer_update_manifests: bool,
-    pub(crate) decode_identity_assertions: bool,
+pub struct Core {
+    /// Size of the [`BmffHash`] merkle tree chunks in kilobytes.
+    ///
+    /// This option is associated with the [`MerkleMap::fixed_block_size`] field.
+    ///
+    /// See more information in the spec here:
+    /// <https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_bmff_based_hash>
+    ///
+    /// [`MerkleMap::fixed_block_size`]: crate::assertions::MerkleMap::fixed_block_size
+    /// [`BmffHash`]: crate::assertions::BmffHash
+    pub merkle_tree_chunk_size_in_kb: Option<usize>,
+    /// Maximum number of proofs when validating or writing a [`BmffHash`] merkle tree.
+    ///
+    /// This option defaults to 5.
+    ///
+    /// See more information in the spec here:
+    /// <https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_bmff_based_hash>
+    ///
+    /// [`BmffHash`]: crate::assertions::BmffHash
+    pub merkle_tree_max_proofs: usize,
+    /// Maximum amount of data in megabytes that will be loaded into memory before
+    /// being stored in temporary files on the disk.
+    ///
+    /// This option defaults to 512MB and can result in noticeable performance improvements.
+    pub backing_store_memory_threshold_in_mb: usize,
+    /// Whether to decode CAWG [`IdentityAssertion`]s during reading in the [`Reader`].
+    ///
+    /// This option defaults to true.
+    ///
+    /// [`IdentityAssertion`]: crate::identity::IdentityAssertion
+    /// [`Reader`]: crate::Reader
+    pub decode_identity_assertions: bool,
 }
 
 impl Default for Core {
     fn default() -> Self {
         Self {
-            debug: false,
-            hash_alg: "sha256".into(),
-            soft_hash_alg: None,
-            salt_jumbf_boxes: true,
-            prefer_box_hash: false,
             merkle_tree_chunk_size_in_kb: None,
             merkle_tree_max_proofs: 5,
-            compress_manifests: true,
-            max_memory_usage: None,
             backing_store_memory_threshold_in_mb: 512,
-            // prefer_update_manifests: true,
             decode_identity_assertions: true,
         }
     }
@@ -203,26 +234,90 @@ impl Default for Core {
 
 impl SettingsValidate for Core {
     fn validate(&self) -> Result<()> {
-        match self.hash_alg.as_str() {
-            "sha256" | "sha384" | "sha512" => Ok(()),
-            _ => Err(Error::UnsupportedType),
-        }
+        Ok(())
     }
 }
 
-// Settings for verification options
+/// Settings to configure the verification process.
+#[cfg_attr(feature = "json_schema", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[allow(unused)]
-pub(crate) struct Verify {
-    pub(crate) verify_after_reading: bool,
-    pub(crate) verify_after_sign: bool,
+pub struct Verify {
+    /// Whether to verify the manifest after reading in the [`Reader`].
+    ///
+    /// The default value is true.
+    ///
+    /// <div class="warning">
+    /// Disabling validation can improve reading performance, BUT it carries the risk of reading an invalid
+    /// manifest.
+    /// </div>
+    ///
+    /// [`Reader`]: crate::Reader
+    pub verify_after_reading: bool,
+    /// Whether to verify the manifest after signing in the [`Builder`].
+    ///
+    /// The default value is true.
+    ///
+    /// <div class="warning">
+    /// Disabling validation can improve signing performance, BUT it carries the risk of signing an invalid
+    /// manifest.
+    /// </div>
+    ///
+    /// [`Builder`]: crate::Builder
+    pub verify_after_sign: bool,
+    /// Whether to verify certificates against the trust lists specified in [`Trust`]. To configure
+    /// timestamp certificate verification, see [`Verify::verify_timestamp_trust`].
+    ///
+    /// The default value is true.
+    ///
+    /// <div class="warning">
+    /// Verifying trust is REQUIRED by the C2PA spec. This option should only be used for development or testing.
+    /// </div>
     pub(crate) verify_trust: bool,
+    /// Whether to verify the timestamp certificates against the trust lists specified in [`Trust`].
+    ///
+    /// The default value is true.
+    ///
+    /// <div class="warning">
+    /// Verifying timestamp trust is REQUIRED by the C2PA spec. This option should only be used for development or testing.
+    /// </div>
     pub(crate) verify_timestamp_trust: bool,
-    pub(crate) ocsp_fetch: bool,
-    pub(crate) remote_manifest_fetch: bool,
-    pub(crate) check_ingredient_trust: bool,
+    /// Whether to fetch the certificates OCSP status during validation.
+    ///
+    /// Revocation status is checked in the following order:
+    /// 1. The OCSP staple stored in the COSE claim of the manifest
+    /// 2. Otherwise if `ocsp_fetch` is enabled, it fetches a new OCSP status
+    /// 3. Otherwise if `ocsp_fetch` is disabled, it checks `CertificateStatus` assertions
+    ///
+    /// The default value is false.
+    pub ocsp_fetch: bool,
+    /// Whether to fetch remote manifests in the following scenarios:
+    /// - Constructing a [`Reader`]
+    /// - Constructing an [`Ingredient`]
+    /// - Adding an [`Ingredient`] to the [`Builder`]
+    ///
+    /// The default value is true.
+    ///
+    /// <div class="warning">
+    /// This setting is only applicable if the crate is compiled with the `fetch_remote_manifests` feature.
+    /// </div>
+    ///
+    /// [`Reader`]: crate::Reader
+    /// [`Ingredient`]: crate::Ingredient
+    /// [`Builder`]: crate::Builder
+    pub remote_manifest_fetch: bool,
+    ///
+    /// Whether to skip ingredient conflict resolution when multiple ingredients have the same
+    /// manifest identifier. This settings is only applicable for C2PA v2 validation.
+    ///
+    /// The default value is false.
+    ///
+    /// See more information in the spec here:
+    /// <https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_versioning_manifests_due_to_conflicts>
     pub(crate) skip_ingredient_conflict_resolution: bool,
-    pub(crate) strict_v1_validation: bool,
+    /// Whether to do strictly C2PA v1 validation or otherwise the latest validation.
+    ///
+    /// The default value is false.
+    pub strict_v1_validation: bool,
 }
 
 impl Default for Verify {
@@ -234,7 +329,6 @@ impl Default for Verify {
             verify_timestamp_trust: !cfg!(test), // verify timestamp trust unless in test mode
             ocsp_fetch: false,
             remote_manifest_fetch: true,
-            check_ingredient_trust: true,
             skip_ingredient_conflict_resolution: false,
             strict_v1_validation: false,
         }
@@ -243,29 +337,35 @@ impl Default for Verify {
 
 impl SettingsValidate for Verify {}
 
-const MAJOR_VERSION: usize = 1;
-const MINOR_VERSION: usize = 0;
-
 /// Settings for configuring all aspects of c2pa-rs.
 ///
 /// [Settings::default] will be set thread-locally by default. Any settings set via
 /// [Settings::from_toml] or [Settings::from_file] will also be thread-local.
+#[cfg_attr(feature = "json_schema", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
-#[allow(unused)]
 pub struct Settings {
-    version_major: usize,
-    version_minor: usize,
+    /// Version of the configuration.
+    pub version: u32,
     // TODO (https://github.com/contentauth/c2pa-rs/issues/1314):
     // Rename to c2pa_trust? Discuss possibly breaking change.
-    pub(crate) trust: Trust,
-    pub(crate) cawg_trust: Trust,
-    pub(crate) core: Core,
-    pub(crate) verify: Verify,
-    pub(crate) builder: BuilderSettings,
+    /// Settings for configuring the C2PA trust lists.
+    pub trust: Trust,
+    /// Settings for configuring the CAWG trust lists.
+    pub cawg_trust: Trust,
+    /// Settings for configuring core features.
+    pub core: Core,
+    /// Settings for configuring verification.
+    pub verify: Verify,
+    /// Settings for configuring the [`Builder`].
+    ///
+    /// [`Builder`]: crate::Builder
+    pub builder: BuilderSettings,
+    /// Settings for configuring the base C2PA signer, accessible via [`Settings::signer`].
     #[serde(skip_serializing_if = "Option::is_none")]
-    signer: Option<SignerSettings>,
+    pub signer: Option<SignerSettings>,
+    /// Settings for configuring the CAWG x509 signer, accessible via [`Settings::signer`].
     #[serde(skip_serializing_if = "Option::is_none")]
-    cawg_x509_signer: Option<SignerSettings>,
+    pub cawg_x509_signer: Option<SignerSettings>,
 }
 
 impl Settings {
@@ -278,19 +378,18 @@ impl Settings {
             .to_string_lossy();
 
         let setting_buf = std::fs::read(&settings_path).map_err(Error::IoError)?;
-        #[allow(deprecated)]
         Settings::from_string(&String::from_utf8_lossy(&setting_buf), &ext)
     }
 
-    #[deprecated = "use `Settings::from_toml` instead"]
+    /// Load settings from string representation of the configuration. Format of configuration must be supplied (json or toml).
     pub fn from_string(settings_str: &str, format: &str) -> Result<Self> {
         let f = match format.to_lowercase().as_str() {
             "json" => FileFormat::Json,
-            "json5" => FileFormat::Json5,
+            //"json5" => FileFormat::Json5,
             //"ini" => FileFormat::Ini,
             "toml" => FileFormat::Toml,
             //"yaml" => FileFormat::Yaml,
-            "ron" => FileFormat::Ron,
+            //ron" => FileFormat::Ron,
             _ => return Err(Error::UnsupportedType),
         };
 
@@ -326,20 +425,7 @@ impl Settings {
 
     /// Set the [Settings] from a toml file.
     pub fn from_toml(toml: &str) -> Result<()> {
-        #[allow(deprecated)]
         Settings::from_string(toml, "toml").map(|_| ())
-    }
-
-    /// Set the [Settings] from a url to a toml file.
-    #[cfg(not(target_arch = "wasm32"))]
-    pub fn from_url(url: &str) -> Result<()> {
-        let toml = ureq::get(url)
-            .call()
-            .map_err(|_| Error::FailedToFetchSettings)?
-            .into_body()
-            .read_to_string()
-            .map_err(|_| Error::FailedToFetchSettings)?;
-        Settings::from_toml(&toml)
     }
 
     /// Set a [Settings] value by path reference. The path is nested names of of the Settings objects
@@ -390,7 +476,7 @@ impl Settings {
 
             update_config
                 .get::<T>(value_path)
-                .map_err(|_| Error::NotFound)
+                .map_err(|_| Error::BadParam("could not get settings value".into()))
         })
     }
 
@@ -431,8 +517,7 @@ impl Settings {
 impl Default for Settings {
     fn default() -> Self {
         Settings {
-            version_major: MAJOR_VERSION,
-            version_minor: MINOR_VERSION,
+            version: VERSION,
             trust: Default::default(),
             cawg_trust: Default::default(),
             core: Default::default(),
@@ -446,7 +531,7 @@ impl Default for Settings {
 
 impl SettingsValidate for Settings {
     fn validate(&self) -> Result<()> {
-        if self.version_major > MAJOR_VERSION {
+        if self.version > VERSION {
             return Err(Error::VersionCompatibility(
                 "settings version too new".into(),
             ));
@@ -481,10 +566,7 @@ pub(crate) fn load_settings_from_file<P: AsRef<Path>>(settings_path: P) -> Resul
 
 /// Load settings from string representation of the configuration. Format of configuration must be supplied.
 #[allow(unused)]
-// TODO: when this is removed, remove the additional features (for all supported formats) from the Cargo.toml
-#[deprecated = "use `Settings::from_toml`"]
 pub fn load_settings_from_str(settings_str: &str, format: &str) -> Result<()> {
-    #[allow(deprecated)]
     Settings::from_string(settings_str, format).map(|_| ())
 }
 
@@ -512,7 +594,7 @@ fn get_settings_value<'de, T: serde::de::Deserialize<'de>>(value_path: &str) -> 
     Settings::get_value(value_path)
 }
 
-/// See [Settings::reset] for more information.
+/// Reset all settings back to default values.
 #[allow(unused)]
 // #[deprecated = "use `Settings::reset` instead"]
 pub fn reset_default_settings() -> Result<()> {
@@ -545,10 +627,6 @@ pub mod tests {
     fn test_get_val_by_direct_path() {
         // you can do this for all values but if these sanity checks pass they all should if the path is correct
         assert_eq!(
-            get_settings_value::<String>("core.hash_alg").unwrap(),
-            Core::default().hash_alg
-        );
-        assert_eq!(
             get_settings_value::<bool>("builder.thumbnail.enabled").unwrap(),
             BuilderSettings::default().thumbnail.enabled
         );
@@ -573,13 +651,11 @@ pub mod tests {
         );
 
         // test implicit deserialization
-        let hash_alg: String = get_settings_value("core.hash_alg").unwrap();
         let remote_manifest_fetch: bool =
             get_settings_value("verify.remote_manifest_fetch").unwrap();
         let auto_thumbnail: bool = get_settings_value("builder.thumbnail.enabled").unwrap();
         let user_anchors: Option<String> = get_settings_value("trust.user_anchors").unwrap();
 
-        assert_eq!(hash_alg, Core::default().hash_alg);
         assert_eq!(
             remote_manifest_fetch,
             Verify::default().remote_manifest_fetch
@@ -606,7 +682,7 @@ pub mod tests {
         let ts = include_bytes!("../../tests/fixtures/certs/trust/test_cert_root_bundle.pem");
 
         // test updating values
-        Settings::set_value("core.hash_alg", "sha512").unwrap();
+        Settings::set_value("core.merkle_tree_chunk_size_in_kb", 10).unwrap();
         Settings::set_value("verify.remote_manifest_fetch", false).unwrap();
         Settings::set_value("builder.thumbnail.enabled", false).unwrap();
         Settings::set_value(
@@ -616,8 +692,8 @@ pub mod tests {
         .unwrap();
 
         assert_eq!(
-            get_settings_value::<String>("core.hash_alg").unwrap(),
-            "sha512"
+            get_settings_value::<usize>("core.merkle_tree_chunk_size_in_kb").unwrap(),
+            10
         );
         assert!(!get_settings_value::<bool>("verify.remote_manifest_fetch").unwrap());
         assert!(!get_settings_value::<bool>("builder.thumbnail.enabled").unwrap());
@@ -669,7 +745,6 @@ pub mod tests {
 
         {
             let settings_str: &str = &String::from_utf8_lossy(&setting_buf);
-            #[allow(deprecated)]
             Settings::from_string(settings_str, "json").map(|_| ())
         }
         .unwrap();
@@ -713,11 +788,6 @@ pub mod tests {
             BuilderSettings::default().thumbnail.enabled
         );
 
-        assert_eq!(
-            get_settings_value::<bool>("core.salt_jumbf_boxes").unwrap(),
-            Core::default().salt_jumbf_boxes
-        );
-
         reset_default_settings().unwrap();
     }
 
@@ -725,9 +795,9 @@ pub mod tests {
     fn test_bad_setting() {
         let modified_core = toml::toml! {
             [core]
-            debug = true
-            hash_alg = "sha1000000"
-            max_memory_usage = 123456
+            merkle_tree_chunk_size_in_kb = true
+            merkle_tree_max_proofs = "sha1000000"
+            backing_store_memory_threshold_in_mb = -123456
         }
         .to_string();
 
@@ -763,8 +833,7 @@ pub mod tests {
     #[test]
     fn test_all_setting() {
         let all_settings = toml::toml! {
-            version_major = 1
-            version_minor = 0
+            version = 1
 
             [trust]
 
@@ -782,7 +851,6 @@ pub mod tests {
             verify_trust = true
             ocsp_fetch = false
             remote_manifest_fetch = true
-            check_ingredient_trust = true
             skip_ingredient_conflict_resolution = false
             strict_v1_validation = false
         }

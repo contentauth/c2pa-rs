@@ -262,6 +262,7 @@ pub static V2_DEPRECATED_ACTIONS: [&str; 7] = [
 ];
 
 /// We use this to allow SourceAgent to be either a string or a ClaimGeneratorInfo
+#[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 #[derive(Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
 #[serde(untagged)]
 #[allow(clippy::large_enum_variant)]
@@ -283,6 +284,7 @@ impl From<ClaimGeneratorInfo> for SoftwareAgent {
 }
 
 /// Additional parameters of the action.
+#[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 #[derive(Deserialize, Serialize, Clone, Debug, Default, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct ActionParameters {
@@ -313,6 +315,8 @@ pub struct ActionParameters {
 
     /// Anything from the common parameters.
     #[serde(flatten)]
+    // JsonSchema does not support CBOR values
+    #[cfg_attr(feature = "json_schema", schemars(skip))]
     pub common: HashMap<String, Value>,
 }
 
@@ -323,6 +327,7 @@ pub struct ActionParameters {
 /// the action.
 ///
 /// See <https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_actions>.
+#[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 #[derive(Deserialize, Serialize, Clone, Debug, Default, PartialEq)]
 pub struct Action {
     /// The label associated with this action. See ([`c2pa_action`]).
@@ -833,8 +838,15 @@ impl Actions {
     }
 
     /// Adds an [`Action`] to this assertion's list of actions.
+    /// OPENED and CREATED actions are inserted at the beginning of the list.
+    /// as required by the c2pa specification.
+    /// Note, this does not check for duplicates since it does not return errors.
     pub fn add_action(mut self, action: Action) -> Self {
-        self.actions.push(action);
+        if action.action() == c2pa_action::OPENED || action.action() == c2pa_action::CREATED {
+            self.actions.insert(0, action);
+        } else {
+            self.actions.push(action);
+        }
         self
     }
 
@@ -862,7 +874,7 @@ impl Actions {
 impl AssertionCbor for Actions {}
 
 impl AssertionBase for Actions {
-    const LABEL: &'static str = labels::ACTIONS;
+    const LABEL: &'static str = Self::LABEL;
     const VERSION: Option<usize> = Some(ASSERTION_CREATION_VERSION);
 
     fn version(&self) -> Option<usize> {

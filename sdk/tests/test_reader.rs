@@ -52,7 +52,7 @@ fn test_reader_c_jpg() -> Result<()> {
 
 #[test]
 fn test_reader_xca_jpg() -> Result<()> {
-    Settings::from_toml(include_str!("fixtures/test_settings.toml"))?;
+    Settings::from_string(include_str!("fixtures/test_settings.json"), "json")?;
 
     let (format, mut stream) = fixture_stream("XCA.jpg")?;
     let reader = Reader::from_stream(&format, &mut stream)?;

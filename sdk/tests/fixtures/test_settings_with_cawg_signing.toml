@@ -1,8 +1,7 @@
 # c2pa-rs Configuration File
 
 # Version information.
-version_major = 1
-version_minor = 0
+version = 1
 
 # Trust settings for certificate validation.
 # [trust]
@@ -220,16 +219,18 @@ xPd7wFhjRZHfuWb2cs63xjAGjQ==
 """
 # String to trust configuration.
 trust_config = """
-//id-kp-emailProtection 
+//id-kp-emailProtection
 1.3.6.1.5.5.7.3.4
-//id-kp-documentSigning 
+//id-kp-documentSigning
 1.3.6.1.5.5.7.3.36
-//id-kp-timeStamping 
+//id-kp-timeStamping
 1.3.6.1.5.5.7.3.8
-//id-kp-OCSPSigning 
+//id-kp-OCSPSigning
 1.3.6.1.5.5.7.3.9
 // MS C2PA Signing
 1.3.6.1.4.1.311.76.59.1.9
+// c2pa-kp-claimSigning
+1.3.6.1.4.1.62558.2.1
 """
 
 # # Path to allowed certificate list (PEM format).
@@ -407,8 +408,8 @@ tsa_url = "http://timestamp.digicert.com"
 
 # Configuration for the `Builder`.
 [builder]
-certificate_status_fetch = "all"
-certificate_status_should_override = true
+#certificate_status_fetch = "all"
+#certificate_status_should_override = true
 
 # Claim generator info list.
 [builder.claim_generator_info]
@@ -418,8 +419,8 @@ name = "c2pa-rs testing"
 version = "1.0.0"
 # The operating system the claim generator is running on.
 #operating_system.name = "macOS"
-# Or if the name isn't specified, it can be inferred automatically.
-operating_system.infer = true
+# Or specify "auto" to infer the operating system automatically.
+operating_system = "auto"
 # Arbitrary fields can also be defined.
 #
 # By default, the SDK adds a field "org.cai.c2pa_rs" with the value
@@ -579,3 +580,5 @@ iMrbvbI8fG7w2Bbl9otNG/cch3DAw5rGAPV7NWkyl3QGuV/wt0MrAPDo
 """
 # Time stamp authority URL for signing.
 tsa_url = "http://timestamp.digicert.com"
+
+referenced_assertions = ["cawg.training-mining"]

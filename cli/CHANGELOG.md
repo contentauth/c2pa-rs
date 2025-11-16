@@ -7,6 +7,67 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.26.3](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.26.2...c2patool-v0.26.3)
+_13 November 2025_
+
+## [0.26.2](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.26.1...c2patool-v0.26.2)
+_12 November 2025_
+
+### Fixed
+
+* Use Digitalsourcetype with Builder intents ([#1586](https://github.com/contentauth/c2pa-rs/pull/1586))
+
+## [0.26.1](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.26.0...c2patool-v0.26.1)
+_07 November 2025_
+
+## [0.26.0](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.25.0...c2patool-v0.26.0)
+_06 November 2025_
+
+### Added
+
+* Sync/async HTTP resolvers API ([#1355](https://github.com/contentauth/c2pa-rs/pull/1355))
+
+## [0.25.0](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.24.0...c2patool-v0.25.0)
+_04 November 2025_
+
+### Added
+
+* Allow reading a manifest store as a Builder to continue editing ([#1476](https://github.com/contentauth/c2pa-rs/pull/1476))
+
+### Fixed
+
+* Update to avoid deprecation warning for Command::cargo_bin ([#1548](https://github.com/contentauth/c2pa-rs/pull/1548))
+
+### Other
+
+* Revert "chore: release ([#1535](https://github.com/contentauth/c2pa-rs/pull/1535))"
+
+## [0.24.0](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.23.4...c2patool-v0.24.0)
+_24 October 2025_
+
+### Added
+
+* Add settings structs to the public API ([#1447](https://github.com/contentauth/c2pa-rs/pull/1447))
+
+### Documented
+
+* Change relative to absolute URLs ([#1418](https://github.com/contentauth/c2pa-rs/pull/1418))
+
+### Fixed
+
+* Timestamp grace for legacy manifests ([#1502](https://github.com/contentauth/c2pa-rs/pull/1502))
+* Turn on trust by default ([#1483](https://github.com/contentauth/c2pa-rs/pull/1483))
+
+### Other
+
+* Update httpmock to 0.8.0 ([#1472](https://github.com/contentauth/c2pa-rs/pull/1472))
+
+### Updated dependencies
+
+* Bump pem from 3.0.5 to 3.0.6 ([#1511](https://github.com/contentauth/c2pa-rs/pull/1511))
+* Bump clap from 4.5.47 to 4.5.50 ([#1506](https://github.com/contentauth/c2pa-rs/pull/1506))
+* Bump httpmock from 0.8.1 to 0.8.2 ([#1504](https://github.com/contentauth/c2pa-rs/pull/1504))
+
 ## [0.23.4](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.23.3...c2patool-v0.23.4)
 _02 October 2025_
 

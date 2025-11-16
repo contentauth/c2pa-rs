@@ -1,10 +1,12 @@
-# Additional checks that we no longer run on PR validation
-# but want to verify before publishing a new crate version.
+# Enforce Tier 1B support tier.
+
+# If you change the supported platforms in this workflow, please also
+# update docs/support-tiers.md to match the changes you're making.
 
 # Cool trick: If you want to assess release readiness for any PR,
 # add the "check-release" label to the PR.
 
-name: Release readiness
+name: Tier 1B
 
 on:
   pull_request:
@@ -24,7 +26,7 @@ jobs:
       openssl-features: ${{ steps.get-features.outputs.openssl-features }}
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@master
@@ -35,6 +37,7 @@ jobs:
         id: get-features
         run: |
           FEATURES=$(cargo metadata --format-version=1 | jq -r '[.packages[] | select(.name=="c2pa") | .features | keys | map(select(. != "default")) | .[]] | unique | join(" ")')
+
           RUST_NATIVE_FEATURES=$(echo $FEATURES | sed 's/openssl//g')
           OPENSSL_FEATURES=$(echo $FEATURES | sed 's/rust_native_crypto//g')
           echo "rust-native-features=$RUST_NATIVE_FEATURES" >> "$GITHUB_OUTPUT"
@@ -50,11 +53,11 @@ jobs:
       fail-fast: false
       matrix:
         os: [windows-latest, macos-latest, ubuntu-latest]
-        rust_version: [stable, 1.86.0]
+        rust_version: [stable, 1.88.0]
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@master
@@ -81,11 +84,11 @@ jobs:
       fail-fast: false
       matrix:
         os: [windows-latest, macos-latest, ubuntu-latest]
-        rust_version: [stable, 1.86.0]
+        rust_version: [stable, 1.88.0]
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@master
@@ -112,11 +115,11 @@ jobs:
       fail-fast: false
       matrix:
         target: [aarch64-unknown-linux-gnu]
-        rust_version: [stable, 1.86.0]
+        rust_version: [stable, 1.88.0]
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@master
@@ -130,11 +133,14 @@ jobs:
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
 
+      # Integration tests are excluded because they require executing
+      # the compiled binary, which isn't reliably possible when cross-compiling,
+      # due to architecture mismatch.
       - name: Run unit tests (cross build)
         env:
           FEATURES: ${{needs.get-features.outputs.openssl-features}}
         run: |
-          cross test --all-targets --features "$FEATURES" --target ${{ matrix.target }}
+          cross test --lib --bins --features "$FEATURES" --target ${{ matrix.target }}
 
   test-direct-minimal-versions:
     name: Unit tests with minimum versions of direct dependencies
@@ -149,7 +155,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@master
@@ -173,7 +179,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@nightly
@@ -192,7 +198,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@master
@@ -210,38 +216,3 @@ jobs:
           cargo udeps --all-targets --features "$FEATURES"
           # NOTE: Using pre-built binary as a workaround for
           # https://github.com/aig787/cargo-udeps-action/issues/6.
-
-  c-library-mobile-builds:
-    name: C library mobile builds
-    if: contains(github.event.pull_request.labels.*.name, 'release') || contains(github.event.pull_request.labels.*.name, 'check-release')
-    runs-on: ${{ matrix.os }}
-
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: macos-latest
-            target: aarch64-apple-ios
-          - os: macos-latest
-            target: x86_64-apple-ios
-          - os: macos-latest
-            target: aarch64-apple-ios-sim
-          - os: ubuntu-latest
-            target: aarch64-linux-android
-          - os: ubuntu-latest
-            target: armv7-linux-androideabi
-          - os: ubuntu-latest
-            target: i686-linux-android
-          - os: ubuntu-latest
-            target: x86_64-linux-android
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Set up Rust
-        uses: actions-rust-lang/setup-rust-toolchain@v1
-
-      - name: Build C library for mobile target
-        run: make release TARGET=${{ matrix.target }}
-        working-directory: ./c2pa_c_ffi
