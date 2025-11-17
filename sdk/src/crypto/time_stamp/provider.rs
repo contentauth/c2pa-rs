@@ -16,11 +16,13 @@ use bcder::{encode::Values, OctetString};
 use rand::{thread_rng, Rng};
 use sha2::{Digest, Sha256};
 
-use crate::crypto::{
-    asn1::rfc3161::TimeStampReq,
+use crate::{
+    crypto::{
+        asn1::rfc3161::TimeStampReq,
+        raw_signature::oids::{ans1_oid_bcder_oid, SHA256_OID},
+        time_stamp::TimeStampError,
+    },
     http::SyncGenericResolver,
-    raw_signature::oids::{ans1_oid_bcder_oid, SHA256_OID},
-    time_stamp::TimeStampError,
 };
 
 /// A `TimeStampProvider` implementation can contact a [RFC 3161] time stamp
