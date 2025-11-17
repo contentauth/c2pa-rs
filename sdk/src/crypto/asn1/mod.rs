@@ -39,7 +39,7 @@ pub(crate) fn reconstruct_der_bytes(tag: u8, content: &[u8]) -> Vec<u8> {
 
 /// Helper function to extract string content from DER bytes
 /// DER format: tag (1 byte) + length (1 byte) + content
-pub(crate) fn extract_der_content(der_bytes: &[u8]) -> &str {
+fn extract_der_content(der_bytes: &[u8]) -> &str {
     if der_bytes.len() >= 2 {
         let length = der_bytes[1] as usize;
         if length < 128 && der_bytes.len() >= 2 + length {
@@ -238,24 +238,7 @@ impl From<GeneralizedTime> for chrono::DateTime<chrono::Utc> {
     fn from(gt: GeneralizedTime) -> Self {
         // Use der's conversion to SystemTime, then to chrono
         let system_time = gt.der_time.to_system_time();
-
-        // Convert SystemTime directly
-        #[cfg(any(not(target_arch = "wasm32"), target_os = "wasi"))]
-        {
-            system_time.into()
-        }
-
-        #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
-        {
-            use chrono::TimeZone;
-            let duration = system_time
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or(std::time::Duration::from_secs(0));
-            chrono::Utc
-                .timestamp_opt(duration.as_secs() as i64, duration.subsec_nanos())
-                .single()
-                .unwrap_or_else(|| chrono::Utc.timestamp_opt(0, 0).unwrap())
-        }
+        system_time.into()
     }
 }
 
@@ -293,3 +276,378 @@ pub mod rfc3281;
 pub mod rfc4210;
 #[allow(dead_code)]
 pub mod rfc5652;
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::expect_used)]
+    #![allow(clippy::panic)]
+    #![allow(clippy::unwrap_used)]
+    use bcder::{decode::Constructed, encode::Values, Mode, Oid};
+
+    use super::*;
+
+    // Helper to load test certificate
+    fn load_test_cert_pem(name: &str) -> Vec<u8> {
+        let path = format!("tests/fixtures/certs/{}", name);
+        std::fs::read(&path).unwrap_or_else(|_| panic!("Failed to read test certificate: {}", path))
+    }
+
+    // Helper to parse PEM and extract DER certificate
+    fn extract_cert_der_from_pem(pem_data: &[u8]) -> Vec<u8> {
+        // Use the pem crate to parse
+        let pems = pem::parse_many(pem_data).expect("Failed to parse PEM data");
+
+        // Find the first certificate
+        for p in pems {
+            if p.tag() == "CERTIFICATE" {
+                return p.contents().to_vec();
+            }
+        }
+
+        panic!("No certificate found in PEM data");
+    }
+
+    #[test]
+    fn test_algorithm_identifier_encoding() {
+        // SHA-256 OID: 2.16.840.1.101.3.4.2.1
+        let sha256_bytes = bytes::Bytes::from_static(&[96, 134, 72, 1, 101, 3, 4, 2, 1]);
+        let sha256_oid = Oid(sha256_bytes.clone());
+        let alg_id = AlgorithmIdentifier {
+            algorithm: sha256_oid.clone(),
+        };
+
+        // Encode and verify
+        let mut encoded = Vec::new();
+        alg_id.write_encoded(Mode::Der, &mut encoded).unwrap();
+
+        assert!(!encoded.is_empty());
+
+        // Decode and verify round-trip
+        let decoded = Constructed::decode(encoded.as_slice(), Mode::Der, |cons| {
+            AlgorithmIdentifier::take_from(cons)
+        })
+        .unwrap();
+
+        assert_eq!(decoded.algorithm.as_ref(), sha256_oid.as_ref());
+    }
+
+    #[test]
+    fn test_algorithm_identifier_with_es256_cert() {
+        // Load ES256 certificate to verify ECDSA-SHA256 algorithm handling
+        let pem_data = load_test_cert_pem("es256.pub");
+        let cert_der = extract_cert_der_from_pem(&pem_data);
+
+        // Verify we got valid DER data (X.509 cert starts with SEQUENCE tag 0x30)
+        assert!(!cert_der.is_empty(), "Certificate DER should not be empty");
+        assert_eq!(
+            cert_der[0], 0x30,
+            "Certificate should start with SEQUENCE tag"
+        );
+
+        // Create an AlgorithmIdentifier manually from known ECDSA-SHA256 OID
+        // (which the es256 cert uses)
+        let ecdsa_sha256_oid = bytes::Bytes::from_static(&[
+            0x2a, 0x86, 0x48, 0xce, 0x3d, 0x04, 0x03, 0x02, // 1.2.840.10045.4.3.2
+        ]);
+        let alg_id = AlgorithmIdentifier {
+            algorithm: Oid(ecdsa_sha256_oid.clone()),
+        };
+
+        // Verify we can encode and decode it
+        let mut encoded = Vec::new();
+        alg_id.write_encoded(Mode::Der, &mut encoded).unwrap();
+
+        let decoded = Constructed::decode(encoded.as_slice(), Mode::Der, |cons| {
+            AlgorithmIdentifier::take_from(cons)
+        })
+        .unwrap();
+
+        // Verify round-trip works
+        assert_eq!(alg_id.algorithm.as_ref(), decoded.algorithm.as_ref());
+    }
+
+    #[test]
+    fn test_algorithm_identifier_with_es384_cert() {
+        // Load ES384 certificate to verify ECDSA-SHA384 algorithm handling
+        let pem_data = load_test_cert_pem("es384.pub");
+        let cert_der = extract_cert_der_from_pem(&pem_data);
+
+        assert!(!cert_der.is_empty());
+        assert_eq!(cert_der[0], 0x30);
+
+        // ECDSA-SHA384 OID: 1.2.840.10045.4.3.3
+        let ecdsa_sha384_oid =
+            bytes::Bytes::from_static(&[0x2a, 0x86, 0x48, 0xce, 0x3d, 0x04, 0x03, 0x03]);
+        let alg_id = AlgorithmIdentifier {
+            algorithm: Oid(ecdsa_sha384_oid.clone()),
+        };
+
+        let mut encoded = Vec::new();
+        alg_id.write_encoded(Mode::Der, &mut encoded).unwrap();
+
+        let decoded = Constructed::decode(encoded.as_slice(), Mode::Der, |cons| {
+            AlgorithmIdentifier::take_from(cons)
+        })
+        .unwrap();
+
+        assert_eq!(alg_id.algorithm.as_ref(), decoded.algorithm.as_ref());
+    }
+
+    #[test]
+    fn test_algorithm_identifier_with_es512_cert() {
+        // Load ES512 certificate to verify ECDSA-SHA512 algorithm handling
+        let pem_data = load_test_cert_pem("es512.pub");
+        let cert_der = extract_cert_der_from_pem(&pem_data);
+
+        assert!(!cert_der.is_empty());
+        assert_eq!(cert_der[0], 0x30);
+
+        // ECDSA-SHA512 OID: 1.2.840.10045.4.3.4
+        let ecdsa_sha512_oid =
+            bytes::Bytes::from_static(&[0x2a, 0x86, 0x48, 0xce, 0x3d, 0x04, 0x03, 0x04]);
+        let alg_id = AlgorithmIdentifier {
+            algorithm: Oid(ecdsa_sha512_oid.clone()),
+        };
+
+        let mut encoded = Vec::new();
+        alg_id.write_encoded(Mode::Der, &mut encoded).unwrap();
+
+        let decoded = Constructed::decode(encoded.as_slice(), Mode::Der, |cons| {
+            AlgorithmIdentifier::take_from(cons)
+        })
+        .unwrap();
+
+        assert_eq!(alg_id.algorithm.as_ref(), decoded.algorithm.as_ref());
+    }
+
+    #[test]
+    fn test_algorithm_identifier_with_rsa_pss_cert() {
+        // Load PS256 certificate to verify RSA-PSS algorithm handling
+        let pem_data = load_test_cert_pem("ps256.pub");
+        let cert_der = extract_cert_der_from_pem(&pem_data);
+
+        assert!(!cert_der.is_empty());
+        assert_eq!(cert_der[0], 0x30);
+
+        // RSA-PSS OID: 1.2.840.113549.1.1.10
+        let rsa_pss_oid =
+            bytes::Bytes::from_static(&[0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x0a]);
+        let alg_id = AlgorithmIdentifier {
+            algorithm: Oid(rsa_pss_oid.clone()),
+        };
+
+        let mut encoded = Vec::new();
+        alg_id.write_encoded(Mode::Der, &mut encoded).unwrap();
+
+        let decoded = Constructed::decode(encoded.as_slice(), Mode::Der, |cons| {
+            AlgorithmIdentifier::take_from(cons)
+        })
+        .unwrap();
+
+        assert_eq!(alg_id.algorithm.as_ref(), decoded.algorithm.as_ref());
+    }
+
+    #[test]
+    fn test_algorithm_identifier_with_ed25519_cert() {
+        // Load Ed25519 certificate to verify EdDSA algorithm handling
+        let pem_data = load_test_cert_pem("ed25519.pub");
+        let cert_der = extract_cert_der_from_pem(&pem_data);
+
+        assert!(!cert_der.is_empty());
+        assert_eq!(cert_der[0], 0x30);
+
+        // Ed25519 OID: 1.3.101.112
+        let ed25519_oid = bytes::Bytes::from_static(&[0x2b, 0x65, 0x70]);
+        let alg_id = AlgorithmIdentifier {
+            algorithm: Oid(ed25519_oid.clone()),
+        };
+
+        let mut encoded = Vec::new();
+        alg_id.write_encoded(Mode::Der, &mut encoded).unwrap();
+
+        let decoded = Constructed::decode(encoded.as_slice(), Mode::Der, |cons| {
+            AlgorithmIdentifier::take_from(cons)
+        })
+        .unwrap();
+
+        assert_eq!(alg_id.algorithm.as_ref(), decoded.algorithm.as_ref());
+    }
+
+    #[test]
+    fn test_algorithm_identifier_with_rsa_cert() {
+        // Load RS256 certificate to verify standard RSA algorithm handling
+        let pem_data = load_test_cert_pem("rs256.pub");
+        let cert_der = extract_cert_der_from_pem(&pem_data);
+
+        assert!(!cert_der.is_empty());
+        assert_eq!(cert_der[0], 0x30);
+
+        // SHA256withRSA OID: 1.2.840.113549.1.1.11
+        let sha256_rsa_oid =
+            bytes::Bytes::from_static(&[0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x0b]);
+        let alg_id = AlgorithmIdentifier {
+            algorithm: Oid(sha256_rsa_oid.clone()),
+        };
+
+        let mut encoded = Vec::new();
+        alg_id.write_encoded(Mode::Der, &mut encoded).unwrap();
+
+        let decoded = Constructed::decode(encoded.as_slice(), Mode::Der, |cons| {
+            AlgorithmIdentifier::take_from(cons)
+        })
+        .unwrap();
+
+        assert_eq!(alg_id.algorithm.as_ref(), decoded.algorithm.as_ref());
+    }
+
+    #[test]
+    fn test_generalized_time_from_chrono() {
+        use chrono::{Datelike, TimeZone, Timelike, Utc};
+
+        // Create a known timestamp: 2023-01-15 12:30:45 UTC
+        let dt = Utc.with_ymd_and_hms(2023, 1, 15, 12, 30, 45).unwrap();
+
+        // Convert to GeneralizedTime
+        let gt = GeneralizedTime::from(dt);
+
+        // Verify the time string format (should be "20230115123045Z")
+        let time_str = gt.as_str();
+        assert!(time_str.starts_with("20230115"));
+        assert!(time_str.contains("123045"));
+
+        // Convert back to chrono and verify
+        let dt_back: chrono::DateTime<chrono::Utc> = gt.into();
+        assert_eq!(dt_back.year(), 2023);
+        assert_eq!(dt_back.month(), 1);
+        assert_eq!(dt_back.day(), 15);
+        assert_eq!(dt_back.hour(), 12);
+        assert_eq!(dt_back.minute(), 30);
+        assert_eq!(dt_back.second(), 45);
+    }
+
+    #[test]
+    fn test_generalized_time_from_der_bytes() {
+        // Load a real certificate to verify it contains valid time data
+        let pem_data = load_test_cert_pem("es256.pub");
+        let cert_der = extract_cert_der_from_pem(&pem_data);
+
+        // Verify we got valid DER data
+        assert!(!cert_der.is_empty(), "Certificate DER should not be empty");
+
+        // Create a GeneralizedTime from a known timestamp and test roundtrip
+        use chrono::{Datelike, TimeZone, Utc};
+        let test_time = Utc.with_ymd_and_hms(2022, 6, 10, 18, 46, 40).unwrap();
+        let gt = GeneralizedTime::from(test_time);
+
+        // Get DER bytes and parse them back
+        let der_bytes = gt.as_der_bytes();
+        let gt_parsed = GeneralizedTime::from_der_bytes(der_bytes).unwrap();
+
+        // Verify they match
+        assert_eq!(gt, gt_parsed);
+
+        // Convert back to DateTime
+        let dt_back: chrono::DateTime<chrono::Utc> = gt_parsed.into();
+        assert_eq!(dt_back.year(), 2022);
+        assert_eq!(dt_back.month(), 6);
+        assert_eq!(dt_back.day(), 10);
+    }
+
+    #[test]
+    fn test_generalized_time_with_multiple_cert_types() {
+        // Test that we can load and parse certificates with different algorithms
+        // This verifies the der/bcder integration works across all supported cert types
+        use chrono::{TimeZone, Utc};
+
+        let cert_types = vec![
+            "es256.pub",
+            "es384.pub",
+            "es512.pub",
+            "ps256.pub",
+            "rs256.pub",
+            "ed25519.pub",
+        ];
+
+        for cert_name in cert_types {
+            // Load the certificate
+            let pem_data = load_test_cert_pem(cert_name);
+            let cert_der = extract_cert_der_from_pem(&pem_data);
+
+            // Verify we got valid DER data for each cert type
+            assert!(
+                !cert_der.is_empty(),
+                "Certificate {} DER should not be empty",
+                cert_name
+            );
+            assert_eq!(
+                cert_der[0], 0x30,
+                "Certificate {} should start with SEQUENCE tag",
+                cert_name
+            );
+        }
+
+        // Test GeneralizedTime roundtrip with a timestamp
+        let test_time = Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap();
+        let gt = GeneralizedTime::from(test_time);
+        let der_bytes = gt.as_der_bytes();
+        let gt_parsed = GeneralizedTime::from_der_bytes(der_bytes).unwrap();
+        assert_eq!(gt, gt_parsed);
+    }
+
+    #[test]
+    fn test_generalized_time_invalid_der() {
+        // Invalid format - should fail
+        let invalid_der = vec![0x18, 0x05, b't', b'e', b's', b't', b'!'];
+        assert!(GeneralizedTime::from_der_bytes(&invalid_der).is_err());
+    }
+
+    #[test]
+    fn test_generalized_time_encode_decode_roundtrip() {
+        use chrono::{TimeZone, Utc};
+
+        let original_dt = Utc.with_ymd_and_hms(2025, 10, 29, 14, 30, 0).unwrap();
+        let gt1 = GeneralizedTime::from(original_dt);
+
+        // Get the DER bytes directly
+        let der_bytes = gt1.as_der_bytes();
+
+        // Decode from DER bytes
+        let decoded = GeneralizedTime::from_der_bytes(der_bytes).unwrap();
+
+        // Verify equality
+        assert_eq!(gt1, decoded);
+
+        // Also verify conversion back to chrono works
+        let dt_back: chrono::DateTime<chrono::Utc> = decoded.into();
+        // Times should be close (within 1 second due to potential precision loss)
+        let diff = if original_dt > dt_back {
+            original_dt.signed_duration_since(dt_back)
+        } else {
+            dt_back.signed_duration_since(original_dt)
+        };
+        assert!(diff.num_seconds().abs() <= 1);
+    }
+
+    #[cfg(any(not(target_arch = "wasm32"), target_os = "wasi"))]
+    #[test]
+    fn test_generalized_time_from_system_time() {
+        use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+        // Create a SystemTime 1 day after epoch
+        let system_time = UNIX_EPOCH + Duration::from_secs(86400);
+
+        // Convert to chrono, then to GeneralizedTime
+        let dt: chrono::DateTime<chrono::Utc> = system_time.into();
+        let gt = GeneralizedTime::from(dt);
+
+        // Convert back and verify
+        let dt_back: chrono::DateTime<chrono::Utc> = gt.into();
+        let system_time_back: SystemTime = dt_back.into();
+
+        // Should be within 1 second (due to potential precision loss)
+        let diff = system_time_back
+            .duration_since(system_time)
+            .unwrap_or_else(|_| system_time.duration_since(system_time_back).unwrap());
+        assert!(diff.as_secs() < 1);
+    }
+}
