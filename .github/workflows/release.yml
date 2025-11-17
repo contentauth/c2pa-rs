@@ -108,7 +108,6 @@ jobs:
           echo "Filtered c2patool tags:"
           git tag --contains HEAD | grep '^c2patool-' || echo "No c2patool tags found"
           echo tag=`git tag --contains HEAD | grep '^c2patool-'` >> "$GITHUB_OUTPUT" || true
-          echo "Output tag: $(git tag --contains HEAD | grep '^c2patool-' || echo 'none')"
 
   publish-c2patool-binaries:
     name: Publish c2patool binaries
