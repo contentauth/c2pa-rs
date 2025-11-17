@@ -29,26 +29,57 @@ use der::{Decode, Encode};
 
 /// Helper function to reconstruct DER encoding from primitive content
 /// (tag + length + content bytes)
-pub(crate) fn reconstruct_der_bytes(tag: u8, content: &[u8]) -> Vec<u8> {
-    let mut der_bytes = Vec::with_capacity(2 + content.len());
-    der_bytes.push(tag);
-    der_bytes.push(content.len() as u8); // length (assumes < 128)
+///
+/// Uses the `der` crate's `Header` type to ensure proper DER length encoding,
+/// including support for long-form lengths (>= 128 bytes).
+///
+/// # Errors
+///
+/// Returns an error if:
+/// - The tag value is invalid for DER encoding
+/// - The content length exceeds the maximum supported by DER encoding
+/// - The header cannot be encoded
+pub(crate) fn reconstruct_der_bytes(tag: u8, content: &[u8]) -> Result<Vec<u8>, der::Error> {
+    // Use der crate's Header which handles both short and long form length encoding
+    let der_tag = der::Tag::try_from(tag)?;
+    let header = der::Header::new(der_tag, content.len())?;
+
+    // Encode the header (tag + length)
+    let mut der_bytes = Vec::new();
+    header.encode_to_vec(&mut der_bytes)?;
     der_bytes.extend_from_slice(content);
-    der_bytes
+    Ok(der_bytes)
 }
 
 /// Helper function to extract string content from DER bytes
-/// DER format: tag (1 byte) + length (1 byte) + content
-fn extract_der_content(der_bytes: &[u8]) -> &str {
-    if der_bytes.len() >= 2 {
-        let length = der_bytes[1] as usize;
-        if length < 128 && der_bytes.len() >= 2 + length {
-            if let Ok(s) = std::str::from_utf8(&der_bytes[2..2 + length]) {
-                return s;
-            }
-        }
+/// DER format: tag (1 byte) + length (variable) + content
+///
+/// Uses the `der` crate's `Header::decode()` and `SliceReader` to properly parse
+/// DER-encoded data, supporting both short-form (< 128 bytes) and long-form (>= 128 bytes)
+/// length encoding automatically.
+///
+/// # Errors
+///
+/// Returns an error if:
+/// - The buffer is too short to contain a valid DER structure
+/// - The DER header is malformed
+/// - The content is not valid UTF-8
+fn extract_der_content(der_bytes: &[u8]) -> Result<&str, der::Error> {
+    // Use der crate to decode the header (tag + length)
+    let mut reader = der::SliceReader::new(der_bytes)?;
+    let header = der::Header::decode(&mut reader)?;
+
+    // Get the content portion - header.encoded_len() gives a Length we need to convert
+    let header_len: usize = header.encoded_len()?.try_into()?;
+    let content_len: usize = header.length.try_into()?;
+
+    if der_bytes.len() < header_len + content_len {
+        Err(der::Tag::GeneralizedTime.length_error())?;
     }
-    ""
+
+    // Extract and validate UTF-8
+    std::str::from_utf8(&der_bytes[header_len..header_len + content_len])
+        .map_err(|_| der::Tag::Utf8String.value_error())
 }
 
 /// Algorithm identifier for use with bcder
@@ -215,7 +246,9 @@ impl GeneralizedTime {
     ) -> Result<Self, bcder::decode::DecodeError<S::Error>> {
         let bytes = prim.take_all()?;
         // Reconstruct DER encoding using helper (tag 0x18 = GENERALIZED_TIME)
-        let der_bytes = reconstruct_der_bytes(0x18, bytes.as_ref());
+        let der_bytes = reconstruct_der_bytes(0x18, bytes.as_ref()).map_err(|_| {
+            bcder::decode::DecodeError::content("failed to reconstruct DER bytes", prim.pos())
+        })?;
         // Parse with der crate - it will properly validate the time format
         Self::from_der_bytes(&der_bytes)
             .map_err(|_| bcder::decode::DecodeError::content("invalid GeneralizedTime", prim.pos()))
@@ -229,8 +262,11 @@ impl GeneralizedTime {
     }
 
     /// Get time string representation (for compatibility)
+    ///
+    /// Returns an empty string if the DER bytes cannot be decoded.
+    /// This should never fail for valid GeneralizedTime instances.
     pub fn as_str(&self) -> &str {
-        extract_der_content(&self.der_bytes)
+        extract_der_content(&self.der_bytes).unwrap_or("")
     }
 }
 
@@ -247,15 +283,7 @@ impl From<GeneralizedTime> for chrono::DateTime<chrono::Utc> {
 impl From<chrono::DateTime<chrono::Utc>> for GeneralizedTime {
     fn from(dt: chrono::DateTime<chrono::Utc>) -> Self {
         // Convert chrono to SystemTime, then to der's GeneralizedTime
-        #[cfg(any(not(target_arch = "wasm32"), target_os = "wasi"))]
         let system_time: std::time::SystemTime = dt.into();
-
-        #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
-        let system_time: std::time::SystemTime = {
-            let timestamp = dt.timestamp();
-            let nanos = dt.timestamp_subsec_nanos();
-            std::time::UNIX_EPOCH + std::time::Duration::new(timestamp as u64, nanos)
-        };
 
         // Create GeneralizedTime from SystemTime
         // This should never fail for valid dates (der crate supports dates from 1970-2255)
@@ -599,6 +627,155 @@ mod tests {
         // Invalid format - should fail
         let invalid_der = vec![0x18, 0x05, b't', b'e', b's', b't', b'!'];
         assert!(GeneralizedTime::from_der_bytes(&invalid_der).is_err());
+    }
+
+    #[test]
+    fn test_reconstruct_der_bytes_short_form() {
+        // Test short form length encoding (< 128 bytes)
+        let content = b"20231215120000Z"; // 15 bytes
+        let der_bytes = reconstruct_der_bytes(0x18, content).unwrap();
+
+        // Should be: tag (0x18) + length (0x0F = 15) + content (15 bytes)
+        assert_eq!(der_bytes[0], 0x18, "Tag should be GeneralizedTime");
+        assert_eq!(der_bytes[1], 0x0f, "Length should be 15 in short form");
+        assert_eq!(
+            der_bytes.len(),
+            1 + 1 + 15,
+            "Total length should be tag + len + content"
+        );
+        assert_eq!(&der_bytes[2..], content);
+    }
+
+    #[test]
+    fn test_reconstruct_der_bytes_long_form() {
+        // Test long form length encoding (>= 128 bytes)
+        // Create content that's exactly 128 bytes
+        let content = vec![b'X'; 128];
+        let der_bytes = reconstruct_der_bytes(0x18, &content).unwrap();
+
+        // Long form: tag (0x18) + length_encoding + content
+        // For length 128: 0x81 0x80 (1 byte to encode the length, value 128)
+        assert_eq!(der_bytes[0], 0x18, "Tag should be GeneralizedTime");
+        assert_eq!(
+            der_bytes[1], 0x81,
+            "Should use long form with 1 byte for length"
+        );
+        assert_eq!(der_bytes[2], 0x80, "Length value should be 128");
+        assert_eq!(
+            der_bytes.len(),
+            1 + 2 + 128,
+            "Total length should be tag + length_encoding(2) + content"
+        );
+        assert_eq!(&der_bytes[3..], &content[..]);
+    }
+
+    #[test]
+    fn test_reconstruct_der_bytes_very_long() {
+        // Test with 256 bytes (requires 2 bytes for length in long form)
+        let content = vec![b'Y'; 256];
+        let der_bytes = reconstruct_der_bytes(0x18, &content).unwrap();
+
+        // For length 256: 0x82 0x01 0x00 (2 bytes to encode the length, value 256)
+        assert_eq!(der_bytes[0], 0x18, "Tag should be GeneralizedTime");
+        assert_eq!(
+            der_bytes[1], 0x82,
+            "Should use long form with 2 bytes for length"
+        );
+        assert_eq!(der_bytes[2], 0x01, "Length high byte should be 1");
+        assert_eq!(der_bytes[3], 0x00, "Length low byte should be 0");
+        assert_eq!(
+            der_bytes.len(),
+            1 + 3 + 256,
+            "Total length should be tag + length_encoding(3) + content"
+        );
+        assert_eq!(&der_bytes[4..], &content[..]);
+    }
+
+    #[test]
+    fn test_reconstruct_der_bytes_invalid_tag() {
+        // Test that invalid tags return an error
+        let content = b"test";
+        let result = reconstruct_der_bytes(0xff, content);
+        assert!(result.is_err(), "Should fail with invalid tag");
+    }
+
+    #[test]
+    fn test_extract_der_content_short_form() {
+        // Test short form length encoding (< 128 bytes)
+        // Tag 0x18 (GeneralizedTime), length 15, then content
+        let der_bytes = vec![
+            0x18, 0x0f, // tag + length (15 bytes)
+            b'2', b'0', b'2', b'3', b'1', b'2', b'1', b'5', b'1', b'2', b'0', b'0', b'0', b'0',
+            b'Z',
+        ];
+
+        let content = extract_der_content(&der_bytes).unwrap();
+        assert_eq!(content, "20231215120000Z");
+    }
+
+    #[test]
+    fn test_extract_der_content_long_form() {
+        // Test long form length encoding (>= 128 bytes)
+        // Create 128 bytes of content
+        let mut content_bytes = vec![b'X'; 128];
+
+        // Build DER: tag + long-form length + content
+        let mut der_bytes = vec![
+            0x18, // GeneralizedTime tag
+            0x81, // Long form: 1 byte for length
+            0x80, // Length value: 128
+        ];
+        der_bytes.append(&mut content_bytes);
+
+        let content = extract_der_content(&der_bytes).unwrap();
+        assert_eq!(content.len(), 128);
+        assert_eq!(content, "X".repeat(128));
+    }
+
+    #[test]
+    fn test_extract_der_content_very_long_form() {
+        // Test with 256 bytes (2 bytes for length encoding)
+        let mut content_bytes = vec![b'Y'; 256];
+
+        let mut der_bytes = vec![
+            0x18, // GeneralizedTime tag
+            0x82, // Long form: 2 bytes for length
+            0x01, 0x00, // Length value: 256
+        ];
+        der_bytes.append(&mut content_bytes);
+
+        let content = extract_der_content(&der_bytes).unwrap();
+        assert_eq!(content.len(), 256);
+        assert_eq!(content, "Y".repeat(256));
+    }
+
+    #[test]
+    fn test_extract_der_content_buffer_too_short() {
+        // Buffer with only 1 byte
+        let der_bytes = vec![0x18];
+        assert!(extract_der_content(&der_bytes).is_err());
+
+        // Length claims more data than available
+        let der_bytes = vec![0x18, 0x10, b't', b'e', b's', b't'];
+        assert!(extract_der_content(&der_bytes).is_err());
+    }
+
+    #[test]
+    fn test_extract_der_content_invalid_utf8() {
+        // Valid DER structure but invalid UTF-8
+        let der_bytes = vec![0x18, 0x02, 0xff, 0xfe];
+        assert!(extract_der_content(&der_bytes).is_err());
+    }
+
+    #[test]
+    fn test_extract_der_content_invalid_long_form() {
+        // Long form with 0 length bytes (0x80)
+        let der_bytes = vec![0x18, 0x80, b't', b'e', b's', b't'];
+        assert!(extract_der_content(&der_bytes).is_err());
+
+        // Long form with too many length bytes (> 4)
+        let der_bytes = vec![0x18, 0x85, 0x01, 0x02, 0x03, 0x04, 0x05];
+        assert!(extract_der_content(&der_bytes).is_err());
     }
 
     #[test]

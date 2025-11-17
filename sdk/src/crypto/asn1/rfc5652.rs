@@ -57,7 +57,8 @@ impl UtcTime {
         // Get the raw bytes (without tag/length)
         let bytes = prim.take_all()?;
         // Reconstruct DER encoding using helper (tag 0x17 = UTC_TIME)
-        let der_bytes = super::reconstruct_der_bytes(0x17, bytes.as_ref());
+        let der_bytes = super::reconstruct_der_bytes(0x17, bytes.as_ref())
+            .map_err(|_| DecodeError::content("failed to reconstruct DER bytes", prim.pos()))?;
         // Parse with der crate - it handles Y2K correctly and validates format
         let der_time = der::asn1::UtcTime::from_der(&der_bytes)
             .map_err(|_| DecodeError::content("invalid UtcTime", prim.pos()))?;
