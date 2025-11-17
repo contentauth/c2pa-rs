@@ -256,6 +256,9 @@ impl GeneralizedTime {
     }
 
     /// Parse from bcder Primitive (no fractional or timezone offsets)
+    ///
+    /// This is used by CMS Time structures (RFC 5652) which use strict DER encoding.
+    #[allow(dead_code)] // Used by rfc5652::Time::take_from
     pub fn from_primitive_no_fractional_or_timezone_offsets<S: bcder::decode::Source>(
         prim: &mut bcder::decode::Primitive<S>,
     ) -> Result<Self, bcder::decode::DecodeError<S::Error>> {
@@ -914,7 +917,7 @@ mod tests {
         })
         .expect("Failed to parse Extensions with SEQUENCE tag");
 
-        assert!(extensions_explicit.0.as_slice().len() > 0);
+        assert!(!extensions_explicit.0.as_slice().is_empty());
 
         // Test 2: Parse Extensions with IMPLICIT [1] tagging using from_constructed()
         // This is how RFC 3161 uses it: extensions [1] IMPLICIT Extensions
@@ -929,7 +932,7 @@ mod tests {
             "Extensions should be present"
         );
         let extensions_implicit = extensions_implicit.unwrap();
-        assert!(extensions_implicit.0.as_slice().len() > 0);
+        assert!(!extensions_implicit.0.as_slice().is_empty());
 
         // Verify the tag is CTX_1, not SEQUENCE
         let (tag, _) =
@@ -1001,7 +1004,7 @@ mod tests {
         // Test parsing as it's done in TstInfo::take_from()
         let general_name_dns =
             Constructed::decode(TSA_GENERAL_NAME_DNS, bcder::Mode::Der, |cons| {
-                cons.take_opt_constructed_if(Tag::CTX_0, |cons| GeneralName::take_from(cons))
+                cons.take_opt_constructed_if(Tag::CTX_0, GeneralName::take_from)
             })
             .expect("Failed to decode TSA with dNSName");
 
@@ -1013,7 +1016,7 @@ mod tests {
         // Test URI variant
         let general_name_uri =
             Constructed::decode(TSA_GENERAL_NAME_URI, bcder::Mode::Der, |cons| {
-                cons.take_opt_constructed_if(Tag::CTX_0, |cons| GeneralName::take_from(cons))
+                cons.take_opt_constructed_if(Tag::CTX_0, GeneralName::take_from)
             })
             .expect("Failed to decode TSA with URI");
 
@@ -1029,5 +1032,50 @@ mod tests {
         assert_eq!(tag, Tag::CTX_0, "Outer tag should be [0] for TstInfo.tsa");
 
         println!("✅ GeneralName in TstInfo context validated");
+    }
+
+    /// Test from_primitive_no_fractional_or_timezone_offsets via CMS Time
+    ///
+    /// This method is used by CMS Time structures (RFC 5652) for strict DER encoding.
+    /// We test it indirectly through the Time::take_from() parser.
+    ///
+    /// ## Test Data
+    ///
+    /// Standard GeneralizedTime DER format: Tag(0x18) + Length + YYYYMMDDHHmmssZ
+    /// Example: "20240115120000Z" = January 15, 2024, 12:00:00 UTC
+    #[test]
+    fn test_generalized_time_from_primitive_no_fractional() {
+        use bcder::decode::Constructed;
+
+        use super::rfc5652::Time;
+
+        // GeneralizedTime in DER format (tag + length + content)
+        // Tag: 0x18 (GENERALIZED_TIME)
+        // Length: 0x0f (15 bytes)
+        // Content: "20240115120000Z"
+        const TIME_DER: &[u8] = &[
+            0x18, 0x0f, // GENERALIZED_TIME, length 15
+            b'2', b'0', b'2', b'4', b'0', b'1', b'1', b'5', b'1', b'2', b'0', b'0', b'0', b'0',
+            b'Z',
+        ];
+
+        // Parse using Time::take_from which calls from_primitive_no_fractional_or_timezone_offsets
+        let time = Constructed::decode(TIME_DER, bcder::Mode::Der, Time::take_from)
+            .expect("Failed to parse CMS Time with GeneralizedTime");
+
+        // Verify it's the GeneralizedTime variant
+        let gen_time = match time {
+            Time::GeneralizedTime(gt) => gt,
+            Time::UtcTime(_) => panic!("Expected GeneralizedTime, got UtcTime"),
+        };
+
+        // Verify the time value
+        let dt: chrono::DateTime<chrono::Utc> = gen_time.into();
+        assert_eq!(
+            dt.format("%Y-%m-%d %H:%M:%S").to_string(),
+            "2024-01-15 12:00:00"
+        );
+
+        println!("✅ GeneralizedTime from_primitive_no_fractional validated via CMS Time");
     }
 }
