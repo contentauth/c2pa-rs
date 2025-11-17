@@ -128,7 +128,7 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 pub mod assertions;
 
 pub mod context;
-pub use context::Context;
+pub use context::{Context, IntoSettings};
 pub mod content_credential;
 pub use content_credential::ContentCredential;
 /// The cose_sign module contains the definitions for the COSE signing algorithms.

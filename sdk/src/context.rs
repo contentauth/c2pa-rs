@@ -4,8 +4,50 @@ use crate::{
     content_credential::ContentCredential,
     http::{AsyncGenericResolver, AsyncHttpResolver, SyncGenericResolver, SyncHttpResolver},
     settings::Settings,
-    AsyncSigner, Result, Signer,
+    AsyncSigner, Error, Result, Signer,
 };
+
+/// A trait for types that can be converted into Settings
+pub trait IntoSettings {
+    /// Convert this type into Settings
+    fn into_settings(self) -> Result<Settings>;
+}
+
+/// Implement for Settings (passthrough)
+impl IntoSettings for Settings {
+    fn into_settings(self) -> Result<Settings> {
+        Ok(self)
+    }
+}
+
+/// Implement for &str (JSON/TOML string - tries both formats)
+impl IntoSettings for &str {
+    fn into_settings(self) -> Result<Settings> {
+        let mut settings = Settings::default();
+        // Try JSON first, then TOML
+        settings
+            .update_from_str(self, "json")
+            .or_else(|_| settings.update_from_str(self, "toml"))?;
+        Ok(settings)
+    }
+}
+
+/// Implement for String
+impl IntoSettings for String {
+    fn into_settings(self) -> Result<Settings> {
+        self.as_str().into_settings()
+    }
+}
+
+/// Implement for serde_json::Value
+impl IntoSettings for serde_json::Value {
+    fn into_settings(self) -> Result<Settings> {
+        let json_str = serde_json::to_string(&self).map_err(Error::JsonError)?;
+        let mut settings = Settings::default();
+        settings.update_from_str(&json_str, "json")?;
+        Ok(settings)
+    }
+}
 
 pub struct Context {
     settings: Settings,
@@ -41,9 +83,9 @@ impl Context {
     }
 
     /// use the provided settings in this context
-    pub fn with_settings(mut self, settings: Settings) -> Self {
-        self.settings = settings;
-        self
+    pub fn with_settings<S: IntoSettings>(mut self, settings: S) -> Result<Self> {
+        self.settings = settings.into_settings()?;
+        Ok(self)
     }
 
     /// Returns a reference to the settings.
@@ -127,5 +169,49 @@ impl Context {
 
     pub fn content_credential(&self) -> ContentCredential<'_> {
         ContentCredential::new(self)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used)]
+    use super::*;
+
+    #[test]
+    fn test_into_settings_from_settings() {
+        let mut settings = Settings::default();
+        settings.verify.verify_after_sign = true;
+        let context = Context::new().with_settings(settings).unwrap();
+        assert!(context.settings().verify.verify_after_sign);
+    }
+
+    #[test]
+    fn test_into_settings_from_json_str() {
+        let json = r#"{"verify": {"verify_after_sign": true}}"#;
+        let context = Context::new().with_settings(json).unwrap();
+        assert!(context.settings().verify.verify_after_sign);
+    }
+    #[test]
+    fn test_into_settings_from_toml_str() {
+        let toml = r#"
+            [verify]
+            verify_after_sign = true
+            "#;
+        let context = Context::new().with_settings(toml).unwrap();
+        assert!(context.settings().verify.verify_after_sign);
+    }
+
+    #[test]
+    fn test_into_settings_from_json_value() {
+        let value = serde_json::json!({"verify": {"verify_after_sign": true}});
+        let context = Context::new().with_settings(value).unwrap();
+        assert!(context.settings().verify.verify_after_sign);
+    }
+
+    #[test]
+    fn test_into_settings_invalid_json() {
+        let invalid_json = r#"{"verify": {"verify_after_sign": "#;
+        let result = Context::new().with_settings(invalid_json);
+        assert!(result.is_err());
     }
 }

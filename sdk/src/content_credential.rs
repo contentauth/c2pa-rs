@@ -31,7 +31,7 @@ use crate::{
     store::Store,
     utils::hash_utils::hash_to_b64,
     validation_status::ValidationStatus,
-    ClaimGeneratorInfo, DigitalSourceType, Error, HashedUri, Result, ValidationResults,
+    DigitalSourceType, Error, HashedUri, Result, ValidationResults,
 };
 
 /// This Generates the standard Reader output format for a Store
@@ -194,16 +194,6 @@ impl<'a> ContentCredential<'a> {
         Ok(ingredient_uri)
     }
 
-    /// sets the default claim generator info if not already set
-    fn set_default_claim_generator_info(&mut self) -> Result<&Self> {
-        if self.claim.claim_generator_info().is_none() {
-            // only set if not already set
-            self.claim
-                .add_claim_generator_info(ClaimGeneratorInfo::default());
-        }
-        Ok(self)
-    }
-
     /// signs and saves the content credential to the destination stream
     pub fn save_to_stream<R, W>(
         &mut self,
@@ -216,7 +206,11 @@ impl<'a> ContentCredential<'a> {
         W: Write + Read + Seek + Send,
     {
         let signer = self.context.signer()?;
-        self.set_default_claim_generator_info()?;
+        if self.claim.claim_generator_info().is_none() {
+            if let Some(cgi) = &self.context.settings().builder.claim_generator_info {
+                self.claim.add_claim_generator_info(cgi.try_into()?);
+            }
+        }
         self.store.commit_claim(self.claim.clone())?;
         source.rewind()?; // always reset source to start
         self.store
@@ -278,10 +272,22 @@ mod tests {
     use super::*;
     use crate::utils::test::*;
 
+    fn test_settings_json() -> serde_json::Value {
+        serde_json::json!({
+            "builder": {
+                "claim_generator_info": {
+                    "name": "Content Credential Tests",
+                    "version": env!("CARGO_PKG_VERSION")
+                }
+            }
+        })
+    }
+
     #[test]
     fn test_content_credential_create() -> Result<()> {
         let (format, mut source, mut dest) = create_test_streams(CA_JPEG);
-        let context = Context::new();
+
+        let context = Context::new().with_settings(test_settings_json())?;
 
         let mut cr = ContentCredential::new(&context).create(DigitalSourceType::Empty)?;
 
@@ -295,7 +301,7 @@ mod tests {
     #[test]
     fn test_content_credential_open_stream() -> Result<()> {
         let (format, mut source, mut dest) = create_test_streams(CA_JPEG);
-        let context = Context::new();
+        let context = Context::new().with_settings(test_settings_json())?;
 
         let mut cr = ContentCredential::new(&context).open_stream(format, &mut source)?;
         cr.add_action(Action::new(c2pa_action::PUBLISHED))?;
@@ -310,15 +316,15 @@ mod tests {
     #[test]
     fn test_add_ingredient_from_stream() -> Result<()> {
         let (format, mut source, mut dest) = create_test_streams(CA_JPEG);
-        let context = Context::new();
+        let context = Context::new().with_settings(test_settings_json())?;
 
         let mut cr = ContentCredential::new(&context).create(DigitalSourceType::Empty)?;
-        cr.add_ingredient_from_stream(Relationship::ParentOf, format, &mut source)?;
+        cr.add_ingredient_from_stream(Relationship::ComponentOf, format, &mut source)?;
 
         cr.save_to_stream(format, &mut source, &mut dest)?;
 
-        let cr = ContentCredential::from_stream(&context, format, &mut dest)?;
-        println!("{cr:?}");
+        let cr2 = ContentCredential::new(&context).open_stream(format, &mut dest)?;
+        println!("{cr2}");
         Ok(())
     }
 }

@@ -4321,7 +4321,6 @@ pub mod tests {
         assertions::{Action, Actions, Uuid},
         claim::AssertionStoreJsonFormat,
         crypto::raw_signature::SigningAlg,
-        settings::Settings,
         status_tracker::{LogItem, StatusTracker},
         utils::{
             patch::patch_bytes,
@@ -4496,9 +4495,8 @@ pub mod tests {
 
     #[test]
     fn test_bad_claim_v2_generation() {
-        let mut settings = Settings::default();
-        settings.verify.verify_after_sign = false;
-        let context = Context::new().with_settings(settings);
+        let mut context = Context::new();
+        context.settings_mut().verify.verify_after_sign = false;
 
         let (format, mut input_stream, mut output_stream) =
             create_test_streams("earth_apollo17.jpg");
@@ -4843,9 +4841,8 @@ pub mod tests {
 
     #[test]
     fn test_png_jumbf_generation() {
-        let mut settings = Settings::default();
-        settings.verify.verify_after_sign = false;
-        let context = crate::context::Context::new().with_settings(settings);
+        let mut context = Context::new();
+        context.settings_mut().verify.verify_after_sign = false;
 
         // test adding to actual image
         let (format, mut input_stream, mut output_stream) = create_test_streams("libpng-test.png");
@@ -6882,9 +6879,9 @@ pub mod tests {
     #[test]
     #[ignore = "this test is not generating the expected errors - the test image cert has expired"]
     fn test_bmff_legacy() {
-        let mut settings = Settings::default();
-        settings.verify.verify_trust = false;
-        let context = Context::new().with_settings(settings);
+        let mut context = Context::new();
+        context.settings_mut().verify.verify_trust = false;
+
         let (format, mut input_stream, _output_stream) = create_test_streams("legacy.mp4");
         // test 1.0 bmff hash
         let mut report = StatusTracker::default();
@@ -7127,9 +7124,8 @@ pub mod tests {
 
     #[test]
     fn test_bmff_jumbf_stream_generation() {
-        let mut settings = Settings::default();
-        settings.verify.verify_after_reading = false;
-        let context = crate::context::Context::new().with_settings(settings);
+        let mut context = Context::new();
+        context.settings_mut().verify.verify_after_reading = false;
 
         // test adding to actual image
         let (format, mut input_stream, mut output_stream) = create_test_streams("video1.mp4");
@@ -8126,9 +8122,8 @@ pub mod tests {
     #[test]
     #[cfg(feature = "file_io")]
     fn test_fragmented_jumbf_generation() {
-        let mut settings = crate::settings::Settings::default();
-        settings.verify.verify_after_reading = false;
-        let context = crate::context::Context::new().with_settings(settings);
+        let mut context = crate::context::Context::new();
+        context.settings_mut().verify.verify_after_reading = false;
 
         // test adding to actual image
 
