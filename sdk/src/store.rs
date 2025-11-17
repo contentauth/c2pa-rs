@@ -64,8 +64,8 @@ use crate::{
         self,
         boxes::*,
         labels::{
-            manifest_label_from_uri, manifest_label_to_parts, to_assertion_uri, to_manifest_uri,
-            ASSERTIONS, CREDENTIALS, DATABOXES, SIGNATURE,
+            manifest_label_to_parts, to_assertion_uri, to_manifest_uri, ASSERTIONS, CREDENTIALS,
+            DATABOXES, SIGNATURE,
         },
     },
     jumbf_io::{
@@ -3941,20 +3941,11 @@ impl Store {
         }
 
         // walk the update manifests until you find an acceptable claim
-        for i in claim.ingredient_assertions() {
-            let ingredient = Ingredient::from_assertion(i.assertion()).ok()?;
-            if ingredient.relationship == Relationship::ParentOf {
-                if let Some(parent_uri) = ingredient.c2pa_manifest() {
-                    let parent_label = manifest_label_from_uri(&parent_uri.url())?;
-                    if let Some(parent) = self.get_claim(&parent_label) {
-                        // recurse until we find
-                        if parent.update_manifest() {
-                            self.get_hash_binding_manifest(parent);
-                        } else if !parent.hash_assertions().is_empty() {
-                            return Some(parent.label().to_owned());
-                        }
-                    }
-                }
+        if let Some(parent) = claim.parent_claim().ok()? {
+            if parent.update_manifest() {
+                self.get_hash_binding_manifest(parent);
+            } else if !parent.hash_assertions().is_empty() {
+                return Some(parent.label().to_owned());
             }
         }
         None

@@ -1425,35 +1425,37 @@ impl Builder {
         store: &mut Store,
         http_resolver: &impl SyncHttpResolver,
     ) -> Result<()> {
-        if self.intent() == Some(BuilderIntent::Update)
-            && self.definition.ingredients.iter().any(|i| i.is_parent())
-            && self.settings.builder.add_parent_timestamp_assertion
-        {
-            // TODO: or err?
-            #[allow(clippy::unwrap_used)]
-            let manifest_id = store.provenance_path().unwrap();
+        if self.settings.builder.update_manifest_timestamp_assertion {
+            // TODO: better errors here
+            let provenance_claim = store.provenance_claim().ok_or(Error::NotFound)?;
+            if provenance_claim.update_manifest() {
+                // TODO: better errors here
+                let parent_claim_id = provenance_claim
+                    .parent_claim()?
+                    .ok_or(Error::NotFound)?
+                    .label();
 
-            let manifest_ids = vec![manifest_id.as_ref()];
-            let timestamp_assertion = if _sync {
-                store.get_timestamp_assertion(
-                    &manifest_ids,
-                    timestamp_authority_url,
-                    http_resolver,
-                )?
-            } else {
-                store
-                    .get_timestamp_assertion_async(
+                let manifest_ids = vec![parent_claim_id];
+                let timestamp_assertion = if _sync {
+                    store.get_timestamp_assertion(
                         &manifest_ids,
                         timestamp_authority_url,
                         http_resolver,
-                    )
-                    .await?
-            };
+                    )?
+                } else {
+                    store
+                        .get_timestamp_assertion_async(
+                            &manifest_ids,
+                            timestamp_authority_url,
+                            http_resolver,
+                        )
+                        .await?
+                };
 
-            // TODO: or err?
-            #[allow(clippy::unwrap_used)]
-            let claim = store.provenance_claim_mut().unwrap();
-            claim.add_assertion(&timestamp_assertion)?;
+                // TODO: better errors here
+                let claim = store.provenance_claim_mut().ok_or(Error::NotFound)?;
+                claim.add_assertion(&timestamp_assertion)?;
+            }
         }
 
         Ok(())

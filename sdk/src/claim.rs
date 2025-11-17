@@ -3396,6 +3396,21 @@ impl Claim {
         self.ingredients_store.get_mut(claim_guid)
     }
 
+    /// Return the claim of the ingredient with a ParentOf relationship.
+    pub fn parent_claim(&self) -> Result<Option<&Claim>> {
+        for i in self.ingredient_assertions() {
+            let ingredient = Ingredient::from_assertion(i.assertion())?;
+            if ingredient.relationship == Relationship::ParentOf {
+                if let Some(parent_uri) = ingredient.c2pa_manifest() {
+                    return Ok(manifest_label_from_uri(&parent_uri.url())
+                        .and_then(|parent_label| self.ingredients_store.get(&parent_label)));
+                }
+            }
+        }
+
+        Ok(None)
+    }
+
     /// Adds ingredients, this data will be written out during commit of the Claim
     /// redactions are full uris since they refer to external assertions
     pub(crate) fn add_ingredient_data(
