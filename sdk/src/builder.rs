@@ -256,16 +256,14 @@ pub enum BuilderIntent {
 
 /// Use a Builder to add a signed manifest to an asset.
 ///
-/// # Example: Building and signing a manifest
+/// ## Example: Adding a signed manifest to an asset
 ///
-/// ```ignore-wasm32
-/// use c2pa::Result;
-/// use std::path::PathBuf;
+/// ```
+/// # use c2pa::Result;
+/// use std::io::Cursor;
 ///
-/// use c2pa::{create_signer, Builder, SigningAlg};
+/// use c2pa::{settings::Settings, Builder, SigningAlg};
 /// use serde::Serialize;
-/// use serde_json::json;
-/// use tempfile::tempdir;
 ///
 /// #[derive(Serialize)]
 /// struct Test {
@@ -273,36 +271,17 @@ pub enum BuilderIntent {
 /// }
 ///
 /// # fn main() -> Result<()> {
-/// #[cfg(feature = "file_io")]
 /// {
-///     let manifest_json = json!({
-///        "claim_generator_info": [
-///           {
-///               "name": "c2pa_test",
-///               "version": "1.0.0"
-///           }
-///        ],
-///        "title": "Test_Manifest"
-///     }).to_string();
-///
-///     let mut builder = Builder::from_json(&manifest_json)?;
+///     Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml"))?;
+///     let mut builder = Builder::from_json(r#"{"title": "Test"}"#)?;
 ///     builder.add_assertion("org.contentauth.test", &Test { my_tag: 42 })?;
 ///
-///     let source = PathBuf::from("tests/fixtures/C.jpg");
-///     let dir = tempdir()?;
-///     let dest = dir.path().join("test_file.jpg");
-///
-///     // Create a ps256 signer using certs and key files. TO DO: Update example.
-///     let signcert_path = "tests/fixtures/certs/ps256.pub";
-///     let pkey_path = "tests/fixtures/certs/ps256.pem";
-///     let signer = create_signer::from_files(signcert_path, pkey_path, SigningAlg::Ps256, None)?;
-///
 ///     // embed a manifest using the signer
-///     builder.sign_file(
-///         signer.as_ref(),
-///         &source,
-///         &dest)?;
-///     }
+///     let mut source = std::fs::File::open("tests/fixtures/C.jpg")?;
+///     let mut dest = Cursor::new(Vec::new());
+///     let signer = Settings::signer()?;
+///     let _c2pa_data = builder.sign(&signer, "image/jpeg", &mut source, &mut dest)?;
+/// }
 /// # Ok(())
 /// # }
 /// ```
