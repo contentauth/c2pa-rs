@@ -8839,6 +8839,11 @@ pub mod tests {
     #[cfg(feature = "file_io")]
     fn test_bogus_cert() {
         use crate::builder::{Builder, BuilderIntent};
+
+        // bypass auto sig check
+        crate::settings::set_settings_value("verify.verify_after_sign", false).unwrap();
+        crate::settings::set_settings_value("verify.verify_trust", false).unwrap();
+
         let png = include_bytes!("../tests/fixtures/libpng-test.png"); // Randomly generated local Ed25519
         let ed25519 = include_bytes!("../tests/fixtures/certs/ed25519.pem");
         let certs = include_bytes!("../tests/fixtures/certs/es256.pub");
@@ -8848,10 +8853,6 @@ pub mod tests {
         let signer =
             crate::create_signer::from_keys(certs, ed25519, SigningAlg::Ed25519, None).unwrap();
         let mut dst = Cursor::new(Vec::new());
-
-        // bypass auto sig check
-        crate::settings::set_settings_value("verify.verify_after_sign", false).unwrap();
-        crate::settings::set_settings_value("verify.verify_trust", false).unwrap();
 
         builder
             .sign(&signer, "image/png", &mut Cursor::new(png), &mut dst)
