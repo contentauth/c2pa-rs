@@ -222,6 +222,38 @@ impl TryFrom<ClaimGeneratorInfoSettings> for ClaimGeneratorInfo {
     }
 }
 
+impl TryFrom<&ClaimGeneratorInfoSettings> for ClaimGeneratorInfo {
+    type Error = Error;
+
+    fn try_from(value: &ClaimGeneratorInfoSettings) -> Result<Self> {
+        Ok(ClaimGeneratorInfo {
+            name: value.name.clone(),
+            version: value.version.clone(),
+            icon: value
+                .icon
+                .as_ref()
+                .map(|icon| UriOrResource::ResourceRef(icon.clone())),
+            operating_system: {
+                value.operating_system.as_ref().map(|os| match os {
+                    ClaimGeneratorInfoOperatingSystem::Auto => {
+                        format!("{}-unknown-{}", consts::ARCH, consts::OS)
+                    }
+                    ClaimGeneratorInfoOperatingSystem::Other(name) => name.clone(),
+                })
+            },
+            other: value
+                .other
+                .iter()
+                .map(|(key, value)| {
+                    serde_json::to_value(value)
+                        .map(|value| (key.clone(), value))
+                        .map_err(|err| err.into())
+                })
+                .collect::<Result<HashMap<String, serde_json::Value>>>()?,
+        })
+    }
+}
+
 /// Settings for an action template.
 #[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
