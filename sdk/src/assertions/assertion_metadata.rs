@@ -53,11 +53,12 @@ impl AssertionMetadata {
     pub const LABEL: &'static str = labels::ASSERTION_METADATA;
 
     pub fn new() -> Self {
+        // Get current time (platform-specific)
+        let date_time = Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true);
+
         Self {
             reviews: None,
-            date_time: Some(DateT(
-                Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true),
-            )),
+            date_time: Some(DateT(date_time)),
             reference: None,
             data_source: None,
             localizations: None,

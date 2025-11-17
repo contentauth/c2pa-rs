@@ -516,7 +516,6 @@ dependencies = [
  "web-time",
  "windows-core 0.61.2",
  "wstd",
- "x509-certificate",
  "x509-parser",
  "zeroize",
  "zip",
@@ -5170,25 +5169,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "05f360fc0b24296329c78fda852a1e9ae82de9cf7b27dae4b7f62f118f77b9ed"
 dependencies = [
  "tap",
-]
-
-[[package]]
-name = "x509-certificate"
-version = "0.24.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e57b9f8bcae7c1f36479821ae826d75050c60ce55146fd86d3553ed2573e2762"
-dependencies = [
- "bcder",
- "bytes",
- "chrono",
- "der",
- "hex",
- "pem",
- "ring",
- "signature",
- "spki",
- "thiserror 1.0.69",
- "zeroize",
 ]
 
 [[package]]
