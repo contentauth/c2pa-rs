@@ -7,6 +7,9 @@ on:
         description: 'Test commit SHA (defaults to c2patool-v0.26.4 release)'
         required: false
         default: '17ad81b5750eee3be0a5c058054fa1492e8f29c4'
+  push:
+    branches:
+      - 'mathern/release-fix-possibly'
 
 permissions:
   contents: read
@@ -24,7 +27,11 @@ jobs:
         run: |
           echo "🧪 E2E TEST MODE"
           echo "==============="
-          echo "Testing commit: ${{ inputs.test_commit }}"
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "Testing commit: ${{ inputs.test_commit }}"
+          else
+            echo "Testing commit: ${{ github.sha }}"
+          fi
           echo "This workflow simulates the real release workflow"
           echo "but does NOT publish anything to production."
           echo ""
@@ -33,7 +40,7 @@ jobs:
         uses: actions/checkout@v5
         with:
           fetch-depth: 0
-          ref: ${{ inputs.test_commit }}
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.test_commit || '17ad81b5750eee3be0a5c058054fa1492e8f29c4' }}
 
       - name: Show current state BEFORE fetch
         run: |
@@ -82,9 +89,9 @@ jobs:
           echo "Output tag: '${TAG}'"
           echo ""
           if [ -n "$TAG" ]; then
-            echo "✅ SUCCESS: Tag detected - binaries WOULD be built"
+            echo "SUCCESS: Tag detected - binaries WOULD be built"
           else
-            echo "❌ FAILURE: No tag detected - binaries would be SKIPPED"
+            echo "FAIL: No tag detected - binaries would be SKIPPED"
           fi
 
   test-publish-c2patool-binaries:
@@ -119,7 +126,7 @@ jobs:
         if: ${{ needs.test-release-plz.outputs.c2patool-release-tag }}
         uses: actions/checkout@v5
         with:
-          ref: ${{ github.event.inputs.test_commit }}
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.test_commit || '17ad81b5750eee3be0a5c058054fa1492e8f29c4' }}
 
       - name: Install Rust toolchain
         if: ${{ needs.test-release-plz.outputs.c2patool-release-tag }}
