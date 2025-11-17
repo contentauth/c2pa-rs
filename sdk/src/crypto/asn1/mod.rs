@@ -52,19 +52,11 @@ pub(crate) fn extract_der_content(der_bytes: &[u8]) -> &str {
 }
 
 /// Algorithm identifier for use with bcder
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AlgorithmIdentifier {
     /// The algorithm OID
     pub algorithm: Oid,
 }
-
-impl PartialEq for AlgorithmIdentifier {
-    fn eq(&self, other: &Self) -> bool {
-        self.algorithm == other.algorithm
-    }
-}
-
-impl Eq for AlgorithmIdentifier {}
 
 impl AlgorithmIdentifier {
     pub fn take_from<S: Source>(cons: &mut Constructed<S>) -> Result<Self, DecodeError<S::Error>> {

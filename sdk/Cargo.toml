@@ -119,7 +119,7 @@ config = { version = "0.14.0", default-features = false, features = [
 const-hex = "1.14"
 const-oid = { version = "0.9.6", optional = true }
 coset = "0.4.0"
-der = { version = "0.7.9", features = ["alloc", "derive"] }
+der = { version = "0.7.9", features = ["alloc"] }
 extfmt = "0.1.1"
 ecdsa = { version = "0.16.9", features = ["digest", "sha2"], optional = true }
 ed25519-dalek = { version = "2.1.1", features = [
@@ -265,6 +265,7 @@ features = ["now"]
 
 [target.'cfg(all(target_arch = "wasm32", not(target_os = "wasi")))'.dependencies]
 chrono = { version = "0.4.39", default-features = false, features = [
+    "clock",
     "serde",
     "wasmbind",
 ] }
