@@ -389,15 +389,15 @@ impl Default for ActionsSettings {
             templates: None,
             actions: None,
             auto_created_action: AutoActionSettings {
-                enabled: true,
-                source_type: Some(DigitalSourceType::Empty),
+                enabled: false,
+                source_type: None, // Some(DigitalSourceType::Empty),
             },
             auto_opened_action: AutoActionSettings {
-                enabled: true,
+                enabled: false,
                 source_type: None,
             },
             auto_placed_action: AutoActionSettings {
-                enabled: true,
+                enabled: false,
                 source_type: None,
             },
         }

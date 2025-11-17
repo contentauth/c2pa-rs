@@ -12,7 +12,7 @@ members = [
 
 # members in this workspace can share this version setting
 [workspace.package]
-version = "0.71.0"
+version = "0.71.2"
 
 [workspace.dependencies]
 c2pa = { path = "sdk", default-features = false }

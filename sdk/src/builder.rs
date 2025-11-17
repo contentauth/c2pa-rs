@@ -327,6 +327,7 @@ pub struct Builder {
     pub base_path: Option<PathBuf>,
 
     /// A builder should construct a created, opened or updated manifest.
+    #[deprecated(note = "Use set_intent() to set or intent() to get the builder intent")]
     pub intent: Option<BuilderIntent>,
 
     /// Container for binary assets (like thumbnails).
@@ -369,14 +370,17 @@ impl Builder {
     /// * `intent` - The [`BuilderIntent`] for this [`Builder`].
     /// # Returns
     /// * A mutable reference to the [`Builder`].
+    #[allow(deprecated)]
     pub fn set_intent(&mut self, intent: BuilderIntent) -> &mut Self {
+        self.settings.builder.intent = Some(intent.clone());
         self.intent = Some(intent);
         self
     }
 
     /// Returns the current [`BuilderIntent`] for this [`Builder`], if set.
     /// If not set, it will use the Settings default intent.
-    pub(crate) fn intent(&self) -> Option<BuilderIntent> {
+    #[allow(deprecated)]
+    pub fn intent(&self) -> Option<BuilderIntent> {
         let mut intent = self.intent.clone();
         if intent.is_none() {
             intent = self.settings.builder.intent.clone();
@@ -395,6 +399,7 @@ impl Builder {
     pub fn from_json(json: &str) -> Result<Self> {
         Ok(Self {
             definition: serde_json::from_str(json).map_err(Error::JsonError)?,
+            settings: settings::get_settings().unwrap_or_default(),
             ..Default::default()
         })
     }
@@ -1121,7 +1126,7 @@ impl Builder {
 
                     // Do this at the end of the preprocessing step to ensure all ingredient references
                     // are resolved to their hashed URIs.
-                    Self::add_actions_assertion_settings(&ingredient_map, &mut actions, settings)?;
+                    self.add_actions_assertion_settings(&ingredient_map, &mut actions)?;
 
                     claim.add_assertion(&actions)
                 }
@@ -1168,7 +1173,7 @@ impl Builder {
 
         if !found_actions {
             let mut actions = Actions::new();
-            Self::add_actions_assertion_settings(&ingredient_map, &mut actions, settings)?;
+            self.add_actions_assertion_settings(&ingredient_map, &mut actions)?;
 
             if !actions.actions().is_empty() {
                 // todo: add setting for created added actions
@@ -1188,15 +1193,15 @@ impl Builder {
     /// * `builder.actions.actions`
     /// * For more, see [Builder::add_auto_actions_assertions]
     fn add_actions_assertion_settings(
+        &self,
         ingredient_map: &HashMap<String, (&Relationship, HashedUri)>,
         actions: &mut Actions,
-        settings: &Settings,
     ) -> Result<()> {
         if actions.all_actions_included.is_none() {
-            actions.all_actions_included = settings.builder.actions.all_actions_included;
+            actions.all_actions_included = self.settings.builder.actions.all_actions_included;
         }
 
-        let action_templates = &settings.builder.actions.templates;
+        let action_templates = &self.settings.builder.actions.templates;
 
         if let Some(action_templates) = action_templates {
             let action_templates = action_templates
@@ -1211,7 +1216,7 @@ impl Builder {
             }
         }
 
-        let additional_actions = &settings.builder.actions.actions;
+        let additional_actions = &self.settings.builder.actions.actions;
 
         if let Some(additional_actions) = additional_actions {
             let additional_actions = additional_actions
@@ -1226,81 +1231,100 @@ impl Builder {
                 true => actions.actions = additional_actions,
             }
         }
-        Self::add_auto_actions_assertions_settings(ingredient_map, actions, settings)
+        self.add_auto_actions_assertions_settings(ingredient_map, actions)
     }
 
     /// Adds c2pa.created, c2pa.opened, and c2pa.placed actions for the specified [Actions][crate::assertions::Actions]
-    /// assertion if the condiitons are applicable as defined in the spec.
+    /// assertion if the conditons are applicable as defined in the spec.
     ///
     /// This function takes into account the [Settings][crate::Settings]:
     /// * `builder.actions.auto_created_action`
     /// * `builder.actions.auto_opened_action`
     /// * `builder.actions.auto_placed_action`
     fn add_auto_actions_assertions_settings(
+        &self,
         ingredient_map: &HashMap<String, (&Relationship, HashedUri)>,
         actions: &mut Actions,
-        settings: &Settings,
     ) -> Result<()> {
         // https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_mandatory_presence_of_at_least_one_actions_assertion
-        let auto_created = settings.builder.actions.auto_created_action.enabled;
-        let auto_opened = settings.builder.actions.auto_opened_action.enabled;
+        let auto_created = self.settings.builder.actions.auto_created_action.enabled;
+        let auto_opened = self.settings.builder.actions.auto_opened_action.enabled;
 
-        if auto_created || auto_opened {
+        if (self.intent().is_some() || auto_created || auto_opened)
+            && !actions.actions.iter().any(|action| {
+                action.action() == c2pa_action::CREATED || action.action() == c2pa_action::OPENED
+            })
+        {
             // look for a parentOf relationship ingredient in the ingredient map and return a copy of the hashed URI if found.
             let parent_ingredient_uri = ingredient_map
                 .iter()
                 .find(|(_, (relationship, _))| *relationship == &Relationship::ParentOf)
                 .map(|(_, (_, uri))| uri.clone());
 
-            let action = match (parent_ingredient_uri, auto_created, auto_opened) {
-                (Some(parent_ingredient_uri), _, true) => {
-                    let action = Action::new(c2pa_action::OPENED);
-
-                    let action =
-                        action.set_parameter("ingredients", vec![parent_ingredient_uri])?;
-
-                    let source_type = &settings.builder.actions.auto_opened_action.source_type;
-                    match source_type {
-                        Some(source_type) => Some(action.set_source_type(source_type.clone())),
-                        _ => Some(action),
+            let action = match self.intent() {
+                Some(BuilderIntent::Create(source_type)) => {
+                    if parent_ingredient_uri.is_some() {
+                        return Err(Error::BadParam(
+                            "Cannot have ParentOf ingredient with a Create intent".to_string(),
+                        ));
+                    }
+                    Some(Action::new(c2pa_action::CREATED).set_source_type(source_type.clone()))
+                }
+                Some(BuilderIntent::Edit) | Some(BuilderIntent::Update) => {
+                    if let Some(parent_ingredient_uri) = parent_ingredient_uri {
+                        Some(
+                            Action::new(c2pa_action::OPENED)
+                                .set_parameter("ingredients", vec![parent_ingredient_uri])?,
+                        )
+                    } else {
+                        return Err(Error::BadParam(
+                            "Must have ParentOf ingredient for an Edit or Update intent"
+                                .to_string(),
+                        ));
                     }
                 }
-                (None, true, _) => {
-                    // The settings ensures this field always exists for the "c2pa.created" action.
-                    let source_type = &settings.builder.actions.auto_created_action.source_type;
-
-                    match source_type {
-                        Some(source_type) => {
-                            let action = {
-                                let action = Action::new(c2pa_action::CREATED);
-                                action.set_source_type(source_type.clone())
-                            };
+                None => {
+                    // handle auto_opened and auto_created settings if no intent was set
+                    if auto_opened && parent_ingredient_uri.is_some() {
+                        // only add if we have a parent ingredient
+                        if let Some(parent_uri) = &parent_ingredient_uri {
+                            let mut action = Action::new(c2pa_action::OPENED)
+                                .set_parameter("ingredients", vec![parent_uri])?;
+                            if let Some(source_type) =
+                                &self.settings.builder.actions.auto_opened_action.source_type
+                            {
+                                action = action.set_source_type(source_type.clone());
+                            }
                             Some(action)
+                        } else {
+                            None
                         }
-                        _ => None,
+                    } else if auto_created {
+                        let mut action = Action::new(c2pa_action::CREATED);
+                        if let Some(source_type) = &self
+                            .settings
+                            .builder
+                            .actions
+                            .auto_created_action
+                            .source_type
+                        {
+                            action = action.set_source_type(source_type.clone());
+                        }
+                        Some(action)
+                    } else {
+                        None
                     }
                 }
-                _ => None,
             };
 
-            // If the first action isn't "c2pa.created" or "c2pa.opened" then add ours,
-            // or if there are no actions then add our action.
+            // we know there are no other created or opened actions, so we can safely insert at the front
             if let Some(action) = action {
-                if let Some(first_action) = actions.actions.first() {
-                    if first_action.action() != c2pa_action::CREATED
-                        && first_action.action() != c2pa_action::OPENED
-                    {
-                        actions.actions.insert(0, action);
-                    }
-                } else if actions.actions.is_empty() {
-                    actions.actions.push(action);
-                }
+                actions.actions.insert(0, action);
             }
         }
 
         // https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_relationship
-        let auto_placed = settings.builder.actions.auto_placed_action.enabled;
-        if auto_placed {
+        if self.settings.builder.actions.auto_placed_action.enabled {
             // Get a list of ingredient URIs referenced by "c2pa.placed" actions.
             let mut referenced_uris = HashSet::new();
             for action in &actions.actions {
@@ -1324,7 +1348,8 @@ impl Builder {
 
                     let action = action.set_parameter("ingredients", vec![uri])?;
 
-                    let action = match settings.builder.actions.auto_placed_action.source_type {
+                    let action = match self.settings.builder.actions.auto_placed_action.source_type
+                    {
                         Some(ref source_type) => action.set_source_type(source_type.clone()),
                         _ => action,
                     };
@@ -2159,6 +2184,9 @@ mod tests {
 
     // Ensure multiple `c2pa.placed` actions aren't created.
     // Source: https://github.com/contentauth/c2pa-rs/pull/1458
+    // This makes a created Manifest and includes two ingredients.
+    // the first is referenced in the JSON and should not get an auto_placed
+    // The second is not referenced and should get one.
     #[test]
     fn test_builder_one_placed_action_via_ingredient_id_ref() {
         #[cfg(target_os = "wasi")]
@@ -2166,8 +2194,8 @@ mod tests {
 
         Settings::from_toml(
             &toml::toml! {
-                [builder.actions.auto_placed_action]
-                enabled = true
+                [builder]
+                actions.auto_placed_action.enabled = true
             }
             .to_string(),
         )
@@ -2180,10 +2208,16 @@ mod tests {
                 "format": "image/jpeg",
                 "ingredients": [
                     {
-                        "title": "Test Ingredient",
+                        "title": "First Ingredient",
                         "format": "image/jpeg",
                         "relationship": "componentOf",
                         "instance_id": "123"
+                    },
+                    {
+                        "title": "Second Ingredient",
+                        "format": "image/png",
+                        "relationship": "componentOf",
+                        "instance_id": "456"
                     }
                 ],
                 "assertions": [
@@ -2203,6 +2237,8 @@ mod tests {
             .to_string(),
         )
         .unwrap();
+
+        builder.set_intent(BuilderIntent::Create(DigitalSourceType::DigitalCapture));
         builder
             .sign(
                 &Settings::signer().unwrap(),
@@ -2214,21 +2250,20 @@ mod tests {
 
         output.rewind().unwrap();
         let reader = Reader::from_stream("image/jpeg", output).unwrap();
-
         let actions: Actions = reader
             .active_manifest()
             .unwrap()
             .find_assertion(Actions::LABEL)
             .unwrap();
 
-        assert_eq!(actions.actions.len(), 2);
+        assert_eq!(actions.actions.len(), 3);
 
         let num_placed_actions = actions
             .actions
             .iter()
             .filter(|action| action.action() == c2pa_action::PLACED)
             .count();
-        assert_eq!(num_placed_actions, 1);
+        assert_eq!(num_placed_actions, 2);
     }
 
     #[test]
@@ -2273,6 +2308,15 @@ mod tests {
     fn test_builder_settings_auto_opened() {
         #[cfg(target_os = "wasi")]
         Settings::reset().unwrap();
+
+        settings::Settings::from_toml(
+            &toml::toml! {
+                [builder.actions.auto_opened_action]
+                enabled = true
+            }
+            .to_string(),
+        )
+        .unwrap();
 
         let mut builder = Builder::new();
         builder
@@ -3396,8 +3440,8 @@ mod tests {
     }
 
     #[test]
-    // this first creates a manifest with an assertion we will later redact
-    // then creates an update manifest that redacts the assertion
+    /// this first creates a manifest with an assertion we will later redact
+    /// then creates an update manifest that redacts the assertion
     fn test_redaction2() {
         use crate::{assertions::Action, utils::test::setup_logger};
         Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml")).unwrap();
