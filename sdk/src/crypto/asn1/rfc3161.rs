@@ -54,7 +54,7 @@ impl TimeStampReq {
                 cons.take_opt_primitive_if(Tag::INTEGER, |prim| Integer::from_primitive(prim))?;
             let cert_req = cons.take_opt_bool()?;
             let extensions =
-                cons.take_opt_constructed_if(Tag::CTX_0, |cons| Extensions::take_from(cons))?;
+                cons.take_opt_constructed_if(Tag::CTX_0, |cons| Extensions::from_constructed(cons))?;
 
             Ok(Self {
                 version,
@@ -376,7 +376,7 @@ impl TstInfo {
             let tsa =
                 cons.take_opt_constructed_if(Tag::CTX_0, |cons| GeneralName::take_from(cons))?;
             let extensions =
-                cons.take_opt_constructed_if(Tag::CTX_1, |cons| Extensions::take_from(cons))?;
+                cons.take_opt_constructed_if(Tag::CTX_1, |cons| Extensions::from_constructed(cons))?;
 
             Ok(Self {
                 version,

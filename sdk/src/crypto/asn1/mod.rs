@@ -134,8 +134,19 @@ impl PartialEq for Extensions {
 impl Eq for Extensions {}
 
 impl Extensions {
-    pub fn take_from<S: Source>(cons: &mut Constructed<S>) -> Result<Self, DecodeError<S::Error>> {
-        cons.take_constructed_if(Tag::SEQUENCE, |cons| cons.capture_all().map(Extensions))
+    /// Parse Extensions for IMPLICIT tagging context.
+    ///
+    /// This method is used when Extensions appears with IMPLICIT tagging (e.g., `[0] IMPLICIT Extensions`),
+    /// where the SEQUENCE tag is replaced by the context-specific tag. The caller has already
+    /// entered the context-specific tag, so we just capture the content directly.
+    ///
+    /// In RFC 3161, Extensions always appears with IMPLICIT tagging:
+    /// - TimeStampReq: `extensions [0] IMPLICIT Extensions OPTIONAL`
+    /// - TstInfo: `extensions [1] IMPLICIT Extensions OPTIONAL`
+    pub fn from_constructed<S: Source>(
+        cons: &mut Constructed<S>,
+    ) -> Result<Self, DecodeError<S::Error>> {
+        cons.capture_all().map(Extensions)
     }
 
     pub fn encode_ref_as(&self, tag: Tag) -> Captured {
@@ -144,6 +155,10 @@ impl Extensions {
 }
 
 /// General name for use with bcder
+///
+/// Note: GeneralName is a CHOICE type (not a SEQUENCE), so it doesn't need separate
+/// `from_constructed` and `take_from` methods. It can use the same implementation
+/// for both IMPLICIT and EXPLICIT tagging contexts.
 #[derive(Clone, Debug)]
 pub struct GeneralName(Captured);
 
@@ -826,5 +841,193 @@ mod tests {
             .duration_since(system_time)
             .unwrap_or_else(|_| system_time.duration_since(system_time_back).unwrap());
         assert!(diff.as_secs() < 1);
+    }
+
+    /// Test Extensions::from_constructed() with IMPLICIT tagging
+    ///
+    /// RFC 3161 specifies:  extensions [1] IMPLICIT Extensions OPTIONAL
+    ///
+    /// With IMPLICIT tagging, the SEQUENCE tag is REPLACED by the context tag.
+    /// This test validates that from_constructed() correctly parses the content
+    /// without expecting an inner SEQUENCE tag.
+    ///
+    /// ## Test Data Generation
+    ///
+    /// The DER data below was manually crafted according to ASN.1 DER encoding rules
+    /// and can be validated using standard ASN.1 tools:
+    ///
+    /// ```bash
+    /// # Verify with openssl asn1parse
+    /// echo "300B300906032A0304040205 00" | xxd -r -p | openssl asn1parse -inform DER
+    /// # Should show: SEQUENCE, SEQUENCE, OBJECT, OCTET STRING
+    ///
+    /// # Or with Python pyasn1:
+    /// from pyasn1.codec.der import decoder
+    /// from pyasn1_modules import rfc5280
+    /// data = bytes.fromhex("300B300906032A030404020500")
+    /// decoded, _ = decoder.decode(data, asn1Spec=rfc5280.Extensions())
+    /// print(decoded[0]['extnID'])  # Should print: 1.2.3.4
+    /// ```
+    ///
+    /// The IMPLICIT variant simply replaces the outer SEQUENCE tag (0x30) with [1] (0xA1).
+    #[test]
+    fn test_extensions_implicit_tagging() {
+        use bcder::decode::Constructed;
+
+        // Extensions ::= SEQUENCE SIZE (1..MAX) OF Extension
+        // One Extension with OID 1.2.3.4 and NULL extnValue
+        //
+        // DER structure (hex: 300B300906032A030404020500):
+        //   30 0b           SEQUENCE (11 bytes) - Extensions
+        //      30 09        SEQUENCE (9 bytes) - Extension
+        //         06 03     OBJECT IDENTIFIER (3 bytes)
+        //            2a 03 04  = 1.2.3.4 (OID encoding: 40*1+2, 3, 4)
+        //         04 02     OCTET STRING (2 bytes) - extnValue
+        //            05 00  DER NULL
+        const EXTENSIONS_DER: &[u8] = &[
+            0x30, 0x0b, // SEQUENCE (11 bytes)
+            0x30, 0x09, //   SEQUENCE (9 bytes) - Extension
+            0x06, 0x03, 0x2a, 0x03, 0x04, //     OID 1.2.3.4
+            0x04, 0x02, 0x05, 0x00, //     OCTET STRING containing NULL
+        ];
+
+        // Same Extensions with [1] IMPLICIT tagging (RFC 3161 format)
+        // The outer SEQUENCE tag (0x30) is REPLACED by context tag [1] (0xA1)
+        //
+        // DER structure (hex: A10B300906032A030404020500):
+        //   A1 0b           [1] IMPLICIT (11 bytes) - replaces SEQUENCE tag
+        //      30 09        SEQUENCE (9 bytes) - Extension
+        //         06 03     OBJECT IDENTIFIER (3 bytes)
+        //            2a 03 04  = 1.2.3.4
+        //         04 02     OCTET STRING (2 bytes)
+        //            05 00  NULL
+        const EXTENSIONS_IMPLICIT: &[u8] = &[
+            0xa1, 0x0b, // [1] IMPLICIT (11 bytes)
+            0x30, 0x09, //   SEQUENCE (9 bytes) - Extension
+            0x06, 0x03, 0x2a, 0x03, 0x04, //     OID 1.2.3.4
+            0x04, 0x02, 0x05, 0x00, //     OCTET STRING containing NULL
+        ];
+
+        // Test 1: Parse normal Extensions with SEQUENCE tag (baseline)
+        let extensions_explicit = Constructed::decode(EXTENSIONS_DER, bcder::Mode::Der, |cons| {
+            cons.take_constructed_if(Tag::SEQUENCE, |cons| cons.capture_all().map(Extensions))
+        })
+        .expect("Failed to parse Extensions with SEQUENCE tag");
+
+        assert!(extensions_explicit.0.as_slice().len() > 0);
+
+        // Test 2: Parse Extensions with IMPLICIT [1] tagging using from_constructed()
+        // This is how RFC 3161 uses it: extensions [1] IMPLICIT Extensions
+        let extensions_implicit =
+            Constructed::decode(EXTENSIONS_IMPLICIT, bcder::Mode::Der, |cons| {
+                cons.take_opt_constructed_if(Tag::CTX_1, Extensions::from_constructed)
+            })
+            .expect("Failed to parse Extensions with IMPLICIT tagging");
+
+        assert!(
+            extensions_implicit.is_some(),
+            "Extensions should be present"
+        );
+        let extensions_implicit = extensions_implicit.unwrap();
+        assert!(extensions_implicit.0.as_slice().len() > 0);
+
+        // Verify the tag is CTX_1, not SEQUENCE
+        let (tag, _) =
+            bcder::Tag::take_from(&mut bcder::decode::SliceSource::new(EXTENSIONS_IMPLICIT))
+                .expect("Failed to read tag");
+        assert_eq!(
+            tag,
+            Tag::CTX_1,
+            "First tag should be CTX_1 (0xA1), not SEQUENCE"
+        );
+
+        println!("✅ Extensions IMPLICIT tagging validated");
+    }
+
+    /// Test GeneralName::take_from() with RFC 3161 TstInfo context
+    ///
+    /// In RFC 3161, GeneralName is used as: tsa [0] GeneralName OPTIONAL
+    ///
+    /// GeneralName is a CHOICE type from RFC 5280 with multiple alternatives,
+    /// each having its own IMPLICIT tag. This test validates parsing GeneralName
+    /// as it appears in the TstInfo structure with [0] EXPLICIT wrapping.
+    ///
+    /// ## Test Data Generation
+    ///
+    /// The DER data was generated using openssl and validated:
+    ///
+    /// ```bash
+    /// # Inner GeneralName (dNSName [2]):
+    /// echo "821574696d657374616d702e6578616d706c652e636f6d" | xxd -r -p | \
+    ///   openssl asn1parse -inform DER -dump
+    ///
+    /// # Wrapped in [0] EXPLICIT for TstInfo:
+    /// echo "A0178215...6d" | xxd -r -p | openssl asn1parse -inform DER -dump
+    /// # Shows: [0] { [2] "timestamp.example.com" }
+    /// ```
+    #[test]
+    fn test_general_name_in_tstinfo_context() {
+        use bcder::decode::Constructed;
+
+        // GeneralName with dNSName [2] IMPLICIT IA5String
+        // Wrapped in [0] EXPLICIT as used in RFC 3161 TstInfo
+        //
+        // DER structure:
+        //   A0 17     [0] EXPLICIT (23 bytes) - TstInfo's tsa context tag
+        //      82 15  [2] IMPLICIT (21 bytes) - dNSName
+        //         74 69 6d 65 73 74 61 6d 70 2e 65 78 61 6d 70 6c 65 2e 63 6f 6d
+        //         = "timestamp.example.com"
+        const TSA_GENERAL_NAME_DNS: &[u8] = &[
+            0xa0, 0x17, // [0] EXPLICIT (23 bytes)
+            0x82, 0x15, //   [2] IMPLICIT dNSName (21 bytes)
+            0x74, 0x69, 0x6d, 0x65, 0x73, 0x74, 0x61, 0x6d, 0x70, 0x2e, 0x65, 0x78, 0x61, 0x6d,
+            0x70, 0x6c, 0x65, 0x2e, 0x63, 0x6f, 0x6d, // "timestamp.example.com"
+        ];
+
+        // GeneralName with URI [6] IMPLICIT IA5String
+        // Wrapped in [0] EXPLICIT for TstInfo
+        //
+        // DER structure:
+        //   A0 19     [0] EXPLICIT (25 bytes)
+        //      86 17  [6] IMPLICIT uniformResourceIdentifier (23 bytes)
+        //         "https://tsa.example.com"
+        const TSA_GENERAL_NAME_URI: &[u8] = &[
+            0xa0, 0x19, // [0] EXPLICIT (25 bytes)
+            0x86, 0x17, //   [6] IMPLICIT URI (23 bytes)
+            0x68, 0x74, 0x74, 0x70, 0x73, 0x3a, 0x2f, 0x2f, 0x74, 0x73, 0x61, 0x2e, 0x65, 0x78,
+            0x61, 0x6d, 0x70, 0x6c, 0x65, 0x2e, 0x63, 0x6f, 0x6d, // "https://tsa.example.com"
+        ];
+
+        // Test parsing as it's done in TstInfo::take_from()
+        let general_name_dns =
+            Constructed::decode(TSA_GENERAL_NAME_DNS, bcder::Mode::Der, |cons| {
+                cons.take_opt_constructed_if(Tag::CTX_0, |cons| GeneralName::take_from(cons))
+            })
+            .expect("Failed to decode TSA with dNSName");
+
+        assert!(general_name_dns.is_some(), "GeneralName should be present");
+        let general_name_dns = general_name_dns.unwrap();
+        // The captured data should be the inner [2] tagged value
+        assert!(general_name_dns.0.as_slice().starts_with(&[0x82]));
+
+        // Test URI variant
+        let general_name_uri =
+            Constructed::decode(TSA_GENERAL_NAME_URI, bcder::Mode::Der, |cons| {
+                cons.take_opt_constructed_if(Tag::CTX_0, |cons| GeneralName::take_from(cons))
+            })
+            .expect("Failed to decode TSA with URI");
+
+        assert!(general_name_uri.is_some(), "GeneralName should be present");
+        let general_name_uri = general_name_uri.unwrap();
+        // The captured data should be the inner [6] tagged value
+        assert!(general_name_uri.0.as_slice().starts_with(&[0x86]));
+
+        // Verify outer tag is [0]
+        let (tag, _) =
+            bcder::Tag::take_from(&mut bcder::decode::SliceSource::new(TSA_GENERAL_NAME_DNS))
+                .expect("Failed to read outer tag");
+        assert_eq!(tag, Tag::CTX_0, "Outer tag should be [0] for TstInfo.tsa");
+
+        println!("✅ GeneralName in TstInfo context validated");
     }
 }
