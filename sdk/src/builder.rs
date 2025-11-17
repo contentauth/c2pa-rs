@@ -1452,16 +1452,14 @@ impl Builder {
         http_resolver: &impl SyncHttpResolver,
     ) -> Result<()> {
         if self.settings.builder.update_manifest_timestamp_assertion {
-            // TODO: better errors here
-            let provenance_claim = store.provenance_claim().ok_or(Error::NotFound)?;
+            let provenance_claim = store.provenance_claim().ok_or(Error::ClaimEncoding)?;
             if provenance_claim.update_manifest() {
-                // TODO: better errors here
                 let parent_claim_id = manifest_label_from_uri(
                     &provenance_claim
                         .parent_claim_uri()?
-                        .ok_or(Error::NotFound)?,
+                        .ok_or(Error::ClaimEncoding)?,
                 )
-                .ok_or(Error::NotFound)?;
+                .ok_or(Error::ClaimEncoding)?;
 
                 let manifest_ids = vec![parent_claim_id.as_ref()];
                 let timestamp_assertion = if _sync {
@@ -1480,8 +1478,7 @@ impl Builder {
                         .await?
                 };
 
-                // TODO: better errors here
-                let claim = store.provenance_claim_mut().ok_or(Error::NotFound)?;
+                let claim = store.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
                 claim.add_assertion(&timestamp_assertion)?;
             }
         }
