@@ -1441,13 +1441,13 @@ impl Builder {
 
     #[async_generic(async_signature(
         &mut self,
-        timestamp_authority_url: &str,
+        time_authority_url: &str,
         store: &mut Store,
         http_resolver: &impl AsyncHttpResolver,
     ))]
     fn maybe_add_timestamp(
         &mut self,
-        timestamp_authority_url: &str,
+        time_authority_url: &str,
         store: &mut Store,
         http_resolver: &impl SyncHttpResolver,
     ) -> Result<()> {
@@ -1467,14 +1467,14 @@ impl Builder {
                 let timestamp_assertion = if _sync {
                     store.get_timestamp_assertion(
                         &manifest_ids,
-                        timestamp_authority_url,
+                        time_authority_url,
                         http_resolver,
                     )?
                 } else {
                     store
                         .get_timestamp_assertion_async(
                             &manifest_ids,
-                            timestamp_authority_url,
+                            time_authority_url,
                             http_resolver,
                         )
                         .await?

@@ -474,7 +474,7 @@ pub struct BuilderSettings {
     ///
     /// Useful when a manifest was signed offline and you want to attach a trusted timestamp to it later.
     ///
-    /// Note that for this setting to take effect, a time stamp authority URL must be set in the
+    /// Note that for this setting to take effect, a time authority URL must be set in the
     /// [`Signer::time_authority_url`]. If the signer is acquired from settings via [`Settings::signer`],
     /// the URL can be set in [`SignerSettings`].
     ///
