@@ -24,6 +24,7 @@ mod common;
 #[cfg(all(feature = "add_thumbnails", feature = "file_io"))]
 use common::compare_stream_to_known_good;
 use common::test_signer;
+use serde_with::TimestampSeconds;
 
 #[test]
 fn test_update_manifest_timestamp_assertion() {
@@ -101,9 +102,11 @@ fn test_update_manifest_timestamp_assertion() {
         .find_assertion(assertions::labels::TIMESTAMP)
         .unwrap();
 
-    let active_manifest_label = reader.active_label().unwrap();
+    let child_manifest_label = reader.active_manifest().unwrap().ingredients()[0]
+        .active_manifest()
+        .unwrap();
     assert!(timestamp_assertion
-        .get_timestamp(active_manifest_label)
+        .get_timestamp(child_manifest_label)
         .is_some());
 }
 
