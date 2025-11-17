@@ -24,7 +24,6 @@ mod common;
 #[cfg(all(feature = "add_thumbnails", feature = "file_io"))]
 use common::compare_stream_to_known_good;
 use common::test_signer;
-use serde_with::TimestampSeconds;
 
 #[test]
 fn test_update_manifest_timestamp_assertion() {
