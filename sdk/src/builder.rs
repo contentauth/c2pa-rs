@@ -38,6 +38,7 @@ use crate::{
     claim::Claim,
     error::{Error, Result},
     http::{AsyncGenericResolver, AsyncHttpResolver, SyncGenericResolver, SyncHttpResolver},
+    jumbf::labels::manifest_label_from_uri,
     jumbf_io,
     resource_store::{ResourceRef, ResourceResolver, ResourceStore},
     settings::{self, Settings},
@@ -1430,12 +1431,14 @@ impl Builder {
             let provenance_claim = store.provenance_claim().ok_or(Error::NotFound)?;
             if provenance_claim.update_manifest() {
                 // TODO: better errors here
-                let parent_claim_id = provenance_claim
-                    .parent_claim()?
-                    .ok_or(Error::NotFound)?
-                    .label();
+                let parent_claim_id = manifest_label_from_uri(
+                    &provenance_claim
+                        .parent_claim_uri()?
+                        .ok_or(Error::NotFound)?,
+                )
+                .ok_or(Error::NotFound)?;
 
-                let manifest_ids = vec![parent_claim_id];
+                let manifest_ids = vec![parent_claim_id.as_ref()];
                 let timestamp_assertion = if _sync {
                     store.get_timestamp_assertion(
                         &manifest_ids,
