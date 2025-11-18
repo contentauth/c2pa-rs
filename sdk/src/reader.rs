@@ -48,6 +48,18 @@ use crate::{
     Ingredient, Manifest, ManifestAssertion, Relationship,
 };
 
+/// MaybeSend allows for no Send bound on wasm32 targets
+/// todo: move this to a common module
+#[cfg(not(target_arch = "wasm32"))]
+pub trait MaybeSend: Send {}
+#[cfg(target_arch = "wasm32")]
+pub trait MaybeSend {}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl<T: Send> MaybeSend for T {}
+#[cfg(target_arch = "wasm32")]
+impl<T> MaybeSend for T {}
+
 /// A trait for post-validation of manifest assertions.
 pub trait PostValidator {
     fn validate(
@@ -102,36 +114,56 @@ pub struct Reader {
     /// Map to hold post-validation assertion values for reports
     /// the key is an assertion uri and the value is the assertion value
     assertion_values: HashMap<String, Value>,
+
+    #[serde(skip)]
+    context: Context,
 }
 
 type ValidationFn =
     dyn Fn(&str, &crate::ManifestAssertion, &mut StatusTracker) -> Option<serde_json::Value>;
 
 impl Reader {
-    //  #[async_generic]
-    // pub fn from_asset<'a>(context: &'a Context, asset: &'a mut Asset<'a>) -> Result<Reader> {
+    /// Create a new Reader with the given Context
+    /// # Arguments
+    /// * `context` - The Context to use for the Reader
+    /// # Returns
+    /// A new Reader
+    pub fn new(context: Context) -> Self {
+        Self {
+            context,
+            store: Store::new(),
+            assertion_values: HashMap::new(),
+            ..Default::default()
+        }
+    }
 
-    //     let mut validation_log = StatusTracker::default();
-    //     //asset.rewind()?;
-    //     let store = if _sync {
-    //         Store::from_asset(context,
-    //             asset,
-    //             &mut validation_log,
-    //         )
-    //     } else {
-    //         Store::from_asset_async(
-    //             context,
-    //             asset,
-    //             &mut validation_log,
-    //         )
-    //         .await
-    //     }?;
-    //     if _sync {
-    //         Self::from_store(store, &mut validation_log, context)
-    //     } else {
-    //         Self::from_store_async(store, &mut validation_log, context).await
-    //     }
-    // }
+    /// Add manifest store from a stream to the Reader
+    /// # Arguments
+    /// * `format` - The format of the stream.  MIME type or extension that maps to a MIME type.
+    /// * `stream` - The stream to read from.  Must implement the Read and Seek traits.
+    /// # Returns
+    /// The updated Reader.
+    #[async_generic]
+    pub fn with_stream(
+        mut self,
+        format: &str,
+        mut stream: impl Read + Seek + MaybeSend,
+    ) -> Result<Self> {
+        let mut validation_log = StatusTracker::default();
+        stream.rewind()?; // Ensure stream is at the start
+        let store = if _sync {
+            Store::from_stream(format, stream, &mut validation_log, &self.context)
+        } else {
+            Store::from_stream_async(format, stream, &mut validation_log, &self.context).await
+        }?;
+
+        if _sync {
+            self.with_store(store, &mut validation_log)
+        } else {
+            self.with_store_async(store, &mut validation_log).await
+        }?;
+        Ok(self)
+    }
 
     /// Create a manifest store [`Reader`] from a stream.  A Reader is used to validate C2PA data from an asset.
     ///
@@ -161,42 +193,13 @@ impl Reader {
     ///
     /// [CAWG identity]: https://cawg.io/identity/
     #[async_generic]
-    #[cfg(not(target_arch = "wasm32"))]
-    pub fn from_stream(format: &str, mut stream: impl Read + Seek + Send) -> Result<Reader> {
-        let context = Context::new();
-
-        let mut validation_log = StatusTracker::default();
-        stream.rewind()?; // Ensure stream is at the start
-        let store = if _sync {
-            Store::from_stream(format, stream, &mut validation_log, &context)
-        } else {
-            Store::from_stream_async(format, stream, &mut validation_log, &context).await
-        }?;
-
+    pub fn from_stream(format: &str, stream: impl Read + Seek + MaybeSend) -> Result<Reader> {
         if _sync {
-            Self::from_store(store, &mut validation_log, &context)
+            Reader::new(Context::new()).with_stream(format, stream)
         } else {
-            Self::from_store_async(store, &mut validation_log, &context).await
-        }
-    }
-
-    #[async_generic]
-    #[cfg(target_arch = "wasm32")]
-    pub fn from_stream(format: &str, mut stream: impl Read + Seek) -> Result<Reader> {
-        let context = Context::new();
-
-        let mut validation_log = StatusTracker::default();
-
-        let store = if _sync {
-            Store::from_stream(format, &mut stream, &mut validation_log, &context)
-        } else {
-            Store::from_stream_async(format, &mut stream, &mut validation_log, &context).await
-        }?;
-
-        if _sync {
-            Self::from_store(store, &mut validation_log, &context)
-        } else {
-            Self::from_store_async(store, &mut validation_log, &context).await
+            Reader::new(Context::new())
+                .with_stream_async(format, stream)
+                .await
         }
     }
 
@@ -289,6 +292,7 @@ impl Reader {
         stream: impl Read + Seek + Send,
     ) -> Result<Reader> {
         let context = Context::new();
+        let mut reader = Reader::new(context);
 
         let mut validation_log = StatusTracker::default();
 
@@ -298,7 +302,7 @@ impl Reader {
                 format,
                 stream,
                 &mut validation_log,
-                &context,
+                &reader.context,
             )
         } else {
             Store::from_manifest_data_and_stream_async(
@@ -306,12 +310,16 @@ impl Reader {
                 format,
                 stream,
                 &mut validation_log,
-                &context,
+                &reader.context,
             )
             .await
         }?;
-
-        Self::from_store(store, &mut validation_log, &context)
+        if _sync {
+            reader.with_store(store, &mut validation_log)
+        } else {
+            reader.with_store_async(store, &mut validation_log).await
+        }?;
+        Ok(reader)
     }
 
     /// Create a [`Reader`] from an initial segment and a fragment stream.
@@ -331,7 +339,7 @@ impl Reader {
         mut stream: impl Read + Seek + Send,
         mut fragment: impl Read + Seek + Send,
     ) -> Result<Self> {
-        let context = Context::new();
+        let mut reader = Reader::new(Context::new());
 
         let mut validation_log = StatusTracker::default();
 
@@ -341,7 +349,7 @@ impl Reader {
                 &mut stream,
                 &mut fragment,
                 &mut validation_log,
-                &context,
+                &reader.context,
             )
         } else {
             Store::load_fragment_from_stream_async(
@@ -349,12 +357,17 @@ impl Reader {
                 &mut stream,
                 &mut fragment,
                 &mut validation_log,
-                &context,
+                &reader.context,
             )
             .await
         }?;
 
-        Self::from_store(store, &mut validation_log, &context)
+        if _sync {
+            reader.with_store(store, &mut validation_log)
+        } else {
+            reader.with_store_async(store, &mut validation_log).await
+        }?;
+        Ok(reader)
     }
 
     /// Loads a [`Reader`]` from an initial segment and fragments.  This
@@ -365,7 +378,7 @@ impl Reader {
         path: P,
         fragments: &Vec<std::path::PathBuf>,
     ) -> Result<Reader> {
-        let context = Context::new();
+        let mut reader = Reader::new(Context::new());
 
         let mut validation_log = StatusTracker::default();
 
@@ -379,9 +392,12 @@ impl Reader {
             &mut init_segment,
             fragments,
             &mut validation_log,
-            &context,
+            &reader.context,
         ) {
-            Ok(store) => Self::from_store(store, &mut validation_log, &context),
+            Ok(store) => {
+                reader.with_store(store, &mut validation_log)?;
+                Ok(reader)
+            }
             Err(e) => Err(e),
         }
     }
@@ -703,11 +719,11 @@ impl Reader {
     }
 
     #[async_generic()]
-    pub(crate) fn from_store(
+    pub(crate) fn with_store(
+        &mut self,
         store: Store,
         validation_log: &mut StatusTracker,
-        context: &Context,
-    ) -> Result<Self> {
+    ) -> Result<&Self> {
         let active_manifest = store.provenance_label();
         let mut manifests = HashMap::new();
         let mut options = StoreOptions::default();
@@ -720,7 +736,7 @@ impl Reader {
                     manifest_label,
                     &mut options,
                     validation_log,
-                    context.settings(),
+                    self.context.settings(),
                 )
             } else {
                 Manifest::from_store_async(
@@ -728,7 +744,7 @@ impl Reader {
                     manifest_label,
                     &mut options,
                     validation_log,
-                    context.settings(),
+                    self.context.settings(),
                 )
                 .await
             };
@@ -764,7 +780,6 @@ impl Reader {
         missing.retain(|item| !options.redacted_assertions.contains(item));
 
         // Add any remaining redacted assertions to the validation results
-        // todo: figure out what to do here!
         for uri in &redacted {
             log_item!(uri.clone(), "assertion not redacted", "Reader::from_store")
                 .validation_status(ASSERTION_NOT_REDACTED)
@@ -778,15 +793,14 @@ impl Reader {
         }
 
         let validation_state = validation_results.validation_state();
-        Ok(Self {
-            active_manifest,
-            manifests,
-            validation_status: validation_results.validation_errors(),
-            validation_results: Some(validation_results),
-            validation_state: Some(validation_state),
-            store,
-            assertion_values: HashMap::new(),
-        })
+
+        self.active_manifest = active_manifest;
+        self.manifests = manifests;
+        self.validation_status = validation_results.validation_errors();
+        self.validation_results = Some(validation_results);
+        self.validation_state = Some(validation_state);
+        self.store = store;
+        Ok(self)
     }
 
     /// Populate manifest_data references for all ingredients in a manifest
@@ -1170,6 +1184,23 @@ pub mod tests {
         let reader = Reader::from_stream("image/jpeg", Cursor::new(IMAGE_WITH_MANIFEST))?;
         assert_eq!(reader.remote_url(), None);
         assert!(reader.is_embedded());
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_reader_new_with_stream() -> Result<()> {
+        const TEST_SETTINGS: &str = include_str!("../tests/fixtures/test_settings.toml");
+        let context = Context::new().with_settings(TEST_SETTINGS)?;
+
+        let mut source = Cursor::new(IMAGE_WITH_MANIFEST);
+
+        let reader = Reader::new(context).with_stream("image/jpeg", &mut source)?;
+
+        assert_eq!(reader.remote_url(), None);
+        assert!(reader.is_embedded());
+        assert_eq!(reader.validation_state(), ValidationState::Trusted);
+        assert!(reader.active_manifest().is_some());
 
         Ok(())
     }

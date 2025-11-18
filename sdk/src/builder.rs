@@ -325,7 +325,7 @@ pub struct Builder {
     pub base_path: Option<PathBuf>,
 
     /// A builder should construct a created, opened or updated manifest.
-    #[deprecated(note = "Use set_intent() to set or intent() to get the builder intent")]
+    #[deprecated(note = "Use set_intent() to set or intent()")]
     pub intent: Option<BuilderIntent>,
 
     /// Container for binary assets (like thumbnails).
@@ -383,7 +383,7 @@ impl Builder {
     #[allow(deprecated)]
     pub fn set_intent(&mut self, intent: BuilderIntent) -> &mut Self {
         self.context.settings_mut().builder.intent = Some(intent.clone());
-        self.intent = Some(intent);
+        self.intent = Some(intent); // self.intent is deprecated but keep in sync for now
         self
     }
 
@@ -916,7 +916,8 @@ impl Builder {
                 &mut validation_log,
                 &context,
             )?;
-            let reader = Reader::from_store(store, &mut validation_log, &context)?;
+            let mut reader = Reader::new(context);
+            reader.with_store(store, &mut validation_log)?;
             reader.into_builder()
         })
     }
