@@ -16,12 +16,5 @@ jobs:
         uses: peter-evans/repository-dispatch@v4
         with:
           event-type: c2pa-rs-release
-          repository: contentauth/json-manifest-reference
-          token: ${{ secrets.TRIGGER_JSON_MANIFEST_UPDATE }}
-
-      - name: Send repository dispatch to contentauth/json-manifest-reference
-        uses: peter-evans/repository-dispatch@v4
-        with:
-          event-type: c2pa-rs-release
-          repository: contentauth/json-manifest-reference
+          repository: contentauth/opensource.contentauth.org
           token: ${{ secrets.TRIGGER_JSON_MANIFEST_UPDATE }}
