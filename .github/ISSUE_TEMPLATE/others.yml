@@ -1,0 +1,12 @@
+name: 💬 Other
+description: General inquiries, questions, or discussions
+labels: [question]
+body:
+  - type: textarea
+    id: details
+    attributes:
+      label: Details
+      description: Tell us what's on your mind.
+      placeholder: Describe your inquiry, question, or feedback here.
+    validations:
+      required: true
