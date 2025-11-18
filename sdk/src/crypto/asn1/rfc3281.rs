@@ -8,9 +8,50 @@
 
 use bcder::{
     decode::{Constructed, DecodeError, Source},
-    BitString, Oid,
+    BitString, Captured, Oid,
 };
-use x509_certificate::{asn1time::*, rfc3280::*, rfc5280::*};
+
+use super::{AlgorithmIdentifier, Extensions, GeneralizedTime};
+
+// Define opaque types for RFC 3281 that are not currently parsed
+// Since AttributeCertificateInfo::take_from is not implemented, these are just
+// opaque wrappers around Captured for type safety
+
+/// General names (opaque - not parsed)
+#[derive(Clone, Debug)]
+pub struct GeneralNames(Captured);
+
+impl PartialEq for GeneralNames {
+    fn eq(&self, other: &Self) -> bool {
+        self.0.as_slice() == other.0.as_slice()
+    }
+}
+
+impl Eq for GeneralNames {}
+
+/// Certificate serial number (opaque - not parsed)
+#[derive(Clone, Debug)]
+pub struct CertificateSerialNumber(Captured);
+
+impl PartialEq for CertificateSerialNumber {
+    fn eq(&self, other: &Self) -> bool {
+        self.0.as_slice() == other.0.as_slice()
+    }
+}
+
+impl Eq for CertificateSerialNumber {}
+
+/// Unique identifier (opaque - not parsed)
+#[derive(Clone, Debug)]
+pub struct UniqueIdentifier(Captured);
+
+impl PartialEq for UniqueIdentifier {
+    fn eq(&self, other: &Self) -> bool {
+        self.0.as_slice() == other.0.as_slice()
+    }
+}
+
+impl Eq for UniqueIdentifier {}
 
 /// Attribute certificate.
 ///

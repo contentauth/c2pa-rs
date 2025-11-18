@@ -13,13 +13,16 @@
 
 use std::{collections::HashMap, env::consts};
 
+#[cfg(feature = "json_schema")]
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::{
     assertions::{
-        region_of_interest::RegionOfInterest, Action, ActionTemplate, DigitalSourceType,
-        SoftwareAgent,
+        region_of_interest::RegionOfInterest, Action, ActionParameters, ActionTemplate,
+        DigitalSourceType, SoftwareAgent,
     },
+    builder::BuilderIntent,
     cbor_types::DateT,
     resource_store::UriOrResource,
     settings::SettingsValidate,
@@ -31,9 +34,10 @@ use crate::{
 ///
 /// These formats are a combination of types supported in [image-rs](https://docs.rs/image/latest/image/enum.ImageFormat.html)
 /// and types defined by the [IANA registry media type](https://www.iana.org/assignments/media-types/media-types.xhtml) (as defined in the spec).
+#[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 #[derive(Copy, Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "lowercase")]
-pub(crate) enum ThumbnailFormat {
+pub enum ThumbnailFormat {
     /// An image in PNG format.
     Png,
     /// An image in JPEG format.
@@ -46,9 +50,10 @@ pub(crate) enum ThumbnailFormat {
     Tiff,
 }
 /// Quality of the thumbnail.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[cfg_attr(feature = "json_schema", derive(JsonSchema))]
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "lowercase")]
-pub(crate) enum ThumbnailQuality {
+pub enum ThumbnailQuality {
     /// Low quality.
     Low,
     /// Medium quality.
@@ -58,23 +63,36 @@ pub(crate) enum ThumbnailQuality {
 }
 
 /// Settings for controlling automatic thumbnail generation.
+#[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-pub(crate) struct ThumbnailSettings {
+pub struct ThumbnailSettings {
     /// Whether or not to automatically generate thumbnails.
+    ///
+    /// The default value is true.
+    ///
+    /// <div class="warning">
+    /// This setting is only applicable if the crate is compiled with the `add_thumbnails` feature.
+    /// </div>
     pub enabled: bool,
     /// Whether to ignore thumbnail generation errors.
     ///
     /// This may occur, for instance, if the thumbnail media type or color layout isn't
     /// supported.
+    ///
+    /// The default value is true.
     pub ignore_errors: bool,
     /// The size of the longest edge of the thumbnail.
     ///
     /// This function will resize the input to preserve aspect ratio.
+    ///
+    /// The default value is 1024.
     pub long_edge: u32,
     /// Format of the thumbnail.
     ///
     /// If this field isn't specified, the thumbnail format will correspond to the
     /// input format.
+    ///
+    /// The default value is None.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub format: Option<ThumbnailFormat>,
     /// Whether or not to prefer a smaller sized media format for the thumbnail.
@@ -85,11 +103,15 @@ pub(crate) struct ThumbnailSettings {
     ///
     /// For instance, if the source input type is a PNG, but it doesn't have an alpha channel,
     /// the image will be converted to a JPEG of smaller size.
+    ///
+    /// The default value is true.
     pub prefer_smallest_format: bool,
     /// The output quality of the thumbnail.
     ///
     /// This setting contains sensible defaults for things like quality, compression, and
     /// algorithms for various formats.
+    ///
+    /// The default value is [`ThumbnailQuality::Medium`].
     pub quality: ThumbnailQuality,
 }
 
@@ -118,9 +140,9 @@ impl SettingsValidate for ThumbnailSettings {
 }
 
 /// Settings for the auto actions (e.g. created, opened, placed).
-#[allow(unused)]
+#[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-pub(crate) struct AutoActionSettings {
+pub struct AutoActionSettings {
     /// Whether to enable this auto action or not.
     pub enabled: bool,
     /// The default source type for the auto action.
@@ -128,31 +150,33 @@ pub(crate) struct AutoActionSettings {
     pub source_type: Option<DigitalSourceType>,
 }
 
-/// Settings for how to specify the claim generator info's operating system.
-#[allow(unused)]
+#[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-pub(crate) struct ClaimGeneratorInfoOSSettings {
-    /// Whether or not to infer the operating system.
-    pub infer: bool,
+#[serde(untagged, rename_all = "lowercase")]
+pub enum ClaimGeneratorInfoOperatingSystem {
+    /// Whether or not to automatically infer the operating system.
+    ///
+    /// This option will attempt to following the [LLVM "triples"] conventions. For more information,
+    /// see [`ClaimGeneratorInfoOperatingSystem::Other`].
+    ///
+    /// [LLVM "triples"]: https://clang.llvm.org/docs/CrossCompilation.html#target-triple
+    Auto,
     /// The name of the operating system.
     ///
-    /// Note this field overrides [ClaimGeneratorInfoOSSettings::infer].
-    pub name: Option<String>,
-}
-
-impl Default for ClaimGeneratorInfoOSSettings {
-    fn default() -> Self {
-        Self {
-            infer: true,
-            name: None,
-        }
-    }
+    /// It is recommended to follow the [LLVM "triples"] conventions to define the operating system,
+    /// with the format `<arch><sub>-<vendor>-<sys>-<env>`. For instance:
+    /// - `x86_64-unknown-linux-gnu`
+    /// - `x86_64-pc-windows-msvc`
+    /// - `arm64-apple-darwin`
+    ///
+    /// [LLVM "triples"]: https://clang.llvm.org/docs/CrossCompilation.html#target-triple
+    Other(String),
 }
 
 /// Settings for the claim generator info.
-#[allow(unused)]
+#[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-pub(crate) struct ClaimGeneratorInfoSettings {
+pub struct ClaimGeneratorInfoSettings {
     /// A human readable string naming the claim_generator.
     pub name: String,
     /// A human readable string of the product's version.
@@ -160,13 +184,13 @@ pub(crate) struct ClaimGeneratorInfoSettings {
     pub version: Option<String>,
     /// Reference to an icon.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub icon: Option<ResourceRef>,
+    pub(crate) icon: Option<ResourceRef>,
     /// Settings for the claim generator info's operating system field.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub operating_system: Option<ClaimGeneratorInfoOSSettings>,
+    pub operating_system: Option<ClaimGeneratorInfoOperatingSystem>,
     /// Any other values that are not part of the standard.
     #[serde(flatten)]
-    pub other: HashMap<String, toml::Value>,
+    pub other: HashMap<String, serde_json::Value>,
 }
 
 impl TryFrom<ClaimGeneratorInfoSettings> for ClaimGeneratorInfo {
@@ -178,11 +202,12 @@ impl TryFrom<ClaimGeneratorInfoSettings> for ClaimGeneratorInfo {
             version: value.version,
             icon: value.icon.map(UriOrResource::ResourceRef),
             operating_system: {
-                let os = value.operating_system.unwrap_or_default();
-                match os.infer {
-                    true => Some(consts::OS.to_owned()),
-                    false => os.name,
-                }
+                value.operating_system.map(|os| match os {
+                    ClaimGeneratorInfoOperatingSystem::Auto => {
+                        format!("{}-unknown-{}", consts::ARCH, consts::OS)
+                    }
+                    ClaimGeneratorInfoOperatingSystem::Other(name) => name,
+                })
             },
             other: value
                 .other
@@ -198,6 +223,7 @@ impl TryFrom<ClaimGeneratorInfoSettings> for ClaimGeneratorInfo {
 }
 
 /// Settings for an action template.
+#[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub(crate) struct ActionTemplateSettings {
     /// The label associated with this action. See ([c2pa_action][crate::assertions::actions::c2pa_action]).
@@ -221,7 +247,7 @@ pub(crate) struct ActionTemplateSettings {
     pub description: Option<String>,
     /// Additional parameters for the template
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub template_parameters: Option<HashMap<String, toml::Value>>,
+    pub template_parameters: Option<HashMap<String, serde_json::Value>>,
 }
 
 impl TryFrom<ActionTemplateSettings> for ActionTemplate {
@@ -256,7 +282,7 @@ impl TryFrom<ActionTemplateSettings> for ActionTemplate {
 }
 
 /// Settings for an action.
-#[allow(unused)]
+#[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub(crate) struct ActionSettings {
     /// The label associated with this action. See ([`c2pa_action`]).
@@ -280,8 +306,8 @@ pub(crate) struct ActionSettings {
 
     /// Additional parameters of the action. These vary by the type of action.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub parameters: Option<HashMap<String, toml::Value>>,
-
+    pub parameters: Option<ActionParameters>,
+    /// One of the defined URI values at `<https://cv.iptc.org/newscodes/digitalsourcetype/>`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub source_type: Option<DigitalSourceType>,
     /// List of related actions.
@@ -309,19 +335,7 @@ impl TryFrom<ActionSettings> for Action {
                 .map(SoftwareAgent::ClaimGeneratorInfo),
             software_agent_index: value.software_agent_index,
             changes: value.changes,
-            parameters: value
-                .parameters
-                .map(|template_parameters| {
-                    template_parameters
-                        .into_iter()
-                        .map(|(key, value)| {
-                            serde_cbor::value::to_value(value)
-                                .map(|value| (key, value))
-                                .map_err(|err| err.into())
-                        })
-                        .collect::<Result<HashMap<String, serde_cbor::Value>>>()
-                })
-                .transpose()?,
+            parameters: value.parameters,
             source_type: value.source_type,
             related: value.related,
             reason: value.reason,
@@ -335,33 +349,33 @@ impl TryFrom<ActionSettings> for Action {
 ///
 /// The reason this setting exists only for an [Actions][crate::assertions::Actions] assertion
 /// is because of its mandations and reusable fields.
-#[allow(unused)]
+#[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-pub(crate) struct ActionsSettings {
+pub struct ActionsSettings {
     /// Whether or not to set the [Actions::all_actions_included][crate::assertions::Actions::all_actions_included]
     /// field.
-    pub all_actions_included: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub all_actions_included: Option<bool>,
     /// Templates to be added to the [Actions::templates][crate::assertions::Actions::templates] field.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub templates: Option<Vec<ActionTemplateSettings>>,
-    // TODO: should we define a new struct for "Action" too, like ActionTemplateSettings?
+    pub(crate) templates: Option<Vec<ActionTemplateSettings>>,
     /// Actions to be added to the [Actions::actions][crate::assertions::Actions::actions] field.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub actions: Option<Vec<ActionSettings>>,
-    /// Whether to automatically generate a c2pa.created [Action][crate::assertions::Action]
-    /// assertion or error that it doesn't already exist.
+    // TODO: ActionSettings indirectly depends on ActionParameters which contains a serde_cbor::Value and
+    // schemars can't generate a schema for cbor values. It also doesn't feel right to change our API for
+    // the sake of json schemas.
+    #[cfg_attr(feature = "json_schema", schemars(skip))]
+    pub(crate) actions: Option<Vec<ActionSettings>>,
+    /// Whether to automatically generate a c2pa.created [Action] assertion or error that it doesn't already exist.
     ///
     /// For more information about the mandatory conditions for a c2pa.created action assertion, see here:
     /// <https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_mandatory_presence_of_at_least_one_actions_assertion>
     pub auto_created_action: AutoActionSettings,
-    /// Whether to automatically generate a c2pa.opened [Action][crate::assertions::Action]
-    /// assertion or error that it doesn't already exist.
+    /// Whether to automatically generate a c2pa.opened [Action] assertion or error that it doesn't already exist.
     ///
     /// For more information about the mandatory conditions for a c2pa.opened action assertion, see here:
     /// <https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_mandatory_presence_of_at_least_one_actions_assertion>
     pub auto_opened_action: AutoActionSettings,
-    /// Whether to automatically generate a c2pa.placed [Action][crate::assertions::Action]
-    /// assertion or error that it doesn't already exist.
+    /// Whether to automatically generate a c2pa.placed [Action] assertion or error that it doesn't already exist.
     ///
     /// For more information about the mandatory conditions for a c2pa.placed action assertion, see:
     /// <https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_relationship>
@@ -371,19 +385,19 @@ pub(crate) struct ActionsSettings {
 impl Default for ActionsSettings {
     fn default() -> Self {
         ActionsSettings {
-            all_actions_included: true,
+            all_actions_included: None,
             templates: None,
             actions: None,
             auto_created_action: AutoActionSettings {
-                enabled: true,
-                source_type: Some(DigitalSourceType::Empty),
+                enabled: false,
+                source_type: None, // Some(DigitalSourceType::Empty),
             },
             auto_opened_action: AutoActionSettings {
-                enabled: true,
+                enabled: false,
                 source_type: None,
             },
             auto_placed_action: AutoActionSettings {
-                enabled: true,
+                enabled: false,
                 source_type: None,
             },
         }
@@ -401,9 +415,9 @@ impl SettingsValidate for ActionsSettings {
 
 // TODO: do more validation on URL fields, cert fields, etc.
 /// Settings for the [Builder][crate::Builder].
-#[allow(unused)]
+#[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize, Default)]
-pub(crate) struct BuilderSettings {
+pub struct BuilderSettings {
     /// Claim generator info that is automatically added to the builder.
     ///
     /// Note that this information will prepend any claim generator info
@@ -416,18 +430,57 @@ pub(crate) struct BuilderSettings {
     ///
     /// For more information on the reasoning behind this field see [ActionsSettings].
     pub actions: ActionsSettings,
+    // TODO: this setting affects fetching and generation of the assertion; needs clarification
+    /// Whether to create [`CertificateStatus`] assertions for manifests to store certificate revocation
+    /// status. The assertion can be fetched for the active manifest or for all manifests (including
+    /// ingredients).
+    ///
+    /// The default is to not fetch them at all.
+    ///
+    /// See more information in the spec here:
+    /// <https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#certificate_status_assertion>
+    ///
+    /// [`CertificateStatus`]: crate::assertions::CertificateStatus
+    pub(crate) certificate_status_fetch: Option<OcspFetchScope>,
+    // TODO: this setting affects fetching and generation of the assertion; needs clarification
+    /// Whether to only use [`CertificateStatus`] assertions to check certificate revocation status. If there
+    /// is a stapled OCSP in the COSE claim of the manifest, it will be ignored. If [`Verify::ocsp_fetch`] is
+    /// enabled, it will also be ignored.
+    ///
+    /// The default value is false.
+    ///
+    /// [`CertificateStatus`]: crate::assertions::CertificateStatus
+    /// [`Verify::ocsp_fetch`]: crate::settings::Verify::ocsp_fetch
+    pub(crate) certificate_status_should_override: Option<bool>,
+    /// The default [`BuilderIntent`] for the [`Builder`].
+    ///
+    /// See [`BuilderIntent`] for more information.
+    ///
+    /// [`BuilderIntent`]: crate::BuilderIntent
+    /// [`Builder`]: crate::Builder
+    pub intent: Option<BuilderIntent>,
+    /// Assertions with a base label included in this list will be automatically marked as a created assertion.
+    /// Assertions not in this list will be automatically marked as gathered.
+    ///
+    /// Note that the label should be a **base label**, not including the assertion version nor instance.
+    ///
+    /// See more information on the difference between created vs gathered assertions in the spec here:
+    /// <https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_fields>
+    pub created_assertion_labels: Option<Vec<String>>,
 
-    // Certificate statuses will be fetched for either all the manifest labels, or just the active manifest.
-    pub certificate_status_fetch: Option<OcspFetch>,
-
-    // Whether or not existing OCSP responses should be overridden by new values.
-    pub certificate_status_should_override: Option<bool>,
+    /// Whether to generate a C2PA archive (instead of zip) when writing the manifest builder.
+    /// This will eventually become the default behavior.
+    pub generate_c2pa_archive: Option<bool>,
 }
 
+/// The scope of which manifests to fetch for OCSP.
+#[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 #[derive(Copy, Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "lowercase")]
-pub(crate) enum OcspFetch {
+pub(crate) enum OcspFetchScope {
+    /// Fetch OCSP for all manifests.
     All,
+    /// Fetch OCSP for the active manifest only.
     Active,
 }
 

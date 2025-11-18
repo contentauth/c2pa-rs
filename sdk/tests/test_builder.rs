@@ -13,7 +13,10 @@
 
 use std::io::{self, Cursor};
 
-use c2pa::{settings::Settings, validation_status, Builder, Reader, Result, ValidationState};
+use c2pa::{
+    settings::Settings, validation_status, Builder, BuilderIntent, ManifestAssertionKind, Reader,
+    Result, ValidationState,
+};
 
 mod common;
 #[cfg(all(feature = "add_thumbnails", feature = "file_io"))]
@@ -29,7 +32,8 @@ fn test_builder_ca_jpg() -> Result<()> {
     let format = "image/jpeg";
     let mut source = Cursor::new(TEST_IMAGE);
 
-    let mut builder = Builder::edit();
+    let mut builder = Builder::new();
+    builder.set_intent(BuilderIntent::Edit);
 
     use c2pa::assertions::Action;
     builder.add_action(Action::new("c2pa.published"))?;
@@ -50,9 +54,10 @@ fn test_builder_ca_jpg() -> Result<()> {
 
     builder.sign(&Settings::signer()?, format, &mut source, &mut dest)?;
 
-    //dest.set_position(0);
-    //let reader = Reader::from_stream(format, &mut dest)?;
-    //std::fs::write("CA_test.json", reader.json()).unwrap();
+    // use this to update the known good
+    // dest.set_position(0);
+    // let reader = Reader::from_stream(format, &mut dest)?;
+    // std::fs::write("tests/known_good/CA_test.json", reader.json()).unwrap();
 
     dest.set_position(0);
     compare_stream_to_known_good(&mut dest, format, "CA_test.json")
@@ -65,10 +70,35 @@ fn test_builder_riff() -> Result<()> {
     let mut source = Cursor::new(include_bytes!("fixtures/sample1.wav"));
     let format = "audio/wav";
 
-    let mut builder = Builder::edit();
+    let mut builder = Builder::new();
+    builder.set_intent(BuilderIntent::Edit);
     builder.definition.claim_version = Some(1); // use v1 for this test
     builder.no_embed = true;
     builder.sign(&Settings::signer()?, format, &mut source, &mut io::empty())?;
+
+    Ok(())
+}
+
+#[test]
+fn test_builder_sidecar_only() -> Result<()> {
+    Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml"))?;
+    let mut source = Cursor::new(include_bytes!("fixtures/earth_apollo17.jpg"));
+    let format = "image/jpeg";
+
+    let mut builder = Builder::new();
+    builder.set_intent(BuilderIntent::Edit);
+    builder.set_no_embed(true);
+    let c2pa_data = builder.sign(&Settings::signer()?, format, &mut source, &mut io::empty())?;
+
+    let reader1 = Reader::from_manifest_data_and_stream(&c2pa_data, format, &mut source)?;
+    println!("reader1: {reader1}");
+
+    let builder2: Builder = reader1.try_into()?;
+    println!("builder2 {builder2}");
+
+    //    let c2pa_stream = Cursor::new(c2pa_data);
+    //    let reader = Reader::from_stream("application/c2pa", c2pa_stream)?;
+    //    println!("reader: {reader}");
 
     Ok(())
 }
@@ -80,7 +110,8 @@ fn test_builder_fragmented() -> Result<()> {
     use common::tempdirectory;
     Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml"))?;
 
-    let mut builder = Builder::edit();
+    let mut builder = Builder::new();
+    builder.set_intent(BuilderIntent::Edit);
     let tempdir = tempdirectory().expect("temp dir");
     let output_path = tempdir.path();
     let mut init_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -142,7 +173,8 @@ fn test_builder_fragmented() -> Result<()> {
 fn test_builder_remote_url_no_embed() -> Result<()> {
     Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml"))?;
     //let manifest_def = std::fs::read_to_string(fixtures_path("simple_manifest.json"))?;
-    let mut builder = Builder::edit();
+    let mut builder = Builder::new();
+    builder.set_intent(BuilderIntent::Edit);
     // disable remote fetching for this test
     Settings::from_toml(
         &toml::toml! {
@@ -180,13 +212,14 @@ fn test_builder_embedded_v1_otgp() -> Result<()> {
     let mut source = Cursor::new(include_bytes!("fixtures/XCA.jpg"));
     let format = "image/jpeg";
 
-    let mut builder = Builder::edit();
+    let mut builder = Builder::new();
+    builder.set_intent(BuilderIntent::Edit);
     let mut dest = Cursor::new(Vec::new());
     builder.sign(&Settings::signer()?, format, &mut source, &mut dest)?;
     dest.set_position(0);
     let reader = Reader::from_stream(format, &mut dest)?;
     // check that the v1 OTGP is embedded and we catch it correct with validation_results
-    assert_ne!(reader.validation_state(), ValidationState::Invalid);
+    assert_eq!(reader.validation_state(), ValidationState::Trusted);
     //println!("reader: {}", reader);
     assert_eq!(
         reader.active_manifest().unwrap().ingredients()[0]
@@ -293,8 +326,11 @@ fn test_dynamic_assertions_builder() -> Result<()> {
         }
     }
 
+    Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml"))?;
+
     //let manifest_def = std::fs::read_to_string(fixtures_path("simple_manifest.json"))?;
-    let mut builder = Builder::edit();
+    let mut builder = Builder::new();
+    builder.set_intent(BuilderIntent::Edit);
 
     const TEST_IMAGE: &[u8] = include_bytes!("fixtures/CA.jpg");
     let format = "image/jpeg";
@@ -311,7 +347,176 @@ fn test_dynamic_assertions_builder() -> Result<()> {
 
     println!("reader: {reader}");
 
+    assert_eq!(reader.validation_state(), ValidationState::Trusted);
+
+    Ok(())
+}
+
+#[test]
+fn test_assertion_created_field() -> Result<()> {
+    use serde_json::json;
+
+    Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml"))?;
+
+    const TEST_IMAGE: &[u8] = include_bytes!("fixtures/CA.jpg");
+    let format = "image/jpeg";
+    let mut source = Cursor::new(TEST_IMAGE);
+
+    let definition = json!(
+    {
+        "assertions": [
+        {
+            "label": "org.test.gathered",
+            "data": {
+                "value": "gathered"
+            }
+        },
+        {
+            "label": "org.test.created",
+            "kind": "Json",
+            "data": {
+                "value": "created"
+            },
+            "created": true
+        }]
+    }
+    )
+    .to_string();
+
+    let mut builder = Builder::from_json(&definition)?;
+
+    // Add a regular assertion (should default to created = false)
+    builder.add_assertion("org.test.regular", &json!({"value": "regular"}))?;
+
+    // let created = json!({
+    //     "value": "created"
+    // });
+    // builder.add_assertion("org.test.created", &created)?;
+
+    // let gathered = json!({
+    //     "value": "gathered"
+    // });
+    // builder.add_assertion("org.test.gathered", &gathered)?;
+
+    let mut dest = Cursor::new(Vec::new());
+    builder.sign(&Settings::signer()?, format, &mut source, &mut dest)?;
+
+    dest.set_position(0);
+    let reader = Reader::from_stream(format, &mut dest)?;
+
+    // Verify the manifest was created successfully
     assert_ne!(reader.validation_state(), ValidationState::Invalid);
 
+    let manifest = reader.active_manifest().unwrap();
+
+    // Find our test assertions
+    let regular_assertion = manifest
+        .assertions()
+        .iter()
+        .find(|a| a.label() == "org.test.regular")
+        .expect("Should find regular assertion");
+
+    let created_assertion = manifest
+        .assertions()
+        .iter()
+        .find(|a| a.label() == "org.test.created")
+        .expect("Should find created assertion");
+
+    let gathered_assertion = manifest
+        .assertions()
+        .iter()
+        .find(|a| a.label() == "org.test.gathered")
+        .expect("Should find gathered assertion");
+
+    // Verify the values are preserved correctly
+    assert_eq!(regular_assertion.value().unwrap()["value"], "regular");
+    assert_eq!(created_assertion.value().unwrap()["value"], "created");
+    assert_eq!(gathered_assertion.value().unwrap()["value"], "gathered");
+
+    assert_eq!(created_assertion.kind(), &ManifestAssertionKind::Json);
+    assert_eq!(gathered_assertion.kind(), &ManifestAssertionKind::Cbor);
+    assert_eq!(regular_assertion.kind(), &ManifestAssertionKind::Cbor);
+
+    // Test the created() method to verify the created field is preserved
+    assert!(!regular_assertion.created()); // add_assertion defaults to false
+    assert!(created_assertion.created()); // explicitly set to true
+    assert!(!gathered_assertion.created()); // explicitly set to false
+
+    Ok(())
+}
+
+#[test]
+fn test_metadata_formats_json_manifest() -> Result<()> {
+    use c2pa::settings::Settings;
+    Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml"))?;
+
+    let manifest_json = r#"
+    {
+        "assertions": [
+            {
+                "label": "c2pa.metadata",
+                "kind": "Json",
+                "data": {
+                    "@context": { "exif": "http://ns.adobe.com/exif/1.0/" },
+                    "exif:GPSLatitude": "39,21.102N"
+                }
+            },
+            {
+                "label": "cawg.metadata",
+                "kind": "Json",
+                "data": {
+                    "@context": { "cawg": "http://cawg.org/ns/1.0/" },
+                    "cawg:SomeField": "SomeValue"
+                }
+            },
+            {
+                "label": "c2pa.assertion.metadata",
+                "data": {
+                    "@context": { "custom": "http://custom.org/ns/1.0/" },
+                    "custom:Field": "CustomValue"
+                }
+            },
+            {
+                "label": "org.myorg.metadata",
+                "data": {
+                    "@context": { "myorg": "http://myorg.org/ns/1.0/" },
+                    "myorg:Field": "MyOrgValue"
+                }
+            }
+        ]
+    }
+    "#;
+
+    let mut builder = Builder::from_json(manifest_json)?;
+    const TEST_IMAGE: &[u8] = include_bytes!("fixtures/CA.jpg");
+    let format = "image/jpeg";
+    let mut source = Cursor::new(TEST_IMAGE);
+    let mut dest = Cursor::new(Vec::new());
+
+    builder.sign(&Settings::signer()?, format, &mut source, &mut dest)?;
+
+    dest.set_position(0);
+    let reader = Reader::from_stream(format, &mut dest)?;
+
+    for assertion in reader.active_manifest().unwrap().assertions() {
+        match assertion.label() {
+            "c2pa.assertion.metadata" => {
+                assert_eq!(
+                    assertion.kind(),
+                    &ManifestAssertionKind::Cbor,
+                    "c2pa.assertion.metadata should be CBOR"
+                );
+            }
+            "c2pa.metadata" | "cawg.metadata" | "org.myorg.metadata" => {
+                assert_eq!(
+                    assertion.kind(),
+                    &ManifestAssertionKind::Json,
+                    "{} should be JSON",
+                    assertion.label()
+                );
+            }
+            _ => {}
+        }
+    }
     Ok(())
 }

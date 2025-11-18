@@ -7,6 +7,110 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.71.4](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.71.3...c2pa-c-ffi-v0.71.4)
+_17 November 2025_
+
+## [0.71.3](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.71.2...c2pa-c-ffi-v0.71.3)
+_17 November 2025_
+
+## [0.71.2](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.71.1...c2pa-c-ffi-v0.71.2)
+_13 November 2025_
+
+## [0.71.1](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.71.0...c2pa-c-ffi-v0.71.1)
+_12 November 2025_
+
+### Fixed
+
+* Use Digitalsourcetype with Builder intents ([#1586](https://github.com/contentauth/c2pa-rs/pull/1586))
+
+## [0.71.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.70.0...c2pa-c-ffi-v0.71.0)
+_07 November 2025_
+
+### Added
+
+* Builder setIntent API exposed in C2PA C FFI ([#1574](https://github.com/contentauth/c2pa-rs/pull/1574))
+
+## [0.70.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.69.0...c2pa-c-ffi-v0.70.0)
+_06 November 2025_
+
+### Added
+
+* Sync/async HTTP resolvers API ([#1355](https://github.com/contentauth/c2pa-rs/pull/1355))
+
+### Updated dependencies
+
+* Bump thiserror from 1.0.69 to 2.0.17 ([#1562](https://github.com/contentauth/c2pa-rs/pull/1562))
+
+## [0.69.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.68.0...c2pa-c-ffi-v0.69.0)
+_04 November 2025_
+
+### Added
+
+* Adds support and documentation for JSON formatted Settings ([#1533](https://github.com/contentauth/c2pa-rs/pull/1533))
+* Allow reading a manifest store as a Builder to continue editing ([#1476](https://github.com/contentauth/c2pa-rs/pull/1476))
+
+### Other
+
+* Revert "chore: release ([#1535](https://github.com/contentauth/c2pa-rs/pull/1535))"
+
+## [0.68.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.67.1...c2pa-c-ffi-v0.68.0)
+_24 October 2025_
+
+### Fixed
+
+* Turn on trust by default ([#1483](https://github.com/contentauth/c2pa-rs/pull/1483))
+* Add linker flags to Android library builds ([#1463](https://github.com/contentauth/c2pa-rs/pull/1463))
+
+### Updated dependencies
+
+* Bump cbindgen from 0.28.0 to 0.29.2 ([#1500](https://github.com/contentauth/c2pa-rs/pull/1500))
+
+## [0.67.1](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.67.0...c2pa-c-ffi-v0.67.1)
+_02 October 2025_
+
+## [0.67.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.66.0...c2pa-c-ffi-v0.67.0)
+_30 September 2025_
+
+### Added
+
+* Fix ARM builds ([#1456](https://github.com/contentauth/c2pa-rs/pull/1456))
+
+## [0.66.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.65.1...c2pa-c-ffi-v0.66.0)
+_24 September 2025_
+
+### Fixed
+
+* We lost the ability to read the deprecated instanceId actions parameters field. ([#1443](https://github.com/contentauth/c2pa-rs/pull/1443))
+
+## [0.65.1](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.65.0...c2pa-c-ffi-v0.65.1)
+_23 September 2025_
+
+### Fixed
+
+* Add checks at C API level ([#1438](https://github.com/contentauth/c2pa-rs/pull/1438))
+
+## [0.65.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.64.0...c2pa-c-ffi-v0.65.0)
+_19 September 2025_
+
+### Added
+
+* Expose add_action from the Builder at the C level ([#1425](https://github.com/contentauth/c2pa-rs/pull/1425))
+* *(sdk)* Introduce new API to retrieve detailed manifest JSON ([#1406](https://github.com/contentauth/c2pa-rs/pull/1406))
+
+## [0.63.1](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.63.0...c2pa-c-ffi-v0.63.1)
+_15 September 2025_
+
+## [0.63.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.62.0...c2pa-c-ffi-v0.63.0)
+_10 September 2025_
+
+### Added
+
+* Remove the v1_api feature and all associated code ([#1387](https://github.com/contentauth/c2pa-rs/pull/1387))
+
+### Fixed
+
+* Make zip script syntax change ([#1399](https://github.com/contentauth/c2pa-rs/pull/1399))
+
 ## [0.61.1](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.61.0...c2pa-c-ffi-v0.61.1)
 _06 September 2025_
 

@@ -15,14 +15,13 @@ use std::str::FromStr;
 
 use asn1_rs::FromDer;
 use async_generic::async_generic;
-use bcder::{decode::SliceSource, OctetString};
+use bcder::OctetString;
 use chrono::{offset::LocalResult, DateTime, TimeZone, Utc};
+use der::asn1::ObjectIdentifier;
 use rasn::{prelude::*, types};
 use rasn_cms::{CertificateChoices, SignerIdentifier};
-use x509_certificate::{
-    asn1time::{GeneralizedTime, GeneralizedTimeAllowedTimezone},
-    DigestAlgorithm,
-};
+use sha1::Sha1;
+use sha2::{Digest as _, Sha256, Sha384, Sha512};
 
 use crate::{
     crypto::{
@@ -35,7 +34,7 @@ use crate::{
         },
     },
     log_item,
-    settings::get_settings_value,
+    settings::Settings,
     status_tracker::StatusTracker,
     validation_status::{
         TIMESTAMP_MALFORMED, TIMESTAMP_MISMATCH, TIMESTAMP_OUTSIDE_VALIDITY, TIMESTAMP_TRUSTED,
@@ -65,10 +64,11 @@ pub fn verify_time_stamp(
     data: &[u8],
     ctp: &CertificateTrustPolicy,
     validation_log: &mut StatusTracker,
+    settings: &Settings,
 ) -> Result<TstInfo, TimeStampError> {
     // Get the signed data frorm the timestamp data
     let Ok(Some(sd)) = signed_data_from_time_stamp_response(ts) else {
-        log_item!("", "count not parse timestamp data", "verify_time_stamp")
+        log_item!("", "could not parse timestamp data", "verify_time_stamp")
             .validation_status(TIMESTAMP_MALFORMED)
             .informational(validation_log);
 
@@ -79,7 +79,7 @@ pub fn verify_time_stamp(
 
     // Grab the list of certs used in signing this timestamp
     let Some(certs) = &sd.certificates else {
-        log_item!("", "count not parse timestamp data", "verify_time_stamp")
+        log_item!("", "could not parse timestamp data", "verify_time_stamp")
             .validation_status(TIMESTAMP_UNTRUSTED)
             .informational(validation_log);
 
@@ -102,7 +102,7 @@ pub fn verify_time_stamp(
         .collect();
 
     if cert_ders.len() != certs.len() {
-        log_item!("", "count not parse timestamp data", "verify_time_stamp")
+        log_item!("", "could not parse timestamp data", "verify_time_stamp")
             .validation_status(TIMESTAMP_UNTRUSTED)
             .informational(validation_log);
 
@@ -210,7 +210,8 @@ pub fn verify_time_stamp(
                 if let Some(gt) = timestamp_to_generalized_time(signed_signing_time) {
                     // Use actual signed time.
                     signing_time = generalized_time_to_datetime(gt.clone()).timestamp();
-                    tst.gen_time = gt;
+                    let dt: chrono::DateTime<chrono::Utc> = gt.into();
+                    tst.gen_time = dt.into();
                 };
             }
 
@@ -530,23 +531,28 @@ pub fn verify_time_stamp(
         }
 
         // the certificate must be on the trust list to be considered valid
-        let verify_trust = get_settings_value("verify.verify_timestamp_trust").unwrap_or(true);
+        let verify_trust = settings.verify.verify_timestamp_trust;
 
-        if verify_trust
-            && ctp
+        if verify_trust {
+            // per the spec TSA trust can only be checked against the system trust list not the user trust list
+            let mut adjusted_ctp = ctp.clone();
+            adjusted_ctp.set_trust_anchors_only(true);
+
+            if adjusted_ctp
                 .check_certificate_trust(&cert_ders[0..], &cert_ders[0], Some(signing_time))
                 .is_err()
-        {
-            log_item!(
-                "",
-                format!("timestamp cert untrusted: {}", &common_name),
-                "verify_time_stamp"
-            )
-            .validation_status(TIMESTAMP_UNTRUSTED)
-            .informational(&mut current_validation_log);
+            {
+                log_item!(
+                    "",
+                    format!("timestamp cert untrusted: {}", &common_name),
+                    "verify_time_stamp"
+                )
+                .validation_status(TIMESTAMP_UNTRUSTED)
+                .informational(&mut current_validation_log);
 
-            last_err = TimeStampError::Untrusted;
-            continue;
+                last_err = TimeStampError::Untrusted;
+                continue;
+            }
         }
 
         log_item!(
@@ -570,19 +576,123 @@ fn generalized_time_to_datetime<T: Into<DateTime<Utc>>>(gt: T) -> DateTime<Utc> 
     gt.into()
 }
 
-fn timestamp_to_generalized_time(dt: i64) -> Option<GeneralizedTime> {
+fn timestamp_to_generalized_time(dt: i64) -> Option<crate::crypto::asn1::GeneralizedTime> {
     match Utc.timestamp_opt(dt, 0) {
-        LocalResult::Single(time) => {
-            let formatted_time = time.format("%Y%m%d%H%M%SZ").to_string();
-
-            GeneralizedTime::parse(
-                SliceSource::new(formatted_time.as_bytes()),
-                false,
-                GeneralizedTimeAllowedTimezone::Z,
-            )
-            .ok()
-        }
+        LocalResult::Single(time) => Some(time.into()),
         _ => None,
+    }
+}
+
+/// Digest algorithm enum compatible with bcder OIDs
+#[derive(Clone, Copy, Debug)]
+enum DigestAlgorithm {
+    Sha1,
+    Sha256,
+    Sha384,
+    Sha512,
+}
+
+impl DigestAlgorithm {
+    fn digester(self) -> Hasher {
+        match self {
+            DigestAlgorithm::Sha1 => Hasher::Sha1(Sha1::new()),
+            DigestAlgorithm::Sha256 => Hasher::Sha256(Sha256::new()),
+            DigestAlgorithm::Sha384 => Hasher::Sha384(Sha384::new()),
+            DigestAlgorithm::Sha512 => Hasher::Sha512(Sha512::new()),
+        }
+    }
+}
+
+impl TryFrom<&bcder::Oid> for DigestAlgorithm {
+    type Error = ();
+
+    fn try_from(oid: &bcder::Oid) -> Result<Self, Self::Error> {
+        // Using der::asn1 instead of oids defined in oid.rs, because this is faster and we intend to remove x509_parser eventually.
+        // Convert bcder::Oid to string, then parse as ObjectIdentifier for comparison
+        let oid_str = oid.to_string();
+        let const_oid = ObjectIdentifier::new(&oid_str).map_err(|_| ())?;
+
+        // SHA-1: 1.3.14.3.2.26
+        const SHA1_OID: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.3.14.3.2.26");
+        // SHA-256: 2.16.840.1.101.3.4.2.1
+        const SHA256_OID: ObjectIdentifier = ObjectIdentifier::new_unwrap("2.16.840.1.101.3.4.2.1");
+        // SHA-384: 2.16.840.1.101.3.4.2.2
+        const SHA384_OID: ObjectIdentifier = ObjectIdentifier::new_unwrap("2.16.840.1.101.3.4.2.2");
+        // SHA-512: 2.16.840.1.101.3.4.2.3
+        const SHA512_OID: ObjectIdentifier = ObjectIdentifier::new_unwrap("2.16.840.1.101.3.4.2.3");
+
+        if const_oid == SHA1_OID {
+            Ok(DigestAlgorithm::Sha1)
+        } else if const_oid == SHA256_OID {
+            Ok(DigestAlgorithm::Sha256)
+        } else if const_oid == SHA384_OID {
+            Ok(DigestAlgorithm::Sha384)
+        } else if const_oid == SHA512_OID {
+            Ok(DigestAlgorithm::Sha512)
+        } else {
+            Err(())
+        }
+    }
+}
+
+/// Hasher enum to hold different digest types
+enum Hasher {
+    Sha1(Sha1),
+    Sha256(Sha256),
+    Sha384(Sha384),
+    Sha512(Sha512),
+}
+
+impl Hasher {
+    fn update(&mut self, data: &[u8]) {
+        match self {
+            Hasher::Sha1(h) => {
+                use sha1::Digest;
+                h.update(data);
+            }
+            Hasher::Sha256(h) => {
+                use sha2::Digest;
+                h.update(data);
+            }
+            Hasher::Sha384(h) => {
+                use sha2::Digest;
+                h.update(data);
+            }
+            Hasher::Sha512(h) => {
+                use sha2::Digest;
+                h.update(data);
+            }
+        }
+    }
+
+    fn finish(self) -> HasherOutput {
+        match self {
+            Hasher::Sha1(h) => {
+                use sha1::Digest;
+                HasherOutput(h.finalize().to_vec())
+            }
+            Hasher::Sha256(h) => {
+                use sha2::Digest;
+                HasherOutput(h.finalize().to_vec())
+            }
+            Hasher::Sha384(h) => {
+                use sha2::Digest;
+                HasherOutput(h.finalize().to_vec())
+            }
+            Hasher::Sha512(h) => {
+                use sha2::Digest;
+                HasherOutput(h.finalize().to_vec())
+            }
+        }
+    }
+}
+
+/// Wrapper for hash output that implements AsRef<[u8]>
+struct HasherOutput(Vec<u8>);
+
+impl AsRef<[u8]> for HasherOutput {
+    fn as_ref(&self) -> &[u8] {
+        &self.0
     }
 }
 

@@ -183,9 +183,4 @@ impl AsyncSigner for CallbackSigner {
     fn time_authority_url(&self) -> Option<String> {
         self.tsa_url.clone()
     }
-
-    #[cfg(target_arch = "wasm32")]
-    async fn send_timestamp_request(&self, _message: &[u8]) -> Option<Result<Vec<u8>>> {
-        None
-    }
 }

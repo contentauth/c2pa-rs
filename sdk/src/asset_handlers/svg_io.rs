@@ -18,7 +18,6 @@ use std::{
     path::Path,
 };
 
-use conv::ValueFrom;
 use quick_xml::{
     events::{BytesText, Event},
     Reader, Writer,
@@ -248,7 +247,7 @@ fn detect_manifest_location(
                     && xml_path[2] == MANIFEST
                 {
                     let encoded_content = e
-                        .unescape()
+                        .decode()
                         .map_err(|_e| {
                             Error::InvalidAsset("XML incorrectly escaped character".to_string())
                         })?
@@ -546,7 +545,7 @@ impl CAIWriter for SvgIO {
 
         // add position from cai to end
         let end = manifest_pos + encoded_manifest_len;
-        let length = usize::value_from(stream_len(input_stream)?)
+        let length = usize::try_from(stream_len(input_stream)?)
             .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?
             .saturating_sub(end);
         positions.push(HashObjectPositions {

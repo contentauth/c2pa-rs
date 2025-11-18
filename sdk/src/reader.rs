@@ -32,19 +32,21 @@ use serde_with::skip_serializing_none;
 #[cfg(feature = "file_io")]
 use crate::utils::io_utils::uri_to_path;
 use crate::{
-    crypto::base64,
+    claim::Claim,
     dynamic_assertion::PartialClaim,
     error::{Error, Result},
+    http::{AsyncGenericResolver, SyncGenericResolver},
     jumbf::labels::{manifest_label_from_uri, to_absolute_uri, to_relative_uri},
-    jumbf_io,
+    jumbf_io, log_item,
     manifest::StoreOptions,
     manifest_store_report::ManifestStoreReport,
-    settings::get_settings_value,
+    settings::Settings,
     status_tracker::StatusTracker,
     store::Store,
+    utils::hash_utils::hash_to_b64,
     validation_results::{ValidationResults, ValidationState},
-    validation_status::ValidationStatus,
-    Manifest, ManifestAssertion,
+    validation_status::{ValidationStatus, ASSERTION_MISSING, ASSERTION_NOT_REDACTED},
+    Ingredient, Manifest, ManifestAssertion, Relationship,
 };
 
 /// A trait for post-validation of manifest assertions.
@@ -108,13 +110,17 @@ type ValidationFn =
 
 impl Reader {
     /// Create a manifest store [`Reader`] from a stream.  A Reader is used to validate C2PA data from an asset.
+    ///
     /// # Arguments
     /// * `format` - The format of the stream.  MIME type or extension that maps to a MIME type.
     /// * `stream` - The stream to read from.  Must implement the Read and Seek traits. (NOTE: Explain Send trait, required for both sync & async?).
+    ///
     /// # Returns
     /// A [`Reader`] for the manifest store.
+    ///
     /// # Errors
     /// Returns an [`Error`] when the manifest data cannot be read.  If there's no error upon reading, you must still check validation status to ensure that the manifest data is validated.  That is, even if there are no errors, the data still might not be valid.
+    ///
     /// # Example
     /// This example reads from a memory buffer and prints out the JSON manifest data.
     /// ```no_run
@@ -125,52 +131,122 @@ impl Reader {
     /// let reader = Reader::from_stream("image/jpeg", stream).unwrap();
     /// println!("{}", reader.json());
     /// ```
-    #[async_generic()]
+    ///
+    /// # Note
+    /// [CAWG identity] assertions require async calls for validation.
+    ///
+    /// [CAWG identity]: https://cawg.io/identity/
+    #[async_generic]
     #[cfg(not(target_arch = "wasm32"))]
     pub fn from_stream(format: &str, mut stream: impl Read + Seek + Send) -> Result<Reader> {
-        let verify = get_settings_value::<bool>("verify.verify_after_reading")?; // defaults to true
-        let mut validation_log = StatusTracker::default();
-        let store = if _sync {
-            Store::from_stream(format, &mut stream, verify, &mut validation_log)
+        let settings = crate::settings::get_settings().unwrap_or_default();
+        let http_resolver = if _sync {
+            SyncGenericResolver::new()
         } else {
-            Store::from_stream_async(format, &mut stream, verify, &mut validation_log).await
+            AsyncGenericResolver::new()
+        };
+        // TODO: passing verify is redundant with settings
+        let verify = settings.verify.verify_after_reading;
+
+        let mut validation_log = StatusTracker::default();
+        stream.rewind()?; // Ensure stream is at the start
+        let store = if _sync {
+            Store::from_stream(
+                format,
+                stream,
+                verify,
+                &mut validation_log,
+                &http_resolver,
+                &settings,
+            )
+        } else {
+            Store::from_stream_async(
+                format,
+                stream,
+                verify,
+                &mut validation_log,
+                &http_resolver,
+                &settings,
+            )
+            .await
         }?;
 
-        Self::from_store(store, &validation_log)
+        if _sync {
+            Self::from_store(store, &mut validation_log, &settings)
+        } else {
+            Self::from_store_async(store, &mut validation_log, &settings).await
+        }
     }
 
-    #[async_generic()]
+    #[async_generic]
     #[cfg(target_arch = "wasm32")]
     pub fn from_stream(format: &str, mut stream: impl Read + Seek) -> Result<Reader> {
-        let verify = get_settings_value::<bool>("verify.verify_after_reading")?; // defaults to true
+        let settings = crate::settings::get_settings().unwrap_or_default();
+        let http_resolver = if _sync {
+            SyncGenericResolver::new()
+        } else {
+            AsyncGenericResolver::new()
+        };
+        // TODO: passing verify is redundant with settings
+        let verify = settings.verify.verify_after_reading;
+
         let mut validation_log = StatusTracker::default();
 
         let store = if _sync {
-            Store::from_stream(format, &mut stream, verify, &mut validation_log)
+            Store::from_stream(
+                format,
+                &mut stream,
+                verify,
+                &mut validation_log,
+                &http_resolver,
+                &settings,
+            )
         } else {
-            Store::from_stream_async(format, &mut stream, verify, &mut validation_log).await
+            Store::from_stream_async(
+                format,
+                &mut stream,
+                verify,
+                &mut validation_log,
+                &http_resolver,
+                &settings,
+            )
+            .await
         }?;
 
-        Self::from_store(store, &validation_log)
+        if _sync {
+            Self::from_store(store, &mut validation_log, &settings)
+        } else {
+            Self::from_store_async(store, &mut validation_log, &settings).await
+        }
     }
 
     #[cfg(feature = "file_io")]
     /// Create a manifest store [`Reader`] from a file.
     /// If the `fetch_remote_manifests` feature is enabled, and the asset refers to a remote manifest, the function fetches a remote manifest.
+    ///
     /// NOTE: If the file does not have a manifest store, the function will check for a sidecar manifest with the same base file name and a .c2pa extension.
+    ///
     /// # Arguments
     /// * `path` - The path to the file.
+    ///
     /// # Returns
     /// A [`Reader`] for the manifest store.
+    ///
     /// # Errors
     /// Returns an [`Error`] when the manifest data cannot be read from the specified file.  If there's no error upon reading, you must still check validation status to ensure that the manifest data is validated.  That is, even if there are no errors, the data still might not be valid.
+    ///
     /// # Example
-    /// This example
+    ///
     /// ```no_run
     /// use c2pa::Reader;
     /// let reader = Reader::from_file("path/to/file.jpg").unwrap();
     /// ```
-    #[async_generic()]
+    ///
+    /// # Note
+    /// [CAWG identity] assertions require async calls for validation.
+    ///
+    /// [CAWG identity]: https://cawg.io/identity/
+    #[async_generic]
     pub fn from_file<P: AsRef<std::path::Path>>(path: P) -> Result<Reader> {
         let path = path.as_ref();
         let format = crate::format_from_path(path).ok_or(crate::Error::UnsupportedType)?;
@@ -226,15 +302,22 @@ impl Reader {
     /// # Errors
     /// This function returns an [`Error`] ef the c2pa_data is not valid, or severe errors occur in validation.
     /// You must check validation status for non-severe errors.
-    #[async_generic()]
+    #[async_generic]
     pub fn from_manifest_data_and_stream(
         c2pa_data: &[u8],
         format: &str,
         stream: impl Read + Seek + Send,
     ) -> Result<Reader> {
+        let settings = crate::settings::get_settings().unwrap_or_default();
+        let http_resolver = if _sync {
+            SyncGenericResolver::new()
+        } else {
+            AsyncGenericResolver::new()
+        };
+
         let mut validation_log = StatusTracker::default();
 
-        let verify = get_settings_value::<bool>("verify.verify_after_reading")?; // defaults to true
+        let verify = settings.verify.verify_after_reading;
 
         let store = if _sync {
             Store::from_manifest_data_and_stream(
@@ -243,6 +326,8 @@ impl Reader {
                 stream,
                 verify,
                 &mut validation_log,
+                &http_resolver,
+                &settings,
             )
         } else {
             Store::from_manifest_data_and_stream_async(
@@ -251,11 +336,13 @@ impl Reader {
                 stream,
                 verify,
                 &mut validation_log,
+                &http_resolver,
+                &settings,
             )
             .await
         }?;
 
-        Self::from_store(store, &validation_log)
+        Self::from_store(store, &mut validation_log, &settings)
     }
 
     /// Create a [`Reader`] from an initial segment and a fragment stream.
@@ -269,12 +356,19 @@ impl Reader {
     /// # Errors
     /// This function returns an [`Error`] if the streams are not valid, or severe errors occur in validation.
     /// You must check validation status for non-severe errors.
-    #[async_generic()]
+    #[async_generic]
     pub fn from_fragment(
         format: &str,
         mut stream: impl Read + Seek + Send,
         mut fragment: impl Read + Seek + Send,
     ) -> Result<Self> {
+        let settings = crate::settings::get_settings().unwrap_or_default();
+        let http_resolver = if _sync {
+            SyncGenericResolver::new()
+        } else {
+            AsyncGenericResolver::new()
+        };
+
         let mut validation_log = StatusTracker::default();
 
         let store = if _sync {
@@ -283,6 +377,8 @@ impl Reader {
                 &mut stream,
                 &mut fragment,
                 &mut validation_log,
+                &http_resolver,
+                &settings,
             )
         } else {
             Store::load_fragment_from_stream_async(
@@ -290,23 +386,27 @@ impl Reader {
                 &mut stream,
                 &mut fragment,
                 &mut validation_log,
+                &http_resolver,
+                &settings,
             )
             .await
         }?;
 
-        Self::from_store(store, &validation_log)
+        Self::from_store(store, &mut validation_log, &settings)
     }
 
-    #[cfg(feature = "file_io")]
     /// Loads a [`Reader`]` from an initial segment and fragments.  This
     /// would be used to load and validate fragmented MP4 files that span
     /// multiple separate asset files.
+    #[cfg(feature = "file_io")]
     pub fn from_fragmented_files<P: AsRef<std::path::Path>>(
         path: P,
         fragments: &Vec<std::path::PathBuf>,
     ) -> Result<Reader> {
-        let verify = get_settings_value::<bool>("verify.verify_after_reading")?; // defaults to true
+        let settings = crate::settings::get_settings().unwrap_or_default();
+        let http_resolver = SyncGenericResolver::new();
 
+        let verify = settings.verify.verify_after_reading;
         let mut validation_log = StatusTracker::default();
 
         let asset_type = jumbf_io::get_supported_file_extension(path.as_ref())
@@ -320,48 +420,12 @@ impl Reader {
             fragments,
             verify,
             &mut validation_log,
+            &http_resolver,
+            &settings,
         ) {
-            Ok(store) => Self::from_store(store, &validation_log),
+            Ok(store) => Self::from_store(store, &mut validation_log, &settings),
             Err(e) => Err(e),
         }
-    }
-
-    /// replace byte arrays with base64 encoded strings
-    fn hash_to_b64(mut value: Value) -> Value {
-        use std::collections::VecDeque;
-
-        let mut queue = VecDeque::new();
-        queue.push_back(&mut value);
-
-        while let Some(current) = queue.pop_front() {
-            match current {
-                Value::Object(obj) => {
-                    for (_, v) in obj.iter_mut() {
-                        if let Value::Array(hash_arr) = v {
-                            if !hash_arr.is_empty() && hash_arr.iter().all(|x| x.is_number()) {
-                                // Pre-allocate with capacity to avoid reallocations
-                                let mut hash_bytes = Vec::with_capacity(hash_arr.len());
-                                // Convert numbers to bytes safely
-                                for n in hash_arr.iter() {
-                                    if let Some(num) = n.as_u64() {
-                                        hash_bytes.push(num as u8);
-                                    }
-                                }
-                                *v = Value::String(base64::encode(&hash_bytes));
-                            }
-                        }
-                        queue.push_back(v);
-                    }
-                }
-                Value::Array(arr) => {
-                    for v in arr.iter_mut() {
-                        queue.push_back(v);
-                    }
-                }
-                _ => {}
-            }
-        }
-        value
     }
 
     /// Returns a [Vec] of mime types that [c2pa-rs] is able to read.
@@ -404,7 +468,7 @@ impl Reader {
             }
         }
         // Convert hash values to base64 strings
-        Ok(Self::hash_to_b64(json))
+        Ok(hash_to_b64(json))
     }
 
     /// Convert the reader to a JSON value with detailed formatting.
@@ -436,14 +500,23 @@ impl Reader {
             }
         }
         // Convert hash values to base64 strings
-        json = Self::hash_to_b64(json);
+        json = hash_to_b64(json);
         Ok(json)
     }
 
     /// Get the Reader as a JSON string
-    /// This just calls to_
+    /// This just calls to_json_formatted
     pub fn json(&self) -> String {
         match self.to_json_formatted() {
+            Ok(value) => serde_json::to_string_pretty(&value).unwrap_or_default(),
+            Err(_) => "{}".to_string(),
+        }
+    }
+
+    /// Get the Reader as a detailed JSON string
+    /// This just calls to_json_detailed_formatted
+    pub fn detailed_json(&self) -> String {
+        match self.to_json_detailed_formatted() {
             Ok(value) => serde_json::to_string_pretty(&value).unwrap_or_default(),
             Err(_) => "{}".to_string(),
         }
@@ -499,11 +572,13 @@ impl Reader {
 
     /// Get the [`ValidationState`] of the manifest store.
     pub fn validation_state(&self) -> ValidationState {
+        let settings = crate::settings::get_settings().unwrap_or_default();
+
         if let Some(validation_results) = self.validation_results() {
             return validation_results.validation_state();
         }
 
-        let verify_trust = get_settings_value("verify.verify_trust").unwrap_or(false);
+        let verify_trust = settings.verify.verify_trust;
         match self.validation_status() {
             Some(status) => {
                 // if there are any errors, the state is invalid unless the only error is an untrusted credential
@@ -668,9 +743,11 @@ impl Reader {
     }
 
     #[async_generic()]
-    fn from_store(store: Store, validation_log: &StatusTracker) -> Result<Self> {
-        let mut validation_results = ValidationResults::from_store(&store, validation_log);
-
+    pub(crate) fn from_store(
+        store: Store,
+        validation_log: &mut StatusTracker,
+        settings: &Settings,
+    ) -> Result<Self> {
         let active_manifest = store.provenance_label();
         let mut manifests = HashMap::new();
         let mut options = StoreOptions::default();
@@ -678,19 +755,41 @@ impl Reader {
         for claim in store.claims() {
             let manifest_label = claim.label();
             let result = if _sync {
-                Manifest::from_store(&store, manifest_label, &mut options)
+                Manifest::from_store(
+                    &store,
+                    manifest_label,
+                    &mut options,
+                    validation_log,
+                    settings,
+                )
             } else {
-                Manifest::from_store_async(&store, manifest_label, &mut options).await
+                Manifest::from_store_async(
+                    &store,
+                    manifest_label,
+                    &mut options,
+                    validation_log,
+                    settings,
+                )
+                .await
             };
+
             match result {
-                Ok(manifest) => {
+                Ok(mut manifest) => {
+                    // Generate manifest_data for ingredients
+                    Self::populate_ingredient_manifest_data(&store, &mut manifest)?;
                     manifests.insert(manifest_label.to_owned(), manifest);
                 }
                 Err(e) => {
-                    validation_results.add_status(ValidationStatus::from_error(&e));
+                    let uri = crate::jumbf::labels::to_manifest_uri(manifest_label);
+                    let code = ValidationStatus::code_from_error(&e);
+                    log_item!(uri.clone(), "Failed to load manifest", "Reader::from_store")
+                        .validation_status(code)
+                        .failure(validation_log, Error::C2PAValidation(e.to_string()))?;
                 }
             };
         }
+
+        let validation_results = ValidationResults::from_store(&store, validation_log);
 
         // resolve redactions
         // Even though we validate
@@ -706,15 +805,16 @@ impl Reader {
 
         // Add any remaining redacted assertions to the validation results
         // todo: figure out what to do here!
-        if !redacted.is_empty() {
-            eprintln!("Not Redacted: {redacted:?}");
-            return Err(Error::AssertionRedactionNotFound);
+        for uri in &redacted {
+            log_item!(uri.clone(), "assertion not redacted", "Reader::from_store")
+                .validation_status(ASSERTION_NOT_REDACTED)
+                .informational(validation_log);
         }
-        if !missing.is_empty() {
-            eprintln!("Assertion Missing: {missing:?}");
-            return Err(Error::AssertionMissing {
-                url: redacted[0].to_owned(),
-            });
+
+        for uri in &missing {
+            log_item!(uri.clone(), "assertion missing", "Reader::from_store")
+                .validation_status(ASSERTION_MISSING)
+                .informational(validation_log);
         }
 
         let validation_state = validation_results.validation_state();
@@ -727,6 +827,64 @@ impl Reader {
             store,
             assertion_values: HashMap::new(),
         })
+    }
+
+    /// Populate manifest_data references for all ingredients in a manifest
+    fn populate_ingredient_manifest_data(store: &Store, manifest: &mut Manifest) -> Result<()> {
+        for ingredient in manifest.ingredients_mut() {
+            if let Some(active_label) = ingredient.active_manifest() {
+                if let Some(claim) = store.get_claim(active_label) {
+                    // Generate the ingredient store with all referenced claims
+                    let ingredient_store = {
+                        let mut ingredient_store = Store::new();
+                        let mut active_claim = claim.clone();
+
+                        // Recursively collect all ingredient claims
+                        Self::collect_ingredient_claims_for_store(store, claim, &mut active_claim)?;
+
+                        // Add the main claim
+                        ingredient_store.commit_claim(active_claim)?;
+                        ingredient_store
+                    };
+
+                    let c2pa_data = ingredient_store.to_jumbf_internal(0)?;
+
+                    // Create a unique resource name based on the ingredient's active manifest label
+                    // This ensures each ingredient has a uniquely identifiable manifest_data resource
+                    let resource_name = format!("{}/manifest_data", active_label.replace('/', "_"));
+
+                    let manifest_data_ref = ingredient.resources_mut().add_with(
+                        &resource_name,
+                        "application/c2pa",
+                        c2pa_data,
+                    )?;
+
+                    ingredient.set_manifest_data_ref(manifest_data_ref)?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Helper method to recursively collect ingredient claims for a store
+    fn collect_ingredient_claims_for_store(
+        store: &Store,
+        claim: &Claim,
+        active_claim: &mut Claim,
+    ) -> Result<()> {
+        for ingredient in claim.claim_ingredients() {
+            if let Some(ingredient_claim) = store.get_claim(ingredient.label()) {
+                // First, recursively collect any ingredients this claim references
+                Self::collect_ingredient_claims_for_store(store, ingredient_claim, active_claim)?;
+
+                // Then add this ingredient claim to the primary claim
+                active_claim.replace_ingredient_or_insert(
+                    ingredient_claim.label().to_string(),
+                    ingredient_claim.clone(),
+                );
+            }
+        }
+        Ok(())
     }
 
     /// Post-validate the reader. This function is called after the reader is created.
@@ -844,6 +1002,124 @@ impl Reader {
 
         Ok(assertion_values)
     }
+
+    /// Convert the Reader back into a Builder.
+    /// This can be used to modify an existing manifest store.
+    /// # Errors
+    /// Returns an [`Error`] if there is no active manifest.
+    pub fn into_builder(mut self) -> Result<crate::Builder> {
+        let mut builder = crate::Builder::new();
+        if let Some(label) = &self.active_manifest {
+            if let Some(parts) = crate::jumbf::labels::manifest_label_to_parts(label) {
+                builder.definition.vendor = parts.cgi.clone();
+                if parts.is_v1 {
+                    builder.definition.claim_version = Some(1);
+                }
+            }
+            builder.definition.label = Some(label.to_string());
+            if let Some(mut manifest) = self.manifests.remove(label) {
+                builder.definition.claim_generator_info =
+                    manifest.claim_generator_info.take().unwrap_or_default();
+                builder.definition.format = manifest.format().unwrap_or_default().to_string();
+                builder.definition.title = manifest.title().map(|s| s.to_owned());
+                builder.definition.instance_id = manifest.instance_id().to_owned();
+                builder.definition.thumbnail = manifest.thumbnail_ref().cloned();
+                builder.definition.redactions = manifest.redactions.take();
+                let ingredients = std::mem::take(&mut manifest.ingredients); //manifest.ingredients.drain(..).collect::<Vec<_>>();
+                for mut ingredient in ingredients {
+                    if let Some(active_manifest) = ingredient.active_manifest() {
+                        let ingredient_claim = self.store.remove_claim(active_manifest);
+                        if let Some(claim) = ingredient_claim {
+                            // recreate an ingredient store to get the jumbf data
+                            let mut ingredient_store = Store::new();
+                            ingredient_store.commit_claim(claim.clone())?;
+                            let jumbf = ingredient_store.to_jumbf_internal(0)?;
+                            let manifest_data_ref = manifest.resources_mut().add_with(
+                                "manifest_data",
+                                "application/c2pa",
+                                jumbf,
+                            )?;
+                            ingredient.set_manifest_data_ref(manifest_data_ref)?;
+                        }
+                    }
+                    builder.add_ingredient(ingredient);
+                }
+                for assertion in manifest.assertions.iter() {
+                    builder.add_assertion(assertion.label(), assertion.value()?)?;
+                }
+                for (uri, data) in manifest.resources().resources() {
+                    builder.add_resource(uri, std::io::Cursor::new(data))?;
+                }
+            }
+        }
+        Ok(builder)
+    }
+
+    /// Convert a Reader into an [`Ingredient`] using the parent ingredient from the active manifest.
+    /// # Errors
+    /// Returns an [`Error`] if there is no parent ingredient.
+    pub(crate) fn to_ingredient(&self) -> Result<Ingredient> {
+        // make a copy of the parent ingredient (or return an error if not found)
+        let mut ingredient = self
+            .active_manifest()
+            .and_then(|m| {
+                m.ingredients()
+                    .iter()
+                    .find(|&i| *i.relationship() == Relationship::ParentOf)
+            })
+            .ok_or_else(|| Error::IngredientNotFound)?
+            .to_owned();
+
+        // now we need to rebuild the manifest data for the ingredient
+        // strip out the active manifest claim from the store before adding it to the ingredient
+        // We only care about the ingredient and any claims it references
+        if let Some(active_label) = ingredient.active_manifest() {
+            let claim = self
+                .store
+                .get_claim(active_label)
+                .ok_or_else(|| Error::ClaimMissing {
+                    label: active_label.to_string(),
+                })?;
+
+            // build a new store with just the ingredient claim and any referenced claims
+            let ingredient_store = {
+                let mut store = Store::new();
+                let mut active_claim = claim.clone();
+
+                // Recursively collect all ingredient claims and add them to primary_claim
+                self.collect_ingredient_claims_recursive(claim, &mut active_claim)?;
+
+                // Add the main claim last
+                store.commit_claim(active_claim)?;
+                store
+            };
+            let c2pa_data = ingredient_store.to_jumbf_internal(0)?;
+            ingredient.set_manifest_data(c2pa_data)?;
+        }
+
+        Ok(ingredient)
+    }
+
+    /// Recursively collect all ingredient claims and add them to the primary claim
+    fn collect_ingredient_claims_recursive(
+        &self,
+        claim: &Claim,
+        active_claim: &mut Claim,
+    ) -> Result<()> {
+        for ingredient in claim.claim_ingredients() {
+            if let Some(ingredient_claim) = self.store.get_claim(ingredient.label()) {
+                // First, recursively collect any ingredients this claim references
+                self.collect_ingredient_claims_recursive(ingredient_claim, active_claim)?;
+
+                // Then add this ingredient claim to the primary claim
+                active_claim.replace_ingredient_or_insert(
+                    ingredient_claim.label().to_string(),
+                    ingredient_claim.clone(),
+                );
+            }
+        }
+        Ok(())
+    }
 }
 
 /// Convert the Reader to a JSON value.
@@ -875,13 +1151,16 @@ impl std::fmt::Debug for Reader {
         let json = self
             .to_json_detailed_formatted()
             .map_err(|_| std::fmt::Error)?;
-        // let report = match self.validation_results() {
-        //     Some(results) => ManifestStoreReport::from_store_with_results(&self.store, results),
-        //     None => ManifestStoreReport::from_store(&self.store),
-        // }
-        // .map_err(|_| std::fmt::Error)?;
         let output = serde_json::to_string_pretty(&json).map_err(|_| std::fmt::Error)?;
         f.write_str(&output)
+    }
+}
+
+impl TryInto<crate::Builder> for Reader {
+    type Error = Error;
+
+    fn try_into(self) -> Result<crate::Builder> {
+        self.into_builder()
     }
 }
 
@@ -897,6 +1176,34 @@ pub mod tests {
     const IMAGE_COMPLEX_MANIFEST: &[u8] = include_bytes!("../tests/fixtures/CACAE-uri-CA.jpg");
     const IMAGE_WITH_MANIFEST: &[u8] = include_bytes!("../tests/fixtures/CA.jpg");
     const IMAGE_WITH_REMOTE_MANIFEST: &[u8] = include_bytes!("../tests/fixtures/cloud.jpg");
+    const IMAGE_WITH_INGREDIENT_MANIFEST: &[u8] = include_bytes!("../tests/fixtures/CACA.jpg");
+
+    #[test]
+    // Verify that we can convert a Reader back into a Builder re-sign and the read it back again
+    fn test_into_builder() -> Result<()> {
+        crate::settings::Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml"))?;
+        let mut source = Cursor::new(IMAGE_WITH_INGREDIENT_MANIFEST);
+        let format = "image/jpeg";
+        let reader = Reader::from_stream(format, &mut source)?;
+        println!("{reader}");
+
+        assert_eq!(reader.validation_state(), ValidationState::Trusted);
+        let mut builder: crate::Builder = reader.try_into()?;
+        println!("{builder}");
+
+        source.set_position(0);
+        let mut dest = Cursor::new(Vec::new());
+        let signer = crate::settings::Settings::signer()?;
+        builder.sign(&signer, format, &mut source, &mut dest)?;
+
+        dest.set_position(0);
+        let reader2 = Reader::from_stream(format, &mut dest)?;
+        println!("{reader2}");
+
+        assert_eq!(reader2.validation_state(), ValidationState::Trusted);
+        //std::fs::write("../target/CA-rebuilt.jpg", dest.get_ref())?;
+        Ok(())
+    }
 
     #[test]
     fn test_reader_embedded() -> Result<()> {
@@ -940,8 +1247,10 @@ pub mod tests {
     }
 
     #[test]
-    #[cfg(not(target_os = "wasi"))] // todo: enable when disable we find out wasi trust issues
     fn test_reader_trusted() -> Result<()> {
+        #[cfg(target_os = "wasi")]
+        Settings::reset().unwrap();
+
         let reader =
             Reader::from_stream("image/jpeg", std::io::Cursor::new(IMAGE_COMPLEX_MANIFEST))?;
         assert_eq!(reader.validation_state(), ValidationState::Trusted);
@@ -981,17 +1290,74 @@ pub mod tests {
 
     #[test]
     #[cfg(feature = "file_io")]
-    /// Test that the reader can validate a file with nested assertion errors
+    /// Tests that the reader can write resources to a folder and that ingredients have manifest_data populated
     fn test_reader_to_folder() -> Result<()> {
+        // Skip this test in GitHub workflow when target is WASI
+        if std::env::var("GITHUB_ACTIONS").is_ok() && cfg!(target_os = "wasi") {
+            eprintln!("Skipping test_reader_to_folder on WASI in GitHub Actions");
+            return Ok(());
+        }
+
         use crate::utils::{io_utils::tempdirectory, test::temp_dir_path};
-        let reader = Reader::from_file("tests/fixtures/CACAE-uri-CA.jpg")?;
+        let reader = Reader::from_stream(
+            "image/jpeg",
+            std::io::Cursor::new(IMAGE_WITH_INGREDIENT_MANIFEST),
+        )?;
         assert_eq!(reader.validation_status(), None);
+
+        // Test that ingredients have manifest_data populated
+        if let Some(manifest) = reader.active_manifest() {
+            for ingredient in manifest.ingredients() {
+                // Verify that each ingredient has manifest_data
+                assert!(
+                    ingredient.manifest_data().is_some(),
+                    "Ingredient should have manifest_data populated"
+                );
+
+                // Verify the manifest_data is not empty
+                let manifest_data = ingredient.manifest_data().unwrap();
+                assert!(
+                    !manifest_data.is_empty(),
+                    "Ingredient manifest_data should not be empty"
+                );
+            }
+        }
+
         let temp_dir = tempdirectory().unwrap();
         reader.to_folder(temp_dir.path())?;
         let path = temp_dir_path(&temp_dir, "manifest.json");
         assert!(path.exists());
-        #[cfg(target_os = "wasi")]
-        crate::utils::io_utils::wasm_remove_dir_all(temp_dir)?;
+        Ok(())
+    }
+
+    #[test]
+    #[cfg(feature = "file_io")]
+    /// Test that the reader can validate a file with nested assertion errors
+    fn test_reader_detailed_json() -> Result<()> {
+        let reader = Reader::from_file("tests/fixtures/CACAE-uri-CA.jpg")?;
+        let json = reader.json();
+        let detailed_json = reader.detailed_json();
+        let parsed_json: Value = serde_json::from_str(json.as_str())?;
+        let parsed_detailed_json: Value = serde_json::from_str(detailed_json.as_str())?;
+
+        // Undetailed JSON doesn't include "claim" object as child of active manifest object
+        // Detailed JSON does include the "claim" object.
+        assert!(
+            if let Some(active_manifest) = parsed_json["active_manifest"].as_str() {
+                let mut is_valid = parsed_json["manifests"]
+                    .get(active_manifest)
+                    .and_then(|m| m.get("claim"))
+                    .is_none();
+                is_valid &= parsed_detailed_json["manifests"]
+                    .get(active_manifest)
+                    .and_then(|m| m.get("claim"))
+                    .is_some();
+                is_valid
+            } else {
+                false
+            }
+        );
+        assert!(json.len() < detailed_json.len()); // Detailed JSON should contain more information
         Ok(())
     }
 

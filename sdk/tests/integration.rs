@@ -142,7 +142,7 @@ mod integration_1 {
         let json = std::fs::read_to_string(manifest_path)?;
 
         let mut builder = Builder::from_json(&json)?;
-        builder.base_path = Some(fixture_path(""));
+        builder.set_base_path(fixture_path(""));
 
         // sign and embed into the target file
         let signer = Settings::signer()?;
@@ -232,7 +232,7 @@ mod integration_1 {
         if let Some(manifest) = reader.active_manifest() {
             assert!(manifest.title().is_some());
             assert_eq!(manifest.assertions().len(), 2); // one for AssetReference and one for Actions
-            let assertion_ref: AssetReference = manifest.assertions()[1].to_assertion()?;
+            let assertion_ref: AssetReference = manifest.assertions()[0].to_assertion()?;
             assert_eq!(assertion_ref, references);
         } else {
             panic!("no manifest in store");
@@ -349,46 +349,50 @@ mod integration_1 {
         Ok(())
     }
 
-    #[test]
-    #[cfg(feature = "file_io")]
-    fn test_certificate_status() -> Result<()> {
-        use std::io::Cursor;
+    /*
+    This test is currently invalid.  It is using C2PA 2.2 assertions in 1.4 claims
+    This needs to be rewritten in a way that does not require network calls, or mock
+    them correctly.  Tracking issue: https://github.com/contentauth/c2pa-rs/issues/1581
 
-        use c2pa::ValidationState;
-        use serde_json::json;
-        let parent_json = json!({
-            "title": "Parent Test",
-            "relationship": "parentOf",
-            "label": "CA.jpg",
-        })
-        .to_string();
-        Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml"))?;
+        #[test]
+        #[cfg(feature = "file_io")]
+        fn test_certificate_status() -> Result<()> {
+            use c2pa::ValidationState;
 
-        // set up parent and destination paths
-        let temp_dir = tempdirectory()?;
-        let output_path = temp_dir.path().join("test_file.jpg");
-        let parent_path = fixture_path("earth_apollo17.jpg");
+            Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml"))?;
+            Settings::from_toml(
+                &toml::toml! {
+                    [builder]
+                    certificate_status_fetch = "all"
+                    certificate_status_should_override = true
+                }
+                .to_string(),
+            )?;
 
-        // create a new Manifest
-        let mut builder = Builder::new();
+            // set up parent and destination paths
+            let temp_dir = tempdirectory()?;
+            let output_path = temp_dir.path().join("test_file.jpg");
+            let parent_path = fixture_path("ocsp.jpg");
 
-        // sign and embed into the target file
-        let signer = Settings::signer()?;
-        let mut source = Cursor::new(include_bytes!("fixtures/ocsp.jpg"));
-        builder.add_ingredient_from_stream(parent_json, "image/jpeg", &mut source)?;
-        builder.sign_file(signer.as_ref(), &parent_path, &output_path)?;
+            // create a new Manifest
+            let mut builder = Builder::new();
+            builder.set_intent(c2pa::BuilderIntent::Update);
 
-        // read our new file with embedded manifest
-        let reader = Reader::from_file(&output_path)?;
-        let reader_json = reader.json();
-        // ensure certificate status assertion was created
-        // TODO: wasm32 does not yet support OCSP fetching
-        #[cfg(not(target_arch = "wasm32"))]
-        assert!(reader_json.contains(r#"label": "c2pa.certificate-status"#));
-        assert_eq!(reader.validation_status(), None);
-        assert_eq!(reader.validation_state(), ValidationState::Valid);
-        assert!(reader_json.contains("signingCredential.ocsp.notRevoked"));
+            // sign and embed into the target file
+            let signer = Settings::signer()?;
+            builder.sign_file(signer.as_ref(), &parent_path, &output_path)?;
 
-        Ok(())
-    }
+            // std::fs::copy(&output_path, "cert_status.jpg")?;
+
+            // read our new file with embedded manifest
+            let reader = Reader::from_file(&output_path)?;
+            let reader_json = reader.json();
+            //println!("{reader}");
+            // ensure certificate status assertion was created
+            //assert!(reader_json.contains(r#"label": "c2pa.certificate-status"#));
+            assert_eq!(reader.validation_state(), ValidationState::Trusted);
+            assert!(reader_json.contains("signingCredential.ocsp.notRevoked"));
+            Ok(())
+        }
+    */
 }

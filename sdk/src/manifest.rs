@@ -25,15 +25,18 @@ use uuid::Uuid;
 
 use crate::{
     assertion::{AssertionBase, AssertionData},
-    assertions::{labels, Actions, AssertionMetadata, EmbeddedData, SoftwareAgent},
-    claim::RemoteManifest,
+    assertions::{labels, Actions, AssertionMetadata, EmbeddedData, Metadata, SoftwareAgent},
+    claim::{ClaimAssertionType, RemoteManifest},
     crypto::raw_signature::SigningAlg,
     error::{Error, Result},
     hashed_uri::HashedUri,
+    identity::IdentityAssertion,
     ingredient::Ingredient,
     jumbf::labels::{to_absolute_uri, to_assertion_uri},
     manifest_assertion::ManifestAssertion,
-    resource_store::{mime_from_uri, skip_serializing_resources, ResourceRef, ResourceStore},
+    resource_store::{mime_from_uri, ResourceRef, ResourceStore},
+    settings::Settings,
+    status_tracker::StatusTracker,
     store::Store,
     ClaimGeneratorInfo, ManifestAssertionKind,
 };
@@ -89,7 +92,7 @@ pub struct Manifest {
 
     /// A List of ingredients
     #[serde(default = "default_vec::<Ingredient>")]
-    ingredients: Vec<Ingredient>,
+    pub(crate) ingredients: Vec<Ingredient>,
 
     /// A List of verified credentials
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -97,7 +100,7 @@ pub struct Manifest {
 
     /// A list of assertions
     #[serde(default = "default_vec::<ManifestAssertion>")]
-    assertions: Vec<ManifestAssertion>,
+    pub(crate) assertions: Vec<ManifestAssertion>,
 
     /// A list of assertion hash references.
     #[serde(skip)]
@@ -105,7 +108,7 @@ pub struct Manifest {
 
     /// A list of redactions - URIs to a redacted assertions
     #[serde(skip_serializing_if = "Option::is_none")]
-    redactions: Option<Vec<String>>,
+    pub(crate) redactions: Option<Vec<String>>,
 
     /// Signature data (only used for reporting)
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -119,8 +122,7 @@ pub struct Manifest {
     remote_manifest: Option<RemoteManifest>,
 
     /// container for binary assets (like thumbnails)
-    #[serde(skip_deserializing)]
-    #[serde(skip_serializing_if = "skip_serializing_resources")]
+    #[serde(skip)]
     resources: ResourceStore,
 }
 
@@ -350,6 +352,8 @@ impl Manifest {
         store: &Store,
         manifest_label: &str,
         options: &mut StoreOptions,
+        validation_log: &mut StatusTracker,
+        settings: &Settings,
     ) -> Result<Self> {
         let claim = store
             .get_claim(manifest_label)
@@ -434,6 +438,8 @@ impl Manifest {
             })
             .collect();
 
+        let decode_identity_assertions = settings.core.decode_identity_assertions;
+
         for assertion in claim.assertions() {
             let claim_assertion = match store
                 .get_claim_assertion_from_uri(&to_absolute_uri(claim.label(), &assertion.url()))
@@ -451,6 +457,7 @@ impl Manifest {
             let assertion = claim_assertion.assertion();
             let label = claim_assertion.label();
             let base_label = assertion.label();
+            let created = claim_assertion.assertion_type() == ClaimAssertionType::Created;
             debug!("assertion = {}", &label);
             match base_label.as_ref() {
                 base if base.starts_with(labels::ACTIONS) => {
@@ -493,7 +500,8 @@ impl Manifest {
                         }
                     }
                     let manifest_assertion = ManifestAssertion::from_assertion(&actions)?
-                        .set_instance(claim_assertion.instance());
+                        .set_instance(claim_assertion.instance())
+                        .set_created(created);
                     manifest.assertions.push(manifest_assertion);
                 }
                 base if base.starts_with(labels::INGREDIENT) => {
@@ -520,6 +528,59 @@ impl Manifest {
                         &thumbnail.content_type,
                         thumbnail.data,
                     )?);
+                } // handle special case for AssertionMetadata
+                labels::ASSERTION_METADATA => {
+                    let assertion_metadata = AssertionMetadata::from_assertion(assertion)?;
+                    let manifest_assertion =
+                        ManifestAssertion::from_assertion(&assertion_metadata)?
+                            .set_instance(claim_assertion.instance());
+                    manifest.assertions.push(manifest_assertion);
+                } // all other labels that end in .metadata are Metadata assertions
+                label if label.ends_with(".metadata") => {
+                    let metadata = Metadata::from_assertion(assertion)?;
+                    let manifest_assertion = ManifestAssertion::from_assertion(&metadata)?
+                        .set_kind(ManifestAssertionKind::Json)
+                        .set_instance(claim_assertion.instance());
+                    manifest.assertions.push(manifest_assertion);
+                }
+                label
+                    if decode_identity_assertions
+                        && (label == "cawg.identity" || label.starts_with("cawg.identity__")) =>
+                {
+                    let value = assertion.as_json_object()?;
+                    let mut ma = ManifestAssertion::new(label.to_string(), value)
+                        .set_instance(claim_assertion.instance());
+
+                    let mut partial_claim = crate::dynamic_assertion::PartialClaim::default();
+                    for a in claim.assertions() {
+                        partial_claim.add_assertion(a);
+                    }
+
+                    let uri = to_assertion_uri(manifest_label, label);
+                    validation_log.push_current_uri(&uri);
+                    let value: Option<serde_json::Value> = if _sync {
+                        crate::log_item!(
+                            uri,
+                            "decoding identity assertions not supported in sync",
+                            "from_store - validating cawg.identity"
+                        )
+                        .validation_status("cawg.validation_skipped")
+                        .informational(validation_log);
+                        None
+                    } else {
+                        let identity_assertion: IdentityAssertion = ma.to_assertion()?;
+                        identity_assertion
+                            .validate_partial_claim(&partial_claim, validation_log)
+                            .await
+                            .ok()
+                    };
+                    if let Some(v) = value {
+                        //debug!("cawg.identity validation returned: {v}");
+                        ma = ManifestAssertion::new(label.to_string(), v)
+                            .set_instance(claim_assertion.instance());
+                    }
+                    validation_log.pop_current_uri();
+                    manifest.assertions.push(ma);
                 }
                 _ => {
                     // inject assertions for all other assertions
@@ -527,7 +588,8 @@ impl Manifest {
                         AssertionData::Cbor(_) => {
                             let value = assertion.as_json_object()?;
                             let ma = ManifestAssertion::new(label, value)
-                                .set_instance(claim_assertion.instance());
+                                .set_instance(claim_assertion.instance())
+                                .set_created(created);
 
                             manifest.assertions.push(ma);
                         }
@@ -535,7 +597,8 @@ impl Manifest {
                             let value = assertion.as_json_object()?;
                             let ma = ManifestAssertion::new(label, value)
                                 .set_instance(claim_assertion.instance())
-                                .set_kind(ManifestAssertionKind::Json);
+                                .set_kind(ManifestAssertionKind::Json)
+                                .set_created(created);
 
                             manifest.assertions.push(ma);
                         }
@@ -1270,7 +1333,6 @@ pub(crate) mod tests {
 
     // This is only used for testing obsolete v1 manifest creation code
     const MANIFEST_JSON: &str = r#"{
-
         "claim_version": 1,
         "claim_generator": "test",
         "claim_generator_info": [
