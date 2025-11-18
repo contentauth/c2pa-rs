@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.71.4](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.71.3...c2pa-c-ffi-v0.71.4)
+_17 November 2025_
+
+## [0.71.3](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.71.2...c2pa-c-ffi-v0.71.3)
+_17 November 2025_
+
+## [0.71.2](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.71.1...c2pa-c-ffi-v0.71.2)
+_13 November 2025_
+
+## [0.71.1](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.71.0...c2pa-c-ffi-v0.71.1)
+_12 November 2025_
+
+### Fixed
+
+* Use Digitalsourcetype with Builder intents ([#1586](https://github.com/contentauth/c2pa-rs/pull/1586))
+
+## [0.71.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.70.0...c2pa-c-ffi-v0.71.0)
+_07 November 2025_
+
+### Added
+
+* Builder setIntent API exposed in C2PA C FFI ([#1574](https://github.com/contentauth/c2pa-rs/pull/1574))
+
 ## [0.70.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.69.0...c2pa-c-ffi-v0.70.0)
 _06 November 2025_
 
