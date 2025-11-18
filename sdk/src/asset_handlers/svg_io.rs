@@ -247,7 +247,7 @@ fn detect_manifest_location(
                     && xml_path[2] == MANIFEST
                 {
                     let encoded_content = e
-                        .unescape()
+                        .decode()
                         .map_err(|_e| {
                             Error::InvalidAsset("XML incorrectly escaped character".to_string())
                         })?
