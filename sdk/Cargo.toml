@@ -111,10 +111,7 @@ ciborium = "0.2.2"
 toml = "0.8.23"
 config = { version = "0.14.0", default-features = false, features = [
     "json",
-    "json5",
     "toml",
-    "ron",
-    "ini",
 ] }
 const-hex = "1.14"
 const-oid = { version = "0.9.6", optional = true }
