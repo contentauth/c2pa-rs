@@ -287,7 +287,7 @@ web-sys = { version = "0.3.58", features = [
 ] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
-windows-core = "0.61.2" # Override yanked version used in chrono and other crates.
+windows-core = "0.62.2" # Override yanked version used in chrono and other crates.
 
 [dev-dependencies]
 anyhow = "1.0.97"
