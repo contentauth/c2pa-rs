@@ -3471,17 +3471,15 @@ impl Store {
     ) -> Result<Vec<u8>> {
         // verify provenance path is remote url
         if Store::is_valid_remote_url(ext_ref) {
-            {
-                // Everything except browser wasm if fetch_remote_manifests is enabled
-                if settings.verify.remote_manifest_fetch {
-                    if _sync {
-                        Store::fetch_remote_manifest(ext_ref, http_resolver)
-                    } else {
-                        Store::fetch_remote_manifest_async(ext_ref, http_resolver).await
-                    }
+            // Everything except browser wasm if fetch_remote_manifests is enabled
+            if settings.verify.remote_manifest_fetch {
+                if _sync {
+                    Store::fetch_remote_manifest(ext_ref, http_resolver)
                 } else {
-                    Err(Error::RemoteManifestUrl(ext_ref.to_owned()))
+                    Store::fetch_remote_manifest_async(ext_ref, http_resolver).await
                 }
+            } else {
+                Err(Error::RemoteManifestUrl(ext_ref.to_owned()))
             }
         } else {
             Err(Error::JumbfNotFound)
