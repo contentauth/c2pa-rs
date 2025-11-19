@@ -18,11 +18,10 @@ use serde_bytes::ByteBuf;
 use crate::{
     assertions::{BoxMap, C2PA_BOXHASH},
     asset_io::{
-        AssetBoxHash, AssetIO, CAIRead, CAIReadWrapper, CAIReadWrite, CAIReader, CAIWriter,
-        ComposedManifestRef, HashBlockObjectType, HashObjectPositions,
+        AssetBoxHash, AssetIO, CAIRead, CAIReadWrite, CAIReader, CAIWriter, ComposedManifestRef,
+        HashBlockObjectType, HashObjectPositions,
     },
     error::{Error, Result},
-    jumbf::boxes::{self, BoxReader, Cai},
 };
 
 static SUPPORTED_TYPES: [&str; 3] = [
