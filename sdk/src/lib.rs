@@ -47,16 +47,17 @@
 //! # Ok(())
 //! # }
 //! ```
+
+//! ## Example: Adding a signed Manifest to an Asset
 //!
 //! ## Adding a manifest to a file
 //!
 //! ```ignore-wasm32
 //! # use c2pa::Result;
-//! use std::path::PathBuf;
+//! use std::io::Cursor;
 //!
-//! use c2pa::{create_signer, Builder, SigningAlg};
+//! use c2pa::{settings::Settings, Builder, SigningAlg};
 //! use serde::Serialize;
-//! use tempfile::tempdir;
 //!
 //! #[derive(Serialize)]
 //! struct Test {
@@ -64,35 +65,36 @@
 //! }
 //!
 //! # fn main() -> Result<()> {
-//! #[cfg(feature = "file_io")]
 //! {
+//!     Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml"))?;
 //!     let mut builder = Builder::from_json(r#"{"title": "Test"}"#)?;
 //!     builder.add_assertion("org.contentauth.test", &Test { my_tag: 42 })?;
 //!
-//!     // Create a ps256 signer using certs and key files
-//!     let signer = create_signer::from_files(
-//!         "tests/fixtures/certs/ps256.pub",
-//!         "tests/fixtures/certs/ps256.pem",
-//!         SigningAlg::Ps256,
-//!         None,
-//!     )?;
-//!
 //!     // embed a manifest using the signer
-//!     std::fs::remove_file("../target/tmp/lib_sign.jpg"); // ensure the file does not exist
-//!     builder.sign_file(
-//!         &*signer,
-//!         "tests/fixtures/C.jpg",
-//!         "../target/tmp/lib_sign.jpg",
-//!     )?;
+//!     let mut source = std::fs::File::open("tests/fixtures/C.jpg")?;
+//!     let mut dest = Cursor::new(Vec::new());
+//!     let signer = Settings::signer()?;
+//!     let _c2pa_data = builder.sign(&signer, "image/jpeg", &mut source, &mut dest)?;
 //! }
 //! # Ok(())
 //! # }
 //! ```
 //!
+//! # WASM
+//!
+//! The only supported HTTP features for WASM (not WASI) are `http_reqwest`. This means WASM
+//! only supports the async API for network requests.
+//!
+//! ## WASI
+//!
+//! The only supported HTTP features for WASI are `http_wasi` and `http_wstd`. The former
+//! enables sync network requests, while the latter enables async network requests.
+//!
 //! # Features
 //!
 //! You can enable any of the following features:
 //!
+//! - **default_http** *(enabled by default)*: Enables default HTTP features for sync and async HTTP resolvers (`http_req`, `http_reqwest`, `http_wasi`, and `http_std`).
 //! - **openssl** *(enabled by default)*: Use the vendored `openssl` implementation for cryptography.
 //! - **rust_native_crypto**: Use Rust native cryptography.
 //! - **add_thumbnails**: Adds the [`image`](https://github.com/image-rs/image) crate to enable auto-generated thumbnails, if possible and enabled in settings.
@@ -100,6 +102,11 @@
 //! - **file_io**: Enables APIs that use filesystem I/O.
 //! - **json_schema**: Adds the [`schemars`](https://github.com/GREsau/schemars) crate to derive JSON schemas for JSON-compatible structs.
 //! - **pdf**: Enables basic PDF read support.
+//! - **http_ureq**: Enables `ureq` for sync HTTP requests.
+//! - **http_reqwest**: Enables `reqwest` for async HTTP requests.
+//! - **http_reqwest_blocking**: Enables the `blocking` feature of `reqwest` for sync HTTP requests.
+//! - **http_wasi**: Enables `wasi` for sync HTTP requests on WASI.
+//! - **http_wstd**: Enables `wstd` for async HTTP requests on WASI.
 
 /// The internal name of the C2PA SDK
 pub const NAME: &str = "c2pa-rs";
@@ -145,6 +152,10 @@ pub mod validation_results;
 /// The validation_status module contains the definitions for the validation status that are part of the C2PA specification.
 #[doc(hidden)]
 pub mod validation_status;
+
+// TODO: pub it when we expose in high-level API
+/// The http module contains generic traits for configuring sync and async http resolvers.
+pub(crate) mod http;
 
 // Public exports
 pub use assertions::DigitalSourceType;

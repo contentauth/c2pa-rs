@@ -7,6 +7,82 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.72.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.71.3...c2pa-v0.72.0)
+_17 November 2025_
+
+### Added
+
+* Remove x509_certificate ([#1547](https://github.com/contentauth/c2pa-rs/pull/1547))
+
+### Fixed
+
+* Remove ring altogether ([#1606](https://github.com/contentauth/c2pa-rs/pull/1606))
+
+## [0.71.3](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.71.2...c2pa-v0.71.3)
+_17 November 2025_
+
+### Documented
+
+* Fix and update Builder examples ([#1484](https://github.com/contentauth/c2pa-rs/pull/1484))
+
+## [0.71.2](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.71.1...c2pa-v0.71.2)
+_13 November 2025_
+
+### Fixed
+
+* Remove a dbg statement ([#1594](https://github.com/contentauth/c2pa-rs/pull/1594))
+
+## [0.71.1](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.71.0...c2pa-v0.71.1)
+_12 November 2025_
+
+### Fixed
+
+* Use Digitalsourcetype with Builder intents ([#1586](https://github.com/contentauth/c2pa-rs/pull/1586))
+* Restore recursive ingredient checks ([#1582](https://github.com/contentauth/c2pa-rs/pull/1582))
+
+## [0.71.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.70.0...c2pa-v0.71.0)
+_07 November 2025_
+
+### Fixed
+
+* Disallow ureq and reqwest_blocking for WASM and WASI ([#1579](https://github.com/contentauth/c2pa-rs/pull/1579))
+
+## [0.70.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.69.0...c2pa-v0.70.0)
+_06 November 2025_
+
+### Added
+
+* Sync/async HTTP resolvers API ([#1355](https://github.com/contentauth/c2pa-rs/pull/1355))
+
+### Fixed
+
+* Better support for remote-only manifests of non-BMFF assets ([#1569](https://github.com/contentauth/c2pa-rs/pull/1569))
+
+### Updated dependencies
+
+* Bump thiserror from 1.0.69 to 2.0.17 ([#1562](https://github.com/contentauth/c2pa-rs/pull/1562))
+
+## [0.69.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.68.0...c2pa-v0.69.0)
+_04 November 2025_
+
+### Added
+
+* Refine validation state logic ([#1541](https://github.com/contentauth/c2pa-rs/pull/1541))
+* Adds support and documentation for JSON formatted Settings ([#1533](https://github.com/contentauth/c2pa-rs/pull/1533))
+* Allow reading a manifest store as a Builder to continue editing ([#1476](https://github.com/contentauth/c2pa-rs/pull/1476))
+
+### Fixed
+
+* Allow C2PA archives to be unsigned ([#1560](https://github.com/contentauth/c2pa-rs/pull/1560))
+* Add JsonSchema to Action ([#1550](https://github.com/contentauth/c2pa-rs/pull/1550))
+* Update to avoid deprecation warning for Command::cargo_bin ([#1548](https://github.com/contentauth/c2pa-rs/pull/1548))
+
+### Updated dependencies
+
+* Bump zip from 3.0.0 to 6.0.0 ([#1540](https://github.com/contentauth/c2pa-rs/pull/1540))
+* Bump coset from 0.3.8 to 0.4.0 ([#1539](https://github.com/contentauth/c2pa-rs/pull/1539))
+* Bump hex-literal from 0.4.1 to 1.0.0 ([#1527](https://github.com/contentauth/c2pa-rs/pull/1527))
+
 ## [0.68.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.67.1...c2pa-v0.68.0)
 _24 October 2025_
 

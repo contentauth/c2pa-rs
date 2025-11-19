@@ -1,10 +1,13 @@
-# A minimal set of tests to catch common issues.
+# Enforce Tier 1A support tier.
 
-# See release_readiness.yml for a more complete suite of tests.
+# See tier-1b.yml for a more complete suite of tests.
 # You can add the label "check-release" to any PR to invoke that
 # larger set of tests.
 
-name: CI
+# If you change the supported platforms in this workflow, please also
+# update docs/support-tiers.md to match the changes you're making.
+
+name: Tier 1A
 
 on:
   workflow_dispatch:
@@ -42,6 +45,7 @@ jobs:
         id: get-features
         run: |
           FEATURES=$(cargo metadata --format-version=1 | jq -r '[.packages[] | select(.name=="c2pa") | .features | keys | map(select(. != "default")) | .[]] | unique | join(" ")')
+
           RUST_NATIVE_FEATURES=$(echo $FEATURES | sed 's/openssl//g')
           OPENSSL_FEATURES=$(echo $FEATURES | sed 's/rust_native_crypto//g')
           echo "rust-native-features=$RUST_NATIVE_FEATURES" >> "$GITHUB_OUTPUT"
@@ -81,6 +85,12 @@ jobs:
         run: |
           cargo llvm-cov --lib --features "$FEATURES" --lcov --output-path lcov-openssl.info
 
+      - name: Filter out tests
+        uses: scouten/uncover-tests@v1
+        with:
+          input-file: lcov-openssl.info
+          output-file: lcov-openssl.filtered.info
+
       # Tokens aren't available for PRs originating from forks,
       # so we don't attempt to upload code coverage in that case.
       - name: Upload code coverage results
@@ -94,7 +104,7 @@ jobs:
           token: ${{ secrets.CODECOV_TOKEN }}
           fail_ci_if_error: true
           verbose: true
-          files: ./lcov-openssl.info,./lcov-rust_native_crypto.info
+          files: ./lcov-openssl.filtered.info,./lcov-rust_native_crypto.filtered.info
 
   tests-rust-native-crypto:
     name: Unit tests (Rust native crypto installed)
@@ -130,6 +140,12 @@ jobs:
         run: |
           cargo llvm-cov -p c2pa --no-default-features --features "$FEATURES" --lcov --output-path lcov-rust_native_crypto.info
 
+      - name: Filter out tests
+        uses: scouten/uncover-tests@v1
+        with:
+          input-file: lcov-rust_native_crypto.info
+          output-file: lcov-rust_native_crypto.filtered.info
+
       # Tokens aren't available for PRs originating from forks,
       # so we don't attempt to upload code coverage in that case.
       - name: Upload code coverage results
@@ -143,7 +159,7 @@ jobs:
           token: ${{ secrets.CODECOV_TOKEN }}
           fail_ci_if_error: true
           verbose: true
-          files: ./lcov-openssl.info,./lcov-rust_native_crypto.info
+          files: ./lcov-openssl.filtered.info,./lcov-rust_native_crypto.filtered.info
 
   tests-cli:
     name: Unit tests (c2patool)
@@ -300,19 +316,24 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Set up Chrome
-        id: setup-chrome
         uses: browser-actions/setup-chrome@v2
         with:
-          chrome-version: 140
+          chrome-version: 142
           install-chromedriver: true
 
-      - name: Install wasm-pack
-        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+      - name: Add wasm web target
+        run: rustup target add wasm32-unknown-unknown
+
+      - name: Install cargo-binstall
+        uses: cargo-bins/cargo-binstall@main
+
+      - name: Install wasm-bindgen-cli
+        run: cargo binstall -y wasm-bindgen-cli --version 0.2.105
 
       - name: Run Wasm tests
-        run: wasm-pack test --chrome --chromedriver ${{ steps.setup-chrome.outputs.chromedriver-path }} --headless --no-default-features --features rust_native_crypto,fetch_remote_manifests
-        working-directory: ./sdk
+        run: cargo test -p c2pa --no-default-features --features rust_native_crypto,fetch_remote_manifests,http_reqwest --target wasm32-unknown-unknown
         env:
+          CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER: wasm-bindgen-test-runner
           WASM_BINDGEN_TEST_TIMEOUT: 60
 
   benchmarks:
@@ -328,7 +349,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -366,7 +387,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
         # nightly required for testing until this issue is resolved:
         # wasip2 target should not conditionally feature gate stdlib APIs rust-lang/rust#130323 https://github.com/rust-lang/rust/issues/130323
