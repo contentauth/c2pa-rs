@@ -120,6 +120,9 @@ impl ComposedManifestRef for PdfIO {
     }
 }
 
+#[derive(Debug, thiserror::Error)]
+pub enum PdfError {}
+
 #[cfg(test)]
 pub mod tests {
     #![allow(clippy::panic)]

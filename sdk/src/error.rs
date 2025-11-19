@@ -15,7 +15,14 @@
 
 use thiserror::Error;
 
-use crate::crypto::{cose::CoseError, raw_signature::RawSignerError, time_stamp::TimeStampError};
+use crate::{
+    asset_handlers::{
+        bmff_io::BmffError, gif_io::GifError, jpeg_io::JpegError, mp3_io::Mp3Error,
+        pdf_io::PdfError, png_io::PngError, riff_io::RiffError, svg_io::SvgError,
+        tiff_io::TiffError,
+    },
+    crypto::{cose::CoseError, raw_signature::RawSignerError, time_stamp::TimeStampError},
+};
 
 /// `Error` enumerates errors returned by most C2PA toolkit operations.
 #[derive(Debug, Error)]
@@ -374,6 +381,33 @@ pub enum Error {
     // The string should be one of the C2PA validation codes
     #[error("C2PA Validation Error: {0}")]
     C2PAValidation(String),
+
+    #[error("error parsing BMFF: {0}")]
+    BmffError(#[from] BmffError),
+
+    #[error("error parsing GIF: {0}")]
+    GifError(#[from] GifError),
+
+    #[error("error parsing JPEG: {0}")]
+    JpegError(#[from] JpegError),
+
+    #[error("error parsing MP3: {0}")]
+    Mp3Error(#[from] Mp3Error),
+
+    #[error("error parsing PDF: {0}")]
+    PdfError(#[from] PdfError),
+
+    #[error("error parsing PNG: {0}")]
+    PngError(#[from] PngError),
+
+    #[error("error parsing RIFF: {0}")]
+    RiffError(#[from] RiffError),
+
+    #[error("error parsing SVG: {0}")]
+    SvgError(#[from] SvgError),
+
+    #[error("error parsing TIFF: {0}")]
+    TiffError(#[from] TiffError),
 }
 
 /// A specialized `Result` type for C2PA toolkit operations.

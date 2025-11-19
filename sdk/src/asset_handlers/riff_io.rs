@@ -264,13 +264,14 @@ impl CAIReader for RiffIO {
         let top_level_chunks = Chunk::read(&mut chunk_reader, 0)?;
 
         if top_level_chunks.id() != RIFF_ID {
-            return Err(Error::InvalidFileSignature {
+            return Err(RiffError::InvalidFileSignature {
                 reason: format!(
                     "invalid header: expected \"{}\", got \"{}\"",
                     String::from_utf8_lossy(&RIFF_ID.value),
                     String::from_utf8_lossy(&top_level_chunks.id().value),
                 ),
-            });
+            }
+            .into());
         }
 
         for result in top_level_chunks.iter(&mut chunk_reader) {
@@ -623,6 +624,12 @@ impl RemoteRefEmbed for RiffIO {
             RemoteRefEmbedType::Watermark(_) => Err(Error::UnsupportedType),
         }
     }
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum RiffError {
+    #[error("invalid file signature: {reason}")]
+    InvalidFileSignature { reason: String },
 }
 
 #[cfg(test)]

@@ -181,12 +181,13 @@ impl TiffStructure {
             II => Endianness::Little,
             MM => Endianness::Big,
             endianness => {
-                return Err(Error::InvalidFileSignature {
+                return Err(TiffError::InvalidFileSignature {
                     reason: format!(
                     "invalid header signature: expected endianness \"II\" or \"MM\", found \"{}\"",
                     String::from_utf8_lossy(&endianness)
                 ),
-                })
+                }
+                .into())
             }
         };
 
@@ -199,22 +200,22 @@ impl TiffStructure {
                 // Read byte size of offsets, must be 8
                 let first_ifd_offset = byte_reader.read_u16()?;
                 if first_ifd_offset != 8 {
-                    return Err(Error::InvalidFileSignature {
+                    return Err(TiffError::InvalidFileSignature {
                         reason: format!(
                             "invalid header signature: expected first IFD offset for BigTiff to be \"8\", found \"{}\"",
                             first_ifd_offset
                         ),
-                    });
+                    }.into());
                 }
                 // must currently be 0
                 let reserved = byte_reader.read_u16()?;
                 if reserved != 0 {
-                    return Err(Error::InvalidFileSignature {
+                    return Err(TiffError::InvalidFileSignature {
                         reason: format!(
                             "invalid header signature: expected bytes after first IFD offset for BigTiff to be \"0\", found \"{}\"",
                             reserved
                         ),
-                    });
+                    }.into());
                 }
                 true
             }
@@ -1629,6 +1630,12 @@ impl ComposedManifestRef for TiffIO {
     fn compose_manifest(&self, manifest_data: &[u8], _format: &str) -> Result<Vec<u8>> {
         Ok(manifest_data.to_vec())
     }
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum TiffError {
+    #[error("invalid file signature: {reason}")]
+    InvalidFileSignature { reason: String },
 }
 
 #[cfg(test)]

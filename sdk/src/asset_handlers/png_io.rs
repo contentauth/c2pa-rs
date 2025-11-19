@@ -73,9 +73,10 @@ fn get_png_chunk_positions<R: Read + Seek + ?Sized>(f: &mut R) -> Result<Vec<Png
     // check PNG signature
     f.read_exact(&mut hdr)?;
     if hdr != PNG_ID {
-        return Err(Error::InvalidFileSignature {
+        return Err(PngError::InvalidFileSignature {
             reason: format!("invalid header: expected {:02X?}, got {:02X?}", PNG_ID, hdr),
-        });
+        }
+        .into());
     }
 
     loop {
@@ -784,6 +785,12 @@ impl ComposedManifestRef for PngIO {
     }
 }
 
+#[derive(Debug, thiserror::Error)]
+pub enum PngError {
+    #[error("invalid file signature: {reason}")]
+    InvalidFileSignature { reason: String },
+}
+
 #[cfg(test)]
 #[allow(clippy::panic)]
 #[allow(clippy::unwrap_used)]
@@ -937,7 +944,7 @@ pub mod tests {
         let mut output_stream = Cursor::new(output);
         assert!(matches!(
             png_io.write_cai(&mut stream, &mut output_stream, &[]),
-            Err(Error::InvalidFileSignature { .. },)
+            Err(Error::PngError(PngError::InvalidFileSignature { .. }))
         ));
     }
 

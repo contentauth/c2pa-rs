@@ -1543,12 +1543,13 @@ impl CAIReader for BmffIO {
         reader.read_exact(&mut header)?;
 
         if header[..4] != *b"ftyp" {
-            return Err(Error::InvalidFileSignature {
+            return Err(BmffError::InvalidFileSignature {
                 reason: format!(
                     "invalid BMFF structure: expected box type \"ftyp\" at offset 4, found {}",
                     String::from_utf8_lossy(&header[..4])
                 ),
-            });
+            }
+            .into());
         }
 
         let c2pa_boxes = read_bmff_c2pa_boxes(reader)?;
@@ -2283,6 +2284,12 @@ impl RemoteRefEmbed for BmffIO {
             crate::asset_io::RemoteRefEmbedType::Watermark(_) => Err(Error::UnsupportedType),
         }
     }
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum BmffError {
+    #[error("invalid file signature: {reason}")]
+    InvalidFileSignature { reason: String },
 }
 
 #[cfg(test)]
