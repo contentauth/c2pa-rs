@@ -15,11 +15,12 @@
 
 use thiserror::Error;
 
+#[cfg(feature = "pdf")]
+use crate::asset_handlers::pdf_io::PdfError;
 use crate::{
     asset_handlers::{
         bmff_io::BmffError, gif_io::GifError, jpeg_io::JpegError, mp3_io::Mp3Error,
-        pdf_io::PdfError, png_io::PngError, riff_io::RiffError, svg_io::SvgError,
-        tiff_io::TiffError,
+        png_io::PngError, riff_io::RiffError, svg_io::SvgError, tiff_io::TiffError,
     },
     crypto::{cose::CoseError, raw_signature::RawSignerError, time_stamp::TimeStampError},
     http::HttpResolverError,
@@ -388,6 +389,7 @@ pub enum Error {
     #[error("error parsing MP3: {0}")]
     Mp3Error(#[from] Mp3Error),
 
+    #[cfg(feature = "pdf")]
     #[error("error parsing PDF: {0}")]
     PdfError(#[from] PdfError),
 
