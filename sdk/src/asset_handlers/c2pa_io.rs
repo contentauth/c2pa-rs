@@ -35,6 +35,8 @@ pub struct C2paIO {}
 
 impl CAIReader for C2paIO {
     fn read_cai(&self, asset_reader: &mut dyn CAIRead) -> Result<Vec<u8>> {
+        asset_reader.rewind()?;
+
         let mut cai_data = Vec::new();
         // read the whole file
         asset_reader.read_to_end(&mut cai_data)?;

@@ -136,6 +136,7 @@ pub fn save_jumbf_to_stream(
 /// writes the jumbf data in store_bytes into an asset in data and returns the newly created asset
 pub fn save_jumbf_to_memory(asset_type: &str, data: &[u8], store_bytes: &[u8]) -> Result<Vec<u8>> {
     let mut input_stream = Cursor::new(data);
+
     let output_vec: Vec<u8> = Vec::with_capacity(data.len() + store_bytes.len() + 1024);
     let mut output_stream = Cursor::new(output_vec);
 
@@ -508,8 +509,12 @@ pub mod tests {
             .unwrap();
         removed.set_position(0);
         let result = load_jumbf_from_stream(asset_type, &mut removed);
-        if (asset_type != "wav")
-            && (asset_type != "avi" && asset_type != "mp3" && asset_type != "webp")
+        // For c2pa this is expected to return `Error::InvalidFormat`.
+        if asset_type != "wav"
+            && asset_type != "avi"
+            && asset_type != "mp3"
+            && asset_type != "webp"
+            && asset_type != "c2pa"
         {
             assert!(matches!(&result.err().unwrap(), Error::JumbfNotFound));
         }

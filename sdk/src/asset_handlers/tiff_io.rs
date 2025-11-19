@@ -150,7 +150,6 @@ pub struct ImageFileDirectory {
 }
 
 impl ImageFileDirectory {
-    #[allow(dead_code)]
     pub fn get_tag(&self, tag_id: u16) -> Option<&IfdEntry> {
         self.entries.get(&tag_id)
     }
@@ -162,16 +161,15 @@ impl ImageFileDirectory {
 }
 
 // Struct to map the contents of a TIFF file
-#[allow(dead_code)]
 pub(crate) struct TiffStructure {
     byte_order: Endianness,
     big_tiff: bool,
+    #[allow(dead_code)]
     first_ifd_offset: u64,
     first_ifd: Option<ImageFileDirectory>,
 }
 
 impl TiffStructure {
-    #[allow(dead_code)]
     pub fn load<R>(reader: &mut R) -> Result<Self>
     where
         R: Read + Seek + ?Sized,
@@ -182,37 +180,52 @@ impl TiffStructure {
         let byte_order = match endianness {
             II => Endianness::Little,
             MM => Endianness::Big,
-            _ => {
-                return Err(Error::InvalidAsset(
-                    "Could not parse input image".to_owned(),
-                ))
+            endianness => {
+                return Err(TiffError::InvalidFileSignature {
+                    reason: format!(
+                    "invalid header signature: expected endianness \"II\" or \"MM\", found \"{}\"",
+                    String::from_utf8_lossy(&endianness)
+                ),
+                }
+                .into())
             }
         };
 
         let mut byte_reader = ByteOrdered::runtime(reader, byte_order);
 
-        let big_tiff = match byte_reader.read_u16() {
-            Ok(42) => false,
-            Ok(43) => {
+        let big_tiff = match byte_reader.read_u16()? {
+            42 => false,
+            43 => {
                 // read Big TIFF structs
                 // Read byte size of offsets, must be 8
-                if byte_reader.read_u16()? != 8 {
-                    return Err(Error::InvalidAsset(
-                        "Could not parse input image".to_owned(),
-                    ));
+                let first_ifd_offset = byte_reader.read_u16()?;
+                if first_ifd_offset != 8 {
+                    return Err(TiffError::InvalidFileSignature {
+                        reason: format!(
+                            "invalid header signature: expected first IFD offset for BigTiff to be \"8\", found \"{}\"",
+                            first_ifd_offset
+                        ),
+                    }.into());
                 }
                 // must currently be 0
-                if byte_reader.read_u16()? != 0 {
-                    return Err(Error::InvalidAsset(
-                        "Could not parse input image".to_owned(),
-                    ));
+                let reserved = byte_reader.read_u16()?;
+                if reserved != 0 {
+                    return Err(TiffError::InvalidFileSignature {
+                        reason: format!(
+                            "invalid header signature: expected bytes after first IFD offset for BigTiff to be \"0\", found \"{}\"",
+                            reserved
+                        ),
+                    }.into());
                 }
                 true
             }
-            _ => {
-                return Err(Error::InvalidAsset(
-                    "Could not parse input image".to_owned(),
-                ))
+            magic => {
+                return Err(TiffError::InvalidFileSignature {
+                    reason: format!(
+                        "invalid header signature: expected magic \"2A\" (TIFF) \"2B\" (BigTIFF), found \"{:02X}\"",
+                        magic
+                    ),
+                }.into());
             }
         };
 
@@ -1332,6 +1345,7 @@ where
 
     asset_reader.read_to_vec(xmp_ifd_entry.value_count).ok()
 }
+
 pub struct TiffIO {}
 
 impl CAIReader for TiffIO {
@@ -1616,6 +1630,12 @@ impl ComposedManifestRef for TiffIO {
     fn compose_manifest(&self, manifest_data: &[u8], _format: &str) -> Result<Vec<u8>> {
         Ok(manifest_data.to_vec())
     }
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum TiffError {
+    #[error("invalid file signature: {reason}")]
+    InvalidFileSignature { reason: String },
 }
 
 #[cfg(test)]
