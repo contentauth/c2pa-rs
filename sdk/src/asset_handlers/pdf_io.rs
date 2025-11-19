@@ -27,6 +27,21 @@ pub struct PdfIO {}
 impl CAIReader for PdfIO {
     fn read_cai(&self, asset_reader: &mut dyn CAIRead) -> crate::Result<Vec<u8>> {
         asset_reader.rewind()?;
+
+        let mut header = [0u8; 5];
+        asset_reader.read_exact(&mut header)?;
+        if header != *b"%PDF-" {
+            return Err(PdfError::InvalidFileSignature {
+                reason: format!(
+                    "invalid header signature: expected \"%PDF-\", found {}",
+                    String::from_utf8_lossy(&header)
+                ),
+            }
+            .into());
+        }
+
+        asset_reader.rewind()?;
+
         let pdf = Pdf::from_reader(asset_reader).map_err(|e| Error::InvalidAsset(e.to_string()))?;
         self.read_manifest_bytes(pdf)
     }
@@ -121,7 +136,10 @@ impl ComposedManifestRef for PdfIO {
 }
 
 #[derive(Debug, thiserror::Error)]
-pub enum PdfError {}
+pub enum PdfError {
+    #[error("invalid file signature: {reason}")]
+    InvalidFileSignature { reason: String },
+}
 
 #[cfg(test)]
 pub mod tests {
