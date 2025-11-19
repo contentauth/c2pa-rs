@@ -134,15 +134,6 @@ impl AssetIO for C2paIO {
         &SUPPORTED_TYPES
     }
 
-    fn supports_stream(&self, stream: &mut dyn CAIRead) -> Result<bool> {
-        stream.rewind()?;
-
-        let super_box = BoxReader::read_super_box(&mut CAIReadWrapper { reader: stream })?;
-        let cai_block = Cai::from(super_box);
-
-        Ok(cai_block.desc_box().uuid() == boxes::CAI_BLOCK_UUID)
-    }
-
     fn composed_data_ref(&self) -> Option<&dyn ComposedManifestRef> {
         Some(self)
     }

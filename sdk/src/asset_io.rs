@@ -186,14 +186,6 @@ pub trait AssetIO: Sync + Send {
     // List of supported extensions and mime types
     fn supported_types(&self) -> &[&str];
 
-    /// Returns whether the asset handler supports parsing the specified stream.
-    ///
-    /// It's recommended to default to true if unimplemented for a particular format.
-    fn supports_stream(&self, stream: &mut dyn CAIRead) -> Result<bool> {
-        let _stream = stream;
-        Ok(true)
-    }
-
     // OPTIONAL INTERFACES
 
     // Returns [`AssetPatch`] trait if this I/O handler supports patching.

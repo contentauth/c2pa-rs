@@ -71,10 +71,11 @@ fn get_png_chunk_positions<R: Read + Seek + ?Sized>(f: &mut R) -> Result<Vec<Png
     let mut hdr = [0; 8];
 
     // check PNG signature
-    f.read_exact(&mut hdr)
-        .map_err(|_err| Error::InvalidAsset("PNG invalid".to_string()))?;
+    f.read_exact(&mut hdr)?;
     if hdr != PNG_ID {
-        return Err(Error::InvalidAsset("PNG invalid".to_string()));
+        return Err(Error::InvalidFileSignature {
+            reason: format!("invalid header: expected {:02X?}, got {:02X?}", PNG_ID, hdr),
+        });
     }
 
     loop {
@@ -570,15 +571,6 @@ impl AssetIO for PngIO {
     fn supported_types(&self) -> &[&str] {
         &SUPPORTED_TYPES
     }
-
-    fn supports_stream(&self, stream: &mut dyn CAIRead) -> Result<bool> {
-        stream.rewind()?;
-
-        let mut header = [0u8; 8];
-        stream.read_exact(&mut header)?;
-
-        Ok(header == [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
-    }
 }
 
 fn get_xmp_insertion_point(asset_reader: &mut dyn CAIRead) -> Option<(u64, u32)> {
@@ -945,7 +937,7 @@ pub mod tests {
         let mut output_stream = Cursor::new(output);
         assert!(matches!(
             png_io.write_cai(&mut stream, &mut output_stream, &[]),
-            Err(Error::InvalidAsset(_),)
+            Err(Error::InvalidFileSignature { .. },)
         ));
     }
 

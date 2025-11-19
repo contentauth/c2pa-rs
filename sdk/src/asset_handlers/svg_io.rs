@@ -159,15 +159,6 @@ impl AssetIO for SvgIO {
     fn supported_types(&self) -> &[&str] {
         &SUPPORTED_TYPES
     }
-
-    fn supports_stream(&self, stream: &mut dyn CAIRead) -> Result<bool> {
-        stream.rewind()?;
-
-        let mut bytes = [0u8; 4096];
-        let len = stream.read(&mut bytes)?;
-
-        Ok(bytes[..len].windows(4).any(|pattern| pattern == b"<svg"))
-    }
 }
 
 // create manifest entry
@@ -230,9 +221,20 @@ fn detect_manifest_location(
                 let name = String::from_utf8_lossy(e.name().into_inner()).into_owned();
                 xml_path.push(name);
 
-                if xml_path.len() == 2 && xml_path[0] == SVG && xml_path[1] == METADATA {
-                    detected_level = DetectedTagsDepth::Metadata;
-                    insertion_point = xml_reader.buffer_position();
+                if xml_path.len() == 2 {
+                    if xml_path[0] == SVG {
+                        if xml_path[1] == METADATA {
+                            detected_level = DetectedTagsDepth::Metadata;
+                            insertion_point = xml_reader.buffer_position();
+                        }
+                    } else {
+                        return Err(Error::InvalidFileSignature {
+                            reason: format!(
+                                "invalid tag structure: root element must be \"{}\", found \"{}\"",
+                                SVG, xml_path[0]
+                            ),
+                        });
+                    }
                 }
 
                 if xml_path.len() == 3

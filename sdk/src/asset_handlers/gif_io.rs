@@ -379,15 +379,6 @@ impl AssetIO for GifIO {
     fn supported_types(&self) -> &[&str] {
         &["gif", "image/gif"]
     }
-
-    fn supports_stream(&self, stream: &mut dyn CAIRead) -> Result<bool> {
-        stream.rewind()?;
-
-        let mut header = [0u8; 6];
-        stream.read_exact(&mut header)?;
-
-        Ok(header == *b"GIF87a" || header == *b"GIF89a")
-    }
 }
 
 impl GifIO {
@@ -826,11 +817,24 @@ impl Header {
         let mut signature = [0u8; 3];
         stream.read_exact(&mut signature)?;
         if signature != *b"GIF" {
-            return Err(Error::InvalidAsset("GIF signature invalid".to_owned()));
+            return Err(Error::InvalidFileSignature {
+                reason: format!(
+                    "invalid header signature: expected \"GIF\", found \"{}\"",
+                    String::from_utf8_lossy(&signature)
+                ),
+            });
         }
 
         let mut version = [0u8; 3];
         stream.read_exact(&mut version)?;
+        if version != *b"87a" && version != *b"89a" {
+            return Err(Error::InvalidFileSignature {
+                reason: format!(
+                    "invalid header version: expected \"89a\" or \"87a\", found \"{}\"",
+                    String::from_utf8_lossy(&version)
+                ),
+            });
+        }
 
         Ok(Header {
             // version

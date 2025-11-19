@@ -191,8 +191,16 @@ impl CAIReader for JpegIO {
         asset_reader.rewind()?;
         asset_reader.read_to_end(&mut buf).map_err(Error::IoError)?;
 
-        let dimg_opt = DynImage::from_bytes(buf.into())
-            .map_err(|_err| Error::InvalidAsset("Could not parse input JPEG".to_owned()))?;
+        let dimg_opt = DynImage::from_bytes(buf.into()).map_err(|err| match err {
+            img_parts::Error::WrongSignature => Error::InvalidFileSignature {
+                reason: format!(
+                    "it may be because the stream does not start with \"{} {}\"",
+                    markers::P,
+                    markers::SOI
+                ),
+            },
+            _ => Error::InvalidAsset("Could not parse input JPEG".to_owned()),
+        })?;
 
         if let Some(dimg) = dimg_opt {
             match dimg {
@@ -567,15 +575,6 @@ impl AssetIO for JpegIO {
 
     fn supported_types(&self) -> &[&str] {
         &SUPPORTED_TYPES
-    }
-
-    fn supports_stream(&self, stream: &mut dyn CAIRead) -> Result<bool> {
-        stream.rewind()?;
-
-        let mut header = [0u8; 3];
-        stream.read_exact(&mut header)?;
-
-        Ok(header == [0xff, 0xd8, 0xff])
     }
 }
 

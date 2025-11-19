@@ -1537,6 +1537,20 @@ pub(crate) fn read_bmff_c2pa_boxes(reader: &mut dyn CAIRead) -> Result<C2PABmffB
 
 impl CAIReader for BmffIO {
     fn read_cai(&self, reader: &mut dyn CAIRead) -> Result<Vec<u8>> {
+        reader.seek(SeekFrom::Start(4))?;
+
+        let mut header = [0u8; 4];
+        reader.read_exact(&mut header)?;
+
+        if header[..4] != *b"ftyp" {
+            return Err(Error::InvalidFileSignature {
+                reason: format!(
+                    "invalid BMFF structure: expected box type \"ftyp\" at offset 4, found {}",
+                    String::from_utf8_lossy(&header[..4])
+                ),
+            });
+        }
+
         let c2pa_boxes = read_bmff_c2pa_boxes(reader)?;
 
         // is this an update manifest?
@@ -1639,15 +1653,6 @@ impl AssetIO for BmffIO {
 
     fn supported_types(&self) -> &[&str] {
         &SUPPORTED_TYPES
-    }
-
-    fn supports_stream(&self, stream: &mut dyn CAIRead) -> Result<bool> {
-        stream.rewind()?;
-
-        let mut header = [0u8; 12];
-        stream.read_exact(&mut header)?;
-
-        Ok(header[4..8] == *b"ftyp")
     }
 }
 

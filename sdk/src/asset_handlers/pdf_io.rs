@@ -108,15 +108,6 @@ impl AssetIO for PdfIO {
         &SUPPORTED_TYPES
     }
 
-    fn supports_stream(&self, stream: &mut dyn CAIRead) -> crate::Result<bool> {
-        stream.rewind()?;
-
-        let mut header = [0u8; 5];
-        stream.read_exact(&mut header)?;
-
-        Ok(header == *b"%PDF-")
-    }
-
     fn composed_data_ref(&self) -> Option<&dyn ComposedManifestRef> {
         Some(self)
     }

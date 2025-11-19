@@ -294,6 +294,9 @@ pub enum Error {
     #[error("could not parse ECDSA signature")]
     InvalidEcdsaSignature,
 
+    #[error("invalid file signature: {reason}")]
+    InvalidFileSignature { reason: String },
+
     #[error("missing data box")]
     MissingDataBox,
 

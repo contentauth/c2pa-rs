@@ -264,7 +264,13 @@ impl CAIReader for RiffIO {
         let top_level_chunks = Chunk::read(&mut chunk_reader, 0)?;
 
         if top_level_chunks.id() != RIFF_ID {
-            return Err(Error::InvalidAsset("Invalid RIFF format".to_string()));
+            return Err(Error::InvalidFileSignature {
+                reason: format!(
+                    "invalid header: expected \"{}\", got \"{}\"",
+                    String::from_utf8_lossy(&RIFF_ID.value),
+                    String::from_utf8_lossy(&top_level_chunks.id().value),
+                ),
+            });
         }
 
         for result in top_level_chunks.iter(&mut chunk_reader) {
@@ -385,16 +391,6 @@ impl AssetIO for RiffIO {
 
     fn supported_types(&self) -> &[&str] {
         &SUPPORTED_TYPES
-    }
-
-    fn supports_stream(&self, stream: &mut dyn CAIRead) -> Result<bool> {
-        stream.rewind()?;
-
-        let mut header = [0u8; 4];
-        stream.read_exact(&mut header)?;
-
-        // TODO: if we want to detect the subtype we can do extra parsing on the next few bytes
-        Ok(header == *b"RIFF")
     }
 }
 
