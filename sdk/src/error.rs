@@ -238,13 +238,6 @@ pub enum Error {
     #[error("the specified stream is not of format {format}")]
     InvalidFormat { format: String },
 
-    #[error("failed to check format {format}")]
-    FormatCheckFailed {
-        format: String,
-        #[source]
-        source: Option<Box<dyn std::error::Error + Send + Sync>>,
-    },
-
     #[error("`trust.signer_info` is missing from settings")]
     MissingSignerSettings,
 
@@ -300,9 +293,6 @@ pub enum Error {
     /// Could not parse ECDSA signature. (Only appears when using WASM web crypto.)
     #[error("could not parse ECDSA signature")]
     InvalidEcdsaSignature,
-
-    #[error("invalid file signature: {reason}")]
-    InvalidFileSignature { reason: String },
 
     #[error("missing data box")]
     MissingDataBox,

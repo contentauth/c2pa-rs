@@ -220,12 +220,12 @@ impl TiffStructure {
                 true
             }
             magic => {
-                return Err(Error::InvalidFileSignature {
+                return Err(TiffError::InvalidFileSignature {
                     reason: format!(
                         "invalid header signature: expected magic \"2A\" (TIFF) \"2B\" (BigTIFF), found \"{:02X}\"",
                         magic
                     ),
-                });
+                }.into());
             }
         };
 
