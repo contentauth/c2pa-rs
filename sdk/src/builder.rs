@@ -1477,7 +1477,11 @@ impl Builder {
                 }
 
                 let claim = store.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
-                claim.replace_assertion(timestamp_assertion.to_assertion()?)?;
+                if claim.timestamp_assertions().is_empty() {
+                    claim.add_assertion(&timestamp_assertion)?;
+                } else {
+                    claim.replace_assertion(timestamp_assertion.to_assertion()?)?;
+                }
             }
         }
 
