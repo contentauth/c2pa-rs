@@ -25,7 +25,6 @@ pdf = ["c2pa/pdf"]
 [dependencies]
 c2pa = { path = "../sdk", version = "0.72.0", default-features = false, features = [
     "add_thumbnails",
-    "fetch_remote_manifests",
     "file_io",
     "pdf",
     "default_http",

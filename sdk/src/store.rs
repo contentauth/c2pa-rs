@@ -3409,7 +3409,6 @@ impl Store {
     }
 
     // fetch remote manifest if possible
-    #[cfg(feature = "fetch_remote_manifests")]
     #[async_generic(async_signature(
         url: &str,
         http_resolver: &impl AsyncHttpResolver
@@ -3472,7 +3471,6 @@ impl Store {
     ) -> Result<Vec<u8>> {
         // verify provenance path is remote url
         if Store::is_valid_remote_url(ext_ref) {
-            #[cfg(feature = "fetch_remote_manifests")]
             {
                 // Everything except browser wasm if fetch_remote_manifests is enabled
                 if settings.verify.remote_manifest_fetch {
@@ -3485,9 +3483,6 @@ impl Store {
                     Err(Error::RemoteManifestUrl(ext_ref.to_owned()))
                 }
             }
-
-            #[cfg(not(feature = "fetch_remote_manifests"))]
-            Err(Error::RemoteManifestUrl(ext_ref.to_owned()))
         } else {
             Err(Error::JumbfNotFound)
         }

@@ -222,7 +222,7 @@ impl Reader {
 
     #[cfg(feature = "file_io")]
     /// Create a manifest store [`Reader`] from a file.
-    /// If the `fetch_remote_manifests` feature is enabled, and the asset refers to a remote manifest, the function fetches a remote manifest.
+    /// If the `verify.remote_manifest_fetch` setting is enabled, and the asset refers to a remote manifest, the function fetches a remote manifest.
     ///
     /// NOTE: If the file does not have a manifest store, the function will check for a sidecar manifest with the same base file name and a .c2pa extension.
     ///
@@ -1215,8 +1215,15 @@ pub mod tests {
     }
 
     #[test]
-    #[cfg(feature = "fetch_remote_manifests")]
     fn test_reader_remote_url() -> Result<()> {
+        Settings::from_toml(
+            &toml::toml! {
+                [verify]
+                remote_manifest_fetch = true
+            }
+            .to_string(),
+        )?;
+
         let reader = Reader::from_stream("image/jpeg", Cursor::new(IMAGE_WITH_REMOTE_MANIFEST))?;
         let remote_url = reader.remote_url();
         assert_eq!(remote_url, Some("https://cai-manifests.adobe.com/manifests/adobe-urn-uuid-5f37e182-3687-462e-a7fb-573462780391"));

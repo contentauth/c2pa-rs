@@ -1839,7 +1839,6 @@ mod tests {
         );
     }
 
-    #[cfg(feature = "fetch_remote_manifests")]
     #[c2pa_test_async]
     async fn test_jpg_cloud_from_memory() {
         crate::settings::set_settings_value("verify.verify_trust", false).unwrap();
@@ -1861,7 +1860,7 @@ mod tests {
         assert_eq!(ingredient.validation_status(), None);
     }
 
-    #[cfg(not(any(feature = "fetch_remote_manifests", feature = "file_io")))]
+    #[cfg(not(feature = "file_io"))]
     #[c2pa_test_async]
     async fn test_jpg_cloud_from_memory_no_file_io() {
         crate::settings::set_settings_value("verify.verify_trust", false).unwrap();
@@ -2111,7 +2110,6 @@ mod tests_file_io {
     }
 
     #[test]
-    #[cfg(feature = "fetch_remote_manifests")]
     fn test_jpg_cloud_failure() {
         let ap = fixture_path("cloudx.jpg");
         let ingredient = Ingredient::from_file(ap).expect("from_file");

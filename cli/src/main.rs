@@ -389,6 +389,15 @@ fn blocking_get(url: &str) -> Result<String> {
 }
 
 fn configure_sdk(args: &CliArgs) -> Result<()> {
+    // Enable remote manifest fetching for backwards compatibility.
+    Settings::from_toml(
+        &toml::toml! {
+            [verify]
+            remote_manifest_fetch = true
+        }
+        .to_string(),
+    )?;
+
     if args.settings.exists() {
         let settings = fs::read_to_string(&args.settings)?;
         Settings::from_toml(&settings)?
