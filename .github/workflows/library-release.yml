@@ -3,7 +3,7 @@ name: Publish c2pa-library binaries
 on:
   push:
     tags:
-      - 'c2pa-v*' # Trigger on version tags (e.g., v1.0.0)
+      - "c2pa-v*" # Trigger on version tags (e.g., v1.0.0)
   workflow_dispatch:
 
 jobs:
@@ -47,10 +47,11 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v5
 
-      - name: Set up Rust
-        uses: actions-rust-lang/setup-rust-toolchain@v1
-        with:
-          cache: false
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
 
       - name: Build Windows release
         if: matrix.os == 'windows-latest'
