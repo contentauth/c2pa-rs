@@ -1669,8 +1669,6 @@ unsafe fn c2pa_mime_types_to_c_array(strs: Vec<String>, count: *mut usize) -> *c
 mod tests {
     use std::{ffi::CString, panic::catch_unwind};
 
-    use serde_json::json;
-
     use super::*;
     use crate::TestC2paStream;
 
