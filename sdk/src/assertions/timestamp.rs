@@ -20,8 +20,13 @@ use serde_bytes::ByteBuf;
 use crate::{
     assertion::{Assertion, AssertionBase, AssertionCbor},
     assertions::labels,
+    crypto::cose::CertificateTrustPolicy,
     error::Result,
     http::{AsyncHttpResolver, SyncHttpResolver},
+    settings::Settings,
+    status_tracker::StatusTracker,
+    store::Store,
+    Error,
 };
 
 /// Helper class to create Timestamp assertions
@@ -50,26 +55,57 @@ impl TimeStamp {
     }
 
     #[async_generic(async_signature(
-        tsa_url: &str,
+        &mut self,
+        store: &Store,
+        time_authority_url: &str,
+        manifest_id: &str,
+        http_resolver: &impl AsyncHttpResolver,
+    ))]
+    pub(crate) fn refresh_timestamp(
+        &mut self,
+        store: &Store,
+        time_authority_url: &str,
+        manifest_id: &str,
+        http_resolver: &impl SyncHttpResolver,
+    ) -> Result<&[u8]> {
+        let signature = store
+            .get_cose_sign1_signature(manifest_id)
+            .ok_or(Error::ClaimMissingSignatureBox)?;
+
+        let timestamp_token = if _sync {
+            TimeStamp::send_timestamp_token_request(time_authority_url, &signature, http_resolver)?
+        } else {
+            TimeStamp::send_timestamp_token_request_async(
+                time_authority_url,
+                &signature,
+                http_resolver,
+            )
+            .await?
+        };
+
+        Ok(self
+            .0
+            .entry(manifest_id.to_owned())
+            .or_insert(ByteBuf::from(timestamp_token))
+            .as_slice())
+    }
+
+    #[async_generic(async_signature(
+        time_authority_url: &str,
         message: &[u8],
         http_resolver: &impl AsyncHttpResolver,
     ))]
     pub(crate) fn send_timestamp_token_request(
-        tsa_url: &str,
+        time_authority_url: &str,
         message: &[u8],
         http_resolver: &impl SyncHttpResolver,
     ) -> Result<Vec<u8>> {
-        use crate::{
-            crypto::cose::CertificateTrustPolicy, settings::Settings,
-            status_tracker::StatusTracker, Error,
-        };
-
         let body = crate::crypto::time_stamp::default_rfc3161_message(message)?;
         let headers = None;
 
         let bytes = if _sync {
             crate::crypto::time_stamp::default_rfc3161_request(
-                tsa_url,
+                time_authority_url,
                 headers,
                 &body,
                 message,
@@ -77,7 +113,7 @@ impl TimeStamp {
             )
         } else {
             crate::crypto::time_stamp::default_rfc3161_request_async(
-                tsa_url,
+                time_authority_url,
                 headers,
                 &body,
                 message,

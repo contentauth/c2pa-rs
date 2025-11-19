@@ -485,7 +485,7 @@ impl Store {
         placeholder
     }
 
-    fn get_cose_sign1_signature(&self, manifest_id: &str) -> Option<Vec<u8>> {
+    pub fn get_cose_sign1_signature(&self, manifest_id: &str) -> Option<Vec<u8>> {
         let manifest = self.get_claim(manifest_id)?;
 
         let sig = manifest.signature_val();
@@ -496,39 +496,6 @@ impl Store {
         let sign1 = parse_cose_sign1(sig, &data, &mut validation_log).ok()?;
 
         Some(sign1.signature)
-    }
-
-    /// Creates a TimeStamp (c2pa.time-stamp) assertion containing the TimeStampTokens for each
-    /// specified manifest_id.  If any time stamp request fails the assertion is not created.
-    #[async_generic(async_signature(
-        &self,
-        manifest_ids: &[&str],
-        tsa_url: &str,
-        http_resolver: &impl AsyncHttpResolver
-    ))]
-    pub fn get_timestamp_assertion(
-        &self,
-        manifest_ids: &[&str],
-        tsa_url: &str,
-        http_resolver: &impl SyncHttpResolver,
-    ) -> Result<TimeStamp> {
-        let mut timestamp_assertion = TimeStamp::new();
-        for manifest_id in manifest_ids {
-            // lets add a timestamp for old manifest
-            let signature = self
-                .get_cose_sign1_signature(manifest_id)
-                .ok_or(Error::ClaimMissingSignatureBox)?;
-
-            let timestamp_token = if _sync {
-                TimeStamp::send_timestamp_token_request(tsa_url, &signature, http_resolver)?
-            } else {
-                TimeStamp::send_timestamp_token_request_async(tsa_url, &signature, http_resolver)
-                    .await?
-            };
-
-            timestamp_assertion.add_timestamp(manifest_id, &timestamp_token);
-        }
-        Ok(timestamp_assertion)
     }
 
     /// Return OCSP info if available

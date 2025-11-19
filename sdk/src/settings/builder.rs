@@ -470,7 +470,8 @@ pub struct BuilderSettings {
     /// Whether to generate a C2PA archive (instead of zip) when writing the manifest builder.
     /// This will eventually become the default behavior.
     pub generate_c2pa_archive: Option<bool>,
-    /// Whether to auto-generate a [`TimeStamp`] assertion for update manifests.
+    /// Whether to auto-generate a [`TimeStamp`] assertion for parent of the update manifest if one does not
+    /// exist already.
     ///
     /// Useful when a manifest was signed offline and you want to attach a trusted timestamp to it later.
     ///

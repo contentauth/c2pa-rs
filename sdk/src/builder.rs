@@ -32,8 +32,8 @@ use crate::{
     assertion::{AssertionBase, AssertionDecodeError},
     assertions::{
         c2pa_action, labels, Action, ActionTemplate, Actions, AssertionMetadata, BmffHash, BoxHash,
-        DataHash, DigitalSourceType, EmbeddedData, Exif, Metadata, SoftwareAgent, Thumbnail, User,
-        UserCbor,
+        DataHash, DigitalSourceType, EmbeddedData, Exif, Metadata, SoftwareAgent, Thumbnail,
+        TimeStamp, User, UserCbor,
     },
     claim::Claim,
     error::{Error, Result},
@@ -1440,22 +1440,41 @@ impl Builder {
                 )
                 .ok_or(Error::ClaimEncoding)?;
 
-                let manifest_ids = vec![parent_claim_id.as_ref()];
-                let timestamp_assertion = if _sync {
-                    store.get_timestamp_assertion(
-                        &manifest_ids,
-                        time_authority_url,
-                        http_resolver,
-                    )?
+                // First check if a timestamp assertion already exists.
+                let timestamp_assertions = provenance_claim.timestamp_assertions();
+                let mut timestamp_assertion = if !timestamp_assertions.is_empty() {
+                    // There can only be one timestamp assertion per the spec.
+                    let timestamp_assertion =
+                        TimeStamp::from_assertion(timestamp_assertions[0].assertion())?;
+                    if timestamp_assertion
+                        .get_timestamp(&parent_claim_id)
+                        .is_some()
+                    {
+                        return Ok(());
+                    }
+
+                    timestamp_assertion
                 } else {
-                    store
-                        .get_timestamp_assertion_async(
-                            &manifest_ids,
+                    TimeStamp::new()
+                };
+
+                if _sync {
+                    timestamp_assertion.refresh_timestamp(
+                        store,
+                        time_authority_url,
+                        &parent_claim_id,
+                        http_resolver,
+                    )?;
+                } else {
+                    timestamp_assertion
+                        .refresh_timestamp_async(
+                            store,
                             time_authority_url,
+                            &parent_claim_id,
                             http_resolver,
                         )
-                        .await?
-                };
+                        .await?;
+                }
 
                 let claim = store.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
                 claim.add_assertion(&timestamp_assertion)?;
