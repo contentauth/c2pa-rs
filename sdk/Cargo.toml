@@ -97,7 +97,7 @@ required-features = ["file_io"]
 crate-type = ["lib"]
 
 [dependencies]
-asn1-rs = "0.6.2"
+asn1-rs = "0.7.1"
 async-generic = "1.1"
 async-trait = "0.1.78"
 atree = "0.5.2"
