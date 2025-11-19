@@ -106,7 +106,6 @@ impl IdentityAssertion {
                     if let Some(manifest_label) = manifest.label() {
                         label = to_assertion_uri(manifest_label, &label);
                     }
-
                     log_item!(label, "invalid CBOR", "IdentityAssertion::from_manifest")
                         .validation_status("cawg.identity.cbor.invalid")
                         .failure_no_throw(

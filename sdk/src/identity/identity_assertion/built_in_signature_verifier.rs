@@ -173,15 +173,12 @@ mod tests {
     use crate::{
         crypto::raw_signature,
         identity::{
-            builder::{
-                AsyncIdentityAssertionBuilder, AsyncIdentityAssertionSigner,
-                IdentityAssertionBuilder, IdentityAssertionSigner,
-            },
+            builder::{AsyncIdentityAssertionBuilder, AsyncIdentityAssertionSigner},
             claim_aggregation::{IdentityProvider, VerifiedIdentity},
             identity_assertion::built_in_signature_verifier::BuiltInCredential,
             tests::fixtures::{
                 cert_chain_and_private_key_for_alg, default_built_in_signature_verifier,
-                manifest_json, parent_json, NaiveCredentialHolder,
+                manifest_json, parent_json, NaiveAsyncCredentialHolder,
             },
             x509::AsyncX509CredentialHolder,
             IdentityAssertion, SignerPayload, ValidationError,
@@ -201,7 +198,8 @@ mod tests {
 
         let mut builder = Builder::from_json(&manifest_json()).unwrap();
         builder
-            .add_ingredient_from_stream(parent_json(), format, &mut source)
+            .add_ingredient_from_stream_async(parent_json(), format, &mut source)
+            .await
             .unwrap();
 
         builder
@@ -234,7 +232,7 @@ mod tests {
         // Read back the Manifest that was generated.
         dest.rewind().unwrap();
 
-        let manifest_store = Reader::from_stream(format, &mut dest).unwrap();
+        let manifest_store = Reader::from_stream_async(format, &mut dest).await.unwrap();
         assert_eq!(manifest_store.validation_status(), None);
 
         let manifest = manifest_store.active_manifest().unwrap();
@@ -274,7 +272,9 @@ mod tests {
 
         let mut test_image = Cursor::new(test_image);
 
-        let reader = Reader::from_stream(format, &mut test_image).unwrap();
+        let reader = Reader::from_stream_async(format, &mut test_image)
+            .await
+            .unwrap();
         assert_eq!(reader.validation_status(), None);
 
         let manifest = reader.active_manifest().unwrap();
@@ -366,27 +366,29 @@ mod tests {
 
         let mut builder = Builder::from_json(&manifest_json()).unwrap();
         builder
-            .add_ingredient_from_stream(parent_json(), format, &mut source)
+            .add_ingredient_from_stream_async(parent_json(), format, &mut source)
+            .await
             .unwrap();
 
         builder
             .add_resource("thumbnail.jpg", Cursor::new(TEST_THUMBNAIL))
             .unwrap();
 
-        let mut signer = IdentityAssertionSigner::from_test_credentials(SigningAlg::Ps256);
+        let mut signer = AsyncIdentityAssertionSigner::from_test_credentials(SigningAlg::Ps256);
 
-        let nch = NaiveCredentialHolder {};
-        let iab = IdentityAssertionBuilder::for_credential_holder(nch);
+        let nch = NaiveAsyncCredentialHolder {};
+        let iab = AsyncIdentityAssertionBuilder::for_credential_holder(nch);
         signer.add_identity_assertion(iab);
 
         builder
-            .sign(&signer, format, &mut source, &mut dest)
+            .sign_async(&signer, format, &mut source, &mut dest)
+            .await
             .unwrap();
 
         // Read back the Manifest that was generated.
         dest.rewind().unwrap();
 
-        let manifest_store = Reader::from_stream(format, &mut dest).unwrap();
+        let manifest_store = Reader::from_stream_async(format, &mut dest).await.unwrap();
         assert_eq!(manifest_store.validation_status(), None);
 
         let manifest = manifest_store.active_manifest().unwrap();

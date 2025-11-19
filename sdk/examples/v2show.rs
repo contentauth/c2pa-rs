@@ -15,7 +15,7 @@
 
 use anyhow::Result;
 
-#[cfg(target_arch = "wasm32")]
+#[cfg(not(all(not(target_arch = "wasm32"), feature = "http_ureq")))]
 fn main() -> Result<()> {
     Ok(())
 }

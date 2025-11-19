@@ -48,10 +48,8 @@ rust_native_crypto = [
     "dep:rsa",
     "dep:spki",
 ]
-# TODO: make our async tests always use the async API so we don't need ureq + reqwest
-#       see https://github.com/contentauth/c2pa-rs/issues/1364
 # Enables default http features for sync and async http resolvers.
-default_http = ["http_reqwest", "http_ureq", "http_wasi", "http_wstd"]
+default_http = ["http_reqwest", "http_reqwest_blocking", "http_wasi", "http_wstd"]
 # Enable `reqwest` sync http resolver, not supported on WASM/WASI.
 http_reqwest_blocking = ["dep:reqwest", "reqwest/blocking"]
 # Enable `ureq` sync http resolver, not supported on WASM/WASI.

@@ -616,8 +616,6 @@ impl Builder {
         T: Into<String>,
         R: Read + Seek + Send,
     {
-        let settings = crate::settings::get_settings().unwrap_or_default();
-
         let ingredient: Ingredient = Ingredient::from_json(&ingredient_json.into())?;
 
         if format == "c2pa" || format == "application/c2pa" {
@@ -632,10 +630,10 @@ impl Builder {
         }
 
         let ingredient = if _sync {
-            ingredient.with_stream(format, stream, &SyncGenericResolver::new(), &settings)?
+            ingredient.with_stream(format, stream, &SyncGenericResolver::new(), &self.settings)?
         } else {
             ingredient
-                .with_stream_async(format, stream, &AsyncGenericResolver::new(), &settings)
+                .with_stream_async(format, stream, &AsyncGenericResolver::new(), &self.settings)
                 .await?
         };
 
@@ -1402,6 +1400,11 @@ impl Builder {
     }
 
     /// Maybe add a parent ingredient to the manifest.
+    #[async_generic(async_signature(
+        &mut self,
+        format: &str,
+        stream: &mut R
+    ))]
     fn maybe_add_parent<R>(&mut self, format: &str, stream: &mut R) -> Result<&mut Self>
     where
         R: Read + Seek + Send,
@@ -1416,7 +1419,12 @@ impl Builder {
                 "relationship": "parentOf",
             });
             stream.rewind()?;
-            self.add_ingredient_from_stream(parent_def.to_string(), format, stream)?;
+            if _sync {
+                self.add_ingredient_from_stream(parent_def.to_string(), format, stream)?;
+            } else {
+                self.add_ingredient_from_stream_async(parent_def.to_string(), format, stream)
+                    .await?;
+            }
             stream.rewind()?;
         }
         Ok(self)
@@ -1593,7 +1601,11 @@ impl Builder {
             self.resources.set_base_path(base_path);
         }
 
-        self.maybe_add_parent(&format, source)?;
+        if _sync {
+            self.maybe_add_parent(&format, source)?;
+        } else {
+            self.maybe_add_parent_async(&format, source).await?;
+        }
 
         // generate thumbnail if we don't already have one
         #[cfg(feature = "add_thumbnails")]
@@ -3235,11 +3247,12 @@ mod tests {
             .add_assertion("org.test.assertion", &"assertion".to_string())
             .unwrap();
 
-        let signer = test_signer(SigningAlg::Ps256);
+        let signer = async_test_signer(SigningAlg::Ps256);
         // Embed a manifest using the signer.
         let mut output = Cursor::new(Vec::new());
         builder
-            .sign(signer.as_ref(), "jpeg", &mut input, &mut output)
+            .sign_async(signer.as_ref(), "jpeg", &mut input, &mut output)
+            .await
             .expect("builder sign");
 
         output.set_position(0);

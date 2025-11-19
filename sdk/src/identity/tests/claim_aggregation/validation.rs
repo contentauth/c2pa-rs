@@ -118,7 +118,9 @@ async fn invalid_cose_sign1() {
 
     let mut test_image = Cursor::new(test_image);
 
-    let reader = Reader::from_stream(format, &mut test_image).unwrap();
+    let reader = Reader::from_stream_async(format, &mut test_image)
+        .await
+        .unwrap();
     assert_eq!(reader.validation_status(), None);
 
     let manifest = reader.active_manifest().unwrap();
@@ -323,7 +325,9 @@ async fn invalid_content_type() {
 
     let mut test_image = Cursor::new(test_image);
 
-    let reader = Reader::from_stream(format, &mut test_image).unwrap();
+    let reader = Reader::from_stream_async(format, &mut test_image)
+        .await
+        .unwrap();
     assert_eq!(reader.validation_status(), None);
 
     let manifest = reader.active_manifest().unwrap();
@@ -386,7 +390,9 @@ async fn invalid_content_type_assigned() {
 
     let mut test_image = Cursor::new(test_image);
 
-    let reader = Reader::from_stream(format, &mut test_image).unwrap();
+    let reader = Reader::from_stream_async(format, &mut test_image)
+        .await
+        .unwrap();
     assert_eq!(reader.validation_status(), None);
 
     let manifest = reader.active_manifest().unwrap();
@@ -838,7 +844,9 @@ async fn did_doc_without_assertion_method() {
 
     let mut test_image = Cursor::new(test_image);
 
-    let reader = Reader::from_stream(format, &mut test_image).unwrap();
+    let reader = Reader::from_stream_async(format, &mut test_image)
+        .await
+        .unwrap();
     assert_eq!(reader.validation_status(), None);
 
     let manifest = reader.active_manifest().unwrap();

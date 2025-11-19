@@ -94,7 +94,7 @@
 //!
 //! You can enable any of the following features:
 //!
-//! - **default_http** *(enabled by default)*: Enables default HTTP features for sync and async HTTP resolvers (`http_req`, `http_reqwest`, `http_wasi`, and `http_std`).
+//! - **default_http** *(enabled by default)*: Enables default HTTP features for sync and async HTTP resolvers (`http_reqwest`, `http_reqwest_blocking`, `http_wasi`, and `http_std`).
 //! - **openssl** *(enabled by default)*: Use the vendored `openssl` implementation for cryptography.
 //! - **rust_native_crypto**: Use Rust native cryptography.
 //! - **add_thumbnails**: Adds the [`image`](https://github.com/image-rs/image) crate to enable auto-generated thumbnails, if possible and enabled in settings.

@@ -124,7 +124,9 @@ async fn ims_multiple_manifests() {
 
     let mut test_image = Cursor::new(test_image);
 
-    let reader = Reader::from_stream(format, &mut test_image).unwrap();
+    let reader = Reader::from_stream_async(format, &mut test_image)
+        .await
+        .unwrap();
     assert_eq!(reader.validation_status(), None);
 
     // Check the summary report for the entire manifest store.
