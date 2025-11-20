@@ -225,7 +225,10 @@ impl ValidationResults {
             // https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_valid_manifest
             let is_valid = success_codes.contains(validation_status::CLAIM_SIGNATURE_VALIDATED)
                 && success_codes.contains(validation_status::CLAIM_SIGNATURE_INSIDE_VALIDITY)
-                && failure_codes.is_empty()
+                && (failure_codes.is_empty()
+                    || failure_codes.iter().all(|status| {
+                        status.code() == validation_status::SIGNING_CREDENTIAL_UNTRUSTED
+                    }))
                 && !ingredient_failure;
 
             // https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_trusted_manifest
