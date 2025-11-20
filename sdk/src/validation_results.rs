@@ -11,8 +11,6 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use std::collections::HashSet;
-
 #[cfg(feature = "json_schema")]
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -210,39 +208,55 @@ impl ValidationResults {
     /// [§14.3. Validation states]: https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_validation_states
     pub fn validation_state(&self) -> ValidationState {
         if let Some(active_manifest) = self.active_manifest.as_ref() {
-            let success_codes: HashSet<&str> = active_manifest
-                .success()
-                .iter()
-                .map(|status| status.code())
-                .collect();
-            let failure_codes = active_manifest.failure();
-            let ingredient_failure: Vec<&ValidationStatus> = self
-                .ingredient_deltas
-                .as_ref()
-                .map(|deltas| {
-                    deltas
-                        .iter()
-                        .flat_map(|idv| idv.validation_deltas().failure().iter())
-                        .collect()
-                })
-                .unwrap_or_default();
+            fn is_manifest_valid(
+                success_codes: &[ValidationStatus],
+                failure_codes: &[ValidationStatus],
+            ) -> bool {
+                success_codes
+                    .iter()
+                    .any(|status| status.code() == validation_status::CLAIM_SIGNATURE_VALIDATED)
+                    && success_codes.iter().any(|status| {
+                        status.code() == validation_status::CLAIM_SIGNATURE_INSIDE_VALIDITY
+                    })
+                    && (failure_codes.is_empty()
+                        || failure_codes.iter().all(|status| {
+                            status.code() == validation_status::SIGNING_CREDENTIAL_UNTRUSTED
+                        }))
+            }
+
+            fn is_manifest_trusted(
+                success_codes: &[ValidationStatus],
+                failure_codes: &[ValidationStatus],
+            ) -> bool {
+                success_codes
+                    .iter()
+                    .any(|status| status.code() == validation_status::SIGNING_CREDENTIAL_TRUSTED)
+                    && failure_codes.is_empty()
+            }
 
             // https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_valid_manifest
-            let is_valid = success_codes.contains(validation_status::CLAIM_SIGNATURE_VALIDATED)
-                && success_codes.contains(validation_status::CLAIM_SIGNATURE_INSIDE_VALIDITY)
-                && (failure_codes.is_empty()
-                    || failure_codes.iter().all(|status| {
-                        status.code() == validation_status::SIGNING_CREDENTIAL_UNTRUSTED
-                    }))
-                && (ingredient_failure.is_empty()
-                    || ingredient_failure.iter().all(|status| {
-                        status.code() == validation_status::SIGNING_CREDENTIAL_UNTRUSTED
-                    }));
+            let is_valid = is_manifest_valid(active_manifest.success(), active_manifest.failure())
+                && self.ingredient_deltas.as_ref().iter().all(|deltas| {
+                    deltas.iter().all(|idv| {
+                        let deltas = idv.validation_deltas();
+                        deltas.informational().iter().any(|status| {
+                            status.code() == validation_status::INGREDIENT_PROVENANCE_UNKNOWN
+                        }) || is_manifest_valid(deltas.success(), deltas.failure())
+                    })
+                });
 
             // https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_trusted_manifest
-            let is_trusted = success_codes.contains(validation_status::SIGNING_CREDENTIAL_TRUSTED)
-                && failure_codes.is_empty()
-                && is_valid;
+            let is_trusted =
+                is_manifest_trusted(active_manifest.success(), active_manifest.failure())
+                    && self.ingredient_deltas.as_ref().iter().all(|deltas| {
+                        deltas.iter().all(|idv| {
+                            let deltas = idv.validation_deltas();
+                            deltas.informational().iter().any(|status| {
+                                status.code() == validation_status::INGREDIENT_PROVENANCE_UNKNOWN
+                            }) || is_manifest_trusted(deltas.success(), deltas.failure())
+                        })
+                    })
+                    && is_valid;
 
             if is_trusted {
                 return ValidationState::Trusted;
