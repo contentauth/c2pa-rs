@@ -73,8 +73,7 @@ mod tests {
         }
         assert!(asset.manifest.is_some());
         if let Some(manifest) = &asset.manifest {
-            let cc = ContentCredential::from_stream(
-                &context,
+            let cc = ContentCredential::new(&context).open_stream(
                 "application/c2pa",
                 std::io::Cursor::new(manifest),
             )
@@ -84,7 +83,7 @@ mod tests {
         let mut output = Cursor::new(Vec::new());
         Asset::write_stream(&mut asset, &mut output, "image/jpeg").unwrap();
 
-        let cc = ContentCredential::from_stream(&context, "image/jpeg", &mut output).unwrap();
+        let cc = ContentCredential::new(&context).open_stream("image/jpeg", &mut output).unwrap();
         println!("manifest: {:?}", cc);
     }
 }

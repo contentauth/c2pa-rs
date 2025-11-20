@@ -18,6 +18,7 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use serde_with::skip_serializing_none;
 
 use crate::{
     assertion::AssertionBase,
@@ -35,9 +36,12 @@ use crate::{
 };
 
 /// This Generates the standard Reader output format for a Store
+#[skip_serializing_none]
 #[derive(Serialize, Deserialize, Debug, Default)]
 pub struct StandardStoreReport {
-    #[serde(skip_serializing_if = "Option::is_none")]
+    title: Option<String>,
+    format: Option<String>,
+    instance_id: Option<String>,
     /// A label for the active (most recent) manifest in the store
     active_manifest: Option<String>,
 
@@ -80,6 +84,7 @@ impl StandardStoreReport {
             active_manifest,
             manifests,
             validation_results,
+            ..Default::default()
         })
     }
 }
@@ -123,17 +128,6 @@ impl<'a> ContentCredential<'a> {
         Ok(self)
     }
 
-    /// creates a content credential from an existing stream
-    pub fn from_stream(
-        context: &'a Context,
-        format: &str,
-        mut stream: impl Read + Seek + Send,
-    ) -> Result<Self> {
-        let mut cr = Self::new(context);
-        stream.rewind()?;
-        cr.add_ingredient_from_stream(Relationship::ParentOf, format, &mut stream)?;
-        Ok(cr)
-    }
 
     fn parent_ingredient(&self) -> Option<Ingredient> {
         for i in self.claim.ingredient_assertions() {
@@ -258,7 +252,7 @@ impl std::fmt::Display for ContentCredential<'_> {
 
 impl std::fmt::Debug for ContentCredential<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let value = self.detailed_value().map_err(|_| std::fmt::Error)?;
+        let value = self.reader_value().map_err(|_| std::fmt::Error)?;
         f.write_str(
             serde_json::to_string_pretty(&value)
                 .map_err(|_| std::fmt::Error)?
