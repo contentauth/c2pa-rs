@@ -216,16 +216,11 @@ impl ValidationResults {
                 .map(|status| status.code())
                 .collect();
             let failure_codes = active_manifest.failure();
-            let ingredient_failure: Vec<&ValidationStatus> = self
-                .ingredient_deltas
-                .as_ref()
-                .map(|deltas| {
-                    deltas
-                        .iter()
-                        .flat_map(|idv| idv.validation_deltas().failure().iter())
-                        .collect()
-                })
-                .unwrap_or_default();
+            let ingredient_failure = self.ingredient_deltas.as_ref().is_some_and(|deltas| {
+                deltas
+                    .iter()
+                    .any(|idv| !idv.validation_deltas().failure().is_empty())
+            });
 
             // https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_valid_manifest
             let is_valid = success_codes.contains(validation_status::CLAIM_SIGNATURE_VALIDATED)
@@ -234,10 +229,7 @@ impl ValidationResults {
                     || failure_codes.iter().all(|status| {
                         status.code() == validation_status::SIGNING_CREDENTIAL_UNTRUSTED
                     }))
-                && (ingredient_failure.is_empty()
-                    || ingredient_failure.iter().all(|status| {
-                        status.code() == validation_status::SIGNING_CREDENTIAL_UNTRUSTED
-                    }));
+                && !ingredient_failure;
 
             // https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_trusted_manifest
             let is_trusted = success_codes.contains(validation_status::SIGNING_CREDENTIAL_TRUSTED)
