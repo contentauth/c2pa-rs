@@ -35,7 +35,6 @@ use crate::{
         },
     },
     log_item,
-    settings::Settings,
     status_tracker::StatusTracker,
     validation_status::{
         TIMESTAMP_MALFORMED, TIMESTAMP_MISMATCH, TIMESTAMP_OUTSIDE_VALIDITY, TIMESTAMP_TRUSTED,
@@ -65,7 +64,7 @@ pub fn verify_time_stamp(
     data: &[u8],
     ctp: &CertificateTrustPolicy,
     validation_log: &mut StatusTracker,
-    settings: &Settings,
+    verify_trust: bool,
 ) -> Result<TstInfo, TimeStampError> {
     // Get the signed data frorm the timestamp data
     let Ok(Some(sd)) = signed_data_from_time_stamp_response(ts) else {
@@ -531,8 +530,6 @@ pub fn verify_time_stamp(
         }
 
         // the certificate must be on the trust list to be considered valid
-        let verify_trust = settings.verify.verify_timestamp_trust;
-
         if verify_trust {
             // per the spec TSA trust can only be checked against the system trust list not the user trust list
             let mut adjusted_ctp = ctp.clone();

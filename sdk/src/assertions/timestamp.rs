@@ -23,84 +23,93 @@ use crate::{
     crypto::cose::CertificateTrustPolicy,
     error::Result,
     http::{AsyncHttpResolver, SyncHttpResolver},
-    settings::Settings,
     status_tracker::StatusTracker,
-    store::Store,
     Error,
 };
 
-/// Helper class to create Timestamp assertions
+/// Helper class to create a `TimeStamp` assertion.
+///
+/// <https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#timestamp_assertion>
 #[derive(Serialize, Deserialize, Default, Debug, PartialEq, Eq)]
 pub struct TimeStamp(HashMap<String, ByteBuf>);
 
 impl TimeStamp {
-    /// Label prefix for an [`Timestamp`] assertion.
+    /// Label prefix for an [`TimeStamp`] assertion.
     ///
     /// See <https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_actions>.
     pub const LABEL: &'static str = labels::TIMESTAMP;
 
+    /// Construct a new, empty [`TimeStamp`] assertion.
     pub fn new() -> Self {
         TimeStamp(HashMap::new())
     }
 
-    //
+    /// Add a timestamp token for the given manifest id.
     pub fn add_timestamp(&mut self, manifest_id: &str, timestamp: &[u8]) {
         self.0
             .insert(manifest_id.to_string(), ByteBuf::from(timestamp.to_vec()));
     }
 
-    /// Get the timestamp for a given manifest id
+    /// Get the timestamp token for a given manifest id.
     pub fn get_timestamp(&self, manifest_id: &str) -> Option<&[u8]> {
         self.0.get(manifest_id).map(|buf| buf.as_ref())
     }
 
+    /// Refresh the timstamp token for a given manifest id.
+    ///
+    /// The signature is expected to be the `signature` field of the `COSE_Sign1_Tagged` structure
+    /// found in the C2PA claim signature box of the manifest corresponding to the `manifest_id`.
+    //
+    // The `signature` is normally obtained from [`Store::get_cose_sign1_signature`].
+    //
+    // [`Store::get_cose_sign1_signature`][crate::store::Store::get_cose_sign1_structure].
     #[async_generic(async_signature(
         &mut self,
-        store: &Store,
         time_authority_url: &str,
         manifest_id: &str,
+        signature: &[u8],
         http_resolver: &impl AsyncHttpResolver,
     ))]
     pub(crate) fn refresh_timestamp(
         &mut self,
-        store: &Store,
         time_authority_url: &str,
         manifest_id: &str,
+        signature: &[u8],
         http_resolver: &impl SyncHttpResolver,
-    ) -> Result<&[u8]> {
-        let signature = store
-            .get_cose_sign1_signature(manifest_id)
-            .ok_or(Error::ClaimMissingSignatureBox)?;
-
+    ) -> Result<()> {
         let timestamp_token = if _sync {
-            TimeStamp::send_timestamp_token_request(time_authority_url, &signature, http_resolver)?
+            TimeStamp::send_timestamp_token_request(time_authority_url, signature, http_resolver)?
         } else {
             TimeStamp::send_timestamp_token_request_async(
                 time_authority_url,
-                &signature,
+                signature,
                 http_resolver,
             )
             .await?
         };
 
-        Ok(self
-            .0
-            .entry(manifest_id.to_owned())
-            .or_insert(ByteBuf::from(timestamp_token))
-            .as_slice())
+        self.0
+            .insert(manifest_id.to_owned(), ByteBuf::from(timestamp_token));
+
+        Ok(())
     }
 
+    /// Send a timestamp token request to the `time_authority_url` with the given `signature`.
+    ///
+    /// This function will verify the structure of the returned response but not the trust.
+    ///
+    /// See [`TimeStamp::refresh_timestamp`] for more information.
     #[async_generic(async_signature(
         time_authority_url: &str,
-        message: &[u8],
+        signature: &[u8],
         http_resolver: &impl AsyncHttpResolver,
     ))]
     pub(crate) fn send_timestamp_token_request(
         time_authority_url: &str,
-        message: &[u8],
+        signature: &[u8],
         http_resolver: &impl SyncHttpResolver,
     ) -> Result<Vec<u8>> {
-        let body = crate::crypto::time_stamp::default_rfc3161_message(message)?;
+        let body = crate::crypto::time_stamp::default_rfc3161_message(signature)?;
         let headers = None;
 
         let bytes = if _sync {
@@ -108,7 +117,7 @@ impl TimeStamp {
                 time_authority_url,
                 headers,
                 &body,
-                message,
+                signature,
                 http_resolver,
             )
         } else {
@@ -116,37 +125,31 @@ impl TimeStamp {
                 time_authority_url,
                 headers,
                 &body,
-                message,
+                signature,
                 http_resolver,
             )
             .await
         }
-        .map_err(|_e| Error::OtherError("timestamp token not found".into()))?;
+        .map_err(|err| Error::OtherError(format!("timestamp token not found: {err:?}").into()))?;
 
         // make sure it is a good response
         let ctp = CertificateTrustPolicy::passthrough();
         let mut tracker = StatusTracker::default();
-
-        // TODO: separate verifying time stamp and verifying time stamp trust into separate functions?
-        //       do we need to pass settings here at all if `ctp` is set to pasthrough anyways?
-        let mut settings = Settings::default();
-        settings.verify.verify_timestamp_trust = false;
-
         if _sync {
             crate::crypto::time_stamp::verify_time_stamp(
                 &bytes,
-                message,
+                signature,
                 &ctp,
                 &mut tracker,
-                &settings,
+                false,
             )?;
         } else {
             crate::crypto::time_stamp::verify_time_stamp_async(
                 &bytes,
-                message,
+                signature,
                 &ctp,
                 &mut tracker,
-                &settings,
+                false,
             )
             .await?;
         }

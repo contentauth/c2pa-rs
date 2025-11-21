@@ -75,9 +75,22 @@ pub fn default_rfc3161_request(
 
     // Make sure the time stamp is valid before we return it.
     if _sync {
-        verify_time_stamp(&ts, message, &ctp, &mut local_log, &settings)?;
+        verify_time_stamp(
+            &ts,
+            message,
+            &ctp,
+            &mut local_log,
+            settings.verify.verify_timestamp_trust,
+        )?;
     } else {
-        verify_time_stamp_async(&ts, message, &ctp, &mut local_log, &settings).await?;
+        verify_time_stamp_async(
+            &ts,
+            message,
+            &ctp,
+            &mut local_log,
+            settings.verify.verify_timestamp_trust,
+        )
+        .await?;
     }
 
     Ok(ts)

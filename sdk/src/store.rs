@@ -485,17 +485,22 @@ impl Store {
         placeholder
     }
 
-    pub fn get_cose_sign1_signature(&self, manifest_id: &str) -> Option<Vec<u8>> {
-        let manifest = self.get_claim(manifest_id)?;
+    /// Return the COSE Sign1 signature found in the claim signature of the given `manifest_id`.
+    ///
+    /// This function will return `None` if there is no claim corresponding to the `manifest_id`.
+    pub fn get_cose_sign1_signature(&self, manifest_id: &str) -> Result<Option<Vec<u8>>> {
+        match self.get_claim(manifest_id) {
+            Some(claim) => {
+                let sig = claim.signature_val();
+                let data = claim.data()?;
+                let mut validation_log =
+                    StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
 
-        let sig = manifest.signature_val();
-        let data = manifest.data().ok()?;
-        let mut validation_log =
-            StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
-
-        let sign1 = parse_cose_sign1(sig, &data, &mut validation_log).ok()?;
-
-        Some(sign1.signature)
+                let sign1 = parse_cose_sign1(sig, &data, &mut validation_log)?;
+                Ok(Some(sign1.signature))
+            }
+            None => Ok(None),
+        }
     }
 
     /// Return OCSP info if available
@@ -1969,7 +1974,6 @@ impl Store {
         claim: &'a Claim,
         asset_data: &mut ClaimAssetData<'_>,
         validation_log: &mut StatusTracker,
-        settings: &Settings,
     ) -> Result<StoreValidationInfo<'a>> {
         let mut svi = StoreValidationInfo::default();
         Store::get_claim_referenced_manifests(claim, self, &mut svi, true, validation_log)?;
@@ -2054,26 +2058,19 @@ impl Store {
 
                 // save the valid timestamps stored in the StoreValidationInfo
                 // we only use valid timestamps, otherwise just ignore
-                let mut adjusted_settings = settings.clone();
-                let original_trust_val = adjusted_settings.verify.verify_timestamp_trust;
                 for (referenced_claim, time_stamp_token) in timestamp_assertion.as_ref() {
                     if let Some(rc) = svi.manifest_map.get(referenced_claim) {
-                        if rc.version() == 1 {
-                            // no trust checks for leagacy timestamps
-                            adjusted_settings.verify.verify_timestamp_trust = false;
-                        }
-
                         if let Ok(tst_info) = verify_time_stamp(
                             time_stamp_token,
                             rc.signature_val(),
                             &self.ctp,
                             validation_log,
-                            &adjusted_settings,
+                            // no trust checks for leagacy timestamps
+                            rc.version() != 1,
                         ) {
                             svi.timestamps.insert(rc.label().to_owned(), tst_info);
                         }
                     }
-                    adjusted_settings.verify.verify_timestamp_trust = original_trust_val;
                 }
             }
 
@@ -2133,7 +2130,7 @@ impl Store {
         };
 
         // get info needed to complete validation
-        let svi = store.get_store_validation_info(claim, asset_data, validation_log, settings)?;
+        let svi = store.get_store_validation_info(claim, asset_data, validation_log)?;
 
         if _sync {
             // verify the provenance claim

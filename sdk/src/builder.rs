@@ -1458,22 +1458,27 @@ impl Builder {
                     TimeStamp::new()
                 };
 
-                if _sync {
-                    timestamp_assertion.refresh_timestamp(
-                        store,
-                        time_authority_url,
-                        &parent_claim_id,
-                        http_resolver,
-                    )?;
-                } else {
-                    timestamp_assertion
-                        .refresh_timestamp_async(
-                            store,
-                            time_authority_url,
-                            &parent_claim_id,
-                            http_resolver,
-                        )
-                        .await?;
+                match store.get_cose_sign1_signature(&parent_claim_id)? {
+                    Some(signature) => {
+                        if _sync {
+                            timestamp_assertion.refresh_timestamp(
+                                time_authority_url,
+                                &parent_claim_id,
+                                &signature,
+                                http_resolver,
+                            )?;
+                        } else {
+                            timestamp_assertion
+                                .refresh_timestamp_async(
+                                    time_authority_url,
+                                    &parent_claim_id,
+                                    &signature,
+                                    http_resolver,
+                                )
+                                .await?;
+                        }
+                    }
+                    None => return Err(Error::ClaimMissingSignatureBox),
                 }
 
                 let claim = store.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
