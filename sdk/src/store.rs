@@ -485,9 +485,10 @@ impl Store {
         placeholder
     }
 
-    /// Return the COSE Sign1 signature found in the claim signature of the given `manifest_id`.
+    /// Returns the `signature` field of the `COSE_Sign1_Tagged` structure found in the claim signature
+    /// box of the manifest corresponding to the `manifest_id`.
     ///
-    /// This function will return `None` if there is no claim corresponding to the `manifest_id`.
+    /// This function will return `Ok(None)` if there is no claim corresponding to the `manifest_id`.
     pub fn get_cose_sign1_signature(&self, manifest_id: &str) -> Result<Option<Vec<u8>>> {
         match self.get_claim(manifest_id) {
             Some(claim) => {

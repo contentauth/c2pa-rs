@@ -154,8 +154,10 @@ impl TimeStamp {
             .await?;
         }
 
-        let token = crate::crypto::cose::timestamptoken_from_timestamprsp(&bytes)
-            .ok_or(Error::OtherError("timestamp token not found".into()))?;
+        let token =
+            crate::crypto::cose::timestamptoken_from_timestamprsp(&bytes).map_err(|err| {
+                Error::OtherError(format!("timestamp token not found: {err:?}").into())
+            })?;
 
         Ok(token)
     }
