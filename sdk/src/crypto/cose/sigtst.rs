@@ -297,7 +297,7 @@ pub fn timestamptoken_from_timestamprsp(ts: &[u8]) -> Result<Vec<u8>> {
     let tst = ts_resp
         .0
         .time_stamp_token
-        .ok_or_else(|| CoseError::InternalError(format!("invalid timestamp token")))?;
+        .ok_or_else(|| CoseError::InternalError("invalid timestamp token".to_string()))?;
 
     let a = tst
         .content_type
