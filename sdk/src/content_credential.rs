@@ -128,7 +128,6 @@ impl<'a> ContentCredential<'a> {
         Ok(self)
     }
 
-
     fn parent_ingredient(&self) -> Option<Ingredient> {
         for i in self.claim.ingredient_assertions() {
             if let Ok(ingredient) = Ingredient::from_assertion(i.assertion()) {
