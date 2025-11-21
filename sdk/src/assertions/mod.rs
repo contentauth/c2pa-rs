@@ -70,7 +70,7 @@ mod thumbnail;
 pub(crate) use thumbnail::Thumbnail;
 
 mod timestamp;
-pub(crate) use timestamp::TimeStamp;
+pub use timestamp::TimeStamp;
 
 mod user;
 pub(crate) use user::User;
