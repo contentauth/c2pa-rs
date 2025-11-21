@@ -19,6 +19,7 @@ use http::{Request, Response};
 use crate::Result;
 
 mod reqwest;
+pub mod restricted;
 mod ureq;
 mod wasi;
 
@@ -149,6 +150,14 @@ pub enum HttpResolverError {
     /// Note this often occurs when the http-related features are improperly enabled.
     #[error("the async http resolver is not implemented")]
     AsyncHttpResolverNotImplemented,
+
+    /// The remote URI is blocked by the allowed list.
+    ///
+    /// The allowed list is normally set in a [`SyncRestrictedResolver`].
+    ///
+    /// [`SyncRestrictedResolver`]: restricted::SyncRestrictedResolver
+    #[error("remote URI \"{uri}\" is not permitted by the allowed list")]
+    UriDisallowed { uri: String },
 
     /// An error occured from the underlying HTTP resolver.
     #[error("an error occurred from the underlying http resolver")]

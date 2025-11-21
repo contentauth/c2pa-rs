@@ -35,7 +35,10 @@ use crate::{
     crypto::base64,
     error::{Error, Result},
     hashed_uri::HashedUri,
-    http::{AsyncGenericResolver, AsyncHttpResolver, SyncGenericResolver, SyncHttpResolver},
+    http::{
+        restricted::{AsyncRestrictedResolver, SyncRestrictedResolver},
+        AsyncGenericResolver, AsyncHttpResolver, SyncGenericResolver, SyncHttpResolver,
+    },
     jumbf::{
         self,
         labels::{assertion_label_from_uri, manifest_label_from_uri},
@@ -733,7 +736,15 @@ impl Ingredient {
         options: &dyn IngredientOptions,
     ) -> Result<Self> {
         let settings = crate::settings::get_settings().unwrap_or_default();
-        let http_resolver = SyncGenericResolver::new();
+        let allowed_network_hosts = settings
+            .core
+            .allowed_network_hosts
+            .as_deref()
+            .unwrap_or_default();
+        let http_resolver = SyncRestrictedResolver::with_allowed_hosts(
+            SyncGenericResolver::new(),
+            allowed_network_hosts.to_vec(),
+        );
         Self::from_file_impl(path.as_ref(), options, &http_resolver, &settings)
     }
 
@@ -842,9 +853,19 @@ impl Ingredient {
     /// Thumbnail will be set only if one can be retrieved from a previous valid manifest.
     pub fn from_stream(format: &str, stream: &mut dyn CAIRead) -> Result<Self> {
         let settings = crate::settings::get_settings().unwrap_or_default();
+        let allowed_network_hosts = settings
+            .core
+            .allowed_network_hosts
+            .as_deref()
+            .unwrap_or_default();
+        let http_resolver = SyncRestrictedResolver::with_allowed_hosts(
+            SyncGenericResolver::new(),
+            allowed_network_hosts.to_vec(),
+        );
+
         let ingredient = Self::from_stream_info(stream, format, "untitled");
         stream.rewind()?;
-        ingredient.add_stream_internal(format, stream, &SyncGenericResolver::new(), &settings)
+        ingredient.add_stream_internal(format, stream, &http_resolver, &settings)
     }
 
     /// Create an Ingredient from JSON.
@@ -1023,7 +1044,16 @@ impl Ingredient {
     /// Thumbnail will be set only if one can be retrieved from a previous valid manifest.
     pub async fn from_stream_async(format: &str, stream: &mut dyn CAIRead) -> Result<Self> {
         let settings = crate::settings::get_settings().unwrap_or_default();
-        let http_resolver = AsyncGenericResolver::new();
+        let allowed_network_hosts = settings
+            .core
+            .allowed_network_hosts
+            .as_deref()
+            .unwrap_or_default();
+        let http_resolver = AsyncRestrictedResolver::with_allowed_hosts(
+            AsyncGenericResolver::new(),
+            allowed_network_hosts.to_vec(),
+        );
+
         Self::from_stream_async_with_settings(format, stream, &http_resolver, &settings).await
     }
 
@@ -1042,7 +1072,7 @@ impl Ingredient {
         let (result, manifest_bytes) = match Store::load_jumbf_from_stream_async(
             format,
             stream,
-            &AsyncGenericResolver::new(),
+            http_resolver,
             settings,
         )
         .await
@@ -1489,7 +1519,15 @@ impl Ingredient {
         stream: &mut dyn CAIRead,
     ) -> Result<Self> {
         let settings = crate::settings::get_settings().unwrap_or_default();
-        let http_resolver = AsyncGenericResolver::new();
+        let allowed_network_hosts = settings
+            .core
+            .allowed_network_hosts
+            .as_deref()
+            .unwrap_or_default();
+        let http_resolver = AsyncRestrictedResolver::with_allowed_hosts(
+            AsyncGenericResolver::new(),
+            allowed_network_hosts.to_vec(),
+        );
         let mut ingredient = Self::from_stream_info(stream, format, "untitled");
 
         let mut validation_log = StatusTracker::default();

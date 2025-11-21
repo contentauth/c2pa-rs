@@ -35,7 +35,10 @@ use crate::{
     claim::Claim,
     dynamic_assertion::PartialClaim,
     error::{Error, Result},
-    http::{AsyncGenericResolver, SyncGenericResolver},
+    http::{
+        restricted::{AsyncRestrictedResolver, SyncRestrictedResolver},
+        AsyncGenericResolver, SyncGenericResolver,
+    },
     jumbf::labels::{manifest_label_from_uri, to_absolute_uri, to_relative_uri},
     jumbf_io, log_item,
     manifest::StoreOptions,
@@ -140,11 +143,24 @@ impl Reader {
     #[cfg(not(target_arch = "wasm32"))]
     pub fn from_stream(format: &str, mut stream: impl Read + Seek + Send) -> Result<Reader> {
         let settings = crate::settings::get_settings().unwrap_or_default();
+
+        let allowed_network_hosts = settings
+            .core
+            .allowed_network_hosts
+            .as_deref()
+            .unwrap_or_default();
         let http_resolver = if _sync {
-            SyncGenericResolver::new()
+            SyncRestrictedResolver::with_allowed_hosts(
+                SyncGenericResolver::new(),
+                allowed_network_hosts.to_vec(),
+            )
         } else {
-            AsyncGenericResolver::new()
+            AsyncRestrictedResolver::with_allowed_hosts(
+                AsyncGenericResolver::new(),
+                allowed_network_hosts.to_vec(),
+            )
         };
+
         // TODO: passing verify is redundant with settings
         let verify = settings.verify.verify_after_reading;
 
@@ -182,10 +198,21 @@ impl Reader {
     #[cfg(target_arch = "wasm32")]
     pub fn from_stream(format: &str, mut stream: impl Read + Seek) -> Result<Reader> {
         let settings = crate::settings::get_settings().unwrap_or_default();
+        let allowed_network_hosts = settings
+            .core
+            .allowed_network_hosts
+            .as_deref()
+            .unwrap_or_default();
         let http_resolver = if _sync {
-            SyncGenericResolver::new()
+            SyncRestrictedResolver::with_allowed_hosts(
+                SyncGenericResolver::new(),
+                allowed_network_hosts.to_vec(),
+            )
         } else {
-            AsyncGenericResolver::new()
+            AsyncRestrictedResolver::with_allowed_hosts(
+                AsyncGenericResolver::new(),
+                allowed_network_hosts.to_vec(),
+            )
         };
         // TODO: passing verify is redundant with settings
         let verify = settings.verify.verify_after_reading;
@@ -309,10 +336,21 @@ impl Reader {
         stream: impl Read + Seek + Send,
     ) -> Result<Reader> {
         let settings = crate::settings::get_settings().unwrap_or_default();
+        let allowed_network_hosts = settings
+            .core
+            .allowed_network_hosts
+            .as_deref()
+            .unwrap_or_default();
         let http_resolver = if _sync {
-            SyncGenericResolver::new()
+            SyncRestrictedResolver::with_allowed_hosts(
+                SyncGenericResolver::new(),
+                allowed_network_hosts.to_vec(),
+            )
         } else {
-            AsyncGenericResolver::new()
+            AsyncRestrictedResolver::with_allowed_hosts(
+                AsyncGenericResolver::new(),
+                allowed_network_hosts.to_vec(),
+            )
         };
 
         let mut validation_log = StatusTracker::default();
@@ -363,10 +401,21 @@ impl Reader {
         mut fragment: impl Read + Seek + Send,
     ) -> Result<Self> {
         let settings = crate::settings::get_settings().unwrap_or_default();
+        let allowed_network_hosts = settings
+            .core
+            .allowed_network_hosts
+            .as_deref()
+            .unwrap_or_default();
         let http_resolver = if _sync {
-            SyncGenericResolver::new()
+            SyncRestrictedResolver::with_allowed_hosts(
+                SyncGenericResolver::new(),
+                allowed_network_hosts.to_vec(),
+            )
         } else {
-            AsyncGenericResolver::new()
+            AsyncRestrictedResolver::with_allowed_hosts(
+                AsyncGenericResolver::new(),
+                allowed_network_hosts.to_vec(),
+            )
         };
 
         let mut validation_log = StatusTracker::default();
@@ -404,7 +453,15 @@ impl Reader {
         fragments: &Vec<std::path::PathBuf>,
     ) -> Result<Reader> {
         let settings = crate::settings::get_settings().unwrap_or_default();
-        let http_resolver = SyncGenericResolver::new();
+        let allowed_network_hosts = settings
+            .core
+            .allowed_network_hosts
+            .as_deref()
+            .unwrap_or_default();
+        let http_resolver = SyncRestrictedResolver::with_allowed_hosts(
+            SyncGenericResolver::new(),
+            allowed_network_hosts.to_vec(),
+        );
 
         let verify = settings.verify.verify_after_reading;
         let mut validation_log = StatusTracker::default();

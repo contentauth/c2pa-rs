@@ -27,7 +27,10 @@ use config::{Config, FileFormat};
 use serde_derive::{Deserialize, Serialize};
 use signer::SignerSettings;
 
-use crate::{crypto::base64, settings::builder::BuilderSettings, Error, Result, Signer};
+use crate::{
+    crypto::base64, http::restricted::HostPattern, settings::builder::BuilderSettings, Error,
+    Result, Signer,
+};
 
 const VERSION: u32 = 1;
 
@@ -219,6 +222,28 @@ pub struct Core {
     /// [`IdentityAssertion`]: crate::identity::IdentityAssertion
     /// [`Reader`]: crate::Reader
     pub decode_identity_assertions: bool,
+    /// List of host patterns that are allowed for outbound network requests.
+    ///
+    /// Each pattern may include:
+    /// - A scheme (e.g. `https://` or `http://`)
+    /// - A hostname, which may have a single leading wildcard (e.g. `*.contentauthenticity.org`)
+    ///
+    /// Matching is case-insensitive. A wildcard pattern such as `*.contentauthenticity.org` matches
+    /// `sub.contentauthenticity.org`, but does not match `contentauthenticity.org` or `fakecontentauthenticity.org`.
+    /// If a scheme is present in the pattern, only URIs using the same scheme are considered a match. If the scheme
+    /// is omitted, any scheme is allowed as long as the host matches.
+    ///
+    /// The behavior is as follows:
+    /// - `None` (default) no filtering enabled.
+    /// - `Some(vec)` where `vec` is empty, all outbound traffic is blocked.
+    /// - `Some(vec)` with at least one pattern, filtering enabled for only those patterns.
+    ///
+    /// These settings are consumed by [`SyncRestrictedResolver`] and [`AsyncRestrictedResolver`].
+    ///
+    /// [`HostPattern`]: crate::http::restricted::HostPattern
+    /// [`SyncRestrictedResolver`]: crate::http::restricted::SyncRestrictedResolver
+    /// [`AsyncRestrictedResolver`]: crate::http::restricted::AsyncRestrictedResolver
+    pub allowed_network_hosts: Option<Vec<HostPattern>>,
 }
 
 impl Default for Core {
@@ -228,6 +253,7 @@ impl Default for Core {
             merkle_tree_max_proofs: 5,
             backing_store_memory_threshold_in_mb: 512,
             decode_identity_assertions: true,
+            allowed_network_hosts: None,
         }
     }
 }

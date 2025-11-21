@@ -37,7 +37,10 @@ use crate::{
     },
     claim::Claim,
     error::{Error, Result},
-    http::{AsyncGenericResolver, SyncGenericResolver},
+    http::{
+        restricted::{AsyncRestrictedResolver, SyncRestrictedResolver},
+        AsyncGenericResolver, SyncGenericResolver,
+    },
     jumbf_io,
     resource_store::{ResourceRef, ResourceResolver, ResourceStore},
     settings::{self, Settings},
@@ -617,6 +620,22 @@ impl Builder {
         R: Read + Seek + Send,
     {
         let settings = crate::settings::get_settings().unwrap_or_default();
+        let allowed_network_hosts = settings
+            .core
+            .allowed_network_hosts
+            .as_deref()
+            .unwrap_or_default();
+        let http_resolver = if _sync {
+            SyncRestrictedResolver::with_allowed_hosts(
+                SyncGenericResolver::new(),
+                allowed_network_hosts.to_vec(),
+            )
+        } else {
+            AsyncRestrictedResolver::with_allowed_hosts(
+                AsyncGenericResolver::new(),
+                allowed_network_hosts.to_vec(),
+            )
+        };
 
         let ingredient: Ingredient = Ingredient::from_json(&ingredient_json.into())?;
 
@@ -632,10 +651,10 @@ impl Builder {
         }
 
         let ingredient = if _sync {
-            ingredient.with_stream(format, stream, &SyncGenericResolver::new(), &settings)?
+            ingredient.with_stream(format, stream, &http_resolver, &settings)?
         } else {
             ingredient
-                .with_stream_async(format, stream, &AsyncGenericResolver::new(), &settings)
+                .with_stream_async(format, stream, &http_resolver, &settings)
                 .await?
         };
 
@@ -862,6 +881,15 @@ impl Builder {
             // so we will read the store directly here
             //crate::Reader::from_stream("application/c2pa", stream).and_then(|r| r.into_builder())
             let settings = crate::settings::get_settings().unwrap_or_default();
+            let allowed_network_hosts = settings
+                .core
+                .allowed_network_hosts
+                .as_deref()
+                .unwrap_or_default();
+            let http_resolver = SyncRestrictedResolver::with_allowed_hosts(
+                SyncGenericResolver::new(),
+                allowed_network_hosts.to_vec(),
+            );
 
             let mut validation_log = crate::status_tracker::StatusTracker::default();
             stream.rewind()?; // Ensure stream is at the start
@@ -871,7 +899,7 @@ impl Builder {
                 &mut stream,
                 false,
                 &mut validation_log,
-                &SyncGenericResolver::new(),
+                &http_resolver,
                 &settings,
             )?;
             let reader = Reader::from_store(store, &mut validation_log, &settings)?;
@@ -1576,10 +1604,21 @@ impl Builder {
         W: Write + Read + Seek + Send,
     {
         let settings = crate::settings::get_settings().unwrap_or_default();
+        let allowed_network_hosts = settings
+            .core
+            .allowed_network_hosts
+            .as_deref()
+            .unwrap_or_default();
         let http_resolver = if _sync {
-            SyncGenericResolver::new()
+            SyncRestrictedResolver::with_allowed_hosts(
+                SyncGenericResolver::new(),
+                allowed_network_hosts.to_vec(),
+            )
         } else {
-            AsyncGenericResolver::new()
+            AsyncRestrictedResolver::with_allowed_hosts(
+                AsyncGenericResolver::new(),
+                allowed_network_hosts.to_vec(),
+            )
         };
 
         let format = format_to_mime(format);
