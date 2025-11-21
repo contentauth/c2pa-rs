@@ -384,11 +384,7 @@ impl Settings {
     pub fn from_string(settings_str: &str, format: &str) -> Result<Self> {
         let f = match format.to_lowercase().as_str() {
             "json" => FileFormat::Json,
-            //"json5" => FileFormat::Json5,
-            //"ini" => FileFormat::Ini,
             "toml" => FileFormat::Toml,
-            //"yaml" => FileFormat::Yaml,
-            //ron" => FileFormat::Ron,
             _ => return Err(Error::UnsupportedType),
         };
 
