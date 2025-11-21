@@ -764,14 +764,14 @@ pub unsafe extern "C" fn c2pa_reader_detailed_json(reader_ptr: *mut C2paReader) 
 /// The returned value MUST be released by calling c2pa_string_free
 /// and it is no longer valid after that call.
 #[no_mangle]
-pub unsafe extern "C" fn c2pa_reader_raw_jumbf(
+pub unsafe extern "C" fn c2pa_reader_raw_manifest_jumbf(
     reader_ptr: *mut C2paReader,
     manifest_bytes_ptr: *mut *const c_uchar,
 ) -> i64 {
     check_or_return_int!(reader_ptr);
     check_or_return_int!(manifest_bytes_ptr);
     let c2pa_reader = guard_boxed!(reader_ptr);
-    let result = c2pa_reader.jumbf_manifest();
+    let result = c2pa_reader.raw_manifest_jumbf();
     ok_or_return_int!(result, |manifest_bytes: Vec<u8>| {
         let len = manifest_bytes.len() as i64;
         if !manifest_bytes_ptr.is_null() {
@@ -1861,7 +1861,8 @@ mod tests {
         assert!(json_content.contains("com.example.test-action"));
 
         let mut manifest_bytes_ptr = std::ptr::null();
-        let raw_jumbf_result = unsafe { c2pa_reader_raw_jumbf(reader, &mut manifest_bytes_ptr) };
+        let raw_jumbf_result =
+            unsafe { c2pa_reader_raw_manifest_jumbf(reader, &mut manifest_bytes_ptr) };
         assert!(raw_jumbf_result > 0);
         assert!(!manifest_bytes_ptr.is_null());
 

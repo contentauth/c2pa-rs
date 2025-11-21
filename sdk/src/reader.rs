@@ -524,7 +524,7 @@ impl Reader {
 
     /// Get the Reader as a raw JUMBF Manifest
     /// This just calls to_jumbf_internal on the store with no min_reserved_size
-    pub fn jumbf_manifest(&self) -> Result<Vec<u8>> {
+    pub fn raw_manifest_jumbf(&self) -> Result<Vec<u8>> {
         self.store.to_jumbf_internal(0)
     }
 
