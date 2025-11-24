@@ -244,8 +244,7 @@ pub struct Core {
     ///
     /// [When do outbound network requests occur?]: crate::http#when-do-outbound-network-requests-occur
     /// [`HostPattern`]: crate::http::restricted::HostPattern
-    /// [`SyncRestrictedResolver`]: crate::http::restricted::SyncRestrictedResolver
-    /// [`AsyncRestrictedResolver`]: crate::http::restricted::AsyncRestrictedResolver
+    /// [`RestrictedResolver`]: crate::http::restricted::RestrictedResolver
     pub allowed_network_hosts: Option<Vec<HostPattern>>,
 }
 

@@ -25,6 +25,11 @@ use crate::{
     Result,
 };
 
+/// HTTP resolver wrapper that enforces an allowed-list of outbound hosts.
+///
+/// If the allowed list is empty, no filtering is applied and all outbound requests are allowed.
+///
+/// When a URI is not permitted, the resolver returns [`HttpResolverError::UriDisallowed`].
 #[derive(Debug)]
 pub struct RestrictedResolver<T> {
     inner: T,
@@ -32,6 +37,7 @@ pub struct RestrictedResolver<T> {
 }
 
 impl<T> RestrictedResolver<T> {
+    /// Creates a new `RestrictedResolver` with an empty allowed list.
     pub fn new(inner: T) -> Self {
         Self {
             inner,
@@ -39,6 +45,7 @@ impl<T> RestrictedResolver<T> {
         }
     }
 
+    /// Creates a new `RestrictedResolver` with the specified allowed list.
     pub fn with_allowed_hosts(inner: T, allowed_hosts: Vec<HostPattern>) -> Self {
         Self {
             inner,
@@ -46,6 +53,12 @@ impl<T> RestrictedResolver<T> {
         }
     }
 
+    /// Replaces the current allowed list with the given allowed list.
+    pub fn set_allowed_hosts(&mut self, allowed_hosts: Vec<HostPattern>) {
+        self.allowed_hosts = allowed_hosts;
+    }
+
+    /// Returns a reference to the allowed list.
     pub fn allowed_hosts(&self) -> &[HostPattern] {
         &self.allowed_hosts
     }
@@ -99,6 +112,16 @@ impl<T: AsyncHttpResolver + Sync> AsyncHttpResolver for RestrictedResolver<T> {
     }
 }
 
+/// A host/scheme pattern used to restrict outbound network requests.
+///
+/// Each pattern may include:
+/// - A scheme (e.g. `https://` or `http://`)
+/// - A hostname, which may have a single leading wildcard (e.g. `*.contentauthenticity.org`)
+///
+/// Matching is case-insensitive. A wildcard pattern such as `*.contentauthenticity.org` matches
+/// `sub.contentauthenticity.org`, but does not match `contentauthenticity.org` or `fakecontentauthenticity.org`.
+/// If a scheme is present in the pattern, only URIs using the same scheme are considered a match. If the scheme
+/// is omitted, any scheme is allowed as long as the host matches.
 #[cfg_attr(
     feature = "json_schema",
     derive(schemars::JsonSchema),
@@ -111,10 +134,12 @@ pub struct HostPattern {
 
 impl HostPattern {
     // TODO: validate it doesn't have more than a scheme and a host and that it has at least 1
+    /// Creates a new `HostPattern` with the given URI.
     pub fn new(uri: Uri) -> Self {
         Self { uri }
     }
 
+    /// Returns if the given URI matches the `HostPattern`.
     pub fn matches(&self, uri: &Uri) -> bool {
         if let Some(allowed_host_pattern) = self.uri.host() {
             if let Some(host) = uri.host() {
@@ -173,6 +198,7 @@ impl<'de> Deserialize<'de> for HostPattern {
     }
 }
 
+/// Returns if the given URI matches at least one of the [`HostPattern`]s.
 fn is_uri_allowed(patterns: &[HostPattern], uri: &Uri) -> bool {
     if patterns.is_empty() {
         return true;

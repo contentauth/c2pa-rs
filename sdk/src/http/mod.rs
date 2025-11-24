@@ -45,9 +45,11 @@ use http::{Request, Response};
 use crate::Result;
 
 mod reqwest;
-pub mod restricted;
 mod ureq;
 mod wasi;
+
+/// Structs for restricting outbound network requests.
+pub mod restricted;
 
 // Since we use `http::Request` and `http::Response` we also expose the `http` crate.
 pub use http;
