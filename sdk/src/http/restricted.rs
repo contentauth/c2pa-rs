@@ -38,6 +38,7 @@ pub struct RestrictedResolver<T> {
 
 impl<T> RestrictedResolver<T> {
     /// Creates a new `RestrictedResolver` with an empty allowed list.
+    #[allow(dead_code)] // TODO: temp until http module is public
     pub fn new(inner: T) -> Self {
         Self {
             inner,
@@ -54,6 +55,7 @@ impl<T> RestrictedResolver<T> {
     }
 
     /// Replaces the current allowed list with the given allowed list.
+    #[allow(dead_code)] // TODO: temp until http module is public
     pub fn set_allowed_hosts(&mut self, allowed_hosts: Vec<HostPattern>) {
         self.allowed_hosts = allowed_hosts;
     }
@@ -178,6 +180,12 @@ impl HostPattern {
     }
 }
 
+impl From<Uri> for HostPattern {
+    fn from(uri: Uri) -> Self {
+        Self { uri }
+    }
+}
+
 impl Serialize for HostPattern {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
@@ -215,10 +223,60 @@ fn is_uri_allowed(patterns: &[HostPattern], uri: &Uri) -> bool {
 
 #[cfg(test)]
 mod test {
+    #![allow(clippy::panic, clippy::unwrap_used)]
+
     use super::*;
 
+    struct NoopHttpResolver;
+
+    impl SyncHttpResolver for NoopHttpResolver {
+        fn http_resolve(
+            &self,
+            _request: Request<Vec<u8>>,
+        ) -> Result<Response<Box<dyn Read>>, HttpResolverError> {
+            Ok(Response::new(Box::new(std::io::empty()) as Box<dyn Read>))
+        }
+    }
+
     #[test]
-    fn basic_wildcard_pattern() {
+    fn allowed_http_request() {
+        let allowed_list = vec![
+            Uri::from_static("*.prefix.contentauthenticity.org").into(),
+            Uri::from_static("test.contentauthenticity.org").into(),
+            Uri::from_static("fakecontentauthenticity.org").into(),
+            Uri::from_static("https://*.contentauthenticity.org").into(),
+            Uri::from_static("https://test.contentauthenticity.org").into(),
+        ];
+        let restricted_resolver =
+            RestrictedResolver::with_allowed_hosts(NoopHttpResolver, allowed_list);
+
+        let result = restricted_resolver.http_resolve(
+            Request::get(Uri::from_static("fakecontentauthenticity.org"))
+                .body(Vec::new())
+                .unwrap(),
+        );
+        assert!(matches!(result, Ok(..)));
+    }
+
+    #[test]
+    fn disallowed_http_request() {
+        let allowed_list = vec![];
+        let restricted_resolver =
+            RestrictedResolver::with_allowed_hosts(NoopHttpResolver, allowed_list);
+
+        let result = restricted_resolver.http_resolve(
+            Request::get(Uri::from_static("fakecontentauthenticity.org"))
+                .body(Vec::new())
+                .unwrap(),
+        );
+        assert!(matches!(
+            result,
+            Err(HttpResolverError::UriDisallowed { .. })
+        ));
+    }
+
+    #[test]
+    fn wildcard_pattern() {
         let pattern = HostPattern::new(Uri::from_static("*.contentauthenticity.org"));
 
         let uri = Uri::from_static("test.contentauthenticity.org");
@@ -258,7 +316,7 @@ mod test {
     }
 
     #[test]
-    fn pattern_case_insensitive() {
+    fn case_insensitive_pattern() {
         let pattern = HostPattern::new(Uri::from_static("*.contentAuthenticity.org"));
 
         let uri = Uri::from_static("tEst.conTentauthenticity.orG");
@@ -266,7 +324,7 @@ mod test {
     }
 
     #[test]
-    fn pattern_exact() {
+    fn exact_pattern() {
         let pattern = HostPattern::new(Uri::from_static("contentauthenticity.org"));
 
         let uri = Uri::from_static("contentauthenticity.org");
@@ -280,7 +338,7 @@ mod test {
     }
 
     #[test]
-    fn pattern_exact_with_schema() {
+    fn exact_pattern_with_schema() {
         let pattern = HostPattern::new(Uri::from_static("https://contentauthenticity.org"));
 
         let uri = Uri::from_static("https://contentauthenticity.org");
