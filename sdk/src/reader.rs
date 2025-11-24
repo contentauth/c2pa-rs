@@ -141,22 +141,13 @@ impl Reader {
     pub fn from_stream(format: &str, mut stream: impl Read + Seek + Send) -> Result<Reader> {
         let settings = crate::settings::get_settings().unwrap_or_default();
 
-        let allowed_network_hosts = settings
-            .core
-            .allowed_network_hosts
-            .as_deref()
-            .unwrap_or_default();
         let http_resolver = if _sync {
-            RestrictedResolver::with_allowed_hosts(
-                SyncGenericResolver::new(),
-                allowed_network_hosts.to_vec(),
-            )
+            SyncGenericResolver::new()
         } else {
-            RestrictedResolver::with_allowed_hosts(
-                AsyncGenericResolver::new(),
-                allowed_network_hosts.to_vec(),
-            )
+            AsyncGenericResolver::new()
         };
+        let mut http_resolver = RestrictedResolver::new(http_resolver);
+        http_resolver.set_allowed_hosts(settings.core.allowed_network_hosts.clone());
 
         // TODO: passing verify is redundant with settings
         let verify = settings.verify.verify_after_reading;
@@ -201,16 +192,13 @@ impl Reader {
             .as_deref()
             .unwrap_or_default();
         let http_resolver = if _sync {
-            RestrictedResolver::with_allowed_hosts(
-                SyncGenericResolver::new(),
-                allowed_network_hosts.to_vec(),
-            )
+            SyncGenericResolver::new()
         } else {
-            RestrictedResolver::with_allowed_hosts(
-                AsyncGenericResolver::new(),
-                allowed_network_hosts.to_vec(),
-            )
+            AsyncGenericResolver::new()
         };
+        let mut http_resolver = RestrictedResolver::new(http_resolver);
+        http_resolver.set_allowed_hosts(settings.core.allowed_network_hosts.clone());
+
         // TODO: passing verify is redundant with settings
         let verify = settings.verify.verify_after_reading;
 
@@ -333,22 +321,13 @@ impl Reader {
         stream: impl Read + Seek + Send,
     ) -> Result<Reader> {
         let settings = crate::settings::get_settings().unwrap_or_default();
-        let allowed_network_hosts = settings
-            .core
-            .allowed_network_hosts
-            .as_deref()
-            .unwrap_or_default();
         let http_resolver = if _sync {
-            RestrictedResolver::with_allowed_hosts(
-                SyncGenericResolver::new(),
-                allowed_network_hosts.to_vec(),
-            )
+            SyncGenericResolver::new()
         } else {
-            RestrictedResolver::with_allowed_hosts(
-                AsyncGenericResolver::new(),
-                allowed_network_hosts.to_vec(),
-            )
+            AsyncGenericResolver::new()
         };
+        let mut http_resolver = RestrictedResolver::new(http_resolver);
+        http_resolver.set_allowed_hosts(settings.core.allowed_network_hosts.clone());
 
         let mut validation_log = StatusTracker::default();
 
@@ -398,22 +377,13 @@ impl Reader {
         mut fragment: impl Read + Seek + Send,
     ) -> Result<Self> {
         let settings = crate::settings::get_settings().unwrap_or_default();
-        let allowed_network_hosts = settings
-            .core
-            .allowed_network_hosts
-            .as_deref()
-            .unwrap_or_default();
         let http_resolver = if _sync {
-            RestrictedResolver::with_allowed_hosts(
-                SyncGenericResolver::new(),
-                allowed_network_hosts.to_vec(),
-            )
+            SyncGenericResolver::new()
         } else {
-            RestrictedResolver::with_allowed_hosts(
-                AsyncGenericResolver::new(),
-                allowed_network_hosts.to_vec(),
-            )
+            AsyncGenericResolver::new()
         };
+        let mut http_resolver = RestrictedResolver::new(http_resolver);
+        http_resolver.set_allowed_hosts(settings.core.allowed_network_hosts.clone());
 
         let mut validation_log = StatusTracker::default();
 
@@ -450,15 +420,8 @@ impl Reader {
         fragments: &Vec<std::path::PathBuf>,
     ) -> Result<Reader> {
         let settings = crate::settings::get_settings().unwrap_or_default();
-        let allowed_network_hosts = settings
-            .core
-            .allowed_network_hosts
-            .as_deref()
-            .unwrap_or_default();
-        let http_resolver = RestrictedResolver::with_allowed_hosts(
-            SyncGenericResolver::new(),
-            allowed_network_hosts.to_vec(),
-        );
+        let mut http_resolver = RestrictedResolver::new(SyncGenericResolver::new());
+        http_resolver.set_allowed_hosts(settings.core.allowed_network_hosts.clone());
 
         let verify = settings.verify.verify_after_reading;
         let mut validation_log = StatusTracker::default();

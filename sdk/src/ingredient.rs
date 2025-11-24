@@ -736,15 +736,9 @@ impl Ingredient {
         options: &dyn IngredientOptions,
     ) -> Result<Self> {
         let settings = crate::settings::get_settings().unwrap_or_default();
-        let allowed_network_hosts = settings
-            .core
-            .allowed_network_hosts
-            .as_deref()
-            .unwrap_or_default();
-        let http_resolver = RestrictedResolver::with_allowed_hosts(
-            SyncGenericResolver::new(),
-            allowed_network_hosts.to_vec(),
-        );
+        let mut http_resolver = RestrictedResolver::new(SyncGenericResolver::new());
+        http_resolver.set_allowed_hosts(settings.core.allowed_network_hosts.clone());
+
         Self::from_file_impl(path.as_ref(), options, &http_resolver, &settings)
     }
 
@@ -853,15 +847,8 @@ impl Ingredient {
     /// Thumbnail will be set only if one can be retrieved from a previous valid manifest.
     pub fn from_stream(format: &str, stream: &mut dyn CAIRead) -> Result<Self> {
         let settings = crate::settings::get_settings().unwrap_or_default();
-        let allowed_network_hosts = settings
-            .core
-            .allowed_network_hosts
-            .as_deref()
-            .unwrap_or_default();
-        let http_resolver = RestrictedResolver::with_allowed_hosts(
-            SyncGenericResolver::new(),
-            allowed_network_hosts.to_vec(),
-        );
+        let mut http_resolver = RestrictedResolver::new(SyncGenericResolver::new());
+        http_resolver.set_allowed_hosts(settings.core.allowed_network_hosts.clone());
 
         let ingredient = Self::from_stream_info(stream, format, "untitled");
         stream.rewind()?;
@@ -1044,15 +1031,8 @@ impl Ingredient {
     /// Thumbnail will be set only if one can be retrieved from a previous valid manifest.
     pub async fn from_stream_async(format: &str, stream: &mut dyn CAIRead) -> Result<Self> {
         let settings = crate::settings::get_settings().unwrap_or_default();
-        let allowed_network_hosts = settings
-            .core
-            .allowed_network_hosts
-            .as_deref()
-            .unwrap_or_default();
-        let http_resolver = RestrictedResolver::with_allowed_hosts(
-            AsyncGenericResolver::new(),
-            allowed_network_hosts.to_vec(),
-        );
+        let mut http_resolver = RestrictedResolver::new(AsyncGenericResolver::new());
+        http_resolver.set_allowed_hosts(settings.core.allowed_network_hosts.clone());
 
         Self::from_stream_async_with_settings(format, stream, &http_resolver, &settings).await
     }
@@ -1519,15 +1499,9 @@ impl Ingredient {
         stream: &mut dyn CAIRead,
     ) -> Result<Self> {
         let settings = crate::settings::get_settings().unwrap_or_default();
-        let allowed_network_hosts = settings
-            .core
-            .allowed_network_hosts
-            .as_deref()
-            .unwrap_or_default();
-        let http_resolver = RestrictedResolver::with_allowed_hosts(
-            AsyncGenericResolver::new(),
-            allowed_network_hosts.to_vec(),
-        );
+        let mut http_resolver = RestrictedResolver::new(AsyncGenericResolver::new());
+        http_resolver.set_allowed_hosts(settings.core.allowed_network_hosts.clone());
+
         let mut ingredient = Self::from_stream_info(stream, format, "untitled");
 
         let mut validation_log = StatusTracker::default();

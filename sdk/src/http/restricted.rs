@@ -18,14 +18,11 @@ use http::{Request, Response, Uri};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::{
-    http::{
-        AsyncGenericResolver, AsyncHttpResolver, HttpResolverError, SyncGenericResolver,
-        SyncHttpResolver,
-    },
+    http::{AsyncHttpResolver, HttpResolverError, SyncHttpResolver},
     Result,
 };
 
-/// HTTP resolver wrapper that enforces an allowed-list of outbound hosts.
+/// HTTP resolver wrapper that enforces an allowed list of outbound hosts.
 ///
 /// If the allowed list is empty, no filtering is applied and all outbound requests are allowed.
 ///
@@ -33,54 +30,35 @@ use crate::{
 #[derive(Debug)]
 pub struct RestrictedResolver<T> {
     inner: T,
-    allowed_hosts: Vec<HostPattern>,
+    allowed_hosts: Option<Vec<HostPattern>>,
 }
 
 impl<T> RestrictedResolver<T> {
     /// Creates a new `RestrictedResolver` with an empty allowed list.
-    #[allow(dead_code)] // TODO: temp until http module is public
     pub fn new(inner: T) -> Self {
         Self {
             inner,
-            allowed_hosts: Vec::new(),
+            allowed_hosts: None,
         }
     }
 
     /// Creates a new `RestrictedResolver` with the specified allowed list.
+    #[allow(dead_code)] // TODO: temp until http module is public
     pub fn with_allowed_hosts(inner: T, allowed_hosts: Vec<HostPattern>) -> Self {
         Self {
             inner,
-            allowed_hosts,
+            allowed_hosts: Some(allowed_hosts),
         }
     }
 
-    /// Replaces the current allowed list with the given allowed list.
-    #[allow(dead_code)] // TODO: temp until http module is public
-    pub fn set_allowed_hosts(&mut self, allowed_hosts: Vec<HostPattern>) {
+    /// Replaces the current allowed list with the given allowed list if specified.
+    pub fn set_allowed_hosts(&mut self, allowed_hosts: Option<Vec<HostPattern>>) {
         self.allowed_hosts = allowed_hosts;
     }
 
     /// Returns a reference to the allowed list.
-    pub fn allowed_hosts(&self) -> &[HostPattern] {
-        &self.allowed_hosts
-    }
-}
-
-impl Default for RestrictedResolver<SyncGenericResolver> {
-    fn default() -> Self {
-        Self {
-            inner: SyncGenericResolver::new(),
-            allowed_hosts: Vec::new(),
-        }
-    }
-}
-
-impl Default for RestrictedResolver<AsyncGenericResolver> {
-    fn default() -> Self {
-        Self {
-            inner: AsyncGenericResolver::new(),
-            allowed_hosts: Vec::new(),
-        }
+    pub fn allowed_hosts(&self) -> Option<&[HostPattern]> {
+        self.allowed_hosts.as_deref()
     }
 }
 
@@ -89,11 +67,15 @@ impl<T: SyncHttpResolver> SyncHttpResolver for RestrictedResolver<T> {
         &self,
         request: Request<Vec<u8>>,
     ) -> Result<Response<Box<dyn Read>>, HttpResolverError> {
-        match is_uri_allowed(self.allowed_hosts(), request.uri()) {
-            true => self.inner.http_resolve(request),
-            false => Err(HttpResolverError::UriDisallowed {
+        if self
+            .allowed_hosts()
+            .is_none_or(|hosts| is_uri_allowed(hosts, request.uri()))
+        {
+            self.inner.http_resolve(request)
+        } else {
+            Err(HttpResolverError::UriDisallowed {
                 uri: request.uri().to_string(),
-            }),
+            })
         }
     }
 }
@@ -105,11 +87,15 @@ impl<T: AsyncHttpResolver + Sync> AsyncHttpResolver for RestrictedResolver<T> {
         &self,
         request: Request<Vec<u8>>,
     ) -> Result<Response<Box<dyn Read>>, HttpResolverError> {
-        match is_uri_allowed(self.allowed_hosts(), request.uri()) {
-            true => self.inner.http_resolve_async(request).await,
-            false => Err(HttpResolverError::UriDisallowed {
+        if self
+            .allowed_hosts()
+            .is_none_or(|hosts| is_uri_allowed(hosts, request.uri()))
+        {
+            self.inner.http_resolve_async(request).await
+        } else {
+            Err(HttpResolverError::UriDisallowed {
                 uri: request.uri().to_string(),
-            }),
+            })
         }
     }
 }
@@ -208,10 +194,6 @@ impl<'de> Deserialize<'de> for HostPattern {
 
 /// Returns if the given URI matches at least one of the [`HostPattern`]s.
 fn is_uri_allowed(patterns: &[HostPattern], uri: &Uri) -> bool {
-    if patterns.is_empty() {
-        return true;
-    }
-
     for pattern in patterns {
         if pattern.matches(uri) {
             return true;
@@ -238,6 +220,27 @@ mod test {
         }
     }
 
+    fn assert_allowed_uri(resolver: &impl SyncHttpResolver, uri: &'static str) {
+        let result = resolver.http_resolve(
+            Request::get(Uri::from_static(uri))
+                .body(Vec::new())
+                .unwrap(),
+        );
+        assert!(matches!(result, Ok(..)));
+    }
+
+    fn assert_disallowed_uri(resolver: &impl SyncHttpResolver, uri: &'static str) {
+        let result = resolver.http_resolve(
+            Request::get(Uri::from_static(uri))
+                .body(Vec::new())
+                .unwrap(),
+        );
+        assert!(matches!(
+            result,
+            Err(HttpResolverError::UriDisallowed { .. })
+        ));
+    }
+
     #[test]
     fn allowed_http_request() {
         let allowed_list = vec![
@@ -250,29 +253,45 @@ mod test {
         let restricted_resolver =
             RestrictedResolver::with_allowed_hosts(NoopHttpResolver, allowed_list);
 
-        let result = restricted_resolver.http_resolve(
-            Request::get(Uri::from_static("fakecontentauthenticity.org"))
-                .body(Vec::new())
-                .unwrap(),
+        assert_allowed_uri(&restricted_resolver, "fakecontentauthenticity.org");
+        assert_allowed_uri(&restricted_resolver, "test.prefix.contentauthenticity.org");
+        assert_allowed_uri(&restricted_resolver, "https://test.contentauthenticity.org");
+        assert_allowed_uri(
+            &restricted_resolver,
+            "https://test2.contentauthenticity.org",
         );
-        assert!(matches!(result, Ok(..)));
+
+        assert_disallowed_uri(&restricted_resolver, "test.test.contentauthenticity.org");
+        assert_disallowed_uri(
+            &restricted_resolver,
+            "https://test.prefix.fakecontentauthenticity.org",
+        );
+        assert_disallowed_uri(
+            &restricted_resolver,
+            "https://test.fakecontentauthenticity.org",
+        );
+        assert_disallowed_uri(&restricted_resolver, "https://contentauthenticity.org");
     }
 
     #[test]
-    fn disallowed_http_request() {
+    fn allowed_none_http_request() {
         let allowed_list = vec![];
         let restricted_resolver =
             RestrictedResolver::with_allowed_hosts(NoopHttpResolver, allowed_list);
 
-        let result = restricted_resolver.http_resolve(
-            Request::get(Uri::from_static("fakecontentauthenticity.org"))
-                .body(Vec::new())
-                .unwrap(),
+        assert_disallowed_uri(
+            &restricted_resolver,
+            "test.test.fakecontentauthenticity.org",
         );
-        assert!(matches!(
-            result,
-            Err(HttpResolverError::UriDisallowed { .. })
-        ));
+        assert_disallowed_uri(
+            &restricted_resolver,
+            "https://test.prefix.fakecontentauthenticity.org",
+        );
+        assert_disallowed_uri(
+            &restricted_resolver,
+            "https://test.fakecontentauthenticity.org",
+        );
+        assert_disallowed_uri(&restricted_resolver, "https://contentauthenticity.org");
     }
 
     #[test]
