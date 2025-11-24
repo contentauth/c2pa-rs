@@ -11,6 +11,32 @@
 // specific language governing permissions and limitations under
 // each license.
 
+//! HTTP abstraction layer.
+//!
+//! This module defines generic traits and helpers for performing HTTP requests
+//! without hard-wiring a specific HTTP client. It allows host applications to
+//! plug in their own HTTP implementation, restrict where the SDK may connect,
+//! or disable networking entirely.
+//!
+//! # When do outbound network requests occur?
+//!
+//! The SDK may issue outbound HTTP/S requests in the following scenarios:
+//! - [`Reader`]:
+//!     - Fetching remote manifests
+//!     - Validating CAWG identity assertions
+//!     - Fetching OCSP revocation status
+//! - [`Builder`]:
+//!     - Fetching ingredient remote manifests
+//!     - Fetching timestamps
+//!     - Fetching [`TimeStamp`] assertions
+//!     - Fetching OCSP staples
+//!     - Fetching [`CertificateStatus`] assertions
+//!
+//! [`Reader`]: crate::Reader
+//! [`Builder`]: crate::Builder
+//! [`TimeStamp`]: crate::assertions::TimeStamp
+//! [`CertificateStatus`]: crate::assertions::CertificateStatus
+
 use std::io::{self, Read};
 
 use async_trait::async_trait;

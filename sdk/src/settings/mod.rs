@@ -238,8 +238,11 @@ pub struct Core {
     /// - `Some(vec)` where `vec` is empty, all outbound traffic is blocked.
     /// - `Some(vec)` with at least one pattern, filtering enabled for only those patterns.
     ///
+    /// For information on when the SDK might perform an outbound network request, see "[When do outbound network requests occur?]"
+    ///
     /// These settings are consumed by [`SyncRestrictedResolver`] and [`AsyncRestrictedResolver`].
     ///
+    /// [When do outbound network requests occur?]: crate::http#when-do-outbound-network-requests-occur
     /// [`HostPattern`]: crate::http::restricted::HostPattern
     /// [`SyncRestrictedResolver`]: crate::http::restricted::SyncRestrictedResolver
     /// [`AsyncRestrictedResolver`]: crate::http::restricted::AsyncRestrictedResolver
