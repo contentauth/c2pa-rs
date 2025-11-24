@@ -26,12 +26,12 @@ use crate::{
 };
 
 #[derive(Debug)]
-pub struct SyncRestrictedResolver<T = SyncGenericResolver> {
+pub struct RestrictedResolver<T> {
     inner: T,
     allowed_hosts: Vec<HostPattern>,
 }
 
-impl<T: SyncHttpResolver> SyncRestrictedResolver<T> {
+impl<T> RestrictedResolver<T> {
     pub fn new(inner: T) -> Self {
         Self {
             inner,
@@ -51,7 +51,7 @@ impl<T: SyncHttpResolver> SyncRestrictedResolver<T> {
     }
 }
 
-impl Default for SyncRestrictedResolver<SyncGenericResolver> {
+impl Default for RestrictedResolver<SyncGenericResolver> {
     fn default() -> Self {
         Self {
             inner: SyncGenericResolver::new(),
@@ -60,7 +60,16 @@ impl Default for SyncRestrictedResolver<SyncGenericResolver> {
     }
 }
 
-impl<T: SyncHttpResolver> SyncHttpResolver for SyncRestrictedResolver<T> {
+impl Default for RestrictedResolver<AsyncGenericResolver> {
+    fn default() -> Self {
+        Self {
+            inner: AsyncGenericResolver::new(),
+            allowed_hosts: Vec::new(),
+        }
+    }
+}
+
+impl<T: SyncHttpResolver> SyncHttpResolver for RestrictedResolver<T> {
     fn http_resolve(
         &self,
         request: Request<Vec<u8>>,
@@ -74,44 +83,9 @@ impl<T: SyncHttpResolver> SyncHttpResolver for SyncRestrictedResolver<T> {
     }
 }
 
-#[derive(Debug)]
-pub struct AsyncRestrictedResolver<T = AsyncGenericResolver> {
-    inner: T,
-    allowed_hosts: Vec<HostPattern>,
-}
-
-impl<T: AsyncHttpResolver> AsyncRestrictedResolver<T> {
-    pub fn new(inner: T) -> Self {
-        Self {
-            inner,
-            allowed_hosts: Vec::new(),
-        }
-    }
-
-    pub fn with_allowed_hosts(inner: T, allowed_hosts: Vec<HostPattern>) -> Self {
-        Self {
-            inner,
-            allowed_hosts,
-        }
-    }
-
-    pub fn allowed_hosts(&self) -> &[HostPattern] {
-        &self.allowed_hosts
-    }
-}
-
-impl Default for AsyncRestrictedResolver<AsyncGenericResolver> {
-    fn default() -> Self {
-        Self {
-            inner: AsyncGenericResolver::new(),
-            allowed_hosts: Vec::new(),
-        }
-    }
-}
-
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
-impl<T: AsyncHttpResolver + Sync> AsyncHttpResolver for AsyncRestrictedResolver<T> {
+impl<T: AsyncHttpResolver + Sync> AsyncHttpResolver for RestrictedResolver<T> {
     async fn http_resolve_async(
         &self,
         request: Request<Vec<u8>>,
@@ -125,8 +99,11 @@ impl<T: AsyncHttpResolver + Sync> AsyncHttpResolver for AsyncRestrictedResolver<
     }
 }
 
-#[cfg_attr(feature = "json_schema", derive(schemars::JsonSchema))]
-#[schemars(with = "String")]
+#[cfg_attr(
+    feature = "json_schema",
+    derive(schemars::JsonSchema),
+    schemars(with = "String")
+)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct HostPattern {
     uri: Uri,

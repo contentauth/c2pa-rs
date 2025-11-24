@@ -35,10 +35,7 @@ use crate::{
     claim::Claim,
     dynamic_assertion::PartialClaim,
     error::{Error, Result},
-    http::{
-        restricted::{AsyncRestrictedResolver, SyncRestrictedResolver},
-        AsyncGenericResolver, SyncGenericResolver,
-    },
+    http::{restricted::RestrictedResolver, AsyncGenericResolver, SyncGenericResolver},
     jumbf::labels::{manifest_label_from_uri, to_absolute_uri, to_relative_uri},
     jumbf_io, log_item,
     manifest::StoreOptions,
@@ -150,12 +147,12 @@ impl Reader {
             .as_deref()
             .unwrap_or_default();
         let http_resolver = if _sync {
-            SyncRestrictedResolver::with_allowed_hosts(
+            RestrictedResolver::with_allowed_hosts(
                 SyncGenericResolver::new(),
                 allowed_network_hosts.to_vec(),
             )
         } else {
-            AsyncRestrictedResolver::with_allowed_hosts(
+            RestrictedResolver::with_allowed_hosts(
                 AsyncGenericResolver::new(),
                 allowed_network_hosts.to_vec(),
             )
@@ -204,12 +201,12 @@ impl Reader {
             .as_deref()
             .unwrap_or_default();
         let http_resolver = if _sync {
-            SyncRestrictedResolver::with_allowed_hosts(
+            RestrictedResolver::with_allowed_hosts(
                 SyncGenericResolver::new(),
                 allowed_network_hosts.to_vec(),
             )
         } else {
-            AsyncRestrictedResolver::with_allowed_hosts(
+            RestrictedResolver::with_allowed_hosts(
                 AsyncGenericResolver::new(),
                 allowed_network_hosts.to_vec(),
             )
@@ -342,12 +339,12 @@ impl Reader {
             .as_deref()
             .unwrap_or_default();
         let http_resolver = if _sync {
-            SyncRestrictedResolver::with_allowed_hosts(
+            RestrictedResolver::with_allowed_hosts(
                 SyncGenericResolver::new(),
                 allowed_network_hosts.to_vec(),
             )
         } else {
-            AsyncRestrictedResolver::with_allowed_hosts(
+            RestrictedResolver::with_allowed_hosts(
                 AsyncGenericResolver::new(),
                 allowed_network_hosts.to_vec(),
             )
@@ -407,12 +404,12 @@ impl Reader {
             .as_deref()
             .unwrap_or_default();
         let http_resolver = if _sync {
-            SyncRestrictedResolver::with_allowed_hosts(
+            RestrictedResolver::with_allowed_hosts(
                 SyncGenericResolver::new(),
                 allowed_network_hosts.to_vec(),
             )
         } else {
-            AsyncRestrictedResolver::with_allowed_hosts(
+            RestrictedResolver::with_allowed_hosts(
                 AsyncGenericResolver::new(),
                 allowed_network_hosts.to_vec(),
             )
@@ -458,7 +455,7 @@ impl Reader {
             .allowed_network_hosts
             .as_deref()
             .unwrap_or_default();
-        let http_resolver = SyncRestrictedResolver::with_allowed_hosts(
+        let http_resolver = RestrictedResolver::with_allowed_hosts(
             SyncGenericResolver::new(),
             allowed_network_hosts.to_vec(),
         );

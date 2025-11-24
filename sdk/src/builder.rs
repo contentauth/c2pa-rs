@@ -37,10 +37,7 @@ use crate::{
     },
     claim::Claim,
     error::{Error, Result},
-    http::{
-        restricted::{AsyncRestrictedResolver, SyncRestrictedResolver},
-        AsyncGenericResolver, SyncGenericResolver,
-    },
+    http::{restricted::RestrictedResolver, AsyncGenericResolver, SyncGenericResolver},
     jumbf_io,
     resource_store::{ResourceRef, ResourceResolver, ResourceStore},
     settings::{self, Settings},
@@ -626,12 +623,12 @@ impl Builder {
             .as_deref()
             .unwrap_or_default();
         let http_resolver = if _sync {
-            SyncRestrictedResolver::with_allowed_hosts(
+            RestrictedResolver::with_allowed_hosts(
                 SyncGenericResolver::new(),
                 allowed_network_hosts.to_vec(),
             )
         } else {
-            AsyncRestrictedResolver::with_allowed_hosts(
+            RestrictedResolver::with_allowed_hosts(
                 AsyncGenericResolver::new(),
                 allowed_network_hosts.to_vec(),
             )
@@ -886,7 +883,7 @@ impl Builder {
                 .allowed_network_hosts
                 .as_deref()
                 .unwrap_or_default();
-            let http_resolver = SyncRestrictedResolver::with_allowed_hosts(
+            let http_resolver = RestrictedResolver::with_allowed_hosts(
                 SyncGenericResolver::new(),
                 allowed_network_hosts.to_vec(),
             );
@@ -1610,12 +1607,12 @@ impl Builder {
             .as_deref()
             .unwrap_or_default();
         let http_resolver = if _sync {
-            SyncRestrictedResolver::with_allowed_hosts(
+            RestrictedResolver::with_allowed_hosts(
                 SyncGenericResolver::new(),
                 allowed_network_hosts.to_vec(),
             )
         } else {
-            AsyncRestrictedResolver::with_allowed_hosts(
+            RestrictedResolver::with_allowed_hosts(
                 AsyncGenericResolver::new(),
                 allowed_network_hosts.to_vec(),
             )

@@ -36,8 +36,8 @@ use crate::{
     error::{Error, Result},
     hashed_uri::HashedUri,
     http::{
-        restricted::{AsyncRestrictedResolver, SyncRestrictedResolver},
-        AsyncGenericResolver, AsyncHttpResolver, SyncGenericResolver, SyncHttpResolver,
+        restricted::RestrictedResolver, AsyncGenericResolver, AsyncHttpResolver,
+        SyncGenericResolver, SyncHttpResolver,
     },
     jumbf::{
         self,
@@ -741,7 +741,7 @@ impl Ingredient {
             .allowed_network_hosts
             .as_deref()
             .unwrap_or_default();
-        let http_resolver = SyncRestrictedResolver::with_allowed_hosts(
+        let http_resolver = RestrictedResolver::with_allowed_hosts(
             SyncGenericResolver::new(),
             allowed_network_hosts.to_vec(),
         );
@@ -858,7 +858,7 @@ impl Ingredient {
             .allowed_network_hosts
             .as_deref()
             .unwrap_or_default();
-        let http_resolver = SyncRestrictedResolver::with_allowed_hosts(
+        let http_resolver = RestrictedResolver::with_allowed_hosts(
             SyncGenericResolver::new(),
             allowed_network_hosts.to_vec(),
         );
@@ -1049,7 +1049,7 @@ impl Ingredient {
             .allowed_network_hosts
             .as_deref()
             .unwrap_or_default();
-        let http_resolver = AsyncRestrictedResolver::with_allowed_hosts(
+        let http_resolver = RestrictedResolver::with_allowed_hosts(
             AsyncGenericResolver::new(),
             allowed_network_hosts.to_vec(),
         );
@@ -1524,7 +1524,7 @@ impl Ingredient {
             .allowed_network_hosts
             .as_deref()
             .unwrap_or_default();
-        let http_resolver = AsyncRestrictedResolver::with_allowed_hosts(
+        let http_resolver = RestrictedResolver::with_allowed_hosts(
             AsyncGenericResolver::new(),
             allowed_network_hosts.to_vec(),
         );

@@ -179,9 +179,9 @@ pub enum HttpResolverError {
 
     /// The remote URI is blocked by the allowed list.
     ///
-    /// The allowed list is normally set in a [`SyncRestrictedResolver`].
+    /// The allowed list is normally set in a [`RestrictedResolver`].
     ///
-    /// [`SyncRestrictedResolver`]: restricted::SyncRestrictedResolver
+    /// [`RestrictedResolver`]: restricted::RestrictedResolver
     #[error("remote URI \"{uri}\" is not permitted by the allowed list")]
     UriDisallowed { uri: String },
 
