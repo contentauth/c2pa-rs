@@ -186,11 +186,6 @@ impl Reader {
     #[cfg(target_arch = "wasm32")]
     pub fn from_stream(format: &str, mut stream: impl Read + Seek) -> Result<Reader> {
         let settings = crate::settings::get_settings().unwrap_or_default();
-        let allowed_network_hosts = settings
-            .core
-            .allowed_network_hosts
-            .as_deref()
-            .unwrap_or_default();
         let http_resolver = if _sync {
             SyncGenericResolver::new()
         } else {
