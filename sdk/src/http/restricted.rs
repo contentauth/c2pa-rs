@@ -117,24 +117,38 @@ impl<T: AsyncHttpResolver + Sync> AsyncHttpResolver for RestrictedResolver<T> {
 )]
 #[derive(Debug, Clone, PartialEq)]
 pub struct HostPattern {
-    uri: Uri,
+    pattern: String,
+    scheme: Option<String>,
+    host: Option<String>,
 }
 
 impl HostPattern {
-    // TODO: validate it doesn't have more than a scheme and a host and that it has at least 1
-    /// Creates a new `HostPattern` with the given URI.
-    pub fn new(uri: Uri) -> Self {
-        Self { uri }
+    /// Creates a new `HostPattern` with the given pattern.
+    pub fn new(pattern: &str) -> Self {
+        let pattern = pattern.to_ascii_lowercase();
+        let (scheme, host): (Option<String>, Option<String>) =
+            if let Some(host) = pattern.strip_prefix("https://") {
+                (Some("https".to_owned()), Some(host.to_owned()))
+            } else if let Some(host) = pattern.strip_prefix("http://") {
+                (Some("http".to_owned()), Some(host.to_owned()))
+            } else {
+                (None, Some(pattern.clone()))
+            };
+
+        Self {
+            pattern,
+            scheme,
+            host,
+        }
     }
 
     /// Returns if the given URI matches the `HostPattern`.
     pub fn matches(&self, uri: &Uri) -> bool {
-        if let Some(allowed_host_pattern) = self.uri.host() {
+        if let Some(allowed_host_pattern) = &self.host {
             if let Some(host) = uri.host() {
                 // If there's a wildcard, do an suffix match, otherwise do an exact match.
                 let host_allowed = if let Some(suffix) = allowed_host_pattern.strip_prefix("*.") {
                     let host = host.to_ascii_lowercase();
-                    let suffix = suffix.to_ascii_lowercase();
 
                     if host.len() <= suffix.len() || !host.ends_with(&suffix) {
                         false
@@ -147,18 +161,18 @@ impl HostPattern {
                 };
 
                 if host_allowed {
-                    if let Some(allowed_scheme) = self.uri.scheme() {
+                    if let Some(allowed_scheme) = &self.scheme {
                         if let Some(scheme) = uri.scheme() {
-                            return scheme == allowed_scheme;
+                            return scheme.as_str() == allowed_scheme;
                         }
                     } else {
                         return true;
                     }
                 }
             }
-        } else if let Some(allowed_scheme) = self.uri.scheme() {
+        } else if let Some(allowed_scheme) = &self.scheme {
             if let Some(scheme) = uri.scheme() {
-                return scheme == allowed_scheme;
+                return scheme.as_str() == allowed_scheme;
             }
         }
 
@@ -166,9 +180,9 @@ impl HostPattern {
     }
 }
 
-impl From<Uri> for HostPattern {
-    fn from(uri: Uri) -> Self {
-        Self { uri }
+impl From<&str> for HostPattern {
+    fn from(pattern: &str) -> Self {
+        Self::new(pattern)
     }
 }
 
@@ -177,7 +191,7 @@ impl Serialize for HostPattern {
     where
         S: Serializer,
     {
-        serializer.serialize_str(&self.uri.to_string())
+        serializer.serialize_str(&self.pattern.to_string())
     }
 }
 
@@ -186,9 +200,7 @@ impl<'de> Deserialize<'de> for HostPattern {
     where
         D: Deserializer<'de>,
     {
-        let string = String::deserialize(deserializer)?;
-        let uri = string.parse::<Uri>().map_err(serde::de::Error::custom)?;
-        Ok(HostPattern::new(uri))
+        Ok(HostPattern::new(&String::deserialize(deserializer)?))
     }
 }
 
@@ -244,11 +256,11 @@ mod test {
     #[test]
     fn allowed_http_request() {
         let allowed_list = vec![
-            Uri::from_static("*.prefix.contentauthenticity.org").into(),
-            Uri::from_static("test.contentauthenticity.org").into(),
-            Uri::from_static("fakecontentauthenticity.org").into(),
-            Uri::from_static("https://*.contentauthenticity.org").into(),
-            Uri::from_static("https://test.contentauthenticity.org").into(),
+            "*.prefix.contentauthenticity.org".into(),
+            "test.contentauthenticity.org".into(),
+            "fakecontentauthenticity.org".into(),
+            "https://*.contentauthenticity.org".into(),
+            "https://test.contentauthenticity.org".into(),
         ];
         let restricted_resolver =
             RestrictedResolver::with_allowed_hosts(NoopHttpResolver, allowed_list);
@@ -296,7 +308,7 @@ mod test {
 
     #[test]
     fn wildcard_pattern() {
-        let pattern = HostPattern::new(Uri::from_static("*.contentauthenticity.org"));
+        let pattern = HostPattern::new("*.contentauthenticity.org");
 
         let uri = Uri::from_static("test.contentauthenticity.org");
         assert!(pattern.matches(&uri));
@@ -310,7 +322,7 @@ mod test {
 
     #[test]
     fn wildcard_pattern_with_scheme() {
-        let pattern = HostPattern::new(Uri::from_static("https://*.contentauthenticity.org"));
+        let pattern = HostPattern::new("https://*.contentauthenticity.org");
 
         let uri = Uri::from_static("test.contentauthenticity.org");
         assert!(!pattern.matches(&uri));
@@ -336,7 +348,7 @@ mod test {
 
     #[test]
     fn case_insensitive_pattern() {
-        let pattern = HostPattern::new(Uri::from_static("*.contentAuthenticity.org"));
+        let pattern = HostPattern::new("*.contentAuthenticity.org");
 
         let uri = Uri::from_static("tEst.conTentauthenticity.orG");
         assert!(pattern.matches(&uri));
@@ -344,7 +356,7 @@ mod test {
 
     #[test]
     fn exact_pattern() {
-        let pattern = HostPattern::new(Uri::from_static("contentauthenticity.org"));
+        let pattern = HostPattern::new("contentauthenticity.org");
 
         let uri = Uri::from_static("contentauthenticity.org");
         assert!(pattern.matches(&uri));
@@ -358,7 +370,7 @@ mod test {
 
     #[test]
     fn exact_pattern_with_schema() {
-        let pattern = HostPattern::new(Uri::from_static("https://contentauthenticity.org"));
+        let pattern = HostPattern::new("https://contentauthenticity.org");
 
         let uri = Uri::from_static("https://contentauthenticity.org");
         assert!(pattern.matches(&uri));
