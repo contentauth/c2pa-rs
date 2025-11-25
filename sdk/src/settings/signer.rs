@@ -44,6 +44,8 @@ pub enum SignerSettings {
         private_key: String,
         // Time stamp authority URL for signing.
         tsa_url: Option<String>,
+        // Referenced assertions for CAWG identity signing (optional).
+        referenced_assertions: Option<Vec<String>>,
     },
     /// A signer configured remotely.
     Remote {
@@ -57,6 +59,8 @@ pub enum SignerSettings {
         sign_cert: String,
         // Time stamp authority URL for signing.
         tsa_url: Option<String>,
+        // Referenced assertions for CAWG identity signing (optional).
+        referenced_assertions: Option<Vec<String>>,
     },
 }
 
@@ -98,6 +102,7 @@ impl SignerSettings {
                 sign_cert,
                 private_key,
                 tsa_url,
+                referenced_assertions: _,
             } => create_signer::from_keys(
                 sign_cert.as_bytes(),
                 private_key.as_bytes(),
@@ -109,6 +114,7 @@ impl SignerSettings {
                 alg,
                 sign_cert,
                 tsa_url,
+                referenced_assertions: _,
             } => Ok(Box::new(RemoteSigner {
                 url,
                 alg,
@@ -127,6 +133,7 @@ impl SignerSettings {
                 sign_cert: cawg_sign_cert,
                 private_key: cawg_private_key,
                 tsa_url: cawg_tsa_url,
+                referenced_assertions: cawg_referenced_assertions,
             } => {
                 let cawg_dual_signer = CawgX509IdentitySigner {
                     c2pa_signer,
@@ -134,6 +141,8 @@ impl SignerSettings {
                     cawg_sign_cert,
                     cawg_private_key,
                     cawg_tsa_url,
+                    cawg_referenced_assertions: cawg_referenced_assertions
+                        .unwrap_or_default(),
                 };
 
                 Ok(Box::new(cawg_dual_signer))
@@ -144,6 +153,7 @@ impl SignerSettings {
                 alg: _alg,
                 sign_cert: _sign_cert,
                 tsa_url: _tsa_url,
+                referenced_assertions: _,
             } => todo!("Remote CAWG X.509 signing not yet supported"),
         }
     }
@@ -161,6 +171,7 @@ struct CawgX509IdentitySigner {
     cawg_sign_cert: String,
     cawg_private_key: String,
     cawg_tsa_url: Option<String>,
+    cawg_referenced_assertions: Vec<String>,
     // NOTE: The CAWG signing settings are stored here because
     // we can't clone or transfer ownership of an `X509CredentialHolder`
     // inside the dynamic_assertions callback.
@@ -222,9 +233,17 @@ impl Signer for CawgX509IdentitySigner {
 
         let x509_credential_holder = X509CredentialHolder::from_raw_signer(raw_signer);
 
-        let iab = IdentityAssertionBuilder::for_credential_holder(x509_credential_holder);
+        let mut iab = IdentityAssertionBuilder::for_credential_holder(x509_credential_holder);
 
-        // TODO: Configure referenced assertions and role.
+        // TODO: Configure referenced assertions and role.        // Add referenced assertions if configured
+        if !self.cawg_referenced_assertions.is_empty() {
+            let referenced_assertions: Vec<&str> = self
+                .cawg_referenced_assertions
+                .iter()
+                .map(|s| s.as_str())
+                .collect();
+            iab.add_referenced_assertions(&referenced_assertions);
+        }
 
         vec![Box::new(iab)]
     }

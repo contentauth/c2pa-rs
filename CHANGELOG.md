@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.72.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.71.3...c2pa-v0.72.0)
+_17 November 2025_
+
+### Added
+
+* Remove x509_certificate ([#1547](https://github.com/contentauth/c2pa-rs/pull/1547))
+
+### Fixed
+
+* Remove ring altogether ([#1606](https://github.com/contentauth/c2pa-rs/pull/1606))
+
+## [0.71.3](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.71.2...c2pa-v0.71.3)
+_17 November 2025_
+
+### Documented
+
+* Fix and update Builder examples ([#1484](https://github.com/contentauth/c2pa-rs/pull/1484))
+
 ## [0.71.2](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.71.1...c2pa-v0.71.2)
 _13 November 2025_
 
