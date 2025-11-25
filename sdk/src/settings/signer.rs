@@ -141,8 +141,7 @@ impl SignerSettings {
                     cawg_sign_cert,
                     cawg_private_key,
                     cawg_tsa_url,
-                    cawg_referenced_assertions: cawg_referenced_assertions
-                        .unwrap_or_default(),
+                    cawg_referenced_assertions: cawg_referenced_assertions.unwrap_or_default(),
                 };
 
                 Ok(Box::new(cawg_dual_signer))
