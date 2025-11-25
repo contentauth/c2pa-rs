@@ -265,6 +265,9 @@ pub enum Error {
     #[error("hash verification( {0} )")]
     HashMismatch(String),
 
+    #[error("cyclic ingredient found in path: {claim_label_path:?}")]
+    CyclicIngredients { claim_label_path: Vec<String> },
+
     #[error("claim verification failure: {0}")]
     ClaimVerification(String),
 
