@@ -11,6 +11,26 @@
 // specific language governing permissions and limitations under
 // each license.
 
+//! HTTP request restriction layer.
+//!
+//! # Why restrict network requests?
+//! In some environments, you may not want the SDK to talk to arbitrary hosts. Restricting
+//! network requests help to:
+//! - Reduce SSRF-style risks (e.g. requests to internal services).
+//! - Constrain requests to a small, trusted set of domains.
+//!
+//! # OCSP and other dynamic endpoints
+//! Some protocols used by the SDK (like OCSP or CRLs) discover endpoints from certificate
+//! metadata at runtime. In a restricted environment, there is no way for the resolver to
+//! know that these endpoints are "special" unless you anticipate them in advance and add
+//! their hosts to the allow-list.
+//!
+//! # Disabling networking completely
+//! This restriction layer is a runtime control. To turn networking off entirely at compile
+//! time, do not enable any of the HTTP features (`http_*`), see ["Features"].
+//!
+//! ["Features"]: crate#features
+
 use std::io::Read;
 
 use async_trait::async_trait;

@@ -240,9 +240,9 @@ pub struct Core {
     ///
     /// These settings are consumed by [`RestrictedResolver`].
     ///
-    /// For information on when the SDK might perform an outbound network request, see "[When do outbound network requests occur?]"
+    /// For information on when the SDK might perform an outbound network request, see ["When do outbound network requests occur?"]
     ///
-    /// [When do outbound network requests occur?]: crate::http#when-do-outbound-network-requests-occur
+    /// ["When do outbound network requests occur?"]: crate::http#when-do-outbound-network-requests-occur
     /// [`HostPattern`]: crate::http::restricted::HostPattern
     /// [`RestrictedResolver`]: crate::http::restricted::RestrictedResolver
     pub allowed_network_hosts: Option<Vec<HostPattern>>,
