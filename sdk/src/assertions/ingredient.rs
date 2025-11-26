@@ -11,6 +11,8 @@
 // specific language governing permissions and limitations under
 // each license.
 
+use std::io::{Read, Seek};
+
 #[cfg(feature = "json_schema")]
 use schemars::JsonSchema;
 use serde::{ser::SerializeStruct, Deserialize, Serialize, Serializer};
@@ -20,8 +22,12 @@ use crate::{
     assertion::{Assertion, AssertionBase, AssertionDecodeError, AssertionDecodeErrorCause},
     assertions::{labels, AssertionMetadata, ReviewRating},
     cbor_types::map_cbor_to_type,
+    context::Context,
     error::Result,
     hashed_uri::HashedUri,
+    jumbf::labels::{to_manifest_uri, to_signature_uri},
+    status_tracker::StatusTracker,
+    store::Store,
     validation_results::ValidationResults,
     validation_status::ValidationStatus,
     Error,
@@ -519,6 +525,79 @@ impl Ingredient {
         }
 
         ingredient_map.end()
+    }
+
+    /// Create a new Ingredient assertion from a stream
+    /// You must specify the relationship and format.
+    /// This will return both the new Ingredient and the associated Store.
+    pub(crate) fn from_stream(
+        relationship: Relationship,
+        format: &str,
+        mut stream: impl Read + Seek + Send,
+        context: &Context,
+    ) -> Result<(Self, Store)> {
+        let mut validation_log = StatusTracker::default();
+
+        // // Try to get xmp info, if this fails all XmpInfo fields will be None.
+        // let xmp_info = XmpInfo::from_source(stream, &format);
+
+        // let id = if let Some(id) = xmp_info.instance_id {
+        //     id
+        // } else {
+        //     default_instance_id()
+        // };
+
+        // let mut ingredient = Self::new(title.into(), format, id);
+
+        // ingredient.document_id = xmp_info.document_id; // use document id if one exists
+        // ingredient.provenance = xmp_info.provenance;
+        let store: Store = Store::from_stream(format, &mut stream, &mut validation_log, context)?;
+        let validation_results = ValidationResults::from_store(&store, &validation_log);
+        let ingredient =
+            Self::from_store_and_validation_results(relationship, &store, &validation_results)?;
+        Ok((ingredient, store))
+    }
+
+    /// Create a new Ingredient assertion from a Store and ValidationResults.
+    /// You must specify the relationship.
+    pub(crate) fn from_store_and_validation_results(
+        relationship: Relationship,
+        store: &Store,
+        validation_results: &ValidationResults,
+    ) -> Result<Self> {
+        if let Some(claim) = store.provenance_claim() {
+            let mut ingredient = Self::new_v3(relationship);
+
+            ingredient.title = claim.title().cloned();
+            ingredient.format = claim.format().map(|f| f.to_string());
+            ingredient.instance_id = Some(claim.instance_id().to_string());
+
+            let hashes = store.get_manifest_box_hashes(claim);
+
+            ingredient.active_manifest = Some(HashedUri::new(
+                to_manifest_uri(claim.label()),
+                Some(claim.alg().to_owned()),
+                hashes.manifest_box_hash.as_ref(),
+            ));
+            ingredient.claim_signature = Some(HashedUri::new(
+                to_signature_uri(claim.label()),
+                Some(claim.alg().to_owned()),
+                hashes.signature_box_hash.as_ref(),
+            ));
+
+            ingredient.validation_results = Some(validation_results.clone());
+
+            if ingredient
+                .validation_results
+                .as_ref()
+                .map(|r| r.validation_state())
+                != Some(crate::ValidationState::Invalid)
+            {
+                ingredient.thumbnail = claim.thumbnail();
+            }
+            return Ok(ingredient);
+        }
+        Ok(Self::new_v3(relationship))
     }
 }
 

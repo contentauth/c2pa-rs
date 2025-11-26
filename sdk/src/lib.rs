@@ -118,6 +118,10 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 /// The assertions module contains the definitions for the assertions that are part of the C2PA specification.
 pub mod assertions;
 
+pub mod context;
+pub use context::{Context, IntoSettings};
+pub mod content_credential;
+pub use content_credential::ContentCredential;
 /// The cose_sign module contains the definitions for the COSE signing algorithms.
 pub mod cose_sign;
 
@@ -188,6 +192,7 @@ pub use validation_results::{ValidationResults, ValidationState};
 
 // Internal modules
 pub(crate) mod assertion;
+pub(crate) mod asset;
 pub(crate) mod asset_handlers;
 pub(crate) mod asset_io;
 pub(crate) mod builder;

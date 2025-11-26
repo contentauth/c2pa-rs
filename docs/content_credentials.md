@@ -52,14 +52,6 @@ For Builder archives - Sign and save a manifest, either embedded or sidecar.  If
 - Add a captured .c2pa archived ingredient using add_ingredient_from_stream. This will use the parent ingredient in the archive as the ingredient added.
 
 
-
-
-### Questions
-
-- Should we allow any Reader to be converted to a Builder, or only those with the same claim_generator? Maybe there is some other flag.
-
-- Can we save a .c2pa file that does not need to validate against an asset? This should probably be an option, but lets think about it.
-
 ### Test cases
 
 1) Validate an ingredient without a manifest, store in Builder and save.
@@ -78,7 +70,7 @@ A future lower level API will wrap the Claim and Store structures providing a si
 
 ## Asset objects (not directly related to the above)
 
-An Asset object creates a persistent layer over the asset_io traits. Currently we parse entire asset every time we need to access information about it. We have separate passes for XMP, JUMBF, Offset/box generation & etc..
+An Asset object creates a semi-persistent layer over the asset_io traits. Currently we parse entire asset every time we need to access information about it. We have separate passes for XMP, JUMBF, Offset/box generation & etc..
 
 - The details of file i/o, in memory, streamed, or remote web access are handled here. 
 - This will parse the asset, extract XMP, and C2PA data and allow 
