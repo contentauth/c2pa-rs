@@ -11,6 +11,32 @@
 // specific language governing permissions and limitations under
 // each license.
 
+//! HTTP abstraction layer.
+//!
+//! This module defines generic traits and helpers for performing HTTP requests
+//! without hard-wiring a specific HTTP client. It allows host applications to
+//! plug in their own HTTP implementation, restrict where the SDK may connect,
+//! or disable networking entirely.
+//!
+//! # When do outbound network requests occur?
+//!
+//! The SDK may issue outbound HTTP/S requests in the following scenarios:
+//! - [`Reader`]:
+//!     - Fetching remote manifests
+//!     - Validating CAWG identity assertions
+//!     - Fetching OCSP revocation status
+//! - [`Builder`]:
+//!     - Fetching ingredient remote manifests
+//!     - Fetching timestamps
+//!     - Fetching [`TimeStamp`] assertions
+//!     - Fetching OCSP staples
+//!     - Fetching [`CertificateStatus`] assertions
+//!
+//! [`Reader`]: crate::Reader
+//! [`Builder`]: crate::Builder
+//! [`TimeStamp`]: crate::assertions::TimeStamp
+//! [`CertificateStatus`]: crate::assertions::CertificateStatus
+
 use std::io::{self, Read};
 
 use async_trait::async_trait;
@@ -21,6 +47,9 @@ use crate::Result;
 mod reqwest;
 mod ureq;
 mod wasi;
+
+/// Structs for restricting outbound network requests.
+pub mod restricted;
 
 // Since we use `http::Request` and `http::Response` we also expose the `http` crate.
 pub use http;
@@ -149,6 +178,14 @@ pub enum HttpResolverError {
     /// Note this often occurs when the http-related features are improperly enabled.
     #[error("the async http resolver is not implemented")]
     AsyncHttpResolverNotImplemented,
+
+    /// The remote URI is blocked by the allowed list.
+    ///
+    /// The allowed list is normally set in a [`RestrictedResolver`].
+    ///
+    /// [`RestrictedResolver`]: restricted::RestrictedResolver
+    #[error("remote URI \"{uri}\" is not permitted by the allowed list")]
+    UriDisallowed { uri: String },
 
     /// An error occured from the underlying HTTP resolver.
     #[error("an error occurred from the underlying http resolver")]
