@@ -26,6 +26,7 @@ use async_trait::async_trait;
 use serde::Serialize;
 
 use crate::{
+    http::AsyncHttpResolver,
     identity::{
         builder::{AsyncCredentialHolder, CredentialHolder, IdentityBuilderError},
         identity_assertion::signature_verifier::ToCredentialSummary,
@@ -89,7 +90,8 @@ impl SignatureVerifier for NaiveSignatureVerifier {
         &self,
         signer_payload: &SignerPayload,
         signature: &[u8],
-        _status_tracker: &mut StatusTracker,
+        __status_tracker: &mut StatusTracker,
+        http_resolver: &impl AsyncHttpResolver,
     ) -> Result<Self::Output, ValidationError<Self::Error>> {
         let mut signer_payload_cbor: Vec<u8> = vec![];
         ciborium::into_writer(signer_payload, &mut signer_payload_cbor)

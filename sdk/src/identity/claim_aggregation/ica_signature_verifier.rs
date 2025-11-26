@@ -21,6 +21,7 @@ use crate::{
         asn1::rfc3161::TstInfo,
         cose::{validate_cose_tst_info_async, CertificateTrustPolicy},
     },
+    http::AsyncHttpResolver,
     identity::{
         claim_aggregation::{
             w3c_vc::{
@@ -64,6 +65,7 @@ impl SignatureVerifier for IcaSignatureVerifier {
         signer_payload: &SignerPayload,
         signature: &[u8],
         status_tracker: &mut StatusTracker,
+        http_resolver: &impl AsyncHttpResolver,
     ) -> Result<Self::Output, ValidationError<Self::Error>> {
         self.check_sig_type(signer_payload, status_tracker)?;
 
@@ -83,7 +85,7 @@ impl SignatureVerifier for IcaSignatureVerifier {
         // TO DO (CAI-7970): Add support for VC version 1.
         let mut ica_credential = self.parse_ica_vc_v2(payload_bytes, status_tracker)?;
 
-        self.check_issuer_signature(&sign1, &ica_credential)
+        self.check_issuer_signature(&sign1, &ica_credential, http_resolver)
             .await
             .or_else(|err| {
                 ok = false;
@@ -363,6 +365,7 @@ impl IcaSignatureVerifier {
         &self,
         sign1: &CoseSign1,
         ica_credential: &IcaCredential,
+        http_resolver: &impl AsyncHttpResolver,
     ) -> Result<(), ValidationError<IcaValidationError>> {
         // Discover public key for issuer DID and validate signature.
         // TEMPORARY version supports did:jwk and did:web only.
@@ -392,7 +395,7 @@ impl IcaSignatureVerifier {
             }
 
             "web" => {
-                let did_doc = did_web::resolve(&primary_did).await?;
+                let did_doc = did_web::resolve(&primary_did, http_resolver).await?;
 
                 let Some(vm1) = did_doc.verification_relationships.assertion_method.first() else {
                     return Err(ValidationError::SignatureError(

@@ -23,6 +23,7 @@ use serde_bytes::ByteBuf;
 use crate::{
     crypto::cose::{CertificateTrustPolicy, Verifier},
     dynamic_assertion::PartialClaim,
+    http::AsyncHttpResolver,
     identity::{
         claim_aggregation::IcaSignatureVerifier,
         identity_assertion::{
@@ -130,11 +131,12 @@ impl IdentityAssertion {
         manifest: &Manifest,
         status_tracker: &mut StatusTracker,
         verifier: &SV,
+        http_resolver: &impl AsyncHttpResolver,
     ) -> impl Serialize
     where
         <SV as SignatureVerifier>::Output: 'static,
     {
-        self.to_summary_impl(manifest, status_tracker, verifier)
+        self.to_summary_impl(manifest, status_tracker, verifier, http_resolver)
             .await
     }
 
@@ -143,13 +145,17 @@ impl IdentityAssertion {
         manifest: &Manifest,
         status_tracker: &mut StatusTracker,
         verifier: &SV,
+        http_resolver: &impl AsyncHttpResolver,
     ) -> IdentityAssertionReport<
         <<SV as SignatureVerifier>::Output as ToCredentialSummary>::CredentialSummary,
     >
     where
         <SV as SignatureVerifier>::Output: 'static,
     {
-        match self.validate(manifest, status_tracker, verifier).await {
+        match self
+            .validate(manifest, status_tracker, verifier, http_resolver)
+            .await
+        {
             Ok(named_actor) => {
                 let summary = named_actor.to_summary();
 
@@ -170,14 +176,16 @@ impl IdentityAssertion {
         manifest: &Manifest,
         status_tracker: &mut StatusTracker,
         verifier: &SV,
+        http_resolver: &impl AsyncHttpResolver,
     ) -> impl Serialize {
-        Self::summarize_all_impl(manifest, status_tracker, verifier).await
+        Self::summarize_all_impl(manifest, status_tracker, verifier, http_resolver).await
     }
 
     pub(crate) async fn summarize_all_impl<SV: SignatureVerifier>(
         manifest: &Manifest,
         status_tracker: &mut StatusTracker,
         verifier: &SV,
+        http_resolver: &impl AsyncHttpResolver,
     ) -> IdentityAssertionsForManifest<
         <<SV as SignatureVerifier>::Output as ToCredentialSummary>::CredentialSummary,
     > {
@@ -196,7 +204,7 @@ impl IdentityAssertion {
             let report = match assertion {
                 Ok(assertion) => {
                     assertion
-                        .to_summary_impl(manifest, status_tracker, verifier)
+                        .to_summary_impl(manifest, status_tracker, verifier, http_resolver)
                         .await
                 }
                 Err(_) => {
@@ -219,6 +227,7 @@ impl IdentityAssertion {
         reader: &Reader,
         status_tracker: &mut StatusTracker,
         verifier: &SV,
+        http_resolver: &impl AsyncHttpResolver,
     ) -> impl Serialize {
         // NOTE: We can't write this using .map(...).collect() because there are async
         // calls.
@@ -230,7 +239,8 @@ impl IdentityAssertion {
         > = BTreeMap::new();
 
         for (id, manifest) in reader.manifests() {
-            let report = Self::summarize_all_impl(manifest, status_tracker, verifier).await;
+            let report =
+                Self::summarize_all_impl(manifest, status_tracker, verifier, http_resolver).await;
             reports.insert(id.clone(), report);
         }
 
@@ -253,12 +263,15 @@ impl IdentityAssertion {
         manifest: &Manifest,
         status_tracker: &mut StatusTracker,
         verifier: &SV,
+        http_resolver: &impl AsyncHttpResolver,
     ) -> Result<SV::Output, ValidationError<SV::Error>> {
         if let Some(ref label) = self.label {
             status_tracker.push_current_uri(label);
         }
 
-        let result = self.validate_imp(manifest, status_tracker, verifier).await;
+        let result = self
+            .validate_imp(manifest, status_tracker, verifier, http_resolver)
+            .await;
 
         if self.label.is_some() {
             status_tracker.pop_current_uri();
@@ -272,6 +285,7 @@ impl IdentityAssertion {
         manifest: &Manifest,
         status_tracker: &mut StatusTracker,
         verifier: &SV,
+        http_resolver: &impl AsyncHttpResolver,
     ) -> Result<SV::Output, ValidationError<SV::Error>> {
         self.check_padding(status_tracker)?;
 
@@ -279,7 +293,12 @@ impl IdentityAssertion {
             .check_against_manifest(manifest, status_tracker)?;
 
         verifier
-            .check_signature(&self.signer_payload, &self.signature, status_tracker)
+            .check_signature(
+                &self.signer_payload,
+                &self.signature,
+                status_tracker,
+                http_resolver,
+            )
             .await
     }
 
@@ -294,6 +313,7 @@ impl IdentityAssertion {
         &self,
         partial_claim: &PartialClaim,
         status_tracker: &mut StatusTracker,
+        http_resolver: &impl AsyncHttpResolver,
     ) -> Result<serde_json::Value, ValidationError<String>> {
         let settings = crate::settings::get_settings().unwrap_or_default();
         self.check_padding(status_tracker)?;
@@ -334,7 +354,12 @@ impl IdentityAssertion {
             let verifier = X509SignatureVerifier { cose_verifier };
 
             let result = verifier
-                .check_signature(&self.signer_payload, &self.signature, status_tracker)
+                .check_signature(
+                    &self.signer_payload,
+                    &self.signature,
+                    status_tracker,
+                    http_resolver,
+                )
                 .await
                 .map(|v| v.to_summary())
                 .map_err(|e| ValidationError::UnknownSignatureType(e.to_string()))?;
@@ -354,7 +379,12 @@ impl IdentityAssertion {
             let verifier = IcaSignatureVerifier {};
 
             let result = verifier
-                .check_signature(&self.signer_payload, &self.signature, status_tracker)
+                .check_signature(
+                    &self.signer_payload,
+                    &self.signature,
+                    status_tracker,
+                    http_resolver,
+                )
                 .await
                 .map(|v| v.to_summary())
                 .map_err(|e| ValidationError::UnknownSignatureType(e.to_string()))?;

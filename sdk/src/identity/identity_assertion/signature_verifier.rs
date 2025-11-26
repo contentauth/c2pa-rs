@@ -17,6 +17,7 @@ use async_trait::async_trait;
 use serde::Serialize;
 
 use crate::{
+    http::AsyncHttpResolver,
     identity::{SignerPayload, ValidationError},
     status_tracker::StatusTracker,
 };
@@ -52,6 +53,7 @@ pub trait SignatureVerifier: Sync {
         signer_payload: &SignerPayload,
         signature: &[u8],
         status_tracker: &mut StatusTracker,
+        http_resolver: &impl AsyncHttpResolver,
     ) -> Result<Self::Output, ValidationError<Self::Error>>;
 }
 
@@ -86,6 +88,7 @@ pub trait SignatureVerifier {
         signer_payload: &SignerPayload,
         signature: &[u8],
         status_tracker: &mut StatusTracker,
+        http_resolver: &impl AsyncHttpResolver,
     ) -> Result<Self::Output, ValidationError<Self::Error>>;
 }
 

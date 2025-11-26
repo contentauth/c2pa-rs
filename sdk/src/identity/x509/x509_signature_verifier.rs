@@ -20,6 +20,7 @@ use crate::{
         cose::{parse_cose_sign1, CertificateInfo, CoseError, Verifier},
         raw_signature::RawSignatureValidationError,
     },
+    http::AsyncHttpResolver,
     identity::{
         identity_assertion::signature_verifier::ToCredentialSummary, SignatureVerifier,
         SignerPayload, ValidationError,
@@ -51,6 +52,7 @@ impl SignatureVerifier for X509SignatureVerifier<'_> {
         signer_payload: &SignerPayload,
         signature: &[u8],
         status_tracker: &mut StatusTracker,
+        _http_resolver: &impl AsyncHttpResolver,
     ) -> Result<Self::Output, ValidationError<Self::Error>> {
         if signer_payload.sig_type != super::CAWG_X509_SIG_TYPE {
             log_current_item!(

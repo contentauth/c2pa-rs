@@ -35,7 +35,7 @@ use crate::{
     claim::Claim,
     dynamic_assertion::PartialClaim,
     error::{Error, Result},
-    http::{AsyncGenericResolver, SyncGenericResolver},
+    http::{AsyncGenericResolver, AsyncHttpResolver, SyncGenericResolver, SyncHttpResolver},
     jumbf::labels::{manifest_label_from_uri, to_absolute_uri, to_relative_uri},
     jumbf_io, log_item,
     manifest::StoreOptions,
@@ -71,6 +71,7 @@ pub trait AsyncPostValidator {
         uri: &str,
         preliminary_claim: &PartialClaim,
         tracker: &mut StatusTracker,
+        http_resolver: &impl AsyncHttpResolver,
     ) -> Result<Option<Value>>;
 }
 
@@ -921,7 +922,8 @@ impl Reader {
         &self,
         manifest_label: &str,
         validator: &impl AsyncPostValidator,
-        validation_log: &mut StatusTracker
+        validation_log: &mut StatusTracker,
+        http_resolver: &impl AsyncHttpResolver,
     ))]
     fn walk_manifest(
         &self,
@@ -975,6 +977,7 @@ impl Reader {
                             &assertion_uri,
                             &partial_claim,
                             validation_log,
+                            http_resolver,
                         )
                         .await
                 }?;

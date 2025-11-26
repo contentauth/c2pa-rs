@@ -24,6 +24,7 @@ use c2pa_macros::c2pa_test_async;
 use wasm_bindgen_test::wasm_bindgen_test;
 
 use crate::{
+    http::AsyncGenericResolver,
     identity::{
         claim_aggregation::{IcaSignatureVerifier, IcaValidationError},
         tests::fixtures::claim_aggregation::ica_credential_example,
@@ -69,7 +70,11 @@ async fn success_case() {
     // And that identity assertion should be valid for this manifest.
     let isv = IcaSignatureVerifier {};
 
-    let ica_vc = ia.validate(manifest, &mut st, &isv).await.unwrap();
+    let http_resolver = AsyncGenericResolver::new();
+    let ica_vc = ia
+        .validate(manifest, &mut st, &isv, http_resolver)
+        .await
+        .unwrap();
 
     // Start matching against expected values.
     let expected_identities = ica_credential_example::ica_example_identities();

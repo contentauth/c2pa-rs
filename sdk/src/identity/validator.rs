@@ -19,6 +19,7 @@ use serde_json::Value;
 
 use crate::{
     dynamic_assertion::{AsyncPostValidator, PartialClaim},
+    http::AsyncHttpResolver,
     identity::IdentityAssertion,
     status_tracker::StatusTracker,
     ManifestAssertion,
@@ -36,12 +37,13 @@ impl AsyncPostValidator for CawgValidator {
         uri: &str,
         partial_claim: &PartialClaim,
         tracker: &mut StatusTracker,
+        http_resolver: &impl AsyncHttpResolver,
     ) -> crate::Result<Option<Value>> {
         if label == "cawg.identity" || label.starts_with("cawg.identity__") {
             let identity_assertion: IdentityAssertion = assertion.to_assertion()?;
             tracker.push_current_uri(uri.to_string());
             let result = identity_assertion
-                .validate_partial_claim(partial_claim, tracker)
+                .validate_partial_claim(partial_claim, tracker, http_resolver)
                 .await
                 .ok();
             tracker.pop_current_uri();

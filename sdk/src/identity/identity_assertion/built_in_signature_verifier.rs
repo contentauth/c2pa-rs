@@ -18,6 +18,7 @@ use serde::Serialize;
 
 use crate::{
     crypto::cose::CoseError,
+    http::AsyncHttpResolver,
     identity::{
         claim_aggregation::{
             IcaCredential, IcaCredentialSummary, IcaSignatureVerifier, IcaValidationError,
@@ -50,18 +51,19 @@ impl SignatureVerifier for BuiltInSignatureVerifier<'_> {
         signer_payload: &SignerPayload,
         signature: &[u8],
         status_tracker: &mut StatusTracker,
+        http_resolver: &impl AsyncHttpResolver,
     ) -> Result<Self::Output, ValidationError<Self::Error>> {
         match signer_payload.sig_type.as_str() {
             crate::identity::claim_aggregation::CAWG_ICA_SIG_TYPE => self
                 .ica_verifier
-                .check_signature(signer_payload, signature, status_tracker)
+                .check_signature(signer_payload, signature, status_tracker, http_resolver)
                 .await
                 .map(BuiltInCredential::IdentityClaimsAggregationCredential)
                 .map_err(map_err_to_built_in),
 
             crate::identity::x509::CAWG_X509_SIG_TYPE => self
                 .x509_verifier
-                .check_signature(signer_payload, signature, status_tracker)
+                .check_signature(signer_payload, signature, status_tracker, http_resolver)
                 .await
                 .map(BuiltInCredential::X509Signature)
                 .map_err(map_err_to_built_in),

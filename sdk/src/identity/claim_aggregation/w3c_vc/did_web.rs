@@ -19,7 +19,7 @@
 // each license.
 
 use super::{did::Did, did_doc::DidDocument};
-use crate::http::{AsyncGenericResolver, AsyncHttpResolver, HttpResolverError};
+use crate::http::{AsyncHttpResolver, HttpResolverError};
 
 const USER_AGENT: &str = concat!(env!("CARGO_PKG_NAME"), "/", env!("CARGO_PKG_VERSION"));
 
@@ -57,7 +57,10 @@ pub enum DidWebError {
     InvalidWebDid(String),
 }
 
-pub(crate) async fn resolve(did: &Did<'_>) -> Result<DidDocument, DidWebError> {
+pub(crate) async fn resolve(
+    did: &Did<'_>,
+    http_resolver: &impl AsyncHttpResolver,
+) -> Result<DidDocument, DidWebError> {
     let method = did.method_name();
     #[allow(clippy::panic)] // TEMPORARY while refactoring
     if method != "web" {
@@ -69,20 +72,23 @@ pub(crate) async fn resolve(did: &Did<'_>) -> Result<DidDocument, DidWebError> {
     let url = to_url(method_specific_id)?;
     // TODO: https://w3c-ccg.github.io/did-method-web/#in-transit-security
 
-    let did_doc = get_did_doc(&url).await?;
+    let did_doc = get_did_doc(&url, http_resolver).await?;
 
     let json = String::from_utf8(did_doc).map_err(|_| DidWebError::InvalidData(url.clone()))?;
 
     DidDocument::from_json(&json).map_err(|_| DidWebError::InvalidData(url))
 }
 
-async fn get_did_doc(url: &str) -> Result<Vec<u8>, DidWebError> {
+async fn get_did_doc(
+    url: &str,
+    http_resolver: &impl AsyncHttpResolver,
+) -> Result<Vec<u8>, DidWebError> {
     let request = http::Request::get(url)
         .header(header::USER_AGENT, USER_AGENT)
         .header(header::ACCEPT, "application/did+json")
         .body(Vec::new())
         .map_err(|e| DidWebError::Request(url.to_owned(), e.into()))?;
-    let response = AsyncGenericResolver::new()
+    let response = http_resolver
         .http_resolve_async(request)
         .await
         .map_err(|e| DidWebError::Request(url.to_owned(), e))?;
@@ -187,9 +193,12 @@ mod tests {
         use httpmock::prelude::*;
 
         use super::did;
-        use crate::identity::claim_aggregation::w3c_vc::{
-            did_doc::DidDocument,
-            did_web::{self, PROXY},
+        use crate::{
+            http::AsyncGenericResolver,
+            identity::claim_aggregation::w3c_vc::{
+                did_doc::DidDocument,
+                did_web::{self, PROXY},
+            },
         };
 
         #[tokio::test]
@@ -224,7 +233,9 @@ mod tests {
                     .body(DID_JSON);
             });
 
-            let doc = did_web::resolve(&did("did:web:localhost")).await.unwrap();
+            let doc = did_web::resolve(&did("did:web:localhost"), &AsyncGenericResolver::new())
+                .await
+                .unwrap();
             let doc_expected = DidDocument::from_json(DID_JSON).unwrap();
             assert_eq!(doc, doc_expected);
 
