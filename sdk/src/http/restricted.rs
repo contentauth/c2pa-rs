@@ -42,9 +42,9 @@ use crate::{
     Result,
 };
 
-/// HTTP resolver wrapper that enforces an allowed list of outbound hosts.
+/// HTTP resolver wrapper that enforces an allowed list of hosts.
 ///
-/// If the allowed list is empty, no filtering is applied and all outbound requests are allowed.
+/// If the allowed list is empty, no filtering is applied and all requests are allowed.
 ///
 /// When a URI is not permitted, the resolver returns [`HttpResolverError::UriDisallowed`].
 #[derive(Debug)]
@@ -120,7 +120,7 @@ impl<T: AsyncHttpResolver + Sync> AsyncHttpResolver for RestrictedResolver<T> {
     }
 }
 
-/// A host/scheme pattern used to restrict outbound network requests.
+/// A host/scheme pattern used to restrict network requests.
 ///
 /// Each pattern may include:
 /// - A scheme (e.g. `https://` or `http://`)

@@ -18,9 +18,9 @@
 //! plug in their own HTTP implementation, restrict where the SDK may connect,
 //! or disable networking entirely.
 //!
-//! # When do outbound network requests occur?
+//! # When do network requests occur?
 //!
-//! The SDK may issue outbound HTTP/S requests in the following scenarios:
+//! The SDK may issue HTTP/S requests in the following scenarios:
 //! - [`Reader`]:
 //!     - Fetching remote manifests
 //!     - Validating CAWG identity assertions
@@ -32,10 +32,14 @@
 //!     - Fetching OCSP staples
 //!     - Fetching [`CertificateStatus`] assertions
 //!
+//! Network requests may also be issued during the signing process, such as when
+//! [`SignerSettings::Remote`] is specified.
+//!
 //! [`Reader`]: crate::Reader
 //! [`Builder`]: crate::Builder
 //! [`TimeStamp`]: crate::assertions::TimeStamp
 //! [`CertificateStatus`]: crate::assertions::CertificateStatus
+//! [`SignerSettings::Remote`]: crate::settings::signer::SignerSettings::Remote
 
 use std::io::{self, Read};
 
@@ -48,7 +52,6 @@ mod reqwest;
 mod ureq;
 mod wasi;
 
-/// Structs for restricting outbound network requests.
 pub mod restricted;
 
 // Since we use `http::Request` and `http::Response` we also expose the `http` crate.

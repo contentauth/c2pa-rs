@@ -222,7 +222,7 @@ pub struct Core {
     /// [`IdentityAssertion`]: crate::identity::IdentityAssertion
     /// [`Reader`]: crate::Reader
     pub decode_identity_assertions: bool,
-    /// List of host patterns that are allowed for outbound network requests.
+    /// List of host patterns that are allowed for network requests.
     ///
     /// Each pattern may include:
     /// - A scheme (e.g. `https://` or `http://`)
@@ -235,14 +235,14 @@ pub struct Core {
     ///
     /// The behavior is as follows:
     /// - `None` (default) no filtering enabled.
-    /// - `Some(vec)` where `vec` is empty, all outbound traffic is blocked.
+    /// - `Some(vec)` where `vec` is empty, all traffic is blocked.
     /// - `Some(vec)` with at least one pattern, filtering enabled for only those patterns.
     ///
     /// These settings are consumed by [`RestrictedResolver`].
     ///
-    /// For information on when the SDK might perform an outbound network request, see ["When do outbound network requests occur?"]
+    /// For information on when the SDK might perform an network request, see ["When do network requests occur?"]
     ///
-    /// ["When do outbound network requests occur?"]: crate::http#when-do-outbound-network-requests-occur
+    /// ["When do network requests occur?"]: crate::http#when-do-network-requests-occur
     /// [`HostPattern`]: crate::http::restricted::HostPattern
     /// [`RestrictedResolver`]: crate::http::restricted::RestrictedResolver
     pub allowed_network_hosts: Option<Vec<HostPattern>>,
