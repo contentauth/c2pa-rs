@@ -41,7 +41,7 @@ The following options are available with any (or no) subcommand.  Additional opt
 | `--external-manifest` | N/A | `<c2pa_file>` | Path to the binary .c2pa manifest to use for validation against the input asset. |
 | `--reserve-size` | N/A | Only valid with `--signer-path` argument. The amount of memory to reserve for signing. Default: 20000. For more information, see CLI help. |
 | `--sidecar` | `-s` | N/A | Put manifest in external "sidecar" file with `.c2pa` extension. See [Generating an external manifest](#generating-an-external-manifest). |
-| `--settings`  | N/A | Path to `<settings_file>` TOML file.<br/>Default is value of environment variable C2PATOOL_SETTINGS. If the environment variable is not set, then default is` ~/.config/c2pa/c2pa.toml`. |  Path to the config file.  See [Configuring SDK settings](https://opensource.contentauthenticity.org/docs/rust-sdk/docs/settings) | 
+| `--settings`  | N/A | Path to `<settings_file>` TOML or JSON file.<br/>Default is value of environment variable C2PATOOL_SETTINGS. If the environment variable is not set, then default is` ~/.config/c2pa/c2pa.toml`. |  Path to the config file.  See [Configuring SDK settings](https://opensource.contentauthenticity.org/docs/rust-sdk/docs/settings) | 
 | `--signer-path` | N/A | Specify path to command-line executable for signing.  See [Signing claim bytes with your own signer](#signing-claim-bytes-with-your-own-signer). |
 | `--tree` | | N/A | Create a tree diagram of the manifest store. |
 | `--version` | `-V` | N/A | Display version information. |
