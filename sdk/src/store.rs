@@ -4040,7 +4040,6 @@ impl Store {
     ) -> Result<()> {
         let claim_label = claim.label();
 
-        // REVIEW-NOTE: added this so we don't compute the same ingredients more than once.
         if svi.manifest_map.contains_key(claim_label) {
             return Ok(());
         }
