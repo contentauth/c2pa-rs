@@ -149,9 +149,9 @@ struct CliArgs {
     reserve_size: usize,
 
     // TODO: ideally this would be called config, not to be confused with the other config arg
-    /// Path to the config file.
+    /// Path to the settings file in JSON or TOML.
     ///
-    /// By default config files are read from `$XDG_CONFIG_HOME/c2pa/c2pa.toml`.
+    /// By default the settings file is read from `$XDG_CONFIG_HOME/c2pa/c2pa.toml`.
     #[clap(
         long,
         env = "C2PATOOL_SETTINGS",
@@ -390,8 +390,7 @@ fn blocking_get(url: &str) -> Result<String> {
 
 fn configure_sdk(args: &CliArgs) -> Result<()> {
     if args.settings.exists() {
-        let settings = fs::read_to_string(&args.settings)?;
-        Settings::from_toml(&settings)?
+        Settings::from_file(&args.settings)?;
     }
 
     let mut enable_trust_checks = false;
