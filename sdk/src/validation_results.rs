@@ -208,55 +208,47 @@ impl ValidationResults {
     /// [§14.3. Validation states]: https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_validation_states
     pub fn validation_state(&self) -> ValidationState {
         if let Some(active_manifest) = self.active_manifest.as_ref() {
-            fn is_manifest_valid(
-                success_codes: &[ValidationStatus],
-                failure_codes: &[ValidationStatus],
-            ) -> bool {
-                success_codes
-                    .iter()
-                    .any(|status| status.code() == validation_status::CLAIM_SIGNATURE_VALIDATED)
-                    && success_codes.iter().any(|status| {
-                        status.code() == validation_status::CLAIM_SIGNATURE_INSIDE_VALIDITY
-                    })
-                    && (failure_codes.is_empty()
-                        || failure_codes.iter().all(|status| {
-                            status.code() == validation_status::SIGNING_CREDENTIAL_UNTRUSTED
-                        }))
-            }
-
-            fn is_manifest_trusted(
-                success_codes: &[ValidationStatus],
-                failure_codes: &[ValidationStatus],
-            ) -> bool {
-                success_codes
-                    .iter()
-                    .any(|status| status.code() == validation_status::SIGNING_CREDENTIAL_TRUSTED)
-                    && failure_codes.is_empty()
-            }
-
             // https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_valid_manifest
-            let is_valid = is_manifest_valid(active_manifest.success(), active_manifest.failure())
+            let is_valid = active_manifest
+                // First check if the claim is valid and the certificate hasn't expired.
+                .success()
+                .iter()
+                .any(|status| status.code() == validation_status::CLAIM_SIGNATURE_VALIDATED)
+                && active_manifest.success().iter().any(|status| {
+                    status.code() == validation_status::CLAIM_SIGNATURE_INSIDE_VALIDITY
+                })
+                // Then check if the manifest contains either no failures or that it's only untrusted.
+                && (active_manifest.failure().is_empty()
+                    || active_manifest.failure().iter().all(|status| {
+                        status.code() == validation_status::SIGNING_CREDENTIAL_UNTRUSTED
+                    }))
+                // Finally check if the ingredients contain either no failures or the only failure is
+                // that the ingredient is untrusted.
                 && self.ingredient_deltas.as_ref().iter().all(|deltas| {
                     deltas.iter().all(|idv| {
                         let deltas = idv.validation_deltas();
-                        deltas.informational().iter().any(|status| {
-                            status.code() == validation_status::INGREDIENT_PROVENANCE_UNKNOWN
-                        }) || is_manifest_valid(deltas.success(), deltas.failure())
+                        deltas.failure().is_empty()
+                            || deltas.failure().iter().any(|status| {
+                                status.code() == validation_status::SIGNING_CREDENTIAL_UNTRUSTED
+                            })
                     })
                 });
 
             // https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_trusted_manifest
-            let is_trusted =
-                is_manifest_trusted(active_manifest.success(), active_manifest.failure())
-                    && self.ingredient_deltas.as_ref().iter().all(|deltas| {
-                        deltas.iter().all(|idv| {
-                            let deltas = idv.validation_deltas();
-                            deltas.informational().iter().any(|status| {
-                                status.code() == validation_status::INGREDIENT_PROVENANCE_UNKNOWN
-                            }) || is_manifest_trusted(deltas.success(), deltas.failure())
-                        })
+            let is_trusted = active_manifest
+                // First check if the signing certificate is trusted.
+                .success()
+                .iter()
+                .any(|status| status.code() == validation_status::SIGNING_CREDENTIAL_TRUSTED)
+                // Then check that there are no errors.
+                && active_manifest.failure().is_empty()
+                // Finally check if the ingredients contain no failures.
+                && self.ingredient_deltas.as_ref().iter().all(|deltas| {
+                    deltas.iter().all(|idv| {
+                        idv.validation_deltas().failure().is_empty()
                     })
-                    && is_valid;
+                })
+                && is_valid;
 
             if is_trusted {
                 return ValidationState::Trusted;
