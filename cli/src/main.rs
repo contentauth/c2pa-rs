@@ -390,7 +390,7 @@ fn blocking_get(url: &str) -> Result<String> {
 
 fn configure_sdk(args: &CliArgs) -> Result<()> {
     if args.settings.exists() {
-        Settings::from_file(&args.settings)?
+        Settings::from_file(&args.settings)?;
     }
 
     let mut enable_trust_checks = false;
