@@ -1,7 +1,4 @@
-use std::cell::OnceCell;
-
 use crate::{
-    content_credential::ContentCredential,
     http::{AsyncGenericResolver, AsyncHttpResolver, SyncGenericResolver, SyncHttpResolver},
     settings::Settings,
     AsyncSigner, Error, Result, Signer,
@@ -51,20 +48,25 @@ impl IntoSettings for serde_json::Value {
 
 pub struct Context {
     settings: Settings,
-    http_resolver: OnceCell<Box<dyn SyncHttpResolver>>,
-    http_resolver_async: OnceCell<Box<dyn AsyncHttpResolver>>,
-    signer: OnceCell<Box<dyn Signer>>,
-    _signer_async: OnceCell<Box<dyn AsyncSigner>>,
+    http_resolver: Option<Box<dyn SyncHttpResolver>>,
+    http_resolver_async: Option<Box<dyn AsyncHttpResolver>>,
+    signer: Option<Box<dyn Signer>>,
+    _signer_async: Option<Box<dyn AsyncSigner>>,
 }
 
 impl Default for Context {
     fn default() -> Self {
         Self {
             settings: crate::settings::get_settings().unwrap_or_default(),
-            http_resolver: OnceCell::new(),
-            http_resolver_async: OnceCell::new(),
-            signer: OnceCell::new(),
-            _signer_async: OnceCell::new(),
+            http_resolver: None,
+            http_resolver_async: None,
+            #[cfg(test)]
+            signer: Some(crate::utils::test_signer::test_signer(
+                crate::SigningAlg::Ps256,
+            )),
+            #[cfg(not(test))]
+            signer: None,
+            _signer_async: None,
         }
     }
 }
@@ -99,60 +101,49 @@ impl Context {
     }
 
     /// Use the provided sync resolver in this context
-    pub fn with_resolver<T: SyncHttpResolver + 'static>(self, resolver: T) -> Self {
-        let _ = self.http_resolver.set(Box::new(resolver));
+    pub fn with_resolver<T: SyncHttpResolver + 'static>(mut self, resolver: T) -> Self {
+        self.http_resolver = Some(Box::new(resolver));
         self
     }
 
     /// Use the provided async resolver in this context
-    pub fn with_resolver_async<T: AsyncHttpResolver + 'static>(self, resolver: T) -> Self {
-        let _ = self.http_resolver_async.set(Box::new(resolver));
+    pub fn with_resolver_async<T: AsyncHttpResolver + 'static>(mut self, resolver: T) -> Self {
+        self.http_resolver_async = Some(Box::new(resolver));
         self
     }
 
     /// Returns a reference to the sync resolver.
     pub fn resolver(&self) -> &dyn SyncHttpResolver {
+        use std::sync::OnceLock;
+        static DEFAULT: OnceLock<SyncGenericResolver> = OnceLock::new();
         self.http_resolver
-            .get_or_init(|| Box::new(SyncGenericResolver::new()))
             .as_ref()
+            .map(|r| r.as_ref())
+            .unwrap_or(DEFAULT.get_or_init(SyncGenericResolver::new))
     }
 
     /// Returns a reference to the async resolver.
     pub fn resolver_async(&self) -> &dyn AsyncHttpResolver {
+        use std::sync::OnceLock;
+        static DEFAULT: OnceLock<AsyncGenericResolver> = OnceLock::new();
         self.http_resolver_async
-            .get_or_init(|| Box::new(AsyncGenericResolver::new()))
             .as_ref()
+            .map(|r| r.as_ref())
+            .unwrap_or(DEFAULT.get_or_init(AsyncGenericResolver::new))
+    }
+
+    /// Use the provided signer in this context
+    pub fn with_signer<T: Signer + 'static>(mut self, signer: T) -> Self {
+        self.signer = Some(Box::new(signer));
+        self
     }
 
     /// Returns a reference to the signer.
-    #[allow(clippy::unwrap_used)] // switch to get_or_try_init when stable
     pub fn signer(&self) -> Result<&dyn Signer> {
-        match self.signer.get() {
-            Some(s) => Ok(s),
-            None => {
-                if let Some(c2pa_settings) = self.settings().signer.clone() {
-                    let mut signer = c2pa_settings.c2pa_signer()?;
-                    if let Some(cawg_settings) = self.settings().cawg_x509_signer.clone() {
-                        signer = cawg_settings.cawg_signer(signer)?;
-                    }
-                    self.signer.set(signer).ok();
-                    return Ok(self.signer.get().unwrap());
-                }
-                #[cfg(test)]
-                {
-                    self.signer
-                        .set(crate::utils::test_signer::test_signer(
-                            crate::SigningAlg::Ps256,
-                        ))
-                        .ok();
-                    Ok(self.signer.get().unwrap())
-                }
-                #[cfg(not(test))]
-                {
-                    Err(crate::Error::MissingSignerSettings)
-                }
-            }
-        }
+        self.signer
+            .as_ref()
+            .ok_or_else(|| crate::Error::MissingSignerSettings)
+            .map(|s| s.as_ref())
     }
 
     // pub fn signer_async(&self) -> Result<&dyn crate::signer::AsyncSigner> {
@@ -166,10 +157,6 @@ impl Context {
     //         }
     //     }
     // }
-
-    pub fn content_credential(&self) -> ContentCredential<'_> {
-        ContentCredential::new(self)
-    }
 }
 
 #[cfg(test)]

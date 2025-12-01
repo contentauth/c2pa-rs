@@ -192,7 +192,6 @@ pub use validation_results::{ValidationResults, ValidationState};
 
 // Internal modules
 pub(crate) mod assertion;
-pub(crate) mod asset;
 pub(crate) mod asset_handlers;
 pub(crate) mod asset_io;
 pub(crate) mod builder;

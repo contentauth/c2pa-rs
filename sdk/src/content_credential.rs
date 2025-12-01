@@ -124,7 +124,9 @@ impl<'a> ContentCredential<'a> {
         mut stream: impl Read + Seek + Send,
     ) -> Result<Self> {
         stream.rewind()?;
-        self.add_ingredient_from_stream(Relationship::ParentOf, format, &mut stream)?;
+        let ingredient_uri =
+            self.add_ingredient_from_stream(Relationship::ParentOf, format, &mut stream)?;
+        self.add_action(Action::new(c2pa_action::OPENED).add_ingredient(ingredient_uri)?)?;
         Ok(self)
     }
 
@@ -144,6 +146,29 @@ impl<'a> ContentCredential<'a> {
         self.claim.add_assertion(assertion)
     }
 
+    /// adds an ingredient assertion to the content credential's claim
+    /// if manifest_bytes is provided, it will be loaded into the store
+    pub fn add_ingredient_assertion(
+        &mut self,
+        ingredient_assertion: &Ingredient,
+        manifest_bytes: Option<&[u8]>,
+    ) -> Result<HashedUri> {
+        if let Some(manifest_bytes) = manifest_bytes {
+            let store = Store::load_ingredient_to_claim(
+                &mut self.claim,
+                manifest_bytes,
+                None,
+                self.context,
+            )?;
+            if ingredient_assertion.relationship == Relationship::ParentOf {
+                // we must replace the store for parent ingredients
+                self.store = store;
+            }
+        }
+        // add the ingredient assertion and get it's uri
+        self.add_assertion(ingredient_assertion)
+    }
+
     /// create a manifest store report from the store and validation results
     pub fn add_action(&mut self, action: Action) -> Result<()> {
         self.claim.add_action(action)?;
@@ -157,34 +182,10 @@ impl<'a> ContentCredential<'a> {
         format: &str,
         mut stream: impl Read + Seek + Send,
     ) -> Result<HashedUri> {
-        let (ingredient_assertion, store) =
+        let (ingredient_assertion, manifest_bytes) =
             Ingredient::from_stream(relationship.clone(), format, &mut stream, self.context)?;
 
-        // todo: allow passing store to load_ingredient_to_claim to avoid this conversion
-        let manifest_bytes = store.to_jumbf_internal(0)?;
-        Store::load_ingredient_to_claim(&mut self.claim, &manifest_bytes, None, self.context)?;
-
-        if relationship == Relationship::ParentOf {
-            // we must replace the store for parent ingredients
-            self.store = store;
-        }
-
-        // add the ingredient assertion and get it's uri
-        let ingredient_uri = self.add_assertion(&ingredient_assertion)?;
-
-        // This part automatically adds the correct associated action for the ingredient
-        // I'm not sure if we want to have this behavior here or leave it to the user
-        let action_label = if relationship == Relationship::ParentOf {
-            c2pa_action::OPENED
-        } else {
-            c2pa_action::PLACED
-        };
-
-        let action = Action::new(action_label).add_ingredient(ingredient_uri.clone())?;
-
-        self.add_action(action)?;
-
-        Ok(ingredient_uri)
+        self.add_ingredient_assertion(&ingredient_assertion, manifest_bytes.as_deref())
     }
 
     /// signs and saves the content credential to the destination stream
@@ -288,6 +289,7 @@ mod tests {
 
         let cr = ContentCredential::new(&context).open_stream(format, &mut dest)?;
         println!("{cr}");
+        assert_eq!(cr.store.claims().len(), 1);
         Ok(())
     }
 
@@ -297,6 +299,7 @@ mod tests {
         let context = Context::new().with_settings(test_settings_json())?;
 
         let mut cr = ContentCredential::new(&context).open_stream(format, &mut source)?;
+
         cr.add_action(Action::new(c2pa_action::PUBLISHED))?;
 
         cr.save_to_stream(format, &mut source, &mut dest)?;
@@ -308,11 +311,13 @@ mod tests {
 
     #[test]
     fn test_add_ingredient_from_stream() -> Result<()> {
-        let (format, mut source, mut dest) = create_test_streams(CA_JPEG);
+        let (format, mut source, mut dest) = create_test_streams(SMALL_JPEG);
         let context = Context::new().with_settings(test_settings_json())?;
 
         let mut cr = ContentCredential::new(&context).create(DigitalSourceType::Empty)?;
-        cr.add_ingredient_from_stream(Relationship::ComponentOf, format, &mut source)?;
+        let ingredient_uri =
+            cr.add_ingredient_from_stream(Relationship::ComponentOf, format, &mut source)?;
+        cr.add_action(Action::new(c2pa_action::PLACED).add_ingredient(ingredient_uri)?)?;
 
         cr.save_to_stream(format, &mut source, &mut dest)?;
 

@@ -28,6 +28,7 @@ use crate::{
     jumbf::labels::{to_manifest_uri, to_signature_uri},
     status_tracker::StatusTracker,
     store::Store,
+    utils::xmp_inmemory_utils::XmpInfo,
     validation_results::ValidationResults,
     validation_status::ValidationStatus,
     Error,
@@ -529,75 +530,99 @@ impl Ingredient {
 
     /// Create a new Ingredient assertion from a stream
     /// You must specify the relationship and format.
-    /// This will return both the new Ingredient and the associated Store.
+    /// This will return the new Ingredient and associated manifest_bytes if they exist.
     pub(crate) fn from_stream(
         relationship: Relationship,
         format: &str,
         mut stream: impl Read + Seek + Send,
         context: &Context,
-    ) -> Result<(Self, Store)> {
+    ) -> Result<(Self, Option<Vec<u8>>)> {
         let mut validation_log = StatusTracker::default();
+        let mut ingredient = Self::new_v3(relationship);
+        ingredient.format = Some(format.to_owned());
 
-        // // Try to get xmp info, if this fails all XmpInfo fields will be None.
-        // let xmp_info = XmpInfo::from_source(stream, &format);
+        // Try to get xmp info, if this fails all XmpInfo fields will be None.
+        stream.rewind()?;
+        let xmp_info = XmpInfo::from_source(&mut stream, format);
+        stream.rewind()?;
+        // use xmp info if available
+        ingredient.instance_id = xmp_info.instance_id;
+        ingredient.document_id = xmp_info.document_id;
+        // note, provenance is handled in Store::from_stream
+        // should we add something to ingredient to indicate it was remotely fetched?
 
-        // let id = if let Some(id) = xmp_info.instance_id {
-        //     id
-        // } else {
-        //     default_instance_id()
-        // };
-
-        // let mut ingredient = Self::new(title.into(), format, id);
-
-        // ingredient.document_id = xmp_info.document_id; // use document id if one exists
-        // ingredient.provenance = xmp_info.provenance;
-        let store: Store = Store::from_stream(format, &mut stream, &mut validation_log, context)?;
-        let validation_results = ValidationResults::from_store(&store, &validation_log);
-        let ingredient =
-            Self::from_store_and_validation_results(relationship, &store, &validation_results)?;
-        Ok((ingredient, store))
+        match Store::from_stream(format, &mut stream, &mut validation_log, context) {
+            Ok(store) => {
+                ingredient.with_store(&store, &validation_log)?;
+                let manifest_bytes = store.to_jumbf_internal(0)?;
+                Ok((ingredient, Some(manifest_bytes)))
+            }
+            Err(Error::JumbfNotFound)
+            | Err(Error::ProvenanceMissing)
+            | Err(Error::UnsupportedType) => {
+                // no claims but valid file
+                Ok((ingredient, None))
+            }
+            Err(Error::BadParam(desc)) if desc == *"unrecognized file type" => {
+                Ok((ingredient, None))
+            } // no claims but valid file
+            Err(Error::RemoteManifestUrl(url)) | Err(Error::RemoteManifestFetch(url)) => {
+                let status =
+                    ValidationStatus::new_failure(crate::validation_status::MANIFEST_INACCESSIBLE)
+                        .set_url(url)
+                        .set_explanation("Remote manifest not fetched".to_string());
+                let mut validation_results = ValidationResults::default();
+                validation_results.add_status(status.clone());
+                ingredient.validation_results = Some(validation_results);
+                Ok((ingredient, None))
+            }
+            Err(e) => Err(e),
+        }
     }
 
-    /// Create a new Ingredient assertion from a Store and ValidationResults.
-    /// You must specify the relationship.
-    pub(crate) fn from_store_and_validation_results(
-        relationship: Relationship,
+    /// Add store information to the ingredient assertion
+    pub(crate) fn with_store(
+        &mut self,
         store: &Store,
-        validation_results: &ValidationResults,
-    ) -> Result<Self> {
-        if let Some(claim) = store.provenance_claim() {
-            let mut ingredient = Self::new_v3(relationship);
+        validation_log: &StatusTracker,
+    ) -> Result<&Self> {
+        self.validation_results = Some(ValidationResults::from_store(store, validation_log));
 
-            ingredient.title = claim.title().cloned();
-            ingredient.format = claim.format().map(|f| f.to_string());
-            ingredient.instance_id = Some(claim.instance_id().to_string());
+        if let Some(claim) = store.provenance_claim() {
+            if self.title.is_none() {
+                self.title = claim.title().cloned();
+            }
+            if self.instance_id.is_none() {
+                self.instance_id = Some(claim.instance_id().to_string());
+            }
 
             let hashes = store.get_manifest_box_hashes(claim);
 
-            ingredient.active_manifest = Some(HashedUri::new(
+            self.active_manifest = Some(HashedUri::new(
                 to_manifest_uri(claim.label()),
                 Some(claim.alg().to_owned()),
                 hashes.manifest_box_hash.as_ref(),
             ));
-            ingredient.claim_signature = Some(HashedUri::new(
+            self.claim_signature = Some(HashedUri::new(
                 to_signature_uri(claim.label()),
                 Some(claim.alg().to_owned()),
                 hashes.signature_box_hash.as_ref(),
             ));
 
-            ingredient.validation_results = Some(validation_results.clone());
-
-            if ingredient
-                .validation_results
-                .as_ref()
-                .map(|r| r.validation_state())
-                != Some(crate::ValidationState::Invalid)
+            let thumbnail = claim.thumbnail();
+            if thumbnail.is_some()
+                && self
+                    .validation_results
+                    .as_ref()
+                    .map(|r| r.validation_state())
+                    != Some(crate::ValidationState::Invalid)
             {
-                ingredient.thumbnail = claim.thumbnail();
+                self.thumbnail = thumbnail;
+            } else {
+                // todo:: add thumbnail here
             }
-            return Ok(ingredient);
         }
-        Ok(Self::new_v3(relationship))
+        Ok(self)
     }
 }
 
