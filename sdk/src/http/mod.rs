@@ -54,7 +54,7 @@ mod wasi;
 
 pub mod restricted;
 
-// Since we use `http::Request` and `http::Response` we also expose the `http` crate.
+// Since we expose `http::Request` and `http::Response` in the public API, we also expose the `http` crate.
 pub use http;
 
 /// A resolver for sync (blocking) HTTP requests.
