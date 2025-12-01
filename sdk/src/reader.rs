@@ -17,7 +17,7 @@
 #[cfg(feature = "file_io")]
 use std::fs::{read, File};
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     io::{Read, Seek, Write},
 };
 
@@ -931,8 +931,11 @@ impl Reader {
     ) -> Result<HashMap<String, Value>> {
         let mut assertion_values = HashMap::new();
         let mut stack: Vec<(String, Option<String>)> = vec![(manifest_label.to_string(), None)];
+        let mut seen = HashSet::new();
 
         while let Some((current_label, parent_uri)) = stack.pop() {
+            seen.insert(current_label.clone());
+
             // If we're processing an ingredient, push its URI to the validation log
             if let Some(uri) = &parent_uri {
                 validation_log.push_ingredient_uri(uri.clone());
@@ -986,11 +989,13 @@ impl Reader {
             // Add ingredients to stack for processing
             for ingredient in manifest.ingredients().iter() {
                 if let Some(label) = ingredient.active_manifest() {
-                    let ingredient_uri = crate::jumbf::labels::to_assertion_uri(
-                        &current_label,
-                        ingredient.label().unwrap_or("unknown"),
-                    );
-                    stack.push((label.to_string(), Some(ingredient_uri)));
+                    if !seen.contains(label) {
+                        let ingredient_uri = crate::jumbf::labels::to_assertion_uri(
+                            &current_label,
+                            ingredient.label().unwrap_or("unknown"),
+                        );
+                        stack.push((label.to_string(), Some(ingredient_uri)));
+                    }
                 }
             }
 
