@@ -4031,16 +4031,40 @@ impl Store {
         recurse: bool,
         validation_log: &mut StatusTracker,
     ) -> Result<()> {
+        Self::get_claim_referenced_manifests_impl(
+            claim,
+            store,
+            svi,
+            recurse,
+            validation_log,
+            &mut Vec::new(),
+        )
+    }
+
+    fn get_claim_referenced_manifests_impl<'a>(
+        claim: &'a Claim,
+        store: &'a Store,
+        svi: &mut StoreValidationInfo<'a>,
+        recurse: bool,
+        validation_log: &mut StatusTracker,
+        claim_label_path: &mut Vec<&'a str>,
+    ) -> Result<()> {
+        let claim_label = claim.label();
+
+        if svi.manifest_map.contains_key(claim_label) {
+            return Ok(());
+        }
+
+        claim_label_path.push(claim_label);
+
         // add in current redactions
         if let Some(c_redactions) = claim.redactions() {
             svi.redactions
                 .append(&mut c_redactions.clone().into_iter().collect::<Vec<_>>());
         }
 
-        let claim_label = claim.label().to_owned();
-
         // save the addressible claims for quicker lookup
-        svi.manifest_map.insert(claim_label.clone(), claim);
+        svi.manifest_map.insert(claim_label.to_owned(), claim);
 
         for i in claim.ingredient_assertions() {
             let ingredient_assertion = Ingredient::from_assertion(i.assertion())?;
@@ -4055,20 +4079,39 @@ impl Store {
             let ingredient_label = Store::manifest_label_from_path(&c2pa_manifest.url());
 
             if let Some(ingredient) = store.get_claim(&ingredient_label) {
+                if claim_label_path.contains(&ingredient.label()) {
+                    return Err(log_item!(
+                        jumbf::labels::to_assertion_uri(claim_label, &i.label()),
+                        "ingredient cannot be cyclic",
+                        "ingredient_checks"
+                    )
+                    .validation_status(validation_status::ASSERTION_INGREDIENT_MALFORMED)
+                    .failure_as_err(
+                        validation_log,
+                        Error::CyclicIngredients {
+                            claim_label_path: claim_label_path
+                                .iter()
+                                .map(|&label| label.to_owned())
+                                .collect(),
+                        },
+                    ));
+                }
+
                 // build mapping of ingredients and those claims that reference it
                 svi.ingredient_references
-                    .entry(ingredient_label)
-                    .or_insert(HashSet::from_iter(vec![claim_label.clone()].into_iter()))
-                    .insert(claim_label.clone());
+                    .entry(ingredient_label.clone())
+                    .or_insert(HashSet::from_iter(vec![claim_label.to_owned()].into_iter()))
+                    .insert(claim_label.to_owned());
 
                 // recurse nested ingredients
                 if recurse {
-                    Store::get_claim_referenced_manifests(
+                    Store::get_claim_referenced_manifests_impl(
                         ingredient,
                         store,
                         svi,
                         recurse,
                         validation_log,
+                        claim_label_path,
                     )?;
                 }
             } else {
@@ -4086,6 +4129,8 @@ impl Store {
                 )?;
             }
         }
+
+        claim_label_path.pop();
 
         Ok(())
     }
