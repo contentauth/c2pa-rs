@@ -7625,8 +7625,6 @@ pub mod tests {
     }
 
     #[test]
-    #[cfg(not(target_arch = "wasm32"))]
-    // TODO: Can run on Wasm once https://github.com/contentauth/c2pa-rs/pull/1325 lands
     fn test_removed_jumbf() {
         let (format, mut input_stream, _output_stream) = create_test_streams("no_manifest.jpg");
 
