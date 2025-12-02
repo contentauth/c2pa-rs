@@ -69,7 +69,7 @@ pub(crate) fn async_test_signer(alg: SigningAlg) -> BoxedAsyncSigner {
     let (cert_chain, private_key) = cert_chain_and_private_key_for_alg(alg);
 
     Box::new(AsyncRawSignerWrapper(
-        async_signer_from_cert_chain_and_private_key(&cert_chain, &private_key, alg, None).unwrap(),
+        async_signer_from_cert_chain_and_private_key(cert_chain, private_key, alg, None).unwrap(),
     ))
 }
 
