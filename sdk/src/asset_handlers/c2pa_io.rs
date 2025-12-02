@@ -153,6 +153,8 @@ impl AssetBoxHash for C2paIO {
             pad: ByteBuf::from(vec![]),
             range_start: 0,
             range_len: 0,
+            is_tiff: false,
+            entry_is_data: None,
         };
 
         let box_maps = vec![c2pa_box_map];
