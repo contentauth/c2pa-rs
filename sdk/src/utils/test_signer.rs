@@ -57,20 +57,15 @@ pub(crate) fn test_cawg_signer(
     Ok(Box::new(ia_signer))
 }
 
-/// Creates an [`AsyncSigner`] instance for testing purposes using test credentials.
 #[cfg(not(target_arch = "wasm32"))]
-#[allow(dead_code)]
-pub(crate) fn async_test_signer(alg: SigningAlg) -> Box<dyn AsyncSigner + Sync + Send> {
-    let (cert_chain, private_key) = cert_chain_and_private_key_for_alg(alg);
+type BoxedAsyncSigner = Box<dyn AsyncSigner + Sync + Send>;
 
-    Box::new(AsyncRawSignerWrapper(
-        async_signer_from_cert_chain_and_private_key(cert_chain, private_key, alg, None).unwrap(),
-    ))
-}
+#[cfg(target_arch = "wasm32")]
+type BoxedAsyncSigner = Box<dyn AsyncSigner>;
 
 /// Creates an [`AsyncSigner`] instance for testing purposes using test credentials.
-#[cfg(target_arch = "wasm32")]
-pub(crate) fn async_test_signer(alg: SigningAlg) -> Box<dyn AsyncSigner> {
+#[allow(dead_code)]
+pub(crate) fn async_test_signer(alg: SigningAlg) -> BoxedAsyncSigner {
     let (cert_chain, private_key) = cert_chain_and_private_key_for_alg(alg);
 
     Box::new(AsyncRawSignerWrapper(
@@ -120,11 +115,13 @@ pub(crate) fn cert_chain_and_private_key_for_alg(
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-struct AsyncRawSignerWrapper(Box<dyn AsyncRawSigner + Sync + Send>);
+type BoxedAsyncRawSigner = Box<dyn AsyncRawSigner + Sync + Send>;
+
+#[cfg(target_arch = "wasm32")]
+type BoxedAsyncRawSigner = Box<dyn AsyncRawSigner>;
 
 #[allow(dead_code)] // TEMPORARY: Not used on WASM
-#[cfg(target_arch = "wasm32")]
-struct AsyncRawSignerWrapper(Box<dyn AsyncRawSigner>);
+struct AsyncRawSignerWrapper(BoxedAsyncRawSigner);
 
 #[allow(dead_code)] // TEMPORARY: Not used on WASM
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]

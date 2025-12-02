@@ -147,6 +147,10 @@ pub struct AsyncIdentityAssertionBuilder {
     roles: Vec<String>,
 }
 
+// SAFETY: On wasm32, there is no threading, so Send is trivially safe
+#[cfg(target_arch = "wasm32")]
+unsafe impl Send for AsyncIdentityAssertionBuilder {}
+
 impl AsyncIdentityAssertionBuilder {
     /// Create an `AsyncIdentityAssertionBuilder` for the given
     /// `AsyncCredentialHolder` instance.

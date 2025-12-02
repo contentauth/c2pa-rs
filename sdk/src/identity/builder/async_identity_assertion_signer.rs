@@ -33,11 +33,7 @@ pub struct AsyncIdentityAssertionSigner {
     #[cfg(target_arch = "wasm32")]
     signer: Box<dyn AsyncRawSigner>,
 
-    #[cfg(not(target_arch = "wasm32"))]
     identity_assertions: std::sync::RwLock<Vec<AsyncIdentityAssertionBuilder>>,
-
-    #[cfg(target_arch = "wasm32")]
-    identity_assertions: std::cell::RefCell<Vec<AsyncIdentityAssertionBuilder>>,
 }
 
 impl AsyncIdentityAssertionSigner {
@@ -47,7 +43,7 @@ impl AsyncIdentityAssertionSigner {
     pub fn new(signer: Box<dyn AsyncRawSigner + Sync + Send>) -> Self {
         Self {
             signer,
-            identity_assertions: Self::ia_default(),
+            identity_assertions: std::sync::RwLock::new(vec![]),
         }
     }
 
@@ -57,7 +53,7 @@ impl AsyncIdentityAssertionSigner {
     pub fn new(signer: Box<dyn AsyncRawSigner>) -> Self {
         Self {
             signer,
-            identity_assertions: Self::ia_default(),
+            identity_assertions: std::sync::RwLock::new(vec![]),
         }
     }
 
@@ -81,18 +77,8 @@ impl AsyncIdentityAssertionSigner {
                 None,
             )
             .unwrap(),
-            identity_assertions: Self::ia_default(),
+            identity_assertions: std::sync::RwLock::new(vec![]),
         }
-    }
-
-    #[cfg(not(target_arch = "wasm32"))]
-    fn ia_default() -> std::sync::RwLock<Vec<AsyncIdentityAssertionBuilder>> {
-        std::sync::RwLock::new(vec![])
-    }
-
-    #[cfg(target_arch = "wasm32")]
-    fn ia_default() -> std::cell::RefCell<Vec<AsyncIdentityAssertionBuilder>> {
-        std::cell::RefCell::new(vec![])
     }
 
     /// Add an [`AsyncIdentityAssertionBuilder`] to be used when signing the
@@ -104,21 +90,10 @@ impl AsyncIdentityAssertionSigner {
     /// [`Manifest`]: crate::Manifest
     /// [`sign()`]: Self::sign
     pub fn add_identity_assertion(&mut self, iab: AsyncIdentityAssertionBuilder) {
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            #[allow(clippy::unwrap_used)]
-            let mut identity_assertions = self.identity_assertions.write().unwrap();
-            // TO DO: Replace with error handling in the very unlikely case of a panic here.
-            identity_assertions.push(iab);
-        }
-
-        #[cfg(target_arch = "wasm32")]
-        {
-            #[allow(clippy::unwrap_used)]
-            let mut identity_assertions = self.identity_assertions.try_borrow_mut().unwrap();
-            // TO DO: Replace with error handling in the very unlikely case of a panic here.
-            identity_assertions.push(iab);
-        }
+        #[allow(clippy::unwrap_used)]
+        let mut identity_assertions = self.identity_assertions.write().unwrap();
+        // TO DO: Replace with error handling in the very unlikely case of a panic here.
+        identity_assertions.push(iab);
     }
 }
 
@@ -171,36 +146,17 @@ impl AsyncSigner for AsyncIdentityAssertionSigner {
     }
 
     fn dynamic_assertions(&self) -> Vec<Box<dyn AsyncDynamicAssertion>> {
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            #[allow(clippy::unwrap_used)]
-            let mut identity_assertions = self.identity_assertions.write().unwrap();
-            // TO DO: Replace with error handling in the very unlikely case of a panic here.
+        #[allow(clippy::unwrap_used)]
+        let mut identity_assertions = self.identity_assertions.write().unwrap();
+        // TO DO: Replace with error handling in the very unlikely case of a panic here.
 
-            let ia_clone = identity_assertions.split_off(0);
-            let mut dynamic_assertions: Vec<Box<dyn AsyncDynamicAssertion>> = vec![];
+        let ia_clone = identity_assertions.split_off(0);
+        let mut dynamic_assertions: Vec<Box<dyn AsyncDynamicAssertion>> = vec![];
 
-            for ia in ia_clone.into_iter() {
-                dynamic_assertions.push(Box::new(ia));
-            }
-
-            dynamic_assertions
+        for ia in ia_clone.into_iter() {
+            dynamic_assertions.push(Box::new(ia));
         }
 
-        #[cfg(target_arch = "wasm32")]
-        {
-            #[allow(clippy::unwrap_used)]
-            let mut identity_assertions = self.identity_assertions.try_borrow_mut().unwrap();
-            // TO DO: Replace with error handling in the very unlikely case of a panic here.
-
-            let ia_clone = identity_assertions.split_off(0);
-            let mut dynamic_assertions: Vec<Box<dyn AsyncDynamicAssertion>> = vec![];
-
-            for ia in ia_clone.into_iter() {
-                dynamic_assertions.push(Box::new(ia));
-            }
-
-            dynamic_assertions
-        }
+        dynamic_assertions
     }
 }
