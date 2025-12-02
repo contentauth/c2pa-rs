@@ -40,6 +40,7 @@ use crate::{
     jumbf_io, log_item,
     manifest::StoreOptions,
     manifest_store_report::ManifestStoreReport,
+    maybe_send::MaybeSend,
     settings::Settings,
     status_tracker::StatusTracker,
     store::Store,
@@ -137,8 +138,7 @@ impl Reader {
     ///
     /// [CAWG identity]: https://cawg.io/identity/
     #[async_generic]
-    #[cfg(not(target_arch = "wasm32"))]
-    pub fn from_stream(format: &str, mut stream: impl Read + Seek + Send) -> Result<Reader> {
+    pub fn from_stream(format: &str, mut stream: impl Read + Seek + MaybeSend) -> Result<Reader> {
         let settings = crate::settings::get_settings().unwrap_or_default();
         let http_resolver = if _sync {
             SyncGenericResolver::new()
@@ -163,48 +163,6 @@ impl Reader {
             Store::from_stream_async(
                 format,
                 stream,
-                verify,
-                &mut validation_log,
-                &http_resolver,
-                &settings,
-            )
-            .await
-        }?;
-
-        if _sync {
-            Self::from_store(store, &mut validation_log, &settings)
-        } else {
-            Self::from_store_async(store, &mut validation_log, &settings).await
-        }
-    }
-
-    #[async_generic]
-    #[cfg(target_arch = "wasm32")]
-    pub fn from_stream(format: &str, mut stream: impl Read + Seek) -> Result<Reader> {
-        let settings = crate::settings::get_settings().unwrap_or_default();
-        let http_resolver = if _sync {
-            SyncGenericResolver::new()
-        } else {
-            AsyncGenericResolver::new()
-        };
-        // TODO: passing verify is redundant with settings
-        let verify = settings.verify.verify_after_reading;
-
-        let mut validation_log = StatusTracker::default();
-
-        let store = if _sync {
-            Store::from_stream(
-                format,
-                &mut stream,
-                verify,
-                &mut validation_log,
-                &http_resolver,
-                &settings,
-            )
-        } else {
-            Store::from_stream_async(
-                format,
-                &mut stream,
                 verify,
                 &mut validation_log,
                 &http_resolver,
@@ -306,7 +264,7 @@ impl Reader {
     pub fn from_manifest_data_and_stream(
         c2pa_data: &[u8],
         format: &str,
-        stream: impl Read + Seek + Send,
+        stream: impl Read + Seek + MaybeSend,
     ) -> Result<Reader> {
         let settings = crate::settings::get_settings().unwrap_or_default();
         let http_resolver = if _sync {
@@ -359,8 +317,8 @@ impl Reader {
     #[async_generic]
     pub fn from_fragment(
         format: &str,
-        mut stream: impl Read + Seek + Send,
-        mut fragment: impl Read + Seek + Send,
+        mut stream: impl Read + Seek + MaybeSend,
+        mut fragment: impl Read + Seek + MaybeSend,
     ) -> Result<Self> {
         let settings = crate::settings::get_settings().unwrap_or_default();
         let http_resolver = if _sync {
@@ -662,7 +620,7 @@ impl Reader {
     pub fn resource_to_stream(
         &self,
         uri: &str,
-        stream: impl Write + Read + Seek + Send,
+        stream: impl Write + Read + Seek + MaybeSend,
     ) -> Result<usize> {
         // get the manifest referenced by the uri, or the active one if None
         // add logic to search for local or absolute uri identifiers

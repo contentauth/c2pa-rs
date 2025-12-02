@@ -22,6 +22,7 @@ mod integration_1 {
         settings::Settings,
         Builder, Ingredient, Reader, Result,
     };
+    use c2pa_macros::c2pa_test_async;
     #[allow(unused)] // different code path for WASI
     use tempfile::{tempdir, TempDir};
 
@@ -300,9 +301,8 @@ mod integration_1 {
         Ok(())
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
     #[cfg(feature = "file_io")]
-    #[tokio::test]
+    #[c2pa_test_async]
     async fn test_cawg_signing_via_settings() -> Result<()> {
         Settings::from_toml(include_str!(
             "../tests/fixtures/test_settings_with_cawg_signing.toml"
