@@ -74,6 +74,7 @@ use crate::{
     },
     log_item,
     manifest_store_report::ManifestStoreReport,
+    maybe_send::MaybeSend,
     settings::{builder::OcspFetchScope, Settings},
     status_tracker::{ErrorBehavior, StatusTracker},
     utils::{
@@ -3614,77 +3615,15 @@ impl Store {
     /// Load store from a stream
     #[async_generic(async_signature(
         format: &str,
-        mut stream: impl Read + Seek + Send,
+        mut stream: impl Read + Seek + MaybeSend,
         verify: bool,
         validation_log: &mut StatusTracker,
         http_resolver: &impl AsyncHttpResolver,
         settings: &Settings,
     ))]
-    #[cfg(not(target_arch = "wasm32"))]
     pub fn from_stream(
         format: &str,
-        mut stream: impl Read + Seek + Send,
-        verify: bool,
-        validation_log: &mut StatusTracker,
-        http_resolver: &impl SyncHttpResolver,
-        settings: &Settings,
-    ) -> Result<Self> {
-        let (manifest_bytes, remote_url) = if _sync {
-            Store::load_jumbf_from_stream(format, &mut stream, http_resolver, settings)
-        } else {
-            Store::load_jumbf_from_stream_async(format, &mut stream, http_resolver, settings).await
-        }
-        .inspect_err(|e| {
-            log_item!("asset", "error loading file", "load_from_asset")
-                .failure_no_throw(validation_log, e);
-        })?;
-
-        let store = if _sync {
-            Self::from_manifest_data_and_stream(
-                &manifest_bytes,
-                format,
-                &mut stream,
-                verify,
-                validation_log,
-                http_resolver,
-                settings,
-            )
-        } else {
-            Self::from_manifest_data_and_stream_async(
-                &manifest_bytes,
-                format,
-                &mut stream,
-                verify,
-                validation_log,
-                http_resolver,
-                settings,
-            )
-            .await
-        };
-
-        let mut store = store?;
-        if remote_url.is_none() {
-            store.embedded = true;
-        } else {
-            store.remote_url = remote_url;
-        }
-
-        Ok(store)
-    }
-
-    /// Load store from a stream
-    #[async_generic(async_signature(
-        format: &str,
-        mut stream: impl Read + Seek,
-        verify: bool,
-        validation_log: &mut StatusTracker,
-        http_resolver: &impl AsyncHttpResolver,
-        settings: &Settings,
-    ))]
-    #[cfg(target_arch = "wasm32")]
-    pub fn from_stream(
-        format: &str,
-        mut stream: impl Read + Seek,
+        mut stream: impl Read + Seek + MaybeSend,
         verify: bool,
         validation_log: &mut StatusTracker,
         http_resolver: &impl SyncHttpResolver,
@@ -3737,17 +3676,16 @@ impl Store {
     #[async_generic(async_signature(
         c2pa_data: &[u8],
         format: &str,
-        mut stream: impl Read + Seek + Send,
+        mut stream: impl Read + Seek + MaybeSend,
         verify: bool,
         validation_log: &mut StatusTracker,
         http_resolver: &impl AsyncHttpResolver,
         settings: &Settings,
     ))]
-    #[cfg(not(target_arch = "wasm32"))]
     pub fn from_manifest_data_and_stream(
         c2pa_data: &[u8],
         format: &str,
-        mut stream: impl Read + Seek + Send,
+        mut stream: impl Read + Seek + MaybeSend,
         verify: bool,
         validation_log: &mut StatusTracker,
         http_resolver: &impl SyncHttpResolver,
@@ -3764,59 +3702,6 @@ impl Store {
 
         if verify {
             stream.rewind()?;
-            let mut asset_data = ClaimAssetData::Stream(&mut stream, format);
-            if _sync {
-                Store::verify_store(
-                    &store,
-                    &mut asset_data,
-                    validation_log,
-                    http_resolver,
-                    settings,
-                )
-            } else {
-                Store::verify_store_async(
-                    &store,
-                    &mut asset_data,
-                    validation_log,
-                    http_resolver,
-                    settings,
-                )
-                .await
-            }?;
-        }
-        Ok(store)
-    }
-
-    /// Load store from a manifest data and stream
-    #[async_generic(async_signature(
-        c2pa_data: &[u8],
-        format: &str,
-        mut stream: impl Read + Seek,
-        verify: bool,
-        validation_log: &mut StatusTracker,
-        http_resolver: &impl AsyncHttpResolver,
-        settings: &Settings,
-    ))]
-    #[cfg(target_arch = "wasm32")]
-    pub fn from_manifest_data_and_stream(
-        c2pa_data: &[u8],
-        format: &str,
-        mut stream: impl Read + Seek,
-        verify: bool,
-        validation_log: &mut StatusTracker,
-        http_resolver: &impl SyncHttpResolver,
-        settings: &Settings,
-    ) -> Result<Self> {
-        // first we convert the JUMBF into a usable store
-        let store = Store::from_jumbf_with_settings(c2pa_data, validation_log, settings)
-            .inspect_err(|e| {
-                log_item!("asset", "error loading file", "load_from_asset")
-                    .failure_no_throw(validation_log, e);
-            })?;
-
-        //let verify = get_settings_value::<bool>("verify.verify_after_reading")?; // defaults to true
-
-        if verify {
             let mut asset_data = ClaimAssetData::Stream(&mut stream, format);
             if _sync {
                 Store::verify_store(
@@ -3889,16 +3774,16 @@ impl Store {
     /// validation_log: If present all found errors are logged and returned, otherwise first error causes exit and is returned
     #[async_generic(async_signature(
         format: &str,
-        mut stream: impl Read + Seek + Send,
-        mut fragment: impl Read + Seek + Send,
+        mut stream: impl Read + Seek + MaybeSend,
+        mut fragment: impl Read + Seek + MaybeSend,
         validation_log: &mut StatusTracker,
         http_resolver: &impl AsyncHttpResolver,
         settings: &Settings,
     ))]
     pub fn load_fragment_from_stream(
         format: &str,
-        mut stream: impl Read + Seek + Send,
-        mut fragment: impl Read + Seek + Send,
+        mut stream: impl Read + Seek + MaybeSend,
+        mut fragment: impl Read + Seek + MaybeSend,
         validation_log: &mut StatusTracker,
         http_resolver: &impl SyncHttpResolver,
         settings: &Settings,
@@ -4031,16 +3916,40 @@ impl Store {
         recurse: bool,
         validation_log: &mut StatusTracker,
     ) -> Result<()> {
+        Self::get_claim_referenced_manifests_impl(
+            claim,
+            store,
+            svi,
+            recurse,
+            validation_log,
+            &mut Vec::new(),
+        )
+    }
+
+    fn get_claim_referenced_manifests_impl<'a>(
+        claim: &'a Claim,
+        store: &'a Store,
+        svi: &mut StoreValidationInfo<'a>,
+        recurse: bool,
+        validation_log: &mut StatusTracker,
+        claim_label_path: &mut Vec<&'a str>,
+    ) -> Result<()> {
+        let claim_label = claim.label();
+
+        if svi.manifest_map.contains_key(claim_label) {
+            return Ok(());
+        }
+
+        claim_label_path.push(claim_label);
+
         // add in current redactions
         if let Some(c_redactions) = claim.redactions() {
             svi.redactions
                 .append(&mut c_redactions.clone().into_iter().collect::<Vec<_>>());
         }
 
-        let claim_label = claim.label().to_owned();
-
         // save the addressible claims for quicker lookup
-        svi.manifest_map.insert(claim_label.clone(), claim);
+        svi.manifest_map.insert(claim_label.to_owned(), claim);
 
         for i in claim.ingredient_assertions() {
             let ingredient_assertion = Ingredient::from_assertion(i.assertion())?;
@@ -4055,20 +3964,39 @@ impl Store {
             let ingredient_label = Store::manifest_label_from_path(&c2pa_manifest.url());
 
             if let Some(ingredient) = store.get_claim(&ingredient_label) {
+                if claim_label_path.contains(&ingredient.label()) {
+                    return Err(log_item!(
+                        jumbf::labels::to_assertion_uri(claim_label, &i.label()),
+                        "ingredient cannot be cyclic",
+                        "ingredient_checks"
+                    )
+                    .validation_status(validation_status::ASSERTION_INGREDIENT_MALFORMED)
+                    .failure_as_err(
+                        validation_log,
+                        Error::CyclicIngredients {
+                            claim_label_path: claim_label_path
+                                .iter()
+                                .map(|&label| label.to_owned())
+                                .collect(),
+                        },
+                    ));
+                }
+
                 // build mapping of ingredients and those claims that reference it
                 svi.ingredient_references
-                    .entry(ingredient_label)
-                    .or_insert(HashSet::from_iter(vec![claim_label.clone()].into_iter()))
-                    .insert(claim_label.clone());
+                    .entry(ingredient_label.clone())
+                    .or_insert(HashSet::from_iter(vec![claim_label.to_owned()].into_iter()))
+                    .insert(claim_label.to_owned());
 
                 // recurse nested ingredients
                 if recurse {
-                    Store::get_claim_referenced_manifests(
+                    Store::get_claim_referenced_manifests_impl(
                         ingredient,
                         store,
                         svi,
                         recurse,
                         validation_log,
+                        claim_label_path,
                     )?;
                 }
             } else {
@@ -4086,6 +4014,8 @@ impl Store {
                 )?;
             }
         }
+
+        claim_label_path.pop();
 
         Ok(())
     }
@@ -7695,8 +7625,6 @@ pub mod tests {
     }
 
     #[test]
-    #[cfg(not(target_arch = "wasm32"))]
-    // TODO: Can run on Wasm once https://github.com/contentauth/c2pa-rs/pull/1325 lands
     fn test_removed_jumbf() {
         let (format, mut input_stream, _output_stream) = create_test_streams("no_manifest.jpg");
 

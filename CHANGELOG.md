@@ -5,7 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+As of December 2025 and until the 1.0.0 version is released, the CAI team will only make minor version changes (incrementing the `x` in `0.x.0`) if breaking changes are made. Features will now result in a patch version change (incrementing the `y` in `0.x.y`). This brings us into closer compliance with typical SemVer practice (and follows the default behavior of [`release-plz`](https://release-plz.dev/docs/config#the-features_always_increment_minor-field).
+
 ## [Unreleased]
+
+## [0.72.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.71.3...c2pa-v0.72.0)
+_17 November 2025_
+
+### Added
+
+* Remove x509_certificate ([#1547](https://github.com/contentauth/c2pa-rs/pull/1547))
+
+### Fixed
+
+* Remove ring altogether ([#1606](https://github.com/contentauth/c2pa-rs/pull/1606))
+
+## [0.71.3](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.71.2...c2pa-v0.71.3)
+_17 November 2025_
+
+### Documented
+
+* Fix and update Builder examples ([#1484](https://github.com/contentauth/c2pa-rs/pull/1484))
 
 ## [0.71.2](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.71.1...c2pa-v0.71.2)
 _13 November 2025_
