@@ -3092,6 +3092,8 @@ impl Store {
                 let pc_mut = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
                 pc_mut.set_signature_val(s);
 
+                output_stream.rewind()?;
+
                 let verify_after_sign = settings.verify.verify_after_sign;
                 // Also catch the case where we may have written to io::empty() or similar
                 if verify_after_sign && output_stream.seek(SeekFrom::End(0))? > 0 {
