@@ -194,7 +194,6 @@ pub trait AsyncSigner: Sync {
     ///
     /// The default implementation will send the request to the URL
     /// provided by [`Self::time_authority_url()`], if any.
-    #[cfg(not(target_arch = "wasm32"))]
     async fn send_timestamp_request(&self, message: &[u8]) -> Option<Result<Vec<u8>>> {
         if let Some(url) = self.time_authority_url() {
             if let Ok(body) = self.timestamp_request_body(message) {
@@ -215,18 +214,6 @@ pub trait AsyncSigner: Sync {
             }
         }
 
-        None
-    }
-
-    /// Request RFC 3161 timestamp to be included in the manifest data
-    /// structure.
-    ///
-    /// `message` is a preliminary hash of the claim
-    ///
-    /// The default implementation will send the request to the URL
-    /// provided by [`Self::time_authority_url()`], if any.
-    #[cfg(target_arch = "wasm32")]
-    async fn send_timestamp_request(&self, _message: &[u8]) -> Option<Result<Vec<u8>>> {
         None
     }
 
