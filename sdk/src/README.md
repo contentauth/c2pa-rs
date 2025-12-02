@@ -4,7 +4,7 @@ This document describes the outermost architectural layer of the c2pa SDK. The S
 
 ## Architectural overview
 
-The SDK follows a layered architecture that separates concerns between user-facing APIs, data models, storage, asset I/O, cryptography, and validation.
+The SDK follows a layered architecture that separates concerns between public APIs, data models, storage, asset I/O, cryptography, and validation.
 
 ```mermaid
 graph TB
@@ -157,7 +157,7 @@ The core internal representation of a C2PA claim. A claim is a set of assertions
 
 #### `Manifest` ([manifest.rs](manifest.rs))
 
-User-facing representation of a validated C2PA manifest. Manifests are created from claims during validation.
+Public representation of a validated C2PA manifest. Manifests are created from claims during validation.
 
 ##### Key responsibilities
 
@@ -473,7 +473,7 @@ Internal tracking of validation and processing events during reading and signing
 - Record validation events as they occur
 - Support filtering by label/URI
 - Provide event iteration and reporting
-- Convert to user-facing validation results
+- Convert to public validation results
 
 ### Identity layer
 
